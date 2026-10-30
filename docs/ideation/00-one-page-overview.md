@@ -20,7 +20,7 @@ flowchart LR
     I --> O[Resolve owner and authority]
     O --> C[Compose the decision card]
     C --> H{Human decides}
-    H -->|approve| G[Gate execute and roll back if harmed]
+    H -->|approve| G[Gate and execute, rolling back where the class allows]
     H -->|defer decline or delegate| M[Remember the reason and expiry]
     G --> V[Verify the saving against a counterfactual]
     V --> L[Savings ledger]

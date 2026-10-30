@@ -332,11 +332,12 @@ Call (02:11, no response to the card):
    spending about forty times its normal rate. This pool class has a
    recorded safe-to-pause contract, and pausing is reversible. A
    confirmation prompt is on your phone now. If nobody confirms within
-   ten minutes, and the live incident and service checks are still
-   clear, the pre-certified cost brake will pause the pool; if any
-   check is not clear, I will page the next person on call and change
-   nothing. Say 'repeat' to hear this again, or 'human' to reach the
-   on-call lead."
+   ten minutes, the cost brake may pause the pool, but only if every
+   condition on this pool's contract still holds: an independent signal
+   still shows the spike, and the live incident and service checks are
+   clear. If any condition fails, or anything is in doubt, I will page
+   the next person on call and change nothing. Say 'repeat' to hear
+   this again, or 'human' to reach the on-call lead."
 ```
 
 *Had the pool's class had no safe-to-pause contract, the script would end differently: the call would page the next human on the on-call ladder and **change nothing**. A cost anomaly alone never pauses anything, and a failed or doubtful check always resolves to paging a human.*

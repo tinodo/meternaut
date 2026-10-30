@@ -3,16 +3,20 @@
 
 Standard library only (no packages to install). Run from anywhere:
 
-    python tools/check-docs.py            # human-readable report, exit code 1 on any ERROR
-    python tools/check-docs.py --strict   # WARNINGs also fail
+    python tools/check-docs.py              # human-readable report, exit code 1 on any ERROR
+    python tools/check-docs.py --strict     # WARNINGs also fail
+    python tools/check-docs.py --self-test  # prove the classification heuristics catch mislabelled rows
 
 Checks (and why they exist - each one came from a review finding):
   1. Relative links and heading anchors resolve (docs/_archive is skipped).
-  2. The opportunity catalog has unique IDs, and its row count matches the README claim.
+  2. The opportunity catalog has unique IDs, its row count matches the README claim, and its
+     'At a glance' table matches the rows.
   3. Classification lint (06 section 2): the declared Rev/Ceil of every catalog row must not break
      the rules - R3 / R3-Data never at L3-L5, transactions never above L2, no hybrid classes such
-     as "R0/R1", R3-D is the only abbreviation of R3-Data, and rows that touch observability data
-     are R3-D (WARN: needs a human look).
+     as "R0/R1", R3-D is the only abbreviation of R3-Data. Word heuristics also flag a row that reads
+     like a transaction but is not R3, that reduces observability or evidence data but is not R3-D,
+     that removes redundancy but is not R3 (ERROR), or that deletes something yet claims R1 (WARN).
+     They read words, not typed effects, so a row may be exempted only with a written reason.
   4. Counts quoted in the README (threats, invariants, spikes, risks, decisions, assumptions)
      match what the documents actually contain.
   5. Mermaid labels: unquoted square-bracket labels must not contain ( ) " { } ;
@@ -128,12 +132,86 @@ def check_links():
 # ---------------------------------------------------------------- 2/3. catalog
 CATALOG = os.path.join(ROOT, "docs", "ideation", "02-opportunity-catalog.md")
 ROW_RE = re.compile(r"^\| ([A-Z]+-\d+)\b")
-TRANSACTION_WORDS = re.compile(r"\b(cancel|purchase|exchange|renew|reservation|savings plan|commitment)\b", re.I)
-OBSERVABILITY_WORDS = re.compile(
-    r"\b(ingest\w*|diagnostic|log|logs|logging|metric|metrics|telemetry|retention|sampling|flow logs?|"
-    r"capture|change feed|syslog|counters?|trace|traces|audit)\b",
+# Word heuristics for the classification rubric (06 section 2). They read only the words of a row, so they
+# cannot replace the typed effects a real playbook declares - but they catch the mislabels that two review
+# rounds found by hand. A row is exempt from ONE heuristic only with a written reason (EXEMPT below).
+TRANSACTION_WORDS = re.compile(
+    r"commitment|prepaid|prepay|reservation|savings plan|marketplace subscription|support plan|protection plan|"
+    r"plan model|plan scope|pick tier|switch tier|\bcancel|\brenew|\bpurchase|\bexchange|\bbuy\b",
     re.I,
 )
+OBSERVABILITY_WORDS = re.compile(
+    r"\b(ingest\w*|diagnostic\w*|logs?|logging|metrics?|telemetry|retention|sampling|flow logs?|capture|"
+    r"change feed|syslog|counters?|traces?|audit|availability tests?|web tests?|synthetic|monitoring tests?|probes?)\b",
+    re.I,
+)
+REDUCTION_VERBS = re.compile(
+    r"\b(stop|disable|remove|reduce|narrow|drop|exclude|filter|lower|shorten|lifecycle|sampl|prune|trim)\w*", re.I
+)
+REDUNDANCY_WORDS = re.compile(r"replica|redundan|geo-?replicat|multi-region|\bzone", re.I)
+REDUNDANCY_CUTS = re.compile(r"\b(remove|disable|reduce|drop|downgrade|delete|fewer|consolidat)\w*", re.I)
+DELETE_WORDS = re.compile(r"\b(delete|remove|drop|purge|prune|release|deprovision|decommission)\w*", re.I)
+EXEMPT = {
+    ("RATE-03", "TX"): "a benefit-scope change is not a purchase (06 section 6): R1, L2 at most, Finance and every affected owner",
+    ("RATE-22", "TX"): "a benefit-scope change, not a purchase (06 section 6)",
+    ("TELE-16", "DEL"): "alert rules are restorable detection configuration; no evidence is lost (the metrics stay collected)",
+    ("NET-06", "DEL"): "an hourly-billed add-on that can be re-added; nothing is destroyed",
+    ("TELE-16", "OBS"): "pruning alert rules changes detection, not collection: the metrics stay collected",
+    ("GOV-04", "TX"): "this row's operation is closing or consolidating subscriptions (R2); cancelling plans on the way is a separate transaction (IDLE-29, R3)",
+}
+
+
+def row_problems(cid, opp, action, rev, ceil):
+    """Problems for one catalog row as (level, check, message); level is ERROR or WARN."""
+    out = []
+    rev_key = re.sub(r"[^A-Za-z0-9\-/]", "", rev)  # an em dash (advice only) strips to ""
+    advice_only = rev_key in ("", "-")
+    high = bool(set(re.findall(r"L([0-5])", ceil)) & {"3", "4", "5"})
+    text = f"{opp} {action}"
+    if "/" in rev_key:
+        out.append(("ERROR", "HYBRID", f"hybrid class '{rev}' (exactly one class per operation)"))
+    if rev_key in {"R3-D", "R3-Data", "R3"} and high and "cost-brake" not in ceil.lower():
+        out.append(("ERROR", "CEIL", f"{rev_key} must never be L3/L4/L5 (Ceil says '{ceil}')"))
+    if advice_only:
+        return [p for p in out if (cid, p[1]) not in EXEMPT]
+    if TRANSACTION_WORDS.search(text):
+        if rev_key != "R3":
+            out.append(("ERROR", "TX", f"reads like a transaction (06 section 2, step 1) but is '{rev_key}'; a transaction is R3"))
+        if high:
+            out.append(("ERROR", "TX", f"reads like a transaction but Ceil is '{ceil}'; a transaction is never above L2"))
+    if OBSERVABILITY_WORDS.search(text) and REDUCTION_VERBS.search(action) and rev_key not in {"R3-D", "R3-Data", "R3"}:
+        out.append(("ERROR", "OBS", f"reduces observability or evidence data but is '{rev_key}'; that is R3-Data (never L3/L4)"))
+    if REDUNDANCY_WORDS.search(text) and REDUNDANCY_CUTS.search(action) and rev_key != "R3":
+        out.append(("ERROR", "RDN", f"removes redundancy but is '{rev_key}'; reducing redundancy is R3 (the lost copy is gone)"))
+    if rev_key == "R1" and DELETE_WORDS.search(action):
+        out.append(("WARN", "DEL", "R1 means 'put back exactly'; deleting or releasing something is R2 (a proven recovery path) or R3"))
+    return [p for p in out if (cid, p[1]) not in EXEMPT]
+
+
+def self_test():
+    """Feed deliberately mislabelled rows to the heuristics: each must be caught, and clean rows must pass."""
+    cases = [
+        ("availability tests reduced, labelled R1 at L3", ("X-01", "Availability tests too frequent", "Reduce", "R1", "L3"), {"OBS"}),
+        ("commitment tier picked, labelled R1", ("X-02", "Commitment tier choice for monitoring", "Pick tier", "R1", "L2"), {"TX"}),
+        ("replicas removed, labelled R2", ("X-03", "Replicas never read", "Remove replicas", "R2", "L2"), {"RDN"}),
+        ("ingestion capture removed, labelled R1 at L3", ("X-04", "Ingestion capture copies nobody reads", "Remove", "R1", "L3"), {"OBS"}),
+        ("plan cancelled, labelled R2 at L3", ("X-05", "Plan covering nothing", "Cancel plan", "R2", "L3"), {"TX"}),
+        ("hybrid class", ("X-06", "Tags missing", "Add advisory tag", "R0/R1", "L2"), {"HYBRID"}),
+        ("R3-Data at L3", ("X-07", "Verbose diagnostics", "Narrow categories", "R3-D", "L3"), {"CEIL"}),
+        ("a resource deleted, labelled R1", ("X-08", "Unused gateway", "Delete", "R1", "L2"), {"DEL"}),
+        ("clean: snapshot, then delete an orphaned disk", ("X-09", "Orphaned disks", "Snapshot, then delete", "R2", "L2"), set()),
+        ("clean: collection reduction labelled R3-D at L2", ("X-10", "Verbose diagnostics", "Narrow categories", "R3-D", "L2"), set()),
+        ("clean: a transaction labelled R3 at L2", ("X-11", "Commitment tier choice", "Pick tier", "R3", "L2"), set()),
+        ("clean: advice only", ("X-12", "Support plan fit", "Advise", "\u2014", "L1"), set()),
+    ]
+    bad = 0
+    for desc, (cid, opp, action, rev, ceil), expect in cases:
+        fired = {check for _, check, _ in row_problems(cid, opp, action, rev, ceil)}
+        ok = expect <= fired if expect else not fired
+        print(("ok   " if ok else "FAIL ") + desc + f"  (fired: {sorted(fired) or 'nothing'})")
+        bad += 0 if ok else 1
+    print(f"self-test: {len(cases) - bad}/{len(cases)} passed")
+    return 1 if bad else 0
 
 
 def catalog_rows():
@@ -179,22 +257,9 @@ def check_catalog():
             err(f"catalog 'At a glance' says {tm.group(1)} ideas but the catalog has {len(ids)} rows")
     for ln, c in rows:
         cid, opp, signal, action, rev, ceil = c[0], c[1], c[2], c[3], c[4], c[5]
-        rev_key = re.sub(r"[^A-Za-z0-9\-/]", "", rev)
-        ceil_levels = set(re.findall(r"L([0-5])", ceil))
-        high = bool(ceil_levels & {"3", "4", "5"})
-        text = f"{opp} {action}"
-        if "/" in rev_key:
-            err(f"{rel(CATALOG)}:{ln} {cid}: hybrid class '{rev}' (exactly one class per operation)")
-        if rev_key in {"R3-D", "R3-Data", "R3"} and high and "cost-brake" not in ceil.lower():
-            err(f"{rel(CATALOG)}:{ln} {cid}: {rev_key} must never be L3/L4/L5 (Ceil says '{ceil}')")
-        if rev_key == "R3" and TRANSACTION_WORDS.search(text) and high:
-            err(f"{rel(CATALOG)}:{ln} {cid}: a transaction must never be above L2 (Ceil says '{ceil}')")
-        if TRANSACTION_WORDS.search(action) and re.search(r"\b(cancel|purchase|exchange|renew)\b", action, re.I):
-            if high:
-                err(f"{rel(CATALOG)}:{ln} {cid}: action '{action}' looks like a transaction but Ceil is '{ceil}'")
-        if OBSERVABILITY_WORDS.search(text) and rev_key not in {"R3-D", "R3-Data", "R3", "\u2014", ""} and rev_key != "-":
-            if re.search(r"\b(stop|disable|remove|reduce|narrow|drop|exclude|filter|lower|shorten|lifecycle|sampl)\w*", action, re.I):
-                warn(f"{rel(CATALOG)}:{ln} {cid}: touches observability data and is '{rev_key}' - check it is not R3-Data: {opp[:70]}")
+        short_id = re.match(r"[A-Z]+-\d+", cid).group(0)
+        for level, check, msg in row_problems(short_id, opp, action, rev, ceil):
+            (err if level == "ERROR" else warn)(f"{rel(CATALOG)}:{ln} {short_id}: [{check}] {msg}")
     return len(ids)
 
 
@@ -323,6 +388,8 @@ def check_stale():
 
 
 def main():
+    if "--self-test" in sys.argv:
+        sys.exit(self_test())
     strict = "--strict" in sys.argv
     links = check_links()
     rows = check_catalog()

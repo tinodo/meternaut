@@ -21,7 +21,7 @@ Owners then get **one clear ask in Teams**, in their language, with the evidence
 
 "The first thing that convinced me was the **regret report**," said **Lars Jensen**, Contoso's (fictional) FinOps lead. "Every week the agents show me what they got wrong. Two rollbacks last month. Both explained. That's why I trusted giving them more room."
 
-For low-risk, repeatable actions — putting development environments to sleep at night, for example — Contoso's FinOps lead and security team ratified **policy envelopes**, and each team **enrolled** in the ones it wanted, so the crew acts within human-authored rules and reports afterwards. Anything irreversible still needs two humans, and **commitment purchases are never automated**: each is signed by the authorised buyer against a finite manifest.
+For low-risk, repeatable actions — putting development environments to sleep at night, for example — Contoso's FinOps lead and security team ratified **policy envelopes**, and each team **enrolled** in the ones it wanted, so the crew acts within human-authored rules and reports afterwards. Anything irreversible still needs at least two humans, and **commitment purchases are never automated**: each is signed by the authorised buyer against a finite manifest.
 
 "In the quarterly review, the finance partner asked the AI participant — clearly labelled as AI — why commitment utilisation dipped," said **Aïsha Bello**, Contoso's (fictional) CFO. "It answered with evidence, recorded two decisions, and executed nothing until the right people confirmed in the authenticated channel. That's the right behaviour."
 
@@ -37,13 +37,13 @@ Azure Cost in Action is built on Microsoft platforms, follows the Cloud Adoption
 Because a resource you own appears to cost more than it should, and you are the person best placed to say yes or no. The message tells you it is AI, why you were asked, and who else could answer.
 
 **Will it spam me?**
-No. Each person has an **attention budget**. Low-value or low-risk items go to a weekly digest or are handled by a policy you (or your manager) opted in to. You can mute a class of messages.
+No. Each person has an **attention budget**. Low-value or low-risk items go to a weekly digest or are handled by a policy that you, or a delegate you named, enrolled in. You can mute a class of messages.
 
 **What if I disagree or it's wrong?**
 Tap *Not now*, *Not mine*, *Never for this resource* or just reply. Your reason becomes remembered context, with an expiry, and we don't ask again for the same reason.
 
 **Can it change my resources without asking?**
-Only if you approved that specific change, or you **affirmatively enrolled** in a policy that allows that narrow class of change in that scope. Silence is never consent. Anything irreversible needs two humans. **Undo depends on the kind of change, and every card says which:** configuration changes can be undone for a stated window; some changes — permanently deleted data, telemetry we stop collecting, commitment purchases — cannot, and then the card says so plainly and asks for two people.
+Only if you approved that specific change, or you **affirmatively enrolled** in a policy that allows that narrow class of change in that scope. Silence is never consent. Anything irreversible needs at least two humans. **Undo depends on the kind of change, and every card says which:** configuration changes can be undone for a stated window; some changes — permanently deleted data, telemetry we stop collecting, commitment purchases — cannot, and then the card says so plainly and asks for at least two people.
 
 **What if it breaks something?**
 It watches for harm after every change and, for the kinds of change that can be rolled back, rolls back automatically; you can also undo from the card. For changes that cannot be undone nothing is fixed automatically — which is exactly why those need two people first. Reviews are blameless: they ask what the system and policy should change. The audit still records who approved what — that is attribution for learning and audit, not blame.
@@ -62,7 +62,7 @@ We *do* — they are inputs. On their own, Advisor and Cost Management detect an
 They are relevant and moving quickly; the verified state of play is in [research/01](../research/01-azure-native-landscape.md) and [research/06](../research/06-first-party-teardown.md) (ride / copy / build / contribute). The FinOps toolkit (MIT-licensed) already ships read-only agent plugins and FinOps alerts; we would ride it, not rebuild it. Our position is complementary: the open, owner-centred, workflow-first *last mile* — and a place for the community to share playbooks. Where Microsoft ships something that does a step better, we use it; **if it ships owner-routed, owner-approved execution for three or more Release-1 playbooks, we become contribute-only** (kill criterion K4).
 
 **3. What if the AI is wrong?**
-Four layers: (a) numbers are computed by deterministic tools, never generated; (b) a **Challenger**, built to an independence profile and drilled for correlated failure, tries to refute every case; (c) every action has *one* reversibility class — reversible classes are simulated, canaried and rolled back automatically, while irreversible (R3) and collection-reducing (R3-Data) classes need two humans and **no rollback is claimed**; (d) an independent **Auditor** measures regret and a **Warden** watches the agents. Humans decide, or author the policy that decides.
+Four layers: (a) numbers are computed by deterministic tools, never generated; (b) a **Challenger**, built to an independence profile and drilled for correlated failure, tries to refute every case; (c) every action has *one* reversibility class — reversible classes are simulated, canaried and rolled back automatically, while irreversible (R3) and collection-reducing (R3-Data) classes need at least two humans (R3-Data: the owner, the data owner and security) and **no rollback is claimed**; (d) an independent **Auditor** measures regret and a **Warden** watches the agents. Humans decide, or author the policy that decides.
 
 **4. Who is accountable when something goes wrong?**
 Accountability is layered, following the customer's own RACI: the authorised business approver accepts the *workload trade-off*; the platform owner owns the *controls*; the agent steward owns the *agent's behaviour*; the organisation owns *operational accountability*. Every action is logged with agent version, evidence and approver, so "who decided this, and on what evidence?" always has an answer — as **attribution for learning and audit, not personal blame**.

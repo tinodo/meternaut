@@ -2,6 +2,18 @@
 
 All notable changes to the ideation package. Newest first. Versions are git tags; earlier versions are archived under [`docs/_archive/`](docs/_archive/) and are never edited.
 
+## v3.1 — 2026-10-30 — after the post-v3 audits (tag `ideation-v3.1`)
+
+Two further read-only audits of the committed v3 — *is the round-2 record true?* and a *contradiction hunt* over the live package — found **17 defects, all real**. The documents keep their v3 header; this patch is recorded here. Row by row in [`docs/reviews/round-2/disposition.md` §12](docs/reviews/round-2/disposition.md#12-post-v3-audit-v31); raw reports in [04](docs/reviews/round-2/04-audit-disposition-truth.md) and [05](docs/reviews/round-2/05-audit-contradiction-hunt.md).
+
+### Fixed
+- **22 catalog rows reclassified.** The examples round 2 named were a sample; a whole-catalog scan found the rest. **15 → R3:** paid-plan and commitment changes (IDLE-12, RATE-13/17/18/19/24, TELE-09, SEC-01/04, AI-14/23) and removal of redundancy or scarce capacity (IDLE-31, IDLE-33, DATA-13, PLAT-14). **3 → R3-Data:** availability and network-monitoring tests (IDLE-39, TELE-14, NET-12). **3 → R2:** IDLE-07, IDLE-11, IDLE-28. **1 → advice only:** RATE-15. R1 now means "can be put back exactly; durable state preserved"; R2 means "a recovery path exists and is proven"; a row that lists alternatives takes the class of its most consequential one.
+- **Normative text caught up with its own glossary and record:** control-plane claims are *signed*, and the signature is verified at re-read; the signature record and the provider's transaction ID are specified; held-out evaluation sets are held by the independent evaluation custodian everywhere (four stale "owned by the Warden" statements); the full eight-field enrolment key everywhere, and the FAQ no longer lets "your manager" opt in; dropping log data is R3-Data, not R3; rollback is promised only "where the class allows"; L5 has no write actions; the shared-workspace log example classes silent consumers consent-required or inform-only; the voice script's cost brake is conditional on every condition of the class's contract.
+- **Evidence:** five claims the round-2 fact-checker could not read were re-verified against primary sources — the Advisor "up to a day" delay, the 24-hour and 48-hour settings delays, the Advisor alert categories, the management-group exclusion for FOCUS exports, the Azure Optimization Engine README banner. All confirmed; research/01 and the disposition now agree.
+
+### Tooling
+- [`tools/check-docs.py`](tools/check-docs.py) flags, as errors, a catalog row that reads like a transaction, reduces observability data or removes redundancy but wears a lower class, and warns on an R1 row that deletes something; an exemption needs a written reason. New `--self-test` (12 cases) proves it catches mislabelled rows and passes clean ones.
+
 ## v3 — 2026-10-30 — after review round 2 (tag `ideation-v3`)
 
 A red team and disposition audit, a Microsoft-Learn-grounded fact-check and a brief-compliance and consistency review raised **15 + 9 numbered findings and 38 checked claims**. Everything was accepted except one reviewer artefact (R2-C-01: "301 catalog IDs" — the catalog really has 305) and one over-cautious fact-check verdict (the 63% AI-spend figure). The row-by-row record, including corrections to the round-1 record, is in [`docs/reviews/round-2/disposition.md`](docs/reviews/round-2/disposition.md).

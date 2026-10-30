@@ -182,7 +182,7 @@ For each role: **Mission · Reads · Produces · May decide alone · Must never 
 - **Ceiling:** can *block*, never *approve* on behalf of a human.
 
 #### Operator — *executor*
-- **Mission:** execute the approved Plan through **narrow typed tools** with canary, SLO watch and auto-rollback; log everything.
+- **Mission:** execute the approved Plan through **narrow typed tools** with canary, SLO watch and — for classes that can be rolled back (R0–R2) — auto-rollback (R3 and R3-Data have none); log everything.
 - **Must never:** act without a Gatekeeper pass bound to a human approval or a policy envelope; hold standing broad privileges (prefer just-in-time elevation); run free-form commands.
 - **Ceiling:** L2 by default; L3 only for enrolled owners and classes; **L4 only inside a ratified, enrolled policy envelope** — by default for R0 advisory-tag actions, and for R1/R2 classes in non-prod, isolated scope. **Never L3/L4 for R3, R3-Data or purchases.**
 
@@ -328,7 +328,7 @@ Only **Herald, Diplomat, Coach, Narrator**. Every other role emits an *intent to
 | **Insider / Buyer collusion** | Preparer ≠ signer; just-in-time credentials issued only against a signed manifest; Finance-owned audit of every transaction |
 | **Approval abuse** (rubber-stamping, or a delegate socially engineered into approving) | Authority checks; read-back; approval-rate anomaly flags; step-up authentication for R3 and R3-Data |
 | **Poisoned feedback** (replies and ratings steer thresholds) | Feedback carries provenance and per-person caps; thresholds change only through governed releases |
-| **Evaluation gaming** (agents or prompts tuned to the test set) | Held-out, rotating evaluation sets owned by the Warden; seeded canary cases |
+| **Evaluation gaming** (agents or prompts tuned to the test set) | Held-out, rotating evaluation sets held by the independent evaluation custodian (the Warden runs the drills, not the answers); seeded canary cases |
 
 ---
 

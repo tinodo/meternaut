@@ -122,7 +122,7 @@ stateDiagram-v2
     Planned --> Scheduled: change window
     Scheduled --> Executing
     Executing --> Verifying
-    Executing --> RolledBack: harm detected
+    Executing --> RolledBack: harm detected and the class allows rollback
     Verifying --> Realized: savings proven
     Realized --> Sustained: holds for 90 days
     Realized --> Regressed: savings erode
@@ -132,6 +132,8 @@ stateDiagram-v2
     RolledBack --> [*]
     Sustained --> [*]
 ```
+
+**Rollback exists only for the classes that allow it (R0–R2).** For R3 and R3-Data, harm goes to the incident process and the regret report — never to a promised undo ([06 §9](06-closed-loop-actions-and-autonomy.md)).
 
 A *Declined* or *Deferred* case is **not a failure**: it produces **context** (a reason, an expiry) that makes the next case smarter and the next message rarer.
 
@@ -169,7 +171,7 @@ The brief is **FULL AI-infused — not a chatbot**. We interpret that as: *AI pe
 | 2 | **Reason** | Form hypotheses ("this is idle"), gather evidence *and counter-evidence*, weigh seasonality, find alternative explanations. |
 | 3 | **Propose** | Choose among options (delete / schedule / downsize / re-tier / commit), rank by value × confidence × risk × the owner's capacity to act. |
 | 4 | **Communicate** | Write the message for *this* person (language, tone, detail, channel), hold the conversation, negotiate dates and scope, summarise for executives, speak in a call or meeting. |
-| 5 | **Act** | Turn an approved decision into a precise, reversible plan; operate typed tools; watch SLOs; roll back. |
+| 5 | **Act** | Turn an approved decision into a precise plan with its reversibility stated; operate typed tools; watch SLOs; roll back where the class allows. |
 | 6 | **Verify** | Construct counterfactuals, separate signal from seasonality, detect regret (harm), reconcile with the invoice. |
 | 7 | **Learn** | Per-owner preferences, per-workload memory, calibration of confidence, **authoring new playbooks** for human review. |
 | 8 | **Govern** | Compile natural-language policy into enforceable policy, explain every action, red-team itself, watch its own cost and quality. |
@@ -195,9 +197,9 @@ HITL is a founding constraint, so autonomy is **explicitly granted by humans, pe
 | **L0** | **Observe** | Read-only. Build cases silently; *shadow mode* predicts what it would do, scored against what humans do. | Reviewers audit predictions |
 | **L1** | **Advise** | Send evidence-backed recommendations. No changes. | Decides and acts themselves |
 | **L2** | **Assist** | Execute a specific, previewed plan **after explicit one-tap approval**. | **In the loop** — approves each action |
-| **L3** | **Veto window** | Schedule a plan; proceed unless a human vetoes within the window — **only against an authenticated enrolment record that matches the action on every field (owner, tenant, scope, environment, action class, expiry), with proof that the notice was delivered. Silence is never consent for anything else.** | **On the loop** — supervises, can veto |
+| **L3** | **Veto window** | Schedule a plan; proceed unless a human vetoes within the window — **only against an authenticated enrolment record that matches the action on every field (owner or named delegate, tenant, scope, environment, action class, reversibility class, expiry, policy-envelope version), with proof that the notice was delivered. Silence is never consent for anything else.** | **On the loop** — supervises, can veto |
 | **L4** | **Policy autopilot** | Act inside a human-authored, versioned **policy envelope** (scope, action class, value cap, reversibility, windows) and report. | **Over the loop** — authors and reviews policy |
-| **L5** | **Portfolio intelligence** *(reserved)* | **Monitor, simulate and advise** on portfolio-level questions (e.g. commitment coverage and benefit scope) within a finance-approved risk budget. **No write action is assigned to L5 in this package.** Every *transaction* is individually signed by the legally authorised buyer ([06 §6](06-closed-loop-actions-and-autonomy.md)) and is never L3–L5. A future L5 action would have to be a bounded, reversible, non-transaction class with its own pre-registered enrolment and regret criteria. | Sets risk budget, signs transactions, reviews ledger |
+| **L5** | **Portfolio intelligence** *(reserved)* | **Monitor, simulate and advise** on portfolio-level questions (e.g. commitment coverage and benefit scope) within a finance-approved risk budget. **No write action is assigned to L5 in this package.** Every *transaction* is individually signed by the legally authorised buyer ([06 §6](06-closed-loop-actions-and-autonomy.md)) and is never L3–L5. L5 has **no write actions** in this package; a future write capability would need its own, newly ratified level — it cannot be added to L5 by a playbook or a policy envelope. | Sets risk budget, signs transactions, reviews ledger |
 
 **Default = L2** for anything that changes the estate. **L4/L5 are earned**: only for narrow action classes with a clean track record (no regret events), and only after a named human (or role) ratifies the policy envelope. Every level has **downgrade triggers** (a regret event, an SLO breach, an owner complaint, a model change) and a **kill switch** reachable by the FinOps lead and security. See [06](06-closed-loop-actions-and-autonomy.md).
 
@@ -235,7 +237,7 @@ A **crew** with separation of duties, mirroring good internal controls: those wh
 
 | To | We promise |
 |---|---|
-| **Resource owners** | We will not waste your attention or surprise you. We state up front whether an action can be undone — and for the ones that cannot, we say so, ask two humans, and show what would be lost. |
+| **Resource owners** | We will not waste your attention or surprise you. We state up front whether an action can be undone — and for the ones that cannot, we say so, ask at least two humans, and show what would be lost. |
 | **FinOps / Cloud CoE** | Every saving is proven, every action is auditable, and *you* hold the dial and the kill switch. |
 | **Finance** | The numbers reconcile to the invoice; projections are labelled as projections; regret is reported next to savings. |
 | **Security & compliance** | Nothing happens outside policy; every action is attributable; no covert hand on the wheel. |
@@ -294,7 +296,7 @@ Seventeen families, from the obvious to the outer rim. Full catalog (with IDs, s
 4. **Usage over billing.** Ask *"is it used and useful?"*, not just *"is it expensive?"*.
 5. **Owners first.** No cost action without a confirmed owner — or, for genuinely orphaned resources, a **named custodian** with policy authority who accepts the case. Ownership is a product, not a tag.
 6. **Meet people where they work; treat attention like money.** Every message spends it.
-7. **Honest about reversibility.** Every action carries a stated reversibility class. Reversible by default; **irreversible (R3) actions — including dropping log data — require two humans, a stated residual loss and, where possible, a safety net.** We never promise an undo we cannot deliver.
+7. **Honest about reversibility.** Every action carries a stated reversibility class. Reversible by default; **irreversible (R3) and information-losing (R3-Data — for example dropping log data) actions require the approvers their class names (at least two humans), a stated residual loss and, where possible, a safety net.** We never promise an undo we cannot deliver.
 8. **Context is king.** Remember *why*. Never ask twice for the same reason.
 9. **Prove it.** A saving is claimed only when measured against a counterfactual.
 10. **Fix it at the source.** If infrastructure-as-code would revert the change, the pull request *is* the fix.

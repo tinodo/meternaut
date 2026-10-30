@@ -145,7 +145,7 @@ An invariant with no enforcement point and no negative test is an **aspiration**
 |---|---|
 | **Red-team scenarios** | T1 indirect prompt injection via tag/log/reply; T3 approval phishing; T4 confused deputy; T7 malicious playbook; T8 secrets in logs; T9 wrong-owner approval; **T31 control-plane tag manipulation; T32 evidence manipulation; T34 approval abuse; T35 poisoned feedback; T39 classification laundering; T40 instrumentation creep; T41 custodian overreach** |
 | **Chaos & drills** | Kill-switch drill; chat-platform outage; model outage; stale-approval flood; token-spike (denial of wallet); change-freeze collision; **correlated-failure drill** for the Challenger and Auditor |
-| **Evaluation gates** | Numeric integrity; groundedness; confidence calibration; Challenger independence; regression on every prompt/model/tool change (each a **governed release**); **held-out sets owned by the Warden** |
+| **Evaluation gates** | Numeric integrity; groundedness; confidence calibration; Challenger independence; regression on every prompt/model/tool change (each a **governed release**); **held-out sets held by the independent evaluation custodian** |
 | **Privacy tests** | Redaction efficacy on seeded secrets/PII; retention enforcement; people-data minimisation; **ledger-versus-erasure** (cryptographic deletion of evidence while the hash chain stays valid) |
 | **Authority tests** | Approver without RBAC on the target is refused; delegation expiry; approval bound to **plan version, commit SHA, plan digest and target-state hash** |
 | **Communication tests** | AI disclosure present; attention budgets honoured; phishing-resistance of messages; accessibility checks; **no named person in any shared space for not answering** |

@@ -43,7 +43,7 @@
 | ID | Risk | L | I | Mitigation | Owner (role) |
 |---|---|---|---|---|---|
 | R1 | Strategic overlap with first-party Azure optimisation tools | M | H | Ride / copy / build / contribute map ([research/06](../research/06-first-party-teardown.md)); quarterly re-check; **K4** triggers contribute-only | Product |
-| R2 | **An early harmful action** destroys trust | L | **VH** | Start at L0/L1; classed actions (reversible ones canaried and rolled back; R3 and R3-Data need two humans); Warden; **blameless** review; **K2** freezes writes | FinOps lead |
+| R2 | **An early harmful action** destroys trust | L | **VH** | Start at L0/L1; classed actions (reversible ones canaried and rolled back; R3 needs two keys, R3-Data the owner, the data owner and security); Warden; **blameless** review; **K2** freezes writes | FinOps lead |
 | R3 | Scope creep (40 moonshots, 305 catalog rows) | **H** | M | Release-1 cut **pre-registered in Phase 0.5**; every idea has a status (selected / research queue / parked / retired) | Product |
 | R4 | Compromise of an agent identity | L | VH | Least privilege; JIT; separate read/write; anomaly detection | Security |
 | R5 | People-data backlash (works council, employees) | M | H | Purpose limitation; transparency; contest path; opt-in signals | Privacy |

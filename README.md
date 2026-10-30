@@ -1,7 +1,7 @@
 # Azure Cost in Action
 
 > **AI-infused, agent-driven, human-in-the-loop Azure cost optimisation — from insight to outcome.**
-> *Working title.* Status: **ideation v3** — both rubber-duck rounds applied ([round 1](docs/reviews/round-1/disposition.md), [round 2](docs/reviews/round-2/disposition.md)) · private repository · not yet licensed (decisions pending: name D1, licence D2, employer approval D13 in [plan/01](docs/plan/01-assumptions-risks-decisions.md)). What changed: [CHANGELOG](CHANGELOG.md).
+> *Working title.* Status: **ideation v3.1** — both rubber-duck rounds applied ([round 1](docs/reviews/round-1/disposition.md), [round 2](docs/reviews/round-2/disposition.md)) plus two post-v3 audits ([§12](docs/reviews/round-2/disposition.md#12-post-v3-audit-v31)) · private repository · not yet licensed (decisions pending: name D1, licence D2, employer approval D13 in [plan/01](docs/plan/01-assumptions-risks-decisions.md)). What changed: [CHANGELOG](CHANGELOG.md).
 > **Project home:** GitHub `tinodo/meternaut` (private) · local working copy `<repo>` *(a private-repository convenience — scrub local paths before any publication, decision D6)*.
 
 **New here? Read the [one-page overview](docs/ideation/00-one-page-overview.md) first** — the loop, the five Release-1 plays, who may decide what, and what "it worked" means, on one page.
@@ -81,13 +81,13 @@ Runs on **Microsoft platforms** (Azure / Power Platform / M365) · **Microsoft t
 | Document | Topic |
 |---|---|
 | [Round 1 — disposition of all 41 findings](docs/reviews/round-1/disposition.md) | Three independent reviewers (product, safety, strategy); raw reports preserved verbatim next to it |
-| [Round 2 — disposition](docs/reviews/round-2/disposition.md) | Red team and disposition audit, a Learn-grounded fact-check, and a brief-compliance and consistency review of the v2 package; raw reports in [the folder](docs/reviews/round-2/README.md) |
+| [Round 2 — disposition](docs/reviews/round-2/disposition.md) | Red team and disposition audit, a Learn-grounded fact-check, and a brief-compliance and consistency review of the v2 package — plus two post-v3 audits (§12) that found 17 more defects; raw reports in [the folder](docs/reviews/round-2/README.md) |
 | [Archive of v1 and v2](docs/_archive/) | The frozen earlier packages ([v1](docs/_archive/round-1-v1/), [v2](docs/_archive/round-2-v2/); git tags `ideation-v1`, `ideation-v2`) |
 
 ### The tooling
 | Tool | What it does |
 |---|---|
-| [`tools/check-docs.py`](tools/check-docs.py) | A standard-library-only lint — run `python tools/check-docs.py` before every commit. It checks links and anchors, the catalog (count, unique IDs, one class per row, R3-Data and transactions never above their ceilings), the counts quoted in this README, Mermaid labels and a list of phrases the reviews retired |
+| [`tools/check-docs.py`](tools/check-docs.py) | A standard-library-only lint — run `python tools/check-docs.py` before every commit. It checks links and anchors, the catalog (count, unique IDs, one class per row, R3-Data and transactions never above their ceilings, and word heuristics that flag a row reading like a transaction, reducing observability data or removing redundancy under a lower class), the counts quoted in this README, Mermaid labels and a list of phrases the reviews retired. `--self-test` proves it catches mislabelled rows |
 
 ---
 

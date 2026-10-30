@@ -12,4 +12,6 @@ Round 2 reviewed **v2** (the package after round 1's findings were applied), so 
 
 The orchestrator's spot-check of every quote and external fact a reviewer relied on is at the end of each report. **What we did with all of it:** [disposition.md](disposition.md).
 
+**After v3 — two additional audits.** Round 2 had shown that the orchestrator's own record could be partly untrue, so two further read-only audits were run on the committed v3: [04 — is the disposition true?](04-audit-disposition-truth.md) (7 defects, all real) and [05 — contradictions and loopholes in the live package](05-audit-contradiction-hunt.md) (10 findings, all real). They produced **v3.1** — see [disposition §12](disposition.md#12-post-v3-audit-v31).
+
 The second round's third-party landscape research ([research/02](../../research/02-third-party-and-oss-landscape.md)) was delivered in parallel and is part of v3, not of the review.

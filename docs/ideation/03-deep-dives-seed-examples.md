@@ -75,12 +75,12 @@ Outcome classes: **Keep · Keep-with-sample · Cheapen (cheaper plan) · Drop ·
 | 4 | **Cheaper table plan** for high-volume, low-query tables | R1 (weekly limit; check dependencies) | Verify alerts/Power BI/dashboards first |
 | 5 | **Ingestion-time filter** (rows/columns) | **R3-Data** | Only with the safety plan below; never L3/L4 |
 | 6 | **Retention / archive changes** | **R3-Data** (shorter retention of logs, whether it affects future or existing data) | Compliance check first |
-| 7 | **Commitment tier / dedicated cluster** | R1 | Do *after* shrinking volume ("fix, filter, then price") |
+| 7 | **Commitment tier / dedicated cluster** | **R3** — a transaction (a 31-day lock; a signed purchase, L2 at most) | Do *after* shrinking volume ("fix, filter, then price") |
 
 ### 1.5 The safety plan for the irreversible option
 
 1. **Check the evidence horizon and calibrate the signal.** Is query auditing on, and since when? Then **run a canary query through each consumer surface that matters** (portal, workbook, dashboard, Sentinel/Defender hunting, API) and confirm it appears in the audit log — Microsoft's documentation of what is logged is unreconciled for the hunting surfaces, so we measure. **Unknown coverage blocks any destructive recommendation.** If auditing is off, the first case is *"start watching"* — an **R1** action (it *adds* collection; the added cost is an attribute, not a class) that opens an **Observing** state (see §1.8) and delivers value later; the clock starts the day it is enabled, which is why this should happen *early* on pilot workspaces. **But switching on collection to gather evidence is itself an action**: it needs its own approval (data owner and security, with a cost cap — the audit records are billed as ingested data), a scope, an end date, a retention and deletion rule, and a notification ([06 §3 item 13](06-closed-loop-actions-and-autonomy.md)); it is never a silent side effect of "observing".
-2. **Enumerate every consumer** we *can* see (queries, scheduled/alert rules, Sentinel rules, workbooks, dashboards, exports, API consumers) and record the **blind-spot list** we cannot see. Unknown consumers require the owner's confirmation.
+2. **Enumerate every consumer** we *can* see (queries, scheduled/alert rules, Sentinel rules, workbooks, dashboards, exports, API consumers) and record the **blind-spot list** we cannot see. **A consumer we cannot see cannot consent:** unknown consumers block any destructive recommendation until the workspace owner confirms there are none or records a named risk acceptance.
 3. **Measure savings from data already ingested** — bytes by pattern — so no experiment is needed to size the prize.
 4. **Replay test.** Re-run the audited queries and alert logic over the history **with the candidate lines removed**; results must be identical (or the differences explained and accepted).
 5. **Watch period.** A defined number of days in which the agent keeps checking that nothing *new* starts using those patterns.
@@ -98,9 +98,9 @@ Outcome classes: **Keep · Keep-with-sample · Cheapen (cheaper plan) · Drop ·
 | **Producers** (their logs, their volume) | The teams behind each source (`_ResourceId` → team) |
 | **Technical steward** for a transformation | Platform team (workspace-level) with the *producer's* consent for their sources |
 | **Budget holder** | Per team, using **usage-based allocation by ingested GB** |
-| **Consumers** | Security operations, SRE, compliance — who may use the data silently |
+| **Consumers** | Security operations, SRE, compliance — who may use the data silently. Each is classed **consent-required** (they rely on the data) or **inform-only**; a consent-required consumer **acknowledges by name**, or the accountable workspace owner records a **named risk acceptance** ([06 §3 item 12](06-closed-loop-actions-and-autonomy.md)) |
 
-The **Diplomat** handles it as a *multi-party case*: the producer decides about *their* noise; the platform team decides about the workspace-level transformation; security co-signs anything near protected sources.
+The **Diplomat** handles it as a *multi-party case*: the producer decides about *their* noise; the platform team decides about the workspace-level transformation; security co-signs anything near protected sources; and **Approve stays locked until every consent-required consumer is recorded** — an unanswered consumer blocks the change and follows the private-first ladder.
 
 ### 1.7 The case file (illustrative numbers)
 
