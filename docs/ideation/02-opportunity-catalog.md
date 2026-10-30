@@ -342,7 +342,7 @@ Many savings interact. The Conductor sequences cases into **plays**:
 
 | ID | Opportunity | Usage-truth signal | Action | Rev | Ceil |
 |---|---|---|---|---|---|
-| AI-01 | **Idle fine-tuned model deployments** (hourly hosting; verify) | Requests zero | Undeploy | R2 | L2 |
+| AI-01 | **Near-idle fine-tuned model deployments** — hosting is billed hourly regardless of calls; a deployment with *zero* calls for 15 days is deleted automatically, so the waste sits in the first 15 days and in near-idle deployments kept alive by health checks or trickle traffic | Requests per hosting hour; keep-alive call patterns | Undeploy (the customised model is kept and can be redeployed) | R1 | L2 |
 | AI-02 | Provisioned throughput under-utilised | Utilisation percentage | Resize or switch to pay-as-you-go | R1 | L2 |
 | AI-03 | Provisioned-throughput commitments vs deployments | Mismatch | Align | R3 | L1 |
 | AI-04 | **Model downshift** (smaller model for simple tasks; routing) | Task complexity metrics; quality evaluations | Route | R1 | L1 |
@@ -517,7 +517,8 @@ Many savings interact. The Conductor sequences cases into **plays**:
 | GOV-08 | research/01 §1 | Verified | Budget action groups work **only at subscription and resource-group scope** |
 | GOV-14 | TRAP-FINOPS-006; research/01 §1 | Verified | Tag inheritance applies to **usage records going forward** |
 | ANOM-01, 07, FORE-* | research/01 §1 | Verified | Cost anomaly alerts use a 60-day baseline and are **email-only** |
-| AI-01, COMM-*, ADJ-*, SUST-*, most of DEV-* and TIME-02…12 | — | **Hypothesis** | Not yet sourced; verify in Phase 3 when selected for a playbook |
+| AI-01 | Learn: Azure OpenAI *manage costs* (full billing model), *fine-tuning how-to* and *FAQ* (retrieved 2026-10-30) | Verified | Hourly hosting regardless of usage; **auto-deleted after 15 days with no calls**; deleting a deployment does not delete the model |
+| COMM-*, ADJ-*, SUST-*, most of DEV-* and TIME-02…12 | — | **Hypothesis** | Not yet sourced; verify in Phase 3 when selected for a playbook |
 
 ## Appendix B — How the catalog becomes playbooks (Phase 3)
 
