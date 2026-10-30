@@ -1,6 +1,6 @@
 # Value, Metrics & Economics — how we will know it works (and that it pays for itself)
 
-> **Status:** Ideation **v2** (revised after rubber-duck round 1; v1 archived [here](../_archive/round-1-v1/ideation/10-value-metrics-and-economics.md)) · **Date:** 2026-10-30 · Part of the [north-star vision](01-north-star-vision.md)
+> **Status:** Ideation **v3** (revised after rubber-duck round 2 — numeric pre-registration thresholds added; v2 archived [here](../_archive/round-2-v2/ideation/10-value-metrics-and-economics.md), v1 [here](../_archive/round-1-v1/ideation/10-value-metrics-and-economics.md)) · **Date:** 2026-10-30 · Part of the [north-star vision](01-north-star-vision.md)
 > **Scope guard:** definitions and shape of measurement. Targets are set in Phase 1–2 from pilot data; all example numbers are **illustrative**.
 
 ---
@@ -174,7 +174,7 @@ If **verified savings < platform cost** for two consecutive quarters in a scope,
 
 A pilot that is judged by the people who built it, with criteria chosen after the data arrives, proves nothing. The strawman therefore has four parts:
 
-**Pre-registration.** Before any data is seen, write down and date: the hypotheses, the metrics and thresholds, the exclusions, the analysis method and the stop rules. Changes after the start are recorded as *deviations*, not silently absorbed.
+**Pre-registration.** Before any data is seen, write down and date: the hypotheses, the metrics and thresholds, the exclusions, the analysis method and the stop rules. Changes after the start are recorded as *deviations*, not silently absorbed. The **numeric thresholds to fix before the data** include: owner-resolution accuracy (assumption A2); authority-check success (no approval is ever accepted from someone without authority over the target); action safety (severity-1 incidents and regret per 100 actions — kill criterion K2); cost per decided case (spike S16, feeding K3); and, for the separate later **enrolled-autonomy** hypothesis ([01 §4](01-north-star-vision.md)), the enrolment rate, approval-fatigue indicators (dwell time, approvals given without opening the evidence) and regret per enrolled class.
 
 **A comparison condition.** Choose one *before* the pilot: a **matched set of teams or subscriptions** that keep the status quo (Cost Management and Advisor alone), or a **stepped rollout** in which each team is its own control. The claim is the **incremental** effect over the comparison, never the absolute saving ([§6](#6-measurement-challenges-and-how-we-respect-them), ledger rule 10).
 

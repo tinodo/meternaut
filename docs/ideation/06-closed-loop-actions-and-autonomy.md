@@ -1,6 +1,6 @@
 # The Closed Loop — from decision to action to proof
 
-> **Status:** Ideation **v2** (revised after rubber-duck round 1; v1 archived [here](../_archive/round-1-v1/ideation/06-closed-loop-actions-and-autonomy.md)) · **Date:** 2026-10-30 · Part of the [north-star vision](01-north-star-vision.md)
+> **Status:** Ideation **v3** (revised after rubber-duck round 2 — this is now the **normative** safety model: derived classification, the enrolment key, affected-party consent, the transaction matrix; v2 archived [here](../_archive/round-2-v2/ideation/06-closed-loop-actions-and-autonomy.md), v1 [here](../_archive/round-1-v1/ideation/06-closed-loop-actions-and-autonomy.md)) · **Date:** 2026-10-30 · Part of the [north-star vision](01-north-star-vision.md)
 > **Scope guard:** the *shape* of safe automation, not its implementation. Thresholds and policies shown are **candidates to be ratified** in the [guardrails workplan](../plan/02-guardrails-workplan.md).
 
 ---
@@ -43,19 +43,34 @@
 | **Negotiate** | Commercial levers | Renewal evidence packs, commitment strategy |
 | **Prevent** | Shift left | Cost delta in pull requests; deployment-time estimates |
 
-### Reversibility classes — **one exact class per operation**
+### Reversibility classes — **one exact class per operation, derived — not declared**
+
+> **Normative.** This section, §3, §5 and §6 are the single source for classification, enrolment, affected-party consent, the cost brake, control-plane tags and the commitment-transaction matrix. Other documents summarise and link here; where they differ, **this document wins** and the difference is a defect (the docs lint in `tools/check-docs.py` checks the mechanical parts).
 
 | Class | Definition | Examples |
 |---|---|---|
 | **R0** | Trivially reversible, metadata only | Tags (advisory tags only — see control-plane tags below), schedules, alert routing, budgets |
 | **R1** | Reversible configuration change, state preserved | Scale up/down, SKU change within family, pause/stop with state retained |
 | **R2** | Reversible within a recovery window | Snapshot-then-delete, soft-delete, quarantine-then-delete |
-| **R3** | Irreversible or *economically* irreversible | Permanent deletion without backup, shortening retention, reducing redundancy (the lost copy is gone), releasing a static IP address (it may sit in a partner's allow-list), **commitment purchases, exchanges, renewals and cancellations** (exchange/refund is limited and time-limited — see [research/01](../research/01-azure-native-landscape.md)) |
-| **R3-Data** | **Prospective information loss.** Any *collection-reducing* action: ingestion filters, narrower diagnostic categories, sampling, dropped columns, excluded namespaces, lowered collection levels, shortened retention. The configuration can be restored; **the evidence not collected in the meantime cannot** | See below |
+| **R3** | Irreversible or *economically* irreversible loss that is **not** a reduction of observability or evidence data | Permanent deletion of a resource or its data without a recovery path, **shortening the retention of backups or recovery points**, reducing redundancy (the lost copy is gone), releasing a static IP address (it may sit in a partner's allow-list), and every **transaction** (defined below) — including reservation purchases, exchanges, renewals and cancellations. Exchange and refund rights are limited *and changing* — for example, reservations bought on or after 1 Feb 2027 are not exchangeable where savings plans cover the service, and refunds are capped (see [research/01](../research/01-azure-native-landscape.md)) |
+| **R3-Data** | **Information loss in observability and evidence data** — logs, metrics, traces, audit and activity records, flow logs, change feeds, event captures. Any action that reduces **what is collected or how long it is kept**: ingestion filters, narrower diagnostic categories, sampling, dropped columns, excluded namespaces, lowered collection levels, disabled feeds, exports and captures, **and shorter retention — whether it affects only future data or also purges existing data**. The configuration can be restored; **the evidence that was not collected, or no longer exists, cannot** | See below |
 
-**Each operation also records separate attributes — they are *not* part of the class** (no hybrid labels such as "R0/R1"): *state preservation* · *prospective information loss* · ***service interruption*** (user-visible, e.g. a P2S scale change may reconnect users) · *dependency blast radius* · *rollback SLA* · *preconditions*. A change can be mechanically reversible (R1) and still interrupt service; the attribute says so.
+**Each operation also records separate attributes — they are *not* part of the class** (no hybrid labels such as "R0/R1"): *state preservation* · *information loss* · ***service interruption*** (user-visible — for a P2S gateway Microsoft says to **plan for downtime** when scaling or changing its configuration) · *dependency blast radius* · *rollback SLA* · *preconditions*. A change can be mechanically reversible (R1) and still interrupt service; the attribute says so.
 
-> **R3-Data rules.** Never L3 or L4. Requires data-owner **and** security approval, calibrated audit coverage, replay, protected-source checks and — where policy mandates — a complete mirror. Applies to every row in the catalog that reduces what is collected, whatever its `Rev` column shows ([catalog](02-opportunity-catalog.md)). A **safety net** (shadow period, short-lived cheap copy — see [03](03-deep-dives-seed-examples.md)) reduces regret but **does not make the action reversible**, and we never say it does.
+**How the class is decided — ordered, first match wins.** This is what makes "exactly one class per operation" mechanical rather than a matter of taste:
+
+1. **Is it a *transaction*?** → **R3** (the transaction path below: L2 at most, individually signed). A *transaction* creates, changes the terms of (SKU, quantity, term, billing scope, legal entity), renews, exchanges or cancels a **financial commitment or paid plan** — reservations, savings plans, prepaid or consumption commitments, support plans, marketplace subscriptions, security and protection plans. Closing a subscription is a transaction when it cancels such plans.
+2. **Does it reduce observability or evidence information** — what is collected, or how long it is kept? → **R3-Data**.
+3. **Does it destroy or release anything else with no recovery path?** → **R3**.
+4. **Is it recoverable within a stated window** (backup, snapshot, soft-delete, quarantine)? → **R2**.
+5. **Is it a configuration change that can be put back exactly?** → **R1**.
+6. **Metadata only?** → **R0**.
+
+An operation that could match two lines takes the **earlier** one: a retention cut that also purges existing logs is **R3-Data** (never "R3 plus something"); "cancel the plans on an empty subscription" is a **transaction**.
+
+**Derived, not declared.** Every typed operation declares its *effects* (for example `reduces-collection`, `shortens-retention`, `destroys-existing-data`, `releases-identifier`, `changes-commitment-terms`, `interrupts-service`, `keeps-state`). The **Gatekeeper derives the class from the effects** with the rules above; a playbook's or an agent's label is never trusted, and an operation whose declared class is *lower* than its derived class is **rejected**. The same rules run as a **lint over the catalog and every playbook** — a row that fails cannot be selected — and the threat *classification laundering* ([08 T39](08-trust-safety-and-guardrail-topics.md)) covers a label that tries to dodge them.
+
+> **R3-Data rules.** Never L3 or L4. Requires data-owner **and** security approval, calibrated audit coverage, replay, protected-source checks and — where policy mandates — a complete mirror. Applies to every operation whose derived class is R3-Data, whatever its `Rev` column shows ([catalog](02-opportunity-catalog.md)). A **safety net** (shadow period, short-lived cheap copy — see [03](03-deep-dives-seed-examples.md)) reduces regret but **does not make the action reversible**, and we never say it does.
 
 ### Candidate default autonomy by risk (to be ratified)
 
@@ -66,9 +81,9 @@
 | R1 | prod | isolated | **L2** assist | Owner |
 | R2 | non-prod | isolated | **L3** (enrolled); **L4 only inside a ratified, enrolled policy envelope** | Owner (can veto) |
 | R2 | prod | isolated or shared | **L2** | Owner **+ all affected parties** if shared |
-| R3 | any | any | **L1–L2, two-key** | Owner **+** FinOps lead |
+| R3 | any | any | **L1–L2, two-key** | Owner **+** FinOps lead (**+** the data owner if the lost thing is data and the owner is someone else; **+** security co-sign where the row is marked ⚑) |
 | **R3-Data** | any | any | **L1–L2 only; never L3/L4** | Owner **+** data owner **+** security co-sign |
-| **Commitment purchase / exchange / renewal / cancellation** | any | billing scope | **L2 only — individually signed by the legally authorised buyer(s)** against a finite transaction manifest | Workload owner **+** Finance (**+** more above thresholds) |
+| **Transaction** (commitment or paid-plan purchase, exchange, renewal, cancellation, change of terms) | any | billing scope | **L2 only — individually signed by the legally authorised buyer** against a finite manifest; **mechanically rejected above L2** | The [transaction matrix](#6-commitments-and-other-transactions-the-buyers-workflow): workload owner **+** FinOps lead (**+** Finance above the policy threshold), then the signer |
 | any | regulated / critical-tagged | any | **L1 advise only** unless a recorded exception — *and never an exception to a lock or legal hold* | Owner + risk/compliance |
 
 ---
@@ -97,12 +112,14 @@
    2. **Protected / critical scopes** can only be touched by a distinct, pre-authorised action class.
    3. **Change freezes and declared incidents** stop all changes in the affected scope. The only exception is the narrowly defined **cost brake** below.
    4. Everything else follows policy and the autonomy ladder. **No gate has an "urgent" bypass.**
-6. **Veto windows require enrolment.** A veto window (L3) runs only for owners who have **affirmatively enrolled** that action class and scope, with **proof the notice was delivered**. *Silence is never consent* — least of all for orphans ([07](07-ownership-and-organization.md)).
+6. **Veto windows require enrolment — and an enrolment is a precise key.** An L3 action may run only against an **enrolment record** that matches the action on **every** field: *owner (or named delegate)* · *tenant* · *scope* · **environment** · *action class* · *reversibility class* · *expiry* · *policy-envelope version*. The record is created by an **authenticated** act of the owner (step-up where policy requires), is **revocable at any moment**, and each notice carries **proof of delivery** (a delivery receipt or an acknowledged read — a *sent* message is not proof). **No field is inferred:** an enrolment for dev never authorises prod; one for a class never authorises another; an expired one authorises nothing; a changed envelope version needs a fresh enrolment. *Silence is never consent* — least of all for orphans ([07](07-ownership-and-organization.md)).
 7. **Rate limits / blast limiter.** Max concurrent changes per subscription per hour; stop-the-line if failure rate crosses a threshold.
 8. **Idempotency and concurrency.** Steps are idempotent; the plan checks it is acting on the same configuration it analysed; detect in-flight human edits.
 9. **Two-key for R3.** Two different humans (owner plus FinOps/Finance) approve any irreversible or economically irreversible action.
 10. **Rollback bundle** generated *before* execution: pre-state, exact reverse operation, verification steps, owner of the rollback.
-11. **The cost brake — deliberately narrow.** A pre-certified emergency action class, never a general override. It may fire automatically only when **all** hold: the resource class has a **service-owner-recorded safe-to-pause contract**; the trigger is an **independent signal** (not the same data that raised the case); **live incident and SLO checks** show it will not worsen an active incident; it is **enumerated** (e.g. pause a specific class of compute pool), **rate-limited**, **reversible (R1)** and followed by a **mandatory post-incident review**. **A cost anomaly alone never pauses anything**: absent a certified class, the system pages humans and records what it knew. The brake does not outrank locks, legal holds or protected scopes (precedence 1–2 above).
+11. **The cost brake — deliberately narrow.** A pre-certified emergency action class, never a general override. It may fire automatically only when **all** hold: (a) the resource class has a **service-owner-recorded safe-to-pause contract**, bound to specific asset IDs, with an expiry, a **security co-sign** and an immutable policy version; (b) the trigger is an **independent signal** — telemetry from a **separately administered source** than the data that raised the case, which **no principal able to edit the contract or the case can also forge or suppress**; (c) **live incident and SLO checks** show it will not worsen an active incident; (d) the action is **enumerated** (e.g. pause a specific class of compute pool), **rate-limited**, **reversible (R1)** and followed by a **mandatory post-incident review**; and (e) **any doubt about the integrity of a signal, contract or check resolves to paging a human and changing nothing**. **A cost anomaly alone never pauses anything**, and spend spikes that come from commitment purchases are not anomalies (budgets can include reservation purchase costs). The brake does not outrank locks, legal holds or protected scopes (precedence 1–2 above). Who certifies a class as safe-to-pause is decision D18 ([plan/01](../plan/01-assumptions-risks-decisions.md)).
+12. **Affected parties: consent or a named risk acceptance — never silence.** For anything shared (a gateway, a workspace, a firewall, a commitment's benefit scope), every affected party is classed as **consent-required** (their service is interrupted, their data is reduced or their cost changes) or **inform-only** (no effect). *Notice is not consent*, and *"no objection so far" is silence.* A consent-required party must **acknowledge by name through an authenticated channel**, or a role with authority under the ratified policy envelope (for a shared gateway, the shared-platform owner) must record a **named, dated risk acceptance** on their behalf. The approval action does not become executable until every consent-required party is recorded; an unanswered party blocks execution and follows the private-first ladder ([05 §3](05-human-interaction-concepts.md)).
+13. **Instrumentation is an action, not an observation.** Switching on query audit, a new diagnostic setting or any new collection *in order to gather evidence* adds data, cost and sometimes personal data. It needs its **own approval** (data owner and security, with a cost cap), a **scope**, an **end date**, a **retention and deletion rule** and a notification to the people affected. A case in the *Observing* state ([01 §2.2](01-north-star-vision.md)) **expires or is re-authorised** at the end date — observation never becomes indefinite by default.
 
 ---
 
@@ -159,19 +176,37 @@ review_cadence_days: 90
 
 The envelope is **human-authored, versioned, expiring and reviewable**. The agents can *propose* envelopes (from observed approvals: "you approved this 31 times with no regret — want a policy?") but never ratify them. **Every behaviour-affecting artefact — thresholds, prompts, models, evaluators, playbooks, routing rules — is a governed release** (versioned, independently reviewed, evaluated, approved, reversible), never live-self-tuned by the agents ([04](04-agent-crew.md)).
 
-**Control-plane tags.** Tags are not harmless metadata when they decide autopilot scope, exemptions, criticality, ownership or data class. Those are *control-plane* tags: only an **independent authority** may change them (with audit), and a tag that was just written or inferred does **not** qualify a resource for automation until a cooling-off revalidation passes. *Advisory* tags (e.g. a descriptive label) can be written at R0.
+**Control-plane tags.** Tags are not harmless metadata when they decide autopilot scope, exemptions, criticality, ownership or data class. Those are *control-plane* tags: only an **independent authority** may change them (with audit). Each control-plane value is a **claim** with a *source, a version and a timestamp*, and four rules make the cooling-off real rather than a delay: (1) **the revalidator is never the principal who changed the tag**; (2) **every change to a control-plane tag invalidates** the resource's enrolment eligibility, its policy-envelope membership and any pending approval that relied on the old value; (3) a value that was just written or inferred does **not** qualify a resource for automation until an independent revalidation passes; (4) the Gatekeeper **re-reads the claim at the last moment before execution** and binds the approval to the claim's version ([§3 item 1](#3-the-safe-change-toolkit)). *Advisory* tags (e.g. a descriptive label) can be written at R0.
 
 ---
 
-## 6. Commitments (the Buyer's workflow)
+## 6. Commitments and other transactions (the Buyer's workflow)
 
-Reservations and savings plans are different animals: large, long, and only partially reversible. **Purchases, exchanges, renewals and cancellations are never L3–L5.** The crew's role is analysis, simulation and scope optimisation; **every transaction is individually signed by the legally authorised buyer(s)** against a **finite transaction manifest** (what, how much, which scope, which term) bound to the finance policy.
+Reservations, savings plans and other paid plans are different animals: large, long, and only partially reversible (and the exchange rules are changing — for example, reservations bought on or after 1 Feb 2027 are not exchangeable where savings plans cover the service; see [research/01](../research/01-azure-native-landscape.md)). **Every *transaction* — a purchase, exchange, renewal, cancellation or change of terms (defined in §2) — is never L3–L5.** The crew's role is analysis, simulation and scope advice; **every transaction is individually signed by the legally authorised buyer** against a **finite manifest** bound to the finance policy.
+
+**Transaction matrix (normative — every other document links here):**
+
+| Role | Who | What they do | Separation rule |
+|---|---|---|---|
+| **Proposer** | Economist and Buyer (agents) | Analyse, simulate, prepare the manifest | Cannot approve or sign |
+| **Workload approver** | The workload owner (or named delegate) | Accepts that the workload will run at the assumed baseline | A different human from the signer |
+| **Policy approver** | FinOps lead | Confirms the proposal is inside the finance-approved risk budget | A different human from the workload approver |
+| **Threshold approver** | Finance | Required **above** the threshold set in the finance policy (the third key) | — |
+| **Signer** | The legally authorised buyer (the holder of the billing purchase role) | Signs the **manifest digest** | **Never the preparer;** never the only human involved |
+
+So the minimum chain is **workload owner + FinOps lead, then the signer**; Finance joins above the threshold. Nobody — and no agent — can substitute for a missing key.
+
+**The manifest — canonical fields.** Offer and SKU · legal entity and billing scope · quantity · term · **unit price, total price and currency** · quote timestamp and **expiry** · benefit scope · finance-policy and risk-budget version · a **one-use nonce**. The **manifest digest** is what is signed. The Buyer executes only a manifest whose every field still matches; **any difference — price, term, scope, quantity, legal entity, an expired quote — needs a new signature.** The provider's transaction ID goes into the ledger.
+
+A change of a reservation's **benefit scope** (single versus shared) is not a purchase, but it changes who benefits and who is charged back: it needs Finance and every affected owner ([§3 item 12](#3-the-safe-change-toolkit)) and is **L2 at most**.
+
+**The workflow:**
 
 1. **Portfolio view first:** coverage, utilisation, scope, expiry, what-if on steady-state baselines (excluding things the crew is about to shrink — *sequence matters: right-size first, then commit*).
 2. **Risk budget** set by Finance: maximum commitment as % of baseline, term ladder (e.g. staggered terms), cooling-off periods, minimum utilisation target. The budget **bounds what may be proposed**; it never substitutes for a signature.
-3. **Staged purchases** instead of one big bet; **scope optimisation** (a free-saving class, if scope can be changed) before new purchases.
-4. **Two-key** (or three-key above a threshold): owner of the workload + FinOps lead (+ Finance), then the authorised buyer signs.
-5. **Post-purchase watch:** utilisation, orphaned commitments after SKU changes, exchange/refund options (time-limited policy), expiry planning.
+3. **Staged purchases** instead of one big bet; **benefit-scope advice** (a free change where scope can be changed, subject to the affected-party rule) before new purchases.
+4. **The transaction matrix above** — two keys, a third above the threshold, then the authorised buyer signs; the preparer can never be the signer.
+5. **Post-purchase watch:** utilisation, orphaned commitments after SKU changes, the remaining exchange and refund options (a changing policy), expiry planning.
 6. **Regret analysis:** back-test decisions against what actually ran.
 
 ---

@@ -1,6 +1,6 @@
 # Ownership & Organisation — "a recommendation without an owner is a rumour"
 
-> **Status:** Ideation **v2** (revised after rubber-duck round 1; v1 archived [here](../_archive/round-1-v1/ideation/07-ownership-and-organization.md)) · **Date:** 2026-10-30 · Part of the [north-star vision](01-north-star-vision.md)
+> **Status:** Ideation **v3** (revised after rubber-duck round 2; v2 archived [here](../_archive/round-2-v2/ideation/07-ownership-and-organization.md), v1 [here](../_archive/round-1-v1/ideation/07-ownership-and-organization.md)) · **Date:** 2026-10-30 · Part of the [north-star vision](01-north-star-vision.md)
 > **Scope guard:** concepts and organisational design only. Data sources and permissions are a Phase 4–5 topic; privacy rules are a guardrail topic ([08](08-trust-safety-and-guardrail-topics.md)).
 
 ---
@@ -113,14 +113,20 @@ Principles: ask the **most likely** person first; one question, one tap; explain
 
 Truly unowned, costly resources are nobody's problem — which is exactly why they persist. The v1 design started a quarantine ladder after *silence*. Round 1 review showed the flaw: **an orphan has nobody to be silent**, silence from a resource that has no owner is not consent, and a "countdown ends → delete" branch can destroy something business-critical that nobody documented. v2 makes a **named human** accountable instead.
 
-**The orphan custodian.** Every scope (subscription or management group) has a *recorded custodian for orphans* — typically the subscription owner, the platform team or the FinOps lead — named in the policy envelope. The custodian is the **owner of last resort** and receives the orphan queue. For each orphan the custodian decides one of:
+**The orphan custodian.** Every scope (subscription or management group) has a *recorded custodian for orphans* — typically the platform team or the FinOps lead — named in the policy envelope. The custodian is the **owner of last resort**: it receives the orphan queue and can *triage, park, restrict and hand out for adoption*. **It cannot retire a resource alone.** Three separation rules stop the role from becoming a back door:
+
+1. **Appointment is not action.** Someone *other than the custodian* — the scope's accountable executive or the FinOps lead — appoints it, records it and reviews it every quarter. A custodian cannot appoint itself or widen its own authority.
+2. **Orphanhood is corroborated, not asserted.** A resource counts as an orphan only after *independent* signals agree — no ownership claim, no recent human change, no dependants found **within the stated evidence horizon** — and the Archaeologist and the Challenger record why. One agent's hunch is not enough.
+3. **Retirement needs a second key.** *Retire* needs the custodian **and** a second authority (the FinOps lead or the scope's accountable executive), a snapshot or backup first, and the customer's change record. For anything other teams *might* use — a shared network resource, storage others read — the affected-party rule applies: likely users are asked, and their answers are recorded ([06 §3 item 12](06-closed-loop-actions-and-autonomy.md)).
+
+For each orphan the custodian decides one of:
 
 | Decision | Meaning | Limits |
 |---|---|---|
 | **Adopt** | Assign an owner; the owner confirms (never assumed) | Normal case flow follows |
 | **Park** | Accept the cost, with a reason and an **expiry date** | Re-asked at expiry |
 | **Restrict or pause** | Reduce exposure or cost within the policy's allowed classes | Reversible classes only; the [enrolment and precedence rules](06-closed-loop-actions-and-autonomy.md) still apply |
-| **Retire** | Delete — a *named human decision* | Only after snapshot/backup (an R2 path); never for locked, held or protected scopes |
+| **Retire** | Delete — the custodian **plus a second authority** (rule 3) | Only after snapshot/backup (an R2 path); never for locked, held or protected scopes |
 
 If a scope has **no custodian**, the case goes to the FinOps lead and the system raises *the missing custodian itself* as a governance finding. **The resource is left untouched.**
 
@@ -132,9 +138,9 @@ flowchart LR
     B -->|claimed| C[Owner confirmed: normal case]
     B -->|nobody| D[Notify subscription owner, team channels and the orphan custodian]
     D -->|claimed| C
-    D -->|no claim| E[Custodian decides: adopt, park with expiry, restrict within policy, or retire]
+    D -->|no claim| E[Custodian decides: adopt, park with expiry, restrict within policy, or propose retirement]
     E -->|adopt| C
-    E -->|retire| F[Snapshot or backup first, then delete as a named human decision]
+    E -->|retire| F[Second authority agrees, then snapshot or backup, then delete]
     D -->|no custodian recorded| G[FinOps lead: governance finding, resource untouched]
 ```
 
@@ -145,7 +151,7 @@ Timelines, thresholds by value and risk, and what is exempt are **policy**, set 
 ## 8. Tags are a cache, not the truth
 
 - The agents **propose tag values** (from the Owner Graph), ask the owner to confirm, then *write the tag* — for **advisory tags only** (R0, L2→L4 by policy).
-- **Two kinds of tag.** *Advisory* tags are descriptive (team, cost centre, a "suspected orphan" label). *Control-plane* tags decide what automation may touch — environment, criticality, data class, exemptions such as `cost-exempt`, and ownership itself. They are **security-relevant**: anyone who can write a tag could otherwise steer the system, or hide a resource from it. Only an **independent authority** changes them (with audit), and a freshly written or inferred value does not qualify a resource for automation until a **cooling-off revalidation** passes ([06 §5](06-closed-loop-actions-and-autonomy.md)).
+- **Two kinds of tag.** *Advisory* tags are descriptive (team, cost centre, a "suspected orphan" label). *Control-plane* tags decide what automation may touch — environment, criticality, data class, exemptions such as `cost-exempt`, and ownership itself. They are **security-relevant**: anyone who can write a tag could otherwise steer the system, or hide a resource from it. Only an **independent authority** changes them (with audit). Each value is a **claim** with a source, a version and a timestamp: the revalidator is never the principal who changed it, every change invalidates the resource's enrolment, envelope membership and pending approvals, a freshly written or inferred value does not qualify a resource for automation until an independent revalidation passes, and the Gatekeeper re-reads the claim just before execution ([06 §5](06-closed-loop-actions-and-autonomy.md) is normative).
 - **Tag drift** (tag says X; evidence says Y) opens a small case.
 - **Tag taxonomy** guidance (owner, team, cost centre, environment, criticality, data class, expiry) is part of the Coach's output, aligned with CAF tagging guidance.
 - **Expiry tags** (`expires-on`) make "temporary" real: the Herald asks at expiry; if nobody answers, the case follows the [private-first ladder](05-human-interaction-concepts.md) — expiry never triggers a deletion by itself.

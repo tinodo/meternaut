@@ -1,6 +1,6 @@
 # The Crew — a society of specialised agents (and the humans who govern them)
 
-> **Status:** Ideation **v2** (revised after rubber-duck round 1; v1 archived [here](../_archive/round-1-v1/ideation/04-agent-crew.md)) · **Date:** 2026-10-30 · Part of the [north-star vision](01-north-star-vision.md)
+> **Status:** Ideation **v3** (revised after rubber-duck round 2; v2 archived [here](../_archive/round-2-v2/ideation/04-agent-crew.md), v1 [here](../_archive/round-1-v1/ideation/04-agent-crew.md)) · **Date:** 2026-10-30 · Part of the [north-star vision](01-north-star-vision.md)
 > **Scope guard:** roles, duties and rules of engagement only. *Which* Foundry constructs, models or workflow engines implement them is a later phase ([plan](../plan/00-follow-up-plan.md)).
 
 ---
@@ -172,7 +172,7 @@ For each role: **Mission · Reads · Produces · May decide alone · Must never 
 #### Planner — *from decision to executable plan*
 - **Mission:** convert an approved decision into a precise, **reversible** plan: IaC pull request or direct change, **what-if/dry-run**, window selection, rollback bundle, success criteria, post-change SLO watch.
 - **Produces:** the Plan (a signed, versioned artifact bound to the approval).
-- **Must never:** extend the scope of the approval; plan an irreversible step without proven backup.
+- **Must never:** extend the scope of the approval; plan an **R2** step without a proven recovery path; plan an **R3 or R3-Data** step without the approvers its class requires and a stated residual loss — for those classes **no rollback is claimed** ([06 §2](06-closed-loop-actions-and-autonomy.md)); attach to a plan any approval that is not bound to the exact artefact it will run.
 - **Ceiling:** L2.
 
 #### Gatekeeper — *policy and safety officer*
@@ -187,7 +187,7 @@ For each role: **Mission · Reads · Produces · May decide alone · Must never 
 - **Ceiling:** L2 by default; L3 only for enrolled owners and classes; **L4 only inside a ratified, enrolled policy envelope** — by default for R0 advisory-tag actions, and for R1/R2 classes in non-prod, isolated scope. **Never L3/L4 for R3, R3-Data or purchases.**
 
 #### Buyer — *commitment preparer*
-- **Mission:** prepare **commitment purchases, exchanges, renewals and cancellations** under finance policy (staged purchases, cooling-off, scope, term ladder) as a **finite transaction manifest** (what, how much, which scope, which term). Because these are costly and only partly reversible, **each transaction is individually signed by the legally authorised buyer(s)**; the Buyer then executes exactly that manifest through a just-in-time credential.
+- **Mission:** prepare **commitment and paid-plan transactions** — purchases, exchanges, renewals, cancellations and changes of terms ([06 §6](06-closed-loop-actions-and-autonomy.md) defines *transaction*) — under finance policy (staged purchases, cooling-off, scope, term ladder) as a **finite transaction manifest** with the canonical fields in [06 §6](06-closed-loop-actions-and-autonomy.md) (offer and SKU, legal entity and billing scope, quantity, term, unit and total price, currency, quote expiry, policy and risk-budget version, nonce). Because these are costly and only partly reversible, **each transaction is individually signed by the legally authorised buyer(s)**; the Buyer then executes exactly that manifest through a just-in-time credential.
 - **Must never:** transact without a human signature on the exact manifest; run on a schedule or a standing instruction; act when price, term, scope or quantity differ from what was signed; exceed the finance-approved risk budget; let the preparer of a manifest also be its signer.
 - **Ceiling:** **L2 only — never L3–L5.**
 
@@ -205,7 +205,7 @@ For each role: **Mission · Reads · Produces · May decide alone · Must never 
 
 #### Alchemist — *learning and playbook author*
 - **Mission:** mine outcomes to **propose** confidence calibration, threshold changes and per-owner preference updates, and to **draft new or improved playbooks**. A playbook is a **declarative, read-only recipe** (signal → evidence → case → proposed action → verification) — data, never executable code.
-- **Governed releases:** every behaviour-affecting artefact — thresholds, prompts, models, evaluators, playbooks, routing rules — ships only as a **governed release**: versioned, independently reviewed, evaluated against held-out sets, approved by a human steward, reversible. Nothing is live-tuned.
+- **Governed releases:** every behaviour-affecting artefact — thresholds, prompts, models, evaluators, playbooks, routing rules — ships only as a **governed release**: versioned, independently reviewed, evaluated against held-out sets, approved by a human steward, reversible. Nothing is live-tuned. **The trust root of this mechanism is an open decision (D16 in [plan/01](../plan/01-assumptions-risks-decisions.md)) and a prerequisite: until it is decided — key custody, approval quorum, separation from Warden administration, signed provenance, emergency revocation and a pinned rollback release — no behaviour-affecting artefact may ship, in any release.**
 - **Must never:** publish, enable or change anything live; tune the Challenger, Auditor, Gatekeeper or Warden; let a single person's replies move a global threshold (feedback carries provenance and per-person caps); train on or export customer data across boundaries.
 - **Ceiling:** L1 (proposals only).
 
@@ -216,7 +216,7 @@ For each role: **Mission · Reads · Produces · May decide alone · Must never 
 - **Must never:** execute or approve.
 
 #### Warden — *AI governance for the agents themselves*
-- **Mission:** *FinOps for the FinOps agents*: monitor the crew's cost, quality (evaluations), behaviour drift, prompt-injection attempts, policy violations and model changes; verify that every behaviour-affecting artefact in production matches an approved **governed release**; run **red-team simulations** and the **correlated-failure drill** ([§4.6](#46-independence-profile-challenger-and-auditor)); own the held-out evaluation sets; **pause or quarantine agents**; report to the FinOps lead and security.
+- **Mission:** *FinOps for the FinOps agents*: monitor the crew's cost, quality (evaluations), behaviour drift, prompt-injection attempts, policy violations and model changes; verify that every behaviour-affecting artefact in production matches an approved **governed release**; run **red-team simulations** and the **correlated-failure drill** ([§4.6](#46-independence-profile-challenger-and-auditor)) using held-out sets that **the independent evaluation custodian holds** (the Warden runs the drill but does not own the answers); **pause or quarantine agents**; report to the FinOps lead and security.
 - **Independence:** outside the crew's reporting line.
 - **Must never:** be configurable by the agents it watches.
 
@@ -299,8 +299,10 @@ Only **Herald, Diplomat, Coach, Narrator**. Every other role emits an *intent to
 | **Steward** | A named human steward different from the Analyst's and the Operator's; the Auditor reports to the FinOps lead and Finance |
 | **Configuration** | Prompts, thresholds and tools are versioned separately and are not editable by the Analyst, Alchemist or Operator |
 | **Data path** | Retrieves its own evidence (its own queries, a different retrieval route) instead of reading the Analyst's excerpts; where only the Analyst's evidence exists, the Challenger says so in its verdict |
+| **Identities and evidence sources** | Separate service identities from the Analyst and Operator; evidence comes from **immutable or independently administered sources**, so one compromised source or principal cannot shape the case, the challenge and the audit together |
 | **Model** | A different model family or provider where available; otherwise a different version and configuration, with the rationale recorded |
-| **Evaluation** | Its own held-out, rotating seeded-error set, owned by the Warden; measured *catch rate* and *agreement rate* |
+| **Evaluation** | Its own held-out, rotating seeded-error set; measured *catch rate* and *agreement rate*. **Custody of the held-out sets sits with an *evaluation custodian* — a human role independent of both release approval and Warden operation** (for example internal audit or security) |
+| **Fail closed** | Where independence evidence is weak (a shared source, a shared model family with no drill result, an unrotated evaluation set), the class's autonomy ceiling drops and the Challenger's pass is not treated as independent |
 | **Correlated-failure drill** | Recurring, and after every model change: inject known-bad cases that fool the Analyst and check that the Challenger catches them. An implausibly high agreement rate is itself a finding — independence has failed and the Challenger's veto is not trusted until it is restored |
 | **Auditor measurement** | Deterministic code owned by Finance/FinOps (counterfactual, invoice reconciliation); never tuned by the Alchemist or touched by the Operator |
 

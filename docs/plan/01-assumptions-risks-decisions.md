@@ -1,6 +1,6 @@
 # Assumptions, Risks & Decisions Needed
 
-> **Status:** Ideation **v2** (revised after rubber-duck round 1; v1 archived [here](../_archive/round-1-v1/plan/01-assumptions-risks-decisions.md)) · **Date:** 2026-10-30 · Part of the [follow-up plan](00-follow-up-plan.md)
+> **Status:** Ideation **v3** (revised after rubber-duck round 2; v2 archived [here](../_archive/round-2-v2/plan/01-assumptions-risks-decisions.md), v1 [here](../_archive/round-1-v1/plan/01-assumptions-risks-decisions.md)) · **Date:** 2026-10-30 · Part of the [follow-up plan](00-follow-up-plan.md)
 > Everything the vision *leans on* without proof is listed here, with a cheap test and a home in the plan. Operator-only decisions (one-way doors) are marked 🚪.
 
 ---
@@ -16,7 +16,7 @@
 | A5 | AI-built **case files** are trusted by engineers — bet B2 | Need more human analysis; slower, costlier | Blind review of AI vs human analyses | 2 |
 | A6 | Usage signals (metrics, query audit, activity history) cover a long enough **evidence horizon** | More cases need scream-test ladders and owner confirmation | Inventory signal retention per playbook; **enable query audit (LAQueryLogs) on pilot workspaces now** — it is off by default, so the evidence clock starts only when it is on — and prove coverage per workspace with a canary | 0.5, 4 |
 | A7 | **Log usefulness** can be judged from metadata/templates without exposing sensitive content | The log playbook needs stronger privacy controls or is limited to table-level analysis | Offline experiment on a consenting workspace | 4 |
-| A8 | **Shadow measurement + replay** make log filtering safe enough — bet B4 | Log filtering stays advise-only (and as an R3-D class it never runs at L3/L4 in any case) | Replay existing queries/alerts against would-be-filtered data | 4–6 |
+| A8 | **Shadow measurement + replay** make log filtering safe enough — bet B4 | Log filtering stays advise-only (and as an R3-Data class it never runs at L3/L4 in any case) | Replay existing queries/alerts against would-be-filtered data | 4–6 |
 | A9 | **Counterfactual savings** convince Finance — bet B5 | Savings are reported as "estimated" only; weaker business case | Reconcile three real savings against invoices with Finance; compare with a matched control so that only the **incremental** effect is claimed | 2–7 |
 | A10 | **Attention budgets** keep HITL manageable — bet B6 | Need more policy envelopes sooner; autonomy pressure rises | Simulate message load on a real estate; fatigue survey | 2 |
 | A11 | Foundry can host **long-running, multi-agent, wait-state workflows** with evaluations and tracing at tolerable cost | Re-plan the orchestration layer within Microsoft platforms | Spike | 4 |
@@ -33,6 +33,8 @@
 | A22 | Owners will **affirmatively enrol** in veto windows (L3) | L3 never materialises; most classes stay at L2 (Assist) and HITL economics worsen | Measure enrolment willingness in the Wizard-of-Oz pilot | 2 |
 | A23 | Authorised buyers will **sign each commitment transaction** individually | The commitment portfolio stays advice-only | Finance interview | 1–2 |
 | A24 | Query-audit **coverage** can be measured per workspace with a canary | Log usefulness is limited to advice with an explicit coverage caveat | Canary spike on pilot workspaces | 0.5, 4 |
+| A25 | **Enrolled autonomy** (L3/L4) is usable, trusted and economical at scale — a separate hypothesis from closure, which Release 1 tests | The product stays at Advise and Assist; HITL economics are then the main constraint | A separate pre-registered test later: enrolment rate, approval fatigue, regret per enrolled class, on a bounded non-destructive class such as dev sleep schedules | 7+ |
+| A26 | **Advisor recommendation state** (accepted, dismissed, postponed) can be read — and, where we are authorised, written — through an identity we can govern, so a routed recommendation can be *closed* and *verified* | Closure verification falls back to re-scanning resource state, which Advisor itself recognises only "up to a day" later; the closed-loop claim weakens for Advisor-sourced cases | Spike **S2** (on the Release-1 critical path) | 4 |
 
 ---
 
@@ -41,7 +43,7 @@
 | ID | Risk | L | I | Mitigation | Owner (role) |
 |---|---|---|---|---|---|
 | R1 | Strategic overlap with first-party Azure optimisation tools | M | H | Ride / copy / build / contribute map ([research/06](../research/06-first-party-teardown.md)); quarterly re-check; **K4** triggers contribute-only | Product |
-| R2 | **An early harmful action** destroys trust | L | **VH** | Start at L0/L1; classed actions (reversible ones canaried and rolled back; R3 and R3-D need two humans); Warden; **blameless** review; **K2** freezes writes | FinOps lead |
+| R2 | **An early harmful action** destroys trust | L | **VH** | Start at L0/L1; classed actions (reversible ones canaried and rolled back; R3 and R3-Data need two humans); Warden; **blameless** review; **K2** freezes writes | FinOps lead |
 | R3 | Scope creep (40 moonshots, 305 catalog rows) | **H** | M | Release-1 cut **pre-registered in Phase 0.5**; every idea has a status (selected / research queue / parked / retired) | Product |
 | R4 | Compromise of an agent identity | L | VH | Least privilege; JIT; separate read/write; anomaly detection | Security |
 | R5 | People-data backlash (works council, employees) | M | H | Purpose limitation; transparency; contest path; opt-in signals | Privacy |
@@ -64,7 +66,9 @@
 | R22 | **Silence misread as consent** (veto windows, orphans) | L | **VH** | Invariant 15; affirmative enrolment with proof of delivery; an orphan custodian, not a countdown | Product + Security |
 | R23 | Model retirement and evaluation upkeep with a single maintainer | **H** | M | Model-agnostic skills and MCP; budgeted re-evaluations (Learn states at least 60 days' notice before retirement of a GA model) | AI lead |
 | R24 | Employer, IP or open-source approval is not obtained | M | H | Decision **D13** in Phase 0.5; **K6** falls back to an internal accelerator | Operator |
-| R25 | A mis-sized P2S gateway cuts users off (capacity is banded; scaling can reconnect users) | L | H | Banded lookup that satisfies connections *and* bandwidth plus headroom; human-approved window; rollback; never labelled "low-risk automation" | Product |
+| R25 | A mis-sized P2S gateway cuts users off (capacity is banded; Microsoft says to plan for downtime when scaling) | L | H | Banded lookup that satisfies connections *and* bandwidth plus headroom; consent from every affected business unit; human-approved window; rollback; never labelled "low-risk automation" | Product |
+| R26 | **Classification laundering, instrumentation creep and custodian overreach** (T39–T41) | M | H | Class derived from typed effects and linted; instrumentation is an action with an end date and cost cap; custodian appointment separate from action, retirement needs a second authority | Security |
+| R27 | Third-party products add owner-approved Azure execution (Datadog already offers in-channel approval for two Azure actions) or autonomous commitment buying | M | M | Logged at the quarterly re-check; differentiate on directory-resolved owners, replay-based safety, counterfactual verification — all *not found* in [research/02](../research/02-third-party-and-oss-landscape.md); K4 is first-party only because we cannot contribute to a proprietary product | Product |
 
 *(L = likelihood, I = impact; VH = very high.)*
 
@@ -77,7 +81,7 @@
 | **D1** 🚪 | **Project name** | See §6 | **Rename to a neutral name within ~2 weeks** — it is free while the repository is private. "Azure" is a Microsoft mark; the strategy reviewer read the guidelines (many uses "require a license first") but could not find the rule for third-party project names — ask OSPO. "… for Azure" may be used descriptively once OSPO agrees | Costly after publication; free now |
 | **D2** 🚪 | **Licence** | MIT; Apache-2.0; CC-BY for docs and playbook specs | Low urgency — freely changeable while the project is private and single-author; it only bites once outside contributions arrive, so **decide before the first one**. MIT if hosted in a Microsoft org or aligned with the FinOps toolkit (MIT-licensed); Apache-2.0 only if counsel wants the explicit patent grant | Hard to change once contributors arrive |
 | **D3** 🚪 | **Deployment model** | (a) single-tenant, customer-owned, self-hosted; (b) partner-operated; (c) multi-tenant service | **(a)** for the ideation assumption — data stays in the customer tenant, **including all model prompts, traces, memories and audit data**; partner-deployable | Architectural one-way door |
-| **D4** | **First-release scope** | The Release-1 cut | **Five items:** Owner Graph · log usefulness (advisory, non-Sentinel, template-level) · P2S right-sizing (Assist) · orphans (the loop-proving vehicle) · provisioned-throughput utilisation (demand-pull). **Parked:** schedules, commitments, security-tool economics, adjacent spend. **Retired:** M-05, M-38, RATE-11, COMM-05 ([catalog](../ideation/02-opportunity-catalog.md#selection-and-status-v2)) | Reversible |
+| **D4** | **First-release scope** | The Release-1 cut | **Five items:** Owner Graph · log usefulness (advisory, non-Sentinel, template-level) · P2S right-sizing (Assist; advise-only until spike S7 is Green; every affected business unit consents) · **orphans and Advisor-recommendation closure** (the loop-proving vehicle, and the brief's own problem) · provisioned-throughput utilisation (demand-pull, conditional). **Parked:** schedules, commitments, security-tool economics, adjacent spend. **Retired:** M-05, M-38, RATE-11, COMM-05 ([catalog](../ideation/02-opportunity-catalog.md#selection-and-status-v2)) | Reversible |
 | **D5** | **Pilot partner and Wizard-of-Oz permission** | Internal team; a friendly customer | A friendly customer with a named executive sponsor and security contact (**K5** applies: no sponsor and read access by week 4 → publish the research as a guide) | Reversible |
 | **D6** 🚪 | **Repository visibility** | Private now → public at Phase 8, or earlier | **Stay private** until the guardrail charter and the internal release process check are done | **Public release is a one-way door** |
 | **D7** | **Go-to-market wedge** | A read-only *Assess* report · **Assess-and-Close** | **Assess-and-Close:** two usage-truth detectors, an ownership map and a *human-delivered* last mile on 10–15 cases, verified at +30 and +60 days. An Assess report on its own recreates the failure the thesis attacks — a list nobody acts on — and competes with free assessments | Reversible |
@@ -88,8 +92,10 @@
 | **D12** | **Voice/avatar stance** | Explore / defer | Defer until text channels are proven; AI disclosure rules first | Reversible |
 | **D13** 🚪 | **Employer approval, OSPO and IP stance; project home** | Personal project with approval · a Microsoft GitHub organisation · an internal accelerator only | **Start the approval now** — it has the longest lead time. **K6** (no approved publication path by week 6) falls back to an internal accelerator | Hard to reverse once published |
 | **D14** 🚪 | **Are commitment purchases permanently excluded from L3–L5?** | Yes, permanently · revisit later with a signed-manifest design | **Yes.** We only ever *prepare* a manifest; the authorised buyer signs each transaction ([invariant 16](../ideation/08-trust-safety-and-guardrail-topics.md#4-candidate-safety-invariants-non-negotiables-to-ratify)) | Loosening later is possible; tightening after an incident is not |
-| **D15** | **Default orphan custodian** | Subscription owner · platform team · FinOps lead | The platform team, with the FinOps lead as backstop; a scope with no custodian is itself a governance finding ([07 §7](../ideation/07-ownership-and-organization.md)) | Reversible |
-| **D16** 🚪 | **Trust root and emergency revocation** for playbooks, models, prompts and evaluators | Maintainers only · maintainers plus the customer's FinOps lead and security · the customer alone | The **governed-release approver set** (maintainers plus the customer's FinOps lead and security) owns the trust root; revocation is the kill switch plus a pinned previous release ([04 §3.4](../ideation/04-agent-crew.md), invariant 4) | Hard to change once artefacts are signed |
+| **D15** | **Default orphan custodian** | Subscription owner · platform team · FinOps lead | The platform team, with the FinOps lead as backstop. **Appointed and reviewed by someone other than the custodian**; retirement always needs a second authority; a scope with no custodian is itself a governance finding ([07 §7](../ideation/07-ownership-and-organization.md)) | Reversible |
+| **D16** 🚪 | **Trust root and emergency revocation** for playbooks, models, prompts and evaluators | Maintainers only · maintainers plus the customer's FinOps lead and security · the customer alone | The **governed-release approver set** (maintainers plus the customer's FinOps lead and security) owns the trust root. **It must be decided before any behaviour-affecting artefact ships, in any release.** It needs: key custody, an approval quorum, separation from Warden administration, signed provenance, emergency revocation, a pinned rollback release and an independent audit of release state ([04 §3.4](../ideation/04-agent-crew.md), invariant 4) | Hard to change once artefacts are signed |
+| **D17** 🚪 | **Who signs the Phase-0.5 exception** (query audit on pilot workspaces, a handful of real messages)? | The sponsor and the customer's security contact · the data owner and security · the operator alone | **The data owner and the customer's security contact**, on the one-page outreach note and the instrumentation approval (scope, cost cap, end date, deletion rule). The operator may not sign it alone — it touches a customer's data and people | Reversible once removed; the audit records already ingested persist |
+| **D18** | **Who certifies a resource class as safe-to-pause** for the cost brake? | The service owner alone · the service owner plus security · an independent reliability or risk function | **The service owner plus security**, recorded as an expiring contract bound to specific assets; the telemetry that may trigger the brake must come from a separately administered source ([06 §3 item 11](../ideation/06-closed-loop-actions-and-autonomy.md)). Until a class is certified, nothing pauses automatically | Reversible |
 
 ---
 
@@ -123,7 +129,19 @@ The v1 plan named stop criteria three times and never quantified them, gave them
 | **Contribute** | Detector specs, Waste Lab scenarios, ledger counting rules | Offer upstream to the FinOps toolkit (MIT) |
 | **Accept obsolescence** | Teams plumbing, scheduling, generic approvals | The moat is time and validated content, not plumbing |
 
-**Trigger:** K4. **Re-check quarterly** with the checklist in [research/06 §5](../research/06-first-party-teardown.md), and add a dated row for every change.
+**Trigger:** K4. **Re-check quarterly** with the checklist in [research/06 §5](../research/06-first-party-teardown.md), and add a dated row for every change. A **third-party** equivalent (see [research/02](../research/02-third-party-and-oss-landscape.md)) does not trigger K4 — we cannot contribute to a proprietary product — but is logged at the same re-check (risk R27).
+
+### Build, ride or contribute — the decision per Release-1 play
+
+K4 is reactive. Before any implementation investment, the Phase-0.5 memo records an explicit call for each Release-1 play, and Phase 5 re-confirms it before architecture. The default positions, with the overlap that drives them:
+
+| Release-1 play | First-party / OSS overlap | Default position | What would change it |
+|---|---|---|---|
+| **Owner Graph** | Defender governance rules (tag → owner → weekly mail, manager summary; security recommendations; needs Defender CSPM) | **Build** the cost-domain graph (directory, history, conversation); **copy the pattern** | Defender extends owner routing to cost recommendations |
+| **Log usefulness** | Sentinel SOC optimization (Sentinel workspaces, 30-day window, security-scoped) | **Build** for non-Sentinel workspaces; **ride** SOC optimization for Sentinel ones; **contribute** detector specs and Waste Lab scenarios to the FinOps toolkit | A first-party usage-based table-usefulness verdict outside Sentinel |
+| **P2S right-sizing** | FinOps toolkit alerts cover idle Application Gateways and idle public IPs — nothing for P2S scale units | **Ride** any detection that appears; **build** the banded lookup and the consent-gated execution; **contribute** the lookup as an open data file | The toolkit or Advisor ships a P2S recommendation |
+| **Orphans and Advisor closure** | Advisor cost recommendations; toolkit alerts; the SRE Agent as an optional execution runtime (admin approval only) | **Ride** detection; **build** owner routing, authority-checked approval and verification | The SRE Agent or Advisor ships owner-approved execution for these classes (K4) |
+| **PTU utilisation** | Azure Monitor metrics and Foundry billing views | **Build** the advice rule (cheap); contribute upstream if it generalises | A first-party PTU right-sizing recommendation |
 
 ---
 

@@ -1,6 +1,6 @@
 # Human Interaction Concepts — how the crew talks to people
 
-> **Status:** Ideation **v2** (revised after rubber-duck round 1; v1 archived [here](../_archive/round-1-v1/ideation/05-human-interaction-concepts.md)) · **Date:** 2026-10-30 · Part of the [north-star vision](01-north-star-vision.md)
+> **Status:** Ideation **v3** (revised after rubber-duck round 2; v2 archived [here](../_archive/round-2-v2/ideation/05-human-interaction-concepts.md), v1 [here](../_archive/round-1-v1/ideation/05-human-interaction-concepts.md)) · **Date:** 2026-10-30 · Part of the [north-star vision](01-north-star-vision.md)
 > **Scope guard:** this is *concept exploration*, not UI design. Formal personas, journeys, wireframes and the message design kit are Phase 2 ([plan](../plan/00-follow-up-plan.md)). Every mock-up here is **illustrative**: invented resources, invented numbers.
 > **The brief:** *"What is the communication with humans? Teams cards? Emails? Text messages? Avatars talking to you in Teams meetings? IDEATE."* — so we do.
 
@@ -62,13 +62,14 @@ The Herald chooses from **value × urgency × reversibility × persona × presen
 
 ### Escalation: gradual, private-first, humane
 
-Five rules govern every ladder:
+Six rules govern every ladder:
 
 1. **Private before public.** The first steps happen in private channels. Nobody is named in a shared space for not answering — ever.
-2. **Escalate the case, not the person.** A shared post names the resource and the decision needed; it never says who has not answered.
+2. **Escalate the case, not the person.** A shared post names the case and the decision needed (and only as much of the resource as the audience is entitled to see — rule 6); it never says who has not answered.
 3. **Warn before you widen.** Each step announces the next one ("if there is no answer by Thursday I will ask your team lead how to route this"), so nothing happens behind someone's back.
 4. **Silence is never approval.** The ladder ends in a human decision — reroute, hand to the [orphan custodian](07-ownership-and-organization.md), park with an expiry, or a written risk acceptance — never in an automatic yes.
 5. **Managers get one team-level summary** (counts, value, ageing), only when their role is accountable for the resource — never a list of who ignored what.
+6. **Widening needs authorisation, not just patience.** Before any step reaches a wider audience (a team channel, a manager, the FinOps lead), the Herald checks that **every recipient is entitled to know** — their role relates to the resource, and the resource's data classification allows it. Until that is established the message is an **opaque routing request** ("a cost decision needs an owner — can you route it?") or an **aggregate**, never a resource name, cost or project name. For **regulated, security-sensitive or confidential** cases there is **no shared post at all**: the case goes only to named, authorised people.
 
 ```mermaid
 flowchart TB
@@ -305,9 +306,12 @@ enrolled in (snapshots kept 14 days).
 | Risk budget used: 22% of EUR 20k . Min. utilisation target: 92%   |
 | Back-test (last 12 months): utilisation 94-97%; regret: none      |
 | Workload owner: Sanne - APPROVED          Finance: pending        |
+| FinOps lead: APPROVED (risk budget)                               |
 | Authorised buyer: pending - signs the finite manifest below       |
-| Manifest: 1 commitment, 1-year term, shared scope, fixed hourly   |
-|           amount shown on the approval page - nothing else        |
+| Manifest (digest 7f3a...): 1 commitment . 1-year term . shared    |
+|   scope . legal entity and billing scope shown . quantity and     |
+|   unit and total price in EUR . quote expires in 48 h . policy    |
+|   version 5 . nonce - nothing else can run under this signature   |
 |                                                                   |
 | [Approve stage 1] [Approve smaller] [Not yet] [Ask about the      |
 | back-test] [Talk to a human]                                      |
@@ -328,11 +332,14 @@ Call (02:11, no response to the card):
    spending about forty times its normal rate. This pool class has a
    recorded safe-to-pause contract, and pausing is reversible. A
    confirmation prompt is on your phone now. If nobody confirms within
-   ten minutes, the pre-certified cost brake will pause the pool. Say
-   'repeat' to hear this again, or 'human' to reach the on-call lead."
+   ten minutes, and the live incident and service checks are still
+   clear, the pre-certified cost brake will pause the pool; if any
+   check is not clear, I will page the next person on call and change
+   nothing. Say 'repeat' to hear this again, or 'human' to reach the
+   on-call lead."
 ```
 
-*Had the pool's class had no safe-to-pause contract, the script would end differently: the call would page the next human on the on-call ladder and **change nothing**. A cost anomaly alone never pauses anything.*
+*Had the pool's class had no safe-to-pause contract, the script would end differently: the call would page the next human on the on-call ladder and **change nothing**. A cost anomaly alone never pauses anything, and a failed or doubtful check always resolves to paging a human.*
 
 ### 13.6 The executive's 90-second brief (script)
 

@@ -1,6 +1,6 @@
 # Capability Radar & Spike Catalogue (non-binding)
 
-> **Status:** Ideation **v2** (revised after rubber-duck round 1; v1 archived [here](../_archive/round-1-v1/plan/03-capability-radar.md)) · **Date:** 2026-10-30 · Part of the [follow-up plan](00-follow-up-plan.md) (Phase 4 input)
+> **Status:** Ideation **v3** (revised after rubber-duck round 2; v2 archived [here](../_archive/round-2-v2/plan/03-capability-radar.md), v1 [here](../_archive/round-1-v1/plan/03-capability-radar.md)) · **Date:** 2026-10-30 · Part of the [follow-up plan](00-follow-up-plan.md) (Phase 4 input)
 > **This is a radar, not a design.** It lists the Microsoft building blocks we will *evaluate*, and the time-boxed spikes that will tell us what is feasible. Ideation deliberately ignored feasibility; this is where feasibility gets its turn. Product names are as understood on 2026-10-30 and **must be re-verified at Phase 4** — several of these products are evolving or being renamed quickly (verified state of the Azure-native cost tooling is in [research/01](../research/01-azure-native-landscape.md)).
 
 ---
@@ -29,6 +29,7 @@
 | 18 | **IaC and packaging** (Bicep/Terraform with verified modules; developer CLI) | Reference architecture, one-click deploy | WAF-aligned landing zone; "Deploy to Azure" experience | CAF/WAF |
 | 19 | **Key Vault & managed identities** | Secrets and credentials | Agents never see secrets | G2-06 |
 | 20 | **Chaos and load testing services** | Guardrail drills | Chaos experiments for kill switch, outages | G10 |
+| 21 | **Landscape watch** — third-party FinOps products and open-source tools ([research/02](../research/02-third-party-and-oss-landscape.md)) | **Not a dependency** — the product stays Microsoft-only. A watch list for overlap (risk R27), ideas to borrow, and the open cost format | Which competitor or open-source feature changes a build, ride or contribute call? Log it at the quarterly re-check | R27, K4 |
 
 ---
 
@@ -36,18 +37,22 @@
 
 Each spike: **1–3 days**, a written pass criterion, an owner, an outcome (**Green / Amber / Red**) and an ADR. *Guardrail-dependent* means we need the relevant [guardrail decision](02-guardrails-workplan.md) first.
 
-**Changes after review round 1:** three spikes are **deferred** (S14, S15, S21), one is **folded into a slice** (S22 into slice S1), and one is **added** (S1b) — **19 active spikes**. S5 gains an audit-coverage canary, S7 a banded-capacity lookup, and S13 binds approvals to the exact artefact. The strawman **Release-1 critical path** is S1, S1b, S3, S4, S5, S7, S8, S10, S11, S12, S13, S16, S17, S19 and S20 (S2, S6, S9 and S18 support it).
+**Changes after review round 1:** three spikes are **deferred** (S14, S15, S21), one is **folded into a slice** (S22 into slice SL1), and one is **added** (S1b) — **19 active spikes**. S5 gains an audit-coverage canary, S7 a banded-capacity lookup, and S13 binds approvals to the exact artefact.
+
+**Changes after review round 2:** **S2 (Advisor access) joins the Release-1 critical path**, because *Orphans and Advisor-recommendation closure* is now a Release-1 play; the strawman critical path is S1, S1b, S2, S3, S4, S5, S7, S8, S10, S11, S12, S13, S16, S17, S19 and S20 (S6, S9 and S18 support it). S5's audit canary starts in **Phase 0.5** under the D17 instrumentation exception ([plan/00](00-follow-up-plan.md)). S7 treats scaling as **disruptive until measured**. The promised owner, order, decision date, result and ADR now have a home in the [spike register](#spike-register) below.
+
+> **Naming.** Spike IDs (**S1–S22**) are *not* slice IDs. The Release-1 slices in [plan/00 Phase 6](00-follow-up-plan.md) are **SL0–SL8**. (Both used "S" in v2; slice S5 and spike S5 were different things.)
 
 | ID | Spike | Question | Pass criterion (strawman) | Guardrail-dependent |
 |---|---|---|---|---|
 | **S1** | Cost data coverage & latency | Per-resource cost, tags, commitment/benefit utilisation at the needed freshness and scale? | Daily data within an agreed lag; throttling budget fits N subscriptions; pilot's billing scope supported | — |
 | **S1b** *(new)* | IaC detection and fix path | Can we tell whether a resource is IaC-managed (and by which repository and pipeline) so the fix goes **at the source** instead of a direct change the next deployment would revert (T11)? | ≥ an agreed % of seed-playbook resources correctly classified as IaC-managed or not; the target repository identified for the managed ones | G3 |
-| **S2** | Advisor data access | Coverage, refresh cadence and dismissal-state sync for cost recommendations? | Recommendations retrievable programmatically; dismissal state readable/writable | — |
+| **S2** | Advisor data access *(Release-1 critical path)* | Coverage, refresh cadence and **dismissal-state sync** for cost recommendations? Can we **close the loop** — see that a routed recommendation was acted on, dismissed or postponed, and by whom? | Recommendations retrievable programmatically; dismissal and postponement state readable *and* writable by the identity we would use; a closed recommendation observable within an agreed lag | — |
 | **S3** | Inventory & topology | Can we build dependency edges (network, identity, configuration) with enough fidelity for blast radius? | ≥ agreed % of edges for the seed playbooks | — |
 | **S4** | Metric availability for the seed playbooks | Is the *used* signal (e.g. P2S connection counts, capacity usage) available for long enough, at what granularity? | Required metrics for ≥ the evidence horizon, or a documented alternative | — |
-| **S5** | Log usage signals | Is query auditing on? **Calibrate coverage per workspace with a canary query** — the documentation is inconsistent about what is recorded (hunting, Investigation Graph, Sentinel investigation clients) and scheduled alert executions are not logged. Can queries, alerts, workbooks and exports be mapped to tables? Which consumers are unobservable? | Table-level "last used by whom" with a **canary-measured** blind-spot list; Sentinel workspaces identified and excluded (covered by SOC optimization) | G4 |
+| **S5** | Log usage signals | Is query auditing on? **Calibrate coverage per workspace with a canary query** — the documentation is *unreconciled* on what is recorded (hunting, Investigation Graph, Sentinel investigation clients) and scheduled alert executions are not logged. Can queries, alerts, workbooks and exports be mapped to tables? Which consumers are unobservable? | Table-level "last used by whom" with a **canary-measured** blind-spot list; Sentinel workspaces identified and excluded (covered by SOC optimization) | G4 |
 | **S6** | Ingestion transformation dry-run & shadow | Can we measure *would-have-dropped* volume and replay existing queries/alerts against filtered data? | Shadow measurement within ±x% of actual filter effect; replay detects result changes | G3, G4 |
-| **S7** | P2S gateway scale operation | **Banded capacity lookup:** throughput is linear (0.5 Gbps per unit) but connection capacity is banded (units 1–3 → 500, 4–6 → 1,000, 7–10 → 5,000, 11–20 → 10,000, then +10,000 per extra pair of instances). Is scaling online or disruptive; how long; how does rollback behave? | The lookup returns the smallest band that satisfies *both* connections and bandwidth plus headroom, and matches the current documentation; documented reconnect/downtime behaviour; safe window length; scripted rollback | G3 |
+| **S7** | P2S gateway scale operation | **Banded capacity lookup:** throughput is linear (0.5 Gbps per unit) but connection capacity is banded (units 1–3 → 500, 4–6 → 1,000, 7–10 → 5,000, 11–20 → 10,000, then +10,000 per extra pair of instances). **Microsoft's FAQ says to plan for downtime when scaling or changing configuration — treat scaling as disruptive until measured.** How long; what do connected users experience; how does rollback behave? | The lookup returns the smallest band that satisfies *both* connections and bandwidth plus headroom, and matches the current documentation; **measured** reconnect/downtime behaviour on a test gateway; safe window length; scripted rollback | G3 |
 | **S8** | Teams actionable approvals | Authenticated, user-bound approvals; mobile; tenant policies; anti-phishing properties | Security review passes; approval bound to user and plan | G2, G7 |
 | **S9** | Email approvals | Actionable message vs. signed deep link to an authenticated approval page | Spoofing-resistant design accepted by security | G7-05 |
 | **S10** | Directory reads | Manager chain, delegates, presence, out-of-office, time zone, language, lifecycle events under least privilege | Required reads available with minimal scopes | G4, G2 |
@@ -62,6 +67,34 @@ Each spike: **1–3 days**, a written pass criterion, an owner, an outcome (**Gr
 | **S19** | Policy-envelope enforcement | Deterministic gating: where it lives, how it is tested | Gate cannot be bypassed by agents; tests pass | G1, G3 |
 | **S20** | Waste Lab realism | Cheap, realistic synthetic estates with ground truth | Seeded cases detected/evaluated reproducibly | — |
 | **S21** | Anomaly input — **deferred** | Consume native anomaly signals and correlate with changes? | Useful precision on a sample. *Re-open with the ANOM family and the cost brake* | — |
-| **S22** | Fallback channels — **folded into slice S1** | Behaviour during chat or model outage | Degrades to advise; critical items still reach a human — tested inside the orphans slice | G10 |
+| **S22** | Fallback channels — **folded into slice SL1** | Behaviour during chat or model outage | Degrades to advise; critical items still reach a human — tested inside the orphans slice | G10 |
+
+### Spike register
+
+The register turns the catalogue into an *ordered, owned* de-risking plan. **Waves** are a strawman order; spikes in a wave run in parallel. A "—" in *Owner*, *Result* or *ADR* means **not started**, which is itself the status; owners are named at the Phase-4 kickoff and a decision date that passes without a result is escalated, not extended silently.
+
+| Wave | Question the wave answers | Spike | Depends on | Owner | Decide by | Result (G/A/R) | ADR |
+|---|---|---|---|---|---|---|---|
+| **0** | *Does the data exist, and can we see it?* | S1 | — | — | End of wave 0 | — | — |
+| 0 | | S2 | — | — | End of wave 0 | — | — |
+| 0 | | S3 | — | — | End of wave 0 | — | — |
+| 0 | | S4 | S3 (resource list) | — | End of wave 0 | — | — |
+| 0 | | S5 | **D17** (the query-audit exception) | — | End of wave 0 | — | — |
+| 0 | | S18 | — (long lead time: start first) | — | End of wave 0 | — | — |
+| 0 | | S20 | — | — | End of wave 0 | — | — |
+| **1** | *Who and what runs it?* | S10 | — | — | End of wave 1 | — | — |
+| 1 | | S11 | — | — | End of wave 1 | — | — |
+| 1 | | S12 | — | — | End of wave 1 | — | — |
+| 1 | | S17 | — | — | End of wave 1 | — | — |
+| **2** | *Can it act safely?* (guardrail-dependent) | S1b | S3; G3 | — | End of wave 2 | — | — |
+| 2 | | S6 | S5 | — | End of wave 2 | — | — |
+| 2 | | S7 | S4; G3 | — | End of wave 2 | — | — |
+| 2 | | S8 | S10, S12; G2, G7 | — | End of wave 2 | — | — |
+| 2 | | S9 | S12; G7-05 | — | End of wave 2 | — | — |
+| 2 | | S13 | S1b; G3 | — | End of wave 2 | — | — |
+| 2 | | S16 | S11, S17; G6 | — | End of wave 2 | — | — |
+| 2 | | S19 | S12; G1, G3 | — | End of wave 2 | — | — |
+
+*Deferred, with their re-open triggers:* S14 (SMS/voice) with the voice-brake idea M-04 and decision D12; S15 (meeting avatar) with M-03; S21 (anomaly input) with the ANOM family and the cost brake.
 
 **Spike hygiene:** time-boxed; documented as ADRs; outcomes feed Phase 5 and *change scope* if needed (a Red on a Release-1 playbook either re-scopes it or defers it with a recorded alternative).

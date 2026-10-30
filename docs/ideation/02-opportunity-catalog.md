@@ -1,8 +1,36 @@
-# The Opportunity Catalog — 17 families, 300+ ideas
+# The Opportunity Catalog — 17 families, 305 ideas
 
-> **Status:** Ideation **v2** (revised after rubber-duck round 1; v1 archived [here](../_archive/round-1-v1/ideation/02-opportunity-catalog.md)) · **Date:** 2026-10-30 · Part of the [north-star vision](01-north-star-vision.md)
+> **Status:** Ideation **v3** (revised after rubber-duck round 2; v2 archived [here](../_archive/round-2-v2/ideation/02-opportunity-catalog.md), v1 [here](../_archive/round-1-v1/ideation/02-opportunity-catalog.md)) · **Date:** 2026-10-30 · Part of the [north-star vision](01-north-star-vision.md)
 > **Rule of the catalog:** *every entry is a **hypothesis to validate** unless it is mapped to a verified source in [Appendix A](#appendix-a--evidence-map).* The catalog is for breadth; the research reports ([05 cost traps](../research/05-cost-traps-and-dark-spend.md), [04 seed facts](../research/04-seed-example-facts.md)) carry the verification.
 > **Scope guard:** ideation. Technical feasibility is ignored here on purpose; the spikes in the [plan](../plan/03-capability-radar.md) test it.
+
+---
+
+## At a glance
+
+**305 ideas in 17 families.** *One status each:* **5 plays selected** for Release 1 · **5 families parked**, each with a re-open trigger (TIME, RATE, SEC, ADJ, SUST — with two exceptions: RATE-21 stays as advice and SEC-10 as a guard) · **2 rows retired** with reasons · everything else is **research queue**. The decisions are in [Selection and status](#selection-and-status-v2); the five selected plays are on the [one-page overview](00-one-page-overview.md).
+
+| Family | Rows | What it hunts |
+|---|---|---|
+| **IDLE** | 41 | Resources that exist and bill, but nothing uses them |
+| **SIZE** | 35 | Capacity beyond demand — including *hidden* capacity units (the P2S gateway, seed example 2) |
+| **TIME** | 12 | Run only when needed: schedules and elasticity |
+| **RATE** | 25 | Pay less per unit: commitments, licensing, pricing models (every purchase is a signed transaction) |
+| **TELE** | 32 | Telemetry nobody uses (seed example 1) |
+| **DATA** | 29 | Storage lifecycle and data platforms |
+| **NET** | 16 | Network components that bill whether or not traffic flows |
+| **PLAT** | 15 | Platform and architecture choices |
+| **SEC** | 13 | Security-tool economics — never trade away required security |
+| **DEV** | 12 | Developer platform |
+| **AI** | 23 | AI workloads: provisioned throughput, fine-tuned hosting, tokens |
+| **ANOM** | 8 | Anomalies and incidents |
+| **FORE** | 8 | Forecast and budget |
+| **COMM** | 8 | Contracts and commercial |
+| **GOV** | 15 | Governance hygiene, starting with the Owner Graph |
+| **SUST** | 5 | Sustainability crossover |
+| **ADJ** | 8 | Adjacent spend (horizon 3+) |
+
+**Two patterns to know before reading rows.** (1) The **safest, best-evidenced** rows are *advice-first* hidden-capacity and idle findings — the P2S gateway and orphans — which is why Release 1 starts there. (2) The **highest-risk** rows are those that reduce *evidence* (TELE filters and shorter retention — class R3-Data, never above Advise or Assist) and those that *spend or commit money* (RATE — every transaction signed by the authorised buyer, never automatic).
 
 ---
 
@@ -14,24 +42,24 @@
 | **Opportunity** | What is wrong or improvable |
 | **Usage-truth signal** | What would *prove* it — the evidence the Analyst must gather (usage, not just billing) |
 | **Action** | The verb from the [action vocabulary](06-closed-loop-actions-and-autonomy.md#2-the-action-vocabulary-the-verbs) |
-| **Rev** | The **one** operation class — **R0–R3 or R3-D** ([06 §2](06-closed-loop-actions-and-autonomy.md)); `—` = advice only. **R3-D = prospective information loss**: any collection-reducing action (filters, narrower categories, sampling, dropped columns, excluded namespaces, lowered levels, shorter retention). R3-D **never runs at L3/L4** and implies security co-sign (⚑) and a data-owner approval. Service interruption, state preservation and the other attributes are *separate* from the class — no hybrid labels such as "R0/R1" |
-| **Ceil (hyp.)** | A **hypothesis** about the highest autonomy mode worth *studying* for that class — **not a decision and not a permission**. No row inherits an autonomy level from this table: each class passes the decision gates below and starts at Advise or Assist. Anything above the class default in [06 §2](06-closed-loop-actions-and-autonomy.md) is an *envelope candidate* — it needs a ratified policy envelope **and** the owner's affirmative enrolment. **Every purchase, exchange, renewal or cancellation is a signed transaction (L2 at most)** |
+| **Rev** | The **one** operation class — **R0, R1, R2, R3 or R3-D** — *derived* from the action's typed effects by the ordered rubric in [06 §2](06-closed-loop-actions-and-autonomy.md) and checked by `tools/check-docs.py`; `—` = advice only. **R3-D is this column's abbreviation of the enum value R3-Data** (no other spelling exists): information loss in **observability and evidence data** — anything that reduces what is collected *or how long it is kept* (filters, narrower categories, sampling, dropped columns, excluded namespaces, lowered levels, disabled feeds/exports/captures, shorter retention, future or existing). R3-D **never runs at L3/L4** and implies security co-sign (⚑) and a data-owner approval. **R3 here means irreversible loss of anything else** (backups, resources, redundancy, an address) **or a transaction.** Service interruption, state preservation and the other attributes are *separate* from the class — no hybrid labels such as "R0/R1" |
+| **Ceil (hyp.)** | A **hypothesis** about the highest autonomy mode worth *studying* for that class — **not a decision and not a permission**. No row inherits an autonomy level from this table: each class passes the decision gates below and starts at Advise or Assist. Anything above the class default in [06 §2](06-closed-loop-actions-and-autonomy.md) is an *envelope candidate* — it needs a ratified policy envelope **and** the owner's affirmative, authenticated enrolment. **Every transaction (purchase, exchange, renewal, cancellation or change of terms of a commitment or paid plan) is a signed transaction, L2 at most** |
 
 Items marked **★** are the two seed examples from the brief. Items marked **⚑** need **security co-sign** (they touch security posture or compliance). Items marked **§** are *protected-class candidates* — likely "advise only" until a recorded exception.
 
-### Decision gates (v2) — what a row must pass before it can become a playbook
+### Decision gates — what a row must pass before it can become a playbook
 
 Round 1 showed that a `Ceil` column looks like a safety decision but cannot encode approver count, shared-party consent or evidence maturity. These gates do:
 
 | Gate | The question |
 |---|---|
 | **Evidence status** | Is the usage-truth signal verified against a primary source ([Appendix A](#appendix-a--evidence-map)) — or still a hypothesis? |
-| **Action risk** | Exactly one class (R0–R3 or R3-D) plus its attributes; protected-class (§) and security (⚑) flags |
-| **Minimum human roles** | Owner · + data owner · + security · + FinOps · + Finance and the authorised buyer (for transactions) |
-| **Affected-party rule** | Shared resources need every affected party's explicit consent |
+| **Action risk** | Exactly one class (R0–R3 or R3-D), derived and linted, plus its attributes; protected-class (§) and security (⚑) flags |
+| **Minimum human roles** | Owner · + data owner · + security · + FinOps · + Finance and the authorised buyer (for transactions — the [matrix](06-closed-loop-actions-and-autonomy.md#6-commitments-and-other-transactions-the-buyers-workflow)) |
+| **Affected-party rule** | Every affected party of a shared resource is *consent-required* or *inform-only*; consent-required parties acknowledge **by name**, or a role with authority records a **named risk acceptance** ([06 §3 item 12](06-closed-loop-actions-and-autonomy.md)). Notice and "no objection" are never consent |
 | **First permitted mode** | Advise or Assist; anything higher only by the ratified route |
 
-### Status (v2)
+### Status
 
 Every row has one status: **Selected** (Release 1) · **Research queue** (the default for any row not listed in [Selection and status](#selection-and-status-v2)) · **Parked** (with a re-open trigger) · **Retired** (with a reason). The catalog is a menu with decisions attached, not a 305-item roadmap.
 
@@ -86,7 +114,7 @@ Many savings interact. The Conductor sequences cases into **plays**:
 | IDLE-26 | Idle Data Explorer clusters | Queries and ingestion near zero | Stop or enable auto-stop | R1 | L3 |
 | IDLE-27 | Idle Databricks, Synapse or Fabric capacity | No jobs; low capacity usage | Pause, terminate, auto-terminate | R1 | L3 |
 | IDLE-28 | Idle Virtual Desktop hosts and developer workstations | No sessions for N days | Deallocate or delete | R1 | L3 |
-| IDLE-29 | **Zombie subscriptions** with no workloads but recurring plans (security plans, support, backup) | Zero resources or near-zero activity | Cancel plans; close subscription | R2 | L3 |
+| IDLE-29 | **Zombie subscriptions** with no workloads but recurring plans (security plans, support, backup) | Zero resources or near-zero activity | Advise. **Cancelling a plan is a transaction** (signed by the authorised buyer, L2 at most; ⚑ for security plans). Closing the subscription itself is GOV-04 | R3 | L2 ⚑ |
 | IDLE-30 | Backup items for resources that no longer exist | Protected item with missing source; retention still costing | Delete data after policy (data loss) | R3 | L1 ⚑ |
 | IDLE-31 | Unused VM capacity reservations | Reserved capacity not consumed (billed whether used or not) | Release or associate | R2 | L2 |
 | IDLE-32 | Idle SignalR/Web PubSub/Static Web Apps premium tiers | Connections zero | Downgrade | R1 | L3 |
@@ -135,7 +163,7 @@ Many savings interact. The Conductor sequences cases into **plays**:
 | SIZE-27 | Fabric/Power BI capacity SKU and smoothing | Capacity-unit utilisation | Resize or pause | R1 | L2 |
 | SIZE-28 | Synapse dedicated pool DWU; Data Explorer SKU and node count | Utilisation | Resize | R1 | L2 |
 | SIZE-29 | Databricks cluster sizing and auto-termination | Cluster utilisation | Tune | R1 | L2 |
-| SIZE-30 | Backup policy over-retention | Policy retention vs need | Lower retention (**data loss**) | R3-D | L1 ⚑ |
+| SIZE-30 | Backup policy over-retention | Policy retention vs need | Lower retention (**data loss** — backups and recovery points, so **R3**, not observability data) | R3 | L1 ⚑ |
 | SIZE-31 | Over-sized Bastion, NAT and load-balancer tiers | Throughput vs tier | Re-tier | R1 | L3 |
 | SIZE-32 | Search/vector index storage and dimensions | Index statistics | Tune | R2 | L1 |
 | SIZE-33 | Cosmos DB autoscale maximum set far above real peaks (billed at the hourly peak reached) | Normalised RU consumption vs configured maximum | Lower the ceiling | R1 | L2 |
@@ -169,7 +197,7 @@ Many savings interact. The Conductor sequences cases into **plays**:
 |---|---|---|---|---|---|
 | RATE-01 | Reservation recommendations for steady-state resources | Stable baseline over 30–90 days **after** planned right-sizing | Staged purchase — a **signed transaction** | R3 | L2 (signed by the authorised buyer) |
 | RATE-02 | Savings plan for compute | Baseline compute spend | Staged purchase — a **signed transaction** | R3 | L2 (signed by the authorised buyer) |
-| RATE-03 | Commitment scope optimisation | Utilisation by scope (where scope can be changed) | Change scope | R1 | L3 |
+| RATE-03 | Commitment benefit-scope optimisation | Utilisation by scope (where scope can be changed) | Change benefit scope — it changes who benefits and who is charged back, so it needs Finance and every affected owner | R1 | L2 |
 | RATE-04 | Under-used reservations | Utilisation under target | Re-target, exchange or return within policy | R3 | L1 |
 | RATE-05 | Orphaned reservations after SKU migrations | Reserved SKU no longer running | Exchange within policy | R3 | L1 |
 | RATE-06 | Reservation expiry planning | Expiry vs forecast baseline | Renew (a signed transaction), resize or lapse | R3 | L2 |
@@ -188,7 +216,7 @@ Many savings interact. The Conductor sequences cases into **plays**:
 | RATE-19 | Security-plan pricing-model fit | Resource counts and transaction volumes | Switch plan model | R1 | L1 ⚑ |
 | RATE-20 | Portfolio mix: reservation vs savings plan | Back-tested simulation | Advise a rebalance; any exchange or purchase is a signed transaction | R3 | L1 |
 | RATE-21 | **Break-even utilisation check** before any commitment (commitments are priced as if used 100% of the term) | Projected utilisation vs break-even | Gate every purchase | — | L1 |
-| RATE-22 | Single-subscription commitment scope stranding unused hours | Utilisation by subscription | Widen scope | R1 | L3 |
+| RATE-22 | Single-subscription commitment scope stranding unused hours | Utilisation by subscription | Widen benefit scope (Finance and every affected owner; chargeback effect) | R1 | L2 |
 | RATE-23 | Size-flexibility limits when moving between VM families | Reserved size-group vs running size-group | Plan before migrating | — | L1 |
 | RATE-24 | Prepaid security-plan units use-it-or-lose-it | Consumption vs prepaid pool | Adjust plan scope | R2 | L1 ⚑ |
 | RATE-25 | Commitment-tier ratchet (can be raised any time, lowered only after a lock period; dedicated clusters carry a minimum) | Daily volume vs tier | Choose conservatively; stage | R3 | L1 |
@@ -228,8 +256,8 @@ Many savings interact. The Conductor sequences cases into **plays**:
 | TELE-27 | Pipeline-stage filtering before ingestion | Patterns | Edge transform | R3-D | L1 |
 | TELE-28 | Log budgets and SLOs per team | Ingestion per team vs agreed budget | Governance | — | L1 |
 | TELE-29 | **Incident-informed usefulness** | Which logs were used in past incidents and post-mortems | Prioritise keep/drop | — | L1 |
-| TELE-30 | Data exports never consumed | Export rules vs downstream consumers | Remove export (first confirm it is not a mandated mirror) | R1 | L3 |
-| TELE-31 | **Silent throttling** of metrics ingestion at default limits (loss of data, not only cost) | Throttle indicators vs active series | Reduce cardinality; raise limits deliberately | R1 | L2 |
+| TELE-30 | Data exports never consumed | Export rules vs downstream consumers | Remove export (first confirm it is not a mandated mirror) | R3-D | L2 |
+| TELE-31 | **Silent throttling** of metrics ingestion at default limits (loss of data, not only cost) | Throttle indicators vs active series | Reduce cardinality (collection-reducing); raise limits deliberately | R3-D | L2 |
 | TELE-32 | Flow logs on storage with no retention/lifecycle policy | Container growth | Lifecycle | R3-D | L2 |
 
 ---
@@ -252,11 +280,11 @@ Many savings interact. The Conductor sequences cases into **plays**:
 | DATA-12 | SQL backup storage redundancy for non-prod | Redundancy vs environment | Lower | R3 | L2 |
 | DATA-13 | Zone redundancy in non-prod databases | Environment | Disable | R1 | L2 |
 | DATA-14 | Unused SQL indexes | Index usage statistics | Drop via pull request | R2 | L1 |
-| DATA-15 | SQL long-term backup retention | Policy vs need | Tune (**data loss**) | R3-D | L1 ⚑ |
+| DATA-15 | SQL long-term backup retention | Policy vs need | Tune (**data loss** — backups, so **R3**) | R3 | L1 ⚑ |
 | DATA-16 | Pipeline frequency and polling too high | Trigger-run history showing mostly empty runs | Reduce frequency | R1 | L3 |
 | DATA-17 | Data-flow cluster time-to-live and integration-runtime sizing | Run duration and idle | Tune | R1 | L3 |
 | DATA-18 | **Hot-cache window larger than query horizon** (Data Explorer) | Query time ranges | Reduce cache policy | R1 | L2 |
-| DATA-19 | Ingestion capture copies nobody reads | Consumers | Remove | R1 | L3 |
+| DATA-19 | Ingestion capture copies nobody reads | Consumers (and whether the capture is a mandated mirror) | Remove — stops a long-term copy of the event stream | R3-D | L2 |
 | DATA-20 | Databricks pools, job vs all-purpose clusters, spot workers | Cluster utilisation | Tune | R1 | L2 |
 | DATA-21 | Unused Fabric items, workspaces and refresh schedules | Usage; refresh history | Retire or reduce | R1 | L3 |
 | DATA-22 | Dataset refresh frequency vs report usage | Report views | Reduce refresh | R1 | L3 |
@@ -264,8 +292,8 @@ Many savings interact. The Conductor sequences cases into **plays**:
 | DATA-24 | Backup vault redundancy defaults | Environment | Lower | R3 | L2 |
 | DATA-25 | File-share snapshot accumulation | Snapshot count | Policy | R2 | L3 |
 | DATA-26 | **Capacity pause with hidden settlement** (pausing a capacity may settle accumulated overage immediately; storage keeps billing) | Overage balance at pause; storage size | Plan pause windows; include settlement in the saving | R1 | L2 |
-| DATA-27 | Soft-deleted containers billed at full data rate | Soft-deleted container size/age | Shorten retention window | R3-D | L2 |
-| DATA-28 | Change feed or inventory left on, writing to containers nobody reads | Consumers of the output | Disable | R1 | L3 |
+| DATA-27 | Soft-deleted containers billed at full data rate | Soft-deleted container size/age | Shorten retention window (destroys recovery copies sooner — **R3**, not observability data) | R3 | L2 |
+| DATA-28 | Change feed or inventory left on, writing to containers nobody reads | Consumers of the output (and whether it is a required audit record) | Disable — stops a record of changes going forward | R3-D | L2 |
 | DATA-29 | Leftover unmanaged VHD page blobs after VM deletion | Blob lease state/age | Delete after owner check | R2 | L2 |
 
 ---
@@ -289,7 +317,7 @@ Many savings interact. The Conductor sequences cases into **plays**:
 | NET-13 | VPN gateway sprawl across virtual networks | Gateway count vs traffic | Consolidate (vWAN or peering) | R3 | L1 |
 | NET-14 | Retiring network SKUs (forced migrations) | SKU inventory | Plan migration | R2 | L2 |
 | NET-15 | Private traffic going via public path (or vice versa) | Flow data | Re-route | R2 | L1 |
-| NET-16 | **Flow-log migration duplicates** (legacy and new flow logs running in parallel double records and storage; legacy flow logs retire 30 Sep 2027) | Both log types enabled on the same network | Finish migration; disable legacy | R1 | L2 |
+| NET-16 | **Flow-log migration duplicates** (legacy and new flow logs running in parallel double records and storage; legacy flow logs retire 30 Sep 2027) | Both log types enabled on the same network | Finish migration; disable legacy **only after the new logs are verified complete** | R3-D | L2 |
 
 ---
 
@@ -436,7 +464,7 @@ Many savings interact. The Conductor sequences cases into **plays**:
 | GOV-01 | Missing or invalid owner tags | Owner Graph vs tags | Propose, confirm, write an **advisory** tag (control-plane tags need an independent authority — [06 §5](06-closed-loop-actions-and-autonomy.md)) | R0 | L2→L4 |
 | GOV-02 | Tag drift (tag disagrees with evidence) | Evidence vs tag | Open case | R0 | L2 |
 | GOV-03 | Tag-inheritance and allocation-rule gaps | Untagged cost share | Fix rules | R0 | L2 |
-| GOV-04 | Subscription sprawl | Subscriptions with no owner or activity | Consolidate/close | R2 | L2 |
+| GOV-04 | Subscription sprawl | Subscriptions with no owner or activity | Consolidate/close (cancelling plans on the way is a transaction — IDLE-29) | R2 | L2 |
 | GOV-05 | Exceptions without expiry | Exception registry | Add expiry; re-ask | R0 | L3 |
 | GOV-06 | Locks protecting unused waste | Lock plus zero usage | Ask owner to lift | R1 | L1 |
 | GOV-07 | Preventive policy for allowed SKUs and regions | Recurring waste pattern | Propose policy | R1 | L1 |
@@ -484,15 +512,15 @@ Every row has exactly one status. **Anything not listed below is *Research queue
 
 ### Selected — Release 1
 
-Release 1 is *five* things, chosen for the strength of their evidence, their value for proving the closed loop, and their low risk ([plan/00](../plan/00-follow-up-plan.md)). Release 1 also uses **SEC-10** (the protected-sources registry) as a guard.
+Release 1 is *five* plays on a pre-release skeleton, chosen for the strength of their evidence, their value for proving the closed loop, and their low risk ([plan/00](../plan/00-follow-up-plan.md)). The five plays map to slices SL5, SL2, SL3, SL1 and SL8 (SL8 is conditional); SL0 is the walking skeleton they run on, not a play. Release 1 also uses **SEC-10** (the protected-sources registry) as a guard.
 
 | # | Release-1 item | Catalog rows | First permitted mode | Why it is in | Conditions |
 |---|---|---|---|---|---|
 | 1 | **Owner Graph** — the prerequisite for every owner-bound action | GOV-01, GOV-02, GOV-09 | Advise; the Estate Interview confirms ownership; advisory tags only | Without an owner nothing else closes | No inference becomes *Confirmed* without a human |
 | 2 | **Log usefulness** (seed example 1) | TELE-01, TELE-02, TELE-03, TELE-06 | **Advise only** — R3-D, so no writes in Release 1 | The strongest evidence of "FOMO logging"; closest to the brief | Non-Sentinel workspaces only (Sentinel SOC optimization already covers those — [research/06 #8](../research/06-first-party-teardown.md)); template-level, no raw content; audit coverage proven per workspace by a canary; SEC-10 consulted |
-| 3 | **P2S gateway right-sizing** (seed example 2) | SIZE-12 | **Assist** — human-approved, in a window; *advise-only until spike S7 is Green* | Hidden capacity with a concrete price: 100 units ≈ €23k/month at West Europe list (€0.3177 per unit-hour; Retail Prices API, checked 2026-10-30) | Banded capacity lookup; disruption-bearing (users reconnect) |
-| 4 | **Orphans** — the loop-proving vehicle | IDLE-01, IDLE-02, IDLE-13 | Advise → Assist through the orphan custodian | Detection is a commodity (the FinOps toolkit already alerts on idle gateways and public IPs — [research/06 #5](../research/06-first-party-teardown.md)); the point is to prove *owner → decision → action → verified saving* | Non-prod first; snapshot before delete; never a deletion on silence |
-| 5 | **Provisioned-throughput utilisation** (demand-pull candidate) | AI-02, with AI-21 as an advice rule | Advise | AI-spend management is the top unmet need in the State of FinOps 2026 (per [research/03](../research/03-finops-framework-and-evidence.md); not re-verified) | Only if a pilot customer has provisioned deployments — otherwise swap in the next best row |
+| 3 | **P2S gateway right-sizing** (seed example 2) | SIZE-12 | **Assist** — human-approved, in a window; *advise-only until spike S7 is Green* | Hidden capacity with a concrete price: 100 units ≈ €23k/month at West Europe list (€0.3177 per unit-hour; Retail Prices API, checked 2026-10-30) | Banded capacity lookup; Microsoft says to **plan for downtime** when scaling; every business unit using the gateway is consent-required ([06 §3 item 12](06-closed-loop-actions-and-autonomy.md)) |
+| 4 | **Orphans and Advisor-recommendation closure** — the loop-proving vehicle | IDLE-01, IDLE-02, IDLE-13, plus the Advisor and FinOps-toolkit findings for orphaned or idle resources | Advise → Assist through the orphan custodian and the resolved owner | Detection is a commodity (Advisor cost recommendations; the FinOps toolkit's alerts for idle Application Gateways and idle public IPs — [research/06 #5](../research/06-first-party-teardown.md)). The point is the brief's own problem — *recommendations nobody reads* — so we take the **existing** recommendations, route each to the right owner and prove *owner → decision → action → verified saving* | Non-prod first; snapshot before delete; never a deletion on silence; Advisor's savings ignore commitment coverage, so every case recomputes the saving |
+| 5 | **Provisioned-throughput utilisation** (demand-pull candidate) | AI-02, with AI-21 as an advice rule | Advise | Granular AI-spend monitoring is the number-one unmet need in the State of FinOps 2026 (data.finops.org, re-read 2026-10-30) | Only if a pilot customer has provisioned deployments — otherwise swap in the next best row |
 
 ### Parked — with re-open triggers
 
@@ -523,7 +551,7 @@ Release 1 is *five* things, chosen for the strength of their evidence, their val
 |---|---|---|---|
 | IDLE-01, 02, 03, 20 | TRAP-ORPH-001/002/003, TRAP-STOP-002/003 | Partial / Unverified | Snapshot lineage; **releasing a static public IP loses the address** (R3) |
 | IDLE-04 | TRAP-ORPH-004, TRAP-NET-001 | Verified | NAT gateway has **no stopped state** — only deletion stops billing |
-| IDLE-05, 06, SIZE-11 | TRAP-ORPH-005/006, TRAP-NET-007 | Partial / Verified | Application Gateway v2 bills a fixed rate plus capacity units even at zero traffic |
+| IDLE-05, 06, SIZE-11 | TRAP-ORPH-005/006, TRAP-NET-007; Learn *Application Gateway pricing* (round-2 fact-check) | Partial / Verified | Application Gateway v2 bills a fixed rate plus capacity units even at zero traffic; **setting the minimum instance count to 0 does not remove the fixed charge — only deleting the gateway does** (so SIZE-11 saves capacity units, not the fixed fee) |
 | IDLE-07 | TRAP-ORPH-007 | Verified | Private endpoints outlive the target resource |
 | IDLE-08, 09, 10 | TRAP-ORPH-008/011, TRAP-NET-003/010 | Verified / Partial | An ExpressRoute gateway **keeps billing after the circuit is deleted**; firewalls carry a fixed hourly charge |
 | IDLE-12, SEC-05 | TRAP-NET-008 | Verified | DDoS plan is a flat recurring fee |
@@ -540,17 +568,17 @@ Release 1 is *five* things, chosen for the strength of their evidence, their val
 | IDLE-39 | TRAP-OBS-003 | Verified | Deprecated test type keeps billing |
 | SIZE-01 | research/01 §2 | Verified | Advisor's VM algorithm uses **retail rates and ignores commitment coverage**; cross-series resize can raise effective cost |
 | SIZE-08, 09, 33 | TRAP-DB-001/002/003 | Verified / Partial | Throughput billed at the **hourly peak**; default indexing indexes everything |
-| **SIZE-12, 13, 14** ★ | research/04 Part B/C (**corrected after review round 1**) | **Verified** | P2S: 1–200 scale units. **Throughput is linear (0.5 Gbps per unit); connection capacity is *banded*, not linear** — units 1–3 → 500 connections, 4–6 → 1,000, 7–10 → 5,000, 11–20 → 10,000, then +10,000 per extra pair of instances (100 units → 50,000; 200 → 100,000). Scaling may reconnect users or cause downtime. Meter "VPN P2S Scale Unit" (≈ €0.3177 per unit-hour, West Europe list, Retail Prices API 2026-10-30) |
+| **SIZE-12, 13, 14** ★ | research/04 Part B/C (**corrected after review round 1**) | **Verified** | P2S: 1–200 scale units. **Throughput is linear (0.5 Gbps per unit); connection capacity is *banded*, not linear** — units 1–3 → 500 connections, 4–6 → 1,000, 7–10 → 5,000, 11–20 → 10,000, then +10,000 per extra pair of instances (100 units → 50,000; 200 → 100,000). Scaling is disruption-bearing: the Virtual WAN FAQ says to **plan for downtime** when scaling the P2S gateway or changing its configuration (the "TCP reconnects" wording belongs to the ExpressRoute-gateway entry, not P2S). Meter "VPN P2S Scale Unit" (≈ €0.3177 per unit-hour, West Europe list, Retail Prices API 2026-10-30) |
 | SIZE-16–21 | research/04 Part C; TRAP-DATA-012/014, TRAP-APP-010, TRAP-AI-003/004, TRAP-STOR-005 | Verified / Partial / Unverified | Event Hubs auto-inflate scales **up only**; search cost is **replicas × partitions** (multiplicative) and scale-in is disruptive; messaging units bill at the **peak in the hour** |
 | TIME-01 | research/01 §5 | Verified | Start/Stop VMs v2 (Functions-based) replaced v1; native auto-shutdown has no start schedule |
 | TIME-04, DATA-26 | TRAP-DATA-007/008/009/010 | Verified | **Pausing a capacity stops compute but not storage and can settle accumulated overage immediately** |
 | TIME-07 | TRAP-DB-008 | Partial | Auto-pause delay often set too long |
-| RATE-01–06, 21–23 | research/01 §5; TRAP-COMMIT-001/002/003/004 | Verified | Priced as if used 100% of the term; scope matters; size flexibility only within a family; **exchange policy is time-limited ("until further notice")**, refunds capped (USD 50,000 per rolling 12 months), owner-only |
+| RATE-01–06, 21–23 | research/01 §5; TRAP-COMMIT-001/002/003/004; Learn *Exchange and refund Azure reservations* (re-read 2026-10-30) | Verified | Priced as if used 100% of the term; scope matters; size flexibility only within a family (unchanged by the exchange change); **exchange rights are being withdrawn: reservations bought on or after 1 Feb 2027 are not exchangeable where savings plans cover the service, earlier purchases keep one final exchange, and an older Learn bullet still says "until further notice"**; refunds capped at USD 50,000 per rolling 12 months for a billing profile or single enrollment; savings-plan trade-in is unchanged; who may exchange is described inconsistently on Learn (owner versus Reservation administrator) |
 | RATE-07, 08, 09 | research/01 §5; TRAP-COMMIT-005/006 | Verified (mechanics) | Hybrid Benefit needs eligible licences; Dev/Test needs Visual Studio subscriptions |
 | RATE-12, 13 | TRAP-COMMIT-009/010 | Unverified | Marketplace auto-renew; MACC tracked at billing-account level |
-| RATE-17, 25, SEC-04, 11 | research/04 A.1; TRAP-SEC-005/006/007 | Verified | Commitment tiers start at 100 GB/day, 31-day lock; SIEM bills **all** data analysed on the workspace |
+| RATE-17, 25, SEC-04, 11 | research/04 A.1; TRAP-SEC-005/006/007; Learn *Azure Monitor Logs cost* (round-2 fact-check) | Verified | Commitment tiers start at 100 GB/day with a 31-day period; raising a tier restarts the period; a tier can be lowered for **6 hours** after configuration; real discounts on the list meters run from about 15% to about 36% (not a flat "up to 30%"); SIEM bills **all** data analysed on the workspace |
 | RATE-19, SEC-01–03, 12, 13 | TRAP-SEC-001/002/003/008, TRAP-STOR-009, TRAP-PLAT-009 | Verified / Partial | Legacy per-transaction storage plan is retired for new enablement; malware scanning has a default monthly per-account cap |
-| **TELE-01, 02, 03** ★ | research/04 A.2–A.4 (**corrected after review round 1**) | **Verified** (coverage: the docs disagree) | Query audit (LAQueryLogs) is **off by default**. **The documentation is inconsistent about what it records**: the Azure Monitor page lists Defender advanced hunting, Sentinel investigation clients and the Sentinel portal as request apps, while the Sentinel page says hunting and Investigation Graph are excluded; both agree **scheduled alert executions are not logged**. So **measure coverage per workspace with a canary query**. **No native "never queried" signal**; row filters and column drops are supported |
+| **TELE-01, 02, 03** ★ | research/04 A.2–A.4 (**corrected after review rounds 1 and 2**) | **Verified** (coverage: the two pages are *unreconciled*) | Query audit (LAQueryLogs) is **off by default** (enabling it is free; the audit records ingested are billed). **The Azure Monitor and Sentinel documentation are unreconciled for the hunting surfaces**: the Azure Monitor page lists `M365D_AdvancedHunting`, Sentinel investigation clients and the Sentinel portal as request client apps, while the Sentinel page says queries from hunting and the Investigation Graph are not included; both agree **scheduled alert executions are not logged**. So **measure coverage per workspace with a canary query**. **No native "never queried" signal**; row filters and column drops are supported |
 | TELE-01, 23 | research/06 #8 (Sentinel SOC optimization) | Verified (scope) | **Sentinel SOC optimization already flags unused tables and unused columns (Preview) — on Sentinel workspaces only**, security-scoped, over a **30-day window** ("data value optimizations only look at billable tables that ingested data in the past 30 days"), with a warning to check compliance before changing ingestion. Treat Sentinel workspaces as covered by it. The Sentinel experience in the Azure portal retires after **31 March 2027** |
 | TELE-06, 09 | research/04 A.1 | Verified | Plan switch once per table per week; **simple log-search alerts work on Basic; alerts stop on Auxiliary** |
 | TELE-11, 12, 13, 17, 18, 20, 22, 31 | research/04 A.3/A.5; TRAP-OBS-001/004/005 | Verified / Partial | Cost presets for container monitoring; sampling; Windows event tiers; **Prometheus ingestion limits throttle silently** |
@@ -562,7 +590,7 @@ Release 1 is *five* things, chosen for the strength of their evidence, their val
 | DATA-16–20 | TRAP-DATA-001/002/003/004/011/013 | Verified / Unverified | Data-flow debug sessions and runtime TTL bill while idle |
 | NET-01–07, 14 | TRAP-NET-003/004/009/011/012/014, TRAP-REGION-003 | Verified / Partial | Private Link bills endpoint-hours, data processing and cross-region; Premium downgrade is blocked above a linked-network limit |
 | PLAT-06, 07, 10 | TRAP-APP-001/004/011/012, TRAP-NET-012, TRAP-COMMIT-008 | Verified / Unverified | Polling triggers billed per poll (unverified); retiring Basic SKUs; legacy commitment model |
-| AI-02, 03, 21, 23 | research/04 Part C; TRAP-STOP-006, TRAP-AI-001/002, TRAP-COMMIT-007/008 | Verified | Provisioned throughput **cannot be paused**; Microsoft advises against hourly scaling |
+| AI-02, 03, 21, 23 | research/04 Part C; TRAP-STOP-006, TRAP-AI-001/002, TRAP-COMMIT-007/008; Learn *Provisioned throughput billing* (round-2 fact-check) | Verified | Provisioned throughput **cannot be paused**; Microsoft advises against scaling it up and down with traffic; an in-place **resize is supported** (billing adjusts to the new PTU count immediately), scale-up depends on capacity, and **a reservation stays at its original PTU quantity after a scale-down**, so scaling down does not cut reserved cost |
 | AI-09 | TRAP-AI-010 | Unverified | Runaway loops — only a **pre-certified cost-brake class** may act without a human ([06 §3](06-closed-loop-actions-and-autonomy.md)) |
 | AI-12 | TRAP-AI-009 | Partial | Deployment sprawl |
 | AI-22 | TRAP-AI-005 | Verified | One-way developer-tier choice |

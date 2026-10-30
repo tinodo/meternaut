@@ -1,6 +1,6 @@
 # Guardrails Workplan — how we turn the territory into enforceable rules
 
-> **Status:** Ideation **v2** (revised after rubber-duck round 1; v1 archived [here](../_archive/round-1-v1/plan/02-guardrails-workplan.md)) · **Date:** 2026-10-30 · Part of the [follow-up plan](00-follow-up-plan.md) · Input: [08 — guardrail territory](../ideation/08-trust-safety-and-guardrail-topics.md)
+> **Status:** Ideation **v3** (revised after rubber-duck round 2; v2 archived [here](../_archive/round-2-v2/plan/02-guardrails-workplan.md), v1 [here](../_archive/round-1-v1/plan/02-guardrails-workplan.md)) · **Date:** 2026-10-30 · Part of the [follow-up plan](00-follow-up-plan.md) · Input: [08 — guardrail territory](../ideation/08-trust-safety-and-guardrail-topics.md)
 > **Rule:** *a guardrail without an owner, an enforcement mechanism and a test is a wish.*
 
 ---
@@ -14,7 +14,7 @@
 1. **Guardrail Charter v1** ratified (principles + scope + roles).
 2. **Safety invariants** ratified (the 16 candidates in [08 §4](../ideation/08-trust-safety-and-guardrail-topics.md#4-candidate-safety-invariants-non-negotiables-to-ratify)), each with an enforcement mechanism and a test.
 3. **Autonomy policy v1**: levels, entry/exit criteria, downgrade triggers, **enrolment rules for veto windows**, kill-switch authority and drill cadence.
-4. **Threat model v0** covering at least the 38 seeded threats (T1–T38), each mapped to a control or an accepted risk.
+4. **Threat model v0** covering at least the 41 seeded threats (T1–T41), each mapped to a control or an accepted risk.
 5. **Data-handling statement:** what data may be read, what may reach a model, retention, residency, redaction, people-data rules, and the **disclosure statement** for people.
 6. **Responsible-AI impact assessment v0** and **DPIA screening** completed.
 7. **OSS governance note:** licence decision input, contribution model, trademark/naming findings, internal release process check.
@@ -23,6 +23,10 @@
 10. **Control matrix** complete for every invariant ([§4.1](#41-the-control-matrix--the-traceability-gate)).
 11. **Minimum write-safety harness** specified ([§4.2](#42-the-minimum-write-safety-harness)) — and, later, passing before any customer-facing write test.
 12. **RACI and liability model** (who accepts the workload trade-off, who owns controls, who owns agent behaviour, who owns operational accountability), the **orphan custodian** model, and the **independence profile** for the Challenger and Auditor ([04 §4.6](../ideation/04-agent-crew.md#46-independence-profile-challenger-and-auditor)).
+13. **Trust root decided (D16)** — a prerequisite for shipping *any* behaviour-affecting artefact (playbook, prompt, model, evaluator, policy) in *any* release, including Release 1: key custody, approval quorum, separation from Warden administration, signed provenance, emergency revocation, a pinned rollback release and an independent audit of release state.
+14. **Ledger-versus-erasure design proven** (cryptographic deletion of evidence while the hash chain stays valid) — a **release blocker** for the first customer-facing write, not a later nicety.
+15. **Classification rubric ratified** as a *derived, linted* property: the class follows from the typed effects of an operation, a declared class below the derived one is rejected, and the catalog linter ([`tools/check-docs.py`](../../tools/check-docs.py)) is the first enforcement point ([06 §2](../ideation/06-closed-loop-actions-and-autonomy.md)).
+16. **Phase-0.5 exceptions signed (D17)** and the **cost-brake certifier named (D18)** — the two signers that the sprint and the first automatic-pause class depend on.
 
 ---
 
@@ -61,7 +65,7 @@
 | **WS3 — Data, privacy & people** | G4, G12 (part) | [07](../ideation/07-ownership-and-organization.md) §12, research/04 | G4-01…11 | Data-handling statement; DPIA screening; people-data rules and **disclosure statement**; ledger vs erasure design; R3-Data approval rules |
 | **WS4 — AI safety, quality & economics** | G5, G6 | research/03 | G5-01…14, G6-01…06 | Evaluation gates; red-team scope; numeric-integrity rule; **independence profile and drill**; **governed-release rules**; AI-cost budgets; counting rules |
 | **WS5 — Communication ethics & compliance** | G7, G8, G12 (rest) | [05](../ideation/05-human-interaction-concepts.md) | G7-01…08, G8-01…07, G12-01…04 | Communication standard (AI disclosure, consent, attention rules, **private-first escalation**, anti-phishing); regulatory map; RAI assessment v0 |
-| **WS6 — Platform security, OSS, commercial** | G9, G11, G13, G14 | T1–T38 | G9-01…07, G11-01…06, G13-01…04, G14-01 | Threat model v0; **declarative-playbook trust model**; OSS governance note; purchase-authority rules and **authorised-signer register** |
+| **WS6 — Platform security, OSS, commercial** | G9, G11, G13, G14 | T1–T41 | G9-01…07, G11-01…06, G13-01…04, G14-01 | Threat model v0; **declarative-playbook trust model**; OSS governance note; purchase-authority rules and **authorised-signer register** |
 | **WS7 — Ratification** | all | all outputs | Residual risk; conflicts between domains | **Guardrail Charter v1 ratified**; invariants ratified; **control matrix reviewed**; open decisions assigned |
 
 *Each working session: 90–120 minutes, a facilitator, a scribe (AI-assisted, human-verified), decisions recorded as GDRs in the same week.*
@@ -108,8 +112,14 @@ An invariant with no enforcement point and no negative test is an **aspiration**
 - A **stale or swapped approval** (changed commit SHA, plan digest, target-state hash, or deploying identity) is rejected.
 - **Locks and legal holds** are never bypassed, and the order of stops is enforced.
 - No **L3 action** runs for an owner who has not enrolled, or whose notice delivery is unproven.
+- **Enrolment is a precise key** (owner or delegate, tenant, scope, environment, action class, reversibility class, expiry, envelope version): a *dev* enrolment never authorises *prod*, and an expired, revoked or mismatched record means no L3 action fires ([06 §3 item 6](../ideation/06-closed-loop-actions-and-autonomy.md)).
 - **R3-Data** classes never run at L3 or L4.
-- **No commitment transaction** runs without a human signature on the exact manifest, and the preparer cannot sign.
+- **Classification is derived, not declared:** an operation whose declared class is below the class derived from its typed effects is rejected, and a catalog row with a hybrid class, R3/R3-Data at L3 or above, or a transaction above L2 fails the lint.
+- **Affected-party consent:** an action with a *consent-required* consumer and no named acknowledgement or named risk acceptance keeps Approve locked; "no objection" is silence and never counts ([06 §3 item 12](../ideation/06-closed-loop-actions-and-autonomy.md)).
+- **Control-plane tag changes** (owner, environment, criticality, exclusion) invalidate enrolment, envelope membership and open approvals; the claim is re-read, and its version bound, *before* execution.
+- **No commitment transaction** runs without a human signature on the **exact manifest** — price, term, scope, exchange and cancellation terms, the asset set and the signer included — and the preparer cannot sign; a manifest that differs from what was signed is refused.
+- **Instrumentation is an action:** enabling query audit, diagnostic settings or sampling changes needs its own approval, cost cap, end date and deletion rule, and expired instrumentation is removed or re-approved ([06 §3 item 13](../ideation/06-closed-loop-actions-and-autonomy.md)).
+- The **cost brake** takes its signal from a separately administered source; if the integrity of that signal is in doubt it **pages a human** instead of acting.
 - The **approver's authority** is checked at approval *and* again at execution.
 - The **rate limiter** and stop-the-line trigger fire.
 - With a degraded dependency (chat, model, policy engine) **nothing acts**.
@@ -133,7 +143,7 @@ An invariant with no enforcement point and no negative test is an **aspiration**
 
 | Test family | Examples |
 |---|---|
-| **Red-team scenarios** | T1 indirect prompt injection via tag/log/reply; T3 approval phishing; T4 confused deputy; T7 malicious playbook; T8 secrets in logs; T9 wrong-owner approval; **T31 control-plane tag manipulation; T32 evidence manipulation; T34 approval abuse; T35 poisoned feedback** |
+| **Red-team scenarios** | T1 indirect prompt injection via tag/log/reply; T3 approval phishing; T4 confused deputy; T7 malicious playbook; T8 secrets in logs; T9 wrong-owner approval; **T31 control-plane tag manipulation; T32 evidence manipulation; T34 approval abuse; T35 poisoned feedback; T39 classification laundering; T40 instrumentation creep; T41 custodian overreach** |
 | **Chaos & drills** | Kill-switch drill; chat-platform outage; model outage; stale-approval flood; token-spike (denial of wallet); change-freeze collision; **correlated-failure drill** for the Challenger and Auditor |
 | **Evaluation gates** | Numeric integrity; groundedness; confidence calibration; Challenger independence; regression on every prompt/model/tool change (each a **governed release**); **held-out sets owned by the Warden** |
 | **Privacy tests** | Redaction efficacy on seeded secrets/PII; retention enforcement; people-data minimisation; **ledger-versus-erasure** (cryptographic deletion of evidence while the hash chain stays valid) |

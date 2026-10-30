@@ -1,6 +1,6 @@
 # Follow-up Plan — from ideation to an open-source, guardrailed, agent-driven product
 
-> **Status:** Ideation **v2** (revised after rubber-duck round 1; v1 archived [here](../_archive/round-1-v1/plan/00-follow-up-plan.md)) · **Date:** 2026-10-30 · Part of the [north-star vision](../ideation/01-north-star-vision.md)
+> **Status:** Ideation **v3** (revised after rubber-duck round 2; v2 archived [here](../_archive/round-2-v2/plan/00-follow-up-plan.md), v1 [here](../_archive/round-1-v1/plan/00-follow-up-plan.md)) · **Date:** 2026-10-30 · Part of the [north-star vision](../ideation/01-north-star-vision.md)
 > **Principle:** *no building before the guardrails exist; no guardrails without knowing what we are guarding; no assumptions without a cheap test.* Every idea in the ideation set has a **status** — *selected*, *research queue*, *parked with a re-open trigger*, or *retired* — see §5. Nothing is silently dropped, and nothing is silently promised.
 
 ---
@@ -9,8 +9,8 @@
 
 | Phase | What | State |
 |---|---|---|
-| **0 — Ideation** | North-star vision, opportunity catalog, crew, interactions, loop, ownership, guardrail territory, outer rim, metrics, PR/FAQ, research, this plan; **two rounds of rubber-duck review** ([reviews](../reviews/)) | ✅ this package (round 1 applied in v2; round 2 in [reviews/round-2](../reviews/round-2/)) |
-| **0.5 — Kill-or-confirm sprint** | ~4 weeks, **no writes**: find out cheaply whether to continue, reshape or stop | **next** |
+| **0 — Ideation** | North-star vision, opportunity catalog, crew, interactions, loop, ownership, guardrail territory, outer rim, metrics, PR/FAQ, research, this plan; **two rounds of rubber-duck review** ([reviews](../reviews/)) | ✅ this package (round 1 applied in v2, round 2 in v3 — see [reviews](../reviews/)) |
+| **0.5 — Kill-or-confirm sprint** | ~4 weeks, **no remediation writes**: find out cheaply whether to continue, reshape or stop. One narrowly approved instrumentation exception (query audit on pilot workspaces); no change to anything else | **next** |
 | **1 — Direction & guardrails** | Scope cut ratified, stop criteria ratified, guardrail charter, control matrix, threat model, RAI + privacy screening, OSS governance basics | after the sprint |
 | 2 → 8 | see below | planned |
 
@@ -37,18 +37,19 @@ flowchart LR
 
 **Gates.** Each phase ends with a **gate**: exit criteria met, stop/pivot criteria (K1–K7) checked, and a **rubber-duck review**. Duck gates are **risk-based**: a full *two-round* review at three gates — (1) Guardrail Charter v1, (2) before the first customer-facing write, (3) before public release — and one targeted round elsewhere. **Hard rule:** Phase 6 cannot start until Phase 1's *Guardrail Charter v1* and *safety invariants* are ratified, the **control matrix** exists, and no customer-facing write test runs before the **minimum write-safety harness** passes ([08 §5](../ideation/08-trust-safety-and-guardrail-topics.md)).
 
-**Parallelism.** Phases 2 and 3 run side by side. The **Wizard-of-Oz pilot** in Phase 2 involves *humans* sending messages manually — no automation, no write access — so it may start as soon as the *outreach ethics* subset of Phase 1 (consent, attention limits, disclosure) is agreed. A *small* card test (about ten hand-built cards) already happens inside Phase 0.5.
+**Parallelism.** Phases 2 and 3 run side by side. The **Wizard-of-Oz pilot** in Phase 2 involves *humans* sending messages manually — no automation, no write access — so it may start as soon as the *outreach ethics* subset of Phase 1 (consent, attention limits, disclosure) is agreed. A *small* card test (about ten hand-built cards) happens inside Phase 0.5 **only after** the minimum outreach note — consent, disclosure, attention cap, who may be contacted — is agreed in writing with the sponsor and the customer's security contact (see the entry conditions below).
 
 ---
 
 ## 3. The phases
 
-### Phase 0.5 — Kill-or-confirm sprint (~4 weeks, no writes)
-**Goal:** spend a few weeks, not a few quarters, finding out whether the idea survives contact with reality — and **stop cheaply if it does not**. This replaces the v1 order (a long guardrail marathon first) after the strategy review: the guardrails matter most for the *writes*, and the sprint has none.
+### Phase 0.5 — Kill-or-confirm sprint (~4 weeks, no remediation writes)
+**Goal:** spend a few weeks, not a few quarters, finding out whether the idea survives contact with reality — and **stop cheaply if it does not**. This replaces the v1 order (a long guardrail marathon first) after the strategy review: the guardrails matter most for the *remediation writes*, and the sprint has none. The sprint is honest about what it *does* touch: **one instrumentation exception and a handful of real messages** — both under the entry conditions below.
 
 | Item | Detail |
 |---|---|
-| **Activities** | Secure a **sponsor** and **read access** to a friendly customer or internal estate · a one-hour **"top-10 unfixed recommendations — and why"** interview with a cloud CoE · enable **query audit (LAQueryLogs) on pilot workspaces now** (the *evidence clock*: usefulness analysis needs weeks of query history) and run the **canary query** that measures audit coverage per workspace · a **Time Machine replay in Assess mode** over past recommendations · a **small Wizard-of-Oz card test** (~10 cards, humans send) · settle the **employer-approval / OSPO / IP stance**, the project home, a **rename within ~2 weeks** (the "Azure" mark) and the **licence before any outside contribution** — staying private · **open a channel to the FinOps toolkit maintainers** (ride and contribute, do not duplicate) · record the **weekly time budget** · **pre-register** the stop criteria K1–K7 and the Release-1 cut |
+| **Entry conditions** | (1) A **one-page outreach note** agreed in writing with the sponsor and the customer's security contact: who may be contacted, the AI-disclosure text, consent, an attention cap, who may see what. (2) For the **query-audit exception**: the **data owner's and security's approval**, a **cost cap** (the audit records are billed as ingested data), a **scope** (named pilot workspaces), an **end date**, a **retention and deletion rule**, and a removal plan ([06 §3 item 13](../ideation/06-closed-loop-actions-and-autonomy.md)). Neither is a substitute for the Phase-1 guardrails; both are deliberately the *minimum* that makes the sprint honest. Who signs them is decision D17. |
+| **Activities** | Secure a **sponsor** and **read access** to a friendly customer or internal estate · a one-hour **"top-10 unfixed recommendations — and why"** interview with a cloud CoE · enable **query audit (LAQueryLogs) on the approved pilot workspaces** under the exception above (the *evidence clock*: usefulness analysis needs weeks of query history) and run the **canary query** that measures audit coverage per workspace · a **Time Machine replay in Assess mode** over past recommendations · a **small Wizard-of-Oz card test** (~10 cards, humans send, after the outreach note is agreed) · settle the **employer-approval / OSPO / IP stance**, the project home, a **rename within ~2 weeks** (the "Azure" mark) and the **licence before any outside contribution** — staying private · **open a channel to the FinOps toolkit maintainers** (ride and contribute, do not duplicate) · record the **weekly time budget** · **pre-register** the stop criteria K1–K7 and the Release-1 cut |
 | **Deliverables** | A one-page **kill-or-confirm memo**: evidence for and against, K1–K7 status, Release-1 cut confirmed or changed, decisions recorded |
 | **Exit criteria** | Sponsor and read access (or a documented alternative) · CoE interview done · LAQueryLogs running with canary results · Time Machine replay produced · decisions recorded · a plain **go / reshape / stop** |
 | **Stop/pivot** | K5 (no sponsor and read access by week 4 → publish the research as a guide) · K6 (no approved publication path by week 6 → internal accelerator) · K7 (under five hours a week for six weeks → freeze) · or the CoE interview shows the unfixed recommendations are *not* ownership or attention problems (reshape) |
@@ -58,7 +59,7 @@ flowchart LR
 
 | Item | Detail |
 |---|---|
-| **Activities** | Ratify the **Release-1 cut** and the **stop criteria K1–K7** · run the **guardrail sessions G1–G14** ([workplan](02-guardrails-workplan.md)) · build the **control matrix** (threat → invariant → decision record → policy rule → enforcement point → test vector → telemetry → owner) · specify the **minimum write-safety harness** · define the **RACI and liability model**, the **orphan custodian** and the **independence profile** · threat model v0 (T1–T38) · Responsible-AI impact assessment kickoff · privacy (DPIA) screening incl. people-data and the disclosure statement · OSS governance basics (licence, name/trademark, internal release process check) · CAF/WAF alignment approach |
+| **Activities** | Ratify the **Release-1 cut** and the **stop criteria K1–K7** · run the **guardrail sessions G1–G14** ([workplan](02-guardrails-workplan.md)) · build the **control matrix** (threat → invariant → decision record → policy rule → enforcement point → test vector → telemetry → owner) · specify the **minimum write-safety harness** · define the **RACI and liability model**, the **orphan custodian** and the **independence profile** · **decide the trust root (D16)** — a prerequisite for shipping *any* behaviour-affecting artefact in any release — and name the **cost-brake certifier (D18)** · ratify the **derived, linted classification rubric** ([06 §2](../ideation/06-closed-loop-actions-and-autonomy.md)) · threat model v0 (T1–T41) · Responsible-AI impact assessment kickoff · privacy (DPIA) screening incl. people-data and the disclosure statement · OSS governance basics (licence, name/trademark, internal release process check) · CAF/WAF alignment approach |
 | **Deliverables** | Guardrail Charter v1 · Autonomy policy v1 (levels, entry/exit, downgrade triggers, enrolment rules) · ratified **safety invariants** (16 candidates) · control matrix v0 · write-safety harness spec · RACI and incident model · Threat model v0 · RAI impact assessment v0 · DPIA screening result · OSS governance note · decision records |
 | **Exit criteria** | Charter reviewed by security, compliance/legal, Finance and a platform owner · invariants ratified · stop criteria agreed · control matrix complete for every invariant · duck gate passed (**two rounds**) |
 | **Stop/pivot** | A veto-level objection (e.g. legal) that cannot be mitigated for the chosen scope |
@@ -87,7 +88,7 @@ flowchart LR
 
 | Item | Detail |
 |---|---|
-| **Activities** | ~19 spikes of 1–3 days after review round 1 (three deferred, one folded, one added — see [03](03-capability-radar.md)): e.g. cost data coverage and latency; advisor data access; metric/log usage signals and **audit-coverage canary**; DCR transformation dry-run and **shadow** measurement; vWAN P2S metrics, **banded capacity lookup** and scale operation; Teams actionable approvals and authentication; directory/manager-chain/presence reads; Foundry agent workflows with wait states, evaluation and tracing; agent identities and RBAC; **IaC pull-request path**; **approval binding to commit SHA and plan digest**; **cost per case**; open-source release process |
+| **Activities** | ~19 spikes of 1–3 days in **three waves** — *does the data exist* (wave 0), *who and what runs it* (wave 1), *can it act safely* (wave 2) — each with an owner, a decision date and an ADR slot in the [spike register](03-capability-radar.md#spike-register); e.g. cost data coverage and latency; **Advisor data access including the closed-loop view** (on the Release-1 critical path); metric/log usage signals and **audit-coverage canary**; DCR transformation dry-run and **shadow** measurement; vWAN P2S metrics, **banded capacity lookup** and the scale operation (**disruptive until measured**); Teams actionable approvals and authentication; directory/manager-chain/presence reads; Foundry agent workflows with wait states, evaluation and tracing; agent identities and RBAC; **IaC pull-request path**; **approval binding to commit SHA and plan digest**; **cost per case**; open-source release process |
 | **Deliverables** | Feasibility register · ADRs · list of scope adjustments · cost-per-case baseline |
 | **Exit criteria** | No *Red* on a Release-1 playbook's critical path, or a documented alternative |
 
@@ -101,19 +102,19 @@ flowchart LR
 | **Exit criteria** | WAF review passed (or findings accepted with owners) · security design review passed · targeted duck gate passed |
 
 ### Phase 6 — Thin vertical slices
-**Goal:** prove the loop end-to-end on small, safe, real examples — each slice *includes its evaluations, guardrail tests and red-team scenarios*. **Release 1 is the first five rows**; nothing here writes to a customer estate before the write-safety harness passes.
+**Goal:** prove the loop end-to-end on small, safe, real examples — each slice *includes its evaluations, guardrail tests and red-team scenarios*. **Release 1 is five plays on one pre-release skeleton:** **SL0** is the skeleton (not a play), and the five plays are **SL5** (Owner Graph and the Estate Interview), **SL2** (log usefulness, advisory), **SL3** (P2S right-sizing), **SL1** (orphans and Advisor-recommendation closure) and **SL8** (provisioned-throughput utilisation — conditional). Nothing here writes to a customer estate before the write-safety harness passes. *Slice IDs are SL-numbers so they cannot be confused with the spike IDs (S1–S22) in [03](03-capability-radar.md).*
 
 | Slice | Release | What it proves |
 |---|---|---|
-| **S0 — Skeleton** | R1 | One case: signal → case file → card → (mock) execution → ledger entry |
-| **S5 — Owner Graph and the Estate Interview** (pulled forward) | R1 | Owner Graph updates by conversation; attestation; the **orphan custodian** |
-| **S1 — Orphans** (unattached disks, orphan snapshots, empty plans) | R1 | Full HITL with **real** approval, authority check, snapshot, rollback, verification — **no deletion on silence** |
-| **S2 — Log usefulness (read-only)** | R1 | Table/pattern usage analysis on **non-Sentinel** workspaces, **audit-coverage canary**, **shadow measurement**, advisory cards — no changes |
-| **S3 — vWAN P2S right-sizing** | R1 | **Banded** capacity lookup, Assist-level approval, window, rollback, verification |
-| **S8 — Provisioned-throughput utilisation (advise)** | R1, if a pilot customer has deployments | Demand-pull proof for the AI-workload family |
-| **S7 — Log filter execution** (R3-D) | Later | Only after S2 evidence, **data-owner and security co-sign**; never L3/L4; the cheap copy is a net, not an undo |
-| **S4 — Dev sleep schedule** | Parked | Re-opens with the TIME family ([catalog](../ideation/02-opportunity-catalog.md#selection-and-status-v2)) |
-| **S6 — Commitment advice** | Parked | Re-opens with the RATE family; every transaction is signed by the authorised buyer |
+| **SL0 — Skeleton** | Skeleton | One case: signal → case file → card → (mock) execution → ledger entry |
+| **SL5 — Owner Graph and the Estate Interview** (pulled forward) | R1 | Owner Graph updates by conversation; attestation; the **orphan custodian** |
+| **SL1 — Orphans and Advisor closure** (unattached disks, orphan snapshots, empty plans, and the Advisor and FinOps-toolkit findings for orphaned or idle resources) | R1 | Full HITL with **real** approval, authority check, snapshot, rollback, verification — **no deletion on silence**; routes the *existing* recommendations to owners, the brief's own problem |
+| **SL2 — Log usefulness (read-only)** | R1 | Table/pattern usage analysis on **non-Sentinel** workspaces, **audit-coverage canary**, **shadow measurement**, advisory cards — no changes |
+| **SL3 — vWAN P2S right-sizing** | R1 | **Banded** capacity lookup, Assist-level approval, **consent from every affected business unit**, window (Microsoft says to plan for downtime), rollback, verification |
+| **SL8 — Provisioned-throughput utilisation (advise)** | R1, if a pilot customer has deployments | Demand-pull proof for the AI-workload family |
+| **SL7 — Log filter execution** (R3-Data) | Later | Only after SL2 evidence, **data-owner and security co-sign**; never L3/L4; the cheap copy is a net, not an undo |
+| **SL4 — Dev sleep schedule** | Parked | Re-opens with the TIME family ([catalog](../ideation/02-opportunity-catalog.md#selection-and-status-v2)); it is also the first candidate for the **enrolled-autonomy** hypothesis (Phase 7) |
+| **SL6 — Commitment advice** | Parked | Re-opens with the RATE family; every transaction is signed by the authorised buyer |
 
 ### Phase 7 — Pilot (shadow → advise → assist)
 **Goal:** real owners, real money, progressive autonomy.
@@ -121,7 +122,7 @@ flowchart LR
 | Item | Detail |
 |---|---|
 | **Activities** | Shadow (L0) for N weeks, scored · advise (L1) · assist (L2) · selected action classes to L3 only on evidence **and only for enrolled owners** · weekly **regret report** · monthly Finance reconciliation · attention-cost surveys · red-team exercise · kill-switch drill · **correlated-failure drill** |
-| **Exit criteria** | [Pilot success criteria](../ideation/10-value-metrics-and-economics.md#8-pilot-design-and-success-criteria-strawman--to-be-pre-registered) met against the pre-registered comparison condition; no kill criterion triggered |
+| **Exit criteria** | [Pilot success criteria](../ideation/10-value-metrics-and-economics.md#8-pilot-design-and-success-criteria-strawman--to-be-pre-registered) met against the pre-registered comparison condition; no kill criterion triggered. **Release 1 proves AI-assisted closure only.** *Enrolled autonomy* (L3/L4) is a **separate hypothesis with its own pre-registration** — enrolment rate, approval fatigue, regret per enrolled class — to be run later on a bounded non-destructive class (dev sleep schedules are the natural first candidate) |
 
 ### Phase 8 — Open-source launch & community
 **Goal:** a public, trustworthy, maintainable project.
@@ -152,7 +153,7 @@ flowchart LR
 
 | Source | Idea group | Status |
 |---|---|---|
-| [02 catalog](../ideation/02-opportunity-catalog.md) | **Release 1:** Owner Graph (GOV-01/02/09) · log usefulness (TELE-01/02/03/06, advise only) · P2S right-sizing (SIZE-12) · orphans (IDLE-01/02/13) · PTU utilisation (AI-02) | **Selected** → Phase 3 specs → Phase 6 slices |
+| [02 catalog](../ideation/02-opportunity-catalog.md) | **Release 1:** Owner Graph (GOV-01/02/09) · log usefulness (TELE-01/02/03/06, advise only) · P2S right-sizing (SIZE-12) · orphans and Advisor-recommendation closure (IDLE-01/02/13) · PTU utilisation (AI-02) | **Selected** → Phase 3 specs → Phase 6 slices |
 | 02 catalog | TIME, RATE (except the break-even gate), SEC (except the protected-sources registry), ADJ, SUST | **Parked**, each with a re-open trigger |
 | 02 catalog | RATE-11, COMM-05 | **Retired**, with reasons |
 | 02 catalog | Every other row | **Research queue** — no commitment |
@@ -160,8 +161,8 @@ flowchart LR
 | 09 | M-01/02/03/04/07/10/13/19/20, M-26, M-28, M-29, M-37 | **Parked**, each with a re-open trigger |
 | 09 | M-05 meeting-intent mining, M-38 multi-cloud visibility | **Retired** |
 | 09 | The remaining candidates (e.g. M-08/09/11/12, M-21/23) | **Research queue** |
-| [07 ownership](../ideation/07-ownership-and-organization.md) | Owner Graph, interviews, attestation, orphan custodian | Release-1 item 1 → slice S5 |
-| [08 guardrails](../ideation/08-trust-safety-and-guardrail-topics.md) | G1–G14, invariants, T1–T38 | Phase 1 (sessions, control matrix, harness) → Phase 5 → continuous tests |
+| [07 ownership](../ideation/07-ownership-and-organization.md) | Owner Graph, interviews, attestation, orphan custodian | Release-1 item 1 → slice SL5 |
+| [08 guardrails](../ideation/08-trust-safety-and-guardrail-topics.md) | G1–G14, invariants, T1–T41 | Phase 1 (sessions, control matrix, harness) → Phase 5 → continuous tests |
 
 **Retirement is allowed:** scope-cutting that can only defer produces a 300-item roadmap by stealth. Retired items keep their reason and a re-open condition; parked items keep a trigger.
 
@@ -169,13 +170,13 @@ flowchart LR
 
 ## 6. Rubber-duck discipline
 
-At the **three big gates**: **Round 1** (independent reviewers with distinct lenses: product/human factors, safety/governance, strategy) → fixes → **Round 2** (red-team, fact-check and consistency lenses on the revised package). At other gates one targeted round. **Reviewers' own cited facts are spot-checked against primary sources** before anything is accepted — a reviewer can reach the right verdict with a wrong example. The dispositions for this package are in [reviews/round-1/disposition.md](../reviews/round-1/disposition.md).
+At the **three big gates**: **Round 1** (independent reviewers with distinct lenses: product/human factors, safety/governance, strategy) → fixes → **Round 2** (red-team, fact-check and consistency lenses on the revised package). At other gates one targeted round. **Reviewers' own cited facts are spot-checked against primary sources** before anything is accepted — a reviewer can reach the right verdict with a wrong example. The dispositions for this package are in [reviews/round-1/disposition.md](../reviews/round-1/disposition.md) and [reviews/round-2/disposition.md](../reviews/round-2/disposition.md) — the second also corrects two claims the first got wrong or only partly right.
 
 ---
 
 ## 7. What we need from you (operator decisions)
 
-Listed with options and a recommendation in [01 — assumptions, risks and decisions](01-assumptions-risks-decisions.md): employer approval / OSPO / IP stance, project home and permission, project name (rename within ~2 weeks), licence (before the first outside contribution), deployment model, the Release-1 cut, pilot partner, Wizard-of-Oz permission, the time budget, and when (if ever) the repository goes public — **it stays private for now**.
+Listed with options and a recommendation in [01 — assumptions, risks and decisions](01-assumptions-risks-decisions.md): employer approval / OSPO / IP stance, project home and permission, project name (rename within ~2 weeks), licence (before the first outside contribution), deployment model, the Release-1 cut, pilot partner, Wizard-of-Oz permission, the time budget, and when (if ever) the repository goes public — **it stays private for now**. Three decisions were added by review round 2: the **trust root (D16)** that must exist before any behaviour-affecting artefact ships, **who signs the Phase-0.5 exception** (D17), and **who certifies a resource class as safe to pause** (D18).
 
 ---
 

@@ -1,6 +1,6 @@
 # Trust, Safety & the Guardrail Territory
 
-> **Status:** Ideation **v2** (revised after rubber-duck round 1; v1 archived [here](../_archive/round-1-v1/ideation/08-trust-safety-and-guardrail-topics.md)) · **Date:** 2026-10-30 · Part of the [north-star vision](01-north-star-vision.md)
+> **Status:** Ideation **v3** (revised after rubber-duck round 2; v2 archived [here](../_archive/round-2-v2/ideation/08-trust-safety-and-guardrail-topics.md), v1 [here](../_archive/round-1-v1/ideation/08-trust-safety-and-guardrail-topics.md)) · **Date:** 2026-10-30 · Part of the [north-star vision](01-north-star-vision.md)
 > **Purpose:** the brief says *"before you start coding, we need to define a lot of guardrails, which we have to do later."* This document does **not** define guardrails. It maps the **territory**: the domains, the questions each must answer, the threats we already see, and the candidate non-negotiables. It is the input to the [guardrails workplan](../plan/02-guardrails-workplan.md).
 
 ---
@@ -43,15 +43,15 @@ Each domain lists the **questions we must answer** (IDs for tracking in the work
 - G1-01 What are the exact autonomy levels, and what are the *entry and exit criteria* for each?
 - G1-02 Which roles may ratify a policy envelope? Is dual control required?
 - G1-03 What are the downgrade triggers, and who is told when one fires?
-- G1-04 Is any action class **never automatable** (e.g. deleting a data store, purging keys, shortening retention)? *Candidate answer: purchases and R3-Data are never L3 or higher; R3 never above L2.*
+- G1-04 Is any action class **never automatable** (e.g. deleting a data store, purging keys, shortening retention)? *Candidate answer: transactions and R3-Data are never L3 or higher; R3 never above L2.*
 - G1-05 What proves a *human decided* (strong authentication, step-up, device compliance)?
 - G1-06 May approvals be delegated? For how long? How is delegation recorded?
-- G1-07 What must a *veto window* require? *Candidate: **affirmative, authenticated enrolment** per owner × action class × scope × environment, proof that each notice was delivered, and a minimum window. Silence is never consent ([invariant 15](#4-candidate-safety-invariants-non-negotiables-to-ratify)).*
+- G1-07 What must a *veto window* require? *Candidate (now normative in [06 §3 item 6](06-closed-loop-actions-and-autonomy.md)): an **authenticated enrolment record** that matches the action on **every** field — owner or delegate, tenant, scope, environment, action class, reversibility class, expiry, envelope version — with proof that each notice was delivered, revocable at any moment. Silence is never consent ([invariant 15](#4-candidate-safety-invariants-non-negotiables-to-ratify)).*
 - G1-08 How do we detect and counter **approval fatigue** (click-through behaviour)?
 - G1-09 Is there a minimum *cooling-off* time between approval and execution?
 - G1-10 How is **shadow-mode** performance scored, and which thresholds promote L0 → L1 → L2 → L3?
 - G1-11 Who may use the kill switch, and what is the maximum time to effect?
-- G1-12 Who may be the **orphan custodian** for a scope, how is the role recorded, and what happens when a scope has none ([07 §7](07-ownership-and-organization.md))?
+- G1-12 Who may be the **orphan custodian** for a scope, **who appoints and reviews the custodian (never the custodian itself)**, which **second authority** co-approves a retirement, and what happens when a scope has none ([07 §7](07-ownership-and-organization.md))?
 - G1-13 What is the **RACI and liability model**: who accepts the workload trade-off, who owns the controls, who owns agent behaviour, who owns organisational accountability? (Audit attribution is not blame.)
 
 ### G2 — Identity, authority & permissions
@@ -80,7 +80,7 @@ Each domain lists the **questions we must answer** (IDs for tracking in the work
 - G3-08 How do we handle in-flight human edits and optimistic-concurrency failures?
 - G3-09 How are changes recorded in the customer's existing change process (standard-change catalogue, CAB)?
 - G3-10 **Precedence of stops:** confirm the machine-enforced order — legal hold and lock, then protected/critical scope, then freeze and incident, then policy — and that nothing outranks the first two.
-- G3-11 **Cost brake:** which resource classes may carry a service-owner-recorded safe-to-pause contract? Which independent signal may trigger it, at what rate limit, with what mandatory post-incident review?
+- G3-11 **Cost brake:** which resource classes may carry a service-owner-recorded safe-to-pause contract, **and who certifies a class as safe-to-pause (decision D18)**? Which independent signal — from a **separately administered source** — may trigger it, at what rate limit, with what mandatory post-incident review? Purchase-driven budget spikes are not anomalies.
 
 ### G4 — Data protection & privacy
 *Owner: privacy office + security*
@@ -93,7 +93,7 @@ Each domain lists the **questions we must answer** (IDs for tracking in the work
 - G4-07 How do we respect classification labels and sensitive workloads?
 - G4-08 **People-data**: DPIA for the Owner Graph; subject-access and erasure; works-council consultation (NL/DE); a plain-language **disclosure statement** of what is processed, why, for how long and who sees it (it replaces any blanket "nobody is watching you" claim)
 - G4-09 What may be shared in the open-source learning flywheel, if anything? (Default: nothing customer-derived.)
-- G4-10 **Immutability vs erasure:** the ledger is a minimal, signed, hash-chained event record; evidence, personal data and transcripts live separately with retention, legal-hold, access, redaction and cryptographic-deletion rules.
+- G4-10 **Immutability vs erasure:** the ledger is a minimal, signed, hash-chained event record; evidence, personal data and transcripts live separately with retention, legal-hold, access, redaction and cryptographic-deletion rules. Requirements: tenant-scoped keyed references (no bare hashes of personal data), a prohibited-fields list for the event schema, tombstone and correction events, and an erasure test that keeps the chain verifiable — a release blocker ([invariant 6](#4-candidate-safety-invariants-non-negotiables-to-ratify)).
 - G4-11 **R3-Data approvals:** who are the data owner and the security co-signer; what counts as a *complete mandated mirror*; which sources are protected and can never be filtered?
 
 ### G5 — AI safety & quality
@@ -148,7 +148,7 @@ Each domain lists the **questions we must answer** (IDs for tracking in the work
 - G9-01 **Threat model** (see §3) and who maintains it
 - G9-02 Network isolation, secrets management, tenant isolation
 - G9-03 **Supply chain:** SBOM, dependency pinning, signing, provenance, OpenSSF-style checks
-- G9-04 **Playbook trust model:** **declarative, read-only playbooks only** (data, never code); declared capabilities (what a playbook may read or propose), signing, mandatory review, sandboxed evaluation
+- G9-04 **Playbook trust model:** **declarative, read-only playbooks only** (data, never code); declared capabilities (what a playbook may read or propose), signing, mandatory review, sandboxed evaluation. **The trust root behind every governed release** (playbooks, prompts, models, evaluators, thresholds) — key custody, approval quorum, separation from Warden administration, signed provenance, emergency revocation and a pinned rollback release — is decision D16 and a prerequisite for shipping any of them
 - G9-05 AI-specific threats (OWASP LLM Top-10 style, MITRE ATLAS style) coverage
 - G9-06 Detection and response *for the platform's own agents* (assume an agent identity can be compromised)
 - G9-07 Vulnerability disclosure and patch SLAs
@@ -191,7 +191,7 @@ Each domain lists the **questions we must answer** (IDs for tracking in the work
 
 ---
 
-## 3. Threat seeds — "what could go wrong" (first 38; T31–T38 added after review round 1)
+## 3. Threat seeds — "what could go wrong" (first 41; T31–T38 added after review round 1, T39–T41 after round 2)
 
 | # | Threat | Example | Control family |
 |---|---|---|---|
@@ -232,30 +232,33 @@ Each domain lists the **questions we must answer** (IDs for tracking in the work
 | T35 | **Poisoned feedback** | Coordinated replies or ratings steer thresholds, or teach the crew that a class is "always fine" | Feedback provenance and per-person caps; thresholds change only through governed releases; fairness checks (T30) |
 | T36 | **Evaluation gaming** | Prompts or agents tuned to the test set; manipulated hold-outs; a sandbagging Challenger; gamed Challenger/Auditor metrics | Held-out, rotating sets owned by the Warden; seeded canary cases; correlated-failure drill ([04 §4.6](04-agent-crew.md#46-independence-profile-challenger-and-auditor)) |
 | T37 | **Approval–artefact swap** | The approved pull request is rebased or edited, or the pipeline deploys something other than what was approved | Approval bound to commit SHA, rendered plan digest, pipeline identity and target-state hash; any change invalidates it |
-| T38 | **Silence and signal exploitation** | An attacker (or an accident) relies on an unreachable owner so a veto window fires; or a forged anomaly triggers the cost brake | Affirmative enrolment with proof of delivery; orphans go to a custodian, not a countdown; the cost brake needs an independent signal, a safe-to-pause contract and a live incident check |
+| T38 | **Silence and signal exploitation** | An attacker (or an accident) relies on an unreachable owner so a veto window fires; or a forged anomaly triggers the cost brake | Affirmative, authenticated enrolment with proof of delivery; orphans go to a custodian, not a countdown; the cost brake needs an independent signal from a separately administered source, a safe-to-pause contract bound to asset IDs and a live incident check, and any integrity doubt pages a human |
+| T39 | **Classification laundering** | A playbook labels a collection-reducing action R1, or a transaction R2, so it can run at L3 without a data owner or a signer | The class is **derived from typed effects** by the Gatekeeper, never declared; a lower declared class is rejected; the same rules run as a lint over the catalog and every playbook ([06 §2](06-closed-loop-actions-and-autonomy.md)) |
+| T40 | **Instrumentation creep** | "Observing" or "start watching" turns into indefinite, unreviewed collection of data — cost, and sometimes personal data | Instrumentation is an action with its own approval, cost cap, end date, retention and deletion rule and notification; an Observing case expires or is re-authorised ([06 §3 item 13](06-closed-loop-actions-and-autonomy.md)) |
+| T41 | **Custodian overreach** | The orphan custodian — or whoever can appoint one — retires a resource other teams use, or installs a friendly custodian | Appointment separate from action and reviewed quarterly; orphanhood corroborated by independent signals; retirement needs a second authority, a backup and the affected-party rule ([07 §7](07-ownership-and-organization.md)) |
 
 ---
 
 ## 4. Candidate safety invariants (non-negotiables to ratify)
 
-> **v2 note:** after review round 1, invariants 1–4, 6 and 12 were tightened and 14–16 added (marked **(v2)**). Numbers 1–13 are unchanged so existing references stay valid.
+> **Version notes.** After review round 1, invariants 1–4, 6 and 12 were tightened and 14–16 added. After round 2, invariants 4, 5, 6, 12, 15 and 16 were tightened again (marked **(v3)**). Numbers 1–16 are stable so existing references stay valid.
 
-1. **(v2)** **No irreversible (R3) or collection-reducing (R3-Data) action without two named human approvals and an explicit statement of the residual loss.** Where a rollback exists it is proven first; where none exists (lost telemetry, a commitment), *none is claimed*.
+1. **(v2)** **No irreversible (R3) or information-reducing (R3-Data) action without the approvers its class requires and an explicit statement of the residual loss.** Where a rollback exists it is proven first; where none exists (lost telemetry, a commitment), *none is claimed*.
 2. **(v2)** **Locks and legal holds are never bypassable by the cost system** — no exception, no emergency. Protected or critical scopes are touched only by a distinct, pre-authorised action class. The order of stops is machine-enforced.
-3. **(v2)** **The approver must hold authority over the target** — checked at approval *and* at execution — and **the approval is bound to the exact artefact that runs** (tenant and resource IDs, source commit SHA, rendered plan digest, pipeline identity, target-state hash).
-4. **(v2)** **Agents cannot modify their own guardrails, autonomy levels, identities or permissions — or any behaviour-affecting artefact** (thresholds, prompts, models, evaluators, playbooks, routing rules, control-plane tags). These ship only as **governed releases**: versioned, independently reviewed, evaluated, approved, reversible — never live-tuned.
-5. **The language model never calls unconstrained tools**: only typed, permissioned, parameter-validated operations.
-6. **(v2)** **Every decision and action is recorded in an immutable, minimal, signed, hash-chained event ledger** (agent version, evidence lineage, approver or policy). **Evidence, personal data and transcripts are stored separately** and referenced by hash, so the record is tamper-evident *and* erasure and retention duties remain possible.
+3. **(v2)** **The approver must hold authority over the target** — checked at approval *and* at execution — and **the approval is bound to the exact artefact that runs** (tenant and resource IDs, source commit SHA, rendered plan digest, pipeline identity, target-state hash, and the version of any control-plane tag claim it relied on).
+4. **(v3)** **Agents cannot modify their own guardrails, autonomy levels, identities or permissions — or any behaviour-affecting artefact** (thresholds, prompts, models, evaluators, playbooks, routing rules, control-plane tags). These ship only as **governed releases**: versioned, independently reviewed, evaluated, approved, reversible — never live-tuned. **The trust root of the release mechanism (decision D16) must be decided before any behaviour-affecting artefact ships.**
+5. **(v3)** **The language model never calls unconstrained tools**: only typed, permissioned, parameter-validated operations — and an operation's reversibility class is **derived by the Gatekeeper from its typed effects**, never declared by a playbook or an agent.
+6. **(v3)** **Every decision and action is recorded in an immutable, minimal, signed, hash-chained event ledger** (agent version, evidence lineage, approver or policy). **Evidence, personal data and transcripts are stored separately** and referenced by **tenant-scoped keyed references** (never a bare hash of personal data, which can be re-derived by guessing), so the record is tamper-evident *and* erasure and retention duties remain possible. The event schema has a **prohibited-fields list**, corrections and deletions are **tombstone events**, and an **erasure test that keeps the chain verifiable** is a **release blocker**.
 7. **Every number shown to a human derives from a deterministic computation with lineage.**
 8. **Estate-derived text is untrusted data**, never instructions.
 9. **A kill switch takes effect within a defined, tested time.**
 10. **Customer data stays within the agreed boundary**; no training on it.
 11. **AI identity is disclosed** in every interaction; no impersonation of humans.
-12. **(v2)** **No gate has an "urgent" bypass.** The only emergency mechanism is the narrow *cost brake*: a pre-certified action class with a service-owner-recorded safe-to-pause contract, an independent trigger signal, a live incident/SLO check, an enumerated, rate-limited, reversible action and a mandatory post-incident review. **A cost anomaly alone never pauses anything.**
+12. **(v3)** **No gate has an "urgent" bypass.** The only emergency mechanism is the narrow *cost brake*: a pre-certified action class with a service-owner-recorded safe-to-pause contract bound to asset IDs, an independent trigger signal from a separately administered source, a live incident/SLO check, an enumerated, rate-limited, reversible action and a mandatory post-incident review. **A cost anomaly alone never pauses anything, and any doubt about the integrity of a signal, contract or check resolves to paging a human.**
 13. **When in doubt, degrade to advise:** failures reduce autonomy, never raise it.
 14. **(v2, new)** **Tenant identity on every artefact, fail closed.** Every case, approval, tool call, queue item, memory record, prompt, message and audit event carries an immutable tenant, cloud and billing-scope identity that is verified at each boundary; a missing or mismatched identity stops the action.
-15. **(v2, new)** **Silence is never consent.** A veto window runs only for owners who affirmatively enrolled that action class and scope, with proof the notice was delivered; unowned resources have a named custodian, not a countdown.
-16. **(v2, new)** **Commitment purchases, exchanges, renewals and cancellations are never L3–L5.** Each transaction is individually signed by a legally authorised human buyer against a finite manifest; the preparer of the manifest cannot be its signer.
+15. **(v3)** **Silence is never consent.** A veto window runs only against an **authenticated enrolment record** that matches the action on every field (owner, tenant, scope, environment, action class, expiry), with proof the notice was delivered; for anything shared, every consent-required party acknowledges by name or a named risk acceptance is recorded; unowned resources have a named custodian, not a countdown.
+16. **(v3)** **Transactions are never L3–L5.** A *transaction* creates, changes the terms of, renews, exchanges or cancels a financial commitment or paid plan (defined in [06 §2](06-closed-loop-actions-and-autonomy.md)). Each is individually signed by a legally authorised human buyer against a finite manifest with the canonical fields in [06 §6](06-closed-loop-actions-and-autonomy.md); the preparer of the manifest cannot be its signer.
 
 ---
 

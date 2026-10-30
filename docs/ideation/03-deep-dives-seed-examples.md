@@ -1,6 +1,6 @@
 # Deep Dives — the seed examples, end to end
 
-> **Status:** Ideation **v2** (corrected after rubber-duck round 1 — notably the P2S capacity model and the audit-coverage claims; v1 is archived [here](../_archive/round-1-v1/ideation/03-deep-dives-seed-examples.md)) · **Date:** 2026-10-30 · Part of the [north-star vision](01-north-star-vision.md)
+> **Status:** Ideation **v3** (revised after rubber-duck round 2 — notably consent for shared resources, the instrumentation rule and the "plan for downtime" wording; v2 is archived [here](../_archive/round-2-v2/ideation/03-deep-dives-seed-examples.md), v1 [here](../_archive/round-1-v1/ideation/03-deep-dives-seed-examples.md)) · **Date:** 2026-10-30 · Part of the [north-star vision](01-north-star-vision.md)
 > **Grounding:** product mechanics and list prices come from [research/04](../research/04-seed-example-facts.md) (retrieved 2026-10-30; list prices from the public Azure Retail Prices API, West Europe, EUR). **Scenario data (workspace names, volumes, people) is invented.** Every € figure in a real message must come from the customer's own price data at execution time.
 > **Purpose:** show what "usage over billing, owners first, human decides, proof afterwards" looks like on the two examples in the brief — plus two more that stress other parts of the loop.
 
@@ -13,7 +13,7 @@
 | The waste | Data paid for, retained, never needed | Capacity paid for by the hour, never used |
 | Why it's invisible | Billing shows GB; nobody sees *use* | The gateway lives inside the virtual hub, set once and forgotten |
 | The "usage truth" | Query history, alert/rule references, templates | Connection count and bandwidth metrics |
-| Reversibility | **R3** for dropped data (hence a safety net) | **R1** (scale back up), with brief reconnects |
+| Reversibility | **R3-Data** for dropped data (hence a safety net) | **R1** (scale back up) — but Microsoft says to plan for downtime |
 | Owner problem | Workspace owner ≠ the teams producing the logs | The network team ≠ the business units using the VPN |
 | Main risk | Dropping something someone needs later (security, forensics) | Disconnecting users during a change |
 | Teaches | **Evidence horizon**, replay, protected sources, shared costs | **Deterministic sizing**, windows, consumers, scale-by-calendar |
@@ -36,7 +36,7 @@ A platform team runs a central Log Analytics workspace. Over three years every t
 | Who queries what? | **Query auditing** (`LAQueryLogs`) — **off by default**; only records from when you switch it on | **Evidence horizon starts at "enable"** |
 | Do alerts/rules depend on a table? | Rule definitions contain the KQL | **No built-in cross-reference** between tables and rules/workbooks |
 | Does anything flag a table as never queried? | Advisor's four log-cost recommendations and Azure Copilot do **not**. **Sentinel SOC optimization does** — for *Sentinel workspaces*, billable tables ingested in the last **30 days**, security-scoped (and unused columns in preview) | **A gap outside Sentinel**, for longer horizons and for template-level noise |
-| Is "zero queries" safe to act on? | Query audit does **not log scheduled alert/analytic rule executions**; coverage of interactive Sentinel/Defender surfaces is **documented inconsistently** between two Microsoft pages | **Zero logged queries ≠ unused** — and the blind-spot list must be **measured per workspace** (canary test), not assumed |
+| Is "zero queries" safe to act on? | Query audit does **not log scheduled alert/analytic rule executions**; coverage of interactive Sentinel/Defender surfaces is **unreconciled between two Microsoft pages** | **Zero logged queries ≠ unused** — and the blind-spot list must be **measured per workspace** (canary test), not assumed |
 | What can be filtered, and how? | Ingestion-time transformations (row filters, column drops); table plans (Analytics/Basic/Auxiliary); source-side settings | Not all tables support them (e.g. P2S gateway diagnostics: no Basic plan, no transformation) |
 | Is changing the plan safe? | Plan switches are limited to **once per table per week**; **simple log-search alerts work on Basic**, but **alerts stop working on Auxiliary** | **Dependency check before any plan change** |
 
@@ -74,12 +74,12 @@ Outcome classes: **Keep · Keep-with-sample · Cheapen (cheaper plan) · Drop ·
 | 3 | **Code pull request:** change a chatty log statement or level | **R3-Data** (reversible by revert; evidence not logged meanwhile is gone) | See [TELE-26](02-opportunity-catalog.md) and [M-15](09-outer-rims-moonshots.md) |
 | 4 | **Cheaper table plan** for high-volume, low-query tables | R1 (weekly limit; check dependencies) | Verify alerts/Power BI/dashboards first |
 | 5 | **Ingestion-time filter** (rows/columns) | **R3-Data** | Only with the safety plan below; never L3/L4 |
-| 6 | **Retention / archive changes** | R3 if shortened | Compliance check first |
+| 6 | **Retention / archive changes** | **R3-Data** (shorter retention of logs, whether it affects future or existing data) | Compliance check first |
 | 7 | **Commitment tier / dedicated cluster** | R1 | Do *after* shrinking volume ("fix, filter, then price") |
 
 ### 1.5 The safety plan for the irreversible option
 
-1. **Check the evidence horizon and calibrate the signal.** Is query auditing on, and since when? Then **run a canary query through each consumer surface that matters** (portal, workbook, dashboard, Sentinel/Defender hunting, API) and confirm it appears in the audit log — Microsoft's documentation of what is logged is inconsistent, so we measure. **Unknown coverage blocks any destructive recommendation.** If auditing is off, the first case is *"start watching"* — an **R1** action (it *adds* collection; the added cost is an attribute, not a class) that opens an **Observing** state (see §1.8) and delivers value later; the clock starts the day it is enabled, which is why this should happen *early* on pilot workspaces.
+1. **Check the evidence horizon and calibrate the signal.** Is query auditing on, and since when? Then **run a canary query through each consumer surface that matters** (portal, workbook, dashboard, Sentinel/Defender hunting, API) and confirm it appears in the audit log — Microsoft's documentation of what is logged is unreconciled for the hunting surfaces, so we measure. **Unknown coverage blocks any destructive recommendation.** If auditing is off, the first case is *"start watching"* — an **R1** action (it *adds* collection; the added cost is an attribute, not a class) that opens an **Observing** state (see §1.8) and delivers value later; the clock starts the day it is enabled, which is why this should happen *early* on pilot workspaces. **But switching on collection to gather evidence is itself an action**: it needs its own approval (data owner and security, with a cost cap — the audit records are billed as ingested data), a scope, an end date, a retention and deletion rule, and a notification ([06 §3 item 13](06-closed-loop-actions-and-autonomy.md)); it is never a silent side effect of "observing".
 2. **Enumerate every consumer** we *can* see (queries, scheduled/alert rules, Sentinel rules, workbooks, dashboards, exports, API consumers) and record the **blind-spot list** we cannot see. Unknown consumers require the owner's confirmation.
 3. **Measure savings from data already ingested** — bytes by pattern — so no experiment is needed to size the prize.
 4. **Replay test.** Re-run the audited queries and alert logic over the history **with the candidate lines removed**; results must be identical (or the differences explained and accepted).
@@ -114,7 +114,7 @@ The **Diplomat** handles it as a *multi-party case*: the producer decides about 
 
 ### 1.8 The Case gains an **Observing** state
 
-Because the evidence horizon is itself a feature of the case, the lifecycle gets a loop: `Investigating → Observing (need longer evidence) → Investigating`. A case can be *worth doing later*, and the Herald can tell the owner exactly that: *"I need 30 more days of query history to be sure."*
+Because the evidence horizon is itself a feature of the case, the lifecycle gets a loop: `Investigating → Observing (need longer evidence) → Investigating`. A case can be *worth doing later*, and the Herald can tell the owner exactly that: *"I need 30 more days of query history to be sure."* **Observing has an end date**: when it arrives the case is re-authorised or closed, and any instrumentation switched on for it follows its own end-date and deletion rule ([06 §3 item 13](06-closed-loop-actions-and-autonomy.md)).
 
 ### 1.9 Illustrative Teams card
 
@@ -179,7 +179,7 @@ During a surge in remote work, a network team raised the user-VPN gateway in a v
 | Capacity | **1–200 scale units**; throughput is **linear at 0.5 Gbps per unit**, but **connection capacity is banded**: units 1–3 → 500 · 4–6 → 1,000 · 7–10 → 5,000 · 11–20 → 10,000 · then +10,000 per extra pair of instances (40 → 20,000 · 100 → 50,000 · 200 → 100,000). Instances: 2 up to 20 units, then +2 per extra 20. Plan to the table value, **not** to twice it (an instance may be serviced) |
 | Billing | Per **scale-unit hour** ("VPN P2S Scale Unit") plus a per-connection meter ("VPN P2S Connection Unit"); West Europe list ≈ **€0.3177 per unit-hour ≈ €232 per unit-month** |
 | "Used" signals | `P2SConnectionCount`, `P2SBandwidth` (and `UserVpnRouteCount`) |
-| Changing it | Portal / CLI / PowerShell / REST — **may cause TCP reconnects; Microsoft says to plan for downtime** |
+| Changing it | Portal / CLI / PowerShell / REST — Microsoft's P2S FAQ says to **plan for downtime** when scaling or changing the P2S configuration. (The "TCP reconnects … minor disruptions" wording is in the *ExpressRoute*-gateway entry, not the P2S one.) |
 | Guidance | Alert when bandwidth nears aggregate throughput, and when connections near the band limit |
 
 ### 2.3 The right-sizing model (deterministic lookup — *corrected after review*)
@@ -201,7 +201,7 @@ The capacity table is a **versioned lookup of Microsoft's published table** (re-
 
 | # | Option | Reversibility | Note |
 |---|---|---|---|
-| 1 | Scale down to the recommended size | R1 (configuration), **user-visible interruption possible** | Owner's window; human approval; reconnects likely |
+| 1 | Scale down to the recommended size | R1 (configuration), **user-visible interruption possible** | Owner's window; human approval; consent from every affected business unit; plan for downtime |
 | 2 | **Scale by calendar:** low baseline, scheduled scale-up for known events | R1 | Needs the event calendar ([TIME-06](02-opportunity-catalog.md)) |
 | 3 | Consolidate gateways/hubs with the same user populations | R3 | Architecture change |
 | 4 | Remove gateways with no connected users for N days | R2 | Scream-test ladder |
@@ -213,45 +213,48 @@ The capacity table is a **versioned lookup of Microsoft's published table** (re-
 |---|---|
 | Accountable owner / technical steward | Network Platform team |
 | Budget holder | Per business unit if chargeback exists (**allocation by connection-hours**) |
-| **Consumers** | IT of the business units whose users connect — the Diplomat informs them, in case a population is about to grow |
+| **Consumers** | IT of the business units whose users connect — **consent-required**: their users are interrupted. The Diplomat obtains each unit's named acknowledgement, or the Network Platform owner records a named risk acceptance on its behalf ([06 §3 item 12](06-closed-loop-actions-and-autonomy.md)); *notice is not consent* |
 
 ### 2.6 Illustrative Teams card
 
 ```
-+------------------------------------------------------------------+
++-------------------------------------------------------------------+
 | Cost agent (AI)  .  Case C-20611  .  Decision needed (shared)     |
 | Your user-VPN gateway is sized for ten times what it has used     |
-+------------------------------------------------------------------+
++-------------------------------------------------------------------+
 | P2S gateway in hub vhub-weu-prod . owner: Network Platform        |
 |                                                                   |
 | SAVE ~ EUR 20,400/month (list price)   Confidence: high           |
-| Reversible - scale back up any time (brief reconnects possible)   |
+| Reversible - can be scaled back up, but plan for downtime         |
 |                                                                   |
 | NOW    100 scale units = up to 50,000 users / 50 Gbps             |
 |        (~ EUR 23,200/month)                                       |
 | USED   90-day peak: 1,240 connected users, 3.1 Gbps.              |
 |        Typical working-day peak: 380 users.                       |
-| NEED   7 units cover the peak (1,240 users fall in the 5,000     |
-|        connection band; 3.1 Gbps needs 3.5 Gbps). 12 units =     |
-|        10,000 connections and 6 Gbps (~2x the peak bandwidth).   |
+| NEED   7 units cover the peak (1,240 users fall in the 5,000      |
+|        connection band; 3.1 Gbps needs 3.5 Gbps). 12 units =      |
+|        10,000 connections and 6 Gbps (~2x the peak bandwidth).    |
 |                                                                   |
 | TRADE-OFF  Cost down . Reliability: headroom kept .               |
-|            User impact: possible reconnects during the change     |
+|            User impact: plan for downtime (Microsoft FAQ)         |
 | CHALLENGER Passed with conditions: the 12 Dec all-hands (forecast |
 |            2,100 users ~ 5.3 Gbps) would leave ~14% headroom ->   |
 |            scheduled scale-up to 16 units on event days proposed  |
-| AFFECTED   Network Platform (owner); IT of 3 business units       |
-|            (informed by me; no objection so far)                  |
+| AFFECTED   Network Platform (owner approves). Consent needed      |
+|            from the IT of 3 business units: BU-A confirmed,       |
+|            BU-B confirmed, BU-C no answer yet (no answer is       |
+|            not a yes - Approve stays locked until all 3 say so)   |
 |                                                                   |
-| [Approve for Thu 22:00] [Preview plan] [Another time]             |
-| [Not now v] [Not mine] [Why?] [Talk to a human]                   |
+| [Approve for Thu 22:00 - locked] [Ask BU-C again] [Preview plan]  |
+| [Record my risk acceptance for BU-C] [Another time] [Not now v]   |
+| [Not mine] [Why?] [Talk to a human]                               |
 | Cost of waiting ~ EUR 4,700/wk . AI-composed . figures computed   |
-+------------------------------------------------------------------+
++-------------------------------------------------------------------+
 ```
 
 ### 2.7 Execution, safety and verification
 
-1. **Window:** choose a low-connection period from the metric history (e.g. a night hour with ~20 connected users); the Diplomat announces to consumers. **Class:** a configuration change that can be rolled back (R1) but that may **interrupt connected users** — approved by the Network Platform owner, never above Assist level until the disruption model and the customer's change process are proven.
+1. **Window:** choose a low-connection period from the metric history (e.g. a night hour with ~20 connected users). **Consent first:** every consent-required business unit has acknowledged by name, or the Network Platform owner has recorded a named risk acceptance for it — until then the approval action stays locked. **Class:** a configuration change that can be rolled back (R1) but that may **interrupt connected users** — approved by the Network Platform owner, never above Assist level until the disruption model and the customer's change process are proven.
 2. **Preconditions:** no freeze, no lock, no active incident, current units still equal analysed units (stale-approval check).
 3. **Execute** via a typed operation; **watch** `P2SConnectionCount` recovery and bandwidth; a **regret watch** for support tickets and reconnect storms.
 4. **Rollback bundle:** scale back to the previous units (the plan records the value).
@@ -301,7 +304,7 @@ Note the **R3 flag** on the IP, the **fix-at-source** principle, and the **Owner
 | The Economist's reservation proposal uses the **current** baseline | Buying now would **over-commit** to capacity about to disappear (a classic regret) |
 | Nine of the 14 will move to a new generation in December | Instance-flexibility and exchange rules may or may not cover the move — *check before buying* |
 
-**The Conductor sequences:** (1) right-size the ten (owner approvals); (2) apply Hybrid Benefit where eligible (it changes the effective baseline); (3) re-compute the **steady-state baseline**; (4) propose a **staged** commitment covering only the remainder; (5) back-test against twelve months of usage; (6) two-key approval (workload owner + Finance).
+**The Conductor sequences:** (1) right-size the ten (owner approvals); (2) apply Hybrid Benefit where eligible (it changes the effective baseline); (3) re-compute the **steady-state baseline**; (4) propose a **staged** commitment covering only the remainder; (5) back-test against twelve months of usage; (6) the transaction matrix in [06 §6](06-closed-loop-actions-and-autonomy.md): workload owner + FinOps lead (+ Finance above the threshold), then the authorised buyer signs the manifest.
 
 The lesson: **cases are not independent.** The Conductor owns a *plan across cases* so savings don't cancel and commitments don't outlive the thing they cover.
 
