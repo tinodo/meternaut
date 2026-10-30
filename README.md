@@ -1,7 +1,8 @@
 # Azure Cost in Action
 
 > **AI-infused, agent-driven, human-in-the-loop Azure cost optimisation — from insight to outcome.**
-> *Working title.* Status: **ideation v3.1** — both rubber-duck rounds applied ([round 1](docs/reviews/round-1/disposition.md), [round 2](docs/reviews/round-2/disposition.md)) plus two post-v3 audits ([§12](docs/reviews/round-2/disposition.md#12-post-v3-audit-v31)) · private repository · not yet licensed (decisions pending: name D1, licence D2, employer approval D13 in [plan/01](docs/plan/01-assumptions-risks-decisions.md)). What changed: [CHANGELOG](CHANGELOG.md).
+> *Working title.* Status: **ideation v3.2** — both rubber-duck rounds applied ([round 1](docs/reviews/round-1/disposition.md), [round 2](docs/reviews/round-2/disposition.md)) plus two post-v3 audits ([§12](docs/reviews/round-2/disposition.md#12-post-v3-audit-v31)) · private repository · **MIT-licensed** ([LICENSE](LICENSE), decision D2). What changed: [CHANGELOG](CHANGELOG.md).
+> **Stance:** an open-source demonstrator of what AI and Foundry agents can do inside governed workflows. Ideation only: every open decision carries an assumed default ([plan/01 §3](docs/plan/01-assumptions-risks-decisions.md#3-decisions-decided-or-assumed)) and nothing waits for an answer.
 > **Project home:** GitHub `tinodo/meternaut` (private) · local working copy `<repo>` *(a private-repository convenience — scrub local paths before any publication, decision D6)*.
 
 **New here? Read the [one-page overview](docs/ideation/00-one-page-overview.md) first** — the loop, the five Release-1 plays, who may decide what, and what "it worked" means, on one page.
@@ -63,7 +64,7 @@ Runs on **Microsoft platforms** (Azure / Power Platform / M365) · **Microsoft t
 | Document | What it is |
 |---|---|
 | [Follow-up plan](docs/plan/00-follow-up-plan.md) | Phases 0.5–8, risk-based gates, Release 1, where every idea stands |
-| [Assumptions, risks, decisions](docs/plan/01-assumptions-risks-decisions.md) | 26 assumptions, 27 risks, 18 decisions for the operator, kill criteria K1–K7, the first-party overlap map and the build/ride/contribute call per play |
+| [Assumptions, risks, decisions](docs/plan/01-assumptions-risks-decisions.md) | 26 assumptions, 27 risks, 18 decisions (D2 decided: MIT; the rest carry assumed defaults on a status board), kill criteria K1–K7, the first-party overlap map and the build/ride/contribute call per play |
 | [Guardrails workplan](docs/plan/02-guardrails-workplan.md) | How the guardrail territory becomes enforceable, tested rules — control matrix and write-safety harness |
 | [Capability radar & spikes](docs/plan/03-capability-radar.md) | Non-binding: what to evaluate and the 19 active feasibility spikes, ordered in three waves with a register for owners, results and ADRs |
 
@@ -94,3 +95,7 @@ Runs on **Microsoft platforms** (Azure / Power Platform / M365) · **Microsoft t
 ## Scope guard
 
 This repository is currently **ideation only**. Technology, feasibility and the *content* of guardrails are deliberately deferred to the [plan](docs/plan/00-follow-up-plan.md). Numbers in examples are illustrative unless a source is cited. Nothing here has touched a customer environment.
+
+## Licence
+
+[MIT](LICENSE) — code, documents and playbook specs alike.

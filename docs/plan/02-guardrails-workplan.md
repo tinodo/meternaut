@@ -17,7 +17,7 @@
 4. **Threat model v0** covering at least the 41 seeded threats (T1–T41), each mapped to a control or an accepted risk.
 5. **Data-handling statement:** what data may be read, what may reach a model, retention, residency, redaction, people-data rules, and the **disclosure statement** for people.
 6. **Responsible-AI impact assessment v0** and **DPIA screening** completed.
-7. **OSS governance note:** licence decision input, contribution model, trademark/naming findings, internal release process check.
+7. **OSS governance note:** contribution model, trademark/naming findings, internal release process check — *the licence is decided: MIT (D2).*
 8. **Guardrail test plan:** red-team scenarios, chaos drills, evaluation gates, privacy and authority tests — each owned.
 9. Open decisions recorded with owners and dates; **stop criteria K1–K7** ratified.
 10. **Control matrix** complete for every invariant ([§4.1](#41-the-control-matrix--the-traceability-gate)).

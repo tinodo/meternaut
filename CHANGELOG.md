@@ -2,6 +2,13 @@
 
 All notable changes to the ideation package. Newest first. Versions are git tags; earlier versions are archived under [`docs/_archive/`](docs/_archive/) and are never edited.
 
+## v3.2 — 2026-10-31 — operator decision: MIT (tag `ideation-v3.2`)
+
+- **D2 decided: MIT**, for code, documents and playbook specs. [`LICENSE`](LICENSE) added (copyright holder: the package owner named throughout, Tino Donderwinkel). MIT is also the FinOps toolkit's licence, so detector specs and Waste Lab scenarios can be contributed upstream without licence friction.
+- **Stance recorded:** an open-source demonstrator of what AI and Foundry agents can do inside governed workflows. The remaining open items — name (D1), employer/OSPO/IP (D13), and the design-level D3–D12 and D14–D18 — are **not ideation questions**: [plan/01 §3](docs/plan/01-assumptions-risks-decisions.md#3-decisions-decided-or-assumed) now carries a status board with each recommended option as an *assumed default* and a *revisit trigger*. Nothing was dropped and nothing blocks; the safety rules are unchanged (D14 stays "yes": purchases are never L3–L5).
+- Softened accordingly: the "rename within about two weeks" and "start the approval now" advice (the repository stays private under its working title until publication, D6); a lab-only demonstration on the Waste Lab needs no outside signer for the Phase-0.5 exception (D17).
+- No change to the catalog, the safety model or the counts (26 assumptions, 27 risks, 18 decisions).
+
 ## v3.1 — 2026-10-30 — after the post-v3 audits (tag `ideation-v3.1`)
 
 Two further read-only audits of the committed v3 — *is the round-2 record true?* and a *contradiction hunt* over the live package — found **17 defects, all real**. The documents keep their v3 header; this patch is recorded here. Row by row in [`docs/reviews/round-2/disposition.md` §12](docs/reviews/round-2/disposition.md#12-post-v3-audit-v31); raw reports in [04](docs/reviews/round-2/04-audit-disposition-truth.md) and [05](docs/reviews/round-2/05-audit-contradiction-hunt.md).

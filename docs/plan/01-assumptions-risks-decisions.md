@@ -1,7 +1,8 @@
-# Assumptions, Risks & Decisions Needed
+# Assumptions, Risks & Decisions
 
 > **Status:** Ideation **v3** (revised after rubber-duck round 2; v2 archived [here](../_archive/round-2-v2/plan/01-assumptions-risks-decisions.md), v1 [here](../_archive/round-1-v1/plan/01-assumptions-risks-decisions.md)) · **Date:** 2026-10-30 · Part of the [follow-up plan](00-follow-up-plan.md)
-> Everything the vision *leans on* without proof is listed here, with a cheap test and a home in the plan. Operator-only decisions (one-way doors) are marked 🚪.
+> Everything the vision *leans on* without proof is listed here, with a cheap test and a home in the plan. 🚪 marks a **one-way door** — revisit it before the door closes (publication, signing artefacts, building for a customer); ✅ marks a **decision taken**.
+> **Operator stance (2026-10-31):** this is ideation for an **MIT-licensed demonstrator** of what AI and Foundry agents can do inside governed workflows. **D2 is decided: MIT.** Nothing else waits for an answer — every remaining decision in §3 carries its recommended option as an *assumed default* and a *revisit trigger*, so nothing is dropped and nothing blocks.
 
 ---
 
@@ -24,7 +25,7 @@
 | A13 | A community will contribute playbooks — bet B7 | Slower library growth; maintainers write most playbooks | Publish five playbooks early | 8 |
 | A14 | Microsoft first-party capabilities remain **complementary for cost optimisation across consumption** — they already close parts of a loop for *their* domains (Defender governance rules, SRE Agent Review mode, Sentinel SOC optimization, FinOps toolkit v15) | **K4**: the project becomes contribute-only | Quarterly re-check of [research/06](../research/06-first-party-teardown.md); landscape in [research/01](../research/01-azure-native-landscape.md) | 0.5, continuous |
 | A15 | GDPR, EU AI Act and works-council implications of ownership inference are **manageable** | Owner Graph restricted to declared signals and conversation | Legal/DPIA screening | 1 |
-| A16 | Publishing as open source by a Microsoft employee is **approvable** within internal rules | Hosting/ownership changes; **K6** → internal accelerator | Check the internal release process **now** (long lead; decision D13) | 0.5 |
+| A16 | Publishing as open source by a Microsoft employee is **approvable** within internal rules | Hosting/ownership changes; **K6** → internal accelerator | Check the internal release process before the repository goes public (D6, D13); until then nothing is published | before D6 |
 | A17 | Directory reads needed (manager chain, delegates, presence, out-of-office) are available under **least privilege** | Weaker escalation ladders | Spike | 4 |
 | A18 | Enterprises accept agent-executed changes inside existing **change management** | Provide standard-change mapping and CAB integrations earlier | Interviews | 2 |
 | A19 | Cost/Advisor data is **fresh and complete** enough for the candidate playbooks | Slower detection; more reliance on resource telemetry | Spike | 4 |
@@ -51,7 +52,7 @@
 | R7 | Platform cost exceeds savings | M | H | Economic triage; Warden; stop rule | FinOps lead |
 | R8 | Model/provider change shifts behaviour | M | M | Version pinning; regression gates | AI lead |
 | R9 | Open-source governance burden | M | M | Minimal governance model; clear maintainers | Maintainers |
-| R10 | Naming/trademark conflict | M | M | Resolve in Phase 1 (decision D1) | Operator |
+| R10 | Naming/trademark conflict | M | M | Resolve before publication (decision D1); the working title is kept while private | Operator |
 | R11 | Over-engineering before validation | **H** | M | Wizard-of-Oz first; thin slices | Product |
 | R12 | Customers refuse data/permission access | M | H | Assess/Advise modes; read-only first | Sales/CSA |
 | R13 | No ground truth for evaluation | M | H | Waste Lab; Time Machine replays | AI lead |
@@ -65,7 +66,7 @@
 | R21 | Evidence-integrity, insider/Buyer-collusion, approval-abuse, poisoned-feedback and evaluation-gaming attacks (T31–T38) | M | H | Control matrix; independence profile and correlated-failure drill; governed releases; preparer ≠ signer | Security |
 | R22 | **Silence misread as consent** (veto windows, orphans) | L | **VH** | Invariant 15; affirmative enrolment with proof of delivery; an orphan custodian, not a countdown | Product + Security |
 | R23 | Model retirement and evaluation upkeep with a single maintainer | **H** | M | Model-agnostic skills and MCP; budgeted re-evaluations (Learn states at least 60 days' notice before retirement of a GA model) | AI lead |
-| R24 | Employer, IP or open-source approval is not obtained | M | H | Decision **D13** in Phase 0.5; **K6** falls back to an internal accelerator | Operator |
+| R24 | Employer, IP or open-source approval is not obtained | M | H | Decision **D13** (assumed handled by the operator; revisit before publication); **K6** falls back to an internal accelerator | Operator |
 | R25 | A mis-sized P2S gateway cuts users off (capacity is banded; Microsoft says to plan for downtime when scaling) | L | H | Banded lookup that satisfies connections *and* bandwidth plus headroom; consent from every affected business unit; human-approved window; rollback; never labelled "low-risk automation" | Product |
 | R26 | **Classification laundering, instrumentation creep and custodian overreach** (T39–T41) | M | H | Class derived from typed effects and linted; instrumentation is an action with an end date and cost cap; custodian appointment separate from action, retirement needs a second authority | Security |
 | R27 | Third-party products add owner-approved Azure execution (Datadog already offers in-channel approval for two Azure actions) or autonomous commitment buying | M | M | Logged at the quarterly re-check; differentiate on directory-resolved owners, replay-based safety, counterfactual verification — all *not found* in [research/02](../research/02-third-party-and-oss-landscape.md); K4 is first-party only because we cannot contribute to a proprietary product | Product |
@@ -74,12 +75,35 @@
 
 ---
 
-## 3. Decisions needed from you
+## 3. Decisions: decided or assumed
+
+**Status board.** One line per decision: what is *taken*, or what is *assumed* until its trigger. The reasoning and the alternatives are in the table below the board.
+
+| ID | Status | Default taken | Revisit when |
+|---|---|---|---|
+| D1 | Assumed | Keep the working title *Azure Cost in Action* while the repository is private | Before the repository goes public (D6) |
+| D2 | ✅ **Decided** | **MIT**, for code, documents and playbook specs — [`LICENSE`](../../LICENSE) | — |
+| D3 | Assumed | Single-tenant, customer-owned, self-hosted | Phase 5 (architecture) |
+| D4 | Assumed | The five-play Release 1 | The Phase-0.5 memo |
+| D5 | Assumed | A friendly customer — or an internal estate or the Waste Lab for a lab-only demonstration | When Phase 0.5 is scheduled |
+| D6 | Assumed | Private | Before any publication |
+| D7 | Assumed | Assess-and-Close | Phase 2 |
+| D8 | Assumed | Adjacent spend parked | A sponsor asks |
+| D9 | Assumed | Azure-only | Only if founding constraint F2 changes |
+| D10 | Assumed | The operator, part-time (K7 is the guard) | When Phase 0.5 is scheduled |
+| D11 | Assumed | K1–K7 as written | Pre-registration in Phase 0.5 |
+| D12 | Assumed | Voice and avatars deferred | Text channels proven |
+| D13 | Assumed | Employer, OSPO and IP are the operator's to handle outside this package; nothing is published while the repository is private (K6 is the fallback if it proves otherwise) | Before D6 |
+| D14 | Assumed | **Yes** — purchases are never L3–L5 ([invariant 16](../ideation/08-trust-safety-and-guardrail-topics.md#4-candidate-safety-invariants-non-negotiables-to-ratify)) | Never loosened without a signed-manifest design |
+| D15 | Assumed | The platform team is the default custodian, the FinOps lead the backstop | Phase 1 |
+| D16 | Assumed | The maintainers (initially the operator) hold the trust root; a customer deployment adds the customer's FinOps lead and security | Before any behaviour-affecting artefact ships |
+| D17 | Assumed | The data owner and the customer's security contact sign; a lab-only demonstration needs no outside signer | When Phase 0.5 touches a real estate |
+| D18 | Assumed | The service owner plus security | Before the first automatic-pause class |
 
 | ID | Decision | Options | Recommendation | Reversibility |
 |---|---|---|---|---|
-| **D1** 🚪 | **Project name** | See §6 | **Rename to a neutral name within ~2 weeks** — it is free while the repository is private. "Azure" is a Microsoft mark; the strategy reviewer read the guidelines (many uses "require a license first") but could not find the rule for third-party project names — ask OSPO. "… for Azure" may be used descriptively once OSPO agrees | Costly after publication; free now |
-| **D2** 🚪 | **Licence** | MIT; Apache-2.0; CC-BY for docs and playbook specs | Low urgency — freely changeable while the project is private and single-author; it only bites once outside contributions arrive, so **decide before the first one**. MIT if hosted in a Microsoft org or aligned with the FinOps toolkit (MIT-licensed); Apache-2.0 only if counsel wants the explicit patent grant | Hard to change once contributors arrive |
+| **D1** 🚪 | **Project name** | See §6 | **Assumed: keep the working title while the repository is private** — renaming is free until it goes public. Settle it before then (D6): "Azure" is a Microsoft mark; the strategy reviewer read the guidelines (many uses "require a license first") but could not find the rule for third-party project names — ask OSPO at that point. "… for Azure" may be used descriptively once OSPO agrees | Free while private; costly after publication |
+| **D2** ✅ | **Licence** | MIT; Apache-2.0; CC-BY for docs and playbook specs | **Decided: MIT**, for code, documents and playbook specs alike (operator, 2026-10-31); [`LICENSE`](../../LICENSE) added. MIT is also the FinOps toolkit's licence, so detector specs and Waste Lab scenarios can be contributed upstream without licence friction | Decided; hard to change once outside contributors arrive |
 | **D3** 🚪 | **Deployment model** | (a) single-tenant, customer-owned, self-hosted; (b) partner-operated; (c) multi-tenant service | **(a)** for the ideation assumption — data stays in the customer tenant, **including all model prompts, traces, memories and audit data**; partner-deployable | Architectural one-way door |
 | **D4** | **First-release scope** | The Release-1 cut | **Five items:** Owner Graph · log usefulness (advisory, non-Sentinel, template-level) · P2S right-sizing (Assist; advise-only until spike S7 is Green; every affected business unit consents) · **orphans and Advisor-recommendation closure** (the loop-proving vehicle, and the brief's own problem) · provisioned-throughput utilisation (demand-pull, conditional). **Parked:** schedules, commitments, security-tool economics, adjacent spend. **Retired:** M-05, M-38, RATE-11, COMM-05 ([catalog](../ideation/02-opportunity-catalog.md#selection-and-status-v2)) | Reversible |
 | **D5** | **Pilot partner and Wizard-of-Oz permission** | Internal team; a friendly customer | A friendly customer with a named executive sponsor and security contact (**K5** applies: no sponsor and read access by week 4 → publish the research as a guide) | Reversible |
@@ -90,11 +114,11 @@
 | **D10** | **People and time** | Who else is on the project; hours per week | Needed to sequence Phases 0.5–3; **K7** freezes the project below five hours a week for six weeks | Reversible |
 | **D11** | **Stop criteria thresholds** | The strawman K1–K7 in §4, or your own numbers | **Pre-register in Phase 0.5** with a named decider and dates; Finance and security co-own K2 and K3 | Reversible |
 | **D12** | **Voice/avatar stance** | Explore / defer | Defer until text channels are proven; AI disclosure rules first | Reversible |
-| **D13** 🚪 | **Employer approval, OSPO and IP stance; project home** | Personal project with approval · a Microsoft GitHub organisation · an internal accelerator only | **Start the approval now** — it has the longest lead time. **K6** (no approved publication path by week 6) falls back to an internal accelerator | Hard to reverse once published |
+| **D13** 🚪 | **Employer approval, OSPO and IP stance; project home** | Personal project with approval · a Microsoft GitHub organisation · an internal accelerator only | **Assumed: the operator handles it outside this package** — it is not an ideation question, and nothing is published while the repository is private (D6). If it proves not approvable, **K6** falls back to an internal accelerator | Hard to reverse once published |
 | **D14** 🚪 | **Are commitment purchases permanently excluded from L3–L5?** | Yes, permanently · revisit later with a signed-manifest design | **Yes.** We only ever *prepare* a manifest; the authorised buyer signs each transaction ([invariant 16](../ideation/08-trust-safety-and-guardrail-topics.md#4-candidate-safety-invariants-non-negotiables-to-ratify)) | Loosening later is possible; tightening after an incident is not |
 | **D15** | **Default orphan custodian** | Subscription owner · platform team · FinOps lead | The platform team, with the FinOps lead as backstop. **Appointed and reviewed by someone other than the custodian**; retirement always needs a second authority; a scope with no custodian is itself a governance finding ([07 §7](../ideation/07-ownership-and-organization.md)) | Reversible |
 | **D16** 🚪 | **Trust root and emergency revocation** for playbooks, models, prompts and evaluators | Maintainers only · maintainers plus the customer's FinOps lead and security · the customer alone | The **governed-release approver set** (maintainers plus the customer's FinOps lead and security) owns the trust root. **It must be decided before any behaviour-affecting artefact ships, in any release.** It needs: key custody, an approval quorum, separation from Warden administration, signed provenance, emergency revocation, a pinned rollback release and an independent audit of release state ([04 §3.4](../ideation/04-agent-crew.md), invariant 4) | Hard to change once artefacts are signed |
-| **D17** 🚪 | **Who signs the Phase-0.5 exception** (query audit on pilot workspaces, a handful of real messages)? | The sponsor and the customer's security contact · the data owner and security · the operator alone | **The data owner and the customer's security contact**, on the one-page outreach note and the instrumentation approval (scope, cost cap, end date, deletion rule). The operator may not sign it alone — it touches a customer's data and people | Reversible once removed; the audit records already ingested persist |
+| **D17** 🚪 | **Who signs the Phase-0.5 exception** (query audit on pilot workspaces, a handful of real messages)? | The sponsor and the customer's security contact · the data owner and security · the operator alone | **The data owner and the customer's security contact**, on the one-page outreach note and the instrumentation approval (scope, cost cap, end date, deletion rule). The operator may not sign it alone — it touches a customer's data and people. *A lab-only demonstration on the Waste Lab has no customer data or people to protect: there the operator, as data owner, approves the instrumentation.* | Reversible once removed; the audit records already ingested persist |
 | **D18** | **Who certifies a resource class as safe-to-pause** for the cost brake? | The service owner alone · the service owner plus security · an independent reliability or risk function | **The service owner plus security**, recorded as an expiring contract bound to specific assets; the telemetry that may trigger the brake must come from a separately administered source ([06 §3 item 11](../ideation/06-closed-loop-actions-and-autonomy.md)). Until a class is certified, nothing pauses automatically | Reversible |
 
 ---
@@ -176,5 +200,5 @@ Checklist per candidate: GitHub organisation/repo, trademark search, package reg
 8. Do we want an **advisory board** (customers, Microsoft engineers, FinOps Foundation members)?
 9. How do we position vs. first-party offerings in communications?
 10. What is the plan if a first-party feature makes a slice obsolete? (K4 gives the first answer: contribute-only.)
-11. What is the **approved publication path** for a Microsoft employee's open-source project (OSPO, IP, trademark)? (A16, D13, K6)
+11. What is the **approved publication path** for a Microsoft employee's open-source project (OSPO, IP, trademark)? (A16, D13, K6) — *assumed handled by the operator before publication; not an ideation question.*
 12. Which **cloud CoE** can host the one-hour "top-10 unfixed recommendations — and why" interview in Phase 0.5?

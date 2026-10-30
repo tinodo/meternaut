@@ -164,11 +164,11 @@ Each domain lists the **questions we must answer** (IDs for tracking in the work
 
 ### G11 — Open-source governance
 *Owner: project maintainers + legal/OSPO*
-- G11-01 Licence choice (and compatibility with dependencies)
+- G11-01 Licence — **MIT, decided (D2)**; check compatibility with dependencies as they are chosen
 - G11-02 Contribution model (developer certificate vs. contributor agreement), code of conduct, maintainer decision process
 - G11-03 **Naming and trademark** (use of "Azure" in a project name)
 - G11-04 Telemetry policy (default: none), no secrets, sample data hygiene, third-party notices
-- G11-05 If a Microsoft employee publishes: verify the internal open-source release/approval requirements early
+- G11-05 If a Microsoft employee publishes: verify the internal open-source release/approval requirements before publication (D6, D13)
 - G11-06 Community playbook review and release cadence
 
 ### G12 — Responsible AI
