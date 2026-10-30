@@ -2,6 +2,11 @@
 
 All notable changes to the ideation package. Newest first. Versions are git tags; earlier versions are archived under [`docs/_archive/`](docs/_archive/) and are never edited.
 
+## v3.2.1 — 2026-10-31 — visibility rule recorded (tag `ideation-v3.2.1`)
+
+- **D6 decided: the repository stays private until the operator says to switch it.** No agent changes its visibility or publishes its content; every "publish" step in the plan (K5, Phase 8) waits for that word.
+- New [`AGENTS.md`](AGENTS.md) records this and the other standing rules (assume rather than ask during ideation; MIT; keep history; run the lint) so they survive a session restart and bind sub-agents.
+
 ## v3.2 — 2026-10-31 — operator decision: MIT (tag `ideation-v3.2`)
 
 - **D2 decided: MIT**, for code, documents and playbook specs. [`LICENSE`](LICENSE) added (copyright holder: the package owner named throughout, Tino Donderwinkel). MIT is also the FinOps toolkit's licence, so detector specs and Waste Lab scenarios can be contributed upstream without licence friction.

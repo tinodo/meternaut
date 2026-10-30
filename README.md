@@ -1,7 +1,7 @@
 # Azure Cost in Action
 
 > **AI-infused, agent-driven, human-in-the-loop Azure cost optimisation — from insight to outcome.**
-> *Working title.* Status: **ideation v3.2** — both rubber-duck rounds applied ([round 1](docs/reviews/round-1/disposition.md), [round 2](docs/reviews/round-2/disposition.md)) plus two post-v3 audits ([§12](docs/reviews/round-2/disposition.md#12-post-v3-audit-v31)) · private repository · **MIT-licensed** ([LICENSE](LICENSE), decision D2). What changed: [CHANGELOG](CHANGELOG.md).
+> *Working title.* Status: **ideation v3.2.1** — both rubber-duck rounds applied ([round 1](docs/reviews/round-1/disposition.md), [round 2](docs/reviews/round-2/disposition.md)) plus two post-v3 audits ([§12](docs/reviews/round-2/disposition.md#12-post-v3-audit-v31)) · private repository (**stays private until the operator says to switch it**, decision D6) · **MIT-licensed** ([LICENSE](LICENSE), decision D2). What changed: [CHANGELOG](CHANGELOG.md).
 > **Stance:** an open-source demonstrator of what AI and Foundry agents can do inside governed workflows. Ideation only: every open decision carries an assumed default ([plan/01 §3](docs/plan/01-assumptions-risks-decisions.md#3-decisions-decided-or-assumed)) and nothing waits for an answer.
 > **Project home:** GitHub `tinodo/meternaut` (private) · local working copy `<repo>` *(a private-repository convenience — scrub local paths before any publication, decision D6)*.
 
@@ -89,6 +89,7 @@ Runs on **Microsoft platforms** (Azure / Power Platform / M365) · **Microsoft t
 | Tool | What it does |
 |---|---|
 | [`tools/check-docs.py`](tools/check-docs.py) | A standard-library-only lint — run `python tools/check-docs.py` before every commit. It checks links and anchors, the catalog (count, unique IDs, one class per row, R3-Data and transactions never above their ceilings, and word heuristics that flag a row reading like a transaction, reducing observability data or removing redundancy under a lower class), the counts quoted in this README, Mermaid labels and a list of phrases the reviews retired. `--self-test` proves it catches mislabelled rows |
+| [`AGENTS.md`](AGENTS.md) | Standing rules for agents working here — private until the operator says otherwise, assume rather than ask during ideation, keep history, run the lint |
 
 ---
 

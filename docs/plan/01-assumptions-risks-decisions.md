@@ -86,7 +86,7 @@
 | D3 | Assumed | Single-tenant, customer-owned, self-hosted | Phase 5 (architecture) |
 | D4 | Assumed | The five-play Release 1 | The Phase-0.5 memo |
 | D5 | Assumed | A friendly customer — or an internal estate or the Waste Lab for a lab-only demonstration | When Phase 0.5 is scheduled |
-| D6 | Assumed | Private | Before any publication |
+| D6 | ✅ **Decided** | **Private until the operator says to switch it** — nothing is published and no agent changes the visibility ([`AGENTS.md`](../../AGENTS.md)) | The operator says so |
 | D7 | Assumed | Assess-and-Close | Phase 2 |
 | D8 | Assumed | Adjacent spend parked | A sponsor asks |
 | D9 | Assumed | Azure-only | Only if founding constraint F2 changes |
@@ -107,7 +107,7 @@
 | **D3** 🚪 | **Deployment model** | (a) single-tenant, customer-owned, self-hosted; (b) partner-operated; (c) multi-tenant service | **(a)** for the ideation assumption — data stays in the customer tenant, **including all model prompts, traces, memories and audit data**; partner-deployable | Architectural one-way door |
 | **D4** | **First-release scope** | The Release-1 cut | **Five items:** Owner Graph · log usefulness (advisory, non-Sentinel, template-level) · P2S right-sizing (Assist; advise-only until spike S7 is Green; every affected business unit consents) · **orphans and Advisor-recommendation closure** (the loop-proving vehicle, and the brief's own problem) · provisioned-throughput utilisation (demand-pull, conditional). **Parked:** schedules, commitments, security-tool economics, adjacent spend. **Retired:** M-05, M-38, RATE-11, COMM-05 ([catalog](../ideation/02-opportunity-catalog.md#selection-and-status-v2)) | Reversible |
 | **D5** | **Pilot partner and Wizard-of-Oz permission** | Internal team; a friendly customer | A friendly customer with a named executive sponsor and security contact (**K5** applies: no sponsor and read access by week 4 → publish the research as a guide) | Reversible |
-| **D6** 🚪 | **Repository visibility** | Private now → public at Phase 8, or earlier | **Stay private** until the guardrail charter and the internal release process check are done | **Public release is a one-way door** |
+| **D6** ✅ 🚪 | **Repository visibility** | Private now → public at Phase 8, or earlier | **Decided (operator, 2026-10-31): the repository stays private until the operator says to switch it.** No agent changes the visibility or publishes any of its content; every "publish" step in this plan (K5, Phase 8) waits for that word. The guardrail charter and the internal release process check remain the *recommended* preconditions, not a gate on the operator | **Public release is a one-way door** |
 | **D7** | **Go-to-market wedge** | A read-only *Assess* report · **Assess-and-Close** | **Assess-and-Close:** two usage-truth detectors, an ownership map and a *human-delivered* last mile on 10–15 cases, verified at +30 and +60 days. An Assess report on its own recreates the failure the thesis attacks — a list nobody acts on — and competes with free assessments | Reversible |
 | **D8** | **Adjacent spend scopes** (SaaS/GitHub/M365) | In vision / later / never | **Parked** with a trigger (the Azure loop is proven and a sponsor asks); keep the architecture open | Reversible |
 | **D9** | **Multi-cloud stance** | Azure-only / visibility via open cost format later | **Azure-only; M-38 is retired** because it conflicts with *Microsoft technology only* (F2). Re-open only if F2 changes | Reversible |
