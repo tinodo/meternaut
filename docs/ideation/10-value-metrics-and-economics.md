@@ -1,6 +1,6 @@
 # Value, Metrics & Economics — how we will know it works (and that it pays for itself)
 
-> **Status:** Ideation v1 · **Date:** 2026-10-30 · Part of the [north-star vision](01-north-star-vision.md)
+> **Status:** Ideation **v2** (revised after rubber-duck round 1; v1 archived [here](../_archive/round-1-v1/ideation/10-value-metrics-and-economics.md)) · **Date:** 2026-10-30 · Part of the [north-star vision](01-north-star-vision.md)
 > **Scope guard:** definitions and shape of measurement. Targets are set in Phase 1–2 from pilot data; all example numbers are **illustrative**.
 
 ---
@@ -11,13 +11,16 @@
 
 | Metric | Definition | Why it is the one to watch |
 |---|---|---|
-| **Verified savings (run-rate, € / month)** | Recurring savings *proven against a counterfactual* and still holding | The only number Finance should repeat |
-| **Time-to-decision** | Median hours from *detection* to a *human decision* | Measures the last mile directly (gaps 1–4) |
+| **Verified savings (run-rate, € / month)** | Recurring savings *proven against a counterfactual* and still holding | The only *gross* number Finance should repeat |
+| **Net realised value (€ / month)** | Verified, sustained savings **minus** the measurable cost of regret (incident cost, rollback effort, savings lost to boomerangs, human time) **minus** platform cost | The honest number: what is left after the programme has paid for its own mistakes and its own running costs |
+| **Time-to-decision** | Median hours from *detection* to a *human decision* — a case that expires or is parked counts as **undecided** (silence is never a decision) | Measures the last mile directly (gaps 1–4) |
 | **Action funnel conversion** | Identified → Engaged → Decided → Executed → Verified → Sustained | Shows *where* savings die |
 | **Ownership coverage** | % of spend with a *Confirmed or Corroborated* owner | The prerequisite for everything else |
 | **Regret rate** | Rollbacks + attributable incidents + boomerangs per 100 actions | The trust metric; must stay near zero |
 | **Attention cost** | Asks per human per week, and the share rated *useful* | The guard against alert fatigue |
 | **Platform ROI** | Verified savings ÷ total platform cost (AI + compute + data + people) | Integrity test: the tool must pay for itself |
+
+**Reporting unit.** Every metric is reported per **team, service or role** — never per individual by default. Individual-level views exist only for a person's own desk and for audit attribution ([07 §10 and §12](07-ownership-and-organization.md)).
 
 ### Supporting metrics
 
@@ -36,7 +39,7 @@
 ### Counter-metrics (anti-gaming)
 
 Every headline metric has a partner that would reveal gaming:
-**Verified savings ↔ regret rate** · **acceptance rate ↔ owner satisfaction** · **messages sent ↔ attention cost** · **savings claimed ↔ invoice reconciliation residual** · **cost down ↔ reliability/security posture regression** · **coverage ↔ ownership accuracy (confirmed, not inferred)**.
+**Verified savings ↔ regret rate** · **verified savings ↔ net realised value** · **acceptance rate ↔ owner satisfaction** · **time-to-decision ↔ regret of fast decisions** · **messages sent ↔ attention cost** · **savings claimed ↔ invoice reconciliation residual** · **cost down ↔ reliability/security posture regression** · **coverage ↔ ownership accuracy (confirmed, not inferred)**.
 
 ---
 
@@ -61,13 +64,16 @@ Headline numbers include **Verified** and **Sustained** only.
 
 ### 2.3 Rules
 
-1. **One saving, one claim.** Attribution across Advisor, other tools, humans and agents is deduplicated; the first credible *executed* claim wins, others are recorded as *corroboration*.
+1. **One saving, one financial outcome — with provenance kept.** The *amount* is counted once, whether Advisor, another tool, a human or an agent surfaced it (no double counting). But **multi-touch provenance is recorded**: every contributing signal, tool and person is on the ledger line, so credit is attributable without being raced for.
 2. **Counterfactual, not before/after.** Normalise for usage and seasonality (see [06](06-closed-loop-actions-and-autonomy.md) §7).
 3. **Reconcile to the invoice.** Residuals are investigated, not ignored.
 4. **Declare the evidence horizon** (how long we watched) and the **confidence band**.
 5. **Time-box sustainment:** a saving becomes *Sustained* after a defined period (e.g. 90 days) without regression.
 6. **Regret is reported in the same table** as savings.
 7. **Independent verification:** the Auditor, not the Operator, writes the ledger.
+8. **Collection-reducing savings carry their cost.** A saving from an R3-Data action (a log filter, a shorter retention) is booked with what is **no longer collected** and the regret signals being watched (for example "I searched for X and found nothing") — never as a clean number.
+9. **Net realised value is shown beside gross verified savings** (see §1), so Finance sees both what was saved and what it cost to save it.
+10. **Only the incremental effect is claimed.** Where owners would have acted anyway (a matched control or the historical action rate says so), the ledger counts the *difference* the platform made, not the whole saving.
 
 ---
 
@@ -118,7 +124,7 @@ Below the threshold → batch into a digest, handle by a policy envelope, or ign
 
 ### 4.4 The honesty test
 
-If **verified savings < platform cost** for two consecutive quarters in a scope, the Warden recommends *reducing scope or autonomy* — and says so in the ledger.
+If **verified savings < platform cost** for two consecutive quarters in a scope, the Warden recommends *reducing scope or autonomy* — and says so in the ledger. The honesty test is hardened into explicit **kill criteria K1–K7** in [plan/01](../plan/01-assumptions-risks-decisions.md); K3 is the economic one (platform cost against verified, Finance-reconciled savings).
 
 ---
 
@@ -148,6 +154,8 @@ If **verified savings < platform cost** for two consecutive quarters in a scope,
 | Late-arriving cost data | Explicit data-latency windows before declaring *Verified* |
 | Shared resources | Usage-based allocation; Diplomat-recorded agreements |
 | Survivorship bias in feedback | Sample declined/deferred cases for review, not only approved ones |
+| "Owners would have acted anyway" | Only the **incremental** effect is claimed: compare against a matched control group, a staggered (stepped) rollout, or the historical action rate — chosen *before* the pilot starts (§8) |
+| Savings from actions that reduce what is collected | Booked with the information-loss attribute and watched regret signals (ledger rule 8) |
 
 ---
 
@@ -162,13 +170,25 @@ If **verified savings < platform cost** for two consecutive quarters in a scope,
 
 ---
 
-## 8. Pilot success criteria (strawman)
+## 8. Pilot design and success criteria (strawman — to be pre-registered)
 
-1. **Owners act** — decision rate on delivered cases above a pre-agreed threshold, with *useful* ratings.
+A pilot that is judged by the people who built it, with criteria chosen after the data arrives, proves nothing. The strawman therefore has four parts:
+
+**Pre-registration.** Before any data is seen, write down and date: the hypotheses, the metrics and thresholds, the exclusions, the analysis method and the stop rules. Changes after the start are recorded as *deviations*, not silently absorbed.
+
+**A comparison condition.** Choose one *before* the pilot: a **matched set of teams or subscriptions** that keep the status quo (Cost Management and Advisor alone), or a **stepped rollout** in which each team is its own control. The claim is the **incremental** effect over the comparison, never the absolute saving ([§6](#6-measurement-challenges-and-how-we-respect-them), ledger rule 10).
+
+**Independent judges.** Finance reconciles the money; security and compliance reproduce decisions from the audit trail; a reviewer outside the build team signs the readout.
+
+**Stop rules.** The kill criteria **K1–K7** in [plan/01](../plan/01-assumptions-risks-decisions.md) apply from day one.
+
+**Success criteria (each with a pre-agreed threshold and the comparison condition):**
+
+1. **Owners act** — decision rate on well-evidenced cases within 14 days, versus the comparison condition, with *useful* ratings. Silence counts as *undecided*.
 2. **No harm** — zero severity-1 incidents attributable to the crew; regret rate below the agreed bound.
-3. **Money is real** — a sample of verified savings reconciles to the invoice, sign-off by Finance.
+3. **Money is real** — a sample of verified savings reconciles to the invoice, with Finance's sign-off.
 4. **Attention respected** — median asks per owner-week within budget; opt-out low.
-5. **It pays for itself** — platform ROI positive within the pilot scope.
+5. **It pays for itself** — net realised value positive within the pilot scope.
 6. **Trust** — security and compliance reviewers can reproduce any decision from the audit trail.
 
 Next: the press release from the future → [11](11-working-backwards-pr-faq.md).

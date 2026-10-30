@@ -1,6 +1,6 @@
 # Ownership & Organisation — "a recommendation without an owner is a rumour"
 
-> **Status:** Ideation v1 · **Date:** 2026-10-30 · Part of the [north-star vision](01-north-star-vision.md)
+> **Status:** Ideation **v2** (revised after rubber-duck round 1; v1 archived [here](../_archive/round-1-v1/ideation/07-ownership-and-organization.md)) · **Date:** 2026-10-30 · Part of the [north-star vision](01-north-star-vision.md)
 > **Scope guard:** concepts and organisational design only. Data sources and permissions are a Phase 4–5 topic; privacy rules are a guardrail topic ([08](08-trust-safety-and-guardrail-topics.md)).
 
 ---
@@ -22,6 +22,15 @@ Cost tools address recommendations to **scopes** (subscriptions, resource groups
 | **Approver (authority)** | Who may authorise the change under policy? | Depends on value/risk (see [06](06-closed-loop-actions-and-autonomy.md)) |
 
 A case may need different people for different hats: the **steward** to preview, the **budget holder** to approve a purchase, the **consumers** to be heard before a shared resource shrinks. The Herald and the Diplomat work with this model.
+
+**Four counterparts decide whether a change may happen at all** (they are not "owners", but a plan that ignores them fails in practice):
+
+| Counterpart | What they control | How the crew works with them |
+|---|---|---|
+| **Change-advisory / ITSM owner** | Change windows, standard-change catalogue, freeze calendar | Policy envelopes are submitted as *standard changes*; every Plan carries the change record |
+| **Billing owner** | Agreement, billing scope, who may buy commitments | Source of truth for the Buyer's authorised signers ([06 §6](06-closed-loop-actions-and-autonomy.md)) |
+| **Shared-platform owner** | Shared gateways, workspaces, firewalls, clusters | The Diplomat's first call; consent is explicit, never assumed |
+| **SOC / incident commander** | Incident state; which data is security-relevant | Freezes all changes in an affected scope; co-signs any R3-Data class touching security data |
 
 ---
 
@@ -54,7 +63,7 @@ Ordered roughly from strongest to weakest, each with its failure mode.
 
 | # | Signal | Why it helps | How it fails |
 |---|---|---|---|
-| 1 | **Explicit owner/contact tag** on the resource | Direct statement | Copy-pasted, stale, a former employee, a shared mailbox nobody reads |
+| 1 | **Explicit owner/contact tag** on the resource | Direct statement | Copy-pasted, stale, a former employee, a shared mailbox nobody reads; **writable by anyone with tag rights, so it is a *claim*, never proof** (it could even name a bystander) |
 | 2 | **Tags inherited** from resource group / subscription | Cheap coverage | Wrong granularity (shared resource group) |
 | 3 | **IaC repository & pipeline** (CODEOWNERS, repo owners, the team behind the deploying pipeline identity) | The people who actually change it | Platform pipelines deploy for many teams |
 | 4 | **Deployment history** (who/what initiated the deployment) | Provenance | Service principals hide the human |
@@ -92,7 +101,7 @@ Principles: ask the **most likely** person first; one question, one tap; explain
 |---|---|
 | **Owner is a person** | Reach them; respect time zone, language, working hours, presence/out-of-office |
 | **Owner left or moved** (joiner-mover-leaver events) | Trigger an ownership review of everything they owned; propose a successor (manager, teammates); never leave resources "owned by a ghost" |
-| **Owner unreachable** | Follow the **manager chain**, delegates and the team channel — with a visible escalation ladder ([05](05-human-interaction-concepts.md)) |
+| **Owner unreachable** | Follow the **private-first ladder** ([05 §3](05-human-interaction-concepts.md)): delegates, the alternate owner or team lead, a team-channel post about the *case* (never naming a person), then one team-level summary for the accountable manager. Silence never becomes approval |
 | **Owner is a group / DL / shared mailbox** | Resolve to humans; ask the group to nominate a steward |
 | **Owner is external** (guest, vendor, contractor) | Route via the sponsor; stricter data-minimisation |
 | **Owner is a workload identity** | Resolve the application's owners/sponsors; route to them |
@@ -100,31 +109,46 @@ Principles: ask the **most likely** person first; one question, one tap; explain
 
 ---
 
-## 7. Orphans — *Adopt or Retire*
+## 7. Orphans — *adopt, park or retire (by a named human)*
 
-Truly unowned, costly resources are the FinOps team's *temporary* problem; the system makes them time-boxed and transparent.
+Truly unowned, costly resources are nobody's problem — which is exactly why they persist. The v1 design started a quarantine ladder after *silence*. Round 1 review showed the flaw: **an orphan has nobody to be silent**, silence from a resource that has no owner is not consent, and a "countdown ends → delete" branch can destroy something business-critical that nobody documented. v2 makes a **named human** accountable instead.
+
+**The orphan custodian.** Every scope (subscription or management group) has a *recorded custodian for orphans* — typically the subscription owner, the platform team or the FinOps lead — named in the policy envelope. The custodian is the **owner of last resort** and receives the orphan queue. For each orphan the custodian decides one of:
+
+| Decision | Meaning | Limits |
+|---|---|---|
+| **Adopt** | Assign an owner; the owner confirms (never assumed) | Normal case flow follows |
+| **Park** | Accept the cost, with a reason and an **expiry date** | Re-asked at expiry |
+| **Restrict or pause** | Reduce exposure or cost within the policy's allowed classes | Reversible classes only; the [enrolment and precedence rules](06-closed-loop-actions-and-autonomy.md) still apply |
+| **Retire** | Delete — a *named human decision* | Only after snapshot/backup (an R2 path); never for locked, held or protected scopes |
+
+If a scope has **no custodian**, the case goes to the FinOps lead and the system raises *the missing custodian itself* as a governance finding. **The resource is left untouched.**
+
+What the system does by itself: *detect, investigate (Archaeologist), interview likely owners, notify, advise*, and write an **advisory tag** ("suspected orphan; custodian: X"). It never stops or deletes because someone was silent.
 
 ```mermaid
 flowchart LR
     A[Detected: cost with no credible owner] --> B[Interview likely owners]
     B -->|claimed| C[Owner confirmed: normal case]
-    B -->|nobody| D[Notify subscription owner, managers and team channels]
+    B -->|nobody| D[Notify subscription owner, team channels and the orphan custodian]
     D -->|claimed| C
-    D -->|silence| E[Quarantine ladder: restrict, stop, snapshot]
-    E -->|claimed| C
-    E -->|countdown ends| F[Retire: delete with backup window]
+    D -->|no claim| E[Custodian decides: adopt, park with expiry, restrict within policy, or retire]
+    E -->|adopt| C
+    E -->|retire| F[Snapshot or backup first, then delete as a named human decision]
+    D -->|no custodian recorded| G[FinOps lead: governance finding, resource untouched]
 ```
 
-Timelines (days at each rung), thresholds by value and risk, and what is exempt are **policy**, set by humans. High-value or high-risk orphans stop at *advise* and escalate to the FinOps lead.
+Timelines, thresholds by value and risk, and what is exempt are **policy**, set by humans. High-value or high-risk orphans stop at *advise* and go to the FinOps lead. **No step starts because somebody was silent**: each starts because a human — or an *enrolled* policy — decided it.
 
 ---
 
 ## 8. Tags are a cache, not the truth
 
-- The agents **propose tag values** (from the Owner Graph), ask the owner to confirm, then *write the tag* (R0 action, L2→L4 by policy).
+- The agents **propose tag values** (from the Owner Graph), ask the owner to confirm, then *write the tag* — for **advisory tags only** (R0, L2→L4 by policy).
+- **Two kinds of tag.** *Advisory* tags are descriptive (team, cost centre, a "suspected orphan" label). *Control-plane* tags decide what automation may touch — environment, criticality, data class, exemptions such as `cost-exempt`, and ownership itself. They are **security-relevant**: anyone who can write a tag could otherwise steer the system, or hide a resource from it. Only an **independent authority** changes them (with audit), and a freshly written or inferred value does not qualify a resource for automation until a **cooling-off revalidation** passes ([06 §5](06-closed-loop-actions-and-autonomy.md)).
 - **Tag drift** (tag says X; evidence says Y) opens a small case.
 - **Tag taxonomy** guidance (owner, team, cost centre, environment, criticality, data class, expiry) is part of the Coach's output, aligned with CAF tagging guidance.
-- **Expiry tags** (`expires-on`) make "temporary" real: the Herald asks at expiry, the Scream-test ladder follows silence.
+- **Expiry tags** (`expires-on`) make "temporary" real: the Herald asks at expiry; if nobody answers, the case follows the [private-first ladder](05-human-interaction-concepts.md) — expiry never triggers a deletion by itself.
 
 ---
 
@@ -159,6 +183,8 @@ Most "FinOps problems" are incentive problems wearing a technical costume (Gap #
 
 **The FinOps team's role changes:** from analysts who produce reports to **policy authors, agent stewards and coaches**. Roles we expect: *FinOps lead* (owns policy and the dial), *Cloud CoE* (platform), *FinOps champions* (one per team), **agent stewards** (a named human accountable for each agent's behaviour), *executive sponsor*.
 
+**The default unit of measurement is the team or the role, never the individual.** Individual-level views exist only for the person's own desk and for audit attribution. Savings, regret and response metrics are reported per team, per service and per role ([10](10-value-metrics-and-economics.md)).
+
 ---
 
 ## 11. Multi-tenant and partner scenarios (to decide later)
@@ -173,7 +199,8 @@ The Owner Graph uses data about people. That is useful and sensitive.
 
 - **Purpose limitation:** ownership resolution for cost action — **never** performance management or surveillance.
 - **Data minimisation:** the least data that resolves ownership; sensitive attributes excluded.
-- **Transparency:** employees can see *how* ownership was inferred and **contest** it (a "this is not mine" path is always available).
+- **Transparency and disclosure:** people are told — in plain language, before the first message and not in a footnote — which signals about them are read, why, for how long and who can see the output. The honest answer to *"is anyone watching me?"* is precise: the system records **which resources you appear to own and what you decided about them**, to route and verify cost actions. It does not score or rank individuals' performance, and managers do not get individual-level reports by default. Employees can see *how* ownership was inferred and **contest** it (a "this is not mine" path is always available).
+- **Accountability is audit attribution plus the customer's own RACI** — a record of *who approved what*, so the organisation can learn and answer for decisions. It is not a mechanism for personal blame.
 - **Retention:** claims expire; history is kept at the level auditors need, not more.
 - **Works councils (NL/DE) and GDPR** may require consultation and a data-protection impact assessment — to be validated with counsel ([research/03](../research/03-finops-framework-and-evidence.md) lists the anchors).
 - **Behavioural-history and collaboration-data signals (#13, #14) are opt-in extras**, off by default.

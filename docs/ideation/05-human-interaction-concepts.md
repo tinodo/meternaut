@@ -1,6 +1,6 @@
 # Human Interaction Concepts — how the crew talks to people
 
-> **Status:** Ideation v1 · **Date:** 2026-10-30 · Part of the [north-star vision](01-north-star-vision.md)
+> **Status:** Ideation **v2** (revised after rubber-duck round 1; v1 archived [here](../_archive/round-1-v1/ideation/05-human-interaction-concepts.md)) · **Date:** 2026-10-30 · Part of the [north-star vision](01-north-star-vision.md)
 > **Scope guard:** this is *concept exploration*, not UI design. Formal personas, journeys, wireframes and the message design kit are Phase 2 ([plan](../plan/00-follow-up-plan.md)). Every mock-up here is **illustrative**: invented resources, invented numbers.
 > **The brief:** *"What is the communication with humans? Teams cards? Emails? Text messages? Avatars talking to you in Teams meetings? IDEATE."* — so we do.
 
@@ -11,15 +11,16 @@
 1. **Every message must earn its interruption** (value-density threshold; see §10).
 2. **One decision per message.** Never a wall of options.
 3. **Lead with the ask and the value; evidence one tap away** (progressive disclosure).
-4. **Always say what happens next and how to undo it.**
+4. **Always say what happens next — and, class by class, what can and cannot be undone** (never imply an undo that does not exist).
 5. **Honest uncertainty:** confidence in plain words and bands, never false precision.
 6. **Respect time:** working hours, time zone, presence, out-of-office, quiet hours, focus time.
 7. **Speak their language and level** — technical for engineers, financial for finance, brief for executives; Dutch, English, German, French first.
-8. **Disclose AI identity every time; always offer a human.**
+8. **Disclose AI identity every time; always offer a human.** The AI *composes* the message; the numbers are *computed* by deterministic code, and the card says so ("AI-composed · figures computed").
 9. **Two-way by default:** replies, objections and questions are first-class.
-10. **Don't nag:** remember reasons; escalate gradually and visibly.
-11. **Never shame.** Credit teams, not individuals; celebrate wins; show regret honestly.
+10. **Don't nag:** remember reasons; escalate gradually, **privately first**, and visibly.
+11. **Never shame.** Credit teams, not individuals; **never name a person who has not answered**; celebrate wins; show regret honestly.
 12. **Verifiable and safe:** recipients can tell a message is genuine; approvals bind to their identity; the agent never asks for secrets.
+13. **Silence is never consent.** No answer ends in a human decision, a parked case or an expiry — never in an automatic approval.
 
 ---
 
@@ -28,7 +29,7 @@
 | Channel | Best for | Urgency | Friction | Watch out for |
 |---|---|---|---|---|
 | **Teams card (direct)** | Decisions on a specific case; approvals; ownership questions | Normal–high | Very low | Card spam; authentication of approvals |
-| **Teams channel post** | Team-level asks, celebrations, shared-resource coordination | Normal | Low | Public shaming; noise |
+| **Teams channel post** | Team-level asks, celebrations, shared-resource coordination | Normal | Low | Public shaming; noise — a post names the **case and resource, never a person who has not answered** |
 | **Teams meeting — AI participant** | Review rituals: recap, what-if, decisions captured | Scheduled | Medium | Consent, accuracy, cross-talk |
 | **Email digest** | Weekly desk, team report, executive monthly | Low | Very low | Ignored if too long |
 | **Email approval request** | Formal approvals (finance, commitments) via signed deep link | Normal | Medium | Spoofing; forwarded links |
@@ -59,22 +60,31 @@ The Herald chooses from **value × urgency × reversibility × persona × presen
 | Shared resource | **Team channel** + Diplomat outreach to each affected owner |
 | Emergency spend rate | **SMS/voice** under the emergency policy, plus card |
 
-### Escalation: gradual, visible, humane
+### Escalation: gradual, private-first, humane
+
+Five rules govern every ladder:
+
+1. **Private before public.** The first steps happen in private channels. Nobody is named in a shared space for not answering — ever.
+2. **Escalate the case, not the person.** A shared post names the resource and the decision needed; it never says who has not answered.
+3. **Warn before you widen.** Each step announces the next one ("if there is no answer by Thursday I will ask your team lead how to route this"), so nothing happens behind someone's back.
+4. **Silence is never approval.** The ladder ends in a human decision — reroute, hand to the [orphan custodian](07-ownership-and-organization.md), park with an expiry, or a written risk acceptance — never in an automatic yes.
+5. **Managers get one team-level summary** (counts, value, ageing), only when their role is accountable for the resource — never a list of who ignored what.
 
 ```mermaid
 flowchart TB
-    A[Case ready for owner] --> B{Value dense and urgent enough}
+    A[Case ready for owner] --> B{Worth an interruption}
     B -->|no| C[Weekly digest]
-    B -->|yes| D[Teams card to owner]
+    B -->|yes| D[Private Teams card to the owner]
     D -->|answered| Z[Decision recorded]
-    D -->|silence 2 working days| E[Reminder in digest and ping delegate if set]
-    E -->|silence| F[Team channel post and alternate owner]
-    F -->|silence| G[Manager chain: one summary, not a shame list]
-    G -->|silence| H[FinOps lead triage: policy decision, quarantine ladder or accepted risk]
-    D -->|emergency spend rate| I[SMS or voice to on-call under emergency policy]
+    D -->|no answer in 2 working days| E[Private reminder in the digest and to the delegate]
+    E -->|no answer| F[Private note to the alternate owner or team lead: help me route this]
+    F -->|no answer| G[Team channel post about the case and resource, never naming a person]
+    G -->|no answer| H[One team level summary to the accountable manager]
+    H -->|no answer| I[FinOps lead triage: reroute, orphan custodian, park with expiry, or written risk acceptance]
+    D -->|emergency spend rate| J[SMS or voice to on call under the emergency policy]
 ```
 
-*Follow the directory:* delegates and out-of-office replies are honoured; the manager chain gets **one summary**, never a list of who ignored what; timing respects each person's time zone and quiet hours.
+*Follow the directory:* delegates and out-of-office replies are honoured; timing respects each person's time zone and quiet hours; a person who left or moved is a routing problem for the [Owner Graph](07-ownership-and-organization.md), not a reason to escalate to their manager's manager.
 
 ---
 
@@ -91,8 +101,8 @@ flowchart TB
 | **Options** | A / B / C — recommended one first | Real choice |
 | **Cost of waiting** | € per week of delay (neutral, never pressure) | Informed deferral |
 | **Actions** | **Primary:** approve (with window) · **Secondary:** preview, another time, not now ▾, not mine, why?, talk to a human | Two-way |
-| **Undo** | "Undo within N days" | Safety |
-| **Footer** | Case ID · AI disclosure · trace link · mute this type | Transparency |
+| **Undo** | Class-specific, never implied: **R0 and R1** "Undo within N days" · **R2** "Recoverable until DATE" · **R3 / R3-Data** "**No undo** — here is exactly what is lost" | Safety and honesty |
+| **Footer** | Case ID · "AI-composed · figures computed" · trace link · mute this type | Transparency |
 
 **Progressive disclosure:** *Layer 0* headline + primary action → *Layer 1* evidence → *Layer 2* full case and trace → *Layer 3* a human.
 
@@ -105,9 +115,9 @@ flowchart TB
 | **My Savings Desk** (weekly) | Owners | Top 3–5 decisions with one-tap links; a win; "things I handled under policies you chose" |
 | **Team brief** (weekly) | Managers | Decisions needed; verified savings; risk; policy suggestions ("you approved this 31 times without regret — adopt as policy?") |
 | **Executive brief** (monthly) | CTO/CFO | One page: spend vs forecast, **verified** savings, commitments, top risks, decisions; optional 90-second audio |
-| **Formal approval** | Finance, commitments, R3 actions | Signed, recipient-bound deep link to an authenticated approval page; full evidence attached |
+| **Formal approval** | Finance, R3 and R3-Data actions, commitment transactions | Signed, recipient-bound deep link to an authenticated approval page; full evidence attached. For commitments the **authorised buyer signs the finite transaction manifest** — an email can never complete a purchase |
 | **Ownership attestation** (quarterly) | Owners | "Still yours? [Confirm all] [Review]" |
-| **Post-action report** | Approver | "Done. Verified in 7 days. Undo available until…" |
+| **Post-action report** | Approver | "Done. Verification due in 7 days. Undo available until… (only where the action's class allows it)" |
 | **Incident summary** | On-call and stakeholders | What spiked, what we did, what's next |
 | **Welcome** | New owners | Who I am (AI), what I will and won't do, how to mute, how to reach a human |
 
@@ -119,7 +129,7 @@ Subject lines are **specific and calm**: *"3 decisions, worth ≈ €1,150/month
 
 | Concept | How it works | Guardrail notes |
 |---|---|---|
-| **Cost-incident call** | After a card goes unanswered during an emergency spend rate, a call to on-call: short, factual, one ask. Confirmation completes in an **authenticated** channel (or a pre-approved *cost brake* applies after a defined timeout). | Voice is not authentication; tabletop-tested; false-alarm budget |
+| **Cost-incident call** | After a card goes unanswered during an emergency spend rate, a call to on-call: short, factual, one ask. Confirmation completes in an **authenticated** channel. A **pre-certified cost brake** may apply after a defined timeout **only** for a resource class whose service owner recorded a *safe-to-pause contract*; otherwise the next human on the ladder is paged and **nothing is changed** ([06 §3](06-closed-loop-actions-and-autonomy.md)). | Voice is not authentication; tabletop-tested; false-alarm budget; a cost anomaly alone never pauses anything |
 | **FinOps Review Room** | A **clearly-labelled AI participant** joins the weekly/monthly review (text first, voice optional): 90-second recap, answers "what if?", captures decisions as Cases, follows up | Consent and recording rules; nothing executes without an authorised human's confirmation |
 | **Executive audio brief** | 60–90 seconds, generated from the ledger, with a transcript | Same truthfulness rules as the written brief |
 | **Estate interview call** (optional) | A short call to a busy owner to resolve ownership by voice, with a transcript and confirmation card | Opt-in; language support |
@@ -144,6 +154,7 @@ Start with **text in the meeting chat**; add voice only after the written flows 
 | **Why?** | Wants evidence | Opens layer 1–2; may run deeper analysis |
 | **What if I wait?** | Asks the cost of delay | Computes and shows |
 | **Stop messaging me about this** | Mutes a type | Honours; reports muted volume to the FinOps lead |
+| **No answer** | Nothing | Follows the private-first ladder (§3); the case stays open, expires or is parked — **never auto-approved** |
 
 ### 7.2 The read-back rule (safety)
 
@@ -201,7 +212,7 @@ Screen-reader friendly cards · plain language · no meaning conveyed by colour 
 
 ## 12. Anti-patterns (we will not do these)
 
-Fake urgency · shaming lists · leaderboards of individuals by default · hidden AI identity · "approve all" without evidence · giant digests nobody reads · notifications that merely inform · asking the same question twice · dark patterns that make *Decline* harder than *Approve* · links that act on click without authentication · jargon.
+Fake urgency · shaming lists · **naming people who have not answered, in any shared space** · leaderboards of individuals by default · hidden AI identity · "approve all" without evidence · giant digests nobody reads · notifications that merely inform · asking the same question twice · dark patterns that make *Decline* harder than *Approve* · links that act on click without authentication · **treating silence as consent** · **implying an undo where there is none** · tone that suggests the owner was negligent · jargon.
 
 ---
 
@@ -233,7 +244,8 @@ Fake urgency · shaming lists · leaderboards of individuals by default · hidde
 |                                                                   |
 | [Approve for Thu 22:00] [Preview] [Another time] [Not now v]      |
 | [Not mine] [Why?] [Talk to a human]                               |
-| Cost of waiting: ~ EUR 30/week . AI-generated . trace . mute type |
+| Cost of waiting: ~ EUR 30/week                                    |
+| AI-composed . figures computed . trace . mute this type           |
 +------------------------------------------------------------------+
 ```
 
@@ -267,14 +279,17 @@ Hi Sanne,
 
 A win: the gateway change you approved in October is verified:
 EUR 1,840/month saved. Your team's verified total this quarter:
-EUR 11,200 (30% goes to your team's innovation budget).
+EUR 11,200 (30% returns to your team under the dividend policy
+your organisation adopted).
 
 Things I handled under policies you opted into: 7 dev VMs slept
-14 nights; 2 unattached disks deleted (snapshots kept 14 days).
+14 nights; 2 unattached dev disks deleted after the veto window you
+enrolled in (snapshots kept 14 days).
 
 [Mute this type] . [Change my settings] . [Talk to a human]
 
-- Your cost agent (AI). I will never ask for passwords or secrets.
+- Your cost agent (AI-composed; every figure is computed from your
+  billing data). I will never ask for passwords or secrets.
 ```
 
 ### 13.4 Approval request to Finance — a commitment (two keys)
@@ -290,10 +305,14 @@ Things I handled under policies you opted into: 7 dev VMs slept
 | Risk budget used: 22% of EUR 20k . Min. utilisation target: 92%   |
 | Back-test (last 12 months): utilisation 94-97%; regret: none      |
 | Workload owner: Sanne - APPROVED          Finance: pending        |
+| Authorised buyer: pending - signs the finite manifest below       |
+| Manifest: 1 commitment, 1-year term, shared scope, fixed hourly   |
+|           amount shown on the approval page - nothing else        |
 |                                                                   |
 | [Approve stage 1] [Approve smaller] [Not yet] [Ask about the      |
 | back-test] [Talk to a human]                                      |
-| Opens an authenticated approval page - this card cannot approve.  |
+| Each key is given on an authenticated page. This card cannot      |
+| approve, and no purchase ever runs without a human signature.     |
 +------------------------------------------------------------------+
 ```
 
@@ -306,16 +325,18 @@ SMS (opt-in, 02:07):
 
 Call (02:11, no response to the card):
   "This is the cost agent, an AI assistant. The GPU pool gpu-train-02 is
-   spending about forty times its normal rate. Pausing it is reversible.
-   A confirmation prompt is on your phone now. If nobody confirms within
-   ten minutes, the cost-brake policy that FinOps and Security approved
-   will pause the pool. Say 'repeat' to hear this again, or 'human'
-   to reach the on-call lead."
+   spending about forty times its normal rate. This pool class has a
+   recorded safe-to-pause contract, and pausing is reversible. A
+   confirmation prompt is on your phone now. If nobody confirms within
+   ten minutes, the pre-certified cost brake will pause the pool. Say
+   'repeat' to hear this again, or 'human' to reach the on-call lead."
 ```
+
+*Had the pool's class had no safe-to-pause contract, the script would end differently: the call would page the next human on the on-call ladder and **change nothing**. A cost anomaly alone never pauses anything.*
 
 ### 13.6 The executive's 90-second brief (script)
 
-> *"Good morning Jan. Azure spend was two percent below forecast. Verified savings this month: one hundred forty thousand euro run-rate, up thirty from last month — projected savings are reported separately. Commitment coverage is eighty-one percent, utilisation ninety-four. Two actions were rolled back; both are explained in the regret report. Three decisions need you this week: a staged commitment purchase, a policy for development environments, and an exception for one regulated workload. Details are in your inbox. This brief was generated by an AI from the savings ledger."*
+> *"Good morning Jan. Azure spend was two percent below forecast. Verified savings this month: one hundred forty thousand euro run-rate, up thirty from last month — projected savings are reported separately. Commitment coverage is eighty-one percent, utilisation ninety-four. Two actions were rolled back; both are explained in the regret report. Three decisions need you this week: a staged commitment purchase, a policy for development environments, and an exception for one regulated workload. Details are in your inbox. This brief was composed by an AI; every figure is computed from the savings ledger."*
 
 ### 13.7 The AI participant in the monthly cost review (excerpt)
 

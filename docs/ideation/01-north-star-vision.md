@@ -1,6 +1,6 @@
 # Azure Cost in Action — North-Star Vision
 
-> **Status:** Ideation v1 · **Date:** 2026-10-30 · **Owner:** Tino Donderwinkel · **Drafted with:** GitHub Copilot
+> **Status:** Ideation **v2** (revised after rubber-duck round 1; v1 is preserved in [the archive](../_archive/round-1-v1/ideation/01-north-star-vision.md)) · **Date:** 2026-10-30 · **Owner:** Tino Donderwinkel · **Drafted with:** GitHub Copilot · **What changed:** [round-1 disposition](../reviews/round-1/disposition.md)
 > **Working title:** *Azure Cost in Action* (the name is a placeholder, see [open decisions](../plan/01-assumptions-risks-decisions.md)).
 > **Scope guard:** this is **ideation**. Technology, feasibility and the *content* of guardrails are deliberately out of scope here. They are scheduled in [the follow-up plan](../plan/00-follow-up-plan.md). Numbers in examples are **illustrative** unless a source is cited.
 
@@ -16,7 +16,7 @@
 
 1. Azure already tells you *what you spend* (Cost Management) and *what you could save* (Advisor). Almost nobody closes the loop.
 2. We build a **crew of AI agents** that studies how the estate is *actually used* (not only what it costs), builds an evidence-backed **case** for every opportunity, and works out **who owns it** (and asks when it can't tell).
-3. The crew then meets the owner **where they already work** — a Teams card, an email, if it is truly urgent a call — with a one-tap, reversible action, instead of hoping someone opens a portal blade.
+3. The crew then meets the owner **where they already work** — a Teams card, an email, if it is truly urgent a call — with a one-tap action whose **reversibility is stated up front**, instead of hoping someone opens a portal blade.
 4. When a human says *yes*, the crew **executes** the change safely (window, canary, rollback), **verifies** the realized savings against a counterfactual, and **keeps the saving from eroding**.
 5. Humans stay in control by construction: every action has either a human decision behind it or a human-authored policy that allows it.
 
@@ -26,9 +26,9 @@
 
 ## 1. The problem we are really solving
 
-> *Detection is (mostly) solved. The last mile is broken.*
+> *Commodity detection exists. Two things do not: **usage intelligence** (knowing what is actually used and useful) and **owner-centred closure** (getting the right human to decide, safely, and proving the result).*
 
-A mature Azure customer typically has Cost Management reports, Advisor recommendations, maybe a FinOps toolkit deployment. And yet the same waste keeps appearing. In our hypothesis the reason is **not a lack of insight** — it is eight gaps between an insight and an outcome:
+A mature Azure customer typically has Cost Management reports, Advisor recommendations, maybe a FinOps toolkit deployment. And yet the same waste keeps appearing. We make **two separate bets** ([§10](#10-key-bets-each-needs-a-cheap-test)): **closure** — the waste we *can* already see is not acted on because of eight gaps between an insight and an outcome — and **usage intelligence** — the most interesting waste hides in *use*, which billing data cannot show (both seed examples).
 
 | # | The gap | What it looks like in real life | What closes it (capability) |
 |---|---|---|---|
@@ -37,25 +37,27 @@ A mature Azure customer typically has Cost Management reports, Advisor recommend
 | 3 | **Context** | "Idle" by a rule is not idle for the business: quarter-end batch, DR standby, compliance retention. | Investigation, **Estate Memory**, conversation ([04](04-agent-crew.md)) |
 | 4 | **Trust** | "If I resize it and prod breaks I'm blamed; if I do nothing nobody notices." The risk is asymmetric. | Case file, **Challenger** review, dry-run, reversibility, track record ([06](06-closed-loop-actions-and-autonomy.md)) |
 | 5 | **Effort** | Even with the right answer, executing takes a ticket, a change window, a pull request. | One-tap execution; IaC pull requests; scheduled windows |
-| 6 | **Incentive** | Savings accrue to central Finance, risk accrues to the team. | **Savings dividend**, team-level recognition ([07](07-ownership-and-organization.md)) |
+| 6 | **Incentive** | Savings accrue to central Finance, risk accrues to the team. | Team-level recognition; a **savings dividend** as an option (parked until a Finance-reconciled saving exists — [09 M-26](09-outer-rims-moonshots.md)) and [07](07-ownership-and-organization.md) |
 | 7 | **Verification** | Nobody checks whether the saving materialised; savings are double-counted across tools. | **Savings Ledger** with counterfactuals ([10](10-value-metrics-and-economics.md)) |
 | 8 | **Sustainment** | Infrastructure-as-code redeploys the old size; new waste appears next week. | Drift guard; fix-at-source PRs; regression watch |
 
-These are **hypotheses**. The evidence we found for them (and where evidence is thin) is in [research/03](../research/03-finops-framework-and-evidence.md). The cheapest way to validate the core one — *"owners act when asked well"* — is a Wizard-of-Oz pilot before any build ([plan](../plan/00-follow-up-plan.md), Phase 2).
+These are **hypotheses**, and the evidence is honest but thin: **no credible, verifiable "percentage of recommendations acted upon" exists** ([research/03](../research/03-finops-framework-and-evidence.md)). The verified proxies are that cloud waste estimates *rose* to 29% (Flexera 2026) despite 63% of organisations having a FinOps team and 71% a cloud centre of excellence, and that the State of FinOps 2026 names **"Automated Remediation & Easy Buttons"** as an unmet need. We will therefore **produce our own number**: first a one-hour "what are your top-10 known-but-unfixed items, and why?" interview with a FinOps/CoE lead (information, owner, effort, incentive or risk?), then an owner-resolution test, then a pre-registered Wizard-of-Oz pilot ([plan](../plan/00-follow-up-plan.md), Phases 0.5 and 2).
 
-### What the primary sources already confirm (as of 2026-10-30)
+### What the primary sources confirm — and what they don't (as of 2026-10-30)
 
-Desk research against Microsoft's own documentation ([research/01](../research/01-azure-native-landscape.md), [research/04](../research/04-seed-example-facts.md)) confirms the gaps are real — the native stack *detects and advises*, then stops:
+Desk research and a dated first-party tear-down ([research/06](../research/06-first-party-teardown.md), [research/01](../research/01-azure-native-landscape.md), [research/04](../research/04-seed-example-facts.md)) show that **individual plumbing capabilities now exist somewhere in Microsoft's stack**. What we could *not* find is the **combination for cost** and the **usage-truth detectors**:
 
-| Gap | What the sources show |
-|---|---|
-| **No owner resolution** | No native primitive resolves tag → directory user → manager chain; documented automations route to a *pre-configured* email or action group |
-| **No delivery where people work** | Cost anomaly alerts are **email only**; no native Teams card with evidence |
-| **Advice stops at a script** | The Azure Copilot optimization agent (preview, VM/VMSS only) generates scripts a human runs; the MCP `advisor` tool edits infrastructure-as-code files, not live resources; the `optimization` tool lists, compares and explains |
-| **No realised-savings check** | Advisor only re-scans ("up to a day"); no verification of actual savings found in Cost Management, Advisor or the FinOps toolkit |
-| **Blind to commitments** | Advisor's VM resize savings use retail rates and **ignore existing reservation coverage** — Microsoft's own doc warns a resize can raise effective cost |
-| **No usage-usefulness signal** | None of Advisor's four Log Analytics cost recommendations (nor Copilot) says "this table is never queried"; query auditing is **off by default** and excludes scheduled rules and hunting |
-| **Hidden capacity** | P2S gateway scale units are billed by the hour inside a managed hub; scaling is documented as possibly disruptive; no tool right-sizes them from usage |
+| Capability | What exists (verified) | What was not found |
+|---|---|---|
+| **Owner → manager routing** | Defender for Cloud **governance rules**: owner from a resource tag, due dates, weekly owner emails, manager email when overdue — for **security** recommendations (Defender CSPM plan) | The same for **cost** recommendations; an *approver* resolved from the directory |
+| **Delivery where people work** | SRE Agent has Teams/Outlook connectors (operations); cost anomaly alerts are **email only** | A cost case with evidence delivered in Teams |
+| **Approve, then execute** | **SRE Agent Review mode** executes approved Azure CLI/ARM operations — **only SRE Agent Administrators approve**; the Optimization Agent (preview, VM/VMSS) generates scripts; the MCP `advisor` tool edits infrastructure-as-code | **Owner-as-approver** for cost changes with an authority check; IaC-pull-request-first execution for cost |
+| **Realised-savings check** | Advisor re-scans ("up to a day"); FinOps hubs report cost | Verification against a counterfactual; a ledger |
+| **Commitment awareness** | Advisor's VM resize savings use retail rates and **ignore existing reservation coverage** (Microsoft's own doc warns a resize can raise effective cost) | A sequencing-aware *right-size → commit* workflow |
+| **Log usefulness** | **Sentinel SOC optimization** flags unused tables/columns — **Sentinel workspaces, 30-day window, security-scoped**; Advisor and Copilot do not | The equivalent for **Azure Monitor-only workspaces**, longer horizons and template-level noise, with replay safety. Query audit is off by default and its coverage of interactive surfaces is **inconsistently documented** (measure it) |
+| **Hidden capacity** | FinOps alerts cover idle gateways and public IPs; P2S scaling is documented as possibly disruptive | Right-sizing of P2S scale units from usage; their **connection capacity is banded, not linear**, which makes it non-trivial |
+
+**Consequence:** we do not claim a plumbing monopoly. Our defensible content is *validated usage-truth playbooks with ground truth, owner-as-approver methodology, savings-counting rules and an open evaluation harness* — and we position as **ride / copy-the-pattern / build / contribute** ([research/06 §3](../research/06-first-party-teardown.md)).
 
 ### Why this is a *consumption* problem, not just a *cost* problem
 
@@ -191,11 +193,13 @@ HITL is a founding constraint, so autonomy is **explicitly granted by humans, pe
 | **L0** | **Observe** | Read-only. Build cases silently; *shadow mode* predicts what it would do, scored against what humans do. | Reviewers audit predictions |
 | **L1** | **Advise** | Send evidence-backed recommendations. No changes. | Decides and acts themselves |
 | **L2** | **Assist** | Execute a specific, previewed plan **after explicit one-tap approval**. | **In the loop** — approves each action |
-| **L3** | **Veto window** | Schedule a plan; proceed unless a human vetoes within the window. | **On the loop** — supervises, can veto |
+| **L3** | **Veto window** | Schedule a plan; proceed unless a human vetoes within the window — **only for owners who have affirmatively enrolled that action class and scope, with proof that the notice was delivered. Silence is never consent for anything else.** | **On the loop** — supervises, can veto |
 | **L4** | **Policy autopilot** | Act inside a human-authored, versioned **policy envelope** (scope, action class, value cap, reversibility, windows) and report. | **Over the loop** — authors and reviews policy |
-| **L5** | **Portfolio autonomy** | Continuously manage a bounded portfolio (e.g. commitments) within a finance-approved risk budget. | Sets risk budget, reviews ledger |
+| **L5** | **Portfolio intelligence** | Continuously **monitor, simulate and optimise scope/configuration** of a bounded portfolio (e.g. commitment coverage and scope) within a finance-approved risk budget. **Purchases, exchanges, renewals and cancellations are never L3–L5: each is individually signed by the legally authorised buyer(s) against a finite transaction manifest.** | Sets risk budget, signs transactions, reviews ledger |
 
 **Default = L2** for anything that changes the estate. **L4/L5 are earned**: only for narrow action classes with a clean track record (no regret events), and only after a named human (or role) ratifies the policy envelope. Every level has **downgrade triggers** (a regret event, an SLO breach, an owner complaint, a model change) and a **kill switch** reachable by the FinOps lead and security. See [06](06-closed-loop-actions-and-autonomy.md).
+
+**What "HITL" means here.** *In the loop* (L2): a human approves each action. *On the loop* (L3): a human who **opted in** can veto. *Over the loop* (L4): a human authors, ratifies and reviews a policy envelope. All three keep a human's authority upstream of every action, but **only L2 is per-action** — and we say so plainly in public-facing language. **Collection-reducing actions (log filters, shorter retention) and anything classed R3 never run at L3 or L4.**
 
 ---
 
@@ -214,6 +218,10 @@ HITL is a founding constraint, so autonomy is **explicitly granted by humans, pe
 | **SRE / on-call** | Receives cost incidents | Cost incidents handled like reliability incidents (severity, runbook, post-incident review) |
 | **Procurement / vendor mgmt** | Commercial decisions | Evidence packs for renewals and commitments |
 | **MSP / partner** (optional) | Operates for several customers | Multi-customer view with strict isolation |
+| **Change / ITSM owner (CAB)** | Owns freeze calendars, the standard-change catalogue and change records | Cost changes arrive as properly classified changes; freezes are honoured |
+| **Billing-account / chargeback owner** | Owns allocation rules and financial authority | A ledger and allocation that match the billing structure |
+| **Shared-platform service owner** | Owns shared gateways, workspaces and firewalls used by many teams | One coordinated decision with every consumer heard |
+| **SOC / incident commander** | Owns incident state and security posture | No cost action during incidents; security-sensitive sources protected |
 
 ### 5.2 Agents (summary — detail in [04](04-agent-crew.md))
 
@@ -223,7 +231,7 @@ A **crew** with separation of duties, mirroring good internal controls: those wh
 
 | To | We promise |
 |---|---|
-| **Resource owners** | We will not waste your attention, surprise you, or leave you without an undo. |
+| **Resource owners** | We will not waste your attention or surprise you. We state up front whether an action can be undone — and for the ones that cannot, we say so, ask two humans, and show what would be lost. |
 | **FinOps / Cloud CoE** | Every saving is proven, every action is auditable, and *you* hold the dial and the kill switch. |
 | **Finance** | The numbers reconcile to the invoice; projections are labelled as projections; regret is reported next to savings. |
 | **Security & compliance** | Nothing happens outside policy; every action is attributable; no covert hand on the wheel. |
@@ -234,15 +242,15 @@ A **crew** with separation of duties, mirroring good internal controls: those wh
 
 ## 6. How it feels — a week in the life (illustrative)
 
-**Tuesday 09:12 — Sanne, platform engineer.** A Teams card: *"Your User-VPN gateway `hub-weu-p2s` has never used more than a fraction of its 100 scale units in 90 days. Scaling to 12 saves ~€X/month. Reversible for 14 days."* She taps **Preview**, sees the 90-day heat map and the Challenger's pre-mortem ("a quarterly all-hands has peaked at 31 units; we kept headroom"). She taps **Approve — Thursday 22:00 window**. Thursday night: *"Done. Rollback available until the 14th."* Monday: *"Verified: €X/month saved so far. Your team has saved €Y this quarter — 30% is yours to spend on the innovation budget."*
+**Tuesday 09:12 — Sanne, platform engineer.** A Teams card: *"Your User-VPN gateway `hub-weu-p2s` has never needed more than a fraction of its 100 scale units in 90 days. Scaling to 12 saves ~€X/month. Scaling is reversible, but connected users may briefly reconnect."* She taps **Preview**, sees the 90-day heat map and the Challenger's pre-mortem ("the all-hands peaked at about 3 Gbps; 12 units keeps twice that; event days get a scheduled scale-up"). She taps **Approve — Thursday 22:00 window**. Thursday night: *"Done. Scaling back up is one tap until the 14th."* Monday: *"Verified: €X/month saved so far. Your team has saved €Y this quarter"* — and, if the organisation has adopted a savings dividend, a share of it is the team's to spend.
 
-**Monday 07:30 — Dirk, engineering manager.** His weekly brief: three decisions needed, one celebration, one risk. He taps **Adopt policy: dev environments sleep 20:00–07:00**, which a FinOps lead has pre-approved as an L3 template for his subscriptions. He never sees those cases again — only the monthly summary.
+**Monday 07:30 — Dirk, engineering manager.** His weekly brief: three decisions needed, one celebration, one risk. He taps **Enrol in policy: dev environments sleep 20:00–07:00** — a template a FinOps lead and security have ratified, which is reversible and runs only for subscriptions that *opted in*. He never sees those cases again — only the monthly summary.
 
 **Wednesday 14:00 — Fatima, FinOps lead.** In *Mission Control* she reviews the agents' **regret report** (two rolled-back actions, both explained), approves a **new playbook the Alchemist authored** ("SFTP-enabled storage accounts with no SFTP logins in 90 days"), and nudges one action class from L2 to L3 for non-production.
 
 **Monthly — Jan, CFO.** A 90-second audio brief in Outlook: spend vs forecast, savings *verified* (not projected), commitments coverage, the three biggest risks. In the quarterly review an **AI participant, clearly labelled as AI**, answers questions with evidence and records decisions as Cases — it cannot execute anything without a confirmation from an authorised human.
 
-**02:07 — a cost incident.** GPU nodes are burning money after a runaway job. The on-call engineer gets a Teams card, then — no response in 4 minutes, spend rate above the emergency threshold — a **call**: *"Spend rate is forty times normal. A confirmation prompt is on your phone; if nobody confirms within ten minutes, the cost-brake policy that FinOps and Security approved will pause the pool. Pausing is reversible."* The pool pauses; a Cost Incident channel is created; next day a post-incident review is drafted. (Voice never carries authority by itself: confirmation completes in an authenticated channel, or the pre-approved, narrow, reversible cost brake applies.)
+**02:07 — a cost incident.** GPU nodes are burning money after a runaway job. The on-call engineer gets a Teams card and, with no response, a **call** — because a spend rate forty times normal *might* be a planned launch, a recovery or an attack, **and a cost anomaly alone never pauses anything.** The call asks one thing: *"Is this expected? A confirmation prompt is on your phone."* A **cost brake** can fire automatically only for resource classes that the **service owner pre-certified as safe to pause** (a recorded contract), with live incident and SLO checks, rate limits and a mandatory review afterwards; otherwise the system keeps paging humans and records what it knew. A Cost Incident channel is created; next day a post-incident review is drafted. (Voice never carries authority: confirmation completes in an authenticated channel.)
 
 (Interaction concepts in detail: [05](05-human-interaction-concepts.md).)
 
@@ -280,9 +288,9 @@ Seventeen families, from the obvious to the outer rim. Full catalog (with IDs, s
 2. **Every number is computed, never generated.** Every claim has evidence one click away.
 3. **Ask less, do more — safely.** The best notification is the one you never needed to send: trivial, reversible items belong in a human-authored policy envelope, not in someone's inbox.
 4. **Usage over billing.** Ask *"is it used and useful?"*, not just *"is it expensive?"*.
-5. **Owners first.** No cost action without a resolved owner. Ownership is a product, not a tag.
+5. **Owners first.** No cost action without a confirmed owner — or, for genuinely orphaned resources, a **named custodian** with policy authority who accepts the case. Ownership is a product, not a tag.
 6. **Meet people where they work; treat attention like money.** Every message spends it.
-7. **Reversible by default.** Irreversible actions require extra human ceremony and proof of backup.
+7. **Honest about reversibility.** Every action carries a stated reversibility class. Reversible by default; **irreversible (R3) actions — including dropping log data — require two humans, a stated residual loss and, where possible, a safety net.** We never promise an undo we cannot deliver.
 8. **Context is king.** Remember *why*. Never ask twice for the same reason.
 9. **Prove it.** A saving is claimed only when measured against a counterfactual.
 10. **Fix it at the source.** If infrastructure-as-code would revert the change, the pull request *is* the fix.
@@ -290,14 +298,15 @@ Seventeen families, from the obvious to the outer rim. Full catalog (with IDs, s
 12. **Explain, don't pressure.** No dark patterns, no shaming, honest uncertainty, always disclose that it is AI.
 13. **Secure by design.** Agents are principals with least privilege; the *approver's* authority is checked; estate data is untrusted input.
 14. **Show the trade-off.** Cost never silently trades away reliability, security, performance or compliance — the WAF pillar impact is on every case.
-15. **Open by default.** Playbooks, evaluations and documentation are open source; no black boxes.
+15. **Open logic and evidence.** Playbooks, evaluations and documentation are open source, and every recommendation can be traced to its evidence. The foundation model is a **replaceable, evaluated component** (models retire on a vendor timetable), not a claim of full transparency.
 16. **Be the reference architecture.** The platform itself follows CAF and WAF — we dogfood what we advise.
+17. **Silence is never consent.** Non-response is not approval, ownership or evidence that something is safe to change. Only affirmative, authenticated enrolment makes a veto window legitimate.
 
 ---
 
 ## 9. Non-goals (for now) and horizons
 
-**Non-goals (v1):** a chatbot-first product · replacing Cost Management/Advisor (we *consume* them) · a billing or chargeback system of record · a security product · a general AIOps/SRE agent · autonomous purchasing outside finance-approved policy · multi-cloud · employee monitoring.
+**Non-goals (v1):** a chatbot-first product · replacing Cost Management/Advisor (we *consume* them) · a billing or chargeback system of record · a security product · a general AIOps/SRE agent · autonomous purchasing of any kind (commitment transactions are always individually signed by authorised humans) · multi-cloud · employee monitoring.
 
 | Horizon | Theme | Notes |
 |---|---|---|
@@ -314,14 +323,16 @@ The outer-rim ideas that sit beyond H2 are collected in [09](09-outer-rims-moons
 
 | # | Bet | Cheapest test (see plan) |
 |---|---|---|
-| B1 | Owners **act** when asked well (right person, channel, evidence, one tap). | Wizard-of-Oz pilot: humans send the cards manually for 2–4 weeks; measure the funnel. |
+| **A2** (precondition) | Owners can be **resolved** with useful accuracy from tags, directory, history and conversation. | Resolve owners for ~200 resources with known owners and measure accuracy — *before* B1a, because "owners act" is untestable if owner resolution fails. |
+| **B1a** | **Closure:** owners **act** when asked well (right person, channel, evidence, one tap) on waste we can already see. | A one-hour CoE interview ("top-10 known-but-unfixed items, and why?"), then a **pre-registered** Wizard-of-Oz pilot with a comparison condition ([plan](../plan/00-follow-up-plan.md), Phase 2). |
+| **B1b** | **Usage intelligence:** AI-built usage-truth cases (log usefulness, capacity right-sizing) are **accurate and safe** enough to put in front of owners. | Ground-truth replay on a consenting workspace and the Waste Lab; measure precision, false-drop rate, evidence completeness. |
 | B2 | AI-built **case files** are trusted by engineers. | Blind review: engineers rate AI case files vs. their own analysis. |
-| B3 | **Teams cards** can carry real, authenticated approvals. | Prototype one approval path; security review. |
-| B4 | **Usefulness analysis of logs** is accurate and safe enough (replay protects against regret). | Offline replay on a consenting workspace; measure false-drop rate. |
-| B5 | **Counterfactual savings** convince Finance. | Reconcile three real savings against invoices with a Finance partner. |
+| B4 | Log-usefulness analysis is accurate **and safe** (calibrated audit coverage, replay, protected sources). | As B1b, advisory only. |
 | B6 | HITL at scale doesn't drown humans: **attention budgets** suffice. | Simulate message load on a real estate; survey fatigue. |
-| B7 | The community will contribute **playbooks**. | Publish five playbooks early; measure external interest. |
-| B8 | Customers will grant **write** permissions with proper guardrails. | Guardrail workshops with 3 customers' security teams. |
+| B8 | Customers will grant **write** permissions with proper guardrails — through **least-privilege roles** and an **infrastructure-as-code pull-request path** (IaC-managed estates revert direct changes). | Concrete role definitions reviewed by a real security reviewer; test the pull-request path first. |
+| B5 | **Verified savings** convince Finance (exact where the meter is exact, counterfactual where usage drives cost). | Reconcile three real savings against invoices with a Finance partner. |
+| B3 | **Teams cards** can carry authenticated, user-bound approvals. | A two-day spike; the real question is B8. |
+| B7 | The community will contribute **playbooks** (declarative and read-only). | Deferred — not a release-1 bet; the largest attack surface. |
 
 ---
 
@@ -334,9 +345,9 @@ The outer-rim ideas that sit beyond H2 are collected in [09](09-outer-rims-moons
 |---|---|---|
 | Microsoft platforms / technology only | Channels are Teams/Outlook/Teams-calling; agents are Foundry agents; data stays in the customer's tenant | Third-party channels (e.g. a non-Microsoft SMS provider) are out; model choice within Foundry; interop with non-Microsoft FinOps data (FOCUS) |
 | CAF + WAF compliant | The platform is a WAF-reviewed reference architecture; every case shows WAF-pillar impact | Which CAF/WAF controls are *testable gates* vs. guidance |
-| Open source | Playbooks, evals, docs and reference implementation are open | A closed foundation model is a dependency; licence, governance, trademark ("Azure" in the name) |
+| Open source | Playbooks, evals, docs and reference implementation are open | A closed foundation model is a dependency (and models retire); **community playbooks must be declarative and read-only, able only to reference actions from a small maintainer-owned typed catalogue**; licence, governance, trademark ("Azure" in the name), employer approval |
 | FULL AI | Eight AI jobs across the loop ([§3](#3-what-full-ai-means-here)) | AI everywhere ≠ AI unconstrained; a deterministic spine is mandatory |
-| HITL | Autonomy Ladder; default L2; humans author any higher-autonomy policy | HITL at scale needs attention budgets and policy envelopes or it collapses under its own weight |
+| HITL | Autonomy Ladder; default L2; humans author any higher-autonomy policy; **L3 needs affirmative enrolment; purchases are never L3–L5** | L3/L4 are *on/over-the-loop*, not per-action — say so plainly; HITL at scale needs attention budgets and policy envelopes or it collapses under its own weight |
 | Guardrails first | [08](08-trust-safety-and-guardrail-topics.md) maps the territory and the questions; [plan](../plan/02-guardrails-workplan.md) schedules the work | — |
 
 ---
@@ -348,7 +359,7 @@ The outer-rim ideas that sit beyond H2 are collected in [09](09-outer-rims-moons
 - The crew → [04](04-agent-crew.md) · The conversation → [05](05-human-interaction-concepts.md) · The loop → [06](06-closed-loop-actions-and-autonomy.md)
 - Ownership & organisation → [07](07-ownership-and-organization.md) · Guardrail territory → [08](08-trust-safety-and-guardrail-topics.md)
 - The outer rim → [09](09-outer-rims-moonshots.md) · Value & metrics → [10](10-value-metrics-and-economics.md) · Press release from the future → [11](11-working-backwards-pr-faq.md)
-- The plan → [plan/00](../plan/00-follow-up-plan.md)
+- The plan → [plan/00](../plan/00-follow-up-plan.md) · The first-party picture → [research/06](../research/06-first-party-teardown.md)
 
 ## Glossary
 
@@ -363,3 +374,7 @@ The outer-rim ideas that sit beyond H2 are collected in [09](09-outer-rims-moons
 | **Regret** | A harm attributable to an action the crew took (rollback, incident, perf regression, owner complaint) |
 | **Challenger** | The agent whose only job is to refute a case before humans see it |
 | **Attention budget** | A cap on asks per human per period; each ask must clear a value-density threshold |
+| **Orphan custodian** | A named role with policy authority who may accept a case for a genuinely unowned resource; silence never substitutes for one |
+| **Control-plane tag** | A tag that influences scope, autonomy, protection, criticality or ownership; changed only with independent authority and audit |
+| **R3-Data** | Prospective information loss: any collection-reducing action (log filters, shorter retention, sampling) — never L3/L4 |
+| **Evidence horizon** | How far back we can actually see; absence of evidence counts only if we could have seen it |

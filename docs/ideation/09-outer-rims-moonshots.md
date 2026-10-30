@@ -1,9 +1,11 @@
 # The Outer Rim — moonshots, wild cards and "what if?"
 
-> **Status:** Ideation v1 · **Date:** 2026-10-30 · Part of the [north-star vision](01-north-star-vision.md)
+> **Status:** Ideation **v2** (revised after rubber-duck round 1; v1 archived [here](../_archive/round-1-v1/ideation/09-outer-rims-moonshots.md)) · **Date:** 2026-10-30 · Part of the [north-star vision](01-north-star-vision.md)
 > **The brief:** *"explore the outer rims of what is possible using AI and Foundry within proper workflows — not as a chatbot."* Technical feasibility is **deliberately ignored** here. Each idea states its **conceptual hard part** (what makes it difficult in principle: trust, privacy, accountability) and a **smallest experiment** that would teach us something without building the platform.
 
 Horizons: **H1** close the last mile · **H2** consumption intelligence · **H3** preventive & predictive · **H4** governed autonomy.
+
+**Decision status (v2).** A menu without decisions is a wish list, so every idea now has a status — see the [status table](#decision-status-v2) at the end: **Enabler** (a foundation Release 1 needs) · **Candidate** (research queue, no commitment) · **Parked** (kept, with a re-open trigger) · **Retired** (removed, reason recorded).
 
 ---
 
@@ -18,11 +20,11 @@ Horizons: **H1** close the last mile · **H2** consumption intelligence · **H3*
 **M-03 · The FinOps Review Room.** A clearly-labelled **AI participant** joins the weekly cost review (voice, optional avatar): gives a 90-second recap, answers "what if we turn off X?" with evidence, and records decisions as Cases. Nothing executes without confirmation from an authorised human in an authenticated channel.
 *Hard part:* real-time accuracy under pressure; consent and recording; cross-talk. *Experiment:* a text-only participant in the meeting chat first. **H3**
 
-**M-04 · The voice cost brake.** A runaway spend spike triggers a **call** to on-call after the card goes unanswered: *"Spend rate is forty times normal. Say 'pause' to deallocate the pool."* Spoken confirmation triggers a *pre-approved, narrow* cost brake.
-*Hard part:* voice is **not** authentication — the confirmation must complete in an authenticated channel; false alarms at 02:00 burn trust. *Experiment:* a tabletop exercise with on-call. **H3**
+**M-04 · The voice cost brake (parked).** A runaway spend spike triggers a **call** to on-call after the card goes unanswered: *"Spend rate is forty times normal. A confirmation prompt is on your phone."* Only a **pre-certified, narrowly enumerated** brake may ever act without a human — and only for a resource class whose service owner recorded a *safe-to-pause contract*, on an independent signal, with a live incident check and a mandatory post-incident review ([06 §3](06-closed-loop-actions-and-autonomy.md)). **A cost anomaly alone never pauses anything.**
+*Hard part:* voice is **not** authentication — confirmation must complete in an authenticated channel; false alarms at 02:00 burn trust; a forged anomaly must not be able to trigger a pause (T38). *Experiment:* a tabletop exercise with on-call. **H3** · *Parked until a safe-to-pause contract exists.*
 
-**M-05 · Meeting-intent mining (strictly opt-in).** With consent, detect "we're sunsetting Project Phoenix" in meeting notes and propose a teardown plan.
-*Hard part:* privacy, works councils, creepiness, accuracy. Likely stays an *optional extra*. *Experiment:* one consenting team, notes only; measure precision. **H4**
+**M-05 · Meeting-intent mining (retired).** With consent, detect "we're sunsetting Project Phoenix" in meeting notes and propose a teardown plan.
+*Hard part:* privacy, works councils, creepiness, accuracy. **Retired in v2:** it mines people's conversations — the line [07 §12](07-ownership-and-organization.md) draws — and invites works-council and GDPR scrutiny out of proportion to the value. The safe sibling is explicit: a team *tells* the Herald "we are sunsetting Project Phoenix" in a card or form. Re-open only on a customer's explicit request with works-council approval. **H4**
 
 **M-06 · Budget conversations.** Instead of a static threshold email, a mid-month dialogue: *"Forecast is +18% vs last month because of X. Expected? [Yes, planned] [No, investigate] [Explain]."* Answers **label** anomalies and teach the model what "normal" means per team.
 *Hard part:* over-messaging. *Experiment:* five owners, manual weekly conversations for a month. **H2**
@@ -81,13 +83,13 @@ Horizons: **H1** close the last mile · **H2** consumption intelligence · **H3*
 
 ## D. Learning, community and open source
 
-**M-21 · Open Waste Rules ("Sigma for FinOps").** A vendor-neutral, declarative, testable **playbook format** — signal → evidence → case → action → verification — with community-contributed rules and test data. The crew *uses and authors* them; humans approve.
-*Hard part:* format design; governance; the trust model for executable intent. *Experiment:* write ten rules and their test data. **H2**
+**M-21 · Open Waste Rules ("Sigma for FinOps").** A vendor-neutral, declarative, testable **playbook format** — signal → evidence → case → *proposed* action → verification — with community-contributed rules and test data. Playbooks are **read-only data, never executable code**: a playbook describes, it does not run. The crew *uses and drafts* them; humans approve each one as a governed release.
+*Hard part:* format design; governance; keeping playbooks declarative so the trust model stays tractable. *Experiment:* write ten rules and their test data. **H2**
 
 **M-22 · The Waste Lab.** A generator that builds a **synthetic estate with injected waste and ground truth**, so agents and playbooks can be evaluated for precision and recall — and so the community can test safely.
 *Hard part:* realism. *Experiment:* 30 injected cases and a Scout run. **H1**
 
-**M-23 · The playbook flywheel.** The Alchemist notices "I've seen this pattern in 37 cases" and drafts a new playbook (sanitised, no customer data) for human review and optional upstream contribution.
+**M-23 · The playbook flywheel.** The Alchemist notices "I've seen this pattern in 37 cases" and drafts a new *declarative* playbook (sanitised, no customer data) for governed human review and optional upstream contribution.
 *Hard part:* privacy boundaries; review load. *Experiment:* one pattern end-to-end. **H3**
 
 **M-24 · Peer benchmarking.** "Teams like yours spend 30% less on logs" — within one organisation first; cross-organisation only with explicit opt-in and aggregation.
@@ -103,11 +105,11 @@ Horizons: **H1** close the last mile · **H2** consumption intelligence · **H3*
 **M-26 · The savings dividend.** A share of **verified, sustained** savings returns to the owning team's budget. Aligns the incentive (gap #6).
 *Hard part:* baseline fairness; gaming; Finance policy. *Experiment:* one team, one quarter. **H3**
 
-**M-27 · No-blame rollback ("savings insurance").** If an agent action causes regret, the platform rolls back automatically and the **team is not penalised**; regret is the platform's budget, not the owner's. Makes saying *yes* safe (gap #4).
-*Hard part:* writing the policy so everyone believes it. *Experiment:* draft the policy text with HR and Finance. **H2**
+**M-27 · Blameless regret ("savings insurance").** When an agent action causes regret, the platform rolls back automatically *where the action's class allows it*, and the review is **blameless**: it asks what the system, the policy and the controls should change. The audit still records who approved what — **attribution is not blame** — and organisational accountability follows the customer's RACI ([08 G1-13](08-trust-safety-and-guardrail-topics.md)). R3 and R3-Data actions have no automatic rollback, so the promise is stated per class. Regret is the platform's budget to learn from, not a verdict on the owner. Makes saying *yes* safe (gap #4).
+*Hard part:* writing the policy so everyone believes it — and so it does not contradict who is accountable. *Experiment:* draft the policy text with HR, Finance and Legal. **H2**
 
-**M-28 · The autonomous commitment portfolio (L5).** A robo-advisor for reservations and savings plans: staged terms, utilisation targets, risk budget, back-tested.
-*Hard part:* irreversibility and Finance accountability. *Experiment:* back-test on historical usage in shadow mode. **H4**
+**M-28 · The commitment portfolio advisor (advice and simulation only; parked).** A robo-*advisor* for reservations and savings plans: staged terms, utilisation targets, risk budget, back-tested simulations and scope-optimisation advice. **It never transacts:** purchases, exchanges, renewals and cancellations are never L3–L5; each is individually signed by the legally authorised buyer against a finite manifest ([06 §6](06-closed-loop-actions-and-autonomy.md), [invariant 16](08-trust-safety-and-guardrail-topics.md#4-candidate-safety-invariants-non-negotiables-to-ratify)).
+*Hard part:* Finance accountability and sign-off fatigue; irreversibility stays with humans. *Experiment:* back-test on historical usage in shadow mode. **H3**
 
 **M-29 · The contract-aware agent.** Knows EA/MACC commitments, burn-down and renewal dates; steers spend and prepares **renewal evidence packs**.
 *Hard part:* confidentiality of contract data. *Experiment:* feed a sanitised contract; test burn-down forecasting. **H3**
@@ -142,7 +144,7 @@ Horizons: **H1** close the last mile · **H2** consumption intelligence · **H3*
 
 **M-37 · Adjacent-spend scopes.** The same loop for **SaaS and developer-platform spend**: inactive licences and seats, capacity add-ons, build minutes, idle developer environments, AI/Copilot seats and capacity. **H4**
 
-**M-38 · Multi-cloud visibility via an open cost format.** Ingest other clouds' cost data for *visibility and ownership*, while actions remain Azure-native (to be reconciled with the "Microsoft technology only" constraint). **H4**
+**M-38 · Multi-cloud visibility via an open cost format (retired).** Ingest other clouds' cost data for *visibility and ownership*, while actions remain Azure-native. **Retired in v2:** it conflicts with the founding constraint *Microsoft technology only* (F2) and widens scope beyond what Release 1 can prove. (Importing *Azure's own* FOCUS export is native and unaffected.) Re-open only if the constraint itself changes. **H4**
 
 **M-39 · Savings stories.** Auto-generated, owner-approved "what we fixed and what we learned" posts for internal communities — culture as a by-product. **H3**
 
@@ -154,7 +156,20 @@ Horizons: **H1** close the last mile · **H2** consumption intelligence · **H3*
 
 | | **Low trust risk** | **Higher trust risk** |
 |---|---|---|
-| **High wow** | Time Machine (M-14) · Shift-left bot (M-08) · Waste Lab (M-22) · Open Waste Rules (M-21) · Pricing Radar (M-12) · Cost-of-nines (M-31) · Cost SLOs (M-11) | Meeting-intent mining (M-05) · Autonomous commitments (M-28) · Voice brake (M-04) · Agent-to-agent negotiation (M-02) |
+| **High wow** | Time Machine (M-14) · Shift-left bot (M-08) · Waste Lab (M-22) · Open Waste Rules (M-21) · Pricing Radar (M-12) · Cost-of-nines (M-31) · Cost SLOs (M-11) | Commitment advisor (M-28, advice only) · Voice brake (M-04, parked) · Agent-to-agent negotiation (M-02, parked) · *Meeting-intent mining (M-05) — retired* |
 | **Quietly valuable** | Exception court (M-33) · Preview-environment reaper (M-16) · Duplicate data (M-17) · Context mining (M-18) · FinOps for agents (M-35) | Savings dividend (M-26) · Code-level PRs (M-15) |
+
+---
+
+## Decision status (v2)
+
+| Status | Meaning | Ideas |
+|---|---|---|
+| **Enabler** | A foundation that Release 1 needs | **M-14** Time Machine (as an Assess-mode replay, no writes) · **M-22** Waste Lab (the evaluation harness) · **M-35** FinOps for the agents (instrument from day one — it feeds kill criterion K3) · **M-25** Confidence calibration league (calibration is measured on the Time Machine replay) · **M-27** Blameless regret (the policy text that makes saying *yes* safe) |
+| **Candidate** | Research queue; no commitment | M-06 · M-08 · M-09 · M-11 · M-12 · M-15 · M-16 · M-17 · M-18 · M-21 · M-23 · M-24 · M-30 · M-31 · M-32 · M-33 · M-34 · M-36 · M-39 · M-40 |
+| **Parked** | Kept, with a **re-open trigger** | **M-01** Cost Court (Release 1 shows Challenger catch and regret numbers, and a contested case type where debate adds value) · **M-02** (human-run multi-owner cases prove the pattern first) · **M-03** Review Room (the written flows are trusted; text first) · **M-04** (a service owner records a safe-to-pause contract *and* the write-safety harness passes) · **M-07** (the secure step-up design passes security review and attention data exists) · **M-10** (schedules are parked until the loop is proven) · **M-13** (with M-28; a commitment scenario is un-parked) · **M-19** (scale rules are un-parked) · **M-20** (Release 1 is done and a design-review partner exists) · **M-26** (a Finance-reconciled saving exists and a baseline policy is agreed) · **M-28** (Release 1 proves the loop and Finance maintains an authorised-signer register) · **M-29** (with commitments) · **M-37** (adjacent spend scopes, after the Azure loop is proven) |
+| **Retired** | Removed; reason recorded | **M-05** (mines people's conversations; works-council and GDPR exposure) · **M-38** (conflicts with *Microsoft technology only*) |
+
+No moonshot is in Release 1 itself: Release 1 is deliberately built from the catalog's best-evidenced plays ([02](02-opportunity-catalog.md), [plan/00](../plan/00-follow-up-plan.md)). The moonshots earn a place by what Release 1 teaches.
 
 Next: how we measure success → [10](10-value-metrics-and-economics.md).

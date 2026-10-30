@@ -1,6 +1,6 @@
 # Deep Dives — the seed examples, end to end
 
-> **Status:** Ideation v1 · **Date:** 2026-10-30 · Part of the [north-star vision](01-north-star-vision.md)
+> **Status:** Ideation **v2** (corrected after rubber-duck round 1 — notably the P2S capacity model and the audit-coverage claims; v1 is archived [here](../_archive/round-1-v1/ideation/03-deep-dives-seed-examples.md)) · **Date:** 2026-10-30 · Part of the [north-star vision](01-north-star-vision.md)
 > **Grounding:** product mechanics and list prices come from [research/04](../research/04-seed-example-facts.md) (retrieved 2026-10-30; list prices from the public Azure Retail Prices API, West Europe, EUR). **Scenario data (workspace names, volumes, people) is invented.** Every € figure in a real message must come from the customer's own price data at execution time.
 > **Purpose:** show what "usage over billing, owners first, human decides, proof afterwards" looks like on the two examples in the brief — plus two more that stress other parts of the loop.
 
@@ -18,7 +18,7 @@
 | Main risk | Dropping something someone needs later (security, forensics) | Disconnecting users during a change |
 | Teaches | **Evidence horizon**, replay, protected sources, shared costs | **Deterministic sizing**, windows, consumers, scale-by-calendar |
 
-> **Terminology note.** Customers who "found hundreds of internal gateways" are most likely seeing **scale units** (and the instances they imply), not hundreds of separate gateway resources: a point-to-site gateway supports **1–200 scale units** (~**500 users and 500 Mbps per unit**, roughly 10 units per gateway instance), and the gateway is a distinct resource type that lives *inside the managed virtual hub*. We should confirm the exact shape with the customer who raised it. (Verified facts: [research/04 Part B](../research/04-seed-example-facts.md).)
+> **Terminology note.** Customers who "found hundreds of internal gateways" are most likely seeing **scale units** and the instances they imply, not hundreds of separate gateway resources: a point-to-site gateway supports **1–200 scale units**, delivers **0.5 Gbps per unit**, has **banded connection capacity**, and runs on **2 instances up to 20 units, then one more pair per extra 20 units** (100 units = 10 instances; 200 units = 20), and it is a distinct resource type that lives *inside the managed virtual hub*. Across several hubs that can read as "hundreds of gateways". We should confirm the exact shape with the customer who raised it. (Verified facts: [research/04 Part B](../research/04-seed-example-facts.md).)
 
 ---
 
@@ -35,8 +35,8 @@ A platform team runs a central Log Analytics workspace. Over three years every t
 | How much does each table/source ingest? | `Usage` table; `_BilledSize`; `_ResourceId` | Fine — a solved measurement problem |
 | Who queries what? | **Query auditing** (`LAQueryLogs`) — **off by default**; only records from when you switch it on | **Evidence horizon starts at "enable"** |
 | Do alerts/rules depend on a table? | Rule definitions contain the KQL | **No built-in cross-reference** between tables and rules/workbooks |
-| Does anything flag a table as never queried? | Advisor's four log-cost recommendations and Azure Copilot do **not** | **A genuine product gap** |
-| Is "zero queries" safe to act on? | Query audit **excludes** scheduled analytics rules, the Sentinel Hunting page, Investigation Graph and Defender Advanced Hunting | **Zero interactive queries ≠ unused** |
+| Does anything flag a table as never queried? | Advisor's four log-cost recommendations and Azure Copilot do **not**. **Sentinel SOC optimization does** — for *Sentinel workspaces*, billable tables ingested in the last **30 days**, security-scoped (and unused columns in preview) | **A gap outside Sentinel**, for longer horizons and for template-level noise |
+| Is "zero queries" safe to act on? | Query audit does **not log scheduled alert/analytic rule executions**; coverage of interactive Sentinel/Defender surfaces is **documented inconsistently** between two Microsoft pages | **Zero logged queries ≠ unused** — and the blind-spot list must be **measured per workspace** (canary test), not assumed |
 | What can be filtered, and how? | Ingestion-time transformations (row filters, column drops); table plans (Analytics/Basic/Auxiliary); source-side settings | Not all tables support them (e.g. P2S gateway diagnostics: no Basic plan, no transformation) |
 | Is changing the plan safe? | Plan switches are limited to **once per table per week**; **simple log-search alerts work on Basic**, but **alerts stop working on Auxiliary** | **Dependency check before any plan change** |
 
@@ -70,16 +70,16 @@ Outcome classes: **Keep · Keep-with-sample · Cheapen (cheaper plan) · Drop ·
 | # | Option | Reversibility | Note |
 |---|---|---|---|
 | 1 | **Do nothing / advise** | — | The honest answer for protected sources |
-| 2 | **Fix at the source:** narrow diagnostic categories, collection level, agent configuration, sampling | R1 | *Preferred* — removes noise before it is paid for |
-| 3 | **Code pull request:** change a chatty log statement or level | R1 | See [TELE-26](02-opportunity-catalog.md) and [M-15](09-outer-rims-moonshots.md) |
+| 2 | **Fix at the source:** narrow diagnostic categories, collection level, agent configuration, sampling | **R3-Data** — the configuration can be restored, the *future evidence not collected* cannot | *Preferred* — removes noise before it is paid for; still needs data-owner and security approval, never L3/L4 |
+| 3 | **Code pull request:** change a chatty log statement or level | **R3-Data** (reversible by revert; evidence not logged meanwhile is gone) | See [TELE-26](02-opportunity-catalog.md) and [M-15](09-outer-rims-moonshots.md) |
 | 4 | **Cheaper table plan** for high-volume, low-query tables | R1 (weekly limit; check dependencies) | Verify alerts/Power BI/dashboards first |
-| 5 | **Ingestion-time filter** (rows/columns) | **R3 for dropped data** | Only with the safety plan below |
+| 5 | **Ingestion-time filter** (rows/columns) | **R3-Data** | Only with the safety plan below; never L3/L4 |
 | 6 | **Retention / archive changes** | R3 if shortened | Compliance check first |
 | 7 | **Commitment tier / dedicated cluster** | R1 | Do *after* shrinking volume ("fix, filter, then price") |
 
 ### 1.5 The safety plan for the irreversible option
 
-1. **Check the evidence horizon.** Is query auditing on? Since when? If not, the first case is *"start watching"* — an R0/R1 action that opens an **Observing** state (see §1.8) and delivers value later.
+1. **Check the evidence horizon and calibrate the signal.** Is query auditing on, and since when? Then **run a canary query through each consumer surface that matters** (portal, workbook, dashboard, Sentinel/Defender hunting, API) and confirm it appears in the audit log — Microsoft's documentation of what is logged is inconsistent, so we measure. **Unknown coverage blocks any destructive recommendation.** If auditing is off, the first case is *"start watching"* — an **R1** action (it *adds* collection; the added cost is an attribute, not a class) that opens an **Observing** state (see §1.8) and delivers value later; the clock starts the day it is enabled, which is why this should happen *early* on pilot workspaces.
 2. **Enumerate every consumer** we *can* see (queries, scheduled/alert rules, Sentinel rules, workbooks, dashboards, exports, API consumers) and record the **blind-spot list** we cannot see. Unknown consumers require the owner's confirmation.
 3. **Measure savings from data already ingested** — bytes by pattern — so no experiment is needed to size the prize.
 4. **Replay test.** Re-run the audited queries and alert logic over the history **with the candidate lines removed**; results must be identical (or the differences explained and accepted).
@@ -145,7 +145,7 @@ Because the evidence horizon is itself a feature of the case, the lifecycle gets
 |                                                                   |
 | [Start replay + watch] [See the 3 patterns] [Not now v]           |
 | [Not mine] [Why?] [Talk to a human]                               |
-| I use message templates, not log values . AI-generated . trace    |
+| I use templates, not log values . AI-composed . figures computed  |
 +------------------------------------------------------------------+
 ```
 
@@ -157,7 +157,7 @@ Because the evidence horizon is itself a feature of the case, the lifecycle gets
 
 ### 1.11 Prior art and what it teaches
 
-Grafana's **Adaptive Logs** clusters log patterns, checks what was queried in the trailing window, recommends a drop rate, and **requires human review and exemptions** before dropping anything ([research/04 A.6](../research/04-seed-example-facts.md)). We keep the spirit — *pattern + usage + human review* — and add what a Microsoft-estate, owner-centred workflow needs: **rule/consumer enumeration, protected sources, replay, ownership across teams, action and verification**.
+Grafana's **Adaptive Logs** clusters log patterns, checks what was queried in the trailing window, recommends a drop rate, and **requires human review and exemptions** before dropping anything ([research/04 A.6](../research/04-seed-example-facts.md)). Microsoft's own **Sentinel SOC optimization** already flags unused tables and columns for Sentinel workspaces (30-day window, security-scoped, with an explicit warning to check compliance before changing ingestion). Both validate the idea and define our space: **Azure Monitor-only workspaces, longer horizons, template-level noise, replay safety, ownership across teams, action and verification** — while for Sentinel workspaces we **ride** Microsoft's signal rather than rebuild it. We keep the spirit of both — *pattern + usage + human review* — and add what a Microsoft-estate, owner-centred workflow needs: **rule/consumer enumeration with calibrated audit coverage, protected sources, replay, ownership across teams, action and verification**.
 
 ### 1.12 Extensions
 
@@ -176,28 +176,32 @@ During a surge in remote work, a network team raised the user-VPN gateway in a v
 | Fact | Value |
 |---|---|
 | Resource | A distinct **P2S VPN gateway** resource inside the **virtual hub** |
-| Capacity | **1–200 scale units**; ≈ **500 users and 500 Mbps per unit** (e.g. 40 units → 20,000 connections / 20 Gbps) |
+| Capacity | **1–200 scale units**; throughput is **linear at 0.5 Gbps per unit**, but **connection capacity is banded**: units 1–3 → 500 · 4–6 → 1,000 · 7–10 → 5,000 · 11–20 → 10,000 · then +10,000 per extra pair of instances (40 → 20,000 · 100 → 50,000 · 200 → 100,000). Instances: 2 up to 20 units, then +2 per extra 20. Plan to the table value, **not** to twice it (an instance may be serviced) |
 | Billing | Per **scale-unit hour** ("VPN P2S Scale Unit") plus a per-connection meter ("VPN P2S Connection Unit"); West Europe list ≈ **€0.3177 per unit-hour ≈ €232 per unit-month** |
 | "Used" signals | `P2SConnectionCount`, `P2SBandwidth` (and `UserVpnRouteCount`) |
-| Changing it | Portal / CLI / PowerShell / REST — **may cause TCP reconnects; plan for downtime** |
-| Guidance | Alert when bandwidth nears aggregate throughput, and when connections near the unit limit |
+| Changing it | Portal / CLI / PowerShell / REST — **may cause TCP reconnects; Microsoft says to plan for downtime** |
+| Guidance | Alert when bandwidth nears aggregate throughput, and when connections near the band limit |
 
-### 2.3 The right-sizing model (deterministic)
+### 2.3 The right-sizing model (deterministic lookup — *corrected after review*)
 
 ```
-required_units_connections = ceil( peak_concurrent_connections / 500 )
-required_units_bandwidth   = ceil( peak_bandwidth / 500 Mbps )
-required_units             = max(both)
-recommended_units          = required_units x headroom factor  (plus calendar events)
+connection_capacity(units): 1-3 -> 500 | 4-6 -> 1,000 | 7-10 -> 5,000 | 11-20 -> 10,000
+                            above 20 -> documented table value (10,000 per pair of instances)
+bandwidth(units)          = 0.5 Gbps x units          (linear)
+
+required_units    = smallest units such that
+                      connection_capacity(units) >= peak_connections x headroom
+                      AND bandwidth(units)       >= peak_bandwidth   x headroom
+recommended_units = required_units, raised on scheduled event days
 ```
 
-The Analyst feeds **real peaks over the evidence horizon** (including event days), applies a **headroom policy** chosen by humans, and the Economist prices the delta with the **customer's own rates**. The model explains; the arithmetic is code.
+The capacity table is a **versioned lookup of Microsoft's published table** (re-verified at execution time), *not* a linear formula — connection capacity jumps in bands, so a linear estimate can under-size the gateway and disconnect users. The Analyst feeds **real peaks over the evidence horizon** (including event days), applies a **headroom policy** chosen by humans, and the Economist prices the delta with the **customer's own rates**. The model explains; the arithmetic is code. **Because scaling may interrupt connected users, this is a human-approved, disruption-bearing change (Assist level, with the owner's maintenance window) — not a "low-risk automatable fix"** — until the disruption model and the customer's change process are proven.
 
 ### 2.4 Options
 
 | # | Option | Reversibility | Note |
 |---|---|---|---|
-| 1 | Scale down to the recommended size | R1 | Window; reconnects possible |
+| 1 | Scale down to the recommended size | R1 (configuration), **user-visible interruption possible** | Owner's window; human approval; reconnects likely |
 | 2 | **Scale by calendar:** low baseline, scheduled scale-up for known events | R1 | Needs the event calendar ([TIME-06](02-opportunity-catalog.md)) |
 | 3 | Consolidate gateways/hubs with the same user populations | R3 | Architecture change |
 | 4 | Remove gateways with no connected users for N days | R2 | Scream-test ladder |
@@ -227,8 +231,9 @@ The Analyst feeds **real peaks over the evidence horizon** (including event days
 |        (~ EUR 23,200/month)                                       |
 | USED   90-day peak: 1,240 connected users, 3.1 Gbps.              |
 |        Typical working-day peak: 380 users.                       |
-| NEED   7 units for the peak; 12 units gives ~2x the peak          |
-|        bandwidth (6,000 users / 6 Gbps).                          |
+| NEED   7 units cover the peak (1,240 users fall in the 5,000     |
+|        connection band; 3.1 Gbps needs 3.5 Gbps). 12 units =     |
+|        10,000 connections and 6 Gbps (~2x the peak bandwidth).   |
 |                                                                   |
 | TRADE-OFF  Cost down . Reliability: headroom kept .               |
 |            User impact: possible reconnects during the change     |
@@ -240,13 +245,13 @@ The Analyst feeds **real peaks over the evidence horizon** (including event days
 |                                                                   |
 | [Approve for Thu 22:00] [Preview plan] [Another time]             |
 | [Not now v] [Not mine] [Why?] [Talk to a human]                   |
-| Cost of waiting ~ EUR 4,700/week . AI-generated . trace . undo 14d|
+| Cost of waiting ~ EUR 4,700/wk . AI-composed . figures computed   |
 +------------------------------------------------------------------+
 ```
 
 ### 2.7 Execution, safety and verification
 
-1. **Window:** choose a low-connection period from the metric history (e.g. a night hour with ~20 connected users); the Diplomat announces to consumers.
+1. **Window:** choose a low-connection period from the metric history (e.g. a night hour with ~20 connected users); the Diplomat announces to consumers. **Class:** a configuration change that can be rolled back (R1) but that may **interrupt connected users** — approved by the Network Platform owner, never above Assist level until the disruption model and the customer's change process are proven.
 2. **Preconditions:** no freeze, no lock, no active incident, current units still equal analysed units (stale-approval check).
 3. **Execute** via a typed operation; **watch** `P2SConnectionCount` recovery and bandwidth; a **regret watch** for support tickets and reconnect storms.
 4. **Rollback bundle:** scale back to the previous units (the plan records the value).
