@@ -1,410 +1,337 @@
 #!/usr/bin/env python3
-"""Docs lint for the Azure Cost in Action ideation package.
+"""Documentation lint for Azure Cost in Action. Standard library only.
 
-Standard library only (no packages to install). Run from anywhere:
+Checks
+  1. Links and anchors in live documents resolve (GitHub heading-slug rules).
+  2. Mermaid blocks: known diagram type, balanced quotes and brackets, quoted labels where
+     needed, and no purely linear flowchart (pictures must show loops, hubs, parallel work).
+  3. SVG files are well-formed XML.
+  4. Every live document is reachable from README.md (no orphans).
+  5. Anchoring guard: the two findings that started the project may appear only in the exam
+     documents - never as the foundation of the design (AGENTS.md rule 6).
+  6. Bloat guard: no governance-paperwork vocabulary in the live documents (AGENTS.md rule 2).
 
-    python tools/check-docs.py              # human-readable report, exit code 1 on any ERROR
-    python tools/check-docs.py --strict     # WARNINGs also fail
-    python tools/check-docs.py --self-test  # prove the classification heuristics catch mislabelled rows
-
-Checks (and why they exist - each one came from a review finding):
-  1. Relative links and heading anchors resolve (docs/_archive is skipped).
-  2. The opportunity catalog has unique IDs, its row count matches the README claim, and its
-     'At a glance' table matches the rows.
-  3. Classification lint (06 section 2): the declared Rev/Ceil of every catalog row must not break
-     the rules - R3 / R3-Data never at L3-L5, transactions never above L2, no hybrid classes such
-     as "R0/R1", R3-D is the only abbreviation of R3-Data. Word heuristics also flag a row that reads
-     like a transaction but is not R3, that reduces observability or evidence data but is not R3-D,
-     that removes redundancy but is not R3 (ERROR), or that deletes something yet claims R1 (WARN).
-     They read words, not typed effects, so a row may be exempted only with a written reason.
-  4. Counts quoted in the README (threats, invariants, spikes, risks, decisions, assumptions)
-     match what the documents actually contain.
-  5. Mermaid labels: unquoted square-bracket labels must not contain ( ) " { } ;
-  6. Stale phrases that earlier reviews removed must not come back.
+Usage:  python tools/check-docs.py [--strict] [--self-test]
+        --strict  treats warnings as errors (use before every commit)
 """
-import os
+from __future__ import annotations
+
+import argparse
 import re
 import sys
+import xml.etree.ElementTree as ET
+from pathlib import Path
+from urllib.parse import unquote
 
-try:
-    sys.stdout.reconfigure(encoding="utf-8")
-except Exception:  # pragma: no cover
-    pass
+ROOT = Path(__file__).resolve().parent.parent
+DOCS = ROOT / "docs"
 
-ROOT = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
-SKIP_DIRS = {".git", "_archive", "node_modules"}
-HISTORY_DIRS = {"reviews"}  # raw reviewer text and dispositions quote old wording on purpose
+# Documents in which the operator's original examples may legitimately appear.
+ANCHOR_ALLOWLIST = {
+    "docs/07-getting-smarter.md",
+    "docs/research/exam-bank-cost-traps.md",
+}
+ANCHOR_PATTERNS = [
+    r"\bP2S\b", r"point[- ]to[- ]site", r"\bvWAN\b", r"virtual wan", r"LAQueryLogs",
+    r"seed[- ]example", r"release[- ]1\b", r"log analytics",
+]
+BLOAT_PATTERNS = [
+    (r"kill criteri", re.I), (r"risk register", re.I), (r"assumption register", re.I),
+    (r"decision register", re.I), (r"technical spike", re.I), (r"threat catalog", re.I),
+    (r"R3-Data", 0), (r"\bK[1-7]\b", 0), (r"\bD(?:1[0-8]|[1-9])\b", 0),
+]
+MERMAID_TYPES = (
+    "flowchart", "graph", "stateDiagram-v2", "stateDiagram", "sequenceDiagram", "classDiagram",
+    "erDiagram", "gantt", "pie", "mindmap", "timeline", "journey", "quadrantChart", "gitGraph",
+)
 
-errors, warnings = [], []
+FENCE = re.compile(r"^\s*(```+|~~~+)\s*([\w-]*)")
+HEADING = re.compile(r"^(#{1,6})\s+(.*?)\s*#*\s*$")
+LINK = re.compile(r"!?\[(?:[^\]\\]|\\.)*\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)")
+INLINE_CODE = re.compile(r"`[^`]*`")
 
 
-def err(msg):
-    errors.append(msg)
+class Report:
+    def __init__(self) -> None:
+        self.errors: list[str] = []
+        self.warnings: list[str] = []
+
+    def error(self, path: Path, line: int, msg: str) -> None:
+        self.errors.append(f"{rel(path)}:{line}: ERROR: {msg}")
+
+    def warn(self, path: Path, line: int, msg: str) -> None:
+        self.warnings.append(f"{rel(path)}:{line}: WARN: {msg}")
 
 
-def warn(msg):
-    warnings.append(msg)
+def rel(path: Path) -> str:
+    try:
+        return path.resolve().relative_to(ROOT).as_posix()
+    except ValueError:
+        return str(path)
 
 
-def rel(p):
-    return os.path.relpath(p, ROOT).replace("\\", "/")
+def slugify(heading: str) -> str:
+    """GitHub's heading-to-anchor rule: lower-case, drop punctuation, spaces to hyphens."""
+    text = re.sub(r"!\[[^\]]*\]\([^)]*\)", "", heading)
+    text = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", text)
+    text = text.strip().lower()
+    text = re.sub(r"[^\w\- ]", "", text, flags=re.UNICODE)
+    return text.replace(" ", "-")
 
 
-def md_files(include_history=True):
-    out = []
-    for dp, dn, fn in os.walk(ROOT):
-        dn[:] = [d for d in dn if d not in SKIP_DIRS]
-        if not include_history and any(part in HISTORY_DIRS for part in rel(dp).split("/")):
+def parse(text: str):
+    """Return (prose_lines, fenced_blocks, headings). Line numbers are 1-based."""
+    prose, blocks, headings = [], [], []
+    in_fence, fence_mark, lang, buf, start = False, "", "", [], 0
+    for n, line in enumerate(text.splitlines(), 1):
+        m = FENCE.match(line)
+        if m and not in_fence:
+            in_fence, fence_mark, lang, buf, start = True, m.group(1)[:3], m.group(2), [], n
             continue
-        for f in fn:
-            if f.endswith(".md"):
-                out.append(os.path.join(dp, f))
+        if in_fence:
+            if line.strip().startswith(fence_mark):
+                blocks.append((lang, start, buf))
+                in_fence = False
+            else:
+                buf.append(line)
+            continue
+        prose.append((n, line))
+        h = HEADING.match(line)
+        if h:
+            headings.append((n, len(h.group(1)), h.group(2)))
+    return prose, blocks, headings
+
+
+def anchors_of(headings) -> set[str]:
+    seen: dict[str, int] = {}
+    out = set()
+    for _, _, title in headings:
+        slug = slugify(title)
+        k = seen.get(slug, 0)
+        seen[slug] = k + 1
+        out.add(slug if k == 0 else f"{slug}-{k}")
     return out
 
 
-def read(p):
-    with open(p, encoding="utf-8") as fh:
-        return fh.read()
-
-
-# ---------------------------------------------------------------- 1. links and anchors
-def slug(h):
-    h = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", h)
-    h = h.replace("`", "").replace("*", "").strip().lower()
-    h = re.sub(r"[^\w\- ]", "", h, flags=re.UNICODE)
-    return h.replace(" ", "-")
-
-
-_anchor_cache = {}
-
-
-def anchors(path):
-    if path in _anchor_cache:
-        return _anchor_cache[path]
-    seen, found, in_code = {}, set(), False
-    for line in read(path).split("\n"):
-        if line.lstrip().startswith("```"):
-            in_code = not in_code
+def live_files() -> list[Path]:
+    files = [ROOT / n for n in ("README.md", "AGENTS.md", "CHANGELOG.md")]
+    for p in sorted(DOCS.rglob("*.md")):
+        parts = p.relative_to(DOCS).parts
+        if parts[0] == "_archive":
             continue
-        if in_code:
+        if parts[0] == "reviews" and p.name.startswith("raw-"):
             continue
-        m = re.match(r"^(#{1,6})\s+(.*?)\s*#*\s*$", line)
-        if m:
-            s = slug(m.group(2))
-            if s in seen:
-                seen[s] += 1
-                found.add(f"{s}-{seen[s]}")
-            else:
-                seen[s] = 0
-                found.add(s)
-    _anchor_cache[path] = found
-    return found
+        files.append(p)
+    return [f for f in files if f.exists()]
 
 
-def check_links():
-    link_re = re.compile(r"(?<!\!)\[[^\]]*\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)")
-    total = 0
-    for p in md_files():
-        in_code = False
-        for i, line in enumerate(read(p).split("\n"), 1):
-            if line.lstrip().startswith("```"):
-                in_code = not in_code
-                continue
-            if in_code:
-                continue
-            for m in link_re.finditer(line):
-                t = m.group(1)
-                if t.startswith(("http://", "https://", "mailto:")):
+def check_links(files, parsed, anchor_cache, rep: Report):
+    graph: dict[Path, set[Path]] = {f: set() for f in files}
+    for f in files:
+        prose, _, _ = parsed[f]
+        for n, line in prose:
+            for m in LINK.finditer(INLINE_CODE.sub("", line)):
+                target = m.group(1)
+                if re.match(r"^(https?:|mailto:)", target, re.I):
                     continue
-                total += 1
-                frag = None
-                if "#" in t:
-                    t, frag = t.split("#", 1)
-                target = p if t == "" else os.path.normpath(os.path.join(os.path.dirname(p), t))
-                if not os.path.exists(target):
-                    err(f"{rel(p)}:{i} link target missing: {m.group(1)}")
+                path_part, _, frag = target.partition("#")
+                dest = f if not path_part else (f.parent / unquote(path_part)).resolve()
+                if not dest.exists():
+                    rep.error(f, n, f"broken link target: {target}")
                     continue
-                if frag and target.endswith(".md") and frag.lower() not in anchors(target):
-                    err(f"{rel(p)}:{i} anchor missing: {m.group(1)}")
-    return total
+                if dest.suffix.lower() == ".md" and dest in graph:
+                    graph[f].add(dest)
+                if frag and dest.suffix.lower() == ".md":
+                    if dest not in anchor_cache:
+                        _, _, hs = parse(dest.read_text(encoding="utf-8"))
+                        anchor_cache[dest] = anchors_of(hs)
+                    if unquote(frag).lower() not in anchor_cache[dest]:
+                        rep.error(f, n, f"broken anchor: {target}")
+    return graph
 
 
-# ---------------------------------------------------------------- 2/3. catalog
-CATALOG = os.path.join(ROOT, "docs", "ideation", "02-opportunity-catalog.md")
-ROW_RE = re.compile(r"^\| ([A-Z]+-\d+)\b")
-# Word heuristics for the classification rubric (06 section 2). They read only the words of a row, so they
-# cannot replace the typed effects a real playbook declares - but they catch the mislabels that two review
-# rounds found by hand. A row is exempt from ONE heuristic only with a written reason (EXEMPT below).
-TRANSACTION_WORDS = re.compile(
-    r"commitment|prepaid|prepay|reservation|savings plan|marketplace subscription|support plan|protection plan|"
-    r"plan model|plan scope|pick tier|switch tier|\bcancel|\brenew|\bpurchase|\bexchange|\bbuy\b",
-    re.I,
-)
-OBSERVABILITY_WORDS = re.compile(
-    r"\b(ingest\w*|diagnostic\w*|logs?|logging|metrics?|telemetry|retention|sampling|flow logs?|capture|"
-    r"change feed|syslog|counters?|traces?|audit|availability tests?|web tests?|synthetic|monitoring tests?|probes?)\b",
-    re.I,
-)
-REDUCTION_VERBS = re.compile(
-    r"\b(stop|disable|remove|reduce|narrow|drop|exclude|filter|lower|shorten|lifecycle|sampl|prune|trim)\w*", re.I
-)
-REDUNDANCY_WORDS = re.compile(r"replica|redundan|geo-?replicat|multi-region|\bzone", re.I)
-REDUNDANCY_CUTS = re.compile(r"\b(remove|disable|reduce|drop|downgrade|delete|fewer|consolidat)\w*", re.I)
-DELETE_WORDS = re.compile(r"\b(delete|remove|drop|purge|prune|release|deprovision|decommission)\w*", re.I)
-EXEMPT = {
-    ("RATE-03", "TX"): "a benefit-scope change is not a purchase (06 section 6): R1, L2 at most, Finance and every affected owner",
-    ("RATE-22", "TX"): "a benefit-scope change, not a purchase (06 section 6)",
-    ("TELE-16", "DEL"): "alert rules are restorable detection configuration; no evidence is lost (the metrics stay collected)",
-    ("NET-06", "DEL"): "an hourly-billed add-on that can be re-added; nothing is destroyed",
-    ("TELE-16", "OBS"): "pruning alert rules changes detection, not collection: the metrics stay collected",
-    ("GOV-04", "TX"): "this row's operation is closing or consolidating subscriptions (R2); cancelling plans on the way is a separate transaction (IDLE-29, R3)",
-}
+def check_orphans(files, graph, rep: Report):
+    start = ROOT / "README.md"
+    seen, todo = {start}, [start]
+    while todo:
+        for nxt in graph.get(todo.pop(), ()):
+            if nxt not in seen:
+                seen.add(nxt)
+                todo.append(nxt)
+    for f in files:
+        if f.parent == DOCS or f.parent.parent == DOCS and f.parent.name in ("research", "reviews"):
+            if f not in seen:
+                rep.error(f, 1, "orphan: not reachable from README.md")
 
 
-def row_problems(cid, opp, action, rev, ceil):
-    """Problems for one catalog row as (level, check, message); level is ERROR or WARN."""
-    out = []
-    rev_key = re.sub(r"[^A-Za-z0-9\-/]", "", rev)  # an em dash (advice only) strips to ""
-    advice_only = rev_key in ("", "-")
-    high = bool(set(re.findall(r"L([0-5])", ceil)) & {"3", "4", "5"})
-    text = f"{opp} {action}"
-    if "/" in rev_key:
-        out.append(("ERROR", "HYBRID", f"hybrid class '{rev}' (exactly one class per operation)"))
-    if rev_key in {"R3-D", "R3-Data", "R3"} and high and "cost-brake" not in ceil.lower():
-        out.append(("ERROR", "CEIL", f"{rev_key} must never be L3/L4/L5 (Ceil says '{ceil}')"))
-    if advice_only:
-        return [p for p in out if (cid, p[1]) not in EXEMPT]
-    if TRANSACTION_WORDS.search(text):
-        if rev_key != "R3":
-            out.append(("ERROR", "TX", f"reads like a transaction (06 section 2, step 1) but is '{rev_key}'; a transaction is R3"))
-        if high:
-            out.append(("ERROR", "TX", f"reads like a transaction but Ceil is '{ceil}'; a transaction is never above L2"))
-    if OBSERVABILITY_WORDS.search(text) and REDUCTION_VERBS.search(action) and rev_key not in {"R3-D", "R3-Data", "R3"}:
-        out.append(("ERROR", "OBS", f"reduces observability or evidence data but is '{rev_key}'; that is R3-Data (never L3/L4)"))
-    if REDUNDANCY_WORDS.search(text) and REDUNDANCY_CUTS.search(action) and rev_key != "R3":
-        out.append(("ERROR", "RDN", f"removes redundancy but is '{rev_key}'; reducing redundancy is R3 (the lost copy is gone)"))
-    if rev_key == "R1" and DELETE_WORDS.search(action):
-        out.append(("WARN", "DEL", "R1 means 'put back exactly'; deleting or releasing something is R2 (a proven recovery path) or R3"))
-    return [p for p in out if (cid, p[1]) not in EXEMPT]
+def strip_labels(line: str) -> str:
+    line = re.sub(r'"[^"]*"', '""', line)
+    line = re.sub(r"\|[^|]*\|", "", line)
+    for _ in range(3):
+        line = re.sub(r"\[[^\[\]]*\]|\([^()]*\)|\{[^{}]*\}", "", line)
+    return line
 
 
-def self_test():
-    """Feed deliberately mislabelled rows to the heuristics: each must be caught, and clean rows must pass."""
-    cases = [
-        ("availability tests reduced, labelled R1 at L3", ("X-01", "Availability tests too frequent", "Reduce", "R1", "L3"), {"OBS"}),
-        ("commitment tier picked, labelled R1", ("X-02", "Commitment tier choice for monitoring", "Pick tier", "R1", "L2"), {"TX"}),
-        ("replicas removed, labelled R2", ("X-03", "Replicas never read", "Remove replicas", "R2", "L2"), {"RDN"}),
-        ("ingestion capture removed, labelled R1 at L3", ("X-04", "Ingestion capture copies nobody reads", "Remove", "R1", "L3"), {"OBS"}),
-        ("plan cancelled, labelled R2 at L3", ("X-05", "Plan covering nothing", "Cancel plan", "R2", "L3"), {"TX"}),
-        ("hybrid class", ("X-06", "Tags missing", "Add advisory tag", "R0/R1", "L2"), {"HYBRID"}),
-        ("R3-Data at L3", ("X-07", "Verbose diagnostics", "Narrow categories", "R3-D", "L3"), {"CEIL"}),
-        ("a resource deleted, labelled R1", ("X-08", "Unused gateway", "Delete", "R1", "L2"), {"DEL"}),
-        ("clean: snapshot, then delete an orphaned disk", ("X-09", "Orphaned disks", "Snapshot, then delete", "R2", "L2"), set()),
-        ("clean: collection reduction labelled R3-D at L2", ("X-10", "Verbose diagnostics", "Narrow categories", "R3-D", "L2"), set()),
-        ("clean: a transaction labelled R3 at L2", ("X-11", "Commitment tier choice", "Pick tier", "R3", "L2"), set()),
-        ("clean: advice only", ("X-12", "Support plan fit", "Advise", "\u2014", "L1"), set()),
-    ]
-    bad = 0
-    for desc, (cid, opp, action, rev, ceil), expect in cases:
-        fired = {check for _, check, _ in row_problems(cid, opp, action, rev, ceil)}
-        ok = expect <= fired if expect else not fired
-        print(("ok   " if ok else "FAIL ") + desc + f"  (fired: {sorted(fired) or 'nothing'})")
-        bad += 0 if ok else 1
-    print(f"self-test: {len(cases) - bad}/{len(cases)} passed")
-    return 1 if bad else 0
-
-
-def catalog_rows():
-    text = read(CATALOG).split("\n")
-    start = next(i for i, l in enumerate(text) if l.startswith("## 1. IDLE"))
-    end = next(i for i, l in enumerate(text) if l.startswith("## Selection and status"))
-    rows = []
-    for ln in range(start, end):
-        line = text[ln]
-        if ROW_RE.match(line):
-            cells = [c.strip() for c in line.strip().strip("|").split("|")]
-            if len(cells) >= 6:
-                rows.append((ln + 1, cells))
-    return rows
-
-
-def check_catalog():
-    rows = catalog_rows()
-    ids = [re.match(r"[A-Z]+-\d+", c[0]).group(0) for _, c in rows]
-    if len(ids) != len(set(ids)):
-        dup = sorted({i for i in ids if ids.count(i) > 1})
-        err(f"catalog: duplicate IDs {dup}")
-    readme = read(os.path.join(ROOT, "README.md"))
-    m = re.search(r"(\d+) ideas in 17 families", readme)
-    if m and int(m.group(1)) != len(ids):
-        err(f"README claims {m.group(1)} catalog ideas but the catalog has {len(ids)} rows")
-    catalog_text = read(CATALOG)
-    if "## At a glance" in catalog_text:
-        block = catalog_text.split("## At a glance")[1].split("\n## ")[0]
-        per_family = {}
-        for cid in ids:
-            fam = cid.split("-")[0]
-            per_family[fam] = per_family.get(fam, 0) + 1
-        seen = set()
-        for fm in re.finditer(r"^\| \*\*([A-Z]+)\*\* \| (\d+) \|", block, re.M):
-            seen.add(fm.group(1))
-            if per_family.get(fm.group(1)) != int(fm.group(2)):
-                err(f"catalog 'At a glance' says {fm.group(1)}={fm.group(2)} but the family has {per_family.get(fm.group(1))} rows")
-        if seen != set(per_family):
-            err(f"catalog 'At a glance' families {sorted(seen)} differ from the catalog's {sorted(per_family)}")
-        tm = re.search(r"\*\*(\d+) ideas in 17 families\*\*", block)
-        if tm and int(tm.group(1)) != len(ids):
-            err(f"catalog 'At a glance' says {tm.group(1)} ideas but the catalog has {len(ids)} rows")
-    for ln, c in rows:
-        cid, opp, signal, action, rev, ceil = c[0], c[1], c[2], c[3], c[4], c[5]
-        short_id = re.match(r"[A-Z]+-\d+", cid).group(0)
-        for level, check, msg in row_problems(short_id, opp, action, rev, ceil):
-            (err if level == "ERROR" else warn)(f"{rel(CATALOG)}:{ln} {short_id}: [{check}] {msg}")
-    return len(ids)
-
-
-# ---------------------------------------------------------------- 4. counts
-def count_in(path, pattern, flags=0):
-    return len(re.findall(pattern, read(path), flags))
-
-
-def check_counts():
-    readme = read(os.path.join(ROOT, "README.md"))
-    d08 = os.path.join(ROOT, "docs", "ideation", "08-trust-safety-and-guardrail-topics.md")
-    d01 = os.path.join(ROOT, "docs", "plan", "01-assumptions-risks-decisions.md")
-    d03 = os.path.join(ROOT, "docs", "plan", "03-capability-radar.md")
-    threats = count_in(d08, r"^\| T\d+ \|", re.M)
-    questions = count_in(d08, r"^- G\d+-\d+ ", re.M)
-    text08 = read(d08)
-    inv_block = text08.split("## 4. Candidate safety invariants")[1].split("## 5.")[0]
-    invariants = len(re.findall(r"^\d+\. \*\*", inv_block, re.M))
-    assumptions = count_in(d01, r"^\| A\d+ \|", re.M)
-    risks = count_in(d01, r"^\| R\d+ \|", re.M)
-    decisions = count_in(d01, r"^\| \*\*D\d+\*\*", re.M)
-    spikes_all = set(re.findall(r"^\| \*\*(S\d+b?)\*\*", read(d03), re.M))
-    deferred = set(re.findall(r"^\| \*\*(S\d+)\*\* \| [^|]*\u2014 \*\*(?:deferred|folded)", read(d03), re.M))
-    active = len(spikes_all - deferred)
-
-    def claim(label, actual, pattern):
-        for m in re.finditer(pattern, readme):
-            if int(m.group(1)) != actual:
-                err(f"README says {m.group(0)!r} but the documents have {actual} {label}")
-
-    claim("threats", threats, r"(\d+) threats")
-    claim("guardrail questions", questions, r"(\d+) questions")
-    claim("candidate invariants", invariants, r"(\d+) candidate invariants")
-    claim("assumptions", assumptions, r"(\d+) assumptions")
-    claim("risks", risks, r"(\d+) risks")
-    claim("decisions", decisions, r"(\d+) decisions")
-    claim("active spikes", active, r"(\d+) active feasibility spikes")
-    return dict(threats=threats, questions=questions, invariants=invariants, assumptions=assumptions,
-                risks=risks, decisions=decisions, spikes=active)
-
-
-# ---------------------------------------------------------------- 5. mermaid
-def check_mermaid():
-    blocks = 0
-    for p in md_files(include_history=False):
-        lines = read(p).split("\n")
-        i = 0
-        while i < len(lines):
-            if lines[i].strip().startswith("```mermaid"):
-                j, body = i + 1, []
-                while j < len(lines) and not lines[j].strip().startswith("```"):
-                    body.append((j + 1, lines[j]))
-                    j += 1
-                blocks += 1
-                first = next((b for b in body if b[1].strip()), (0, ""))[1].strip()
-                if first.startswith(("flowchart", "graph")):
-                    for ln, t in body[1:]:
-                        for lab in re.findall(r"\[([^\]]*)\]", t):
-                            if not lab.startswith('"') and re.search(r'[()"{};]', lab):
-                                err(f"{rel(p)}:{ln} mermaid square label needs quotes or simpler text: [{lab}]")
-                        for lab in re.findall(r"\{([^}]*)\}", t):
-                            if re.search(r'[()"\[\];]', lab):
-                                err(f"{rel(p)}:{ln} mermaid diamond label has special characters: {{{lab}}}")
-                        for lab in re.findall(r"\|([^|]*)\|", t):
-                            if re.search(r'[()"\[\]{};]', lab):
-                                err(f"{rel(p)}:{ln} mermaid edge label has special characters: |{lab}|")
-                i = j
-            i += 1
-    return blocks
-
-
-# ---------------------------------------------------------------- 6. stale phrases and aliases
-STALE = [
-    (r"Everything has an undo window", "universal undo promise (round 1 R2)"),
-    (r"Is anyone watching me\?\s*\*?\*?\s*No\.", "blanket 'nobody is watching' claim (round 1 G-14)"),
-    (r"AI-generated \.", "card footer must read 'AI-composed - figures computed' (round 1)"),
-    (r"Quarantine ladder: restrict, stop, snapshot", "silence-to-quarantine orphan flow (round 1 R3)"),
-    (r"R0/R1", "hybrid reversibility class (round 1 G-10)"),
-    (r"Release 1 is the first five rows", "Release 1 is five plays on the S0 skeleton (round 2 C-02)"),
-    (r"\bno objection so far\b", "'no objection' is silence, not consent (round 2 A-05)"),
-    (r"until further notice", "reservation exchange wording is outdated (round 2 fact-check)"),
-    (r"brief reconnects", "P2S: Microsoft says to plan for downtime; 'TCP reconnects' is the ExpressRoute entry (round 2 fact-check)"),
-    (r"documented inconsistently", "say 'unreconciled' (round 2 fact-check)"),
-    (r"explicit, dated unmet need", "Easy Buttons is an additional theme, not a top-three need (round 2 fact-check)"),
-    (r"\*\*S[0-8] — ", "slice IDs are SL0-SL8; S1-S22 are spikes (round 2 orchestrator finding)"),
-]
-ALLOW_STALE_IN = {
-    "R0/R1": {"docs/ideation/02-opportunity-catalog.md", "docs/ideation/05-human-interaction-concepts.md",
-              "docs/ideation/06-closed-loop-actions-and-autonomy.md", "docs/ideation/08-trust-safety-and-guardrail-topics.md",
-              "CHANGELOG.md", "tools/check-docs.py"},
-    "Quarantine ladder: restrict, stop, snapshot": {"CHANGELOG.md"},
-    "until further notice": {"docs/research/01-azure-native-landscape.md", "docs/research/05-cost-traps-and-dark-spend.md",
-                             "docs/ideation/02-opportunity-catalog.md", "CHANGELOG.md"},
-    r"\bno objection so far\b": {"docs/ideation/06-closed-loop-actions-and-autonomy.md", "CHANGELOG.md"},
-    "brief reconnects": {"docs/research/04-seed-example-facts.md", "CHANGELOG.md"},
-    "documented inconsistently": {"CHANGELOG.md"},
-    "explicit, dated unmet need": {"docs/research/03-finops-framework-and-evidence.md", "CHANGELOG.md"},
-}
-
-
-def check_stale():
-    for p in md_files(include_history=False):
-        r = rel(p)
-        if r == "tools/check-docs.py":
+def mermaid_edges(lines):
+    edges, nodes = set(), set()
+    arrow = re.compile(r"\s*(?:<-->|<==>|-\.->|-\.-|-->|==>|---|--x|--o)\s*")
+    skip = ("subgraph", "end", "classdef", "class ", "style ", "linkstyle", "direction", "%%", "click ")
+    for raw in lines:
+        s = raw.strip()
+        if not s or s.lower().startswith(("flowchart", "graph") + skip):
             continue
-        text = read(p)
-        for pat, why in STALE:
-            m = re.search(pat, text)
-            if not m:
-                continue
-            allowed = ALLOW_STALE_IN.get(pat.replace("\\", ""), set()) | ALLOW_STALE_IN.get(pat, set())
-            if r in allowed:
-                continue
-            line = text[: m.start()].count("\n") + 1
-            err(f"{r}:{line} stale phrase {m.group(0)!r}: {why}")
-    # the lint also protects the alias rule: R3-D may appear only in the catalog and (as a plain
-    # abbreviation) where the catalog is quoted - never in other normative documents.
-    alias_ok = {"docs/ideation/02-opportunity-catalog.md"}
-    for p in md_files(include_history=False):
-        r = rel(p)
-        if r in alias_ok or r == "tools/check-docs.py" or r == "CHANGELOG.md":
+        clean = strip_labels(s)
+        both = "<-->" in clean or "<==>" in clean
+        groups = [[x.strip() for x in p.split("&") if x.strip()] for p in arrow.split(clean)]
+        for g in groups:
+            nodes.update(re.findall(r"[A-Za-z_]\w*", " ".join(g)))
+        for left, right in zip(groups, groups[1:]):
+            for a in left:
+                for b in right:
+                    edges.add((a, b))
+                    if both:
+                        edges.add((b, a))
+    return nodes, edges
+
+
+def is_linear(nodes, edges) -> bool:
+    if len(nodes) < 5 or len(edges) != len(nodes) - 1:
+        return False
+    out, inn = {}, {}
+    for a, b in edges:
+        out[a] = out.get(a, 0) + 1
+        inn[b] = inn.get(b, 0) + 1
+    if max(out.values(), default=0) > 1 or max(inn.values(), default=0) > 1:
+        return False
+    adj = {n: set() for n in nodes}
+    for a, b in edges:
+        adj[a].add(b)
+        adj[b].add(a)
+    seen, todo = set(), [next(iter(nodes))]
+    while todo:
+        x = todo.pop()
+        if x not in seen:
+            seen.add(x)
+            todo.extend(adj[x] - seen)
+    return len(seen) == len(nodes)
+
+
+def check_mermaid(path: Path, blocks, rep: Report):
+    for lang, start, lines in blocks:
+        if lang != "mermaid":
             continue
-        for i, line in enumerate(read(p).split("\n"), 1):
-            if re.search(r"\bR3-D\b", line):
-                err(f"{r}:{i} use the enum 'R3-Data' (R3-D is only a catalog column abbreviation)")
+        body = [ln for ln in lines if ln.strip()]
+        if not body:
+            rep.error(path, start, "empty mermaid block")
+            continue
+        head = body[0].strip()
+        kind = next((t for t in MERMAID_TYPES if head.startswith(t)), None)
+        if kind is None:
+            rep.error(path, start, f"unknown mermaid diagram type: {head[:30]!r}")
+            continue
+        depth = 0
+        for i, raw in enumerate(lines, 1):
+            ln = start + i
+            if raw.strip().startswith("%%"):
+                continue
+            if raw.count('"') % 2:
+                rep.error(path, ln, "unbalanced double quotes in mermaid line")
+            unq = re.sub(r'"[^"]*"', '""', raw)
+            for a, b in ("[]", "()", "{}"):
+                if unq.count(a) != unq.count(b):
+                    rep.error(path, ln, f"unbalanced {a}{b} in mermaid line")
+            if unq.count("|") % 2:
+                rep.error(path, ln, "unbalanced | in mermaid edge label")
+            if kind in ("flowchart", "graph"):
+                for lab in re.findall(r"\w\s*(?:\[\[|\[\(|\(\(|\{\{|\[|\(|\{)([^\]\)\}\"]+)(?:\]\]|\)\]|\)\)|\}\}|\]|\)|\})", unq):
+                    if re.search(r"[^A-Za-z0-9 _.,\-]", lab):
+                        rep.warn(path, ln, f"unquoted mermaid label with special characters: {lab[:40]!r}")
+                st = raw.strip()
+                if st.startswith("subgraph"):
+                    depth += 1
+                elif st == "end":
+                    depth -= 1
+            if kind.startswith("stateDiagram") and "-->" in raw and ":" in raw and '"' in raw.split(":", 1)[1]:
+                rep.warn(path, ln, "quotes in a state-diagram transition label")
+        if depth != 0:
+            rep.error(path, start, "subgraph/end mismatch in mermaid block")
+        if kind in ("flowchart", "graph"):
+            nodes, edges = mermaid_edges(lines)
+            if is_linear(nodes, edges):
+                rep.warn(path, start, "linear pipeline picture - show loops, hubs or parallel work instead")
 
 
-def main():
-    if "--self-test" in sys.argv:
-        sys.exit(self_test())
-    strict = "--strict" in sys.argv
-    links = check_links()
-    rows = check_catalog()
-    counts = check_counts()
-    blocks = check_mermaid()
-    check_stale()
-    print(f"links checked: {links}; catalog rows: {rows}; mermaid blocks: {blocks}")
-    print("counts:", ", ".join(f"{k}={v}" for k, v in counts.items()))
-    for w in warnings:
-        print("WARN ", w)
-    for e in errors:
-        print("ERROR", e)
-    print(f"{len(errors)} error(s), {len(warnings)} warning(s)")
-    sys.exit(1 if errors or (strict and warnings) else 0)
+def check_guards(files, rep: Report):
+    guarded = [f for f in files if f.name != "AGENTS.md" and f.name != "CHANGELOG.md"
+               and (f == ROOT / "README.md" or (f.parent == DOCS or f.parent == DOCS / "research"))]
+    for f in guarded:
+        text = f.read_text(encoding="utf-8")
+        allow = rel(f) in ANCHOR_ALLOWLIST
+        for n, line in enumerate(text.splitlines(), 1):
+            if not allow:
+                for pat in ANCHOR_PATTERNS:
+                    if re.search(pat, line, re.I):
+                        rep.error(f, n, f"anchoring guard: {pat!r} may appear only in the exam documents")
+            for pat, flags in BLOAT_PATTERNS:
+                if re.search(pat, line, flags):
+                    rep.error(f, n, f"bloat guard: {pat!r} (no governance paperwork in ideation)")
+
+
+def check_svgs(rep: Report):
+    for p in sorted((DOCS / "img").glob("*.svg")) if (DOCS / "img").exists() else []:
+        try:
+            ET.parse(p)
+        except ET.ParseError as e:
+            rep.error(p, 1, f"malformed SVG: {e}")
+
+
+def check_headings(files, parsed, rep: Report):
+    for f in files:
+        h1 = [h for h in parsed[f][2] if h[1] == 1]
+        if len(h1) != 1:
+            rep.warn(f, h1[1][0] if len(h1) > 1 else 1, f"expected exactly one H1, found {len(h1)}")
+
+
+def run(strict: bool) -> int:
+    rep = Report()
+    files = live_files()
+    parsed = {f: parse(f.read_text(encoding="utf-8")) for f in files}
+    anchor_cache = {f: anchors_of(parsed[f][2]) for f in files}
+    graph = check_links(files, parsed, anchor_cache, rep)
+    check_orphans(files, graph, rep)
+    for f in files:
+        check_mermaid(f, parsed[f][1], rep)
+    check_guards(files, rep)
+    check_svgs(rep)
+    check_headings(files, parsed, rep)
+    for line in rep.errors + rep.warnings:
+        print(line)
+    failed = bool(rep.errors) or (strict and bool(rep.warnings))
+    print(f"\n{len(files)} documents checked: {len(rep.errors)} error(s), {len(rep.warnings)} warning(s)"
+          f"{' (strict)' if strict else ''} -> {'FAIL' if failed else 'OK'}")
+    return 1 if failed else 0
+
+
+def self_test() -> int:
+    assert slugify("7. Staying current — the change radar") == "7-staying-current--the-change-radar"
+    assert slugify("3. The Exam") == "3-the-exam"
+    assert slugify("A `code` and [a link](x.md) title") == "a-code-and-a-link-title"
+    assert anchors_of([(1, 2, "Same"), (2, 2, "Same")]) == {"same", "same-1"}
+    n, e = mermaid_edges(["flowchart LR", 'A["x"] --> B["y"]', "B --> C", "C --> D", "D --> E"])
+    assert is_linear(n, e)
+    n, e = mermaid_edges(["flowchart LR", "A --> B", "B --> C", "C --> D", "D --> E", "E --> A"])
+    assert not is_linear(n, e)
+    n, e = mermaid_edges(["flowchart LR", "A --> B", "A --> C", "B --> D", "C --> D", "D --> E"])
+    assert not is_linear(n, e)
+    n, e = mermaid_edges(["flowchart TB", "A <--> B", "B --> C", "C --> D", "D --> E"])
+    assert not is_linear(n, e)
+    print("self-test OK")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--strict", action="store_true", help="treat warnings as errors")
+    ap.add_argument("--self-test", action="store_true", help="run the built-in tests and exit")
+    a = ap.parse_args()
+    sys.exit(self_test() if a.self_test else run(a.strict))

@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 700" width="1200" height="700" role="img" aria-labelledby="t d" font-family="'Segoe UI', Helvetica, Arial, sans-serif">
+  <title id="t">Four clocks</title>
+  <desc id="d">One system running on four tempos at once: Watch (minutes to hours), Cases (days to weeks), Strategy (months) and Learning (always), drawn as four nested loops.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#0b1220"/>
+      <stop offset="1" stop-color="#101a30"/>
+    </linearGradient>
+    <marker id="w" viewBox="0 0 10 10" refX="7" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#f87171"/></marker>
+    <marker id="c" viewBox="0 0 10 10" refX="7" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#60a5fa"/></marker>
+    <marker id="s" viewBox="0 0 10 10" refX="7" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#34d399"/></marker>
+    <marker id="l" viewBox="0 0 10 10" refX="7" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#a78bfa"/></marker>
+  </defs>
+  <rect width="1200" height="700" fill="url(#bg)"/>
+
+  <!-- the four loops: faint full circles, bright travelling arcs -->
+  <g fill="none">
+    <circle cx="340" cy="350" r="70" stroke="#f87171" stroke-opacity="0.22" stroke-width="2"/>
+    <circle cx="340" cy="350" r="140" stroke="#60a5fa" stroke-opacity="0.22" stroke-width="2"/>
+    <circle cx="340" cy="350" r="210" stroke="#34d399" stroke-opacity="0.22" stroke-width="2"/>
+    <circle cx="340" cy="350" r="280" stroke="#a78bfa" stroke-opacity="0.22" stroke-width="2"/>
+  </g>
+  <g fill="none" stroke-width="5" stroke-linecap="round">
+    <path d="M363.9,284.2 A70,70 0 1 1 282.7,309.8" stroke="#f87171" stroke-dasharray="3 9" marker-end="url(#w)"/>
+    <path d="M387.9,218.4 A140,140 0 1 1 225.3,269.7" stroke="#60a5fa" stroke-dasharray="14 12" marker-end="url(#c)"/>
+    <path d="M411.8,152.7 A210,210 0 1 1 168.0,229.5" stroke="#34d399" stroke-dasharray="40 16" marker-end="url(#s)"/>
+    <path d="M435.8,86.9 A280,280 0 1 1 110.6,189.4" stroke="#a78bfa" marker-end="url(#l)"/>
+  </g>
+
+  <!-- chips on the rings -->
+  <g font-size="12" font-weight="700" letter-spacing="2" text-anchor="middle">
+    <rect x="296" y="266" width="88" height="22" rx="11" fill="#0b1220" stroke="#f87171" stroke-width="2"/>
+    <text x="340" y="282" fill="#f87171">WATCH</text>
+    <rect x="291" y="196" width="98" height="22" rx="11" fill="#0b1220" stroke="#60a5fa" stroke-width="2"/>
+    <text x="340" y="212" fill="#60a5fa">CASES</text>
+    <rect x="281" y="126" width="118" height="22" rx="11" fill="#0b1220" stroke="#34d399" stroke-width="2"/>
+    <text x="340" y="142" fill="#34d399">STRATEGY</text>
+    <rect x="281" y="56" width="118" height="22" rx="11" fill="#0b1220" stroke="#a78bfa" stroke-width="2"/>
+    <text x="340" y="72" fill="#a78bfa">LEARNING</text>
+  </g>
+
+  <g text-anchor="middle" fill="#e2e8f0">
+    <text x="340" y="346" font-size="14" font-weight="700">one system,</text>
+    <text x="340" y="366" font-size="14" font-weight="700">four tempos</text>
+  </g>
+
+  <!-- the legend -->
+  <text x="700" y="66" fill="#f8fafc" font-size="23" font-weight="700" letter-spacing="2">FOUR CLOCKS</text>
+  <text x="700" y="90" fill="#cbd5e1" font-size="13">The same agents run all four at once. Importance sets the tempo.</text>
+
+  <g>
+    <rect x="700" y="130" width="8" height="96" rx="4" fill="#f87171"/>
+    <text x="724" y="150" fill="#f87171" font-size="16" font-weight="700" letter-spacing="1.5">WATCH · minutes to hours</text>
+    <text x="724" y="176" fill="#e2e8f0" font-size="14">Spend that suddenly runs away. A meter that should not be</text>
+    <text x="724" y="196" fill="#e2e8f0" font-size="14">moving. A deployment that just changed the bill.</text>
+    <text x="724" y="216" fill="#94a3b8" font-size="12.5" font-style="italic">fast, cheap, mostly code; the AI reasons only when something is new</text>
+
+    <rect x="700" y="260" width="8" height="96" rx="4" fill="#60a5fa"/>
+    <text x="724" y="280" fill="#60a5fa" font-size="16" font-weight="700" letter-spacing="1.5">CASES · days to weeks</text>
+    <text x="724" y="306" fill="#e2e8f0" font-size="14">Investigate, test, decide with an owner, change, verify.</text>
+    <text x="724" y="326" fill="#e2e8f0" font-size="14">Most of the work a person sees.</text>
+    <text x="724" y="346" fill="#94a3b8" font-size="12.5" font-style="italic">hypotheses, Briefs, conversations, Moves</text>
+
+    <rect x="700" y="390" width="8" height="96" rx="4" fill="#34d399"/>
+    <text x="724" y="410" fill="#34d399" font-size="16" font-weight="700" letter-spacing="1.5">STRATEGY · months</text>
+    <text x="724" y="436" fill="#e2e8f0" font-size="14">Architecture shifts, commitments, platform choices,</text>
+    <text x="724" y="456" fill="#e2e8f0" font-size="14">price changes, the next launch.</text>
+    <text x="724" y="476" fill="#94a3b8" font-size="12.5" font-style="italic">design-space exploration, the Time Machine, the Lab's wind tunnel</text>
+
+    <rect x="700" y="520" width="8" height="96" rx="4" fill="#a78bfa"/>
+    <text x="724" y="540" fill="#a78bfa" font-size="16" font-weight="700" letter-spacing="1.5">LEARNING · always</text>
+    <text x="724" y="566" fill="#e2e8f0" font-size="14">Reading Azure, experiments, exams, re-checking what it</text>
+    <text x="724" y="586" fill="#e2e8f0" font-size="14">believes. Never stops — and steers the other three.</text>
+    <text x="724" y="606" fill="#94a3b8" font-size="12.5" font-style="italic">the Atlas, the Agenda, knowledge CI, the report card</text>
+  </g>
+</svg>
