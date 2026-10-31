@@ -1,56 +1,52 @@
 # Design 05 — Agents and orchestration
 
-> **What this answers:** *How do fourteen agents actually run — on what, under which identity, calling what, in what order, waiting for whom — and how does the cost stay proportional to the thinking done?* The agents themselves are described in the [north star](../01-north-star.md#9-the-cast); the trust rules they run under are in the [logical architecture](03-logical-architecture.md) and the [security architecture](07-security-architecture.md). Every product statement rests on the research in [Foundry Agent Service](research/foundry-agent-service.md), [governance and Agent Framework](research/foundry-governance-and-framework.md) and [options analysis](research/options-analysis.md), checked on 2026-10-31. Part of the [design](README.md).
+> **What this answers:** *How do fourteen agent roles actually run — on what, under which identity, calling what, in what order, waiting for whom — and how does the cost stay proportional to the thinking done?* The agents themselves are described in the [north star](../01-north-star.md#9-the-cast); the trust rules they run under are in the [logical architecture](03-logical-architecture.md) and the [security architecture](07-security-architecture.md). Every product statement rests on the research in [Foundry Agent Service](research/foundry-agent-service.md), [governance and Agent Framework](research/foundry-governance-and-framework.md) and [options analysis](research/options-analysis.md), checked on 2026-10-31. Part of the [design](README.md).
 
 ---
 
 ## 1. The pattern: a deterministic spine with agentic leaves
 
-The system is not one big agent and not a swarm of agents talking to each other. It is **a spine of ordinary, deterministic workflows that call agents as leaves**, one step at a time, with a budget.
+The system is not one big agent and not a swarm of agents talking to each other. It is **a spine of ordinary, deterministic workflows that call agents as leaves**, one step at a time, with a budget. The spine may branch, fan out competing hypotheses in parallel and return to an earlier step; what it never does is let an agent choose the next step or pass its words to another agent. Every loop is bounded by a budget and a maximum number of rounds.
 
 ```mermaid
 flowchart LR
-    CLK["Clock or event<br/>cron job or queue message"]
-    subgraph SP["Spine: workflows, no model inside"]
-        WF["Workflow instance<br/>checkpointed, resumable"]
-        GD["Budgets, deadlines,<br/>idempotency keys"]
+    CLK["Clock or event<br/>timer trigger or queue message"]
+    subgraph SP["Spine: Durable Functions, no model inside"]
+        WF["Orchestration instance<br/>event-sourced, resumable"]
+        GD["Budget reservation, deadlines,<br/>instance id as idempotency key"]
     end
     subgraph LV["Leaves: hosted agents, one identity each"]
-        L1["Detective"]
+        L1["Detective<br/>one run per hypothesis"]
         L2["Skeptic"]
         L3["Economist"]
         L4["Diplomat"]
     end
-    HUB{{"Governance hub<br/>models, tools"}}
-    TS["Tool services<br/>read-only"]
-    CASE[("Case store<br/>typed records")]
+    HUB{{"Governance hub<br/>models, tools, leaf endpoints"}}
+    TS["Tool services<br/>read-only, source sanitiser"]
+    CASE[("Case store<br/>immutable, versioned records")]
     BRF["Brief and Approval services"]
     OWN(("Owner"))
     CLK --> WF
     WF --- GD
-    WF -->|"case id and budget"| L1
-    WF -->|"case id and budget"| L2
-    WF -->|"case id and budget"| L3
-    WF -->|"case id and budget"| L4
-    L1 --> HUB
-    L2 --> HUB
-    L3 --> HUB
-    L4 --> HUB
+    WF -->|"start a run: ids and budget"| HUB
+    HUB <-->|"invoke, models, tools"| L1
+    HUB <-->|"invoke, models, tools"| L2
+    HUB <-->|"invoke, models, tools"| L3
+    HUB <-->|"invoke, models, tools"| L4
     HUB --> TS
-    L1 -->|"typed record"| CASE
-    L2 -->|"typed record"| CASE
-    L3 -->|"typed record"| CASE
-    L4 -->|"Brief draft"| BRF
+    HUB -->|"typed records"| CASE
+    HUB -->|"Brief drafts"| BRF
+    CASE -->|"record written: event"| WF
     BRF <--> OWN
-    BRF -->|"decision signal"| WF
+    BRF -->|"decision: event"| WF
 ```
 
 Six rules make the pattern what it is:
 
-1. **Agents never call each other.** There is no agent-to-agent message channel, so there is nothing for an injected instruction to travel along. The Skeptic does not receive the Detective's *words*; it receives a **case id** and reads the Detective's *record* through a read tool, as labelled data.
-2. **The spine passes ids and budgets, never prose.** An invocation envelope carries the case id, the step, a budget, a deadline and an idempotency key ([§4](#4-how-the-spine-runs)).
-3. **Everything an agent produces is a typed record,** validated against a schema by the case store before any later step may read it. Free-text fields exist, are length-limited, and are marked *untrusted* for whoever reads them next.
-4. **The spine never calls a model.** Whether a step runs, repeats, escalates or stops is decided by deterministic code from typed records, never from an agent's say-so. This is the "no model inside the decision to execute" rule, applied to the whole loop.
+1. **Agents never call each other.** There is no agent-to-agent message channel. That closes the direct route for an injected instruction, not every route: the free-text fields of a typed record are read by whoever reads the record next, which is why those fields are length-limited and labelled *untrusted*, why every tool service that returns free text passes the shared source sanitiser, and why a session that has read untrusted text is tainted ([07 §5](07-security-architecture.md#5-defence-against-prompt-injection-in-nine-layers)). The Skeptic does not receive the Detective's *words*; the spine hands it the **ids of the records** to read, and it reads them through a read tool, as labelled data.
+2. **The spine passes ids and budgets, never prose.** An invocation envelope carries the case id, the step, the ids of the records to read, a budget, a deadline and an idempotency key ([§4](#4-how-the-spine-runs)).
+3. **Everything an agent produces is a typed record,** validated against a schema by the case store before any later step may read it. Records are **immutable and versioned**: a correction is a new version that names what it supersedes, and the records of a case form an **evidence graph** in which each hypothesis points at the evidence *for* and *against* it. Contrary evidence stays — an objection, a negative result and a failed experiment are records like any other, and a verdict must cite them ([06 §2](06-data-and-knowledge.md#2-the-information-model)). Free-text fields exist, are length-limited, and are marked *untrusted* for whoever reads them next.
+4. **The spine never calls a model.** Whether a step runs, repeats, branches, returns to an earlier step, escalates or stops is decided by deterministic code from typed records, never from an agent's say-so — a *does not survive* verdict, for instance, sends the case back to the Detective, at most *n* times. This is the "no model inside the decision to execute" rule, applied to the whole loop.
 5. **A leaf can fail without failing the case.** Retries, a cheaper or different model alias, and "pause and ask a person" are the spine's job.
 6. **People are signals.** An owner's decision reaches the spine as a message from the Approval service, never through an agent ([07 §4](07-security-architecture.md#4-approvals-that-cannot-be-forged-or-reused)).
 
@@ -63,80 +59,119 @@ Six rules make the pattern what it is:
 | Foundry's visual workflow agents | **retire on 1 December 2026**; no outbound VNet injection; not covered by the cloud red-teaming agent |
 | A model-driven planner that decides the next step | the decision to run, repeat or stop becomes probabilistic and unreviewable; cost control moves into a prompt |
 
-The price of the pattern is schema upkeep and less free-form collaboration. The mitigation is a bounded free-text `notes` field in every record, and that the *Skeptic's* job — to break a case — works *better* when it reads the evidence instead of the Detective's rhetoric.
+The price of the pattern is schema upkeep and less free-form collaboration. The mitigation is a bounded free-text `notes` field in every record, and that the *Skeptic's* job — to break a case — works *better* when it reads the evidence instead of the Detective's rhetoric. The added freedom — branching, parallel hypotheses, return edges — has to earn its place: the exam compares the flexible investigation with the fixed Detective → Skeptic → Economist path on rediscovery, transfer, injection resistance, tokens and latency before the flexible path runs on real cases.
 
 ## 2. The roster
 
-Fourteen agents, deployed as **hosted agents** in Foundry Agent Service, in nine groups. A **group** is a *contract and trust class*: it shares one gateway contract ([04 §4](04-landing-zone-and-citadel.md#4-contracts-per-agent-group)) and one position in the capability matrix ([07 §5.1](07-security-architecture.md#51-the-lethal-trifecta-per-agent-group)). Each *agent* still has its own Entra agent identity, created automatically when it is deployed.
+**Fourteen agent roles**, deployed as **fifteen hosted-agent identities** — the Librarian runs twice — in Foundry Agent Service, in **eleven groups**. A **group** is a *trust class*: its agents share the kind of gateway contract ([04 §4](04-landing-zone-and-citadel.md#4-contracts-per-agent-group); one contract per group, data class and environment) and one row of the capability matrix ([07 §5.1](07-security-architecture.md#51-the-lethal-trifecta-per-agent-group)). Each *agent* still has its own Entra agent identity, created automatically when it is deployed, and its own per-tool app roles.
 
 | Agent | Group | Alias | Reads and calls (published through the hub) | Writes (typed record) |
 |---|---|---|---|---|
 | **Scholar** | study | `acia-triage`, `acia-reason` | Document reader, Microsoft Learn MCP, release-feed MCP, Atlas read | draft **claims** with receipts |
 | **Cartographer** | study | `acia-reason` | Atlas, price engine | profile and taxonomy **proposals**, conflicts between sources |
-| **Librarian (Atlas)** | study | `acia-judge-pub` | Atlas, claim re-check results | reviewed claims; release proposal |
+| **Librarian (Atlas)** | curate | `acia-judge-pub` | Atlas, claim re-check results | reviewed claims; release proposals (pull requests to data paths) |
 | **Surveyor** | survey | `acia-triage`, `acia-reason` | Estate reader, directory reader, Cost query | Estate Model **drafts**, ownership proposals |
 | **Detective** | investigate | `acia-reason` | Cost query, Estate reader, Atlas, Ledger (read), Sandbox | **case notebook** entries: hypotheses, evidence, a *prediction* |
 | **Skeptic** | investigate | `acia-judge-eu` | the same read tools as the case used | **objections** and a survives / does not survive verdict |
 | **Economist** | investigate | `acia-reason` | Price engine, Cost query, Consequence engine | **option cards** with ranges and consequences |
-| **Experimenter** | experiment | `acia-reason` | Lab controller, Atlas, Sandbox | experiment records, predictions |
+| **Experimenter** | experiment | `acia-reason` | Atlas, Sandbox; *requests* runs from the Lab controller | experiment **plans** (a recipe id and a run code), predictions |
 | **Diplomat** | converse | `acia-reason` (small share), `acia-triage` | Brief drafting tool, Estate service (pseudonymised), Lesson read | **Brief drafts**; lesson drafts |
-| **Engineer** | engineer | `acia-reason` | Move catalogue, source repositories, Sandbox | **Move drafts** and pull requests |
-| **Auditor** | govern | `acia-judge-eu` | Ledger, audit ledger, evaluation results | outcome scores, drift cases |
-| **Examiner** | govern | `acia-judge-eu` or `acia-judge-pub` | Exam bank, Terrarium (through the scoring service) | exam scores |
-| **Librarian (lessons)** | govern | `acia-reason` | Lesson Book, Atlas | reviewed lessons |
-| **Forger** | forge | `acia-reason` | Terrarium generator only | synthetic estates; answer keys, sealed |
+| **Engineer** | engineer | `acia-reason` | Move catalogue, source repositories, Sandbox | **Move drafts** and pull requests (to data paths only) |
+| **Auditor** | govern | `acia-judge-eu` | Ledger, audit ledger, Entra sign-in logs (through a tool service), evaluation results | outcome scores, drift cases, approval cross-checks |
+| **Examiner** | examine | `acia-judge-pub` on synthetic estates, `acia-judge-eu` on real-estate retrospective cases | Exam bank, Terrarium (through the scoring service) | exam scores |
+| **Librarian (lessons)** | govern | `acia-reason` | Lesson Book, Atlas | reviewed lesson **drafts** (an owner confirms them) |
+| **Forger** | forge | `acia-reason`, resolved by the `forge` contract to a **different model family** from the investigators' ([04 §4.2](04-landing-zone-and-citadel.md#42-the-alias-map)) | Terrarium generator only | synthetic estates; answer keys, sealed |
 | **Conductor** | conduct | `acia-triage`, `acia-reason` | Agenda, budgets, Ledger (read) | the **Agenda** |
 
-Two splits are deliberate:
+Two splits are deliberate, and round 1 added two more pairs that are kept apart:
 
-- **The Librarian runs as two instances** with separate identities and contracts. One may write to the public Atlas and sees no estate data; the other may read estate lessons and has no route to anything public. One agent with both would be a ready-made leak path.
-- **The Forger and the Conductor sit in groups of their own.** The Forger must share nothing with the examinee — not a key, not a tool, not a contract. The Conductor holds budget authority, so a compromised planner must not be able to spend another group's budget.
+- **The Librarian runs as two instances** with separate identities and contracts. *Atlas* (group `curate`) may write proposals to the public Atlas and sees no estate data; *lessons* (group `govern`) may read estate lessons and has no route to anything public. One agent with both would be a ready-made leak path.
+- **The Forger and the Conductor sit in groups of their own.** The Forger must share nothing with the examinee — not a key, not a tool, not a contract, **not a model family**: the `forge` contract resolves `acia-reason` to a model of a different family from the one the investigators' contract resolves it to (Detective, Economist, Experimenter; the second-family model or Claude, both on `acia-global`), because a separate key stops a shared key, not a shared blind spot. A contract test fails if the two resolve to the same family, and the exam measures the independence ([10 §3](10-test-and-evaluation.md#the-forger-is-tested-for-independence)). The Conductor holds budget authority, so a compromised planner must not be able to spend another group's budget.
+- **The Scholar and the Librarian (Atlas) are apart** (`study`, `curate`). The Scholar is the only reader of untrusted web text, and only through the Document reader; it has no path to the Atlas. The Atlas writer reads claims with receipts and no web page, so a page that carried an injection cannot reach the one role that proposes Atlas changes.
+- **The Examiner and the Auditor are apart** (`examine`, `govern`). The Examiner may use a Claude judge on synthetic estates (public class); the Auditor reads the live ledger, which is EU-only. No contract can mix the two data classes.
 
-Not every call goes through the hub as a *person* would see it: the **Move runner, Approval service, Policy service, Credential broker and Verifier hold no contract**, because they call no model ([03 §3](03-logical-architecture.md#3-trust-boundaries)).
+Not every call goes through the hub as a *person* would see it: the **Move runner, Approval service, Policy service, Credential broker, Verifier, Audit Writer and Lab controller hold no model contract**, because they call no model ([03 §3](03-logical-architecture.md#3-trust-boundaries)). The **spine** is a consumer of the hub's publish contract only: its identity may invoke the leaf endpoints the hub publishes (one app role, `Agent.Invoke`), holds **no Foundry role**, and may do nothing else ([§4](#4-how-the-spine-runs)).
 
 ## 3. The workflows
 
-Nine workflows run on the spine. Each is a graph of typed steps.
+Ten workflows run on the spine (W1–W10; W3b is the fast-signal path beside W3). Each is a graph of typed steps — an orchestration that may branch, fan out and return within its budget.
 
 | # | Workflow | Triggered by | Steps | Waits for people | Cost guard |
 |---|---|---|---|---|---|
-| **W1** | **Watch** | daily cron; a feed event | deterministic job reads the Release Communications feed and Learn's change data → cheap triage step classifies relevance → *study requests* | no | triage tier only; a daily token ceiling |
+| **W1** | **Watch** | daily timer trigger; a feed event | deterministic job reads the Release Communications feed and Learn's change data → cheap triage step classifies relevance → *study requests* | no | triage tier only; a daily token ceiling |
 | **W2** | **Study** | a study request | Scholar → *Document reader* → claims → Cartographer (conflicts) → Experimenter if sources disagree → Librarian review → Atlas pull request → knowledge CI | a human reviewer merges to the Atlas | per-request budget; public-class data, so cheap deployment types |
-| **W3** | **Survey** | hourly and daily cron | deterministic estate and cost refresh jobs → Surveyor interprets *changes only* → Estate Model drafts → ownership proposals → Diplomat asks (rate-limited) | owners answer questions | interprets deltas, never the whole estate |
-| **W4** | **Case** | the Agenda opens a case | Detective → Skeptic (loop up to *n*) → Economist → Diplomat → Brief → **decision** → Approval → Policy → Broker → Move runner → Verifier → Auditor → lessons | owner decides; approver(s) | per-case budget; expected value must exceed expected cost to open |
-| **W5** | **Commitment** | periodic; a W4 outcome | Economist proposal → re-price → Brief to two approvers → purchase approval → execute → utilisation tracked | two named approvers, different hats | high stakes, so the stronger tier is justified |
-| **W6** | **Experiment** | a question the Atlas cannot answer | Experimenter plans → Lab controller vends → probe → **waits for the bill** (hours to days) → Skeptic → Librarian | none, but the Lab expiry is a hard stop | Lab budget and expiry; runs at least two days |
-| **W7** | **Dream** | nightly | consolidate the day: lessons, detector candidates, Atlas change proposals | no | batch or flex deployments where the data class allows |
-| **W8** | **Exam and release** | nightly (small), weekly and per release (full) | Forger → Terrarium → agents under test run W4 on synthetic estates → Examiner scores → gates G1–G9 ([10](10-test-and-evaluation.md)) | a human approves a promotion | evaluation budget; judge-prompt caching |
-| **W9** | **Self-watch** | continuous detections; weekly | drift watchers and detections ([09](09-safeguards-and-drift-controls.md), [07 §10](07-security-architecture.md#10-detection-response-and-the-kill-switches)) → Auditor triage → *cases about ourselves*, including the platform's own cost | the operator | the platform's own spend is the first entry on its own Agenda (FR-X4) |
+| **W3** | **Survey** | hourly and daily timer triggers | deterministic estate and cost refresh jobs → Surveyor interprets *changes only* → Estate Model drafts → ownership **proposals** (hints only: approver standing comes from human-administered groups and roles on the target, [07 §4](07-security-architecture.md#4-approvals-that-cannot-be-forged-or-reused)) → Diplomat asks (rate-limited) | owners answer questions | interprets deltas, never the whole estate |
+| **W3b** | **Fast signal** | an event from an opted-in estate: a budget or anomaly alert, a resource-change notification (sources *to confirm* in S-FAST-1) | event → per-estate queue → deterministic check against the estate's usual rhythm → a triage step only if the check is ambiguous → **owner notification** through the Brief service | the owner acknowledges, snoozes, or asks for a case | triage tier only; a rate limit per estate and a daily token ceiling; a flood becomes one grouped message |
+| **W4** | **Case** | the Agenda opens a case | Detective (one run per competing hypothesis, in parallel) → Skeptic (an objection returns the case to the Detective, up to *n* rounds) → Economist → Diplomat → Brief → **decision** → Approval service (signs a record that names the Policy decision, then dispatches the runner) → Credential broker (verifies, then grants) → Move runner (verifies the live state, then acts) → Verifier → Auditor → lesson drafts | owner decides; approver(s) | per-case budget, reserved before each call; expected value must exceed expected cost to open |
+| **W5** | **Commitment** | periodic; a W4 outcome | Economist proposal → re-price → Brief to two approvers → two signed purchase approvals → the AI executes through the same chain → utilisation tracked | two named approvers, different hats | high stakes, so the stronger tier is justified |
+| **W6** | **Experiment** | a question the Atlas cannot answer | Experimenter **plans** (a recipe id and a run code) → the deterministic **Lab controller** deploys a **signed recipe** under a pre-deploy cost cap from the price engine → probe → **waits for the bill** (hours to days, as a loop of timers) → Skeptic → Librarian | a human reviews any *new* recipe before it can be signed; otherwise none, and the Lab expiry is a hard stop | Lab budget and expiry; the pre-deploy cap; runs at least two days |
+| **W7** | **Dream** | nightly | consolidate the day: lesson **drafts**, detector candidates, Atlas change proposals (pull requests to data paths) | owners confirm lessons by an authenticated action; reviewers merge | `acia-batch` (the Flex tier in phase 1) where the data class allows |
+| **W8** | **Exam and release** | nightly (small), weekly and per release (full) | Forger (on a **model family other than the investigators'**, so a shared blind spot cannot seed the traps) → Terrarium → agents under test run W4 on synthetic estates → Examiner scores → gates G1–G9 ([10](10-test-and-evaluation.md)) | a human approves a promotion | evaluation budget; judge-prompt caching |
+| **W9** | **Self-watch** | continuous detections; weekly | drift watchers and detections ([09](09-safeguards-and-drift-controls.md), [07 §10](07-security-architecture.md#10-detection-response-and-the-kill-switches)) → Auditor triage → *cases about ourselves*, including stuck or failed orchestrations and the platform's own cost | the operator | the platform's own spend is the first entry on its own Agenda (FR-X4) |
+| **W10** | **Method learning** | weekly, after the full exam; after a real outcome miss | **post-mortem** of exam and outcome misses (which step failed: source, hypothesis, test, estimate, wording) → *method hypotheses* → pre-registered **experiments** on paper (Terrarium) and Lab estates, with protected exploration → a typed **method proposal** (the patch and the exam evidence) → gates G2–G6 → a human opens the pull request and merges | a human reviews and merges; the system never edits its own prompts, tools, rubrics or gates | a fixed exploration share of the evaluation budget; comparisons registered before they run |
 
-Two things recur. **Every wait is explicit** (a signal, a deadline, an expiry), so nothing waits on an agent's patience. **Every workflow has a budget in tokens, euros, seconds and tool calls,** enforced in the spine, in the agent middleware and at the hub, so three independent layers must fail before a loop can run away.
+**W3b, the fast path.** Hourly deltas (W3) cannot meet a target of minutes ([01 §4](01-requirements-and-principles.md#4-quality-targets)), so an event from an opted-in estate takes a shorter, bounded route: a per-estate queue, an orchestration whose id is the event id (a duplicate collapses into it), a deterministic check against the estate's usual rhythm, and a triage call only if that is ambiguous. The output is a notification, never a case. Estate-side throttling, hosted-agent session and subnet-IP headroom, and p95 latency are load-tested in spike **S-FAST-1**.
+
+**W10, how the system studies its own method.** *Source reliability*, *action selection* (which tactic, question or model to try first) and *counterfactual prediction* are kept apart. A replay of a real case cannot show what another method would have found, so a change is scored on synthetic estates with answer keys and on held-out retrospective cases, against the current method and a retrieval-only baseline, with sample sizes from spike **S-EVAL-1** and a share of runs reserved for deliberate exploration so the learner does not collapse onto the easy wins. The output is a proposal, never a change: agent identities may open pull requests only to data paths ([07 §9](07-security-architecture.md#9-supply-chain)), and prompts, tools and rubrics are not data paths, so a human opens it (assumption: the rule holds for W10 too).
+
+Two things recur. **Every wait is explicit** (a signal, a deadline, an expiry), so nothing waits on an agent's patience. **Every workflow has a budget in tokens, euros, seconds and tool calls,** enforced in the spine (reserved before each call), in the agent middleware and at the hub, so three independent layers must fail before a loop can run away — the hub's layer is not an exact one ([§4](#4-how-the-spine-runs)).
 
 ## 4. How the spine runs
 
-**The spine is ordinary code on ordinary serverless compute.** It does not need a model, so it does not run inside an agent's identity boundary.
+**The spine is ordinary code on ordinary serverless compute: Durable Functions on the Flex Consumption plan.** It does not need a model, so it does not run inside an agent's identity boundary. Round 1 reversed the draft's own design here: our checkpoint-and-jobs spine had been weighed against the pre-release Durable Extension for the Agent Framework instead of the generally available runtime beneath it. Durable Functions already supplies what that design would have had to build, test and secure — event-sourced state, timers, external events, fan-out and fan-in, instance management and versioning ([ADR-33](13-decisions.md#adr-33-the-spine-is-durable-functions-on-flex-consumption-calling-leaves-through-the-hub)). Its replay model also requires the separation we want: an orchestrator must be deterministic, so it may not do I/O, read a clock or call a network, and everything that touches the world — every model call included — sits in an activity, behind the hub.
+
+```mermaid
+stateDiagram-v2
+    [*] --> Reserve
+    Reserve --> Start : reserved
+    Reserve --> Parked : refused
+    Start --> Waiting : run id returned
+    Waiting --> Read : event with an id
+    Waiting --> Tick : timer fires
+    Tick --> Waiting : before the deadline
+    Tick --> Decide : deadline passed
+    Read --> Decide
+    Decide --> Reserve : next step, branch or return
+    Decide --> Closed : done or unresolved
+    Parked --> Reserve : budget available
+    Parked --> Closed : owner or timeout
+    Closed --> [*]
+```
+
+One turn of the loop: every orchestration, whatever its workflow, is this loop, and a fan-out runs several of them side by side.
 
 | Aspect | Design |
 |---|---|
-| **Definition** | **Microsoft Agent Framework graph workflows** (GA, 1.0 since 2 April 2026; orchestrations and declarative YAML workflows 1.0 in July 2026). Simple sequences are declarative YAML so a change is a readable diff; branching ones are code. |
-| **Execution** | **Azure Container Apps jobs** (Consumption): triggered by a cron schedule or by a Storage Queue message (KEDA scaler). One execution advances a workflow instance to its next wait, checkpoints, and exits. **Nothing runs while a workflow waits for a person.** |
-| **Checkpoints** | a custom checkpoint store over our own Cosmos DB account (the Framework's storage protocol allows a custom store); state is JSON only, integrity-protected, and **only the spine's identity can read or write it** — a checkpoint is trusted infrastructure, and the Framework's own guidance is never to load checkpoints from an untrusted source |
-| **Human waits** | a workflow raises a typed *request* (the Framework's request-and-response mechanism) and ends the execution; the Approval or Brief service later enqueues the signal that resumes it; a deadline message does the same on expiry |
-| **Invocation of a leaf** | the spine calls the hosted agent's endpoint under its own managed identity, which holds the least-privilege **Foundry Agent Consumer** role *at that agent's scope*. The response carries a status and a record id; **the result is read from the case store, not from the response body**, so a leaf cannot smuggle prose into the spine |
-| **Idempotency** | every step has an idempotency key; a duplicate delivery returns the earlier record |
-| **Poison and stuck work** | a poison message goes to a dead-letter store; a watchdog job finds instances with no progress and raises a case about it |
+| **Runtime** | **Durable Functions** in C#, isolated worker (Learn: in-process support ends on 10 November 2026), on the **Flex Consumption** plan in our spoke: outbound through virtual-network integration in a delegated `/27` subnet (`Microsoft.App/environments`), no HTTP function published. One user-assigned managed identity, **the spine's identity**, apart from every agent identity: data roles on its own storage account and the few operational containers it needs, the hub's app role `Agent.Invoke` for the leaf APIs, and **no Foundry role, no model role, no key**. |
+| **Provider and state** | the **Azure Storage provider** (Learn: the lowest-cost serverless billing model) in a storage account used only by the task hub: identity-based connections (a user-assigned identity by **client id**; a resource id is not supported), blob, queue and table data roles for the spine's identity alone, key access off, private endpoints. Histories are trusted infrastructure. The partition count (default four, at most sixteen) is fixed **before** the task hub exists; Learn: it cannot be changed afterwards. |
+| **Orchestrations** | one orchestrator per workflow (W1–W10). It only *decides*: it asks activities for typed verdicts and picks the next step, a branch or a return. No I/O, clock, random value or model (Learn's code constraints), so replay repeats the same decisions. Histories hold ids, numbers and statuses, **never prose or personal data**; typed records stay in the case store. |
+| **Calling a leaf** | an *activity*, never the orchestrator, reserves the budget and then calls the leaf **through the hub**, which publishes each leaf's invocation endpoint as an ordinary API, not as A2A ([04 §4.4](04-landing-zone-and-citadel.md#44-the-publish-contract-tools-and-who-may-call-them)). The spine's identity holds **no Foundry role**: the hub admits it by its verified `azp` and the role `Agent.Invoke`, then calls the leaf with **its own backend identity, the only one that holds *Foundry Agent Consumer*, at that leaf's scope**. The hub is therefore the only route, and a call that skipped it would fail on RBAC at Foundry and count as bypass **B12** ([04 §8](04-landing-zone-and-citadel.md#8-the-gateway-bypass-register)). The call is `POST /invocations` (structured JSON) with the idempotency key as the invocation id and the case id as the session; it returns **at once with a run id**, and the protocol also offers `GET` for status and `cancel` for a cooperative abort. **The result is read from the case store** (through the case-record facade), **not from the response body**, so a leaf cannot smuggle prose into the spine. That the hub forwards those routes and the session parameter is *to confirm* in S-NET-1. |
+| **Waiting** | an **external event** races a **deadline timer** (Learn's human-interaction pattern), and the timer is cancelled when the event wins. Events — a leaf's *record written*, the owner's *decision*, a *Brief answered*, a Move's *execution finished* — are raised by a small **queue-triggered function** from messages that carry **ids only**, so no other service holds a right on the task hub (senders hold *Storage Queue Data Message Sender* on that one queue). An event is a **doorbell, not evidence**: the orchestrator re-reads the typed record or signed approval from the store. Events arrive at least once, so duplicates are dropped by id; an event for an instance that does not exist is discarded, so a lost one costs a timer tick, never an approval. A waiting orchestration is not running and not billed (Learn). |
+| **Long waits** | a wait of more than a few days (a reminder ladder, a Lab bill, a 30-day expiry) is a **loop of bounded timers**. Learn limits durable timers to six days for JavaScript, Python and PowerShell and says current .NET supports arbitrary lengths; **we loop anyway**, because each tick re-reads the deadline and the kill-switch flags, and nothing then depends on how long timers are implemented. `ContinueAsNew` restarts the history (same instance id; C# keeps unprocessed events; a pending timer is discarded, so the next is created afterwards). S-ORCH-1 runs a 30-day wait. |
+| **Parallel work** | **fan-out and fan-in** (Learn's pattern): competing hypotheses or independent leaves start as parallel activities, or as sub-orchestrations with deterministic ids when a branch has steps of its own, and are awaited together. The fan-in is a deterministic join over returned **ids**, never content; branches and rounds (*n*) are in the envelope, and each branch reserves its own budget. |
+| **Identity and idempotency** | **instance ids are deterministic idempotency keys**: `<workflow>:<case id>` plus the step, printable ASCII, at most 100 characters (the Durable Task Scheduler's limit, so one rule serves both providers). A start request for an id that exists, **finished or not**, returns the earlier instance (Learn's singleton sample restarts a finished id; ours does not). **Activities run at least once**, so each activity with an effect carries its own key — reservation id, invocation id, approval nonce — and returns the first run's result instead of repeating the effect. Exactly-once *effects* come from keys at every boundary, not from the runtime; S-ORCH-1 forces restarts at each boundary and counts lost and doubled effects. |
+| **Versioning** | **orchestration versioning** (worker extension 1.14.0 or later; any provider): `defaultVersion` in `host.json`; an instance keeps the version it started under; a newer worker runs older instances (`CurrentOrOlder`, the default), an older worker never runs newer ones, and a mismatch returns to the queue (`Reject`, the default). The orchestrator branches on `context.Version`, and an old branch goes only after its version has **drained** (no pending or running instance). A changed activity signature follows the same rule. Flex has no deployment slots, so Learn's slot-based strategies are out. Its rolling site updates are *public preview* on the [Flex plan](https://learn.microsoft.com/azure/azure-functions/flex-consumption-plan) and [how-to](https://learn.microsoft.com/azure/azure-functions/flex-consumption-how-to) pages but generally available in some regions on the [site-updates](https://learn.microsoft.com/azure/azure-functions/flex-consumption-site-updates) page: the pages disagree, so the register fails closed to preview, and nothing depends on them. |
+| **Hosting economics** | an **always-ready instance for the `durable` group** (one in production) and a **queue polling interval of 10 seconds or less**, both Learn's guidance for Durable Functions on Flex: a standing instance and extra storage transactions ([12 §4](12-cost-and-finops.md#4-what-still-costs-money-when-nothing-is-happening)). Zone redundancy needs at least two always-ready instances per group, so phase 1 leaves it off *(to confirm against 11 §8)*. Whether an orchestrator replay is a billed execution on Flex is *to confirm* in S-ORCH-1. |
+| **Stuck and failed work** | a **watchdog** function queries orchestrations by status (failed, or past their deadline) and raises a *case about ourselves* (W9). A failed instance is **re-opened from the case store under a new instance id**, never replayed against changed code. A signal that keeps failing goes to the poison queue and the `dead-letter` container; completed instances are purged after 30 days. |
+
+**Budget reservation.** Before each leaf call an activity reserves the call's worst case — the envelope's euro cap — against the *case's* budget (arithmetic on the orchestration's own state) and the *group's and contract's monthly budget*, a document in the operational store (`budgets`, [06 §7.2](06-data-and-knowledge.md#72-the-operational-store-container-by-container)) changed only by a **conditional patch**: `reserved` grows only if the limit minus spent minus reserved still covers the call (Cosmos DB's partial-document update with a filter predicate), in one transactional batch with the reservation document, whose id is the reservation id, so a retried activity cannot reserve twice. A refused reservation parks the step and the Conductor decides. When the hub's usage record arrives (the reservation id travels in a header the record keeps — *to confirm* on our hub), a deterministic reconciler replaces the reservation with the actual spend; one with no record after a day stays reserved and becomes a finding for the drift controller ([09](09-safeguards-and-drift-controls.md)). A Durable entity per budget scope is the alternative if one document becomes a point of contention.
+
+**The residual overrun is stated, not hidden.** A leaf can overshoot its envelope by the call in flight when its middleware stops it, and the hub's `llm-token-limit` can be overshot by concurrent requests ([04 §4.3](04-landing-zone-and-citadel.md#43-the-access-contracts)), so per contract the worst case is its concurrency times its largest call above the reservation. The cap is *a* control, bounded by the plan-computed quota ([12 §6](12-cost-and-finops.md#6-how-the-systems-own-spend-is-governed)) and by detection, not a hard budget.
 
 **The invocation envelope** (illustrative):
 
 ```yaml
-envelope: 1
+envelope: 2
 case_id: c-2026-10-31-0042
 step: investigate.skeptic
 agent_version: skeptic@sha256:…        # pinned; the release manifest names it
+contract: investigate/estate-confidential/prod   # group, data class, environment (04 §4)
 data_class: estate-confidential
+reads: [ev-0412, ev-0413]              # record ids chosen by the spine, never prose
 budget: { tokens: 150000, euros: 0.60, seconds: 300, tool_calls: 25 }
+reservation_id: rsv-c-0042-skeptic-2   # the euros reserved before this call
 deadline: 2026-10-31T14:05:00Z
-idempotency_key: c-0042/skeptic/2
+idempotency_key: c-0042/skeptic/2      # also the invocation id at the leaf
 trace_parent: 00-…
 ```
 
@@ -144,28 +179,33 @@ trace_parent: 00-…
 
 | Option | Status | Verdict |
 |---|---|---|
+| **Durable Functions, Flex, Azure Storage provider** | generally available; Learn lists Flex as fully supported for the Azure Storage provider, the Durable Task Scheduler and MSSQL (not Netherite) | **chosen**: the lowest-cost serverless provider, identity-based connections, scale to zero apart from the always-ready instance |
+| **Durable Task Scheduler** (same programming model, managed backend) | generally available and Learn's recommended provider; Dedicated SKU (fixed price per capacity unit, 90 days of retention, high availability from three units) and Consumption SKU (per action, 30 days, no high availability; labelled *preview* on one Learn page only — [Durable Functions billing](https://learn.microsoft.com/azure/durable-task/durable-functions/durable-functions-billing) — and not on the Scheduler's overview or billing pages, so treated as preview, *to confirm*); private endpoints on both; offered in Sweden Central | **optional upgrade** if the storage provider proves too slow or too chatty (S-ORCH-1; cost in [12 §4](12-cost-and-finops.md#4-what-still-costs-money-when-nothing-is-happening)). No code change but **no state migration** — Learn says to create a new app on the new provider — so a switch is a drain and a cut-over |
+| **Our checkpoint-and-jobs design** (Agent Framework graph workflows as Container Apps jobs, checkpoints in Cosmos DB) | ours; the draft's choice | **named fallback**; it needs JSON-only state (the Framework's Python checkpoint stores use `pickle` for non-JSON state), an inbox and an outbox, lease fencing, timers of our own and idempotent effects |
+| **Durable Extension for the Agent Framework** | pre-release packages | not used; revisited if generally available *and* better than Durable Functions in S-ORCH-1 |
 | Workflow inside a hosted agent, state in the platform's durable store | hosted agents GA; Agent Framework hosting packages pre-release | the spine would run *inside an agent identity*; used only for tests |
-| **Durable Extension for Agent Framework** (Functions Flex Consumption, Durable Task Scheduler) | pre-release packages | ADOPT-PREVIEW as the **named alternative**; chosen if our checkpoint store proves brittle (spike **S-ORCH-1**) |
 | Foundry visual workflows | retire 1 December 2026 | not used |
 | Logic Apps | agent loops in preview; always-on pricing in the usage pipeline of the hub | not used |
-| Foundry **Routines** | GA 24 September 2026 | optional for a single-agent clock; **not the default**: a routine has one trigger and one action and cannot carry an envelope, and Routines support no customer-managed keys |
+| Foundry **Routines** | **preview**: Learn and a Foundry devblog read as generally available, the Azure release record says public preview, the .NET packages are beta | optional for a single-agent clock, **not the default**: one trigger, one action, a five-minute minimum interval, no customer-managed keys, five regions excluded. Its input can be text or JSON, so an envelope is possible; the unclear status is the obstacle |
+
+*Learn pages read on 2026-10-31 for this section:* [timers](https://learn.microsoft.com/azure/durable-task/common/durable-task-timers), [external events](https://learn.microsoft.com/azure/durable-task/common/durable-task-external-events), [human interaction](https://learn.microsoft.com/azure/durable-task/common/durable-task-human-interaction), [fan-out and fan-in](https://learn.microsoft.com/azure/durable-task/common/durable-task-fan-in-fan-out), [singletons](https://learn.microsoft.com/azure/durable-task/common/durable-task-singletons), [eternal orchestrations](https://learn.microsoft.com/azure/durable-task/common/durable-task-eternal-orchestrations), [code constraints](https://learn.microsoft.com/azure/durable-task/common/durable-task-code-constraints), [versioning](https://learn.microsoft.com/azure/durable-task/common/durable-orchestration-versioning), [zero-downtime deployment](https://learn.microsoft.com/azure/durable-task/durable-functions/durable-functions-zero-downtime-deployment), the [Azure Storage provider](https://learn.microsoft.com/azure/durable-task/durable-functions/durable-functions-azure-storage-provider), [provider comparison](https://learn.microsoft.com/azure/durable-task/common/durable-task-storage-providers), the [Durable Task Scheduler](https://learn.microsoft.com/azure/durable-task/scheduler/durable-task-scheduler) and its [billing](https://learn.microsoft.com/azure/durable-task/scheduler/durable-task-scheduler-billing), [Flex Consumption](https://learn.microsoft.com/azure/azure-functions/flex-consumption-plan), the [Invocations library](https://learn.microsoft.com/python/api/overview/azure/ai-agentserver-invocations-readme?view=azure-python), [Routines](https://learn.microsoft.com/azure/foundry/agents/how-to/use-routines) and [partial-document update](https://learn.microsoft.com/azure/cosmos-db/partial-document-update). Flex Consumption and the Durable Task Scheduler are both offered in Sweden Central (`az functionapp list-flexconsumption-locations`, `az provider show --namespace Microsoft.DurableTask`).
 
 ## 5. Anatomy of a leaf
 
 | Part | Design |
 |---|---|
-| **Runtime** | a **hosted agent** (GA): a per-session microVM sandbox, its own Entra agent identity, scale to zero, billed per active vCPU-hour and GiB-hour. Size 0.5 vCPU / 1 GiB by default; idle timeout **2 minutes** for batch-style roles (the default is 15, which would bill a 30-second job thirty-fold), 15 for the Diplomat. Limits to design around: no traffic splitting between versions, versions immutable, **not offered in North Europe**. |
-| **Code** | **Python**, Agent Framework 1.x pinned, one image per group, built in CI from a pinned base, signed, in a private registry. The role is selected by the agent version's (immutable) environment. |
+| **Runtime** | a **hosted agent** (generally available since June 2026): a per-session microVM sandbox, its own Entra agent identity, scale to zero, billed on the CPU and memory of *active* sessions. Size 0.5 vCPU / 1 GiB by default (maximum 2 vCPU / 4 GiB); idle timeout **2 minutes** for batch-style roles, 15 for the Diplomat. Whether the idle tail (the platform default is 15 minutes) is billed is not stated on the pricing or concepts pages: the cost model assumes it is, and spike S-COST-1 measures it. One session per role per case (the session id is the case id), so the tail is paid once per case and role, not once per call. Limits: no traffic splitting between versions, versions immutable (up to 1,000 per agent), **not offered in North Europe**. |
+| **Code** | **Python**, Agent Framework 1.x pinned, one image per group, built in CI from a pinned base, signed, in a private registry. The role is selected by the agent version's (immutable) environment. The Framework core is generally available, but its **Python hosting integration `agent-framework-foundry-hosting` is prerelease** (the managed hosting service is GA, the integration is not), so it sits in the preview register ([09 §5](09-safeguards-and-drift-controls.md#5-the-preview-register-and-the-dependency-register)) with a **framework-agnostic fallback**: our own container speaks the Invocations protocol through `azure-ai-agentserver-invocations` and calls the Framework as a library inside its handler. The leaf's logic does not change, only its host. On the Python path the prerelease part is the **hosting integration**, not the protocol packages: Learn lists the Python `azure-ai-agentserver-*` packages as generally available (core and Responses 2.0.0 or later, Invocations 1.0.0 or later), the .NET packages as beta and the long-running APIs as preview, on which nothing here depends ([Learn](https://learn.microsoft.com/azure/foundry/agents/concepts/long-running-agent-reference)); its migration page still names core 2.0.0b1, so the exact versions are *to confirm* when pinning. |
 | **Instructions** | `agents/<name>/instructions.md` and skills in the repository; a **hash** of each is computed at build time and written to every span and every record (`prompt_hash`), so behaviour can be tied to an exact text |
 | **Model access** | the hub's unified surface, by **alias**, with the agent identity's token (the app role `Model.Invoke` assigned directly to that identity) plus the contract's key from Key Vault. A hosted agent holds no model-deployment role, so it *cannot* reach a deployment any other way ([07 §3.2](07-security-architecture.md#32-roles--least-privilege-in-foundry)) |
 | **Tools** | the hub's published MCP endpoints, through the Agent Framework's MCP client; the contract's allow-list decides which. Toolboxes (GA) are **not** used by default, because whether a toolbox's tool calls pass the hub is unproven (spike **S-NET-1**) |
 | **Memory** | none beyond the case record. **Foundry Memory is not used**: preview, no VNet support, available in a handful of regions, and its extraction model calls cannot be shown to pass the hub. Conversation state is the case notebook, compacted by deterministic code |
-| **Middleware** (GA) | in order: **budget guard** (stops at the envelope's limits), **taint labels** (marks fields from untrusted sources), **deterministic gate** (allow / deny / require-approval before any tool call — the Agent Governance Toolkit if it proves out, otherwise our own check), **output validator** (schema) |
+| **Middleware** (GA) | in order: **budget guard** (stops at the envelope's limits), **taint labels** (marks fields from untrusted sources, and taints the session once untrusted text has entered it: privileged tools then need a human or are blocked, [07 §5](07-security-architecture.md#5-defence-against-prompt-injection-in-nine-layers)), **deterministic gate** (allow / deny / require-approval before any tool call — the Agent Governance Toolkit if it proves out, otherwise our own check), **output validator** (schema) |
 | **Loop** | the Framework's agent loop with the middleware above. The Framework *Harness* (tool loop, compaction, file memory) is marked stable in one place and experimental in the Python status table in another; it is **EVALUATE** for the Scholar and the Detective (spike **S-AGT-1**) |
-| **Code execution** | avoided where a deterministic query tool can answer. Where an agent must compute, it calls the **Sandbox** tool — **Container Apps dynamic sessions** (GA), which hold no identity and no secrets, and deny egress. Container Apps Sandboxes (preview) are the cheaper per-second option once proven, behind a switch |
+| **Code execution** | avoided where a deterministic query tool can answer. Where an agent must compute, it calls the **Sandbox** tool — **Container Apps dynamic sessions** or **Container Apps Sandboxes** (generally available since September 2026; EU regions and price *unverified*) — which hold no identity and no secrets and deny egress. A session or sandbox is scoped to **(group, case)** and never reused across them. Typed query tools stay preferred, because every sandbox hour is a cost line and a code path to defend; between the two options the choice rests on measured isolation, region, suspended-state cost, egress denial, audit and latency, not on status ([ADR-37](13-decisions.md#adr-37-model-written-code-runs-only-in-a-sandbox-with-no-identity)) |
 | **Telemetry** | OpenTelemetry through the Framework to Application Insights; span attributes `case_id`, `group`, `alias`, `prompt_hash`, `envelope.budget`, `cost.estimate` |
 
-**Languages.** *Python* for agents, evaluation and analytics; *C#* for the execution plane (Approval service, Policy service, Credential broker, Move runner) and the Teams adapter. The reason is not fashion: the money-moving and approving code is small and security-critical, so it gets a statically typed language, property-based tests and a **dependency surface that is deliberately small**, while the Teams card-action handlers exist in the .NET and JavaScript Agents SDKs but not in the Python one.
+**Languages.** *Python* for agents, evaluation and analytics; *C#* for the spine (Durable Functions), the execution plane (Approval service, Policy service, Credential broker, Move runner, Audit Writer) and the Teams adapter. The reason is not fashion: the code that sequences work and moves money is small and security-critical, so it gets a statically typed language, property-based tests, **signed contracts shared** by the Approval service, the broker and the runner, and a **dependency surface that is deliberately small**; Durable Functions is also most mature on .NET. It is *not* because Python lacks Teams card actions — the Python Microsoft 365 Agents SDK registers `Action.Execute` handlers — so the adapter is C# for typing and shared contracts ([ADR-36](13-decisions.md#adr-36-c-for-the-spine-the-execution-plane-and-the-teams-adapter-python-for-agents)).
 
 ## 6. Models and the alias map
 
@@ -174,52 +214,52 @@ An agent never names a model. It names an **alias**; the hub's contract maps the
 | Alias | Used for | Starting model | Deployment type | Fallback |
 |---|---|---|---|---|
 | `acia-triage` | volume: classification, relevance, "ask or not" | GPT-6 **Luna** | EU Data Zone for estate data; Global for public | the next cheapest cleared model |
-| `acia-reason` | investigation, economics, drafting | GPT-6.1 **Sol** | EU Data Zone for estate data; Global (or flex) for public | GPT-6.1 Terra |
+| `acia-reason` | investigation, economics, drafting | GPT-6.1 **Sol**; the contract, not the alias, picks the model, and the `forge` contract resolves `acia-reason` to a model of a **different family** from the one the investigators' contract resolves it to (the second-family model or Claude, both on `acia-global`; [04 §4.2](04-landing-zone-and-citadel.md#42-the-alias-map)) | EU Data Zone for estate data; Global for public | GPT-6.1 Terra |
 | `acia-judge-eu` | the Skeptic, the Auditor, estate-data evaluation | a model from a **different family** than `acia-reason`, with an EU Data Zone option; chosen by exam, not by taste | EU Data Zone | another family or `acia-reason` with a changed prompt, flagged as *not independent* |
-| `acia-judge-pub` | claim review, synthetic and public evaluation | a Claude model, **Global Standard**, only for public and synthetic data | Global | `acia-judge-eu` |
+| `acia-judge-pub` | claim review, synthetic and public evaluation | a Claude model, **Global Standard**, only for public and synthetic data; the model **and its hosting version** are pinned | Global | `acia-judge-eu`, after a contract test of the protocol and the accounting |
 | `acia-embed` | retrieval | an embedding model | EU Data Zone | pinned alternative |
-| `acia-batch` | nightly consolidation of public-class work | the same families on **Batch or Flex** | Global | the interactive alias |
+| `acia-batch` | delay-tolerant public-class work: nightly consolidation, synthetic exams | a Flex-capable model from the same families (Learn lists the GPT-5.6 and GPT-6 families; any other gets HTTP 400); **Batch** waits for an adapter with submit, collect and cancel | Global Standard deployment of its own, **Flex requested per call** (a tier, not a deployment type; preview, no SLA, 429 when capacity is short) | none: Flex does not fall back to Standard by itself, and the alias is *not* a fallback for the interactive aliases, so a refused call waits for the next window or the spine decides to pay for Standard |
 
 Rules:
 
-- **Independence is a tested property.** A contract test fails if a judge alias resolves to the same family as the alias it judges.
-- **Claude is never the default and never sees estate data**: no EU Data Zone option exists, it is sold through the Marketplace with Anthropic as a separate processor, and its lifetime as a generally available model is 12 months.
+- **Independence is a tested property.** A contract test fails if a judge alias resolves to the same family as the alias it judges, or if the `forge` contract's `acia-reason` resolves to the same family as the investigators' contract does; the exam measures the independence ([10 §3](10-test-and-evaluation.md#the-forger-is-tested-for-independence)).
+- **Claude is never the default and never sees estate data**: no EU Data Zone option exists (Learn lists Global Standard and Data Zone Standard (US) only), and only public-class contracts reach it. Foundry hosts it in two versions — **Version 1 on Anthropic's infrastructure, outside Azure; Version 2 on Azure end to end** — so the model *and the hosting version* are pinned and the processor and residency terms are read for that version. It is billed through the Azure Marketplace, Foundry applies no built-in content filter to it (the hub's content-safety policy is its filter), and its lifetime as a generally available model is 12 months.
 - **GPT-6 Astra is never a default**: it costs five times the Sol tier and its EU availability is described inconsistently.
 - The **model router** is used only with a pinned subset and an exam run on every pool change; its version label does not pin its behaviour.
 - The **Decisions API** (GA, runs on Luna) is a candidate for triage and "ask or not" gates, because it returns typed probabilities; spike **S-MOD-2** measures it against plain structured output.
-- **Flex and Batch** serve only the public and synthetic data classes, because Flex needs a Global deployment whose processing may leave the EU.
+- **Flex and Batch** serve only the public and synthetic data classes. **Flex is a per-request service tier** (`service_tier`, or the `x-ms-service-tier` header a gateway can set), not a deployment type, and Learn documents it only on **Global Standard** deployments, whose processing may leave the EU; it has **no automatic fallback** ([Learn](https://learn.microsoft.com/azure/foundry/openai/how-to/flex-processing), read 2026-10-31), so a refused call is retried within a bound by the spine or paid for as Standard by an explicit decision, and every response's `service_tier` is recorded. Flex and Standard requests **share a deployment's quota**, which is why `acia-batch` has a deployment of its own and a Flex burst cannot starve an interactive alias. **Batch** is a separate deployment type behind an adapter that does not exist yet. Both sit behind their own alias, never behind an interactive one.
 - **No model name appears in agent code.** A retirement date is data in the contract; an alert fires 90 days before it ([09](09-safeguards-and-drift-controls.md)).
 
 ## 7. The token economy
 
-Cost is a design constraint ([C7](01-requirements-and-principles.md#1-constraints--what-is-not-negotiable)), and in this system **tokens, not compute, are the bill**: an illustrative thousand cases a month on the strongest tier costs more than twenty times the hosted compute that runs them ([12](12-cost-and-finops.md)). The design therefore spends tokens like money:
+Cost is a design constraint ([C7](01-requirements-and-principles.md#1-constraints--what-is-not-negotiable)), and in this system **tokens, not compute, are the variable bill**: the largest line from Team scale upward, while the private-network floor dominates below it ([12 §3](12-cost-and-finops.md#3-reading-the-numbers)). The design therefore spends tokens like money:
 
 1. **Think cheaply first.** The triage tier decides whether anything deeper is worth running. The Conductor opens a case only when *expected saving × confidence* exceeds the case's expected cost.
-2. **Summaries, not rows.** Agents see aggregates and samples from the Cost query tool; raw cost lines never enter a prompt.
-3. **A stable prefix.** Instructions, the skills index and tool definitions come first and do not change within a release, so prompt caching applies from 1,024 tokens; a `prompt_cache_key` groups related calls. Cache *writes* are billed on the newest models, so the prefix is written once per release, not per case.
+2. **Summaries, not rows, and ids, not notebooks.** Agents see aggregates and samples from the Cost query tool; raw cost lines never enter a prompt. A reader gets the records it needs by id — immutable, so they digest and cache cleanly — instead of re-reading a whole mutable case.
+3. **A stable prefix.** Instructions, the skills index and tool definitions come first and do not change within a release, so prompt caching applies from 1,024 tokens; a `prompt_cache_key` groups related calls, and on the GPT-5.6-and-later families `prompt_cache_options.mode` set to `explicit` with one breakpoint after the static prefix keeps the variable tail from being written. **A cache is not a release-long store**: an entry lives at least 30 minutes on those families (the only supported lifetime), and on earlier models in-memory entries typically clear after 5 to 10 minutes of inactivity and always within an hour. A prefix is therefore rewritten whenever its traffic pauses — in practice once per session or burst, **not once per release or per case** — and **cache writes are billed** on the newer families only. What caching is worth ranges from a few percent to about a third of a case's token cost ([12 §3](12-cost-and-finops.md#3-reading-the-numbers)); the model prices both readings and spike S-COST-1 measures which is true.
 4. **Fewer, sharper tools.** Every published tool adds tokens to every call; the tool list is small and schema-driven, with tool search where a group's list grows.
 5. **Bounded loops.** Every envelope carries limits; `max_tokens` is set deliberately because rate limits count it at request time.
-6. **The cheapest deployment the data class allows.** Estate data pays the EU Data Zone premium; public and synthetic work does not.
-7. **Cost per case is a trace attribute and an evaluation metric.** A regression in cost per case fails a release like a regression in accuracy (G6).
-8. **Budgets at the hub are the real cap.** Azure budgets alert on data that is hours old and stop nothing, so they are a backstop only.
+6. **The cheapest deployment the data class allows.** Estate data pays the EU Data Zone premium — about +20 % on the GPT-6 family, about +10 % on earlier models, and it varies by meter; public and synthetic work does not.
+7. **Cost per case is a trace attribute and an evaluation metric.** A regression in cost per case fails a release like a regression in accuracy (G6). It is reported as p50, p95 and p99 (a mean hides the tail), with cache hits, writes and misses by alias and context length, and with the value each extra agent hop adds.
+8. **Budgets are layered, and none is exact.** The envelope, reserved before the call, is the first cap; the contract at the hub is the second (`llm-token-limit` can be overrun by concurrent requests, [§4](#4-how-the-spine-runs)); Azure budgets alert on data that is hours old and stop nothing, so they are a backstop only.
 
 ## 8. People in the spine
 
-- **Reminders, expiry and attention.** The Brief service owns the attention budget. A question that is not answered ages out into a lesson ("no answer"); nothing auto-acts on silence.
-- **Explain, Challenge, Teach** are new cases, not chat: *Explain* is a Diplomat run over the stored case record; *Challenge* re-opens the case for the Skeptic with the owner's objection attached as untrusted data; *Teach* creates a lesson draft that a reviewer confirms.
-- **Decisions and approvals** are authenticated actions captured by the Approval service ([07 §4](07-security-architecture.md#4-approvals-that-cannot-be-forged-or-reused)). The workflow sees only the signed result.
+- **Reminders, expiry and attention.** The Brief service owns the attention budget, and the reminder ladder is a loop of timers inside the waiting orchestration ([§4](#4-how-the-spine-runs)). A question that is not answered ages out into a lesson ("no answer"); nothing auto-acts on silence.
+- **Explain, Challenge, Teach** are new cases, not chat: *Explain* is a Diplomat run over the stored case record; *Challenge* re-opens the case for the Skeptic with the owner's objection attached as untrusted data; *Teach* creates a lesson **draft**. A draft stays a draft until its owner **confirms it by an authenticated action** — the same sign-in discipline as a decision — and a draft is never an instruction to an acting agent: retrieval for the Detective, Economist and Diplomat returns confirmed lessons only, and an unconfirmed draft ages out like an unanswered question.
+- **Decisions and approvals** are authenticated actions captured by the Approval service ([07 §4](07-security-architecture.md#4-approvals-that-cannot-be-forged-or-reused)). The workflow receives an event that carries only the approval's id and reads the signed record from the store; it never treats the event as proof, because the broker and the runner verify the signature.
 
 ## 9. The five clocks
 
 | Clock | Cadence | Mechanism | What runs |
 |---|---|---|---|
-| **Watch** | daily; plus a feed event | Container Apps cron job → queue | W1, then W2 for what matters |
-| **Estate** | hourly deltas, daily cost refresh | cron jobs (deterministic) → queue | W3; the cost-data ingestion |
-| **Case** | event-driven | the Agenda enqueues a case | W4, W5 |
-| **Learning** | nightly | cron job | W7, W6 follow-ups |
-| **Exam and drift** | nightly (small), weekly (full), per release | cron job and pipeline | W8, W9 |
+| **Watch** | daily; plus a feed event | timer-trigger function → orchestration | W1, then W2 for what matters |
+| **Estate** | hourly deltas, daily cost refresh; plus estate events | timer-trigger functions (deterministic) → orchestrations; an event → queue → orchestration | W3, W3b; the cost-data ingestion |
+| **Case** | event-driven | the Agenda enqueues a case; a queue-triggered function starts its orchestration | W4, W5 |
+| **Learning** | nightly; weekly for W10 | timer-trigger function | W7, W6 follow-ups, W10 |
+| **Exam and drift** | nightly (small), weekly (full), per release | timer-trigger function and pipeline | W8, W9 |
 
-Five clocks, one mechanism (cron job, queue, job). Nothing is always on.
+Five clocks, one mechanism: **a timer-trigger function or a queue message starts an orchestration** ([ADR-34](13-decisions.md#adr-34-clocks-are-timer-triggers-and-queues-routines-are-optional-and-preview)). Foundry Routines may serve a single-agent clock, but they are preview and not the default ([§4](#4-how-the-spine-runs)). Almost nothing is always on: a waiting orchestration is not running, and the spine's idle cost is the always-ready instance and the queue polling ([12 §4](12-cost-and-finops.md#4-what-still-costs-money-when-nothing-is-happening)).
 
 ## 10. Failure and degradation
 
@@ -227,10 +267,14 @@ Five clocks, one mechanism (cron job, queue, job). Nothing is always on.
 |---|---|
 | a model alias returns 429 or 5xx | the hub's fallback member answers; the envelope records the alias actually used |
 | a tool returns a typed error | the agent sees the error as data and may try another route within its budget; the spine does not retry blindly |
-| a leaf exceeds its budget or deadline | the middleware stops it and writes a *partial* record; the spine decides: escalate, park, or close with "unresolved" |
-| a hosted-agent session is lost | the spine re-invokes with the same idempotency key |
-| the checkpoint store is unreachable | workflows stop; read-only dashboards stay up |
-| the hub is down | all agent activity stops ([03 §6](03-logical-architecture.md#6-degraded-modes)) |
+| a leaf exceeds its budget or deadline | the middleware stops it and writes a *partial* record; if no record arrives by the deadline timer, **the spine cancels the run through the hub**; then it decides: escalate, park, or close with "unresolved" |
+| a hosted-agent session is lost | the spine re-invokes with the same idempotency key, which is the invocation id, so a repeat returns the earlier run's record instead of running twice |
+| an activity runs twice, or a signal is lost or duplicated (delivery is at least once) | every activity with an effect carries its own key — reservation id, invocation id, approval nonce — and finds the first run's result; a signal is a doorbell that carries ids, so the waiting loop's next tick re-reads the store and a duplicate is dropped by id |
+| the budget store refuses or is unreachable | no leaf call starts: the step parks (fail closed) |
+| the task hub's storage is unreachable | the spine stops and resumes when the storage returns; delivery is at least once, so a step may repeat but is never silently lost; read-only dashboards stay up |
+| a deployment changes orchestrator code | versioning keeps in-flight instances on compatible code; a failed instance is a case about ourselves, re-opened from the case store under a new instance id |
+| the Approval service, the broker or the Audit Writer is down | no change executes (fail closed: each is needed, and so is a ledger entry); investigation continues and the case waits at *awaiting execution* ([03 §6](03-logical-architecture.md#6-degraded-modes)) |
+| the hub is down | all agent activity stops ([03 §6](03-logical-architecture.md#6-degraded-modes)); orchestrations park on their deadline timers |
 | two agents disagree | the disagreement is a record; the **Skeptic's objection stands until answered**; a person sees both |
 
 ## 11. The life of an agent version
@@ -239,8 +283,9 @@ Five clocks, one mechanism (cron job, queue, job). Nothing is always on.
 build (CI) → L0–L3 → register an immutable version → shadow (dry runs on real data) → L4–L8 → promote (set the pinned version) → monitor → retire
 ```
 
-- A **release manifest** names every pin: agent versions, image digests, contract versions, model aliases and their resolved models, Atlas release, Move versions. **Rollback is redeploying the previous manifest.**
+- A **release manifest** names every pin: agent versions, image digests, hosting-library and framework versions, contract versions, model aliases and their resolved models, Atlas release, Move versions, and the spine's package and orchestration version. **Rollback is redeploying the previous manifest.**
 - Hosted agents are **data-plane objects, not Azure Resource Manager resources**, so Bicep and Deployment Stacks cannot own or guard them. The pipeline registers versions through the Foundry API; a **drift watcher** compares what is serving traffic with the manifest (detection D11); an agent version cap (1,000) is handled by pruning in the pipeline.
+- **The spine is versioned too.** A new orchestrator version rolls out beside the old one (orchestration versioning, [§4](#4-how-the-spine-runs)): in-flight cases finish on code compatible with their history, an old branch goes only after its version has drained, and a change to the envelope or a record schema bumps the version. A rollback of the spine does not rewind instances: those that started under the newer version are rejected by the older worker and wait until a compatible worker returns, or are re-opened from the case store under a new id.
 - A change of **model, prompt, tool, contract or framework version** is a release and passes the gates ([10 §4](10-test-and-evaluation.md#4-release-gates)).
 
 ## 12. What is deliberately not used
@@ -248,6 +293,10 @@ build (CI) → L0–L3 → register an immutable version → shadow (dry runs on
 | Capability | Why not (as of 2026-10-31) | Revisit when |
 |---|---|---|
 | Foundry **visual workflow agents** | retire 1 December 2026 | never |
+| **Durable Extension for the Agent Framework** | pre-release; our spine is plain Durable Functions that call leaves | it is generally available *and* beats Durable Functions in S-ORCH-1 |
+| **Foundry Routines** as the default clock | preview (the records conflict); one trigger and one action, a five-minute minimum interval, no customer-managed keys, five regions excluded | a routine is confirmed generally available and can start our orchestration with its envelope |
+| **Durable Task Scheduler** by default | a fixed monthly cost per capacity unit on the Dedicated SKU, no high availability on the Consumption SKU; the Azure Storage provider costs least at our volume | S-ORCH-1 shows the storage provider too slow or too chatty |
+| **Our own checkpoint-and-jobs spine** | the named fallback: more to build, test and secure than the runtime beneath it | S-ORCH-1 fails |
 | **Prompt agents** on the critical path | reaching the hub needs a model connection limited to Chat Completions, while the strongest models need the Responses API for tool calls | the connection supports Responses |
 | **Foundry Memory** | preview, no VNet, few EU regions, extraction cannot be shown to pass the hub | GA with private networking |
 | **Copilot harness** for prompt agents | preview; no bring-your-own-model; no Foundry Memory, so its model calls cannot go through the hub | it can |
@@ -261,4 +310,4 @@ build (CI) → L0–L3 → register an immutable version → shadow (dry runs on
 
 ## 13. What this document leaves to spikes
 
-**S-ORCH-1** (checkpoint store versus the Durable Extension), **S-AGT-1** (Harness; deterministic gate: Agent Governance Toolkit versus in-house), **S-MOD-2** (Decisions API for triage), **S-ID-2** (whether an Entra agent identity's token validates at the hub with its own `azp`, so attribution is per agent rather than by header) and **S-NET-1** (toolboxes and the hub) are specified in [14](14-next-phases.md).
+**S-ORCH-1** (the Durable Functions spine on Flex Consumption in our spoke: private storage, identity-based connections, forced restarts at every boundary, a 30-day wait as timer loops, an in-flight version upgrade and the always-ready cost; fallback: our checkpoint-and-jobs design), **S-FAST-1** (the event-driven fast path under load), **S-GW-3** (per-tool authorisation by verified `azp` and app roles, on which the spine's call to a leaf and a leaf's tool calls rely), **S-AGT-1** (the Harness against a plain loop), **S-SEC-1** (the Agent Governance Toolkit as the deterministic gate, against an in-house check), **S-MOD-2** (Decisions API for triage), **S-ID-2** (whether an Entra agent identity's token validates at the hub with its own `azp`, so attribution is per agent rather than by header), **S-NET-1** (toolboxes, the hub and the leaf routes published through it), **S-COST-1** (what the idle tail and cache writes really bill) and **S-EVAL-1** (sample sizes for W10's comparisons and the gates) are specified in [14](14-next-phases.md#3-spike-register).

@@ -12,3 +12,7 @@ Every version of the ideation is reviewed by independent agents before it is cal
 ## Design phase 1
 
 The design ([docs/design](../design/README.md)) is reviewed in **two rounds with a different model family on each lens in each round**, against one standing brief: [the design review brief](design-review-brief.md). The lenses are *architecture*, *security, safety and compliance*, *cost and operability*, *AI engineering, evaluation and drift*, and *platform fact-check*.
+
+| Round | Lens and model | Raw report | Disposition |
+|---|---|---|---|
+| **Design · Round 1** — reviewed at commit `20390d4` | A architecture (gpt-6.1-sol) · B security, safety, compliance (gemini-4-argon) · C cost and operability (grok-4.7) · D AI engineering, evaluation, drift (gpt-6-sol) · E platform fact-check (gpt-5.6-sol) | [A](design-v1-round-1/raw-a-architecture.md) · [B](design-v1-round-1/raw-b-security.md) · [C](design-v1-round-1/raw-c-cost-ops.md) · [D](design-v1-round-1/raw-d-ai-engineering.md) · [E](design-v1-round-1/raw-e-platform-factcheck.md) | [disposition](design-v1-round-1/disposition.md) |

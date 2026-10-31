@@ -38,3 +38,14 @@ You are given **one lens**; stay in it, but report a defect you cannot ignore fr
 3. The **decision table**: `ADR · verdict · confidence · strongest alternative · what would change my mind`.
 4. **What is strong** — what to keep.
 5. **What is missing** — the five most important omissions for your lens.
+
+## Round 2 — what is different
+
+Round 2 reviews the design **after** the Round-1 revisions, with a **different model on each lens than in Round 1**. The record of Round 1 — what the reviewers said, what was checked, what was changed — is [`design-v1-round-1/disposition.md`](design-v1-round-1/disposition.md) and the raw reports next to it. In addition to the lens work above:
+
+1. **Do not re-raise** a Round-1 finding that was fixed, unless the fix is wrong, incomplete or contradicted elsewhere; say which.
+2. **Audit the disposition for truth.** For every Round-1 finding in your lens, open the file and section the disposition says changed and confirm the change is there and correct. A change that is claimed but absent, or present but contradicted by another document, is a **Critical** finding.
+3. **Attack the new material first**: the three-party authority chain (Approval service signs and dispatches; broker verifies and grants; Move runner verifies live state; Audit Writer), the eleven contract groups with per-tool authorisation, the Durable Functions spine, the source sanitiser, the statistical protocol and signed gate evidence, the ledger and recovery changes, the CI and supply-chain rules, the fast-signal path (W3b) and method learning (W10), the new spikes, and the corrected cost model (`<repo>\tools\cost-model.py`, which you may run read-only).
+4. **Consistency after a large edit.** Counts (fourteen roles, fifteen identities, eleven groups, two Foundry projects per account), names, anchors and numbers must agree across all documents; list every disagreement you find.
+5. **Platform facts.** Anything that changed in Round 1 is a new claim and must be verified on the vendor's page today, not accepted because the disposition says so.
+
