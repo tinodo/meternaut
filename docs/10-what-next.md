@@ -35,7 +35,7 @@ An experienced practitioner takes the explanation test beside them. What the lea
 
 ### Step zero — the paper test
 
-The cheapest version needs no Lab, no Teams and no agent society. **Freeze** the documentation, schemas and prices for one service family at a past date; **withhold** two real billing exports and one related service. Each arm writes predictions in advance — the meters, the billing lag, a diagnosis, its uncertainty. One outcome is revealed as a lesson; then transfer is tested on the sibling service. If the learner cannot beat retrieval on the held-out case, with honest calibration, and improve after the correction, the idea needs rethinking before anything else is built. (It is an experiment, not a gate: its results shape everything after.)
+The cheapest version needs no Lab, no Teams and no agent society. **Freeze** the documentation, schemas and prices for one service family at a past date; **withhold** two real billing exports and one related service. Each arm writes predictions in advance — the meters, the billing lag, a diagnosis, its uncertainty. One outcome is revealed as a lesson; then transfer is tested on the sibling service. What it shows is where the learning actually is: if the learner beats retrieval on the held-out case with honest calibration, and improves after the correction, the loop has earned its first evidence; if it does not, the miss shows which faculty to strengthen first. Its results shape everything after.
 
 ### The thinnest slice — the whole loop in miniature
 

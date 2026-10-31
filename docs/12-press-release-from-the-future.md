@@ -9,7 +9,7 @@
 
 ### Contoso's Azure bill now explains itself — and the AI that explains it learns something new every week
 
-*An open-source "scientist for Azure's economics" studies new Azure services within hours, tests how they really bill, and works with the people who own the spend. Humans decide; the AI learns from every answer.*
+*An open-source "scientist for Azure's economics" studies new Azure services as they ship, tests how they really bill, and works with the people who own the spend. Humans decide; the AI learns from every answer.*
 
 **AMSTERDAM** — Today the Azure Cost in Action community released version 1.0 of an open-source system that treats cloud cost optimisation as a **science** rather than a checklist. Instead of matching a fixed list of rules, it **studies** how each Azure service charges, **surveys** each organisation's estate — what things are *for*, who owns them, when they are busy — **tests** its beliefs in a walled-off sandbox where it can create things, break them and watch the bill form, **acts** with people through short, specific questions and decisions in Microsoft Teams and email, and **grows** by being examined on tests it cannot see.
 
@@ -36,7 +36,7 @@ The system's knowledge of Azure — its **Atlas** of how services bill, its test
 Advisor ships hand-written recommendations for things Microsoft has already worked out. This system's centre of gravity is the *opposite*: it works out what nobody has written down — by studying a new service, running experiments to see how it really bills, and finding waste with no rule for it. It uses Advisor's findings as one input among many, and checks them like any other claim. And it is not a chat window: it runs long, resumable research programmes, and talks to people mostly through short cards and letters.
 
 **Why would anyone trust an AI to change their estate?**
-It doesn't, on day one. It starts by observing and predicting, and earns each kind of autonomy — one narrow domain at a time, with a cap and an expiry — by being right, in public, on a report card that leads with what it is worst at. It cannot do anything its approver could not do, anything irreversible needs two named people, and a purchase is always prepared by the AI, approved by two named humans, and only then executed by the AI. When it slips, it demotes itself.
+It doesn't, on day one. It starts by observing and predicting, and earns each kind of autonomy — one narrow domain at a time, with a cap and an expiry — by being right, on a report card that leads with what it is worst at. It cannot do anything its approver could not do, anything irreversible needs two named people, and a purchase is always prepared by the AI, approved by two named humans, and only then executed by the AI. When it slips, it demotes itself.
 
 **What if it learns something wrong?**
 Then it will — and the design assumes so. Every claim carries receipts and a way to re-check it. Lessons from people are scoped, dated, expiring and editable, and conflicting ones are put side by side for a human, never silently overwritten. A confirmed finding must survive a Skeptic whose only job is to break it, and an important one is replicated. The exam is set by an independent agent and includes **decoys** — things that look wasteful but are not — so recommending a harmful change is the worst mark on the card.

@@ -11,8 +11,8 @@
 | Work | The idea | What we borrow |
 |---|---|---|
 | **Voyager: An Open-Ended Embodied Agent with Large Language Models** — Wang et al., [arXiv:2305.16291](https://arxiv.org/abs/2305.16291), May 2023 | A lifelong-learning agent that explores on an **automatic curriculum**, stores what works as an ever-growing **library of executable skills**, and improves them using environment feedback, execution errors and self-verification | The **Agenda** as an automatic curriculum (ranked by value of information); **Moves, Detectors and Lab recipes** as a growing skill library; evidence from the Lab as "execution feedback" |
-| **Agent Workflow Memory** — Wang et al., [arXiv:2409.07429](https://arxiv.org/abs/2409.07429), Sep 2024 | Agents **induce reusable workflows** from past experience and reuse them | Investigation playbooks the system writes *for itself* from confirmed cases |
-| **Large Language Models as Tool Makers** — Cai et al., [arXiv:2305.17126](https://arxiv.org/abs/2305.17126), May 2023 | A strong model **makes** reusable tools; a lighter model **uses** them | **"Expensive reasoning once, cheap detection forever"** — the Detective writes the Detector; a cheap check runs everywhere |
+| **Agent Workflow Memory** — Wang et al., [arXiv:2409.07429](https://arxiv.org/abs/2409.07429), Sep 2024 | Agents **induce reusable workflows** from past experience and reuse them | Investigation recipes the system writes *for itself* from confirmed cases |
+| **Large Language Models as Tool Makers** — Cai et al., [arXiv:2305.17126](https://arxiv.org/abs/2305.17126), May 2023 | A strong model **makes** reusable tools; a lighter model **uses** them | **"Expensive reasoning once — cheap nominations after"** — the Detective writes the Detector; a cheap check nominates leads everywhere |
 | **Executable Code Actions Elicit Better LLM Agents (CodeAct)** — Wang et al., [arXiv:2402.01030](https://arxiv.org/abs/2402.01030), Feb 2024 | Agents act by writing **executable code** | Moves and Detectors are **inspectable code**, so they can be reviewed, tested and replayed |
 | **Toolformer** — Schick et al., [arXiv:2302.04761](https://arxiv.org/abs/2302.04761), Feb 2023 · **ReAct** — Yao et al., [arXiv:2210.03629](https://arxiv.org/abs/2210.03629), Oct 2022 | Models that learn to **use tools**, interleaving reasoning with action | The founding rule: **numbers come from tools, never from model memory** |
 
@@ -21,7 +21,7 @@
 | Work | The idea | What we borrow |
 |---|---|---|
 | **Reflexion: Language Agents with Verbal Reinforcement Learning** — Shinn et al., [arXiv:2303.11366](https://arxiv.org/abs/2303.11366), Mar 2023 | Agents improve by writing **verbal reflections** on outcomes into memory — no weight updates | The **Lesson Book**, and the principle that a refuted hypothesis yields a written *"why it looked true"* |
-| **ExpeL: LLM Agents Are Experiential Learners** — Zhao et al., [arXiv:2308.10144](https://arxiv.org/abs/2308.10144), Aug 2023 | Agents gather experience, extract **natural-language insights** across tasks, and recall past successes | The **maturity ladder** of knowledge — observation → lesson → pattern → Detector → Atlas claim |
+| **ExpeL: LLM Agents Are Experiential Learners** — Zhao et al., [arXiv:2308.10144](https://arxiv.org/abs/2308.10144), Aug 2023 | Agents gather experience, extract **natural-language insights** across tasks, and recall past successes | The **maturity ladder** of knowledge — observation → lesson → pattern → a candidate claim or Detector |
 | **Generative Agents: Interactive Simulacra of Human Behavior** — Park et al., [arXiv:2304.03442](https://arxiv.org/abs/2304.03442), Apr 2023 | A **memory stream** with retrieval by recency, relevance and importance, plus periodic **reflection** that synthesises higher-level insight | **Dreaming**: the overnight pass that re-reads the day and consolidates it |
 | **MemGPT: Towards LLMs as Operating Systems** — Packer et al., [arXiv:2310.08560](https://arxiv.org/abs/2310.08560), Oct 2023 | **Tiered memory management** so long-running agents are not limited by context size | The split between a small always-loaded working set and a large searchable archive |
 | **Self-Refine** — Madaan et al., [arXiv:2303.17651](https://arxiv.org/abs/2303.17651), Mar 2023 · **CRITIC** — Gou et al., [arXiv:2305.11738](https://arxiv.org/abs/2305.11738), May 2023 | Iterative improvement with feedback; **self-correction that verifies with external tools** | Brief drafting loops — with the Skeptic checking against *tools and data*, not opinion |
@@ -48,7 +48,7 @@
 | Work | Relevance |
 |---|---|
 | **Azure SRE Agent — memory and skills** ([Memory](https://learn.microsoft.com/en-us/azure/sre-agent/memory), [Skills](https://learn.microsoft.com/en-us/azure/sre-agent/skills)) | The clearest first-party precedent: it learns after each session with no manual training, persists learnings as readable knowledge files, and loads authored skills when relevant — for incidents, not cost |
-| **AIOpsLab** — Microsoft Research, [arXiv:2501.06706](https://arxiv.org/abs/2501.06706) | A sandbox that deploys systems, injects faults, generates workload and evaluates agents — the nearest architecture to the **Lab** and the **Terrarium** |
+| **AIOpsLab** — Chen et al., [arXiv:2501.06706](https://arxiv.org/abs/2501.06706), Jan 2025 | A sandbox that deploys systems, injects faults, generates workload and evaluates agents — the nearest architecture to the **Lab** and the **Terrarium** |
 | **Foundry Agent Service** ([overview](https://learn.microsoft.com/en-us/azure/foundry/agents/overview)) | Memory (preview), tracing and evaluations, an **agent optimizer (preview)**, toolboxes and publishing to Teams — the platform primitives the cast would be built from |
 | **Azure Updates and its MCP server** ([page](https://azure.microsoft.com/en-us/updates/)) | A machine-readable "something new shipped" signal — the trigger for day-zero learning |
 
@@ -71,7 +71,7 @@
 
 - The **Agenda as a curriculum** and the **skill library** (Voyager) → [01](../01-north-star.md#2-the-big-idea-science-industrialised), [04](../04-experiments-and-the-lab.md).
 - **Verbal reflection as memory** (Reflexion, ExpeL) → the Lesson Book and its maturity ladder: [03 §10](../03-estate-and-investigation.md#10-the-lesson-book--memory-you-can-read), [07 §2](../07-getting-smarter.md#2-the-lesson-book-matures).
-- **Tool-making** (LATM) → "expensive reasoning once, cheap detection forever": [04 §13](../04-experiments-and-the-lab.md#13-dreaming--consolidation-while-the-world-is-quiet).
+- **Tool-making** (LATM) → "expensive reasoning once — cheap nominations after": [04 §13](../04-experiments-and-the-lab.md#13-dreaming--consolidation-while-the-world-is-quiet).
 - **Reflection and consolidation** (Generative Agents) → *dreaming*.
 - **Orchestration with a ledger** (Magentic-One) → the Conductor.
 - **Sandboxed evaluation** (AIOpsLab) → the Lab, Terrarium and Exam.

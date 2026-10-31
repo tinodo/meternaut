@@ -2,6 +2,7 @@
 
 > **Status:** ideation **v4** · 2026-10-31 · This is the whole idea in one place. Each part has its own deeper document: [studying Azure](02-learning-azure.md) · [the estate and the investigation](03-estate-and-investigation.md) · [experiments and the Lab](04-experiments-and-the-lab.md) · [recommend, act, verify](05-recommend-act-verify.md) · [people and conversation](06-people-and-conversation.md) · [getting smarter](07-getting-smarter.md) · [the outer rims](08-outer-rims.md) · [the learning contract](11-the-learning-contract.md).
 > Nothing here is a technical design. It is what we want to exist.
+> **How to read it.** *Two minutes:* the sentence on the wall, *In one minute*, and the [day-zero story](#a-day-zero-story-the-service-is-invented). *Ten minutes:* add §2 (the big idea), the [worked investigation](#a-worked-investigation) and §7 (how it works with people). Everything else is reference, one section per deeper document.
 
 ![The living system: five faculties around a shared memory](img/living-system.svg)
 
@@ -14,10 +15,10 @@
 ## In one minute
 
 1. **Azure outruns every rulebook.** Hundreds of services, thousands of ways to be charged, changes every week. Cost advice written by people covers the well-known head, misses the long tail, and goes stale the day it is written.
-2. **So we do not write the advice. We build an AI that learns Azure's economics for itself.** It reads everything Microsoft publishes, decodes how every meter works and — because documents can be wrong or silent — **tests how things really bill, in a lab of its own.**
+2. **So we do not write the advice by hand. We build an AI that learns Azure's economics for itself** — and we measure what it adds beyond a hand-written seed. It reads everything Microsoft publishes, decodes how every meter works and — because documents can be wrong or silent — **tests how things really bill, in a lab of its own.**
 3. **It studies each estate like a scientist.** It explains where every euro goes, forms hypotheses about waste, tries hard to disprove them, runs experiments, and only then recommends a change — with the evidence, the alternatives and the consequences on the table.
 4. **It works with the people who own things.** In Teams, in email, by voice, in meetings. It asks the cheapest question that settles a doubt, learns from every answer, and changes something only when a human says OK — or inside rules humans wrote.
-5. **Everything it learns compounds.** What is true about Azure becomes an open, versioned, *tested* body of knowledge that anyone can use and improve. What is true about your estate stays yours. The longer it runs, the less it has to ask and the more it finds.
+5. **What it learns accumulates.** What is true about Azure becomes an open, versioned, *tested* body of knowledge that anyone can use and improve. What is true about your estate stays yours. The longer it runs, the less it should need to ask and the more it can find.
 
 **What it is not:** a dashboard; a rulebook with a Teams webhook; a chatbot bolted onto the bill; a list of recommendations somebody typed. It is a long-running research programme with a memory, a lab and colleagues.
 
@@ -49,7 +50,7 @@ We build an AI that **does science on Azure's economics**. The scientific method
 | **Predict** | Writes down what should be true *if the hypothesis is right* — before looking |
 | **Test** | Analyses data, replays history, runs experiments in its Lab, asks the cheapest decisive question |
 | **Peer review** | A sceptical agent tries to break it; humans review what becomes "known" |
-| **Publish** | Findings become Atlas entries, detectors and Moves — and, when general, go to the open **Commons** |
+| **Publish** | Findings become claims in the **Atlas** (its open map of how Azure charges), Detectors and Moves — and, when general, go to the open **Commons** |
 | **Replicate** | Knowledge is re-tested on a schedule; claims that stop reproducing are retired |
 | **Apply** | A tested **Move** changes something, with the owner's OK |
 | **Measure** | Predictions are scored against what happened; the system keeps a **report card** |
@@ -62,11 +63,11 @@ We build an AI that **does science on Azure's economics**. The scientific method
 | **Estate knowledge** | this one customer | the **Estate Model** and the **Lesson Book** | the bill, telemetry, configuration, code, conversations |
 | **Experience** | "what happened when we did X" | the **Experiment Ledger** and the outcome record | experiments, trials, results of real changes |
 
-And a fourth, quieter kind: **knowing how sure it is**, and **what is worth learning next**. Every claim carries its receipts, its *scope* and a confidence; the Agenda ranks questions by what finding the answer is worth.
+And a quieter thing that runs through all three: **knowing how sure it is**, and **what is worth learning next**. Every claim carries its receipts, its *scope* and a confidence; the Agenda ranks questions by what finding the answer is worth.
 
 ### What "learning" means here
 
-Storing a lesson is not learning. A system has learned only if something that governs its future behaviour has *changed*, in a way that improves its results on a test it could not game. Six things change, each by a defined process and each tested on the Exam: **its beliefs about Azure** (claims whose evidence accumulates, and which count as trusted only once replicated); **what it chooses to do next** (a policy that learns which questions, sources and experiments pay off); **compiled knowledge** (Detectors and Moves that are written, back-tested, run in shadow and expire); **its predictions of consequence** (a causal model refitted from interventions); **its understanding of one estate** (people's testimony, widened only with corroboration); and **its own method**. It is measured against *retrieval only* and against the *expert-written seed* — so we can tell what it added. [The learning contract →](11-the-learning-contract.md)
+Storing a lesson is not learning. A system has learned only if something that governs its future behaviour has *changed*, in a way that improves its results on a test it could not game. Six things change, each by a defined process and each tested on the Exam: **its beliefs about Azure** (claims whose evidence accumulates, and which are relied on only once replicated and reviewed); **what it chooses to do next** (a policy that learns which questions, sources and experiments pay off); **compiled knowledge** (Detectors and Moves that are written, back-tested, run in shadow and expire); **its predictions of consequence** (a causal model refitted from interventions); **its understanding of one estate** (people's testimony, widened only with corroboration); and **its own method**. It is measured against *retrieval only* and against the *expert-written seed* — so we can tell what it added. [The learning contract →](11-the-learning-contract.md)
 
 ### How it works: five faculties, not five stages
 
@@ -184,11 +185,11 @@ stateDiagram-v2
 
 ### A worked investigation
 
-> *The bill for a customer-facing app has crept up 9% a month for four months, with no change in traffic and no change in the design anyone remembers.* The Agenda ranks it high: **unexplained, and growing.** The blueprint model — built from the infrastructure code — expects a modest bill; the **residual** is a data-transfer meter it has no line for. The Atlas knows that meter: **flow, priced by path** — traffic that crosses regions is billed, traffic inside a region is not.
+> *The bill for a customer-facing app has crept up 9% a month for four months, with no change in traffic and no change in the design anyone remembers.* The Agenda ranks it high: **unexplained, and growing.** The blueprint model — built from the infrastructure code — expects a modest bill; the **residual** is a data-transfer meter it has no line for. The Atlas knows that meter: **flow, priced by path** — traffic that leaves a region is billed per gigabyte, traffic between availability zones is not, and traffic inside a region can still be billed where it crosses a peering or a private endpoint.
 > The Detective finds the change: on 9 October a deployment moved the web tier to a second region "for latency"; the database stayed behind, so every request now crosses regions. The hypothesis — *an unintended coupling, not growth* — predicts that the transfer meter tracks request volume. It does.
-> The Skeptic asks: *was this planned — a half-finished migration, a disaster-recovery design?* The pipeline history says the database move is still "queued". *Would moving the database fix it, and at what risk?* The **Time Machine** replays last month's traffic against a co-located layout in the Lab: latency improves and the meter disappears; the Consequence Engine adds the migration cost and a week of risk — as evidence under stated assumptions, not as proof.
+> The Skeptic asks: *was this planned — a half-finished migration, a disaster-recovery design?* The pipeline history says the database move is still "queued". *Would moving the database fix it, and at what risk?* The **Time Machine** (the Lab bench that re-runs real history under a different configuration) replays last month's traffic against a co-located layout in the Lab: latency improves and the meter disappears; the Consequence Engine adds the migration cost and a week of risk — as evidence under stated assumptions, not as proof.
 > The directory points to the platform team. The Diplomat asks **one** question: *"Is the database move still planned for this quarter?"* — "Yes, in January."
-> The Brief offers three options: wait for January and accept about €2,300 a month until then; add a read cache in the second region now (cheap, partial); or move the database now with the migration Move. The system also writes a **Lesson** — *this team stages regional moves: web tier first, data later* — and a Detector idea: *a tier moved without its data.*
+> The **Brief** (the one-minute decision card) offers three options: wait for January and accept about €2,300 a month until then; add a read cache in the second region now (cheap, partial); or move the database now with the migration Move. The system also writes a **Lesson** — *this team stages regional moves: web tier first, data later* — and a Detector idea: *a tier moved without its data.*
 
 ---
 
@@ -216,6 +217,8 @@ Experiments are designed like experiments: a hypothesis, a **prediction written 
 This is where the AI meets owners, FinOps leads, finance partners, engineers. [Full detail →](05-recommend-act-verify.md) · [People and conversation →](06-people-and-conversation.md)
 
 **A Brief, not a recommendation.** What it proposes, why it thinks so (and how to check), the alternatives including *do nothing*, the consequences with ranges, what it has already tested, what would change its mind, the effort, how reversible it is, exactly what it will do on *yes*, and how everyone will know it worked.
+
+**More than one owner.** Some of the biggest opportunities belong to several people — a shared platform, a pooled commitment. The system opens one **decision room** instead of sending four cards: each person sees their own stake, the split of a shared cost is proposed and argued over, objections change the plan, and the result is verified for each party. [A scene →](05-recommend-act-verify.md#1b-when-more-than-one-person-owns-the-answer)
 
 **A conversation, not a notification.** Teams cards for decisions and teaching, email for digests and formal approvals, a call or a text only when it is truly urgent, a participant in the monthly cost review — an AI in the room (voice, even an avatar) that can pull up its reasoning and answer "why?" live. Every message carries **Explain** (show the reasoning and the receipts), **Challenge** (red-team this) and **Teach** (here is something you should know).
 
@@ -259,7 +262,7 @@ A small society of specialists — more like a research group than a pipeline.
 | **Diplomat** | ACT | Talks to people; asks, explains, negotiates, *teaches and is taught* | answers, reactions |
 | **Engineer** | ACT | Writes, tests and runs Moves; opens pull requests; guards against drift | results of changes |
 | **Auditor** | GROW | Verifies outcomes against predictions; measures regret and cost-to-run | the ledger |
-| **Examiner** | GROW | Sets independent exams; publishes the report card | exam results |
+| **Examiner** (and its adversarial twin, the **Forger**) | GROW | Sets independent exams and forges waste and decoys to fool the investigators; publishes the report card | exam results |
 | **Librarian** | GROW | Curates the Lesson Book and the Commons; guards provenance | review outcomes |
 | **Conductor** | all | Runs the research programme: Agenda, budgets, priorities | everything |
 
@@ -292,7 +295,7 @@ My report card: predictions 81% right (I said 79%) · explained spend 72% (+3) �
 
 **The first quarter.** The Estate Model fills in: intent for the main workloads, a calendar, an owner for almost everything. The first Briefs go out; a few are accepted, several declined *with reasons* — each reason becomes a lesson. Explained spend climbs. The first Moves are tried in non-production; the first verified savings are measured against counterfactuals. The system asks fewer questions each week.
 
-**The first year.** The Atlas has hundreds of verified profiles and a refuted-beliefs shelf. The report card shows calibration improving. Some domains have earned autopilot credentials; others have not, and the card says why. When Microsoft ships something, the Atlas has a provisional profile within hours and the estate is told what it may mean *for it* — firm advice follows once a bill confirms it. A part of the Commons has been used by other organisations. The system now finds things no one has a name for — and **names them**, as new Atlas mechanisms and detectors, for human review.
+**The first year.** The Atlas has hundreds of profiles, each saying how far it is verified, and a refuted-beliefs shelf. The report card shows calibration improving. Some domains have earned autopilot credentials; others have not, and the card says why. When Microsoft ships something, the Atlas has a provisional profile within hours and the estate is told what it may mean *for it* — advice follows once a bill confirms it. A part of the Commons has been used by other organisations. The system now finds things no one has a name for — and **names them**, as new Atlas mechanisms and detectors, for human review.
 
 ---
 
@@ -303,7 +306,6 @@ A taste of what the north star opens up. Detail and many more in [the outer rims
 - **Dreaming.** Overnight the system explores alternative architectures for your biggest spend in the Lab and wakes up with a map of options: *"I tried 40 configurations; here is the frontier."*
 - **Law-finding.** From hundreds of experiments it infers regularities across services — *"a thing that is stopped but not released often keeps its most expensive meter"* — and is tested on whether they predict services it has never touched.
 - **Self-writing Detectors.** For every confirmed, general finding the AI writes a cheap, scoped, expiring *lead generator*, back-tests it and proposes it for review: expensive reasoning once for the pattern, cheap nominations afterwards — with the ambiguous cases still going to a Detective.
-- **The Forger.** An adversary that forges clever waste and plausible decoys to fool the Detectives, so the Exam stays hard.
 - **The Hunch Box.** Anyone can submit a hunch; the system investigates and reports back with evidence — and the good ones become Detectors.
 
 ---
@@ -314,7 +316,7 @@ A chatbot answers. This system **runs research programmes**: long-lived, multi-s
 
 The product will run on Microsoft's platforms and technology. The *ideas* may come from anywhere — [the research that inspired this](research/inspirations.md) ranges from agents that write and keep their own skill libraries, to agents that keep memory and reflect on it, to automated scientific discovery.
 
-**Built on Microsoft's own frameworks.** The Well-Architected pillars are the checklist for every consequence the system shows (a saving that costs reliability is a different offer); the Cloud Adoption Framework's Govern and Manage disciplines are the operating context it works inside; and the FinOps Framework's *Inform → Optimize → Operate* lifecycle is the capability map for what it does. [How the idea lines up →](09-guardrails-later.md#how-the-idea-lines-up-with-caf-waf-and-the-finops-framework)
+**Built on Microsoft's own frameworks.** The Well-Architected pillars are the checklist for every consequence the system shows (a saving that costs reliability is a different offer); the Cloud Adoption Framework's Govern and Manage methodologies are the operating context it works inside; and the FinOps Framework's *Inform → Optimize → Operate* lifecycle is the capability map for what it does. [How the idea lines up →](09-guardrails-later.md#how-the-idea-lines-up-with-caf-waf-and-the-finops-framework)
 
 ---
 
@@ -322,7 +324,7 @@ The product will run on Microsoft's platforms and technology. The *ideas* may co
 
 Human-in-the-loop is not a button on the end. It is five places in the design. Detailed guardrails come in a later phase — [what we will design then](09-guardrails-later.md) — but these five are the spine.
 
-1. **What counts as known.** Knowledge becomes *trusted* only after peer review — by the Skeptic and by people — and carries its receipts forever.
+1. **What counts as known.** Knowledge is *relied on* only after it has been replicated and reviewed — by the Skeptic and by people — and carries its receipts forever; advice for an estate waits for one more gate, a match with that estate's own bill ([the gates](11-the-learning-contract.md#the-gates--one-word-is-not-enough)).
 2. **What it spends to learn.** The Lab and every experiment have budgets people set.
 3. **What it changes.** Every change has a human's OK, or a rule a human wrote — and purchases always have named humans.
 4. **How much autonomy it earns.** Credentials per domain, granted and revoked by people, based on the report card.
@@ -332,7 +334,7 @@ Human-in-the-loop is not a button on the end. It is five places in the design. D
 
 ## 15. The honest limits
 
-The design does not hide where learning can fail; it builds the answers in. Documents and bills disagree, and the Lab cannot reproduce everything ([studying Azure, §8](02-learning-azure.md#8-knowing-what-it-does-not-know)); a claim verified in a Lab is not verified on a customer's bill ([the learning contract, §2](11-the-learning-contract.md#2-verified-has-a-scope)); replays are evidence, not proof ([§3](11-the-learning-contract.md#3-counterfactual-evidence-not-proof)); people are witnesses, not oracles ([§4](11-the-learning-contract.md#4-people-are-witnesses-not-oracles)); an exam can be gamed, so it is independent, rotated and audited, and no single number is optimised alone ([getting smarter, §3 and §5](07-getting-smarter.md#3-the-exam)); and the system's own cost is counted against its savings ([§6](11-the-learning-contract.md#6-does-it-pay-for-itself)).
+The design does not hide where learning can fail; it builds the answers in. Documents and bills disagree ([studying Azure, §3](02-learning-azure.md#3-what-it-reads--and-how-far-it-trusts-each-source)), and the Lab cannot reproduce everything ([§11](02-learning-azure.md#11-what-it-cannot-read)); a claim verified in a Lab is not verified on a customer's bill ([the learning contract, §2](11-the-learning-contract.md#2-verified-has-a-scope)); replays are evidence, not proof ([§3](11-the-learning-contract.md#3-counterfactual-evidence-not-proof)); people are witnesses, not oracles ([§4](11-the-learning-contract.md#4-people-are-witnesses-not-oracles)); an exam can be gamed, so it is independent, rotated and audited, and no single number is optimised alone ([getting smarter, §3 and §5](07-getting-smarter.md#3-the-exam)); and the system's own cost is counted against its savings ([§6](11-the-learning-contract.md#6-does-it-pay-for-itself)).
 
 ---
 
@@ -346,7 +348,7 @@ The design does not hide where learning can fail; it builds the answers in. Docu
 | **Transfer** — right after one correction, on a service it has not seen | rise |
 | **Beating the baselines** — against retrieval-only and the expert-written seed | widen |
 | **Calibration** — "80% sure" means right 80% of the time | tighten |
-| **Atlas coverage and freshness** — meters on real bills with a verified profile; median age of claims | broaden and stay young |
+| **Atlas coverage and freshness** — meters on real bills with a profile, and how far each is verified; median age of claims | broaden and stay young |
 | **Decision burden** — a person's minutes per decision, and cases waiting on an answer | fall: it learns, so it asks less, and asks better |
 | **Surprises per month** | stay above zero: it is still discovering |
 | **Verified net savings** — after what the system itself costs to run | rise |
@@ -368,13 +370,9 @@ The two findings that started this project are exam questions like any other, wi
 | **Estate Model** | The AI's understanding of one customer's estate, including intent, rhythms and people |
 | **Lesson Book** | What people taught the system — scoped, dated, expiring, editable |
 | **Agenda** | The ranked list of questions the system is working on |
-| **Explained spend** | Spend whose purpose, need and cost-to-reduce the system can state with confidence |
-| **Hypothesis / Case** | A testable claim about cost or waste / one that survived and deserves a human |
 | **Skeptic** | The agent whose job is to break the case |
 | **Consequence Engine** | Answers "what happens to the bill — and to risk — if we do X?" |
 | **Lab** | The sandbox where agents run billing and signal experiments |
-| **Time Machine** | Replay of history under alternative configurations |
-| **Wind tunnel** | Benchmark rigs that map a service's cost/performance frontier |
 | **Experiment Ledger** | The system-wide register of predictions and results (each experiment's page is a **Lab Notebook**) |
 | **Brief** | The decision document a human receives |
 | **Move** | A tested, versioned, reviewable change recipe |
@@ -385,5 +383,5 @@ The two findings that started this project are exam questions like any other, wi
 | **Claim and scope** | One statement about Azure with its receipts — and the region, offer, load and date it was tested in |
 | **Mechanism-verified / commercially verified** | Matched its prediction in a named Lab scope / reconciled against one customer's own bill |
 | **Detector** | A cheap, scoped, expiring lead generator compiled from a confirmed finding; it nominates, investigators decide |
-| **Terrarium** | Miniature estates with planted waste and decoys, for exams and Detector back-tests |
-| **Unexplained Spend Ledger** | The part of the bill the system cannot yet explain — the engine of the Agenda |
+
+The full crosswalk — every term, with the one word kept for each — is in [the learning contract, §7](11-the-learning-contract.md#7-one-vocabulary).

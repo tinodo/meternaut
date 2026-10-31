@@ -59,20 +59,26 @@ The Atlas can grow only as fast as the AI can *understand* meters. The **Cost Gr
 |---|---|---|---|---|---|
 | **Capacity** | you pay for what you provision, used or not | provisioned far above any demand over a representative period | utilisation, throughput, connections, queue depth | resize, scale in, schedule, change model, consolidate (headroom, latency, resilience) | a *floor*: some services bill a minimum even at zero |
 | **Consumption** | you pay per unit of use | use that produces no value: retries, polling, chatty callers | value-weighted usage, error and retry rates | batch, cache, rate-limit, fix the caller | an *idle rate* that is not zero |
-| **Stock** | you pay per month for what you keep | growing and unread | last access, retrieval, growth vs need | tier, lifecycle, expire (retrieval cost, restore time) | versioning and soft-delete multiplying the stock silently |
+| **Stock** | you pay per month for what you keep | growing and unread | last access, retrieval, growth vs need | tier, lifecycle, expire (retrieval cost, restore time) | versioning and soft-delete quietly adding to the stock |
 | **Flow** | you pay for what moves or is produced | moved further than needed; copied more than needed; produced in a form no consumer wants | consumers and their value; destinations | filter, sample, aggregate, re-route, co-locate (completeness) | the consumer you cannot see: the rare audit job |
 | **Feature** | a switch turns on a meter | enabled and unused | feature usage | switch off, re-scope (capability) | defaults that enable it |
-| **Multiplier** | dimensions multiply | one dimension beyond its need | per-dimension load | shrink the cheapest-to-shrink dimension | adding one to each of two dimensions quadruples the bill |
-| **Tier / step** | price jumps at thresholds | just over a threshold; premium tier whose differences go unused | position vs threshold; feature usage | re-tier | a tier you can never leave |
+| **Multiplier** | dimensions multiply | one dimension beyond its need | per-dimension load | shrink the cheapest-to-shrink dimension | doubling both dimensions quadruples the bill |
+| **Tier / step** | price jumps at thresholds | just over a threshold; premium tier whose differences go unused | position vs threshold; feature usage | re-tier | a tier some services will not let you step back down from |
 | **Commitment** | you pay ahead for a discount | unused coverage; wrong scope; wrong term | coverage and utilisation over time; a forecast | right-size the next term, re-scope, exchange where allowed | priced as if used 100% |
 | **Time quantum** | billing granularity decides the price of short things | many short-lived items paying minimums | duration distribution | batch, pool, reuse | "started hour" billing |
 | **Coupling** | a thing you add drags in other meters | a side-effect nobody intended | dependency graph; meters that appear after a change | decouple, relocate, remove | private connectivity, diagnostics and replication traffic |
 | **Leftover** | billing continues after the parent is gone | children without a parent; retained backups | parent state; owner existence | clean up with a safety net | deleting the parent does not delete the child |
 | **Rate and benefit** | the price per unit is negotiable | paying list where a benefit applies | effective vs list price; eligibility | apply the benefit, negotiate, use a programme | discount structures differ by agreement |
-| **Allowance** | an included or free amount, then paid | paying for what a free grant would have covered, or sitting just past its edge | usage against the allowance, per period | spread or consolidate use; pick the plan whose grant fits | allowances are often per subscription, per month, per region |
+| **Allowance** | an included or free amount, then paid | paying for what a free grant would have covered, or sitting just past its edge | usage against the allowance, per period | spread or consolidate use; pick the plan whose grant fits | allowances are often per subscription and per month; each service defines its own scope |
 | **Time cliff** | a price or condition changes on a date | a preview or promotion ending unnoticed; a retiring SKU | the announced date; the resources it touches | plan the move before the date | the free period that quietly stops |
 
 The table is the **seed of a living taxonomy**. If the AI meets a meter that fits no row, it proposes a new mechanism with evidence; the reviewers of knowledge decide whether it earns a place. The grammar learns too.
+
+### When nothing fits — a story (the service is invented)
+
+A new service bills a "burst balance": a little credit accrues every hour the resource is quiet, and use above the baseline spends it. The Cartographer's first guess is **allowance**, a free amount — but that predicts an idle resource never pays extra, and the first Lab probe breaks the prediction: after a quiet night the same burst is free; after a busy afternoon it is billed at three times the rate. Second guess, **tier / step** — wrong too: the price does not jump at a threshold, it depends on *history*. The Experimenter designs a probe that varies only the history (six quiet hours, then six busy ones, the same burst each time), and the meter reproduces.
+
+Nothing in the grammar says *a price that depends on a balance that builds up and drains*. The system proposes a new mechanism — **accrual** — attaches the probe as evidence, and tests whether it transfers by predicting which two other credit-style meters in the Atlas should behave the same way. One does. The other turns out to be a **time quantum** effect, so the proposal is narrowed. The reviewers are asked to accept *accrual* as a mechanism of its own, and the exam gains a question built on it that no investigator has seen.
 
 ### Decoding a meter
 
@@ -90,13 +96,13 @@ The *fingerprint* of a meter — its unit of measure, its name, its product and 
 
 | Service and behaviour | Mechanism | The demand question | A lever |
 |---|---|---|---|
-| A premium serverless plan that always keeps at least one instance warm | **Capacity** (a floor) | does anything need the warmth? | move idle apps to a plan that scales to zero — today the documented path is Flex Consumption, because Linux Consumption retires in September 2028 (a lever the change radar must keep current) |
-| A container platform that bills an *idle* rate when a minimum replica count is above zero | **Consumption** with an idle rate | can it scale to zero? | set the minimum to zero where latency allows |
-| A search service on the *dedicated* model, billed by replicas × partitions (a serverless preview bills consumption instead, and the two cannot be converted) | **Multiplier** | which dimension exceeds its need? | shrink the cheaper-to-shrink dimension |
+| A premium serverless plan that always keeps at least one instance warm | **Capacity** (a floor) | does anything need the warmth? | move idle apps to a plan that scales to zero — for Linux apps today that is Flex Consumption (Linux-only), because Linux Consumption retires on 30 September 2028 (a lever the change radar must keep current) |
+| A container platform that bills an *idle* rate on its consumption plan when a minimum replica count is above zero (serverless GPU apps excepted) | **Consumption** with an idle rate | can it scale to zero? | set the minimum to zero where latency allows |
+| A search service on the *dedicated* model, billed by replicas × partitions (a serverless preview bills consumption instead; it has no SLA and cannot be converted to or from the other tiers) | **Multiplier** | which dimension exceeds its need? | shrink the cheaper-to-shrink dimension |
 | A file-transfer option on storage that bills hourly while enabled | **Feature** | does anyone connect? | switch it off until needed |
-| Object versioning plus soft delete plus snapshots on the same data | **Stock** (compounded) | will anyone ever restore these? | lifecycle rules to expire old versions |
-| A managed firewall: billed while it is allocated — deallocating it stops the billing | **Capacity** | does anything need it outside business hours? | deallocate where it is used only in office hours |
-| A NAT gateway: documented hourly and data-processing charges, and no stopped state — only removal stops them | **Capacity** + **Flow** | does any subnet still depend on it? | remove it when nothing needs it |
+| Object versioning plus soft delete plus snapshots on the same data (versioning is unsupported on hierarchical-namespace accounts) | **Stock** (overlapping) | will anyone ever restore these? | lifecycle rules to expire old versions |
+| A virtual machine that is *stopped* but still allocated: the compute meter keeps running, and so do its disks and addresses | **Capacity** | is it deallocated, not just stopped? | deallocate what is idle (disks and addresses still bill) |
+| A managed database instance that can be stopped: compute and licence stop billing, storage does not — and each start is billed from a full started hour | **Capacity** × **time quantum** | is it idle overnight, and does anything cycle it? | stop it outside use hours; do not cycle it often |
 | A data-engineering cluster without automatic termination — the platform's own units *layered* on top of the compute underneath | **Capacity × time**, layered | is anything attached overnight? | enforce auto-termination |
 | A prepaid reservation | **Commitment** | is the coverage used? | right-size the next term |
 | A capacity that can be paused, where pausing stops compute but storage keeps billing | **Capacity** + **Stock** | what is left running after the pause? | manage the stock separately |
@@ -110,7 +116,7 @@ From hundreds of experiments the system can look for **laws of Azure billing** �
 - *"A per-hour meter usually starts at provisioning, not at first use."*
 - *"Billing granularity differs by meter — per second, prorated, or per started hour — so a short-lived resource pays a minimum only where its meter says so."* (every meter's granularity is recorded and tested, never assumed)
 - *"A thing that is stopped but not released often keeps its most expensive meter."*
-- *"Retention policies compound: each protective feature added to the same data multiplies its stock."*
+- *"Retention features overlap: each keeps changed or deleted data for its own period, so the stock grows with churn × retention, not simply once per feature."*
 
 A law with a good track record makes day-zero learning faster: the first hour of a new service starts with *"which of the laws applies here?"* instead of a blank page.
 
@@ -121,13 +127,13 @@ A law with a good track record makes day-zero learning faster: the first hour of
 | Kind of source | Examples | What it teaches | Trust |
 |---|---|---|---|
 | **Measured reality** | the Lab's experiments; real bills and usage data from estates | how things *actually* bill | highest |
-| **Machine-readable authoritative surfaces** | the **Retail Prices** list (unauthenticated, all meters, by region and SKU — *list* prices in a base currency, never what a customer pays); **Cost Management exports** (including the open FOCUS dataset where the agreement and scope support it); **Resource Graph** (resources, and a short window of property changes); **metric definitions** (every metric each resource type emits); the public **resource-provider API specifications** and the **Bicep type definitions** generated from them (every property, every SKU enumeration) | the meters, the knobs, the signals — *the raw material for the grammar* | high — but they say *what exists*, not *what it means* |
+| **Machine-readable authoritative surfaces** | the **Retail Prices** list (unauthenticated, all meters, by region and SKU — *list* prices in a base currency, never what a customer pays); **Cost Management exports** (including the open FOCUS dataset where the agreement and scope support it); **Resource Graph** (resources, and a short window of property changes); **metric definitions** (the metrics each resource type documents); the public **resource-provider API specifications** and the **Bicep type definitions** generated from them (the properties and SKU enumerations each service declares) | the meters, the knobs, the signals — *the raw material for the grammar* | high — but they say *what exists*, not *what it means* |
 | **Official documentation** | service pages, pricing pages, limits and quotas, SLAs, architecture and Well-Architected guidance, release notes and announcements — all written in public, version-controlled sources, so **every change is a diff the AI can read** | intent, behaviour, advice | high, but must be tested when load-bearing, contradictory or silent |
 | **Microsoft engineers in public** | talks, blogs, issue discussions | behaviour that documents omit | medium |
 | **The community** | experts' write-ups, FinOps practitioners, open-source repositories (policies, detectors, infrastructure code) | traps seen in the wild | medium-low until verified |
 | **The AI's own memory** | what the language model "remembers" | leads only | **lowest — never a source of a number** |
 
-Three rules follow from the table:
+Four rules follow from the table:
 
 - **Prices and numbers come from tools, never from memory.** The language model may *explain* a price; a deterministic computation over the price list or the customer's own price sheet *produces* it. A number on a Brief always has lineage.
 - **A document is evidence, not truth.** Two documents that disagree, or a silence about something that matters, always becomes an experiment.
@@ -162,12 +168,9 @@ stateDiagram-v2
     MechanismVerified --> Replicated: holds in other regions, agreements, dates
     MechanismVerified --> CommerciallyVerified: reconciled with one customer's own bill
     Replicated --> CommerciallyVerified: reconciled with one customer's own bill
-    CommerciallyVerified --> Compiled: general enough for a Detector or a Move
-    Compiled --> Watched: shadow mode, then promoted
     MechanismVerified --> Stale: a re-check fails, or time runs out
     Replicated --> Stale
     CommerciallyVerified --> Stale
-    Watched --> Stale: drift, false positives or expiry
     Stale --> Tested: re-tested
     Refuted --> Lesson: why it looked true is knowledge too
     MechanismVerified --> Retired: the behaviour or service is gone
@@ -175,7 +178,7 @@ stateDiagram-v2
     Retired --> [*]
 ```
 
-**Peer review of knowledge** is where the human sits. Every claim that will be *relied on to change something* must have passed the Skeptic and a person with domain standing — **and, before it becomes advice for a particular estate, been reconciled with that customer's own bill** (*commercially verified*; see [the learning contract](11-the-learning-contract.md#2-verified-has-a-scope)). Claims that are merely informative can stay *provisional* — clearly labelled — so the system is useful from day one and honest about its edges.
+**Peer review of knowledge** is where the human sits. Every claim that will be *relied on to change something* must have passed the Skeptic and a person with domain standing — **and, before it becomes advice for a particular estate, been reconciled with that customer's own bill** (*commercially verified*; see [the gates](11-the-learning-contract.md#the-gates--one-word-is-not-enough)). Claims that are merely informative can stay *provisional* — clearly labelled — so the system is useful from day one and honest about its edges. A general, replicated claim can also be *compiled* into a Detector or a Move; those are not claim states and have [their own life cycle](04-experiments-and-the-lab.md#13-dreaming--consolidation-while-the-world-is-quiet).
 
 ---
 
@@ -241,7 +244,7 @@ Prism is invented. **Azure SRE Agent** is not: a recent service whose billing pa
 |---|---|---|---|
 | **Always-on flow** — 4 AAUs per agent-hour, from the moment an agent is created until it is deleted, whether or not it does anything | **Capacity** (an existence floor) | is the agent doing any work? | delete agents created for a trial and forgotten; the page notes new customers can evaluate with the always-on charge waived — a **time cliff** |
 | **Active flow** — AAUs per million tokens, metered separately for input, output, cache read and cache write, at rates set by the model | **Consumption**, with a **multiplier** from model choice | tasks completed against tokens spent | the model choice moves the price: the page's own worked example prices the same quick question at about 3.8 AAUs on one model and about 1.3 on another |
-| A monthly **AAU allocation limit** that covers active flow only; at the limit the agent becomes unavailable until next month, and always-on charges continue | a **cap that bites** | is the limit sized to the work? | a cost control that causes an outage |
+| A monthly **AAU allocation limit** that covers active flow only; at the limit the agent becomes unavailable until next month, and always-on charges continue | a **cap that bites** (a candidate new mechanism) | is the limit sized to the work? | a cost control that causes an outage |
 
 What the page leaves open — how multiple agents share a limit, how a mid-month change prorates, how the meters round — goes to the Agenda as predictions for the Lab. The profile is **provisional**, and says exactly what it rests on.
 
@@ -269,9 +272,9 @@ Because documents and specifications are written and versioned in public, a chan
 
 A learning system must have a map of its own ignorance.
 
-- **The coverage map.** For every service, meter and region: how well is it known — *verified, provisional, doc-only, unknown*? The map is public on the report card.
+- **The coverage map.** For every service, meter and region: how well is it known — *verified, provisional, doc-only, unknown*? The map is shown on the report card.
 - **The frontier.** Real bills sometimes contain meters the Atlas has never seen. That is not a failure; it is the most valuable lead the system can get. It goes straight to the top of the Agenda: learn this one now.
-- **Humility in the brief.** When advice rests on a provisional or doc-only profile, the Brief says so — *"I have not tested this myself"* — and the confidence is lower.
+- **Humility in the brief.** A Brief never rests on a provisional or doc-only profile for a savings claim; it says what is not yet known — *"I have not tested this myself"* — and asks, or starts a watch.
 - **Curiosity on purpose.** The Conductor spends a measured part of the learning budget on the frontier: the services most used in estates and least well known come first.
 
 ---
@@ -283,12 +286,12 @@ The same meter costs different amounts for different customers. The system learn
 | Part of the commercial layer | What the AI must learn | Why it changes the answer |
 |---|---|---|
 | **Agreement type** | enterprise agreement, Microsoft Customer Agreement, partner-sold, pay-as-you-go: who can see the price sheet, how export and data latency differ, who may exchange or refund | the same saving is reported — and sometimes *possible* — differently |
-| **Price level** | list → contracted → effective (after commitments); the pricing currency and the billing currency | "what it costs" depends on the level; savings are booked per level |
-| **Commitments — three kinds** | hourly benefits (reservations, savings plans; an unused hour does not roll over), pooled prepurchases, and agreement-level consumption commitments | each has its own flexibility, exchange rules and "is it used?" test |
-| **Rate levers** | licence benefits, dev/test pricing, spot capacity, capacity reservations, credits and free grants — and the order in which they stack | the cheapest change is often a *rate* change, not a usage change |
+| **Price level** | list → contracted → effective (after commitments); on some agreements a pricing currency distinct from the billing currency | "what it costs" depends on the level; savings are booked per level |
+| **Commitments — three kinds** | hourly benefits (reservations, savings plans; an unused hour does not roll over), pooled prepurchases, and agreement-level consumption commitments (a capacity reservation is a different thing: it guarantees capacity at the normal rate, it is not a discount) each has its own flexibility, exchange rules and "is it used?" test |
+| **Rate levers** | licence benefits, dev/test pricing, spot capacity, credits and free grants — and the order in which they stack | the cheapest change is often a *rate* change, not a usage change |
 | **Price mechanics** | graduated tiers, free allowances, billing quantum, currency conversion, tax | small print that moves totals |
 | **Charges that are not resources** | marketplace and SaaS purchases, support plans | spend nobody tags |
-| **Network paths** | egress, cross-region, inter-zone and private-connectivity processing — priced by *path*, not by resource | placement decisions hide here |
+| **Network paths** | egress, cross-region, peering and private-connectivity processing — priced by *path*, not by resource (traffic between availability zones in a region is not charged) | placement decisions hide here |
 | **Views** | actual versus amortised cost; showback and chargeback; shared-cost allocation | one bill, told several ways — Finance decides which counts |
 
 ---

@@ -1,21 +1,21 @@
 # The learning contract — what changes when it learns
 
 > **What this answers:** *The north star says the AI "learns". What exactly changes when it does — and what evidence would let us say it really did?*
-> Storing a lesson is not learning. A system has learned only if **something that governs its future behaviour has changed, in a way that improves its results on a test it could not game.** This page names the things that change, what each is made of, how it is updated, when it is trusted, and how it is tested.
+> Storing a lesson is not learning. A system has learned only if **something that governs its future behaviour has changed, in a way that improves its results on a test it could not game.** This page names the things that change, what each is made of, how it is updated, when it is relied on, and how it is tested.
 > Part of the [north star](01-north-star.md). Idea-level: the contract, not the implementation.
 
 ---
 
 ## 1. Six things that change
 
-| # | What changes | Made of | Evidence it consumes | How it updates | Trusted when | Tested by |
+| # | What changes | Made of | Evidence it consumes | How it updates | Relied on when | Tested by |
 |---|---|---|---|---|---|---|
-| **1** | **Beliefs about Azure** — the [Atlas](02-learning-azure.md) | *claims*, each with a [scope](#2-verified-has-a-scope) and a confidence | documents, price lists, specifications, Lab results, real outcomes | evidence for and against each scoped claim accumulates; every kind of source has a learned reliability; conflicting evidence lowers confidence *and* triggers a Lab test | it has been **replicated** across conditions, not merely read | predicting meters and behaviours on held-out services; transfer; regression |
+| **1** | **Beliefs about Azure** — the [Atlas](02-learning-azure.md) | *claims*, each with a [scope](#2-verified-has-a-scope) and a confidence | documents, price lists, specifications, Lab results, real outcomes | evidence for and against each scoped claim accumulates; every kind of source has a learned reliability; conflicting evidence lowers confidence *and* triggers a Lab test | it has been **replicated** across conditions and **reviewed**, not merely read — and, before it backs advice for an estate, **commercially verified** there ([the gates](#the-gates--one-word-is-not-enough)) | predicting meters and behaviours on held-out services; transfer; regression |
 | **2** | **What to do next** — the Agenda, tactics, experiments, wording | a *policy* for choosing: which question, source, tactic, experiment or phrasing | outcomes: what a choice turned out to be worth, per euro and per human minute | each option keeps a running estimate of verified value; most effort goes to the best estimate, a **protected share explores** the rest (the curiosity budget) | its choices beat a random or fixed order in ablations | A/B and ablation runs in the Terrarium and shadow estates |
-| **3** | **Compiled knowledge** — Detectors, Moves, investigation playbooks | *code* with a test | a confirmed finding, its data, and the checks that would have caught it | written → back-tested → tested in the Lab → run in shadow → promoted; carries its **validity domain, blind spots and expiry** | shadow precision and harm record are good enough | held-out cases, decoys, the Forger |
+| **3** | **Compiled knowledge** — Detectors, Moves and the investigation recipes the Detective reuses | *code* with a test | a confirmed finding, its data, and the checks that would have caught it | written → back-tested → tested in the Lab → run in shadow → active; carries its **validity domain, blind spots and expiry** | shadow precision and harm record are good enough | held-out cases, decoys, the Forger |
 | **4** | **Predictions of consequence** — the [Consequence Engine](03-estate-and-investigation.md#11-the-consequence-engine--what-happens-to-the-bill-if) | a *causal model* of what drives cost, reliability and performance, with explicit assumptions | interventions in the Lab, natural experiments, trials, realised outcomes | structure and parameters are refitted from *interventions* and comparison groups, not only from correlations | its calibration record in that domain is good | predicted vs realised, scored with proper scoring rules |
 | **5** | **Understanding of one estate** — the Estate Model and Lesson Book | *testimony* from people (attributed, scoped, expiring) and observation | what people say, what telemetry shows | testimony is adopted provisionally and **widened only with corroboration** | it has survived contact with evidence, and its owner re-confirms | the teachability exam; correction rate |
-| **6** | **The method itself** — playbooks, model routing, how it speaks | procedures and prompts as versioned artefacts | exam results, ablations, the report card | the system *proposes* a change; the change is tested; people approve | it improves the held-out exam without hurting anything else | the Exam, with the Goodhart watch |
+| **6** | **The method itself** — procedures, model routing, how it speaks | procedures and prompts as versioned artefacts | exam results, ablations, the report card | the system *proposes* a change; the change is tested; people approve | it improves the held-out exam without hurting anything else | the Exam, with the Goodhart watch |
 
 Two things the table does **not** claim: that an AI model's weights are retrained (almost none of this needs it), or that memory alone is learning. Rows 1–5 are *knowledge that a defined process updates*; row 6 is the process itself.
 
@@ -37,7 +37,18 @@ Consequences that run through the design:
 - The [Commons](07-getting-smarter.md#7-the-commons) distributes *scoped claims and the recipes to re-test them*, never "universal" facts.
 - Speed claims are about the **draft**: a provisional mechanism profile within hours of an announcement is an aspiration; commercial verification waits for a bill (hours to days) and for the customer's own export.
 
-The full life of a claim — from *heard* to *mechanism-verified*, *replicated*, *commercially verified*, *compiled* into a Detector or a Move, and *stale* — is drawn in [studying Azure, §4](02-learning-azure.md#4-from-reading-to-knowing-claims-receipts-life-cycle).
+The full life of a claim — from *heard* to *mechanism-verified*, *replicated*, *commercially verified* and *stale* — is drawn in [studying Azure, §4](02-learning-azure.md#4-from-reading-to-knowing-claims-receipts-life-cycle). What a general claim can be compiled into — a Detector or a Move — has its own life cycle, in [the Lab, §13](04-experiments-and-the-lab.md#13-dreaming--consolidation-while-the-world-is-quiet).
+
+### The gates — one word is not enough
+
+"Trusted" is never used alone, because different things must be true before different uses. Each gate is a separate question with its own evidence:
+
+| Gate | The question | Evidence | Granted by | What it allows |
+|---|---|---|---|---|
+| **Replicated** | has it held in more than one condition, or when someone else re-ran it? | other regions, agreements and dates; an independent re-run | the Lab; another lab or organisation in the Commons | being offered beyond a draft |
+| **Reviewed** | has someone tried to break it, and has a person with standing read it? | the Skeptic's attack; a maintainer's or an owner's review | the Skeptic and a person | being relied on to start a watch, ask a question or nominate a lead |
+| **Commercially verified** | does it match *this* customer's own bill? | reconciliation against the customer's export and price book | the Economist, open to Finance's challenge | being the basis of a *savings* claim for that estate |
+| **Credentialed** | has it earned permission to act on its own, in this domain? | the Move's record, the credential exam, shadow results | people; it demotes itself when it slips | a Move running without a human OK |
 
 ---
 
@@ -106,8 +117,14 @@ The documents use many words for related things. This is the crosswalk; where tw
 | **Case notebook** | the working file of one investigation | an estate |
 | **Unexplained Spend Ledger** | the part of the bill the system cannot yet explain | an estate |
 | **Terrarium** | miniature estates with planted waste and decoys, for exams and Detector back-tests | the Lab |
-| **Technical steward** | the human who can change a resource safely (one of the hats) | an estate's human graph |
+| **Technical lead** | the human who can change a resource safely (one of the hats) | an estate's human graph |
 | **Team agent** | an agent that represents one team's constraints in negotiations | an estate |
 | **Atlas maintainer** | a human who stewards one service's Profile in the Commons | the Commons |
+| **Claim states** | heard · disputed · tested · mechanism-verified · replicated · commercially verified · refuted · stale · retired — evidence about Azure | the Atlas |
+| **Detector and Move states** | drafted · back-tested · lab-tested · attacked · reviewed · shadow · active · demoted · retired | the Lab and the Commons |
+| **Commons tiers** | *draft* → *replicated* → *maintained*: how a claim is shown outside the organisation | the Commons |
+| **Lesson rungs** | observation → lesson → pattern; a pattern is a *candidate* for a claim or a Detector, each of which then follows its own life cycle | an estate's Lesson Book |
+| **Gates** | replicated · reviewed · commercially verified · credentialed — [separate questions, never one word "trusted"](#the-gates--one-word-is-not-enough) | the Atlas and the Moves |
+| **Tell** | a signal that something deserves a look — a meter that appears after a change, a metric that goes silent | the Atlas and the Agenda |
 
 A **Detector** is deliberately *not* a verdict. Prices, workloads and meaning change, so each Detector declares its **validity domain** (where it applies), its **blind spots**, a **novelty trigger** (conditions under which it must hand back to an investigator) and an **expiry** — and the expensive reasoning is kept not only for the new, but for the ambiguous and the shifted.

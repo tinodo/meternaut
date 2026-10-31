@@ -55,6 +55,38 @@ The native recommendations are a free, always-on first pass. What this system ad
 
 ---
 
+## 1b. When more than one person owns the answer
+
+The biggest opportunities rarely belong to one person: a shared cluster, a shared network, a pooled commitment, a platform that four teams build on. One card to one owner would be wrong, and four separate cards would start four arguments. So the system opens **one decision room** — a single thread with everyone who holds a piece of the answer — and gives each person a private card with their own numbers.
+
+```
+Decision room · the shared build-and-batch cluster
+Mei (platform owner) · Ravi, Lena, Tom, Aisha (team leads) · Finance (watching)
+
+AI:    Nodes average 38% busy over 11 weeks, but the 22nd–28th reach 91% — Orion's month-end run.
+       Three changes could save about €5,800 a month. Each of you has a private card with your own share.
+Ravi:  Orion needs that peak. Don't cut headroom on the 22nd–28th.
+AI:    Already handled: nodes scale up on a schedule for those days. The saving becomes €5,100, not €5,800.
+Lena:  Why do we all pay the same? We use a tenth of it.
+AI:    Today the cost is split equally; nobody chose that. Two keys, side by side: equal shares, or requested
+       capacity. 12% of the workloads carry no team label — I treated them as shared; tell me if that is wrong.
+Mei:   Requested capacity. Recorded as Mei's decision; Finance sees both keys at the quarter-end review.
+AI:    Plan: Tuesday, lower the autoscaler floor · a week later, interruptible nodes for batch work ·
+       guard: pods waiting more than 5 minutes → roll back. Open objections: none.
+```
+
+What differs from a one-owner Brief:
+
+- **Everyone sees their own stake** — what changes for *their* share and *their* peak, not a platform-wide summary.
+- **An allocation is a question, not a given.** The AI proposes how a shared cost could be split, says how sure it is, hears objections, and keeps both keys visible rather than quietly choosing one.
+- **Objections change the plan.** A recorded objection either alters the option (the scheduled scale-up) or is answered with what it costs. Silence from an affected owner is not consent: it is chased, then escalated.
+- **One accountable name.** The directory names the change authority; the decision is theirs, with the objections attached.
+- **Verified for each party.** The result is measured for the platform *and* for each team's share, so nobody finds out later that a saving moved a cost onto them.
+
+And the room teaches: *"this organisation splits shared platforms by requested capacity"* becomes a Lesson, and *"a shared pool split equally while use is unequal"* becomes a lead for other estates.
+
+---
+
 ## 2. Options: the design space
 
 A good advisor does not hand over *the* answer; it maps what is possible. The **Economist** and the **Engineer** build the option space from the [Cost Grammar's levers](02-learning-azure.md#2-the-cost-grammar--how-it-reasons-about-services-it-has-never-seen): stop · shrink · schedule · tier · share · commit · move · redesign · fix the source · change the contract.
@@ -98,7 +130,7 @@ An action is never improvised. It is a **Move**: a versioned, reviewable recipe 
 | **Dry run** | the exact change, shown as a diff and in plain words |
 | **Guard metrics** | what must *not* move — and the limits that trigger an automatic rollback |
 | **Rollback** | a tested undo, with how long it stays available |
-| **Invariants and proof boundary** | what must stay true after it runs (no data lost, same endpoints, same access) — checked by machine where possible — and exactly where its proof *stops* |
+| **Invariants and assurance boundary** | what must stay true after it runs (no data lost, same endpoints, same access) — checked by machine where possible — and exactly where that checking *stops* |
 | **Verification plan** | how success is measured, when, against which baseline |
 | **Track record** | where it has been tested: Lab runs, past uses, success and regret counts |
 | **Approver hats** | who must say yes (an owner? a change authority? two people?) |
@@ -183,7 +215,7 @@ Four ideas keep it honest:
 
 ## 7. The Commitment Desk
 
-Commitments are the **biggest single lever** and the one with the *least forgiveness*: money committed for one or three years. They come in three kinds with different rules and different "is it used?" tests — **hourly benefits** (reservations and savings plans; an unused hour expires and does not roll over), **pooled prepurchases**, and **agreement-level consumption commitments**. So purchases get their own desk: **prepared by the AI, approved by two named humans with different hats, and then executed by the AI on their say-so.**
+Commitments are the **biggest single lever** and the one with the *least forgiveness*: money committed for a fixed term — typically one or three years for hourly benefits, whatever the agreement sets for a consumption commitment. They come in three kinds with different rules and different "is it used?" tests — **hourly benefits** (reservations and savings plans; an unused hour expires and does not roll over), **pooled prepurchases**, and **agreement-level consumption commitments**. So purchases get their own desk: **prepared by the AI, approved by two named humans with different hats, and then executed by the AI on their say-so.**
 
 What the Desk keeps in view:
 
@@ -260,6 +292,7 @@ stateDiagram-v2
     Countered --> Drafted: new options, re-tested
     Challenged --> Drafted: the case is re-opened
     Declined --> Lesson: the reason is kept, with re-open conditions
+    Lesson --> Offered: a re-open condition is met
     Accepted --> Applying: a Move runs, or a pull request opens
     Applying --> Verifying: change made, guards watching
     Applying --> RolledBack: a guard tripped
@@ -270,15 +303,23 @@ stateDiagram-v2
     Boomerang --> Lesson
     Regret --> Lesson
     Sustained --> Drifted: the saving erodes
+    Sustained --> Lesson: what made it stick is kept
     Drifted --> Drafted: re-open, preferably at the source
     Lesson --> [*]
-    Sustained --> [*]
 ```
 
 Two details make this the most important picture in the document:
 
 - **"No" is not an end state.** A declined Brief is filed with its reason and **re-open conditions** — *"ask again if peak usage drops below X, or when the project ends."* The system does not nag; it waits for the condition. And when a *different* team declines the same kind of thing for the same reason, the Lesson Book proposes the generalisation.
 - **Everything ends in a Lesson**, not in a report. Success, failure and refusal all leave something behind.
+
+### A rollback, and what it did to trust
+
+*On a Sunday, with Amir's OK, the system moves a managed database one tier down.* At 02:14 on Monday the weekly batch runs; the guard sees query latency up 40% — past its limit — and rolls the change back in four minutes. No query fails; one report finishes late. At 07:30 Amir finds a plain message:
+
+> *I rolled back my change at 02:14. I expected no effect: the database averaged 20% CPU. What happened: the weekly batch is limited by disk throughput, which falls with the tier, and I had not checked it. I was wrong about the signal, not about the saving. I have added throughput to the checks for databases like this one and re-run last night's load in the Lab; the smaller tier fails it, so I will not offer it again. Another option: move the batch off this database. Want to see the Lab run first?*
+
+He says yes. Three weeks later he accepts the new option. The report card keeps one rollback, one wrong signal and the check added after it — and Amir's replies to the next Briefs get faster, not slower. Trust is not earned by never being wrong; it is earned by being wrong *visibly*, cheaply and once.
 
 ---
 
@@ -292,7 +333,7 @@ Cost optimisation is not cost minimisation. The right measure is **cost per outc
 - **Replace the cheap, expensive-to-run option.** A self-managed component whose people cost dwarfs the managed service's price.
 - **Spend where it buys resilience that the business has said it needs** — and say so.
 
-The AI celebrates when the bill rises *because the business grew and the unit cost fell*, and says so in the monthly letter. A system that only ever says "less" is a spreadsheet with opinions.
+The AI celebrates when the bill rises *because the business grew and the unit cost fell*, and says so in the monthly letter. A system that can only say "less" cannot tell a bill that grew badly from one that grew well.
 
 **Spending more is an *investment recommendation*, never a saving.** It is counted as a saving only after the business owner and Finance have named — in advance — the outcome metric that will show whether it paid off (cost per order, lost sales avoided, latency held), and the Auditor then verifies it against that metric like any other claim.
 
@@ -302,7 +343,7 @@ The AI celebrates when the bill rises *because the business grew and the unit co
 
 Some of the biggest numbers are not resource settings but **agreements**: a consumption commitment burning down faster or slower than planned, a discount that does not apply to a growing service, a marketplace charge nobody owns. The commercial Moves are mostly **briefings for humans who negotiate**:
 
-- *"Your consumption commitment is on track to fall short by about 11% by the end of the term. Eligible spend that now sits outside this billing account, or eligible marketplace purchases, could count toward it."* (A consumption commitment is not a pool that workloads attach to: it counts eligible Azure consumption on the billing account.)
+- *"Your consumption commitment is on track to fall short by about 11% by the end of the term. Eligible spend that now sits outside this billing account, or eligible marketplace purchases (those marked "Azure benefit eligible"), could count toward it."* (A consumption commitment is not a pool that workloads attach to: it counts eligible Azure consumption on the billing account.)
 - *"This service's rate is higher in this region than in the neighbouring region you already operate in, with no data-residency reason that we can see."*
 - A **negotiation pack** for the person who talks to the account team: effective discount, committed versus actual curve, the usage forecast, and what the estate would look like under each scenario.
 
@@ -325,7 +366,7 @@ The AI never negotiates. It makes the human who does the best-prepared person in
 
 ## 13. Where humans stay in charge in this part
 
-- **Which Moves exist and which are trusted** — people review every Move, including the AI's.
+- **Which Moves exist and which are active** — people review every Move, including the AI's.
 - **Who may say yes** — the approver hats on each Move; two keys for purchases and irreversible changes.
 - **How much runs on its own** — autonomy is a credential that people grant, with scope, cap and expiry; it shrinks when trust shrinks.
 - **What counts as saved** — the savings ledger is co-signed by Finance.

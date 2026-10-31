@@ -7,9 +7,9 @@
 
 ## A. Learning Azure faster, deeper, sooner
 
-**Azure moves; you benefit.** A new service enters preview; within hours a *provisional* mechanism profile exists. By general availability it is verified in the Lab, and firm advice follows once a customer's own bill confirms it. The day a new SKU is cheaper for a workload shaped like yours, you get a letter — *"this changes the answer for these three things; here is the Lab evidence."* Retirements work the same way, in reverse: *"this SKU retires in nine months; the cheaper equivalent behaves like this under your load."*
+**Azure moves; you benefit.** A new service enters preview; within hours a *provisional* mechanism profile exists. By general availability it is verified in the Lab, and advice follows once a customer's own bill confirms it. The day a new SKU is cheaper for a workload shaped like yours, you get a letter — *"this changes the answer for these three things; here is the Lab evidence."* Retirements work the same way, in reverse: *"this SKU retires in nine months; the cheaper equivalent behaves like this under your load."*
 
-**Law-finding.** After a few hundred experiments, the AI looks for **laws** — regularities across services that nobody wrote down: *"anything short-lived pays a minimum"*, *"stopped usually means compute stops but storage does not"*, *"a private connection usually adds a per-GB processing meter."* It predicts services it has never touched, and the Exam tests whether the prediction was right. A law that survives becomes part of the Cost Grammar.
+**Law-finding.** After a few hundred experiments, the AI looks for **laws** — regularities across services that nobody wrote down: *"a short-lived resource pays a minimum only where its meter says so"*, *"stopped usually means compute stops but storage does not"*, *"a private connection usually adds a per-GB processing meter."* It predicts services it has never touched, and the Exam tests whether the prediction was right. A law that survives becomes part of the Cost Grammar.
 
 **Default-drift radar.** Every API version is published as a machine-readable specification. The AI diffs them: *"in the new version, this property now defaults to on — and it is the one that adds a meter."* Defaults are how bills change without anyone deciding anything; the radar finds them the day they ship.
 
@@ -103,7 +103,7 @@
 
 **Spend as a security signal.** A sudden compute or egress spike can mean a crypto-miner or an exfiltration; conversely, a security finding implies cost. The AI routes the right spikes, with context, to the people who watch for them, and learns their patterns from the other side.
 
-**The voice of the bill.** A two-minute weekly audio for each team — *"what your platform did with its money this week"* — in the team's own language, with the one thing worth knowing and the one thing worth asking. Playful, low-risk, humane; it makes the bill a thing people *listen to*.
+**The voice of the bill.** A two-minute weekly audio for each team — *"what your platform did with its money this week"* — in the team's own language, with the one thing worth knowing and the one thing worth asking. Low-risk, and it reaches people who never open a dashboard.
 
 ---
 

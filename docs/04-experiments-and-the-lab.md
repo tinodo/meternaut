@@ -58,7 +58,7 @@ The **Lab** is a dedicated, budget-capped sandbox subscription — separate from
 
 ```mermaid
 flowchart LR
-    NB[("Lab Notebook<br/>predictions · results · surprises")]
+    NB[("Experiment Ledger<br/>predictions · results · surprises")]
     BB["Billing Bench<br/>how does it really bill?"]
     SB["Signal Bench<br/>which metric tells the truth?"]
     WT["Wind Tunnel<br/>cost and performance frontier"]
@@ -89,7 +89,7 @@ flowchart LR
     JA -.-> RB
 ```
 
-The Lab Notebook is the hub: every bench reads *what is worth learning next* from it and writes back what it found. The **rehearsal estate** is a digital twin built from a real estate's Estate Model with synthetic data and recorded load shapes: before the AI proposes a change that matters, it rehearses it there, and shows the owner the rehearsal. The Janitor is not an afterthought — every resource the Lab creates carries an expiry, and the Lab's own bill is on the report card.
+The Experiment Ledger is the hub: every bench reads *what is worth learning next* from it and writes back what it found. The **rehearsal estate** is a digital twin built from a real estate's Estate Model with synthetic data and recorded load shapes: before the AI proposes a change that matters, it rehearses it there, and shows the owner the rehearsal. The Janitor is not an afterthought — every resource the Lab creates carries an expiry, and the Lab's own bill is on the report card.
 
 ---
 
@@ -239,7 +239,7 @@ Two budgets pull in opposite directions, and both are explicit:
 
 ## 13. Dreaming — consolidation while the world is quiet
 
-At night, with no one waiting, the system does what a good analyst does on a train: **re-reads the day and makes it stick.** The *dreaming* pass:
+At night, with no one waiting, the system **re-reads the day and consolidates what it learned.** The *dreaming* pass:
 
 - re-reads the day's cases and turns repeated reasoning into **Lessons** and **Detectors**;
 - merges duplicate claims and spots contradictions between Profiles;
@@ -259,19 +259,19 @@ Detectors and Moves earn their place the same way — one life cycle, with a way
 stateDiagram-v2
     [*] --> Drafted: a confirmed general finding, or a recurring need with no Move
     Drafted --> BackTested: run against labelled history and the Terrarium
-    BackTested --> LabProven: tried in the Lab, with failure injection for Moves
+    BackTested --> LabTested: tried in the Lab, with failure injection for Moves
     BackTested --> Drafted: a hole is found
-    LabProven --> Attacked: the Skeptic asks what it could destroy or miss
+    LabTested --> Attacked: the Skeptic asks what it could destroy or miss
     Attacked --> Drafted: it breaks
     Attacked --> Reviewed: a person reads it, as a pull request to the Commons
     Reviewed --> Drafted: changes requested
-    Reviewed --> Shadow: a Detector runs and tells nobody; a Move runs at assist level only
-    Shadow --> Trusted: precision, harm record and value are good enough
+    Reviewed --> Shadow: a Detector runs and tells nobody, a Move runs at assist level only
+    Shadow --> Active: precision, harm record and value are good enough
     Shadow --> Retired: not good enough, and the reason becomes a Lesson
-    Trusted --> Demoted: a surprise, a false positive or a regret
+    Active --> Demoted: a surprise, a false positive or a regret
     Demoted --> Shadow: it has to re-earn trust
-    Trusted --> BackTested: a price, API or document change triggers a re-test
-    Trusted --> Retired: the world changed
+    Active --> BackTested: a price, API or document change triggers a re-test
+    Active --> Retired: the world changed
     Retired --> [*]
 ```
 
@@ -302,7 +302,7 @@ The same method points inward. The Conductor runs **ablations** and **A/Bs on it
 - *three hypotheses at once, or depth-first?*
 - *does a Detector written from two examples beat one written from five?*
 
-The answers change how the system works — and are published on the report card. A system that can run experiments on *itself* can, within the limits people set, **improve its own process** without being rebuilt.
+The answers change how the system works — and are shown on the report card. A system that can run experiments on *itself* can, within the limits people set, **improve its own process** without being rebuilt.
 
 ---
 
@@ -310,7 +310,7 @@ The answers change how the system works — and are published on the report card
 
 > **The Lab this week** (Monday, 08:00, for the FinOps lead — a short read)
 > **14 experiments** · 11 matched their predictions · **3 surprises** (below) · **spent €212** of €260 budget
-> **Knowledge moved:** 9 claims strengthened with receipts, 2 downgraded, 1 new Detector entering shadow mode, 4 Atlas entries drafted for review
+> **Knowledge moved:** 9 claims strengthened with receipts, 2 downgraded, 1 new Detector entering shadow mode, 4 Atlas claims drafted for review
 > **Surprises:** *Prism* paused indexes still carry a metadata meter · a cold-tier read path bills per-GB retrieval even on small reads in one tier · *a metric the system had trusted was silent for the one consumer that mattered*
 > **Ablation result:** switching the Skeptic off raised the false-positive rate from 6% to 19% · kept on
 > **Next week's curiosity budget:** two services released last week, one price change in a region we have ten estates in

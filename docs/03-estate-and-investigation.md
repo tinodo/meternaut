@@ -22,7 +22,7 @@ An inventory says *what exists*. The **Estate Model** says what exists, how it c
 | **Constraints** | what must not change: compliance, disaster-recovery roles, freezes, contracts | policies, wikis, owners |
 | **Lessons** | what people have taught it | the [Lesson Book](#10-the-lesson-book--memory-you-can-read) |
 
-The model is a living twin: it updates continuously, carries a confidence on every statement, and is **explicit about what is inferred and what a human confirmed**. It also only knows what has been *kept*: Azure itself retains property changes for just 14 days and platform metrics for about 93, so how far back the system can see is decided by what a customer exports and retains — collecting history from day one is part of onboarding.
+The model is a living twin: it updates continuously, carries a confidence on every statement, and is **explicit about what is inferred and what a human confirmed**. It also only knows what has been *kept*: Azure itself keeps resource property changes for 14 days, platform metrics for about 93 and control-plane events in the activity log for 90, so how far back the system can see is decided by what a customer exports and retains — collecting history from day one is part of onboarding.
 
 ---
 
@@ -64,7 +64,7 @@ Cost is decided by people, so the AI must know *which* people. For every resourc
 | Hat | Question |
 |---|---|
 | **Accountable owner** | who answers for it? |
-| **Technical steward** | who can change it safely? |
+| **Technical lead** | who can change it safely? |
 | **Budget holder** | whose money is it? |
 | **Consumers** | who depends on it, visibly or silently? |
 | **Change authority** | who must agree to a change — a change board, a platform team, a customer? |
@@ -74,6 +74,10 @@ Ownership is inferred from a **waterfall of evidence**, strongest first: an expl
 It follows the **directory**: managers, delegates, the person on leave, the person who just changed team, working hours, time zones, preferred language. When someone leaves, their things do not become nobody's: they are flagged within days, with a proposal for a new owner.
 
 **Things with no owner** go to a **named custodian** — a person or team who agrees to be the owner of last resort — never to a countdown that quietly deletes them. An orphan is an *ownership* problem first and a cost problem second.
+
+### An organisation made of organisations
+
+Real companies are rarely one estate: a central platform team, an acquired business unit with its own agreement and tagging habits, product teams that run what they like. The system keeps **one Atlas but many estates**. Lessons are scoped to the unit that taught them; an acquired unit's price book and allocation rules are its own; decisions stay local, and the central team sees a roll-up of verified savings and open questions — not the units' private lessons. When two units disagree about how a shared service should be charged, that is a [decision room](05-recommend-act-verify.md#1b-when-more-than-one-person-owns-the-answer), not a ruling by the AI.
 
 ---
 
@@ -121,7 +125,7 @@ The **Agenda** is the AI's ranked list of open questions. It is fed from many di
 | **New knowledge** | a profile was just published or revised: *which of our things does it touch?* |
 | **Change in Azure** | a price moved, a SKU appeared, a service retires |
 | **Weak foundations** | a belief it relies on is old, high-impact and weakly verified |
-| **Detectors without evidence** | a "tell" the Atlas knows has no matching measurement in this estate: a blind spot |
+| **Tells with no measurement** | a "tell" the Atlas knows has no matching measurement in this estate: a blind spot |
 | **Human hunches** | *"I bet the test environments sit idle at weekends."* — the [Hunch Box](08-outer-rims.md) |
 | **Native recommendations and alerts** | an Advisor recommendation, a budget alert, an anomaly alert — checked like any other claim, then routed to the right owner with reasoning ([what happens to an Advisor card](05-recommend-act-verify.md#1a-what-happens-to-an-advisor-card--and-to-a-budget-alert)) |
 | **Unknown unknowns** | change-points with no known cause, and meters that fit no mechanism and no Detector — the patterns outside everything the system already knows |
@@ -166,7 +170,7 @@ Each piece of evidence is graded so a reader can weigh it: **measured** (telemet
 
 ## 8. The Case notebook
 
-Every investigation leaves a **notebook**: the question, the hypotheses, the queries and their results, the charts, the experiments, the Skeptic's objections and the verdict — readable by a person, re-runnable by anyone. It is the answer to *"why do you think so?"* A Brief links to it; an Atlas entry cites it; an auditor can replay it. A recommendation with no notebook is not a recommendation.
+Every investigation leaves a **notebook**: the question, the hypotheses, the queries and their results, the charts, the experiments, the Skeptic's objections and the verdict — readable by a person, re-runnable by anyone. It is the answer to *"why do you think so?"* A Brief links to it; an Atlas claim cites it; an auditor can replay it. A recommendation with no notebook is not a recommendation.
 
 ---
 
@@ -178,7 +182,7 @@ Alongside "start from the bill", the system works from the other end. From the a
 - A **negative residual** is a lead too: something the design assumes exists but does not, or a discount applied that nobody planned.
 - A **stable residual** teaches the model; a **growing** one goes straight to the Agenda.
 
-It is the way physicists find a missing planet: the model is good enough that its failures are informative.
+The point: when the model is good, its failures are informative.
 
 ---
 
@@ -219,7 +223,7 @@ How it thinks, in plain terms:
 2. **Place it in this estate**: the real demand, the real prices, the real rhythm — not list price at an average load.
 3. **Return a range, not a number**, with the assumptions that drive it, and a **cost of being wrong**: what happens if the demand is half, or double.
 4. **Show the non-cost consequences** next to the cost, using the Well-Architected pillars as the checklist — a saving that costs resilience is a different offer.
-5. **Remember it**: the prediction is filed in the Ledger and scored when reality arrives.
+5. **Remember it**: the prediction is filed in the Experiment Ledger and scored when reality arrives.
 
 **Under the hood, a causal model.** The Engine is not a table of correlations. It models what drives what — configuration → demand → meters → bill, with reliability and performance side-effects — and refits it from *interventions* (Lab runs, trials) and *natural experiments* (a team changes something; the system compares before and after against untouched look-alikes). Its assumptions sit on the page; where there are no good comparison resources it says so and widens the range. Counterfactual numbers are *evidence under stated assumptions* — see [the learning contract, §3](11-the-learning-contract.md#3-counterfactual-evidence-not-proof).
 
@@ -227,7 +231,7 @@ This is the engine behind **shift-left**: the cost of a decision shown *at the m
 
 ### A worked example
 
-> A pull request turns on cross-region replication for a data store "for resilience". The Consequence Engine reads the change, decodes the meters from the Atlas — storage in the second region, replication traffic between regions, a higher-priced SKU that the feature requires — and reads the estate: the store holds 4 TB and grows 6% a month; the change rate is high. It answers in a comment on the pull request: *"About €1,900 a month, rising to about €2,600 within a year; €700 of that is replication traffic and depends on the change rate, which is the uncertain part. If this store is not in the disaster-recovery plan for the payments platform, the resilience gain is small; if it is, this is cheap. Alternative: replicate only the two tables the runbook lists — about €480."* The author replies, the AI files the lesson, and the prediction goes in the Ledger.
+> A pull request turns on cross-region replication for a data store "for resilience". The Consequence Engine reads the change, decodes the meters from the Atlas — storage in the second region, replication traffic between regions, a higher-priced SKU that the feature requires — and reads the estate: the store holds 4 TB and grows 6% a month; the change rate is high. It answers in a comment on the pull request: *"About €1,900 a month, rising to about €2,600 within a year; €700 of that is replication traffic and depends on the change rate, which is the uncertain part. If this store is not in the disaster-recovery plan for the payments platform, the resilience gain is small; if it is, this is cheap. Alternative: replicate only the two tables the runbook lists — about €480."* The author replies, the AI files the lesson, and the prediction goes in the Experiment Ledger.
 
 ---
 
@@ -253,38 +257,38 @@ The Estate Model and the Lesson Book describe a customer's business and its peop
 
 What the system might bring to a human, across every mechanism. **Illustrative**: none of these is a rule the system is given. Each would come from reasoning with the [Cost Grammar](02-learning-azure.md#2-the-cost-grammar--how-it-reasons-about-services-it-has-never-seen), the estate and a Skeptic's objections — and sourced versions of many are in the [exam bank](research/exam-bank-cost-traps.md) as test questions.
 
-| Mechanism | A case it might bring | Why nobody noticed |
+| Where it shows up | A case it might bring | Why nobody noticed |
 |---|---|---|
 | **Rate and benefit** | A fleet of Windows VMs runs at the licence-inclusive rate while the agreement shows eligible licences with active Software Assurance | entitlements live in procurement records, not in the portal |
 | **Commitment** | The shutdown an Advisor card recommends would free a reservation benefit that simply moves to another VM — the real saving is about zero, and the real saving is somewhere else | the card prices the VM at retail, ignoring the commitment |
 | **Commitment** | A savings plan bought in January sits 30% unused through every August lull | it was sized to the peak, not to the floor |
 | **Commitment** | A reservation for an instance family the platform team is migrating away from in Q3 | purchase and roadmap are owned by different people |
-| **Flow** | A web tier moved to a second region "for latency"; its database did not — every request now crosses regions | the deployment was reviewed for latency, not for the transfer meter |
-| **Flow** | Backups replicated to three regions when the recovery plan names one | the default was copied from a template |
+| **Flow** | A nightly full copy of a dataset to another region for analytics that only ever read yesterday's changes | the job was written when the dataset was small |
+| **Flow** | Backups left on geo-redundant storage — a second, paired region — when the recovery plan names only one | the default was copied from a template |
 | **Capacity** | A premium messaging namespace provisioned for a launch, peaking at 8% of its capacity ever since | launches end quietly |
 | **Capacity** | A GPU pool kept warm between training runs that are two weeks apart | the idle period is invisible at the monthly level |
 | **Capacity × time** | A data-engineering cluster with no auto-termination, still attached on Sunday | nobody owns "turning it off" |
-| **Stock** | Versioning, soft delete and snapshots compounding on a very large analytics container | each protection was added for a good reason, separately |
-| **Stock** | A container registry holding images from thousands of CI builds that nobody can pull | storage is cheap per image and enormous in total |
-| **Leftover** | Private endpoints whose target services were deleted months ago | the endpoint is a separate object |
-| **Leftover** | Managed disks and public IPs from deleted VMs | deleting the parent did not delete the children |
-| **Feature** | A default that switched on zone redundancy in the dev copy of a production template | it was inherited, never chosen |
+| **Stock** | Versioning, soft delete and snapshots overlapping on a very large blob container that has all three switched on | each protection was added for a good reason, separately |
+| **Stock** | A container registry holding thousands of tagged CI images that nobody pulls (built-in retention covers untagged manifests only) | storage is cheap per image and enormous in total |
+| **Leftover** | Private endpoints — billed per hour while they exist — whose target services were deleted months ago | the endpoint is a separate object |
+| **Leftover** | Managed disks and public IPs left behind by deleted VMs (whether they go with the VM is a per-resource setting) | deleting the parent did not delete the children |
+| **Feature** | A default that switched on zone redundancy in the dev copy of a production template (an extra cost on some services, none on others) | it was inherited, never chosen |
 | **Feature** | Geo-replication enabled on a registry for a region with no consumers | enabled "just in case" |
 | **Tier / step** | A database tier chosen for one premium feature that nobody uses | the feature was needed in the pilot |
 | **Allowance** | A plan tier chosen just above its free allowance, for use that fits inside the tier below | the threshold is in the pricing page, not the portal |
 | **Time cliff** | A service in preview pricing goes to paid on 1 March; nine of fourteen estates use it | the free period had no owner |
-| **Time cliff** | Function apps on Linux Consumption: the plan retires in 2028, and the migration doubles as a right-sizing chance | a forced move is also a design review |
-| **Time quantum** | A job that starts and stops hundreds of times a day, each start paying a started-hour minimum | the meter rounds up; the job does not know |
+| **Time cliff** | Function apps on Linux Consumption: the plan retires on 30 September 2028, and the migration doubles as a right-sizing chance | a forced move is also a design review |
+| **Time quantum** | A job that stops and starts a managed database instance hundreds of times a day, each start billed for a full started hour | the meter rounds up; the job does not know |
 | **Coupling** | Private connectivity that added a per-GB processing meter nobody modelled | it arrived with a security change |
-| **Consumption** | A retry loop in an AI agent that quadruples token spend after a prompt change | tokens are billed after the fact |
+| **Consumption** | A retry loop in an AI agent that quadruples token spend on a pay-as-you-go deployment after a prompt change | tokens are billed after the fact |
 | **Consumption × multiplier** | A model swapped for a larger one in a configuration change: the same task now costs several times as much | the change was reviewed for quality, not for price |
-| **A cap that bites** | A monthly spending limit that, once reached, takes an agent offline for the rest of the month | the control was set for cost and caused an outage |
-| **Capacity (existence floor)** | Agents created for a trial and forgotten, billing always-on since creation | nothing "uses" them, so nothing alerts |
-| **Network path** | Cross-zone chatter between a chatty service pair that autoscaling spread across zones | the bill shows a transfer line, not a placement choice |
+| **A cap that bites** | A monthly allocation limit that, once reached, takes an agent offline for the rest of the month while its always-on charge continues | the control was set for cost and caused an outage |
+| **Capacity (existence floor)** | Agents created for a trial and forgotten, billing always-on from creation until they are deleted | nothing "uses" them, so nothing alerts |
+| **Network path** | Chatty traffic between a service pair that a redesign put into two peered virtual networks | the bill shows a transfer line, not a placement choice |
 | **Agreement** | A consumption commitment tracking 11% short at year-end, while eligible spend sits outside the billing account | the burn-down is read once a year |
-| **Marketplace** | Two similar marketplace purchases — only one counts toward the commitment | eligibility is a property of the offer |
+| **Marketplace** | Two similar marketplace purchases — only one counts toward the commitment, because eligibility depends on the offer and on how it was bought | eligibility is a property of the offer |
 | **Governance** | A quarter of the bill is untagged, so it is nobody's budget | tags are optional at creation |
-| **Dev/test** | Production-priced licences in a non-production subscription that qualifies for dev/test rates | the subscription type was set once, years ago |
+| **Dev/test** | Non-production workloads billed at production rates in a subscription that could sit on a dev/test offer | the subscription type was set once, years ago |
 | **Region** | The same SKU at a lower list price in a neighbouring region, with no data-residency reason to stay | placement was decided before pricing diverged |
 | **Retention** | A seven-year retention policy on a dataset whose legal requirement is ninety days | policy was set for the strictest dataset in the platform |
 | **Unit economics** | Cost per order fell 18% while the bill rose 9% — the growth was good news the bill hid | the dashboard shows the bill, not the unit cost |

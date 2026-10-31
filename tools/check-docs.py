@@ -9,8 +9,18 @@ Checks
   3. SVG files are well-formed XML.
   4. Every live document is reachable from README.md (no orphans).
   5. Anchoring guard: the two findings that started the project may appear only in the exam
-     documents - never as the foundation of the design (AGENTS.md rule 6).
+     documents - never as the foundation of the design (AGENTS.md rule 6). Matching also works
+     across hard-wrapped lines, and the text of the SVG pictures is scanned too.
   6. Bloat guard: no governance-paperwork vocabulary in the live documents (AGENTS.md rule 2).
+  7. Purchase wording: purchases are prepared by the AI, approved by two named humans and executed
+     by the AI (AGENTS.md rule 10); the older "executed by humans" wording is rejected.
+  8. State diagrams: no ';' in a transition label (Mermaid ends the description there) and no
+     straight-line state diagram without a back-edge.
+
+Limits (a guard is a safety net, not a substitute for judgement): AGENTS.md, CHANGELOG.md and
+docs/reviews/ describe the rules and the review record, so the pattern guards skip them; paraphrase
+can evade a pattern; a decorative hub can hide a pipeline; the link check ignores reference-style,
+HTML and autolink forms (they raise a warning instead).
 
 Usage:  python tools/check-docs.py [--strict] [--self-test]
         --strict  treats warnings as errors (use before every commit)
@@ -35,14 +45,24 @@ ANCHOR_ALLOWLIST = {
 ANCHOR_PATTERNS = [
     r"\bP2S\b", r"point[- ]to[- ]site", r"\bvWAN\b", r"virtual wan", r"LAQueryLogs",
     r"seed[- ]example", r"release[- ]1\b", r"log analytics",
-    r"never read\b", r"nobody (?:ever )?reads", r"read by nobody", r"scaled up long ago",
+    r"never reads?\b", r"nobody (?:ever )?(?:reads|queries|looks at)",
+    r"no ?one (?:ever )?(?:reads|queries|looks at)", r"read by nobody",
+    r"scaled up (?:years )?(?:long )?ago", r"never opened", r"not queried",
     r"idle gateway", r"shared gateway", r"unused logs", r"never queried",
+    r"virtual hub", r"gateway scale units?", r"vpn gateway", r"azure monitor logs",
 ]
 BLOAT_PATTERNS = [
     (r"kill criteri", re.I), (r"risk register", re.I), (r"assumption register", re.I),
     (r"decision register", re.I), (r"technical spike", re.I), (r"threat catalog", re.I),
     (r"honest unknowns", re.I), (r"exit criteria", re.I), (r"assumptions? list", re.I),
+    (r"open questions? (?:for|to) the operator", re.I), (r"go\s*/\s*no-go", re.I),
+    (r"risk log", re.I), (r"decision log", re.I),
+    (r"threat model", re.I), (r"assumptions we are making", re.I), (r"abandon the idea", re.I),
     (r"R3-Data", 0), (r"\bK[1-7]\b", 0), (r"\bD(?:1[0-8]|[1-9])\b", 0),
+]
+PURCHASE_PATTERNS = [
+    (r"executed by (?:the )?(?:named )?humans?", re.I),
+    (r"humans? (?:execute|click|sign)s? the purchase", re.I),
 ]
 MERMAID_TYPES = (
     "flowchart", "graph", "stateDiagram-v2", "stateDiagram", "sequenceDiagram", "classDiagram",
@@ -163,9 +183,8 @@ def check_orphans(files, graph, rep: Report):
                 seen.add(nxt)
                 todo.append(nxt)
     for f in files:
-        if f.parent == DOCS or f.parent.parent == DOCS and f.parent.name in ("research", "reviews"):
-            if f not in seen:
-                rep.error(f, 1, "orphan: not reachable from README.md")
+        if f.name not in ("README.md", "AGENTS.md", "CHANGELOG.md") and f not in seen:
+            rep.error(f, 1, "orphan: not reachable from README.md")
 
 
 def strip_labels(line: str) -> str:
@@ -185,6 +204,9 @@ def mermaid_edges(lines):
         if not s or s.lower().startswith(("flowchart", "graph") + skip):
             continue
         clean = strip_labels(s)
+        clean = re.sub(r"(?<![-=.])--\s+.+?\s+-->", "-->", clean)
+        clean = re.sub(r"(?<![-=.])-\.\s+.+?\s+\.->", "-.->", clean)
+        clean = re.sub(r"(?<![-=.])==\s+.+?\s+==>", "==>", clean)
         both = "<-->" in clean or "<==>" in clean
         groups = [[x.strip() for x in p.split("&") if x.strip()] for p in arrow.split(clean)]
         for g in groups:
@@ -252,8 +274,48 @@ def max_degree(nodes, edges) -> int:
 
 
 def is_pipeline_in_disguise(nodes, edges) -> bool:
-    """One path through at least 80% of the nodes and no hub: a chain, even if closed into a ring."""
+    """One path through at least 70% of the nodes and no hub: a chain, even if closed into a ring."""
     if len(nodes) < 6 or len(nodes) > 24:
+        return False
+    return longest_path_nodes(nodes, edges) >= 0.7 * len(nodes) and max_degree(nodes, edges) < 4
+
+
+STATE_EDGE = re.compile(r"^\s*(\[\*\]|[A-Za-z_]\w*)\s*-->\s*(\[\*\]|[A-Za-z_]\w*)")
+
+
+def state_edges(lines):
+    nodes, edges = set(), set()
+    for raw in lines:
+        m = STATE_EDGE.match(raw)
+        if not m:
+            continue
+        a, b = m.groups()
+        nodes.update(x for x in (a, b) if x != "[*]")
+        if "[*]" not in (a, b):
+            edges.add((a, b))
+    return nodes, edges
+
+
+def has_cycle(nodes, edges) -> bool:
+    adj: dict[str, list[str]] = {n: [] for n in nodes}
+    for a, b in edges:
+        adj[a].append(b)
+    state: dict[str, int] = {}
+
+    def visit(n: str) -> bool:
+        state[n] = 1
+        for m in adj[n]:
+            if state.get(m) == 1 or (m not in state and visit(m)):
+                return True
+        state[n] = 2
+        return False
+
+    return any(n not in state and visit(n) for n in nodes)
+
+
+def is_straight_state_line(nodes, edges) -> bool:
+    """A state diagram with no back-edge, one path through most states and no hub."""
+    if len(nodes) < 6 or has_cycle(nodes, edges):
         return False
     return longest_path_nodes(nodes, edges) >= 0.8 * len(nodes) and max_degree(nodes, edges) < 4
 
@@ -293,10 +355,18 @@ def check_mermaid(path: Path, blocks, rep: Report):
                     depth += 1
                 elif st == "end":
                     depth -= 1
-            if kind.startswith("stateDiagram") and "-->" in raw and ":" in raw and '"' in raw.split(":", 1)[1]:
-                rep.warn(path, ln, "quotes in a state-diagram transition label")
+            if kind.startswith("stateDiagram") and "-->" in raw and ":" in raw:
+                label = raw.split(":", 1)[1]
+                if '"' in label:
+                    rep.warn(path, ln, "quotes in a state-diagram transition label")
+                if ";" in label:
+                    rep.error(path, ln, "semicolon in a state-diagram transition label (Mermaid ends the description at ';')")
         if depth != 0:
             rep.error(path, start, "subgraph/end mismatch in mermaid block")
+        if kind.startswith("stateDiagram"):
+            snodes, sedges = state_edges(lines)
+            if is_straight_state_line(snodes, sedges):
+                rep.warn(path, start, "state diagram is a straight line - show back-edges (declined, rolled back, re-opened)")
         if kind in ("flowchart", "graph"):
             nodes, edges = mermaid_edges(lines)
             if is_linear(nodes, edges):
@@ -305,28 +375,75 @@ def check_mermaid(path: Path, blocks, rep: Report):
                 rep.warn(path, start, "pipeline in disguise: one path through most nodes and no hub - show hubs or parallel work")
 
 
+def paragraph_hits(text: str, pat: str):
+    """Yield (line, matched text) for a pattern found in a paragraph, even across hard-wrapped lines."""
+    lines = text.splitlines()
+    i = 0
+    while i < len(lines):
+        if not lines[i].strip():
+            i += 1
+            continue
+        j = i
+        while j < len(lines) and lines[j].strip():
+            j += 1
+        joined, offsets = "", []
+        for k in range(i, j):
+            offsets.append((len(joined), k + 1))
+            joined += lines[k].strip() + " "
+        for m in re.finditer(pat, joined, re.I):
+            yield next(n for off, n in reversed(offsets) if off <= m.start()), m.group(0)
+        i = j
+
+
+def guarded_files(files):
+    """Every live document except the files that describe the rules and the review record."""
+    return [f for f in files if f.name not in ("AGENTS.md", "CHANGELOG.md")
+            and "reviews" not in f.resolve().relative_to(ROOT).parts]
+
+
 def check_guards(files, rep: Report):
-    guarded = [f for f in files if f.name != "AGENTS.md" and f.name != "CHANGELOG.md"
-               and (f == ROOT / "README.md" or (f.parent == DOCS or f.parent == DOCS / "research"))]
-    for f in guarded:
+    for f in guarded_files(files):
         text = f.read_text(encoding="utf-8")
-        allow = rel(f) in ANCHOR_ALLOWLIST
-        for n, line in enumerate(text.splitlines(), 1):
-            if not allow:
-                for pat in ANCHOR_PATTERNS:
-                    if re.search(pat, line, re.I):
+        if rel(f) not in ANCHOR_ALLOWLIST:
+            seen = set()
+            for pat in ANCHOR_PATTERNS:
+                for n, _hit in paragraph_hits(text, pat):
+                    if (n, pat) not in seen:
+                        seen.add((n, pat))
                         rep.error(f, n, f"anchoring guard: {pat!r} may appear only in the exam documents")
+        for n, line in enumerate(text.splitlines(), 1):
             for pat, flags in BLOAT_PATTERNS:
                 if re.search(pat, line, flags):
                     rep.error(f, n, f"bloat guard: {pat!r} (no governance paperwork in ideation)")
+            for pat, flags in PURCHASE_PATTERNS:
+                if re.search(pat, line, flags):
+                    rep.error(f, n, "purchase wording: prepared by the AI, approved by two named humans, executed by the AI (AGENTS.md rule 10)")
 
 
 def check_svgs(rep: Report):
     for p in sorted((DOCS / "img").glob("*.svg")) if (DOCS / "img").exists() else []:
         try:
-            ET.parse(p)
+            tree = ET.parse(p)
         except ET.ParseError as e:
             rep.error(p, 1, f"malformed SVG: {e}")
+            continue
+        words = " ".join(t.strip() for t in tree.getroot().itertext() if t.strip())
+        for pat in ANCHOR_PATTERNS:
+            if re.search(pat, words, re.I):
+                rep.error(p, 1, f"anchoring guard in SVG text: {pat!r}")
+        for pat, flags in BLOAT_PATTERNS:
+            if re.search(pat, words, flags):
+                rep.error(p, 1, f"bloat guard in SVG text: {pat!r}")
+
+
+UNCHECKED_LINKS = re.compile(r"\]\[[^\]]*\]|<a\s+href=|<https?://", re.I)
+
+
+def check_link_forms(files, parsed, rep: Report):
+    for f in files:
+        for n, line in parsed[f][0]:
+            if UNCHECKED_LINKS.search(INLINE_CODE.sub("", line)):
+                rep.warn(f, n, "link form this lint does not check (reference-style, HTML or autolink) - use an inline [text](target) link")
 
 
 def check_headings(files, parsed, rep: Report):
@@ -347,6 +464,7 @@ def run(strict: bool) -> int:
         check_mermaid(f, parsed[f][1], rep)
     check_guards(files, rep)
     check_svgs(rep)
+    check_link_forms(files, parsed, rep)
     check_headings(files, parsed, rep)
     for line in rep.errors + rep.warnings:
         print(line)
@@ -373,6 +491,21 @@ def self_test() -> int:
     assert is_pipeline_in_disguise(n, e)
     n, e = mermaid_edges(["flowchart TB", "H --> A", "H --> B", "H --> C", "H --> D", "A --> H", "B --> H", "C --> H"])
     assert not is_pipeline_in_disguise(n, e)
+    n, e = mermaid_edges(["flowchart LR", "A -- go --> B", "B -- next step --> C", "C --> D", "D -. maybe .-> E", "E --> F", "F --> G"])
+    assert ("A", "B") in e and ("B", "C") in e and ("D", "E") in e and is_pipeline_in_disguise(n, e)
+    n, e = mermaid_edges(["flowchart LR", "A --> B", "B --> C", "C --> D", "D --> E", "E --> F", "F --> G", "C --> X", "D --> Y", "E --> Z"])
+    assert is_pipeline_in_disguise(n, e)  # a 7-chain with three leaves is still a pipeline
+    sn, se = state_edges(["stateDiagram-v2", "    [*] --> A: start", "    A --> B", "    B --> C", "    C --> D", "    D --> E", "    E --> F", "    F --> [*]"])
+    assert is_straight_state_line(sn, se)
+    sn, se = state_edges(["    [*] --> A", "    A --> B", "    B --> C", "    C --> D", "    D --> E", "    E --> F", "    F --> A: back-edge"])
+    assert not is_straight_state_line(sn, se)
+    probe = Report()
+    check_mermaid(Path("probe.md"), [("mermaid", 1, ["stateDiagram-v2", "    A --> B: one; two"])], probe)
+    assert any("semicolon" in m for m in probe.errors)
+    assert list(paragraph_hits("it was scaled up\nlong ago by someone", r"scaled up (?:years )?(?:long )?ago"))
+    assert any(re.search(p, "a Go / no-go gate", f) for p, f in BLOAT_PATTERNS)
+    assert any(re.search(p, "a purchase is executed by humans", f) for p, f in PURCHASE_PATTERNS)
+    assert UNCHECKED_LINKS.search("see [text][ref] here")
     print("self-test OK")
     return 0
 

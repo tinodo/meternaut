@@ -53,8 +53,8 @@
     <rect x="700" y="130" width="8" height="96" rx="4" fill="#f87171"/>
     <text x="724" y="150" fill="#f87171" font-size="16" font-weight="700" letter-spacing="1.5">WATCH · minutes to hours</text>
     <text x="724" y="176" fill="#e2e8f0" font-size="14">Spend that suddenly runs away. A meter that should not be</text>
-    <text x="724" y="196" fill="#e2e8f0" font-size="14">moving. A deployment that just changed the bill.</text>
-    <text x="724" y="216" fill="#94a3b8" font-size="12.5" font-style="italic">fast, cheap, mostly code; the AI reasons only when something is new</text>
+    <text x="724" y="196" fill="#e2e8f0" font-size="14">moving. A deployment that just changed what you pay.</text>
+    <text x="724" y="216" fill="#94a3b8" font-size="12.5" font-style="italic">on fast signals (the bill lags) · mostly code; AI reasons when new</text>
 
     <rect x="700" y="260" width="8" height="96" rx="4" fill="#60a5fa"/>
     <text x="724" y="280" fill="#60a5fa" font-size="16" font-weight="700" letter-spacing="1.5">CASES · days to weeks</text>

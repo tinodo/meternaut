@@ -64,7 +64,7 @@ Everything below — the channels, the tone, the rituals — serves this loop.
 | Person | What they get | What the AI learns from them |
 |---|---|---|
 | **Resource owner** | decisions that are worth a minute; explanations; a fair hearing | what a workload is for, when it is busy, what must not change |
-| **Engineer / steward** | pull-request comments, cost deltas, the exact diff of a change | how the system really behaves; which signals lie |
+| **Engineer / technical lead** | pull-request comments, cost deltas, the exact diff of a change | how the system really behaves; which signals lie |
 | **FinOps lead** | the Agenda's top questions, the report card, autonomy decisions | what counts as a good saving here; where to be bolder or quieter |
 | **Finance partner** | a ledger that reconciles; commitment briefs; the claimed-versus-verified gap | what Finance will and will not accept as "saved" |
 | **Platform / cloud lead** | patterns across teams; policy proposals; template fixes | standards, roadmaps, planned migrations |
@@ -93,7 +93,7 @@ Everything below — the channels, the tone, the rituals — serves this loop.
 | **Office hours** | an open session where anyone brings a puzzle | scheduled | becomes a lecture |
 | **Pull side: ask in chat, in the IDE, in the portal** | "why did my bill go up?", "what would this cost?" | pull | **never the primary channel** — chat is a way *into* a case, not the product |
 
-The heuristic for choosing: **value × urgency × reversibility × the person × their moment.** Low value → the weekly letter, or no message at all because a standing rule handled it. Medium and reversible → a card in working hours. High, or needing a formal record → card plus email. A shared resource → the team channel, plus a private word with each affected owner. An emergency spend rate → text and voice to on-call, plus a card.
+The heuristic for choosing: **value × urgency × reversibility × the person × their moment.** Low value → the weekly letter, or no message at all because a standing rule handled it. Medium and reversible → a card in working hours. High, or needing a formal record → card plus email. A shared resource → the team channel, plus a private word with each affected owner. An emergency spend rate → text and voice to on-call, plus a card. (Voice and text are not Teams features: they need a telephony or messaging service, and what is available depends on the country and the kind of number.)
 
 ---
 
@@ -176,7 +176,7 @@ stateDiagram-v2
     Classified --> Asked: a private question to the owner, with what changed and when
     Asked --> Dismissed: the owner explains
     Asked --> Acting: a credential allows it, or the owner says yes
-    Asked --> Escalating: no answer, so the circle widens; an emergency uses text and voice
+    Asked --> Escalating: no answer, so the circle widens — an emergency uses text and voice
     Escalating --> Acting: a human decides
     Acting --> Verifying: a Move runs and its guards watch
     Verifying --> Resolved: the spend is back where it should be
@@ -190,7 +190,7 @@ If a *credential* exists that lets the AI act on this kind of thing — *"pause 
 
 ### The letters — what I learned, what I did
 
-Three letters, each *short and specific*: **the Monday letter** (what I learned this week — see [the north star](01-north-star.md#10-what-the-learning-looks-like-from-the-outside)), **the weekly desk** (the person's own decisions) and **the monthly letter** to the FinOps lead and Finance ([what the Moves of a month look like](05-recommend-act-verify.md#12-what-it-looks-like-from-outside--the-moves-of-a-month)). Subject lines are specific and calm: *"3 decisions, worth about €1,150 a month"* — never *"URGENT: action required"*.
+Three letters, each *short and specific*: **the Monday letter** (what I learned this week — see [the north star](01-north-star.md#10-what-the-learning-looks-like-from-the-outside)), **the weekly desk** (the person's own decisions) and **the monthly letter** to the FinOps lead and Finance ([what the Moves of a month look like](05-recommend-act-verify.md#12-what-it-looks-like-from-outside--the-moves-of-a-month)). Subject lines are specific and calm: *"2 decisions and 1 question, about €215 a month"* — never *"URGENT: action required"*.
 
 ```
 Subject: Your Azure savings desk - 2 decisions, 1 question, 1 win (week 45)
@@ -219,7 +219,7 @@ since last Thursday. Want me to remember it for all of team Atlas?
 
 | Button | What happens |
 |---|---|
-| **Explain** | the reasoning in plain steps; the evidence with its grade (measured / observed / reported / inferred); a link to the case notebook; a toggle for *simple · technical · finance* level |
+| **Explain** | the reasoning in plain steps; the evidence with its grade (measured / observed / reported / inferred / assumed); a link to the case notebook; a toggle for *simple · technical · finance* level |
 | **Challenge** | the AI argues the **other side**: *"here are the three strongest reasons I might be wrong, and what I did about each"*. The person can push: *"what would change your mind?"* — and the AI answers with a specific observation. When it is wrong, it **concedes in the thread** and re-opens the case: *"You're right — I missed the failover job. I've re-opened it. Thank you."* |
 | **Teach** | the person writes in their own words, however they like — *"that's our DR environment"*, *"anything tagged legal is off-limits"*, *"like this one, but for the other region"*. The AI **reads back** what it understood in structured form, proposes the scope (*this resource · this team · everywhere*), and writes the lesson. |
 
@@ -241,7 +241,7 @@ How well the AI takes a lesson is itself scored (see [the Exam](07-getting-smart
 | **Accepts with changes** — "resize to the other size" | re-plans, **reads back**, asks to confirm |
 | **Another time** — "after the launch on the 15th" | schedules; remembers the *why* |
 | **Not now** — a reason chip: busy · risk · waiting for X · I disagree | defers with a condition to re-open; learns |
-| **Not needed** — "that's the quarter-end batch VM" | stores the context with an expiry; adapts the playbook |
+| **Not needed** — "that's the quarter-end batch VM" | stores the context with an expiry; adjusts its next question |
 | **Not mine** | updates the human graph (with consent) and re-routes |
 | **Why?** | opens the reasoning; may run a deeper analysis |
 | **What if I wait?** | computes and shows the cost of delay |
@@ -364,6 +364,14 @@ Call (02:11, no answer to the card):
 
 > *"Good morning Jan. Azure spend was two percent below forecast. Verified savings: eleven thousand euro realised this month — a run-rate of about one hundred forty thousand a year, up thirty from last month; projected savings are reported separately. Commitment coverage is eighty-one percent, utilisation ninety-four. Two actions were rolled back; both are explained in the regret report. Three decisions need you this week: a staged commitment purchase, a policy for development environments, and an exception for one regulated workload. This brief was composed by an AI; every figure is computed from the savings ledger."*
 
+### A target, not a pile of Briefs — the executive's quarter
+
+*The CFO writes one sentence into the system:* "Take 8% off the Azure run-rate by the end of the quarter, keep headroom for the growth plan, and spend no more than 40 minutes of the leadership team's time." The AI does not send Briefs. It assembles a **portfolio**: candidate Moves ranked by verified value per minute of attention and by risk, with the interactions made visible — savings are not additive, so right-sizing goes first and the commitment waits for the new floor instead of being sized for a bill that is about to shrink.
+
+The answer comes back as ranges, not a promise: *"About 7.1% (range 5.4–8.6) by 31 December. Four decisions for leadership, about 32 minutes; eleven for owners, already routed. Two large Moves are not in the plan because they would breach the growth plan's headroom."*
+
+After that, the same page returns every month as a rhythm rather than a report: forecast against budget, what next month's bill will say because of what was bought this month, what has been verified and how much of it Finance has accepted, and the next decision. At month-end it reconciles with the close and says in one line which numbers are provisional, which reconciled and which accepted.
+
 ### The AI in the monthly cost review (excerpt)
 
 ```
@@ -392,14 +400,13 @@ AI participant: Recorded as a decision by Lars. I will remind you on
 
 ```
 Maya (human):   why did our October bill go up 14%?
-AI:             About EUR 3,900 of the EUR 4,300 rise comes from one change on
-                the 9th: the web tier of the booking app moved to a second region
-                (deployed by the "booking-v3" pipeline) while its database stayed
-                put, so every request now crosses regions. EUR 400 is organic
-                growth. That looks like an unfinished move rather than a decision
-                - but that is a hypothesis, not a finding yet: want me to open a
-                case and ask whoever owns the pipeline?
+AI:             About EUR 3,900 of the EUR 4,300 rise comes from one event on
+                the 9th: a one-year reservation covering 14 VMs expired, and
+                they now bill at pay-as-you-go rates. EUR 400 is organic
+                growth. That looks like a renewal nobody owned rather than a
+                decision - but that is a hypothesis, not a finding yet: want me
+                to open a case and ask whoever bought it?
 Maya (human):   yes
-AI:             Opened as case 4312. I'll ask Jonas (the pipeline's last
-                author) one question and tell you what he says.
+AI:             Opened as case 4312. I'll ask Jonas (who bought it) one
+                question and tell you what he says.
 ```
