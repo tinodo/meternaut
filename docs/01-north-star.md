@@ -1,13 +1,13 @@
 # Azure Cost in Action — the north star
 
-> **Status:** ideation **v4** · 2026-10-31 · This is the whole idea in one place. Each part has its own deeper document: [studying Azure](02-learning-azure.md) · [the estate and the investigation](03-estate-and-investigation.md) · [experiments and the Lab](04-experiments-and-the-lab.md) · [recommend, act, verify](05-recommend-act-verify.md) · [people and conversation](06-people-and-conversation.md) · [getting smarter](07-getting-smarter.md) · [the outer rims](08-outer-rims.md).
+> **Status:** ideation **v4** · 2026-10-31 · This is the whole idea in one place. Each part has its own deeper document: [studying Azure](02-learning-azure.md) · [the estate and the investigation](03-estate-and-investigation.md) · [experiments and the Lab](04-experiments-and-the-lab.md) · [recommend, act, verify](05-recommend-act-verify.md) · [people and conversation](06-people-and-conversation.md) · [getting smarter](07-getting-smarter.md) · [the outer rims](08-outer-rims.md) · [the learning contract](11-the-learning-contract.md).
 > Nothing here is a technical design. It is what we want to exist.
 
 ![The living system: five faculties around a shared memory](img/living-system.svg)
 
 ## The sentence on the wall
 
-> **Every euro spent on Azure has a reason. This AI learns the reasons — and finds, proves and fixes the euros that have none.**
+> **Every euro spent on Azure has a reason. This AI learns the reasons — and finds, tests and fixes the euros that have none.**
 >
 > *A scientist for Azure's economics. Not a rulebook.*
 
@@ -29,7 +29,7 @@
 
 **Context decides.** The same setting is waste in one estate and the reason the quarter-close works in another. A rulebook cannot know which. Understanding can.
 
-**People act on what they trust.** Owners ignore advice they cannot explain, check or argue with. Trust comes from reasoning you can inspect, proof you can re-run and a track record you can see.
+**People act on what they trust.** Owners ignore advice they cannot explain, check or argue with. Trust comes from reasoning you can inspect, evidence you can re-run and a track record you can see.
 
 **Knowledge rots.** Prices move, SKUs appear and vanish, behaviours shift, documents are revised. A static catalogue is a little more wrong every day.
 
@@ -45,7 +45,7 @@ We build an AI that **does science on Azure's economics**. The scientific method
 |---|---|
 | **Observe** | Reads the bill, the estate, telemetry — and everything the world has written about Azure |
 | **Ask** | Keeps an **Agenda** of open questions: what is unexplained? what is surprising? what just changed? |
-| **Hypothesise** | "This capacity is idle." "This data is never read." "Turning on that feature switched on a meter." |
+| **Hypothesise** | "Spend grew 9% a month with no change in the design." "That default flipped a meter on." "This commitment no longer covers what we run." |
 | **Predict** | Writes down what should be true *if the hypothesis is right* — before looking |
 | **Test** | Analyses data, replays history, runs experiments in its Lab, asks the cheapest decisive question |
 | **Peer review** | A sceptical agent tries to break it; humans review what becomes "known" |
@@ -62,7 +62,11 @@ We build an AI that **does science on Azure's economics**. The scientific method
 | **Estate knowledge** | this one customer | the **Estate Model** and the **Lesson Book** | the bill, telemetry, configuration, code, conversations |
 | **Experience** | "what happened when we did X" | the **Experiment Ledger** and the outcome record | experiments, trials, results of real changes |
 
-And a fourth, quieter kind: **knowing how sure it is**, and **what is worth learning next**. Every claim carries its receipts and a confidence; the Agenda ranks questions by what finding the answer is worth.
+And a fourth, quieter kind: **knowing how sure it is**, and **what is worth learning next**. Every claim carries its receipts, its *scope* and a confidence; the Agenda ranks questions by what finding the answer is worth.
+
+### What "learning" means here
+
+Storing a lesson is not learning. A system has learned only if something that governs its future behaviour has *changed*, in a way that improves its results on a test it could not game. Six things change, each by a defined process and each tested on the Exam: **its beliefs about Azure** (claims whose evidence accumulates, and which count as trusted only once replicated); **what it chooses to do next** (a policy that learns which questions, sources and experiments pay off); **compiled knowledge** (Detectors and Moves that are written, back-tested, run in shadow and expire); **its predictions of consequence** (a causal model refitted from interventions); **its understanding of one estate** (people's testimony, widened only with corroboration); and **its own method**. It is measured against *retrieval only* and against the *expert-written seed* — so we can tell what it added. [The learning contract →](11-the-learning-contract.md)
 
 ### How it works: five faculties, not five stages
 
@@ -89,7 +93,7 @@ The same system runs on four clocks at once:
 
 | Clock | Tempo | What happens |
 |---|---|---|
-| **Watch** | minutes to hours | spend that suddenly runs away; a meter that should not be moving |
+| **Watch** | minutes to hours — on fast signals (metrics, activity, deployments); the bill itself lags by hours to days | spend that suddenly runs away; a meter that should not be moving |
 | **Cases** | days to weeks | investigate → decide with an owner → change → verify |
 | **Strategy** | months | architecture, commitments, platform shifts, price changes |
 | **Learning** | always | reading, experiments, exams, re-checking what it thinks it knows |
@@ -109,34 +113,13 @@ Four moves, repeated forever:
 3. **Test.** Documents are evidence, not truth. Anything load-bearing, contradictory or silent goes to **the Lab**: deploy it, drive load, watch the meters appear in the usage data, write down what really happened — including the delays, minimums, rounding and hidden meters no document mentions.
 4. **Keep fresh.** Every claim carries a re-check recipe — **knowledge CI**, unit tests for facts. When Microsoft changes a price, retires a SKU or alters behaviour, claims fail their re-check, profiles are marked stale, and every affected estate is told — in *both* directions: *"this just got more expensive for you"* and *"this just got cheaper — move?"*
 
-### The Cost Grammar in one table
+### The Cost Grammar — fourteen ways money arises
 
-| Mechanism — how the money arises | The question it makes you ask | Typical signal of real need | Typical levers |
-|---|---|---|---|
-| **Capacity** — you pay for what you provision | How much of it is actually used? | utilisation, throughput, connections | size, count, schedule, model change |
-| **Consumption** — you pay for what you use | Is each unit of use worth it? | requests, executions, volume | batching, caching, tier |
-| **Stock** — you pay for what you keep, per month | Is anyone ever going to read it again? | last access, growth, retrieval | tier, lifecycle, delete |
-| **Flow** — you pay for what moves | Does anyone consume what is produced? | consumers, destinations, volume | filter, sample, re-route, co-locate |
-| **Feature** — a switch turns on a meter | Does anyone benefit from the switch? | feature usage | switch off, re-scope |
-| **Multiplier** — dimensions multiply | Which dimension exceeds its need? | per-dimension load | shrink the cheapest-to-shrink dimension |
-| **Tier / step** — price jumps at thresholds | Are we just above, or far below, a threshold? | position vs threshold | re-tier |
-| **Commitment** — pay ahead for a discount | Is the coverage used, in the right scope and term? | coverage, utilisation | right-size, re-scope, re-term |
-| **Time quantum** — billing granularity | Do short-lived things pay for time they didn't use? | duration distribution | batch, consolidate, reuse |
-| **Coupling** — a thing drags in other meters | Is there a side-effect nobody intended? | dependency graph | decouple, relocate |
-| **Leftover** — billing continues after the parent is gone | Does the parent still exist? | parent state | clean up |
-
-The table is the **seed of a living taxonomy**, not its end: when the AI meets a meter that fits none of these, it proposes a new mechanism and the humans who review knowledge decide whether it earns a place.
+Every meter, in every service, is one or a few of **fourteen mechanisms**: *capacity* (you pay for what you provision), *consumption* (what you use), *stock* (what you keep), *flow* (what moves), *feature* (a switch turns on a meter), *multiplier* (dimensions multiply), *tier / step* (price jumps at thresholds), *commitment* (pay ahead for a discount), *time quantum* (billing granularity), *coupling* (a thing drags in other meters), *leftover* (billing continues after the parent is gone), *rate and benefit* (the price per unit is negotiable), *allowance* (an included amount, then paid) and *time cliff* (a price changes on a date). Each comes with a question to ask, a **signal of real need** and typical levers — [the full grammar is in 02](02-learning-azure.md#2-the-cost-grammar--how-it-reasons-about-services-it-has-never-seen). It is the seed of a living taxonomy: when the AI meets a meter that fits none of these, it proposes a new mechanism, and the humans who review knowledge decide whether it earns a place.
 
 ### A day-zero story (the service is invented)
 
-*Tuesday 09:00.* Microsoft announces **Azure Prism**, a managed retrieval service. The change radar fires.
-*09:05.* Four readers start in parallel: the announcement and documentation; the price list and the meters it exposes; the resource schema and the metric catalogue; early community write-ups.
-*10:30.* The Cartographer decodes six meters. A *Prism Unit* is **capacity**. A *Query Unit* is **consumption**. *Snapshot GB-month* is **stock**. *Replicas* are a **multiplier** on Prism Units. The private-link add-on is **coupling**. Preview pricing carries an expiry date — a **time cliff**. Two documents disagree about whether scaling down refunds a started hour.
-*11:00.* The Experimenter takes the disagreement to the Lab and writes its prediction down first: *"scale-down does not refund the started hour."* It deploys the smallest instance, runs a synthetic load, scales down at minute 20, and waits for the usage data to catch up.
-*Wednesday 08:00.* Prediction confirmed; a second finding — *snapshots keep billing after the index is deleted unless purged* — is flagged as a trap. The **Profile v0.1** is published as *provisional*, flagged for human review, with every line linked to its receipts.
-*08:30.* The Agenda asks: *which resources in which estates are Prism?* Two preview deployments, one team. The Diplomat prepares a question for that team: **"This will go from free to paid on 1 March. Do you want a heads-up plan?"**
-
-Nobody wrote a Prism rule. The system learned Prism — and the *next* new service, and the one after.
+*A story, not a measurement.* Tuesday 09:00: Microsoft announces **Azure Prism**, a managed retrieval service. By 10:30 four parallel readers have decoded six meters with the grammar — a *Prism Unit* is **capacity**, a *Query Unit* **consumption**, *snapshot GB-months* **stock**, *replicas* a **multiplier**, the private-link add-on **coupling**, the preview price a **time cliff** — and found two documents that disagree about whether scaling down refunds a started hour. The Experimenter writes its prediction down first and takes the disagreement to the Lab. By Wednesday morning the prediction is confirmed, a second trap (snapshots keep billing after an index is deleted) is found, and a **provisional Profile v0.1** is published, every line linked to its receipts and marked mechanism-verified in the Lab only. The Agenda then asks *which resources in which estates are Prism?* — two preview deployments, one team — and the Diplomat asks that team one question: **"This goes from free to paid on 1 March. Do you want a heads-up plan?"** Nobody wrote a Prism rule. A real example, read on the day this was written, is in [studying Azure, §6](02-learning-azure.md#6-day-zero--a-new-service-feature-or-price-change).
 
 ---
 
@@ -144,11 +127,13 @@ Nobody wrote a Prism rule. The system learned Prism — and the *next* new servi
 
 The **Estate Model** is the AI's understanding of one customer. Not an inventory — a *story*: what exists, how it connects, **what it is for**, who needs it, when it is busy, what must never be touched. [Full detail →](03-estate-and-investigation.md)
 
-- **Reads widely** (with permission): the bill, the resource inventory, configuration and change history, telemetry, infrastructure-as-code and the repositories behind it, wikis, architecture diagrams (it can read pictures), tickets and post-mortems, the commercial agreement and price sheet, the organisation chart.
+- **Reads widely** (with permission): the bill, the resource inventory, configuration and change history, telemetry, the native recommendations, budgets and anomaly alerts (Advisor and Cost Management), infrastructure-as-code and the repositories behind it, wikis, architecture diagrams (it can read pictures), tickets and post-mortems, the commercial agreement and price sheet, the organisation chart.
 - **Infers intent.** A workload's *purpose* is rarely written anywhere; the AI assembles it from names, tags, deployment history, traffic shape, code and conversation — and confirms the important guesses with a human.
 - **Learns rhythms.** Daily, weekly, seasonal, and the *business calendar*: the quarter-close, the launch, the audit week. A quiet resource in March can be the star of November.
 - **Follows the directory.** Owners from tags, directory, commit and deployment history, role assignments and ticket traffic; managers, delegates, presence, time zones, languages; and a **named custodian** for things that have no owner at all.
 - **Remembers what people taught it** in a **Lesson Book** — human-readable, scoped, expiring, editable. Memory you can read.
+
+**Where Cost Management and Advisor fit.** They are *inputs* and *a baseline to beat* — never ignored, never trusted blindly. Their findings enter the Agenda as leads and are checked like any other claim (Advisor's own documentation says its VM savings are computed at retail rates and ignore existing commitment coverage). Part of the value is simply **closing the loop** on what Azure already recommends — the owner who never opens a recommendations blade gets a short, specific, explained question — and the rest is everything those tools cannot see. [What happens to an Advisor card →](05-recommend-act-verify.md#1a-what-happens-to-an-advisor-card--and-to-a-budget-alert)
 
 ---
 
@@ -199,10 +184,11 @@ stateDiagram-v2
 
 ### A worked investigation
 
-> *A search service tagged "prototype" costs about €3,100 a month.* The Atlas says its price is **capacity × multiplier** (replicas × partitions). The demand signal — query volume — shows a handful of queries an hour. Hypothesis: *sized for a launch that is over.*
-> The Skeptic asks: *was there a peak?* — Yes: a November event, with a spike. *Would a smaller configuration have survived it?* — The **Time Machine** replays the November queries against a 1×1 layout in the Lab: latency stays inside the target the team once wrote in the wiki.
-> The directory says the owner left in July. The Surveyor finds the team lead through commit history and role assignments. The Diplomat asks **one** question: *"Is this needed for the March relaunch?"* — "Yes."
-> The Brief offers three options: stay; shrink now and scale up in February (the Atlas knows scaling this service takes hours); or shrink and let the March team decide. The system also writes a **Lesson**: *this team launches in March and November* — so next time it will not ask.
+> *The bill for a customer-facing app has crept up 9% a month for four months, with no change in traffic and no change in the design anyone remembers.* The Agenda ranks it high: **unexplained, and growing.** The blueprint model — built from the infrastructure code — expects a modest bill; the **residual** is a data-transfer meter it has no line for. The Atlas knows that meter: **flow, priced by path** — traffic that crosses regions is billed, traffic inside a region is not.
+> The Detective finds the change: on 9 October a deployment moved the web tier to a second region "for latency"; the database stayed behind, so every request now crosses regions. The hypothesis — *an unintended coupling, not growth* — predicts that the transfer meter tracks request volume. It does.
+> The Skeptic asks: *was this planned — a half-finished migration, a disaster-recovery design?* The pipeline history says the database move is still "queued". *Would moving the database fix it, and at what risk?* The **Time Machine** replays last month's traffic against a co-located layout in the Lab: latency improves and the meter disappears; the Consequence Engine adds the migration cost and a week of risk — as evidence under stated assumptions, not as proof.
+> The directory points to the platform team. The Diplomat asks **one** question: *"Is the database move still planned for this quarter?"* — "Yes, in January."
+> The Brief offers three options: wait for January and accept about €2,300 a month until then; add a read cache in the second region now (cheap, partial); or move the database now with the migration Move. The system also writes a **Lesson** — *this team stages regional moves: web tier first, data later* — and a Detector idea: *a tier moved without its data.*
 
 ---
 
@@ -221,7 +207,7 @@ Reading and analysing is not enough. Sometimes the only way to know is to try. [
 
 **The Lab** is a dedicated, budget-capped sandbox subscription where the agents are allowed to create, break and delete things, drive synthetic load and watch the bill form. It is how Azure's economics become *measured* rather than *quoted*. It also runs a **wind tunnel**: benchmark rigs that map the *cost / performance frontier* of a service, so a recommendation says "this configuration costs 40% less and, in our tests, stays inside your latency target" instead of "the spec sheet says so".
 
-Experiments are designed like experiments: a hypothesis, a **prediction written down first**, a budget, a stop condition, an analysis plan. They are chosen by **value of information** — cheapest decisive test first: *a question, then data already collected, then replay, then the Lab, then a live trial.* **Surprises** — the gap between prediction and result — are logged as first-class knowledge. The Lab pays its own way: if learning costs more than it is worth, it stops.
+Experiments are designed like experiments: a hypothesis, a **prediction written down first**, a budget, a stop condition, an analysis plan. They are chosen by **value of information** — cheapest decisive test first: *a question, then data already collected, then replay, then the Lab, then a live trial.* **Surprises** — the gap between prediction and result — are logged as first-class knowledge. Every result carries an **external-validity envelope** (what was held constant, what scale was tested, what was *not*): replays and Lab results are counterfactual evidence under stated assumptions, and only a guarded trial or observation after the change supports "safe in this estate". The Lab pays its own way: if learning costs more than it is worth, it stops.
 
 ---
 
@@ -235,11 +221,11 @@ This is where the AI meets owners, FinOps leads, finance partners, engineers. [F
 
 **Teachable.** Every answer is a lesson. *"Not now — this runs the quarter-close"* becomes a calendar. *"That's our DR environment"* becomes a scope — and the AI proposes the generalisation and asks whether to remember it for this resource, this team or everywhere.
 
-**Moves.** Actions are **Moves**: tested, versioned, reviewable recipes — resize, schedule, tier, clean up, open a pull request against the infrastructure code, propose a policy, prepare a commitment purchase. The AI can **write new Moves**, prove them in the Lab, and offer them for human review — the way a good engineer contributes a tool to the team.
+**Moves.** Actions are **Moves**: tested, versioned, reviewable recipes — resize, schedule, tier, clean up, open a pull request against the infrastructure code, propose a policy, prepare a commitment purchase. The AI can **write new Moves**, test them in the Lab, and offer them for human review — the way a good engineer contributes a tool to the team.
 
 **Autonomy is earned.** The ladder is short: *observe → advise → assist (one tap) → autopilot inside a rule a human wrote*. Autopilot is granted as a **credential per domain** — "storage tiering in non-production, up to this value" — on the strength of the report card, by people, and revoked when regret appears.
 
-**Purchases get the most care.** Reservations and savings plans are prepared by the AI and executed only after named humans say OK.
+**Purchases get the most care.** Reservations and savings plans are prepared by the AI, approved by two named humans with different hats, and then executed by the AI on their say-so — never on its own judgement.
 
 **Verification.** Every change is checked against the prediction made before it: the saving is measured against a counterfactual, regret and "boomerangs" (the change reversed within weeks) are recorded, and drift is guarded — preferably by **fixing the source** (a pull request on the infrastructure code), so the next deployment does not quietly undo it.
 
@@ -251,7 +237,7 @@ This is where the AI meets owners, FinOps leads, finance partners, engineers. [F
 
 - **Everything is a prediction.** Every recommendation says what will happen and by when. The outcome scores it. Over time the AI keeps a *calibration record*: when it says 80%, how often is it right?
 - **The Lesson Book** keeps what people taught it — with scope, expiry and the evidence — so it can be read, corrected and retired.
-- **The Exam.** An independent agent sets exams the system cannot see in advance: *rediscovery* (hide known waste in synthetic and real-but-labelled estates — does it find it with no rule for it?), *new-service races*, *transfer* (learn on service A, test on service B), *teachability*, *explanation quality*, *communication*. Results go on a public **report card** — including what it is bad at.
+- **The Exam.** An independent agent sets exams the system cannot see in advance: *rediscovery* (hide known waste in synthetic and real-but-labelled estates — does it find it with no rule for it?), *new-service races*, *transfer* (learn on service A, test on service B), *teachability*, *explanation quality*, *communication*. Results go on a **report card** kept inside the organisation — including what it is bad at. (An open benchmark is separate; see the Commons.)
 - **It learns how to learn.** Which sources yielded true claims? Which investigation tactics paid off for which kind of service? Which phrasing gets a useful answer? The system tunes its own *method*.
 - **The Commons.** The world-knowledge half — Atlas, Moves, lab recipes, detectors, exam questions — is **open source** and versioned, maintained by the AI *proposing changes for human review* and by the community. Estate knowledge never leaves the customer. Even the *outcome statistics* ("how often does this advice pay off?") can be shared without sharing a byte of data. The knowledge is the open-source asset, not just the code.
 
@@ -281,7 +267,7 @@ A small society of specialists — more like a research group than a pipeline.
 
 ## 10. What the learning looks like from the outside
 
-The system is only trustworthy if its learning is *visible*. Three small windows:
+The system is only trustworthy if its learning is *visible*. The clearest window is a short letter every Monday; the cards, the AI in the meeting and the way an Atlas change looks to a reviewer are in [people and conversation](06-people-and-conversation.md) and [studying Azure](02-learning-azure.md#12-the-atlas-seen-from-outside).
 
 **The Monday email — "What I learned this week"**
 
@@ -298,35 +284,15 @@ My report card: predictions 81% right (I said 79%) · explained spend 72% (+3) �
 11 questions this month (was 19)
 ```
 
-**A teaching card in Teams**
-
-```
-Quick question from the cost agent (AI)
-The search service "support-search" costs about €3,100/month and answers a few queries an hour.
-Is it needed for something that has not happened yet?
-  [Yes — March relaunch]  [No — retire it]  [Not mine]  [Show me why you're asking]
-Your answer also teaches me: I'll remember this team's launch months.
-```
-
-**An Atlas change, as a reviewer sees it**
-
-```
-Profile: Azure Prism · v0.1 → v0.2 · 3 claims changed
-  ± "Scale-down refunds the started hour"  → REFUTED by lab experiment #214 (predicted yes, observed no)
-  + "Deleting an index leaves snapshots billing until purged"  → VERIFIED #217, 2 regions
-  ? "Private-link add-on bills per endpoint-hour"  → UNVERIFIED (doc only) — experiment queued
-[Approve] [Request changes]
-```
-
 ---
 
 ## 11. A first day, a first quarter, a first year
 
-**The first 24 hours in a new estate.** The Surveyor inventories and reads the bill. The Atlas — already knowing Azure — decodes every meter on it at once. The Conductor builds the first Unexplained Spend Ledger; the Detective starts with the biggest unexplained blocks. No customer-specific training is needed: the *world* is already known. By the end of the day the owners of the five largest unexplained blocks have each received **one** question.
+**The first 24 hours in a new estate.** The Surveyor inventories and reads the bill. The Atlas — already knowing Azure — decodes every meter on it at once. The Conductor builds the first Unexplained Spend Ledger; the Detective starts with the biggest unexplained blocks. No customer-specific *model training* is needed to start — the world is already known — and the first thing the AI learns about a customer is its own price book and agreements. Once the bill data has caught up (hours to days), the owners of the five largest unexplained blocks each receive **one** question.
 
 **The first quarter.** The Estate Model fills in: intent for the main workloads, a calendar, an owner for almost everything. The first Briefs go out; a few are accepted, several declined *with reasons* — each reason becomes a lesson. Explained spend climbs. The first Moves are tried in non-production; the first verified savings are measured against counterfactuals. The system asks fewer questions each week.
 
-**The first year.** The Atlas has hundreds of verified profiles and a refuted-beliefs shelf. The report card shows calibration improving. Some domains have earned autopilot credentials; others have not, and the card says why. When Microsoft ships something, the Atlas profiles it the same day and the estate is told what it means *for it*. A part of the Commons has been used by other organisations. The system now finds things no one has a name for — and **names them**, as new Atlas mechanisms and detectors, for human review.
+**The first year.** The Atlas has hundreds of verified profiles and a refuted-beliefs shelf. The report card shows calibration improving. Some domains have earned autopilot credentials; others have not, and the card says why. When Microsoft ships something, the Atlas has a provisional profile within hours and the estate is told what it may mean *for it* — firm advice follows once a bill confirms it. A part of the Commons has been used by other organisations. The system now finds things no one has a name for — and **names them**, as new Atlas mechanisms and detectors, for human review.
 
 ---
 
@@ -335,13 +301,10 @@ Profile: Azure Prism · v0.1 → v0.2 · 3 claims changed
 A taste of what the north star opens up. Detail and many more in [the outer rims](08-outer-rims.md).
 
 - **Dreaming.** Overnight the system explores alternative architectures for your biggest spend in the Lab and wakes up with a map of options: *"I tried 40 configurations; here is the frontier."*
-- **Law-finding.** From hundreds of experiments it infers the *laws of Azure billing* — "short-lived resources almost always pay for a minimum" — and predicts services it has never touched.
-- **Self-writing detectors.** For every confirmed "tell" the AI writes the cheap, deterministic detector, back-tests it, and proposes it for review. **Expensive reasoning once; cheap detection forever.**
-- **Bill versus blueprint.** A cost model derived from your architecture, compared continuously with your actual bill. The residual is the investigation list.
-- **Azure moves; you benefit.** A new SKU is cheaper for a workload shaped like yours — lab-verified — and the AI tells you the day it is announced.
-- **The Hunch Box.** Anyone can submit a hunch; the system investigates and reports back with evidence — and the good ones become detectors.
-- **The cost scientist in the room.** In architecture reviews and cost reviews, an AI participant presents lab results, shows its notebook, and takes "why?" from the floor.
-- **Cost autopsy.** After any surprise, a blameless write-up of what happened, what the system believed, and what it has now learned.
+- **Law-finding.** From hundreds of experiments it infers regularities across services — *"a thing that is stopped but not released often keeps its most expensive meter"* — and is tested on whether they predict services it has never touched.
+- **Self-writing Detectors.** For every confirmed, general finding the AI writes a cheap, scoped, expiring *lead generator*, back-tests it and proposes it for review: expensive reasoning once for the pattern, cheap nominations afterwards — with the ambiguous cases still going to a Detective.
+- **The Forger.** An adversary that forges clever waste and plausible decoys to fool the Detectives, so the Exam stays hard.
+- **The Hunch Box.** Anyone can submit a hunch; the system investigates and reports back with evidence — and the good ones become Detectors.
 
 ---
 
@@ -350,6 +313,8 @@ A taste of what the north star opens up. Detail and many more in [the outer rims
 A chatbot answers. This system **runs research programmes**: long-lived, multi-step, partly parallel, resumable; it **remembers**; it uses **tools** (price lists, queries, the Lab, change recipes); it **delegates** among specialists; it is **evaluated** on exams it cannot see; its work is **traced** so it can be replayed and reviewed; and it works alongside humans who teach, decide and review. Those are the ingredients agent platforms such as Microsoft Foundry are for — which is why Foundry is the natural home we imagine. The *workflows* are research programmes and campaigns, not scripts. Chat is one way to ask the system a question; it is not the product.
 
 The product will run on Microsoft's platforms and technology. The *ideas* may come from anywhere — [the research that inspired this](research/inspirations.md) ranges from agents that write and keep their own skill libraries, to agents that keep memory and reflect on it, to automated scientific discovery.
+
+**Built on Microsoft's own frameworks.** The Well-Architected pillars are the checklist for every consequence the system shows (a saving that costs reliability is a different offer); the Cloud Adoption Framework's Govern and Manage disciplines are the operating context it works inside; and the FinOps Framework's *Inform → Optimize → Operate* lifecycle is the capability map for what it does. [How the idea lines up →](09-guardrails-later.md#how-the-idea-lines-up-with-caf-waf-and-the-finops-framework)
 
 ---
 
@@ -365,18 +330,9 @@ Human-in-the-loop is not a button on the end. It is five places in the design. D
 
 ---
 
-## 15. The hard parts, honestly
+## 15. The honest limits
 
-| Hard part | The idea for handling it |
-|---|---|
-| **Learning the wrong lesson** — a coincidence, a one-off exception | Predictions are scored; lessons are scoped and expire; replication before trust; the Skeptic; people confirm generalisations |
-| **Documents and reality disagree** | A hierarchy of evidence; the Lab settles disputes; every claim says how it is known |
-| **The Lab cannot reproduce everything** — scale, negotiated prices, quotas | Claims say whether they were *tested* or *inferred*; outcomes in real estates feed back; confidence travels with the claim |
-| **Spending to learn** | Value of information decides; budgets; the Lab must earn its keep |
-| **Goodhart** — chasing "savings" at the cost of reliability or people's time | Success is *net* value, with regret and attention cost; every recommendation shows its non-cost consequences |
-| **Human teachers are busy, wrong or biased** | Lessons are scoped, dated and reviewable; high-stakes lessons ask for evidence |
-| **A shared commons can be sloppy or poisoned** | Provenance on every claim; executable re-checks; human review; reproducible experiments |
-| **Over-trust in a fluent machine** | The report card; calibrated uncertainty; "I don't know" is an allowed answer |
+The design does not hide where learning can fail; it builds the answers in. Documents and bills disagree, and the Lab cannot reproduce everything ([studying Azure, §8](02-learning-azure.md#8-knowing-what-it-does-not-know)); a claim verified in a Lab is not verified on a customer's bill ([the learning contract, §2](11-the-learning-contract.md#2-verified-has-a-scope)); replays are evidence, not proof ([§3](11-the-learning-contract.md#3-counterfactual-evidence-not-proof)); people are witnesses, not oracles ([§4](11-the-learning-contract.md#4-people-are-witnesses-not-oracles)); an exam can be gamed, so it is independent, rotated and audited, and no single number is optimised alone ([getting smarter, §3 and §5](07-getting-smarter.md#3-the-exam)); and the system's own cost is counted against its savings ([§6](11-the-learning-contract.md#6-does-it-pay-for-itself)).
 
 ---
 
@@ -385,17 +341,20 @@ Human-in-the-loop is not a button on the end. It is five places in the design. D
 | Measure | It should… |
 |---|---|
 | **Explained spend** — the share of spend whose purpose, need and cost-to-reduce the system can state with confidence | rise |
-| **Time to profile** a new service, feature or price change | fall — to hours |
+| **Time to profile** a new service, feature or price change | fall — to a provisional mechanism profile in hours (commercial verification waits for the bill) |
 | **Rediscovery rate** on the Exam — known waste found with no rule for it | rise |
+| **Transfer** — right after one correction, on a service it has not seen | rise |
+| **Beating the baselines** — against retrieval-only and the expert-written seed | widen |
 | **Calibration** — "80% sure" means right 80% of the time | tighten |
 | **Atlas coverage and freshness** — meters on real bills with a verified profile; median age of claims | broaden and stay young |
-| **Questions asked per decision** | fall: it learns, so it asks less |
+| **Decision burden** — a person's minutes per decision, and cases waiting on an answer | fall: it learns, so it asks less, and asks better |
 | **Surprises per month** | stay above zero: it is still discovering |
 | **Verified net savings** — after what the system itself costs to run | rise |
+| **Value per human minute** — verified value for each minute of a person's attention | rise |
 
 ### The founding exam
 
-Two findings started this project. One is **data that is produced and paid for but that nobody ever reads**. The other is **capacity inside a managed networking service that was scaled up long ago, is invisible to its owners, and shows almost no use in its metrics**. They are not in the Atlas. They are not in any rule. They are not in this design. They are the **first two exam questions** — and the tips that go with them (what to stop paying for, how to shrink it safely) must come out of the system's own reasoning. If it cannot find them — and the hundred others nobody has thought of — it is not learning, and we have built a rulebook after all.
+The two findings that started this project are exam questions like any other, with no special place in the design. They are described, and marked, in [getting smarter, §8](07-getting-smarter.md#8-the-founding-exam).
 
 ---
 
@@ -416,10 +375,15 @@ Two findings started this project. One is **data that is produced and paid for b
 | **Lab** | The sandbox where agents run billing and signal experiments |
 | **Time Machine** | Replay of history under alternative configurations |
 | **Wind tunnel** | Benchmark rigs that map a service's cost/performance frontier |
-| **Experiment Ledger** | The register of predictions and results |
+| **Experiment Ledger** | The system-wide register of predictions and results (each experiment's page is a **Lab Notebook**) |
 | **Brief** | The decision document a human receives |
 | **Move** | A tested, versioned, reviewable change recipe |
 | **Credential** | Earned, revocable permission for autopilot in one domain |
-| **Exam / report card** | Independent evaluation of the system / its public record |
+| **Exam / report card** | Independent evaluation of the system / its record, kept inside the organisation |
 | **Knowledge CI** | Re-check recipes that keep every claim honest |
 | **Commons** | The open, shared half of the knowledge |
+| **Claim and scope** | One statement about Azure with its receipts — and the region, offer, load and date it was tested in |
+| **Mechanism-verified / commercially verified** | Matched its prediction in a named Lab scope / reconciled against one customer's own bill |
+| **Detector** | A cheap, scoped, expiring lead generator compiled from a confirmed finding; it nominates, investigators decide |
+| **Terrarium** | Miniature estates with planted waste and decoys, for exams and Detector back-tests |
+| **Unexplained Spend Ledger** | The part of the bill the system cannot yet explain — the engine of the Agenda |

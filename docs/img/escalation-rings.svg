@@ -1,0 +1,96 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 700" width="1200" height="700" role="img" aria-labelledby="t d" font-family="'Segoe UI', Helvetica, Arial, sans-serif">
+  <title id="t">Escalation: widening circles</title>
+  <desc id="d">A question to an owner widens, one ring at a time and only when there is no answer, from the owner in private to a delegate, a team lead, the team channel, the accountable manager and a FinOps triage. Any ring can answer, which ends the escalation in a recorded human decision. A cost emergency skips the ladder and goes by text and voice to the on-call person.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#0b1220"/>
+      <stop offset="1" stop-color="#101a30"/>
+    </linearGradient>
+    <marker id="out" viewBox="0 0 10 10" refX="7" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#e5e7eb"/></marker>
+    <marker id="in" viewBox="0 0 10 10" refX="7" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#34d399"/></marker>
+  </defs>
+  <rect width="1200" height="700" fill="url(#bg)"/>
+
+  <!-- the six rings: solid while private, dashed once shared -->
+  <g fill="none">
+    <circle cx="340" cy="350" r="325" stroke="#f472b6" stroke-opacity="0.6" stroke-width="2.5" stroke-dasharray="10 8" fill="#f472b6" fill-opacity="0.05"/>
+    <circle cx="340" cy="350" r="270" stroke="#fb923c" stroke-opacity="0.6" stroke-width="2.5" stroke-dasharray="10 8" fill="#fb923c" fill-opacity="0.05"/>
+    <circle cx="340" cy="350" r="215" stroke="#f59e0b" stroke-opacity="0.6" stroke-width="2.5" stroke-dasharray="10 8" fill="#f59e0b" fill-opacity="0.05"/>
+    <circle cx="340" cy="350" r="160" stroke="#a78bfa" stroke-opacity="0.75" stroke-width="2.5" fill="#a78bfa" fill-opacity="0.05"/>
+    <circle cx="340" cy="350" r="105" stroke="#60a5fa" stroke-opacity="0.75" stroke-width="2.5" fill="#60a5fa" fill-opacity="0.05"/>
+    <circle cx="340" cy="350" r="50" stroke="#34d399" stroke-opacity="0.75" stroke-width="2.5" fill="#34d399" fill-opacity="0.08"/>
+  </g>
+
+  <!-- the person at the centre -->
+  <g fill="#34d399" fill-opacity="0.9">
+    <circle cx="340" cy="342" r="9"/>
+    <path d="M322,372 C322,356 358,356 358,372 Z"/>
+  </g>
+
+  <!-- widening outwards: only when there is no answer -->
+  <path d="M360,330 L577,113" stroke="#e5e7eb" stroke-width="3" stroke-dasharray="8 7" fill="none" marker-end="url(#out)"/>
+  <rect x="436" y="214" width="196" height="40" rx="8" fill="#0b1220" fill-opacity="0.92" stroke="#e5e7eb" stroke-opacity="0.5" transform="rotate(-45 534 234)"/>
+  <g transform="rotate(-45 534 234)" font-size="12.5" text-anchor="middle" fill="#e5e7eb">
+    <text x="534" y="231">no answer</text>
+    <text x="534" y="247">warn first, then widen</text>
+  </g>
+
+  <!-- answering inwards: any ring can end it -->
+  <path d="M128,562 L312,378" stroke="#34d399" stroke-width="3" fill="none" marker-end="url(#in)"/>
+  <rect x="44" y="506" width="218" height="52" rx="8" fill="#0b1220" fill-opacity="0.92" stroke="#34d399" stroke-opacity="0.6"/>
+  <g font-size="12.5" text-anchor="middle" fill="#a7f3d0">
+    <text x="153" y="528">any answer ends it:</text>
+    <text x="153" y="545">a human decision, recorded</text>
+  </g>
+
+  <!-- ring chips -->
+  <g font-size="12" font-weight="700" letter-spacing="2" text-anchor="middle">
+    <rect x="298" y="289" width="84" height="22" rx="11" fill="#0b1220" stroke="#34d399" stroke-width="2"/>
+    <text x="340" y="305" fill="#34d399">OWNER</text>
+    <rect x="288" y="234" width="104" height="22" rx="11" fill="#0b1220" stroke="#60a5fa" stroke-width="2"/>
+    <text x="340" y="250" fill="#60a5fa">DELEGATE</text>
+    <rect x="287" y="179" width="106" height="22" rx="11" fill="#0b1220" stroke="#a78bfa" stroke-width="2"/>
+    <text x="340" y="195" fill="#a78bfa">TEAM LEAD</text>
+    <rect x="271" y="124" width="138" height="22" rx="11" fill="#0b1220" stroke="#f59e0b" stroke-width="2"/>
+    <text x="340" y="140" fill="#f59e0b">TEAM CHANNEL</text>
+    <rect x="288" y="69" width="104" height="22" rx="11" fill="#0b1220" stroke="#fb923c" stroke-width="2"/>
+    <text x="340" y="85" fill="#fb923c">MANAGER</text>
+    <rect x="269" y="14" width="142" height="22" rx="11" fill="#0b1220" stroke="#f472b6" stroke-width="2"/>
+    <text x="340" y="30" fill="#f472b6">FINOPS TRIAGE</text>
+  </g>
+
+  <!-- right-hand explanation -->
+  <g>
+    <text x="700" y="64" font-size="34" font-weight="700" letter-spacing="3" fill="#ffffff">ESCALATION</text>
+    <text x="700" y="92" font-size="14" fill="#cbd5e1">Widening circles, not a chain. A circle opens only when there is no answer.</text>
+
+    <rect x="700" y="128" width="5" height="92" rx="2.5" fill="#34d399"/>
+    <text x="722" y="148" font-size="18" font-weight="700" fill="#34d399">PRIVATE</text>
+    <text x="722" y="172" font-size="14" fill="#e5e7eb">Owner, then delegate, then team lead — in the places they</text>
+    <text x="722" y="192" font-size="14" fill="#e5e7eb">already work. Each step says what the next one will be.</text>
+
+    <rect x="700" y="238" width="5" height="70" rx="2.5" fill="#f59e0b"/>
+    <text x="722" y="258" font-size="18" font-weight="700" fill="#f59e0b">SHARED</text>
+    <text x="722" y="282" font-size="14" fill="#e5e7eb">The team channel names the case, never a person</text>
+    <text x="722" y="302" font-size="14" fill="#e5e7eb">who has not answered.</text>
+
+    <rect x="700" y="326" width="5" height="70" rx="2.5" fill="#fb923c"/>
+    <text x="722" y="346" font-size="18" font-weight="700" fill="#fb923c">ACCOUNTABLE</text>
+    <text x="722" y="370" font-size="14" fill="#e5e7eb">The manager gets one team-level summary — only if</text>
+    <text x="722" y="390" font-size="14" fill="#e5e7eb">accountable for the resource.</text>
+
+    <rect x="700" y="414" width="5" height="70" rx="2.5" fill="#f472b6"/>
+    <text x="722" y="434" font-size="18" font-weight="700" fill="#f472b6">TRIAGE</text>
+    <text x="722" y="458" font-size="14" fill="#e5e7eb">FinOps lead: reroute, name a custodian, park with an</text>
+    <text x="722" y="478" font-size="14" fill="#e5e7eb">expiry, or accept the risk in writing.</text>
+
+    <rect x="700" y="502" width="5" height="70" rx="2.5" fill="#ef4444"/>
+    <text x="722" y="522" font-size="18" font-weight="700" fill="#ef4444">EMERGENCY LANE</text>
+    <text x="722" y="546" font-size="14" fill="#e5e7eb">A spreading cost emergency skips the ladder: text and</text>
+    <text x="722" y="566" font-size="14" fill="#e5e7eb">voice to on-call — and still ends in a human decision.</text>
+
+    <text x="700" y="624" font-size="14" font-style="italic" fill="#94a3b8">Widening needs entitlement: every recipient must be entitled to know.</text>
+    <text x="700" y="646" font-size="14" font-style="italic" fill="#94a3b8">Silence is never consent.</text>
+  </g>
+</svg>

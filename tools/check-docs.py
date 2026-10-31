@@ -4,7 +4,8 @@
 Checks
   1. Links and anchors in live documents resolve (GitHub heading-slug rules).
   2. Mermaid blocks: known diagram type, balanced quotes and brackets, quoted labels where
-     needed, and no purely linear flowchart (pictures must show loops, hubs, parallel work).
+     needed, and no linear pipeline - a single chain, or one path through most nodes with no
+     hub, even if closed into a ring (pictures must show loops, hubs, parallel work).
   3. SVG files are well-formed XML.
   4. Every live document is reachable from README.md (no orphans).
   5. Anchoring guard: the two findings that started the project may appear only in the exam
@@ -34,10 +35,13 @@ ANCHOR_ALLOWLIST = {
 ANCHOR_PATTERNS = [
     r"\bP2S\b", r"point[- ]to[- ]site", r"\bvWAN\b", r"virtual wan", r"LAQueryLogs",
     r"seed[- ]example", r"release[- ]1\b", r"log analytics",
+    r"never read\b", r"nobody (?:ever )?reads", r"read by nobody", r"scaled up long ago",
+    r"idle gateway", r"shared gateway", r"unused logs", r"never queried",
 ]
 BLOAT_PATTERNS = [
     (r"kill criteri", re.I), (r"risk register", re.I), (r"assumption register", re.I),
     (r"decision register", re.I), (r"technical spike", re.I), (r"threat catalog", re.I),
+    (r"honest unknowns", re.I), (r"exit criteria", re.I), (r"assumptions? list", re.I),
     (r"R3-Data", 0), (r"\bK[1-7]\b", 0), (r"\bD(?:1[0-8]|[1-9])\b", 0),
 ]
 MERMAID_TYPES = (
@@ -216,6 +220,44 @@ def is_linear(nodes, edges) -> bool:
     return len(seen) == len(nodes)
 
 
+def longest_path_nodes(nodes, edges) -> int:
+    """Number of nodes on the longest simple directed path (graphs here are small)."""
+    adj: dict[str, list[str]] = {n: [] for n in nodes}
+    for a, b in edges:
+        adj.setdefault(a, []).append(b)
+    best = 0
+
+    def walk(n: str, seen: set[str]) -> None:
+        nonlocal best
+        best = max(best, len(seen))
+        if best == len(nodes):
+            return
+        for m in adj.get(n, ()):
+            if m not in seen:
+                walk(m, seen | {m})
+
+    for start in nodes:
+        walk(start, {start})
+        if best == len(nodes):
+            break
+    return best
+
+
+def max_degree(nodes, edges) -> int:
+    deg = {n: 0 for n in nodes}
+    for a, b in edges:
+        deg[a] = deg.get(a, 0) + 1
+        deg[b] = deg.get(b, 0) + 1
+    return max(deg.values(), default=0)
+
+
+def is_pipeline_in_disguise(nodes, edges) -> bool:
+    """One path through at least 80% of the nodes and no hub: a chain, even if closed into a ring."""
+    if len(nodes) < 6 or len(nodes) > 24:
+        return False
+    return longest_path_nodes(nodes, edges) >= 0.8 * len(nodes) and max_degree(nodes, edges) < 4
+
+
 def check_mermaid(path: Path, blocks, rep: Report):
     for lang, start, lines in blocks:
         if lang != "mermaid":
@@ -259,6 +301,8 @@ def check_mermaid(path: Path, blocks, rep: Report):
             nodes, edges = mermaid_edges(lines)
             if is_linear(nodes, edges):
                 rep.warn(path, start, "linear pipeline picture - show loops, hubs or parallel work instead")
+            elif is_pipeline_in_disguise(nodes, edges):
+                rep.warn(path, start, "pipeline in disguise: one path through most nodes and no hub - show hubs or parallel work")
 
 
 def check_guards(files, rep: Report):
@@ -325,6 +369,10 @@ def self_test() -> int:
     assert not is_linear(n, e)
     n, e = mermaid_edges(["flowchart TB", "A <--> B", "B --> C", "C --> D", "D --> E"])
     assert not is_linear(n, e)
+    n, e = mermaid_edges(["flowchart LR", "A --> B", "B --> C", "C --> D", "D --> E", "E --> F", "F --> A"])
+    assert is_pipeline_in_disguise(n, e)
+    n, e = mermaid_edges(["flowchart TB", "H --> A", "H --> B", "H --> C", "H --> D", "A --> H", "B --> H", "C --> H"])
+    assert not is_pipeline_in_disguise(n, e)
     print("self-test OK")
     return 0
 

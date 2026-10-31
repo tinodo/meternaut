@@ -142,7 +142,7 @@ The AI asks to *learn*, not to nag. Four kinds recur:
 | **Rhythm** — "is this busy at quarter end?" | how long the AI must watch before it may say "unused" |
 | **Constraint** — "can this be paused?" | the options the Brief may offer at all |
 
-Every question says **why it is being asked** and **what it will do with the answer** — and the answer is remembered, so the same question is never asked twice.
+Every question says **why it is being asked** and **what it will do with the answer** — and the answer is remembered as **testimony**: attributed, scoped to what was asked, and *widened only with corroboration* (telemetry that agrees, a second person, repeated outcomes). It is never treated as a fact beyond its scope, and it can be re-asked cheaply if the evidence changes. The measure of success is **decision burden** — a person's minutes per decision, and cases waiting on an answer — not question count.
 
 ### The teaching card — one useful idea at the right moment
 
@@ -166,23 +166,43 @@ Three rules keep teaching from becoming noise: **relevance** (only about what so
 
 ### The alert — private first, calm
 
-A spend that suddenly runs away (the WATCH clock) goes **first to one person, in private**. If a *credential* exists that lets the AI act on this kind of thing — *"pause training pools that spend more than 20× normal"* — it acts and tells. If none exists, it asks and keeps asking in the ladder below; it never invents authority. Emergencies get text and voice (below).
+A spend that suddenly runs away (the WATCH clock) goes **first to one person, in private** — and it is *classified* before anyone is alarmed:
+
+```mermaid
+stateDiagram-v2
+    [*] --> Noticed: a fast signal, an anomaly alert or a budget alert
+    Noticed --> Classified: planned, growth, incident, attack or a mistake?
+    Classified --> Dismissed: planned or expected, and the reason is kept
+    Classified --> Asked: a private question to the owner, with what changed and when
+    Asked --> Dismissed: the owner explains
+    Asked --> Acting: a credential allows it, or the owner says yes
+    Asked --> Escalating: no answer, so the circle widens; an emergency uses text and voice
+    Escalating --> Acting: a human decides
+    Acting --> Verifying: a Move runs and its guards watch
+    Verifying --> Resolved: the spend is back where it should be
+    Verifying --> Asked: it is not, so ask again with what the Move changed
+    Resolved --> Lesson: what it was, how it was found, what to watch next
+    Dismissed --> Lesson
+    Lesson --> [*]
+```
+
+If a *credential* exists that lets the AI act on this kind of thing — *"pause training pools that spend more than 20× normal"* — it acts and tells. If none exists, it asks and keeps asking as the circle widens; it never invents authority. A spike that looks like abuse goes to the people who watch for that as well.
 
 ### The letters — what I learned, what I did
 
 Three letters, each *short and specific*: **the Monday letter** (what I learned this week — see [the north star](01-north-star.md#10-what-the-learning-looks-like-from-the-outside)), **the weekly desk** (the person's own decisions) and **the monthly letter** to the FinOps lead and Finance ([what the Moves of a month look like](05-recommend-act-verify.md#12-what-it-looks-like-from-outside--the-moves-of-a-month)). Subject lines are specific and calm: *"3 decisions, worth about €1,150 a month"* — never *"URGENT: action required"*.
 
 ```
-Subject: Your Azure savings desk - 3 decisions, 1 win (week 45)
+Subject: Your Azure savings desk - 2 decisions, 1 question, 1 win (week 45)
 
 Hi Sanne,
 
-3 decisions need you (about 4 minutes), worth about EUR 1,150/month:
+2 decisions and 1 question need you (about 4 minutes); the decisions are worth about EUR 215/month:
   1. Resize vm-orders-api-03 ................ ~EUR 135/mo . reversible . [Decide]
   2. Move dev database backups to a cooler tier ~EUR  80/mo . reversible . [Decide]
   3. Is vm-batch-07 yours? .................. [Answer]
 
-A win: the gateway change you approved in October is verified:
+A win: the storage-tiering change you approved in October is verified:
 EUR 1,840/month saved (measured against a comparison group, not guessed).
 
 Something I learned from you: "Phoenix is pre-production" - applied 6 times
@@ -258,32 +278,7 @@ When a question is unanswered, the AI widens the circle — slowly, and never be
 5. **Widening needs entitlement.** Before a message reaches a wider audience, the AI checks that every recipient is *entitled to know*. Until then it sends an **opaque routing request** (*"a cost decision needs an owner — can you route it?"*) or an **aggregate** — never a resource name, a cost or a project name. For sensitive cases there is **no shared post at all**.
 6. **Managers get one team-level summary** (counts, value, age), only if they are accountable — never a list of who ignored what.
 
-```mermaid
-flowchart TB
-    O(["Owner, in private"])
-    D["Delegate or alternate<br/>private, with context"]
-    L["Team lead<br/>private: help me route this"]
-    C["Team channel<br/>the case, never a person"]
-    M["Accountable manager<br/>one team-level summary"]
-    F["FinOps lead triage<br/>reroute · custodian · park · written risk acceptance"]
-    X(["A human decision<br/>recorded and remembered"])
-    E{{"Emergency spend rate"}}
-    V["Text and voice to on-call<br/>under the emergency rule"]
-    O -->|"no answer, 2 working days"| D
-    D -->|"no answer"| L
-    L -->|"no answer"| C
-    C -->|"no answer"| M
-    M -->|"no answer"| F
-    O --> X
-    D --> X
-    L --> X
-    C --> X
-    M --> X
-    F --> X
-    E --> V
-    V --> X
-    X -.->|"reason kept; condition to re-open"| O
-```
+![Escalation as widening circles: owner, delegate, team lead, team channel, accountable manager, FinOps triage — plus an emergency lane](img/escalation-rings.svg)
 
 ---
 
@@ -330,34 +325,19 @@ With people's agreement, the AI treats *how it communicates* as something to lea
 
 ---
 
-## 13. Archetypes to design for (hypotheses, not personas)
-
-| Archetype | Wants | Design implication |
-|---|---|---|
-| **The Skeptic** | evidence | layer 2 is one tap; Challenge is prominent |
-| **The Busy** | one tap | the Brief has a default and an undo |
-| **The Analyst** | data | the notebook, the queries, the charts, an export |
-| **The Delegator** | routing | easy "Not mine — try X"; team-level views |
-| **The Anxious** | reassurance about reversibility | undo and guards are visible before the buttons |
-| **The Champion** | more | opt-in to Assist and Autopilot; a place to teach the AI |
-
-These are things to *test*, not categories to put people in. Adaptation is explicit, explainable and opt-in.
-
----
-
-## 14. Inclusion and accessibility
+## 13. Inclusion and accessibility
 
 Screen-reader friendly cards · plain language · no meaning conveyed by colour alone · captions and transcripts for everything spoken · a predictable structure (kind to neurodiverse readers) · multilingual, with locale-aware dates and currency · directness calibrated to the audience — what reads as clear in one culture reads as curt in another.
 
 ---
 
-## 15. Things we will not do
+## 14. Things we will not do
 
-Fake urgency · shaming lists · naming people who have not answered, in any shared space · leaderboards of individuals · hidden AI identity · an "approve all" button · giant digests nobody reads · notifications that merely inform · asking the same question twice · a *Decline* that is harder than an *Accept* · links that act on click without authentication · treating silence as consent · implying an undo where there is none · tone that suggests the owner was negligent · jargon · scoring how well people work.
+Fake urgency · shaming lists · naming people who have not answered, in any shared space · leaderboards of individuals · hidden AI identity · an "approve all" button · giant digests that go unread · notifications that merely inform · asking the same question twice · a *Decline* that is harder than an *Accept* · links that act on click without authentication · treating silence as consent · implying an undo where there is none · tone that suggests the owner was negligent · jargon · scoring how well people work.
 
 ---
 
-## 16. Storyboards
+## 15. Storyboards
 
 > Invented names, resources and numbers. Buttons are shown as `[Label]`.
 
@@ -382,7 +362,7 @@ Call (02:11, no answer to the card):
 
 ### The executive's 90-second brief (text of the audio)
 
-> *"Good morning Jan. Azure spend was two percent below forecast. Verified savings this month: one hundred forty thousand euro run-rate, up thirty from last month — projected savings are reported separately. Commitment coverage is eighty-one percent, utilisation ninety-four. Two actions were rolled back; both are explained in the regret report. Three decisions need you this week: a staged commitment purchase, a policy for development environments, and an exception for one regulated workload. This brief was composed by an AI; every figure is computed from the savings ledger."*
+> *"Good morning Jan. Azure spend was two percent below forecast. Verified savings: eleven thousand euro realised this month — a run-rate of about one hundred forty thousand a year, up thirty from last month; projected savings are reported separately. Commitment coverage is eighty-one percent, utilisation ninety-four. Two actions were rolled back; both are explained in the regret report. Three decisions need you this week: a staged commitment purchase, a policy for development environments, and an exception for one regulated workload. This brief was composed by an AI; every figure is computed from the savings ledger."*
 
 ### The AI in the monthly cost review (excerpt)
 
@@ -413,12 +393,12 @@ AI participant: Recorded as a decision by Lars. I will remind you on
 ```
 Maya (human):   why did our October bill go up 14%?
 AI:             About EUR 3,900 of the EUR 4,300 rise comes from one change on
-                the 9th: the nightly batch started running in two regions
-                (deployed by the "reporting-v3" pipeline). EUR 400 is organic
-                growth. The second region has the same data processing volume
-                as the first, which looks unintended - nothing reads it.
-                That is a hypothesis, not a finding yet: want me to
-                open a case and ask whoever owns the pipeline?
+                the 9th: the web tier of the booking app moved to a second region
+                (deployed by the "booking-v3" pipeline) while its database stayed
+                put, so every request now crosses regions. EUR 400 is organic
+                growth. That looks like an unfinished move rather than a decision
+                - but that is a hypothesis, not a finding yet: want me to open a
+                case and ask whoever owns the pipeline?
 Maya (human):   yes
 AI:             Opened as case 4312. I'll ask Jonas (the pipeline's last
                 author) one question and tell you what he says.

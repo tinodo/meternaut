@@ -19,36 +19,36 @@ Three principles run through everything below:
 
 ---
 
-## 2. The ladder: cheapest decisive test first
+## 2. Five ways of finding out — cheapest decisive test first
 
-For any open question, the Experimenter climbs only as far as it must. Each rung is more convincing — and more expensive — than the one below:
+For any open question, the Experimenter asks one thing: *what is the cheapest test that would change the decision?* It does not climb a ladder — it **chooses**, and goes back to choose again when a result is not enough. Each way is more convincing, and more expensive, than the one before it:
 
 ```mermaid
 flowchart TB
     Q(["An open question from the Agenda"])
-    R1["Rung 1 — ASK<br/>a person, in one question"]
-    R2["Rung 2 — LOOK<br/>data already collected: bill, metrics, history, natural experiments"]
-    R3["Rung 3 — REPLAY<br/>the Time Machine: history under another configuration"]
-    R4["Rung 4 — LAB<br/>build it, drive it, watch the bill form"]
-    R5["Rung 5 — TRIAL<br/>one small, reversible change on a real resource, with consent"]
-    D{{"Decisive enough?<br/>is the answer worth more than the next rung costs?"}}
+    H{{"Value of information<br/>what is the cheapest test that would change the decision?"}}
+    R1["ASK<br/>a person, in one question"]
+    R2["LOOK<br/>data already collected: bill, metrics, history, natural experiments"]
+    R3["REPLAY<br/>the Time Machine: history under another configuration"]
+    R4["LAB<br/>build it, drive it, watch the bill form"]
+    R5["TRIAL<br/>one small, reversible change on a real resource, with consent"]
     K[("Knowledge<br/>Atlas · Lessons · Detectors · Ledger")]
-    Q --> D
-    D -->|"cheap rung first"| R1
-    D --> R2
-    R1 -->|"answered"| K
-    R1 -->|"only a person could say, and they did not know"| R2
-    R2 -->|"answered"| K
-    R2 -->|"history cannot show it"| R3
-    R3 -->|"answered"| K
-    R3 -->|"cannot be simulated"| R4
-    R4 -->|"answered"| K
-    R4 -->|"only reality will do"| R5
+    Q --> H
+    H -->|"one person could say"| R1
+    H -->|"the data already exists"| R2
+    H -->|"history can answer it"| R3
+    H -->|"only a build can answer it"| R4
+    H -->|"only reality will do"| R5
+    R1 -->|"a result, or not enough"| H
+    R2 -->|"a result, or not enough"| H
+    R3 -->|"a result, or not enough"| H
+    R4 -->|"a result, or not enough"| H
     R5 --> K
+    H -->|"decisive"| K
     K -.->|"new questions, new surprises"| Q
 ```
 
-The ladder is not a rule that every question visits every rung — the Experimenter jumps by **value of information**: if a wrong answer is expensive and the Lab is cheap, go straight to the Lab; if one person can say it in ten seconds, ask them.
+The hub is not a rule that every question visits every way: if a wrong answer is expensive and the Lab is cheap, go straight to the Lab; if one person can say it in ten seconds, ask them.
 
 ---
 
@@ -64,7 +64,8 @@ flowchart LR
     WT["Wind Tunnel<br/>cost and performance frontier"]
     TM["Time Machine<br/>replay history, re-price history"]
     TR["Terrarium<br/>miniature estates with planted waste"]
-    MW["Move Workshop<br/>write and prove new Moves"]
+    MW["Move Workshop<br/>write and test new Moves"]
+    RB["Rehearsal estate<br/>a twin of a real estate, to rehearse a change"]
     JA["Janitor<br/>everything dies on a timer"]
     BB --> NB
     SB --> NB
@@ -72,20 +73,23 @@ flowchart LR
     TM --> NB
     TR --> NB
     MW --> NB
+    RB --> NB
     NB --> BB
     NB --> SB
     NB --> WT
     NB --> TM
     NB --> TR
     NB --> MW
+    NB --> RB
     JA -.-> BB
     JA -.-> SB
     JA -.-> WT
     JA -.-> TR
     JA -.-> MW
+    JA -.-> RB
 ```
 
-The Lab Notebook is the hub: every bench reads *what is worth learning next* from it and writes back what it found. The Janitor is not an afterthought — every resource the Lab creates carries an expiry, and the Lab's own bill is on the report card.
+The Lab Notebook is the hub: every bench reads *what is worth learning next* from it and writes back what it found. The **rehearsal estate** is a digital twin built from a real estate's Estate Model with synthetic data and recorded load shapes: before the AI proposes a change that matters, it rehearses it there, and shows the owner the rehearsal. The Janitor is not an afterthought — every resource the Lab creates carries an expiry, and the Lab's own bill is on the report card.
 
 ---
 
@@ -112,6 +116,10 @@ The most basic question about any service: *what shows up on the bill, and why?*
 ### Meter fingerprints
 
 Each probe leaves a **fingerprint**: *this behaviour produces these meters in this pattern*. Later, in a real estate, an unexplained meter can be matched against fingerprints: *"this pattern is what an idle capacity-billed thing looks like."* Fingerprints are how the system explains a bill line that nothing in the documentation names.
+
+### Designed probes and executable laws
+
+Probes are *designed*, not improvised. A small **factorial plan** varies state, size, region and time together, so that interactions show up instead of hiding behind one-at-a-time tests; and **metamorphic checks** ask what must stay true however the numbers come out (*double the size — does the meter exactly double? stop and start — do the same meters return?*). When a regularity holds across many probes, the system writes it down as an **executable law** — a small function from a configuration to its meters — that can predict a service it has not seen, and that the next probe can falsify.
 
 ### An entry from the Lab Notebook (illustrative — the service is invented)
 
@@ -155,11 +163,13 @@ Frontiers are filed in the Atlas with their *test conditions* and a freshness da
 
 Customers' estates have a **past**, and the past is the best test set there is.
 
-- **Analytic replay** — from recorded metrics and the Atlas's capacity model: *"if this had been two instances instead of six, would it have survived every peak of the last twelve months?"* No Lab needed.
+- **Analytic replay** — from recorded metrics and the Atlas's capacity model: *"if this had been two instances instead of six, would it have survived every peak in the history we hold?"* No Lab needed.
 - **Empirical replay** — from recorded traffic or a faithful synthetic version of it, run against another configuration in the Lab: *"here is what would have happened in November."*
 - **The price Time Machine** — re-price the last year under different choices: another region, another tier, a different commitment portfolio, a different purchase date. *"If you had bought this commitment in January, you would have saved X — and been over-committed in the August lull by Y."* This is where purchases are tested before they are proposed.
 
-The Time Machine is what lets the system **prove** a change *would have been safe* before asking anyone to say yes.
+*How far back it can go depends on what has been kept*: Azure retains property changes for 14 days and platform metrics for about 93, and a price sheet for past months has to be exported by the customer. So history is collected from day one, and replay is honest about how deep it is.
+
+The Time Machine produces **counterfactual evidence under stated assumptions**, each result with its **external-validity envelope**: what was held constant, how faithful the traffic was, what scale was tested, and what was *not* tested — rare paths, quota contention, dependencies, commitments, the human side of operating it. It can make a change look *safe enough to try*. Only a guarded trial, or observation after the change, can show it *is* safe in this estate.
 
 ---
 
@@ -221,8 +231,9 @@ Three features make this more than bookkeeping: the **prediction** (so surprise 
 
 Two budgets pull in opposite directions, and both are explicit:
 
-- **The Lab's cost** is on the report card, next to what the knowledge it produced was worth. Experiments are funded by **value of information**: what a wrong belief would cost × how likely it is wrong × how cheaply the Lab can settle it. If learning costs more than it is worth, it stops.
-- **A curiosity budget** — a protected slice of effort — goes to questions with *no* immediate payoff: new services before anyone uses them, odd corners of the grammar, the "I wonder" list. This is how the system finds the things nobody knew to ask about, and it is why day zero for a new service can be *day zero*.
+- **The Lab's cost** is on the report card, next to what the knowledge it produced was worth — judged as a **portfolio** (learning return over a quarter), not only experiment by experiment. Experiments are funded by **value of information**: what a wrong belief would cost × how likely it is wrong × how cheaply the Lab can settle it. If learning costs more than it is worth, it stops.
+- **A curiosity budget** — a protected slice of effort — goes to questions with *no* immediate payoff: new services before anyone uses them, odd corners of the grammar, the "I wonder" list. This is how the system finds the things nobody knew to ask about, and why a new service can get a provisional profile within hours.
+- **A research director that learns.** Which source, question, experiment or replay yields the most *verified value per euro and per human minute* is itself learned — a bandit-style allocation with a protected exploration share ([the learning contract, row 2](11-the-learning-contract.md#1-six-things-that-change)).
 
 ---
 
@@ -236,25 +247,35 @@ At night, with no one waiting, the system does what a good analyst does on a tra
 - replays a sample of old, closed cases with today's Atlas to find where yesterday's answer would now be different;
 - proposes edits to the Atlas for human review.
 
-### Expensive reasoning once, cheap detection forever
+### Expensive reasoning once — cheap nominations after
 
-The Detectives' deep investigations are slow and costly — and should happen **once**. When a hypothesis is confirmed and is *general*, the system writes the **Detector**: a small, cheap, inspectable piece of logic that looks for the same pattern in every estate, every night, without reasoning at all. A Detector earns its place the same way a Move does:
+The Detectives' deep investigations are slow and costly, so the system does not want to repeat them. When a hypothesis is confirmed and is *general*, it writes a **Detector**: a small, cheap, inspectable piece of logic that looks for the same pattern in every estate, every night, without reasoning at all.
+
+A Detector is a **lead generator, never a verdict**. It nominates; an investigator decides. Because prices, workloads and meaning change, each Detector declares its **validity domain** (where it applies), its **blind spots** (what it cannot see), a **novelty trigger** (the conditions under which it must hand the case back to a Detective) and an **expiry**. The expensive reasoning is kept not only for the genuinely new, but for the ambiguous and the shifted.
+
+Detectors and Moves earn their place the same way — one life cycle, with a way back at every step:
 
 ```mermaid
-flowchart LR
-    C(["Confirmed general finding"]) --> W["Write the Detector<br/>logic + what it needs to see"]
-    W --> B["Back-test on history<br/>(labelled cases, Terrarium)"]
-    B --> L["Try in the Lab<br/>with planted examples"]
-    L --> S["Shadow mode<br/>runs, tells nobody, is scored"]
-    S --> P{"Precision and value good enough?"}
-    P -->|"yes"| PR["Promoted<br/>owners see its findings"]
-    P -->|"no"| RW["Rewrite or retire<br/>the reason is a Lesson"]
-    RW --> W
-    PR --> M["Watched forever<br/>false positives retire it,<br/>price changes re-test it"]
-    M -.-> W
+stateDiagram-v2
+    [*] --> Drafted: a confirmed general finding, or a recurring need with no Move
+    Drafted --> BackTested: run against labelled history and the Terrarium
+    BackTested --> LabProven: tried in the Lab, with failure injection for Moves
+    BackTested --> Drafted: a hole is found
+    LabProven --> Attacked: the Skeptic asks what it could destroy or miss
+    Attacked --> Drafted: it breaks
+    Attacked --> Reviewed: a person reads it, as a pull request to the Commons
+    Reviewed --> Drafted: changes requested
+    Reviewed --> Shadow: a Detector runs and tells nobody; a Move runs at assist level only
+    Shadow --> Trusted: precision, harm record and value are good enough
+    Shadow --> Retired: not good enough, and the reason becomes a Lesson
+    Trusted --> Demoted: a surprise, a false positive or a regret
+    Demoted --> Shadow: it has to re-earn trust
+    Trusted --> BackTested: a price, API or document change triggers a re-test
+    Trusted --> Retired: the world changed
+    Retired --> [*]
 ```
 
-Detectors are the system's way of *compiling* what it learned into something fast. A year in, most of what a customer sees is the output of Detectors; the expensive investigations are reserved for the genuinely new.
+Detectors are the system's way of *compiling* what it learned into something fast. A year in, much of what a customer sees begins as a Detector's nomination; investigation stays for what the Detectors cannot see.
 
 ---
 
@@ -262,7 +283,13 @@ Detectors are the system's way of *compiling* what it learned into something fas
 
 To test whether the system *really* finds things rather than recalling them, it needs estates where the truth is known. The **Terrarium** builds **miniature, realistic estates** in the Lab — a few dozen resources with real usage rhythms running for weeks, mimicking the shape of a retailer, a bank's analytics team, a start-up — and **plants** inefficiencies in them: some famous, some novel, some that depend on the business calendar. The planting is done by the **Examiner**, who writes down the answer key and tells nobody. Then the investigation agents are let loose, and the [Exam](07-getting-smarter.md#3-the-exam) scores what they find against the key.
 
-The Terrarium is also where Detectors are back-tested and where new Moves are proven against realistic neighbours.
+The Terrarium is also where Detectors are back-tested and where new Moves are tested against realistic neighbours.
+
+### The Forger
+
+The Examiner has an adversarial twin. The **Forger** builds waste designed to *fool* the investigators — disguised idle capacity, plausible decoys that look wasteful but are not, confounded cases (traffic fell while the "saving" happened), and combinations of mechanisms the grammar has never seen — and evolves them as the Detectives improve. Every Forger win becomes an exam question and a Lesson. It keeps the exam hard in ways no human question-writer could, and it tests whether the system recognises *the Examiner's own way of thinking* rather than the world.
+
+To keep the test honest beyond synthetic estates, the Terrarium is mixed with **real, labelled, provenance-separated cases** — post-cutoff and retrospective cases from real estates, with consent — and anything that resembles material the system may have seen is marked *possibly seen* and weighted down.
 
 ---
 
@@ -292,4 +319,4 @@ The answers change how the system works — and are published on the report card
 
 ## 17. The Lab is a walled garden
 
-Because it *is* allowed to break things, the Lab lives behind a wall of its own: its own subscription, its own spending cap, its own identity, no network path into any customer estate, no customer data inside it. Customer-shaped workloads in the Lab are **synthetic or reconstructed from statistics**, never copies. What goes in, what may come out and who can authorise a new kind of experiment are [guardrail questions for later](09-guardrails-later.md) — the point here is that **the freedom to experiment is what makes the learning possible, and the wall is what makes the freedom safe.**
+Because it *is* allowed to break things, the Lab is walled off from every customer estate and holds no customer data; customer-shaped workloads in it are **synthetic or reconstructed from statistics**, never copies. The rules are [guardrail questions for later](09-guardrails-later.md) — the point here is that **the freedom to experiment is what makes the learning possible, and the wall is what makes the freedom safe.**

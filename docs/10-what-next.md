@@ -1,6 +1,6 @@
-# What next — from the idea to the thinnest thing that proves it
+# What next — from the idea to a first experiment
 
-> You said: *"Later, we will design the UIs, the personas, the user flows, systems, etc. and THEN we will design, architect and build it."* This is that order, kept simple: only the next steps and what each one produces — no paperwork.
+> You said, at the start: *"Later, we will design the UI's, the persona's, the user flows, systems, etc. and THEN we will design, architect and build it."* This is that order, kept simple: only the next steps and what each one produces — no paperwork.
 > Part of the [north star](01-north-star.md).
 
 ---
@@ -15,62 +15,71 @@
 | **4** | **The Lab** | which benches first (Billing Bench, Signal Bench); the budget model; the walls; five services probed by hand to find out what an AI would have to do | [04 Experiments and the Lab](04-experiments-and-the-lab.md) |
 | **5** | **Agents and workflows** | the cast mapped to research programmes and campaigns; memory, tools, tracing, evaluation; what the Conductor does; a walk through what Microsoft Foundry offers today | [01 §9](01-north-star.md#9-the-cast) |
 | **6** | **Guardrails** | the themes answered as small, testable commitments | [09 Guardrails, later](09-guardrails-later.md) |
-| **7** | **Architecture, then build** | a design aligned with CAF and WAF on Microsoft platforms; the thinnest slice below | everything above |
+| **7** | **Architecture, then build** | a design aligned with CAF and WAF on Microsoft platforms; the first experiment below | everything above |
 
 Steps 1–4 can overlap; none needs code. Step 3 deliberately comes **before** building the learner: *you cannot know it is learning until you have an exam it cannot see.*
 
 ---
 
-## The thinnest slice: learn one service, find its waste, explain it to a person
+## The first experiment: does it learn?
 
-If this small loop works for three services, it works for three hundred. The slice is a **whole loop in miniature**, not one layer of a stack:
+Before building the whole society of agents, ask the one question everything else depends on — **does it learn, or does it only retrieve?** One test, three arms:
+
+| Arm | What it is |
+|---|---|
+| **Retrieval only** | the same documents and price lists, no experiments, no feedback |
+| **The expert seed** | the hand-written Profiles and Grammar, frozen — what *we* wrote |
+| **The learner** | the full loop in miniature (below) |
+
+An experienced practitioner takes the explanation test beside them. What the learner adds beyond the seed, and beyond retrieval, is what "learning" means here ([the learning contract](11-the-learning-contract.md#5-what-better-is-measured-against)).
+
+### Step zero — the paper test
+
+The cheapest version needs no Lab, no Teams and no agent society. **Freeze** the documentation, schemas and prices for one service family at a past date; **withhold** two real billing exports and one related service. Each arm writes predictions in advance — the meters, the billing lag, a diagnosis, its uncertainty. One outcome is revealed as a lesson; then transfer is tested on the sibling service. If the learner cannot beat retrieval on the held-out case, with honest calibration, and improve after the correction, the idea needs rethinking before anything else is built. (It is an experiment, not a gate: its results shape everything after.)
+
+### The thinnest slice — the whole loop in miniature
+
+Not one layer of a stack, but every faculty at once, around the shared memory:
 
 ```mermaid
-flowchart LR
-    S1["Scholar reads the docs<br/>and the price list"]
-    P[("Draft Profile")]
-    B["Billing Bench probes it<br/>in the Lab"]
-    P2[("Corrected Profile<br/>with receipts")]
-    T["Terrarium estate<br/>planted waste + decoys"]
-    D["Detective investigates<br/>with no rule for it"]
-    K["Skeptic attacks the case"]
-    DI["Diplomat sends one Brief<br/>to a person in Teams"]
-    H(["A human<br/>decides, teaches"])
-    E["Examiner scores it<br/>against the key"]
-    L[("Lessons, Atlas fixes,<br/>a Detector draft")]
-    S1 --> P
-    P --> B
-    B --> P2
-    B -.->|"surprise: the docs were wrong"| S1
-    P2 --> D
-    T --> D
-    D --> K
-    K -.->|"it breaks: new hypothesis"| D
-    K --> DI
-    DI --> H
-    H -->|"answer, correction, lesson"| L
-    D --> E
-    E --> L
-    L -.->|"next time"| D
-    L -.->|"fix the Profile"| P
+flowchart TB
+    M[("Shared memory<br/>Profiles · Lessons · Agenda · Ledger")]
+    SC["Scholar<br/>reads docs, specs and the price list"]
+    BB["Billing Bench<br/>probes the service in the Lab"]
+    TE["Terrarium<br/>planted waste and decoys"]
+    DE["Detective<br/>investigates with no rule for it"]
+    SK["Skeptic<br/>attacks every case"]
+    DI["Diplomat<br/>one Brief, to one person"]
+    HU(["A person<br/>decides, corrects, teaches"])
+    EX["Examiner<br/>scores against a hidden key and the baselines"]
+    SC <--> M
+    BB <--> M
+    TE --> M
+    DE <--> M
+    SK <--> M
+    DI <--> M
+    EX --> M
+    DI <--> HU
+    SC -->|"a draft Profile"| BB
+    BB -.->|"the documents were wrong"| SC
+    TE --> DE
+    DE -->|"a case"| SK
+    SK -.->|"it breaks: a new hypothesis"| DE
+    SK -->|"it survives"| DI
+    DE --> EX
 ```
 
-Choose **three services with different mechanisms** — one billed for capacity, one for stock (data that accumulates), one for flow (things that move) — so the slice tests the *grammar*, not one service. For each: the Scholar writes a Profile; the Billing Bench corrects it; the Terrarium plants waste the Examiner keeps secret; the Detective must find it **without a rule for it**; the Skeptic must try to break it; one Brief goes to one human in Teams; the human's answer becomes a Lesson; the Examiner scores everything. The slice is **done when a person, reading only the Brief, says "yes, that's real and I'd act on it"** — for waste that no rule described.
+Choose **three services with different mechanisms** — one billed for capacity, one for per-operation consumption, one whose price depends on the customer's agreement (a rate or benefit) — so the slice tests the *grammar*, not one service. For each: the Scholar writes a Profile; the Billing Bench corrects it; the Terrarium plants waste (and decoys) the Examiner keeps secret; the Detective must find it **without a rule for it**; the Skeptic tries to break it; one Brief goes to one person in Teams; the answer becomes a Lesson; the Examiner scores everything. It is scored on *withheld* services, on withheld *combinations* of known mechanisms, and on mechanisms constructed to be unknown to every arm.
 
----
+**What success looks like** — a description, not a gate:
 
-## Things we are curious about
+- on withheld services it beats retrieval-only, and improves on the expert seed as corrections arrive;
+- after one correction it transfers to a sibling service;
+- on decoys it recommends nothing harmful, and says so when unsure;
+- a person who reads only the Brief says *"yes, that's real, and I'd act on it"* — for waste that no rule described;
+- all-in, it costs less than the value it verified, counting people's time.
 
-The honest unknowns are not risks to manage but **questions to explore** — each one a small experiment:
-
-1. *Can a model read a service's pricing page and billing documentation and produce a Profile an expert agrees with?* — and how often does the Lab then say the documentation was wrong?
-2. *How well does the Cost Grammar transfer?* Learn on one capacity-billed service; predict another.
-3. *How much of an estate's bill can be explained* from inventory, usage and the directory alone — before any person is asked anything?
-4. *What do people actually answer on a card?* How many questions can one owner take in a month before they stop reading?
-5. *How cheap can a Detector get* once an expensive investigation has found the pattern?
-6. *Where do documents and the bill disagree most* — by mechanism, by service kind, by age of the page?
-7. *Does the Lab's behaviour match production* for the claims that matter — and for which does it not?
-8. *What does the AI cost to run* per euro of verified saving — and which parts of that are worth it?
+**What it does not prove.** Scale to hundreds of services, commercial reality across agreements and regions, and safety in production. Those are built up as a **coverage matrix** — mechanism × commercial variation × region × life cycle × interaction complexity × kind of evidence — and scale is claimed only as far as the matrix is filled.
 
 ---
 

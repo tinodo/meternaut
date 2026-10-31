@@ -7,7 +7,7 @@
 
 ## A. Learning Azure faster, deeper, sooner
 
-**Azure moves; you benefit.** A new service enters preview; within hours a *draft* Profile exists. By general availability it is verified in the Lab. The day a new SKU is cheaper for a workload shaped like yours, you get a letter — *"this changes the answer for these three things; here is the Lab evidence."* Retirements work the same way, in reverse: *"this SKU retires in nine months; the cheaper equivalent behaves like this under your load."*
+**Azure moves; you benefit.** A new service enters preview; within hours a *provisional* mechanism profile exists. By general availability it is verified in the Lab, and firm advice follows once a customer's own bill confirms it. The day a new SKU is cheaper for a workload shaped like yours, you get a letter — *"this changes the answer for these three things; here is the Lab evidence."* Retirements work the same way, in reverse: *"this SKU retires in nine months; the cheaper equivalent behaves like this under your load."*
 
 **Law-finding.** After a few hundred experiments, the AI looks for **laws** — regularities across services that nobody wrote down: *"anything short-lived pays a minimum"*, *"stopped usually means compute stops but storage does not"*, *"a private connection usually adds a per-GB processing meter."* It predicts services it has never touched, and the Exam tests whether the prediction was right. A law that survives becomes part of the Cost Grammar.
 
@@ -15,7 +15,7 @@
 
 **Doc-diff detective.** Documentation lives in git; every change has a commit. The AI reads the **diff** of billing pages: *"three words changed in the pricing note for this service — 'per hour' became 'per started hour'."* It runs the Lab experiment that tells whether the words matter.
 
-**The price seismograph.** A continuous watch on the price books: it notices a change, an inconsistency (a bigger SKU cheaper than a smaller one in one region), a region that is quietly 18% cheaper for the same thing, or a free allowance that shrank. Most of what it finds is dull. A few things are worth a letter.
+**The price seismograph.** A continuous watch on the price books: it notices a change, an inconsistency (a bigger SKU cheaper than a smaller one in one region), a region that is quietly cheaper by list price for the same thing, or a free allowance that shrank. Most of what it finds is dull. A few things are worth a letter.
 
 **The crowd as a sensor.** People complain in public about surprise bills — in forums, issue trackers, blog posts. The AI reads them as the **lowest-rank evidence** it has: not a claim, a *lead*. Each becomes a hypothesis on the Agenda, and the Lab confirms or refutes it. The crowd is noisy; the Lab is the filter.
 
@@ -29,7 +29,7 @@
 
 **The estate's autobiography.** *"Tell me the story of this subscription."* The AI writes a short, evidence-backed history: what was built and why, which migrations happened, which incidents shaped it, where the spend came from — as a timeline with sources. It is how a new platform lead gets oriented in a day, how an audit finds out "why is it like this", and how the AI itself checks it understood.
 
-**The rehearsal estate.** A **digital twin** of an estate, built in the Lab from the Estate Model with synthetic data and recorded load shapes. Before the AI proposes a change that matters, it *rehearses* it on the twin — and shows the owner the rehearsal. A step beyond the Time Machine: not only *what would have happened* but *what will*.
+**The rehearsal estate.** *(Now a bench in the core Lab — see [the Lab campus](04-experiments-and-the-lab.md#3-the-lab--a-walled-garden-for-finding-out).)* A **digital twin** of an estate: before the AI proposes a change that matters, it *rehearses* it on the twin and shows the owner the rehearsal — a step beyond the Time Machine, not only *what would have happened* but *what will*.
 
 **Reading the whiteboard.** A photo of a whiteboard in a wiki, a slide from a design review, a hand-drawn network sketch: the AI reads **pictures** as evidence of intent. *"The diagram says this is the failover site; that explains the idle machines."*
 
@@ -43,7 +43,7 @@
 
 ## C. Finding out in cleverer ways
 
-**The Forger.** The Examiner's evil twin: an agent whose job is to **forge waste that fools the Detectives** — cleverly disguised idle capacity, plausible decoys that look like waste but are not, "unused" things that are secretly critical. Detectives and Forger compete in the Terrarium; every Forger win becomes an exam question and a Lesson. It keeps the exam hard in ways no human question-writer could.
+**The Forger.** *(Now part of the core Exam — see [the Terrarium](04-experiments-and-the-lab.md#14-the-terrarium--miniature-estates-with-planted-waste).)* The Examiner's evil twin: an agent that forges waste to fool the Detectives — disguised idle capacity, plausible decoys, "unused" things that are secretly critical — and evolves it as they improve.
 
 **Polite scream tests.** The classic way to find out whether anyone uses something is to switch it off and wait for the screaming. The AI does it *properly*: only where the owner agreed, in a short, announced window, with a guard that restores it in seconds, and **a note on the thing itself** saying who to talk to. It is a [Trial](04-experiments-and-the-lab.md#8-experiments-in-the-real-world--carefully) with manners.
 
@@ -51,7 +51,7 @@
 
 **The pre-mortem of the future.** *"Imagine next Black Friday at three times the traffic: which meters explode and which stay flat?"* The Lab runs the stress on a copy and returns the list of cost cliffs *before* the day.
 
-**Move by demonstration.** A human does a cleanup once — *"watch me"* — with the AI observing (with consent). It drafts a **Move** from the demonstration: the steps, the checks the human made without thinking about them, the rollback. Then it proves the Move in the Lab and offers it back for review. Teaching by showing, the way an apprentice learns.
+**Move by demonstration.** A human does a cleanup once — *"watch me"* — with the AI observing (with consent). It drafts a **Move** from the demonstration: the steps, the checks the human made without thinking about them, the rollback. Then it tests the Move in the Lab and offers it back for review. Teaching by showing, the way an apprentice learns.
 
 ---
 
@@ -59,7 +59,7 @@
 
 **Cost Court.** For contested, high-value cases, a *Prosecutor* argues for the change, a *Defender* argues for keeping things as they are, and a *Judge* — a differently configured agent — rules. Humans can appeal. The transcript becomes part of the case notebook: a much richer explanation than a score, and a rehearsal of every objection the owner might raise.
 
-**Steward agents.** Each team can have a **steward** that represents its constraints — budget, service levels, maintenance windows — and that *learns them by being corrected*. The central AI negotiates shared-resource changes with the stewards (*"reduce the shared gateway to 40 units" — "we peak at 38 at 09:00 on Mondays; keep 45 and change after 22:00"*). People set each steward's mandate.
+**Team agents.** Each team can have a **team agent** that represents its constraints — budget, service levels, maintenance windows — and that *learns them by being corrected*. The central AI negotiates shared-resource changes with the team agents (*"shrink the shared build pool to 40 agents" — "we peak at 38 at 09:00 on Mondays; keep 45 and change after 22:00"*). People set each team agent's mandate.
 
 **Policy in plain language.** *"No development resource runs at night unless it is tagged."* The AI compiles it into a standing rule, a preventive control and a **simulated impact report** — what would change, who would be affected, what it would save — for people to ratify. Rules are written the way people think.
 
@@ -112,10 +112,10 @@
 | Faculty | Ideas that extend it |
 |---|---|
 | **STUDY** | Azure moves; law-finding; default-drift radar; doc-diff detective; price seismograph; the crowd as a sensor; meter archaeology; AI-spend intelligence |
-| **SURVEY** | estate autobiography; rehearsal estate; reading the whiteboard; dependency archaeology; org chart as a cost graph; Hunch Box; calendar-aware everything |
-| **TEST** | the Forger; polite scream tests; synthetic customers; pre-mortem of the future; Move by demonstration |
-| **ACT** | Cost Court; steward agents; policy in plain language; decisions with receipts; voice of the bill; spend as a security signal |
+| **SURVEY** | estate autobiography; reading the whiteboard; dependency archaeology; org chart as a cost graph; Hunch Box; calendar-aware everything |
+| **TEST** | polite scream tests; synthetic customers; pre-mortem of the future; Move by demonstration *(the Forger and the rehearsal estate are now core)* |
+| **ACT** | Cost Court; team agents; policy in plain language; decisions with receipts; voice of the bill; spend as a security signal |
 | **GROW** | the cost weather map; Atlas as a service; curiosity feed; the Atlas as a teacher; FinOps for the AI itself; savings dividend and insurance |
 | **Beyond cost** | unit economics; the price of the next nine; cost and carbon; adjacent spend; cost autopsy |
 
-Which of these to try first — the thinnest slice that proves the whole idea — is in [what next](10-what-next.md).
+Which of these to try first — and the first experiment that asks whether the idea works at all — is in [what next](10-what-next.md).

@@ -1,6 +1,6 @@
 # Recommend, act, verify — how a finding becomes a change that sticks
 
-> **What this answers:** *Once the AI has found something real, how does it turn it into a decision a person can make in a minute, carry out the change safely, prove it worked — and learn from "no"?*
+> **What this answers:** *Once the AI has found something real, how does it turn it into a decision a person can make in a minute, carry out the change safely, show that it worked — and learn from "no"?*
 > Part of the [north star](01-north-star.md). Idea-level: what the system does, not how it is built.
 
 ---
@@ -36,6 +36,22 @@ A confirmed [Case](03-estate-and-investigation.md#7-the-investigation-toolkit) b
 > **[A] [B] [C] [D] · Explain · Challenge · Teach · "Not now — ask me in March"**
 
 Priya taps **B** and types: *"that's the month-end regression — it also runs the first Monday after a release."* The AI does three things: it adds a *release* trigger to the wake-up window (it can see releases in the pipeline), writes a **Lesson** ("this environment has month-end and release-driven use"), and thanks her with the number: *€690 a month from today, checked in two weeks.*
+
+---
+
+## 1a. What happens to an Advisor card — and to a budget alert
+
+Azure already tells owners what to do: Advisor posts recommendations; Cost Management sends budget and anomaly alerts. The trouble is the *last mile* — nobody opens the blade, the email sits unread, and the card says *what* without saying *why this one, why now, what else moves*. The system treats these as **inputs and a baseline to beat**:
+
+1. **A lead, not a verdict.** The card enters the Agenda as a hypothesis (*"this VM can be shut down"*, *"this reservation would save 18%"*), recorded as *reported by Advisor*.
+2. **Checked like any claim.** The Detective tests the card's assumptions against the estate. For its VM right-size and shutdown recommendations, Advisor's own documentation says savings do not account for existing reservations or savings plans — so a shutdown may free a benefit that simply moves to another VM, and the real saving is about zero. Is this a quiet-by-design environment? Is there a consumer the metric cannot see? The Skeptic asks what it asks of any case.
+3. **Routed with reasoning.** If the card survives, it becomes a Brief for the *right* person — found through the human graph — with options, consequences and an undo. Advisor's "dismiss" or "postpone" becomes a *reason that is remembered*, not a dead end.
+4. **Closed with a measurement.** Advisor can take up to a day to notice a change; the system measures the *realised* saving against a counterfactual and says by how much Advisor's estimate was off — which feeds its own calibration.
+5. **Taught back.** Cards that owners reject for the same reason become a Lesson (*"this team's development environments are scheduled elsewhere"*).
+
+A **budget or anomaly alert** follows the same path with the Watch clock's urgency: a private question to the owner first — *planned, growth, incident or attack?* — with what changed and when.
+
+The native recommendations are a free, always-on first pass. What this system adds is what happens next — the checking, the routing, the closing — and everything the native tools cannot see.
 
 ---
 
@@ -82,8 +98,9 @@ An action is never improvised. It is a **Move**: a versioned, reviewable recipe 
 | **Dry run** | the exact change, shown as a diff and in plain words |
 | **Guard metrics** | what must *not* move — and the limits that trigger an automatic rollback |
 | **Rollback** | a tested undo, with how long it stays available |
+| **Invariants and proof boundary** | what must stay true after it runs (no data lost, same endpoints, same access) — checked by machine where possible — and exactly where its proof *stops* |
 | **Verification plan** | how success is measured, when, against which baseline |
-| **Proof** | where it has been tested: Lab runs, past uses, success and regret counts |
+| **Track record** | where it has been tested: Lab runs, past uses, success and regret counts |
 | **Approver hats** | who must say yes (an owner? a change authority? two people?) |
 
 ### The families of Moves
@@ -107,24 +124,16 @@ An action is never improvised. It is a **Move**: a versioned, reviewable recipe 
 
 ### The AI writes Moves too
 
-When a recurring need has no Move — *"this kind of cleanup comes up every week"* — the Engineer **authors** one. It does not go live on trust:
+When a recurring need has no Move — *"this kind of cleanup comes up every week"* — the Engineer **authors** one, and it goes through the same life cycle as a Detector: drafted, back-tested, tested in the Lab (with failure injection — locked, throttled, a missing dependency), attacked by the Skeptic, read by a person as a pull request to the Commons, run at assist level only while every run is watched, and demoted the moment a surprise or a regret appears ([the life cycle, with all its back-edges](04-experiments-and-the-lab.md#13-dreaming--consolidation-while-the-world-is-quiet)). Moves are the system's **hands**, and like a person's hands they get better with practice — each use leaves a record of how it went.
 
-```mermaid
-flowchart LR
-    N(["A recurring need<br/>with no Move"]) --> W["The Engineer drafts the Move<br/>and its rollback"]
-    W --> P["Proof in the Lab<br/>including failure injection:<br/>locked, throttled, missing dependency"]
-    P --> S["The Skeptic attacks it<br/>what could this destroy?"]
-    S --> H["A human reviews<br/>a pull request to the Commons"]
-    H --> T["Trial use<br/>Assist level only,<br/>every run watched"]
-    T --> G["Graduates<br/>with a track record"]
-    G --> R["Watched forever<br/>regret retires it,<br/>API or price changes re-test it"]
-    S -.->|"found a hole"| W
-    H -.->|"changes requested"| W
-    T -.->|"a surprise"| P
-    R -.->|"the world changed"| P
-```
+### A Move, from yes to verified
 
-Moves are the system's **hands**, and like a person's hands they get better with practice — each use leaves a record of how it went.
+> **Tuesday 09:12** — Anna Kowalski taps **Yes** on a Brief: shrink the order-API VM from 8 to 4 vCPUs on Thursday at 22:00. The AI **reads back**: *"I understood: resize vm-orders-api-03 from 8 vCPUs to 4 on Thursday 22:00 CET, then verify for 14 days. Confirm?"* Anna confirms with an authenticated tap.
+> **Thursday 21:55 — preconditions:** snapshot exists ✓ · no resource lock ✓ · no deployment in flight ✓ · not month-end week ✓. The **dry-run diff** — one property, size 8 → 4 vCPUs — goes to Anna and the on-call channel.
+> **22:00 — run.** The VM restarts at the new size (about four minutes). **Guard metrics** watch p95 CPU (limit 70% sustained for 15 minutes), p95 response time (limit +15%) and error rate (limit +0.2 points).
+> **22:40** — all guards green. **Friday 09:00:** Anna gets a one-line card with an **Undo** button, valid for 14 days.
+> **Day 3, a surprise:** a Monday batch pushes CPU to 78% for eleven minutes — under the guard's sustained limit, so nothing rolls back, but the AI **flags it**: *"My prediction said a 55% peak. I did not know about the Monday batch. Keeping the change; adding the batch to what I know about this VM."*
+> **Day 14 — verified:** **€135 a month** saved, measured against two untouched look-alike VMs (predicted €135). The Lesson is filed: *this team's batch runs Monday at 06:00.*
 
 ---
 
@@ -174,23 +183,46 @@ Four ideas keep it honest:
 
 ## 7. The Commitment Desk
 
-Commitments — reservations, savings plans, agreement-level commitments — are the **biggest single lever** and the one with the *least forgiveness*: money committed for one or three years. So purchases get their own desk, and they are **always prepared by the AI and executed by named humans.**
+Commitments are the **biggest single lever** and the one with the *least forgiveness*: money committed for one or three years. They come in three kinds with different rules and different "is it used?" tests — **hourly benefits** (reservations and savings plans; an unused hour expires and does not roll over), **pooled prepurchases**, and **agreement-level consumption commitments**. So purchases get their own desk: **prepared by the AI, approved by two named humans with different hats, and then executed by the AI on their say-so.**
 
 What the Desk keeps in view:
 
 - **The portfolio** — everything committed, how well it is used, where it is covered and where it is not, and **the cliff chart**: when each commitment expires, so renewals are Briefs three months ahead rather than surprises.
-- **The rules** — which commitments can be exchanged, resized or cancelled, and under what conditions. The rules change (Microsoft has announced narrower reservation exchange from February 2027), and the Atlas tracks each change on its [radar](02-learning-azure.md#7-staying-current--the-change-radar) — a rule that used to make a mistake cheap can quietly stop doing so.
+- **The rules** — what can be exchanged, refunded or neither, and under what conditions. Savings plans, unlike reservations, cannot be cancelled or exchanged; and from 1 February 2027, reservations bought after that date cannot be exchanged where a savings plan supports the service (earlier ones keep one final exchange, and trade-in to a savings plan remains). The rules change, and the Atlas tracks each change on its [radar](02-learning-azure.md#7-staying-current--the-change-radar) — a rule that used to make a mistake cheap can quietly stop doing so.
 - **The effective price** — what *this* customer actually pays, not list price.
 
 How a purchase Brief is built:
 
 1. The **price Time Machine** replays the last year: *"had you bought this in January, you would have saved X, and been over-committed through the August lull by Y."*
 2. A **regret table** shows the purchase under usage 30% lower, as forecast, and 30% higher: *"if we are wrong, we lose this much; if we wait, we lose that much."*
-3. It proposes a **ladder** rather than a leap — a first, smaller commitment now; a step up after three months of measured use; a renewal date designed to avoid a single expiry cliff.
+3. It proposes a **ladder** rather than a leap — a first, smaller commitment now; a step up after three months of measured use; a renewal date designed to avoid a single expiry cliff. Flexibility has a value: staging, staggered renewals and exchange windows are **options**, and the Brief prices them — including what waiting for more information is worth.
 4. It states **the thing that would make this a mistake**: *"if the platform migration to X goes ahead in Q3, this commitment covers a service you will stop using."* The Surveyor checks the roadmap and asks the owners *before* the Brief goes out.
-5. It names the humans who must agree — the budget holder and the platform owner — and the AI does *nothing* until both have.
+5. It names the humans who must agree — the budget holder and the platform owner — and the AI does *nothing* until both have. Then it executes the signed purchase itself.
 
-> **Why not let the AI buy?** Because a commitment turns a bet about the future into a contract. The AI should make that bet as informed as it can be, and as *visible*; the humans take it. This is one of the five [spine points](01-north-star.md#14-where-humans-stay-in-charge) and the one most likely to stay.
+```
++------------------------------------------------------------------+
+| Cost agent (AI) . Commitment proposal . stage 1 of 3              |
++------------------------------------------------------------------+
+| Proposal    1-year savings plan covering 60% of the steady        |
+|             compute baseline, AFTER the planned right-sizing      |
+|             (the order matters)                                   |
+| Expected    EUR 4,300/month saved   (range 3,700 - 4,600)         |
+| If wrong    usage 30% lower: still net positive                   |
+|             usage 40% lower: about EUR 380/month loss             |
+| Exit        none - a savings plan cannot be cancelled or exchanged|
+| Back-test   last 12 months: 94-97% used; over-committed in the    |
+|             August lull by about EUR 210                          |
+| A mistake if  the Q3 platform migration goes ahead                |
+| Keys        Budget holder (Sanne): APPROVED                       |
+|             Platform owner (Karim): pending                       |
+| [Approve stage 1] [Approve a smaller first step] [Not yet]        |
+| [Ask about the back-test] [Talk to a human]                       |
+| The AI executes this only after both keys. It cannot approve      |
+| for anyone.                                                       |
++------------------------------------------------------------------+
+```
+
+> **Why two humans?** Because a commitment turns a bet about the future into a contract. The AI makes that bet as informed and as *visible* as it can, and carries it out faithfully; two named people take it. This is one of the five [spine points](01-north-star.md#14-where-humans-stay-in-charge) and the one most likely to stay.
 
 ---
 
@@ -198,9 +230,12 @@ How a purchase Brief is built:
 
 A saving that is not measured is a story. Every Brief commits in advance to how it will be checked, and the **Auditor** (independent of the agents that made the case) does the checking:
 
-- **Against a counterfactual.** The saving is the difference between *what the bill is* and *what it would have been* — from a baseline model (trend, seasonality, known events) and, where possible, **untouched similar resources as a comparison group**. A bill that fell because traffic fell is not a saving.
-- **At several distances.** Seen at one week (is the Move doing what it said?), one month (a full bill cycle), three months (the seasonal effect), a year (did it last?).
-- **Claimed versus verified.** Two numbers, always. *Claimed* is what the Brief predicted; *verified* is what the Auditor measured. The difference is the AI's calibration error — published.
+- **Against a counterfactual.** The saving is the difference between *what the bill is* and *what it would have been* — from a baseline model (trend, seasonality, known events) and, where possible, **untouched similar resources as a comparison group**. A bill that fell because traffic fell is not a saving. A bill-level baseline cannot see a €690-a-month Move, so verification works at the **meter level**, on driver-normalised unit cost.
+- **A defined unit of account.** Savings are booked on separate lines — **usage savings** (using less) and **rate savings** (paying less per unit: negotiated, and from commitments) — each stated against a named price level (list, contracted, effective), with price and currency held constant so that neither leaks into "savings". Actual and amortised views are both kept; Finance decides which counts.
+- **Moves are not additive.** Commitments make savings overlap: a reservation benefit is use-it-or-lose-it each hour and moves to another matching resource when a covered VM stops, so right-sizing, reservations and savings plans must be *sequenced*, and a per-Move ledger that simply adds them up would double-count.
+- **At several distances.** Seen at one week (is the Move doing what it said?), one month (a full bill cycle), three months (the seasonal effect), a year (did it last?) — and as **provisional → reconciled → Finance-accepted**, because billing data settles with a lag.
+- **Claimed versus verified; realised versus annualised.** *Claimed* is what the Brief predicted; *verified* is what the Auditor measured; *realised* is what has actually been saved so far, *annualised* is the run-rate. The AI's calibration error is published with an interval and a materiality threshold — a handful of Moves is noise, not a score.
+- **Net of what the system costs.** Models, the Lab, telemetry and the humans' time are programme costs with their own ledger line; *cost avoidance* is kept apart from *realised saving*.
 - **Boomerangs.** A change reversed by a person within weeks tells the system something it did not know. The reversal is a signal, never a blame: *"why?"* gets asked, once, kindly.
 - **Regret.** Anything that harmed — an incident, a slow-down, a complaint — is recorded in full, and a short, blameless look at *what the system could have known* becomes a Lesson. A single regret can shrink an autonomy credential.
 - **Drift.** The saving erodes (a new deployment re-creates the thing; usage grows into it). The Auditor re-opens the Brief — preferably as a source fix.
@@ -259,13 +294,15 @@ Cost optimisation is not cost minimisation. The right measure is **cost per outc
 
 The AI celebrates when the bill rises *because the business grew and the unit cost fell*, and says so in the monthly letter. A system that only ever says "less" is a spreadsheet with opinions.
 
+**Spending more is an *investment recommendation*, never a saving.** It is counted as a saving only after the business owner and Finance have named — in advance — the outcome metric that will show whether it paid off (cost per order, lost sales avoided, latency held), and the Auditor then verifies it against that metric like any other claim.
+
 ---
 
 ## 11. Beyond Azure's own bill — the commercial layer
 
 Some of the biggest numbers are not resource settings but **agreements**: a consumption commitment burning down faster or slower than planned, a discount that does not apply to a growing service, a marketplace charge nobody owns. The commercial Moves are mostly **briefings for humans who negotiate**:
 
-- *"Your consumption commitment is on track to fall short by about 11% by the end of the term. These three workloads could move onto it."*
+- *"Your consumption commitment is on track to fall short by about 11% by the end of the term. Eligible spend that now sits outside this billing account, or eligible marketplace purchases, could count toward it."* (A consumption commitment is not a pool that workloads attach to: it counts eligible Azure consumption on the billing account.)
 - *"This service's rate is higher in this region than in the neighbouring region you already operate in, with no data-residency reason that we can see."*
 - A **negotiation pack** for the person who talks to the account team: effective discount, committed versus actual curve, the usage forecast, and what the estate would look like under each scenario.
 

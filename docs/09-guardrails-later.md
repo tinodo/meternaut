@@ -19,13 +19,20 @@ These came with the brief and are the fixed points every later design must respe
 
 ## The human-in-the-loop spine
 
-Detailed rules come later; the *shape* is already set. Human oversight sits in five places, not one button at the end ([why](01-north-star.md#14-where-humans-stay-in-charge)):
+Detailed rules come later; the *shape* is already set. Human oversight sits in five places, not one button at the end — what counts as known, what it spends to learn, what it changes, how much autonomy it has earned, and how it speaks. They are set out in [the north star](01-north-star.md#14-where-humans-stay-in-charge).
 
-1. **What counts as known** — knowledge becomes trusted after review, and carries its receipts.
-2. **What it spends to learn** — budgets for the Lab and every experiment are set by people.
-3. **What it changes** — every change has a human's OK or a rule a human wrote; purchases always have named humans.
-4. **How much autonomy it has earned** — credentials per domain, granted and revoked by people, from the report card.
-5. **How it speaks** — tone, timing and attention limits set with the people it talks to; silence is never consent.
+---
+
+## How the idea lines up with CAF, WAF and the FinOps Framework
+
+Two of the brief's constraints are frameworks the design is meant to *use*, not merely respect. At idea level:
+
+| Framework | What it offers | Where it lands in the idea |
+|---|---|---|
+| **Well-Architected Framework** — the five pillars (reliability, security, cost optimisation, operational excellence, performance efficiency) | the checklist for trade-offs | the [Consequence Engine](03-estate-and-investigation.md#11-the-consequence-engine--what-happens-to-the-bill-if) shows every option's effect on all five, so a saving that costs reliability is a different offer; the Skeptic's questions are drawn from the pillars; Briefs carry the trade-off |
+| **Cloud Adoption Framework** — the Govern (cost management) and Manage disciplines | the operating context: policy, budgets, accountability, operations | the system is a *participant in an organisation's governance*, not a replacement: standing rules in plain language, budgets and anomaly alerts as inputs, owners and tags from the human graph, savings co-signed by Finance |
+| **FinOps Framework** — *Inform → Optimize → Operate*, and capabilities such as allocation, anomaly management, rate and workload optimisation, forecasting and unit economics | a capability map and a shared language | **Inform**: the Estate Model, explained spend, allocation views · **Optimize**: Briefs, Moves and the Commitment Desk, with rate and usage savings kept apart · **Operate**: rituals, the report card, verification · **unit economics** as the measure of value |
+| **FOCUS** — the open cost-and-usage format | a common shape for cost data | one of the surfaces the Atlas reads and reconciles |
 
 ---
 

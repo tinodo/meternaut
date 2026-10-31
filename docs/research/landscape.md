@@ -18,6 +18,19 @@
 
 ---
 
+## Territory map — what Azure already ships for cost, and what this idea adds
+
+| Native tool | What it does today | What it leaves open — and what this idea adds |
+|---|---|---|
+| **Cost Management** — analysis, budgets, anomaly alerts, exports | shows what was spent; alerts on budgets and anomalies (documented delivery: email); data arrives hours to days late | *why* and *what for*; each alert routed to the right owner with reasoning, as a question or a decision |
+| **Azure Advisor** | hand-authored cost recommendations; VM savings at retail rates, ignoring commitments; a change is recognised after up to a day | each card checked against the estate and the commitments; a measured saving at the end |
+| **Reservations, savings plans, Hybrid Benefit, dev/test pricing** | rate levers, with their own rules and exchange limits | finding unused entitlements and sequencing them with right-sizing; a Commitment Desk with two human keys |
+| **FinOps toolkit** | open reports, hubs, workbooks, rule-based alerts, read-only agent plugins | a substrate to read from, not a learner |
+| **Copilot Optimization Agent and MCP servers** | chat and scripts over existing recommendations and cost/price APIs (the agent is VM/VMSS only, in preview) | investigation, experiments, and acting with people |
+| **Azure SRE Agent** (memory and skills) | learns from every incident, keeps readable knowledge files | the same *shape* of learning, pointed at cost |
+
+---
+
 ## 1. Who claims to learn?
 
 ### Microsoft — first-party
@@ -27,7 +40,7 @@
 | **Azure SRE Agent** — memory and skills | **Confirmed · Re-read** — [Memory](https://learn.microsoft.com/en-us/azure/sre-agent/memory), [Skills](https://learn.microsoft.com/en-us/azure/sre-agent/skills) (both dated 2026-10-28) | Explicit automatic learning: it "doesn't need any manual training"; after each thread goes quiet it captures symptoms, steps that worked, root cause and pitfalls, and keeps "knowledge files" that load into every conversation; skills (`SKILL.md` plus tools) load when relevant. **Domain: incidents and reliability — no evidence it is applied to pricing or SKU knowledge.** The strongest precedent for the *shape* of the learning loop. |
 | **Azure Copilot Optimization Agent** | **Confirmed** — [Learn](https://learn.microsoft.com/azure/copilot/optimization-agent) | Preview; VM/VMSS only; explains recommendations and generates scripts. No claim of self-updating cost knowledge or sandbox verification. |
 | **Azure Resource Manager MCP server** (cost and pricing tools) | **Confirmed** — [docs](https://github.com/Azure/Azure-Resource-Manager-MCP/blob/main/docs/CostManagementAndPricingTools.md) | Natural-language access to cost, price and forecast operations. A query bridge, not a learner. |
-| **Azure Advisor** (cost) | **Confirmed** in the earlier round | Hand-authored rules (for example VM shutdown/right-size with published percentile thresholds); savings at retail rates that ignore existing commitment coverage; recognises a change only after "up to a day"; **no realised-savings check found**. |
+| **Azure Advisor** (cost) | **Confirmed** in the earlier round and **Re-read** ([cost recommendations](https://learn.microsoft.com/en-us/azure/advisor/advisor-cost-recommendations)) | Hand-authored rules (for example VM shutdown/right-size with published percentile thresholds). For those VM recommendations, savings are at retail rates and do **not** account for existing reservations or savings plans; Advisor can take up to a day to recognise a change; **no realised-savings check found**. |
 | **FinOps toolkit** | **Confirmed** — [AI configuration](https://learn.microsoft.com/en-us/cloud-computing/finops/toolkit/hubs/configure-ai) | Agents grounded by static instructions on the FOCUS schema and hub queries — prompt-grounding, not learning. Alerts are explicitly rule-based. Open data and MIT licence make it a valuable substrate. |
 | **Defender for Cloud governance rules; Sentinel SOC optimization** | **Confirmed** in the earlier round | Owner/due-date assignment (security); data-value recommendations on unused tables (Sentinel, 30-day window). Rules, not learning. |
 | **Foundry Agent Service** — the imagined home | **Confirmed · Re-read** — [overview](https://learn.microsoft.com/en-us/azure/foundry/agents/overview) | Prompt agents, hosted agents (bring your own code), the Responses API; **toolboxes** (web and file search, code interpreter, MCP servers) behind one managed endpoint; **observability** (tracing, metrics, evaluations); an **agent optimizer (preview)** that evaluates behaviour and generates better instructions, skills, tool descriptions and model choices; **memory (preview)** with extraction and consolidation into stores; identity and publishing to Teams. A platform for building agents like these — not a cost-learning product. |
@@ -75,9 +88,9 @@ The foundational work on **how agents learn** — skill libraries, reflection, e
 
 | Surface | Label | What it can teach an AI |
 |---|---|---|
-| **Retail Prices API** — unauthenticated REST, filterable by service, region and SKU | **Confirmed** — [Learn](https://learn.microsoft.com/en-us/rest/api/cost-management/retail-prices/azure-retail-prices) | The unit-price ground truth, meter by meter, including savings-plan rates (preview). |
-| **Cost Management exports and FOCUS** | **Confirmed** | Realised spend, normalised across providers, to reconcile with list prices. |
-| **Azure Resource Graph** — KQL across subscriptions, with property change history | **Confirmed** | The shape of an estate and how it changed. |
+| **Retail Prices API** — unauthenticated REST, filterable by service, region and SKU | **Confirmed** — [Learn](https://learn.microsoft.com/en-us/rest/api/cost-management/retail-prices/azure-retail-prices) | The **list-price** ground truth (USD base), meter by meter, including savings-plan rates (preview) — never the customer's own price. |
+| **Cost Management exports and FOCUS** | **Confirmed** | Realised spend, to reconcile with list prices; FOCUS is one dataset and is not available at every scope or for every agreement type. |
+| **Azure Resource Graph** — KQL across subscriptions, with property change history | **Confirmed** | The shape of an estate and how it changed — change data is queryable for only 14 days, so longer history must be collected. |
 | **Advisor through Resource Graph** | **Partly** (table name known, page not read in full) | Advisor's catalogue as queryable data. |
 | **Azure Monitor metric definitions and metrics** | **Confirmed** | The utilisation signal, per resource type — the "signal of real need" in the Cost Grammar. |
 | **`azure-rest-api-specs`** and **`bicep-types-az`** | **Confirmed** | Every resource type, property and API version — and, by diffing, **default changes**. |

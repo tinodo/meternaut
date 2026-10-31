@@ -41,6 +41,18 @@ From the thousands of scored predictions the system draws its **calibration reco
 
 Where the curve sits below the diagonal, the AI is *overconfident* in that area — it gets less autonomy there and says "I think" more. Where it sits above, it is timid and may be *asked to be bolder*. The record is kept **per domain and per kind of claim**: it can be superb at storage tiering and mediocre at predicting database growth, and the report card says so.
 
+Calibration is only meaningful if the predictions are *comparable*, so each one is written to a small **prediction ontology** before it is made:
+
+| Field | What it fixes |
+|---|---|
+| **Target** | exactly what will be true (a meter, a saving, an answer, a latency) |
+| **Window** | by when, and how long reality is watched |
+| **Counterfactual method** | for savings and consequences: against what comparison group or baseline, with which assumptions |
+| **Loss** | what being wrong costs — money, harm, a person's time |
+| **Scoring rule** | a *proper* probabilistic score, so that honest uncertainty is what scores best |
+
+Three cautions are built in. **Model tone is not a probability**: a language model's "I'm fairly sure" is turned into a number only through a calibration layer measured on past outcomes. **Outcomes are not randomly observed** — acceptance depends on how the message was written, and savings are confounded by what else changed — so the record reports its *coverage* (what share of predictions were ever scored) and its selection effects, and uses intervals (including conformal ones) rather than single figures. And **abstaining is allowed**: where the record is thin the system says "I don't know" and is scored for saying so.
+
 ### Why predictions beat feedback
 
 A thumbs-up measures whether someone was pleased. A prediction scored against the world measures whether the AI was *right*. The two are kept apart on purpose: an AI optimised for approval learns to flatter.
@@ -57,23 +69,24 @@ A lesson starts small — one person, one resource — and the interesting part 
 | **Lesson (local)** | a person said it, scoped to their thing | "weekend idleness is expected here" | the person who said it |
 | **Lesson (team / org)** | widened after being applied and confirmed | "all development subscriptions idle at weekends" | the team lead; the AI proposes |
 | **Pattern** | the same lesson found in several teams, estate-independent | "dev environments idle outside office hours" | a reviewer; the AI proposes |
-| **Detector** | the pattern compiled into a cheap, tested check | a back-tested, shadow-proven watcher | a reviewer after shadow mode |
+| **Detector** | the pattern compiled into a cheap, scoped, expiring *lead generator* | a back-tested watcher that has run in shadow | a reviewer after shadow mode |
 | **Atlas claim** | the general fact about Azure underneath, with receipts | "service X bills while stopped, via meter Y" | review by people and the Knowledge CI |
 
 Things move **up** when they keep being right and **down** when they are not. A lesson contradicted three times is demoted; a lesson that nobody has applied for a year **expires** and asks to be renewed or retired. Two lessons that conflict (two teams teaching opposite things) are put side by side for a human to resolve — **a lesson is never silently overwritten**.
 
-Only the top two rungs ever leave the customer — and only as generic, anonymous facts about Azure, never as facts about a company ([the Commons](#7-the-commons)).
+Only the top two rungs ever leave the customer — and only as generic, anonymous facts about Azure, never as facts about a company ([the Commons](#7-the-commons)). The words used here and across the documents are fixed in [one vocabulary](11-the-learning-contract.md#7-one-vocabulary).
 
 ---
 
 ## 3. The Exam
 
-The score that matters is the one the system **cannot see in advance.** An independent agent — the **Examiner** — sets, runs and marks exams. It shares no memory with the investigators, and the investigators never see its questions.
+The score that matters is the one the system **cannot see in advance.** An independent agent — the **Examiner** — sets, runs and marks exams, and an adversarial twin, the **Forger**, builds waste designed to fool the investigators (see [the Terrarium](04-experiments-and-the-lab.md#14-the-terrarium--miniature-estates-with-planted-waste)). The Examiner shares no memory with the investigators, and the investigators never see its questions — but "no shared memory" is not the same as independence, so [independence is designed in](#independence--who-examines-the-examiner).
 
 ```mermaid
 flowchart TB
     EB[("Exam bank<br/>sourced traps · community traps · closed real cases · things the Examiner invents")]
     HO[("Held-out set<br/>kept by humans, never shown to the system")]
+    FG["The Forger<br/>forges waste, decoys and confounders to fool the investigators"]
     TE["Terrarium estates<br/>planted waste · decoys · unanswerable questions"]
     RE["Real, labelled estates<br/>with consent"]
     NS["New-service races<br/>a service nobody has read yet"]
@@ -86,6 +99,8 @@ flowchart TB
     EB --> RE
     EB --> NS
     EB --> TA
+    EB --> FG
+    FG --> TE
     HO --> SC
     TE --> IN
     RE --> IN
@@ -95,6 +110,7 @@ flowchart TB
     SC --> RC
     RC --> HU
     HU --> EB
+    SC -.->|"what slipped through becomes the Forger's next attempt"| FG
     SC -.->|"a miss becomes an Agenda question and a Lesson"| IN
 ```
 
@@ -123,16 +139,27 @@ An exam is not a count of hits. Each question is weighted by **value** (finding 
 - The **exam bank** is built from sourced cost traps in the public record ([a bank of 145+ is already collected](research/exam-bank-cost-traps.md)), community-submitted traps, closed real cases, and **traps the Examiner invents** — including ones nobody has written about.
 - A **held-out set**, curated by humans and never shown to the system, guards against the system learning the exam instead of the subject.
 - The exam is **refreshed constantly**; questions that every version of the system now passes are retired to the regression set.
-- A **miss is gold**: it is turned into an Agenda question and, once understood, a Lesson — so the exam is also a teacher.
+- A **miss is gold**: it is turned into an Agenda question and, once understood, a Lesson — so the exam is also a teacher. (That is why the *credential* exam below is kept apart from the exams the system learns from.)
 - The Examiner is itself examined (are its keys right?) by human review and, for contested keys, by the Lab.
 
 When does it run? **Nightly, in miniature.** **Quarterly, in full.** **Before any autonomy credential is granted or renewed**, and **after any large change** to the Atlas, the models or the method.
+
+### Independence — who examines the Examiner?
+
+The worry is fair: the same programme builds the grammar, the Terrarium, the Forger and the investigators, so a hidden question may only test whether the system recognises *its builders' way of thinking*. So independence is designed in, not assumed:
+
+- **Three exams, kept apart.** The **training Terrarium** (the system learns from it; misses become lessons), the **public benchmark** (open to anyone, never used for credentials) and the **credential exam** (time-frozen, held out, used only to decide autonomy). A miss on the credential exam is *not* fed back into training until the exam is retired.
+- **Different minds where it matters.** The Examiner and the Forger do not share a base model, templates or generators with the investigators where that can be avoided, and the credential exam is run by people outside the system's day-to-day, with **pre-registered scoring** and **confidence intervals**.
+- **A leakage audit** before every credential exam: does any question resemble anything in the system's memory, its sources or the public bank? Anything that might have been seen is marked *possibly seen* and weighted down.
+- **Real cases, post-cutoff.** Part of every exam is retrospective and post-cutoff cases from real estates (with consent), which no generator had a hand in.
+- **Baselines on every exam.** The system is scored beside a **retrieval-only** baseline, the **expert-written seed**, and an experienced **practitioner** — see [what "better" is measured against](11-the-learning-contract.md#5-what-better-is-measured-against).
+- **The keys are audited** too: by people, by the Lab for contested keys, and by an adversarial reviewer whose only job is to find a wrong answer key.
 
 ---
 
 ## 4. The report card
 
-The result of all this is a **report card** — plain, public within the organisation, and always led by what the system is *worst* at.
+The result of all this is a **report card** — plain, kept inside the organisation (the open benchmark is separate), and always led by what the system is *worst* at.
 
 ```
 THE REPORT CARD · Q4                                      (read this part first)
@@ -142,17 +169,19 @@ I would NOT trust me on:     database growth predictions (calibration: says 80%,
 Getting better at:           storage tiering (rediscovery 71% -> 86%) · explaining in plain language
 Unusually good:              spotting quiet "stopped but still billing" meters (found 38 of 40 planted)
 Harm avoided on decoys:      94 of 96 (two near misses: both involved a quarterly job)
-Calibration (all domains):   says 80% -> right 77%   (last quarter: 71%)
-New-service race:            median 9 hours to a verified profile (last quarter: 31)
+Calibration (all domains):   says 80% -> right 77%   (last quarter: 71%)  [interval 71-83%, 412 scored]
+Against the baselines:       retrieval-only 54% · expert seed 68% · me 81% · a practitioner 79%  (held-out exam)
+New-service race:            median 9 hours to a provisional profile (last quarter: 31); commercially verified: 3 days
 
-Verified net savings:        EUR 412,000 after what I cost to run (EUR 31,400, of which the Lab EUR 9,100)
-Claimed vs verified:         EUR 551,000 claimed -> EUR 412,000 verified (75%)
+Verified savings:            EUR 443,000 (claimed EUR 590,000 -> 75% verified)
+All-in cost to serve:        EUR 31,400  (Lab 9,100 · models 10,300 · people's time 12,000)
+Net, and cost per euro:      EUR 412,000 net · 7 cents per verified euro · EUR 38 of value per human minute
 Regret and boomerangs:       3 and 7 · all reviewed · lessons written
 Atlas:                       1,840 meters with verified profiles · median claim age 41 days · 212 claims stale
 Autonomy now:                Autopilot in 6 domains · Assist in 11 · Advise in the rest · 2 self-demotions this quarter
 ```
 
-Three habits make the card trustworthy: **the weak spots come first**; it compares the AI **with its own past** (never team against team, never person against person); and it counts what the AI **costs** — including the Lab and the models — against what it saves. Autonomy credentials are granted, renewed and revoked **from this card**, by people.
+Three habits make the card trustworthy: **the weak spots come first**; it compares the AI **with its own past and with the baselines** (never team against team, never person against person); and it counts what the AI **costs** — the Lab, the models *and the people's time* — against what it saves. Autonomy credentials are granted, renewed and revoked **from this card**, by people.
 
 ---
 
@@ -201,6 +230,8 @@ Two of these deserve a closer look.
 
 **It proposes changes to its own method.** From ablations and A/Bs in the Terrarium ([experiments on itself](04-experiments-and-the-lab.md#15-experiments-on-itself)) it learns that, say, probing before reading works better for networking services. It then *proposes* a change to its own playbook — a human reviews and approves it, like any other change. A system that can run experiments on itself can improve its own process without being rebuilt, **within limits people set**.
 
+How the tracking turns into behaviour is the second and sixth rows of [the learning contract](11-the-learning-contract.md#1-six-things-that-change): each source, tactic, experiment and phrasing keeps a running estimate of verified value per euro and per human minute, effort follows the best estimates, and a protected share keeps exploring the rest.
+
 ---
 
 ## 7. The Commons
@@ -221,10 +252,20 @@ Half of what the system knows is about **Azure**, and that half is the same for 
 ### How it grows
 
 - **The AI proposes, humans dispose.** Each customer's AI notices that a Profile is out of date, or learns a new trap in the Lab, and opens a **pull request to the Commons** — with its receipts, its Lab recipe, its test. People review. Nothing becomes trusted on the AI's say-so alone.
-- **Replication as a contribution.** Anyone can re-run a claim's recipe in *their own* Lab — a different region, a different agreement, a different date — and attach the result. A claim that holds in five regions and three agreement types is worth more than one that was seen once. A claim that fails somewhere *learns where it does not hold*.
-- **People contribute too.** Add a trap you were bitten by. Write a Move. Translate. Report a wrong claim. **Adopt a service**: be the human steward for a service's profile.
-- **Outcome statistics without data.** An organisation can opt in to share *counts* — "this kind of Brief was accepted 71% of the time and verified at 88% of its claim" — which tell everyone how much to trust an idea, without a byte of anyone's estate moving.
-- **Provenance on everything.** Every claim carries who and what supports it, how it can be re-checked, and when it was last verified. Anything that cannot be re-checked is labelled as such.
+- **Replication as a contribution.** Anyone can re-run a claim's recipe in *their own* Lab — a different region, a different agreement, a different date — and attach the result. Claims earn strength through a **reproducibility lattice**: a graph of independent replications across conditions, so the *transfer boundaries* — where a claim holds and where it does not — are themselves first-class knowledge. A claim that holds in five regions and three agreement types is worth more than one that was seen once; a claim that fails somewhere has *learned where it does not hold*.
+- **People contribute too.** Add a trap you were bitten by. Write a Move. Translate. Report a wrong claim. **Adopt a service**: be the human **Atlas maintainer** for a service's profile.
+- **Outcome statistics without data.** An organisation can opt in to share *counts* — "this kind of Brief was accepted 71% of the time and verified at 88% of its claim" — which tell everyone how much to trust an idea, without a byte of anyone's estate moving. Counts are shared only above a **minimum cohort size**, so a small group cannot be picked out.
+- **Provenance on everything.** Every claim carries who and what supports it, its scope, how it can be re-checked, and when it was last verified. Anything that cannot be re-checked is labelled as such.
+
+### How the Commons stays trustworthy
+
+A shared body of knowledge is only as good as the way it is kept. The shape, at idea level:
+
+- **Claim tiers.** *Draft* (proposed, with receipts) → *Reproduced* (re-run independently in a stated scope) → *Trusted* (reviewed by a maintainer and re-tested on a schedule). A Detector or Move is never shown to anyone as more than its tier.
+- **Named maintainers.** Each service profile has a human Atlas maintainer, and the project has named reviewers with decision rights; the AI proposes, people merge.
+- **Revocation.** Any claim can be withdrawn — and everyone who relied on it is told, with the reason. A materially wrong claim is corrected loudly, not quietly.
+- **Provenance and licence.** Everything the project authors is MIT. Documentation and pricing pages are *linked and summarised with receipts*, not copied; third-party terms are respected; nothing derived from a customer's data is ever contributed.
+- **Poison and drift.** Executable re-checks, replication by independent parties and human review are the defences against a plausible-looking wrong claim, and stale claims expire rather than coast on earlier trust.
 
 ### An open benchmark, as a by-product
 
@@ -232,7 +273,7 @@ The exam bank, once opened, is a **public benchmark for cloud cost reasoning** �
 
 ### The network effect nobody has to trust anyone for
 
-A new service launches. Within hours, somewhere, one customer's AI reads it, probes it in its Lab, and proposes the Profile. Review happens once. By the next morning **every** organisation running the Commons has a verified profile — and a Detector, if one was warranted — without a single customer's data having moved. The more estates, regions and agreements take part, the better the Atlas — and nobody has to be told what anyone else spends.
+A new service launches. Within hours, somewhere, one customer's AI reads it, probes it in its Lab, and proposes a **provisional mechanism profile**. Review happens once. Soon after, **every** organisation running the Commons has that scoped, provisional profile — and a Detector, if one was warranted — without a single customer's data having moved; each then reconciles it against its own bill before it becomes advice. The more estates, regions and agreements take part, the better the Atlas — and nobody has to be told what anyone else spends.
 
 > The Commons is the answer to *"why would anyone trust this?"* **Because you can read it, re-run it, and argue with it.**
 
