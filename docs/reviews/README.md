@@ -8,3 +8,7 @@ Every version of the ideation is reviewed by independent agents before it is cal
 | **v4 · Round 2** — reviewed at commit `cbd6756` | A fresh reader through the operator's eyes · B1 Azure billing fact-check · B2 products and commercial-rules fact-check · C disposition-truth and consistency audit | [A](v4-round-2/raw-a-fresh-reader.md) · [B1](v4-round-2/raw-b1-factcheck-gallery.md) · [B2](v4-round-2/raw-b2-factcheck-commit-advisor.md) · [C](v4-round-2/raw-c-disposition-audit.md) | [disposition](v4-round-2/disposition.md) |
 
 **How the record is kept.** Raw reports are saved exactly as the reviewers returned them, with a header and the orchestrator's spot-checks appended — every quoted passage is checked against the files, and every external fact the reviewers relied on is re-checked against its primary source before it is used. The disposition says, finding by finding, what was accepted, what was adjusted and why, and where the change landed. Earlier rounds (v1 → v3.2.1) are in [the archive](../_archive/round-3-v3.2.1/reviews/).
+
+## Design phase 1
+
+The design ([docs/design](../design/README.md)) is reviewed in **two rounds with a different model family on each lens in each round**, against one standing brief: [the design review brief](design-review-brief.md). The lenses are *architecture*, *security, safety and compliance*, *cost and operability*, *AI engineering, evaluation and drift*, and *platform fact-check*.

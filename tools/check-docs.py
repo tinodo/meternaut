@@ -22,6 +22,13 @@ docs/reviews/ describe the rules and the review record, so the pattern guards sk
 can evade a pattern; a decorative hub can hide a pipeline; the link check ignores reference-style,
 HTML and autolink forms (they raise a warning instead).
 
+Scopes (AGENTS.md rule 11). The ideation documents (docs/*.md, docs/research/) get every guard. The
+design documents (docs/design/*.md) may name technologies and discuss security, governance and
+decisions - the operator asked for them - so they get only the phrase-level anchoring patterns (the
+operator's two examples must still not be the foundation), the "pointless questions" bloat terms and
+the purchase wording. The design evidence (docs/design/research/ and docs/design/cost/) is third-party
+material gathered for the design: only the purchase wording is checked there.
+
 Usage:  python tools/check-docs.py [--strict] [--self-test]
         --strict  treats warnings as errors (use before every commit)
 """
@@ -63,6 +70,18 @@ BLOAT_PATTERNS = [
 PURCHASE_PATTERNS = [
     (r"executed by (?:the )?(?:named )?humans?", re.I),
     (r"humans? (?:execute|click|sign)s? the purchase", re.I),
+]
+# Design scope: phrase-level anchoring only (technology names such as Log Analytics or a virtual
+# hub are ordinary design vocabulary), and only the "pointless questions" bloat terms.
+DESIGN_ANCHOR_PATTERNS = [
+    r"seed[- ]example", r"release[- ]1\b", r"never reads?\b",
+    r"nobody (?:ever )?(?:reads|queries|looks at)", r"no ?one (?:ever )?(?:reads|queries|looks at)",
+    r"read by nobody", r"scaled up (?:years )?(?:long )?ago", r"never opened",
+    r"idle gateway", r"shared gateway", r"unused logs", r"never queried", r"\bLAQueryLogs\b",
+]
+DESIGN_BLOAT_PATTERNS = [
+    (r"kill criteri", re.I), (r"open questions? (?:for|to) the operator", re.I),
+    (r"go\s*/\s*no-go", re.I), (r"abandon the idea", re.I), (r"R3-Data", 0),
 ]
 MERMAID_TYPES = (
     "flowchart", "graph", "stateDiagram-v2", "stateDiagram", "sequenceDiagram", "classDiagram",
@@ -361,6 +380,9 @@ def check_mermaid(path: Path, blocks, rep: Report):
                     rep.warn(path, ln, "quotes in a state-diagram transition label")
                 if ";" in label:
                     rep.error(path, ln, "semicolon in a state-diagram transition label (Mermaid ends the description at ';')")
+            if kind == "sequenceDiagram" and re.search(r"-{1,2}>>?|--x|--\)", raw) and ":" in raw:
+                if ";" in raw.split(":", 1)[1]:
+                    rep.error(path, ln, "semicolon in a sequence-diagram message (Mermaid ends the statement at ';')")
         if depth != 0:
             rep.error(path, start, "subgraph/end mismatch in mermaid block")
         if kind.startswith("stateDiagram"):
@@ -401,20 +423,32 @@ def guarded_files(files):
             and "reviews" not in f.resolve().relative_to(ROOT).parts]
 
 
+def scope_of(f: Path) -> str:
+    """'ideation' (default), 'design' (docs/design/*.md) or 'evidence' (docs/design/research|cost)."""
+    parts = f.resolve().relative_to(ROOT).parts
+    if len(parts) >= 3 and parts[0] == "docs" and parts[1] == "design":
+        return "design" if len(parts) == 3 else "evidence"
+    return "ideation"
+
+
 def check_guards(files, rep: Report):
     for f in guarded_files(files):
         text = f.read_text(encoding="utf-8")
-        if rel(f) not in ANCHOR_ALLOWLIST:
+        scope = scope_of(f)
+        anchors = ANCHOR_PATTERNS if scope == "ideation" else DESIGN_ANCHOR_PATTERNS
+        bloat = BLOAT_PATTERNS if scope == "ideation" else DESIGN_BLOAT_PATTERNS
+        if scope != "evidence" and rel(f) not in ANCHOR_ALLOWLIST:
             seen = set()
-            for pat in ANCHOR_PATTERNS:
+            for pat in anchors:
                 for n, _hit in paragraph_hits(text, pat):
                     if (n, pat) not in seen:
                         seen.add((n, pat))
                         rep.error(f, n, f"anchoring guard: {pat!r} may appear only in the exam documents")
         for n, line in enumerate(text.splitlines(), 1):
-            for pat, flags in BLOAT_PATTERNS:
-                if re.search(pat, line, flags):
-                    rep.error(f, n, f"bloat guard: {pat!r} (no governance paperwork in ideation)")
+            if scope != "evidence":
+                for pat, flags in bloat:
+                    if re.search(pat, line, flags):
+                        rep.error(f, n, f"bloat guard: {pat!r} (no governance paperwork in ideation)")
             for pat, flags in PURCHASE_PATTERNS:
                 if re.search(pat, line, flags):
                     rep.error(f, n, "purchase wording: prepared by the AI, approved by two named humans, executed by the AI (AGENTS.md rule 10)")
@@ -441,6 +475,8 @@ UNCHECKED_LINKS = re.compile(r"\]\[[^\]]*\]|<a\s+href=|<https?://", re.I)
 
 def check_link_forms(files, parsed, rep: Report):
     for f in files:
+        if scope_of(f) == "evidence":
+            continue
         for n, line in parsed[f][0]:
             if UNCHECKED_LINKS.search(INLINE_CODE.sub("", line)):
                 rep.warn(f, n, "link form this lint does not check (reference-style, HTML or autolink) - use an inline [text](target) link")
@@ -448,6 +484,8 @@ def check_link_forms(files, parsed, rep: Report):
 
 def check_headings(files, parsed, rep: Report):
     for f in files:
+        if scope_of(f) == "evidence":
+            continue
         h1 = [h for h in parsed[f][2] if h[1] == 1]
         if len(h1) != 1:
             rep.warn(f, h1[1][0] if len(h1) > 1 else 1, f"expected exactly one H1, found {len(h1)}")
@@ -502,10 +540,18 @@ def self_test() -> int:
     probe = Report()
     check_mermaid(Path("probe.md"), [("mermaid", 1, ["stateDiagram-v2", "    A --> B: one; two"])], probe)
     assert any("semicolon" in m for m in probe.errors)
+    probe2 = Report()
+    check_mermaid(Path("probe.md"), [("mermaid", 1, ["sequenceDiagram", "    A->>B: one; two"])], probe2)
+    assert any("semicolon" in m for m in probe2.errors)
     assert list(paragraph_hits("it was scaled up\nlong ago by someone", r"scaled up (?:years )?(?:long )?ago"))
     assert any(re.search(p, "a Go / no-go gate", f) for p, f in BLOAT_PATTERNS)
     assert any(re.search(p, "a purchase is executed by humans", f) for p, f in PURCHASE_PATTERNS)
     assert UNCHECKED_LINKS.search("see [text][ref] here")
+    assert scope_of(ROOT / "docs" / "design" / "03-x.md") == "design"
+    assert scope_of(ROOT / "docs" / "design" / "research" / "citadel.md") == "evidence"
+    assert scope_of(ROOT / "docs" / "05-x.md") == "ideation"
+    assert not any(re.search(p, "a Log Analytics workspace behind a virtual hub", re.I) for p in DESIGN_ANCHOR_PATTERNS)
+    assert any(re.search(p, "a stream nobody reads", re.I) for p in DESIGN_ANCHOR_PATTERNS)
     print("self-test OK")
     return 0
 

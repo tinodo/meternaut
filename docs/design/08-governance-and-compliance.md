@@ -1,0 +1,241 @@
+# Design 08 — Governance and compliance
+
+> **What this answers:** *Who is accountable for what, how do the EU AI Act, GDPR, NIS2, ISO/IEC 42001 and the NIST AI RMF map onto the design, and how does the system produce its own compliance evidence?* The regulatory facts come from the [security and compliance research](research/security-and-compliance.md), read on 2026-10-31. **This is a design mapping, not legal advice**: each regulatory position marked *to confirm* needs a lawyer before the system is put into service. Part of the [design](README.md); the controls referred to are in [07](07-security-architecture.md) and [09](09-safeguards-and-drift-controls.md).
+
+---
+
+## 1. The governance model
+
+### 1.1 Roles
+
+Every role is a *named human*, recorded in the repository (`GOVERNANCE.md`) and in Entra (as owner or sponsor), never a team alias.
+
+| Role | Accountable for | Holds |
+|---|---|---|
+| **System owner** (the operator) | the system as a whole; accepting residual risk; exceptions | Owner of the production subscription; the right to pull any kill switch |
+| **Sponsor**, per agent group and per execution identity | what that identity may do; its quotas; its contract | CODEOWNERS on its contract; Entra sponsor of the identity |
+| **Approvers** | decisions on Moves; for purchases, **two with different hats** (workload owner and Finance) | registered per target in the Estate service; PIM-eligible only where licensed |
+| **FinOps lead** | the commercial truth: price books, commitments, the system's own unit economics | review of Atlas pricing claims; owner of [12](12-cost-and-finops.md) |
+| **Security lead** | the security architecture, detections, red-team scope, incident response | owner of [07](07-security-architecture.md) |
+| **Atlas reviewers** | what enters the public knowledge base | merge rights on the Atlas, never on code that executes |
+| **Data protection contact** | the privacy record: inventory, DPIA, subject requests | owner of §4 |
+| **Platform owner** (landing zone) | the hub, connectivity, policy baseline | owner of the dependencies in [04 §2](04-landing-zone-and-citadel.md#2-the-landing-zone-what-we-need-one-by-one) |
+
+### 1.2 Who decides what
+
+**R** responsible · **A** accountable · **C** consulted · **I** informed. *Agents are never accountable.*
+
+| Decision | System owner | Sponsor | Security lead | FinOps lead | Approvers | Atlas reviewer |
+|---|---|---|---|---|---|---|
+| Change a **model alias** or resolve it to a new model | A | R | C | C | | |
+| Change a **contract** (limits, tools, safety) | I | A, R | C | C | | |
+| Add a **Move** to the catalogue | A | C | C | C | | |
+| Grant an **autonomy credential** | A | R | C | C | R (the domain's owners) | |
+| **Promote** a release | A | C | C | I | | |
+| Merge an **Atlas** change | I | | | C | | A, R |
+| Approve a **purchase** | | | | C | R (two hats) | |
+| Accept an **exception** to a design rule | A | R | C | C | | |
+| **Pull a kill switch** | A | R | R | | | |
+
+### 1.3 Policy as code
+
+Governance that lives in a document drifts. The control set is an **Azure Policy initiative** assigned as code, mapped to the **Microsoft cloud security benchmark v2, AI security domain** (AI-1 approved models, AI-2 multi-layer filtering, AI-3 safety meta-prompts, AI-4 least privilege for agent functions, AI-5 human in the loop, AI-6 monitoring, AI-7 continuous red teaming).
+
+| Policy | Effect: production · non-production · Lab | State |
+|---|---|---|
+| Foundry and AI Services: **key access disabled**, **public network access disabled**, private endpoints, managed identity, diagnostics deployed | Deny · Deny · Audit | GA |
+| **Approved models and model eligibility**; the router's subset | Deny · Deny · Audit | GA (router policy: preview) |
+| Foundry agents and toolboxes: only **approved tools** | Audit · Audit · Audit | preview |
+| Minimum **content-filter** level for agents and deployments | Audit · Audit · Audit | preview |
+| API Management: VNet, no direct management endpoint, authenticated backends, certificate validation, secrets in Key Vault, subscriptions not scoped to all APIs | Audit · Audit · Audit (the hub's owner enforces) | GA |
+| Container Apps: network injection, public access off, HTTPS only, managed identity | Deny · Deny · Audit | GA |
+| AI Search and Key Vault: local auth off, public access off, purge protection, private link | Deny · Deny · Audit | GA |
+| **Tags**: owner, sponsor, environment, expiry (Lab: mandatory) | Deny · Audit · Deny | GA |
+| **Allowed SKUs and regions** (Lab: a short list, no public IPs) | n/a · n/a · Deny | GA |
+
+**The control map.** `governance/controls.yaml` lists every control with its requirement, the query that proves it, the test that exercises it and its owner. **Release gate G8** ([10 §4](10-test-and-evaluation.md#4-release-gates)) fails when a control cannot show evidence — compliance is a build output, not a quarterly scramble.
+
+## 2. The EU AI Act
+
+**Position (to confirm).** The operator is both **provider** (builds the system and puts it into service under his name) and **deployer** (uses it). The system is **not high-risk by purpose**: it works on cost and resources, and it is designed to *stay out of* employment and work-management uses. Where a use would enter Annex III, the design bans it rather than manages it.
+
+### 2.1 Timeline as of 2026-10-31
+
+| Date | What applies |
+|---|---|
+| 2 Feb 2025 | Prohibited practices (Art. 5) and AI literacy (Art. 4) |
+| 2 Aug 2025 | General-purpose AI model obligations (on the model providers) |
+| 27 Jul 2026 | The AI Omnibus enters into force (the regulation number is *to confirm*) |
+| **2 Aug 2026** | The remainder of the Act, **including Art. 50 transparency**. The grace period for machine-readable marking (Art. 50(2)) runs to 2 Dec 2026 *only for systems already on the market*; a new system gets none |
+| 2 Dec 2026 | Ban on non-consensual intimate-image and child-abuse-material generators |
+| 2 Dec 2027 | Annex III high-risk obligations (postponed) |
+| 2 Aug 2028 | Annex I high-risk obligations (postponed) |
+
+### 2.2 What it means for the design
+
+| Obligation | How the design answers it |
+|---|---|
+| **Art. 5 prohibitions** | **No emotion recognition** on staff in meetings or calls: the voice and avatar modules do no mood or sentiment inference. **No ranking or scoring of individuals**: cases attribute cost to resources, services and teams, never to a person's performance. No manipulative techniques: Briefs state the saving, the evidence and the alternatives, and never use urgency, shame or social pressure. These are red-team categories ([10](10-test-and-evaluation.md)) |
+| **Art. 4 AI literacy** | a short training record for operators and approvers, kept in the evidence pack |
+| **Art. 50(1) tell people it is AI** | disclosure at first interaction in *every* channel: a card footer, an e-mail banner, a voice greeting, an avatar label, the first text message |
+| **Art. 50(2) mark synthetic content** | machine-readable marking in e-mail headers and card metadata; marks on audio and video where the service offers them (to confirm); the voluntary code of practice on transparency of AI-generated content is the reference |
+| **Art. 50(4) deepfakes (deployer)** | a clearly synthetic avatar by default; consent and disclosure for any personal voice or custom photo avatar |
+| **General-purpose model duties** | rest with the model providers; **no fine-tuning or distillation into a new general-purpose model** without a legal check |
+| **Open-source** | the Act leaves free and open-source AI systems out of most obligations *unless* they fall under Art. 5, Art. 50 or high-risk; an MIT release therefore does **not** exempt the transparency duties |
+
+### 2.3 Voluntary alignment with the high-risk requirements
+
+Not required, but a useful quality bar, and cheap because the design already produces the evidence:
+
+| Requirement (Arts. 9–15) | Where it is answered |
+|---|---|
+| Risk management | the risk register ([§8](#8-risk-register)) and the threat model ([07 §12](07-security-architecture.md#12-threats-controls-and-what-remains)) |
+| Data and data governance | [06](06-data-and-knowledge.md): provenance, scope, expiry; no estate data in the Commons |
+| Technical documentation | this design, the ADRs, the agent cards and the system card ([§6](#6-responsible-ai-and-the-system-card)) |
+| Record-keeping | the append-only audit ledger and traces |
+| Transparency to users | Briefs with *Explain*, receipts on every claim |
+| **Human oversight** | approvals, two-person purchases, kill switches, credentials with expiry |
+| Accuracy, robustness, cybersecurity | the exam, the attack suite, the drift controller |
+
+## 3. Security regulation and benchmarks
+
+**NIS2 (to confirm applicability).** Directive 2022/2555 covers medium and large entities in listed sectors, with management accountability; the Commission proposed targeted simplification in January 2026 (status to confirm) and national transposition varies. Whether the adopting organisation is in scope is its decision; the controls that would carry the obligations are here: MCSB v2 and Policy (§1.3), Defender for Resource Manager and Key Vault, central logging, PIM for administrators, an incident runbook ([11](11-delivery-and-operations.md)), supply-chain controls ([07 §9](07-security-architecture.md#9-supply-chain)).
+
+**Microsoft cloud security benchmark v2, AI domain.** The control spine; each AI-n maps to controls and evidence:
+
+| Control | Our answer |
+|---|---|
+| **AI-1** approved models | Azure Policy approved models; alias map; the exam on every change |
+| **AI-2** multi-layer filtering | model guardrails, gateway screening, deterministic gate, human approval ([07 §5](07-security-architecture.md#5-defence-against-prompt-injection-in-nine-layers)) |
+| **AI-3** safety meta-prompts | versioned instructions with hashes; tested, never trusted as the boundary |
+| **AI-4** least privilege for agent functions | zero standing write; read-only tool identities; per-contract tool allow-lists |
+| **AI-5** human in the loop | approvals; two-person purchases |
+| **AI-6** monitoring | traces, hub logs, detections D1–D12, the drift controller |
+| **AI-7** continuous red teaming | attack suite in CI; scheduled red teaming; canaries |
+
+## 4. Privacy and GDPR
+
+### 4.1 Personal data in the system
+
+| Data | Why it exists | Where | Minimisation |
+|---|---|---|---|
+| Owner and approver **names, e-mail addresses, Teams identifiers** | to ask the right person and to record who decided | Estate service (mapping); Brief service; audit ledger | prompts see **pseudonyms**; the mapping never leaves the tenant |
+| **Directory data**: manager, team, working hours, language | to ask at a humane time, in the right language | Estate service | only the fields a Brief needs |
+| **Approvals**: who, when, from which channel, what they saw | accountability | audit ledger | pseudonymous ids; mapping elsewhere |
+| **Replies** to questions (free text) | lessons | Brief store; Lesson Book | untrusted text; stored as testimony with expiry; no special-category inference |
+| **Traces** with prompts and tool results | debugging, evaluation | App Insights, the protected table | content capture **off** by default; short retention; restricted role |
+| **Voice and meeting audio** (optional module) | conversation by voice | transient | **off by default**; consent; no storage by default |
+
+### 4.2 Positions
+
+| Topic | Position (to confirm with the adopting organisation's privacy function) |
+|---|---|
+| **Roles** | the adopting organisation is the **controller**; Microsoft is a **processor** under the Products and Services DPA; we ship MIT software and process nothing ourselves |
+| **Residency** | estate and personal data: **EU Data Zone or regional** deployments only; Global deployments only for the public and synthetic data classes ([07 §6.2](07-security-architecture.md#62-data-classes-and-what-each-may-touch)); voice, speech and avatar regions are checked before the module is enabled |
+| **Prompts and training** | the platform states that prompts, completions and embeddings are not used to train models |
+| **Abuse monitoring** | Microsoft personnel may review prompts; managed customers may apply to modify this. **Decide, record and put it in the DPIA** |
+| **Lawful basis** | to confirm per organisation (legitimate interest for cost communication is the likely basis for workplace e-mail; staff-facing voice and meeting agents need more) |
+| **DPIA** | prepared before the first production use; a template ships in `governance/` |
+| **Employee consultation** | works-council or labour-law consultation is *to confirm* before any staff-facing voice, avatar or meeting module is enabled — which is why those modules are off by default |
+| **Automated decisions (Art. 22)** | Moves need human approval; the approval is authenticated and recorded, which meets the intent |
+| **Subject rights** | access and erasure are served from the Estate service; the audit ledger is pseudonymous, so erasing the **mapping** anonymises the ledger without breaking its chain; retention of the pseudonymous approval record rests on the organisation's audit obligation |
+| **Breach** | the 72-hour notification clock starts at detection; the runbook ([11](11-delivery-and-operations.md)) names who decides |
+
+### 4.3 Retention
+
+| Data | Default retention | Where set |
+|---|---|---|
+| Traces (spans, metrics) | 30 days hot; longer only on cheap plans | table plans |
+| Prompt and tool content (if enabled) | 7 days, protected table | Application Insights |
+| Brief and conversation records | 90 days | Brief store |
+| Lessons | expire by design (default 12 months, renewable) | Lesson Book |
+| Audit ledger | per the organisation's audit obligation (default 7 years) | immutable storage policy |
+| Stored model responses | `store=false` where retention matters; the platform default is 30 days | agent configuration |
+| Evaluation samples | redacted before storage; 30 days | evaluation store |
+
+## 5. ISO/IEC 42001 and the NIST AI RMF
+
+**ISO/IEC 42001.** Microsoft Foundry is in scope of Microsoft's certificate (per feature scope to confirm on the Service Trust Portal), which helps but certifies **nothing of ours**. An organisation that wants its own certification needs its own assessor; the design is built so that the management-system evidence already exists.
+
+| Clause theme | Evidence in this system |
+|---|---|
+| Context and scope | [01](01-requirements-and-principles.md), the north star |
+| Leadership and roles | [§1](#1-the-governance-model); `GOVERNANCE.md` |
+| Planning: risk and impact assessment | risk register; threat model; DPIA; the AI system impact assessment (system card) |
+| Support: competence, awareness | AI literacy record |
+| Operation: lifecycle, data, third parties | [05](05-agents-and-orchestration.md), [06](06-data-and-knowledge.md), supply chain |
+| Performance evaluation | the exam, continuous evaluation, drift metrics, internal audit by the Auditor |
+| Improvement | lessons, ADR reviews, incident learnings |
+
+**NIST AI RMF.**
+
+| Function | Mapping |
+|---|---|
+| **Govern** | roles, decision rights, policy as code, exceptions, the evidence pack |
+| **Map** | system card and agent cards; intended use and limits; capability matrix; threat model; data classes |
+| **Measure** | exams with baselines, calibration, decoys, red teaming, cost and latency per case |
+| **Manage** | gates, kill switches, drift controller, incident response, autonomy credentials with expiry |
+
+## 6. Responsible AI and the system card
+
+The design follows Microsoft's Responsible AI principles. The Transparency Note for Agent Service urges human oversight and caution for irreversible or highly consequential actions: Moves and purchases are exactly that, so they carry approvals, and purchases carry two named approvers.
+
+| Principle | How |
+|---|---|
+| Fairness | cases never attribute cost to a person's performance; attributions are to resources, services and teams |
+| Reliability and safety | the exam, restraint on decoys (zero tolerance for a harmful recommendation), shadow mode, rollback |
+| Privacy and security | [07](07-security-architecture.md); pseudonyms; EU residency |
+| Inclusiveness | Briefs in the owner's language; plain text equivalents of cards; no dependence on voice |
+| Transparency | receipts, *Explain*, disclosure of AI in every channel, the system card |
+| Accountability | named sponsors and approvers; the audit ledger |
+
+**The system card** and an **agent card per agent** are generated from the repository (instructions, tools, contract, aliases, evaluation results, known failure modes) at every release, so documentation cannot drift from the system (DR-18).
+
+## 7. The evidence pack
+
+Evidence is produced **automatically** by the pipeline and the drift controller and stored with the release manifest; a person only reviews.
+
+| Artefact | Produced by | Cadence |
+|---|---|---|
+| Control-map results (every control, its query, its result) | CI, gate G8 | every release |
+| Policy compliance export | scheduled job | daily |
+| SBOM, licence report, signed images | CI, gate G1 | every build |
+| Exam, red-team and resilience reports | the Examiner, the schedules | nightly, weekly, per release |
+| Release manifest (every pin) | pipeline | every release |
+| Approval statistics and anomalies | the Auditor | weekly |
+| Drift findings and their time to correct | drift controller | continuous |
+| DPIA, record of processing, DPA acceptance | data protection contact | on change |
+| AI literacy record | system owner | annual |
+| ADR index and exceptions register | repository | on change |
+| Incident log and post-incident reviews | security lead | on event |
+
+## 8. Risk register
+
+Qualitative; each risk has a named owner and appears with its ADR.
+
+| # | Risk | L | I | Controls | Residual | ADR |
+|---|---|---|---|---|---|---|
+| R1 | A prompt-injected agent causes a wrong *proposal* | H | M | no write power; Skeptic; approval gate; layers 0–9 | low | 19 |
+| R2 | A compromised execution component changes an estate | L | H | JIT identity; sweeper; deterministic gate; kill switch; Defender for Resource Manager | low–medium | 07, 08 |
+| R3 | A **preview** dependency changes or disappears | H | M | the preview register; switches; fallbacks | low | 21 |
+| R4 | The **Citadel hub** is a single-maintainer sample | M | H | fork and pin; contract tests; native APIM fallback; contracts as data | medium | 02 |
+| R5 | **Token cost overrun** | M | M | caps at the hub; envelopes; cost-per-case gate; Flex and Batch for public work | low | 26 |
+| R6 | A **model is retired or changes silently** | H | M | aliases; pins; fingerprint probe; 180-day alerts | low | 09, 10 |
+| R7 | **Regulation moves** (AI Act, NIS2) | M | M | the dependency register includes regulation; quarterly review; legal confirmation items | medium | 29 |
+| R8 | **Approver fatigue** or a coerced approver | M | H | two hats; step-up authentication; DR-17; kill switches | medium | 08 |
+| R9 | **Personal data** reaches a Global deployment or a log | L | H | data classes at the hub; contract tests; protected tables; DPIA | low | 25 |
+| R10 | **Licence-dependent controls** are unavailable | H | L | optional modules with fallbacks | low | 20 |
+| R11 | **Platform region constraints** (one region carries all features) | M | M | redeploy-from-code recovery; second-region path documented | medium | 04, 30 |
+| R12 | **Lock-in** to Foundry, APIM and hosted agents | M | M | contracts as data; Agent Framework is open; aliases; MCP and A2A are open protocols | accepted, costed in [13](13-decisions.md) | 01, 02 |
+
+## 9. Open-source governance
+
+**MIT.** Contributions use a developer certificate of origin sign-off; `SECURITY.md` names private vulnerability reporting; `CODE_OF_CONDUCT.md` and `GOVERNANCE.md` name maintainers. The **Commons** accepts only claims, recipes and counts; a scanner rejects anything resembling estate data before review. Third-party licences are checked in CI (gate G1). The project does not use Microsoft marks as its own and states plainly that it is *not* a Microsoft product.
+
+## 10. Exceptions
+
+A design rule may be broken only by an **exception record**: a short ADR with the rule, the reason, the compensating control, an **owner** and an **expiry date**. The register is part of the evidence pack and the Auditor reviews it quarterly. Standing exception: **the embedded analytics engine** is an open-source library rather than a Microsoft service, accepted against constraint C1 in [ADR-13](13-decisions.md#adr-13-cost-analytics-is-parquet-and-an-embedded-engine-in-a-job), with a Microsoft-only fallback behind the same interface.
+
+## 11. Review cadence
+
+Quarterly governance review (risks, exceptions, evidence gaps, regulation); each ADR carries a **review trigger** (a date or an event such as "the AI Gateway product reaches general availability"); the dependency register and the release feed raise triggers automatically; and any change to a regulatory position marked *to confirm* is a change to this document, not a footnote.
