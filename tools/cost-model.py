@@ -11,7 +11,8 @@ changed price list can never silently change a number.
     python tools/cost-model.py --lines Team         # every line item of one scenario
     python tools/cost-model.py --quotas Team        # hub contract quotas derived from the plan
     python tools/cost-model.py --update-doc docs/design/12-cost-and-finops.md
-    python tools/cost-model.py --check  docs/design/12-cost-and-finops.md   # stale block, or a quota that diverges from the plan
+    python tools/cost-model.py --check  docs/design/12-cost-and-finops.md   # stale block; a quota that diverges from the plan; a contract of design 04 section 4.3 the model does not price
+    python tools/cost-model.py --self-test                                  # negative fixtures: each defect above must be caught
 
 All quantities below are *seeds*: assumptions to be replaced by measurements (spike S-COST-1).
 """
@@ -33,53 +34,139 @@ REGION = "swedencentral"
 
 # ---------------------------------------------------------------------------
 # Scenarios (seeds).  Case-driven work scales with `cases`; clocks with `subs`.
-# `accounts` = private Foundry accounts, each with its own standard-setup trio (AI Search, Cosmos DB,
-# Storage): Pilot = production + development, Team adds test, Enterprise adds the Lab.  Accounts are
-# created in the phase that needs them (design 14), so a smaller scenario never pays for a larger one.
+# `accounts` = private Foundry accounts, one per environment (design 04 section 7), each with its own
+# standard-setup trio (AI Search, Cosmos DB, Storage): Pilot = development and production, Team adds test and
+# the Lab, Enterprise is the same four at ten to twenty times the volume.  Accounts are created in the phase
+# that needs them (design 14), so a smaller scenario never pays for a larger one.
+# `envs` = environments with a spine and stores (dev, test, prod); `chain_envs` = those that also run the
+# execution chain (the Approval service, the broker, the runner and their signing vaults): Pilot is read-only
+# plus shadow, so only production holds the chain and development rehearses with a dry-run runner.
+# `gate_*` = the gate plan of design 10 section 4 for one gated domain-release: decoys (G3), comparison
+# cases (G4) and the repeats `r` of a case; `gate_releases` = gated domain-releases a month.  Pilot gates one
+# narrow domain in shadow (the claim narrows instead of the statistics thinning, design 10).
 # ---------------------------------------------------------------------------
 SCENARIOS = {
     "Pilot": dict(subs=5, resources=500, owners=5, cases=100, spend=20_000,
-                  survey_calls=150, study_changes=40, exam_cases=600, accounts=2,
-                  pe=28, la_gb=8, lake_gb=20, ledger_gb=1, ops_ru_m=20, ops_gb=2, search_units=2,
+                  survey_calls=150, study_changes=40, exam_cases=600, accounts=2, envs=2, chain_envs=1,
+                  la_gb=8, lake_gb=20, ledger_gb=1, ops_ru_m=20, ops_gb=2, search_units=2,
                   aca_vcpu_h=150, aca_req_m=1, dp_gb=50, own_subs=4, peer_gb=10,
-                  rt_scans=6, rt_attacks=500, fn_always_ready=1, fw_gb=100),
+                  rt_scans=6, rt_attacks=500, fn_always_ready=1, fw_gb=100,
+                  lab_experiments=0, moves_drafted=25, signals=50, t3_cases=0, method_cycles=1,
+                  commitments=1, detections=100,
+                  gate_decoys=99, gate_cases=99, gate_repeats=3, gate_releases=1),
     "Team": dict(subs=50, resources=10_000, owners=100, cases=1_000, spend=400_000,
-                 survey_calls=1_500, study_changes=40, exam_cases=1_350, accounts=3,
-                 pe=34, la_gb=40, lake_gb=300, ledger_gb=5, ops_ru_m=200, ops_gb=10, search_units=3,
+                 survey_calls=1_500, study_changes=40, exam_cases=1_350, accounts=4, envs=3, chain_envs=2,
+                 la_gb=40, lake_gb=300, ledger_gb=5, ops_ru_m=200, ops_gb=10, search_units=4,
                  aca_vcpu_h=600, aca_req_m=10, dp_gb=500, own_subs=5, peer_gb=50,
-                 rt_scans=8, rt_attacks=1_000, fn_always_ready=1, fw_gb=500),
+                 rt_scans=8, rt_attacks=1_000, fn_always_ready=1, fw_gb=500,
+                 lab_experiments=4, moves_drafted=250, signals=500, t3_cases=30, method_cycles=2,
+                 commitments=4, detections=300,
+                 gate_decoys=218, gate_cases=891, gate_repeats=3, gate_releases=1),
     "Enterprise": dict(subs=1000, resources=200_000, owners=2000, cases=20_000, spend=8_000_000,
-                       survey_calls=30_000, study_changes=40, exam_cases=2_700, accounts=4,
-                       pe=40, la_gb=400, lake_gb=4_000, ledger_gb=40, ops_ru_m=1_500, ops_gb=100, search_units=5,
+                       survey_calls=30_000, study_changes=40, exam_cases=2_700, accounts=4, envs=3, chain_envs=2,
+                       la_gb=400, lake_gb=4_000, ledger_gb=40, ops_ru_m=1_500, ops_gb=100, search_units=5,
                        aca_vcpu_h=3_000, aca_req_m=100, dp_gb=5_000, own_subs=8, peer_gb=500,
-                       rt_scans=12, rt_attacks=2_000, fn_always_ready=2, fw_gb=5_000),
+                       rt_scans=12, rt_attacks=2_000, fn_always_ready=2, fw_gb=5_000,
+                       lab_experiments=10, moves_drafted=5_000, signals=10_000, t3_cases=100, method_cycles=4,
+                       commitments=20, detections=1_000,
+                       gate_decoys=218, gate_cases=891, gate_repeats=3, gate_releases=4),
 }
+for _s in SCENARIOS.values():
+    _s["gate_runs"] = (_s["gate_decoys"] + _s["gate_cases"]) * _s["gate_repeats"] * _s["gate_releases"]
 
-# Token workloads per *case* (W4): role, alias, contract group, then calls per case, input tokens per call,
-# cached share of input, cache-write tokens (charged once per session: one session per role per case) and
-# output tokens per call.
+# Token workloads per *case* (W4): role, alias, contract, then calls per case, input tokens per call, the
+# static prefix (tokens) that one explicit cache breakpoint covers (05 section 7: a session writes it on its
+# first call, its later calls read it, and tokens written are billed at the write price instead of the input
+# price) and output tokens per call.  One session per role per case.
 CASE_WORK = [
-    ("Detective", "reason", "investigate", dict(calls=10, tin=15_000, cached=0.70, cw=6_000, tout=1_500)),
-    ("Skeptic", "judge", "investigate", dict(calls=4, tin=12_000, cached=0.00, cw=0, tout=1_000)),
-    ("Economist", "reason", "investigate", dict(calls=4, tin=10_000, cached=0.60, cw=5_000, tout=1_000)),
-    ("Diplomat", "reason", "converse", dict(calls=2, tin=6_000, cached=0.50, cw=3_000, tout=800)),
-    ("Triage", "luna", "conduct", dict(calls=6, tin=3_000, cached=0.50, cw=1_500, tout=300)),
+    ("Detective", "reason", "investigate", dict(calls=10, tin=15_000, prefix=6_000, tout=1_500)),
+    ("Skeptic", "judge", "investigate", dict(calls=4, tin=12_000, prefix=0, tout=1_000)),
+    ("Economist", "reason", "investigate", dict(calls=4, tin=10_000, prefix=5_000, tout=1_000)),
+    ("Diplomat", "reason", "converse", dict(calls=2, tin=6_000, prefix=3_000, tout=800)),
+    ("Triage", "luna", "conduct", dict(calls=6, tin=3_000, prefix=1_500, tout=300)),
+    ("Auditor", "judge", "govern", dict(calls=1, tin=10_000, prefix=0, tout=1_000)),
 ]
-# Hosted-agent sessions per case: role, active minutes, idle-timeout minutes.  Whether idle time is billed is
-# UNVERIFIED (the hosted-agents page shows active and idle states and states no idle price), so it is billed here.
-HOSTED_SESSIONS = [("Detective", 12, 5), ("Skeptic", 6, 5), ("Economist", 5, 5), ("Diplomat", 2, 15), ("Triage", 3, 2)]
-HOSTED_H_PER_CASE = sum(a + i for _, a, i in HOSTED_SESSIONS) / 60.0
+# The hub's access contracts (design 04 section 4.3): the aliases each lists, and its data class.  The euro worst
+# case of a quota is priced at the dearest rate of the dearest alias, on the pools the environment may reach.
+# The Claude model behind `judge-pub` is billed through the Marketplace with no price in the API, so Sol on
+# Global stands in (UNVERIFIED); `judge-eu` is Mistral Large 3, a stand-in for "an independent-family model".
+CONTRACT_ALIASES = {
+    "study": {"triage", "reason", "embed", "batch"},
+    "curate": {"judge-pub", "embed"},
+    "survey": {"triage", "reason"},
+    "investigate": {"reason", "judge-eu"},
+    "experiment": {"reason"},
+    "converse": {"triage", "reason"},
+    "engineer": {"reason"},
+    "govern": {"judge-eu", "reason", "embed"},
+    "examine-pub": {"judge-pub", "judge-eu", "embed", "batch"},
+    "examine-eu": {"judge-eu", "embed"},
+    "forge": {"reason"},
+    "conduct": {"triage", "reason", "embed"},
+}
+PUBLIC_CONTRACTS = {"study", "curate", "experiment", "examine-pub", "forge"}   # public or synthetic data: Global pools
+ENVIRONMENTS = ("prod", "test", "dev")
+ENV_FLOOR = {"test": 0.25, "dev": 0.10}      # design 04 section 4.3: TEST and DEV carry at least this share of production's quota
+DAILY_SHARE = {"experiment": 0.10}            # a daily quota on the Experimenter: at most this share of the month in a day
+# Peak calls in flight per contract (seeds): the overrun of a token limit is bounded by this times the largest call.
+CONCURRENCY = {"study": 4, "curate": 2, "survey": 8, "investigate": 12, "experiment": 2, "converse": 6, "engineer": 4,
+               "govern": 2, "examine-pub": 16, "examine-eu": 2, "forge": 4, "conduct": 4}
+DEV_CONCURRENCY = 2
+CALLS_PER_MINUTE_PER_SLOT = 2  # starting tokens-per-minute limit = concurrency x largest call x this
+# Hosted-agent sessions per case: role, active minutes, idle timeout in minutes.  Each idle timeout is at least the
+# role's p99 active time (design 05 section 5, Round 2: the platform deprovisions the compute when no request arrives
+# within the timeout, so a leaf that returns at once and works on must not outlive it).  Whether idle time is billed
+# is UNVERIFIED (the hosted-agents page shows active and idle states and states no idle price; the GA record says
+# "you pay only for active execution"), so it is billed here, the conservative reading: a session then costs the
+# larger of its active time and its idle timeout, because the timer starts at the last request.  A session is
+# 0.5 vCPU and 1 GiB by default (05 section 5).
+HOSTED_SESSIONS = [("Detective", 12, 20), ("Skeptic", 6, 10), ("Economist", 5, 10), ("Diplomat", 2, 15), ("Triage", 3, 5),
+                   ("Auditor", 2, 5)]
+HOSTED_H_PER_CASE = sum(max(a, t) for _, a, t in HOSTED_SESSIONS) / 60.0
+HOSTED_ACTIVE_H_PER_CASE = sum(a for _, a, _ in HOSTED_SESSIONS) / 60.0
+HOSTED_VCPU, HOSTED_GIB = 0.5, 1.0
 SANDBOX_H_PER_CASE = 1.0      # one batched session-hour per case (typed query tools are preferred, 05 section 5; UNVERIFIED hour rounding)
 RT_PER_ATTACK = dict(target=dict(tin=3_000, tout=600), attacker=dict(tin=1_500, tout=400), evaluator=dict(tin=3_000, tout=200))
-FN_EXEC_PER_CASE = 150        # Durable Functions activity executions per case or exam case (leaf calls, record writes, timers)
+FN_EXEC_PER_CASE = 150        # Durable Functions executions per case or exam case: leaf calls, completion events, record writes, timers
+FN_REPLAY_FACTOR = 1.3        # orchestrator replays that bill as executions: UNVERIFIED until S-ORCH-1 (design 05 section 4)
 FN_GB_S_PER_EXEC = 2.0        # a 2 GB instance for about a second
+FN_READY_SHARE = 0.8          # share of production execution that runs on the always-ready instance (own rate, no free grant)
+FLEX_SHARE = 0.8              # share of exam, gate and red-team tokens served on the Flex tier; the rest is re-run on Global Standard after a 429 or a deadline (UNVERIFIED)
 PII_RECORDS_PER_CALL = 10     # 1,000-character records of free text pseudonymised in the tool services per Surveyor or Diplomat call
-QUOTA_HEADROOM = 1.5          # monthly contract quota = planned tokens x this; the hub cap is therefore 1.5 x the plan
-QUOTA_CAP_LIMIT = 2.0         # --check fails if the summed euro cap exceeds this multiple of the token plan
+QUOTA_HEADROOM = 1.5          # monthly contract quota = planned tokens x this
+QUOTA_CAP_LIMIT = 2.0         # --check fails if the summed forecast-equivalent cap exceeds this multiple of the token plan
 LABOUR_RATE_EUR = 75.0        # stated seed for the labour sensitivity, EUR per hour
 LABOUR_HOURS = (20, 40, 80, 160)
-KEY_VAULTS = 9                # secrets, the hub's, the registry's, plus one vault each for the Approval service, Policy service, broker, runner, Verifier and Audit Writer signing keys (07 section 6.1)
+GATE_REVIEW_HOURS = 6.0       # a person reads the failed critical cases and a fifth of the passed ones and labels the judges' sample, per gated domain-release (seed)
+# Inventory (design 03 section 5, 04 section 6, 07 section 6.1): vaults, endpoints and the stores of a Foundry account.
+SIGNING_PARTIES = 6           # Approval service, Policy service, broker, runner, Verifier, Audit Writer: one vault each per chain environment
+SECRETS_VAULTS_PER_ENV = 1
+REGISTRY_VAULTS = 1           # the pipeline's signing key and the registry
+PE_PER_ACCOUNT = 4            # Foundry account, AI Search, Cosmos DB, Storage (the Foundry file and blob store)
+PE_PER_SPINE_ENV = 3          # the spine's storage account: blob, queue, table
+PE_PER_CHAIN_ENV = 1          # the chain's queue storage account `stchain` (queue subresource), design 07 section 3.3
+PE_BASE = 8                   # registry, ledger store, recovery lake (two regions), operational Cosmos DB, monitoring, Key Vault-less services
+FOUNDRY_FILE_GB = 5           # files and intermediate blobs of one Foundry account (agent files, vector-store staging), Hot ZRS
 ATLAS_QUERIES_PER_CASE = 20   # Atlas retrievals per case (Detective, Economist, Diplomat), each through the semantic ranker
+LAB_EUR_PER_EXPERIMENT = 25.0 # the pre-deploy cost cap of one Lab recipe (07 section 8), a seed
+FORGER_TOKENS = dict(tin=30_000, tout=8_000)   # one synthetic estate (five cases) per call
+CASES_PER_ESTATE = 5
+INTER_REGION_EUR_PER_GB = 0.0176              # USD 0.02 per GB within Europe at the snapshot's rate (vendor bandwidth page, checked by Round-2 reviewer C); not in the snapshot
+COPY_DELTA_SHARE_PER_HOUR = 0.002             # share of the operational store that changes and is copied each hour (seed)
+# Content Safety text records (1,000 characters each).  The hub's llm-content-safety policy screens a response in
+# windows of 1,000 characters by default, which can overlap, and a prompt in windows of 10,000 (Learn).  Baseline:
+# untrusted free text is screened ONCE, where it enters (the tool service, or the hub on the tool's response), and
+# the verdict is cached by content hash; the hub does not re-screen the whole accumulated prompt on every call.
+# Screening every prompt on every call is a named sensitivity (Model.scenario(screen_all_prompts=True)).
+CS_WINDOW, CS_OVERLAP = 1_000, 100
+CHARS_PER_TOKEN = 4
+CS_TOOL_RESPONSES_PER_CASE = 20   # tool results with free text (tags, names, invoice lines, directory fields)
+CS_TOOL_RESPONSE_CHARS = 3_000
+CS_REPLIES_PER_CASE = 2           # owner replies screened on the way in
+CS_REPLY_CHARS = 1_000
+CS_SURVEY_CHARS = 3_000           # free text per Surveyor call
+CS_FEED_CHARS = 2_000             # one release-feed item
+CS_STUDY_DOCS_PER_CHANGE, CS_STUDY_DOC_CHARS = 12, 30_000   # documents the Scholar reads (chunked in the sanitiser)
 
 # Labels of the token lines (the report groups the workloads by these).
 L_CASES = "Cases (W4) on the EU Data Zone"
@@ -87,9 +174,13 @@ L_WATCH = "Watch (W1): triage of the release feed"
 L_STUDY = "Study (W2): Scholar, Cartographer, Librarian"
 L_SURVEY = "Survey (W3): Surveyor on changes"
 L_DREAM = "Dream (W7): nightly consolidation"
-L_EXAM = "Exams and release gates (W8) on synthetic estates"
+L_EXAM = "Continuous exams (W8) on synthetic estates"
+L_GATE = "Release gates: G3 decoys and G4 comparison runs (design 10 section 4)"
 L_RT = "Red teaming (L5): attacker, target and evaluator (UNVERIFIED seed)"
 L_EMB = "Embeddings (Atlas releases and retrieval)"
+L_OTHER = "Other workflows: engineer, signals (W3b), commitments (W5), self-watch (W9), experiments (W6), method learning (W10), forger, T3 exam"
+L_DEV = "Development and CI smoke tests (every contract, dev environment)"
+DEV_CALLS = 600               # smoke-test calls a month per contract in the dev environment (about 0.6 M tokens)
 
 # Manual figures that are not in the price API.  Each names its source.
 MANUAL = {
@@ -102,6 +193,7 @@ MANUAL = {
     "agent365_user_usd": (15.0, "research/security-and-compliance.md D4 (USD per user per month, list)"),
     "defender_ai_per_1k_tokens": (0.000704, "research/security-and-compliance.md D3 (EUR per 1K tokens)"),
     "adx_devtest": (105.0, "research/options-analysis.md section 2b (about USD 120 per month, EUR)"),
+    "blob_hot_gzrs": (0.0405, "Retail Prices API, 2026-10-31: Storage, General Block Blob v2, Hot GZRS, Sweden Central, first tier; not in the snapshot"),
 }
 
 
@@ -112,6 +204,7 @@ class Prices:
         self.fx = float(d["fx"]["eurPerUsd"])
         self.generated = d["generatedAt"]
         self.used: dict[str, tuple[float, str]] = {}
+        self._cache: dict[tuple, float] = {}
 
     def eur(self, m: dict) -> float:
         p = m["prices"]
@@ -119,6 +212,9 @@ class Prices:
 
     def get(self, service: str, region: str = REGION, product: str | None = None, sku: str | None = None,
             meter: str | None = None, pick: str = "only") -> float:
+        key = (service, region, product, sku, meter, pick)
+        if key in self._cache:
+            return self._cache[key]
         hits = []
         for m in self.meters:
             if m["service"] != service or m["priceType"] != "Consumption":
@@ -140,6 +236,7 @@ class Prices:
             raise LookupError(f"{len(hits)} meters ({vals}) for selector {sel}; add pick='max' or narrow it")
         v = vals[-1] if pick == "max" else vals[0] if pick == "min" else vals[0]
         self.used[sel] = (v, hits[0]["unitOfMeasure"])
+        self._cache[key] = v
         return v
 
 
@@ -147,9 +244,23 @@ def per_m(price_1k: float) -> float:
     return price_1k * 1000.0
 
 
+def cs_records(chars: float) -> int:
+    """Content Safety text records (1,000 characters each) for a text screened in overlapping windows."""
+    if chars <= 0:
+        return 0
+    return max(1, math.ceil(max(0.0, chars - CS_OVERLAP) / (CS_WINDOW - CS_OVERLAP)))
+
+
 class Model:
-    def __init__(self, prices: Prices):
+    def __init__(self, prices: Prices, **knobs):
         self.p = prices
+        # the named sensitivities of the report switch these; the baseline is the default of each
+        self.k = dict(flex_share=FLEX_SHARE, replay=FN_REPLAY_FACTOR, screen_all=False, screen_tests=True, hosted_idle=True,
+                      gate_scale=1.0, ranker=True)
+        unknown = set(knobs) - set(self.k)
+        if unknown:
+            raise KeyError(f"unknown knob {sorted(unknown)}")
+        self.k.update(knobs)
 
     # -- token prices (EUR per 1M tokens) ---------------------------------
     def gpt6(self, family: str, zone: str, svc_class: str = "Std") -> dict:
@@ -178,71 +289,156 @@ class Model:
         raise KeyError(alias)
 
     @staticmethod
-    def tokens_cost(price: dict, calls: float, tin: float, cached: float, cw: float, tout: float,
+    def tokens_cost(price: dict, calls: float, tin: float, prefix: float, tout: float,
                     sessions: float = 1.0, cw_per_call: bool = False) -> float:
-        """Cache writes are charged once per session (design 05 section 7); `cw_per_call` is the pessimistic reading."""
-        per_call = (tin * (1 - cached) * price["inp"] + tin * cached * price["cd"] + tout * price["out"]) / 1e6
-        writes = cw * price["cw"] / 1e6 * (calls if cw_per_call else sessions)
-        return calls * per_call + writes
+        """`prefix` is the static prefix (tokens) that one explicit cache breakpoint covers (design 05 section 7).
+        A session writes it on its first call, billed at the write price instead of the input price, and its later
+        calls read it at the cached price; the rest of every call is plain input.  `cw_per_call` is the pessimistic
+        reading in which every call rewrites the prefix (the cache never hits)."""
+        prefix = min(prefix, tin)
+        writes = calls if cw_per_call else min(calls, sessions)
+        reads = calls - writes
+        plain = calls * (tin - prefix) * price["inp"]
+        return (plain + writes * prefix * price["cw"] + reads * prefix * price["cd"] + calls * tout * price["out"]) / 1e6
 
     def cost_of(self, x: dict) -> float:
-        return self.tokens_cost(x["price"], x["calls"], x["tin"], x["cached"], x["cw"], x["tout"], x["sessions"])
+        return self.tokens_cost(x["price"], x["calls"], x["tin"], x["prefix"], x["tout"], x["sessions"])
 
-    def case_cost(self, zone: str = "DZ", svc_class: str = "Std", detail: bool = False, cw_per_call: bool = False):
+    def exam_price(self, alias: str) -> dict:
+        """Exam, gate and red-team tokens: `flex_share` on the Flex tier, the rest re-run on Global Standard after
+        a 429 or a missed deadline (design 10 section 2, L4: Flex has no fallback and no SLA)."""
+        sh = self.k["flex_share"]
+        f, g = self.alias(alias, "Gl", "Flex"), self.alias(alias, "Gl", "Std")
+        return {key: sh * f[key] + (1 - sh) * g[key] for key in ("inp", "out", "cd", "cw")}
+
+    def case_cost(self, zone: str = "DZ", svc_class: str = "Std", detail: bool = False, cw_per_call: bool = False,
+                  no_cache: bool = False):
         total, rows = 0.0, []
-        for role, alias, _group, w in CASE_WORK:
+        for role, alias, _contract, w in CASE_WORK:
+            w = dict(w, prefix=0) if no_cache else w
             c = self.tokens_cost(self.alias(alias, zone, svc_class), **w, cw_per_call=cw_per_call)
             total += c
             rows.append((role, alias, c))
         return (total, rows) if detail else total
 
     def workloads(self, s: dict) -> list[dict]:
-        """Every token workload of a scenario with its contract group and environment.  The euro lines and the
-        hub quotas both derive from this list, so a quota can never drift from the plan it caps."""
+        """Every token workload of a scenario with its contract and environment (prod, test or dev).  The euro
+        lines and the hub quotas both derive from this list, so a quota can never drift from the plan it caps."""
         W: list[dict] = []
 
-        def add(label, group, env, price, calls, tin, cached, cw, tout, sessions):
-            W.append(dict(label=label, group=group, env=env, price=price, calls=calls, tin=tin, cached=cached,
-                          cw=cw, tout=tout, sessions=sessions))
+        def add(label, contract, env, price, calls, tin, prefix, tout, sessions):
+            W.append(dict(label=label, contract=contract, env=env, price=price, calls=calls, tin=tin, prefix=prefix,
+                          tout=tout, sessions=sessions))
 
         cases, ch, calls = s["cases"], s["study_changes"], s["survey_calls"]
         sol_eu, luna_eu = self.gpt6("6.1-sol", "DZ"), self.gpt6("6-luna", "DZ")
         sol_gl, luna_gl = self.gpt6("6.1-sol", "Gl"), self.gpt6("6-luna", "Gl")
-        for role, alias, group, w in CASE_WORK:
-            add(L_CASES, group, "prod", self.alias(alias, "DZ"), cases * w["calls"], w["tin"], w["cached"], w["cw"], w["tout"], cases)
+        judge_eu, judge_gl = self.mistral_large3("DZ"), self.mistral_large3("Gl")
+        for role, alias, contract, w in CASE_WORK:
+            add(L_CASES, contract, "prod", self.alias(alias, "DZ"), cases * w["calls"], w["tin"], w["prefix"], w["tout"], cases)
         feed_items = 150 * 30
-        add(L_WATCH, "study", "prod", luna_gl, feed_items, 1_500, 0.5, 0, 100, feed_items)
-        add(L_STUDY, "study", "prod", sol_gl, ch * 12, 20_000, 0.5, 6_000, 2_000, ch)
-        add(L_STUDY, "study", "prod", sol_gl, ch * 4, 15_000, 0.5, 4_000, 1_500, ch)
-        add(L_STUDY, "curate", "prod", sol_gl, ch * 4, 15_000, 0.5, 4_000, 1_500, ch)
-        add(L_SURVEY, "survey", "prod", luna_eu, 0.8 * calls, 8_000, 0.5, 2_000, 600, 0.8 * calls)
-        add(L_SURVEY, "survey", "prod", sol_eu, 0.2 * calls, 8_000, 0.5, 2_000, 600, 0.2 * calls)
-        add(L_DREAM, "govern", "prod", sol_eu, 30 * (5 + cases / 200.0), 20_000, 0.5, 5_000, 2_000, 30)
-        ex = [dict(label=L_EXAM, group=group, env="exam", price=self.alias(alias, "Gl", "Flex"), calls=s["exam_cases"] * w["calls"],
-                   tin=w["tin"], cached=w["cached"], cw=w["cw"], tout=w["tout"], sessions=s["exam_cases"])
-              for role, alias, group, w in CASE_WORK]
-        W.extend(ex)
-        W.extend(dict(x, group="examine", calls=0.3 * x["calls"], sessions=0.3 * x["sessions"]) for x in ex)   # judges: 30 % more
+        add(L_WATCH, "study", "prod", luna_gl, feed_items, 1_500, 750, 100, 30)          # one burst a day shares its prefix
+        add(L_STUDY, "study", "prod", sol_gl, ch * 12, 20_000, 6_000, 2_000, ch)
+        add(L_STUDY, "study", "prod", sol_gl, ch * 4, 15_000, 4_000, 1_500, ch)
+        add(L_STUDY, "curate", "prod", sol_gl, ch * 4, 15_000, 4_000, 1_500, ch)
+        bursts = 24 * 30                                                                   # an hourly refresh: one session per burst
+        add(L_SURVEY, "survey", "prod", luna_eu, 0.8 * calls, 8_000, 2_000, 600, min(0.8 * calls, bursts))
+        add(L_SURVEY, "survey", "prod", sol_eu, 0.2 * calls, 8_000, 2_000, 600, min(0.2 * calls, bursts))
+        add(L_DREAM, "govern", "prod", sol_eu, 30 * (5 + cases / 200.0), 20_000, 5_000, 2_000, 30)
+        # exams and gates run W4 on synthetic estates in the TEST environment: Flex where it is available, plus
+        # 30 % judge work (two families on G5) on the `examine-pub` contract
+        gate_total = s["gate_runs"] * self.k["gate_scale"]
+        for label, runs in ((L_EXAM, s["exam_cases"]), (L_GATE, gate_total)):
+            for role, alias, contract, w in CASE_WORK:
+                x = dict(label=label, contract=contract, env="test", price=self.exam_price(alias), calls=runs * w["calls"],
+                         tin=w["tin"], prefix=w["prefix"], tout=w["tout"], sessions=runs)
+                W.append(x)
+                W.append(dict(x, contract="examine-pub", calls=0.3 * x["calls"], sessions=0.3 * x["sessions"]))
         n_attacks = s["rt_scans"] * s["rt_attacks"]
         rt = RT_PER_ATTACK
-        add(L_RT, "investigate", "exam", self.alias("reason", "Gl", "Flex"), n_attacks, rt["target"]["tin"], 0, 0, rt["target"]["tout"], 0)
-        add(L_RT, "examine", "exam", self.alias("luna", "Gl", "Flex"), n_attacks, rt["attacker"]["tin"], 0, 0, rt["attacker"]["tout"], 0)
-        add(L_RT, "examine", "exam", self.alias("luna", "Gl", "Flex"), n_attacks, rt["evaluator"]["tin"], 0, 0, rt["evaluator"]["tout"], 0)
+        add(L_RT, "investigate", "test", self.exam_price("reason"), n_attacks, rt["target"]["tin"], 0, rt["target"]["tout"], 0)
+        add(L_RT, "examine-pub", "test", self.exam_price("luna"), n_attacks, rt["attacker"]["tin"], 0, rt["attacker"]["tout"], 0)
+        add(L_RT, "examine-pub", "test", self.exam_price("luna"), n_attacks, rt["evaluator"]["tin"], 0, rt["evaluator"]["tout"], 0)
         embed = self.p.get("Foundry Models", product="Azure OpenAI", sku="text-embedding-3-large-regional") * 1000.0
-        add(L_EMB, "curate", "prod", dict(inp=embed, out=0.0, cd=embed, cw=0.0), 1, 5_000_000 * 4 + cases * 50 * 300, 0, 0, 0, 1)
+        emb_tokens = 5_000_000 * 4 + cases * 50 * 300
+        add(L_EMB, "curate", "prod", dict(inp=embed, out=0.0, cd=embed, cw=0.0), emb_tokens / 8_000, 8_000, 0, 0, 1)   # requests of 8,000 tokens
+        # the roles and workflows that the first model left out (Round 2, C-06)
+        moves = s["moves_drafted"]
+        add(L_OTHER, "engineer", "prod", sol_eu, moves * 5, 15_000, 4_000, 2_000, moves)
+        add(L_OTHER, "conduct", "prod", luna_eu, s["signals"], 6_000, 0, 400, s["signals"])          # W3b: a triage call only when the check is ambiguous
+        add(L_OTHER, "investigate", "prod", sol_eu, s["commitments"] * 8, 20_000, 5_000, 1_500, s["commitments"])   # W5: the Economist's proposal and re-price
+        add(L_OTHER, "govern", "prod", judge_eu, s["detections"], 6_000, 0, 800, s["detections"])    # W9: the Auditor's triage of detections
+        add(L_OTHER, "experiment", "prod", sol_gl, s["lab_experiments"] * 4, 20_000, 5_000, 2_000, s["lab_experiments"])   # W6: plan and analysis
+        add(L_OTHER, "examine-pub", "test", self.exam_price("reason"), s["method_cycles"] * 30, 20_000, 5_000, 2_000, s["method_cycles"] * 3)   # W10
+        forged = (s["exam_cases"] + gate_total) / (CASES_PER_ESTATE * s["gate_repeats"])
+        add(L_OTHER, "forge", "test", judge_gl, forged, FORGER_TOKENS["tin"], 0, FORGER_TOKENS["tout"], forged)   # another model family than the investigators'
+        add(L_OTHER, "examine-eu", "prod", judge_eu, s["t3_cases"] * 3, 12_000, 0, 1_000, s["t3_cases"] * 3)
+        for name in CONTRACT_ALIASES:
+            add(L_DEV, name, "dev", self.rep_price(name), DEV_CALLS, 800, 0, 200, DEV_CALLS)
         return W
 
+    def rep_price(self, contract: str) -> dict:
+        """A representative price for a contract's smoke tests: the strongest alias it lists, on the public pools
+        (DEV carries synthetic data only)."""
+        a = CONTRACT_ALIASES[contract]
+        if "reason" in a or "judge-pub" in a:
+            return self.gpt6("6.1-sol", "Gl")
+        if "triage" in a:
+            return self.gpt6("6-luna", "Gl")
+        return self.mistral_large3("DZ")
+
+    def dearest(self, contract: str, env: str) -> float:
+        """The dearest rate (EUR per million tokens, input or output) among the aliases a contract lists, on the
+        pools its environment may reach: estate contracts in production use the EU Data Zone, everything else
+        (public contracts, and TEST and DEV, which carry synthetic data only) the Global pools."""
+        zone = "Gl" if (contract in PUBLIC_CONTRACTS or env != "prod") else "DZ"
+        prices = []
+        for a in CONTRACT_ALIASES[contract]:
+            if a == "triage":
+                prices.append(self.alias("luna", zone))
+            elif a == "reason":
+                prices.append(self.alias("reason", zone))
+            elif a == "judge-eu":
+                prices.append(self.alias("judge", "DZ"))
+            elif a == "judge-pub":
+                prices.append(self.alias("reason", "Gl"))      # stand-in for the Claude model (UNVERIFIED price)
+            elif a == "batch":
+                prices.append(self.alias("reason", "Gl", "Flex"))
+        return max(max(p["inp"], p["out"]) for p in prices)
+
     def quotas(self, s: dict, wl: list[dict] | None = None) -> list[dict]:
-        """Monthly token quota and implied euro cap per (group, environment): the plan x QUOTA_HEADROOM."""
+        """Monthly token quota per (contract, environment): the plan x QUOTA_HEADROOM, for every contract that has
+        planned work in that environment.  TEST and DEV carry at least ENV_FLOOR of production's plan (design 04
+        section 4.3), or their own planned work where that is larger.  Each row also gives the forecast-equivalent
+        euros (the quota at the contract's own blended price), the worst case (the quota at the dearest rate the
+        contract's aliases allow), a starting tokens-per-minute limit and the in-flight overrun a limit can suffer."""
+        wl = wl or self.workloads(s)
         agg: dict[tuple[str, str], list[float]] = {}
-        for x in (wl or self.workloads(s)):
-            a = agg.setdefault((x["group"], x["env"]), [0.0, 0.0])
+        for x in wl:
+            a = agg.setdefault((x["contract"], x["env"]), [0.0, 0.0, 0.0])
             a[0] += x["calls"] * (x["tin"] + x["tout"])
             a[1] += self.cost_of(x)
+            a[2] = max(a[2], x["tin"] + x["tout"])
         rows = []
-        for (g, e), (tok, eur) in sorted(agg.items(), key=lambda kv: (kv[0][1] != "prod", kv[0][0])):
-            q = math.ceil(tok * QUOTA_HEADROOM / 1e6) * 1e6
-            rows.append(dict(group=g, env=e, planned_tokens=tok, quota_tokens=q, planned_eur=eur, cap_eur=eur * q / tok))
+        for c in CONTRACT_ALIASES:
+            prod = agg.get((c, "prod"))
+            for e in ENVIRONMENTS:
+                own = agg.get((c, e))
+                floor = ENV_FLOOR.get(e, 0.0) * (prod[0] if prod else 0.0)
+                planned = max(own[0] if own else 0.0, floor)
+                if planned <= 0:
+                    continue
+                ref = own if own and own[0] else prod
+                blended = ref[1] / ref[0]
+                big = ref[2]
+                q = math.ceil(planned * QUOTA_HEADROOM / 1e6) * 1e6
+                slot = (DEV_CONCURRENCY if e == "dev" else CONCURRENCY[c]) * big
+                dear = self.dearest(c, e)
+                rows.append(dict(contract=c, env=e, planned_tokens=planned, quota_tokens=q, has_work=bool(own and own[0]),
+                                 own_eur=own[1] if own else 0.0,
+                                 planned_eur=planned * blended, cap_eur=q * blended, worst_eur=q * dear / 1e6,
+                                 tpm=slot * CALLS_PER_MINUTE_PER_SLOT, overrun_tokens=slot, overrun_eur=slot * dear / 1e6,
+                                 daily=(q * DAILY_SHARE[c] if c in DAILY_SHARE else None)))
         return rows
 
     # -- one scenario ------------------------------------------------------
@@ -254,19 +450,27 @@ class Model:
             L.append(dict(group=group, label=label, eur=round(eur, 2), note=note))
 
         # tokens -----------------------------------------------------------
+        k = self.k
         calls = s["survey_calls"]
         feed_items = 150 * 30
         case_eu = self.case_cost("DZ", "Std")
         wl = self.workloads(s)
+        gate_total = s["gate_runs"] * k["gate_scale"]
+        test_runs = s["exam_cases"] + gate_total          # W4 runs on synthetic estates, in the TEST environment
         notes = {
-            L_CASES: f"{s['cases']} cases at EUR {case_eu:.3f} of marginal tokens each",
-            L_WATCH: "public data, Global",
+            L_CASES: f"{s['cases']} cases at EUR {case_eu:.3f} of marginal tokens each; cache written once per session, first call reads nothing",
+            L_WATCH: "public data, Global; the day's burst shares one cached prefix",
             L_STUDY: "public data, Global Standard",
-            L_SURVEY: "80% Luna, 20% Sol, EU Data Zone",
+            L_SURVEY: "80% Luna, 20% Sol, EU Data Zone; one cached session per hourly burst",
             L_DREAM: "estate lessons, EU Data Zone (flex is Global only)",
-            L_EXAM: "Flex, Global, plus 30% for judges",
-            L_RT: f"{s['rt_scans']} scans of {s['rt_attacks']:,} attacks on Flex, Global; the self-hosted harness pays the same tokens",
+            L_EXAM: f"{s['exam_cases']:,} case-runs, {k['flex_share']:.0%} on Flex and the rest on Global Standard, plus 30% for judges",
+            L_GATE: (f"{s['gate_releases']} gated domain-release(s) a month of ({s['gate_decoys']} decoys + {s['gate_cases']} comparison cases) "
+                     f"x {s['gate_repeats']} runs = {gate_total:,.0f} case-runs; baselines frozen and reused"),
+            L_RT: f"{s['rt_scans']} scans of {s['rt_attacks']:,} attacks, {k['flex_share']:.0%} on Flex; the self-hosted harness pays the same tokens",
             L_EMB: "weekly index rebuild plus retrieval",
+            L_OTHER: "engineer (5 calls per drafted Move), W3b triage, W5 re-pricing, W9 Auditor triage, W6 plan and analysis, W10 post-mortems, "
+                     "forger on another family (Mistral Large 3 stands in), T3 judge",
+            L_DEV: f"{DEV_CALLS:,} calls of 1,000 tokens on each of {len(CONTRACT_ALIASES)} contracts, on the strongest alias each lists",
         }
         order: list[str] = []
         for x in wl:
@@ -275,9 +479,22 @@ class Model:
         for lab in order:
             add("Tokens", lab, sum(self.cost_of(x) for x in wl if x["label"] == lab), notes[lab])
         cs = P.get("Foundry Tools", product="Content Safety", sku="Standard", meter="Standard Text Records")
-        records = s["cases"] * 40 + feed_items + calls
-        add("Tokens", "Content safety screening of untrusted text", max(0.0, records - 5_000) / 1000.0 * cs,
-            f"{records:,.0f} records, 5,000 free")
+        per_case = CS_TOOL_RESPONSES_PER_CASE * cs_records(CS_TOOL_RESPONSE_CHARS)
+        routes = {
+            "tool responses and owner replies, cases": s["cases"] * (per_case + CS_REPLIES_PER_CASE * cs_records(CS_REPLY_CHARS)),
+            "tool responses, exam and gate runs": (test_runs * per_case) if k["screen_tests"] else 0,
+            "Surveyor and fast-signal free text": (calls + s["signals"]) * cs_records(CS_SURVEY_CHARS),
+            "release-feed items": feed_items * cs_records(CS_FEED_CHARS),
+            "documents read by the Scholar": s["study_changes"] * CS_STUDY_DOCS_PER_CHANGE * cs_records(CS_STUDY_DOC_CHARS),
+            "attack responses": s["rt_scans"] * s["rt_attacks"] * cs_records(2_400),
+        }
+        records = sum(routes.values())
+        all_prompts = sum(x["calls"] * (x["tin"] + x["tout"]) * CHARS_PER_TOKEN / 1000.0 for x in wl if x["label"] not in (L_EMB, L_DEV))
+        if k["screen_all"]:
+            records = all_prompts
+        add("Tokens", "Content Safety screening of untrusted text (Standard tier: no free allowance)", records / 1000.0 * cs,
+            f"{records:,.0f} records of 1,000 characters, screened once where the text enters (windows of {CS_WINDOW:,} with {CS_OVERLAP} overlap); "
+            f"screening every prompt on every call would be {all_prompts:,.0f}")
         pii = (calls + 2 * s["cases"]) * PII_RECORDS_PER_CALL
         add("Tokens", "Personal-data pseudonymisation (Language PII) in the tool services", pii / 1000.0 * MANUAL["language_pii_per_1k"][0],
             f"{pii:,.0f} records at the research rate, UNVERIFIED")
@@ -285,23 +502,39 @@ class Model:
         # compute ------------------------------------------------------------
         hv = P.get("Foundry Tools", product="Foundry Agents", sku="Hosted", meter="Hosted vCPU Usage")
         hm = P.get("Foundry Tools", product="Foundry Agents", sku="Hosted", meter="Hosted Memory Usage")
-        hosted_h = (s["cases"] + s["exam_cases"]) * HOSTED_H_PER_CASE + s["study_changes"] * 1.0 + calls * 5 / 60.0 + 30 * 0.5
-        add("Compute", "Hosted agents: sessions, active plus idle timeout", hosted_h * (hv * 1.0 + hm * 2.0),
-            f"{hosted_h:,.0f} h at 1 vCPU and 2 GiB; {HOSTED_H_PER_CASE:.1f} h per case; idle billing UNVERIFIED, billed here")
+        per_case_h = HOSTED_H_PER_CASE if k["hosted_idle"] else HOSTED_ACTIVE_H_PER_CASE
+        hosted_h = (s["cases"] + test_runs) * per_case_h + s["study_changes"] * 1.0 + calls * 5 / 60.0 + 30 * 0.5
+        add("Compute", "Hosted agents: sessions, active plus idle timeout", hosted_h * (hv * HOSTED_VCPU + hm * HOSTED_GIB),
+            f"{hosted_h:,.0f} h at {HOSTED_VCPU} vCPU and {HOSTED_GIB:g} GiB; {per_case_h:.2f} h per case-run; idle billing UNVERIFIED, billed here")
         sbx = P.get("Azure Container Apps", product="Azure Container Apps", sku="Dynamic Sessions", meter="Dynamic Sessions")
-        sbx_h = (s["cases"] + s["exam_cases"]) * SANDBOX_H_PER_CASE
+        sbx_h = (s["cases"] + test_runs) * SANDBOX_H_PER_CASE
         add("Compute", "Sandbox sessions for model-written analysis, batched", sbx_h * sbx,
             f"{sbx_h:,.0f} session-hours at the dynamic-sessions rate; hour rounding UNVERIFIED")
         fb = P.get("Functions", product="Flex Consumption", sku="Always Ready", meter="Always Ready Baseline")
+        fr = P.get("Functions", product="Flex Consumption", sku="Always Ready", meter="Always Ready Execution Time")
+        fre = P.get("Functions", product="Flex Consumption", sku="Always Ready", meter="Always Ready Total Executions")
         fx = P.get("Functions", product="Flex Consumption", sku="On Demand", meter="On Demand Execution Time", pick="max")
         fe = P.get("Functions", product="Flex Consumption", sku="On Demand", meter="On Demand Total Executions", pick="max")
-        execs = (s["cases"] + s["exam_cases"]) * FN_EXEC_PER_CASE + s["subs"] * 30 * 4
-        gbs = execs * FN_GB_S_PER_EXEC
-        add("Compute", "Durable Functions spine (Flex Consumption): always-ready instance, executions",
-            s["fn_always_ready"] * 2 * 3600 * HOURS * fb + max(0.0, gbs - 100_000) * fx + max(0.0, execs - 250_000) / 10.0 * fe,
-            f"{s['fn_always_ready']} always-ready 2 GB instance(s) for the durable group, {execs:,.0f} executions, after the free grant")
+        prod_execs = (s["cases"] * FN_EXEC_PER_CASE + s["subs"] * 30 * 4) * k["replay"]
+        test_execs = test_runs * FN_EXEC_PER_CASE * k["replay"]
+
+        def on_demand(execs: float) -> float:
+            """On-demand cost in one subscription after its monthly grant of 100,000 GB-s and 250,000 executions."""
+            return max(0.0, execs * FN_GB_S_PER_EXEC - 100_000) * fx + max(0.0, execs - 250_000) / 10.0 * fe
+
+        ready = prod_execs * FN_READY_SHARE
+        fn_ready = ready * FN_GB_S_PER_EXEC * fr + ready / 10.0 * fre
+        add("Compute", "Durable Functions spine (Flex Consumption): always-ready instance and executions, production and test",
+            s["fn_always_ready"] * 2 * 3600 * HOURS * fb + fn_ready + on_demand(prod_execs * (1 - FN_READY_SHARE)) + on_demand(test_execs),
+            f"{s['fn_always_ready']} always-ready 2 GB instance(s) in production only; {prod_execs:,.0f} production executions ({FN_READY_SHARE:.0%} on the "
+            f"always-ready instance at its own rates, no free grant) and {test_execs:,.0f} on-demand test executions, each environment in its own subscription's "
+            f"grant; replays counted at x{k['replay']}, UNVERIFIED until S-ORCH-1")
         add("Compute", "Durable Functions task-hub storage (queue polling at 10 s or less)",
-            MANUAL["spine_task_hub_storage"][0] * (1 + s["cases"] / 5000.0), "estimate; queue and table meters are not in the snapshot")
+            MANUAL["spine_task_hub_storage"][0] * (1 + s["cases"] / 5000.0) + (s["envs"] - 1) * 1.0,
+            "estimate; queue and table meters are not in the snapshot; the scale-to-zero environments cost about a euro each")
+        lab = s["lab_experiments"] * LAB_EUR_PER_EXPERIMENT
+        add("Compute", "Lab experiments: two-day resources under the pre-deploy cost cap", lab,
+            f"{s['lab_experiments']} recipes at the EUR {LAB_EUR_PER_EXPERIMENT:.0f} cap each (a seed; the cap is the upper bound of one recipe)")
         vcpu_s = P.get("Azure Container Apps", product="Azure Container Apps", sku="Standard", meter="Standard vCPU Active Usage")
         mem_s = P.get("Azure Container Apps", product="Azure Container Apps", sku="Standard", meter="Standard Memory Active Usage")
         req = P.get("Azure Container Apps", product="Azure Container Apps", sku="Standard", meter="Standard Requests")
@@ -312,12 +545,16 @@ class Model:
             f"{s['aca_vcpu_h']} vCPU-hours, 2 GiB each, after the free grants")
 
         # data and observability ----------------------------------------------
+        inv = self.inventory(s)
         srch = P.get("Azure Cognitive Search", product="Azure AI Search", sku="Basic", meter="Basic Unit")
         add("Data", "AI Search Basic: one per private Foundry account (standard setup); the Atlas index shares production's",
-            s["search_units"] * srch * HOURS, f"{s['accounts']} accounts, {s['search_units']} unit(s)")
+            s["search_units"] * srch * HOURS,
+            f"{s['accounts']} accounts, {s['search_units']} unit(s); direct hybrid retrieval is the baseline, Foundry IQ agentic retrieval is off and unpriced; "
+            "the services are created on day zero (design 14), before their accounts, and are priced by phase in the floor table")
         sem = P.get("Azure Cognitive Search", product="Azure AI Search", sku="Semantic Ranker", meter="Semantic Ranker queries")
         atlas_q = s["cases"] * ATLAS_QUERIES_PER_CASE + s["study_changes"] * 100 + calls * 2
-        add("Data", "AI Search semantic ranker on Atlas queries (1,000 free a month)", max(0.0, atlas_q - 1000) / 1000.0 * sem,
+        add("Data", "AI Search semantic ranker on Atlas queries (1,000 free a month)",
+            (max(0.0, atlas_q - 1000) / 1000.0 * sem) if k["ranker"] else 0.0,
             f"{atlas_q:,.0f} queries; switched off where the exam shows no gain (lever 13)")
         ru = P.get("Azure Cosmos DB", product="Azure Cosmos DB serverless", sku="RUs", meter="1M RUs")
         st = P.get("Azure Cosmos DB", product="Azure Cosmos DB", sku="RUs", meter="Data Stored")
@@ -326,16 +563,24 @@ class Model:
             f"{s['ops_ru_m']} M request units and {s['ops_gb']} GB, plus 20 M and 5 GB for each of {acc} Foundry accounts")
         cool = P.get("Storage", product="General Block Blob v2 Hierarchical Namespace", sku="Cool ZRS", meter="Cool ZRS Data Stored", pick="max")
         hot = P.get("Storage", product="General Block Blob v2 Hierarchical Namespace", sku="Hot ZRS", meter="Hot ZRS Data Stored", pick="max")
-        add("Data", "Cost lake (Cool ZRS) and ledger (Hot ZRS)", s["lake_gb"] * cool + s["ledger_gb"] * hot * 2, f"{s['lake_gb']} GB lake, {s['ledger_gb']} GB ledger x2 for redundancy")
+        add("Data", "Foundry file and blob storage: one store per private account (Hot ZRS)", acc * FOUNDRY_FILE_GB * hot,
+            f"{acc} accounts x {FOUNDRY_FILE_GB} GB of agent files and intermediate blobs; transactions are cents")
+        gzrs = MANUAL["blob_hot_gzrs"][0]
+        add("Data", "Cost lake (Cool ZRS) and audit ledger (Hot GZRS)", s["lake_gb"] * cool + s["ledger_gb"] * gzrs,
+            f"{s['lake_gb']} GB lake; {s['ledger_gb']} GB ledger in a GZRS account at EUR {gzrs} a GB-month ({MANUAL['blob_hot_gzrs'][1]})")
         rec_gb = (35 * s["ops_gb"] + s["ledger_gb"]) * 2
         add("Data", "Recovery lake: hourly exports and daily snapshots in two EU regions (35-day retention)", rec_gb * cool,
-            f"{rec_gb:,.0f} GB over both copies at the Cool ZRS price; the copy traffic between regions is cents")
+            f"{rec_gb:,.0f} GB over both copies at the Cool ZRS price")
+        copy_gb = 30 * (s["ops_gb"] + s["ledger_gb"]) + 24 * 30 * COPY_DELTA_SHARE_PER_HOUR * s["ops_gb"]
+        add("Data", "Recovery copies: inter-region transfer of the daily snapshot and the hourly deltas", copy_gb * INTER_REGION_EUR_PER_GB,
+            f"{copy_gb:,.0f} GB a month at EUR {INTER_REGION_EUR_PER_GB} a GB (Retail Prices API, Bandwidth, inter-region, 2026-10-31); write operations are cents")
         acr_day = P.get("Container Registry", product="Container Registry", sku="Premium", meter="Premium Registry Unit")
         add("Data", "Container Registry Premium (private pull)", acr_day * DAYS, "one registry")
         pe_h = P.get("Virtual Network", region="Global", product="Virtual Network Private Link", sku="Standard", meter="Standard Private Endpoint")
         pe_gb = P.get("Virtual Network", region="Global", product="Virtual Network Private Link", sku="Standard",
                       meter="Standard Data Processed - Egress", pick="max")
-        add("Network", "Private endpoints (hourly)", s["pe"] * pe_h * HOURS, f"{s['pe']} endpoints (4 per private Foundry account, one per signing vault, the spine's storage, the recovery lake, ours)")
+        add("Network", "Private endpoints (hourly)", inv["pe"] * pe_h * HOURS,
+            f"{inv['pe']} endpoints: {PE_PER_ACCOUNT} per private Foundry account, {inv['vaults']} vaults, {PE_PER_SPINE_ENV} per spine environment, {PE_PER_CHAIN_ENV} per chain environment, {PE_BASE} shared")
         add("Network", "Private endpoint data processed", s["dp_gb"] * pe_gb * 2, f"{s['dp_gb']} GB in and out")
         peer = P.get("Virtual Network", region="Global", product="Global Virtual Network Peering", sku="Inter-Region", meter="Inter-Region Egress")
         add("Network", "Peering to a hub in another region (both directions)", s["peer_gb"] * peer * 2,
@@ -348,8 +593,8 @@ class Model:
             max(0.0, 0.3 * gb - 5) * la_a + 0.5 * gb * la_b + 0.2 * gb * la_x, f"{gb} GB, 5 GB free")
         drm = P.get("Microsoft Defender for Cloud", product="Microsoft Defender for Resource Manager", sku="Per node Std", meter="Per node Std Node")
         dkv = P.get("Microsoft Defender for Cloud", product="Microsoft Defender for Key Vault", sku="Per node Std", meter="Per node Std Node")
-        add("Security", "Defender for Resource Manager and Key Vault (default tier)", s["own_subs"] * drm * HOURS + KEY_VAULTS * dkv * HOURS,
-            f"{s['own_subs']} subscriptions, {KEY_VAULTS} vaults (the approval-signing key has a vault of its own)")
+        add("Security", "Defender for Resource Manager and Key Vault (default tier)", s["own_subs"] * drm * HOURS + inv["vaults"] * dkv * HOURS,
+            f"{s['own_subs']} subscriptions, {inv['vaults']} vaults ({s['envs']} secrets, {REGISTRY_VAULTS} registry, {SIGNING_PARTIES} signing parties in each of {s['chain_envs']} chain environment(s))")
 
         # hub ----------------------------------------------------------------------
         if hub == "shared":
@@ -369,10 +614,79 @@ class Model:
             groups[r["group"]] = groups.get(r["group"], 0.0) + r["eur"]
         total = sum(groups.values())
         q = self.quotas(s, wl)
-        return dict(name=name, hub=hub, lines=L, groups={k: round(v, 2) for k, v in groups.items()}, total=round(total, 2),
+        work = [r for r in q if r["has_work"]]
+        host_rate = hv * HOSTED_VCPU + hm * HOSTED_GIB
+        eval_eur = (sum(self.cost_of(x) for x in wl if x["env"] == "test")
+                    + test_runs * per_case_h * host_rate + test_runs * SANDBOX_H_PER_CASE * sbx + on_demand(test_execs)
+                    + (routes["tool responses, exam and gate runs"] + routes["attack responses"]) / 1000.0 * cs)
+        cases_eur = (sum(self.cost_of(x) for x in wl if x["label"] == L_CASES)
+                     + s["cases"] * per_case_h * host_rate + s["cases"] * SANDBOX_H_PER_CASE * sbx
+                     + routes["tool responses and owner replies, cases"] / 1000.0 * cs)
+        gate = dict(runs=gate_total, eur=sum(self.cost_of(x) for x in wl if x["label"] == L_GATE),
+                    review_hours=GATE_REVIEW_HOURS * s["gate_releases"])
+        return dict(name=name, hub=hub, lines=L, groups={g: round(v, 2) for g, v in groups.items()}, total=round(total, 2),
                     per_case=round(total / s["cases"], 2), per_sub=round(total / s["subs"], 2),
-                    breakeven_pct=round(100.0 * total / s["spend"], 2), params=s, quotas=q,
-                    plan_eur=round(sum(r["planned_eur"] for r in q), 2), cap_eur=round(sum(r["cap_eur"] for r in q), 2))
+                    breakeven_pct=round(100.0 * total / s["spend"], 2), params=s, quotas=q, inventory=inv, gate=gate,
+                    eval_eur=round(eval_eur, 2), cases_eur=round(cases_eur, 2),
+                    plan_eur=round(sum(r["own_eur"] for r in work), 2), cap_eur=round(sum(r["cap_eur"] for r in work), 2),
+                    worst_eur=round(sum(r["worst_eur"] for r in work), 2))
+
+    @staticmethod
+    def inventory(s: dict) -> dict:
+        """What the floor is made of: environments, Foundry accounts, Search units, vaults and private endpoints."""
+        vaults = s["envs"] * SECRETS_VAULTS_PER_ENV + REGISTRY_VAULTS + s["chain_envs"] * SIGNING_PARTIES
+        pe = (PE_PER_ACCOUNT * s["accounts"] + vaults + PE_PER_SPINE_ENV * s["envs"] + PE_PER_CHAIN_ENV * s["chain_envs"] + PE_BASE)
+        return dict(accounts=s["accounts"], search_units=s["search_units"], envs=s["envs"], chain_envs=s["chain_envs"],
+                    vaults=vaults, pe=pe)
+
+    def phase_floor(self, name: str) -> list[dict]:
+        """The idle floor of each phase of design 14 section 4: environments are created in the phase that needs
+        them, except the AI Search services, which are created on day zero (a deliberate idle meter)."""
+        s, P = SCENARIOS[name], self.p
+        srch = P.get("Azure Cognitive Search", product="Azure AI Search", sku="Basic", meter="Basic Unit")
+        pe_h = P.get("Virtual Network", region="Global", product="Virtual Network Private Link", sku="Standard", meter="Standard Private Endpoint")
+        drm = P.get("Microsoft Defender for Cloud", product="Microsoft Defender for Resource Manager", sku="Per node Std", meter="Per node Std Node")
+        dkv = P.get("Microsoft Defender for Cloud", product="Microsoft Defender for Key Vault", sku="Per node Std", meter="Per node Std Node")
+        fb = P.get("Functions", product="Flex Consumption", sku="Always Ready", meter="Always Ready Baseline")
+        acr_day = P.get("Container Registry", product="Container Registry", sku="Premium", meter="Premium Registry Unit")
+        first = {"dev": 0, "prod": 2, "test": 3, "lab": 4}
+        present = ["dev", "prod"] + (["test"] if s["accounts"] >= 3 else []) + (["lab"] if s["accounts"] >= 4 else [])
+        spine_all = [e for e in present if e != "lab"]
+        chain_all = ["prod"] + (["test"] if s["chain_envs"] >= 2 and "test" in present else [])
+        extra_units = s["search_units"] - len(present)           # the larger scenarios give production more than one unit
+        rows = []
+        for label, p in (("0 Foundation", 0), ("1 Study", 1), ("2 Survey and investigate, in shadow", 2),
+                         ("3 Brief, approve, act", 3), ("4 The Lab and learning", 4)):
+            exist = [e for e in present if first[e] <= p]
+            spine = [e for e in spine_all if first[e] <= p]
+            chain = [e for e in chain_all if e in exist and p >= 3]
+            vaults = len(spine) * SECRETS_VAULTS_PER_ENV + REGISTRY_VAULTS + len(chain) * SIGNING_PARTIES
+            pe = (PE_PER_ACCOUNT * len(exist) + vaults + PE_PER_SPINE_ENV * len(spine) + PE_PER_CHAIN_ENV * len(chain) + PE_BASE)
+            units_missing = sum(1 + (extra_units if e == "prod" else 0) for e in present if e not in exist)
+            floor = (s["search_units"] * srch * HOURS + pe * pe_h * HOURS + vaults * dkv * HOURS
+                     + s["own_subs"] * len(exist) / len(present) * drm * HOURS + acr_day * DAYS
+                     + (s["fn_always_ready"] * 2 * 3600 * HOURS * fb if "prod" in exist else 0.0))
+            rows.append(dict(phase=label, envs=exist, vaults=vaults, pe=pe, floor=floor, early_units=units_missing,
+                             early_eur=units_missing * srch * HOURS))
+        return rows
+
+    def monthly_sensitivities(self) -> list[tuple[str, dict[str, float]]]:
+        """The change in the monthly total, per scenario, when one assumption moves (shared hub)."""
+        variants = [
+            ("Exam, gate and red-team tokens all on Global Standard (no Flex)", dict(flex_share=0.0)),
+            ("Twice as many gated domain-releases a month", dict(gate_scale=2.0)),
+            ("The hub screens every prompt on every call with Content Safety", dict(screen_all=True)),
+            ("Content Safety applied to the safety exams and attacks only, not to the capability exams and gates", dict(screen_tests=False)),
+            ("Hosted-agent idle time not billed (the GA record's wording)", dict(hosted_idle=False)),
+            ("Orchestrator replays bill twice the executions", dict(replay=2.0)),
+            ("Direct hybrid retrieval only: the semantic ranker off (lever 13)", dict(ranker=False)),
+        ]
+        base = {n: self.scenario(n)["total"] for n in SCENARIOS}
+        out = []
+        for label, kn in variants:
+            m = Model(self.p, **{**self.k, **kn})
+            out.append((label, {n: m.scenario(n)["total"] - base[n] for n in SCENARIOS}))
+        return out
 
     def optional(self) -> list[tuple[str, float, str]]:
         au = self.p.get("Foundry Tools", product="Azure Agent Unit", sku="SRE", meter="SRE Agent Unit")
@@ -400,18 +714,15 @@ class Model:
                 if kind != "Opt" else self.p.get("Foundry Models", product="Azure OpenAI GPT6", sku=rf"61 terra ShortCo Opt [Ss]td {zone}", pick="min")
             price = dict(inp=g("Inp"), out=g("Opt"), cd=g("Cd Inp"), cw=g("Cd Wr"))
             tot = 0.0
-            for role, alias, _group, w in CASE_WORK:
+            for role, alias, _contract, w in CASE_WORK:
                 pr = price if alias == "reason" else self.alias(alias, zone)
                 tot += self.tokens_cost(pr, **w)
             return tot
-        nocache = 0.0
-        for role, alias, _group, w in CASE_WORK:
-            nocache += self.tokens_cost(self.alias(alias, "DZ"), **dict(w, cached=0.0, cw=0))
         return [("Baseline: one case on the EU Data Zone, cache written once per session", base),
                 ("Cache written on every call (the pessimistic reading)", self.case_cost("DZ", "Std", cw_per_call=True)),
                 ("The same case on Global (not allowed for estate data: the price of residency)", gl),
                 ("Investigation tier on Terra instead of Sol", terra("DZ")),
-                ("No prompt caching", nocache)]
+                ("No prompt caching", self.case_cost("DZ", "Std", no_cache=True))]
 
 
 def fmt(x: float) -> str:
@@ -419,27 +730,122 @@ def fmt(x: float) -> str:
 
 
 def quota_table(d: dict) -> list[str]:
-    out = ["| Group | Environment | Planned tokens a month | Quota (plan x 1.5) | Planned € | Euro cap at the group's own price |",
-           "|---|---|---|---|---|---|"]
+    out = ["| Contract | Environment | Planned, M tokens | Quota, M tokens | Starting tokens a minute | Forecast-equivalent € | Worst case at the dearest alias € | In-flight overrun, tokens (€ at the dearest rate) |",
+           "|---|---|---|---|---|---|---|---|"]
     for r in d["quotas"]:
-        out.append(f"| `{r['group']}` | {r['env']} | {r['planned_tokens'] / 1e6:,.1f} M | {r['quota_tokens'] / 1e6:,.0f} M | "
-                   f"€{fmt(r['planned_eur'])} | €{fmt(r['cap_eur'])} |")
-    out.append(f"| **Total** | | {sum(r['planned_tokens'] for r in d['quotas']) / 1e6:,.1f} M | "
-               f"{sum(r['quota_tokens'] for r in d['quotas']) / 1e6:,.0f} M | **€{fmt(d['plan_eur'])}** | **€{fmt(d['cap_eur'])}** |")
+        daily = f" ({r['daily'] / 1e6:,.1f} M a day)" if r["daily"] else ""
+        out.append(f"| `{r['contract']}` | {r['env'].upper()} | {r['planned_tokens'] / 1e6:,.1f} | {r['quota_tokens'] / 1e6:,.0f}{daily} | "
+                   f"{r['tpm'] / 1e3:,.0f} K | €{fmt(r['cap_eur'])} | €{fmt(r['worst_eur'])} | {r['overrun_tokens'] / 1e3:,.0f} K (€{r['overrun_eur']:.2f}) |")
+    for e in ENVIRONMENTS:
+        rows = [r for r in d["quotas"] if r["env"] == e]
+        out.append(f"| **All contracts** | **{e.upper()}** | **{sum(r['planned_tokens'] for r in rows) / 1e6:,.1f}** | "
+                   f"**{sum(r['quota_tokens'] for r in rows) / 1e6:,.0f}** | | **€{fmt(sum(r['cap_eur'] for r in rows))}** | "
+                   f"**€{fmt(sum(r['worst_eur'] for r in rows))}** | |")
     return out
 
 
-def validate(model: Model) -> list[str]:
-    """A quota that blocks planned work, or a summed cap far above the plan, is a defect (design 04 section 4.3)."""
+def doc_contracts(text: str) -> dict[str, set[str]]:
+    """The access-contract table of design 04 section 4.3: contract name -> the aliases it lists."""
+    m = re.search(r"### 4\.3 The access contracts(.*?)(?=\n#{2,4} |\Z)", text, re.S)
+    table: dict[str, set[str]] = {}
+    if not m:
+        return table
+    for line in m.group(1).splitlines():
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        if len(cells) >= 4 and re.fullmatch(r"`[a-z-]+`", cells[0]):
+            table[cells[0].strip("`")] = set(re.findall(r"\b(triage|reason|judge-eu|judge-pub|embed|batch)\b", cells[3]))
+    return table
+
+
+def check_contracts(text: str, expected: dict[str, set[str]] | None = None) -> list[str]:
+    """Design 04 section 4.3 and the model must name the same contracts with the same aliases."""
+    expected = CONTRACT_ALIASES if expected is None else expected
+    got = doc_contracts(text)
+    if not got:
+        return ["04 section 4.3: the access-contract table was not found"]
+    errs = []
+    for c, aliases in expected.items():
+        if c not in got:
+            errs.append(f"04 section 4.3: the model's contract `{c}` is not in the table")
+        elif got[c] != aliases:
+            errs.append(f"04 section 4.3: contract `{c}` lists aliases {sorted(got[c])} but the model prices {sorted(aliases)}")
+    for c in got:
+        if c not in expected:
+            errs.append(f"04 section 4.3: contract `{c}` is in the table but not in the model")
+    return errs
+
+
+def check_rows(scenario: str, rows: list[dict], expected: dict[str, set[str]] | None = None) -> list[str]:
+    """Every declared contract has a quota in every environment where it has planned work, and a quota never
+    blocks the work it was derived from (design 04 section 4.3)."""
+    expected = CONTRACT_ALIASES if expected is None else expected
+    seen: dict[str, set[str]] = {}
+    for r in rows:
+        seen.setdefault(r["contract"], set()).add(r["env"])
+    errs = []
+    for c in expected:
+        if c not in seen:
+            errs.append(f"{scenario}: contract `{c}` has no quota row")
+        elif "dev" not in seen[c]:
+            errs.append(f"{scenario}: contract `{c}` has no DEV quota")
+    for c in seen:
+        if c not in expected:
+            errs.append(f"{scenario}: a quota row for the unknown contract `{c}`")
+    for r in rows:
+        tag = f"{scenario}: the quota of {r['contract']}/{r['env']}"
+        if r["quota_tokens"] < 1.2 * r["planned_tokens"]:
+            errs.append(f"{tag} would block planned work")
+        if r["worst_eur"] + 1e-9 < r["cap_eur"]:
+            errs.append(f"{tag} has a worst case below its forecast-equivalent cap")
+        if r["tpm"] <= 0 or r["overrun_tokens"] <= 0:
+            errs.append(f"{tag} has no tokens-per-minute limit or overrun bound")
+    return errs
+
+
+def validate(model: Model, doc04: str | None = None) -> list[str]:
+    """A quota that blocks planned work, a contract without a row, or a summed cap far above the plan is a defect."""
     errs = []
     for n in SCENARIOS:
         d = model.scenario(n)
-        for r in d["quotas"]:
-            if r["quota_tokens"] < 1.2 * r["planned_tokens"]:
-                errs.append(f"{n}: the quota of {r['group']}/{r['env']} would block planned work")
+        errs.extend(check_rows(n, d["quotas"]))
         if d["cap_eur"] > QUOTA_CAP_LIMIT * d["plan_eur"]:
-            errs.append(f"{n}: the summed euro cap {d['cap_eur']:.0f} exceeds {QUOTA_CAP_LIMIT} x the plan {d['plan_eur']:.0f}")
+            errs.append(f"{n}: the summed forecast-equivalent cap {d['cap_eur']:.0f} exceeds {QUOTA_CAP_LIMIT} x the plan {d['plan_eur']:.0f}")
+    if doc04 is not None:
+        errs.extend(check_contracts(doc04))
     return errs
+
+
+def selftest(model: Model) -> int:
+    """Negative fixtures: each defect must be reported, and the clean input must pass."""
+    head = "### 4.3 The access contracts\n\n| Contract | Agents | Data class · pools | Aliases | Quota | Safety |\n|---|---|---|---|---|---|\n"
+    rows = [f"| `{c}` | agent | class · pools | {', '.join(sorted(a))} | 12 §2 | safe |" for c, a in CONTRACT_ALIASES.items()]
+    clean = head + "\n".join(rows) + "\n\n### 4.4 next\n"
+    first = next(iter(CONTRACT_ALIASES))
+    doc_cases = {
+        "a contract missing from the table": head + "\n".join(rows[1:]) + "\n",
+        "an extra contract in the table": clean.replace("### 4.4", "| `phantom` | a | b | reason | 12 §2 | x |\n\n### 4.4"),
+        "an alias that the model does not price": clean.replace(rows[0], rows[0].replace(rows[0].split("|")[4], " reason, judge-pub, embed, batch, triage ")),
+        "no table at all": "# nothing here\n",
+    }
+    team = model.scenario("Team")["quotas"]
+    row_cases = {
+        "a contract without any row": [r for r in team if r["contract"] != first],
+        "a contract without a DEV row": [r for r in team if not (r["contract"] == first and r["env"] == "dev")],
+        "a quota that blocks planned work": [dict(team[0], quota_tokens=team[0]["planned_tokens"])] + team[1:],
+        "a worst case below the forecast": [dict(team[0], worst_eur=0.0)] + team[1:],
+        "a row for an unknown contract": team + [dict(team[0], contract="phantom")],
+    }
+    ok = not check_contracts(clean) and not check_rows("Team", team)
+    print(f"clean fixtures: {'pass' if ok else 'FAIL'}")
+    for label, text in doc_cases.items():
+        found = bool(check_contracts(text))
+        ok &= found
+        print(f"  {'caught' if found else 'MISSED'}: {label}")
+    for label, rws in row_cases.items():
+        found = bool(check_rows("Team", rws))
+        ok &= found
+        print(f"  {'caught' if found else 'MISSED'}: {label}")
+    return 0 if ok else 1
 
 
 def report(model: Model) -> str:
@@ -460,8 +866,22 @@ def report(model: Model) -> str:
                "*Cloud per case* divides **every** cloud line by the cases (it is not the marginal token cost, which is in the table below). "
                "Break-even is the share of monitored cloud spend the system must verifiably save to cover its own **cloud** cost "
                "(monitored spend, a seed: " + ", ".join(f"{k} €{v['spend']:,}" for k, v in SCENARIOS.items()) + " a month). "
-               "Private Foundry accounts, each with its own AI Search, Cosmos DB and Storage: " +
-               ", ".join(f"{k} {v['accounts']}" for k, v in SCENARIOS.items()) + " (production and development; test; the Lab), created in the phase that needs them.")
+               "Private Foundry accounts, one per environment, each with its own AI Search, Cosmos DB and Storage: " +
+               ", ".join(f"{k} {v['accounts']}" for k, v in SCENARIOS.items()) +
+               " (Pilot: development and production; Team and Enterprise add test and the Lab). They are created in the phase that needs them, "
+               "except the AI Search services, which are created on day zero.")
+    out.append("")
+    out.append("**The inventory behind the floor** (design [04 §7](04-landing-zone-and-citadel.md#7-the-foundry-layout), [07 §6.1](07-security-architecture.md#61-secrets)):")
+    out.append("")
+    out.append("| Scenario | Foundry accounts | AI Search units | Spine environments | Chain environments | Key Vaults | Private endpoints |")
+    out.append("|---|---|---|---|---|---|---|")
+    for d in detail:
+        i = d["inventory"]
+        out.append(f"| {d['name']} | {i['accounts']} | {i['search_units']} | {i['envs']} | {i['chain_envs']} | {i['vaults']} | {i['pe']} |")
+    out.append("")
+    out.append(f"A spine environment holds the Durable Functions app, its storage and one secrets vault; a chain environment adds the {SIGNING_PARTIES} signing parties' vaults "
+               f"(Approval, Policy, broker, runner, Verifier, Audit Writer) and the queue storage account `stchain`; one more vault holds the pipeline's signing key. Endpoints: {PE_PER_ACCOUNT} per Foundry account, "
+               f"one per vault, {PE_PER_SPINE_ENV} per spine environment, {PE_PER_CHAIN_ENV} per chain environment and {PE_BASE} shared.")
     out.append("")
     shares = []
     for d in detail:
@@ -470,8 +890,42 @@ def report(model: Model) -> str:
         shares.append(f"{d['name']}: tokens {100 * g['Tokens'] / t:.0f} %, compute {100 * g['Compute'] / t:.0f} %, fixed and platform {100 * fixed / t:.0f} %")
     out.append("**Shares of the total (shared hub):** " + "; ".join(shares) + ".")
     out.append("")
-    out.append("**Hub caps next to the plan** (token quotas at " + f"{QUOTA_HEADROOM} x the planned tokens, priced at each group's own price. The hub's token limit is the control, with a small residual overshoot under concurrency (section 6); the plan is the forecast): "
-               + "; ".join(f"{d['name']} cap €{fmt(d['cap_eur'])} against a token plan of €{fmt(d['plan_eur'])}" for d in detail) + ".")
+    out.append("**The idle floor by phase** (design [14 §4](14-next-phases.md#4-phases); monthly euros with nothing running: Search, endpoints, Key Vault and Resource Manager Defender, "
+               "the registry and, from phase 2, the spine's always-ready instance). The AI Search services are created on day zero, so a phase pays for the ones whose account does not exist yet:")
+    out.append("")
+    out.append("| Phase | Accounts that exist (Pilot / Team / Enterprise) | Idle floor € (Pilot / Team / Enterprise) | Of which Search reserved ahead of its account, € |")
+    out.append("|---|---|---|---|")
+    floors = {n: model.phase_floor(n) for n in SCENARIOS}
+    for idx in range(len(floors["Pilot"])):
+        rows = [floors[n][idx] for n in SCENARIOS]
+        out.append(f"| {rows[0]['phase']} | " + " / ".join(str(len(r["envs"])) for r in rows) + " | "
+                   + " / ".join(f"{fmt(r['floor'])}" for r in rows) + " | " + " / ".join(f"{fmt(r['early_eur'])}" for r in rows) + " |")
+    out.append("")
+    out.append("**The gate plan** (design [10 §4](10-test-and-evaluation.md#the-statistical-protocol): decoys for G3, comparison cases for G4, each run `r` times; the baselines are frozen and reused, so only the candidate runs; "
+               "G5 is judged on the same runs, which the 30 % judge work covers):")
+    out.append("")
+    out.append("| Scenario | Gated domain-releases a month | Decoys | Comparison cases | Runs a case | Case-runs a month | Gate tokens € | Reviewer hours a month |")
+    out.append("|---|---|---|---|---|---|---|---|")
+    for d in detail:
+        p, gt = d["params"], d["gate"]
+        out.append(f"| {d['name']} | {p['gate_releases']} | {p['gate_decoys']} | {p['gate_cases']} | {p['gate_repeats']} | {gt['runs']:,.0f} | "
+                   f"€{fmt(gt['eur'])} | {gt['review_hours']:.0f} |")
+    out.append("")
+    out.append("Pilot gates one narrow domain in shadow: its claim narrows instead of its statistics thinning. Reviewer hours are a person reading the failed critical cases and a fifth of the passed ones and "
+               f"labelling the judges' sample, {GATE_REVIEW_HOURS:.0f} hours per gated domain-release (a seed).")
+    out.append("")
+    out.append("**Evaluation against production** (everything that runs the exams, the gates, the attacks, the forger and method learning, including the hosted-agent, sandbox, function and screening time that "
+               "carry them, against the same lines for the production cases):")
+    out.append("")
+    out.append("| Scenario | Evaluation € | Production cases € | Evaluation as a multiple of production cases | Evaluation as a share of the total |")
+    out.append("|---|---|---|---|---|")
+    for d in detail:
+        out.append(f"| {d['name']} | €{fmt(d['eval_eur'])} | €{fmt(d['cases_eur'])} | {d['eval_eur'] / d['cases_eur']:.1f} x | {100 * d['eval_eur'] / d['total']:.0f} % |")
+    out.append("")
+    out.append("**Contract quotas next to the plan** (token quotas at " + f"{QUOTA_HEADROOM} x the planned tokens). The *forecast-equivalent* euros price the quota at the contract's own blended price; "
+               "the *worst case* prices it at the dearest rate of the dearest alias the contract lists, and neither is a hard cap: the spine's atomic euro reservation is the budget that holds, "
+               "and the hub's token limit is a second, coarser layer with a bounded overrun (section 6): "
+               + "; ".join(f"{d['name']}: forecast-equivalent €{fmt(d['cap_eur'])}, worst case €{fmt(d['worst_eur'])}, token plan €{fmt(d['plan_eur'])}" for d in detail) + ".")
     out.append("")
     out.append("**Where the tokens go** (shared hub):")
     out.append("")
@@ -482,7 +936,8 @@ def report(model: Model) -> str:
         vals = [next(r["eur"] for r in d["lines"] if r["label"] == lab) for d in detail]
         out.append(f"| {lab} | " + " | ".join(f"€{fmt(v)}" for v in vals) + " |")
     out.append("")
-    out.append("**One case, on the strongest tier, by role** (EU Data Zone, marginal tokens only):")
+    out.append("**One case, on the strongest tier, by role** (EU Data Zone, marginal tokens only; a **warm-cache scenario**, not a measured saving: each role's session writes its static prefix once, "
+               "bills it at the write price and reads it on later calls):")
     out.append("")
     tot, rows = model.case_cost("DZ", "Std", detail=True)
     out.append("| Role | Alias | € per case |")
@@ -498,7 +953,14 @@ def report(model: Model) -> str:
     for lab, v in model.sensitivity():
         out.append(f"| {lab} | {v:.3f} |")
     out.append("")
-    out.append(f"**With labour: the all-in break-even** (share of monitored spend; labour at €{LABOUR_RATE_EUR:.0f} an hour is a stated seed, not a measurement):")
+    out.append("**Sensitivity of the monthly total** (change against the table above, shared hub, one assumption at a time):")
+    out.append("")
+    out.append("| Assumption that moves | " + " | ".join(SCENARIOS) + " |")
+    out.append("|---|" + "---|" * len(SCENARIOS))
+    for lab, deltas in model.monthly_sensitivities():
+        out.append(f"| {lab} | " + " | ".join(f"{'+' if v >= 0 else '−'}€{fmt(abs(v))}" for v in deltas.values()) + " |")
+    out.append("")
+    out.append(f"**With labour: the all-in break-even** (share of monitored spend; labour at €{LABOUR_RATE_EUR:.0f} an hour is a stated seed, not a measurement; the gate review hours above are part of it; the 40-hour row is the Pilot-scale operating budget in [11 §7.2](11-delivery-and-operations.md#the-minimum-viable-profile-and-the-operating-budget)):")
     out.append("")
     out.append("| Labour a month | " + " | ".join(SCENARIOS) + " |")
     out.append("|---|" + "---|" * len(SCENARIOS))
@@ -508,9 +970,11 @@ def report(model: Model) -> str:
                    + " | ".join(f"{100.0 * (d['total'] + h * LABOUR_RATE_EUR) / d['params']['spend']:.2f} %" for d in detail) + " |")
     out.append("")
     team = next(d for d in detail if d["name"] == "Team")
-    out.append("**Contract quotas at Team scale.** Every group's monthly token quota is its planned tokens times "
-               f"{QUOTA_HEADROOM}, rounded up to a whole million, so a quota can neither block planned work nor float far above it; "
-               "`python tools/cost-model.py --quotas Pilot` (or `Enterprise`) prints the others. The euro cap is the quota priced at the group's own blended price:")
+    out.append("**Contract quotas at Team scale: every contract of [04 §4.3](04-landing-zone-and-citadel.md#43-the-access-contracts) in every environment where it has planned work.** "
+               f"A quota is the planned tokens times {QUOTA_HEADROOM}, rounded up to a whole million; TEST and DEV carry at least {ENV_FLOOR['test']:.0%} and {ENV_FLOOR['dev']:.0%} of production's plan, "
+               "or their own planned work where that is larger (exams, gates and attacks run in TEST on synthetic data, so TEST and DEV products reach the public pools). "
+               "The starting tokens a minute is the contract's peak concurrency times its largest call times two calls a minute; the in-flight overrun is the concurrency times the largest call, priced at the dearest rate. "
+               "`python tools/cost-model.py --quotas Pilot` (or `Enterprise`) prints the others, and `--check` fails if a contract of the table is missing here or the model prices other aliases:")
     out.append("")
     out.extend(quota_table(team))
     out.append("")
@@ -531,6 +995,7 @@ def main() -> int:
     ap.add_argument("--hub", default="shared", choices=["shared", "own-small", "own-medium"])
     ap.add_argument("--update-doc", metavar="FILE")
     ap.add_argument("--check", metavar="FILE")
+    ap.add_argument("--self-test", action="store_true")
     args = ap.parse_args()
     try:
         sys.stdout.reconfigure(encoding="utf-8")  # type: ignore[attr-defined]
@@ -538,6 +1003,8 @@ def main() -> int:
         pass
     prices = Prices(SNAP)
     model = Model(prices)
+    if args.self_test:
+        return selftest(model)
     if args.lines:
         d = model.scenario(args.lines, args.hub)
         for r in d["lines"]:
@@ -561,7 +1028,8 @@ def main() -> int:
             print(f"{path}: markers not found", file=sys.stderr)
             return 2
         if args.check:
-            errs = validate(model)
+            doc04 = path.parent / "04-landing-zone-and-citadel.md"
+            errs = validate(model, doc04.read_text(encoding="utf-8") if doc04.exists() else "")
             for e in errs:
                 print(f"{path}: {e}", file=sys.stderr)
             if m.group(0) != block:
@@ -569,7 +1037,7 @@ def main() -> int:
                 return 1
             if errs:
                 return 1
-            print(f"{path}: cost block is current; quotas consistent with the plan")
+            print(f"{path}: cost block is current; quotas consistent with the plan and with the contracts of 04 section 4.3")
             return 0
         path.write_text(text[: m.start()] + block + text[m.end():], encoding="utf-8")
         print(f"updated {path}")

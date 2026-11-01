@@ -42,11 +42,11 @@ Every role is a *named human*, recorded in the repository (`GOVERNANCE.md`) and 
 | Accept an **exception** to a design rule | A | R | C | C | | |
 | **Pull a kill switch** | A | R | R | | | |
 
-A lesson is *draft* until an owner confirms it by an authenticated action, and a draft is never an instruction to an acting agent. The estate owner's own decisions — read onboarding, action onboarding, the approver groups, offboarding — are not in the table because they belong to the adopting organisation; the system owner is informed.
+A lesson is *draft* until an owner confirms it by an authenticated action, and a draft is never an instruction to an acting agent. An **autonomy credential** is an item in `controls` that only a named human's grant action writes ([07 §4](07-security-architecture.md#4-approvals-that-cannot-be-forged-or-reused)); no agent, pipeline or pull request can. The estate owner's own decisions — read onboarding, action onboarding, the approver groups, offboarding — are not in the table because they belong to the adopting organisation; the system owner is informed.
 
 ### 1.3 Policy as code
 
-Governance that lives in a document drifts. The control set is an **Azure Policy initiative** assigned as code, mapped to the **Microsoft cloud security benchmark v2, AI security domain** (AI-1 approved models, AI-2 multi-layer filtering, AI-3 safety meta-prompts, AI-4 least privilege for agent functions, AI-5 human in the loop, AI-6 monitoring, AI-7 continuous red teaming).
+Governance that lives in a document drifts. The control set is an **Azure Policy initiative** assigned as code, mapped to the **Microsoft cloud security benchmark v2, AI security domain** (v2 is labelled preview, so the control map in the repository stays authoritative; AI-1 approved models, AI-2 multi-layer filtering, AI-3 safety meta-prompts, AI-4 least privilege for agent functions, AI-5 human in the loop, AI-6 monitoring, AI-7 continuous red teaming).
 
 | Policy | Effect: production · non-production · Lab | State |
 |---|---|---|
@@ -60,7 +60,7 @@ Governance that lives in a document drifts. The control set is an **Azure Policy
 | **Tags**: owner, sponsor, environment, expiry (Lab: mandatory) | Deny · Audit · Deny | GA |
 | **Allowed SKUs and regions** (Lab: a short list, no public IPs) | n/a · n/a · Deny | GA |
 
-**Compliance state is not live state.** Azure Policy compliance data can be up to 24 hours old — the standard evaluation cycle runs once every 24 hours ([Learn](https://learn.microsoft.com/azure/governance/policy/how-to/get-compliance-data#evaluation-triggers)) — and an *Audit* effect blocks nothing. So G8 adds **synchronous Azure Resource Graph and SDK assertions** against the live properties of every control that gates an action (public network access, key authentication, the contract's data class, the access list of the approval-signing key), and uses Policy compliance as the standing record, not as the gate.
+**Compliance state is not live state.** Azure Policy compliance data can be up to 24 hours old — the standard evaluation cycle runs once every 24 hours ([Learn](https://learn.microsoft.com/azure/governance/policy/how-to/get-compliance-data#evaluation-triggers)) — and an *Audit* effect blocks nothing. So G8 adds **synchronous Azure Resource Graph and SDK assertions** against the live properties of every control that gates an action (public network access, key authentication, the contract's data class, the role assignments on every signing vault — only `acia-signer` and `acia-key-reader`, none holding `keys/update/action` — and on the chain's jobs, where only the deploying pipeline holds `jobs/write` and `jobs/start/action`), and uses Policy compliance as the standing record, not as the gate.
 
 **The control map.** `governance/controls.yaml` lists every control with its requirement, the query that proves it, the test that exercises it and its owner. **Release gate G8** ([10 §4](10-test-and-evaluation.md#4-release-gates)) fails when a control cannot show evidence *from live state* — compliance is a build output, not a quarterly scramble.
 
@@ -69,6 +69,8 @@ Governance that lives in a document drifts. The control set is an **Azure Policy
 **Position (to confirm).** The operator is both **provider** (builds the system and puts it into service under his name) and **deployer** (uses it). The system is **not high-risk by purpose**: it works on cost and resources, and it is designed to *stay out of* employment and work-management uses. Where a use would enter Annex III, the design bans it rather than manages it.
 
 ### 2.1 Timeline as of 2026-10-31
+
+Every date and effect in this section and in §2.2 is a reading of the sources on 2026-10-31 and is **to confirm with counsel** before the system is put into service.
 
 | Date | What applies |
 |---|---|
@@ -90,7 +92,7 @@ Governance that lives in a document drifts. The control set is an **Azure Policy
 | **Art. 50(2) mark synthetic content** | machine-readable marking in e-mail headers and card metadata; marks on audio and video where the service offers them (to confirm); the voluntary code of practice on transparency of AI-generated content is the reference |
 | **Art. 50(4) deepfakes (deployer)** | a clearly synthetic avatar by default; consent and disclosure for any personal voice or custom photo avatar |
 | **General-purpose model duties** | rest with the model providers; **no fine-tuning or distillation into a new general-purpose model** without a legal check |
-| **Open-source** | the Act leaves free and open-source AI systems out of most obligations *unless* they fall under Art. 5, Art. 50 or high-risk; an MIT release therefore does **not** exempt the transparency duties |
+| **Open-source** | the Act leaves free and open-source AI systems out of most obligations *unless* they fall under Art. 5, Art. 50 or high-risk; an MIT release therefore does **not** exempt the transparency duties, and the design does not depend on any exemption: whether our release counts as free and open-source in the Act's sense is *to confirm with counsel* |
 
 ### 2.3 Voluntary alignment with the high-risk requirements
 
@@ -114,11 +116,11 @@ Not required, but a useful quality bar, and cheap because the design already pro
 
 | Control | Our answer |
 |---|---|
-| **AI-1** approved models | Azure Policy approved models; alias map; the exam on every change |
+| **AI-1** approved models | Azure Policy approved models, whose asset ids **end with `/`** because the policy matches each id as a prefix ([Learn](https://learn.microsoft.com/azure/foundry/how-to/model-deployment-policy)); asserted by the exam; alias map; the exam on every change |
 | **AI-2** multi-layer filtering | model guardrails, gateway screening, deterministic gate, human approval ([07 §5](07-security-architecture.md#5-defence-against-prompt-injection-in-nine-layers)) |
 | **AI-3** safety meta-prompts | versioned instructions with hashes; tested, never trusted as the boundary |
 | **AI-4** least privilege for agent functions | zero standing write; read-only tool identities; per-tool app roles per agent identity ([07 §5](07-security-architecture.md#5-defence-against-prompt-injection-in-nine-layers), layer 6) |
-| **AI-5** human in the loop | signed approvals; two-person purchases |
+| **AI-5** human in the loop | signed approvals that carry the person's Entra-signed token; two-person purchases |
 | **AI-6** monitoring | traces, hub logs, detections D1–D20, the drift controller |
 | **AI-7** continuous red teaming | attack suite in CI; scheduled red teaming; canaries |
 
@@ -128,9 +130,9 @@ Not required, but a useful quality bar, and cheap because the design already pro
 
 | Data | Why it exists | Where | Minimisation |
 |---|---|---|---|
-| Owner and approver **names, e-mail addresses, Teams identifiers** | to ask the right person and to record who decided | Estate service (mapping); Brief service; audit ledger | prompts see **pseudonyms**; the mapping never leaves the tenant |
+| Owner and approver **names, e-mail addresses, Teams identifiers** | to ask the right person and to record who decided | Estate service (mapping); Brief service; the erasable signed approval records — **not the audit ledger** | prompts see **pseudonyms**; the mapping never leaves the tenant; **names exist only in erasable stores**, and the ledger's entry schema rejects name, e-mail, UPN, `oid` and Teams-id fields (an L1 property test, [10 §2](10-test-and-evaluation.md#2-the-layers)) |
 | **Directory data**: manager, team and **contact preferences** (language, preferred hours) | to ask at a humane time, in the right language | Estate service | only the fields a Brief needs; preferences are stated, **never inferred from behaviour**, and never used to evaluate the person |
-| **Approvals**: who, when, from which channel, what they saw | accountability | audit ledger (a pseudonymous id and a hash of the signed record); the signed record, which carries the approver's directory object id, in the erasable `approval-records` container (the permanent `approvals-index` holds ids, hashes, state and a pseudonymous id only) | the ledger holds pseudonymous ids and hashes only; the mapping and the full record sit in stores where an erasure can reach them |
+| **Approvals**: who, when, from which channel, what they saw | accountability | audit ledger (a pseudonymous id and a hash of the signed record); the signed record, which carries the person's Entra-signed ID token and so the directory object id, tenant, `amr` and `auth_time`, in the erasable `approval-records` container (the permanent `approvals-index` holds ids, hashes, state and a pseudonymous id only) | the ledger holds pseudonymous ids and hashes only; the mapping and the full record sit in stores where an erasure can reach them |
 | **Replies** to questions (free text) | lessons | Brief store; Lesson Book | untrusted text; stored as testimony with expiry; no special-category inference |
 | **Traces** with prompts and tool results | debugging, evaluation | App Insights, the protected table | content capture **off** by default; short retention; restricted role |
 | **Voice and meeting audio** (optional module) | conversation by voice | transient | **off by default**; consent; no storage by default |
@@ -147,7 +149,7 @@ Not required, but a useful quality bar, and cheap because the design already pro
 | **DPIA** | prepared before the first production use; a template ships in `governance/` |
 | **Employee consultation** | works-council or labour-law consultation is *to confirm* before any staff-facing voice, avatar or meeting module is enabled — which is why those modules are off by default — and before any measure of approver behaviour finer than role-level aggregates |
 | **Automated decisions (Art. 22)** | the system's decisions are about cloud resources, not natural persons; a Move runs on a named human's authenticated, signed approval or, within a human-granted *autonomy credential*, under a rule a human wrote. Where a decision touches a person, it is that person's own authenticated act. Whether Art. 22 applies at all is *to confirm with counsel*; the design does not rely on the answer |
-| **Subject rights** | access and erasure are served from the **erasable stores** (the Estate service, the Brief store, the Lesson Book, the signed approval records). The audit ledger is immutable by design and holds **pseudonymous ids and hashes**, not personal data; erasing the mapping removes the link from a pseudonym to a person *in our stores*. Whether the remaining record is anonymous to a party that also holds the tenant's Activity Log or Entra logs, and on what basis the pseudonymous approval record is retained (the organisation's audit obligation is the likely one), are *to confirm with counsel*; backups re-apply erasures ([§4.3](#43-retention)) |
+| **Subject rights** | access and erasure are served from the **erasable stores** (the Estate service, the Brief store, the Lesson Book, the signed approval records). The audit ledger is immutable by design and holds **pseudonymous ids and hashes**, not personal data (no name, e-mail, UPN, `oid` or Teams id, which its schema rejects); erasing the mapping removes the link from a pseudonym to a person *in our stores*. Whether the remaining record is anonymous to a party that also holds the tenant's Activity Log or Entra logs, and on what basis the pseudonymous approval record is retained (the organisation's audit obligation is the likely one), are *to confirm with counsel*; backups re-apply erasures ([§4.3](#43-retention)) |
 | **Breach** | the 72-hour notification clock starts at detection; the runbook ([11](11-delivery-and-operations.md)) names who decides |
 
 ### 4.3 Retention
@@ -215,7 +217,7 @@ Evidence is produced **automatically** by the pipeline and the drift controller 
 | Exam, red-team and resilience reports | the Examiner, the schedules | nightly, weekly, per release |
 | Release manifest (every pin) | pipeline | every release |
 | Approval statistics at role level and in aggregate, cross-checks against sign-in logs (D13), anomalies | the Auditor | weekly |
-| Key rotations, lease and probe records, sweeper findings | the Approval service, the broker, the sweeper | per rotation; monthly |
+| Key rotations (the RB-12 workflow), lease and probe records, sweeper findings, the ledger verifier's nightly result | the Approval service, the broker, the sweeper, the ledger verifier | per rotation; nightly; monthly |
 | Drift findings and their time to correct | drift controller | continuous |
 | DPIA, record of processing, DPA acceptance | data protection contact | on change |
 | AI literacy record | system owner | annual |
@@ -229,7 +231,7 @@ Qualitative; each risk has a named owner and appears with its ADR.
 | # | Risk | L | I | Controls | Residual | ADR |
 |---|---|---|---|---|---|---|
 | R1 | A prompt-injected agent causes a wrong *proposal* | H | M | no write power; Skeptic; approval gate; layers 0–9 | low | 19 |
-| R2 | A compromised execution component changes an estate | L | H | leased just-in-time identity; the three-party chain; sweeper; deterministic gate; kill switches with stated latencies; Defender for Resource Manager; D14–D16 | low–medium | 07, 08 |
+| R2 | A compromised execution component changes an estate | L | H | leased just-in-time identity; a chain in which no single credential completes a change (the signer starts nothing, a Policy permit and a person's Entra-signed token it cannot fabricate, a broker and a runner that each verify again, chain jobs that only the deploying pipeline can start or change); sweeper; kill switches with stated latencies; Defender for Resource Manager; D14–D16 | low–medium | 07, 08 |
 | R3 | A **preview** dependency changes or disappears | H | M | the preview register; switches; fallbacks | low | 21 |
 | R4 | The **Citadel hub** is a single-maintainer sample | M | H | fork and pin; contract tests; native APIM fallback; contracts as data | medium | 02 |
 | R5 | **Token cost overrun** | M | M | caps at the hub; envelopes; cost-per-case gate; Flex and Batch for public work | low | 26 |
@@ -240,11 +242,11 @@ Qualitative; each risk has a named owner and appears with its ADR.
 | R10 | **Licence-dependent controls** are unavailable | H | L | optional modules with fallbacks | low | 20 |
 | R11 | **Platform region constraints** (one region carries all features) | M | M | redeploy-from-code recovery; second-region path documented | medium | 04, 30 |
 | R12 | **Lock-in** to Foundry, APIM and hosted agents | M | M | contracts as data; Agent Framework is open; aliases; MCP and A2A are open protocols | accepted, costed in [13](13-decisions.md) | 01, 02 |
-| R13 | A **forged or replayed approval**, or misuse of the approval-signing key | L | H | signed approvals; the broker and the runner verify independently; single-use nonce, expiry and live-state hash; approval epoch and key deny list; the Auditor's cross-check; D13, D18, D20 | low–medium | 07, 08 |
+| R13 | A **forged or replayed approval**, misuse of a signing key, or two colluding compromised services (credential-based approvals only) | L | H | a Policy permit and a person's Entra-signed token that the Approval service cannot fabricate; the broker and the runner verify again; single-use nonce, expiry and live-state hash; approval epoch, key and credential deny lists; signing-only key roles; the credential's cap, scope and expiry; D13, D15, D16, D18, D20 | low–medium | 07, 08 |
 | R14 | **Lease collision** or slow revocation of an execution identity | M | M | exclusive leases with fence tokens; activation and revocation probes; quarantine; the ten-minute RBAC propagation delay inside every window; D14 | low–medium | 07 |
 | R15 | A **poisoned approver registry** (standing inferred from a tag or a reply) | M | H | standing only from human-administered groups or roles; D10 | low | 08 |
-| R16 | **CI poisoning** through agent-authored pull requests | M | H | data paths only; GitHub-hosted runners without secrets or federation; privileged workflows from the base branch after a human approves; two distinct approvers (spike S-DEL-2) | low–medium | 23, 28 |
-| R17 | The **audit ledger** is unavailable or inconsistent | L | M | one Audit Writer; fail closed, so no change without a ledger entry; rollover, chain verification and signed digests; D19 | low–medium | 32 |
+| R16 | **CI poisoning** through agent-authored pull requests | M | H | data paths only, through a GitHub App installation; two approvers who are not the author on `moves/**` and no executable field in a Move; GitHub-hosted runners without secrets or federation; privileged workflows from the base branch after a human approves, and `pr-spoke` only after the merge (spike S-DEL-2) | low–medium | 23, 28 |
+| R17 | The **audit ledger** is unavailable or inconsistent | L | M | one Audit Writer; fail closed, so no change without a ledger entry (rollback and revocation exempt, from a signed outbox); producers read their block back; a nightly verifier that is not the writer; rollover and signed digests; D19 | low–medium | 32 |
 | R18 | **One person holds every role** (single-operator mode) | H | M | promotion limited to shadow mode and reversible Moves; a second reviewer before anything else; a minimum crew of three | medium | 23 |
 
 ## 9. Open-source governance
@@ -256,7 +258,7 @@ Qualitative; each risk has a named owner and appears with its ADR.
 A design rule may be broken only by an **exception record**: a short ADR with the rule, the reason, the compensating control, an **owner** and an **expiry date**. The register is part of the evidence pack and the Auditor reviews it quarterly. Standing exceptions:
 
 - **The embedded analytics engine** (DuckDB) is an open-source library rather than a Microsoft service, accepted against constraint C1 in [ADR-13](13-decisions.md#adr-13-cost-analytics-is-parquet-and-an-embedded-engine-in-a-job). It is **not** the only option: Synapse serverless SQL reserves no compute while idle and charges for the data processed ([Learn](https://learn.microsoft.com/azure/synapse-analytics/sql/on-demand-workspace-overview)). The exception therefore rests on **measured simplicity and cost, compared against that Microsoft-only option in spike S-DATA-1**, and keeps a Microsoft-only fallback behind the same interface. **Owner:** the sponsor of the Cost query service, a named human in `GOVERNANCE.md`. **Expires 2027-04-30** (an assumption: six months from this design), or when S-DATA-1 reports, whichever comes first; renewal needs the measured comparison.
-- **The public-ingress exceptions X1–X5** are declared with their compensating controls in [07 §7](07-security-architecture.md#7-network-and-the-short-list-of-exceptions), including the Entra-authenticated approval web page (X5). They follow the same rule: **owner:** the security lead; each is re-affirmed at the quarterly review and lapses if it is not.
+- **The public-ingress exceptions X1–X5** are declared with their compensating controls in [07 §7](07-security-architecture.md#7-network-and-the-short-list-of-exceptions), including the Entra-authenticated approval web page (X5), which is the default approval path. They follow the same rule: **owner:** the security lead; each is re-affirmed at the quarterly review and lapses if it is not.
 
 ## 11. Review cadence
 

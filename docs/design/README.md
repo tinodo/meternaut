@@ -1,9 +1,49 @@
 # Design — phase 1
 
-> **Status:** drafted 2026-10-31 · builds on the ideation ([north star](../01-north-star.md), tag `ideation-v4`). **Rubber-duck record:** two rounds, different model families per lens — see [the review record](../reviews/README.md).
+> **Status:** drafted 2026-10-31 · builds on the ideation ([north star](../01-north-star.md), tag `ideation-v4`). **Rubber-duck record:** two full rounds, a different model family on each lens in the second, and a targeted third pass on the parts the second round redesigned — see [the review record](../reviews/README.md).
 > This folder is where the idea becomes a design: architecture on Microsoft Foundry and the Microsoft Agent Framework, deployed through the Citadel framework in the operator's landing zone, with security, governance, drift control, testing and cost designed in. The ideation documents stay the north star; nothing here changes what the system is *for*.
 
-**Read this first.** The system is a *deterministic spine with agentic leaves*: ordinary workflows (Durable Functions) call hosted agents — fourteen roles, fifteen identities, eleven contract groups — one step at a time through the hub with a budget; the agents can only read; the one place that can change an estate is a small execution plane in which three parties each verify a signed approval — the Approval service signs and dispatches, the credential broker grants only after verifying, the Move runner checks the live state — and acts with an identity that exists only for that Move; and every model, tool and agent call passes the Citadel governance hub. Drift is controlled by deterministic detectors; a preview feature is used only behind a switch with a generally available fallback; the cost of the platform itself is modelled, capped at the hub and tracked as *cost per verified euro saved*.
+**Read this first.** The system is a *deterministic spine with agentic leaves*: ordinary workflows (Durable Functions) call hosted agents — fourteen roles, fifteen identities, eleven contract groups — one step at a time through the hub with a budget; the agents can only read; the one place that can change an estate is a small execution plane in which **no single credential completes a change**: the Policy service signs a permit, a person approves with an Entra-signed token bound to the target, the Approval service signs and enqueues (it starts nothing), the credential broker verifies all of it itself before it grants, and an event-driven Move runner verifies again, checks the live state and acts with an identity that exists only for that Move; and every model, tool and agent call passes the Citadel governance hub. Drift is controlled by deterministic detectors; a preview feature is used only behind a switch with a generally available fallback; the cost of the platform itself is modelled, **budgeted by the spine's atomic reservation**, limited at the hub as a second layer and tracked as *cost per verified euro saved*.
+
+```mermaid
+flowchart LR
+    HUB(("Citadel hub<br/>every model, tool and agent call"))
+    SP["Spine<br/>Durable Functions"]
+    LV["Leaves<br/>14 roles, read only"]
+    TL["Tool services<br/>sanitise and scope"]
+    MD["Models<br/>by alias, EU for estate data"]
+    PO["Policy service<br/>signs a permit"]
+    PE["A person<br/>Entra-signed approval"]
+    AP["Approval service<br/>signs and enqueues"]
+    BR["Credential broker<br/>verifies, leases, grants"]
+    RU["Move runner<br/>acts as a leased identity"]
+    VE["Verifier"]
+    LG["Audit ledger<br/>append-only, hash-chained"]
+    AT["Atlas<br/>claims, Detectors, Moves"]
+    EX["Study, Lab and Exam"]
+    DC["Drift controller"]
+    SP -->|"leaf call"| HUB
+    HUB --> LV
+    LV -->|"tool call"| HUB
+    HUB --> TL
+    HUB --> MD
+    SP -->|"proposal"| PO
+    PO -->|"permit"| PE
+    PE -->|"approves"| AP
+    AP --> BR
+    BR --> RU
+    RU --> VE
+    VE -->|"verified result"| SP
+    BR -.->|"entry"| LG
+    RU -.->|"entry"| LG
+    DC -.->|"checks"| HUB
+    DC -.->|"checks"| LG
+    SP --> EX
+    EX -->|"proposes"| AT
+    AT -->|"read by"| LV
+```
+
+*The system on a page: the hub in the middle of every call, the loop that ends a change in a verified result, the ledger beside it, and the learning loop (study, test, propose, read) that makes the Atlas better.*
 
 ## The design
 
@@ -17,7 +57,7 @@
 | [06 · Data and knowledge](06-data-and-knowledge.md) | The information model, the knowledge pipeline, cost data, privacy, and the physical stores |
 | [07 · Security architecture](07-security-architecture.md) | Trust zones, identity, the just-in-time execution identity, approvals, nine layers against injection, the capability matrix, detection and kill switches |
 | [08 · Governance and compliance](08-governance-and-compliance.md) | Roles and decision rights, policy as code, the EU AI Act, GDPR, NIS2, ISO/IEC 42001, NIST AI RMF, the evidence pack, the risk register |
-| [09 · Safeguards and drift controls](09-safeguards-and-drift-controls.md) | Eighteen drift layers with prevent, detect and correct; the drift controller; the safeguards between a mistake and an irreversible action; the preview register |
+| [09 · Safeguards and drift controls](09-safeguards-and-drift-controls.md) | Nineteen drift layers with prevent, detect and correct; the drift controller; the safeguards between a mistake and an irreversible action; the preview register |
 | [10 · Test and evaluation](10-test-and-evaluation.md) | The layers, the Terrarium, the release gates, environments, and the platform mapping |
 | [11 · Delivery and operations](11-delivery-and-operations.md) | Repository, infrastructure as code, pipelines, deploying agents, releases, onboarding, operations, recovery |
 | [12 · Cost and FinOps](12-cost-and-finops.md) | A reproducible cost model at three scales, the always-on ledger, levers, how the system's own spend is governed |
@@ -42,4 +82,4 @@ Everything above rests on research done on 2026-10-31 from pages read that day. 
 
 ## How it was reviewed
 
-Each design document and every ADR went through **two rubber-duck rounds with different model families on each lens** (architecture, security and safety, cost and operability, AI engineering, platform fact-check). Raw reports are kept verbatim with the orchestrator's spot-checks and a disposition for every finding; the standing brief is [`reviews/design-review-brief.md`](../reviews/design-review-brief.md).
+Each design document and every ADR went through **two full rubber-duck rounds** (architecture, security and safety, cost and operability, AI engineering, platform fact-check), with a **different model on each lens in the second round** (four families across the five lenses, so no lens saw its own model twice). Round 1 found the seams of a first draft; Round 2 attacked the revisions and found what a large revision breaks — above all a signer that could also start the runner, a leaf that would be deprovisioned mid-run, and a cost model that claimed a closure it did not have. The parts Round 2 redesigned (the authority chain, the leaf-call rule, the spend budget) went through a **targeted third pass** by another model. Raw reports are kept verbatim with the orchestrator's spot-checks and a disposition for every finding; the standing brief is [`reviews/design-review-brief.md`](../reviews/design-review-brief.md). What the design does **not** claim: that a spike passed (each is a *to confirm* until it has run), that the cost seeds are measurements, or that the statuses in [13](13-decisions.md) are final.
