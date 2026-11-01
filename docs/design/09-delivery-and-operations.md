@@ -192,12 +192,12 @@ The steps, in order:
 
 | # | Step | Who | Done when |
 |---|---|---|---|
-| 1 | Choose scopes and data boundary. Give the read-only identities Reader, Cost Management Reader and Monitoring Reader (Log Analytics Reader where logs are read) there. The Estate refresh workflow probes each scope and stores its capability profile | Platform team, FinOps lead; estate owner deploys the onboarding module | The scope list is a parameter file in `infra/`; a read works and a write fails; every scope has a profile |
+| 1 | Choose scopes and data boundary. Give the read-only identities Reader, Cost Management Reader and Monitoring Reader (Log Analytics Reader where logs are read) there. The Estate refresh workflow probes each scope and stores its capability profile | Platform team, FinOps lead; estate owner deploys the onboarding module | The scope list and the thresholds for a new estate ([knowledge and learning](04-knowledge-and-learning.md)) are parameters in `infra/`; a read works and a write fails; every scope has a profile |
 | 2 | Cost data into the cost lake by the best path the profile shows: exports, else the Cost Details or Query API | Estate owner | The first run lands; the ingestion manifest lists it |
 | 3 | Directory mapping: which Entra groups are owners, FinOps and approvers; the billing owner and the partner contact, where purchases are to be requested; which tags are hints, never authority | Platform team, estate owner | Ten sample resources resolve to named owners; the rest become questions |
-| 4 | Channels (Teams app for the owner group, sender mailbox) and the first Estate model | Platform team, Microsoft 365 admin | A test card reaches a named owner; counts match Resource Graph |
+| 4 | Channels (the sender mailbox; from phase 2 the Teams app for the owner group) and the first Estate model | Platform team, Microsoft 365 admin | A test e-mail reaches the FinOps lead (from phase 2, a test card reaches a named owner); counts match Resource Graph |
 | 5 | First digest | FinOps lead | On time; agrees with Cost Management |
-| 6 | First Case, advice-only: no action role exists | Resource owner | Reaches Lesson and ledger with no change in Azure |
+| 6 | First Case, advice-only: no action role exists | Resource owner (in phase 1a, the FinOps lead through the digest) | Reaches Lesson and ledger with no change in Azure |
 | 7 | Opt in one action family: assign its custom role at chosen scopes, test the kill switch, dry-run a plan in non-production, run one approved Action | Estate owner, security reviewer | The Verifier confirms the prediction |
 
 Purchases (R3) are a separate opt-in in phase 4. Offboarding reverses steps 7 to 1: remove the assignments, stop the exports.

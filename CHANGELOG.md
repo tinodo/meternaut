@@ -2,6 +2,21 @@
 
 All notable changes, newest first. Versions are git tags: `ideation-vN` for the ideation (`docs/01` to `docs/10` and the research) and `design-vN` for the design (`docs/design/`); `design-v1` was withdrawn. The previous editions stay available at their tags, and the earliest are archived under [`docs/_archive/`](docs/_archive/), which is never edited.
 
+## design-v4 — 2026-11-01 (tag `design-v4`)
+
+**Why.** An independent AI reviewer read `design-v3` and filed 26 findings. Each was checked against the files first: 10 were confirmed and fixed, 6 were partly right (the gap was fixed), 5 were already covered or stale, 2 were not adopted, 3 were judgements that the changes reflect ([disposition](docs/reviews/validation-1/disposition.md)).
+
+**What changed.**
+
+- **The roadmap now starts with value on one estate.** Phase 1 is split in two. Phase 1a runs the Operate profile with read roles only on a first estate, sends the Diplomat's Monday digest by e-mail, and ends when the FinOps lead has confirmed a pre-set number of findings as true and worth acting on, with cost per confirmed finding read from hub logs. Phase 1b proves that the system learns. Before, the first phase needed a real estate and a digest while the profile that could read one arrived a phase later. A failed learning test (P6) no longer falls back to "more Detectors": it withdraws the learning claim and reopens the goals. The Auditor settles changes that owners make themselves in phase 2, so the first verified saving no longer waits for the action stack.
+- **Rules that were implied are now written.** A trial is offered only where the change is R1 (non-production), the guard metric must report faster than the change could do harm, and no credential covers a trial. Evidence labelled `bill-observed` never rests on usage taken from the bill. An outcome with a coinciding change, price change or load shift is *undetermined*, counted as unscored: it never counts as a hit, never narrows a range and may only widen one. A Detector is promoted against numbers written beforehand, shadows every scope and becomes active only where it passes. A new estate gets no expected saving until onboarding thresholds are met. The learning test gains an audit of every gain and, when a real launch falls after the snapshot, predictions recorded with the snapshot's hash before its first invoice. The ideation documents now say a trial runs only in non-production.
+- **Goals and cost.** A goal and a report-card measure for effort and time to value. Requirement F11 states its exception (scopes with no Cost Management data). The cost model prices investigations that end without reaching an owner (a seed of one per case): about €332 a month at Pilot (was €311), €1,002 at Team (€795) and €6,831 at Enterprise (€4,760), still at list prices. Break-even is labelled as cloud cost alone; platform, FinOps and security time is stated as not modelled.
+- **Size limit.** The design limit moved from 48,000 to 49,000 words ([why](AGENTS.md)).
+
+**Not adopted.** Replacing break-even with a yield threshold (nobody has measured a yield); fixing one reference access level for the first estate (it is the adopter's own, and the capability probe covers every level); hour estimates for platform work (nothing could seed them, so the report card measures them).
+
+**Not claimed.** Nothing is built. Cost figures are model outputs, not measurements.
+
 ## ideation-v5 and design-v3 — 2026-11-01 (tags `ideation-v5`, `design-v3`)
 
 **Why.** Readers who had never seen the repository (the [stranger test](docs/reviews/stranger-test-v5/disposition.md)) found three kinds of problem in the previous editions (`ideation-v4`, `design-v2`).

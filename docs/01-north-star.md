@@ -207,7 +207,7 @@ stateDiagram-v2
     Split --> Born
     Investigating --> Confirmed: it holds
     Confirmed --> Case: worth a human's attention
-    Confirmed --> Detector: general enough to watch for everywhere
+    Confirmed --> Detector: general enough to watch for, after a shadow run
     Refuted --> Lesson: why it looked true is knowledge too
     Case --> [*]
     Detector --> [*]
@@ -240,7 +240,7 @@ Reading and analysing are not always enough. Sometimes two pages disagree, or a 
 | **Replay** | what *would have* happened | Re-prices recorded usage under another SKU, region, offer or commitment — after proving it can reproduce the real bill of that month |
 | **Follow** | what a change really does | Reads the outcome of changes people were making anyway — a resize, a migration, a retirement — against predictions and control meters (usage and cost series that should not move, written down first) |
 | **Pool** | what other estates have already seen | Observations — *this meter, this behaviour* — contributed to the open Atlas as reviewed changes: only a scope and an aggregate leave an estate, never a bill line, a name or an identifier, and an observation is published only when several organisations contribute it |
-| **Trial** | what only reality can show | Rarely: one small, reversible change to something an owner already runs, with the owner's OK, a cost ceiling shown first, a guard metric and automatic rollback. It can move the bill, which is why it is not free; it is never a resource created just to be measured |
+| **Trial** | what only reality can show | Rarely: one small, reversible change to something an owner already runs in non-production, with the owner's OK each time, a cost ceiling shown first, a guard metric and automatic rollback. It can move the bill, which is why it is not free; it is never a resource created just to be measured |
 
 Three principles run through all of it:
 

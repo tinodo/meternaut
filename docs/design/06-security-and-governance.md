@@ -144,7 +144,7 @@ The runner consumes a record once and re-checks every field. Cosmos DB roles wor
 
 | Class | Typical Actions | Who approves | Autopilot |
 |---|---|---|---|
-| R1: reversible, small, non-production | Stop a dev VM out of hours; lower a dev disk tier | The resource owner, one tap in Teams: the Approval service verifies the tapper's own token (P3 tests it); capped per approver per day | A credential may cover it; the Verifier rolls back |
+| R1: reversible, small, non-production | Stop a dev VM out of hours; lower a dev disk tier | The resource owner, one tap in Teams: the Approval service verifies the tapper's own token (P3 tests it); capped per approver per day | A credential may cover it, never a trial; the Verifier rolls back |
 | R2: reversible, production or larger | Resize a production database; change a storage tier at scale | The resource owner on the approval page, Conditional Access with an authentication context | A credential may cover low-value Actions under a value cap |
 | R3: irreversible or a commitment purchase | Buy a reservation or savings plan; delete data | Two people with two distinct directory roles (resource owner or budget holder; FinOps or finance approver), neither the requester, phishing-resistant sign-in | Never |
 

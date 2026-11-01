@@ -60,3 +60,11 @@ Three more cold readers, who had seen none of this, then read the front door and
 | final 3 (gpt-6-luna) | studying Azure, recommend act verify, the learning contract | [raw-final-3](stranger-test-v5/raw-final-3.md) | 7 |
 
 The [disposition](stranger-test-v5/disposition.md) says what was accepted, what was not and why.
+
+## External validation (design v3)
+
+After the release, an independent AI reviewer read the design and filed 26 findings in two reports (in Dutch, kept as received). Each finding was checked against the files before anything changed: 10 were confirmed and fixed, 6 were partly right, 5 were already covered or stale, 2 were not adopted and 3 were judgements that the changes reflect.
+
+| Reviewer | Read | Raw report | Disposition |
+|---|---|---|---|
+| An independent AI reviewer (model not stated), two reports | A: knowledge and learning, testing and evaluation · B: goals, architecture, data, security, delivery, cost, register, decisions, agreements, roadmap and tools | [raw-validation-1](validation-1/raw-validation-1.md) | [disposition](validation-1/disposition.md) |

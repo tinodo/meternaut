@@ -13,8 +13,8 @@ run, so a changed price list can never silently change a number.
     python tools/cost-model.py --check docs/design/10-cost-and-finops.md     # fails when the generated block is stale
     python tools/cost-model.py --self-test              # negative fixtures: each defect above must be caught
 
-Volumes below are scenario parameters and seeds (calls per case, tokens per call, minutes per
-session). They are replaced by measurements in proof point P10; the report says so.
+Volumes below are scenario parameters and seeds (calls per case, dead ends per case, tokens per call,
+minutes per session). They are replaced by measurements in proof point P10; the report says so.
 """
 from __future__ import annotations
 
@@ -58,6 +58,9 @@ CASE_MIX = [
     ("Surveyor", 3, 6_000, 3_000, 600, "triage", 1.0),
 ]
 LEADS_PER_CASE = 10
+DEAD_ENDS_PER_CASE = 1.0                         # investigations that end refuted, or parked before any message to an owner, for each case that reaches an owner (seed, P10)
+DEAD_END_ROLES = ("Detective", "Skeptic")        # a dead end runs the investigation and the challenge, never the plan or the message
+DEAD_END_WORK_SHARE = 0.5                        # share of a case's hosted time, orchestration steps, tool calls, searches, Cosmos request units and Content Safety records that a dead end uses
 WATCH_CALL = (3_000, 1_500, 300)                 # input, cached prefix, output tokens of one triage call
 STUDY_DOC = dict(triage=(8_000, 0, 500), relevant=0.15, decode=(30_000, 10_000, 3_000), challenge=(10_000, 0, 1_000),
                  curate=(10_000, 0, 1_500), accepted=0.3)
@@ -107,10 +110,11 @@ REASON_FAMILY = {"sol": "6.1-sol", "terra": "61 terra"}   # Terra has Standard m
 
 DEFAULT_KNOBS = dict(estate_zone="DZ", token_scale=1.0, cache=True, flex=True, la_split="tiered", own_hub=False,
                      defender_ai=False, extra_search_units=0, foundry_byo_data=False, always_ready=1,
-                     triage_share=0.0, reason_model="sol")
+                     triage_share=0.0, reason_model="sol", dead_ends=DEAD_ENDS_PER_CASE)
 SENSITIVITIES = [
     ("Global Standard for estate data instead of Data Zone", dict(estate_zone="Gl")),
-    ("Investigations twice as long", dict(token_scale=2.0)),
+    ("Investigations twice as long in tokens (hosted time unchanged)", dict(token_scale=2.0)),
+    ("Three dead-end investigations for every case that reaches an owner, not one", dict(dead_ends=3.0)),
     ("Prompt caching does not hit", dict(cache=False)),
     ("No Flex (preview): study and evaluation on Global Standard", dict(flex=False)),
     ("Every log table on the Analytics plan", dict(la_split="analytics")),
@@ -215,14 +219,18 @@ class Model:
             L.append(dict(profile=profile, group=group, label=label, eur=round(eur, 2), idle=round(eur * idle, 2), note=note))
 
         cases, scale = s["cases"], k["token_scale"]
+        dead = k["dead_ends"]
+        work = cases * (1 + dead * DEAD_END_WORK_SHARE)     # case-equivalents of hosted time, orchestration steps, tool calls, searches, Cosmos request units and Content Safety records
         docs_month = s["study_docs_day"] * DAYS
         estate_calls = s["resources"] * ESTATE_CALLS_PER_RESOURCE
 
         # ---- Operate profile: models ----------------------------------------
         case_tokens_in = sum(c * i * sh for _, c, i, _, _, _, sh in CASE_MIX)
         case_tokens_out = sum(c * o * sh for _, c, _, _, o, _, sh in CASE_MIX)
-        def case_cost(agent, c, i, pf, o, al, sh):
-            n, sess = cases * c * sh * scale, cases * sh * scale
+        dead_tokens = sum(c * (i + o) * sh for a, c, i, _, o, _, sh in CASE_MIX if a in DEAD_END_ROLES)
+        def case_cost(agent, c, i, pf, o, al, sh, n_cases=None):
+            n_cases = cases if n_cases is None else n_cases
+            n, sess = n_cases * c * sh * scale, n_cases * sh * scale
             t = k["triage_share"]
             if al == "reason" and agent in TRIAGE_FIRST and t > 0:
                 return (self.token_eur("triage", "estate", "Std", n * t, i, pf, o, sessions=sess * t)
@@ -232,8 +240,11 @@ class Model:
         case_eur = sum(case_cost(*row) for row in CASE_MIX)
         reason_roles = ("Detective, Economist, Diplomat, Engineer on `reason`" if not k["triage_share"] else
                         f"Detective and Economist start on `triage` and {k['triage_share']:.0%} of their calls stay there, Diplomat and Engineer on `reason`")
-        add("Operate", "Models", "Cases: the agents' tokens", case_eur,
+        add("Operate", "Models", "Cases that reach an owner: the agents' tokens", case_eur,
             f"{cases} cases x {case_tokens_in/1000:,.0f}k input and {case_tokens_out/1000:,.0f}k output tokens (seed, P10); {reason_roles}, Skeptic on `judge`, others on `triage`")
+        add("Operate", "Models", "Investigations that end without reaching an owner",
+            sum(case_cost(*row, n_cases=cases * dead) for row in CASE_MIX if row[0] in DEAD_END_ROLES),
+            f"{cases * dead:,.0f} a month ({dead:g} for each case that reaches an owner; seed, P10): the Detective and the Skeptic, then refuted, or parked before any message to an owner")
         leads = cases * LEADS_PER_CASE
         add("Operate", "Models", "Watch: triage of leads", self.token_eur("triage", "estate", "Std", leads, *WATCH_CALL, sessions=30),
             f"{leads:,} leads, one small-model call each")
@@ -256,12 +267,12 @@ class Model:
         hv = P.get("Foundry Tools", product="Foundry Agents", sku="Hosted", meter="Hosted vCPU Usage")
         hm = P.get("Foundry Tools", product="Foundry Agents", sku="Hosted", meter="Hosted Memory Usage")
         host_rate = HOSTED_VCPU * hv + HOSTED_GIB * hm
-        hosted_h = (cases * CASE_HOSTED_H + WATCH_RUNS * WATCH_RUN_MIN / 60 + docs_month * STUDY_DOC_MIN / 60
+        hosted_h = (work * CASE_HOSTED_H + WATCH_RUNS * WATCH_RUN_MIN / 60 + docs_month * STUDY_DOC_MIN / 60
                     + estate_calls * ESTATE_CALL_MIN / 60)
         add("Operate", "Runtime", "Hosted agents: active time plus idle timeout", hosted_h * host_rate,
             f"{hosted_h:,.0f} hours at {HOSTED_VCPU:g} vCPU and {HOSTED_GIB:g} GiB; nothing bills between sessions")
-        orch = (cases * EXEC_PER_CASE + WATCH_RUNS * 12 + docs_month * 6 + estate_calls * 2) * FN_REPLAY
-        tools_exec = cases * TOOL_CALLS_PER_CASE + estate_calls * TOOL_CALLS_PER_ESTATE_CALL
+        orch = (work * EXEC_PER_CASE + WATCH_RUNS * 12 + docs_month * 6 + estate_calls * 2) * FN_REPLAY
+        tools_exec = work * TOOL_CALLS_PER_CASE + estate_calls * TOOL_CALLS_PER_ESTATE_CALL
         ready_n = k["always_ready"]
         fb = P.get("Functions", product="Flex Consumption", sku="Always Ready", meter="Always Ready Baseline")
         fr = P.get("Functions", product="Flex Consumption", sku="Always Ready", meter="Always Ready Execution Time")
@@ -279,7 +290,7 @@ class Model:
               + max(0.0, od_gb_s - FN_FREE_GB_S) * fx + max(0.0, od_x - FN_FREE_EXEC) / 10.0 * fe)
         add("Operate", "Runtime", "Functions on Flex Consumption: the five apps", fn,
             f"{orch + tools_exec:,.0f} executions and {od_gb_s + ready_x * FN_GB_S_PER_EXEC:,.0f} GB-seconds a month; on-demand after the free grant; zip deployment, no container registry")
-        add("Operate", "Runtime", "Durable Functions state (Azure Storage provider)", MANUAL["durable_storage_env"][0] * (1 + cases / 5000.0),
+        add("Operate", "Runtime", "Durable Functions state (Azure Storage provider)", MANUAL["durable_storage_env"][0] * (1 + work / 5000.0),
             "estimate: queue polling and task-hub tables", idle=1.0)
 
         # ---- Operate profile: knowledge and data -----------------------------------
@@ -289,12 +300,12 @@ class Model:
         add("Operate", "Knowledge", "AI Search Basic (Atlas index)", units * srch * HOURS,
             f"{units} unit(s) as replicas ({sla}: Azure's SLA needs two replicas for queries and three for indexing); runs while idle", idle=1.0)
         sem = P.get("Azure Cognitive Search", product="Azure AI Search", sku="Semantic Ranker", meter="Semantic Ranker queries")
-        queries = cases * SEARCH_QUERIES_PER_CASE + docs_month * 3
+        queries = work * SEARCH_QUERIES_PER_CASE + docs_month * 3
         add("Operate", "Knowledge", "AI Search semantic ranker", max(0.0, queries - SEARCH_FREE_QUERIES) / 1000.0 * sem,
             f"{queries:,.0f} queries, first {SEARCH_FREE_QUERIES:,} free")
         ru = P.get("Azure Cosmos DB", product="Azure Cosmos DB serverless", sku="RUs", meter="1M RUs")
         st = P.get("Azure Cosmos DB", product="Azure Cosmos DB", sku="RUs", meter="Data Stored")
-        ru_m = cases * COSMOS_RU_M_PER_CASE + s["resources"] * COSMOS_RU_M_PER_RESOURCE
+        ru_m = work * COSMOS_RU_M_PER_CASE + s["resources"] * COSMOS_RU_M_PER_RESOURCE
         gb = s["ops_gb"] + (BYO_FOUNDRY_GB if k["foundry_byo_data"] else 0)
         add("Operate", "Data", "Cosmos DB serverless", ru_m * ru + gb * st,
             f"{ru_m:,.1f} M request units and {gb:g} GB; scale to zero", idle=gb * st / max(ru_m * ru + gb * st, 1e-9))
@@ -324,7 +335,7 @@ class Model:
             lnote = f"{s['la_gb']} GB: {sp['analytics']:.0%} Analytics, {sp['basic']:.0%} Basic, {sp['auxiliary']:.0%} Auxiliary plan; 5 GB free"
         add("Operate", "Observability", "Log Analytics ingestion", la, lnote)
         cs = P.get("Foundry Tools", product="Content Safety", sku="Standard", meter="Standard Text Records")
-        cs_rec = cases * CS_RECORDS_PER_CASE + docs_month * CS_RECORDS_PER_DOC
+        cs_rec = work * CS_RECORDS_PER_CASE + docs_month * CS_RECORDS_PER_DOC
         add("Operate", "Safety", "Content Safety on untrusted text", cs_rec / 1000.0 * cs,
             f"{cs_rec:,.0f} text records of 1,000 characters: tool results and owner replies, public documents")
         pii_rec = (cases * 6 + estate_calls * PII_SURVEYOR_SHARE) * PII_RECORDS_PER_CALL
@@ -337,12 +348,12 @@ class Model:
             d = STUDY_DOC
             study_k = (docs_month * (d["triage"][0] + d["triage"][2]) + rel * (d["decode"][0] + d["decode"][2])
                        + rel * (d["challenge"][0] + d["challenge"][2]) + rel * d["accepted"] * (d["curate"][0] + d["curate"][2]))
-            tokens_k = ((case_tokens_in + case_tokens_out) * cases * scale + leads * (WATCH_CALL[0] + WATCH_CALL[2])
+            tokens_k = ((case_tokens_in + case_tokens_out + dead_tokens * dead) * cases * scale + leads * (WATCH_CALL[0] + WATCH_CALL[2])
                         + estate_calls * (ESTATE_CALL[0] + ESTATE_CALL[2]) + study_k
                         + cases * SAMPLE_SHARE * (JUDGE_CALL[0] + JUDGE_CALL[2])) / 1000.0
             dai = P.get("Microsoft Defender for Cloud", region="Global", product="Microsoft Defender for AI Services", sku="Standard", meter="Standard Tokens")
             add("Operate", "Security", "Defender for AI Services (optional)", tokens_k * dai,
-                f"{tokens_k/1e3:,.0f} M tokens scanned: every model call of the Operate profile (cases, watch, estate refresh, study, sampled scoring), not the dev profile or embeddings")
+                f"{tokens_k/1e3:,.0f} M tokens scanned: every model call of the Operate profile (cases and dead ends, watch, estate refresh, study, sampled scoring), not the dev profile or embeddings")
         if k["own_hub"]:
             apim = P.get("API Management", product="API Management", sku="Standard v2", meter="Standard v2 Unit")
             eh = P.get("Event Hubs", product="Event Hubs", sku="Standard", meter="Standard Throughput Unit")
@@ -404,7 +415,7 @@ def report(prices: Prices) -> str:
     for n in names:
         b = base[n]
         out.append(f"- **{n}:** {fmt(b['total'])} EUR a month in total (Operate profile {fmt(b['operate'])}, dev environment "
-                   f"{fmt(b['evaluate'])}); the Operate idle floor is {fmt(b['idle'])}; it breaks even by saving {b['breakeven_pct']:.2f} % "
+                   f"{fmt(b['evaluate'])}); the Operate idle floor is {fmt(b['idle'])}; on its cloud cost alone it breaks even by saving {b['breakeven_pct']:.2f} % "
                    f"of the Azure spend it manages.")
     out.append("")
     out.append("**Scenario parameters**")
@@ -430,6 +441,7 @@ def report(prices: Prices) -> str:
     cc, ci, cp, co = COMPONENT_CALLS
     out.append("")
     out.append(f"- **Watch:** {LEADS_PER_CASE} leads triaged per case, one `triage` call each ({wi:,} input tokens, {wc:,} of them cached, {wo:,} output).")
+    out.append(f"- **Dead ends (seed):** investigations that end refuted, or parked before any message to an owner, number {DEAD_ENDS_PER_CASE:g} for every case that reaches an owner. Each runs the {' and the '.join(DEAD_END_ROLES)} in full and uses {DEAD_END_WORK_SHARE:.0%} of a case's hosted time, orchestration steps, tool calls, searches, Cosmos request units and Content Safety records; log, network, storage and Key Vault volumes are scenario inputs.")
     out.append(f"- **Study:** one `triage` call per public document ({sd['triage'][0]:,} input, {sd['triage'][2]:,} output tokens); {sd['relevant']:.0%} of documents are relevant and get a decode ({sd['decode'][0]:,} input, {sd['decode'][1]:,} of them cached, {sd['decode'][2]:,} output) and a challenge ({sd['challenge'][0]:,} input, {sd['challenge'][2]:,} output); {sd['accepted']:.0%} of those also get a curation call ({sd['curate'][0]:,} input, {sd['curate'][2]:,} output).")
     out.append(f"- **Estate refresh:** {ESTATE_CALLS_PER_RESOURCE:g} `triage` calls a month per resource ({ei:,} input tokens, {ec:,} of them cached, {eo:,} output).")
     out.append(f"- **Sampled scoring:** {SAMPLE_SHARE:.0%} of cases, one judge call each ({ji:,} input, {jo:,} output).")
@@ -468,7 +480,7 @@ def report(prices: Prices) -> str:
     out.append("| of which the stored share of Cosmos DB and Blob (EUR a month) | " + " | ".join(
         fmt(sum(r["idle"] for r in base[n]["lines"] if r["profile"] == "Operate" and r["label"].startswith(("Cosmos DB", "Blob")))) for n in names) + " |")
     out.append("| Total per case that reaches an owner (EUR) | " + " | ".join(fmt(base[n]["per_case"]) for n in names) + " |")
-    out.append("| Break-even: share of managed spend it must save to pay for itself | " + " | ".join(f"{base[n]['breakeven_pct']:.2f} %" for n in names) + " |")
+    out.append("| Break-even on cloud cost alone: share of managed spend it must save to pay for itself | " + " | ".join(f"{base[n]['breakeven_pct']:.2f} %" for n in names) + " |")
     out.append("| Owner time on cases (hours a month, 5 minutes a case) | " + " | ".join(f"{base[n]['owner_hours']:,.0f}" for n in names) + " |")
     out.append("| Atlas pull requests to review a month (documents a day x 30.4 x 15 % relevant x 30 % accepted, 5 claims a pull request; 10 minutes each: hours) | " + " | ".join(
         f"{base[n]['atlas_changes']:,.0f} ({base[n]['reviewer_hours']:,.1f} h)" for n in names) + " |")
@@ -543,10 +555,25 @@ def self_test() -> int:
         assert all(x["eur"] >= 0 and 0 <= x["idle"] <= x["eur"] + 0.01 for x in r["lines"]), f"negative or impossible line in {n}"
         assert r["idle"] <= r["operate"] and abs(r["operate"] + r["evaluate"] - r["total"]) < 0.02
     more = {"token_scale": 2.0, "cache": False, "flex": False, "la_split": "analytics", "own_hub": True, "defender_ai": True,
-            "extra_search_units": 1}
+            "extra_search_units": 1, "dead_ends": 3.0}
     for knob, val in more.items():
         alt = run_all(p, **{knob: val})
         assert alt["Team"]["total"] > base["Team"]["total"], f"{knob}={val} must cost more"
+    assert run_all(p, dead_ends=0.0)["Team"]["total"] < base["Team"]["total"], "no dead ends must cost less"
+    dead_label, dai_label = "Investigations that end without reaching an owner", "Defender for AI Services (optional)"
+    team = lambda r, label: next(x["eur"] for x in r["Team"]["lines"] if x["label"] == label)
+    none, three = run_all(p, dead_ends=0.0), run_all(p, dead_ends=3.0)
+    assert team(none, dead_label) == 0.0, "no dead ends, no dead-end line"
+    assert abs(team(three, dead_label) - 3 * team(base, dead_label)) < 0.02, "dead-end tokens must grow with the dead ends"
+    assert abs(team(run_all(p, token_scale=2.0), dead_label) - 2 * team(base, dead_label)) < 0.02, "token_scale must reach the dead ends"
+    for label in ("Hosted agents: active time plus idle timeout", "Functions on Flex Consumption: the five apps", "AI Search semantic ranker",
+                  "Cosmos DB serverless", "Content Safety on untrusted text"):
+        assert team(three, label) > team(none, label), f"dead ends must reach: {label}"
+    for label in ("PII detection on people data", "Key Vault"):
+        assert team(three, label) == team(none, label), f"dead ends must not reach: {label}"
+    assert none["Team"]["owner_hours"] == three["Team"]["owner_hours"], "a dead end never reaches an owner"
+    assert (team(run_all(p, defender_ai=True, dead_ends=3.0), dai_label)
+            > team(run_all(p, defender_ai=True, dead_ends=0.0), dai_label)), "Defender must count dead-end tokens"
     assert run_all(p, estate_zone="Gl")["Team"]["total"] < base["Team"]["total"], "Global Standard must be cheaper than Data Zone"
     assert run_all(p, foundry_byo_data=True)["Team"]["total"] > base["Team"]["total"], "bring-your-own agent data must cost more"
     assert run_all(p, triage_share=0.5)["Team"]["total"] < base["Team"]["total"], "starting on the small model must cost less"

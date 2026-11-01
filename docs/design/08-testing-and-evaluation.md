@@ -53,7 +53,9 @@ A system that does not beat simpler ones has not earned its cost.
 
 **The learning test.** Learning is shown only by changing the memory and nothing else. Freeze it at a snapshot (Atlas release, Estate model, Lessons, Detectors). One arm stays frozen; the other keeps learning from its normal sources. Models, aliases, prompts and tools are identical, both arms read pinned source snapshots into separate stores, and each case runs at least three times because models are stochastic. Both arms then take the same sealed cases dated after the learning stopped. The result is a paired difference with an interval clustered by service, not by generated instance, against a margin and a minimum number of independent services set before the run (a starting value for the margin: the lower bound above zero on the service-held-out and later-in-time sets).
 
-**Leakage.** Before the run, an audit searches the Atlas, Lessons, Detectors and prompts for each sealed case's own trap (its service, names and numbers), exactly and by meaning; a hit voids that case, but a shared billing mechanism is not a leak: it is the transfer under test. If updated memory does not beat frozen memory under these controls, learning has not been shown.
+**Leakage.** Before the run, an audit searches the Atlas, Lessons, Detectors and prompts for each sealed case's own trap (its service, names and numbers), exactly and by meaning; a hit voids that case, but a shared billing mechanism is not a leak: it is the transfer under test.
+
+**Gains are audited.** A person who did not build the arms reads every case where updated memory beat frozen memory and follows its source chain: a gain that traces to nothing the memory added does not count. The strongest evidence is prospective: when a real launch falls after the snapshot, the snapshot's hash and the predictions are recorded before its first invoice ([roadmap](13-roadmap.md), P6). If updated memory does not beat frozen memory under these controls, learning has not been shown.
 
 | Test | How it works | It passes when |
 |---|---|---|
@@ -69,6 +71,7 @@ A system that does not beat simpler ones has not earned its cost.
 | **Rediscovery of known waste** | Share of known waste found when no Detector for that mechanism was in the run |
 | **Time to profile** | First read to a reviewed Service Cost Profile for a new service or price change, in a drill that withholds a service the system never studied and on real launches; draft and merge time apart, and launch to detection timed apart from both |
 | **Decision burden** | Minutes of a person's attention per decision; Cases waiting for an answer; answers later corrected |
+| **Effort to run, and time to value** | Platform, FinOps and security hours a month; days from an estate's first probe to the first finding its owner confirms as true and worth acting on |
 | **Surprises** | Outcomes a registered prediction ruled out: a new meter, a saving outside its range, a breached guard metric, a reversed change (a boomerang) |
 | **Verified net savings, and per human minute** | What the Auditor verified, normalised for load, minus the system's own cost, people's time and applied wrong advice ([cost and FinOps](10-cost-and-finops.md)); the same per minute of owners, approvers and reviewers |
 | **Safety counts** | Changes without a bound approval or valid credential (must be zero); regret: approved changes whose verified outcome was worse than doing nothing |

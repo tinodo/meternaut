@@ -173,7 +173,7 @@ When the data in hand does not settle a question, the Detective picks the cheape
 - **Follow** — the outcome of a change people were making anyway, against predictions and control meters (the same meters on look-alike resources nobody changed) written down first.
 - **Pool** — what other estates have already seen, as privacy-reviewed aggregates (section 13).
 
-**Trial** is different: rarely, one small, reversible change to something an owner already runs. The owner approves it after seeing a cost ceiling and a guard metric rolls it back automatically; it can move the bill, so it is not free. Learning never provisions anything just to measure it.
+**Trial** is different: rarely, one small, reversible change to something an owner already runs in non-production. The owner approves it after seeing a cost ceiling and a guard metric rolls it back automatically; it can move the bill, so it is not free. Learning never provisions anything just to measure it.
 
 ### Hypotheses, challenge and verdict
 

@@ -18,6 +18,7 @@ So the scarce thing is not detection. It is *knowledge*: how each service really
 | Act safely | Changes without a bound approval or a valid credential; reversed changes ("boomerangs"); regret | Zero; fall |
 | Be trustworthy | Calibration (when it says 80 %, is it right 80 % of the time); refuted beliefs kept and visible | Tighten |
 | Pay for itself | Verified net savings after the system's own cost; share of managed spend needed to break even ([cost](10-cost-and-finops.md)) | Rise; stay small |
+| Be adoptable | Days from an estate's first probe to the first finding its owner confirms as true and worth acting on; platform, FinOps and security hours a month | Fall |
 | Stay open | Share of world knowledge (Atlas, Action catalogue) that is open source; estate knowledge leaves the organisation only as a privacy-reviewed aggregate that its owner has agreed to share | Rise; unreviewed shares stay 0 |
 
 ## 3. Who it serves
@@ -74,7 +75,7 @@ It reads what Azure already offers, treats it as leads and as a baseline to beat
 | F8 | Verify outcomes against registered predictions; keep a calibration record |
 | F9 | Evaluate itself on change and in production; report what it is bad at |
 | F10 | Share world knowledge as open source; share nothing from an estate except a privacy-reviewed scope and aggregate that its owner has agreed to |
-| F11 | Work with every Azure agreement and every level of access: find out per scope what can be seen and what can be done, say so plainly, and use the best path that exists ([agreements and access](14-agreements-and-access.md)) |
+| F11 | Work with every Azure agreement and every level of access: find out per scope what can be seen and what can be done, say so plainly, and use the best path that exists (where Cost Management has no data, as for classic partner subscriptions and sponsorship offers, that path is reading resources) ([agreements and access](14-agreements-and-access.md)) |
 
 **How well (targets are parameters of each adopter).**
 

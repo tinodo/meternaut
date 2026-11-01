@@ -114,7 +114,7 @@ The more organisations use it, the sooner a new service is understood by everyon
 
 ## 8. Trial — rarely, and only on something that already exists
 
-Some questions can only be settled by changing something: *how small can this dev resource get before it hurts?* A **trial** is one small, reversible change to **one resource an owner already runs**, with the owner's clear consent **after seeing a cost ceiling** (a trial can move the bill, and a rollback does not refund what ran), a **guard metric** that triggers automatic rollback, a capped blast radius and a prediction written first. The owner can decline without giving a reason. A trial is how a *"probably safe"* becomes a *"measured safe"*: a **canary saving** (a saving measured on one resource before it is offered more widely), and the way a claim can become *outcome-confirmed*.
+Some questions can only be settled by changing something: *how small can this dev resource get before it hurts?* A **trial** is one small, reversible change to **one non-production resource an owner already runs**, with the owner's clear consent each time **after seeing a cost ceiling** (a trial can move the bill, and a rollback does not refund what ran), a **guard metric** that triggers automatic rollback, a capped blast radius and a prediction written first. The owner can decline without giving a reason. A trial is how a *"probably safe"* becomes a *"measured safe"*: a **canary saving** (a saving measured on one resource before it is offered more widely), and the way a claim can become *outcome-confirmed*.
 
 The system never creates a resource in order to measure it. If a question can only be answered by creating something, the question stays open and says why.
 

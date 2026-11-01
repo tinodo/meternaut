@@ -100,7 +100,7 @@
 
 ## 17. Learning never provisions anything just to measure it · Accepted
 
-- **Decision.** Learning comes from documents, price lists, schemas, release notes, bills, replays, owners' answers and small owner-approved reversible trials. A trial changes only a resource an owner already runs, after the owner has seen a cost ceiling. Known limit: a meter nobody has used cannot be discovered this way, and the first organisation to use a new service meets surprises, so its advice is labelled.
+- **Decision.** Learning comes from documents, price lists, schemas, release notes, bills, replays, owners' answers and small owner-approved reversible trials. A trial changes only a non-production resource an owner already runs (an R1 change), after the owner has seen a cost ceiling. Known limit: a meter nobody has used cannot be discovered this way, and the first organisation to use a new service meets surprises, so its advice is labelled.
 - **Instead of.** A budget-capped sandbox subscription running billing experiments (spends money to learn what money is spent on; needs its own governance).
 - **Cost · security · reversibility.** No sandbox spend · no sandbox estate to secure · a trial can still move the bill of the one resource it changes · reversible: an organisation that wants experiments can add its own environment later ([knowledge](04-knowledge-and-learning.md)).
 
