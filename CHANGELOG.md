@@ -8,9 +8,12 @@ All notable changes, newest first. Versions are git tags (`design-v1` for the de
 
 ## design-v1 (record) — 2026-11-01 — design phase 1: architecture, decisions, cost model and test strategy
 
-**Why.** With the ideation frozen (tag `ideation-v4`), the operator asked for the design: completely AI-driven; Microsoft Foundry and the Microsoft Agent Framework; every AI part deployed through the Citadel framework in his landing zone; every safeguard and drift control; security, compliance, test and governance; every technology decision put to two rubber-duck rounds on different models; and as cost-efficient as possible.
+**Why.** With the ideation frozen (tag `ideation-v4`), the project owner asked for the design: completely AI-driven; Microsoft Foundry and the Microsoft Agent Framework; every AI part deployed through the Citadel framework in the adopting organisation's landing zone; every safeguard and drift control; security, compliance, test and governance; every technology decision put to two review rounds on different models; and as cost-efficient as possible.
 
 **What.** [`docs/_archive/design-v1/design/`](docs/_archive/design-v1/design/README.md) — an index and fourteen documents (about 157,000 words): requirements and principles · technology landscape · logical architecture · landing zone and Citadel · agents and orchestration · data and knowledge · security architecture · governance and compliance · safeguards and drift controls · test and evaluation · delivery and operations · cost and FinOps · 37 decisions · next phases. Evidence is in [`docs/_archive/design-v1/design/research/`](docs/_archive/design-v1/design/research/) and in a snapshot of 2,468 Azure price meters. Still no code.
+
+<details>
+<summary>The detailed record of the withdrawn design (long; kept for the record, not needed to read the current design)</summary>
 
 ### The design in six lines
 - **A deterministic spine with agentic leaves**: Durable Functions workflows call fourteen hosted-agent roles (fifteen Entra agent identities, eleven contract groups, twelve contracts) one step at a time through the Citadel hub; agents can only read; the Agent Framework runs only inside the leaves.
@@ -36,6 +39,8 @@ Three passes and a closure check, nine models, every lens on a different model e
 - [`docs/_archive/design-v1/tools/cost-model.py`](docs/_archive/design-v1/tools/cost-model.py): rebuilt; generates the cost tables of the design and the hub's quotas; `--check` also guards the access-contract table of 04 §4.3 (names, aliases, pools, PROD products, and its Agents column against the roster of 05 §2), every number of roles, identities, groups and contracts that a document states, the pipelines paragraph of 11 §3 and the phase profile of 14 §4; `--self-test` holds 29 negative fixtures.
 - [`tools/check-docs.py`](tools/check-docs.py): a design scope (links, anchors, diagrams, banned stale phrases, counts).
 - [`AGENTS.md`](AGENTS.md) rule 11 gains: say what a compromised party can still do; numbers in 12 come from the model; sweep the seams after a large parallel revision; ask for closure before tagging.
+
+</details>
 
 ## v4 — 2026-10-31 — rebuilt around a learning system (tag `ideation-v4`)
 

@@ -1,0 +1,136 @@
+# Technology register
+
+**What this document answers.** Which technologies the design uses, which sit behind a switch, and which it looked at and does not need yet. Each row gives the status and the day it was checked, the decision, and the reason. The last sections list the non-Microsoft components and what the year's Microsoft AI updates changed in the design.
+
+## How to read
+
+Every status is as on **2026-11-01**, checked on Microsoft Learn or the vendor's announcement; `UNVERIFIED` marks what could not be confirmed. *Preview* means no service-level agreement; *prerelease* means a package that needs `--pre`. The input was the 817 Microsoft AI updates of 2025-10-31 to 2026-10-31; items that touch the design were re-checked. Prices are in [the cost document](10-cost-and-finops.md). Proof points P1 to P10 are in [the roadmap](13-roadmap.md); approval classes R1 to R3 in [security](06-security-and-governance.md).
+
+| Decision | Meaning |
+|---|---|
+| **Adopt** | In the design now, and generally available |
+| **Adopt behind a switch** | Preview, prerelease or licence-bound; off by default; the row names the generally available fallback |
+| **Evaluate** | A proof point decides |
+| **Not needed in phase 1** | Judged on merit; the row says why, and what would change it, or that the service is retiring |
+| **Watch** | No role yet; re-check on the event named |
+
+## Agents and models
+
+| Technology | Role in the design | Status on 2026-11-01 | Decision | Why, and the fallback if preview | Learn |
+|---|---|---|---|---|---|
+| **Foundry hosted agents** | The five hosted agents (ten roles) | GA | Adopt | Own Entra agent identity; billed per active compute hour. Deploys from a zip, no registry. Idle timeout 2 minutes; sessions deleted after 30 idle days. | [Learn](https://learn.microsoft.com/azure/foundry/agents/concepts/hosted-agents) |
+| **Foundry prompt agents** | None today | GA | Not needed in phase 1 | No charge beyond tokens, but the hub route gives them Chat Completions only, so tool-using roles stay hosted. | [Learn](https://learn.microsoft.com/azure/foundry/agents/how-to/ai-gateway) |
+| **Foundry Routines** | Would start one agent on a timer | GA (2026-09-24) | Not needed in phase 1 | The `workflows` app owns every clock; a routine starts one agent only and has no customer-managed keys. | [Learn](https://learn.microsoft.com/azure/foundry/agents/concepts/routines) |
+| **Foundry workflow agents** | None | retiring 2026-12-01 | Not needed in phase 1 | The designer ends on 1 December 2026; YAML workflows then run only as hosted agents. | [Learn](https://learn.microsoft.com/azure/foundry/agents/concepts/workflow) |
+| **Foundry Toolbox** | Would bundle tools per agent | GA; skills preview | Not needed in phase 1 | The hub is the one door for tools; a toolbox would be a second front door. | [Learn](https://learn.microsoft.com/azure/foundry/agents/concepts/toolbox-overview) |
+| **Foundry Memory** | Would hold per-person preferences | preview | Not needed in phase 1 | No virtual-network support, and it needs model deployments in the Foundry account, which the design forbids. Preferences live in Cosmos DB. | [Learn](https://learn.microsoft.com/azure/foundry/agents/concepts/what-is-memory) |
+| **Agent Framework core** | The agent loop and typed results in each hosted agent | GA 1.0 (2026-04-02), MIT | Adopt | Released Python packages no longer need `--pre`. Pin versions; re-run evaluations on every bump. | [Learn](https://learn.microsoft.com/agent-framework/overview/) |
+| **Agent Framework hosting and durable packages** | Serve an agent as a hosted agent; run workflows in Functions | prerelease (Python `agent-framework-foundry-hosting`, durable extension) | Hosting: Adopt behind a switch. Durable: Watch | Fallback for hosting: a thin own adapter around the GA core (P2 proves it). Durable Functions code stays the workflow engine. | [Learn](https://learn.microsoft.com/agent-framework/hosting/foundry-hosted-agent) |
+| **Semantic Kernel and AutoGen** | None | superseded | Not needed in phase 1 | Learn calls Agent Framework their direct successor; migration guides exist. | [Learn](https://learn.microsoft.com/agent-framework/migration-guide/) |
+| **GPT-6.1 Terra and Sol** | `reason` candidates: Terra default, Sol to escalate | GA | Evaluate | P10 picks per alias. Sol's tool calls need the Responses API, which the hub must proxy. | [Learn](https://learn.microsoft.com/azure/foundry/foundry-models/concepts/models-sold-directly-by-azure) |
+| **GPT-6 Luna and Decisions API** | `triage` candidate; the API returns choices and scores | GA (Decisions API 2026-10-23) | Evaluate | Smallest GPT-6 tier. The Decisions API runs on `gpt-6-luna` only and excludes East US 2. | [Learn](https://learn.microsoft.com/azure/foundry/openai/how-to/decisions) |
+| **GPT-5.6 and Grok** | Older tier; a fourth family | GA; `grok-4.7` has no preview label | Watch | Other aliases already have candidates. Re-check if evaluation shows a gap or a region lacks GPT-6. | [Learn](https://learn.microsoft.com/azure/foundry/foundry-models/how-to/use-foundry-models-grok) |
+| **Mistral Large 3** | Candidate `judge` that stays in the EU Data Zone | Listed for Data Zone Standard in seven EU regions; Large 4: UNVERIFIED | Evaluate | Claude cannot judge inside an EU Data Zone; this can. | [Learn](https://learn.microsoft.com/azure/foundry/foundry-models/concepts/models-sold-directly-by-azure-region-availability) |
+| **Claude** | Candidate `judge` where Global processing is acceptable | GA; Global Standard; Data Zone only in the US | Evaluate | For public documents and synthetic evaluation, not estate data in an EU Data Zone. | [Learn](https://learn.microsoft.com/azure/foundry/foundry-models/how-to/use-foundry-models-claude) |
+| **Batch and Flex processing** | The `batch` alias | Batch GA; Flex preview | Adopt Batch; Flex behind a switch | Batch: 24-hour target at half the Global Standard rate. Flex: Global Standard only, 429 when capacity is short. Both may leave the data boundary: public and synthetic work only. | [Learn](https://learn.microsoft.com/azure/foundry/openai/how-to/flex-processing) |
+| **Data Zone and Global deployments** | Deployment type is an adopter parameter | GA | Adopt | Global may process anywhere and gets new models first; Data Zone stays in the US or EU. EU pricing changed on 2026-09-01 ([cost](10-cost-and-finops.md)). | [Learn](https://learn.microsoft.com/azure/foundry/foundry-models/concepts/deployment-types) |
+| **Computer use and browser automation** | None | Computer use preview; browser automation GA | Not needed in phase 1 | The system reads APIs, not screens; Learn warns computer use carries prompt-injection risk. | [Learn](https://learn.microsoft.com/azure/foundry/agents/how-to/tools/computer-use) [Learn](https://learn.microsoft.com/azure/foundry/agents/how-to/tools/browser-automation) |
+
+## Governance and safety
+
+| Technology | Role in the design | Status on 2026-11-01 | Decision | Why, and the fallback if preview | Learn |
+|---|---|---|---|---|---|
+| **Citadel governance hub** | The only door to models and tools | Microsoft sample (MIT), no releases; Publish Contract `1.1.0-preview` | Adopt | Onboard to the adopter's hub, or deploy from `hub/` at a pinned commit. Fallback for the preview contract: import tools natively in API Management. | [GitHub](https://github.com/Azure-Samples/ai-hub-gateway-solution-accelerator) |
+| **Foundry portal AI gateway** | None; the hub is the gateway | No preview label; MCP routing preview | Not needed in phase 1 | A second gateway mechanism. It lists only API Management v2 in the Foundry resource's tenant and subscription. | [Learn](https://learn.microsoft.com/azure/foundry/configuration/enable-ai-api-management-gateway-portal) |
+| **`aigateways` product** | Possible later home of the hub | public preview; East US 2 and Sweden Central | Watch | Learn says full parity with API Management is not planned. Re-test at general availability. | [Learn](https://learn.microsoft.com/azure/ai-gateway/compare-api-management-service) |
+| **Azure API Management** | The hub's engine: token limits, safety and JWT policies, MCP publishing | GA; unified model API preview | Adopt | MCP servers and `llm-content-safety` are documented for every tier except Consumption. The hub's fixed cost is shared platform cost. | [Learn](https://learn.microsoft.com/azure/api-management/mcp-server-overview) |
+| **Foundry Control Plane** | Fleet inventory; human stop and block | No preview label; some panes preview | Adopt | Stopping an agent does not end existing runs; the hard stops are the hub contract and cancelling orchestrations. | [Learn](https://learn.microsoft.com/azure/foundry/control-plane/how-to-manage-agents) |
+| **Foundry guardrails** | Screening at the hosted-agent boundary | Model guardrails GA; agent guardrails preview | Adopt behind a switch | An agent guardrail replaces its model's; omitting `rai_config` means none, so CI asserts it. Fallback: hub content safety. | [Learn](https://learn.microsoft.com/azure/foundry/agents/concepts/hosted-agent-guardrails) |
+| **Content Safety and Prompt Shields** | Screen untrusted text where it enters | No preview label | Adopt | Billed per 1,000 text records. It does not stop a poisoned result that carries no attack pattern. | [Learn](https://learn.microsoft.com/azure/ai-services/content-safety/concepts/jailbreak-detection) |
+| **Azure Language PII** | Redact personal data in owner replies before they become Lessons | Text PII GA (`2026-05-01`) | Evaluate | P7 tests the reply path. Use the GA API, not `2026-05-15-preview`. | [Learn](https://learn.microsoft.com/azure/ai-services/language-service/personally-identifiable-information/how-to/redact-text-pii) |
+| **Azure Policy for AI** | Denies model deployments in the spoke; drift | Approved models GA; model-router and denied-tools policies preview | Adopt | Assigned as code, evaluated at deployment time. GA definitions carry the deny rule. | [Learn](https://learn.microsoft.com/azure/foundry/how-to/model-deployment-policy) |
+| **Defender for Cloud and AI** | Model-level threat alerts | Defender for AI Services GA; agent protection preview, tied to Agent 365 since 2026-07-01 | Adopt behind a switch | Billed per token scanned. Posture still covers Foundry accounts, not agents. Fallback: hub content safety and the audit log. | [Learn](https://learn.microsoft.com/azure/defender-for-cloud/ai-threat-protection) |
+| **Microsoft Purview** | Would add an audit view | Integration does not yet support network isolation | Not needed in phase 1 | Our append-only audit log is the record. Re-check when Purview supports network isolation. | [Learn](https://learn.microsoft.com/azure/foundry/control-plane/how-to-manage-compliance-security) |
+| **Foundry evaluations and red teaming** | Evaluation harness, production sampling | Evaluations GA; continuous runs and local red teaming preview | Adopt | Judge calls go through the hub on the `evaluation` contract. Fallback for preview parts: our own suites plus PyRIT in CI. | [Learn](https://learn.microsoft.com/azure/foundry/concepts/evaluation-overview) |
+
+## Security and identity
+
+| Technology | Role in the design | Status on 2026-11-01 | Decision | Why, and the fallback if preview | Learn |
+|---|---|---|---|---|---|
+| **Entra Agent ID** | An identity per hosted agent | Available to all Entra customers | Adopt | Starts with no permissions, yet can reach the project's model endpoint by default: P1 tests it. | [Learn](https://learn.microsoft.com/azure/foundry/agents/concepts/agent-identity) |
+| **Microsoft Agent 365** | Optional Conditional Access and governance for agents | GA since 2026-05-01; per-user licence | Adopt behind a switch | Needs Microsoft 365 E7, or Agent 365 plus Entra ID P1. Fallback: hub JWT and roles per contract, RBAC, kill switches. | [Learn](https://learn.microsoft.com/entra/identity/conditional-access/agent-id) |
+| **Conditional Access and PIM (people)** | Approver sign-in (R2, R3); elevation for people, not the runner | GA; Conditional Access needs Entra ID P1 | Adopt | Neither stops a signed-in, compromised approver: approvals are single-use and hash-bound. PIM cannot make service principals eligible; purchases use a time-bound role assignment (P8). | [Learn](https://learn.microsoft.com/entra/identity/authentication/concept-authentication-strengths) [Learn](https://learn.microsoft.com/azure/role-based-access-control/pim-integration) |
+| **Azure Key Vault** | Hub keys and the few other secrets | GA | Adopt | One vault; everything else is keyless. RBAC, soft delete, purge protection. | [Learn](https://learn.microsoft.com/azure/key-vault/general/soft-delete-overview) |
+
+## Knowledge and data
+
+| Technology | Role in the design | Status on 2026-11-01 | Decision | Why, and the fallback if preview | Learn |
+|---|---|---|---|---|---|
+| **Foundry IQ** | Possible Atlas retrieval | Part GA (REST `2026-04-01`: minimal retrieval); planning preview | Evaluate | P5 compares it with AI Search used directly. Its model calls would bypass the hub, so it stays off until routable. | [Learn](https://learn.microsoft.com/azure/foundry/agents/concepts/what-is-foundry-iq) |
+| **AI Search Basic** | The Atlas index | GA | Adopt | Search units bill even when idle. West Europe, Sweden Central, North Europe and Germany West Central carry a "high demand" footnote that blocks new services. | [Learn](https://learn.microsoft.com/azure/search/search-region-support) |
+| **AI Search Serverless** | Scale-to-zero option | preview; EU: Sweden Central, Denmark East, Poland Central | Evaluate | Billed per compute-unit hour and indexed GB. P5 measures it; fallback is Basic. | [Learn](https://learn.microsoft.com/azure/search/search-sku-tier) |
+| **Semantic ranker and agentic retrieval** | Reranking; optional query planning | Ranker GA; agentic retrieval GA (minimal), rest preview | Evaluate | P5 switches the ranker by measured gain. Both bill separately from the service. | [Learn](https://learn.microsoft.com/azure/search/semantic-search-overview) |
+| **Cosmos DB serverless** | Estate model, lessons, ledger, approvals | GA | Adopt | Pay per request unit and stored GB; no minimum. One region only. Our own account, never Foundry's. | [Learn](https://learn.microsoft.com/azure/cosmos-db/serverless) |
+| **Blob Storage** | Cost lake and immutable audit log | GA | Adopt | Immutable (WORM) containers: time-based retention and legal hold. | [Learn](https://learn.microsoft.com/azure/storage/blobs/immutable-storage-overview) |
+| **Cost exports (FOCUS) and Retail Prices API** | Cost lake source; daily price snapshot | GA | Adopt | Current-period charges are rerated until the invoice closes, so each run replaces the month-to-date partition. | [Learn](https://learn.microsoft.com/azure/cost-management-billing/costs/tutorial-improved-exports) |
+| **FinOps toolkit and hubs** | Reference; optional adapter (phase 4) | Open source; v15 on 2026-10-28 | Not needed in phase 1 | Hubs add Data Factory and an optional Data Explorer or Fabric store; ours is Blob plus DuckDB. | [Learn](https://learn.microsoft.com/cloud-computing/finops/toolkit/hubs/finops-hubs-overview) |
+| **Azure Data Explorer and Synapse** | Possible lake engines | GA; Learn steers new warehouse work from Synapse to Fabric | Not needed in phase 1 | DuckDB covers Team volume; P4 measures where it stops (a lake beyond 4 GB, many KQL users). | [Learn](https://learn.microsoft.com/azure/data-explorer/manage-cluster-choose-sku) |
+| **Microsoft Fabric and Azure Databricks** | None | GA; Fabric capacity can be paused; Databricks bills in DBUs | Not needed in phase 1 | Cost questions are SQL over one Parquet lake. Fabric would earn a place when the adopter runs a capacity and wants cost data in shared models; Databricks when its data platform runs there and cost data must join business data. | [Learn](https://learn.microsoft.com/fabric/enterprise/pause-resume) |
+| **Azure MCP Server 3.0** | Advisor and Monitor reads via the hub | GA (3.0.0, 2026-10-12); 4.0 betas weekly | Evaluate | Read only option plus a Reader-only identity; pin 3.x. Learn documents remote hosting on Container Apps only (P9). Fallback: `tools` calls the APIs directly. | [Learn](https://learn.microsoft.com/azure/developer/azure-mcp-server/tools/) |
+| **ARM MCP server cost toolsets** | Possible Economist read tool | UNVERIFIED: no GA or preview label in the 2026-08-26 announcement | Watch | `cost-query` covers the same questions with a read-only identity. | [vendor](https://techcommunity.microsoft.com/blog/finopsblog/cost-management-with-azure-resource-manager-mcp/4550182) |
+
+## Compute and workflow
+
+| Technology | Role in the design | Status on 2026-11-01 | Decision | Why, and the fallback if preview | Learn |
+|---|---|---|---|---|---|
+| **Durable Functions and Durable Task Scheduler** | The seven workflows; optional state backend | Functions GA; Scheduler: Dedicated GA, Consumption preview | Adopt Functions; Evaluate Scheduler | A workflow that waits days for a person costs no compute; events arrive at least once, so every step is idempotent. Default backend: Azure Storage (GA); P2 prices the Scheduler. | [Learn](https://learn.microsoft.com/azure/durable-task/common/durable-task-storage-providers) [Learn](https://learn.microsoft.com/azure/durable-task/scheduler/durable-task-scheduler-billing) |
+| **Functions Flex Consumption** | The five Function apps | GA | Adopt | Scales to zero; always-ready instances are optional and bill while running (Learn recommends one for Durable Functions). Zone redundancy stops scale to zero. | [Learn](https://learn.microsoft.com/azure/azure-functions/flex-consumption-plan) |
+| **Functions MCP hosting** | Optional native MCP tools | MCP extension: no preview label; SDK-built MCP servers: preview | Evaluate | Our tools are HTTPS APIs the hub publishes as MCP, so no MCP code is hosted. A native route is a second tool surface (P9). | [Learn](https://learn.microsoft.com/azure/azure-functions/self-hosted-mcp-servers) |
+| **Container Apps and Container Registry** | None in phase 1 | Container Apps GA; registry private endpoint needs Premium | Not needed in phase 1 | Functions runs our code from a zip: no image, no registry. Container Apps scales to zero; it would earn a place as the Azure MCP Server's documented host. | [Learn](https://learn.microsoft.com/azure/container-apps/billing) |
+| **AKS, Logic Apps, Copilot Studio** | None | GA; Logic Apps agent loop preview | Not needed in phase 1 | Nothing here needs Kubernetes. Logic Apps Standard bills a hosting plan and would move control flow into a designer. Copilot Studio is metered in Copilot Credits; our agents are code behind the hub. | [Learn](https://learn.microsoft.com/azure/logic-apps/logic-apps-pricing) |
+
+## Channels
+
+| Technology | Role in the design | Status on 2026-11-01 | Decision | Why, and the fallback if preview | Learn |
+|---|---|---|---|---|---|
+| **Microsoft 365 Agents SDK** | The Teams bot in `approvals` | GA (1.x) | Adopt | Card routing is documented for .NET and JavaScript only, so the bot follows one. It acknowledges a card action in seconds, then continues. | [Learn](https://learn.microsoft.com/microsoft-365/agents-sdk/adaptive-cards) |
+| **Teams publishing of Foundry agents** | None | GA | Not needed in phase 1 | Cards need our own handler. A private project can publish only by REST with a source-IP-filtered public route; Teams traffic does not use Private Link. | [Learn](https://learn.microsoft.com/azure/foundry/agents/how-to/publish-copilot) |
+| **Microsoft Graph and ACS Email** | Mail to owners; owner lookup | Graph GA; ACS Email retiring (30 Sep 2028) | Adopt Graph; ACS Email not needed | Shared mailbox scoped by Exchange RBAC for Applications. Without Exchange Online there is no e-mail path: Teams and the web page carry everything. Microsoft 365 High Volume Email (internal recipients) is the successor to watch. | [Learn](https://learn.microsoft.com/azure/communication-services/acs-retirement-and-breaking-changes-guide) |
+| **Voice Live API and avatars** | Optional later modules | Voice Live: no preview label; voice agents preview; photo avatar GA | Not needed in phase 1 | Voice adds consent and retention duties and its own meters. Phase 5 uses Voice Live; voice agents behind a switch. | [Learn](https://learn.microsoft.com/azure/ai-services/speech-service/voice-live) |
+
+## Delivery and operations
+
+| Technology | Role in the design | Status on 2026-11-01 | Decision | Why, and the fallback if preview | Learn |
+|---|---|---|---|---|---|
+| **Bicep and Azure Verified Modules** | All infrastructure | Bicep 0.48.1; modules owned by Azure engineering | Adopt | The Action catalogue compiles Bicep to ARM JSON. | [Learn](https://learn.microsoft.com/community/content/azure-verified-modules) |
+| **Azure Developer CLI** | Developer loop, deployment | GA; Foundry agents extension prerelease | Adopt | Extension behind a switch; fallback: an SDK or REST pipeline step. | [Learn](https://learn.microsoft.com/azure/developer/azure-developer-cli/pipeline-github-actions) |
+| **Deployment Stacks** | Drift control: deny settings | GA | Adopt | Exclude the runner identity or cover only resources it never changes. It does not stop principals on the exclusion list. | [Learn](https://learn.microsoft.com/azure/azure-resource-manager/bicep/deployment-stacks) |
+| **GitHub Actions with OIDC** | Pipelines sign in without secrets | GA | Adopt | Federated credential on a managed identity; no secret in GitHub. | [Learn](https://learn.microsoft.com/azure/azure-functions/functions-how-to-github-actions) |
+| **Application Insights, OpenTelemetry, Foundry tracing** | Traces and metrics | OpenTelemetry Distro GA; GenAI conventions "Development"; Foundry framework tracing preview | Adopt | Code emits GenAI spans to Application Insights; content recording off in production. Foundry's panes behind a switch. | [Learn](https://learn.microsoft.com/azure/azure-monitor/containers/opentelemetry-options) |
+| **Log Analytics table plans** | Cheaper plans for bulky tables | GA | Adopt | Analytics, Basic or Auxiliary per table, mixed in one workspace; the cheaper plans have fewer features. | [Learn](https://learn.microsoft.com/azure/azure-monitor/logs/cost-logs) |
+| **Workbooks and Grafana** | Dashboards | Workbooks GA; dashboards with Grafana preview | Adopt | Workbooks carry the dashboards; dashboards with Grafana (no extra cost) are the optional alternative. | [Learn](https://learn.microsoft.com/azure/azure-monitor/visualize/best-practices-visualize) |
+| **Azure SRE Agent** | Would watch our platform | GA | Not needed in phase 1 | Always-on charge of 4 agent units an hour while it exists, plus active flow; a 30-day evaluation waives it. Workbooks and alerts suffice. | [Learn](https://learn.microsoft.com/azure/sre-agent/pricing-billing) |
+| **Azure Copilot agents (Optimization)** | A baseline to beat | Optimization agent preview | Watch | VMs and VM Scale Sets only, at most ten items a query. Re-check when it covers more resource types. | [Learn](https://learn.microsoft.com/azure/copilot/optimization-agent) |
+
+## Non-Microsoft components
+
+| Component | Role | Licence and version checked | Microsoft alternative |
+|---|---|---|---|
+| **DuckDB** | SQL over the Parquet cost lake, inside `tools` | MIT; 2.0.0 (2026-10-21) | Data Explorer or Synapse serverless SQL; P4 measures when to switch. |
+| **OpenTelemetry** | Trace format and SDKs | Apache-2.0; GenAI conventions at "Development" status | The Microsoft OpenTelemetry Distro; Foundry tracing and Agent Framework emit the same format. |
+| **PyRIT** | Red-team library in CI | MIT, Microsoft-authored; `microsoft/PyRIT` 1.1.0; `Azure/PyRIT` is archived | Foundry AI Red Teaming Agent, built on PyRIT (local runs preview). |
+| **Python libraries** | What the Function apps import beyond Azure SDKs and Agent Framework | Open-source licences; pinned by hash; in the SBOM | None for general utilities. |
+
+## What the update list changed in the design
+
+- **Hosted agents reached GA** (2026-06-02): each trust boundary gets a hosted agent deployed from a zip, with no registry and no cluster. [Learn](https://learn.microsoft.com/azure/foundry/agents/how-to/deploy-hosted-agent-code)
+- **Workflow agents retire on 2026-12-01.** Workflows are Durable Functions code; Routines (GA 2026-09-24) start one agent only, so the `workflows` app keeps every clock. [Learn](https://learn.microsoft.com/azure/foundry/agents/concepts/workflow)
+- **Agent Framework 1.0** (2026-04-02) made the core stable; hosting and durable packages are still prerelease, so they sit behind switches.
+- **Azure MCP Server 3.0** (2026-10-12): pin 3.x while 4.0 betas ship weekly. Its documented remote host is Container Apps, a question for P9.
+- **Private networking no longer forces Foundry's data trio:** a bring-your-own-network project can use platform-managed data, so agent state stays in our Cosmos DB. [Learn](https://learn.microsoft.com/azure/foundry/agents/concepts/networking-options)
+- **FOCUS exports stay the cost source**, but current data is rerated until the invoice closes and Claude cost moved under the Foundry resource (2026-10-27). [Learn](https://learn.microsoft.com/azure/cost-management-billing/costs/understand-cost-mgt-data)
+- **The GPT-6 generation changed price shape:** cache writes bill separately, EU Data Zone pricing changed on 2026-09-01, and Sol's tool calls need the Responses API. Aliases absorb it. [Learn](https://learn.microsoft.com/azure/foundry/openai/how-to/prompt-caching)
+- **Flex (preview) and Global Batch** are cheaper but leave the data boundary: public and synthetic work only.
+- **Foundry IQ is partly GA** (2026-06-04), so the Atlas stays on AI Search and IQ is an evaluation.
+- **Agent 365 is now the licence for agent protection** (GA 2026-05-01; Defender's agent features moved on 2026-07-01), so Conditional Access for agents is an optional module. [Learn](https://learn.microsoft.com/azure/defender-for-cloud/ai-security-posture)
+- **Two corrections:** dashboards with Grafana is still preview, and the Copilot harness (preview, 2026-10-28) cannot use bring-your-own-model, so it cannot sit behind the hub. [Learn](https://learn.microsoft.com/azure/foundry/agents/concepts/limits-quotas-regions)

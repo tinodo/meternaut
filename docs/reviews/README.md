@@ -11,4 +11,8 @@ Every version of the ideation is reviewed by independent agents before it is cal
 
 ## Design
 
-The first design (`design-v1`) was withdrawn on 2026-11-01. Its review record — two rounds with a different model on each lens, a targeted third pass and its closure checks — is kept in [the archive](../_archive/design-v1/reviews/). The record of the second design is added here as it is made.
+The first design (`design-v1`) was withdrawn on 2026-11-01. Its review record — two rounds with a different model on each lens, a targeted third pass and its closure checks — is kept in [the archive](../_archive/design-v1/reviews/). The record of the second design is kept here: every decision was challenged by independent models before any document was written (round 1), and the finished design was challenged again by other models (round 2). For these records the orchestrator's spot-checks are in each round's disposition rather than appended to the raw reports.
+
+| Round | Reviewers (models) | Raw reports | Disposition |
+|---|---|---|---|
+| **Design v2 · Round 1** — the decisions, before any document was written | A cost and simplicity (gemini-4-argon) · B security and safety (grok-4.7) · C AI engineering and platform facts (gpt-6.1-sol) | [A](design-v2-round-1/raw-a-cost-simplicity.md) · [B](design-v2-round-1/raw-b-security-safety.md) · [C](design-v2-round-1/raw-c-ai-platform.md) | [disposition](design-v2-round-1/disposition.md) |
