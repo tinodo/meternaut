@@ -105,7 +105,32 @@ CONTRACT_ALIASES = {
     "conduct": {"triage", "reason", "embed"},
 }
 PUBLIC_CONTRACTS = {"study", "curate", "experiment", "examine-pub", "forge"}   # public or synthetic data: Global pools
+NO_PROD_CONTRACTS = {"examine-pub", "forge"}   # synthetic estates never run in production: no PROD product (design 04 section 4.3)
+# The pools each contract may reach in PROD (design 04 section 4.3); TEST and DEV carry synthetic data only and reach the public pools.
+CONTRACT_POOLS = {
+    "study": {"acia-global", "acia-flex"},
+    "curate": {"acia-global"},
+    "survey": {"acia-eu"},
+    "investigate": {"acia-eu", "acia-judge-eu"},
+    "experiment": {"acia-global"},
+    "converse": {"acia-eu"},
+    "engineer": {"acia-eu"},
+    "govern": {"acia-eu", "acia-judge-eu"},
+    "examine-pub": {"acia-global", "acia-flex", "acia-judge-eu"},
+    "examine-eu": {"acia-eu", "acia-judge-eu"},
+    "forge": {"acia-global"},
+    "conduct": {"acia-eu"},
+}
 ENVIRONMENTS = ("prod", "test", "dev")
+FIRST_PHASE = {"dev": 0, "prod": 2, "test": 3, "lab": 4}   # the phase of design 14 section 4 in which each environment first exists
+
+
+def environments_present(s: dict) -> list[str]:
+    """The contract environments a scenario creates: PROD and DEV always, TEST only where there is a TEST account.
+    Pilot has none, so DEV carries the exams, the gates and the attacks (design 14 section 4, 11 section 3)."""
+    return ["prod", "dev"] + (["test"] if s["accounts"] >= 3 else [])
+
+
 ENV_FLOOR = {"test": 0.25, "dev": 0.10}      # design 04 section 4.3: TEST and DEV carry at least this share of production's quota
 DAILY_SHARE = {"experiment": 0.10}            # a daily quota on the Experimenter: at most this share of the month in a day
 # Peak calls in flight per contract (seeds): the overrun of a token limit is bounded by this times the largest call.
@@ -325,10 +350,13 @@ class Model:
         """Every token workload of a scenario with its contract and environment (prod, test or dev).  The euro
         lines and the hub quotas both derive from this list, so a quota can never drift from the plan it caps."""
         W: list[dict] = []
+        # Where the exams, the gates, the attacks and method learning run: in TEST, or in DEV where the scenario has
+        # no TEST account (Pilot; design 14 section 4).  `kind` keeps the workload's purpose whichever environment holds it.
+        tenv = "test" if "test" in environments_present(s) else "dev"
 
         def add(label, contract, env, price, calls, tin, prefix, tout, sessions):
-            W.append(dict(label=label, contract=contract, env=env, price=price, calls=calls, tin=tin, prefix=prefix,
-                          tout=tout, sessions=sessions))
+            W.append(dict(label=label, contract=contract, env=(tenv if env == "test" else env), kind=env, price=price,
+                          calls=calls, tin=tin, prefix=prefix, tout=tout, sessions=sessions))
 
         cases, ch, calls = s["cases"], s["study_changes"], s["survey_calls"]
         sol_eu, luna_eu = self.gpt6("6.1-sol", "DZ"), self.gpt6("6-luna", "DZ")
@@ -345,12 +373,12 @@ class Model:
         add(L_SURVEY, "survey", "prod", luna_eu, 0.8 * calls, 8_000, 2_000, 600, min(0.8 * calls, bursts))
         add(L_SURVEY, "survey", "prod", sol_eu, 0.2 * calls, 8_000, 2_000, 600, min(0.2 * calls, bursts))
         add(L_DREAM, "govern", "prod", sol_eu, 30 * (5 + cases / 200.0), 20_000, 5_000, 2_000, 30)
-        # exams and gates run W4 on synthetic estates in the TEST environment: Flex where it is available, plus
-        # 30 % judge work (two families on G5) on the `examine-pub` contract
+        # exams and gates run W4 on synthetic estates in the TEST environment (DEV where there is none): Flex where it is
+        # available, plus 30 % judge work (two families on G5) on the `examine-pub` contract
         gate_total = s["gate_runs"] * self.k["gate_scale"]
         for label, runs in ((L_EXAM, s["exam_cases"]), (L_GATE, gate_total)):
             for role, alias, contract, w in CASE_WORK:
-                x = dict(label=label, contract=contract, env="test", price=self.exam_price(alias), calls=runs * w["calls"],
+                x = dict(label=label, contract=contract, env=tenv, kind="test", price=self.exam_price(alias), calls=runs * w["calls"],
                          tin=w["tin"], prefix=w["prefix"], tout=w["tout"], sessions=runs)
                 W.append(x)
                 W.append(dict(x, contract="examine-pub", calls=0.3 * x["calls"], sessions=0.3 * x["sessions"]))
@@ -413,6 +441,8 @@ class Model:
         euros (the quota at the contract's own blended price), the worst case (the quota at the dearest rate the
         contract's aliases allow), a starting tokens-per-minute limit and the in-flight overrun a limit can suffer."""
         wl = wl or self.workloads(s)
+        present = environments_present(s)
+        tenv = "test" if "test" in present else "dev"
         agg: dict[tuple[str, str], list[float]] = {}
         for x in wl:
             a = agg.setdefault((x["contract"], x["env"]), [0.0, 0.0, 0.0])
@@ -423,6 +453,8 @@ class Model:
         for c in CONTRACT_ALIASES:
             prod = agg.get((c, "prod"))
             for e in ENVIRONMENTS:
+                if e not in present:
+                    continue
                 own = agg.get((c, e))
                 floor = ENV_FLOOR.get(e, 0.0) * (prod[0] if prod else 0.0)
                 planned = max(own[0] if own else 0.0, floor)
@@ -432,7 +464,7 @@ class Model:
                 blended = ref[1] / ref[0]
                 big = ref[2]
                 q = math.ceil(planned * QUOTA_HEADROOM / 1e6) * 1e6
-                slot = (DEV_CONCURRENCY if e == "dev" else CONCURRENCY[c]) * big
+                slot = (DEV_CONCURRENCY if (e == "dev" and tenv != "dev") else CONCURRENCY[c]) * big
                 dear = self.dearest(c, e)
                 rows.append(dict(contract=c, env=e, planned_tokens=planned, quota_tokens=q, has_work=bool(own and own[0]),
                                  own_eur=own[1] if own else 0.0,
@@ -616,7 +648,7 @@ class Model:
         q = self.quotas(s, wl)
         work = [r for r in q if r["has_work"]]
         host_rate = hv * HOSTED_VCPU + hm * HOSTED_GIB
-        eval_eur = (sum(self.cost_of(x) for x in wl if x["env"] == "test")
+        eval_eur = (sum(self.cost_of(x) for x in wl if x["kind"] == "test")
                     + test_runs * per_case_h * host_rate + test_runs * SANDBOX_H_PER_CASE * sbx + on_demand(test_execs)
                     + (routes["tool responses, exam and gate runs"] + routes["attack responses"]) / 1000.0 * cs)
         cases_eur = (sum(self.cost_of(x) for x in wl if x["label"] == L_CASES)
@@ -628,6 +660,8 @@ class Model:
                     per_case=round(total / s["cases"], 2), per_sub=round(total / s["subs"], 2),
                     breakeven_pct=round(100.0 * total / s["spend"], 2), params=s, quotas=q, inventory=inv, gate=gate,
                     eval_eur=round(eval_eur, 2), cases_eur=round(cases_eur, 2),
+                    eval_sessions_eur=round(test_runs * per_case_h * host_rate, 2),
+                    eval_idle_eur=round(test_runs * max(per_case_h - HOSTED_ACTIVE_H_PER_CASE, 0.0) * host_rate, 2),
                     plan_eur=round(sum(r["own_eur"] for r in work), 2), cap_eur=round(sum(r["cap_eur"] for r in work), 2),
                     worst_eur=round(sum(r["worst_eur"] for r in work), 2))
 
@@ -649,7 +683,7 @@ class Model:
         dkv = P.get("Microsoft Defender for Cloud", product="Microsoft Defender for Key Vault", sku="Per node Std", meter="Per node Std Node")
         fb = P.get("Functions", product="Flex Consumption", sku="Always Ready", meter="Always Ready Baseline")
         acr_day = P.get("Container Registry", product="Container Registry", sku="Premium", meter="Premium Registry Unit")
-        first = {"dev": 0, "prod": 2, "test": 3, "lab": 4}
+        first = FIRST_PHASE
         present = ["dev", "prod"] + (["test"] if s["accounts"] >= 3 else []) + (["lab"] if s["accounts"] >= 4 else [])
         spine_all = [e for e in present if e != "lab"]
         chain_all = ["prod"] + (["test"] if s["chain_envs"] >= 2 and "test" in present else [])
@@ -738,47 +772,105 @@ def quota_table(d: dict) -> list[str]:
                    f"{r['tpm'] / 1e3:,.0f} K | €{fmt(r['cap_eur'])} | €{fmt(r['worst_eur'])} | {r['overrun_tokens'] / 1e3:,.0f} K (€{r['overrun_eur']:.2f}) |")
     for e in ENVIRONMENTS:
         rows = [r for r in d["quotas"] if r["env"] == e]
+        if not rows:
+            continue
         out.append(f"| **All contracts** | **{e.upper()}** | **{sum(r['planned_tokens'] for r in rows) / 1e6:,.1f}** | "
                    f"**{sum(r['quota_tokens'] for r in rows) / 1e6:,.0f}** | | **€{fmt(sum(r['cap_eur'] for r in rows))}** | "
                    f"**€{fmt(sum(r['worst_eur'] for r in rows))}** | |")
     return out
 
 
-def doc_contracts(text: str) -> dict[str, set[str]]:
-    """The access-contract table of design 04 section 4.3: contract name -> the aliases it lists."""
+ALL_ALIASES = {"triage", "reason", "judge-eu", "judge-pub", "embed", "batch"}
+
+
+def expected_contracts() -> dict[str, dict]:
+    """What design 04 section 4.3 must say about each contract: its aliases, the pools of its data class and whether
+    it has no PROD product."""
+    return {c: dict(aliases=CONTRACT_ALIASES[c], pools=CONTRACT_POOLS[c], noprod=(c in NO_PROD_CONTRACTS)) for c in CONTRACT_ALIASES}
+
+
+def doc_contracts(text: str) -> dict[str, dict]:
+    """The access-contract table of design 04 section 4.3: per contract the aliases it lists (and any bare word in
+    that cell the model does not know), the pools of its data class, and whether it says 'no PROD product'."""
     m = re.search(r"### 4\.3 The access contracts(.*?)(?=\n#{2,4} |\Z)", text, re.S)
-    table: dict[str, set[str]] = {}
+    table: dict[str, dict] = {}
     if not m:
         return table
+    known = r"\b(" + "|".join(sorted(ALL_ALIASES)) + r")\b"
     for line in m.group(1).splitlines():
         cells = [c.strip() for c in line.strip().strip("|").split("|")]
-        if len(cells) >= 4 and re.fullmatch(r"`[a-z-]+`", cells[0]):
-            table[cells[0].strip("`")] = set(re.findall(r"\b(triage|reason|judge-eu|judge-pub|embed|batch)\b", cells[3]))
+        if len(cells) >= 5 and re.fullmatch(r"`[a-z-]+`", cells[0]):
+            bare = [t for t in (x.strip() for x in cells[3].split(",")) if re.fullmatch(r"[a-z][a-z-]*", t)]
+            table[cells[0].strip("`")] = dict(aliases=set(re.findall(known, cells[3])),
+                                              unknown=sorted(t for t in bare if t not in ALL_ALIASES),
+                                              pools=set(re.findall(r"`(acia-[a-z-]+)`", cells[2])),
+                                              noprod="no prod product" in cells[4].lower())
     return table
 
 
-def check_contracts(text: str, expected: dict[str, set[str]] | None = None) -> list[str]:
-    """Design 04 section 4.3 and the model must name the same contracts with the same aliases."""
-    expected = CONTRACT_ALIASES if expected is None else expected
+def check_contracts(text: str, expected: dict[str, dict] | None = None) -> list[str]:
+    """Design 04 section 4.3 and the model must name the same contracts with the same aliases and pools, and agree on
+    which contracts have no PROD product."""
+    expected = expected_contracts() if expected is None else expected
     got = doc_contracts(text)
     if not got:
         return ["04 section 4.3: the access-contract table was not found"]
     errs = []
-    for c, aliases in expected.items():
+    for c, want in expected.items():
         if c not in got:
             errs.append(f"04 section 4.3: the model's contract `{c}` is not in the table")
-        elif got[c] != aliases:
-            errs.append(f"04 section 4.3: contract `{c}` lists aliases {sorted(got[c])} but the model prices {sorted(aliases)}")
+            continue
+        have = got[c]
+        if have["aliases"] != want["aliases"]:
+            errs.append(f"04 section 4.3: contract `{c}` lists aliases {sorted(have['aliases'])} but the model prices {sorted(want['aliases'])}")
+        if have["unknown"]:
+            errs.append(f"04 section 4.3: contract `{c}` lists {have['unknown']}, which the model does not know as an alias")
+        if have["pools"] != want["pools"]:
+            errs.append(f"04 section 4.3: contract `{c}` reaches pools {sorted(have['pools'])} but the model's data class gives {sorted(want['pools'])}")
+        if have["noprod"] != want["noprod"]:
+            errs.append(f"04 section 4.3: contract `{c}` {'says' if have['noprod'] else 'does not say'} 'no PROD product' "
+                        f"but the model {'has' if not want['noprod'] else 'has no'} PROD work for it")
     for c in got:
         if c not in expected:
             errs.append(f"04 section 4.3: contract `{c}` is in the table but not in the model")
     return errs
 
 
+def doc_profile(text: str) -> dict[str, int]:
+    """Design 14 section 4, 'Phase and capability profiles': the first phase whose row names each environment."""
+    m = re.search(r"### Phase and capability profiles(.*?)(?=\n#{2,4} |\Z)", text, re.S)
+    first: dict[str, int] = {}
+    if not m:
+        return first
+    for line in m.group(1).splitlines():
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        if len(cells) >= 2 and re.fullmatch(r"\d", cells[0]):
+            for tok, env in (("DEV", "dev"), ("PROD", "prod"), ("TEST", "test"), ("Lab", "lab")):
+                if re.search(rf"\b{tok}\b", cells[1]) and env not in first:
+                    first[env] = int(cells[0])
+    return first
+
+
+def check_profile(text: str) -> list[str]:
+    """The phase in which each environment first exists must be the one that the model prices (design 14 section 4)."""
+    got = doc_profile(text)
+    if not got:
+        return ["14 section 4: the phase and capability profile table was not found"]
+    errs = []
+    for env, phase in FIRST_PHASE.items():
+        if env not in got:
+            errs.append(f"14 section 4: no phase row names the {env.upper()} environment, which the model creates in phase {phase}")
+        elif got[env] != phase:
+            errs.append(f"14 section 4: the {env.upper()} environment first exists in phase {got[env]}, the model prices it from phase {phase}")
+    return errs
+
+
 def check_rows(scenario: str, rows: list[dict], expected: dict[str, set[str]] | None = None) -> list[str]:
-    """Every declared contract has a quota in every environment where it has planned work, and a quota never
-    blocks the work it was derived from (design 04 section 4.3)."""
+    """Every declared contract has a quota in every environment where it has planned work, a quota never blocks the
+    work it was derived from, and no quota exists for an environment that the scenario never creates or for a PROD
+    product that a contract does not have (design 04 section 4.3, 14 section 4)."""
     expected = CONTRACT_ALIASES if expected is None else expected
+    present = environments_present(SCENARIOS[scenario]) if scenario in SCENARIOS else list(ENVIRONMENTS)
     seen: dict[str, set[str]] = {}
     for r in rows:
         seen.setdefault(r["contract"], set()).add(r["env"])
@@ -793,6 +885,10 @@ def check_rows(scenario: str, rows: list[dict], expected: dict[str, set[str]] | 
             errs.append(f"{scenario}: a quota row for the unknown contract `{c}`")
     for r in rows:
         tag = f"{scenario}: the quota of {r['contract']}/{r['env']}"
+        if r["env"] not in present:
+            errs.append(f"{tag} is for an environment that this scenario never creates (design 14 section 4)")
+        if r["env"] == "prod" and r["contract"] in NO_PROD_CONTRACTS:
+            errs.append(f"{tag} is a PROD product for a contract that has none (design 04 section 4.3)")
         if r["quota_tokens"] < 1.2 * r["planned_tokens"]:
             errs.append(f"{tag} would block planned work")
         if r["worst_eur"] + 1e-9 < r["cap_eur"]:
@@ -802,47 +898,81 @@ def check_rows(scenario: str, rows: list[dict], expected: dict[str, set[str]] | 
     return errs
 
 
-def validate(model: Model, doc04: str | None = None) -> list[str]:
-    """A quota that blocks planned work, a contract without a row, or a summed cap far above the plan is a defect."""
+def validate(model: Model, doc04: str | None = None, doc14: str | None = None) -> list[str]:
+    """A quota that blocks planned work, a contract without a row, an environment the phase profile does not create,
+    or a summed cap far above the plan is a defect."""
     errs = []
     for n in SCENARIOS:
         d = model.scenario(n)
         errs.extend(check_rows(n, d["quotas"]))
         if d["cap_eur"] > QUOTA_CAP_LIMIT * d["plan_eur"]:
             errs.append(f"{n}: the summed forecast-equivalent cap {d['cap_eur']:.0f} exceeds {QUOTA_CAP_LIMIT} x the plan {d['plan_eur']:.0f}")
+        prod_work = {r["contract"] for r in d["quotas"] if r["env"] == "prod" and r["has_work"]}
+        if prod_work & NO_PROD_CONTRACTS:
+            errs.append(f"{n}: planned PROD work for {sorted(prod_work & NO_PROD_CONTRACTS)}, which design 04 gives no PROD product")
+        if n != "Pilot" and (set(CONTRACT_ALIASES) - NO_PROD_CONTRACTS) - prod_work:
+            errs.append(f"{n}: no planned PROD work for {sorted((set(CONTRACT_ALIASES) - NO_PROD_CONTRACTS) - prod_work)}, which design 04 gives a PROD product")
     if doc04 is not None:
         errs.extend(check_contracts(doc04))
+    if doc14 is not None:
+        errs.extend(check_profile(doc14))
     return errs
 
 
 def selftest(model: Model) -> int:
     """Negative fixtures: each defect must be reported, and the clean input must pass."""
     head = "### 4.3 The access contracts\n\n| Contract | Agents | Data class · pools | Aliases | Quota | Safety |\n|---|---|---|---|---|---|\n"
-    rows = [f"| `{c}` | agent | class · pools | {', '.join(sorted(a))} | 12 §2 | safe |" for c, a in CONTRACT_ALIASES.items()]
+    exp = expected_contracts()
+
+    def row(c: str) -> str:
+        pools = ", ".join(f"`{p}`" for p in sorted(exp[c]["pools"]))
+        return (f"| `{c}` | agent | class · {pools} | {', '.join(sorted(exp[c]['aliases']))} | "
+                f"12 §2{'; no PROD product' if exp[c]['noprod'] else ''} | safe |")
+
+    rows = [row(c) for c in exp]
     clean = head + "\n".join(rows) + "\n\n### 4.4 next\n"
     first = next(iter(CONTRACT_ALIASES))
+    study_row = rows[0]
+    forge_row = row("forge")
     doc_cases = {
         "a contract missing from the table": head + "\n".join(rows[1:]) + "\n",
         "an extra contract in the table": clean.replace("### 4.4", "| `phantom` | a | b | reason | 12 §2 | x |\n\n### 4.4"),
-        "an alias that the model does not price": clean.replace(rows[0], rows[0].replace(rows[0].split("|")[4], " reason, judge-pub, embed, batch, triage ")),
+        "an alias that the model does not price": clean.replace(study_row, study_row.replace(study_row.split("|")[4], " reason, judge-pub, embed, batch, triage ")),
+        "an alias that the model does not know": clean.replace(study_row, study_row.replace(study_row.split("|")[4], study_row.split("|")[4].rstrip() + ", priority ")),
+        "a contract that reaches another pool": clean.replace(study_row, study_row.replace("`acia-flex`", "`acia-eu`")),
+        "a PROD product for a contract that has none": clean.replace(forge_row, forge_row.replace("; no PROD product", "")),
         "no table at all": "# nothing here\n",
     }
     team = model.scenario("Team")["quotas"]
+    pilot = model.scenario("Pilot")["quotas"]
     row_cases = {
-        "a contract without any row": [r for r in team if r["contract"] != first],
-        "a contract without a DEV row": [r for r in team if not (r["contract"] == first and r["env"] == "dev")],
-        "a quota that blocks planned work": [dict(team[0], quota_tokens=team[0]["planned_tokens"])] + team[1:],
-        "a worst case below the forecast": [dict(team[0], worst_eur=0.0)] + team[1:],
-        "a row for an unknown contract": team + [dict(team[0], contract="phantom")],
+        "a contract without any row": ("Team", [r for r in team if r["contract"] != first]),
+        "a contract without a DEV row": ("Team", [r for r in team if not (r["contract"] == first and r["env"] == "dev")]),
+        "a quota that blocks planned work": ("Team", [dict(team[0], quota_tokens=team[0]["planned_tokens"])] + team[1:]),
+        "a worst case below the forecast": ("Team", [dict(team[0], worst_eur=0.0)] + team[1:]),
+        "a row for an unknown contract": ("Team", team + [dict(team[0], contract="phantom")]),
+        "a TEST quota at Pilot scale, where no TEST account exists": ("Pilot", pilot + [dict(pilot[0], env="test")]),
+        "a PROD quota for a contract that has no PROD product": ("Team", team + [dict(team[0], contract="forge", env="prod")]),
     }
-    ok = not check_contracts(clean) and not check_rows("Team", team)
+    profile_head = "### Phase and capability profiles\n\n| Phase | Environments that exist | x |\n|---|---|---|\n"
+    profile = profile_head + "| 0 | DEV | x |\n| 1 | DEV | x |\n| 2 | DEV, PROD (shadow) | x |\n| 3 | + TEST (Team scale) | x |\n| 4 | + the Lab account | x |\n"
+    profile_cases = {
+        "TEST created a phase early": profile.replace("| 2 | DEV, PROD (shadow) |", "| 2 | DEV, PROD, TEST |"),
+        "PROD missing from the profile": profile.replace("DEV, PROD (shadow)", "DEV"),
+        "no profile table at all": "# nothing here\n",
+    }
+    ok = not check_contracts(clean) and not check_rows("Team", team) and not check_rows("Pilot", pilot) and not check_profile(profile)
     print(f"clean fixtures: {'pass' if ok else 'FAIL'}")
     for label, text in doc_cases.items():
         found = bool(check_contracts(text))
         ok &= found
         print(f"  {'caught' if found else 'MISSED'}: {label}")
-    for label, rws in row_cases.items():
-        found = bool(check_rows("Team", rws))
+    for label, (scen, rws) in row_cases.items():
+        found = bool(check_rows(scen, rws))
+        ok &= found
+        print(f"  {'caught' if found else 'MISSED'}: {label}")
+    for label, text in profile_cases.items():
+        found = bool(check_profile(text))
         ok &= found
         print(f"  {'caught' if found else 'MISSED'}: {label}")
     return 0 if ok else 1
@@ -922,6 +1052,9 @@ def report(model: Model) -> str:
     for d in detail:
         out.append(f"| {d['name']} | €{fmt(d['eval_eur'])} | €{fmt(d['cases_eur'])} | {d['eval_eur'] / d['cases_eur']:.1f} x | {100 * d['eval_eur'] / d['total']:.0f} % |")
     out.append("")
+    out.append("**Hosted-agent sessions of the evaluation case-runs** (lever 17 of section 5: evaluate on jobs that run the same image), of which the idle tail, which is billed here on the conservative reading: "
+               + "; ".join(f"{d['name']}: €{fmt(d['eval_sessions_eur'])}, of which €{fmt(d['eval_idle_eur'])}" for d in detail) + ".")
+    out.append("")
     out.append("**Contract quotas next to the plan** (token quotas at " + f"{QUOTA_HEADROOM} x the planned tokens). The *forecast-equivalent* euros price the quota at the contract's own blended price; "
                "the *worst case* prices it at the dearest rate of the dearest alias the contract lists, and neither is a hard cap: the spine's atomic euro reservation is the budget that holds, "
                "and the hub's token limit is a second, coarser layer with a bounded overrun (section 6): "
@@ -973,8 +1106,12 @@ def report(model: Model) -> str:
     out.append("**Contract quotas at Team scale: every contract of [04 §4.3](04-landing-zone-and-citadel.md#43-the-access-contracts) in every environment where it has planned work.** "
                f"A quota is the planned tokens times {QUOTA_HEADROOM}, rounded up to a whole million; TEST and DEV carry at least {ENV_FLOOR['test']:.0%} and {ENV_FLOOR['dev']:.0%} of production's plan, "
                "or their own planned work where that is larger (exams, gates and attacks run in TEST on synthetic data, so TEST and DEV products reach the public pools). "
+               "Pilot has no TEST account, so there DEV carries the exams, the gates and the attacks and its quotas are sized for them. "
                "The starting tokens a minute is the contract's peak concurrency times its largest call times two calls a minute; the in-flight overrun is the concurrency times the largest call, priced at the dearest rate. "
-               "`python tools/cost-model.py --quotas Pilot` (or `Enterprise`) prints the others, and `--check` fails if a contract of the table is missing here or the model prices other aliases:")
+               "The tokens a minute are what the hub is configured to allow, not what the subscription is granted: Foundry quota follows the subscription's tier (Free and Tiers 1 to 6) and more is requested through the quota request form "
+               "([Learn](https://learn.microsoft.com/azure/foundry/openai/quotas-limits)); the day-zero request of [14 §5](14-next-phases.md#5-pre-flight-checklist-day-zero) sizes it (assumption 7). "
+               "`python tools/cost-model.py --quotas Pilot` (or `Enterprise`) prints the others, and `--check` fails if the table of 04 §4.3 disagrees with the model on a contract, its aliases, its pools or whether it has a PROD product, "
+               "if the phase profile of 14 §4 creates an environment in another phase than the one priced here, or if a quota exists for an environment that a scenario never creates:")
     out.append("")
     out.extend(quota_table(team))
     out.append("")
@@ -1029,7 +1166,9 @@ def main() -> int:
             return 2
         if args.check:
             doc04 = path.parent / "04-landing-zone-and-citadel.md"
-            errs = validate(model, doc04.read_text(encoding="utf-8") if doc04.exists() else "")
+            doc14 = path.parent / "14-next-phases.md"
+            errs = validate(model, doc04.read_text(encoding="utf-8") if doc04.exists() else "",
+                            doc14.read_text(encoding="utf-8") if doc14.exists() else "")
             for e in errs:
                 print(f"{path}: {e}", file=sys.stderr)
             if m.group(0) != block:
@@ -1037,7 +1176,7 @@ def main() -> int:
                 return 1
             if errs:
                 return 1
-            print(f"{path}: cost block is current; quotas consistent with the plan and with the contracts of 04 section 4.3")
+            print(f"{path}: cost block is current; quotas consistent with the plan, with the contracts of 04 section 4.3 and with the phase profile of 14 section 4")
             return 0
         path.write_text(text[: m.start()] + block + text[m.end():], encoding="utf-8")
         print(f"updated {path}")
