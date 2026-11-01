@@ -49,20 +49,12 @@ It is **not** a rulebook, a chatbot or a dashboard. It is a research programme w
 
 ## The design (phase 1)
 
-The idea has become a design: **a deterministic spine with agentic leaves** on Microsoft Foundry and the Microsoft Agent Framework, deployed through the Citadel governance hub in the operator's landing zone, with security, governance, drift control, testing and cost designed in. Start at the **[design index](docs/design/README.md)**; the one-page version is its *Read this first* and its system-on-a-page diagram.
-
-| Where | What it decides |
-|---|---|
-| [Architecture](docs/design/03-logical-architecture.md) · [landing zone and Citadel](docs/design/04-landing-zone-and-citadel.md) · [agents and orchestration](docs/design/05-agents-and-orchestration.md) | fourteen agent roles, called one step at a time through the hub by Durable Functions workflows; hub contracts per group, data class and environment |
-| [Security](docs/design/07-security-architecture.md) · [governance](docs/design/08-governance-and-compliance.md) | the one execution plane that can change an estate, and what still remains when a party is compromised |
-| [Safeguards and drift](docs/design/09-safeguards-and-drift-controls.md) · [test](docs/design/10-test-and-evaluation.md) | nineteen drift layers, twenty detections, a statistical gate protocol |
-| [Cost](docs/design/12-cost-and-finops.md) | a cost model in code: about €1.2k / €4.3k / €27k a month at Pilot / Team / Enterprise scale (shared hub, list prices) |
-| [Decisions](docs/design/13-decisions.md) · [next phases](docs/design/14-next-phases.md) | 37 decisions with alternatives and verdicts; 34 spikes that could invalidate one; seven build phases |
+The first design was withdrawn on 2026-11-01 and is kept in [the archive](docs/_archive/design-v1/README.md). A second design is being written, shorter and in plain words; its index is [docs/design](docs/design/README.md).
 
 ## Status
 
 - **Ideation (v4)** — the north star, a deep-dive per faculty, and a plan for what to design next. Frozen as the north star the design answers to.
-- **Design (phase 1)** — `design-v1`; see the [design index](docs/design/README.md). Three review passes and a closure check, with nine models, are in [`docs/reviews/`](docs/reviews/README.md). Still no code: the design phase produces architecture, decisions, a cost model and a test strategy, and nothing that changes an estate is to be switched on before its spikes pass.
+- **Design (phase 1)** — `design-v1` was withdrawn; `design-v2` is in progress. See the [design index](docs/design/README.md) and [why the first one was withdrawn](docs/_archive/design-v1/README.md). Still no code.
 - **Private** until the owner says otherwise. **MIT** licensed ([LICENSE](LICENSE)).
 - Constraints from the brief: Microsoft technology only · aligned with the Cloud Adoption Framework and Well-Architected Framework · open source · fully AI-infused · human-in-the-loop · not a chatbot.
 - Earlier versions (v1 → v3.2.1) are preserved in [`docs/_archive/`](docs/_archive/) (`round-1-v1`, `round-2-v2`, `round-3-v3.2.1`) and as the git tags `ideation-v1` … `ideation-v3.2.1`; see the [changelog](CHANGELOG.md) for why this version replaced them. Every version is reviewed by independent agents before it is called done — the record is in [`docs/reviews/`](docs/reviews/README.md). Rules for anyone — human or agent — working here are in [AGENTS.md](AGENTS.md).

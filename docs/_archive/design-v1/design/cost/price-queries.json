@@ -1,0 +1,470 @@
+{
+  "schemaVersion": 1,
+  "description": "Query specification for tools/fetch-prices.py. Every query is an OData $filter against https://prices.azure.com/api/retail/prices (server side) plus optional include/exclude regular expressions (client side), run once per currency. Regions: eu = West Europe, Sweden Central, North Europe; global = armRegionName 'Global' or '' (the API uses both for region-less meters). Written 2026-10-31.",
+  "api": {
+    "url": "https://prices.azure.com/api/retail/prices",
+    "apiVersion": "2023-01-01-preview",
+    "currencies": ["EUR", "USD"]
+  },
+  "regionGroups": {
+    "eu": ["westeurope", "swedencentral", "northeurope"],
+    "global": ["Global", ""],
+    "weu": ["westeurope"],
+    "sc": ["swedencentral"]
+  },
+  "queries": [
+    {
+      "id": "apim",
+      "topic": "API Management, every tier per unit-hour (Consumption, Developer, Basic, Standard, Premium, v2 tiers, workspace gateways)",
+      "filter": "serviceName eq 'API Management'",
+      "regions": ["eu", "global"],
+      "expectMin": 30
+    },
+    {
+      "id": "container-apps",
+      "topic": "Container Apps: Consumption (active/idle vCPU and memory, requests), dedicated plans, dynamic sessions, environment. Jobs use the same meters. The monthly free grant is not in the API (see manual).",
+      "filter": "serviceName eq 'Azure Container Apps'",
+      "regions": ["eu"],
+      "expectMin": 40
+    },
+    {
+      "id": "functions",
+      "topic": "Functions: Flex Consumption (on-demand, always-ready), Consumption, Premium",
+      "filter": "serviceName eq 'Functions'",
+      "regions": ["eu", "global"],
+      "expectMin": 25
+    },
+    {
+      "id": "cosmos-db",
+      "topic": "Cosmos DB: serverless, provisioned (standard, multi-region write, autoscale), storage, free tier, backup, analytical store, 100 RU/s reservations",
+      "filter": "serviceName eq 'Azure Cosmos DB'",
+      "regions": ["eu", "global"],
+      "include": {"productName": "^Azure Cosmos DB( serverless| autoscale| - PITR| Analytics Storage| Snapshot| Data Transfer)?$"},
+      "exclude": {"skuName": "Million"},
+      "expectMin": 60
+    },
+    {
+      "id": "postgresql-flexible",
+      "topic": "PostgreSQL flexible server: burstable and general purpose compute, storage, backup, HorizonDB",
+      "filter": "serviceName eq 'Azure Database for PostgreSQL'",
+      "regions": ["eu", "global"],
+      "include": {"productName": "Flexible Server (Burstable BS Series Compute|General Purpose Ddsv5 Series Compute|Backup Storage)|Flex Server Storage|Azure HorizonDB"},
+      "exclude": {"skuName": "^(1|16|32|48|64|96) vCore$"},
+      "expectMin": 60
+    },
+    {
+      "id": "sql-database",
+      "topic": "Azure SQL Database: serverless (General Purpose, Gen5, with the free-offer meters), free offer, DTU Basic/Standard, General Purpose storage and PITR backup",
+      "filter": "serviceName eq 'SQL Database'",
+      "regions": ["eu", "global"],
+      "include": {"productName": "^SQL Database (General Purpose - Serverless - Compute Gen5|Single Free|Single Basic|Single Standard|Single/Elastic Pool General Purpose - Storage|Single/Elastic Pool PITR Backup Storage)$"},
+      "exclude": {"skuName": "^S(4|6|7|9|12)( |$)|Secondary|^10 DTU|^(2|4|8|16|24|32|48|80) vCore$"},
+      "expectMin": 40
+    },
+    {
+      "id": "sql-database-provisioned",
+      "topic": "Azure SQL Database provisioned General Purpose Gen5, 2 and 4 vCores (comparison with serverless)",
+      "filter": "serviceName eq 'SQL Database' and productName eq 'SQL Database Single/Elastic Pool General Purpose - Compute Gen5'",
+      "regions": ["eu"],
+      "include": {"skuName": "^(2|4) vCore$"},
+      "priceTypes": ["Consumption"],
+      "expectMin": 2
+    },
+    {
+      "id": "ai-search",
+      "topic": "Azure AI Search (service name in the API: Azure Cognitive Search): Free, Basic, S1-S3, L1-L2, semantic ranker, agentic retrieval, serverless, skills",
+      "filter": "serviceName eq 'Azure Cognitive Search'",
+      "regions": ["eu", "global"],
+      "expectMin": 60
+    },
+    {
+      "id": "storage-blob",
+      "topic": "Blob Storage (general-purpose v2 and ADLS Gen2): hot, cool, cold, archive; LRS and ZRS; capacity, operations, retrieval, early delete",
+      "filter": "serviceName eq 'Storage' and (productName eq 'General Block Blob v2' or productName eq 'General Block Blob v2 Hierarchical Namespace')",
+      "regions": ["eu"],
+      "include": {"skuName": "^(Hot|Cool|Cold|Archive) (LRS|ZRS)$", "meterName": "Data Stored|Write Operations|Read Operations|All Other Operations|List and Create Container Operations|Data Retrieval|Early Delete"},
+      "priceTypes": ["Consumption"],
+      "expectMin": 60
+    },
+    {
+      "id": "log-analytics",
+      "topic": "Log Analytics: analytics-logs ingestion (pay-as-you-go, first 5 GB free), retention, queries",
+      "filter": "serviceName eq 'Log Analytics'",
+      "regions": ["eu", "global"],
+      "expectMin": 15
+    },
+    {
+      "id": "azure-monitor-logs",
+      "topic": "Azure Monitor meters for logs: commitment tiers, basic and auxiliary logs, search, restore, export, platform logs, alert rules",
+      "filter": "serviceName eq 'Azure Monitor'",
+      "regions": ["eu", "global"],
+      "include": {"skuName": "Commitment Tier|^Basic Logs$|^Auxiliary Logs$|^Data Restore$|^Data Archive$|^Search (Queries|Jobs)$|data export|^Platform Logs$|^Alerts$|^Logs Processed$"},
+      "exclude": {"skuName": "Free Benefit"},
+      "expectMin": 30
+    },
+    {
+      "id": "application-insights",
+      "topic": "Application Insights (classic meters; workspace-based ingestion is billed as log ingestion)",
+      "filter": "serviceName eq 'Application Insights'",
+      "regions": ["eu", "global"],
+      "expectMin": 5
+    },
+    {
+      "id": "key-vault",
+      "topic": "Key Vault standard and premium, managed HSM pool, dedicated HSM",
+      "filter": "serviceName eq 'Key Vault'",
+      "regions": ["eu", "global"],
+      "expectMin": 15
+    },
+    {
+      "id": "private-link-network",
+      "topic": "Private Link (private endpoint hour, data processed), VNet peering, standard public IP, service endpoint",
+      "filter": "serviceName eq 'Virtual Network' and (productName eq 'Virtual Network Private Link' or productName eq 'Virtual Network Peering' or productName eq 'Global Virtual Network Peering' or productName eq 'IP Addresses')",
+      "regions": ["eu", "global"],
+      "include": {"meterName": "Private Endpoint|Data Processed|Peering|Egress|Ingress|Standard IPv4 Static Public IP"},
+      "priceTypes": ["Consumption"],
+      "expectMin": 8
+    },
+    {
+      "id": "private-dns",
+      "topic": "Azure DNS private zones, queries and DNS Private Resolver endpoints (region-less meters)",
+      "filter": "serviceName eq 'Azure DNS'",
+      "regions": ["global"],
+      "expectMin": 8
+    },
+    {
+      "id": "azure-firewall",
+      "topic": "Azure Firewall Basic, Standard, Premium (reference: normally provided by the landing zone)",
+      "filter": "serviceName eq 'Azure Firewall'",
+      "regions": ["eu", "global"],
+      "exclude": {"skuName": "Secure|Virtual Hub"},
+      "expectMin": 8
+    },
+    {
+      "id": "event-hubs",
+      "topic": "Event Hubs Basic, Standard, Premium, Dedicated",
+      "filter": "serviceName eq 'Event Hubs'",
+      "regions": ["eu", "global"],
+      "expectMin": 10
+    },
+    {
+      "id": "stream-analytics",
+      "topic": "Stream Analytics streaming units (standard, V2, dedicated)",
+      "filter": "serviceName eq 'Stream Analytics'",
+      "regions": ["eu", "global"],
+      "expectMin": 8
+    },
+    {
+      "id": "service-bus",
+      "topic": "Service Bus Basic, Standard, Premium (messaging operations tiers, base unit, brokered connections)",
+      "filter": "serviceName eq 'Service Bus'",
+      "regions": ["eu", "global"],
+      "exclude": {"skuName": "WCF Relay|Hybrid Connections"},
+      "expectMin": 10
+    },
+    {
+      "id": "event-grid",
+      "topic": "Event Grid operations and throughput units",
+      "filter": "serviceName eq 'Event Grid'",
+      "regions": ["eu", "global"],
+      "expectMin": 5
+    },
+    {
+      "id": "defender-for-cloud",
+      "topic": "Microsoft Defender for Cloud plans relevant to AI and to the workload: AI services, APIs, containers, storage, Key Vault, Resource Manager, Cosmos DB, PostgreSQL, SQL, CSPM, servers, pre-purchase plan (trial meters excluded)",
+      "filter": "serviceName eq 'Microsoft Defender for Cloud'",
+      "regions": ["eu", "global"],
+      "include": {"productName": "Defender for (AI Services|APIs|Containers|Storage|Key Vault|Resource Manager|Azure Cosmos DB|PostgreSQL|SQL|DNS|Servers|App Service)|Defender CSPM|^Microsoft Defender for Cloud( Pre-Purchase Plan)?$"},
+      "exclude": {"skuName": "Trial|Free"},
+      "expectMin": 40
+    },
+    {
+      "id": "sentinel",
+      "topic": "Microsoft Sentinel: pay-as-you-go analysis, commitment tiers, basic/auxiliary, data lake, pre-purchase plan",
+      "filter": "serviceName eq 'Sentinel'",
+      "regions": ["eu", "global"],
+      "exclude": {"skuName": "Free (Trial|Benefit)"},
+      "expectMin": 20
+    },
+    {
+      "id": "acs-email-chat",
+      "topic": "Azure Communication Services: email (per message and per MB), chat, advanced messaging",
+      "filter": "serviceName eq 'Email' or serviceName eq 'Messaging'",
+      "regions": ["eu", "global"],
+      "expectMin": 8
+    },
+    {
+      "id": "acs-sms-placeholder",
+      "topic": "Azure Communication Services SMS: the API carries only placeholder consumption units (price 1.0), the per-country prices are in the manual list",
+      "filter": "serviceName eq 'SMS'",
+      "regions": ["global"],
+      "include": {"productName": "^(Local SMS - Outbound|Mobile SMS - Outbound|Toll Free SMS - Outbound|Short Codes - Outbound|Alphanumeric Sender ID)$"},
+      "flags": ["placeholder-price"],
+      "expectMin": 4
+    },
+    {
+      "id": "acs-voice",
+      "topic": "Azure Communication Services voice: call automation (streaming, recording, captions), direct routing, calling minutes. PSTN per-country minute prices are placeholders in the API (see manual).",
+      "filter": "serviceName eq 'Voice'",
+      "regions": ["eu", "global"],
+      "include": {"productName": "^(Audio Streaming|Call Recording|Closed Captions|Direct Routing|Voice and Video Calling)$"},
+      "expectMin": 15
+    },
+    {
+      "id": "acs-phone-numbers",
+      "topic": "Azure Communication Services phone numbers: geographic and mobile number leases in NL, DE, FR, UK",
+      "filter": "serviceName eq 'Phone Numbers'",
+      "regions": ["global"],
+      "include": {"productName": "^(Geographic Numbers|Mobile)$", "skuName": "^(NL|DE|FR|UK)$"},
+      "expectMin": 4
+    },
+    {
+      "id": "speech",
+      "topic": "Azure Speech: Voice Live (Pro, Standard, Lite, bring-your-own), avatars, real-time and batch speech-to-text, fast transcription, neural and HD text-to-speech, live interpreter",
+      "filter": "serviceName eq 'Foundry Tools' and productName eq 'Azure Speech'",
+      "regions": ["weu", "sc"],
+      "include": {"meterName": "Voice Live|Avatar|Fast Transcription|Neural HD Text to Speech|^S1 (Speech To Text|Speech to Text Batch|Neural Text To Speech Characters|Text To Speech Characters)$|Live Interpreter|Standard Streaming"},
+      "exclude": {"meterName": "Commit|Free|Promo|Video Translation|Photo|Personal Voice|Training|Hosting"},
+      "expectMin": 80
+    },
+    {
+      "id": "foundry-agent-service",
+      "topic": "Foundry Agent Service own meters (service name Foundry Tools): hosted agents vCPU and memory, memory store, skills execution, model router, evaluations, content safety, SRE Agent units",
+      "filter": "serviceName eq 'Foundry Tools' and (productName eq 'Foundry Agents' or productName eq 'Model Tools' or productName eq 'Observability' or productName eq 'Azure Agent Unit' or productName eq 'Content Safety')",
+      "regions": ["eu", "global"],
+      "exclude": {"skuName": "Commitment Tier"},
+      "expectMin": 20
+    },
+    {
+      "id": "grounding-and-tools",
+      "topic": "Grounding with Bing (web search and custom search tool calls) and Agent Service tool charges that sit under Foundry Models",
+      "filter": "(serviceName eq 'MS Bing Services' and productName eq 'Grounding with Bing') or (serviceName eq 'Foundry Models' and (contains(skuName,'Code-Interpreter') or contains(skuName,'file-search-tool') or contains(skuName,'Assistants-File Search') or contains(meterName,'Web Grounding')))",
+      "regions": ["eu", "global"],
+      "expectMin": 8
+    },
+    {
+      "id": "models-openai-gpt6",
+      "topic": "OpenAI GPT-6 family (astra, sol, terra, luna): Standard Global and Data Zone, Priority, Flex, cached input and cache-write meters",
+      "filter": "serviceName eq 'Foundry Models' and productName eq 'Azure OpenAI GPT6'",
+      "regions": ["sc"],
+      "expectMin": 100
+    },
+    {
+      "id": "models-openai-gpt5",
+      "topic": "OpenAI GPT-5.4, 5.5 and 5.6 families and the rolling chat-latest alias: Standard Global and Data Zone, Batch, Flex, Priority, cached input",
+      "filter": "serviceName eq 'Foundry Models' and productName eq 'Azure OpenAI GPT5'",
+      "regions": ["sc"],
+      "include": {"skuName": "^(5\\.4|5\\.5|5\\.6|54 |55 |56|chat-latest)"},
+      "expectMin": 100
+    },
+    {
+      "id": "models-openai-other",
+      "topic": "OpenAI GPT-4.1 family, o4-mini, embeddings, realtime and transcription, gpt-oss",
+      "filter": "serviceName eq 'Foundry Models' and (productName eq 'Azure OpenAI' or productName eq 'Azure OpenAI Embedding' or productName eq 'Azure OpenAI Reasoning' or productName eq 'Azure OpenAI OSS Models' or productName eq 'Azure OpenAI Media')",
+      "regions": ["sc"],
+      "include": {"skuName": "^(gpt 4\\.1( mini| nano)?( Outp)?( Data Zone| regnl)?|o4-mini 0416|text-embedding-3-(small|large)-|embedding-ada|text embedding 3|gpt-oss-120B|gpt-realtime-2\\.1|gpt-live-transcribe|gpt-transcribe|gpt-realtime-translate)"},
+      "exclude": {"skuName": "grader|ft|FT|dev"},
+      "expectMin": 40
+    },
+    {
+      "id": "models-third-party",
+      "topic": "Mistral, DeepSeek, Grok, Llama, Phi, Kimi, Cohere and Microsoft MAI models (Global and Data Zone where offered)",
+      "filter": "serviceName eq 'Foundry Models' and (productName eq 'Azure Mistral Models' or productName eq 'Azure Deepseek Models' or productName eq 'Azure Grok Models' or productName eq 'Azure Llama Models' or productName eq 'Azure Phi Models' or productName eq 'Azure Kimi' or productName eq 'Cohere Models' or productName eq 'MAI Models')",
+      "regions": ["sc"],
+      "include": {"skuName": "^(Large 3|MM3\\.5|Codestral|OCR 4|Doc AI 2512|V4|V3\\.2|R1|4\\.[367]|Grok 4\\.[12]|Grok4 Fast|Llama 4 Maverick|Llama 3\\.3 70B|Phi-4|K2\\.[567]|Model 7|Command A|Embed|Rerank|Parser|Code 1\\.1 Flash|Cyber 1\\.1|MAI-Thinking|MAI-Transcribe|Web Grounding)"},
+      "exclude": {"skuName": "FT|Finetuned| SP"},
+      "expectMin": 80
+    },
+    {
+      "id": "models-provisioned",
+      "topic": "Provisioned throughput: PTU-hour meters (Regional, Data Zone, Global) in the EU regions and the provisioned-throughput reservations",
+      "filter": "serviceName eq 'Foundry Models' and (productName eq 'Azure OpenAI' or productName eq 'Azure AI Foundry Provisioned Throughput Reservation')",
+      "regions": ["eu", "global"],
+      "include": {"skuName": "^Provisioned Managed( Data Zone| Global| Regional)?$"},
+      "expectMin": 6
+    },
+    {
+      "id": "agent-pre-purchase",
+      "topic": "Microsoft Agent Pre-Purchase Plan (Agent Commit Units; usable across Foundry and Copilot Studio)",
+      "filter": "serviceName eq 'Foundry Models' and productName eq 'Microsoft Agent Pre-Purchase Plan'",
+      "regions": ["global"],
+      "expectMin": 3
+    },
+    {
+      "id": "data-explorer",
+      "topic": "Azure Data Explorer: engine markup per vCore-hour (virtual machine compute is billed under Virtual Machines; the free cluster has no meter)",
+      "filter": "serviceName eq 'Azure Data Explorer'",
+      "regions": ["eu", "global"],
+      "expectMin": 2
+    },
+    {
+      "id": "data-explorer-dev-vms",
+      "topic": "Virtual machine meters (Linux, pay-as-you-go) behind the Azure Data Explorer Dev/Test SKUs D11 v2 and E2a v4",
+      "filter": "serviceName eq 'Virtual Machines' and (armSkuName eq 'Standard_D11_v2' or armSkuName eq 'Standard_E2a_v4') and type eq 'Consumption'",
+      "regions": ["eu"],
+      "exclude": {"productName": "Windows", "skuName": "Spot|Low Priority"},
+      "expectMin": 2
+    },
+    {
+      "id": "durable-task-scheduler",
+      "topic": "Durable Task Scheduler: consumption action and dedicated capacity unit",
+      "filter": "serviceName eq 'Durable Task Scheduler'",
+      "regions": ["eu", "global"],
+      "expectMin": 4
+    },
+    {
+      "id": "container-registry",
+      "topic": "Container Registry Basic, Standard, Premium (private link needs Premium), storage, tasks",
+      "filter": "serviceName eq 'Container Registry'",
+      "regions": ["eu", "global"],
+      "expectMin": 10
+    },
+    {
+      "id": "managed-redis",
+      "topic": "Azure Managed Redis (balanced B0-B5), the usual back end of the gateway's semantic cache",
+      "filter": "serviceName eq 'Redis Cache' and productName eq 'Azure Managed Redis - Balanced'",
+      "regions": ["eu"],
+      "include": {"skuName": "^B(0|1|3|5)$"},
+      "expectMin": 9
+    },
+    {
+      "id": "managed-grafana",
+      "topic": "Azure Managed Grafana Essential and Standard (the Workbooks alternative)",
+      "filter": "serviceName eq 'Azure Grafana Service'",
+      "regions": ["eu"],
+      "expectMin": 4
+    }
+  ],
+  "manual": [
+    {"key": "manual|Communication Services|SMS|Alphanumeric sender ID|Netherlands|send", "service": "SMS (the API lists 1.0 placeholders)", "product": "Alphanumeric Sender ID", "sku": "Netherlands", "meter": "Send, per message segment", "region": "global", "unitOfMeasure": "1 message segment", "prices": {"USD": 0.092}, "eur": "derive", "url": "https://learn.microsoft.com/en-us/azure/communication-services/concepts/sms-pricing", "date": "2026-10-31", "note": "Per-destination price; excludes communications taxes and carrier surcharges. Page metadata updated_at 2026-09-23."},
+    {"key": "manual|Communication Services|SMS|Alphanumeric sender ID|Germany|send", "service": "SMS (the API lists 1.0 placeholders)", "product": "Alphanumeric Sender ID", "sku": "Germany", "meter": "Send, per message segment", "region": "global", "unitOfMeasure": "1 message segment", "prices": {"USD": 0.0895}, "eur": "derive", "url": "https://learn.microsoft.com/en-us/azure/communication-services/concepts/sms-pricing", "date": "2026-10-31"},
+    {"key": "manual|Communication Services|SMS|Alphanumeric sender ID|France|send", "service": "SMS (the API lists 1.0 placeholders)", "product": "Alphanumeric Sender ID", "sku": "France", "meter": "Send, per message segment", "region": "global", "unitOfMeasure": "1 message segment", "prices": {"USD": 0.076}, "eur": "derive", "url": "https://learn.microsoft.com/en-us/azure/communication-services/concepts/sms-pricing", "date": "2026-10-31"},
+    {"key": "manual|Communication Services|SMS|Alphanumeric sender ID|United Kingdom|send", "service": "SMS (the API lists 1.0 placeholders)", "product": "Alphanumeric Sender ID", "sku": "United Kingdom", "meter": "Send, per message segment", "region": "global", "unitOfMeasure": "1 message segment", "prices": {"USD": 0.04}, "eur": "derive", "url": "https://learn.microsoft.com/en-us/azure/communication-services/concepts/sms-pricing", "date": "2026-10-31"},
+    {"key": "manual|Communication Services|SMS|Mobile number|Netherlands|send", "service": "SMS (the API lists 1.0 placeholders)", "product": "Mobile Numbers", "sku": "Netherlands", "meter": "Send, per message segment", "region": "global", "unitOfMeasure": "1 message segment", "prices": {"USD": 0.092}, "eur": "derive", "url": "https://learn.microsoft.com/en-us/azure/communication-services/concepts/sms-pricing", "date": "2026-10-31", "note": "Two-way SMS needs a mobile number; Germany and France are not on the mobile-number list, so there only alphanumeric (send-only) sender IDs exist."},
+    {"key": "manual|Communication Services|SMS|Mobile number|Netherlands|receive", "service": "SMS (the API lists 1.0 placeholders)", "product": "Mobile Numbers", "sku": "Netherlands", "meter": "Receive, per message segment", "region": "global", "unitOfMeasure": "1 message segment", "prices": {"USD": 0.0075}, "eur": "derive", "url": "https://learn.microsoft.com/en-us/azure/communication-services/concepts/sms-pricing", "date": "2026-10-31"},
+    {"key": "manual|Communication Services|SMS|Mobile number|United Kingdom|send", "service": "SMS (the API lists 1.0 placeholders)", "product": "Mobile Numbers", "sku": "United Kingdom", "meter": "Send, per message segment", "region": "global", "unitOfMeasure": "1 message segment", "prices": {"USD": 0.04}, "eur": "derive", "url": "https://learn.microsoft.com/en-us/azure/communication-services/concepts/sms-pricing", "date": "2026-10-31"},
+    {"key": "manual|Communication Services|SMS|Mobile number|United Kingdom|receive", "service": "SMS (the API lists 1.0 placeholders)", "product": "Mobile Numbers", "sku": "United Kingdom", "meter": "Receive, per message segment", "region": "global", "unitOfMeasure": "1 message segment", "prices": {"USD": 0.0075}, "eur": "derive", "url": "https://learn.microsoft.com/en-us/azure/communication-services/concepts/sms-pricing", "date": "2026-10-31"},
+    {"key": "manual|Communication Services|Voice PSTN|Netherlands|make call", "service": "Voice (the API lists 1.0 placeholders)", "product": "PSTN calling, geographic number", "sku": "Netherlands", "meter": "Make a call, starting at", "region": "global", "unitOfMeasure": "1 minute", "prices": {"USD": 0.35}, "eur": "derive", "url": "https://learn.microsoft.com/en-us/azure/communication-services/concepts/pstn-pricing", "date": "2026-10-31", "note": "'Starting at' is the page's wording; destination-specific rates are in a CSV on GitHub that was not fetched. 6-second billing increments. Page metadata updated_at 2026-09-23."},
+    {"key": "manual|Communication Services|Voice PSTN|Netherlands|receive call", "service": "Voice (the API lists 1.0 placeholders)", "product": "PSTN calling, geographic number", "sku": "Netherlands", "meter": "Receive a call", "region": "global", "unitOfMeasure": "1 minute", "prices": {"USD": 0.01}, "eur": "derive", "url": "https://learn.microsoft.com/en-us/azure/communication-services/concepts/pstn-pricing", "date": "2026-10-31"},
+    {"key": "manual|Communication Services|Voice PSTN|Germany|make call", "service": "Voice (the API lists 1.0 placeholders)", "product": "PSTN calling, geographic number", "sku": "Germany", "meter": "Make a call, starting at", "region": "global", "unitOfMeasure": "1 minute", "prices": {"USD": 0.015}, "eur": "derive", "url": "https://learn.microsoft.com/en-us/azure/communication-services/concepts/pstn-pricing", "date": "2026-10-31"},
+    {"key": "manual|Communication Services|Voice PSTN|Germany|receive call", "service": "Voice (the API lists 1.0 placeholders)", "product": "PSTN calling, geographic number", "sku": "Germany", "meter": "Receive a call", "region": "global", "unitOfMeasure": "1 minute", "prices": {"USD": 0.01}, "eur": "derive", "url": "https://learn.microsoft.com/en-us/azure/communication-services/concepts/pstn-pricing", "date": "2026-10-31"},
+    {"key": "manual|Communication Services|Voice PSTN|France|make call", "service": "Voice (the API lists 1.0 placeholders)", "product": "PSTN calling, geographic number", "sku": "France", "meter": "Make a call, starting at", "region": "global", "unitOfMeasure": "1 minute", "prices": {"USD": 0.016}, "eur": "derive", "url": "https://learn.microsoft.com/en-us/azure/communication-services/concepts/pstn-pricing", "date": "2026-10-31"},
+    {"key": "manual|Communication Services|Voice PSTN|France|receive call", "service": "Voice (the API lists 1.0 placeholders)", "product": "PSTN calling, geographic number", "sku": "France", "meter": "Receive a call", "region": "global", "unitOfMeasure": "1 minute", "prices": {"USD": 0.01}, "eur": "derive", "url": "https://learn.microsoft.com/en-us/azure/communication-services/concepts/pstn-pricing", "date": "2026-10-31"},
+    {"key": "manual|Communication Services|Voice PSTN|United Kingdom|make call", "service": "Voice (the API lists 1.0 placeholders)", "product": "PSTN calling, geographic number", "sku": "United Kingdom", "meter": "Make a call, starting at", "region": "global", "unitOfMeasure": "1 minute", "prices": {"USD": 0.015}, "eur": "derive", "url": "https://learn.microsoft.com/en-us/azure/communication-services/concepts/pstn-pricing", "date": "2026-10-31"},
+    {"key": "manual|Communication Services|Voice PSTN|United Kingdom|receive call", "service": "Voice (the API lists 1.0 placeholders)", "product": "PSTN calling, geographic number", "sku": "United Kingdom", "meter": "Receive a call", "region": "global", "unitOfMeasure": "1 minute", "prices": {"USD": 0.009}, "eur": "derive", "url": "https://learn.microsoft.com/en-us/azure/communication-services/concepts/pstn-pricing", "date": "2026-10-31"},
+    {"key": "manual|Claude in Foundry|Claude Haiku 5.5|input", "service": "Claude in Microsoft Foundry (Azure Marketplace, billed in CCU, absent from the API)", "product": "Claude Haiku 5.5 (prompts up to 100,000 tokens)", "sku": "Global Standard", "meter": "Input tokens", "region": "global", "unitOfMeasure": "1M tokens", "prices": {"USD": 0.1}, "eur": "derive", "url": "https://platform.claude.com/docs/en/about-claude/pricing", "date": "2026-10-31", "note": "Reached through aka.ms/ccu-pricing, the link the Foundry billing page gives. Foundry converts USD at 0.01 USD per CCU. Hosted on Azure: Global Standard and Data Zone Standard (US, x1.1); no EU data zone is listed (Learn: claude-models-hosting-comparison). The EUR column is derived and indicative: the invoice converts per the billing account."},
+    {"key": "manual|Claude in Foundry|Claude Haiku 5.5|output", "service": "Claude in Microsoft Foundry (Azure Marketplace, billed in CCU, absent from the API)", "product": "Claude Haiku 5.5 (prompts up to 100,000 tokens)", "sku": "Global Standard", "meter": "Output tokens", "region": "global", "unitOfMeasure": "1M tokens", "prices": {"USD": 0.5}, "eur": "derive", "url": "https://platform.claude.com/docs/en/about-claude/pricing", "date": "2026-10-31"},
+    {"key": "manual|Claude in Foundry|Claude Haiku 5.5|cache read", "service": "Claude in Microsoft Foundry (Azure Marketplace, billed in CCU, absent from the API)", "product": "Claude Haiku 5.5 (prompts up to 100,000 tokens)", "sku": "Global Standard", "meter": "Cache hits and refreshes", "region": "global", "unitOfMeasure": "1M tokens", "prices": {"USD": 0.01}, "eur": "derive", "url": "https://platform.claude.com/docs/en/about-claude/pricing", "date": "2026-10-31"},
+    {"key": "manual|Claude in Foundry|Claude Sonnet 5.5|input", "service": "Claude in Microsoft Foundry (Azure Marketplace, billed in CCU, absent from the API)", "product": "Claude Sonnet 5.5", "sku": "Global Standard", "meter": "Input tokens", "region": "global", "unitOfMeasure": "1M tokens", "prices": {"USD": 2.0}, "eur": "derive", "url": "https://platform.claude.com/docs/en/about-claude/pricing", "date": "2026-10-31"},
+    {"key": "manual|Claude in Foundry|Claude Sonnet 5.5|output", "service": "Claude in Microsoft Foundry (Azure Marketplace, billed in CCU, absent from the API)", "product": "Claude Sonnet 5.5", "sku": "Global Standard", "meter": "Output tokens", "region": "global", "unitOfMeasure": "1M tokens", "prices": {"USD": 10.0}, "eur": "derive", "url": "https://platform.claude.com/docs/en/about-claude/pricing", "date": "2026-10-31"},
+    {"key": "manual|Claude in Foundry|Claude Sonnet 5.5|cache read", "service": "Claude in Microsoft Foundry (Azure Marketplace, billed in CCU, absent from the API)", "product": "Claude Sonnet 5.5", "sku": "Global Standard", "meter": "Cache hits and refreshes", "region": "global", "unitOfMeasure": "1M tokens", "prices": {"USD": 0.1}, "eur": "derive", "url": "https://platform.claude.com/docs/en/about-claude/pricing", "date": "2026-10-31"},
+    {"key": "manual|Claude in Foundry|Claude Opus 5.5|input", "service": "Claude in Microsoft Foundry (Azure Marketplace, billed in CCU, absent from the API)", "product": "Claude Opus 5.5", "sku": "Global Standard", "meter": "Input tokens", "region": "global", "unitOfMeasure": "1M tokens", "prices": {"USD": 4.0}, "eur": "derive", "url": "https://platform.claude.com/docs/en/about-claude/pricing", "date": "2026-10-31"},
+    {"key": "manual|Claude in Foundry|Claude Opus 5.5|output", "service": "Claude in Microsoft Foundry (Azure Marketplace, billed in CCU, absent from the API)", "product": "Claude Opus 5.5", "sku": "Global Standard", "meter": "Output tokens", "region": "global", "unitOfMeasure": "1M tokens", "prices": {"USD": 20.0}, "eur": "derive", "url": "https://platform.claude.com/docs/en/about-claude/pricing", "date": "2026-10-31"},
+    {"key": "manual|Claude in Foundry|Claude Opus 5.5|cache read", "service": "Claude in Microsoft Foundry (Azure Marketplace, billed in CCU, absent from the API)", "product": "Claude Opus 5.5", "sku": "Global Standard", "meter": "Cache hits and refreshes", "region": "global", "unitOfMeasure": "1M tokens", "prices": {"USD": 0.2}, "eur": "derive", "url": "https://platform.claude.com/docs/en/about-claude/pricing", "date": "2026-10-31"},
+    {"key": "manual|Claude in Foundry|Claude Haiku 4.5|input", "service": "Claude in Microsoft Foundry (Azure Marketplace, billed in CCU, absent from the API)", "product": "Claude Haiku 4.5", "sku": "Global Standard", "meter": "Input tokens", "region": "global", "unitOfMeasure": "1M tokens", "prices": {"USD": 1.0}, "eur": "derive", "url": "https://platform.claude.com/docs/en/about-claude/pricing", "date": "2026-10-31"},
+    {"key": "manual|Claude in Foundry|Claude Haiku 4.5|output", "service": "Claude in Microsoft Foundry (Azure Marketplace, billed in CCU, absent from the API)", "product": "Claude Haiku 4.5", "sku": "Global Standard", "meter": "Output tokens", "region": "global", "unitOfMeasure": "1M tokens", "prices": {"USD": 5.0}, "eur": "derive", "url": "https://platform.claude.com/docs/en/about-claude/pricing", "date": "2026-10-31"},
+    {"key": "manual|Allowance|Container Apps|Consumption plan", "kind": "allowance", "service": "Azure Container Apps", "product": "Consumption plan free grant", "region": "subscription", "allowance": "180,000 vCPU-seconds, 360,000 GiB-seconds and 2,000,000 requests per subscription per month", "prices": {}, "url": "https://azure.microsoft.com/en-us/pricing/details/container-apps/", "date": "2026-10-31", "note": "Not a meter in the API. Jobs are billed on the same active/idle vCPU and memory meters."},
+    {"key": "manual|Allowance|Functions|Flex Consumption", "kind": "allowance", "service": "Functions", "product": "Flex Consumption free grant (on demand)", "region": "subscription", "allowance": "100,000 GB-s and 250,000 executions per month", "prices": {}, "url": "https://azure.microsoft.com/en-us/pricing/details/functions/", "date": "2026-10-31", "note": "The API models this as a priced tier: the tier-0 row is 0 and the paid row starts at tierMinimumUnits 100000 (GB-s) or 25000 (units of ten executions)."},
+    {"key": "manual|Allowance|Functions|Consumption", "kind": "allowance", "service": "Functions", "product": "Consumption plan free grant", "region": "subscription", "allowance": "400,000 GB-s and 1 million executions per month", "prices": {}, "url": "https://azure.microsoft.com/en-us/pricing/details/functions/", "date": "2026-10-31"},
+    {"key": "manual|Allowance|AI Search|Semantic ranker", "kind": "allowance", "service": "Azure AI Search", "product": "Semantic ranker free requests", "region": "subscription", "allowance": "first 1,000 requests free per month", "prices": {}, "url": "https://azure.microsoft.com/en-us/pricing/details/search/", "date": "2026-10-31"},
+    {"key": "manual|Allowance|AI Search|Agentic retrieval", "kind": "allowance", "service": "Azure AI Search", "product": "Agentic retrieval free tokens", "region": "subscription", "allowance": "first 50M reasoning tokens free per month", "prices": {}, "url": "https://azure.microsoft.com/en-us/pricing/details/search/", "date": "2026-10-31", "note": "The API has Free Agentic Retrieval meters at price 0 but states no quantity."},
+    {"key": "manual|Allowance|Cosmos DB|Free tier", "kind": "allowance", "service": "Azure Cosmos DB", "product": "Free tier", "region": "account", "allowance": "1,000 RU/s provisioned throughput and 25 GB storage per month for the life of one account per subscription", "prices": {}, "url": "https://azure.microsoft.com/en-us/pricing/details/cosmos-db/serverless/", "date": "2026-10-31", "note": "Serverless accounts cannot enable free tier."},
+    {"key": "manual|Allowance|Content Safety|Free", "kind": "allowance", "service": "Content Safety in Foundry Control Plane", "product": "Free instance", "region": "resource", "allowance": "5,000 text records and 5,000 images per month; usage stops at the limit, no overage", "prices": {}, "url": "https://azure.microsoft.com/en-us/pricing/details/content-safety/", "date": "2026-10-31", "note": "The API prices the Standard instance at 0.375 per 1,000 text records and 0.75 per 1,000 images."},
+    {"key": "manual|Allowance|Foundry Agent Service|File search", "kind": "allowance", "service": "Foundry Agent Service", "product": "File search storage", "region": "resource", "allowance": "1 GB of vector storage free", "prices": {}, "url": "https://azure.microsoft.com/en-us/pricing/details/foundry-agent-service/", "date": "2026-10-31"},
+    {"key": "manual|Billing basis|SRE Agent|Always-on baseline", "kind": "billing-basis", "service": "Azure SRE Agent", "product": "Always-on flow", "region": "all", "allowance": "4 Azure Agent Units (AAU) per hour per agent from creation until deletion; active-flow AAUs are computed from tokens (see the pricing documentation)", "prices": {}, "url": "https://azure.microsoft.com/en-us/pricing/details/sre-agent/", "date": "2026-10-31", "note": "At 0.136 USD per AAU in West Europe that is 0.544 USD per hour per agent (about 397 USD a month); at 0.11 USD in Sweden Central 0.44 USD per hour (about 321 USD a month)."}
+  ],
+  "pageChecks": [
+    {"id": "apim-basic-v2", "page": "https://azure.microsoft.com/en-us/pricing/details/api-management/", "address": {"table": "v2 tiers", "row": "^Price", "column": "Basic v2"}, "meter": {"region": "westeurope", "service": "API Management", "sku": "Basic v2", "meter": "Basic v2 Unit"}},
+    {"id": "apim-standard-v2", "page": "https://azure.microsoft.com/en-us/pricing/details/api-management/", "address": {"table": "v2 tiers", "row": "^Price", "column": "Standard v2"}, "meter": {"region": "westeurope", "service": "API Management", "sku": "Standard v2", "meter": "Standard v2 Unit"}},
+    {"id": "apim-premium-v2", "page": "https://azure.microsoft.com/en-us/pricing/details/api-management/", "address": {"table": "v2 tiers", "row": "^Price", "column": "Premium v2"}, "meter": {"region": "westeurope", "service": "API Management", "sku": "Premium v2", "meter": "Premium v2 Unit"}},
+    {"id": "apim-standard-v2-scale-out", "page": "https://azure.microsoft.com/en-us/pricing/details/api-management/", "address": {"table": "v2 tiers", "row": "^Scale-out", "column": "Standard v2"}, "meter": {"region": "westeurope", "service": "API Management", "sku": "Standard v2", "meter": "Standard v2 Secondary Unit"}},
+    {"id": "apim-basic-v2-extra-requests", "page": "https://azure.microsoft.com/en-us/pricing/details/api-management/", "address": {"table": "v2 tiers", "row": "^API requests", "column": "Basic v2"}, "scale": 0.01, "note": "Page: per 1M requests; API: per 10K.", "meter": {"region": "westeurope", "service": "API Management", "sku": "Basic v2", "meter": "Basic v2 Calls", "tierMinimumUnits": 1000}},
+    {"id": "apim-developer", "page": "https://azure.microsoft.com/en-us/pricing/details/api-management/", "address": {"table": "classic tiers", "row": "^Price \\(per unit\\)", "column": "Developer"}, "meter": {"region": "westeurope", "service": "API Management", "sku": "Developer", "meter": "Developer Unit"}},
+    {"id": "apim-basic", "page": "https://azure.microsoft.com/en-us/pricing/details/api-management/", "address": {"table": "classic tiers", "row": "^Price \\(per unit\\)", "column": "^Basic$"}, "meter": {"region": "westeurope", "service": "API Management", "sku": "Basic", "meter": "Basic Unit"}},
+    {"id": "apim-standard", "page": "https://azure.microsoft.com/en-us/pricing/details/api-management/", "address": {"table": "classic tiers", "row": "^Price \\(per unit\\)", "column": "^Standard$"}, "meter": {"region": "westeurope", "service": "API Management", "sku": "Standard", "meter": "Standard Unit"}},
+    {"id": "apim-premium", "page": "https://azure.microsoft.com/en-us/pricing/details/api-management/", "address": {"table": "classic tiers", "row": "^Price \\(per unit\\)", "column": "^Premium$"}, "meter": {"region": "westeurope", "service": "API Management", "sku": "Premium", "meter": "Premium Unit"}},
+    {"id": "apim-consumption-calls", "page": "https://azure.microsoft.com/en-us/pricing/details/api-management/", "address": {"table": "classic tiers", "row": "^Price \\(per unit\\)", "column": "Consumption", "span": 1}, "meter": {"region": "westeurope", "service": "API Management", "sku": "Consumption", "meter": "Consumption Calls", "tierMinimumUnits": 100}},
+    {"id": "aca-vcpu-active", "page": "https://azure.microsoft.com/en-us/pricing/details/container-apps/", "address": {"table": "^Active usage", "row": "^vCPU", "column": "Pay as you go"}, "meter": {"region": "westeurope", "service": "Azure Container Apps", "sku": "Standard", "meter": "Standard vCPU Active Usage"}},
+    {"id": "aca-memory-active", "page": "https://azure.microsoft.com/en-us/pricing/details/container-apps/", "address": {"table": "^Active usage", "row": "^Memory", "column": "Pay as you go"}, "meter": {"region": "westeurope", "service": "Azure Container Apps", "sku": "Standard", "meter": "Standard Memory Active Usage"}},
+    {"id": "aca-vcpu-idle", "page": "https://azure.microsoft.com/en-us/pricing/details/container-apps/", "address": {"table": "^Idle usage", "row": "^vCPU", "column": "Pay as you go"}, "meter": {"region": "westeurope", "service": "Azure Container Apps", "sku": "Standard", "meter": "Standard vCPU Idle Usage"}},
+    {"id": "aca-requests", "page": "https://azure.microsoft.com/en-us/pricing/details/container-apps/", "address": {"table": "^Requests", "row": "^Requests", "column": "Pay as you go"}, "meter": {"region": "westeurope", "service": "Azure Container Apps", "sku": "Standard", "meter": "Standard Requests"}},
+    {"id": "aca-dynamic-sessions", "page": "https://azure.microsoft.com/en-us/pricing/details/container-apps/", "address": {"table": "^Dynamic sessions", "tableIndex": 0, "row": "^Platform-managed", "column": "Pay as you go"}, "meter": {"region": "westeurope", "service": "Azure Container Apps", "sku": "Dynamic Sessions", "meter": "Dynamic Sessions"}},
+    {"id": "functions-flex-on-demand-time", "page": "https://azure.microsoft.com/en-us/pricing/details/functions/", "address": {"table": "^Flex Consumption", "row": "^On Demand Execution Time", "column": "Pay as you go"}, "meter": {"region": "westeurope", "service": "Functions", "product": "Flex Consumption", "meter": "On Demand Execution Time", "tierMinimumUnits": 100000}},
+    {"id": "functions-flex-on-demand-executions", "page": "https://azure.microsoft.com/en-us/pricing/details/functions/", "address": {"table": "^Flex Consumption", "row": "^On Demand Total Executions", "column": "Pay as you go"}, "scale": 1e-05, "note": "Page: per million executions; API: per ten.", "meter": {"region": "westeurope", "service": "Functions", "product": "Flex Consumption", "meter": "On Demand Total Executions", "tierMinimumUnits": 25000}},
+    {"id": "functions-flex-always-ready-baseline", "page": "https://azure.microsoft.com/en-us/pricing/details/functions/", "address": {"table": "^Flex Consumption", "row": "^Always Ready Baseline", "column": "Pay as you go"}, "meter": {"region": "westeurope", "service": "Functions", "product": "Flex Consumption", "meter": "Always Ready Baseline"}},
+    {"id": "functions-premium-vcpu", "page": "https://azure.microsoft.com/en-us/pricing/details/functions/", "address": {"table": "^Premium plan", "row": "^vCPU duration", "column": "Pay as you go"}, "meter": {"region": "westeurope", "service": "Functions", "product": "Premium Functions", "meter": "Premium vCPU Duration"}},
+    {"id": "durable-task-scheduler-dedicated", "page": "https://azure.microsoft.com/en-us/pricing/details/functions/", "address": {"table": "^Durable task scheduler", "tableIndex": 0, "row": "Capacity Unit"}, "meter": {"region": "westeurope", "service": "Durable Task Scheduler", "sku": "Dedicated", "meter": "Dedicated Capacity Unit"}},
+    {"id": "durable-task-scheduler-consumption", "page": "https://azure.microsoft.com/en-us/pricing/details/functions/", "address": {"table": "^Durable task scheduler", "tableIndex": 1, "row": "action dispatched"}, "meter": {"region": "westeurope", "service": "Durable Task Scheduler", "sku": "Consumption", "meter": "Consumption Action"}},
+    {"id": "cosmos-serverless-ru", "page": "https://azure.microsoft.com/en-us/pricing/details/cosmos-db/serverless/", "address": {"table": "^Serverless$", "row": "^Serverless request units \\(RU\\)$", "span": 0}, "meter": {"region": "westeurope", "service": "Azure Cosmos DB", "product": "Azure Cosmos DB serverless", "meter": "1M RUs"}},
+    {"id": "cosmos-provisioned-100ru", "page": "https://azure.microsoft.com/en-us/pricing/details/cosmos-db/autoscale-provisioned/", "address": {"table": "^Service tier", "row": "^General Purpose account$", "span": 0}, "meter": {"region": "westeurope", "service": "Azure Cosmos DB", "product": "Azure Cosmos DB", "sku": "RUs", "meter": "100 RU/s"}},
+    {"id": "cosmos-autoscale-100ru", "page": "https://azure.microsoft.com/en-us/pricing/details/cosmos-db/autoscale-provisioned/", "address": {"table": "^Service tier", "row": "^General Purpose account$", "span": 1}, "meter": {"region": "westeurope", "service": "Azure Cosmos DB", "product": "Azure Cosmos DB autoscale", "sku": "AP1", "meter": "AP1 100 RUs"}},
+    {"id": "cosmos-transactional-storage", "page": "https://azure.microsoft.com/en-us/pricing/details/cosmos-db/autoscale-provisioned/", "address": {"table": "^Consumed Storage", "row": "^Transactional storage"}, "meter": {"region": "westeurope", "service": "Azure Cosmos DB", "product": "Azure Cosmos DB", "sku": "RUs", "meter": "Data Stored"}},
+    {"id": "cosmos-analytical-storage", "page": "https://azure.microsoft.com/en-us/pricing/details/cosmos-db/autoscale-provisioned/", "address": {"table": "^Consumed Storage", "row": "^Analytical storage"}, "meter": {"region": "westeurope", "service": "Azure Cosmos DB", "product": "Azure Cosmos DB Analytics Storage", "meter": "Standard Data Stored"}},
+    {"id": "cosmos-continuous-backup-30d", "page": "https://azure.microsoft.com/en-us/pricing/details/cosmos-db/autoscale-provisioned/", "address": {"table": "^Backup storage", "tableIndex": 1, "row": "30/35-day"}, "meter": {"region": "westeurope", "service": "Azure Cosmos DB", "product": "Azure Cosmos DB - PITR", "meter": "Cont 30D Bckp Continuous Backup"}},
+    {"id": "postgresql-b1ms", "page": "https://azure.microsoft.com/en-us/pricing/details/postgresql/flexible-server/", "address": {"table": "^Burstable", "row": "^B1ms$"}, "meter": {"region": "westeurope", "service": "Azure Database for PostgreSQL", "sku": "B1MS", "meter": "B1MS"}},
+    {"id": "postgresql-b2s", "page": "https://azure.microsoft.com/en-us/pricing/details/postgresql/flexible-server/", "address": {"table": "^Burstable", "row": "^B2s$"}, "meter": {"region": "westeurope", "service": "Azure Database for PostgreSQL", "sku": "B2S", "meter": "B2S"}},
+    {"id": "postgresql-b2ms", "page": "https://azure.microsoft.com/en-us/pricing/details/postgresql/flexible-server/", "address": {"table": "^Burstable", "row": "^B2ms$"}, "meter": {"region": "westeurope", "service": "Azure Database for PostgreSQL", "sku": "B2ms", "meter": "B2ms vCore"}},
+    {"id": "postgresql-b4ms", "page": "https://azure.microsoft.com/en-us/pricing/details/postgresql/flexible-server/", "address": {"table": "^Burstable", "row": "^B4ms$"}, "meter": {"region": "westeurope", "service": "Azure Database for PostgreSQL", "sku": "B4ms", "meter": "B4ms vCore"}},
+    {"id": "ai-search-basic", "page": "https://azure.microsoft.com/en-us/pricing/details/search/", "address": {"table": "^Dedicated pricing", "row": "^Compute Type is Default", "column": "^Basic$"}, "meter": {"region": "westeurope", "service": "Azure Cognitive Search", "sku": "Basic", "meter": "Basic Unit"}},
+    {"id": "ai-search-s1", "page": "https://azure.microsoft.com/en-us/pricing/details/search/", "address": {"table": "^Dedicated pricing", "row": "^Compute Type is Default", "column": "Standard S1"}, "meter": {"region": "westeurope", "service": "Azure Cognitive Search", "sku": "Standard S1", "meter": "Standard S1 Unit"}},
+    {"id": "ai-search-s2", "page": "https://azure.microsoft.com/en-us/pricing/details/search/", "address": {"table": "^Dedicated pricing", "row": "^Compute Type is Default", "column": "Standard S2"}, "meter": {"region": "westeurope", "service": "Azure Cognitive Search", "sku": "Standard S2", "meter": "Standard S2 Unit"}},
+    {"id": "ai-search-l1", "page": "https://azure.microsoft.com/en-us/pricing/details/search/", "address": {"table": "^Dedicated pricing", "row": "^Compute Type is Default", "column": "Storage Optimized L1"}, "meter": {"region": "westeurope", "service": "Azure Cognitive Search", "sku": "Storage Optimized L1", "meter": "Storage Optimized L1 Unit"}},
+    {"id": "ai-search-semantic-ranker", "page": "https://azure.microsoft.com/en-us/pricing/details/search/", "address": {"table": "^Features", "row": "^Semantic ranker"}, "meter": {"region": "westeurope", "service": "Azure Cognitive Search", "sku": "Semantic Ranker", "meter": "Semantic Ranker queries"}},
+    {"id": "ai-search-agentic-retrieval-low", "page": "https://azure.microsoft.com/en-us/pricing/details/search/", "address": {"table": "^Features", "row": "^Agentic retrieval"}, "scale": 0.001, "note": "Page: per 1M tokens; API: per 1K tokens. The page lists three prices (0.022, 0.022, 0.1) for minimum, low and medium reasoning.", "meter": {"region": "westeurope", "service": "Azure Cognitive Search", "sku": "Agentic Retrieval Low Reasoning", "meter": "Agentic Retrieval Low Reasoning Tokens"}},
+    {"id": "key-vault-operations", "page": "https://azure.microsoft.com/en-us/pricing/details/key-vault/", "address": {"table": "^Vaults", "row": "^Secrets operations", "column": "Standard"}, "meter": {"region": "westeurope", "service": "Key Vault", "sku": "Standard", "meter": "Operations"}},
+    {"id": "key-vault-managed-hsm-pool", "page": "https://azure.microsoft.com/en-us/pricing/details/key-vault/", "address": {"table": "^Managed HSM Pools", "row": "^Standard B1"}, "meter": {"region": "westeurope", "service": "Key Vault", "product": "Key Vault HSM Pool", "meter": "Standard B1 Instance"}},
+    {"id": "private-endpoint-hour", "page": "https://azure.microsoft.com/en-us/pricing/details/private-link/", "address": {"row": "^Private endpoint$"}, "meter": {"region": "Global", "service": "Virtual Network", "product": "Virtual Network Private Link", "meter": "Standard Private Endpoint"}},
+    {"id": "private-link-data-processed", "page": "https://azure.microsoft.com/en-us/pricing/details/private-link/", "address": {"row": "^Inbound Data Processed"}, "meter": {"region": "Global", "service": "Virtual Network", "product": "Virtual Network Private Link", "meter": "Standard Data Processed - Ingress", "tierMinimumUnits": 0}},
+    {"id": "container-registry-basic", "page": "https://azure.microsoft.com/en-us/pricing/details/container-registry/", "address": {"table": "^Explore pricing", "row": "^Price per day", "column": "^Basic"}, "meter": {"region": "westeurope", "service": "Container Registry", "sku": "Basic", "meter": "Basic Registry Unit"}},
+    {"id": "container-registry-premium", "page": "https://azure.microsoft.com/en-us/pricing/details/container-registry/", "address": {"table": "^Explore pricing", "row": "^Price per day", "column": "^Premium"}, "meter": {"region": "westeurope", "service": "Container Registry", "sku": "Premium", "meter": "Premium Registry Unit"}},
+    {"id": "log-ingestion-analytics-payg", "page": "https://azure.microsoft.com/en-us/pricing/details/monitor/", "address": {"table": "^Ingestion", "row": "^Analytics Logs$"}, "meter": {"region": "westeurope", "service": "Log Analytics", "sku": "Analytics Logs", "meter": "Analytics Logs Data Ingestion", "tierMinimumUnits": 5}},
+    {"id": "log-ingestion-basic", "page": "https://azure.microsoft.com/en-us/pricing/details/monitor/", "address": {"table": "^Ingestion", "row": "^Basic Logs"}, "meter": {"region": "westeurope", "service": "Azure Monitor", "sku": "Basic Logs", "meter": "Basic Logs Data Ingestion"}},
+    {"id": "log-ingestion-auxiliary", "page": "https://azure.microsoft.com/en-us/pricing/details/monitor/", "address": {"table": "^Ingestion", "row": "^Auxiliary Logs"}, "meter": {"region": "westeurope", "service": "Azure Monitor", "sku": "Auxiliary Logs", "meter": "Auxiliary Logs Data Ingestion"}},
+    {"id": "log-interactive-retention", "page": "https://azure.microsoft.com/en-us/pricing/details/monitor/", "address": {"table": "^Extended Retention", "row": "^Interactive Retention"}, "meter": {"region": "westeurope", "service": "Log Analytics", "sku": "Analytics Logs", "meter": "Analytics Logs Data Retention"}},
+    {"id": "log-long-term-retention-is-data-archive", "page": "https://azure.microsoft.com/en-us/pricing/details/monitor/", "address": {"table": "^Extended Retention", "row": "^Long-term Retention"}, "note": "The page says Long-term Retention; the API meter is called Data Archive.", "meter": {"region": "westeurope", "service": "Azure Monitor", "sku": "Data Archive", "meter": "Data Archive"}},
+    {"id": "log-search-query-scanned", "page": "https://azure.microsoft.com/en-us/pricing/details/monitor/", "address": {"table": "^Query", "row": "^Query$"}, "meter": {"region": "westeurope", "service": "Azure Monitor", "sku": "Search Queries", "meter": "Search Queries Scanned"}},
+    {"id": "event-hubs-basic-tu", "page": "https://azure.microsoft.com/en-us/pricing/details/event-hubs/", "address": {"row": "^Capacity", "column": "^Basic"}, "meter": {"region": "westeurope", "service": "Event Hubs", "sku": "Basic", "meter": "Basic Throughput Unit"}},
+    {"id": "event-hubs-premium-pu", "page": "https://azure.microsoft.com/en-us/pricing/details/event-hubs/", "address": {"row": "^Capacity", "column": "^Premium"}, "meter": {"region": "westeurope", "service": "Event Hubs", "sku": "Premium", "meter": "Premium Processing Unit"}},
+    {"id": "service-bus-premium-mu", "page": "https://azure.microsoft.com/en-us/pricing/details/service-bus/", "address": {"table": "^Messaging operations", "tableIndex": 2, "row": "^Hourly"}, "meter": {"region": "westeurope", "service": "Service Bus", "sku": "Premium", "meter": "Premium Messaging Unit"}},
+    {"id": "service-bus-standard-base", "page": "https://azure.microsoft.com/en-us/pricing/details/service-bus/", "address": {"table": "^Messaging operations", "tableIndex": 1, "row": "^Base charge"}, "meter": {"region": "westeurope", "service": "Service Bus", "sku": "Standard", "meter": "Standard Base Unit", "unitOfMeasure": "1/Hour"}},
+    {"id": "azure-firewall-standard-deployment", "page": "https://azure.microsoft.com/en-us/pricing/details/azure-firewall/", "address": {"table": "^Azure Firewall$", "row": "^Deployment", "column": "Standard"}, "meter": {"region": "westeurope", "service": "Azure Firewall", "sku": "Standard", "meter": "Standard Deployment"}},
+    {"id": "azure-firewall-premium-deployment", "page": "https://azure.microsoft.com/en-us/pricing/details/azure-firewall/", "address": {"table": "^Azure Firewall$", "row": "^Deployment", "column": "Premium"}, "meter": {"region": "westeurope", "service": "Azure Firewall", "sku": "Premium", "meter": "Premium Deployment"}},
+    {"id": "defender-cspm", "page": "https://azure.microsoft.com/en-us/pricing/details/defender-for-cloud/", "address": {"table": "^Cloud Security Posture", "row": "^Defender Cloud Security Posture"}, "meter": {"region": "Global", "service": "Microsoft Defender for Cloud", "product": "Microsoft Defender CSPM", "sku": "Standard", "meter": "Standard Node"}},
+    {"id": "defender-containers-vcore", "page": "https://azure.microsoft.com/en-us/pricing/details/defender-for-cloud/", "address": {"table": "^Cloud workload protection", "row": "^Containers$", "span": 0}, "meter": {"region": "westeurope", "service": "Microsoft Defender for Cloud", "product": "Microsoft Defender for Containers", "sku": "Standard vCore", "meter": "Standard vCore vCore Pack"}},
+    {"id": "defender-ai-services-per-1k-tokens", "page": "https://azure.microsoft.com/en-us/pricing/details/defender-for-cloud/", "address": {"table": "^Cloud workload protection", "row": "^AI$", "span": 0}, "meter": {"region": "Global", "service": "Microsoft Defender for Cloud", "product": "Microsoft Defender for AI Services", "sku": "Standard", "meter": "Standard Tokens"}},
+    {"id": "defender-apis-plan-2", "page": "https://azure.microsoft.com/en-us/pricing/details/defender-for-cloud/", "address": {"table": "^Cloud workload protection", "row": "Defender for APIs Plan 2"}, "meter": {"region": "Global", "service": "Microsoft Defender for Cloud", "product": "Defender for APIs", "sku": "Per Sub Billing P2", "meter": "Per Sub Billing P2 Subscription"}},
+    {"id": "defender-key-vault-per-vault-month", "page": "https://azure.microsoft.com/en-us/pricing/details/defender-for-cloud/", "address": {"table": "^Cloud workload protection", "row": "Defender for Key Vault"}, "scale": 0.0013698630137, "note": "Page: per vault per month; API: per node-hour (page / 730).", "meter": {"region": "westeurope", "service": "Microsoft Defender for Cloud", "product": "Microsoft Defender for Key Vault", "sku": "Per node Std", "meter": "Per node Std Node"}},
+    {"id": "defender-storage-account-hour", "page": "https://azure.microsoft.com/en-us/pricing/details/defender-for-cloud/", "address": {"table": "^Cloud workload protection", "row": "^Storage$", "span": 0}, "meter": {"region": "westeurope", "service": "Microsoft Defender for Cloud", "product": "Microsoft Defender for Storage", "sku": "Standard", "meter": "Standard Node"}},
+    {"id": "sre-agent-aau", "page": "https://azure.microsoft.com/en-us/pricing/details/sre-agent/", "address": {"row": "^Baseline", "span": 0}, "meter": {"region": "westeurope", "service": "Foundry Tools", "product": "Azure Agent Unit", "meter": "SRE Agent Unit"}},
+    {"id": "sre-agent-aau-sweden-central", "page": "https://azure.microsoft.com/en-us/pricing/details/sre-agent/", "slug": "sweden-central", "address": {"row": "^Baseline", "span": 0}, "meter": {"region": "swedencentral", "service": "Foundry Tools", "product": "Azure Agent Unit", "meter": "SRE Agent Unit"}},
+    {"id": "data-explorer-markup", "page": "https://azure.microsoft.com/en-us/pricing/details/data-explorer/", "address": {"table": "^Azure Data Explorer markup", "row": "^Azure Data Explorer markup"}, "meter": {"region": "westeurope", "service": "Azure Data Explorer", "meter": "Standard Engine Cluster Markup", "priceType": "Consumption"}},
+    {"id": "foundry-hosted-agent-vcpu", "page": "https://azure.microsoft.com/en-us/pricing/details/foundry-agent-service/", "slug": "sweden-central", "address": {"row": "^Hosted agents", "span": 0}, "meter": {"region": "swedencentral", "service": "Foundry Tools", "product": "Foundry Agents", "sku": "Hosted", "meter": "Hosted vCPU Usage"}},
+    {"id": "foundry-hosted-agent-memory", "page": "https://azure.microsoft.com/en-us/pricing/details/foundry-agent-service/", "slug": "sweden-central", "address": {"row": "^Hosted agents", "span": 1}, "meter": {"region": "swedencentral", "service": "Foundry Tools", "product": "Foundry Agents", "sku": "Hosted", "meter": "Hosted Memory Usage"}},
+    {"id": "foundry-code-interpreter-session", "page": "https://azure.microsoft.com/en-us/pricing/details/foundry-agent-service/", "address": {"row": "^Tools and Knowledge", "span": 1}, "meter": {"region": "westeurope", "service": "Foundry Models", "product": "Azure OpenAI", "sku": "Code-Interpreter-regnl EP", "meter": "Code-Interpreter-regnl EP Session"}},
+    {"id": "foundry-web-search-1k", "page": "https://azure.microsoft.com/en-us/pricing/details/foundry-agent-service/", "address": {"row": "^Tools and Knowledge", "span": 2}, "meter": {"region": "Global", "service": "MS Bing Services", "product": "Grounding with Bing", "sku": "Search", "meter": "Search Transactions"}},
+    {"id": "model-router-global", "page": "https://azure.microsoft.com/en-us/pricing/details/ai-foundry-models/model-router/", "slug": "sweden-central", "address": {"table": "^Serverless Deployment", "row": "^Model router"}, "meter": {"region": "swedencentral", "service": "Foundry Tools", "product": "Model Tools", "sku": "Model Routers GL", "meter": "Model Routers GL 1M Tokens"}},
+    {"id": "content-safety-text-record", "page": "https://azure.microsoft.com/en-us/pricing/details/content-safety/", "address": {"row": "^Standard", "span": 0}, "meter": {"region": "westeurope", "service": "Foundry Tools", "product": "Content Safety", "sku": "Standard", "meter": "Standard Text Records"}},
+    {"id": "content-safety-image", "page": "https://azure.microsoft.com/en-us/pricing/details/content-safety/", "address": {"row": "^Image Multimodal", "rowIndex": 1, "span": 0}, "meter": {"region": "westeurope", "service": "Foundry Tools", "product": "Content Safety", "sku": "Standard", "meter": "Standard Images"}},
+    {"id": "acs-email-per-message", "page": "https://azure.microsoft.com/en-us/pricing/details/communication-services/", "address": {"table": "Example 2", "tableIndex": 1, "row": "^Email", "span": 0}, "meter": {"region": "westeurope", "service": "Email", "meter": "Basic Sent Email"}},
+    {"id": "acs-chat-message", "page": "https://azure.microsoft.com/en-us/pricing/details/communication-services/", "address": {"table": "Example 2", "tableIndex": 1, "row": "^Messaging$", "span": 0}, "meter": {"region": "westeurope", "service": "Messaging", "product": "Chat", "meter": "Basic Sent Message"}},
+    {"id": "acs-voip-user-minute", "page": "https://azure.microsoft.com/en-us/pricing/details/communication-services/", "address": {"table": "Example 2", "tableIndex": 0, "row": "^Voice and Video Calling", "span": 0}, "meter": {"region": "westeurope", "service": "Voice", "sku": "A2AGroupCalling", "meter": "A2AGroupCalling User Minute"}},
+    {"id": "voice-live-pro-text-input", "page": "https://azure.microsoft.com/en-us/pricing/details/cognitive-services/speech-services/", "address": {"table": "^Voice Live API", "row": "^Voice Live Pro", "span": 0}, "scale": 0.001, "note": "Page: per 1M tokens; API: per 1K.", "meter": {"region": "westeurope", "service": "Foundry Tools", "product": "Azure Speech", "sku": "Voice Live API Pro - LLM Text Input", "meter": "Voice Live API Pro - LLM Text Input Tokens"}},
+    {"id": "voice-live-standard-text-output", "page": "https://azure.microsoft.com/en-us/pricing/details/cognitive-services/speech-services/", "address": {"table": "^Voice Live API", "row": "^Voice Live Standard", "span": 2}, "scale": 0.001, "meter": {"region": "westeurope", "service": "Foundry Tools", "product": "Azure Speech", "sku": "Voice Live API Std - LLM Text Output", "meter": "Voice Live API Std - LLM Text Output Tokens"}},
+    {"id": "speech-realtime-stt-hour", "page": "https://azure.microsoft.com/en-us/pricing/details/cognitive-services/speech-services/", "address": {"table": "^Speech Model Prices", "row": "^Speech to Text\\s*\\(per second", "span": 0}, "meter": {"region": "westeurope", "service": "Foundry Tools", "product": "Azure Speech", "sku": "S1", "meter": "S1 Speech To Text"}},
+    {"id": "speech-neural-tts-1m-characters", "page": "https://azure.microsoft.com/en-us/pricing/details/cognitive-services/speech-services/", "address": {"table": "^Speech Model Prices", "row": "^Text to Speech", "span": 0}, "meter": {"region": "westeurope", "service": "Foundry Tools", "product": "Azure Speech", "sku": "S1", "meter": "S1 Neural Text To Speech Characters"}},
+    {"id": "speech-standard-avatar-realtime-minute", "page": "https://azure.microsoft.com/en-us/pricing/details/cognitive-services/speech-services/", "address": {"table": "^Speech Model Prices", "row": "Avatar", "span": 0}, "meter": {"region": "westeurope", "service": "Foundry Tools", "product": "Azure Speech", "sku": "TTS Standard Avatar Realtime", "meter": "TTS Standard Avatar Realtime Speech"}},
+    {"id": "gpt-6-luna-global-input", "page": "https://azure.microsoft.com/en-us/pricing/details/azure-openai/", "slug": "sweden-central", "address": {"table": "^GPT-6 Series", "row": "^GPT-6 Luna \\(short context\\) Global", "span": 0}, "meter": {"region": "swedencentral", "service": "Foundry Models", "product": "Azure OpenAI GPT6", "sku": "6-luna ShortCo Inp Std Gl"}},
+    {"id": "gpt-6-luna-global-output", "page": "https://azure.microsoft.com/en-us/pricing/details/azure-openai/", "slug": "sweden-central", "address": {"table": "^GPT-6 Series", "row": "^GPT-6 Luna \\(short context\\) Global", "span": 3}, "meter": {"region": "swedencentral", "service": "Foundry Models", "product": "Azure OpenAI GPT6", "sku": "6-luna ShortCo Opt Std Gl"}},
+    {"id": "gpt-6-luna-eu-data-zone-input", "page": "https://azure.microsoft.com/en-us/pricing/details/azure-openai/", "slug": "sweden-central", "address": {"table": "^GPT-6 Series", "row": "^GPT-6 Luna \\(short context\\) Data Zone", "span": 0}, "meter": {"region": "swedencentral", "service": "Foundry Models", "product": "Azure OpenAI GPT6", "sku": "6-luna ShortCo Inp Std DZ"}},
+    {"id": "gpt-5-4-mini-global-input", "page": "https://azure.microsoft.com/en-us/pricing/details/azure-openai/", "slug": "sweden-central", "address": {"table": "^GPT 5.4 Series", "row": "^GPT-5\\.4 mini Global", "span": 0}, "meter": {"region": "swedencentral", "service": "Foundry Models", "product": "Azure OpenAI GPT5", "sku": "5.4 mini Inp Gl"}},
+    {"id": "gpt-5-4-mini-global-output", "page": "https://azure.microsoft.com/en-us/pricing/details/azure-openai/", "slug": "sweden-central", "address": {"table": "^GPT 5.4 Series", "row": "^GPT-5\\.4 mini Global", "span": 2}, "meter": {"region": "swedencentral", "service": "Foundry Models", "product": "Azure OpenAI GPT5", "sku": "5.4 mini Opt Gl"}},
+    {"id": "text-embedding-3-small-data-zone", "page": "https://azure.microsoft.com/en-us/pricing/details/azure-openai/", "slug": "sweden-central", "address": {"table": "^Embedding models", "row": "^text-embedding-3-small DataZone"}, "meter": {"region": "swedencentral", "service": "Foundry Models", "product": "Azure OpenAI Embedding", "sku": "text embedding 3 small DZ"}},
+    {"id": "ptu-global-hour", "page": "https://azure.microsoft.com/en-us/pricing/details/azure-openai/", "slug": "sweden-central", "address": {"table": "^Provisioned", "row": "^GPT-6 Sol \\(short context\\) Global", "span": 0}, "meter": {"region": "swedencentral", "service": "Foundry Models", "product": "Azure OpenAI", "sku": "Provisioned Managed Global", "priceType": "Consumption"}},
+    {"id": "ptu-global-monthly-reservation", "page": "https://azure.microsoft.com/en-us/pricing/details/azure-openai/", "slug": "sweden-central", "address": {"table": "^Provisioned", "row": "^GPT-6 Sol \\(short context\\) Global", "span": 1}, "meter": {"region": "swedencentral", "service": "Foundry Models", "product": "Azure AI Foundry Provisioned Throughput Reservation", "sku": "Provisioned Managed Global", "priceType": "Reservation", "reservationTerm": "1 Month"}},
+    {"id": "ptu-eu-data-zone-hour", "page": "https://azure.microsoft.com/en-us/pricing/details/azure-openai/", "slug": "sweden-central", "address": {"table": "^Provisioned", "row": "^GPT-6 Sol \\(short context\\) Data Zone", "span": 0}, "meter": {"region": "swedencentral", "service": "Foundry Models", "product": "Azure OpenAI", "sku": "Provisioned Managed Data Zone", "priceType": "Consumption"}},
+    {"id": "blob-hot-lrs-gb-month", "page": "https://azure.microsoft.com/en-us/pricing/details/storage/blobs/", "address": {"table": "^Data storage prices", "tableIndex": 0, "row": "^First 50", "column": "^Hot"}, "meter": {"region": "westeurope", "service": "Storage", "product": "General Block Blob v2", "sku": "Hot LRS", "meter": "Hot LRS Data Stored", "tierMinimumUnits": 0}},
+    {"id": "blob-cool-lrs-gb-month", "page": "https://azure.microsoft.com/en-us/pricing/details/storage/blobs/", "address": {"table": "^Data storage prices", "tableIndex": 0, "row": "^First 50", "column": "^Cool"}, "meter": {"region": "westeurope", "service": "Storage", "product": "General Block Blob v2", "sku": "Cool LRS", "meter": "Cool LRS Data Stored"}},
+    {"id": "blob-archive-lrs-gb-month", "page": "https://azure.microsoft.com/en-us/pricing/details/storage/blobs/", "address": {"table": "^Data storage prices", "tableIndex": 0, "row": "^First 50", "column": "^Archive"}, "meter": {"region": "westeurope", "service": "Storage", "product": "General Block Blob v2", "sku": "Archive LRS", "meter": "Archive LRS Data Stored"}},
+    {"id": "blob-hot-zrs-gb-month", "page": "https://azure.microsoft.com/en-us/pricing/details/storage/blobs/", "address": {"table": "^Data storage prices", "tableIndex": 1, "row": "^First 50", "column": "^Hot"}, "meter": {"region": "westeurope", "service": "Storage", "product": "General Block Blob v2", "sku": "Hot ZRS", "meter": "Hot ZRS Data Stored", "tierMinimumUnits": 0}}
+  ]
+}
