@@ -111,7 +111,7 @@ Also from the reviewer's "still unproven" list: the generated tokens-a-minute fi
 
 ## 5. What the review record shows
 
-Three rounds, nine models, 132 findings in the first two rounds and 33 in the third (28 + 5). The pattern that repeats is worth keeping: each round's *fixes* are where the next round's findings live — a signer that could also start the runner (Round 2) became, in the third pass, a set of markers that any identity with container access could forge, a private endpoint that could not be deployed and an ingress that could not carry the calls. The remedy that worked was the same each time: read the platform's own words before believing a sentence of the design, and make every "cannot" name the mechanism that stops it.
+Three rounds and a closure check, nine models: 132 findings in the first two rounds, 33 in the third (28 + 5), then 22 in the closure check (8 reopened and 14 new), 5 in the bounded re-check and 2 in the last confirmation. The pattern that repeats is worth keeping: each round's *fixes* are where the next round's findings live — a signer that could also start the runner (Round 2) became, in the third pass, a set of markers that any identity with container access could forge, a private endpoint that could not be deployed and an ingress that could not carry the calls; and in the closure check a queue role that could also put, a lock that checked and then acted, and a record that the design amended inside a create-only container. The remedy that worked was the same each time: read the platform's own words before believing a sentence of the design, and make every "cannot" name the mechanism that stops it.
 
 ## 6. The closure check at `87925dd` and the closure round
 
@@ -196,15 +196,22 @@ T-A's third turn ([`closure-ta-2.md`](closure-ta-2.md)) was limited to the eight
 
 ### 6.6 The last confirmation
 
-_To be filled in when T-A's confirmation of C23 to C27 has returned (the report is `closure-ta-3.md`)._
+T-A's fourth turn ([`closure-ta-3.md`](closure-ta-3.md), at `56011b4`) was limited to TA-M1 to TA-M5, the five items still open and at most three new defects from C23 to C27. Three of its five quotations were verbatim at `56011b4`; the other two are Learn quotations, both read on the page. **Result:** TA-M4 **closed**. **TA-M1, TA-M2, TA-M5, TA-06, TA-N3, TA-N9 and TA-N13 closed with a residual that only a spike can remove**: that Strong consistency works on a serverless account is unverified (S-ID-3 confirms it first, with two named alternatives), the per-run token's isolation and the hub's not logging its header need the named tests, and a compromised broker could still sign a false counter, which was always the stated limit of a compromised broker. **TA-M3 and TA-N6 stayed open on two new Major defects in the observer.** Verdicts: ADR-07 **Disagree** ("require lossless, deduplicated observation and the consistency spike"), ADR-08 **Agree with changes**, ADR-33 **Agree with changes** ("prove run-token isolation and late-result recovery in S-ORCH-1").
+
+| Finding | Sev | Verified | Decision | Landing |
+|---|---|---|---|---|
+| **TA-K1** | Maj | **True in principle.** An event id inside the payload is not an atomic uniqueness constraint, and Learn does not say whether a scheduled job can start while the previous run still runs (**unverified**). | **C28, accepted, with a fence and not an assumption.** The observer's replica timeout (10 minutes) is below its schedule (15 minutes) and `parallelism` is 1, so two runs never overlap; a run killed after an append is repaired by the next run's window check; a duplicate entry changes no authority, so it is harmless information that the nightly ledger verifier counts and does not alert on. | 07 §3.1/§3.3, 04 §6, 06 §7.3, 09 D15, 10, 11, 14 S-ID-3 (2) |
+| **TA-K2** | Maj | **True.** Learn: Activity Log entries are "usually available for analysis and alerting within 3 to 20 minutes", a tendency and not a bound; a watermark can advance past an event that arrives later. | **C28, accepted.** There is no watermark: each run reads the sweeper's deletions of the **last 24 hours** and the ledger's `sweep-observed` entries of the same window and appends the missing event ids; the run at 03:00 UTC reads **seven days** (retention is 90 days); an entry for an event older than 24 hours raises a D19-class gap alert, so a late delivery is recorded and reported and never skipped. S-ID-3 measures the real delay. | same |
+
+**The loop stops here, on purpose.** Each turn since the closure check has found fewer and smaller defects (21, then 5, then 2), the last two in the one mechanism that grants nothing (the observer records what the sweeper removed), and what remains is what only running the spikes can show. C28 itself was not checked by the reviewer again; it was checked by lint, `--check` and a sweep for the retired wording. The three ADRs stay Proposed.
 
 ### 6.7 Statuses after the closure round
 
 | ADR | Status | Why |
 |---|---|---|
-| 07 Execution identities | **Proposed** | T-A disagreed at `87925dd`; every defect is accepted or adjusted and fixed in the text, but the mechanics are unproven until S-ID-1, S-ID-3 and S-ACT-1 have run; nothing changes an estate before then |
-| 08 Approvals | **Proposed** | as 07: the click-bound sign-in, the claims and the confidential-client flow are unproven until S-ID-3 and S-ACT-1 |
-| 33 The spine | **Proposed** | T-A agreed with changes; registration and arbitration are now specified, and the leaf-call rule stays unproven until S-HOST-1 and S-ORCH-1 |
+| 07 Execution identities | **Proposed** | T-A disagreed at `87925dd`, at the re-check and at the confirmation ("require lossless, deduplicated observation and the consistency spike"); every defect that it found is accepted or adjusted and fixed in the text, but the mechanics are unproven until S-ID-1, S-ID-3 and S-ACT-1 have run, and the first thing S-ID-3 must show is that Strong consistency works on a serverless account; nothing changes an estate before then |
+| 08 Approvals | **Proposed** | T-A: **Agree with changes** at the re-check and the confirmation; the click-bound sign-in, the claims and the confidential-client flow are unproven until S-ID-3 and S-ACT-1, and the trusted-display residual is accepted as stated |
+| 33 The spine | **Proposed** | T-A: Disagree at the re-check (no per-run authorisation, two late-result rules), **Agree with changes** at the confirmation; the run token, the single late-result rule and the registry's crash repair are specified, and the leaf-call rule stays unproven until S-HOST-1 and S-ORCH-1 |
 | 26 The reservation is the budget | Accepted with changes | T-B agreed with changes; the usage-record id and reserved against billed are measurements (S-COST-1, S-GW-1) |
 | 06 Agent identities and eleven groups | Accepted with changes | T-B agreed; the label records that changes were made, and the check now pins the roster, the counts and the phases |
-| 12 The operational store | Accepted with changes | sixteen containers; `runs` and the fresh reads are recorded |
+| 12 The operational store | Accepted with changes | sixteen containers; `runs`, the Strong default consistency and the fresh reads are recorded |
