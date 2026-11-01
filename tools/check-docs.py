@@ -22,12 +22,16 @@ docs/reviews/ describe the rules and the review record, so the pattern guards sk
 can evade a pattern; a decorative hub can hide a pipeline; the link check ignores reference-style,
 HTML and autolink forms (they raise a warning instead).
 
-Scopes (AGENTS.md rule 11). The ideation documents (docs/*.md, docs/research/) get every guard. The
-design documents (docs/design/*.md) may name technologies and discuss security, governance and
-decisions - the operator asked for them - so they get only the phrase-level anchoring patterns (the
-operator's two examples must still not be the foundation), the "pointless questions" bloat terms and
-the purchase wording. The design evidence (docs/design/research/ and docs/design/cost/) is third-party
-material gathered for the design: only the purchase wording is checked there.
+Scopes (AGENTS.md rule 11). The ideation documents (docs/*.md, docs/research/) get every ideation
+guard. The design documents (docs/design/*.md) may name technologies and discuss security, governance
+and decisions, so they get the phrase-level anchoring patterns (the project owner's two examples must
+not appear), the "pointless questions" bloat terms and the purchase wording, plus the design guards
+that the first design taught (AGENTS.md rule 11 a-d, g): write for the community (no personal
+references, no "the operator"), never invent (no "assumptions", no hedge hardened into a ban on
+Databricks or Fabric), no lab, plain words (no invented jargon), no review history, a size budget
+(README and every document, and the whole design) and no wall of text (paragraph and table-row
+length). Anything under docs/design/ other than the documents themselves (the price snapshot) is
+third-party data and is not checked.
 
 Usage:  python tools/check-docs.py [--strict] [--self-test]
         --strict  treats warnings as errors (use before every commit)
@@ -83,6 +87,41 @@ DESIGN_BLOAT_PATTERNS = [
     (r"kill criteri", re.I), (r"open questions? (?:for|to) the operator", re.I),
     (r"go\s*/\s*no-go", re.I), (r"abandon the idea", re.I), (r"R3-Data", 0),
 ]
+# Design guards (AGENTS.md rule 11): what the withdrawn first design taught. (pattern, message);
+# matched case-insensitively across hard-wrapped lines, with link targets removed first.
+DESIGN_FORBIDDEN = [
+    (r"\b(?:the|our|an?) operator\b|\boperator(?:'s|s')|\boperator-declared\b",
+     "write for the community: no 'the operator' (say 'the adopting organisation' or 'the platform team')"),
+    (r"\b(?:my|his|her) (?:landing zone|tenant|subscriptions?|location)\b|\btinodo\b|\bTino\b|\bDonderwinkel\b"
+     r"|\bproject owner\b",
+     "no personal references in a document meant for a community"),
+    (r"^#{1,6}\s.*\bassumptions?\b|\bwe assume\b|\bunder (?:the )?assumption\b|\bassumptions? (?:register|list|table|section)\b",
+     "no assumptions section or list: call sizing numbers scenario parameters and decide the rest"),
+    (r"\blicen[cs]es? (?:is |are )?assumed\b|\bno licen[cs]es? (?:is |are )?(?:assumed|held|owned)\b"
+     r"|\bbeyond (?:the )?azure subscriptions?\b",
+     "do not invent a licence position; state which feature needs which licence"),
+    (r"(?<!\bno )(?<!\bnot )(?<!\bwithout )(?<!instead of )"
+     r"(?:\b(?:the|a|our) lab\b|\blab[- ](?:based|controller|recipes?|subscriptions?|accounts?|experiments?|environment|pool)\b)",
+     "no lab: the system never deploys resources in order to experiment"),
+    (r"\bexams?\b", "plain words: say 'evaluation'"),
+    (r"\b(?:from|per|in|by|of|as) the (?:design )?brief\b|\bdesign brief\b",
+     "do not cite 'the brief' in a design document"),
+    (r"\b(?:no|without|exclud\w+|forbid\w*|bann?\w*)\s+(?:databricks|fabric)\b"
+     r"|\b(?:databricks|fabric)\b[^.\n|]{0,50}\b(?:excluded|forbidden|not allowed|out of scope|by constraint)\b",
+     "do not harden a hedge into a ban on Databricks or Fabric: judge them on merit"),
+    (r"\bspine\b|\bleaf\b|\bagentic leaves\b|\bauthority chain\b|\bdoorbell\b|\bTerrarium\b|\bForger\b|\bJanitor\b"
+     r"|\bExperimenter\b",
+     "plain words: no invented jargon"),
+    (r"\bround [1-3]\b|\bthird pass\b|\bclosure (?:check|round|re-?check)\b|\brubber[- ]?duck\w*\b|\badversarial review\b",
+     "review history belongs in docs/reviews, not in the design"),
+]
+LINK_TARGET = re.compile(r"\]\([^)\n]*\)")
+LIST_ITEM = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s")
+DESIGN_MAX_WORDS_README = 1800
+DESIGN_MAX_WORDS_DOC = 6000
+DESIGN_MAX_WORDS_TOTAL = 42000
+DESIGN_MAX_PARAGRAPH_CHARS = 1100
+DESIGN_MAX_TABLE_ROW_CHARS = 800
 MERMAID_TYPES = (
     "flowchart", "graph", "stateDiagram-v2", "stateDiagram", "sequenceDiagram", "classDiagram",
     "erDiagram", "gantt", "pie", "mindmap", "timeline", "journey", "quadrantChart", "gitGraph",
@@ -454,6 +493,66 @@ def check_guards(files, rep: Report):
                     rep.error(f, n, "purchase wording: prepared by the AI, approved by two named humans, executed by the AI (AGENTS.md rule 10)")
 
 
+def design_text_problems(text: str):
+    """(line, message) for every design vocabulary violation in a document (link targets are ignored)."""
+    clean = LINK_TARGET.sub("]()", text)
+    found = set()
+    for pat, msg in DESIGN_FORBIDDEN:
+        for n, _hit in paragraph_hits(clean, pat):
+            found.add((n, msg))
+    return sorted(found)
+
+
+def prose_blocks(prose):
+    """(first line, kind, characters) for each paragraph, list item and table row; `prose` excludes code fences."""
+    out, cur, last = [], None, 0
+    for n, raw in prose:
+        line = raw.strip()
+        if cur and (not line or n != last + 1):
+            out.append(tuple(cur))
+            cur = None
+        last = n
+        if not line:
+            continue
+        if line.startswith("|"):
+            if cur:
+                out.append(tuple(cur))
+                cur = None
+            out.append((n, "table row", len(line)))
+        elif cur is None or LIST_ITEM.match(raw):
+            if cur:
+                out.append(tuple(cur))
+            cur = [n, "paragraph", len(line)]
+        else:
+            cur[2] += len(line) + 1
+    if cur:
+        out.append(tuple(cur))
+    return out
+
+
+def check_design(files, parsed, rep: Report):
+    """Vocabulary, size and wall-of-text guards for the design documents (docs/design/*.md)."""
+    total = 0
+    for f in files:
+        if scope_of(f) != "design":
+            continue
+        for n, msg in design_text_problems(f.read_text(encoding="utf-8")):
+            rep.error(f, n, f"design guard: {msg}")
+        prose = parsed[f][0]
+        words = sum(len(line.split()) for _, line in prose)
+        total += words
+        cap = DESIGN_MAX_WORDS_README if f.name == "README.md" else DESIGN_MAX_WORDS_DOC
+        if words > cap:
+            rep.error(f, 1, f"size budget: {words} words, the limit is {cap} - cut, do not squeeze")
+        for n, kind, size in prose_blocks(prose):
+            limit = DESIGN_MAX_TABLE_ROW_CHARS if kind == "table row" else DESIGN_MAX_PARAGRAPH_CHARS
+            if size > limit:
+                rep.warn(f, n, f"{kind} of {size} characters (limit {limit}) - split it or turn it into a table")
+    if total > DESIGN_MAX_WORDS_TOTAL:
+        rep.error(DOCS / "design" / "README.md", 1,
+                  f"size budget: the design is {total} words in total, the limit is {DESIGN_MAX_WORDS_TOTAL}")
+
+
 def check_svgs(rep: Report):
     for p in sorted((DOCS / "img").glob("*.svg")) if (DOCS / "img").exists() else []:
         try:
@@ -501,6 +600,7 @@ def run(strict: bool) -> int:
     for f in files:
         check_mermaid(f, parsed[f][1], rep)
     check_guards(files, rep)
+    check_design(files, parsed, rep)
     check_svgs(rep)
     check_link_forms(files, parsed, rep)
     check_headings(files, parsed, rep)
@@ -552,6 +652,30 @@ def self_test() -> int:
     assert scope_of(ROOT / "docs" / "05-x.md") == "ideation"
     assert not any(re.search(p, "a Log Analytics workspace behind a virtual hub", re.I) for p in DESIGN_ANCHOR_PATTERNS)
     assert any(re.search(p, "a stream nobody reads", re.I) for p in DESIGN_ANCHOR_PATTERNS)
+    bad = [
+        "the operator approves", "Our Operator decides", "the operator's tenant", "operator-declared constraint",
+        "my landing zone", "Tino approves", "the project owner wants", "## Assumptions", "We assume a hub exists",
+        "under assumption A1", "the assumption list", "No licence is assumed", "beyond Azure subscriptions",
+        "the Lab runs recipes", "a lab subscription", "lab-based experiments", "the exam questions", "from the brief",
+        "no Databricks", "Fabric is excluded", "Databricks is out of scope", "the spine of the system",
+        "an agentic leaf", "the Terrarium", "added in round 2", "after the third pass", "a rubber duck reviewed it",
+    ]
+    for text in bad:
+        assert design_text_problems(text), f"design guard missed: {text!r}"
+    good = [
+        "the adopting organisation approves", "Kubernetes operators", "no lab: nothing is deployed to experiment",
+        "without a lab", "instead of a lab", "an evaluation of the agents", "Databricks and Fabric are judged on merit",
+        "the saving assumes steady load", "scenario parameters", "[cost-trap bank](../research/exam-bank-cost-traps.md)",
+        "Entra ID P1 is required for Conditional Access", "a design review",
+    ]
+    for text in good:
+        assert not design_text_problems(text), f"design guard false positive: {text!r}"
+    assert design_text_problems("the Lab\ncontroller")  # a phrase split over two lines is still found
+    blocks = prose_blocks([(1, "# T"), (2, ""), (3, "x" * 600), (4, "y" * 600), (5, ""), (6, "- item"), (7, "  more"),
+                           (8, "| a | b |"), (9, "|---|---|"), (10, "| " + "z" * 900 + " |"), (12, "after a fence")])
+    assert (3, "paragraph", 1201) in blocks and (6, "paragraph", 11) in blocks
+    assert any(k == "table row" and s > DESIGN_MAX_TABLE_ROW_CHARS for _, k, s in blocks)
+    assert (12, "paragraph", 13) in blocks
     print("self-test OK")
     return 0
 
