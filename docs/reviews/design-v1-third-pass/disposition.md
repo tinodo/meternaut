@@ -4,8 +4,8 @@
 
 | Reviewer | Model | Subjects | Raw report | Findings |
 |---|---|---|---|---|
-| **T-A** | gpt-6.1-terra | the authority chain; the leaf-call rule | [raw-ta-authority-chain](raw-ta-authority-chain.md) | 28 (16 Critical, 12 Major) |
-| **T-B** | grok-4.6 | the spend budget; the contract × environment model | [raw-tb-spend-and-contracts](raw-tb-spend-and-contracts.md) | 5 (3 Major, 2 Minor) |
+| **T-A** | gpt-6.1-terra | the authority chain; the leaf-call rule | [raw-ta-authority-chain](raw-ta-authority-chain.md) · [closure check at `87925dd`](closure-ta.md) | 28 (16 Critical, 12 Major); closure: 6 closed, 14 closed with residual, **8 still open, 13 new defects** (4 Critical) |
+| **T-B** | grok-4.6 | the spend budget; the contract × environment model | [raw-tb-spend-and-contracts](raw-tb-spend-and-contracts.md) · [closure check at `87925dd`](closure-tb.md) | 5 (3 Major, 2 Minor); closure: 3 closed, 2 closed with a named residual, 1 new Minor (fixed) |
 
 ## 1. What the orchestrator found itself between the revision and the pass
 
@@ -112,3 +112,85 @@ Also from the reviewer's "still unproven" list: the generated tokens-a-minute fi
 ## 5. What the review record shows
 
 Three rounds, nine models, 132 findings in the first two rounds and 33 in the third (28 + 5). The pattern that repeats is worth keeping: each round's *fixes* are where the next round's findings live — a signer that could also start the runner (Round 2) became, in the third pass, a set of markers that any identity with container access could forge, a private endpoint that could not be deployed and an ingress that could not carry the calls. The remedy that worked was the same each time: read the platform's own words before believing a sentence of the design, and make every "cannot" name the mechanism that stops it.
+
+## 6. The closure check at `87925dd` and the closure round
+
+**What was asked.** Each third-pass reviewer, with its own report and the disposition above in hand, judged every finding CLOSED, CLOSED-WITH-RESIDUAL or OPEN at `87925dd`, and hunted for defects the revision itself introduced. The reports are kept as the reviewers returned them: [`closure-ta.md`](closure-ta.md) and [`closure-tb.md`](closure-tb.md). T-A's saved file was rewritten once by the reviewer after its first save; the repository holds the final version, which matches what the reviewer returned.
+
+| | T-A (28 findings) | T-B (5 findings) |
+|---|---|---|
+| CLOSED | 6 | 3 |
+| CLOSED-WITH-RESIDUAL | 14 | 2 |
+| OPEN | **8** (TA-01, 02, 06, 08, 11, 15, 18, 22) | 0 |
+| New defects | **13** (TA-N1 to N13: four Critical, eight Major, one Minor) | 1 (TB-N1, Minor: a link) |
+| Verdict on the ADRs | 07 **Disagree**, 08 **Disagree**, 33 Agree with changes | 26 Agree with changes, 06 Agree |
+
+The reviewer was right to reopen the chain. The pattern of §5 held a fourth time: the third pass's fixes were where the next defects lived (a sequence that started the approve sign-in before any click; a queue role that could also put; a lock that checked and then acted; a record that the design amended while its container was create-only).
+
+### 6.1 What the orchestrator verified before acting
+
+Twenty-one of T-A's quotations from the design were verbatim at `87925dd` (checked against a clean extract of that commit). Its platform claims were then read on Learn, today:
+
+| Claim (finding) | Source | Result |
+|---|---|---|
+| `messages/write` also permits **Put Message** (TA-N2) | [Authorize with Microsoft Entra ID](https://learn.microsoft.com/rest/api/storageservices/authorize-with-azure-active-directory#permissions-for-calling-data-operations): "Put Message … messages/add/action or … messages/write" | **True**: every holder of `acia-queue-worker` can put to the queue it consumes |
+| The dequeue count rises on every dequeue (TA-N9) | [Get Messages](https://learn.microsoft.com/rest/api/storageservices/get-messages): "incremented each time the message is subsequently dequeued" | **True**: a wait counts, unless we count waits ourselves |
+| The runtime writes the poison queue with the host's identity (TA-N8) | [Queue trigger](https://learn.microsoft.com/azure/azure-functions/functions-bindings-storage-queue-trigger#poison-messages): "the functions runtime adds a message to a queue named <originalqueuename>-poison" | **True**: the spine needs Sender there |
+| Cosmos DB separates `create` from `replace` (TA-N4) | [Data-plane roles](https://learn.microsoft.com/azure/cosmos-db/reference-data-plane-security): "Creates new items", "Replaces existing items" | **True**: an amended record needs a replace right the container does not give |
+| A TTL'd item is gone at once, not later (TA-N3) | [Time to live](https://learn.microsoft.com/azure/cosmos-db/time-to-live): "An item no longer appears in query responses immediately after the TTL expires" | **True**, and it does not help: the lock disappears while a deployment still runs |
+| The `nonce` is chosen by the app (TA-N1) | [OpenID Connect](https://learn.microsoft.com/entra/identity-platform/v2-protocols-oidc): "A value generated and sent by your app in its request for an ID token" | **True**: it proves a sign-in for that decision, not a click |
+| A taken id returns HTTP 409 (TA-N5) | [Status codes](https://learn.microsoft.com/rest/api/cosmos-db/http-status-codes-for-cosmosdb): "The ID provided for a resource on a PUT or POST operation has been taken" | **True**: whoever creates first owns the id |
+
+Also read, for the fixes: Update Message "can also … update the contents of a message" (so a wait can carry its own counter), and Bounded Staleness on a single-region account has a minimum of "10 write operations or 5 seconds" (the fallback of the lock protocol). The other four quotations (instance ids, the federated-credential trust, the Conditional Access licence, `exp`) are the ones the third pass already verified.
+
+### 6.2 T-A's reopened findings and new defects: decisions
+
+Decisions are numbered C1 to C21 in the revision spec; the table gives the finding, the decision and where it landed.
+
+| Finding | Sev | Decision | Landing |
+|---|---|---|---|
+| TA-01, TA-11, **TA-N1** | Crit | **Accepted.** The approve sign-in starts only from a click on **Approve** (`prompt=login`); a decline starts none and yields no approve-nonce token. The text now says what the nonce proves (a sign-in for that decision, after the request existed, at the required strength) and what it does not (a click, or what the person saw). A compromised page can still *induce* a sign-in: that is the trusted-display residual, bounded by the short code compared before the click, the two-approver rule, D13 and the autonomy cap. | 07 §3.3 first diagram, §4 row and a new paragraph, long form; 13 ADR-07/08; 14 S-ID-3 (5); 10; 02 H9; 01 |
+| **TA-N2**, TA-05 | Crit | **Accepted, adjusted.** `messages/write` stays (renewing a message and putting to it need the same action; ABAC cannot tell them apart). The claims "only the broker sends to `run`" and "only the Approval service sends to `dispatch`" were false and are replaced by exact sender sets, consumers included. A queue is a **doorbell**: a job wakes for any message, believes nothing in it and verifies the record, the signatures, the lease and the live state. | 07 §3.1, §3.3, 04 §3.1/§6, 09, 10 L0/L6, 14 S-ID-3 (3), 13 ADR-07 |
+| TA-06, **TA-N3** | Crit | **Accepted, adjusted.** The lock and the lease live in different containers, so a transaction is out. The lock is a **two-sided protocol**: the pipeline takes the lock, waits a cache period, re-reads `leases` fresh and re-reads its own lock before every write (the job's 25-minute timeout is below the lock's 30-minute `ttl`, and a lost lock stops the run); the broker, after its lease and before its intent, reads `controls` fresh and gives up its lease if a lock exists. The argument needs replica lag far below the wait: S-ID-3 measures it, with Bounded Staleness as the fallback. | 07 §3.3 point 2, 11 §3, 04 §6, 09, 10 L6, 14 S-ID-3 (1) |
+| TA-08, **TA-N4** | Crit | **Accepted.** An approval record is never amended; the ledger position is a separate signed `approval-position` marker; the Approval service holds no ledger read and does no read-back; the broker and the runner read the record, the marker and the block. | 07, 06 §2/§7.2, 03, 10 |
+| **TA-N5**, TA-04 | Maj | **Accepted, adjusted.** Marker ids are deterministic; a create conflict is read: the party's own earlier write is a redelivery, anything else is a **preemption** that fails closed, closes the decision, raises D14 naming the writer and is never retried under another id. No container per writer. Preemption can deny a decision, not forge one. | 06 §7.2, 07 §4, 09 D14, 10 L1, 14 S-ID-3 (5) |
+| **TA-N6**, TA-09 | Maj | **Accepted, adjusted.** The sweeper stays keyless and writes nothing; the **Verifier** reads the Activity Log events of its deletions and appends a signed `sweep-observed` entry. The broker's outage rollback keeps its signed outbox. | 07 §3.1/§3.3/§6, 06 §7.1/§7.3, 09 D15, 10 L0, 11 |
+| TA-15, **TA-N7** | Maj | **Accepted.** The Auditor calls `cost-query` with a deterministic `corroborate` operation. **Verified** means the Verifier confirmed the live state; **corroborated** means the Auditor re-measured the saving from the cost export; **claimed** is verified and not yet corroborated. Every purchase and every Move above the materiality threshold is corroborated before its saving counts in the headline. | 07 §3.3, 04 §4.4, 05 §2, 10 L1, 01 Q-COST-1, 12, 13 |
+| **TA-N8** | Maj | **Accepted.** The spine holds Sender on `spine-events-poison` and `spine-signals-poison` and the rights the queue trigger needs to retry (the minimal set stays *to confirm*). | 07 §3.1, 04, 10 L0, 14 S-ID-3 (3) |
+| **TA-N9**, TA-18 | Maj | **Accepted.** Poison when `DequeueCount − waits > 3`, where `waits` is a counter in the message text rewritten by Update Message; waiting ends at the permit's `expiry` (closed as *expired, not run*, no poison). The broker's redelivery reconciles, then resumes, like the runner's: its nonce marker carries the approval id, so a conflict on its own marker is a redelivery and one on another approval's is a replay (D20). | 07 §3.3/§4, 06 §7.2, 10, 14 S-ID-3 (1) |
+| TA-20, **TA-N10** | Maj | **Accepted.** One app role, `Run.Manage`, assigned to the spine alone, lets it `register` and `close` runs through the case-record facade; no agent can. Route spine to facade in 04 §6. | 04 §4.4/§6, 03 §4, 05 §4, 07 §3.1, 10, 14 |
+| TA-21, TA-22, **TA-N11** | Maj | **Accepted.** The run registry is a state machine (`registered`, `claimed` with `claim_until`, `started`, then `completed`, `timed-out` or `abandoned`); every transition is a conditional replace **made by the facade**, so the first write wins, a late result is stored as `late` and never reopens an attempt, and a claim that never starts is released by the spine's reconcile. | 05 §4, 06, 03 §4, 14 S-ORCH-1 |
+| **TA-N12**, TA-27 | Min | **Accepted.** "Nothing starts a chain job by a call" is a production statement; in dev and test `deploy` may start one for smoke tests. | 04 §6, 07, 09, 10, 11, 14 |
+| **TA-N13**, TA-28 | Maj | **Accepted.** The runner reads the epoch, the deny lists, the stop flag and its credential's grant record **fresh before every step**, and the broker reads them fresh at grant; every other party keeps the 60-second cache. "An epoch raised during a Move stops it at its next step" is now true. | 07 §3.1/§10.3, 09, 10, 14 S-ID-3 (6) |
+| TA-02 | Crit | **Accepted.** The broker and the runner read the two `oid`s from the tokens; requester and preparer are excluded by `SHA-256(decision id ‖ oid)` against references that the Policy service signs into the permit; the hats are the broker's, recorded in its signed `grant-intent` entry. | 07 §3.3/§4, 06, 10, 14 |
+
+**The reviewer's fourteen residuals.** Three are the second halves of rows above (TA-04 with TA-N5, TA-27 with TA-N12, TA-28 with TA-N13). Eight were text gaps and are fixed: TA-05 by the sender sets; TA-09 by the sweeper's observation; TA-20 and TA-21 by the registry rows; **TA-13** by anchoring freshness on the ledger's `appended_at`, which the Audit Writer stamps, so a compromised Approval service can be late but cannot back-date; **TA-14** by a standing watcher (the drift controller polls the Estate service every five minutes and turns a removed approver into a deny entry, which the runner's per-step read honours); and **TA-03 and TA-10** by a canonical signing input: every signed item is signed over its canonical JSON (RFC 8785) **including its type, container, partition key, id and producer**, and a verifier rejects an item whose location differs from what was signed, so a valid signature cannot be moved to another id or partition; unsigned *narrowing* items can still deny service, which is accepted, alerted and lifted by a signed item or its `ttl`. Three are rules or spike lines that need no new spike id: **TA-07** (a Move class is enabled only if its schema has a harmless, permission-equivalent probe: S-ID-3 and S-ACT-1), **TA-24** (S-HOST-1: the stream survives every hop) and **TA-26** (S-ID-3 (5): the confidential-client flow stays *to confirm*, with the certificate fallback); TA-10's key distribution and withdrawal races are in S-ID-3 (4).
+
+### 6.3 T-B's residuals
+
+**TB-N1** (a link) is fixed. **TB-02**'s residuals are measurements, not design: the usage-record id and the hub's refusal of a caller-supplied tier stay *to confirm* in S-COST-1 and S-GW-1, and 05 §4 now says that the reservation counts a role's session compute per call at the idle timeout while the bill is one session per role per case, so it can block a case early and cannot let one overspend. **TB-03**'s residual is closed by tool: `tools/cost-model.py --check` now also compares the **Agents column** of 04 §4.3 with the roster of 05 §2, every **number of roles, identities, groups and contracts** that any design document states with those two tables (a bolded `**fifteen** identities` included), and the **pipelines paragraph of 11 §3** with the phase profile of 14 §4; `--self-test` holds a fixture for each (29 in all). What no tool can catch is a phase that is consistently wrong in all three places.
+
+### 6.4 Where the fix differs from the proposed fix, and what the owners found themselves
+
+- **No receipt-and-hold step** (TA-N1): the Brief service that serves the approval page would send it, so it adds nothing against the scenario it answers.
+- **No signing key for the sweeper** (TA-N6): the sweeper stays delete-only and keyless, and an independent party records its removals; a new vault would also have added a signing party.
+- **No writer-per-container** (TA-N5) and **no cross-container transaction** (TA-N3), for the reasons in the table.
+- **The run registry got its own container, `runs`** (found by the owner of 05 and 06 while applying C11): conditional replace needs a replace right, Cosmos DB roles are container-level, and in `cases` it would have let the facade rewrite the evidence graph. The account now has **sixteen** containers; `cases` and `case-notes` are create-only by RBAC and by an L0 assertion.
+- **A crash window the orchestrator found in that fix** (C22): the facade replaced the registry item `completed` and then created the `run-result`, so a crash between the two left a `completed` item and no record, and a step that waited for the record would have waited for ever. The item now carries the outcome summary and is the single durable arbiter; the record is created from it idempotently, and any call that finds the gap repairs it.
+- Corrections to the spec: `approvals-index` has **three** writers (the Approval service, the broker, the runner), not four; the lock-race drills are L6 drills, not L3 (L3 is agent evaluation); the runner's fresh per-step read covers the stop flag as well, so the execution-plane switch also stops at the next step. The register of spikes grew by five days: S-ID-3 9 to 12, S-ORCH-1 8 to 9, S-ACT-1 3 to 4, so 32 boxed spikes now carry 106 days of limits (bold 62, plain 44).
+- **Cost impact: none that the model resolves.** The model is unchanged and `--check` is current. A `runs` container on serverless costs request units only (a handful of point writes and reads per leaf call, a few hundred request units a case, well under a thousandth of a cent), the per-step fresh reads are point reads, the Verifier's Activity Log reads and the standing poll are free API calls, and no vault was added because the sweeper signs nothing. What the round did add is length: about 16,000 words over 130,000, most of it in 07, 06, 09, 14 and 10, because each mechanism has to be stated where it is built, tested and drilled.
+
+### 6.5 The bounded re-check
+
+_To be filled in when T-A's second turn has returned (the report is `closure-ta-2.md`)._
+
+### 6.6 Statuses after the closure round
+
+| ADR | Status | Why |
+|---|---|---|
+| 07 Execution identities | **Proposed** | T-A disagreed at `87925dd`; every defect is accepted or adjusted and fixed in the text, but the mechanics are unproven until S-ID-1, S-ID-3 and S-ACT-1 have run; nothing changes an estate before then |
+| 08 Approvals | **Proposed** | as 07: the click-bound sign-in, the claims and the confidential-client flow are unproven until S-ID-3 and S-ACT-1 |
+| 33 The spine | **Proposed** | T-A agreed with changes; registration and arbitration are now specified, and the leaf-call rule stays unproven until S-HOST-1 and S-ORCH-1 |
+| 26 The reservation is the budget | Accepted with changes | T-B agreed with changes; the usage-record id and reserved against billed are measurements (S-COST-1, S-GW-1) |
+| 06 Agent identities and eleven groups | Accepted with changes | T-B agreed; the label records that changes were made, and the check now pins the roster, the counts and the phases |
+| 12 The operational store | Accepted with changes | sixteen containers; `runs` and the fresh reads are recorded |

@@ -865,6 +865,118 @@ def check_profile(text: str) -> list[str]:
     return errs
 
 
+NUMWORDS = {w: i for i, w in enumerate("zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen "
+                                       "sixteen seventeen eighteen nineteen twenty".split())}
+COUNT_PHRASES = {"roles": r"(?:agent\s+)?roles", "identities": r"(?:hosted-agent\s+|agent\s+)?identities",
+                 "groups": r"(?:trust\s+|contract\s+)?groups", "contracts": r"(?:access\s+)?contracts"}
+
+
+def doc_roster(text05: str) -> list[tuple[str, str]]:
+    """Design 05 section 2: one (agent, group) per row of the roster table; the Librarian has two rows."""
+    m = re.search(r"## 2\. The roster(.*?)(?=\n## |\Z)", text05, re.S)
+    rows: list[tuple[str, str]] = []
+    if not m:
+        return rows
+    for line in m.group(1).splitlines():
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        if len(cells) >= 2 and re.fullmatch(r"\*\*[^*]+\*\*", cells[0]):
+            rows.append((cells[0].strip("*").strip(), cells[1].strip("` ")))
+    return rows
+
+
+def doc_agents(text04: str) -> dict[str, set[str]]:
+    """Design 04 section 4.3: per contract the agents of its second column (a note such as 'on T3 cases' is not an agent)."""
+    m = re.search(r"### 4\.3 The access contracts(.*?)(?=\n#{2,4} |\Z)", text04, re.S)
+    out: dict[str, set[str]] = {}
+    if not m:
+        return out
+    for line in m.group(1).splitlines():
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        if len(cells) >= 5 and re.fullmatch(r"`[a-z-]+`", cells[0]):
+            toks = [t.strip() for t in cells[1].split(",")]
+            out[cells[0].strip("`")] = {t for t in toks if t and not t.lower().startswith("on ")}
+    return out
+
+
+def check_roster(text04: str, text05: str) -> tuple[list[str], dict[str, int]]:
+    """The roster of 05 section 2 and the Agents column of 04 section 4.3 must name the same agents under the same
+    groups; the counts that follow from them (roles, identities, groups, contracts) are returned for check_counts."""
+    roster, agents = doc_roster(text05), doc_agents(text04)
+    if not roster:
+        return ["05 section 2: the roster table was not found"], {}
+    if not agents:
+        return ["04 section 4.3: the access-contract table was not found"], {}
+    errs: list[str] = []
+    listed: dict[str, set[str]] = {}
+    for contract, labels in agents.items():
+        if not labels:
+            errs.append(f"04 section 4.3: contract `{contract}` lists no agent")
+        for lab in labels:
+            listed.setdefault(lab, set()).add(re.sub(r"-(pub|eu)$", "", contract))
+    for lab, grp in roster:
+        if lab not in listed:
+            errs.append(f"05 section 2: `{lab}` (group {grp}) is in no contract's Agents column of 04 section 4.3")
+        elif listed[lab] != {grp}:
+            errs.append(f"05 section 2: `{lab}` is in group {grp} but 04 section 4.3 lists it under {sorted(listed[lab])}")
+    known = {lab for lab, _ in roster}
+    for lab in sorted(set(listed) - known):
+        errs.append(f"04 section 4.3: `{lab}` is listed for a contract but is not in the roster of 05 section 2")
+    counts = dict(roles=len({re.sub(r"\s*\(.*\)$", "", lab) for lab, _ in roster}), identities=len(roster),
+                  groups=len({g for _, g in roster}), contracts=len(agents))
+    return errs, counts
+
+
+def check_counts(docs: dict[str, str], counts: dict[str, int]) -> list[str]:
+    """Every document that states how many agent roles, identities, groups or contracts there are must state the
+    number that the tables give. Numbers below ten are other things (the crew of three, the two contracts of examine);
+    'the other thirteen identities' is the identities of the reasoning project, two fewer."""
+    tok = "|".join(list(NUMWORDS) + [r"\d+"])
+    errs: list[str] = []
+    for name, text in sorted(docs.items()):
+        for what, tail in COUNT_PHRASES.items():
+            for m in re.finditer(rf"\b({tok})[*_]{{0,2}}\s+{tail}\b", text, re.I):
+                t = m.group(1).lower()
+                n = int(t) if t.isdigit() else NUMWORDS[t]
+                if n < 10:
+                    continue
+                if what == "identities" and n == counts["identities"] - 2 and "other" in text[max(0, m.start() - 12):m.start()].lower():
+                    continue
+                if n != counts[what]:
+                    errs.append(f"{name}: says '{m.group(0)}' but the tables give {counts[what]} {what}")
+    return errs
+
+
+def doc_pipeline_phases(text11: str) -> dict[str, int]:
+    """Design 11 section 3, 'The pipelines read the phase profile': the first phase named for each environment in the
+    sentence 'DEV in phases 0 and 1; DEV, then PROD in shadow, from phase 2; DEV, TEST and PROD from phase 3 ...'."""
+    m = re.search(r"exists in the profile\*{0,2}:\s*(.*?);\s*never the Lab", text11, re.S)
+    first: dict[str, int] = {}
+    if not m:
+        return first
+    for clause in m.group(1).split(";"):
+        n = re.search(r"(?:from|in) phases?\s+(\d)", clause)
+        if not n:
+            continue
+        for tok, env in (("DEV", "dev"), ("TEST", "test"), ("PROD", "prod")):
+            if re.search(rf"\b{tok}\b", clause):
+                first[env] = min(first.get(env, int(n.group(1))), int(n.group(1)))
+    return first
+
+
+def check_pipeline_phases(text11: str) -> list[str]:
+    """The pipelines paragraph of 11 section 3 must put each environment in the phase that 14 section 4 and the model do."""
+    got = doc_pipeline_phases(text11)
+    if not got:
+        return ["11 section 3: the sentence 'A release deploys to the next environment that exists in the profile: ...; never the Lab' was not found"]
+    errs = []
+    for env in ("dev", "prod", "test"):
+        if env not in got:
+            errs.append(f"11 section 3: the pipelines paragraph does not say from which phase the {env.upper()} environment exists")
+        elif got[env] != FIRST_PHASE[env]:
+            errs.append(f"11 section 3: the pipelines paragraph creates {env.upper()} from phase {got[env]}, the model prices it from phase {FIRST_PHASE[env]}")
+    return errs
+
+
 def check_rows(scenario: str, rows: list[dict], expected: dict[str, set[str]] | None = None) -> list[str]:
     """Every declared contract has a quota in every environment where it has planned work, a quota never blocks the
     work it was derived from, and no quota exists for an environment that the scenario never creates or for a PROD
@@ -898,9 +1010,10 @@ def check_rows(scenario: str, rows: list[dict], expected: dict[str, set[str]] | 
     return errs
 
 
-def validate(model: Model, doc04: str | None = None, doc14: str | None = None) -> list[str]:
+def validate(model: Model, doc04: str | None = None, doc14: str | None = None, docs: dict[str, str] | None = None) -> list[str]:
     """A quota that blocks planned work, a contract without a row, an environment the phase profile does not create,
-    or a summed cap far above the plan is a defect."""
+    or a summed cap far above the plan is a defect; so is a roster, a count or a pipelines paragraph that disagrees
+    with the tables (design 04 section 4.3, 05 section 2, 11 section 3, 14 section 4)."""
     errs = []
     for n in SCENARIOS:
         d = model.scenario(n)
@@ -916,6 +1029,12 @@ def validate(model: Model, doc04: str | None = None, doc14: str | None = None) -
         errs.extend(check_contracts(doc04))
     if doc14 is not None:
         errs.extend(check_profile(doc14))
+    if docs is not None:
+        roster_errs, counts = check_roster(docs.get("04-landing-zone-and-citadel.md", ""), docs.get("05-agents-and-orchestration.md", ""))
+        errs.extend(roster_errs)
+        if counts:
+            errs.extend(check_counts(docs, counts))
+        errs.extend(check_pipeline_phases(docs.get("11-delivery-and-operations.md", "")))
     return errs
 
 
@@ -973,6 +1092,58 @@ def selftest(model: Model) -> int:
         print(f"  {'caught' if found else 'MISSED'}: {label}")
     for label, text in profile_cases.items():
         found = bool(check_profile(text))
+        ok &= found
+        print(f"  {'caught' if found else 'MISSED'}: {label}")
+
+    roster_doc = ("## 2. The roster\n\n| Agent | Group | Alias |\n|---|---|---|\n| **Scholar** | study | x |\n| **Librarian (Atlas)** | curate | x |\n"
+                  "| **Librarian (lessons)** | govern | x |\n| **Auditor** | govern | x |\n| **Examiner** | examine | x |\n\n## 3. next\n")
+    agents_head = "### 4.3 The access contracts\n\n| Contract | Agents | Data class | Aliases | Quota | Safety |\n|---|---|---|---|---|---|\n"
+    agents_rows = ["| `study` | Scholar | public | reason | q | s |", "| `curate` | Librarian (Atlas) | public | reason | q | s |",
+                   "| `govern` | Auditor, Librarian (lessons) | eu | reason | q | s |", "| `examine-pub` | Examiner, on synthetic estates | public | reason | q | s |",
+                   "| `examine-eu` | Examiner, on T3 cases | eu | reason | q | s |"]
+    agents_doc = agents_head + "\n".join(agents_rows) + "\n\n### 4.4 next\n"
+    roster_cases = {
+        "an agent that 04 lists under another group": agents_doc.replace("Auditor, Librarian (lessons)", "Librarian (lessons)").replace("| Scholar |", "| Scholar, Auditor |"),
+        "an agent missing from the Agents column": agents_doc.replace("| Scholar |", "| |"),
+        "an agent in 04 that the roster does not know": agents_doc.replace("| Scholar |", "| Scholar, Phantom |"),
+    }
+    base_errs, counts = check_roster(agents_doc, roster_doc)
+    ok &= not base_errs and counts == dict(roles=4, identities=5, groups=4, contracts=5)
+    print(f"clean roster fixtures: {'pass' if not base_errs and counts else 'FAIL'}")
+    for label, text04 in roster_cases.items():
+        found = bool(check_roster(text04, roster_doc)[0])
+        ok &= found
+        print(f"  {'caught' if found else 'MISSED'}: {label}")
+    found = bool(check_roster(agents_doc, "# nothing here\n")[0])
+    ok &= found
+    print(f"  {'caught' if found else 'MISSED'}: no roster table at all")
+    big = dict(roles=14, identities=15, groups=11, contracts=12)
+    count_cases = {
+        "prose that says thirteen roles": "We have thirteen roles.",
+        "prose that says 16 identities": "all 16 identities are listed",
+        "prose that says twelve groups": "in twelve groups",
+        "prose that says fourteen contracts": "the fourteen contracts",
+        "prose that bolds a wrong number": "Fourteen roles and **sixteen** identities (the Librarian is deployed twice)",
+    }
+    clean_count = "Fourteen agent roles, fifteen hosted-agent identities, eleven groups, twelve contracts, the other thirteen identities, three roles in the crew."
+    count_ok = not check_counts({"a.md": clean_count}, big)
+    ok &= count_ok
+    print(f"clean count fixtures: {'pass' if count_ok else 'FAIL'}")
+    for label, text in count_cases.items():
+        found = bool(check_counts({"a.md": text}, big))
+        ok &= found
+        print(f"  {'caught' if found else 'MISSED'}: {label}")
+    pipe = "**A release deploys to the next environment that exists in the profile**: DEV in phases 0 and 1; DEV, then PROD in shadow, from phase 2; DEV, TEST and PROD from phase 3 at Team scale; never the Lab, where experiments run."
+    pipe_cases = {
+        "TEST created in phase 2 by the pipelines paragraph": pipe.replace("DEV, TEST and PROD from phase 3", "DEV, TEST and PROD from phase 2"),
+        "PROD created in phase 3 by the pipelines paragraph": pipe.replace("DEV, then PROD in shadow, from phase 2", "DEV, then DEV in shadow, from phase 2"),
+        "no pipelines sentence at all": "# nothing here\n",
+    }
+    pipe_ok = not check_pipeline_phases(pipe)
+    ok &= pipe_ok
+    print(f"clean pipelines fixture: {'pass' if pipe_ok else 'FAIL'}")
+    for label, text in pipe_cases.items():
+        found = bool(check_pipeline_phases(text))
         ok &= found
         print(f"  {'caught' if found else 'MISSED'}: {label}")
     return 0 if ok else 1
@@ -1167,8 +1338,9 @@ def main() -> int:
         if args.check:
             doc04 = path.parent / "04-landing-zone-and-citadel.md"
             doc14 = path.parent / "14-next-phases.md"
+            docs = {p.name: p.read_text(encoding="utf-8") for p in sorted(path.parent.glob("*.md"))}
             errs = validate(model, doc04.read_text(encoding="utf-8") if doc04.exists() else "",
-                            doc14.read_text(encoding="utf-8") if doc14.exists() else "")
+                            doc14.read_text(encoding="utf-8") if doc14.exists() else "", docs)
             for e in errs:
                 print(f"{path}: {e}", file=sys.stderr)
             if m.group(0) != block:
@@ -1176,7 +1348,8 @@ def main() -> int:
                 return 1
             if errs:
                 return 1
-            print(f"{path}: cost block is current; quotas consistent with the plan, with the contracts of 04 section 4.3 and with the phase profile of 14 section 4")
+            print(f"{path}: cost block is current; quotas consistent with the plan, with the contracts and agents of 04 section 4.3, "
+                  f"with the roster and the counts of 05 section 2, with the pipelines of 11 section 3 and with the phase profile of 14 section 4")
             return 0
         path.write_text(text[: m.start()] + block + text[m.end():], encoding="utf-8")
         print(f"updated {path}")

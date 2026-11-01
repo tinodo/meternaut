@@ -28,9 +28,9 @@ Three passes, nine models, every lens on a different model each time. **Round 1*
 - **Foundry layout**: two projects per account, not nine; environments and private accounts are created in the phase that needs them.
 
 ### Tools and rules
-- [`tools/cost-model.py`](tools/cost-model.py): rebuilt; generates the cost tables of the design and the hub's quotas; `--check` also guards the access-contract table of 04 §4.3 (names, aliases, pools, PROD products) and the phase profile of 14 §4; `--self-test` holds 17 negative fixtures.
+- [`tools/cost-model.py`](tools/cost-model.py): rebuilt; generates the cost tables of the design and the hub's quotas; `--check` also guards the access-contract table of 04 §4.3 (names, aliases, pools, PROD products, and its Agents column against the roster of 05 §2), every number of roles, identities, groups and contracts that a document states, the pipelines paragraph of 11 §3 and the phase profile of 14 §4; `--self-test` holds 29 negative fixtures.
 - [`tools/check-docs.py`](tools/check-docs.py): a design scope (links, anchors, diagrams, banned stale phrases, counts).
-- [`AGENTS.md`](AGENTS.md) rule 11 gains: say what a compromised party can still do; numbers in 12 come from the model; sweep the seams after a large parallel revision.
+- [`AGENTS.md`](AGENTS.md) rule 11 gains: say what a compromised party can still do; numbers in 12 come from the model; sweep the seams after a large parallel revision; ask for closure before tagging.
 
 ## v4 — 2026-10-31 — rebuilt around a learning system (tag `ideation-v4`)
 
