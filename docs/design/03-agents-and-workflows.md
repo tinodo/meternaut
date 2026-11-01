@@ -143,7 +143,7 @@ flowchart LR
 
 ## 6. What a person receives
 
-The Diplomat writes every message, and a workflow sends it after checks: the recipient comes from the directory, never from the model, the rate limit and quiet hours hold, and a content check passes that fails any draft with a number no tool computed. Every message says it is AI-written and offers a way to reach a person ([security](06-security-and-governance.md) covers the transparency duty). The Monday digest follows the same rules.
+The Diplomat writes every message, and a workflow sends it after checks: the recipient comes from the directory, never from the model, the rate limit and quiet hours hold, and a content check passes that fails any draft with a number no tool computed. The Monday digest follows the same rules.
 
 **The recommendation card** has ten parts. The example is a database compute size.
 
@@ -187,7 +187,7 @@ The ladder is per domain and scope. A domain is a kind of Action, such as resizi
 
 A credential is a human-written policy record: a domain, a scope, a value cap, an expiry and conditions such as "never in a change freeze". The Approval service evaluates it in code against facts the model cannot set: the management-group path, Azure Policy state, the Entra owner, the resource type, and the SKU and cost read from Azure. Tags, names and Lessons never satisfy it, and neither does a claim that is disputed or not `bill-observed` for the meters concerned ([evidence levels](04-knowledge-and-learning.md)). Each autopilot run still writes a single-use authorization record, and a person reviews a sample of autopilot decisions.
 
-Credentials cover R1 and lower-value R2 Actions only. **They never cover purchases**: a purchase is prepared by the AI, approved by two named people with different hats, and then executed by the AI on their say-so.
+Credentials cover R1 and lower-value R2 Actions only. **They never cover purchases** (two people approve each one, [06](06-security-and-governance.md)).
 
 **Narrowing is automatic; widening is human.** If calibration slips, a regret is recorded or a claim the credential relies on is revised, the system steps the domain down to assist and says so. It cannot raise or widen a credential. The report card, the system's scored record ([evaluation](08-testing-and-evaluation.md)), informs the people who grant a credential. It never grants one.
 

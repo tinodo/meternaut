@@ -288,7 +288,7 @@ Storing a lesson is not learning. The system has learned only if something that 
 
 The table does not claim that model weights are trained (not in phase 1) or that memory alone is learning.
 
-**Frozen against updated memory.** To separate learning from luck, [testing and evaluation](08-testing-and-evaluation.md) runs the same sealed cases twice: once with the Atlas, Lessons, Detectors and priors frozen at an earlier date, once with everything learned since. The gap is what learning added, and a negative gap exposes a harmful update. Baselines (retrieval only, an expert-written Detector set, Advisor) and gold labels from [the cost-trap bank](../research/exam-bank-cost-traps.md) are described there.
+**Frozen against updated memory.** [Testing and evaluation](08-testing-and-evaluation.md) runs the same sealed cases twice, once with the Atlas, Lessons, Detectors and priors frozen at an earlier date and once with everything learned since. The gap is what learning added, and a negative gap exposes a harmful update.
 
 The Monday digest makes learning visible (the numbers are illustrative).
 

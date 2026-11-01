@@ -1,6 +1,6 @@
 # Design v2 · Round 2 — disposition
 
-Six independent reviewers (six model families, six lenses) challenged the written design on 2026-11-01, at commit `3543f3b`: [A · learning and the core idea](raw-a-learning.md) (gpt-6-sol), [B · platform facts on Microsoft Learn](raw-b-learn-facts.md) (claude-sonnet-5), [C · security, safety and compliance](raw-c-security.md) (grok-4.6), [D · cost honesty](raw-d-cost.md) (gpt-5.6-sol), [E · consistency, tone and readability](raw-e-consistency.md) (gemini-3.8-flash), [F · a novice who read two documents](raw-f-novice.md) (claude-haiku-5.5). After the fixes, the same reviewers re-read the changed design and looked for holes the fixes had introduced: their replies are in [closure checks](raw-closure-checks.md). This page says, finding by finding, what was accepted, adjusted or rejected, and where the change landed. The design is in [docs/design](../../design/README.md).
+Six independent reviewers (six model families, six lenses) challenged the written design on 2026-11-01, at commit `3543f3b`: [A · learning and the core idea](raw-a-learning.md) (gpt-6-sol), [B · platform facts on Microsoft Learn](raw-b-learn-facts.md) (claude-sonnet-5), [C · security, safety and compliance](raw-c-security.md) (grok-4.6), [D · cost honesty](raw-d-cost.md) (gpt-5.6-sol), [E · consistency, tone and readability](raw-e-consistency.md) (gemini-3.8-flash), [F · a novice who read two documents](raw-f-novice.md) (claude-haiku-5.5). After the fixes, the same reviewers re-read the changed design and looked for holes the fixes had introduced: their replies are in [closure checks](raw-closure-checks.md). A last read-only verification of the closure fixes by gpt-6.1-sol, which reviewed the decisions in Round 1 but not the written design, is in [final verification](raw-final-verification.md). This page says, finding by finding, what was accepted, adjusted or rejected, and where the change landed. The design is in [docs/design](../../design/README.md).
 
 ## What changed
 
@@ -59,7 +59,7 @@ The first fix pass itself introduced defects, which only a second look could cat
 | Queue messages carry no signature (C) | **Adjusted.** A signature does not help against a compromised bot, which sends and holds the Bot Framework credential; Respond caps replies per sender and the residual is stated | 05, 06 |
 | A compromised bot can install the Teams app for anyone (C) | **Accepted.** Residual stated; installs for anyone who is not an owner of record raise an alert | 06, 07 |
 | The private approval page is unreachable off-network, and a silent failure looks like non-approval (C) | **Accepted.** Stated: the button fails and the request expires unapproved; an organisation may publish the page through its own front door | 06 |
-| A stolen on-behalf-of token is replayable until it expires (C) | **Adjusted.** Stated: it is worth only that person's own R1 approvals; R2 and R3 never use it | 06 |
+| A stolen on-behalf-of token is replayable until it expires (C) | **Adjusted, then corrected in the final verification.** First stated as worth only that person's R1 approvals; the wider exposure, a bot that can fetch the token without a tap, is now stated and bounded (see below) | 06 |
 | The invocation schema covers tool arguments only (C) | **Accepted.** One schema for the whole body; unknown fields rejected | 06 |
 | "FOCUS carries both on every line" is false: a purchase or an indirectly related charge may have no resource id (A) | **Accepted.** Confirmed on Learn (FOCUS conformance report); such lines join a profile by meter id and stay unattributed to a workload | 04 |
 | The Prism story promotes a next-day charge to `bill-observed`, against the closed-period rule (A) | **Accepted.** Rewritten | 04 |
@@ -74,6 +74,21 @@ The first fix pass itself introduced defects, which only a second look could cat
 | "On-behalf-of" used before it is defined (E) | **Accepted.** Glossed where it first appears | 05 |
 | "Tap", "bound", "guard metric", "hidden cases", a unit on "a few thousand", unnumbered proof points (F) | **Accepted.** Credential and Approval rows reworded; sealed cases defined; a guard metric glossed; "euros" added; P1 to P10 labelled. Reviewer F's re-read scored clarity, honesty and "keep reading" 4, 4 and 4 (first read: 3, 4 and 3) | README, 01 |
 | Ten new platform claims (B) | **All ten confirmed** on Learn, including the Savings plan purchaser role, the on-behalf-of exchange, the Teams install permission, no stored history with the Invocations protocol, the search SLA replica counts, API Management Standard v2, Flex networking, queue-level roles, the Log Analytics daily cap and the guardrail tool list | none |
+
+## Final verification: the last read
+
+One more reviewer checked only the passages changed since the closure checks. Eight points; each was fixed or stated.
+
+| Finding (reviewer) | Disposition | Landed in |
+|---|---|---|
+| Atlas source quotes reach all five agents, so the Engineer is not text-free (major) | **Accepted.** The `atlas` tool never returns quotes to `engineer` | 05 |
+| The on-behalf-of exchange proves a person's identity, not a fresh tap: a compromised bot that can fetch a signed-in person's token could approve that person's R1 requests without a tap (blocker) | **Accepted in substance; stated and bounded.** The design no longer says the bot cannot approve. R1 is small, reversible and non-production, capped per approver per day; the web page lists each person's approvals; R2 and R3 need a fresh sign-in on the page; P3 tests what a token fetched without a tap can approve. Not adopted: moving every R1 approval to the page (an organisation may choose it, and it is the fallback if P3 fails) | 05, 06, 13 |
+| A compromised bot can forge Teach replies in an owner's name (major) | **Accepted as a stated residual.** A Lesson is scoped, expires, never widens a credential and is shown to its owner. Not adopted: holding every Lesson until confirmed, which would stall the learning loop | 06 |
+| The Agents SDK validates tokens only when authentication and service-URL validation are configured (minor) | **Accepted.** Switched on and tested in CI | 06 |
+| Install, send and uninstall can fall between two snapshots (major) | **Adjusted.** The Microsoft Graph activity log of the bot's identity, an audit trail of every request to Graph, is compared with the live owners of record | 07 |
+| Strict improvement on every memory-changing release blocks price refreshes and safety corrections (major) | **Accepted.** The strict test applies to a release that claims learning | 08 |
+| Verified net savings is defined two ways (major) | **Accepted.** Document 08 uses document 10's definition | 08, 10 |
+| "Every model call" in the Defender sensitivity omits study and sampled scoring (major) | **Accepted.** The model counts every Operate model call and says the dev profile and embeddings are excluded: +€28 / +€192 / +€2,008 a month instead of +€15 / +€165 / +€1,956 | cost model, 10 |
 
 ## Orchestrator spot-checks (2026-11-01)
 
@@ -98,6 +113,7 @@ Facts a reviewer cited were re-checked against the primary source before use.
 | Hosted agents became generally available on a given date | Not claimed beyond the user's list of updates (2026-06-02), which the register links |
 | Foundry guardrail tool list | Verified on the intervention-points page (eight tools including Bing Custom Search; MCP is not supported); the design now lists it with the link |
 | B: ARM what-if needs the same permissions as the deployment | Confirmed |
+| Final verifier: the Microsoft Graph activity log records every request to Graph in a tenant | Confirmed on Learn (it feeds Log Analytics); used for the install check |
 
 ## Residuals the design states and does not remove
 
@@ -105,7 +121,7 @@ Facts a reviewer cited were re-checked against the primary source before use.
 - Terminating an orchestration does not stop an activity already running; a submitted purchase is not recalled.
 - Lessons are written by a code rule inside the `workflows` app; a compromised app could write a false Lesson, which is scoped, expires and never widens a credential.
 - The evaluation profile shares the hub with production; separation is by contract and by negative tests that gate releases.
-- A compromised bot can drop taps, post any text to people who have the app installed and install it for anyone; it cannot approve for anyone else.
+- A compromised bot can drop taps, forge replies in a person's name, post any text to people who have the app installed and install it for anyone; if it can fetch a signed-in person's token it can approve that person's R1 requests without a tap. It cannot approve R2, R3 or a purchase.
 - Search capacity, a Terra Flex price, the language PII price (still UNVERIFIED) and proof point P3 are measured or checked at build time, not decided here.
 
 ## Size budget

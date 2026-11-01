@@ -52,7 +52,7 @@
 
 ## 9. Tools are HTTPS APIs published through the hub as MCP; structured fields only · Accepted
 
-- **Decision.** Free text reaches agents only as a screened, length-capped `untrusted_excerpt`. Our own typed `estate-read` is the default read tool; Azure MCP Server 3.0 is an optional extra (its remote host is Container Apps, settled by P9) and would run with its Read only option and a Reader identity. Tools are pinned and `tools/list` drift is rejected.
+- **Decision.** Free text reaches agents only as a screened, length-capped `untrusted_excerpt`. Our own typed `estate-read` is the default read tool; Azure MCP Server 3.0 is an optional extra settled by P9. Tools are pinned and `tools/list` drift is rejected.
 - **Instead of.** Self-hosted MCP servers on Functions (preview: a switch; the MCP tool trigger is generally available); passing raw tool output into prompts.
 - **Cost · security · reversibility.** Small · cuts the shortest injection paths · high.
 

@@ -119,7 +119,7 @@ SENSITIVITIES = [
     ("Half of Detective and Economist calls stay on `triage`", dict(triage_share=0.5)),
     ("`reason` on GPT-6.1 Terra at its Standard meters (it has no Flex meter, so public study calls leave Flex)", dict(reason_model="terra")),
     ("Foundry bring-your-own agent data", dict(foundry_byo_data=True)),
-    ("Defender for AI Services on every model call", dict(defender_ai=True)),
+    ("Defender for AI Services on every model call of the Operate profile", dict(defender_ai=True)),
     ("Own production hub, API Management Standard v2 (if there is none)", dict(own_hub=True)),
 ]
 
@@ -334,10 +334,15 @@ class Model:
         add("Operate", "Security", "Key Vault", s["kv_ops_10k"] * kv,
             f"one vault; {s['kv_ops_10k'] * 10:,}k operations")
         if k["defender_ai"]:
-            tokens_k = ((case_tokens_in + case_tokens_out) * cases * scale + leads * 3_300 + estate_calls * 5_500) / 1000.0
+            d = STUDY_DOC
+            study_k = (docs_month * (d["triage"][0] + d["triage"][2]) + rel * (d["decode"][0] + d["decode"][2])
+                       + rel * (d["challenge"][0] + d["challenge"][2]) + rel * d["accepted"] * (d["curate"][0] + d["curate"][2]))
+            tokens_k = ((case_tokens_in + case_tokens_out) * cases * scale + leads * (WATCH_CALL[0] + WATCH_CALL[2])
+                        + estate_calls * (ESTATE_CALL[0] + ESTATE_CALL[2]) + study_k
+                        + cases * SAMPLE_SHARE * (JUDGE_CALL[0] + JUDGE_CALL[2])) / 1000.0
             dai = P.get("Microsoft Defender for Cloud", region="Global", product="Microsoft Defender for AI Services", sku="Standard", meter="Standard Tokens")
             add("Operate", "Security", "Defender for AI Services (optional)", tokens_k * dai,
-                f"{tokens_k/1e3:,.0f} M tokens scanned; token-metered")
+                f"{tokens_k/1e3:,.0f} M tokens scanned: every model call of the Operate profile (cases, watch, estate refresh, study, sampled scoring), not the dev profile or embeddings")
         if k["own_hub"]:
             apim = P.get("API Management", product="API Management", sku="Standard v2", meter="Standard v2 Unit")
             eh = P.get("Event Hubs", product="Event Hubs", sku="Standard", meter="Standard Throughput Unit")

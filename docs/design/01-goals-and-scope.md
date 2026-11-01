@@ -20,8 +20,6 @@ So the scarce thing is not detection. It is *knowledge*: how each service really
 | Pay for itself | Verified net savings after the system's own cost; share of managed spend needed to break even ([cost](10-cost-and-finops.md)) | Rise; stay small |
 | Stay open | Share of world knowledge (Atlas, Action catalogue) that is open source; estate knowledge never leaves the organisation | Rise; stays 0 |
 
-How each is measured in practice is in [testing and evaluation](08-testing-and-evaluation.md).
-
 ## 3. Who it serves
 
 | Role | What they do | What they get |
