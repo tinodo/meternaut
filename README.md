@@ -62,7 +62,7 @@ The idea has become a design: **a deterministic spine with agentic leaves** on M
 ## Status
 
 - **Ideation (v4)** — the north star, a deep-dive per faculty, and a plan for what to design next. Frozen as the north star the design answers to.
-- **Design (phase 1)** — `design-v1`; see the [design index](docs/design/README.md). Three review passes with nine models are in [`docs/reviews/`](docs/reviews/README.md). Still no code: the design phase produces architecture, decisions, a cost model and a test strategy, and nothing that changes an estate is to be switched on before its spikes pass.
+- **Design (phase 1)** — `design-v1`; see the [design index](docs/design/README.md). Three review passes and a closure check, with nine models, are in [`docs/reviews/`](docs/reviews/README.md). Still no code: the design phase produces architecture, decisions, a cost model and a test strategy, and nothing that changes an estate is to be switched on before its spikes pass.
 - **Private** until the owner says otherwise. **MIT** licensed ([LICENSE](LICENSE)).
 - Constraints from the brief: Microsoft technology only · aligned with the Cloud Adoption Framework and Well-Architected Framework · open source · fully AI-infused · human-in-the-loop · not a chatbot.
 - Earlier versions (v1 → v3.2.1) are preserved in [`docs/_archive/`](docs/_archive/) (`round-1-v1`, `round-2-v2`, `round-3-v3.2.1`) and as the git tags `ideation-v1` … `ideation-v3.2.1`; see the [changelog](CHANGELOG.md) for why this version replaced them. Every version is reviewed by independent agents before it is called done — the record is in [`docs/reviews/`](docs/reviews/README.md). Rules for anyone — human or agent — working here are in [AGENTS.md](AGENTS.md).
