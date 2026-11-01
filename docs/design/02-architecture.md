@@ -34,11 +34,11 @@ flowchart TB
     act <--> people
 ```
 
-Two rules shape everything. **Agents never write to Azure**: they hold read tools and a few *propose* tools (draft a record, a message, a pull request, a what-if). **Nothing talks to a model or a tool except through the hub**: quotas, safety checks and logs live there, not in each agent.
+Two rules shape everything. **Agents never change the Azure estate**: they hold read tools, three *propose* tools that only the Engineer holds (`plan`, `pr-draft`, `ledger-propose`) and one message-draft tool that the Diplomat holds; a workflow sends what an agent drafts. **Nothing talks to a model or a tool except through the hub**: quotas, safety checks and logs live there, not in each agent. Every component keeps its own state (workflow state, records, the cost lake); only the action plane changes the resources of the estate being managed.
 
 ## 2. Planes and components
 
-| Plane | Components | Runs on | Writes to Azure? |
+| Plane | Components | Runs on | Changes the managed estate? |
 |---|---|---|---|
 | Reasoning | Five hosted agents hosting ten roles ([03](03-agents-and-workflows.md)) | Foundry hosted agents, built with Microsoft Agent Framework | No |
 | Control | Seven workflows: Watch, Case, Study, Estate refresh, Respond, Strategy, Evaluate and grow | Azure Functions, Durable Functions (`workflows` app) | No |
@@ -50,7 +50,7 @@ Two rules shape everything. **Agents never write to Azure**: they hold read tool
 
 ## 3. Five Function apps, one compute family
 
-All of our own code runs on Azure Functions (Flex Consumption, zip deployment): no container registry and no container platform to run. Five apps keep identities and exposure apart. In Operate each app calls out through virtual network integration, so it reaches the stores, the Foundry account and the other apps over private endpoints; only `bot` also takes calls from the public internet.
+All of our own code runs on Azure Functions (Flex Consumption, zip deployment), and the hosted agents also deploy from a zip of source code, so there is no image to build and no container registry or container platform to run ([Learn](https://learn.microsoft.com/azure/foundry/agents/how-to/deploy-hosted-agent-code): Python 3.13 or 3.14, or .NET 10; the container path is for custom runtimes and is not used). Five Function apps keep identities and exposure apart. In Operate each app calls out through virtual network integration, so it reaches the stores, the Foundry account and the other apps over private endpoints; only `bot` also takes calls from the public internet.
 
 | App | Holds | Identity can | Exposed to |
 |---|---|---|---|
@@ -60,7 +60,7 @@ All of our own code runs on Azure Functions (Flex Consumption, zip deployment): 
 | `runner` | Action runner (identities per action family), verifier, a what-if-only function for `plan` | Change Azure within opted-in scopes; record that an approval was consumed | `tools`, for what-if by plan id only: private endpoint. Otherwise nobody |
 | `bot` | The Teams bot endpoint (C# or TypeScript, as the Agents SDK needs) | Call the approval service with the tapper's own token; put replies on an `inbound` queue; post what `workflows` leaves on an `outbound` queue; install itself for a person | Teams, over the public internet: token-validated ([06](06-security-and-governance.md)) |
 
-A workflow that waits days for a person costs nothing while it waits: Durable Functions stores its state and wakes on an event or timer. A hosted-agent session cannot wait, which is why waiting lives in workflows ([03](03-agents-and-workflows.md)). [Hosted agents](https://learn.microsoft.com/azure/foundry/agents/concepts/hosted-agents) · [Flex Consumption](https://learn.microsoft.com/azure/azure-functions/flex-consumption-plan)
+A workflow that waits days for a person runs no orchestration code while it waits: Durable Functions stores its state and wakes on an event or timer (storage transactions and any always-ready instance still bill). A hosted-agent session can idle and resume, but it is deleted after 30 idle days and is not where a person's deadline belongs, so waiting lives in workflows ([03](03-agents-and-workflows.md)). [Hosted agents](https://learn.microsoft.com/azure/foundry/agents/concepts/hosted-agents) · [Flex Consumption](https://learn.microsoft.com/azure/azure-functions/flex-consumption-plan)
 
 ## 4. What goes through the hub, and what does not
 
@@ -99,20 +99,22 @@ sequenceDiagram
         W->>I: answer objections
     end
     W->>P: recommendation card (Explain, Challenge, Teach)
-    alt owner approves
+    alt owner chooses to act
         W->>A: plan and request approval
         A->>P: canonical plan, opaque id
         P-->>A: approve (MFA)
         A->>R: approval record
         R->>R: re-check plan, etags and record, then run
         R-->>W: outcome
-    else owner declines or is silent
-        P-->>W: reason becomes a Lesson
+    else owner declines with a reason
+        P-->>W: the reason becomes a proposed Lesson
+    else no answer
+        W->>W: remind, then park (no Lesson)
     end
     W->>W: verify now, verify savings later
 ```
 
-Every arrow from an agent goes through the hub. The workflow, not an agent, decides to stop the loop (rounds, convergence, budget). If the plan, an etag or the live state no longer matches, the runner **fails closed** and a new plan needs a new approval ([06](06-security-and-governance.md)).
+Every model request and tool call from an agent goes through the hub. The workflow, not an agent, decides to stop the loop (rounds, convergence, budget). If the plan, an etag or the live state no longer matches, the runner **fails closed** and a new plan needs a new approval ([06](06-security-and-governance.md)).
 
 ## 6. The landing zone and the hub
 
@@ -126,7 +128,7 @@ The solution onboards to the **Citadel governance hub of the adopting organisati
 | Monitoring | Central Log Analytics and monitor scope | Diagnostic settings, workbooks, alerts |
 | Policy | Azure Policy and Defender for Cloud baselines | Policy that denies model deployments in the spoke |
 
-**If the organisation has no hub**, the repository's `hub/` instructions deploy the accelerator at a pinned commit. It has no releases and its defaults loosen security (public endpoints, prompt and completion capture), so we override them. Its always-on usage pipeline is its main fixed cost, priced separately in [the cost document](10-cost-and-finops.md). The Publish Contract that exposes tools as MCP is in preview; the fallback is to import the tool API natively in API Management.
+**If the organisation has no hub**, phase 0 adds a `hub/` folder to the repository that deploys the accelerator at a pinned commit. It has no releases and its defaults loosen security (public endpoints, prompt and completion capture), so we override them. Its always-on usage pipeline is its main fixed cost, priced separately in [the cost document](10-cost-and-finops.md). The Publish Contract that exposes tools as MCP is in preview; the fallback is to import the tool API natively in API Management.
 
 ## 7. Two profiles, one codebase
 
@@ -140,7 +142,7 @@ The solution onboards to the **Citadel governance hub of the adopting organisati
 | Roles | **No role on any production scope**; tested in CI | Read roles at onboarded scopes; action roles only where the organisation opts in |
 | AI Search | Free tier | Basic |
 
-The network setting is chosen when the Foundry account is created and cannot be added later. **Moving between profiles means a new account, not a parameter flip.** A pre-release check counts the private endpoints of a short-lived Operate environment against this table: eleven is our own sum, because Learn gives per-resource rules, not a total. Foundry's own agent data can also be bring-your-own (Cosmos DB and Storage in the organisation's tenant); that adds two private endpoints and is a parameter.
+The network setting is chosen when the Foundry account is created and cannot be added later. **Moving between profiles means a new account, not a parameter flip.** A pre-release check counts the private endpoints of a short-lived Operate environment against this table (the total is our own sum of Learn's per-resource rules). Foundry's own agent data can also be bring-your-own (Cosmos DB and Storage in the organisation's tenant); that adds two private endpoints and is a parameter.
 
 The default region is Sweden Central: hosted agents, the hub accelerator and the AI landing zone all list it. It is a default, not a requirement ([delivery](09-delivery-and-operations.md) says how to check).
 

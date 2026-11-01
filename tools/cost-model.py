@@ -413,8 +413,31 @@ def report(prices: Prices) -> str:
     out.append("|---|" + "---|" * len(names))
     for label, key in [("Subscriptions", "subs"), ("Resources", "resources"), ("Resource owners", "owners"),
                        ("Cases that reach an owner a month", "cases"), ("Azure spend under management (EUR a month)", "spend"),
-                       ("Public documents read a day", "study_docs_day"), ("Releases evaluated a month", "eval_releases")]:
+                       ("Public documents read a day", "study_docs_day"), ("Changes evaluated a month", "eval_changes"),
+                       ("Releases evaluated a month", "eval_releases"), ("Safety runs a month", "safety_runs")]:
         out.append(f"| {label} | " + " | ".join(f"{SCENARIOS[n][key]:,}" for n in names) + " |")
+    out.append("")
+    out.append("**Seeded volumes** (starting estimates, replaced by measurement in proof point P10)")
+    out.append("")
+    out.append("| One case that reaches an owner | Calls | Input tokens per call (cached prefix) | Output tokens per call | Model alias | Share of cases |")
+    out.append("|---|---|---|---|---|---|")
+    for agent, calls, tin, tcache, tout, alias, share in CASE_MIX:
+        out.append(f"| {agent} | {calls} | {tin:,} ({tcache:,}) | {tout:,} | `{alias}` | {share:.0%} |")
+    wi, wc, wo = WATCH_CALL
+    sd = STUDY_DOC
+    ei, ec, eo = ESTATE_CALL
+    ji, _, jo = JUDGE_CALL
+    cc, ci, cp, co = COMPONENT_CALLS
+    out.append("")
+    out.append(f"- **Watch:** {LEADS_PER_CASE} leads triaged per case, one `triage` call each ({wi:,} input tokens, {wc:,} of them cached, {wo:,} output).")
+    out.append(f"- **Study:** one `triage` call per public document ({sd['triage'][0]:,} input, {sd['triage'][2]:,} output tokens); {sd['relevant']:.0%} of documents are relevant and get a decode ({sd['decode'][0]:,} input, {sd['decode'][1]:,} of them cached, {sd['decode'][2]:,} output) and a challenge ({sd['challenge'][0]:,} input, {sd['challenge'][2]:,} output); {sd['accepted']:.0%} of those also get a curation call ({sd['curate'][0]:,} input, {sd['curate'][2]:,} output).")
+    out.append(f"- **Estate refresh:** {ESTATE_CALLS_PER_RESOURCE:g} `triage` calls a month per resource ({ei:,} input tokens, {ec:,} of them cached, {eo:,} output).")
+    out.append(f"- **Sampled scoring:** {SAMPLE_SHARE:.0%} of cases, one judge call each ({ji:,} input, {jo:,} output).")
+    (ti, _, to_), (ai, _, ao), (vi, _, vo) = (SAFETY_ROUND_TRIP[x] for x in ("target", "attacker", "evaluator"))
+    out.append(f"- **Evaluation:** {COMPONENT_CASES} component cases per change ({cc} calls each of {ci:,} input tokens, {cp:,} of them cached, and {co:,} output); {E2E_CASES} full cases per release; {SAFETY_ATTACKS:,} attacks per safety run, each a target call ({ti:,} input, {to_:,} output tokens), an attacker call ({ai:,}, {ao:,}) and an evaluator call ({vi:,}, {vo:,}).")
+    out.append("- **Model aliases:** `reason` is GPT-6.1 Sol, `triage` is GPT-6 Luna and `judge` is Mistral Large 3, a different model family from the one it grades.")
+    out.append("- **Prompt caching:** a cached prefix is paid at the cache-write price once per session and at the cached-input price on the other calls of that session. A case opens one session per agent, the Watch and Study jobs open 30 sessions a month, the estate refresh 60, and each evaluation case is its own session.")
+    out.append(f"- **Hosted-agent time:** {CASE_HOSTED_H:g} hours per case including idle tails; a Watch run takes {WATCH_RUN_MIN:g} minutes ({WATCH_RUNS} runs a month), a study document {STUDY_DOC_MIN:g} minutes and an estate call {ESTATE_CALL_MIN:g} minutes.")
     out.append("")
     out.append("**Monthly cost (EUR), Operate profile plus the dev environment**")
     out.append("")
@@ -437,15 +460,17 @@ def report(prices: Prices) -> str:
     out.append("| **Evaluate profile (dev)** | | " + " | ".join(f"**{fmt(base[n]['evaluate'])}**" for n in names) + " |")
     out.append("| **Total** | | " + " | ".join(f"**{fmt(base[n]['total'])}**" for n in names) + " |")
     out.append("")
-    out.append("**What the cost means**")
+    out.append("**What the cost means** (subtotals are computed before rounding, so adding displayed rows can differ by one)")
     out.append("")
     out.append("| | " + " | ".join(names) + " |")
     out.append("|---|" + "---|" * len(names))
-    out.append("| Idle floor of the Operate profile (EUR a month, nobody using it) | " + " | ".join(fmt(base[n]["idle"]) for n in names) + " |")
+    out.append("| Idle floor of the Operate profile (EUR a month, nobody using it: search units, private endpoints, the always-ready Functions instance, Durable state, and the stored share of Cosmos DB and Blob) | " + " | ".join(fmt(base[n]["idle"]) for n in names) + " |")
+    out.append("| of which the stored share of Cosmos DB and Blob (EUR a month) | " + " | ".join(
+        fmt(sum(r["idle"] for r in base[n]["lines"] if r["profile"] == "Operate" and r["label"].startswith(("Cosmos DB", "Blob")))) for n in names) + " |")
     out.append("| Total per case that reaches an owner (EUR) | " + " | ".join(fmt(base[n]["per_case"]) for n in names) + " |")
     out.append("| Break-even: share of managed spend it must save to pay for itself | " + " | ".join(f"{base[n]['breakeven_pct']:.2f} %" for n in names) + " |")
     out.append("| Owner time on cases (hours a month, 5 minutes a case) | " + " | ".join(f"{base[n]['owner_hours']:,.0f}" for n in names) + " |")
-    out.append("| Atlas pull requests to review a month (10 minutes each: hours) | " + " | ".join(
+    out.append("| Atlas pull requests to review a month (documents a day x 30.4 x 15 % relevant x 30 % accepted, 5 claims a pull request; 10 minutes each: hours) | " + " | ".join(
         f"{base[n]['atlas_changes']:,.0f} ({base[n]['reviewer_hours']:,.1f} h)" for n in names) + " |")
     out.append("")
     out.append("**Sensitivities: change in the total (EUR a month)**")

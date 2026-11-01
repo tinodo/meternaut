@@ -60,17 +60,17 @@
     <text x="724" y="280" fill="#60a5fa" font-size="16" font-weight="700" letter-spacing="1.5">CASES · days to weeks</text>
     <text x="724" y="306" fill="#e2e8f0" font-size="14">Investigate, test, decide with an owner, change, verify.</text>
     <text x="724" y="326" fill="#e2e8f0" font-size="14">Most of the work a person sees.</text>
-    <text x="724" y="346" fill="#94a3b8" font-size="12.5" font-style="italic">hypotheses, Briefs, conversations, Moves</text>
+    <text x="724" y="346" fill="#94a3b8" font-size="12.5" font-style="italic">hypotheses, recommendations, conversations, actions</text>
 
     <rect x="700" y="390" width="8" height="96" rx="4" fill="#34d399"/>
     <text x="724" y="410" fill="#34d399" font-size="16" font-weight="700" letter-spacing="1.5">STRATEGY · months</text>
     <text x="724" y="436" fill="#e2e8f0" font-size="14">Architecture shifts, commitments, platform choices,</text>
-    <text x="724" y="456" fill="#e2e8f0" font-size="14">price changes, the next launch.</text>
-    <text x="724" y="476" fill="#94a3b8" font-size="12.5" font-style="italic">design-space exploration, the Time Machine, the Lab's wind tunnel</text>
+    <text x="724" y="456" fill="#e2e8f0" font-size="14">price changes, agreement renewals, the next launch.</text>
+    <text x="724" y="476" fill="#94a3b8" font-size="12.5" font-style="italic">design-space exploration, replays of history, price what-ifs</text>
 
     <rect x="700" y="520" width="8" height="96" rx="4" fill="#a78bfa"/>
     <text x="724" y="540" fill="#a78bfa" font-size="16" font-weight="700" letter-spacing="1.5">LEARNING · always</text>
-    <text x="724" y="566" fill="#e2e8f0" font-size="14">Reading Azure, experiments, exams, re-checking what it</text>
+    <text x="724" y="566" fill="#e2e8f0" font-size="14">Reading Azure, reading bills, evaluation, re-checking what it</text>
     <text x="724" y="586" fill="#e2e8f0" font-size="14">believes. Never stops — and steers the other three.</text>
     <text x="724" y="606" fill="#94a3b8" font-size="12.5" font-style="italic">the Atlas, the Agenda, knowledge CI, the report card</text>
   </g>

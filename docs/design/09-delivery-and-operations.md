@@ -41,12 +41,15 @@ GitHub Actions signs in with [OpenID Connect](https://learn.microsoft.com/azure/
 ```mermaid
 stateDiagram-v2
     state "Pull request" as PullRequest
+    state "Continuous integration" as CI
+    state "Merged to main" as Merged
     state "Dev deploy" as DevDeploy
     state "Evaluation subset" as Evaluation
     state "Release approval" as ReleaseApproval
     state "Prod deploy" as ProdDeploy
     state "Sampled monitoring" as Monitoring
     state "Rolled back" as RolledBack
+    state "On hold" as Hold
     [*] --> PullRequest
     PullRequest --> CI : push
     CI --> PullRequest : a check fails
@@ -103,7 +106,7 @@ Deny settings do not stop deleting a resource group when the stack sits at that 
 | Component | How it is upgraded | How we know, and the way back |
 |---|---|---|
 | Hub | One pinned commit (the accelerator has no releases or tags). Upgrade only with the Gateway Upgrade module (preview; `main.bicep` is for the first deployment): dev contracts, contract tests, then prod | A scheduled job compares `GET /version` and `/version/backend-contract` with the pin; what-if on each contract finds portal edits. Back: re-apply the previous pin |
-| Models | A daily job reads the Models API (`lifecycleStatus`, retirement date) for each alias member and alerts at 120, 90 and 30 days (parameters). Lifecycles differ: GA models 18 months, Anthropic, DeepSeek, Fireworks and Mistral AI 12 ([Learn](https://learn.microsoft.com/azure/foundry/openai/concepts/model-retirements)) | Evaluation subset on the replacement, then a release. A retired model returns `410 Gone`; the alias's fallback member answers meanwhile |
+| Models | A daily job reads the Models List operation (`lifecycleStatus`, retirement date) for each alias member and alerts at 180, 90 and 30 days (parameters). Lifecycles differ: GA models 18 months, Anthropic, DeepSeek, Fireworks and Mistral AI 12 ([Learn](https://learn.microsoft.com/azure/foundry/openai/concepts/model-retirements)) | Evaluation subset on the replacement, then a release. A retired model returns `410 Gone`; the alias's fallback member answers meanwhile |
 | Agent Framework | Core 1.x is GA; the Foundry hosting package is prerelease ([Learn](https://learn.microsoft.com/agent-framework/hosting/foundry-hosted-agent)). A cohort is the package versions tested together, in lock files; a nightly job tests the newest on dev, and adoption is a pull request | Deployed zip hash against the release record. Back: the previous zip, or a thin own adapter around the GA core (P2, [roadmap](13-roadmap.md)) |
 | Durable backend | Azure Storage provider by default. Data cannot move between providers, so a switch to Durable Task Scheduler is a new `workflows` app: new Cases start there and the old app drains ([Learn](https://learn.microsoft.com/azure/durable-task/common/durable-task-storage-providers)) | Instances by status. Back: keep the old app until empty |
 | Orchestration code | Orchestration versioning pins each instance to its starting version; the defaults (`CurrentOrOlder`, `Reject`) keep waiting Cases safe ([Learn](https://learn.microsoft.com/azure/durable-task/common/durable-orchestration-versioning)). Keep the default `Recreate` update strategy; rolling updates (preview) stay off ([Learn](https://learn.microsoft.com/azure/azure-functions/flex-consumption-site-updates)) | Query instances by version before removing an old code path |
@@ -138,10 +141,10 @@ Each playbook below has a runbook with exact commands in `docs/runbooks/`; the f
 | Leaked hub key | Secret-scanner hit; calls without a matching agent token | Rotate with the hub's three-step flow (the contract also needs the agent's token). On misuse, suspend the contract's [API Management subscription](https://learn.microsoft.com/azure/api-management/api-management-subscriptions); unpublishing the product does not block calls | Security reviewer, platform team | New key in Key Vault and the Foundry connection; usage logs reviewed for the window |
 | Compromised runner or approver session | Purchase alarm; runner action with no approval record; sign-in risk alert | Flip the global kill switch (one person). Revoke sessions or disable the family identity. End the purchase identity's time-boxed assignment | Platform team, security reviewer | Compare the audit log with approvals (single-use, plan-bound). Re-enable family by family; the purchase switch needs two people |
 | Poisoned Atlas claim | A bill or outcome contradicts it; a re-check fails; an injected instruction is found | Revert the pull request, rebuild the index, list the Cases that cited it (each step records its Atlas version) | Atlas reviewer | Withdraw or redo those Recommendations; tell owners; add the case to the evaluation |
-| Runaway spend | Quota alerts (429, 403); the daily run-rate trip; budget or anomaly alert | Confirm the trip. Find the contract and Case in hub logs. Suspend that contract's subscription; cancel its orchestrations | Platform team, FinOps lead | Fix the loop; lower the quota; re-enable. The Conductor cannot raise the daily cap |
+| Runaway spend | Quota alerts (429, 403); the daily run-rate trip; budget or anomaly alert | Confirm the trip. Find the contract and Case in hub logs. Suspend that contract's subscription; cancel its orchestrations | Platform team, FinOps lead | Fix the loop; lower the quota; re-enable. The Conductor (the role that ranks open questions and sets budgets, see [agents and workflows](03-agents-and-workflows.md)) cannot raise the daily cap |
 | Wrong action | Effect differs from the prediction; a guard metric breaches; an owner reports it | Switch off the action family. R1 rolled itself back; run the plan's rollback for R2; for R3 the finance-side approver decides | Platform team, resource owner, FinOps lead | A Lesson and the regret in the ledger; fix the template or Detector; re-enable after an evaluation |
 | Hub outage | `/version` probe or canary call fails | Confirm with the hub owner. Workflows queue; the digest says paused; no fallback to direct model access | Platform team | Resume queued Cases after probe and canary pass; if the hub is ours, redeploy the pinned commit |
-| Model retirement | Alert at 120, 90 or 30 days; `410 Gone` | The alias's fallback member answers; run the evaluation subset on the replacement | Platform team, FinOps lead | Release the new alias map; keep the old one until retirement |
+| Model retirement | Alert at 180, 90 or 30 days; `410 Gone` | The alias's fallback member answers; run the evaluation subset on the replacement | Platform team, FinOps lead | Release the new alias map; keep the old one until retirement |
 | Teams route down | Card delivery failures; bot health probe | Cards fall back to e-mail with a link to the approval page; nothing runs without approval | Platform team | Resend undelivered cards; let stale requests expire |
 
 **Break-glass.** The adopting organisation's [emergency-access accounts](https://learn.microsoft.com/entra/identity/role-based-access-control/security-emergency-access) cover tenant lockout; this system adds none. Any platform-team or security member can flip a kill switch alone; lifting the purchase switch takes two people, so no single break-glass account can re-enable purchases. Deploying outside the pipeline needs a time-boxed role elevation, an alert and a next-day review.
@@ -177,21 +180,21 @@ What each part needs, as facts:
 | Need | Fact |
 |---|---|
 | Azure subscriptions | The solution: one per environment, dev with no role on production. The estate: the scopes to read |
-| A hub | The organisation's Citadel hub, or `hub/` deploys the accelerator (Owner, or Contributor plus User Access Administrator) |
+| A hub | The organisation's own Citadel governance hub (an API Management gateway: see the [architecture](02-architecture.md)), or `hub/` deploys the accelerator (Owner, or Contributor plus User Access Administrator) |
 | Entra permissions | Create app registrations and assign app roles (agent identities, federated identity credentials) |
 | Entra ID P1 | Conditional Access with authentication context on the R2 and R3 approval page ([Learn](https://learn.microsoft.com/entra/identity/conditional-access/overview#license-requirements)) |
 | Entra ID Governance or P2 | Access reviews; PIM for human admin roles (PIM cannot make service principals eligible) |
 | Microsoft 365 | Teams cards; an Exchange Online shared mailbox. `Mail.Send` as an application permission sends as any user: scope the app with [Exchange RBAC for Applications](https://learn.microsoft.com/exchange/permissions-exo/application-rbac). Without it: the web page |
-| Cost data | Owner on the scope (Contributor for own exports) creates exports; a firewalled storage account also needs Owner on it during creation, and trusted-service access ([Learn](https://learn.microsoft.com/azure/cost-management-billing/costs/tutorial-improved-exports)) |
+| Cost data | Exports need Owner on the scope (Contributor for own exports) or a billing role at billing scope; a firewalled storage account also needs Owner on it during creation, and trusted-service access ([Learn](https://learn.microsoft.com/azure/cost-management-billing/costs/tutorial-improved-exports)). With Cost Management Reader alone, the system reads through the Cost Details or Query API ([agreements and access](14-agreements-and-access.md)) |
 | Network (Operate) | A delegated subnet in the Foundry account's region (/27 minimum, /24 recommended), private DNS, a runner inside the network |
 
 The steps, in order:
 
 | # | Step | Who | Done when |
 |---|---|---|---|
-| 1 | Choose scopes and data boundary. Give the read-only identities Reader, Cost Management Reader and Monitoring Reader (Log Analytics Reader where logs are read) there | Platform team, FinOps lead; estate owner deploys the onboarding module | The scope list is a parameter file in `infra/`; a read works and a write fails |
-| 2 | Cost exports (FOCUS) to the cost lake | Estate owner | The first export lands; the ingestion manifest lists it |
-| 3 | Directory mapping: which Entra groups are owners, FinOps and approvers; which tags are hints, never authority | Platform team, estate owner | Ten sample resources resolve to named owners; the rest become questions |
+| 1 | Choose scopes and data boundary. Give the read-only identities Reader, Cost Management Reader and Monitoring Reader (Log Analytics Reader where logs are read) there. The Estate refresh workflow probes each scope and stores its capability profile | Platform team, FinOps lead; estate owner deploys the onboarding module | The scope list is a parameter file in `infra/`; a read works and a write fails; every scope has a profile |
+| 2 | Cost data into the cost lake by the best path the profile shows: exports, else the Cost Details or Query API | Estate owner | The first run lands; the ingestion manifest lists it |
+| 3 | Directory mapping: which Entra groups are owners, FinOps and approvers; the billing owner and the partner contact, where purchases are to be requested; which tags are hints, never authority | Platform team, estate owner | Ten sample resources resolve to named owners; the rest become questions |
 | 4 | Channels (Teams app for the owner group, sender mailbox) and the first Estate model | Platform team, Microsoft 365 admin | A test card reaches a named owner; counts match Resource Graph |
 | 5 | First digest | FinOps lead | On time; agrees with Cost Management |
 | 6 | First Case, advice-only: no action role exists | Resource owner | Reaches Lesson and ledger with no change in Azure |
@@ -201,4 +204,4 @@ Purchases (R3) are a separate opt-in in phase 4. Offboarding reverses steps 7 to
 
 ## 10. Operating costs and budgets
 
-Each of the solution's own subscriptions gets a budget and a [cost anomaly alert](https://learn.microsoft.com/azure/cost-management-billing/understand/analyze-unexpected-charges#create-an-anomaly-alert), as Bicep, with thresholds as parameters. Budgets only alert and arrive late; the hard stops are in [safeguards and drift](07-safeguards-and-drift.md). The subscriptions are onboarded as an estate, so the system opens Cases about its own bill. Costs and levers are in [the cost document](10-cost-and-finops.md); this document adds no figures.
+Each of the solution's own subscriptions gets a budget and a [cost anomaly alert](https://learn.microsoft.com/azure/cost-management-billing/understand/analyze-unexpected-charges#create-an-anomaly-alert), as Bicep, with thresholds as parameters. Budgets only alert and arrive late; the hard stops are in [safeguards and drift](07-safeguards-and-drift.md). The subscriptions are onboarded as an estate, so the system opens Cases about its own bill. Costs and levers are in [the cost document](10-cost-and-finops.md).

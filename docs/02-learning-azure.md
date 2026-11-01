@@ -1,59 +1,30 @@
 # Studying Azure — how the AI learns Azure's economics
 
 > **What this answers:** *How does the AI learn about Azure services — including new ones? How does it know what drives a charge? How does it stay right while Azure keeps changing?*
-> Part of the [north star](01-north-star.md). Everything here is idea-level: we describe what the system must be able to do and why it should work, not how it is built.
+> Part of the [north star](01-north-star.md), whose [glossary](01-north-star.md#glossary) defines the capitalised terms and whose [cast](01-north-star.md#10-the-cast) names the agents. Idea-level: what the system must be able to do and why it should work, not how it is built. Nothing is built yet: every example here is invented or worked by hand.
+
+Studying Azure is four steps, repeated forever: **read** what Microsoft publishes (§3), **decode** every meter with the Cost Grammar (§2), **check against the money** (§4) and **keep fresh** (§5 and §7).
 
 ---
 
 ## 1. What it means to "know" a service
 
-Knowing a service is not remembering its marketing page. It is being able to answer, for any resource of that service, in any estate:
+Knowing a service means being able to answer, for any resource of that service, in any estate (one customer's Azure environment):
 
-- **How does this thing charge me — exactly?** Which meters, in which units, with what granularity, minimums and delays?
-- **What drives each charge?** What would make it go up or down?
+- **How does this thing charge me — exactly?** Which meters, units, granularity, minimums and delays?
+- **What drives each charge?** What makes it go up or down?
 - **What can I change — and what does each change trade away?**
-- **How can I tell whether what I pay for is actually needed?** Which signal shows real demand — and is there a blind spot where no signal exists?
+- **How can I tell it is actually needed?** Which signal shows real demand — and where is the blind spot with none?
 - **What surprises are waiting?** Hidden meters, defaults, multiplicative effects, one-way doors.
-- **How sure are we — and for whom?** Where did each answer come from, in which *scope* was it checked (region, offer, load, date), and when was it last checked? A claim verified in a Lab is not a claim verified on *your* bill: [the learning contract](11-the-learning-contract.md#2-verified-has-a-scope) keeps the two apart.
+- **How sure are we — and for whom?** Where did each answer come from, in which *scope* does it hold (region, offer, load, date), and when was it last checked? A price list is not a bill, and one customer's bill is not another's: [the learning contract](09-the-learning-contract.md) keeps them apart.
 
-The Atlas holds that knowledge as a **Service Cost Profile** per service. A profile is a dossier, written for humans, built for machines, and backed by receipts.
-
-| Section of a profile | What it holds |
-|---|---|
-| **Identity and lifecycle** | the service, its SKUs and features, regions, preview/GA/retiring status, version history |
-| **How it bills** | every meter in plain words: the mechanism (see the grammar below), the unit, the granularity, minimums, rounding, delays |
-| **What drives the bill** | which meters dominate, and what moves them |
-| **The knobs** | each lever and what it trades: latency, resilience, security, effort, reversibility |
-| **The tells** | the signals that reveal over-provisioning, dormancy or inefficiency — and the **blind spots** where Azure exposes no signal |
-| **Traps and surprises** | meters that appear when a switch is flipped; things that keep billing after the parent is gone; one-way doors |
-| **Interactions** | what it drags in from other services (connectivity, diagnostics, replication, egress) |
-| **Discount interplay** | how commitments, licence benefits and negotiated terms apply |
-| **Evidence** | for every line: sources, quotes, dates, the scope it was tested in (region, offer, load), the experiments that verified it, a confidence |
-| **Open questions** | what the system does not yet know — and has queued to find out |
-
-### A profile fragment (the service is invented)
-
-```
-SERVICE COST PROFILE — Azure Prism (invented, for illustration)     v0.2 · provisional · mechanism-verified in the Lab scope only
-How it bills
-  Prism Unit ........... capacity    · per started hour, from provisioning to deletion   VERIFIED  lab #212
-  Replica .............. multiplier  · every replica multiplies Prism Units               VERIFIED  lab #215
-  Query Unit ........... consumption · per 1,000 queries                                 doc only
-  Snapshot storage ..... stock       · GB-month; keeps billing after the index is deleted VERIFIED  lab #217
-  Private-link add-on .. coupling    · per endpoint-hour plus data processed             doc only
-  Preview price ........ time cliff  · free until the announced date, then billed         doc + price list
-The knobs     units · replicas · snapshot retention · region · tier
-The tells     capacity → unit utilisation metric   stock → snapshot age and count
-Blind spot    no metric separates cached from uncached queries → query cost cannot be attributed to callers
-Traps         scaling down does not refund the started hour · purge snapshots when deleting an index
-Open          does the private-link add-on bill when the endpoint is disconnected?  → experiment queued
-```
+The **Atlas** — the open, versioned map of how Azure charges that the system builds and tends — holds that knowledge as a **Service Cost Profile** per service: a dossier written for humans, built for machines, and backed by **receipts** (the source, quote and date behind every line). A profile holds **identity and lifecycle** (SKUs, regions, preview, GA or retiring); **how it bills** (every meter in plain words: mechanism, unit, granularity, minimums, delays); **what drives the bill**; **the knobs** and what each trades; **the tells** (signals of waste) and the **blind spots** where Azure exposes none; **traps and surprises**; **interactions** with other services; **discount interplay**; the **evidence level and scope** of every line; and **open questions**.
 
 ---
 
 ## 2. The Cost Grammar — how it reasons about services it has never seen
 
-The Atlas can grow only as fast as the AI can *understand* meters. The **Cost Grammar** is what makes understanding general. Every meter, in every service, falls into a small number of **mechanisms** — ways money arises — and each mechanism comes with a built-in question and a built-in kind of evidence.
+The Atlas can grow only as fast as the AI can *understand* meters. The **Cost Grammar** is what makes understanding general. Most meters, in every service, are one or a few of **fourteen mechanisms** — ways money arises — and each mechanism comes with a built-in question and a built-in kind of evidence.
 
 | Mechanism | How the money arises | What waste looks like | Signal of real need | Levers (and what they trade) | A classic trap |
 |---|---|---|---|---|---|
@@ -72,27 +43,29 @@ The Atlas can grow only as fast as the AI can *understand* meters. The **Cost Gr
 | **Allowance** | an included or free amount, then paid | paying for what a free grant would have covered, or sitting just past its edge | usage against the allowance, per period | spread or consolidate use; pick the plan whose grant fits | allowances are often per subscription and per month; each service defines its own scope |
 | **Time cliff** | a price or condition changes on a date | a preview or promotion ending unnoticed; a retiring SKU | the announced date; the resources it touches | plan the move before the date | the free period that quietly stops |
 
-The table is the **seed of a living taxonomy**. If the AI meets a meter that fits no row, it proposes a new mechanism with evidence; the reviewers of knowledge decide whether it earns a place. The grammar learns too.
+The fourteen are the **starting vocabulary** of a living taxonomy, not a closed list. A meter that fits no row is a finding: the AI proposes a new mechanism with evidence, and the reviewers of knowledge decide whether it earns a place. The grammar learns too.
 
 ### When nothing fits — a story (the service is invented)
 
-A new service bills a "burst balance": a little credit accrues every hour the resource is quiet, and use above the baseline spends it. The Cartographer's first guess is **allowance**, a free amount — but that predicts an idle resource never pays extra, and the first Lab probe breaks the prediction: after a quiet night the same burst is free; after a busy afternoon it is billed at three times the rate. Second guess, **tier / step** — wrong too: the price does not jump at a threshold, it depends on *history*. The Experimenter designs a probe that varies only the history (six quiet hours, then six busy ones, the same burst each time), and the meter reproduces.
+*An invented example.* A new service bills a "burst balance": a little credit accrues every quiet hour, and use above the baseline spends it. The Scholar's first guess is **allowance** — but that predicts an idle resource never pays extra, and the first bill lines of teams already running the service say otherwise: after a quiet night a burst is free; after a busy afternoon a burst of the same size costs three times the rate. Second guess, **tier / step** — wrong too: the price does not jump at a threshold, it depends on *history*. The Detective finds the cleanest comparison one estate's bills hold — a burst after six quiet hours and one after six busy ones — and the same pattern appears in the observations other organisations have pooled.
 
-Nothing in the grammar says *a price that depends on a balance that builds up and drains*. The system proposes a new mechanism — **accrual** — attaches the probe as evidence, and tests whether it transfers by predicting which two other credit-style meters in the Atlas should behave the same way. One does. The other turns out to be a **time quantum** effect, so the proposal is narrowed. The reviewers are asked to accept *accrual* as a mechanism of its own, and the exam gains a question built on it that no investigator has seen.
+Nothing in the grammar says *a price that depends on a balance that builds up and drains*. The Librarian proposes a new mechanism, **accrual**, with those observations as evidence, and tests it by predicting which two other credit-style meters should behave the same way. One does; the other is a **time quantum** effect, so the proposal is narrowed. The reviewers decide whether *accrual* earns a place, and the evaluation gains a sealed case built on it, hidden from the system it tests.
 
 ### Decoding a meter
 
-For any meter, the Cartographer answers five questions — and records *how it knows*:
+For any meter, the Scholar answers five questions — and records *how it knows*:
 
 1. **What is the unit, and what does it measure?** (hour, GB-month, scale unit, request batch, seat …)
-2. **Which mechanism is it?** (one or several — many meters are two things at once, and a platform's own units are often *layered* on top of the compute, storage and network underneath, each layer with its own mechanism)
+2. **Which mechanism is it?** One or several: many meters are two things at once, and a platform's own units are often *layered* on the compute, storage and network underneath.
 3. **What would show it is truly needed?** Which telemetry exists? Is there a blind spot?
 4. **What are the levers, and what do they trade away?**
 5. **What surprises does it hide?** Minimums, rounding, delays, coupling.
 
-The *fingerprint* of a meter — its unit of measure, its name, its product and SKU, the property in the resource schema that sets it, the metrics the service emits — is usually enough for a confident first guess. The Lab turns the guess into knowledge.
+The *fingerprint* of a meter — unit of measure, name, product and SKU, the schema property that sets it, the metrics the service emits — is usually enough for a confident first guess. A closed bill line that contains the meter, matched to the usage and the changes behind it, turns the guess into a claim for that estate; until then the guess stays open.
 
 ### The grammar at work on real services (illustrative decodes)
+
+*Worked by hand from Microsoft's published documentation, to show what the grammar should produce. No agent has run them, and no bill has confirmed them.*
 
 | Service and behaviour | Mechanism | The demand question | A lever |
 |---|---|---|---|
@@ -107,164 +80,136 @@ The *fingerprint* of a meter — its unit of measure, its name, its product and 
 | A prepaid reservation | **Commitment** | is the coverage used? | right-size the next term |
 | A capacity that can be paused, where pausing stops compute but storage keeps billing | **Capacity** + **Stock** | what is left running after the pause? | manage the stock separately |
 
-None of these was typed in as a rule. They are what the grammar produces from the meters and the facts — and the [exam bank](research/exam-bank-cost-traps.md) holds the sourced versions as *test questions*, not as a rulebook.
-
-### Laws the AI may discover
-
-From hundreds of experiments the system can look for **laws of Azure billing** — regularities across services — and use them to predict services it has never touched. They are *hypotheses it tests*, never assumptions; for example:
-
-- *"A per-hour meter usually starts at provisioning, not at first use."*
-- *"Billing granularity differs by meter — per second, prorated, or per started hour — so a short-lived resource pays a minimum only where its meter says so."* (every meter's granularity is recorded and tested, never assumed)
-- *"A thing that is stopped but not released often keeps its most expensive meter."*
-- *"Retention features overlap: each keeps changed or deleted data for its own period, so the stock grows with churn × retention, not simply once per feature."*
-
-A law with a good track record makes day-zero learning faster: the first hour of a new service starts with *"which of the laws applies here?"* instead of a blank page.
+The sourced versions are in the [cost-trap bank](research/cost-trap-bank.md), as published regression cases; its status *Verified* means source-verified — found on the cited Microsoft page — not confirmed by a bill.
 
 ---
 
 ## 3. What it reads — and how far it trusts each source
 
-| Kind of source | Examples | What it teaches | Trust |
-|---|---|---|---|
-| **Measured reality** | the Lab's experiments; real bills and usage data from estates | how things *actually* bill | highest |
-| **Machine-readable authoritative surfaces** | the **Retail Prices** list (unauthenticated, all meters, by region and SKU — *list* prices in a base currency, never what a customer pays); **Cost Management exports** (including the open FOCUS dataset where the agreement and scope support it); **Resource Graph** (resources, and a short window of property changes); **metric definitions** (the metrics each resource type documents); the public **resource-provider API specifications** and the **Bicep type definitions** generated from them (the properties and SKU enumerations each service declares) | the meters, the knobs, the signals — *the raw material for the grammar* | high — but they say *what exists*, not *what it means* |
-| **Official documentation** | service pages, pricing pages, limits and quotas, SLAs, architecture and Well-Architected guidance, release notes and announcements — all written in public, version-controlled sources, so **every change is a diff the AI can read** | intent, behaviour, advice | high, but must be tested when load-bearing, contradictory or silent |
-| **Microsoft engineers in public** | talks, blogs, issue discussions | behaviour that documents omit | medium |
-| **The community** | experts' write-ups, FinOps practitioners, open-source repositories (policies, detectors, infrastructure code) | traps seen in the wild | medium-low until verified |
-| **The AI's own memory** | what the language model "remembers" | leads only | **lowest — never a source of a number** |
+| Kind of source | Examples | Trust |
+|---|---|---|
+| **Measured reality** | the estate's own bills and usage data; what happened after changes people made anyway; observations pooled from many organisations (a scope and an aggregate each) | highest, for the scope it was seen in: how things *actually* bill |
+| **Machine-readable surfaces** | published price lists (all meters by region and SKU — *list* prices, never what a customer pays); cost and usage exports, including the open FOCUS format where the agreement and scope support it; the resource inventory and a short window of property changes; metric definitions; the published API specifications and the type definitions generated from them | high, but they say *what exists*, not *what it means*: the raw material for the grammar |
+| **Official documentation** | service and pricing pages, limits and quotas, SLAs, Well-Architected guidance, release notes — written in public, version-controlled sources, so most changes arrive as a diff the AI can read (section 7 covers the rest) | high, but tested when load-bearing, contradictory or silent |
+| **Engineers and the community** | Microsoft engineers' talks, blogs and issue threads; experts' write-ups; FinOps practitioners; open-source policies, detectors and infrastructure code | medium to medium-low until confirmed: they report behaviour that documents omit, and traps seen in the wild |
+| **The AI's own memory** | what the language model "remembers" | **lowest: leads only, never a source of a number** |
 
-Four rules follow from the table:
+Two rules follow from the table:
 
-- **Prices and numbers come from tools, never from memory.** The language model may *explain* a price; a deterministic computation over the price list or the customer's own price sheet *produces* it. A number on a Brief always has lineage.
-- **A document is evidence, not truth.** Two documents that disagree, or a silence about something that matters, always becomes an experiment.
-- **Machine-readable surfaces beat prose** wherever they overlap, because they can be diffed and re-queried automatically.
-- **History is what has been kept.** Native retention is short — property changes are queryable for 14 days, platform metrics are kept for about 93 days — so how far back the AI can look is decided by what a customer exports and retains. Collecting history is part of onboarding, and the first weeks in a new estate are a cold start for replay.
+- **Prices and numbers come from tools, never from memory.** The language model may *explain* a price; a deterministic computation over the price list or the customer's own price sheet *produces* it. A number on a Recommendation has lineage and names its price basis.
+- **A document is evidence, not truth.** Two documents that disagree, or a silence about something that matters, become a question on the Agenda — settled by a closed bill line, never by a guess.
 
 ---
 
 ## 4. From reading to knowing: claims, receipts, life cycle
 
-The Scholar does not write summaries. It extracts **claims**, each a small, checkable statement:
+The Scholar extracts **claims**, each a small, checkable statement, and then **checks them against the money**: a claim stays *documented* — or *price-confirmed*, where a published price list shows the rate — until a real bill line confirms it for an estate. A closed bill line that contains the meter, matched to the usage and changes behind it, settles a disagreement between two documents; unmatched charges leave it disputed. The surprises no page mentions — the delay, the minimum, the rounding, the hidden meter — arrive as charges nobody predicted, and become knowledge.
 
 ```
-CLAIM   "Scaling down does not refund the started hour"
-SCOPE   service: Prism · SKU: all · API: 2026-10-01 · region: Lab region · offer: list price · load: synthetic · as of 2026-11-02
-SOURCES doc A (quote, date) ✗ says refund · doc B (quote, date) ✓ says no refund · lab #214 ✓ no refund
-STATE   Mechanism-verified (this scope) · confidence 0.93 · reviewed by the Skeptic and a person · NOT yet commercially verified for any estate
-RECHECK lab recipe #214 · every 90 days · plus on any change to doc A or B
+CLAIM   "Scaling down does not refund the started hour"      (an invented example: Azure Prism)
+SCOPE   service: Prism · SKU: all · API: 2026-10-01 · regions seen: West Europe, Sweden Central · offers seen: EA, pay-as-you-go · as of 2026-10-27
+SOURCES doc A (quote, date) ✗ says refund · doc B (quote, date) ✓ says no refund
+ATLAS   documented · pooled observation: 5 organisations, closed periods, hour billed · confidence 0.93 · reviewed by the Skeptic and a person
+ESTATE  bill-observed only when that estate's own closed bill agrees; until then its figures for this meter are scenarios
+RECHECK price and document diff every 90 days · on any change to doc A or B · on every new pooled observation
 ```
 
-Claims live a life, not a status:
+A claim moves between these states:
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Heard: extracted from a source, with a receipt
-    Heard --> Corroborated: an independent source agrees
-    Heard --> Disputed: a source disagrees, or is silent
-    Disputed --> Tested: a Lab or real-bill experiment
-    Corroborated --> Tested: load-bearing claims are tested anyway
-    Tested --> MechanismVerified: matches its prediction in a named scope
-    Tested --> Refuted: the world says otherwise
-    MechanismVerified --> Replicated: holds in other regions, agreements, dates
-    MechanismVerified --> CommerciallyVerified: reconciled with one customer's own bill
-    Replicated --> CommerciallyVerified: reconciled with one customer's own bill
-    MechanismVerified --> Stale: a re-check fails, or time runs out
-    Replicated --> Stale
-    CommerciallyVerified --> Stale
-    Stale --> Tested: re-tested
+    state "documented" as Documented
+    state "price-confirmed" as PriceConfirmed
+    state "bill-observed" as BillObserved
+    state "outcome-confirmed" as OutcomeConfirmed
+    [*] --> Heard: extracted, with a receipt
+    Heard --> Documented: reviewed, no source disagrees
+    Heard --> Disputed: a source disagrees or is silent
+    Disputed --> Documented: the sources are reconciled
+    Disputed --> BillObserved: a closed bill line settles it
+    Disputed --> Refuted: a closed bill line says otherwise
+    Documented --> PriceConfirmed: a price list shows the rate
+    Documented --> BillObserved: a closed bill line behaves as predicted
+    PriceConfirmed --> BillObserved: one estate's bill agrees
+    BillObserved --> OutcomeConfirmed: a change gave the predicted effect
+    Documented --> Stale: a re-check fails
+    PriceConfirmed --> Stale: a re-check fails
+    BillObserved --> Stale: a re-check fails or the bill is restated
+    OutcomeConfirmed --> Stale: a re-check fails
+    Stale --> Documented: re-read, still true
+    Stale --> Refuted: the re-test contradicts it
+    Stale --> Retired: the service or behaviour is gone
     Refuted --> Lesson: why it looked true is knowledge too
-    MechanismVerified --> Retired: the behaviour or service is gone
     Lesson --> [*]
     Retired --> [*]
 ```
 
-**Peer review of knowledge** is where the human sits. Every claim that will be *relied on to change something* must have passed the Skeptic and a person with domain standing — **and, before it becomes advice for a particular estate, been reconciled with that customer's own bill** (*commercially verified*; see [the gates](11-the-learning-contract.md#the-gates--one-word-is-not-enough)). Claims that are merely informative can stay *provisional* — clearly labelled — so the system is useful from day one and honest about its edges. A general, replicated claim can also be *compiled* into a Detector or a Move; those are not claim states and have [their own life cycle](04-experiments-and-the-lab.md#13-dreaming--consolidation-while-the-world-is-quiet).
+The **four evidence levels** say what kind of evidence stands behind a claim; they are not grades of truth.
+
+| Level | What stands behind it | Lives in |
+|---|---|---|
+| **Documented** | a source says so, and the receipt proves it | the open Atlas |
+| **Price-confirmed** | a published price list shows the meter, unit and rate | the open Atlas |
+| **Bill-observed** | one estate's closed bill lines, matched to the usage and changes behind them, behaved as predicted | that estate only |
+| **Outcome-confirmed** | a change made on the strength of the claim had the predicted effect | that estate only |
+
+A claim with no price in it, such as "a stopped VM still bills compute", has no price-confirmed step. A customer's own price sheet confirms its *contracted* rates inside that estate and never enters the Atlas. The last two levels sit in the estate's **Ledger**, the system's record of predictions, decisions and measured outcomes. What an estate can give the Atlas is a **pooled observation** — a scope and an aggregate, privacy-reviewed and published only when several organisations contribute the same one (section 12) — so the next estate starts ahead.
+
+**Peer review of knowledge** is where the human sits. A claim that will be *relied on to change something* must have passed the Skeptic and a person with domain standing. A figure for a particular estate is called an expected *saving* only when the claim is *bill-observed* in that estate (see [the gates](09-the-learning-contract.md)); where the system cannot read the bill, the figure is a labelled **scenario priced at list prices**, and the Recommendation says what it rests on. Claims that are merely informative can stay *documented*, clearly labelled, so the system is useful from day one and honest about its edges. A general claim can also be *compiled* into a Detector or an Action, which have [their own life cycle](04-finding-out-without-spending.md).
 
 ---
 
 ## 5. Knowledge CI — facts that test themselves
 
-Software teams keep code honest with automated tests. The Atlas does the same for **facts**: every claim ships with a **re-check recipe**.
+Software teams keep code honest with automated tests. The Atlas does the same for **facts**: every claim ships with a **re-check recipe** — a **price re-fetch** (the price list still says what the claim says), a **document diff** (the page it rests on has not changed, or changed harmlessly), a **schema diff** (the property, SKU enumeration or metric it depends on still exists) or **bill verification** (each contributing estate re-checks its own closed bills against the claim, and only the aggregate result is shared).
 
-| Recipe | Checks |
-|---|---|
-| **Price re-fetch** | the price list still says what the claim says |
-| **Document diff** | the page the claim rests on has not changed (or changed harmlessly) |
-| **Schema diff** | the property, SKU enumeration or metric the claim depends on still exists |
-| **Lab replication** | the experiment still reproduces, in a fresh run |
-| **Bill verification** | across real estates, the bills still behave as the claim predicts |
-
-Recipes run on a schedule weighted by **impact × volatility**: a claim that, if wrong, would mislead many estates and that rests on a page that changes often is *scheduled* for daily re-checking (a target, not a promise); a stable, low-stakes claim, quarterly. When a recipe fails, the claim goes **stale**, every Brief that relied on it is flagged, and the Agenda gets a new question. Knowledge that has not been re-tested lately says so on its face.
+Recipes run on a schedule weighted by **impact × volatility**: daily for a claim that would mislead many estates if wrong and rests on a page that changes often (a target, not a promise), quarterly for a stable, low-stakes one. When a recipe fails, the claim goes **stale**, every Recommendation that relied on it is flagged, and the Agenda gets a new question. Knowledge that has not been re-tested lately says so on its face.
 
 ---
 
 ## 6. Day zero — a new service, feature or price change
 
-Microsoft ships. The aim is a **provisional mechanism profile within hours** of an announcement — honest about being provisional, and reviewable. That is an aspiration, not a measured result: the Lab's findings are verified only *for the Lab*, and a commercially verified answer for a given estate has to wait for a bill (hours to days) and for that customer's own export.
+Microsoft ships. The aim is a **provisional mechanism profile within hours** — honest about being provisional, and reviewable. That is an aspiration, not a measured result: the profile rests on documents and price lists, and only a bill line confirms it, which exists once somebody has used the service and arrives hours to days later.
 
-```mermaid
-flowchart LR
-    RADAR["Change radar: an announcement, a new meter, a new schema, a price diff"]
-    subgraph READ["Four readers in parallel"]
-        R1["Announcement and documents"]
-        R2["Price list and meters"]
-        R3["Resource schema and metric catalogue"]
-        R4["Community and talks"]
-    end
-    DECODE["Cartographer decodes every meter with the Cost Grammar"]
-    DOUBT{"Do sources disagree, stay silent, or carry the weight?"}
-    LAB["Lab: predict, deploy, load, watch the bill form"]
-    PROFILE["Profile v0.1: provisional, every line with receipts"]
-    REVIEW["Skeptic and people review"]
-    PUBLISH["Atlas and Commons"]
-    AGENDA["Agenda: which of our things does this touch?"]
-    DETECT["Detectors and Moves proposed"]
-    RADAR --> R1 & R2 & R3 & R4
-    R1 & R2 & R3 & R4 --> DECODE
-    DECODE --> DOUBT
-    DOUBT -->|yes| LAB
-    DOUBT -->|no| PROFILE
-    LAB --> PROFILE
-    LAB -->|a new contradiction| R1
-    PROFILE --> REVIEW
-    REVIEW --> PUBLISH
-    PUBLISH --> AGENDA
-    PUBLISH --> DETECT
-    AGENDA -.->|real estates answer back| PROFILE
-    DETECT -.->|false alarms refine the profile| PROFILE
-```
+### A day-zero story (the service is invented)
 
-The same routine runs, in smaller form, for a **new feature** of an existing service, a **new SKU or region**, a **price change** and a **retirement notice**. Each ends the same way: a changed Atlas, a list of affected resources in each estate, and — if the change helps — a Brief that says so.
+*An invented example, not a measurement: the Prism story of the north star, one step at a time.*
 
-### A real one — read on the day this was written
+1. **Tuesday 09:00.** Microsoft announces **Azure Prism**, a managed retrieval service. The change radar sees six new meters on the price list.
+2. **By 10:30.** Four readers work in parallel — documents, price list, schema and metrics, community — and the Scholar decodes each meter with the grammar: a *Prism Unit* is **capacity**, a *Query Unit* **consumption**, *snapshot GB-months* **stock**, *replicas* a **multiplier**, the private-link add-on **coupling**, the preview price a **time cliff**.
+3. **A dispute, recorded rather than settled.** Two pages disagree about whether scaling down refunds a started hour. Nobody builds anything to find out: the claim is marked *disputed*, and both quotes stay as receipts.
+4. **Profile v0.1.** Provisional, every line tied to its source, none of it allowed to back a savings promise.
+5. **The Agenda asks which resources in which estates are Prism.** Two preview deployments, one team. The Diplomat asks that team one question: **"The preview price ends on 1 March. Do you want a heads-up plan?"** Nobody wrote a Prism rule.
+6. **About a week later, the first bill lines.** Once their period has closed and they match the usage behind them, they settle the dispute in that team's estate — a started hour *is* billed after a scale-down — and show a second trap nobody predicted: snapshots keep billing after the index is deleted.
+7. **What travels.** Both findings become observations: a scope and an aggregate, which reach the open Atlas only once several organisations report the same thing. The next estate to meet Prism starts ahead.
 
-Prism is invented. **Azure SRE Agent** is not: a recent service whose billing page ([Learn](https://learn.microsoft.com/en-us/azure/sre-agent/billing), read 2026-10-31) shows the grammar working on something nobody wrote a rule for. It bills in *Azure Agent Units* (AAUs). The Cartographer's first-hour decode:
+### A real one — a recent service, decoded from its billing page
 
-| What the page documents | Mechanism | The demand question | Lever or trap |
-|---|---|---|---|
-| **Always-on flow** — 4 AAUs per agent-hour, from the moment an agent is created until it is deleted, whether or not it does anything | **Capacity** (an existence floor) | is the agent doing any work? | delete agents created for a trial and forgotten; the page notes new customers can evaluate with the always-on charge waived — a **time cliff** |
-| **Active flow** — AAUs per million tokens, metered separately for input, output, cache read and cache write, at rates set by the model | **Consumption**, with a **multiplier** from model choice | tasks completed against tokens spent | the model choice moves the price: the page's own worked example prices the same quick question at about 3.8 AAUs on one model and about 1.3 on another |
-| A monthly **AAU allocation limit** that covers active flow only; at the limit the agent becomes unavailable until next month, and always-on charges continue | a **cap that bites** (a candidate new mechanism) | is the limit sized to the work? | a cost control that causes an outage |
+Prism is invented. **Azure SRE Agent** is not: its billing page ([Learn](https://learn.microsoft.com/en-us/azure/sre-agent/pricing-billing); trial terms on the [evaluation page](https://learn.microsoft.com/en-us/azure/sre-agent/evaluate); both read 2026-11-01) is the kind of day-zero input the Scholar would read. It bills in *Azure Agent Units* (AAUs). The decode below is **worked by hand** to show what the Scholar should produce; no agent has run it.
 
-What the page leaves open — how multiple agents share a limit, how a mid-month change prorates, how the meters round — goes to the Agenda as predictions for the Lab. The profile is **provisional**, and says exactly what it rests on.
+| What the page documents | Mechanism | Lever or trap |
+|---|---|---|
+| **Always-on flow** — 4 AAUs per agent-hour, from creation until deletion, whether or not the agent does anything | **Capacity** (an existence floor) | delete agents created for a trial and forgotten; new customers get up to 30 days with it waived — a **time cliff** |
+| **Active flow** — AAUs per million tokens, metered separately for input, output, cache read and cache write, at rates set by the model | **Consumption**, with a **multiplier** from model choice | the model moves the price: the page's own example prices the same quick question at about 3.8 AAUs on one model and about 1.3 on another |
+| A monthly **AAU allocation limit**, covering active flow only; at the limit the agent becomes unavailable until next month while always-on charges continue | none: an **availability constraint** that caps active work and is not a way money arises | a cost control that causes an outage |
 
-*A week later, transfer:* a different AI service appears with an hourly floor for provisioned capacity. The Scholar starts from the same questions — *which meter is the existence floor? which is consumption? which cap bites?* — and the profile takes far less time. (The [exam bank](research/exam-bank-cost-traps.md) already records that provisioned model throughput cannot be paused: precisely the kind of fact the Lab verifies and the Exam later tests for transfer.)
+What the page leaves open — how a partial hour of the always-on charge is billed, how the meters round, what an AAU costs in euros — goes to the Agenda; the profile stays *documented* until a published price list and a closed bill line say more.
 
 ---
 
 ## 7. Staying current — the change radar
 
-Azure changes in five ways that matter to cost, and the radar watches each:
+Azure changes in five ways that matter to cost, and the radar watches each, running the day-zero routine in smaller form:
 
 | Change | Why it matters | What the system does |
 |---|---|---|
-| **Price change** | every Brief, forecast and commitment depends on it | recomputes; flags estates whose position changed |
-| **New SKU, tier or region** | something cheaper (or better) may now exist for this workload's shape | tests it in the Lab; matches against estates; "Azure moved — you benefit" |
-| **Behaviour change** | an old claim may now be false | re-runs the Lab recipe; marks claims stale |
+| **Price change** | every Recommendation, forecast and commitment depends on it | recomputes; flags estates whose position changed |
+| **New SKU, tier or region** | something cheaper may now exist for this workload's shape | decodes the new meters, replays the affected estates' recorded usage under them, and tells those estates: "Azure moved — you benefit" |
+| **Behaviour change** | an old claim may now be false | re-runs the claim's re-check and reads the next bill lines; marks claims stale |
 | **Retirement** | forced moves are also chances to move *well* | pairs the deadline with the right-sizing opportunity |
 | **New limit or quota** | quiet constraints change what is possible | updates the knobs |
 
-Because documents and specifications are written and versioned in public, a change is not an event to be noticed; it is a **diff to be read**. And the opportunity runs in both directions: the radar is as useful for *"this just got cheaper for you"* as for *"this just got worse"*.
+Most changes are a **diff to be read**: documents and specifications are written and versioned in public. Two kinds are not: a customer's own price sheet and negotiated terms (private, so read only where the system has access, inside that estate) and a change nobody announced (first seen on a closed bill). The radar watches all three, and the news runs both ways: *"this just got cheaper for you"* as well as *"this just got worse"*.
 
 ---
 
@@ -272,22 +217,25 @@ Because documents and specifications are written and versioned in public, a chan
 
 A learning system must have a map of its own ignorance.
 
-- **The coverage map.** For every service, meter and region: how well is it known — *verified, provisional, doc-only, unknown*? The map is shown on the report card.
-- **The frontier.** Real bills sometimes contain meters the Atlas has never seen. That is not a failure; it is the most valuable lead the system can get. It goes straight to the top of the Agenda: learn this one now.
-- **Humility in the brief.** A Brief never rests on a provisional or doc-only profile for a savings claim; it says what is not yet known — *"I have not tested this myself"* — and asks, or starts a watch.
-- **Curiosity on purpose.** The Conductor spends a measured part of the learning budget on the frontier: the services most used in estates and least well known come first.
+- **The coverage map.** For every service, meter and region: how far has it got — *unknown*, *documented*, *price-confirmed* and, estate by estate, *bill-observed* and *outcome-confirmed*? A meter nobody has used yet waits at *documented* ([section 11](#11-what-it-cannot-read)). The map is shown on the report card.
+- **The frontier.** Real bills sometimes contain meters the Atlas has never seen. Such a meter is the most valuable lead the system can get, and it goes straight to the top of the Agenda.
+- **Humility in the Recommendation.** A figure is called an *expected saving* only when a bill line confirms the meter. Otherwise — a provisional or documentation-only profile, or no bill access — it is a labelled scenario, and the Recommendation says what it rests on and what is not yet known (*"no bill line has confirmed this yet"*), and asks, or waits for the bill.
 
 ---
 
 ## 9. Learning the commercial reality
 
-The same meter costs different amounts for different customers. The system learns each customer's **effective price book**: the agreement type, the negotiated discounts and credits, the licence benefits, the reservations and savings plans in force, the way costs are shared and charged back. It reads what the customer lets it read — the price sheet, the agreement, the commitment portfolio — and computes every number from *that*, never from list price, unless it says so. This is also how it explains *why* two identical estates in two organisations deserve different advice. Until that has been done for an estate, whatever the Atlas says about a service is a **mechanism**, not a price (see [verified has a scope](11-the-learning-contract.md#2-verified-has-a-scope)).
+The same meter costs different amounts for different customers, so a mechanism from the Atlas is not yet a price. The system learns each customer's **effective price book** — agreement type, negotiated discounts and credits, licence benefits, the reservations and savings plans in force, how costs are shared and charged back — from what the customer lets it read: the price sheet, the agreement, the commitment portfolio. It computes every number from *that*, never from list price unless it says so, which is also how it explains *why* two identical estates in two organisations deserve different advice.
+
+**The agreement comes first.** Enterprise Agreement (EA), Microsoft Customer Agreement (MCA) bought directly, sold through a partner (CSP) and pay-as-you-go — with the offers around them: dev/test, credits, sponsorship — price the same meter differently, report it differently and let different people commit to it; some estates sit under several at once. So the first thing learned about an estate is which agreement it sits under. The price is always the customer's.
+
+**Reach comes second.** What the system may see and do is not what the organisation could reach but what the identity it was given can reach: *billing reach* (the price sheet and commitments of the whole agreement), *subscription reach with costs* (bill lines) or *subscription reach without costs* (resources and metrics only). It finds out by trying — at onboarding, every week and at once after a refusal — and records what works where: the **capability profile**. Every number then carries its **price basis**: *contracted* (the customer's price sheet), *billed* (the rate on its bill lines) or *list* (the public price list). Where the bill cannot be read, a figure is a scenario priced at list prices and says so; it becomes an *expected saving* only when a bill line confirms the meter. A purchase goes to whoever can make it, as a request where a partner or a central team holds the right. [Every agreement, every level of access](01-north-star.md#5-every-agreement-every-level-of-access) says more.
 
 | Part of the commercial layer | What the AI must learn | Why it changes the answer |
 |---|---|---|
-| **Agreement type** | enterprise agreement, Microsoft Customer Agreement, partner-sold, pay-as-you-go: who can see the price sheet, how export and data latency differ, who may exchange or refund | the same saving is reported — and sometimes *possible* — differently |
-| **Price level** | list → contracted → effective (after commitments); on some agreements a pricing currency distinct from the billing currency | "what it costs" depends on the level; savings are booked per level |
-| **Commitments — three kinds** | hourly benefits (reservations, savings plans; an unused hour does not roll over), pooled prepurchases, and agreement-level consumption commitments (a capacity reservation is a different thing: it guarantees capacity at the normal rate, it is not a discount) each has its own flexibility, exchange rules and "is it used?" test |
+| **Agreement type** | EA · MCA bought directly · sold through a partner (CSP) · pay-as-you-go: who can see the price sheet, how export and data latency differ, who may exchange or refund | the same saving is reported — and sometimes *possible* — differently |
+| **Price basis** | list → contracted → billed (the effective rate, after commitments and credits); on some agreements a pricing currency distinct from the billing currency | "what it costs" depends on the basis; every number says which |
+| **Commitments — three kinds** | hourly benefits (reservations, savings plans; an unused hour does not roll over), pooled prepurchases, agreement-level consumption commitments (a capacity reservation is different: it guarantees capacity at the normal rate, it is not a discount) | each has its own flexibility, exchange rules and "is it used?" test |
 | **Rate levers** | licence benefits, dev/test pricing, spot capacity, credits and free grants — and the order in which they stack | the cheapest change is often a *rate* change, not a usage change |
 | **Price mechanics** | graduated tiers, free allowances, billing quantum, currency conversion, tax | small print that moves totals |
 | **Charges that are not resources** | marketplace and SaaS purchases, support plans | spend nobody tags |
@@ -298,28 +246,28 @@ The same meter costs different amounts for different customers. The system learn
 
 ## 10. Learning how to learn
 
-Facts are half of expertise. The other half is **method**: where to look first, what to trust, how to test, how to ask. The system keeps a record of how well each source, tactic, experiment and question has paid off, and uses it to choose its next move — rows 2 and 6 of [the learning contract](11-the-learning-contract.md#1-six-things-that-change). What is tracked, and the safeguards around it, are in [getting smarter](07-getting-smarter.md#6-learning-how-to-learn).
+Facts are half of expertise; the other half is **method** — where to look first, what to trust, how to test, how to ask. The system records how well each source, tactic, test and question has paid off and uses the record to choose what to do next: the second and sixth of the six things that change in [the learning contract](09-the-learning-contract.md). [Getting smarter](07-getting-smarter.md) covers what is tracked and the safeguards around it.
 
 ---
 
 ## 11. What it cannot read
 
-Some truths are not written anywhere: how a team *actually* uses a thing, why a configuration is what it is, what the next launch will need, which behaviours Microsoft has never documented. For those the system has three routes, in order of cost: **ask a person** (the cheapest experiment there is), **infer from the estate's own history**, and **run it in the Lab**. And it labels what it learned by which route.
+Some truths are not written anywhere: how a team *actually* uses a thing, why a configuration is what it is, what the next launch will need, which behaviours Microsoft has never documented. For those the system has six routes, cheapest first, and none provisions anything just to measure it. The first five cost model tokens and some attention, and change nothing in Azure: **ask** the one person who knows; **look** at what bills, metrics and change history already hold; **replay** recorded usage under another SKU, region, offer or commitment, once the replay has reproduced the real bill of that month; **follow** the outcome of changes people were making anyway; **pool** the observations other organisations contributed (only a scope and an aggregate, once several agree). The sixth is rare and different: a **trial** is one small, reversible change to something an owner already runs, approved by the owner after seeing a cost ceiling, with an automatic rollback — it can move the bill. [Finding out without spending](04-finding-out-without-spending.md) has the detail; what the system learns is labelled with the route that taught it.
 
-Some services cannot be tested by an outsider at all — a limited or private preview, one that needs quota the Lab does not have, one that needs a feature the Lab's subscription lacks. Those profiles are marked **documentation-only**, the Agenda records *why* they cannot be tested, and the system asks the people who can (an early-access customer, Microsoft's own channels) rather than pretend.
+**The honest limit: a meter nobody has used cannot be learned until a bill contains it.** Some services cannot be observed by anyone until somebody uses them — a limited or private preview, a feature restricted to a few customers. Those profiles are marked **documentation-only**, the Agenda records *why* no bill line can exist yet, advice built on them says so, and the system asks the people who can know — an early-access customer, Microsoft's own channels — rather than pretend.
 
 ---
 
 ## 12. The Atlas, seen from outside
 
-The Atlas is meant to be *used by people*, not just by the AI: a browsable, searchable, versioned reference of how Azure charges — closer to a trusted encyclopaedia with a test suite than to a hidden database. Anyone can read a profile and follow every line to its receipts. Anyone can propose a correction; the AI itself proposes changes as reviewable submissions. A change, as a reviewer sees it:
+The Atlas is meant to be *used by people*, not just by the AI: a browsable, searchable, versioned reference of how Azure charges, with a test suite behind it. Anyone can read a profile and follow every line to its receipts; anyone can propose a correction, and the AI itself proposes changes as reviewable submissions. A change, as a reviewer sees it (an invented example):
 
 ```
 Profile: Azure Prism · v0.1 → v0.2 · 3 claims changed
-  ± "Scale-down refunds the started hour"  → REFUTED by lab experiment #214 (predicted yes, observed no)
-  + "Deleting an index leaves snapshots billing until purged"  → VERIFIED #217, 2 regions
-  ? "Private-link add-on bills per endpoint-hour"  → UNVERIFIED (doc only) — experiment queued
+  ± "Scale-down refunds the started hour"  → REFUTED: pooled observation, 5 organisations, closed bill periods: the hour was billed (predicted: refund · observed: none)
+  + "Deleting an index leaves snapshots billing until purged"  → NEW: pooled observation, 4 organisations, 2 regions · no page says so yet
+  ? "Private-link add-on bills per endpoint-hour"  → still DOCUMENTED ONLY: no contributing organisation has a bill line for the meter yet
 [Approve] [Request changes]
 ```
 
-Because the Atlas holds *no customer data*, it can live in the open, and the more people use it, the sharper it gets. That openness is the open-source heart of the project: [the Commons](07-getting-smarter.md#7-the-commons).
+The Atlas can live in the open because of what may enter it: public documents, published price lists and pooled observations. Only a scope and an aggregate leave an estate, a privacy review checks them, an observation is published only when several organisations contribute it, and a bill line, a name or an identifier never does. The open, shared half of the knowledge is [the Commons](07-getting-smarter.md) (the sealed evaluation cases are not part of it). The more people use the Atlas, the sharper it gets.

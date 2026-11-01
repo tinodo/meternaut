@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 700" width="1200" height="700" role="img" aria-labelledby="t d" font-family="'Segoe UI', Helvetica, Arial, sans-serif">
   <title id="t">Escalation: widening circles</title>
-  <desc id="d">A question to an owner widens, one ring at a time and only when there is no answer, from the owner in private to a delegate, a team lead, the team channel, the accountable manager and a FinOps triage. Any ring can answer, which ends the escalation in a recorded human decision. A cost emergency skips the ladder and goes by text and voice to the on-call person.</desc>
+  <desc id="d">A question to an owner widens, one ring at a time and only when there is no answer, from the owner in private to a delegate, a team lead, the team channel, the accountable manager and a FinOps triage. Any ring can answer, which ends the escalation in a recorded human decision. A cost emergency skips the rings and goes by text and voice to the on-call person.</desc>
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
       <stop offset="0" stop-color="#0b1220"/>
@@ -87,7 +87,7 @@
 
     <rect x="700" y="502" width="5" height="70" rx="2.5" fill="#ef4444"/>
     <text x="722" y="522" font-size="18" font-weight="700" fill="#ef4444">EMERGENCY LANE</text>
-    <text x="722" y="546" font-size="14" fill="#e5e7eb">A spreading cost emergency skips the ladder: text and</text>
+    <text x="722" y="546" font-size="14" fill="#e5e7eb">A spreading cost emergency skips the rings: text and</text>
     <text x="722" y="566" font-size="14" fill="#e5e7eb">voice to on-call — and still ends in a human decision.</text>
 
     <text x="700" y="624" font-size="14" font-style="italic" fill="#94a3b8">Widening needs entitlement: every recipient must be entitled to know.</text>

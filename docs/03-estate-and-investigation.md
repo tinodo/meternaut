@@ -1,46 +1,65 @@
 # The estate and the investigation — how the AI understands a customer and finds what is wrong
 
-> **What this answers:** *How does the AI understand this estate — what things are for, who owns them, what must not be touched? How does it investigate: find, explain, test? And how does it work out the cost implications of any change before it happens?*
-> Part of the [north star](01-north-star.md). Idea-level: what the system must be able to do, not how it is built.
+> How the system understands one estate — what exists, what it is for, what it may see and do, who owns it, what must not be touched — and how it investigates and prices a change before it happens. Part of the [north star](01-north-star.md); the technical design is in [docs/design](design/README.md).
 
 ---
 
 ## 1. The Estate Model — a story, not an inventory
 
-An inventory says *what exists*. The **Estate Model** says what exists, how it connects, **what it is for**, who needs it, when it is busy and what must never be touched. It is the AI's understanding of one customer, kept inside that customer's boundary, and it is built from many kinds of reading.
+An inventory says *what exists*. The **Estate Model** says what exists, how it connects, **what it is for**, who needs it, when it is busy and what must never be touched. It is the AI's understanding of one customer, kept inside that customer's boundary and built from many kinds of reading.
 
-| Layer | What it holds | Read from (with permission) |
+| Layer | What it holds | Read from (as far as its reach goes) |
 |---|---|---|
-| **Inventory and topology** | every resource and how they connect: network paths, dependencies, shared platforms | the resource inventory, network and dependency data |
-| **Configuration and change** | what each thing is set to, and how it got there — who changed it and when | configuration, change history, deployment logs |
+| **Inventory and topology** | every resource and how they connect: network paths, dependencies, shared platforms | inventory, network and dependency data |
+| **Configuration and change** | what each thing is set to, and who changed it, when | configuration, change history, deployment logs |
 | **Usage** | what each thing actually does: load, connections, access, throughput, errors | telemetry, metrics, access records |
-| **Money** | the bill, line by line, at the customer's *price level* — list, contracted, effective — under its agreement type, in actual and amortised views | cost data, price sheet, agreement, commitment portfolio |
-| **Origin** | the code and infrastructure definitions that create each thing, and the repository and pipeline behind them | source repositories, deployment pipelines |
+| **Money** | the bill, line by line, actual and amortised, under its **agreement** (the kinds are listed below) and at a known **price level**: contracted, billed or list | cost data, price sheet, agreement, commitments |
+| **Origin** | the code and infrastructure definitions behind each thing, and the pipeline that deploys it | repositories, pipelines |
 | **People** | who owns, builds, pays for, depends on and approves — and who just left | directory, role assignments, commit and ticket history |
 | **Intent** | what each workload is *for* — and the unit of value it produces (orders, users, scans) | names, tags, documents, diagrams, tickets, conversations |
 | **Rhythms** | when it is busy, quiet, critical | usage history, the business calendar |
-| **Constraints** | what must not change: compliance, disaster-recovery roles, freezes, contracts | policies, wikis, owners |
+| **Constraints** | what must not change: compliance, disaster-recovery roles, freezes, service-level promises | policies, wikis, owners |
 | **Lessons** | what people have taught it | the [Lesson Book](#10-the-lesson-book--memory-you-can-read) |
 
-The model is a living twin: it updates continuously, carries a confidence on every statement, and is **explicit about what is inferred and what a human confirmed**. It also only knows what has been *kept*: Azure itself keeps resource property changes for 14 days, platform metrics for about 93 and control-plane events in the activity log for 90, so how far back the system can see is decided by what a customer exports and retains — collecting history from day one is part of onboarding.
+The model is a living twin: it updates continuously, carries a confidence on every statement, and is **explicit about what is inferred and what a human confirmed**. It knows only what has been *kept*. Cost Management shows about 13 months of bills, but Azure itself keeps resource property changes for 14 days, platform metrics for about 93 and control-plane events in the activity log for 90, so how far back the system can look, and what it can replay, depends on what a customer exports and retains. Collecting history from day one is part of onboarding.
+
+### What it may see and do — the capability profile
+
+Azure is sold in several ways, and the way changes what every number means. So the Surveyor, the agent that builds the Estate Model, starts each estate with two questions. **Which agreement is this?** Enterprise Agreement (EA) · Microsoft Customer Agreement (MCA) bought directly · sold through a partner (CSP) · pay-as-you-go, and the offers around them. **What may the system see and do here?** Not what the organisation could reach, but what the access it was given reaches.
+
+| Reach | What it can do | Its numbers say |
+|---|---|---|
+| **Billing reach** — a role on the billing account, the billing profile or the enrollment | reads the price sheet and commitments, sees every subscription, prepares purchases | "Priced at your contracted rates" |
+| **Subscription reach with costs** | reads bill lines, finds waste, advises per subscription | "Priced at the rates on your bill" |
+| **Subscription reach without costs** | reads resources, metrics, Advisor; prices what it finds as scenarios at list prices | "Scenario at list prices — your rates are invisible to me" |
+
+Under a partner agreement the partner holds the billing view: the customer's own system has subscription reach, and sees costs, at retail rates, only once the partner enables cost visibility.
+
+Nobody declares which applies: the system **probes**. At onboarding, every week after and at once whenever Azure refuses a request, it tries to read the bill, the price sheet and the commitments, and records what worked in which scope — the **capability profile**, one per scope. A role granted later is noticed at the next probe.
+
+- **Every number carries its price basis** — contracted, billed or list — and a figure is called an *expected saving* only when a bill backs it. Without a bill it is a scenario at list prices, which owners can still act on.
+- **Every purchase goes to whoever can make it.** Where the agreement lets it, the system prepares the purchase, two named people approve and it carries it out. Where a partner sells the commitment or a central team holds the billing role, it hands over a *request* — evidence, scope, figure — and watches the bill.
+- **It says what more access would buy** — *"with the price sheet I could put your rates on 14 recommendations"* — and leaves the choice to people. It never asks for more than a question needs.
+- **An organisation made of organisations has one profile per scope.** A platform team may hold billing reach while each application team holds one subscription; what one may see never reaches the other.
+
+> **(An invented example.)** *The orders team sees only its own subscription: no bill, no rates, no purchases. The system still finds a database that peaks at 11% of its capacity, two disks attached to nothing and an always-on fleet a commitment could cover. Each Recommendation labels its figure: "About €410 a month. Scenario at list prices — your rates are invisible to me." For the commitment it writes a request, not a purchase — three months of usage, the scope, the scenario at list prices — for the platform team that holds billing reach. The orders team fixes the first two that week.*
+
+The technical side is in [the design](design/14-agreements-and-access.md).
 
 ---
 
 ## 2. Understanding intent
 
-The most important fact about a workload — *what is it for?* — is almost never written down in one place. The Surveyor assembles it:
+The most important fact about a workload — *what is it for?* — is almost never written down in one place. The Surveyor assembles it from:
 
 - **Names and tags** — `payments-dr-weu`, `exp-recsys-2024`.
-- **Deployment history** — created by a pipeline named `launch-campaign-q4`; last changed in July.
-- **Traffic shape** — a nine-to-five curve with a quarter-end spike; or a flat line with a nightly burst.
-- **Code and infrastructure definitions** — the repository's README, its owners file, the service it belongs to.
-- **Pictures** — architecture diagrams, whiteboard photos in a wiki, a slide in an old design review: the AI can read images.
-- **Words** — tickets, post-mortems, chat threads in channels where it has been invited.
-- **The contract** — what the commitment portfolio and agreement say about how the customer expects to use Azure.
+- **Deployment history** — a pipeline named `launch-campaign-q4`, last changed in July.
+- **Traffic shape** — a nine-to-five curve with a quarter-end spike, or a flat line with a nightly burst.
+- **Code and infrastructure definitions** — the README, the owners file, the service it belongs to.
+- **Pictures and words** — architecture diagrams, whiteboard photos (the AI can read images), tickets, post-mortems, chat threads in channels where it has been invited.
+- **Agreement and commitments** — what they say about how the customer expects to use Azure, where its reach lets it read them.
 
-The result is an **intent statement** with a confidence and its evidence: *"Disaster-recovery replica of the payments platform; passive by design; must be able to take full load within 30 minutes (source: runbook, 2025-02)."* High-stakes or low-confidence statements are confirmed by a person — usually in a single question, asked once and remembered.
-
-Intent is what turns *"this is idle"* into *"this is idle on purpose"*.
+The result is an **intent statement** with a confidence and its evidence (an invented example): *"Disaster-recovery replica of the payments platform; passive until a failover; must take full load within 30 minutes (source: runbook, 2025-02)."* High-stakes or low-confidence statements are confirmed by a person, in one question, asked once and remembered. Intent is what turns *"this is idle"* into *"this is idle on purpose"*.
 
 ---
 
@@ -49,9 +68,8 @@ Intent is what turns *"this is idle"* into *"this is idle on purpose"*.
 A resource that is quiet in March can be the star of November. The Surveyor learns, per workload:
 
 - **The daily and weekly shape** — office hours, batch windows, weekend lulls.
-- **The seasons** — quarter close, campaigns, tax filing, harvest, Black Friday.
-- **Events** — launches, audits, migrations, freezes — from calendars, release plans and people.
-- **How the rhythm itself is changing** — growth, new regions, a product sunset.
+- **The seasons** — quarter close, campaigns, tax filing, Black Friday.
+- **Events** — launches, audits, migrations, freezes, from calendars and release plans.
 
 Rhythm decides *how long it has to look* before it may say "unused": a month of silence means one thing for a daily job and another for a yearly one. It also decides **when to ask** and **when to act**.
 
@@ -67,21 +85,21 @@ Cost is decided by people, so the AI must know *which* people. For every resourc
 | **Technical lead** | who can change it safely? |
 | **Budget holder** | whose money is it? |
 | **Consumers** | who depends on it, visibly or silently? |
-| **Change authority** | who must agree to a change — a change board, a platform team, a customer? |
+| **Change authority** | who must agree to a change — a change board, a platform team, a customer, whoever holds the billing role for a purchase? |
 
-Ownership is inferred from a **waterfall of evidence**, strongest first: an explicit, current tag; the repository's owners file; the identity that deploys it; role assignments; commit, ticket and chat history; the directory's manager chain. Each signal adds confidence; **no inference is "confirmed" until a human says so**. When the evidence conflicts or runs out, the Surveyor asks — one question, to the likeliest person, in the place they work — and the answer is remembered.
+Ownership is inferred from a **waterfall of evidence**, strongest first: an explicit, current tag; the repository's owners file; the identity that deploys it; role assignments; commit and ticket history; chat in channels where it is invited; the directory's manager chain. Each signal adds confidence; **nothing is "confirmed" until a human says so**. When the evidence conflicts or runs out, the Diplomat, the agent that talks to people, asks one question of the likeliest person, where they work, and the answer is remembered.
 
-It follows the **directory**: managers, delegates, the person on leave, the person who just changed team, working hours, time zones, preferred language. When someone leaves, their things do not become nobody's: they are flagged within days, with a proposal for a new owner.
+It follows the **directory** — managers, delegates, who is on leave, time zones, languages — using only what the person or the organisation has provided or authorised, and confirming delegates with the person rather than inferring them. When someone leaves or changes team, their things do not become nobody's: they are flagged within days, with a proposal for a new owner.
 
-**Things with no owner** go to a **named custodian** — a person or team who agrees to be the owner of last resort — never to a countdown that quietly deletes them. An orphan is an *ownership* problem first and a cost problem second.
+**Things with no owner** go to a **named custodian**, a person or team who agrees to be the owner of last resort. An orphan is an *ownership* problem first and a cost problem second.
 
 ### An organisation made of organisations
 
-Real companies are rarely one estate: a central platform team, an acquired business unit with its own agreement and tagging habits, product teams that run what they like. The system keeps **one Atlas but many estates**. Lessons are scoped to the unit that taught them; an acquired unit's price book and allocation rules are its own; decisions stay local, and the central team sees a roll-up of verified savings and open questions — not the units' private lessons. When two units disagree about how a shared service should be charged, that is a [decision room](05-recommend-act-verify.md#1b-when-more-than-one-person-owns-the-answer), not a ruling by the AI.
+Real companies are rarely one estate: a central platform team, an acquired business unit with its own agreement and tagging habits, product teams that run what they like. The system keeps **one Atlas** (the open map of how Azure charges) **but many estates**, each with its own [capability profile](#what-it-may-see-and-do--the-capability-profile). Lessons are scoped to the unit that taught them; an acquired unit's price book and allocation rules are its own; decisions stay local, and the central team sees a roll-up of measured savings and open questions — not the units' private lessons. When two units disagree about how a shared service should be charged, that is a [decision room](05-recommend-act-verify.md), not a ruling by the AI.
 
 ---
 
-## 5. The bill as a tree — and the ledger of what is unexplained
+## 5. The bill as a tree — and the list of what is unexplained
 
 The investigation starts from money. Every euro on the bill is a leaf of a tree:
 
@@ -102,12 +120,12 @@ For each leaf the system tries to say four things, with a confidence:
 3. **How much of it is needed?** (the demand signal vs what is provisioned, stored, produced or moved)
 4. **What would it take to need less?** (levers, consequences, effort, risk)
 
-A leaf for which it can answer all four is **explained**. A leaf for which it cannot is on the **Unexplained Spend Ledger**. Two numbers fall out, and both are headline measures:
+A leaf with all four answers is **explained**; a leaf without is on the **Unexplained Spend list**. Two headline numbers fall out:
 
 - **Explained spend** — the share of the bill that is explained. It should rise.
-- **Explained-but-wasteful spend** — the part that is explained and shown to exceed its need. That is the savings pipeline.
+- **Explained-but-wasteful spend** — the part that is explained and shown to exceed its need.
 
-The ledger is not a report. It is the **engine of curiosity**.
+The list is the **engine of the Agenda**: what the system cannot yet explain is what it investigates next.
 
 **"Unused" means no demonstrated value — not few reads.** To decide whether a leaf is needed, the system follows a **value-flow graph**: data and capacity connected to the consumers that use them and the outcomes those consumers serve. A thing with few readers may carry a critical outcome; a thing with many may carry none. Where the graph has a gap, the gap goes on the Agenda.
 
@@ -115,24 +133,24 @@ The ledger is not a report. It is the **engine of curiosity**.
 
 ## 6. The Agenda — what the system is wondering about
 
-The **Agenda** is the AI's ranked list of open questions. It is fed from many directions at once:
+The **Agenda** is the AI's ranked list of open questions. It is fed from many directions:
 
-| Source of questions | Example |
+| Source of questions | Example (invented) |
 |---|---|
 | **Unexplained spend** | a large block with no intent, no owner, or no demand signal |
 | **Growth and surprise** | spend rising 9% a month with no matching change in the architecture |
 | **Model residuals** | the cost model derived from the blueprint disagrees with the bill — [bill versus blueprint](#9-bill-versus-blueprint) |
 | **New knowledge** | a profile was just published or revised: *which of our things does it touch?* |
 | **Change in Azure** | a price moved, a SKU appeared, a service retires |
-| **Weak foundations** | a belief it relies on is old, high-impact and weakly verified |
-| **Tells with no measurement** | a "tell" the Atlas knows has no matching measurement in this estate: a blind spot |
+| **Weak foundations** | a belief it relies on is old, high-impact and weakly confirmed |
+| **Blind spots** | a sign of waste the Atlas knows about has no matching measurement in this estate |
 | **Human hunches** | *"I bet the test environments sit idle at weekends."* — the [Hunch Box](08-outer-rims.md) |
-| **Native recommendations and alerts** | an Advisor recommendation, a budget alert, an anomaly alert — checked like any other claim, then routed to the right owner with reasoning ([what happens to an Advisor card](05-recommend-act-verify.md#1a-what-happens-to-an-advisor-card--and-to-a-budget-alert)) |
-| **Unknown unknowns** | change-points with no known cause, and meters that fit no mechanism and no Detector — the patterns outside everything the system already knows |
+| **Native recommendations and alerts** | an Advisor recommendation, a budget alert, an anomaly alert — checked like any other claim, then routed to the right owner with reasoning ([what happens to an Advisor card](05-recommend-act-verify.md)) |
+| **Unknown unknowns** | change-points with no known cause, and meters that fit no mechanism and no Detector |
 
-Questions are ranked by **value of information**: how much money (or risk) hinges on the answer, how likely the answer is to change what we do, and how cheap it is to find out. A question about a large unexplained block that one conversation could resolve outranks a fascinating question about a small, slow-moving meter. The ranking is itself learned: when the system's guesses about what would matter turn out right, it trusts them more.
+Questions are ranked by **value of information**: how much money (or risk) hinges on the answer, how likely the answer is to change what we do, and how cheap it is to find out. A question about a large unexplained block that one conversation could resolve outranks a fascinating question about a small, slow-moving meter.
 
-The **Conductor** owns the Agenda, spends the research budget and decides, hourly, what to pick up next. It is also where *curiosity* lives — a protected share of effort for questions with no immediate payoff but high expected learning.
+The **Conductor** owns the Agenda, spends the research budget and decides, hourly, what to pick up next. It keeps a simple score per kind of question and per tactic — verified value per euro and per minute of a person's attention — and puts more effort where that score is high. A fixed share of effort is protected for *curiosity*: questions with no immediate payoff but high expected learning.
 
 ---
 
@@ -143,34 +161,37 @@ The **Conductor** owns the Agenda, spends the research budget and decides, hourl
 | **Decomposition** | break a cost into meters, resources, configurations, decisions |
 | **Differential diagnosis** | list *competing* explanations and look for the evidence that separates them |
 | **Consumer analysis** | "who reads, calls or depends on this?" — including the infrequent and the invisible |
-| **Time-series forensics** | find when a cost changed, and what else changed that day |
-| **Cohort comparison** | compare with similar workloads in the estate, or with anonymised patterns from the Commons |
-| **Before / after** | check the effect of a past change — against untouched look-alikes where they exist (a **natural experiment**) |
-| **Counterfactual replay** | replay history under another configuration — the [Time Machine](04-experiments-and-the-lab.md): *evidence under stated assumptions*, never proof |
-| **Dependency tracing** | what breaks, or moves, if this changes? |
+| **Cohort comparison** | compare with look-alike workloads here and, through **Pool**, with what other estates have seen |
 | **Reading the source** | the code and infrastructure definitions, to find what produces the cost — and to fix it *there* |
-| **Reading the contract** | what the agreement and commitments change about the answer |
-| **Asking** | the cheapest decisive test, when only a person knows |
+| **Reading the agreement** | what the agreement and commitments change about the answer, where its reach lets it see them |
 
-Each tactic has a track record per mechanism, so the Detective gets better at choosing.
+When the data in hand does not settle a question, the Detective picks the cheapest decisive test from six routes ([finding out without spending](04-finding-out-without-spending.md)). The first five cost model tokens and some attention, and change nothing in Azure:
+
+- **Ask** — one short question, put by the Diplomat to the one person who knows.
+- **Look** — bills, metrics, change and deployment history, tags: when did the cost change, and what else changed that day? Bills go back about 13 months; a change can be joined to a meter only for the history the estate kept (section 1).
+- **Replay** — re-price recorded usage under another SKU, region, offer or commitment, once the replay reproduces that month's real bill. *Evidence under stated assumptions*, never proof.
+- **Follow** — the outcome of a change people were making anyway, against predictions and control meters (the same meters on look-alike resources nobody changed) written down first.
+- **Pool** — what other estates have already seen, as privacy-reviewed aggregates (section 13).
+
+**Trial** is different: rarely, one small, reversible change to something an owner already runs. The owner approves it after seeing a cost ceiling and a guard metric rolls it back automatically; it can move the bill, so it is not free. Learning never provisions anything just to measure it.
 
 ### Hypotheses, challenge and verdict
 
-Every candidate becomes a hypothesis and follows the [life cycle in the north star](01-north-star.md#5-test--how-it-investigates) — born, triaged, investigated, **challenged**, tested, asked about, parked or split, and finally *confirmed* (a **Case**, or a **Detector** if it is general), *refuted* (a **Lesson** — why it looked true), or dropped. Three details matter:
+Every candidate becomes a hypothesis and follows the [life cycle in the north star](01-north-star.md): triaged, investigated, **challenged**, *gathering evidence*, asked about, parked or split — then *confirmed* (a **Case**, or a **Detector** if it is general), *refuted* (a **Lesson**: why it looked true) or dropped.
 
-- **Triage is economic.** "Is this worth a person's time?" is decided early, because a correct finding worth nothing is still noise.
-- **The Skeptic is adversarial by design.** It is rewarded for good objections, not for agreement. Its standard questions: *Who else uses this? What happens at the peak? What did the last incident teach? What does compliance require? Is the metric lying — sampled, delayed, missing a consumer?* — and, for every Case, a **pre-mortem**: *"imagine we did this and it went badly; what happened?"*
-- **Refuted hypotheses are kept.** "It looked unused because the audit job runs once a quarter" is a lesson that prevents the same mistake in every estate with a quarterly job.
+- **Triage is economic.** "Is this worth a person's time?" is decided early: a correct finding worth nothing is still noise.
+- **The Skeptic's job is to break the case.** It asks *who else uses this, what happens at the peak, what the last incident taught, what compliance requires, whether the metric is lying* (sampled, delayed, missing a consumer) and, for every Case, runs a **pre-mortem**: *"imagine we did this and it went badly; what happened?"*
+- **Refuted hypotheses are kept.** "It looked unused because the audit job runs once a quarter" prevents the same mistake in every estate with a quarterly job.
 
-### Evidence grades
+### How the fact was obtained
 
-Each piece of evidence is graded so a reader can weigh it: **measured** (telemetry, bill, experiment) → **observed** (configuration, history) → **reported** (a person said so) → **inferred** (the AI's reasoning) → **assumed**. A Case lists which of its claims rest on which grade — and what **would change its mind**.
+Each fact in a Case says how it was obtained, so a reader can weigh it: **measured** (telemetry, the bill, the outcome of a change) → **observed** (configuration, history) → **reported** (a person said so) → **inferred** (the AI's reasoning) → **assumed**. A Case lists which claims rest on which — and what **would change its mind**. Atlas claims use a different scale, the four evidence levels: documented → price-confirmed → bill-observed → outcome-confirmed.
 
 ---
 
 ## 8. The Case notebook
 
-Every investigation leaves a **notebook**: the question, the hypotheses, the queries and their results, the charts, the experiments, the Skeptic's objections and the verdict — readable by a person, re-runnable by anyone. It is the answer to *"why do you think so?"* A Brief links to it; an Atlas claim cites it; an auditor can replay it. A recommendation with no notebook is not a recommendation.
+Every investigation leaves a **notebook**: the question, the hypotheses, the queries and results, the charts, the evidence gathered, the Skeptic's objections and the verdict — readable by a person, re-runnable by anyone. It answers *"why do you think so?"* A Recommendation links to it and an Atlas claim cites it. No notebook, no Recommendation.
 
 ---
 
@@ -182,25 +203,23 @@ Alongside "start from the bill", the system works from the other end. From the a
 - A **negative residual** is a lead too: something the design assumes exists but does not, or a discount applied that nobody planned.
 - A **stable residual** teaches the model; a **growing** one goes straight to the Agenda.
 
-The point: when the model is good, its failures are informative.
-
 ---
 
 ## 10. The Lesson Book — memory you can read
 
-Everything people teach the system lands in a **Lesson Book** — plain language, human-editable, never hidden inside a model:
+Everything people teach the system lands in a **Lesson Book** — plain language, human-editable, never hidden inside a model (an invented entry):
 
 ```
 LESSON  "Weekend idleness is expected in development subscriptions."
-SCOPE   the three development subscriptions of team Atlas   (proposed to widen: all development subscriptions — pending)
-SOURCE  Maria Janssen, in reply to a card, 2026-09-12
+SCOPE   the three development subscriptions of team Orchard   (proposed to widen: all development subscriptions — pending)
+SOURCE  the lead of team Orchard, in reply to a Recommendation, 2026-09-12
 EVIDENCE telemetry shows weekend troughs in all three
 EXPIRES 2027-09-12 (review)   STATUS Active · applied 14 times · 0 reversals
 ```
 
-A lesson has a **scope** (this resource, this team, this organisation, everywhere), an **owner**, **evidence**, an **expiry** and a **track record**. The AI may *propose* widening a lesson (*"remember this for all development subscriptions?"*); a person says yes, no or "only here". Lessons can be disputed, corrected and retired. Because memory is visible, it can be trusted — and because it expires, it cannot quietly rot.
+A lesson has a **scope** (this resource, this team, this organisation, everywhere), an **owner**, **evidence**, an **expiry** and a **track record**. The AI may *propose* widening a lesson (*"remember this for all development subscriptions?"*); a person says yes, no or "only here".
 
-What a person says is **testimony**, not truth — attributed, dated, scoped and fallible. It is adopted at the scope it was given, **widened only with corroboration** (telemetry that agrees, a second person, repeated outcomes), re-asked cheaply when evidence changes, and judged by *decision burden* rather than question count ([the learning contract, §4](11-the-learning-contract.md#4-people-are-witnesses-not-oracles)).
+What a person says is **testimony**, not truth — attributed, dated, scoped and fallible. It is adopted at the scope it was given, **widened only with corroboration** (telemetry that agrees, a second person, repeated outcomes), re-asked cheaply when evidence changes, and judged by *decision burden* rather than question count ([the learning contract](09-the-learning-contract.md)).
 
 ---
 
@@ -219,43 +238,43 @@ Finding waste looks *backwards*. The **Consequence Engine** also looks *forwards
 
 How it thinks, in plain terms:
 
-1. **Decode** the change into meters, using the Atlas — including the ones nobody remembers: *flipping this switch adds that meter; this replica count multiplies that one; this private connectivity adds data processing*.
-2. **Place it in this estate**: the real demand, the real prices, the real rhythm — not list price at an average load.
+1. **Decode** the change into meters, using the Atlas — including the ones nobody remembers: *flipping this switch adds that meter; this replica count multiplies that one*.
+2. **Place it in this estate**: the real demand and rhythm, not an average load, and the best prices it may see — contracted or billed, else list — with the answer saying which.
 3. **Return a range, not a number**, with the assumptions that drive it, and a **cost of being wrong**: what happens if the demand is half, or double.
-4. **Show the non-cost consequences** next to the cost, using the Well-Architected pillars as the checklist — a saving that costs resilience is a different offer.
-5. **Remember it**: the prediction is filed in the Experiment Ledger and scored when reality arrives.
+4. **Show the non-cost consequences** next to the cost, using the Well-Architected pillars as the checklist — a saving that costs resilience is a different offer. They come from the estate's telemetry, its dependencies and what owners say; where those are missing, the answer is "unknown", not a guess.
+5. **Remember it**: the prediction is filed in the **Ledger**, the system's record of predictions, decisions and measured outcomes, and scored when reality arrives.
 
-**Under the hood, a causal model.** The Engine is not a table of correlations. It models what drives what — configuration → demand → meters → bill, with reliability and performance side-effects — and refits it from *interventions* (Lab runs, trials) and *natural experiments* (a team changes something; the system compares before and after against untouched look-alikes). Its assumptions sit on the page; where there are no good comparison resources it says so and widens the range. Counterfactual numbers are *evidence under stated assumptions* — see [the learning contract, §3](11-the-learning-contract.md#3-counterfactual-evidence-not-proof).
+**Under the hood, a causal model.** It models what drives what — configuration → demand → meters → bill, with reliability and performance side-effects — and refits it from changes that really happened: what **Follow** reads when a team changes something, compared with untouched look-alikes, and, rarely, a **Trial**. Its assumptions sit on the page, and where there is no good comparison it widens the range. Counterfactual numbers are *evidence under stated assumptions* ([the learning contract](09-the-learning-contract.md)).
 
 This is the engine behind **shift-left**: the cost of a decision shown *at the moment it is made*, in the pull request, the design review and the planning meeting — not three weeks later on the bill.
 
-### A worked example
+### A worked case (an invented example)
 
-> A pull request turns on cross-region replication for a data store "for resilience". The Consequence Engine reads the change, decodes the meters from the Atlas — storage in the second region, replication traffic between regions, a higher-priced SKU that the feature requires — and reads the estate: the store holds 4 TB and grows 6% a month; the change rate is high. It answers in a comment on the pull request: *"About €1,900 a month, rising to about €2,600 within a year; €700 of that is replication traffic and depends on the change rate, which is the uncertain part. If this store is not in the disaster-recovery plan for the payments platform, the resilience gain is small; if it is, this is cheap. Alternative: replicate only the two tables the runbook lists — about €480."* The author replies, the AI files the lesson, and the prediction goes in the Experiment Ledger.
+> A pull request turns on cross-region replication for a data store "for resilience". The Consequence Engine reads the change, decodes the meters from the Atlas — storage in the second region, replication traffic between regions, a higher-priced SKU that the feature requires — and reads the estate: the store holds 4 TB and grows 6% a month; the change rate is high. It answers in a comment on the pull request: *"About €1,900 a month at your billed rates, rising to about €2,600 within a year; €700 of that is replication traffic and depends on the change rate, which is the uncertain part. If this store is not in the disaster-recovery plan for the payments platform, the resilience gain is small; if it is, this is cheap. Alternative: replicate only the two tables the runbook lists — about €480."* The author replies, the AI files the lesson, and the prediction goes in the Ledger.
 
 ---
 
 ## 12. The first 24 hours in a new estate
 
-No customer-specific *model training* is needed to start — the Atlas arrives knowing Azure — but the first thing the system learns about a customer is its own price book and agreements.
+The Atlas already knows Azure. What the system must learn first is the customer's own: what it may see and do, and the agreement, rates and commitments it sits under.
 
-1. The Surveyor inventories what it is allowed to see and reads the bill (billing data arrives with a lag of hours to days, so the first full picture takes a day or two).
-2. Every meter on the bill is decoded at once by the Atlas; the grammar labels each as capacity, stock, flow and so on.
-3. The Conductor builds the first Unexplained Spend Ledger and the first Agenda: biggest blocks first.
+1. The Surveyor **works out what it may see and do**: it probes each scope and records the first capability profile, which fixes the price basis its numbers can honestly carry.
+2. It inventories what it may see and, where its reach includes the bill, reads it (billing data lags by hours to days). Without cost access it starts from resources and metrics, and every figure is a scenario at list prices.
+3. The Atlas decodes every meter it can see at once, and the Conductor builds the first Unexplained Spend list and the first Agenda: biggest blocks first.
 4. The Surveyor drafts intent statements and owners for the largest blocks, with confidence.
-5. Once the bill has caught up, the owners of the five largest unexplained blocks each receive **one** question — nothing else. The rest of the week is the system *listening*.
+5. Day one maps access and resources. Once the bill has caught up, the owners of the five largest unexplained blocks each receive **one** question — nothing else. The rest of the week is the system *listening*.
 
 ---
 
 ## 13. Privacy of understanding
 
-The Estate Model and the Lesson Book describe a customer's business and its people. They stay within the customer's own boundary; only *derived, anonymised statistics* — "this kind of advice paid off in 71% of cases" — can ever be offered to the [Commons](07-getting-smarter.md#7-the-commons), and only with the customer's say-so. People-data is handled with care (the system works out who *owns* things, not how well they work), and the detailed rules come with the [guardrails](09-guardrails-later.md).
+The Estate Model and the Lesson Book describe a customer's business and its people. They stay inside the customer's boundary, and so do its bills, its price sheet and its measured outcomes: none of them enters the open Atlas. Under **Pool**, and only with the customer's say-so, a scope and an aggregate may be offered to the [Commons](07-getting-smarter.md), privacy-reviewed and published only when several organisations contribute the same observation — never a bill line, a name or an identifier. The system works out who *owns* things, not how well they work; the technical rules are in [security and governance](design/06-security-and-governance.md).
 
 ---
 
 ## 14. A gallery of cases — breadth, not rules
 
-What the system might bring to a human, across every mechanism. **Illustrative**: none of these is a rule the system is given. Each would come from reasoning with the [Cost Grammar](02-learning-azure.md#2-the-cost-grammar--how-it-reasons-about-services-it-has-never-seen), the estate and a Skeptic's objections — and sourced versions of many are in the [exam bank](research/exam-bank-cost-traps.md) as test questions.
+What the system might bring to a human, across every mechanism (invented examples). Each would come from reasoning with the [Cost Grammar](02-learning-azure.md), the fourteen ways money arises, the estate and a Skeptic's objections. Many have a source-verified entry in the [cost-trap bank](research/cost-trap-bank.md): the claim was found on the cited Microsoft page, and no bill has confirmed it.
 
 | Where it shows up | A case it might bring | Why nobody noticed |
 |---|---|---|
@@ -276,7 +295,7 @@ What the system might bring to a human, across every mechanism. **Illustrative**
 | **Feature** | Geo-replication enabled on a registry for a region with no consumers | enabled "just in case" |
 | **Tier / step** | A database tier chosen for one premium feature that nobody uses | the feature was needed in the pilot |
 | **Allowance** | A plan tier chosen just above its free allowance, for use that fits inside the tier below | the threshold is in the pricing page, not the portal |
-| **Time cliff** | A service in preview pricing goes to paid on 1 March; nine of fourteen estates use it | the free period had no owner |
+| **Time cliff** | A service's preview price ends on 1 March; nine of fourteen estates use it | the end date had no owner |
 | **Time cliff** | Function apps on Linux Consumption: the plan retires on 30 September 2028, and the migration doubles as a right-sizing chance | a forced move is also a design review |
 | **Time quantum** | A job that stops and starts a managed database instance hundreds of times a day, each start billed for a full started hour | the meter rounds up; the job does not know |
 | **Coupling** | Private connectivity that added a per-GB processing meter nobody modelled | it arrived with a security change |

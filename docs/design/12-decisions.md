@@ -10,14 +10,14 @@
 
 ## 2. Our code runs on Azure Functions; Durable Functions on the Azure Storage provider · Accepted
 
-- **Decision.** Five Function apps (Flex Consumption, Python, zip deployment; the Teams `bot` follows the Agents SDK language): `workflows`, `tools`, `approvals`, `runner` and `bot`, each with its own identity. A workflow that waits days for a person costs nothing while it waits.
+- **Decision.** Five Function apps (Flex Consumption, Python, zip deployment; the Teams `bot` follows the Agents SDK language): `workflows`, `tools`, `approvals`, `runner` and `bot`, each with its own identity. A workflow that waits days for a person runs no orchestration code while it waits.
 - **Instead of.** Foundry workflow agents (retire 1 December 2026); Agent Framework workflows inside hosted agents (sessions time out; the hosting and durable packages are prerelease); Logic Apps Standard (always-on floor); Container Apps with a registry (extra service and, behind a private link, a premium registry). Durable Task Scheduler Consumption is preview, has no high availability and keeps 30 days: an option, not the default.
 - **Cost · security · reversibility.** Scales to zero · separate identity per app · medium (the Agent Framework durable extension is the planned switch).
 
 ## 3. Five hosted agents, one per trust boundary, hosting ten roles · Accepted
 
-- **Decision.** `study`, `investigate`, `skeptic`, `diplomat`, `engineer` as Foundry hosted agents built with Agent Framework 1.0, zip-deployed, small, with a short idle timeout and one session per workflow run. Each has its own agent identity and hub contract. The Engineer alone holds propose tools and never sees free text.
-- **Instead of.** One hosted agent per role (idle tails, ten deployments); one agent for everything (no separation); prompt agents (the hub's bring-your-own-model route is Chat Completions only). Hosted or prompt is chosen by capability. The Librarian returns a change set and the Study workflow opens the pull request, so no role in `study` holds a propose tool.
+- **Decision.** `study`, `investigate`, `skeptic`, `diplomat`, `engineer` as Foundry hosted agents built with Agent Framework 1.0, zip-deployed, small, with a short idle timeout and one session per workflow run. Each has its own agent identity and hub contract. The Engineer alone holds propose tools and never sees free text. The Librarian returns a change set and the Study workflow opens the pull request, so no role in `study` holds a propose tool.
+- **Instead of.** One hosted agent per role (idle tails, ten deployments); one agent for everything (no separation); prompt agents (the hub's bring-your-own-model route is Chat Completions only), so hosted or prompt is chosen by capability.
 - **Cost · security · reversibility.** Fewer idle hours · identities follow trust boundaries · high (a role can move into its own agent if testing finds an injection path).
 
 ## 4. The Citadel hub is the only door to models and tools; one contract per hosted agent · Accepted
@@ -36,7 +36,7 @@
 
 - **Decision.** Claims, profiles, Detectors and Action templates are files; agents propose by pull request; a person merges, never automatically; a claim can never fill an Action parameter; a release rebuilds the index. One AI Search Basic service.
 - **Instead of.** Vector stores inside agents; Foundry Memory (preview, no virtual-network support); a wiki.
-- **Cost · security · reversibility.** One search unit is the main fixed knowledge cost · a poisoned claim needs a human to merge it · high. Retrieval options (Serverless, Foundry IQ) are Proposed, settled by P5.
+- **Cost · security · reversibility.** One search unit is the main fixed knowledge cost · a poisoned claim needs a human to merge it · high. AI Search Basic is the baseline; Serverless and Foundry IQ retrieval are evaluated under P5.
 
 ## 7. Estate knowledge in Cosmos DB serverless; the audit log holds ids, never names · Accepted
 
@@ -46,8 +46,8 @@
 
 ## 8. Cost data: FOCUS exports to Blob, DuckDB in the `tools` app · Accepted
 
-- **Decision.** Manifest-based replacement ingestion; billed and effective cost kept apart; monthly reconciliation. DuckDB (MIT) is the one non-Microsoft engine.
-- **Instead of.** Azure Data Explorer, Fabric, Databricks, FinOps hubs: judged on merit, **not needed in phase 1**; P4 sets the threshold; a hub adapter is phase 4.
+- **Decision.** Manifest-based replacement ingestion; where the agreement offers no FOCUS export, the Cost Details, Usage Details or Query API fills the same layout; billed and effective cost kept apart; monthly reconciliation. DuckDB (MIT) is the one non-Microsoft engine.
+- **Instead of.** Azure Data Explorer, Fabric, Databricks, FinOps hubs: more engine than phase-1 volumes need; P4 measures the volume at which one would pay for itself; a hub adapter is phase 4.
 - **Cost · security · reversibility.** Storage only · no standing cluster to secure · high (adapters).
 
 ## 9. Tools are HTTPS APIs published through the hub as MCP; structured fields only · Accepted
@@ -70,7 +70,7 @@
 
 ## 12. Runner roles per action family; no standing purchase role · Accepted
 
-- **Decision.** One narrow custom role per action family at scopes the organisation opts in. Purchases: a role assignment with an end time, created and removed by the approval service, bound to a stored quote that includes the billing and applied scopes; alarms disable the identity. P8 settles propagation and revocation.
+- **Decision.** One narrow custom role per action family at scopes the organisation opts in. Purchases: a role assignment with an end time, created and removed by the approval service, bound to a stored quote that includes the billing and applied scopes; alarms disable the identity. Where the agreement or the organisation's policy keeps the purchase right from the identity, the same approved quote goes as a request to whoever can buy. P8 settles propagation and revocation.
 - **Instead of.** One broad role; a standing purchaser. Privileged Identity Management cannot make service principals eligible.
 - **Cost · security · reversibility.** Role assignments are free · limits blast radius; a compromised runner can still perform its family's actions in opted-in scopes · high.
 
@@ -88,7 +88,7 @@
 
 ## 15. Evaluation in three tiers; learning shown by frozen versus updated memory · Accepted
 
-- **Decision.** Zero-LLM checks on every pull request; LLM suites on change, on Flex where it is available (preview; Global Standard otherwise); sampled production scoring and safety suites before each autonomy level. Only verified bank rows become gold, adjudicated by a person; sealed rotating test sets.
+- **Decision.** Zero-LLM checks on every pull request; LLM suites on change, on Flex where it is available (preview; Global Standard otherwise); sampled production scoring and safety suites before each autonomy level. Only the source-verified rows of the [cost-trap bank](../research/cost-trap-bank.md) become gold, adjudicated by a person; sealed rotating test sets.
 - **Instead of.** Full suites on every change; a judge as truth.
 - **Cost · security · reversibility.** The main variable cost of the Evaluate profile ([cost](10-cost-and-finops.md)) · red team gates autonomy · high ([evaluation](08-testing-and-evaluation.md)).
 
@@ -98,16 +98,16 @@
 - **Instead of.** A list of things to watch.
 - **Cost · security · reversibility.** Small · catches silent loosening · high.
 
-## 17. No lab: the system never deploys resources to learn · Accepted
+## 17. Learning never provisions anything just to measure it · Accepted
 
-- **Decision.** Learning comes from documents, price lists, schemas, release notes, bills, replays, owners' answers and small owner-approved reversible trials. The honest gap: a meter nobody has used cannot be discovered this way, and the first organisation to use a new service meets surprises, so its advice is labelled.
-- **Instead of.** A budget-capped sandbox subscription running billing experiments (costly, needs its own governance).
-- **Cost · security · reversibility.** Avoids the largest cost in the first design · no experiment estate to secure · reversible: an organisation that wants experiments can add its own environment later ([knowledge](04-knowledge-and-learning.md)).
+- **Decision.** Learning comes from documents, price lists, schemas, release notes, bills, replays, owners' answers and small owner-approved reversible trials. A trial changes only a resource an owner already runs, after the owner has seen a cost ceiling. Known limit: a meter nobody has used cannot be discovered this way, and the first organisation to use a new service meets surprises, so its advice is labelled.
+- **Instead of.** A budget-capped sandbox subscription running billing experiments (spends money to learn what money is spent on; needs its own governance).
+- **Cost · security · reversibility.** No sandbox spend · no sandbox estate to secure · a trial can still move the bill of the one resource it changes · reversible: an organisation that wants experiments can add its own environment later ([knowledge](04-knowledge-and-learning.md)).
 
 ## 18. Cost is a design constraint · Accepted
 
 - **Decision.** Scale to zero; Detectors for cheap leads; small model first; Batch and Flex for non-urgent work; evaluation on change plus sampling; one Key Vault, one AI Search, no container registry; the solution watches its own bill. Azure budgets only alert, so hard stops are the hub's token quotas and a run-rate trip.
-- **Cost · security · reversibility.** The point · quotas double as safety limits · high.
+- **Cost · security · reversibility.** The idle floor (search, private endpoints, one always-ready instance) is the fixed cost that remains · quotas double as safety limits · high.
 
 ## 19. Licences and non-Microsoft parts are listed, not presumed · Accepted
 
@@ -119,3 +119,9 @@
 - **Decision.** Multi-tenant or service-provider operation is out of scope until at least phase 5.
 - **Instead of.** Designing tenancy boundaries now.
 - **Cost · security · reversibility.** Simpler everything · no cross-tenant data path · high.
+
+## 21. Each scope's agreement and access are probed, and the system adapts · Accepted
+
+- **Decision.** For every scope the Estate refresh workflow runs read-only probes (plain code in the `tools` app) for the agreement family, the cost reach (billing, subscription, none), the cost data path, the price basis and the purchase path; it stores a capability profile and probes again weekly and after any 401 or 403. Every number names the prices it rests on, and where the system may not act it prepares the request for whoever may ([agreements and access](14-agreements-and-access.md)).
+- **Instead of.** Assuming one agreement and full billing access; asking an administrator to enter the agreement type by hand (it goes stale and is often wrong).
+- **Cost · security · reversibility.** A few read-only calls per scope a week · no scope is asked for more access than a question needs, and one scope's data never reaches another's · high.

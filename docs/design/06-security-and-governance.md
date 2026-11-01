@@ -7,7 +7,9 @@
 - Who is accountable for each decision.
 - Which frameworks the design maps to (a mapping, not a certification).
 
-An agent can be talked into anything, so no agent can do harm. Agents read and propose. One component, the action plane, writes, and only what a person approved or a rule a person wrote allows. The solution onboards to the [Citadel governance hub](https://github.com/Azure-Samples/ai-hub-gateway-solution-accelerator) of the adopting organisation's Azure landing zone (the Hub). Proof points P1 to P10 are in [the roadmap](13-roadmap.md); components are in [the architecture](02-architecture.md).
+Capitalised terms (Case, Action, Atlas, Detector, Credential, Contract) are defined in [the glossary](README.md#words-used-in-this-design).
+
+An agent can be talked into anything, so assume it will be: no agent holds a write role. Agents read and propose. One component, the action plane, writes, and only what a person approved or a rule a person wrote allows. The solution onboards to the [Citadel governance hub](https://github.com/Azure-Samples/ai-hub-gateway-solution-accelerator) of the adopting organisation's Azure landing zone (the Hub). Proof points P1 to P10 are in [the roadmap](13-roadmap.md); components are in [the architecture](02-architecture.md).
 
 ## 1. Goals, trust zones and data classes
 
@@ -19,7 +21,7 @@ Five goals drive every control.
 4. Every failure is bounded, visible and recoverable.
 5. Personal data stays minimal, inside the adopting organisation's boundary, and erasable.
 
-Red boxes hold text an attacker can write. Blue is the only route from an agent to a model or tool. Green is the only place that changes Azure.
+Red boxes hold text an attacker can write. Blue is the only route from an agent to a model or tool. Green is the only place that changes the Azure estate the system manages; the solution's own resources change only through its deployment pipeline, from reviewed Git, under the pipeline's own identity ([delivery and operations](09-delivery-and-operations.md)).
 
 ```mermaid
 flowchart LR
@@ -55,7 +57,7 @@ flowchart LR
 | Public documentation | Azure documentation, price lists | Yes, via the `study` contract | Git (Atlas), AI Search |
 | Estate metadata | resource ids, SKUs, usage, cost lines, tags, names, log lines | Fields yes; free text only as a screened excerpt, inside the adopter's data boundary | Cosmos DB, cost lake |
 | People data | owner object ids, names, addresses, replies (tags can hold them too) | Ids only; names are resolved at send time, outside the model; replies as screened excerpts | Directory; ids in Cosmos DB |
-| Secrets | Hub subscription keys, one repository key | Never | Key Vault |
+| Secrets | Hub subscription keys, the GitHub App key that `pr-draft` uses | Never | Key Vault |
 | Financial commitments | quotes, reservation orders, amounts, approvals | Quote id and numbers only | Approval records, ledger, audit log |
 
 ## 2. What can go wrong
@@ -67,7 +69,7 @@ Each row gives a threat, its path, the controls and what they leave open. Names 
 | Prompt injection | A tag, name, log line, document or reply tells an agent what to do | Free text arrives only as a screened, length-capped `untrusted_excerpt`; no agent that reads it can write (section 3) | Screening misses attacks. A fooled agent can still write a wrong draft; people must catch it |
 | Tool misuse, excessive agency | An agent calls a tool it should not, or too often | One contract per hosted agent; read and propose tools on separate servers; only the Engineer proposes; quotas, `max_iterations`, call budgets | The Engineer can still propose. A loop inside a session is bounded, not watched |
 | Poisoned Atlas | A planted page becomes a claim, then advice | Pull request, human merge, knowledge CI re-checks each claim; a claim never fills an Action parameter | A reviewer who approves it; a re-check the same page satisfies |
-| Tool rug pull | A tool or server changes after approval | Own tools: the contract's operation allow-list, so changes go through pull requests. Other servers: pinned version or digest and a scheduled probe that hashes each tool's name, description and schema; a mismatch suspends the contract | A same-schema change or a poisoned response. Inline rejection at the Hub is UNVERIFIED (P9): policies cannot read streamed MCP responses |
+| Tool rug pull | A tool or server changes after approval | Own tools: the contract's operation allow-list, so changes go through pull requests. Other servers: pinned version or digest and a scheduled probe that hashes each tool's name, description and schema; a mismatch pulls the switch and a person suspends or re-pins the contract | A same-schema change or a poisoned response. Inline rejection at the Hub is UNVERIFIED (P9): reading `context.Response.Body` in an MCP policy buffers the response and can break streaming |
 | Forged attribution | A caller sets a header to pose as another agent | Identity is the agent's Entra token and app role; headers are cost labels; role and policy headers are stripped | A stolen agent token plus the key |
 | Leaked Hub key | The key appears in a log, trace or repository | Key only in Key Vault and the Foundry connection; a call also needs an agent token; secret scans; three-step rotation; auth-failure alerts | Key plus token until rotation ends. Conditional Access ignores key-based paths |
 | Compromised runner | An attacker controls the runner | One role per action family at opted-in scopes; purchases on a separate identity with no standing role; every run needs a bound, single-use approval; alarms; switches | Its family's Actions at every opted-in scope until revoked |
@@ -99,7 +101,7 @@ Host separation is the strongest cut. `study`, `investigate`, `skeptic` and `dip
 | Principal | Identity | Holds |
 |---|---|---|
 | Five hosted agents | One [Entra Agent ID](https://learn.microsoft.com/azure/foundry/agents/concepts/agent-identity) each | App roles `Model.Invoke` and `MCP.Invoke` on its own Hub contract; no Azure role |
-| Five Function apps | Managed identities; one per action family for the runner; its own for purchases; the `bot` app's identity can call the Approval service, use its two queues and install the Teams app for a person, nothing else | Only the reads or writes the job needs |
+| Five Function apps | Managed identities: one each for `tools`, `workflows`, `approvals` and `bot`; the `runner` app holds one identity per action family and its own for purchases. The `bot` identity can call the Approval service, use its two queues and install the Teams app for a person, nothing else | Only the reads or writes the job needs |
 | Evaluation | Its own identity and contract | Synthetic data and redacted samples; no tools; no production role |
 | People | Entra groups: platform team, FinOps lead, approver (resource-owner and FinOps or finance groups), Atlas reviewer, security reviewer | Rights follow the group; reviewed quarterly |
 
@@ -120,7 +122,7 @@ Host separation is the strongest cut. `study`, `investigate`, `skeptic` and `dip
 
 ## 5. Action-plane safety
 
-The action plane alone changes Azure: Action catalogue, Planner (`plan`), Approval service, runner, Verifier, audit log, kill switches and credentials.
+The action plane alone changes the opted-in estates, and the reviewed deployment pipeline alone changes the solution's own resources. The action plane is the Action catalogue, Planner (`plan`), Approval service, runner, Verifier, audit log, kill switches and credentials.
 
 ### The approval record
 
@@ -161,6 +163,10 @@ The runner has **one narrow custom role per action family** (VM resize, storage 
 
 PIM cannot make a service principal eligible ([Learn](https://learn.microsoft.com/azure/role-based-access-control/pim-integration)), so our code removes the assignment unless Entra P2 or ID Governance lets Azure enforce an end date. P8 tests propagation delay and revocation; a standing role with an alert on every use is the weaker fallback. Two limits sit outside the design: the billing account's policy can bar role-based purchases, and Azure caps refunds in a rolling 12-month window and ends exchange for new reservations of savings-plan services from 1 February 2027 ([Learn](https://learn.microsoft.com/azure/cost-management-billing/reservations/exchange-and-refund-azure-reservations)).
 
+**Where the identity cannot buy, the purchase becomes a request.** A reservation needs the built-in Owner or Reservation Purchaser role on an eligible subscription, under an Enterprise Agreement, a Microsoft Customer Agreement and pay-as-you-go alike, unless a policy bars role-based purchases; a savings plan needs Owner or Savings plan purchaser on a subscription of the enrollment or billing profile, or a billing role, unless the Add Savings Plan policy bars it.
+
+Under a partner agreement a reservation is bought by the partner in Partner Center when the customer authorises it, or by the customer in the Azure portal once the partner has given permission and the customer holds the Reservation Purchaser role ([Learn](https://learn.microsoft.com/azure/cost-management-billing/reservations/prepare-buy-reservation)). Wherever the identity cannot buy, the same two approvals bind the same stored quote, the Case sends it to whoever can buy (the billing owner or the partner), and the Verifier watches the bill for the purchase line ([agreements and access](14-agreements-and-access.md#four-purchase-paths)).
+
 ### Kill switches
 
 Three switches exist: global, per Action, per estate. The Approval service and the runner read them before approving and before each step. One person flips a switch; re-enabling purchases needs two. A switch stops new work and the next step, but cannot recall a purchase already submitted. Stopping a hosted agent or session is not a kill switch: Learn says an in-flight turn can stay in progress for later recovery ([Learn](https://learn.microsoft.com/azure/foundry/agents/how-to/manage-hosted-sessions)). The hard stops are suspending the agent's Hub contract (model and tool access end at once), cancelling its orchestrations and the runner's own check. Drills: [safeguards and drift](07-safeguards-and-drift.md).
@@ -169,7 +175,7 @@ Three switches exist: global, per Action, per estate. The Approval service and t
 
 | Text enters through | Screen | Why there |
 |---|---|---|
-| Tool results with free text | Our tool services return fields; free text only as an `untrusted_excerpt`: length-capped, checked for document attacks with Prompt Shields, wrapped in the documents delimiter; secrets scanned out of all output | The Hub cannot read streamed MCP responses ([Learn](https://learn.microsoft.com/azure/api-management/mcp-server-overview)) and Foundry's tool-response controls skip MCP |
+| Tool results with free text | Our tool services return fields; free text only as an `untrusted_excerpt`: length-capped, checked for document attacks with Prompt Shields, wrapped in the documents delimiter; secrets scanned out of all output | A Hub policy must not read an MCP response body: Learn warns that doing so buffers the response and can break MCP streaming ([Learn](https://learn.microsoft.com/azure/api-management/expose-existing-mcp-server#configure-policies-for-the-mcp-server)). Foundry's tool-response controls skip MCP |
 | Owner replies | At ingress, before any agent: Prompt Shields on prompt and document, length cap | Untrusted from the first byte |
 | Raw text in prompts | At the Hub on `study` and `diplomat`: `llm-content-safety` with `shield-prompt` ([Learn](https://learn.microsoft.com/azure/api-management/llm-content-safety-policy)) | These prompts take raw web text and replies |
 | Other contracts' prompts | Not screened at the Hub | Their free text arrives as screened excerpts; screening every prompt costs tokens and time |
@@ -185,7 +191,7 @@ Prompt Shields do not verify where text came from, are trained mostly on English
 | Headers | `x-policy-id` lets a caller pick its own guardrail per request ([Learn](https://learn.microsoft.com/azure/foundry/guardrails/how-to-create-guardrails)); the Hub strips it and any role header |
 | Alerts, logs | Auth-failure, content-safety and PII alerts on (the accelerator ships them off); prompt and completion capture off in production (the accelerator captures up to 256 KB each) |
 
-**Foundry guardrails are preview.** An agent whose definition omits `rai_config` has no guardrail at the agent boundary, and a missing policy fails open. Tool-call and tool-response controls cover only [listed tools](https://learn.microsoft.com/azure/foundry/guardrails/intervention-points#supported-tools) (Azure AI Search, Azure Functions, OpenAPI, SharePoint, Fabric data agent, Bing, Browser Automation), not MCP ([Learn](https://learn.microsoft.com/azure/foundry/agents/concepts/hosted-agent-guardrails)). They run behind a switch where a policy exists (CI asserts it does); nothing depends on them. The generally available fallback is the screening above.
+**Foundry guardrails are preview.** An agent whose definition omits `rai_config` has no guardrail at the agent boundary, and a nonexistent named policy can fail open. Tool-call and tool-response controls cover only [listed tools](https://learn.microsoft.com/azure/foundry/guardrails/intervention-points#supported-tools) (Azure AI Search, Azure Functions, OpenAPI, SharePoint, Fabric data agent, Bing, Browser Automation), not MCP ([Learn](https://learn.microsoft.com/azure/foundry/agents/concepts/hosted-agent-guardrails)). They run behind a switch where a policy exists (CI asserts it does); nothing depends on them. The generally available fallback is the screening above.
 
 **No way around the Hub.**
 
@@ -198,9 +204,9 @@ Prompt Shields do not verify where text came from, are trained mostly on English
 | Topic | Rule |
 |---|---|
 | Minimisation | Prompts get ids, not names; names and addresses are resolved when a message is rendered, outside the model. With the Invocations protocol Foundry stores no conversation history, and a session's files last up to 30 days, so agents write no personal data to files and the workflow deletes each session when its run ends ([Learn](https://learn.microsoft.com/azure/foundry/agents/how-to/manage-hosted-sessions)) |
-| Audit log | Ids and hashes only, never names or addresses, so an erasure never touches an immutable record. Immutable Blob ([Learn](https://learn.microsoft.com/azure/storage/blobs/immutable-storage-overview)) plus Log Analytics |
+| Audit log | Entra object ids and hashes only, never names or addresses; an object id resolves to a person only through the directory. Immutable Blob ([Learn](https://learn.microsoft.com/azure/storage/blobs/immutable-storage-overview)) plus Log Analytics |
 | Traces | Content recording is off in production: `OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT` defaults to false and Learn says keep it off ([Learn](https://learn.microsoft.com/azure/foundry/observability/how-to/trace-agent-framework)). On in dev, on synthetic data. Evaluators see redacted samples |
-| Erasure, retention | Personal data sits in stores an erasure can reach (Estate model, Lessons, approval records); the audit log holds none. Whether the remaining id-to-person link is enough is the adopting organisation's legal call. Retention values are adopter parameters ([data and integrations](05-data-and-integrations.md)); hosted-agent sessions end with their run |
+| Erasure, retention | Names, addresses and replies sit in stores an erasure can reach (Estate model, Lessons, approval records). The audit log holds object ids, which are pseudonymous: whether that is enough for an erasure request is the adopting organisation's legal call, made before the log is locked. Retention values are adopter parameters ([data and integrations](05-data-and-integrations.md)); hosted-agent sessions end with their run |
 | Residency | Deployment type is an adopter parameter: Global Standard only for public documents and synthetic data. The `judge` alias must resolve to a model deployable in the adopter's boundary: all Claude models support Global Standard, and some run on Anthropic's own infrastructure ([Learn](https://learn.microsoft.com/azure/foundry/foundry-models/how-to/use-foundry-models-claude)) |
 | Abuse monitoring | Flagged prompts can get automated and human review unless the organisation has an approved modification ([Learn](https://learn.microsoft.com/azure/foundry/openai/concepts/abuse-monitoring)); record it in the data protection impact assessment (DPIA) |
 | People | The system never ranks, scores or evaluates a person or infers emotion; cost goes to resources, services and teams. Voice, avatar and meeting modules stay off until the adopting organisation's DPIA and any works-council step are done |
@@ -250,7 +256,7 @@ Mapping, not certification, not legal advice.
 |---|---|---|
 | EU AI Act: transparency (Art. 50) | Tell people they interact with an AI system; mark AI-generated text so machines can detect it. Applies since 2 August 2026; systems already on the market have until 2 December 2026 to mark ([Commission](https://ai-act-service-desk.ec.europa.eu/en/ai-act/timeline/timeline-implementation-eu-ai-act)). An MIT licence does not lift it (Art. 2(12), [text](https://artificialintelligenceact.eu/article/2/)) | Every message says it is AI-written and offers Explain, Challenge, Teach; a machine-readable mark goes in email headers and card metadata where the channel allows ([guidelines](https://digital-strategy.ec.europa.eu/en/policies/guidelines-ai-transparency-obligations)). No emotion inference |
 | EU AI Act: risk class, oversight, logging | Classify the system. Annex III duties apply from 2 December 2027, Annex I from 2 August 2028 ([Digital Omnibus, in force 27 July 2026](https://digital-strategy.ec.europa.eu/en/news/ai-omnibus-enters-force)). High-risk systems need human oversight (Art. 14) and logs (Art. 12) | Likely not high-risk: the purpose is cost control of cloud resources. **The adopting organisation must assess it.** Evaluating employees ([Annex III 4(b)](https://artificialintelligenceact.eu/annex/3/)) or acting as a safety component of critical digital infrastructure would change the class. Approvals, switches, audit log and traces meet the intent of Arts 12 and 14 anyway |
-| GDPR ([text](https://eur-lex.europa.eu/eli/reg/2016/679/oj)) | Minimisation and storage limits (Art. 5), erasure (17), automated decisions (22), design and default (25), processors (28), security (32), breach notice in 72 hours (33), impact assessment (35) | Ids not names; audit log without personal data; erasable stores; residency parameter; approvals are a person's own authenticated act on decisions about cloud resources. Lawful basis, DPIA and works-council steps stay with the adopting organisation |
+| GDPR ([text](https://eur-lex.europa.eu/eli/reg/2016/679/oj)) | Minimisation and storage limits (Art. 5), erasure (17), automated decisions (22), design and default (25), processors (28), security (32), breach notice in 72 hours (33), impact assessment (35) | Ids not names; audit log with pseudonymous ids only; erasable stores; residency parameter; approvals are a person's own authenticated act on decisions about cloud resources. Lawful basis, DPIA and works-council steps stay with the adopting organisation |
 | NIS2 ([Commission](https://digital-strategy.ec.europa.eu/en/policies/nis2-directive)) | If in scope (medium and large entities in listed sectors; national law): risk measures such as incident handling, continuity, supply chain security, access control, MFA (Art. 21); warning in 24 hours, notice in 72 (Art. 23) | Sections 4, 5, 9; playbooks and recovery in [delivery and operations](09-delivery-and-operations.md). Scope and reporting stay with the adopting organisation |
 | DORA ([text](https://eur-lex.europa.eu/eli/reg/2022/2554/oj)) | For financial entities: ICT risk management, incident reporting, resilience testing, third-party risk | Logs, drills, playbooks and the register of third-party services ([technology register](11-technology-register.md)) give the evidence. Scope and reporting stay with the adopting organisation |
 | Microsoft Responsible AI Standard ([Microsoft](https://www.microsoft.com/en-us/ai/principles-and-approach)) | Microsoft's own framework for how it builds and governs AI systems | Not an obligation of the adopter. An adopter's own impact assessment can reuse [testing](08-testing-and-evaluation.md), the safeguards table below and the report card |

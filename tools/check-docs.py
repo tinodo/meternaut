@@ -8,14 +8,18 @@ Checks
      hub, even if closed into a ring (pictures must show loops, hubs, parallel work).
   3. SVG files are well-formed XML.
   4. Every live document is reachable from README.md (no orphans).
-  5. Anchoring guard: the two findings that started the project may appear only in the exam
-     documents - never as the foundation of the design (AGENTS.md rule 6). Matching also works
+  5. Anchoring guard: the two findings that started the project may appear only in the cost-trap
+     bank - never as the foundation of the design (AGENTS.md rule 6). Matching also works
      across hard-wrapped lines, and the text of the SVG pictures is scanned too.
   6. Bloat guard: no governance-paperwork vocabulary in the live documents (AGENTS.md rule 2).
   7. Purchase wording: purchases are prepared by the AI, approved by two named humans and executed
      by the AI (AGENTS.md rule 10); the older "executed by humans" wording is rejected.
   8. State diagrams: no ';' in a transition label (Mermaid ends the description there) and no
      straight-line state diagram without a back-edge.
+  9. Live guards (every live document, ideation and design): the vocabulary of ideas that were
+     dropped (a lab, exams) and of the old names (Brief, Move), text addressed to the person who
+     commissioned the project, and project history (versions, withdrawals) - none of it belongs in
+     a document written for strangers (AGENTS.md rule 11 (c), (j), (k)).
 
 Limits (a guard is a safety net, not a substitute for judgement): AGENTS.md, CHANGELOG.md and
 docs/reviews/ describe the rules and the review record, so the pattern guards skip them; paraphrase
@@ -28,10 +32,10 @@ and decisions, so they get the phrase-level anchoring patterns (the project owne
 not appear), the "pointless questions" bloat terms and the purchase wording, plus the design guards
 that the first design taught (AGENTS.md rule 11 a-d, g): write for the community (no personal
 references, no "the operator"), never invent (no "assumptions", no hedge hardened into a ban on
-Databricks or Fabric), no lab, plain words (no invented jargon), no review history, a size budget
+Databricks or Fabric), plain words (no invented jargon), no review history, a size budget
 (README and every document, and the whole design) and no wall of text (paragraph and table-row
-length). Anything under docs/design/ other than the documents themselves (the price snapshot) is
-third-party data and is not checked.
+length). Both scopes get the live guards. Anything under docs/design/ other than the documents
+themselves (the price snapshot) is third-party data and is not checked.
 
 Usage:  python tools/check-docs.py [--strict] [--self-test]
         --strict  treats warnings as errors (use before every commit)
@@ -50,9 +54,11 @@ DOCS = ROOT / "docs"
 
 # Documents in which the operator's original examples may legitimately appear.
 ANCHOR_ALLOWLIST = {
-    "docs/07-getting-smarter.md",
-    "docs/research/exam-bank-cost-traps.md",
+    "docs/research/cost-trap-bank.md",
 }
+# Records of the ideation-v4 review rounds: their relative links point at the documents of that
+# version, which now live only at the git tag `ideation-v4`, so link targets are not checked there.
+FROZEN_RECORDS = ("docs/reviews/v4-round-1/", "docs/reviews/v4-round-2/")
 ANCHOR_PATTERNS = [
     r"\bP2S\b", r"point[- ]to[- ]site", r"\bvWAN\b", r"virtual wan", r"LAQueryLogs",
     r"seed[- ]example", r"release[- ]1\b", r"log analytics",
@@ -100,26 +106,59 @@ DESIGN_FORBIDDEN = [
     (r"\blicen[cs]es? (?:is |are )?assumed\b|\bno licen[cs]es? (?:is |are )?(?:assumed|held|owned)\b"
      r"|\bbeyond (?:the )?azure subscriptions?\b",
      "do not invent a licence position; state which feature needs which licence"),
-    (r"(?<!\bno )(?<!\bnot )(?<!\bwithout )(?<!instead of )"
-     r"(?:\b(?:the|a|our) lab\b|\blab[- ](?:based|controller|recipes?|subscriptions?|accounts?|experiments?|environment|pool)\b)",
-     "no lab: the system never deploys resources in order to experiment"),
-    (r"\bexams?\b", "plain words: say 'evaluation'"),
     (r"\b(?:from|per|in|by|of|as) the (?:design )?brief\b|\bdesign brief\b",
      "do not cite 'the brief' in a design document"),
     (r"\b(?:no|without|exclud\w+|forbid\w*|bann?\w*)\s+(?:databricks|fabric)\b"
      r"|\b(?:databricks|fabric)\b[^.\n|]{0,50}\b(?:excluded|forbidden|not allowed|out of scope|by constraint)\b",
-     "do not harden a hedge into a ban on Databricks or Fabric: judge them on merit"),
-    (r"\bspine\b|\bleaf\b|\bagentic leaves\b|\bauthority chain\b|\bdoorbell\b|\bTerrarium\b|\bForger\b|\bJanitor\b"
-     r"|\bExperimenter\b",
+     "do not harden a hedge into a ban on Databricks or Fabric: say what each is for and when it earns a place"),
+    (r"\bspine\b|\bleaf\b|\bagentic leaves\b|\bauthority chain\b|\bdoorbell\b",
      "plain words: no invented jargon"),
     (r"\bround [1-3]\b|\bthird pass\b|\bclosure (?:check|round|re-?check)\b|\brubber[- ]?duck\w*\b|\badversarial review\b",
      "review history belongs in docs/reviews, not in the design"),
 ]
+# Live guards: every live document, ideation and design alike (AGENTS.md rule 11 (c), (j), (k)).
+# (pattern, message, flags). Link targets and the names of real Azure products that contain a dropped
+# word (DevTest Labs, Lab Services) are removed first; matching works across hard-wrapped lines.
+LIVE_FORBIDDEN = [
+    (r"\blabs?\b|\blaborator(?:y|ies)\b|\bterrariums?\b|\bwind[- ]tunnels?\b|\btime[- ]machines?\b"
+     r"|\b(?:billing|signal) benche?s?\b|\brehearsal estates?\b|\bjanitor\b|\blab notebook\b|\bexperiment ledger\b",
+     "no lab: the system builds nothing in order to learn, and a document never mentions that it might have", re.I),
+    (r"\bexams?\b|\bexaminers?\b|\bexaminations?\b|\bforgers?\b|\bexperimenters?\b|\bcartographers?\b|\blearners?\b",
+     "plain words: say 'evaluation' and 'sealed test cases', and name the real agent", re.I),
+    (r"\byou said\b|\byour starting constraints\b|\bthe brief\b|\brubber[- ]?duck\w*\b|\bproject owner\b|\bthe commissioner\b"
+     r"|\bprivate until\b|\buntil you say\b|\bunless you say\b",
+     "a document is for its readers: never address, quote or answer the person who commissioned the project", re.I),
+    (r"\bdesign-v\d|\bideation-v\d|\b(?:first|earlier|previous) (?:design|draft)\b|\b(?:was|were|been) withdrawn\b",
+     "history belongs in the changelog and the review record, not in the documents", re.I),
+    (r"\bjudged on merit\b|\bnot ruled out\b",
+     "do not answer a question nobody asked: say what a technology is for and when it earns a place", re.I),
+    (r"\breview rounds?\b|\bround[- ][1-3]\b|\bcorrected (?:after|in) (?:review )?rounds?\b|\bclosure checks?\b|\bthird pass\b",
+     "review history belongs in docs/reviews, not in the documents", re.I),
+    (r"\bBriefs?\b", "say 'Recommendation'", 0),
+    (r"\bMoves\b|\b(?:a|an|the|each|every|new|tested|ordinary) Move\b|\bMove Workshop\b", "say 'Action'", 0),
+    (r"\breplay\s*(?:,|·|→|/|\|)\s*(?:and\s+)?watch\b",
+     "the route is called Follow (ask, look, replay, follow, pool, trial); only the Watch clock and workflow keep 'watch'", re.I),
+    (r"\bUnexplained Spend Ledger\b", "say 'Unexplained Spend list': the Ledger records predictions, decisions and outcomes", 0),
+    (r"\bbill-confirmed\b", "say 'bill-observed' (the four evidence levels)", re.I),
+]
+# Ideation guards (AGENTS.md rule 12): a customer's commercial arrangement is an agreement, never a contract.
+# 'contract' survives only in the title 'the learning contract' and in 'contracted rates' (not matched).
+IDEATION_FORBIDDEN = [
+    (r"(?<!learning )\bcontracts?\b",
+     "say 'agreement' for the customer's commercial arrangement; 'contract' survives only in 'the learning contract' "
+     "and 'contracted rates'", re.I),
+]
+PRODUCT_NAMES = re.compile(r"\b(?:Azure )?(?:DevTest Labs|Lab Services)\b", re.I)
+BANK_ROW = re.compile(r"^\|\s*TRAP-[A-Z0-9]+-\d{3}\s*\|")
+# '78 Verified' / '78 of the 145 Verified' before the status, or 'Verified (78)' / '`Verified` (78 of the 145)' after it
+BANK_STATUS_CLAIM = re.compile(
+    r"\b(\d+)(?: of the 145)?\s+\*?(Verified|Partial|Unverified)\b"
+    r"|\b(Verified|Partial|Unverified)\b`?\*?\s*\((\d+)(?: of the 145)?\)")
 LINK_TARGET = re.compile(r"\]\([^)\n]*\)")
 LIST_ITEM = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s")
 DESIGN_MAX_WORDS_README = 1800
 DESIGN_MAX_WORDS_DOC = 6000
-DESIGN_MAX_WORDS_TOTAL = 42500
+DESIGN_MAX_WORDS_TOTAL = 48000
 DESIGN_MAX_PARAGRAPH_CHARS = 1100
 DESIGN_MAX_TABLE_ROW_CHARS = 800
 MERMAID_TYPES = (
@@ -211,6 +250,8 @@ def check_links(files, parsed, anchor_cache, rep: Report):
     graph: dict[Path, set[Path]] = {f: set() for f in files}
     for f in files:
         prose, _, _ = parsed[f]
+        if f.resolve().relative_to(ROOT).as_posix().startswith(FROZEN_RECORDS):
+            continue
         for n, line in prose:
             for m in LINK.finditer(INLINE_CODE.sub("", line)):
                 target = m.group(1)
@@ -436,7 +477,7 @@ def check_mermaid(path: Path, blocks, rep: Report):
                 rep.warn(path, start, "pipeline in disguise: one path through most nodes and no hub - show hubs or parallel work")
 
 
-def paragraph_hits(text: str, pat: str):
+def paragraph_hits(text: str, pat: str, flags: int = re.I):
     """Yield (line, matched text) for a pattern found in a paragraph, even across hard-wrapped lines."""
     lines = text.splitlines()
     i = 0
@@ -451,7 +492,7 @@ def paragraph_hits(text: str, pat: str):
         for k in range(i, j):
             offsets.append((len(joined), k + 1))
             joined += lines[k].strip() + " "
-        for m in re.finditer(pat, joined, re.I):
+        for m in re.finditer(pat, joined, flags):
             yield next(n for off, n in reversed(offsets) if off <= m.start()), m.group(0)
         i = j
 
@@ -482,7 +523,13 @@ def check_guards(files, rep: Report):
                 for n, _hit in paragraph_hits(text, pat):
                     if (n, pat) not in seen:
                         seen.add((n, pat))
-                        rep.error(f, n, f"anchoring guard: {pat!r} may appear only in the exam documents")
+                        rep.error(f, n, f"anchoring guard: {pat!r} may appear only in the cost-trap bank")
+        if scope != "evidence":
+            for n, msg, hit in live_text_problems(text):
+                rep.error(f, n, f"live guard: {msg} [{hit}]")
+        if scope == "ideation":
+            for n, msg, hit in live_text_problems(text, IDEATION_FORBIDDEN):
+                rep.error(f, n, f"live guard: {msg} [{hit}]")
         for n, line in enumerate(text.splitlines(), 1):
             if scope != "evidence":
                 for pat, flags in bloat:
@@ -491,6 +538,17 @@ def check_guards(files, rep: Report):
             for pat, flags in PURCHASE_PATTERNS:
                 if re.search(pat, line, flags):
                     rep.error(f, n, "purchase wording: prepared by the AI, approved by two named humans, executed by the AI (AGENTS.md rule 10)")
+
+
+def live_text_problems(text: str, rules=None):
+    """(line, message, matched text) for every live-guard violation; link targets and the names of
+    real Azure products that contain a dropped word (DevTest Labs, Lab Services) are ignored."""
+    clean = PRODUCT_NAMES.sub("", LINK_TARGET.sub("]()", text))
+    found: dict = {}
+    for pat, msg, flags in (LIVE_FORBIDDEN if rules is None else rules):
+        for n, hit in paragraph_hits(clean, pat, flags):
+            found.setdefault((n, msg), hit.strip())
+    return sorted((n, msg, hit) for (n, msg), hit in found.items())
 
 
 def design_text_problems(text: str):
@@ -553,6 +611,31 @@ def check_design(files, parsed, rep: Report):
                   f"size budget: the design is {total} words in total, the limit is {DESIGN_MAX_WORDS_TOTAL}")
 
 
+def bank_counts(text: str) -> dict:
+    """Status counts of the cost-trap bank: one table row per trap, the status in the last cell."""
+    counts = {"Verified": 0, "Partial": 0, "Unverified": 0}
+    for line in text.splitlines():
+        if BANK_ROW.match(line):
+            found = re.match(r"\W*(Verified|Partial|Unverified)\b", line.strip().strip("|").split("|")[-1])
+            if found:
+                counts[found.group(1)] += 1
+    return counts
+
+
+def check_bank_counts(files, rep: Report):
+    """Every document that quotes the bank's status counts must quote the bank's own."""
+    bank = DOCS / "research" / "cost-trap-bank.md"
+    if not bank.exists():
+        return
+    counts = bank_counts(bank.read_text(encoding="utf-8"))
+    for f in guarded_files(files):
+        for n, line in enumerate(f.read_text(encoding="utf-8").splitlines(), 1):
+            for m in BANK_STATUS_CLAIM.finditer(line):
+                number, status = int(m.group(1) or m.group(4)), m.group(2) or m.group(3)
+                if number != counts[status]:
+                    rep.error(f, n, f"bank count: says {number} {status}, the cost-trap bank has {counts[status]}")
+
+
 def check_svgs(rep: Report):
     for p in sorted((DOCS / "img").glob("*.svg")) if (DOCS / "img").exists() else []:
         try:
@@ -602,6 +685,7 @@ def run(strict: bool) -> int:
     check_guards(files, rep)
     check_design(files, parsed, rep)
     check_svgs(rep)
+    check_bank_counts(files, rep)
     check_link_forms(files, parsed, rep)
     check_headings(files, parsed, rep)
     for line in rep.errors + rep.warnings:
@@ -656,21 +740,53 @@ def self_test() -> int:
         "the operator approves", "Our Operator decides", "the operator's tenant", "operator-declared constraint",
         "my landing zone", "Tino approves", "the project owner wants", "## Assumptions", "We assume a hub exists",
         "under assumption A1", "the assumption list", "No licence is assumed", "beyond Azure subscriptions",
-        "the Lab runs recipes", "a lab subscription", "lab-based experiments", "the exam questions", "from the brief",
+        "from the brief",
         "no Databricks", "Fabric is excluded", "Databricks is out of scope", "the spine of the system",
-        "an agentic leaf", "the Terrarium", "added in round 2", "after the third pass", "a rubber duck reviewed it",
+        "an agentic leaf", "added in round 2", "after the third pass", "a rubber duck reviewed it",
     ]
     for text in bad:
         assert design_text_problems(text), f"design guard missed: {text!r}"
     good = [
-        "the adopting organisation approves", "Kubernetes operators", "no lab: nothing is deployed to experiment",
-        "without a lab", "instead of a lab", "an evaluation of the agents", "Databricks and Fabric are judged on merit",
-        "the saving assumes steady load", "scenario parameters", "[cost-trap bank](../research/exam-bank-cost-traps.md)",
+        "the adopting organisation approves", "Kubernetes operators", "an evaluation of the agents",
+        "the saving assumes steady load", "scenario parameters", "[cost-trap bank](../research/cost-trap-bank.md)",
         "Entra ID P1 is required for Conditional Access", "a design review",
     ]
     for text in good:
         assert not design_text_problems(text), f"design guard false positive: {text!r}"
-    assert design_text_problems("the Lab\ncontroller")  # a phrase split over two lines is still found
+    live_bad = [
+        "the Lab runs recipes", "a lab subscription", "lab-based experiments", "How it learns without a lab",
+        "no lab: nothing is deployed to experiment", "instead of a lab", "the exam questions", "the Examiner",
+        "the Terrarium", "a wind tunnel", "the Time Machine", "the Experimenter", "a slow learner",
+        "you said it first", "Your starting constraints", "from the brief", "the project owner", "a rubber duck",
+        "was withdrawn the same day", "see design-v1", "the first design", "judged on merit", "not ruled out",
+        "a Brief card", "the Brief", "a Move", "the Moves", "Move Workshop",
+        "Ask · Look · Replay · Watch · Pool", "ask, look, replay, watch, pool", "Replay → Watch",
+        "the Unexplained Spend Ledger", "a bill-confirmed saving",
+    ]
+    for text in live_bad:
+        assert live_text_problems(text), f"live guard missed: {text!r}"
+    live_good = [
+        "Azure DevTest Labs", "Azure Lab Services retires", "an evaluation of the agents", "a brief summary",
+        "briefly", "move the database now", "label", "collaboration", "an example",
+        "[cost-trap bank](../research/cost-trap-bank.md)",
+        "replay history and watch the bill", "the Watch clock runs every hour", "the Unexplained Spend list",
+        "a bill-observed saving",
+    ]
+    for text in live_good:
+        assert not live_text_problems(text), f"live guard false positive: {text!r}"
+    for text in ["under each contract", "the contract type", "the customer's contract", "a Contract renewal"]:
+        assert live_text_problems(text, IDEATION_FORBIDDEN), f"ideation guard missed: {text!r}"
+    for text in ["the learning contract", "The Learning Contract", "contracted rates", "a contracted price",
+                 "[learning](09-the-learning-contract.md)"]:
+        assert not live_text_problems(text, IDEATION_FORBIDDEN), f"ideation guard false positive: {text!r}"
+    assert live_text_problems("the Lab\ncontroller")  # a phrase split over two lines is still found
+    sample = "\n".join(["| ID | Trap | Status |", "|---|---|---|", "| TRAP-A-001 | x | Verified |",
+                        "| TRAP-A-002 | x | Partial (a note) |", "| TRAP-A-003 | x | Verified *(a note)* |",
+                        "| TRAP-A-004 | x | Unverified |"])
+    assert bank_counts(sample) == {"Verified": 2, "Partial": 1, "Unverified": 1}
+    assert [m.group(0) for m in BANK_STATUS_CLAIM.finditer("78 Verified, 33 Partial and 33 Unverified")] == ["78 Verified", "33 Partial", "33 Unverified"]
+    assert BANK_STATUS_CLAIM.search("Rows marked `Verified` (78 of the 145) become gold") and BANK_STATUS_CLAIM.search("`Partial` (34)")
+    assert not BANK_STATUS_CLAIM.search("the Verified rows become gold")
     blocks = prose_blocks([(1, "# T"), (2, ""), (3, "x" * 600), (4, "y" * 600), (5, ""), (6, "- item"), (7, "  more"),
                            (8, "| a | b |"), (9, "|---|---|"), (10, "| " + "z" * 900 + " |"), (12, "after a fence")])
     assert (3, "paragraph", 1201) in blocks and (6, "paragraph", 11) in blocks
