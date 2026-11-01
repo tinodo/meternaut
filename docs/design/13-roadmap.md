@@ -17,19 +17,19 @@ Each phase ends with something an organisation can use and something that was me
 
 ## 2. Ten proof points
 
-Questions whose honest answer is a measurement. Each has a fallback so a failed test changes a choice, not the project.
+Questions whose honest answer is a measurement. Each has a fallback so a failed test changes a choice, not the project. The numbers behind each pass condition (a budget, a margin, a time window) are written down before the measurement, never after.
 
 | # | Question | Passes when | Phase | Fallback |
 |---|---|---|---|---|
 | P1 | Does the hub path work end to end (hosted agent → hub → model and tool, per-agent JWT and quotas, Responses API)? What can a hosted agent do with no grants? | Calls succeed; a direct model call fails; an agent without a role cannot read the estate | 0 | Chat Completions route; prompt agent for simple roles |
 | P2 | Do workflows call hosted agents reliably (auth, timeouts, session reuse, idle tails)? Storage backend or Durable Task Scheduler? | Calls complete within the deadline; idle tail within budget; a backend chosen on measured price and recovery | 0 | Own adapter around the GA Agent Framework core; the other backend |
-| P3 | Is approval integrity real (canonical plan, opaque id, Teams sign-in and card timeout, web page with Conditional Access, single-use consumption, two-role dry run)? | Every tamper, replay and mismatch test fails closed; cards acknowledge in time | 3 | One always-ready instance; cards only open the web page |
+| P3 | Is approval integrity real (canonical plan, opaque id, the tapper's own token carried by a Teams card action, card timeout, web page with Conditional Access, single-use consumption, two-role dry run)? | Every tamper, replay and mismatch test fails closed; cards acknowledge in time | 3 | One always-ready instance; cards only open the web page |
 | P4 | Does cost data hold at Team and Enterprise volume (DuckDB in a 4 GB instance; Cosmos DB serverless limits)? | Queries and refresh finish in budget | 1 | Azure Data Explorer; provisioned Cosmos DB throughput |
-| P5 | Which retrieval for the Atlas: Basic, Serverless (preview) or Foundry IQ? Semantic ranker on or off? | Retrieval quality and cost per query on the Atlas questions | 1 | Basic with direct hybrid retrieval |
-| P6 | How good are Detective and Skeptic on verified bank rows against the baselines? | Rediscovery above baselines on the sealed set, decoys stay quiet | 1 | Narrower scope; more Detectors; better prompts |
+| P5 | Which retrieval for the Atlas: Basic, Serverless (preview), an embedded index in the `tools` app, or Foundry IQ? Semantic ranker on or off? | Retrieval quality and cost per query on the Atlas questions | 1 | Basic with direct hybrid retrieval |
+| P6 | How good are Detective and Skeptic on verified bank rows against the baselines, and on a service launched after the memory snapshot? | Rediscovery above baselines on the sealed set, decoys stay quiet; for a launch replayed with its real first invoice, a documented-only profile within a day of the launch, its meters joined to the bill with the unmatched share reported, and a first-invoice prediction inside the stated error | 1 | Narrower scope; more Detectors; better prompts |
 | P7 | Can any untrusted-text path reach a propose tool or a write? | Red team finds none; screening catches seeded attacks | 1 and 3 | Split the role into its own hosted agent |
-| P8 | Per-family runner roles or time-boxed assignment for purchases: propagation, revocation, ABAC limits? | Assignment appears and disappears within a measured window | 3 and 4 | Standing role with alerts on every use, documented as weaker |
-| P9 | Does tool pinning at the hub catch a changed tool (name, description, schema, server digest)? | A changed tool is rejected | 0 | Block `tools/list` changes in the contract |
+| P8 | Per-family runner roles or time-boxed assignment for purchases: propagation, revocation, attribute-based access control limits? Does the approval record bind the purchase scope? | Assignment appears and disappears within a measured window; a purchase with any other scope than the approved one is refused | 3 and 4 | Standing role with alerts on every use, documented as weaker |
+| P9 | Does tool pinning at the hub catch a changed tool (name, description, schema, server digest)? Is an optional Azure MCP Server worth its host? | A changed tool is rejected; the Azure MCP Server is adopted only if it earns its host over the typed `estate-read` | 0 | Block `tools/list` changes in the contract; typed tools only |
 | P10 | Tokens per case and the model per alias; does the cost model match the bill? | Measured cost within a stated margin of the model | 1 | Cheaper large tier; smaller prompts; more Detectors |
 
 ## 3. What could change the plan

@@ -49,12 +49,14 @@ It is **not** a rulebook, a chatbot or a dashboard. It is a research programme w
 
 ## The design (phase 1)
 
-The first design was withdrawn on 2026-11-01 and is kept in [the archive](docs/_archive/design-v1/README.md). A second design is being written, shorter and in plain words; its index is [docs/design](docs/design/README.md).
+The design lives in [docs/design](docs/design/README.md): fourteen documents (about 42,500 words, in plain language) on goals, architecture, agents and workflows, knowledge and learning, data and integrations, security, safeguards and drift, testing, delivery, cost, technologies, decisions and the build plan. It builds on the ideation and answers two of its ideas differently: there is **no lab** (the system never deploys resources in order to experiment; it learns from documentation, price lists, the bills it reads, replays of history and small reversible trials that an owner approves), and the "exam" becomes an evaluation described in plain terms in [testing and evaluation](docs/design/08-testing-and-evaluation.md).
+
+The first design was withdrawn on 2026-11-01 and is kept in [the archive](docs/_archive/design-v1/README.md), which says why.
 
 ## Status
 
 - **Ideation (v4)** — the north star, a deep-dive per faculty, and a plan for what to design next. Frozen as the north star the design answers to.
-- **Design (phase 1)** — `design-v1` was withdrawn; `design-v2` is in progress. See the [design index](docs/design/README.md) and [why the first one was withdrawn](docs/_archive/design-v1/README.md). Still no code.
+- **Design (phase 1)** — `design-v2` is complete and proposed: fourteen documents, reviewed in two rounds by nine different models (the decisions first, then the written design). `design-v1` was withdrawn. See the [design index](docs/design/README.md), [the review record](docs/reviews/README.md) and [why the first one was withdrawn](docs/_archive/design-v1/README.md). Still no code.
 - **Private** until the owner says otherwise. **MIT** licensed ([LICENSE](LICENSE)).
 - Constraints from the brief: Microsoft technology only · aligned with the Cloud Adoption Framework and Well-Architected Framework · open source · fully AI-infused · human-in-the-loop · not a chatbot.
 - Earlier versions (v1 → v3.2.1) are preserved in [`docs/_archive/`](docs/_archive/) (`round-1-v1`, `round-2-v2`, `round-3-v3.2.1`) and as the git tags `ideation-v1` … `ideation-v3.2.1`; see the [changelog](CHANGELOG.md) for why this version replaced them. Every version is reviewed by independent agents before it is called done — the record is in [`docs/reviews/`](docs/reviews/README.md). Rules for anyone — human or agent — working here are in [AGENTS.md](AGENTS.md).

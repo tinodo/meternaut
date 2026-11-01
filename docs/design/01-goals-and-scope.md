@@ -27,7 +27,7 @@ How each is measured in practice is in [testing and evaluation](08-testing-and-e
 | Role | What they do | What they get |
 |---|---|---|
 | Resource owner | Decides on recommendations; teaches the system | One short, explained question instead of a list; changes made for them |
-| FinOps lead | Sets credentials and budgets of attention; approves commitments with a second person | Verified savings, a report card, a weekly digest of what was learned |
+| FinOps lead | Sets credentials and attention budgets (messages a week, quiet hours); approves commitments with a second person | Verified savings, a report card, a weekly digest of what was learned |
 | Platform owner | Runs the platform; holds the kill switches; opts scopes in | A system that can be stopped, audited and upgraded |
 | Atlas reviewer | Reviews proposed changes to shared knowledge | Small, evidenced pull requests |
 | Security reviewer | Reviews contracts, roles and the action catalogue | A complete audit trail and tested safeguards |
@@ -37,7 +37,7 @@ How each is measured in practice is in [testing and evaluation](08-testing-and-e
 
 | In scope | Out of scope (and why) |
 |---|---|
-| Reading cost, usage, inventory, configuration, Advisor and Cost Management signals | **Deploying resources to learn.** There is no lab: it costs real money and needs its own governance. Learning comes from documents, price lists, bills, replays, owners' answers and small approved trials |
+| Reading cost, usage, inventory, configuration, Advisor and Cost Management signals | **Deploying resources to learn.** There is no lab: it costs real money and needs its own governance. Learning comes from documents, price lists, bills, replays, owners' answers and small approved trials: one reversible change to a resource an owner already runs, never a resource created to be tested |
 | Studying how Azure charges and keeping that knowledge tested and current | Training or fine-tuning models in phase 1 |
 | Investigating, challenging, quantifying and recommending | Operating for several organisations from one deployment (single-tenant) |
 | Asking and teaching people in Teams, email and a small web page | A custom portal beyond the approval and lesson page and Workbooks |
@@ -54,10 +54,10 @@ It reads what Azure already offers, treats it as leads and as a baseline to beat
 | Offering | What it does well | What it leaves open | How this system uses it |
 |---|---|---|---|
 | [Azure Advisor](https://learn.microsoft.com/azure/advisor/advisor-cost-recommendations) | Rule-based cost recommendations in the portal | Savings are computed at retail rates and ignore discounts and commitment coverage; nobody is asked; nothing is changed | Recommendations become leads, checked like any claim; baseline for evaluation |
-| [Cost Management](https://learn.microsoft.com/azure/cost-management-billing/costs/tutorial-improved-exports) | Reporting, budgets, anomaly alerts, exports | Budgets and alerts notify; they do not stop spend or explain it | Exports (FOCUS) feed the cost lake; alerts are Watch signals |
+| [Cost Management](https://learn.microsoft.com/azure/cost-management-billing/costs/tutorial-improved-exports) | Reporting, budgets, anomaly alerts, exports | Budgets and alerts notify; they do not stop spend or explain it | Exports in the FOCUS cost format feed the cost lake, the system's store of bills and prices; alerts are Watch signals |
 | [FinOps toolkit](https://learn.microsoft.com/cloud-computing/finops/toolkit/finops-toolkit-overview) and hubs | Open-source data foundation and reports | Reports, not decisions or actions | Reuse where an organisation has one (an adapter in phase 4); otherwise a lean lake |
 | [Azure Copilot Optimization agent](https://learn.microsoft.com/azure/copilot/optimization-agent) (preview) | Explains and scripts optimisations in chat | Virtual machines and scale sets only, at most ten items per query, no budgets or alerts | A baseline in evaluation; its scripts never bypass the approval path |
-| Azure MCP Server and cost MCP toolsets | Ready read tools for agents | Tool access is not authorisation; remote hosting is documented on Container Apps only | A candidate for generic reads, evaluated in P9; our own typed `estate-read` is the default |
+| Azure MCP Server and cost MCP toolsets | Ready read tools for agents | Tool access is not authorisation; remote hosting is documented on Container Apps only | A candidate for generic reads, evaluated in proof point P9 ([roadmap](13-roadmap.md)); our own typed `estate-read` is the default |
 | Azure Policy and Defender for Cloud | Governance and security posture | Not cost | Guard the platform itself |
 
 ## 6. Requirements
@@ -68,10 +68,10 @@ It reads what Azure already offers, treats it as leads and as a baseline to beat
 |---|---|
 | F1 | Build and maintain the Atlas: claims with sources, scope and evidence level, re-checked on a schedule |
 | F2 | Build an Estate model per organisation: resources, purpose, rhythms, owners, constraints |
-| F3 | Watch cost, usage and change on four clocks and open Cases from leads |
+| F3 | Watch cost, usage and change on clocks that fit each signal (minutes for alerts and metrics, daily for bills, slower for prices and documents) and open Cases from leads |
 | F4 | Investigate with hypotheses, challenge them independently, quantify options and consequences |
-| F5 | Tell the right owner in plain words, with evidence, options and "do nothing"; answer Explain, Challenge, Teach |
-| F6 | Plan, approve, run and verify changes from the Action catalogue; roll back on guard-metric breach |
+| F5 | Tell the right owner in plain words, with evidence, options and "do nothing"; every message offers three buttons: Explain (why), Challenge (I disagree) and Teach (here is what you missed) |
+| F6 | Plan, approve, run and verify changes from the Action catalogue; roll back when a guard metric (a measure the change must not worsen) breaches |
 | F7 | Prepare commitment purchases for two-person approval |
 | F8 | Verify outcomes against registered predictions; keep a calibration record |
 | F9 | Evaluate itself on change and in production; report what it is bad at |
@@ -83,11 +83,11 @@ It reads what Azure already offers, treats it as leads and as a baseline to beat
 |---|---|
 | Safety | No Azure change without a bound approval or valid credential; every change reversible or two-person |
 | Auditability | Every recommendation, approval and action traceable to the facts, versions and people involved |
-| Cost | Idle floor and per-case cost small enough that break-even is a small share of managed spend |
+| Cost | Idle floor (the cost when nobody uses it) and per-case cost small enough that break-even is a small share of managed spend |
 | Explainability | Every recommendation shows its evidence and how to check it |
 | Privacy | Personal data minimised; ids, not names, in the audit log |
 | Availability | Workflows resume after failure; nothing runs unapproved during an outage |
-| Operability | Stoppable at three levels; drift detected where it starts |
+| Operability | Stoppable at three levels (everything, one Action, one estate); drift detected where it starts |
 | Extensibility | New services learned through the Atlas; new Actions added by pull request |
 
 ## 7. What an organisation needs
@@ -99,20 +99,13 @@ It reads what Azure already offers, treats it as leads and as a baseline to beat
 | A Citadel governance hub | Models and tools through one door | The organisation's own, or the accelerator deployed from this repository |
 | Model quota in the chosen region | The model aliases | Quota is per subscription and tiered |
 | Microsoft Entra ID | Sign-in, groups, agent identities | P1 for Conditional Access on approvers; P2 or Governance for PIM (optional) |
-| Microsoft 365 (Teams, Exchange Online) | Cards and email | Fallback: the web page. Azure Communication Services Email retires on 30 September 2028, so it is not a fallback |
+| Microsoft 365 (Teams, Exchange Online) | Cards and email | Fallback: the web page |
 | A Git host (GitHub or Azure DevOps) | Atlas and Action pull requests | |
-| Optional: Agent 365 or Microsoft 365 E7 | Conditional Access and governance for agent identities | The hub's JWT and RBAC are the baseline without it |
+| People | Running and governing the system | A platform team that can run Azure Functions and Foundry; a FinOps lead; owners who answer cards; Atlas and security reviewers (section 3) |
+| Optional: Microsoft Agent 365 or Microsoft 365 E7 licences | Conditional Access and governance for agent identities | The hub's JWT and RBAC are the baseline without it |
 
 ## 8. Scenarios used for sizing
 
-Sizing uses three scenarios. They are parameters, not forecasts.
-
-| | Pilot | Team | Enterprise |
-|---|---|---|---|
-| Subscriptions | 5 | 50 | 1,000 |
-| Resources | 500 | 10,000 | 200,000 |
-| Resource owners | 10 | 100 | 1,500 |
-| Cases that reach an owner a month | 20 | 200 | 2,000 |
-| Azure spend under management (EUR a month) | 50,000 | 1,000,000 | 25,000,000 |
+Sizing uses three scenarios, Pilot, Team and Enterprise: 5, 50 and 1,000 subscriptions, and 20, 200 and 2,000 Cases a month that reach an owner. They are parameters, not forecasts; [cost and FinOps](10-cost-and-finops.md) gives all of them.
 
 Next: [the architecture](02-architecture.md).

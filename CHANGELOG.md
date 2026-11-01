@@ -1,6 +1,26 @@
 # Changelog
 
-All notable changes, newest first. Versions are git tags (`design-v1` for the design, `ideation-v4` for the ideation). Earlier versions are archived under [`docs/_archive/`](docs/_archive/) and are never edited.
+All notable changes, newest first. Versions are git tags (`design-v2` for the design, `ideation-v4` for the ideation; `design-v1` was withdrawn). Earlier versions are archived under [`docs/_archive/`](docs/_archive/) and are never edited.
+
+## design-v2 — 2026-11-01 — design phase 1, second design (tag `design-v2`)
+
+**Why.** The first design (`design-v1`) was withdrawn the same day: about 157,000 words, constraints and assumptions nobody had stated, a lab the project owner had not asked for, and references to one person's environment. [The archive](docs/_archive/design-v1/README.md) says why. The brief is unchanged: completely AI-driven; Microsoft Foundry and Microsoft Agent Framework; every AI part through the Citadel hub of the adopting organisation's landing zone; every safeguard and drift control; security, compliance, test and governance; every technology decision challenged twice by different models; as cost-efficient as possible.
+
+**What.** [`docs/design/`](docs/design/README.md): an index and thirteen documents, about 42,500 words, in plain language: goals and scope · architecture · agents and workflows · knowledge and learning · data and integrations · security and governance · safeguards and drift · testing and evaluation · delivery and operations · cost and FinOps · technology register · decisions · roadmap.
+
+- **Agents think, workflows are code, one component writes.** Seven Durable Functions workflows call five hosted agents (ten roles) through the Citadel hub, one contract per hosted agent. Agents only read and propose; the action plane (catalogue, plan and what-if, approval, runner, verifier, audit) is the only writer and fails closed.
+- **Approval is bound, displayed and single-use.** It is tied to one exact plan; a purchase needs two people with different roles and then runs on a time-boxed assignment of its own identity; a credential (autopilot) is a policy a person wrote and never covers purchases.
+- **It learns without a lab.** From documentation, price lists, the bills it reads, replays, owners' answers, outcomes and small approved trials; every claim carries a source, a scope and an evidence level (`documented`, `price-confirmed`, `bill-observed`, `outcome-confirmed`). Learning is shown by running sealed cases with knowledge frozen and with knowledge updated.
+- **A cost model in code.** About €311 a month at Pilot, €795 at Team and €4,760 at Enterprise scale, at list prices from a snapshot of 2,468 meters, with sensitivities and a generated appendix of every meter ([`docs/design/cost/`](docs/design/cost/meters-used.md)). Own-hub cost is shown separately.
+- **Ten proof points** that are measurements, not arguments, each with a fallback.
+
+**How it was reviewed.** Round 1: three models challenged the 22 decisions before any document was written (24 findings). Round 2: six other models reviewed the written design, each on its own lens (learning, platform facts on Learn, security, cost, consistency, a novice reader); the same reviewers then checked the fixes, and that second look found holes the first fixes had introduced (the bot had no network path to the private Approval service, a false claim about FOCUS resource ids, a contradiction in the day-zero story, a mispriced model sensitivity), which were fixed. Platform claims the reviewers relied on were re-checked on Microsoft Learn; one reviewer claim and two of the orchestrator's own notes were wrong and were corrected. The raw reports, the closure replies, the spot-checks and a disposition for every finding are in [`docs/reviews/`](docs/reviews/README.md).
+
+**What review changed.** The approver now comes from the tapper's own token, never from the bot; the single-use marker moved to a separate create-only container; a purchase quote binds its billing subscription and scope and the Savings plan purchaser role is named; the Engineer's host validates every invocation; Foundry session data is deleted with each run; `bill-observed` needs a closed billing period and matched usage; the learning test pins sources, repeats runs and audits leakage; Detectors are audited on what they did not flag; a production hub is priced as API Management Standard v2; three inbound private endpoints were added; and meters that are not tokens (instance counts, log caps, evaluation budgets) got their own limits and reconciliation.
+
+**Tools and rules.** [`tools/cost-model.py`](tools/cost-model.py) (`--update-doc` writes the cost block and the meters appendix, `--check` guards both, `--self-test`); [`tools/check-docs.py`](tools/check-docs.py) with design guards (community voice, no invented constraints, no lab, plain words) and a size budget; [AGENTS.md](AGENTS.md) rule 11 records what the withdrawn design taught. The size limit was raised from 42,000 to 42,500 words after the first Round-2 fix pass, because the written design needed the Teams paths, purchase scope and learning audits that the first draft lacked; the closure fixes were absorbed by removing duplicated passages.
+
+**Not claimed.** Nothing is built. Cost figures are model outputs, not measurements; what is unproven is listed at the end of the design's README.
 
 ## design-v1 — 2026-11-01 — withdrawn (tag `design-v1`)
 

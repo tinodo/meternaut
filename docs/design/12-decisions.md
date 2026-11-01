@@ -64,19 +64,19 @@
 
 ## 11. Approval is a bound, displayed, single-use authorization · Accepted
 
-- **Decision.** The approval service renders the canonical plan; cards carry an opaque id; the record binds plan hash, etags, quote, approver id and role, and the authentication claim; consumed once. Purchases need two distinct directory roles. Credentials (autopilot) are policies evaluated in code on facts the model cannot set, never for purchases.
+- **Decision.** The approval service renders the canonical plan; cards carry an opaque id; the record binds plan hash, etags, quote, approver id and role, and the authentication claim; consumed once, through a create-only item that only the runner can write. The approver comes from the approver's own token, never from the bot. Purchases need two distinct directory roles. Credentials (autopilot) are policies evaluated in code on facts the model cannot set, never for purchases.
 - **Instead of.** Trusting a row plus a card; tags or lessons deciding scope.
 - **Cost · security · reversibility.** Small · closes replay, swap and confused-deputy paths · signing the record is a later hardening.
 
 ## 12. Runner roles per action family; no standing purchase role · Accepted
 
-- **Decision.** One narrow custom role per action family at scopes the organisation opts in. Purchases: a role assignment with an end time, created and removed by the approval service, bound to a stored quote; alarms disable the identity. P8 settles propagation and revocation.
+- **Decision.** One narrow custom role per action family at scopes the organisation opts in. Purchases: a role assignment with an end time, created and removed by the approval service, bound to a stored quote that includes the billing and applied scopes; alarms disable the identity. P8 settles propagation and revocation.
 - **Instead of.** One broad role; a standing purchaser. Privileged Identity Management cannot make service principals eligible.
 - **Cost · security · reversibility.** Role assignments are free · limits blast radius; a compromised runner can still perform its family's actions in opted-in scopes · high.
 
 ## 13. Agents draft, workflows send; recipients come from the directory · Accepted
 
-- **Decision.** A model never chooses or supplies a recipient; free text never approves. Teams cards use the Agents SDK in .NET or JavaScript (card routing is not in the Python SDK), in a small `bot` app that validates the Bot Framework token and forwards only an opaque id; Azure Bot Service offers no IP allow-list, so token validation is the control. Approvals above R1 open the web page. Email uses an app-only mailbox with a recipient allow-list; Azure Communication Services Email retires in 2028 and is not used.
+- **Decision.** A model never chooses or supplies a recipient; free text never approves. Teams cards use the Agents SDK in .NET or JavaScript (card routing is not in the Python SDK), in a small `bot` app that validates the Bot Framework token; a tap carries the tapper's own token to the approval service; Azure Bot Service offers no IP allow-list, so token validation is the control. Approvals above R1 open the web page. Email uses an app-only mailbox with a recipient allow-list; Azure Communication Services Email is not used.
 - **Instead of.** Agents sending messages; approval by reply.
 - **Cost · security · reversibility.** Small · stops exfiltration by mail and forged approvals · high.
 

@@ -4,7 +4,7 @@
 
 ## 1. The repository
 
-One repository defines the system, so a release is one set of pins. Every path has a code owner. Agents open pull requests; humans merge them.
+One repository defines the system, so a release is one set of pins. Every path has a code owner. The system drafts pull requests; people merge them.
 
 | Path | What it holds | CODEOWNERS group |
 |---|---|---|
@@ -14,7 +14,8 @@ One repository defines the system, so a release is one set of pins. Every path h
 | `contracts/` | Hub contracts per hosted agent and environment; tool pins | Security reviewers |
 | `infra/`, `hub/` | Bicep, profiles, Deployment Stacks, runner role definitions, onboarding modules; hub instructions and pinned commit | Platform team |
 | `apps/workflows`, `apps/tools` | Durable orchestrations; read tools, price simulator, planner | Platform team |
-| `apps/approvals`, `apps/runner` | Approval service and credential evaluator, Teams bot endpoint, web page; action runner, verifier | Security reviewers |
+| `apps/approvals`, `apps/runner` | Approval service and credential evaluator, web page; action runner, verifier | Security reviewers |
+| `apps/bot` | Teams bot endpoint (C# or TypeScript); calls the approval service and carries messages through two queues | Security reviewers |
 | `evaluation/` | Suites, synthetic estates, replays, human-adjudicated gold labels (the sealed test set stays outside Git) | Atlas reviewers |
 | `.github/` | Workflows, CODEOWNERS, rulesets | Security reviewers |
 | `docs/` | Design, decisions, runbooks | Platform team |
@@ -25,17 +26,17 @@ One repository defines the system, so a release is one set of pins. Every path h
 
 **azd** is the developer loop and CI entry point (`azd provision`, `azd deploy`, `azd ai agent`) ([Learn](https://learn.microsoft.com/azure/foundry/agents/how-to/deploy-hosted-agent-code)). Pin the `azd ai` extensions, which are versioned apart from azd; the Python SDK (`azure-ai-projects` 2.2 or later) is the fallback for the same zip upload.
 
-**Two profiles, one codebase.** The Bicep parameter `profile` (`evaluate` or `operate`) switches private endpoints, the Foundry network setting, the AI Search tier and public access ([02](02-architecture.md)). That setting is fixed when the Foundry account is created ([Learn](https://learn.microsoft.com/azure/foundry/agents/concepts/networking-options)), so **moving from `evaluate` to `operate` means a new account, not a parameter flip**. A pre-release job deploys a short-lived `operate` environment in the dev subscription, runs the isolation, restore and kill-switch checks, and deletes it. That environment keeps audit storage on an unlocked retention policy: a locked one cannot be removed and blocks deleting the account ([Learn](https://learn.microsoft.com/azure/storage/blobs/immutable-storage-overview)). Production locks it after its restore test.
+**Two profiles, one codebase.** The Bicep parameter `profile` (`evaluate` or `operate`) switches private endpoints, the Foundry network setting, the AI Search tier and public access ([02](02-architecture.md)). That setting is fixed at account creation, so **moving from `evaluate` to `operate` means a new account** ([02](02-architecture.md)). A pre-release job deploys a short-lived `operate` environment in the dev subscription, runs the isolation, restore and kill-switch checks, and deletes it. That environment keeps audit storage on an unlocked retention policy: a locked one cannot be removed and blocks deleting the account ([Learn](https://learn.microsoft.com/azure/storage/blobs/immutable-storage-overview)). Production locks it after its restore test.
 
 **Code, not clicks.** Contracts deploy with the hub's modules, what-if first; keys go to Key Vault, never into a parameter file. Action templates are code too: each one's CI test deploys a tiny resource to dev and deletes it (software testing, not learning).
 
 **Zip deployment, no registry.** Hosted agents deploy from a zip (`code_configuration`) with `bundled` dependencies, so the bytes CI tested are the bytes that run; the service stores the zip's SHA-256 and returns the deployed zip for comparison. Function apps on [Flex Consumption](https://learn.microsoft.com/azure/azure-functions/flex-consumption-plan) run from a zip in a blob container.
 
-**Region is a parameter.** Sweden Central is the default, not a requirement. A pre-flight job checks the [hosted-agent region list](https://learn.microsoft.com/azure/foundry/agents/concepts/hosted-agents#region-availability) (North Europe is absent), `az functionapp list-flexconsumption-locations`, AI Search capacity (create it first: new capacity can be constrained), each model alias's deployment type and the hub's location list. Always-ready instances default to 0; [Learn recommends](https://learn.microsoft.com/azure/durable-task/durable-functions/durable-functions-azure-storage-provider#flex-consumption-plan) one for the Durable group, at a baseline charge ([10](10-cost-and-finops.md)).
+**Region is a parameter.** Sweden Central is the default, not a requirement. A pre-flight job checks the [hosted-agent region list](https://learn.microsoft.com/azure/foundry/agents/concepts/hosted-agents#region-availability) (North Europe is absent), `az functionapp list-flexconsumption-locations`, AI Search capacity (create it first: new capacity can be constrained), each model alias's deployment type and the hub's location list. Each Function app takes an always-ready instance count as a parameter. [Learn recommends](https://learn.microsoft.com/azure/durable-task/durable-functions/durable-functions-azure-storage-provider#flex-consumption-plan) one for the Durable group, at a baseline charge: [the cost model](10-cost-and-finops.md) counts it, and a pilot can set it to 0 and accept cold starts.
 
 ## 3. Pipelines and releases
 
-GitHub Actions signs in with [OpenID Connect](https://learn.microsoft.com/azure/developer/github/connect-from-azure-openid-connect): no Azure secret is stored. Each environment has a managed identity whose federated credential is bound to a GitHub environment (`dev`, `prod`); pull-request jobs use another identity that can only run what-if. The `prod` environment needs a platform-team reviewer other than whoever started the release. GitHub needs only one environment reviewer ([GitHub](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/manage-environments)), so the second pair of eyes is the CODEOWNERS pull-request review.
+GitHub Actions signs in with [OpenID Connect](https://learn.microsoft.com/azure/developer/github/connect-from-azure-openid-connect): no Azure secret is stored. Each environment has a managed identity whose federated identity credential is bound to a GitHub environment (`dev`, `prod`); pull-request jobs use another identity that can only run what-if. The `prod` environment needs a platform-team reviewer other than whoever started the release. GitHub needs only one environment reviewer ([GitHub](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/manage-environments)), so the second pair of eyes is the CODEOWNERS pull-request review.
 
 ```mermaid
 stateDiagram-v2
@@ -145,7 +146,7 @@ Each playbook below has a runbook with exact commands in `docs/runbooks/`; the f
 
 **Break-glass.** The adopting organisation's [emergency-access accounts](https://learn.microsoft.com/entra/identity/role-based-access-control/security-emergency-access) cover tenant lockout; this system adds none. Any platform-team or security member can flip a kill switch alone; lifting the purchase switch takes two people, so no single break-glass account can re-enable purchases. Deploying outside the pipeline needs a time-boxed role elevation, an alert and a next-day review.
 
-**Access reviews, quarterly.** Check the five role groups, runner assignments, hub app roles, federated credentials and GitHub environment reviewers. Entra access reviews need Entra ID Governance (some capabilities work with P2) ([Learn](https://learn.microsoft.com/entra/id-governance/access-reviews-overview#license-requirements)); otherwise a scheduled workflow lists the assignments into a pull request for the security reviewers.
+**Access reviews, quarterly.** Check the five role groups, runner assignments, hub app roles, federated identity credentials and GitHub environment reviewers. Entra access reviews need Entra ID Governance (some capabilities work with P2) ([Learn](https://learn.microsoft.com/entra/id-governance/access-reviews-overview#license-requirements)); otherwise a scheduled workflow lists the assignments into a pull request for the security reviewers.
 
 **SBOM.** Each release carries an SPDX bill of materials per zip ([GitHub export](https://docs.github.com/en/code-security/how-tos/secure-your-supply-chain/establish-provenance-and-integrity/export-dependencies-as-sbom)). It does not stop a malicious dependency; it shows which releases contain one.
 
@@ -153,7 +154,7 @@ Each playbook below has a runbook with exact commands in `docs/runbooks/`; the f
 
 Targets are parameters. The defaults cover deletion and corruption, not the loss of a region.
 
-| Data | Protected by | RPO | RTO |
+| Data | Protected by | Data lost at most (RPO) | Back in service within (RTO) |
 |---|---|---|---|
 | Atlas, code, prompts, contracts, Action templates, infrastructure | Git and the release records | 0 | Hours: redeploy a release |
 | Cosmos DB records | Continuous backup, tier of 7, 30 or 35 days | 15 minutes | One working day |
@@ -177,7 +178,7 @@ What each part needs, as facts:
 |---|---|
 | Azure subscriptions | The solution: one per environment, dev with no role on production. The estate: the scopes to read |
 | A hub | The organisation's Citadel hub, or `hub/` deploys the accelerator (Owner, or Contributor plus User Access Administrator) |
-| Entra permissions | Create app registrations and assign app roles (agent identities, federated credentials) |
+| Entra permissions | Create app registrations and assign app roles (agent identities, federated identity credentials) |
 | Entra ID P1 | Conditional Access with authentication context on the R2 and R3 approval page ([Learn](https://learn.microsoft.com/entra/identity/conditional-access/overview#license-requirements)) |
 | Entra ID Governance or P2 | Access reviews; PIM for human admin roles (PIM cannot make service principals eligible) |
 | Microsoft 365 | Teams cards; an Exchange Online shared mailbox. `Mail.Send` as an application permission sends as any user: scope the app with [Exchange RBAC for Applications](https://learn.microsoft.com/exchange/permissions-exo/application-rbac). Without it: the web page |
@@ -200,4 +201,4 @@ Purchases (R3) are a separate opt-in in phase 4. Offboarding reverses steps 7 to
 
 ## 10. Operating costs and budgets
 
-What the system costs to run, its idle floor and levers are in [the cost document](10-cost-and-finops.md); this document adds no figures. Each of the solution's own subscriptions gets a budget and a [cost anomaly alert](https://learn.microsoft.com/azure/cost-management-billing/understand/analyze-unexpected-charges#create-an-anomaly-alert), as Bicep, with thresholds as parameters. Budgets only alert: Cost Management evaluates them every 24 hours on data 8 to 24 hours old and stops nothing ([Learn](https://learn.microsoft.com/azure/cost-management-billing/costs/tutorial-acm-create-budgets)). The hard stops are the hub's token quotas and the daily run-rate trip, which a person must raise. The solution's own subscriptions are onboarded as an estate, so it opens Cases about its own bill.
+Each of the solution's own subscriptions gets a budget and a [cost anomaly alert](https://learn.microsoft.com/azure/cost-management-billing/understand/analyze-unexpected-charges#create-an-anomaly-alert), as Bicep, with thresholds as parameters. Budgets only alert and arrive late; the hard stops are in [safeguards and drift](07-safeguards-and-drift.md). The subscriptions are onboarded as an estate, so the system opens Cases about its own bill. Costs and levers are in [the cost document](10-cost-and-finops.md); this document adds no figures.
