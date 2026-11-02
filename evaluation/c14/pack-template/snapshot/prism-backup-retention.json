@@ -1,0 +1,15 @@
+{
+  "id": "prism-backup-retention",
+  "statement": "Prism index backups are billed per gigabyte-month until their retention period ends, and a backup past its retention period is deleted and no longer billed.",
+  "mechanism": ["stock", "time-cliff"],
+  "scope": {"service": "Azure Prism (invented)", "region": "any", "offer": "any", "sku_or_version": "index backup", "scale": "any", "date": "2026-11-02"},
+  "receipts": [
+    {
+      "url": "https://contoso.example/prism/backups",
+      "retrieved": "2026-11-02",
+      "quote": "Index backups are billed per gigabyte-month until their retention period ends.",
+      "quote_sha256": "abbdffb10b712967cf2ae9a007bf14b10c86ee9e51d3edfbf2908a37fe027388"
+    }
+  ],
+  "level": "documented"
+}

@@ -138,7 +138,7 @@ The solution onboards to the **Citadel governance hub of the adopting organisati
 | Subscription | Its own | Its own |
 | Foundry | Basic setup; public endpoint with Entra sign-in and an IP allow-list | Bring-your-own virtual network with **platform-managed agent data**; private endpoint ([networking options](https://learn.microsoft.com/azure/foundry/agents/concepts/networking-options)) |
 | Hub | Dev contracts on the same hub. They reach no production backend, and a negative test in CI gates every release; a separate gateway is an option for stricter organisations | Prod contracts |
-| Private endpoints | None | Eleven: eight for the dependencies (Foundry account, AI Search, Cosmos DB, audit storage, platform storage: blob, queue, table; Key Vault) and three inbound to the `tools`, `approvals` and `runner` apps |
+| Private endpoints | None | Eleven: eight for the dependencies (Foundry account, AI Search, Cosmos DB, audit storage, platform storage: blob, queue, table; Key Vault) and three inbound to the `tools`, `approvals` and `runner` apps. The last two apps are deployed in the phase that first uses them, so the count is nine in phase 1a, ten in phase 2 and eleven from phase 3 |
 | Roles | **No role on any production scope**; tested in CI | Read roles at onboarded scopes; action roles only where the organisation opts in |
 | AI Search | Free tier | Basic |
 

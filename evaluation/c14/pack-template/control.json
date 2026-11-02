@@ -1,0 +1,15 @@
+{
+  "id": "prism-export-transfer",
+  "statement": "A Prism export is billed per gigabyte that leaves the region of the index.",
+  "mechanism": ["flow"],
+  "scope": {"service": "Azure Prism (invented)", "region": "any", "offer": "any", "sku_or_version": "any", "scale": "any", "date": "2026-11-02"},
+  "receipts": [
+    {
+      "url": "https://contoso.example/prism/export",
+      "retrieved": "2026-11-02",
+      "quote": "Exports of an index are billed per gigabyte transferred out of the region.",
+      "quote_sha256": "2c043a608445f1aedab7720a945230a2d972f52349eb2e477dcf8799c4e4300c"
+    }
+  ],
+  "level": "documented"
+}

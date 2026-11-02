@@ -1,0 +1,15 @@
+{
+  "runs_per_arm": 3,
+  "waste_cases": 6,
+  "decoy_cases": 3,
+  "snapshot_claims_min": 5,
+  "baseline_found_max": 2,
+  "updated_found_min": 5,
+  "updated_priced_min": 4,
+  "updated_runs_required": 2,
+  "price_tolerance_pct": 10,
+  "max_model_calls": 100,
+  "max_completion_tokens": null,
+  "spending_cap_eur": null,
+  "price_per_million_tokens_eur": {"input": null, "output": null}
+}

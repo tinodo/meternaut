@@ -2,7 +2,7 @@
 
 > **Every euro spent on Azure has a reason. This AI learns the reasons — and finds, tests and fixes the euros that have none.**
 >
-> *Status: an idea and a design. Nothing is built yet — see [Status](#status).*
+> *Status: an idea, a design and a plan; the first tools are being built. Nothing runs on Azure yet — see [Status](#status).*
 
 ![Five faculties — STUDY, SURVEY, TEST, ACT, GROW — around one shared memory, with the world, the Commons, the estate, the agreement and the people around them](docs/img/living-system.svg)
 
@@ -62,14 +62,14 @@ The [experience design](docs/experience/README.md) is an index and fifteen short
 
 ## The build plan
 
-The [build plan](docs/build-plan/README.md) is an index and four documents on what to build first and how to know that each step works: fifteen slices across phase 0 (foundations) and phase 1a (first value on one estate, ending with a Monday digest and findings that the FinOps lead confirms), what the adopting organisation provides and decides before starting, thirteen first checks with their pass conditions and fallbacks, and what it costs and where it can go wrong. It is a plan only: nothing in it is built.
+The [build plan](docs/build-plan/README.md) is an index and four documents on what to build first and how to know that each step works: seventeen slices across phase 0 (foundations, with a week-0 check of the pilot's bill and a small demonstration that new evidence improves answers) and phase 1a (first value on one estate, first for one workload, ending with a Monday digest and findings that the FinOps lead confirms), what the adopting organisation provides and decides before starting, fourteen first checks with their pass conditions and fallbacks, and what it costs and where it can go wrong. It is a plan only: nothing in it is built.
 
 ## Status
 
 - **Ideation (v5)** — the north star, a deep-dive per faculty and the learning contract. It is the idea the design answers to.
-- **Design (v5)** — the architecture, security and governance, testing, cost model, decisions and roadmap, with what the experience needs of the system placed in it. Nothing is built yet; the end of the [design index](docs/design/README.md) lists what is unproven.
+- **Design (v5)** — the architecture, security and governance, testing, cost model, decisions and roadmap, with what the experience needs of the system placed in it. Nothing is deployed yet; the end of the [design index](docs/design/README.md) lists what is unproven.
 - **Experience design (v1)** — personas, journeys, cards, letters, pages, dashboards, attention and trust, accessibility and testing. Nothing is built; the cards are templates that tools check and render.
-- **Build plan (v1)** — the first two phases as slices, with the first checks. Nothing is built.
+- **Build plan (v2)** — the first two phases as slices, with the first checks, a week-0 check of the pilot's bill and an early demonstration of learning. Building has started with local tools, a probe of the bill, the harness of the learning demonstration ([`evaluation/`](evaluation/README.md)), the first CI and Bicep templates for the budgets of the early stages ([`infra/`](infra/README.md)); nothing is deployed.
 - **Version numbers** are release tags in this repository; the [changelog](CHANGELOG.md) says what each one changed.
 - **Licence:** MIT ([LICENSE](LICENSE)) covers everything in this repository, the documents included.
 - **Principles:** Microsoft technology for the product (open standards and repository tooling are the exceptions) · aligned with the Cloud Adoption Framework and the Well-Architected Framework · open source · fully AI-infused · human-in-the-loop.

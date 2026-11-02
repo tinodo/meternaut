@@ -1,0 +1,15 @@
+{
+  "id": "prism-private-link",
+  "statement": "The Prism private link add-on is billed per hour for each endpoint that is created, whether or not traffic uses it.",
+  "mechanism": ["feature", "coupling"],
+  "scope": {"service": "Azure Prism (invented)", "region": "any", "offer": "any", "sku_or_version": "private link add-on", "scale": "any", "date": "2026-11-02"},
+  "receipts": [
+    {
+      "url": "https://contoso.example/prism/private-link",
+      "retrieved": "2026-11-02",
+      "quote": "The private link add-on is billed per hour for each endpoint.",
+      "quote_sha256": "1b7f8000f0f4c43efb0cf0a9d82f421e0bed7a304c198761c9e8b00989d6deec"
+    }
+  ],
+  "level": "documented"
+}

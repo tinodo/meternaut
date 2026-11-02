@@ -1,6 +1,6 @@
 # Meternaut — design
 
-**What this design answers.** What the system is, how it is built, why it is built that way, and what it costs — in plain words, for anyone who runs Azure. Status: **proposed**. Nothing is built yet; what is unproven is listed at the end.
+**What this design answers.** What the system is, how it is built, why it is built that way, and what it costs — in plain words, for anyone who runs Azure. Status: **proposed**. Nothing is deployed yet; what is unproven is listed at the end.
 
 ## What it is
 

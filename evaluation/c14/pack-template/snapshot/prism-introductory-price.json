@@ -1,0 +1,15 @@
+{
+  "id": "prism-introductory-price",
+  "statement": "The introductory price of Prism ends on the date of general availability, and the list price applies from that date.",
+  "mechanism": ["time-cliff"],
+  "scope": {"service": "Azure Prism (invented)", "region": "any", "offer": "any", "sku_or_version": "preview", "scale": "any", "date": "2026-11-02"},
+  "receipts": [
+    {
+      "url": "https://contoso.example/prism/preview",
+      "retrieved": "2026-11-02",
+      "quote": "The introductory price of Prism changes on the date of general availability.",
+      "quote_sha256": "f05958b7a1527f94d06abd29285010bdf92917c04228491cd7d19a322caae429"
+    }
+  ],
+  "level": "documented"
+}
