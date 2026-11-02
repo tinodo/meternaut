@@ -68,7 +68,7 @@ This slice shows the central idea at small scale, on synthetic data and through 
 
 ## Phase 1a: first value on one estate
 
-Phase 1a reads one real estate and only reports. **It ends when** proof points P4 and P7 (read paths) pass, explained spend (the share of the bill tied to an owner, a purpose and a billing mechanism) is measured, the system has made zero writes to the estate, and the FinOps lead has confirmed a number of findings that count ([the finding record](02-before-you-start.md#what-is-recorded-for-each-finding)), written down before work on the Cases starts, each priced on a named basis. Cost per Case and per confirmed finding are read from hub logs, dead ends (investigations that end without a message) included, with people's hours beside them. **The exit is reached only when that number is reached.** If it is not reached by the review date the adopting organisation sets, phase 1a stays open and the team decides what to change; the number is never lowered to fit a result, and a new number applies only to work done after it is written.
+Phase 1a reads one real estate and only reports. **It ends when** proof points P4 and P7 (read paths) pass, explained spend (the share of the bill tied to an owner, a purpose and a billing mechanism) is measured, the system has made zero writes to the estate, and the FinOps lead has confirmed a number of findings that count ([the finding record](02-before-you-start.md#what-is-recorded-for-each-finding)), written down before work on the Cases starts, each priced on a named basis. Cost per Case and per confirmed finding are read from hub logs, dead ends (investigations that end without a message) included, with people's hours beside them. **The exit is reached only when that number is reached.** If it is not reached at the review point of the stage that is running, phase 1a stays open and the team decides what to change; the number is never lowered to fit a result, and a new number applies only to work done after it is written.
 
 A confirmation is a judgement that a finding is true and worth acting on, with its price basis shown. It is not an owner's acceptance and not a verified saving, which needs a change and a bill that shows it.
 
@@ -110,7 +110,7 @@ Detectors come from rows of the cost-trap bank (a catalogue of sourced Azure cos
 
 ### 1a.6a The price simulator, the Economist and typed records
 
-`price-sim` must reproduce a prior month's bill before it prices anything new, and every price carries its basis: contracted, billed or list ([the price order](../design/14-agreements-and-access.md#the-price-order)). **Why before the Cases:** a Case without a trusted price is an opinion. **Surprise:** this slice cannot start until the FinOps lead has written down, by pull request, how many confirmed findings end phase 1a, the margin for C8 and the review date. **Read:** check C8.
+`price-sim` must reproduce a prior month's bill before it prices anything new, and every price carries its basis: contracted, billed or list ([the price order](../design/14-agreements-and-access.md#the-price-order)). **Why before the Cases:** a Case without a trusted price is an opinion. **Surprise:** this slice cannot start until the FinOps lead has written down, by pull request, how many confirmed findings end phase 1a and the margin for C8. **Read:** check C8.
 
 ### 1a.6b Cases that only report
 

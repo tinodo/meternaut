@@ -10,21 +10,21 @@
 
 targetScope = 'subscription'
 
-@description('The stage that the budget watches, as named in evaluation/stages.json. Resources of the stage carry the tag meternaut-stage with this value.')
+@description('The stage that the budget watches. Resources of the stage carry the tag meternaut-stage with this value.')
 @minLength(1)
 param stage string
 
 @description('Name of the budget. One budget for each stage and subscription.')
 param budgetName string = 'meternaut-${stage}'
 
-@description('Spending cap of the stage for each month, in the billing currency of the subscription. Taken from evaluation/stages.json after the project owner confirmed it.')
+@description('Spending cap of the stage for each month, in the billing currency of the subscription.')
 @minValue(1)
 param amount int
 
 @description('First day of the month in which the budget starts, as YYYY-MM-DD. It must be the first of a month: the current month, or a later one (the Bicep quickstart says at most three months ahead).')
 param startDate string
 
-@description('Date of the stage review, as YYYY-MM-DD. The budget ends here, so a stage that goes on needs a reviewed change.')
+@description('Last day of the budget, as YYYY-MM-DD. The budget ends here, so a stage that goes on needs a reviewed change.')
 param endDate string
 
 @description('People who receive the alerts. At least one is required.')

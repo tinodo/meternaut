@@ -5,7 +5,6 @@ The tests that show whether the system does what the design says, and the number
 | Path | What it holds |
 |---|---|
 | [`c14/`](c14/README.md) | Check C14, the small learning demonstration: a harness, an invented template pack and its tests |
-| [`stages.json`](stages.json) | For each early stage, its named owner, spending cap and review, as proposals until the project owner confirms them |
 
 **Numbers are written before the measurement.** Every pass condition, margin, budget and time window is a starting value, written here by a pull request before anything is measured. A different number later is a new pull request with its reason, and the earlier result stays on record.
 
