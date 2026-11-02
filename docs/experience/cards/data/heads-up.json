@@ -1,8 +1,8 @@
 {
   "_invented": true,
-  "senderName": "Cost in Action (AI)",
+  "senderName": "Meternaut (AI)",
   "requestId": "r_Hu6Fs3",
-  "pageUrl": "https://cost-in-action.contoso.example/ok/r_Hu6Fs3",
+  "pageUrl": "https://meternaut.contoso.example/ok/r_Hu6Fs3",
   "challengeExample": "For example: the extra use is a planned load test",
   "teachExample": "For example: this assistant is in a pilot until Friday",
   "headline": "Your team's AI assistant used six times its normal tokens in three hours",

@@ -2,7 +2,7 @@
   "type": "AdaptiveCard",
   "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
   "version": "1.5",
-  "fallbackText": "Cost in Action (AI) could not finish: ${headline} Open it on the page: ${pageUrl} Written by an AI.",
+  "fallbackText": "Meternaut (AI) could not finish: ${headline} Open it on the page: ${pageUrl} Written by an AI.",
   "msteams": {
     "width": "Full"
   },

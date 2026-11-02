@@ -1,6 +1,6 @@
 # Experience design: what people see, receive and decide
 
-**What this document answers.** Cost in Action is an AI system that finds savings in Azure and asks the people who own the resources to decide, in Teams and e-mail. It changes Azure only after a person's OK on the exact plan. This folder says what each person sees, receives and decides, in which channel, in what words, and how the system spends and protects people's attention; [the technical design](../design/README.md) says what the system does. It is the front door to fifteen documents, seventeen message templates and six wireframes. Nothing here is built; every example is invented.
+**What this document answers.** Meternaut is an AI system that finds savings in Azure and asks the people who own the resources to decide, in Teams and e-mail. It changes Azure only after a person's OK on the exact plan. This folder says what each person sees, receives and decides, in which channel, in what words, and how the system spends and protects people's attention; [the technical design](../design/README.md) says what the system does. It is the front door to fifteen documents, seventeen message templates and six wireframes. Nothing here is built; every example is invented.
 
 ![A Recommendation card in a Teams chat, with its eight parts numbered: sender, headline, value tile, why and what was checked, three decision buttons, four toggles, the opened Details panel and the footer.](../img/experience-recommendation-card.svg)
 
@@ -42,7 +42,7 @@ People never see the system's internal names. The table is the bridge between th
 | Three pauses | **Pause messages** (a person's holiday), **Pause changes here** (an owner stops standing permissions), **the kill switch** (the platform team) |
 | Hub, Runner, Detective, Skeptic, Agenda | Never shown; Atlas appears only to reviewers and contributors |
 
-The sender is always **Cost in Action (AI)**: an organisation may rename the product, never drop "(AI)". Every message ends with "Written by an AI. Figures are computed by tools, not guessed by the AI. Estimates can still be wrong."
+The sender is always **Meternaut (AI)**: an organisation may rename the product, never drop "(AI)". Every message ends with "Written by an AI. Figures are computed by tools, not guessed by the AI. Estimates can still be wrong."
 
 ## The surfaces
 

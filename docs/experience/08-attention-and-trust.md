@@ -104,7 +104,7 @@ One reminder goes out at day 7: its own message (C9), or part of that week's des
 
 ### The AI label, in four layers
 
-- **Sender name:** "Cost in Action (AI)". The product may be renamed; "(AI)" may not be dropped.
+- **Sender name:** "Meternaut (AI)". The product may be renamed; "(AI)" may not be dropped.
 - **Footer line:** "Written by an AI. Figures are computed by tools, not guessed by the AI. Estimates can still be wrong."
 - **Teams label:** the AI-generated entity (`addAiGenerated()`) makes Teams show its "AI Generated" label beside the sender ([Learn](https://learn.microsoft.com/microsoftteams/platform/agents-in-teams/integrate-ai/ai-content-labels), read on 2026-11-02).
 - **Machine-readable mark:** that entity in Teams; in e-mail the header `x-ai-generated: true`.

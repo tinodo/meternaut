@@ -1,8 +1,8 @@
 {
   "_invented": true,
-  "senderName": "Cost in Action (AI)",
+  "senderName": "Meternaut (AI)",
   "requestId": "r_Ps8Vh4",
-  "pageUrl": "https://cost-in-action.contoso.example/ok/r_Ps8Vh4",
+  "pageUrl": "https://meternaut.contoso.example/ok/r_Ps8Vh4",
   "challengeExample": "For example: some of these containers are read every day",
   "teachExample": "For example: keep dev storage on the hot tier during the load test",
   "headline": "From Thursday I may move dev storage to a cooler tier without asking each time",

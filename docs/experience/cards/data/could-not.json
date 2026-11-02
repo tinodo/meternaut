@@ -1,8 +1,8 @@
 {
   "_invented": true,
-  "senderName": "Cost in Action (AI)",
+  "senderName": "Meternaut (AI)",
   "requestId": "r_Cn8Zb1",
-  "pageUrl": "https://cost-in-action.contoso.example/ok/r_Cn8Zb1",
+  "pageUrl": "https://meternaut.contoso.example/ok/r_Cn8Zb1",
   "challengeExample": "For example: the job on the last Tuesday is real",
   "teachExample": "For example: this is our disaster-recovery environment",
   "headline": "I could not prepare the change",

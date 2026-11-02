@@ -5,7 +5,7 @@
   <rect x="24" y="24" width="860" height="910" rx="10" fill="#FFFFFF" stroke="#D1D1D1" stroke-width="1"/>
   <rect x="24" y="24" width="860" height="44" rx="10" fill="#EDEBE9" stroke="#D1D1D1" stroke-width="1"/>
   <rect x="36" y="33" width="836" height="26" rx="13" fill="#FFFFFF" stroke="#D1D1D1" stroke-width="1"/>
-  <text x="54" y="51" font-size="12.5" font-weight="400" fill="#5C5C5C" text-anchor="start">https://cost-in-action.contoso.example/me/notes</text>
+  <text x="54" y="51" font-size="12.5" font-weight="400" fill="#5C5C5C" text-anchor="start">https://meternaut.contoso.example/me/notes</text>
   <rect x="48" y="100" width="172" height="200" rx="6" fill="#FAFAFA" stroke="#D1D1D1" stroke-width="1"/>
   <text x="66" y="126" font-size="12.5" font-weight="400" fill="#242424" text-anchor="start">My decisions</text>
   <rect x="54" y="154" width="160" height="46" rx="4" fill="#EBF3FC"/>

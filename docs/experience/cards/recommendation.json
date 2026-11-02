@@ -2,7 +2,7 @@
   "type": "AdaptiveCard",
   "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
   "version": "1.5",
-  "fallbackText": "Recommendation from Cost in Action (AI): ${headline} Open it on the page: ${pageUrl} Written by an AI.",
+  "fallbackText": "Recommendation from Meternaut (AI): ${headline} Open it on the page: ${pageUrl} Written by an AI.",
   "msteams": {
     "width": "Full"
   },

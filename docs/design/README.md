@@ -1,10 +1,10 @@
-# Azure Cost in Action — design
+# Meternaut — design
 
 **What this design answers.** What the system is, how it is built, why it is built that way, and what it costs — in plain words, for anyone who runs Azure. Status: **proposed**. Nothing is built yet; what is unproven is listed at the end.
 
 ## What it is
 
-Azure Cost in Action is designed as a team of AI agents that keeps an Azure estate cost-efficient without waiting to be asked. It studies how Azure charges, learns what each estate is for, watches the bill and the usage, investigates where money is wasted or about to be, challenges its own findings, and tells the right owner in plain words — with evidence and options. When a person says OK, or inside a rule a person wrote, it makes the change and checks that it worked. What it learns about how Azure charges (documented and price-confirmed claims) is kept in the **Atlas** (a tested knowledge base) and shared; an estate's bills, price sheet and outcomes stay in that estate.
+Meternaut is designed as a team of AI agents that keeps an Azure estate cost-efficient without waiting to be asked. It studies how Azure charges, learns what each estate is for, watches the bill and the usage, investigates where money is wasted or about to be, challenges its own findings, and tells the right owner in plain words — with evidence and options. When a person says OK, or inside a rule a person wrote, it makes the change and checks that it worked. What it learns about how Azure charges (documented and price-confirmed claims) is kept in the **Atlas** (a tested knowledge base) and shared; an estate's bills, price sheet and outcomes stay in that estate.
 
 It is built on Microsoft Foundry and Microsoft Agent Framework, and every model and tool call goes through the **Citadel governance hub** (an API Management based gateway that Microsoft publishes as an open-source sample). The product is the loop *watch → investigate → decide with a person → act → verify → learn*. It reads Azure Advisor and Cost Management and goes further; it changes Azure only after an approval bound to one exact plan, or inside a rule a person wrote; and it adapts to the agreement and the access it finds, and says what it cannot see ([agreements and access](14-agreements-and-access.md)).
 

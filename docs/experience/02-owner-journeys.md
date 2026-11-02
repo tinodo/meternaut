@@ -13,7 +13,7 @@
 | Step | Person | System |
 |---|---|---|
 | 1 | Reads the announcement: the app, its publisher, the approval page's one address, and a warning that a sign-in asking for app permissions is fraud | Sent by her organisation before any card |
-| 2 | Gets Hello from "Cost in Action (AI)". It says why it wrote ("The directory lists you as the owner of 3 of the 14 resources in rg-webshop-qa, and you created the other 11"), what it keeps and who sees it, and that she can pause messages or tap "Talk to a person" | Treats her ownership as a guess. Keeps an object id, a role and stated preferences, no names |
+| 2 | Gets Hello from "Meternaut (AI)". It says why it wrote ("The directory lists you as the owner of 3 of the 14 resources in rg-webshop-qa, and you created the other 11"), what it keeps and who sees it, and that she can pause messages or tap "Talk to a person" | Treats her ownership as a guess. Keeps an object id, a role and stated preferences, no names |
 | 3 | Taps "Yes, I look after these", then "My hours and language": working days (any days of the week), time zone, desk day (the weekly desk lists at most five items), quiet hours and language, once. Settings (C14) offers the same | Records what she states, never inferring hours from calendars or presence |
 
 | If | Then |

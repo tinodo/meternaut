@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Documentation lint for Azure Cost in Action. Standard library only.
+"""Documentation lint for Meternaut. Standard library only.
 
 Checks
   1. Links and anchors in live documents resolve (GitHub heading-slug rules).

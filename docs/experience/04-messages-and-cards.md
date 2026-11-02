@@ -38,7 +38,7 @@ flowchart LR
 
 | Where | What |
 |---|---|
-| Sender name | "Cost in Action (AI)"; the adopting organisation may rename the product, never the suffix |
+| Sender name | "Meternaut (AI)"; the adopting organisation may rename the product, never the suffix |
 | Footer line | "Written by an AI. Figures are computed by tools, not guessed by the AI. Estimates can still be wrong." |
 | Teams label | The AI-generated entity (`addAiGenerated()`) makes Teams show its "AI Generated" label; documented per message, so the device test checks it on a card ([Learn](https://learn.microsoft.com/microsoftteams/platform/agents-in-teams/integrate-ai/ai-content-labels)) |
 | Machine-readable mark | The same entity in the message; in e-mail, the header `x-ai-generated: true` |
@@ -61,7 +61,7 @@ flowchart LR
 
 | Part | What it holds |
 |---|---|
-| 1. Sender row | "Cost in Action (AI)" and the type label "Recommendation" |
+| 1. Sender row | "Meternaut (AI)" and the type label "Recommendation" |
 | 2. Headline and scope | The one change proposed, in the owner's words, ending in a question; its scope |
 | 3. Value tile | A range, never a single figure; the price-basis chip; the saving word; what keeping things as they are forgoes, stated once |
 | 4. Why I think so, What I checked | The evidence in a line or two and why I prefer this option to one that saves more; the strongest objection and what was done about it, side by side |

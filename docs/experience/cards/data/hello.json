@@ -1,8 +1,8 @@
 {
   "_invented": true,
-  "senderName": "Cost in Action (AI)",
+  "senderName": "Meternaut (AI)",
   "requestId": "r_Hi3Lq8",
-  "pageUrl": "https://cost-in-action.contoso.example/ok/r_Hi3Lq8",
+  "pageUrl": "https://meternaut.contoso.example/ok/r_Hi3Lq8",
   "challengeExample": "For example: the job on the last Tuesday is real",
   "teachExample": "For example: this is our disaster-recovery environment",
   "headline": "I am an AI that helps your team spend less on Azure",
@@ -58,9 +58,9 @@
     "timeZone": "Europe/Amsterdam",
     "language": "en"
   },
-  "intro": "The directory lists you as the owner of 3 of the 14 resources in rg-webshop-qa, and you created the other 11. Your team's lead announced me on Monday, and this chat is with the app \"Cost in Action\" published by your own organisation.",
+  "intro": "The directory lists you as the owner of 3 of the 14 resources in rg-webshop-qa, and you created the other 11. Your team's lead announced me on Monday, and this chat is with the app \"Meternaut\" published by your own organisation.",
   "whatIDo": "I look at how your resources are used and billed. When I find something worth a minute, I ask you one question or suggest one change, with my evidence and what it would save. I start slowly: one message a week for the first month.",
-  "whatIDoNot": "I change nothing without your OK on the exact plan: for small, reversible changes with one tap in this chat; for everything else on a page at cost-in-action.contoso.example. I never ask for passwords or codes. A sign-in that asks you to grant permissions to an app is not from me: stop and tell your platform team.",
+  "whatIDoNot": "I change nothing without your OK on the exact plan: for small, reversible changes with one tap in this chat; for everything else on a page at meternaut.contoso.example. I never ask for passwords or codes. A sign-in that asks you to grant permissions to an app is not from me: stop and tell your platform team.",
   "whatIKeep": "I keep your answers, your settings and your notes against your directory ID, not your name. You can see, export or delete them on the settings page. Your platform team sees counts, never a list of who did not answer.",
   "control": "You can pause my messages, ask for fewer, see what I know about your resources, or reach a person at any time.",
   "_scenario": "first contact",

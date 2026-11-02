@@ -5,10 +5,10 @@
   <rect x="24" y="24" width="760" height="1345" rx="10" fill="#FFFFFF" stroke="#D1D1D1" stroke-width="1"/>
   <rect x="24" y="24" width="760" height="44" rx="10" fill="#EDEBE9" stroke="#D1D1D1" stroke-width="1"/>
   <rect x="36" y="33" width="736" height="26" rx="13" fill="#FFFFFF" stroke="#D1D1D1" stroke-width="1"/>
-  <text x="54" y="51" font-size="12.5" font-weight="400" fill="#5C5C5C" text-anchor="start">https://cost-in-action.contoso.example/ok/r_Hn4c7T…</text>
+  <text x="54" y="51" font-size="12.5" font-weight="400" fill="#5C5C5C" text-anchor="start">https://meternaut.contoso.example/ok/r_Hn4c7T…</text>
   <circle cx="788" cy="46" r="11" fill="#5C2E91"/>
   <text x="788" y="50.5" font-size="12" font-weight="700" fill="#FFFFFF" text-anchor="middle">1</text>
-  <text x="60" y="112" font-size="15" font-weight="700" fill="#0F6CBD" text-anchor="start">Cost in Action (AI)</text>
+  <text x="60" y="112" font-size="15" font-weight="700" fill="#0F6CBD" text-anchor="start">Meternaut (AI)</text>
   <text x="748" y="112" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="end">Signed in as Lars (finance approver)</text>
   <line x1="60" y1="124" x2="748" y2="124" stroke="#D1D1D1" stroke-width="1"/>
   <text x="60" y="160" font-size="22" font-weight="700" fill="#242424" text-anchor="start">Buy a one-year compute savings plan for the order</text>

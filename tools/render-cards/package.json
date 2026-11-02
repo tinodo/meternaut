@@ -6,7 +6,8 @@
   "license": "MIT",
   "type": "commonjs",
   "scripts": {
-    "validate": "node validate-cards.cjs"
+    "validate": "node validate-cards.cjs",
+    "screenshots": "node screenshot-cards.cjs"
   },
   "dependencies": {
     "adaptivecards": "^3.0.6",

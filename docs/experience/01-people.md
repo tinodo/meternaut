@@ -120,7 +120,7 @@ Each line carries the channel; only Gerrit sits outside the organisation's direc
 
 ```mermaid
 flowchart LR
-    hub(("Cost in Action (AI)"))
+    hub(("Meternaut (AI)"))
     maya["Maya, resource owner"]
     tomasz["Tomasz, budget holder"]
     nadia["Nadia, FinOps lead"]

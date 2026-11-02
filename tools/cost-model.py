@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Monthly cost model for Azure Cost in Action (standard library only).
+"""Monthly cost model for Meternaut (standard library only).
 
 Reads docs/design/cost/prices-snapshot.json (Azure Retail Prices API, EUR, Sweden Central, 730 h a
 month; written by tools/fetch-prices.py) and prices three scenarios. Every meter is resolved by an

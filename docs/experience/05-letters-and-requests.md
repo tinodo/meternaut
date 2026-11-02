@@ -16,7 +16,7 @@ Nothing is ever approved by e-mail. The platform features named here are general
 | **Subjects without figures** | A subject shows on lock screens and in previews, so it names the kind and count, never an amount. (An invented example.) "Your weekly desk: 2 decisions and 1 question". In the body, a saving carries its price basis and saving word, and any other money figure its basis ([04](04-messages-and-cards.md)). |
 | **One voice, marked** | The sender name ends "(AI)" and the footer says an AI wrote the letter (EU AI Act Article 50(1), interaction); the header `x-ai-generated: true` is the machine-readable mark (Article 50(2), generated content). |
 | **No loops** | `X-Auto-Response-Suppress: All` [asks Exchange and Outlook to send no delivery, read or out-of-office notices back](https://learn.microsoft.com/openspecs/exchange_server_protocols/ms-oxcmail/ced68690-498a-4567-9d14-5c01f974d8b1). A message marked automatic, such as an out-of-office reply, is never answered. |
-| **One mailbox, an allow-list** | Letters leave from one shared mailbox, "Cost in Action (AI)". Exchange RBAC for Applications [scopes mailboxes, not recipients](https://learn.microsoft.com/exchange/permissions-exo/application-rbac), so the send step checks each recipient against the allow-list and a [mail-flow rule](https://learn.microsoft.com/exchange/security-and-compliance/mail-flow-rules/mail-flow-rules) rejects mail to any address not on it. Neither stops a wrong entry on the list or a recipient forwarding a letter. |
+| **One mailbox, an allow-list** | Letters leave from one shared mailbox, "Meternaut (AI)". Exchange RBAC for Applications [scopes mailboxes, not recipients](https://learn.microsoft.com/exchange/permissions-exo/application-rbac), so the send step checks each recipient against the allow-list and a [mail-flow rule](https://learn.microsoft.com/exchange/security-and-compliance/mail-flow-rules/mail-flow-rules) rejects mail to any address not on it. Neither stops a wrong entry on the list or a recipient forwarding a letter. |
 | **Replies are data** | A reply is matched by its `In-Reply-To` header and the request id in the subject, screened, length-capped and handed to the system as an excerpt of untrusted text ([security](../design/06-security-and-governance.md)). It is how Explain, Challenge and Teach work by e-mail. No reply approves, confirms a note or changes anything, because screening misses some attacks. |
 
 ## The letters at a glance
@@ -72,7 +72,7 @@ When the system cannot buy a commitment itself, it prepares a request for whoeve
 
 ```
 (An invented example: the E4 purchase as a partner-sold scope, variant D)
-From: Cost in Action (AI) <cost-in-action@contoso.example>
+From: Meternaut (AI) <meternaut@contoso.example>
 To: Gerrit, partner desk <desk@partner.example>
 Subject: Purchase request: one-year compute savings plan, order platform [request r_Hn4c7T]
 
@@ -101,7 +101,7 @@ This message approves nothing and changes nothing. A reply is read as a question
 
 ## First contact: the announcement and the first e-mail
 
-Before the system writes to anyone, the platform team or a team lead announces it in the organisation's own channels. The announcement names the app, "Cost in Action", its publisher and the one address of the approval page. It says the system never asks for passwords, codes or secrets, and that a sign-in asking you to grant permissions to an app is fraud: stop and tell the platform team.
+Before the system writes to anyone, the platform team or a team lead announces it in the organisation's own channels. The announcement names the app, "Meternaut", its publisher and the one address of the approval page. It says the system never asks for passwords, codes or secrets, and that a sign-in asking you to grant permissions to an app is fraud: stop and tell the platform team.
 
 The first-contact e-mail follows when the person is not yet reachable in Teams, or prefers e-mail. It says that an AI is writing; why this person (the directory evidence); that nothing changes without their OK; that it starts slowly (one message a week for the first 30 days, a starting value); what it keeps and who sees it; and how to use Pause messages or reach a person. Its one link opens a page where the person confirms it is them or says it is not, and sets working days, time zone and desk day once. An opt-out is recorded and honoured.
 

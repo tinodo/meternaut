@@ -1,8 +1,8 @@
 {
   "_invented": true,
-  "senderName": "Cost in Action (AI)",
+  "senderName": "Meternaut (AI)",
   "requestId": "r_Ts5Bk2",
-  "pageUrl": "https://cost-in-action.contoso.example/ok/r_Ts5Bk2",
+  "pageUrl": "https://meternaut.contoso.example/ok/r_Ts5Bk2",
   "challengeExample": "For example: these containers hold records we must keep",
   "teachExample": "For example: this storage account is read every day by a report",
   "headline": "I moved three dev containers to a cooler storage tier",

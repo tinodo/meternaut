@@ -1,8 +1,8 @@
 {
   "_invented": true,
-  "senderName": "Cost in Action (AI)",
+  "senderName": "Meternaut (AI)",
   "requestId": "r_Qx3Wa9",
-  "pageUrl": "https://cost-in-action.contoso.example/ok/r_Qx3Wa9",
+  "pageUrl": "https://meternaut.contoso.example/ok/r_Qx3Wa9",
   "challengeExample": "For example: the processor rose because of the month-end run",
   "teachExample": "For example: this database peaks at every month-end",
   "headline": "My change to sql-orders did not do what I said it would",

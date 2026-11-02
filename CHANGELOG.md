@@ -1,6 +1,14 @@
 # Changelog
 
-All notable changes, newest first. Versions are git tags: `ideation-vN` for the ideation (`docs/01` to `docs/10` and the research), `design-vN` for the design (`docs/design/`; `design-v1` was withdrawn), `experience-vN` for the experience design (`docs/experience/`) and `build-plan-vN` for the build plan (`docs/build-plan/`). The previous editions stay available at their tags, and the earliest are archived under [`docs/_archive/`](docs/_archive/), which is never edited.
+All notable changes, newest first. Versions are git tags: `ideation-vN` for the ideation (`docs/01` to `docs/10` and the research), `design-vN` for the design (`docs/design/`; `design-v1` was withdrawn), `experience-vN` for the experience design (`docs/experience/`) and `build-plan-vN` for the build plan (`docs/build-plan/`). A heading without a tag records a change that is not a new edition. The previous editions stay available at their tags, and the earliest are archived under [`docs/_archive/`](docs/_archive/), which is never edited.
+
+## The name — 2026-11-02
+
+**What.** The product, called "Azure Cost in Action" until now, is called **Meternaut**: an explorer of billing meters. The documents, the tools, the card templates with their sample data and the pictures use the new name, and the card pictures were drawn again (`tools/render-cards/screenshot-cards.cjs` does that). The repository is `tinodo/meternaut`; the old address redirects.
+
+**Why.** Microsoft's [trademark guidelines](https://www.microsoft.com/en-us/legal/intellectualproperty/trademarks) do not allow a Microsoft brand, such as Azure, in the name of a product, a service, a domain name or an account. Saying what the product is built on is allowed, and the README now does.
+
+**Not changed.** The entries below and the review records keep the old name, because they say what was true when they were written. The name is a working name; an organisation that adopts the product may rename it, and the design already says so.
 
 ## build-plan-v1 — 2026-11-02 (tag `build-plan-v1`)
 

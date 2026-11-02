@@ -459,7 +459,7 @@ def _sample() -> tuple[dict, dict, dict, dict]:
     btn = _button
     card = {
         "type": "AdaptiveCard", "$schema": SCHEMA, "version": "1.5",
-        "fallbackText": "A recommendation from Cost in Action (AI). Open it on the page: ${pageUrl} Written by an AI.",
+        "fallbackText": "A recommendation from Meternaut (AI). Open it on the page: ${pageUrl} Written by an AI.",
         "body": [
             {"type": "TextBlock", "id": "ai-label", "text": "${senderName}", "wrap": True},
             {"type": "TextBlock", "id": "headline", "text": "${headline}", "wrap": True},
@@ -476,7 +476,7 @@ def _sample() -> tuple[dict, dict, dict, dict]:
                 "teach": {"inputs": [], "plan": False, "returns": "answer"}, "human": {"inputs": [], "plan": False, "returns": "handoff"}}
     spec = {"file": "x.json", "money": True, "requires": ["headline", "why-you-get-this"], "verbs": contract}
     limits = dict(DEFAULTS)
-    data = {"_invented": True, "senderName": "Cost in Action (AI)", "pageUrl": "https://costinaction.example/ok/abc",
+    data = {"_invented": True, "senderName": "Meternaut (AI)", "pageUrl": "https://meternaut.example/ok/abc",
             "notificationText": "Switch off the QA environment at night?"}
     return card, spec, limits, data
 
@@ -536,7 +536,7 @@ def self_test() -> int:
     broken(lambda c, d, s: c["body"].append({"type": "ActionSet", "actions": [button("explain", "A title that is too long for Teams")]}), "title is longer")
     broken(lambda c, d, s: c.update({"msteams": {"entities": []}}), "msteams may set only width")
     broken(lambda c, d, s: d.update({"_invented": False}), "_invented")
-    broken(lambda c, d, s: d.update({"senderName": "Cost in Action"}), "senderName must end")
+    broken(lambda c, d, s: d.update({"senderName": "Meternaut"}), "senderName must end")
     broken(lambda c, d, s: d.update({"recipient": "x"}), "never supplies a recipient")
     broken(lambda c, d, s: d.update({"okLabel": "A label that is far too long to be a button"}), "button title")
     broken(lambda c, d, s: d.update({"options": [{}, {}, {}]}), "other options")

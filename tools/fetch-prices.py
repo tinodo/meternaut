@@ -48,9 +48,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_SPEC = ROOT / "docs" / "design" / "cost" / "price-queries.json"
 DEFAULT_OUT = ROOT / "docs" / "design" / "cost" / "prices-snapshot.json"
-SCHEMA = "azure-cost-in-action/prices-snapshot@1"
+SCHEMA = "meternaut/prices-snapshot@1"
 API_BASE = "https://prices.azure.com/api/retail/prices"
-USER_AGENT = "Mozilla/5.0 (compatible; azure-cost-in-action-fetch-prices/1)"
+USER_AGENT = "Mozilla/5.0 (compatible; meternaut-fetch-prices/1)"
 LIST_FIELDS = ("meters", "manual", "pageChecks", "anomalies", "queries")
 
 

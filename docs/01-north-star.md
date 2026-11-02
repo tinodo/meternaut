@@ -1,4 +1,4 @@
-# Azure Cost in Action — the north star
+# Meternaut — the north star
 
 > **Status:** ideation **v5** · 2026-11-01 · The whole idea in one place. Each part has a deeper document: [studying Azure](02-learning-azure.md) · [the estate and the investigation](03-estate-and-investigation.md) · [finding out without spending](04-finding-out-without-spending.md) · [recommend, act, verify](05-recommend-act-verify.md) · [people and conversation](06-people-and-conversation.md) · [getting smarter](07-getting-smarter.md) · [the outer rims](08-outer-rims.md) · [the learning contract](09-the-learning-contract.md) · [a press release from the future](10-press-release-from-the-future.md). The technical design that answers this idea is in [docs/design](design/README.md). Nothing is built yet.
 > Nothing here is a technical design: it describes what the system should do, and why.

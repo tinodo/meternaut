@@ -30,7 +30,7 @@ The review card is a check run, which takes Markdown (up to 65,535 characters pe
 
 ```markdown
 (An invented example.)
-Cost in Action (AI), review card prism-scale-down-billing: needs a decision
+Meternaut (AI), review card prism-scale-down-billing: needs a decision
 
 Claim. Scaling an Azure Prism index down still bills the hour already started. Two pages disagree, so the claim is marked disputed and carries no saving.
 Scope. Azure Prism, any region and offer, preview. 2026-11-02. Level: documented ("From Microsoft's documentation").
@@ -120,7 +120,7 @@ As read on 2026-11-02, [What-If](https://learn.microsoft.com/azure/azure-resourc
 
 ```markdown
 (An invented example.)
-Cost in Action (AI), cost note: advisory, it blocks nothing
+Meternaut (AI), cost note: advisory, it blocks nothing
 
 This change adds a General Purpose Azure SQL database (2 vCores), a zone-redundant storage account and a Cosmos DB account.
 Change: about EUR 410 a month more (range 360 to 470). Scenario: priced from the list, with no bill behind it. At list prices. I cannot see your rates.

@@ -1,4 +1,4 @@
-# Azure Cost in Action
+# Meternaut
 
 > **Every euro spent on Azure has a reason. This AI learns the reasons — and finds, tests and fixes the euros that have none.**
 >
@@ -10,7 +10,7 @@
 
 Cost optimisation has a bottleneck: **somebody has to work out *why* each euro is spent and what it would take to spend less.** That knowledge is produced by hand, one service and one estate at a time — so advice is thin, late, and ignored.
 
-This project imagines an AI that **does the knowledge work itself — like a scientist for Azure's economics**. It starts from what Azure already tells you — Cost Management, budgets, Advisor — and closes the loop on it (the owner who never opens a recommendations blade gets a short, explained question), then goes where those tools cannot. In this idea it does five kinds of work:
+This project, **Meternaut** (an explorer of billing meters), imagines an AI that **does the knowledge work itself — like a scientist for Azure's economics**. It starts from what Azure already tells you — Cost Management, budgets, Advisor — and closes the loop on it (the owner who never opens a recommendations blade gets a short, explained question), then goes where those tools cannot. In this idea it does five kinds of work:
 
 - **STUDY** — it learns how every Azure service *really* charges. It reads the documentation, price lists and specifications and writes a Service Cost Profile with receipts (a source, a date and a quote) into the **Atlas**, an open map of how Azure charges; it has a provisional profile for a brand-new service within hours; and it checks every profile against the one fact that cannot argue back: the bills people already pay. It reasons from a *Cost Grammar* — fourteen ways money arises, such as capacity, consumption, stock, flow and commitment — not from a list of rules.
 - **SURVEY** — it understands each estate: what things are *for*, who owns them, when they are busy, what must not be touched, which agreement the estate sits under and what the system may see and do there.
@@ -73,6 +73,7 @@ The [build plan](docs/build-plan/README.md) is an index and four documents on wh
 - **Version numbers** are release tags in this repository; the [changelog](CHANGELOG.md) says what each one changed.
 - **Licence:** MIT ([LICENSE](LICENSE)) covers everything in this repository, the documents included.
 - **Principles:** Microsoft technology for the product (open standards and repository tooling are the exceptions) · aligned with the Cloud Adoption Framework and the Well-Architected Framework · open source · fully AI-infused · human-in-the-loop.
+- **Trademarks:** Azure, Microsoft Foundry, Microsoft Agent Framework, Microsoft Teams and Microsoft 365 are trademarks of the Microsoft group of companies, named here only to say what Meternaut is built on and works with.
 - **How the decisions were challenged:** [`docs/reviews/`](docs/reviews/README.md). **What changed and when:** the [changelog](CHANGELOG.md). **Rules for anyone — human or agent — working here:** [AGENTS.md](AGENTS.md).
 
 Check the documents with `python tools/check-docs.py --strict` (standard library only).

@@ -11,7 +11,7 @@
 
 *An open-source "scientist for Azure's economics" studies how new services really bill, works with the people who own the spend, and learns from every answer. Humans decide.*
 
-**AMSTERDAM, 12 October 2027** — The Azure Cost in Action community today released version 1.0 of an open-source system that treats cloud cost optimisation as a **science**. It **studies** how each Azure service charges, **surveys** each estate — what things are *for*, who owns them, when they are busy — **tests** its beliefs against evidence that already exists (bills, usage history, changes people were making anyway), **acts** with people through short questions and decisions in Teams and email, and **grows** by being evaluated on sealed test cases it cannot see.
+**AMSTERDAM, 12 October 2027** — The Meternaut community today released version 1.0 of an open-source system that treats cloud cost optimisation as a **science**. It **studies** how each Azure service charges, **surveys** each estate — what things are *for*, who owns them, when they are busy — **tests** its beliefs against evidence that already exists (bills, usage history, changes people were making anyway), **acts** with people through short questions and decisions in Teams and email, and **grows** by being evaluated on sealed test cases it cannot see.
 
 Contoso, a retailer running about 3,000 Azure resources across five countries, adopted the system in January. By October:
 
