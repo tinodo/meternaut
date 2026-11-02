@@ -51,7 +51,7 @@ In this letter the system reports on itself, saying what it got wrong as plainly
 | What I need from you | At most three asks, including what more access would buy |
 | What I cost | The system's own cost, next to what it verified |
 
-The footer links to the report card, Talk to a person and Settings.
+The footer links to the report card, Talk to a person and Settings. In phase 1a, before those pages exist, the letter goes to the FinOps lead alone and its footer has no links.
 
 ## The monthly letter
 
@@ -82,9 +82,8 @@ What to buy: a one-year compute savings plan, auto-renew off.
 Price check: Thursday 09:12 CEST. It expires on Thursday 10 June, 09:00 CEST; a later decision gets a new price check.
 Commitment, at the price I checked: USD 25.00 an hour for one year, USD 219,000 in total and about EUR 205,860 at 0.94 euro to the dollar. Paid monthly, about EUR 17,155 a month as invoiced, which follows the exchange rate.
 Scope: management group "Order platform" (mg-order-platform). Today the plan benefits subscriptions a1f0-0001, a1f0-0002 and a1f0-0003 (orders-prod-1 to 3); a later member on billing profile BP-ORD-01 would also benefit.
-Saving: about EUR 4,700 a month (range 4,100 to 5,300), amortised. At retail rates. Your rates are not visible to me. Scenario saving: your quote settles the number.
-Deadline: your quote before the price check expires. The current reservation ends 30 June.
-Left out on purpose: resource names, owners, tags and other spend.
+Deadline: your quote before the price check expires.
+Left out on purpose: the saving, the evidence, resource names, owners, tags and other spend.
 Approved as written: the commitment, term, payment frequency, auto-renew off and scope. A change to any of them needs new approvals at Contoso.
 
 Please reply to this message, keeping the subject, with your quote or one line on why you cannot buy this. If you have allowed Contoso to buy savings plans itself, say so.
@@ -96,7 +95,7 @@ This message approves nothing and changes nothing. A reply is read as a question
 
 **Why plain text, and no link.** A request is read in a mail system or ticket tool the system cannot see. Plain text survives forwarding, can be copied into an order screen and hides nothing. A link would lead to pages the recipient cannot sign in to.
 
-**What leaves the organisation.** Only the management group the purchase applies to and the subscriptions in it are identified, by name and ID: the one piece of estate data the recipient needs. A partner is not in the directory, so the platform team enters each partner address on the allow-list ([15](15-asks-of-the-technical-design.md)). The approval page marks the recipient as outside the organisation and shows the exact text to be sent.
+**What leaves the organisation.** Only the management group the purchase applies to and the subscriptions in it are identified, by name and ID: the one piece of estate data the recipient needs. A partner is not in the directory, so the platform team enters each partner address on the allow-list ([15](15-asks-of-the-technical-design.md)). The approval page shows the recipient's address and the exact text to be sent.
 
 **When no answer comes.** The system looks for the purchase itself where the agreement makes it visible; under a partner agreement the bill may not show it, so it asks the partner to confirm ([14](../design/14-agreements-and-access.md)). One reminder goes to the same address before the price check expires, and says why; none follows a "no". If the deadline passes without a purchase, the approvers are told once, without blame, and the item reopens with a new price check and new approvals.
 

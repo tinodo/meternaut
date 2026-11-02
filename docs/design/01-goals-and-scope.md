@@ -69,13 +69,13 @@ It reads what Azure already offers, treats it as leads and as a baseline to beat
 | F2 | Build an Estate model per organisation: resources, purpose, rhythms, owners, constraints |
 | F3 | Watch cost, usage and change on clocks that fit each signal (minutes for alerts and metrics, daily for bills, slower for prices and documents) and open Cases from leads |
 | F4 | Investigate with hypotheses, challenge them independently, quantify options and consequences |
-| F5 | Tell the right owner in plain words, with evidence, options and "do nothing"; every message offers three buttons: Explain (why), Challenge (I disagree) and Teach (here is what you missed) |
+| F5 | Tell the right owner in plain words, with evidence, options and "do nothing"; a message that carries a claim or a decision about spend offers Explain (why), Challenge (I disagree) and Teach (here is what you missed), every other message Explain alone, and every card ends with "Talk to a person" |
 | F6 | Plan, approve, run and verify changes from the Action catalogue; roll back when a guard metric (a measure the change must not worsen) breaches |
 | F7 | Prepare commitment purchases for two-person approval |
 | F8 | Verify outcomes against registered predictions; keep a calibration record |
 | F9 | Evaluate itself on change and in production; report what it is bad at |
 | F10 | Share world knowledge as open source; share nothing from an estate except a privacy-reviewed scope and aggregate that its owner has agreed to |
-| F11 | Work with every Azure agreement and every level of access: find out per scope what can be seen and what can be done, say so plainly, and use the best path that exists (where Cost Management has no data, as for classic partner subscriptions and sponsorship offers, that path is reading resources) ([agreements and access](14-agreements-and-access.md)) |
+| F11 | Work with every Azure agreement and every level of access: find out per scope what can be seen and what can be done, say so plainly, and use the best path that exists ([agreements and access](14-agreements-and-access.md)) |
 
 **How well (targets are parameters of each adopter).**
 
@@ -96,7 +96,7 @@ It reads what Azure already offers, treats it as leads and as a baseline to beat
 |---|---|---|
 | Azure subscriptions and rights to deploy and assign roles | Deploying the platform; opting scopes in | Owner, or Contributor plus a role-assignment right |
 | Read access to cost data at the scopes to manage | The cost lake | Cost Management Reader on a subscription is enough to start. Billing-level roles add price sheets, reservation recommendations and purchases; what each agreement allows is in [agreements and access](14-agreements-and-access.md) |
-| A Citadel governance hub | Models and tools through one door | The organisation's own, or Microsoft's open-source accelerator (the repository's `hub/` folder, added in phase 0, deploys it) |
+| A Citadel governance hub | Models and tools through one door | The organisation's own, or Microsoft's open-source accelerator |
 | Model quota in the chosen region | The model aliases | Quota is per subscription and tiered |
 | Microsoft Entra ID | Sign-in, groups, agent identities | P1 for Conditional Access on approvers; P2 or Governance for PIM (optional) |
 | Microsoft 365 (Teams, Exchange Online) | Cards and email | Fallback: the web page |

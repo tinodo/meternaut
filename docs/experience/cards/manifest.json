@@ -9,9 +9,9 @@
     "max_options": 2
   },
   "contract": {
-    "who": "The card's addressee; a decision verb (ok, cancel, undo, not-me) also needs the designated approver or a named delegate, checked by directory object id, never by name.",
+    "who": "The card's addressee; a decision verb (ok, cancel, not-me) also needs the designated approver or a named delegate, checked by directory object id, never by name; undo needs the holder of the rollback grant (the approver, or each owner of record for a change under a standing permission).",
     "repeat": "A repeated tap changes nothing: the service answers that it is already recorded.",
-    "refused": "A verb is refused when its request is expired, changed, answered or paused, and the refusal says why.",
+    "refused": "A verb is refused when its request is expired, changed, answered or paused, and the refusal says why; Undo (checked against its own grant and window), \"I did not approve this\" and \"Talk to a person\" stay open.",
     "response": "One immediate response per tap, as listed under returns; the outcome follows by updating the same message.",
     "words": "Only Challenge, Teach and the text boxes send words: bounded, screened and quoted as untrusted data. Free text never approves."
   },

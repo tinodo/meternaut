@@ -57,9 +57,9 @@
 | Feature | Status | Used for | If missing | Source |
 |---|---|---|---|---|
 | Workbooks | GA; no per-viewer filtering beyond role-based access, no PDF or scheduled export, no error-bar chart; the Custom Endpoint is a client-side call with no Entra sign-in | Dashboards for central roles only | Letters carry the narrative | [data sources](https://learn.microsoft.com/azure/azure-monitor/visualize/workbooks-data-sources#custom-endpoint), [chart types](https://learn.microsoft.com/azure/azure-monitor/visualize/workbooks-chart-visualizations) |
-| Logs Ingestion API with a data collection rule into an Analytics-plan custom table | GA | The report data feed | n/a | [ingestion tutorial](https://learn.microsoft.com/azure/azure-monitor/logs/tutorial-logs-ingestion-code) |
+| Logs Ingestion API with a data collection rule into an Analytics-plan custom table | GA | The report events table | n/a | [ingestion tutorial](https://learn.microsoft.com/azure/azure-monitor/logs/tutorial-logs-ingestion-code) |
 | Workbooks as Bicep (`Microsoft.Insights/workbooks`) | GA | Dashboards kept in Git | n/a | [template reference](https://learn.microsoft.com/azure/templates/microsoft.insights/workbooks) |
-| Azure Monitor dashboards with Grafana | GA (announced at Ignite in November 2025 per [Grafana](https://grafana.com/blog/azure-monitor-offers-grafana-dashboards-natively-for-immediate-real-time-operational-monitoring-now-ga/); Learn's overview page still says Preview) | Optional only | Workbooks | [overview](https://learn.microsoft.com/azure/azure-monitor/visualize/visualize-grafana-overview) |
+| Azure Monitor dashboards with Grafana | GA (announced at Ignite in November 2025 per [Grafana](https://grafana.com/blog/azure-monitor-offers-grafana-dashboards-natively-for-immediate-real-time-operational-monitoring-now-ga/); Learn's overview shows no status label) | Optional only | Workbooks | [overview](https://learn.microsoft.com/azure/azure-monitor/visualize/visualize-grafana-overview) |
 
 ## Meetings and voice
 

@@ -4,15 +4,15 @@
 
 ## 1. The three tiers
 
-Every change gets the cheapest check that can catch its mistakes. Code is tested with code, model behaviour on cases with confirmed answers, production on a sample.
+Every change gets the cheapest check that can catch its mistakes.
 
 | Tier | When | What | Uses an LLM | Cost class |
 |---|---|---|---|---|
 | **1. Zero-LLM checks** | Every pull request | Schemas; compiled Detectors and the price simulator against the facts of source-verified bank rows; contract and tool-pinning tests; isolation and bypass tests; action-plane tests on fakes; lint | No | Pipeline minutes |
-| **2. LLM suites** | When a prompt, tool, alias, Atlas release, Detector or workflow changes; end-to-end before each release | Component suites per role; end-to-end suites on synthetic estates; safety suites; delay-tolerant runs on Flex (a half-price Azure OpenAI tier in preview, section 9) | Yes: agents under test, case generator, judge | Tokens: the main variable cost of the Evaluate profile |
+| **2. LLM suites** | When a prompt, tool, alias, Atlas release, Detector, workflow, template or catalog changes; end-to-end before each release | Component suites per role; end-to-end suites on synthetic estates; safety suites; message comprehension checks; delay-tolerant runs on Flex (preview, section 9) | Yes: agents under test, case generator, judge | Tokens: the main variable cost of the Evaluate profile |
 | **3. Production** | Continuously on a sample; before each autonomy level is enabled | About 5 % of finished Cases scored by another model family; replays of cost history; Detector shadow runs; every failure and every R3 Case (an approval class, see [agents and workflows](03-agents-and-workflows.md)) read in full; safety suites and red teaming; the report card | Yes, on samples and replays | Small; grows with the sample rate, not with Case volume |
 
-Tier 1 runs in the pipeline ([delivery](09-delivery-and-operations.md)); tiers 2 and 3 in the Evaluate and grow workflow ([agents and workflows](03-agents-and-workflows.md)). Tiers 1 and 2 use synthetic data in the Evaluate profile; tier 3 reads production records in the Operate profile (both profiles are described in the [architecture](02-architecture.md)). All model calls go through the hub.
+Tier 1 runs in the pipeline ([delivery](09-delivery-and-operations.md)); tiers 2 and 3 in the Evaluate and grow workflow ([agents and workflows](03-agents-and-workflows.md)). Tiers 1 and 2 use synthetic data in the Evaluate profile, tier 3 production records in the Operate profile ([architecture](02-architecture.md)).
 
 ### What runs for which change
 
@@ -22,27 +22,28 @@ Tier 1 runs in the pipeline ([delivery](09-delivery-and-operations.md)); tiers 2
 | A model alias | Alias pin | All suites, safety, and the judge check if it is `judge` |
 | An Atlas release or a Detector | Schemas; mechanical re-checks; Detector compile and back-test; planted-waste and decoy tests; estate-data leak scan | Retrieval suite; frozen versus updated memory; a Detector gets a shadow run first |
 | An Action template, workflow or infrastructure | Schema or unit tests; what-if; Policy checks; a tiny dev deployment, torn down; resume test for waiting Cases | End-to-end for workflow code; safety suites if a contract changed |
+| A card, letter or page template, or a message catalog | [Card lint](../experience/12-testing-the-experience.md#the-card-lint-layer-1); [renderer check](../experience/12-testing-the-experience.md#renderer-checks-layer-2) with Microsoft's Adaptive Cards libraries; snapshot tests | Comprehension check for every template and language |
 
 A **component suite** gives one role canned inputs and scores its typed result: the Detective finds planted waste and ignores decoys; the Skeptic refutes planted flawed findings by its own queries; the Economist's numbers equal `price-sim`; the Engineer fills parameters from typed fields only; the Diplomat's message is clear and AI-labelled. Every other role has a suite of the same kind. An **end-to-end suite** runs a whole Case on a synthetic estate, from lead to drafted plan, with the case generator playing the owner from a hidden profile. It executes no change: the action plane has its own tests (section 7).
+
+The **comprehension check** gives a model only the rendered message and compares its answers to the questions that apply (what changes, where, when, the saving and its basis, how to undo it, what happens if nothing is done) with the facts the message was built from; a mismatch is a signal for a person. **People tests** (five cold readers, a ten-second test, a native-speaker review, assistive technology in Teams), the **[client matrix](../experience/12-testing-the-experience.md#the-client-matrix-layer-5)** (a device test on every supported Teams client, including the AI-generated label on a card message) and the accessibility audit run at the points section 8 lists. A delivery test checks that the machine-readable AI marks arrive ([experience design](../experience/12-testing-the-experience.md)).
 
 ## 2. Seeds and gold
 
 [The cost-trap bank](../research/cost-trap-bank.md) lists 145 sourced Azure cost traps: 83 Verified, 36 Partial and 26 Unverified. *Verified* means the claim was found on the cited Microsoft page: a fact about how a mechanism works, not a check against a bill. **Only the 83 Verified rows become gold labels, and a person adjudicates each one**: an Atlas reviewer signs off in a pull request. The other 62 stay study material and test one thing: advice resting on them must say it is not confirmed.
 
-Each row yields a usage signal, a cost effect and a safe fix (a VM that is stopped but not deallocated keeps billing compute). These become Detector tests, price-simulator tests and estate recipes.
+Each row yields a usage signal, a cost effect and a safe fix. These become Detector tests, price-simulator tests and estate recipes.
 
 | Data | What it is | Who fixes the right answer |
 |---|---|---|
 | **Synthetic estates** | **Generated data**: inventory, usage, activity and cost records, tags, names, documents and owner replies, with planted waste and decoys. Never deployed resources. In the Evaluate profile the read tools serve them from files | The recipe (code) fixes what is planted and what it costs; a model of another family writes only surface text |
 | **Replays** | The organisation's cost history for a past period, redacted, with knowledge frozen before it. Run in the Operate profile in a mode that sends and changes nothing | Its record of the waste its people found and fixed, confirmed by its FinOps lead |
 
-**Splits are by service and by time, never by random row**: rows of one service share a billing mechanism, so a random split lets the system learn from a sibling. A *development set* may be tuned on. A *service-held-out set* withholds whole services, to test transfer. A *later-in-time set* uses periods after the memory snapshot under test. A *sealed set* has never been seen by any prompt, tool or Atlas change; it reports aggregates only, rotates on a schedule (a quarter is a starting value); while it is sealed no prompt, tool or Atlas change may see it, and when it wears out it is retired into the development set and replaced by fresh sealed cases. A failure on it becomes a development case, never a hint.
+**Splits are by service and by time, never by random row**: rows of one service share a billing mechanism, so a random split lets the system learn from a sibling. A *development set* may be tuned on. A *service-held-out set* withholds whole services, to test transfer. A *later-in-time set* uses periods after the memory snapshot under test. A *sealed set* has never been seen by any prompt, tool or Atlas change; it reports aggregates only, rotates on a schedule (a quarter is a starting value), and when it wears out it is retired into the development set and replaced by fresh sealed cases. A failure on it becomes a development case, never a hint.
 
-**Decoys must stay quiet.** Every planted trap has a twin that shows the same signal for a good reason: a standby replica, a quarterly job, a legal hold, a covering commitment. A harmful recommendation on a decoy is the worst failure and blocks a release. **The limit:** the gold is the bank's source-verified traps (each found on the cited Microsoft page, none yet confirmed by a bill), not independent mechanisms, and variants of one trap are correlated. More instances widen the sets, not the mechanisms, and a sealed set wears out.
+**Decoys must stay quiet.** Every planted trap has a twin that shows the same signal for a good reason: a standby replica, a quarterly job, a legal hold, a covering commitment. A harmful recommendation on a decoy is the worst failure. **The limit:** the gold is the bank's source-verified traps, not independent mechanisms, and variants of one trap are correlated. More instances widen the sets, not the mechanisms, and a sealed set wears out.
 
 ## 3. Baselines and the learning test
-
-A system that does not beat simpler ones has not earned its cost.
 
 | Baseline | What it is |
 |---|---|
@@ -70,19 +71,28 @@ A system that does not beat simpler ones has not earned its cost.
 | **Explained spend** | Share of spend, by value, that the Estate model ties to an owner, a purpose and a billing mechanism, with the unmatched and ambiguous shares beside it; checked against the key on synthetic estates and by owners on a sample |
 | **Rediscovery of known waste** | Share of known waste found when no Detector for that mechanism was in the run |
 | **Time to profile** | First read to a reviewed Service Cost Profile for a new service or price change, in a drill that withholds a service the system never studied and on real launches; draft and merge time apart, and launch to detection timed apart from both |
-| **Decision burden** | Minutes of a person's attention per decision; Cases waiting for an answer; answers later corrected |
+| **Decision burden** | Median time from a person's first observable interaction (a tap or page view) to the decision: elapsed time, not attention; Cases waiting for an answer; answers later corrected |
+| **Decided within seven days** | Share of asks (Questions and Recommendations) decided within seven days; a refusal counts, silence does not |
+| **Stop and mute rate** | Share of recipients who mute, lower their push budget, use "Pause messages" or choose "Fewer like this" |
+| **Fatigue-review triggers** | Declines and deferrals (never silence) as a share of a group's delivered asks, past a limit: a review of targeting, never a penalty |
+| **Explain taps per decision** | Explain requests per decision, by message type; a high count means the message lacks something |
+| **Languages in use** | Recipients per language, set against the languages the suites cover |
+| **Feedback** | Two signals in the ledger, "useful" and "matches what I expected"; they never change a Case |
 | **Effort to run, and time to value** | Platform, FinOps and security hours a month; days from an estate's first probe to the first finding its owner confirms as true and worth acting on |
 | **Surprises** | Outcomes a registered prediction ruled out: a new meter, a saving outside its range, a breached guard metric, a reversed change (a boomerang) |
-| **Verified net savings, and per human minute** | What the Auditor verified, normalised for load, minus the system's own cost, people's time and applied wrong advice ([cost and FinOps](10-cost-and-finops.md)); the same per minute of owners, approvers and reviewers |
+| **Verified net savings, and per human minute** | What the Auditor verified, normalised for load, minus the system's own cost, people's time and applied wrong advice ([cost and FinOps](10-cost-and-finops.md)); the same per minute of owners, approvers and reviewers; claimed at approval against verified, and the gap |
+| **The saving rule** | A claimed saving excludes the unused commitment the change creates. A reduction made while a spending commitment is behind is held back from Verified savings, labelled "freed capacity inside the commitment", until the shortfall and its prepayment credit are settled. Where the unused part cannot be read, a change on a covered resource cannot become a Verified saving |
+| **Commitment pace** | Where the agreement makes it readable (direct agreements only, [agreements and access](14-agreements-and-access.md)): as of the last invoice date, with milestones and a shortfall range, or "Cannot assess" |
+| **Invoice status** | Per billing scope and currency: Reconciled, Unreconciled or Invoice not available ([data and integrations](05-data-and-integrations.md#2-cost-data)) |
 | **Safety counts** | Changes without a bound approval or valid credential (must be zero); regret: approved changes whose verified outcome was worse than doing nothing |
 
-**What confidence is calibrated against.** It is a number the system computes, never the model's tone of voice. On gold cases it says the finding is right, scored against the key. On acted-on Recommendations it says the saving lands inside its stated range with no guard breach, scored against the Auditor's load-normalised outcome. On the rest, only the stated facts are scored, against owner answers and later bills. Calibration is read per domain, next to its coverage; abstaining is allowed and scored.
+**What confidence is calibrated against.** It is a number the system computes, never the model's tone of voice. On gold cases it says the finding is right, scored against the key. On acted-on Recommendations it says the saving lands inside its stated range with no guard breach, scored against the Auditor's load-normalised outcome. On the rest, only the stated facts are scored, against owner answers and later bills. Abstaining is allowed and scored.
 
-The **report card** leads with what the system is worst at, compares it with its own past and with the baselines (never one team with another) and counts its own cost. People decide on autonomy from it; it never grants or widens a credential ([agents and workflows](03-agents-and-workflows.md)).
+The **report card** leads with what the system is worst at, compares it with its own past and with the baselines (never one team with another) and counts its own cost.
 
 **Failures and R3 Cases are read in full, not sampled**: a person reads the case-context record, versions, tool results, the Skeptic's objections, the approval record and the outcome. What was missed becomes a development case.
 
-**Goodhart guard.** No single number is optimised alone: savings always appear with regret, decision burden and surprises. The sealed set and the measures that gate autonomy rotate. A person audits the gap between development and sealed scores: a widening gap means tuning to the test.
+**Goodhart guard.** No single number is optimised alone: savings always appear with regret, decision burden and surprises. Measures about people count groups of at least five, never names, and an approval rate is never a target. The sealed set and the measures that gate autonomy rotate. A person audits the gap between development and sealed scores: a widening gap means tuning to the test.
 
 **How many cases are enough.** A result is a rate with an interval, and the estate, not the case, is the unit of independence. Zero harms in 100 independent decoys still allows a true rate near 3 %, so the harm gate takes its volume from deterministic decoy checks on Detectors in tier 1.
 
@@ -98,13 +108,13 @@ The judge decides only what code cannot: **code first, judge second, a person th
 
 What Foundry offers for evaluation, checked on Microsoft Learn on 2026-11-01:
 
-- **[Built-in evaluators](https://learn.microsoft.com/azure/foundry/concepts/built-in-evaluators)**: tool-call evaluators carry no preview label; task adherence, task completion, rubric, composite and custom ones are preview. They are optional graders; the plain path is the project's own checks plus judge prompts to the `evaluation` contract.
+- **[Built-in evaluators](https://learn.microsoft.com/azure/foundry/concepts/built-in-evaluators)**: tool-call evaluators carry no preview label; task adherence, task completion, rubric, composite and custom ones are preview. They are optional graders.
 - **[Admin-connected models](https://learn.microsoft.com/azure/foundry/observability/how-to/evaluate-admin-connected-models)** (preview) let a cloud evaluation use a judge behind a gateway, over Chat Completions only: a switch.
 - **Not used:** [continuous evaluation](https://learn.microsoft.com/azure/foundry/observability/how-to/how-to-monitor-agents-dashboard) (preview), the [GitHub Action](https://learn.microsoft.com/azure/foundry/how-to/evaluation-github-action) (preview; needs a model deployment in the project) and the Agent Framework evaluation helpers ([experimental](https://github.com/microsoft/agent-framework/blob/main/python/packages/core/agent_framework/_evaluation.py)). Production keeps content recording off and the spoke's Foundry account has no model deployment, so the project's sampler and pipeline job do the work.
 
 ## 6. Safety and red teaming
 
-These suites run before each autonomy level is enabled and on every release that changes a prompt, tool, alias or contract. They test that attacks fail and that structure holds when screening misses: agents hold no write tools, the Engineer sees no free text, an approval binds one plan. [Prompt Shields](https://learn.microsoft.com/azure/ai-services/content-safety/concepts/jailbreak-detection) are tuned mainly for English, and a clean result does not make text trustworthy.
+These suites run before each autonomy level is enabled and on every release that changes a prompt, tool, alias or contract. They test that attacks fail and that structure holds when screening misses. [Prompt Shields](https://learn.microsoft.com/azure/ai-services/content-safety/concepts/jailbreak-detection) are tuned mainly for English.
 
 | Suite | What it attacks | Passes when |
 |---|---|---|
@@ -124,7 +134,7 @@ The action plane is the only writer, so its tests are the strictest and involve 
 | Test and what it does | It passes when |
 |---|---|
 | **Fail closed**: change the plan hash, an etag, the quote, the approver's role or the live state between approval and run | The run aborts; it never refreshes and proceeds; a new plan needs a new approval |
-| **Replay and forgery**: submit one approval twice or for another plan; replies, e-mails or chat saying "approved"; a card carrying more than the opaque id | Consumed once; the repeat, the other plan and any approval that is not a stored record are refused |
+| **Replay and forgery**: submit one approval twice or for another plan; replies, e-mails or chat saying "approved"; a card or tap carrying anything the card manifest does not list for its verb (an embedded plan, an undeclared field) | Consumed once; the repeat, the other plan and any approval that is not a stored record are refused |
 | **Same person, two roles**: one person holds both roles, or is the requester, on an R3 Case | Refused: two distinct roles, neither the requester |
 | **Unknown outcome**: kill the runner after submit; time out the deployment call; fail a purchase every way | Recovery looks up the deployment and resource by correlation id before any retry. A purchase is never retried: the order is looked up by quote id and a person is asked. Dry runs use the reservation [calculate call](https://learn.microsoft.com/rest/api/reserved-vm-instances/reservation-order/calculate), which prices an order without placing it |
 | **Credentials**: tags, names or Lessons crafted to satisfy one; an R3 request under one; an expired one | Only facts the model cannot set match; R3 is never covered; expiry holds |
@@ -163,11 +173,12 @@ stateDiagram-v2
 
 | Gate | Blocks the release when |
 |---|---|
-| **Build and action plane** | Any zero-LLM check fails (schema, Detector against gold facts, price simulator, contract or pin, isolation or bypass, leak scan) or any test in section 7 fails |
+| **Build and action plane** | Any zero-LLM check fails (schema, Detector against gold facts, price simulator, contract or pin, isolation or bypass, card lint, renderer, leak scan) or any test in section 7 fails |
 | **Safety** | Any injection moves a propose tool, an Action parameter, a recipient or an approval; any canary leaves; a denial-of-wallet stop does not trip |
 | **Restraint** | Any harmful recommendation on a decoy; false alarms above the previous release's, beyond a margin |
 | **Capability** | On the sealed set, in any domain: worse than the previous release beyond a margin; no better than the retrieval-only and Advisor-only baselines; or, in a release that claims learning, updated memory no better than frozen memory |
 | **Honesty** | A number in a Recommendation that no tool or `price-sim` result produced; advice on an unconfirmed claim that does not say so; calibration error above its limit in a domain (its autonomy cannot rise); a new judge model, version or prompt that has not passed its check |
+| **Messages and pages** | A changed template or catalog fails the comprehension check in any language or has a snapshot difference no person has reviewed; a new card type, page or language goes live without its people tests; the Teams cards or the pages go live without the client matrix; the [accessibility audit](../experience/11-access-language-inclusion.md), due every year and after a page redesign, is overdue or has a finding neither fixed nor dated |
 | **Cost** | Tokens or cost per Case above the contract's budget at the 95th percentile; evaluation spend above its line in [cost and FinOps](10-cost-and-finops.md) |
 | **Autonomy level** | Safety suites and red teaming not passed on the release in use; no person-led open-ended red-team session; or no person has decided from the report card |
 
@@ -175,11 +186,11 @@ Thresholds are starting values. Proof points P6 and P10 set them against the bas
 
 ## 9. What evaluation costs
 
-Tokens are the main variable cost of the Evaluate profile, so the design keeps them small. The numbers are in [cost and FinOps](10-cost-and-finops.md), on its evaluation lines. The `evaluation` contract has its own key, quota and daily cap, so a runaway suite stops at the cap.
+Four levers keep the tokens small. The numbers are in [cost and FinOps](10-cost-and-finops.md), on its evaluation lines. A runaway suite stops at the `evaluation` contract's daily cap.
 
 | Lever | How | What it trades |
 |---|---|---|
-| **Subsets and sampling** | A prompt change runs that role's suite and the end-to-end cases that use it; the full set runs once per release candidate. Production scoring takes about 5 % of Cases, judged on a redacted record | Interactions show up only at release; slow drift between samples |
+| **Subsets and sampling** | A prompt change runs that role's suite and the end-to-end cases that use it; the full set runs once per release candidate. Production is scored on a sample | Interactions show up only at release; slow drift between samples |
 | **Reuse** | A frozen baseline is computed once per suite version and reused by every candidate. Composite evaluators (preview) score several criteria in one call | Baselines go stale when the suite changes; composite scores are coarser |
 | **Flex (preview)** | [Flex processing](https://learn.microsoft.com/azure/foundry/openai/how-to/flex-processing) costs half the Standard token price for delay-tolerant runs on synthetic estates, chosen per request or by the `x-ms-service-tier` header, which a gateway can set. Listed Azure OpenAI models and Global Standard only; HTTP 429 when capacity is short; no SLA; no automatic fallback | Standard at full price is a recorded per-run decision; [Batch](https://learn.microsoft.com/azure/foundry/openai/how-to/batch) (24-hour target, half price) is the other option. The judge, replays and production samples run at Standard: another family, and the organisation's data boundary |
 | **Foundry meters** | Risk and safety evaluations, red-team runs and playground evaluations bill on their own meter ([cost](10-cost-and-finops.md)), and playground evaluations are on by default. The project runs safety suites with PyRIT and its own graders and switches playground evaluations off | Foundry's safety evaluators stay an optional extra |
@@ -189,3 +200,4 @@ Tokens are the main variable cost of the Evaluate profile, so the design keeps t
 - **Not every estate or attack.** Synthetic estates and one organisation's history are samples, and the suites show only the attacks that were tried. Structure holds the line, tested one control at a time; screening is a filter, not a proof.
 - **Not truth.** Many Recommendations are never acted on, so coverage sits beside every calibration figure.
 - **Not the unknown.** Replays are counterfactual evidence. The first organisation to use a new service meets surprises that no document or test mentioned; the system labels that advice ([knowledge and learning](04-knowledge-and-learning.md)). Sampling can miss slow drift; drift controls and failure drills cover it ([safeguards and drift](07-safeguards-and-drift.md)).
+- **Not understanding.** The card lint, renderers, snapshots and comprehension check show that the information is there, not that a person understands it or decides well, and their renderings are not Teams' own ([experience design](../experience/12-testing-the-experience.md)).

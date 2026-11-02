@@ -42,7 +42,7 @@ The system learns from what already exists, so learning deploys nothing of its o
 | 4 | The Citadel hub is the only door | One contract per hosted agent; quotas, safety and logs in one place |
 | 5 | Models by alias | Cheap model first; the judge is another model family |
 | 6 | The Atlas lives in Git | Agents propose, people merge; served from AI Search |
-| 7 | Approval is bound to one exact plan and usable once | The runner re-checks everything and fails closed |
+| 7 | Approval is bound to one exact plan, which runs once | The runner re-checks everything and fails closed |
 | 8 | No standing purchase role | Two people with different roles approve; the AI executes where the agreement allows, and otherwise prepares the request for whoever can buy |
 | 9 | Two profiles | Evaluate on synthetic data; Operate in a private network |
 | 10 | Evaluation is part of the system | Learning is shown by running the same sealed test cases, which the system has never seen, twice: with its knowledge frozen at a date and with what it learned since |
@@ -65,7 +65,7 @@ The full list, with alternatives, cost, security and reversibility, is in [decis
 | **Workflow** | Plain code that sequences agents and people and waits for answers |
 | **Hub** | The Citadel governance hub in the landing zone: the only route to models and tools |
 | **Contract** | The hub's per-agent configuration (Citadel calls it an access contract): what one agent may use and how much. It has nothing to do with an Azure agreement |
-| **Approval** | A person's decision, bound to one exact plan and the facts it was made against (a hash and the live state); it can be used once |
+| **Approval** | A person's decision, bound to one exact plan and the facts it was made against (a hash and the live state); the plan runs once |
 | **Runner** | The only component that changes Azure, and only what an approval names |
 | **Evaluation** | A test run that scores the system on sealed cases (kept from the system) with known answers |
 | **Judge** | The model that grades answers in an evaluation, from a different model family than the one graded |
@@ -78,9 +78,9 @@ The full list, with alternatives, cost, security and reversibility, is in [decis
 
 ## What an organisation needs
 
-An Azure subscription with deploy rights, read access to cost data (subscription-level Cost Management access is enough to start; without cost access the system still reads resources and metrics and prices at list prices; billing-level roles add price sheets at billing scope and purchase rights, and [agreements and access](14-agreements-and-access.md) says where each is available), a Citadel hub (the organisation's own, or Microsoft's open-source accelerator), model quota, Microsoft Entra ID, and a Git host. Microsoft 365 adds Teams and email; the web page is the fallback. People: a platform team to run it, a FinOps lead, owners who answer cards, and Atlas and security reviewers. [Goals and scope](01-goals-and-scope.md) lists every need and the optional licences.
+An Azure subscription with deploy rights, read access to cost data (subscription-level Cost Management access is enough to start; billing-level roles add price sheets and purchase rights, and [agreements and access](14-agreements-and-access.md) says where each is available), a Citadel hub (the organisation's own, or Microsoft's open-source accelerator), model quota, Microsoft Entra ID, and a Git host. Microsoft 365 adds Teams and email; the web page is the fallback. People: a platform team to run it, a FinOps lead, owners who answer cards, and Atlas and security reviewers. [Goals and scope](01-goals-and-scope.md) lists every need and the optional licences.
 
-**What it costs.** As modelled from list prices, a pilot costs a few hundred euros a month, about half of it fixed (search, private endpoints, an always-ready function instance), and an enterprise estate several thousand euros a month. The Citadel hub is shared platform cost and is not in these totals ([cost and FinOps](10-cost-and-finops.md) says what a hub of its own adds). The model, its seeded volumes and its sensitivities are in the same document.
+**What it costs.** As modelled from list prices, a pilot costs a few hundred euros a month, about half of it fixed (search, private endpoints, an always-ready function instance), and an enterprise estate several thousand euros a month. The Citadel hub is shared platform cost and is not in these totals ([cost and FinOps](10-cost-and-finops.md) says what a hub of its own adds).
 
 ## Where to read next
 
@@ -101,7 +101,7 @@ An Azure subscription with deploy rights, read access to cost data (subscription
 | Which technologies, and their status | [Technology register](11-technology-register.md) |
 | Why each choice was made | [Decisions](12-decisions.md) |
 | In what order it is built | [Roadmap](13-roadmap.md) |
-| How to start building it | [Roadmap](13-roadmap.md) phase 0, then [Delivery and operations](09-delivery-and-operations.md) |
+| How to start building it | The [build plan](../build-plan/README.md), the [roadmap](13-roadmap.md) and [Delivery and operations](09-delivery-and-operations.md) |
 
 ## How this relates to the north star
 

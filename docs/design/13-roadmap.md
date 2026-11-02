@@ -4,21 +4,32 @@
 
 ## 1. Phases
 
-Each phase ends with something an organisation can use and something that was measured. A phase does not start because the previous one is "done" on paper but because its exit criteria were met. A hosted agent, its hub contract and its tools are deployed in the phase that first needs them. "Phase 1" elsewhere means 1a and 1b together. Phase 1b may overlap phase 2; phase 3 starts only after 1b's exit, because P6 tests whether the system learns at all.
+A phase starts when the previous phase's exit criteria are met. A hosted agent, its hub contract and its tools are deployed in the phase that first needs them. "Phase 1" elsewhere means 1a and 1b together. Phase 1b may overlap phase 2; phase 3 starts only after 1b's exit, because P6 tests whether the system learns at all.
 
 | Phase | What exists at the end | Exit criteria |
 |---|---|---|
-| **0 Foundations** | Repository, Evaluate profile deployed from code, hub onboarding (dev contracts, published tools), synthetic-estate generator, zero-LLM checks in CI, evaluation harness skeleton, cost model | P1, P2 and P9 pass; a fresh deployment of dev from scratch works; isolation test (dev cannot reach prod) passes |
-| **1a First value on one estate** | The Operate profile with read roles only, and the prod contracts; the cost lake and capability profile of the first estate's scopes; Estate refresh; Watch workflow; Atlas v0; seed Detectors; Cases that investigate, challenge and quantify but only *report*; the Monday digest, written by the Diplomat and e-mailed to the FinOps lead | P4 and P7 (read paths) pass; explained spend measured on the estate; zero writes to Azure; the FinOps lead confirms a pre-set number of findings as true and worth acting on, each priced on a named basis; cost per case and per confirmed finding read from hub logs, dead ends included, with people's hours recorded beside it |
+| **0 Foundations** | Repository, Evaluate profile deployed from code, hub onboarding (dev contracts, published tools), synthetic-estate generator, zero-LLM checks in CI, evaluation harness skeleton, cost model, one minimal hosted agent and workflow, the mail path, and the thin path from a synthetic lead to a test e-mail | P1, P2 and P9 pass; a fresh deployment of dev from scratch works; isolation test (dev cannot reach prod) passes; a first kill-switch drill has run in dev |
+| **1a First value on one estate** | The Operate profile with read roles only, and the prod contracts; the cost lake and capability profile of the first estate's scopes; Estate refresh; Watch workflow; Atlas v0; seed Detectors; Cases that investigate, challenge and quantify but only *report*; the Monday digest, written by the Diplomat and e-mailed to the FinOps lead | P4 and P7 (read paths) pass; explained spend measured on the estate; zero writes to the estate; the FinOps lead confirms a pre-set number of findings as true and worth acting on, each priced on a named basis; cost per case and per confirmed finding read from hub logs, dead ends included, with people's hours recorded beside it |
 | **1b Show that it learns** | Study workflow on its clock; Atlas growth; report card v0; the baselines; the sealed and later-in-time sets | P5, P6 and P10 results; on the sealed set the system beats the retrieval-only and Advisor-only baselines and **updated memory beats frozen memory** |
-| **2 Recommend and ask** | Teams cards, e-mail and the web page for every owner, Respond workflow, directory resolution, Lessons taught by owners; the Auditor settles changes that owners make themselves | Decision burden measured; calibration record running; reply-path injection suite passes; recipients are always resolved from the directory; the first owner-made saving verified in the bill |
+| **2 Recommend and ask** | Teams cards, e-mail and the web page for every owner, Respond workflow, directory resolution, Lessons taught by owners; the Auditor settles changes that owners make themselves | Decision burden measured; calibration record running; reply-path injection suite passes; recipients are always resolved from the directory; the first owner-made saving verified in the bill; the client matrix passes before go-live (every card type on each supported Teams client); the accessibility audit is scheduled yearly |
 | **3 Act** | Action plane: catalogue of the first Actions across several families, planner, approval service with bound records, runner with per-family roles, verifier, kill switches, audit log; R1 and R2 in non-production | P3 and P8 settled; fail-closed, replay, time-of-check and unknown-outcome tests pass; game days (runner crash, approval outage, kill switch) passed; first saving from a system-run Action verified against a counterfactual |
 | **4 Earn autonomy and purchases** | Credentials for R1 and low R2 in named domains; R3 flow with two approvers and a time-boxed purchase role, or a purchase request to the billing owner or the partner where the agreement requires it; Strategy workflow (commitment coverage, renewals; it needs the capability profile's *commitments visible* flag); shared cases; more Actions; optional FinOps-hub adapter | Report card shows calibrated predictions in each credential's domain; red-team suite passes before each credential; purchase dry run with the reservation *calculate* API; incident drills passed |
 | **5 Open up** | Contribution flow for the Atlas and Action catalogue with the same gates; anonymised outcome statistics; optional voice, avatar and meeting modules; second-region recovery | External pull requests pass the same checks; nothing leaves an estate except a privacy-reviewed scope and aggregate that its owner has agreed to share |
 
+### What the experience needs, by phase
+
+| Phase | What the [experience design](../experience/README.md) needs from the system |
+|---|---|
+| **1a** | The send step, the AI marks on e-mail, and the Monday digest's template in Git with CI checks; the notification policy with fixed settings for one allow-listed reader, the FinOps lead (the platform owner joins in phase 2), who is introduced by an agreed message and not by the owner first-contact flow |
+| **1b** | The report events and Workbooks as code (report card v0); Atlas proposals from a fork |
+| **2** | Teams delivery and the verb contract; cards only to directory members; the web pages and their read APIs; preferences and first contact; the notification policy for everyone and coverage routing; the rules for conversation buttons and a Lesson's scope; feedback capture; the saving rule |
+| **3** | The approval rules that belong to P3: one decision per approver on one plan, two different people for R3, the daily cap and alarm, the rollback grant; "I did not approve this"; approver readiness for R2 (the test sign-in with an authentication context); the kill switch page and its runbook fallback |
+| **4** | Credentials: their page and notices, "Pause changes here"; approver readiness for R3 (the phishing-resistant sign-in); the commitment's pace; the monthly letter and its CSV; the rules for e-mail requests to a partner or a billing owner |
+| **5** | The voice and meeting modules and developer cost comments |
+
 ## 2. Ten proof points
 
-Questions whose honest answer is a measurement. Each has a fallback so a failed test changes a choice, not the project; P6 is the exception, because it tests whether the system learns at all. The numbers behind each pass condition (a budget, a margin, a time window) are written down before the measurement, never after.
+Each proof point has a fallback so a failed test changes a choice, not the project; P6 is the exception. The numbers behind each pass condition (a budget, a margin, a time window) are written down before the measurement, never after.
 
 | # | Question | Passes when | Phase | Fallback |
 |---|---|---|---|---|
@@ -37,7 +48,7 @@ Questions whose honest answer is a measurement. Each has a fallback so a failed 
 
 | Change | Effect |
 |---|---|
-| Preview features reach general availability (native MCP on Functions, Foundry guardrails for agents, Serverless AI Search, the Agent Framework hosting and durable packages) | Switch on behind the existing flag; remove the fallback after a stable period |
+| Preview features reach general availability ([the register](11-technology-register.md) lists them) | Switch on behind the existing flag; remove the fallback after a stable period |
 | The hub accelerator changes its contracts or defaults | Contracts are code: re-test with P1 and P9 before upgrading |
 | Measured tokens per case are far above the cost model's starting volumes | Re-run the cost model; push more work into Detectors and Batch |
 | A cheaper model passes the evaluation for an alias | Change the alias mapping; nothing else changes |

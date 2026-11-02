@@ -4,11 +4,9 @@
 
 ![A Recommendation card in a Teams chat, with its eight parts numbered: sender, headline, value tile, why and what was checked, three decision buttons, four toggles, the opened Details panel and the footer.](../img/experience-recommendation-card.svg)
 
-The card carries one decision for one person, with its evidence one tap away, and asks for nothing the person has not yet seen in full.
-
 ## Where this sits
 
-The [technical design](../design/README.md) fixes what the experience may rely on: three approval classes ([security](../design/06-security-and-governance.md)), a send step that no model can steer ([data and integrations](../design/05-data-and-integrations.md)), and a ten-part Recommendation with Explain, Challenge and Teach ([agents and workflows](../design/03-agents-and-workflows.md)). The [idea](../06-people-and-conversation.md) says why a conversation, not a dashboard, is the right way to get people to act. This folder turns both into screens, letters and rules. Where the experience needs something the technical design does not yet say, it is listed in [15-asks-of-the-technical-design.md](15-asks-of-the-technical-design.md).
+The [technical design](../design/README.md) fixes what the experience may rely on: three approval classes ([security](../design/06-security-and-governance.md)), a send step that no model can steer ([data and integrations](../design/05-data-and-integrations.md)), and a ten-part Recommendation with Explain, Challenge and Teach ([agents and workflows](../design/03-agents-and-workflows.md)). The [idea](../06-people-and-conversation.md) says why a conversation, not a dashboard, is the right way to get people to act. This folder turns both into screens, letters and rules. [15](15-asks-of-the-technical-design.md) lists what it needs of the technical design and where the design says it.
 
 ## Ten principles
 
@@ -75,7 +73,7 @@ The sender is always **Cost in Action (AI)**: an organisation may rename the pro
 | [12 Testing the experience](12-testing-the-experience.md) | What is tested, what each layer cannot prove |
 | [13 Platform register](13-platform-register.md) | Which Microsoft features are relied on, their status and fallbacks |
 | [14 Decisions](14-decisions.md) | Each decision with alternatives, cost, security impact and reversibility |
-| [15 Asks of the technical design](15-asks-of-the-technical-design.md) | What the experience needs added to the technical design |
+| [15 What the experience needs of the technical design](15-asks-of-the-technical-design.md) | What it needs of the design, and where the design says it |
 
 The cards are Adaptive Card templates in [cards/](cards/manifest.json) with invented sample data; a reference rendering of each is in [04](04-messages-and-cards.md).
 
@@ -94,4 +92,4 @@ Examples are invented and labelled in every document, and their numbers stay the
 
 ## How the experience is kept honest
 
-Three tools check the work; run them before each commit. `tools/check-docs.py` guards these documents (vocabulary, size, links, diagrams). `tools/cardlint.py` guards the templates: schema, the AI label, why the person got the message, "Talk to a person" as the last button, price basis beside every saving figure, one link, no urgency, a cap on buttons, an action contract for every verb. `tools/render-cards` runs every template through Microsoft's own Adaptive Cards libraries, at desktop and phone width. [12](12-testing-the-experience.md) says what each proves and what none of them can.
+Three tools check the work. `tools/check-docs.py` guards these documents (vocabulary, size, links, diagrams). `tools/cardlint.py` guards the templates: schema, the AI label, why the person got the message, "Talk to a person" as the last button, price basis beside every saving figure, one link, no urgency, a cap on buttons, an action contract for every verb. `tools/render-cards` runs every template through Microsoft's own Adaptive Cards libraries, at desktop and phone width. [12](12-testing-the-experience.md) says what each proves and what none of them can.

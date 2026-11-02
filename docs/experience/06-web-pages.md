@@ -4,7 +4,7 @@
 
 ## The pages at a glance
 
-Seven pages share one address: six for owners and team leads, one for the platform team. The send step builds every link from that address and an opaque id, so no name, resource or figure travels in a link. A card carries one link: the page of its request, which records no decision when opened. A letter may carry several, a page per item. Each page filters on the server by the signed-in person's scope.
+Eight pages share one address: six for owners and team leads, two for the platform team. The send step builds every link from that address and an opaque id, so no name, resource or figure travels in a link. A card carries one link: the page of its request, which records no decision when opened. A letter may carry several, a page per item. Each page filters on the server by the signed-in person's scope.
 
 | Page and route | For | What it is for | What a card hands over |
 |---|---|---|---|
@@ -14,16 +14,17 @@ Seven pages share one address: six for owners and team leads, one for the platfo
 | **What I know about your resources** `/me/notes` | Owners | Read, edit, expire and delete notes; do-not-touch marks | Nothing |
 | **What I did here** `/me/activity` | Owners | Runs under a standing permission, with Undo and "Pause changes here" | Nothing |
 | **Settings** `/me/settings` | Each person | Channel, language, hours, budget, delegates, mutes, "Pause messages", export, delete | Nothing |
+| **Standing permissions** `/ops/permissions` | The FinOps lead and platform owner, together | Write, review and end a standing permission: dry run, evidence, expiry, step-down | Never: no message links here |
 | **The kill switch** `/ops/pause` | Platform owner, FinOps lead, security reviewers | Stop work at three levels | Never: no message links here |
 
 ## How the pages are built
 
 - **Plain pages.** Rendered on the server with no client framework; every page works without scripts. [Fluent 2 design tokens](https://fluent2.microsoft.design/design-tokens) as CSS custom properties give light and dark themes, and a `forced-colors` block gives Windows high contrast ([Learn](https://learn.microsoft.com/fluent-ui/web-components/design-system/high-contrast)).
 - **Headers set in code.** The page sets `Content-Security-Policy` with `frame-ancestors 'none'` plus `X-Frame-Options` (no framing, so no stolen clicks; [OWASP](https://cheatsheetseries.owasp.org/cheatsheets/Clickjacking_Defense_Cheat_Sheet.html)), `Cache-Control: no-store` (nothing returns from the cache; [Learn](https://learn.microsoft.com/azure/security/develop/threat-modeling-tool-sensitive-data)) and a Referrer-Policy (the address holds the request id). Every form carries an anti-forgery token ([Learn](https://learn.microsoft.com/aspnet/core/security/anti-request-forgery)). A function app can declare fixed headers for all its HTTP responses in `host.json` ([Learn](https://learn.microsoft.com/azure/azure-functions/functions-bindings-http-webhook)).
-- **The system browser.** Microsoft documents that embedded web views cannot support browser-dependent sign-in such as FIDO2 security keys and passkeys ([Learn](https://learn.microsoft.com/entra/identity/authentication/concept-passkey-browser-authentication-federated-identity-provider)), so the link must open in the person's own browser. A card cannot force that: `Action.OpenUrl` opens an external or an embedded browser as the host decides ([Learn](https://learn.microsoft.com/adaptive-cards/schema-explorer/action-open-url)).
-- **The release gate.** A purchase always gets the approval-waiting e-mail as well as the card, which says "Opens in your browser. If Teams opens it in its own view and your passkey or security key is not accepted, use the link in the e-mail I sent." A one-person page gets it where the client matrix says the link opens in an embedded view. A device test on every Teams client gates the release ([testing](12-testing-the-experience.md)).
+- **The system browser.** Embedded web views cannot support browser-dependent sign-in such as FIDO2 security keys and passkeys ([Learn](https://learn.microsoft.com/entra/identity/authentication/concept-passkey-browser-authentication-federated-identity-provider)), so the link must open in the person's own browser. A card cannot force that: `Action.OpenUrl` opens an external or an embedded browser as the host decides ([Learn](https://learn.microsoft.com/adaptive-cards/schema-explorer/action-open-url)).
+- **The release gate.** A purchase always gets the approval-waiting e-mail as well as the card, which says "Opens in your browser. If Teams opens it in its own view and your passkey or security key is not accepted, use the link in the e-mail I sent." A one-person page gets it where the client matrix says the link opens in an embedded view. The device test on every Teams client gates the go-live of the cards and the pages ([testing](12-testing-the-experience.md)).
 - **Cold start.** The page starts with zero always-ready instances, so hosting cost follows executions ([Learn](https://learn.microsoft.com/azure/azure-functions/flex-consumption-plan#billing)). The platform team adds always-ready instances only if the 95th-percentile first load takes over 5 seconds (a starting value).
-- **When the page is down,** the front end in front of the app serves a static page and an availability alert reaches the platform team. A page on a private endpoint opens only from the organisation's network, which the approval-waiting e-mail names; elsewhere the link fails and the request expires unapproved ([security](../design/06-security-and-governance.md)).
+- **When the page is down,** the organisation's own front door, where it publishes the page that way, serves a static page; an availability alert reaches the platform team either way. A page on a private endpoint opens only from the organisation's network, which the approval-waiting e-mail names; elsewhere the link fails and the request expires unapproved ([security](../design/06-security-and-governance.md)).
 
 ## The approval page
 
@@ -52,7 +53,7 @@ The page shows the exact plan, from the stored plan record and never the AI's pr
 Each submit is tied to one plan, one person and one time, as [OWASP advises](https://cheatsheetseries.owasp.org/cheatsheets/Transaction_Authorization_Cheat_Sheet.html) for high-risk confirmations.
 
 - The plan code is a reference, not a secret, echoed in every submit; a wrong code, an expired plan or a paused system is refused. Each approver records one decision against it: a second submit by the same person is refused, and the other approver's still counts. The plan itself runs once.
-- Only the designated approver or a named delegate may approve, checked by directory object id in the sign-in token, never by a name. A forwarded link authorises nobody: the approver or delegate who opens it signs in and answers as themselves.
+- Only the designated approver or a named delegate may approve (a delegate fills a purchase seat only if they hold that approver role), checked by directory object id in the sign-in token, never by a name. A forwarded link authorises nobody: the approver or delegate who opens it signs in and answers as themselves.
 - The requester is refused, and one directory object never fills both roles of a two-person change.
 - The runner, the only component that changes Azure, re-checks the same facts and fails closed ([approval record](../design/05-data-and-integrations.md#7-the-approval-record)).
 
@@ -77,7 +78,7 @@ Both approvers are asked at once, see the same plan and evidence, and answer on 
 | Not your role | "I cannot take your OK on this request." No plan details | "Talk to a person" if it should be yours |
 | Step-up failed | "Your sign-in did not meet what this approval needs, for example a security key or passkey. Nothing is approved." | If Teams opened an embedded view, use the link in the approval-waiting e-mail in your own browser. If no required sign-in method is registered, choose "Talk to a person" |
 | The session ended | "You were signed out before you answered. Nothing is approved." | Sign in again; the plan and code are unchanged |
-| The page is unavailable | A static page: "I cannot open approvals right now. Your request stays open until Friday 14:00 CET. Nothing has changed." | Wait |
+| The page is unavailable | Where a front door publishes the page, a static page: "I cannot open approvals right now. Your request stays open until Friday 14:00 CET. Nothing has changed." Otherwise the browser's own error | Wait |
 
 **What the page does not stop:** an approver who misreads a plan, two who collude, and a stolen session while it may still approve (one-tap and page-class changes, within limits). The visible objection, daily cap, two-person rule and strong sign-in narrow them; [attention and trust](08-attention-and-trust.md) covers sampling.
 
@@ -108,7 +109,7 @@ The Settings card (C14) carries the first three rows; the page carries all of th
 | Channel, language | Teams first, e-mail first or only the weekly desk; the language | Teams first once the app is installed; English at launch |
 | Working days, time zone, quiet hours, desk day | Stated by the person (any days of the week), not inferred from calendars, presence or out-of-office | Asked once at first contact; until set, 18:00 to 08:00 and weekends are quiet and the desk comes Tuesday at 10:00 local |
 | Weekly budget | How many unsolicited messages a week: lower it or ask for more; 0 means the weekly desk only | 1 for the first 30 days after first contact, then 3; the FinOps lead sets the ceiling |
-| Delegates | Who may answer for the person and cover while they are away | None; a line manager only if named |
+| Delegates | Who may answer for the person and cover while they are away; named only on this page, after the R2 sign-in, and the person is sent a notice | None; a line manager only if named |
 | Mutes | A kind of message or a resource to silence, honoured at once | None |
 | Pause messages | A return date: no new asks, reminders or cover routing until then | Off; a returning person gets one catch-up desk |
 | Export, delete | A file of the person's preferences and own notes, or their deletion | Always available |
@@ -121,7 +122,7 @@ The kill switch is for the platform owner, the FinOps lead and security reviewer
 
 - **Re-authentication each time:** a fresh sign-in, so a borrowed or left-open session cannot stop the system.
 - **Any one of them can pull it.** Resuming is staged, and resuming purchases takes two people with the two roles of a two-person approval (an emergency account counts as one).
-- **Every pull and resume goes to the audit log**; a pull alerts the platform team and the security reviewer.
+- **Every pull and resume goes to the audit log** and alerts the platform team and the security reviewer.
 - **If the page is down,** the runbook has the commands for the same switch.
 
 The kill switch cannot recall a purchase already submitted.

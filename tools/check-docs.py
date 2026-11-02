@@ -40,7 +40,9 @@ Databricks or Fabric), plain words (no invented jargon), no review history, a si
 (README and every document, and the whole design) and no wall of text (paragraph and table-row
 length). The experience documents (docs/experience/*.md, AGENTS.md rule 13) get the same design
 guards with their own budget (README and every document, and the whole folder) and the card
-checks above. All scopes get the live guards. Anything under docs/design/ other than the documents
+checks above. The build plan (docs/build-plan/*.md, AGENTS.md rule 14) gets the same design guards,
+its own budget, and two more: no euro figure of its own and no "walking skeleton" or "pre-registered".
+All scopes get the live guards. Anything under docs/design/ other than the documents
 themselves (the price snapshot) is third-party data and is not checked.
 
 Usage:  python tools/check-docs.py [--strict] [--self-test]
@@ -167,13 +169,31 @@ LINK_TARGET = re.compile(r"\]\([^)\n]*\)")
 LIST_ITEM = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s")
 DESIGN_MAX_WORDS_README = 1800
 DESIGN_MAX_WORDS_DOC = 6000
-DESIGN_MAX_WORDS_TOTAL = 49000
+DESIGN_MAX_WORDS_TOTAL = 52500
 EXPERIENCE_MAX_WORDS_TOTAL = 38500
-# scope -> (the folder's README, the limit for the whole folder); both folders share the per-document limits
+PLAN_MAX_WORDS_README = 1200
+PLAN_MAX_WORDS_DOC = 3400
+PLAN_MAX_WORDS_TOTAL = 13100
+# scope -> (the folder's README, the limit for the whole folder)
 BUDGETS = {
     "design": ("docs/design/README.md", DESIGN_MAX_WORDS_TOTAL),
     "experience": ("docs/experience/README.md", EXPERIENCE_MAX_WORDS_TOTAL),
+    "build-plan": ("docs/build-plan/README.md", PLAN_MAX_WORDS_TOTAL),
 }
+# scope -> (limit for the folder's README, limit for every other document)
+DOC_LIMITS = {
+    "design": (DESIGN_MAX_WORDS_README, DESIGN_MAX_WORDS_DOC),
+    "experience": (DESIGN_MAX_WORDS_README, DESIGN_MAX_WORDS_DOC),
+    "build-plan": (PLAN_MAX_WORDS_README, PLAN_MAX_WORDS_DOC),
+}
+# The build plan (AGENTS.md rule 14) adds to the design guards: it never types a euro figure of its own
+# (cost is stated by pointing at the cost document), and it avoids two words the project dropped.
+PLAN_FORBIDDEN = [
+    (r"€\s?\d|\bEUR\s?\d|\d\s?(?:EUR\b|euros?\b)",
+     "the plan never types a euro figure of its own: point at docs/design/10-cost-and-finops.md"),
+    (r"\bwalking skeleton\b|\bpre-?registered\b|\bpre-?registration\b",
+     "plain words: say 'the thin path end to end' and 'written down before the measurement'"),
+]
 DESIGN_MAX_PARAGRAPH_CHARS = 1100
 DESIGN_MAX_TABLE_ROW_CHARS = 800
 MERMAID_TYPES = (
@@ -519,10 +539,11 @@ def guarded_files(files):
 
 
 def scope_of(f: Path) -> str:
-    """'ideation' (default), 'design' (docs/design/*.md), 'experience' (docs/experience/*.md) or
-    'evidence' (anything deeper in those two folders: the price snapshot, the card templates)."""
+    """'ideation' (default), 'design' (docs/design/*.md), 'experience' (docs/experience/*.md),
+    'build-plan' (docs/build-plan/*.md) or 'evidence' (anything deeper in those folders: the price
+    snapshot, the card templates)."""
     parts = f.resolve().relative_to(ROOT).parts
-    if len(parts) >= 3 and parts[0] == "docs" and parts[1] in ("design", "experience"):
+    if len(parts) >= 3 and parts[0] == "docs" and parts[1] in ("design", "experience", "build-plan"):
         return parts[1] if len(parts) == 3 else "evidence"
     return "ideation"
 
@@ -567,11 +588,11 @@ def live_text_problems(text: str, rules=None):
     return sorted((n, msg, hit) for (n, msg), hit in found.items())
 
 
-def design_text_problems(text: str):
+def design_text_problems(text: str, rules=None):
     """(line, message) for every design vocabulary violation in a document (link targets are ignored)."""
     clean = LINK_TARGET.sub("]()", text)
     found = set()
-    for pat, msg in DESIGN_FORBIDDEN:
+    for pat, msg in (DESIGN_FORBIDDEN if rules is None else rules):
         for n, _hit in paragraph_hits(clean, pat):
             found.add((n, msg))
     return sorted(found)
@@ -605,19 +626,24 @@ def prose_blocks(prose):
 
 
 def check_design(files, parsed, rep: Report):
-    """Vocabulary, size and wall-of-text guards for the design (docs/design/*.md) and the
-    experience design (docs/experience/*.md); each folder has its own total."""
+    """Vocabulary, size and wall-of-text guards for the design (docs/design/*.md), the experience
+    design (docs/experience/*.md) and the build plan (docs/build-plan/*.md); each folder has its own total."""
     totals = {scope: 0 for scope in BUDGETS}
     for f in files:
         scope = scope_of(f)
         if scope not in BUDGETS:
             continue
-        for n, msg in design_text_problems(f.read_text(encoding="utf-8")):
+        text = f.read_text(encoding="utf-8")
+        for n, msg in design_text_problems(text):
             rep.error(f, n, f"{scope} guard: {msg}")
+        if scope == "build-plan":
+            for n, msg in design_text_problems(text, PLAN_FORBIDDEN):
+                rep.error(f, n, f"{scope} guard: {msg}")
         prose = parsed[f][0]
         words = sum(len(line.split()) for _, line in prose)
         totals[scope] += words
-        cap = DESIGN_MAX_WORDS_README if f.name == "README.md" else DESIGN_MAX_WORDS_DOC
+        readme_cap, doc_cap = DOC_LIMITS[scope]
+        cap = readme_cap if f.name == "README.md" else doc_cap
         if words > cap:
             rep.error(f, 1, f"size budget: {words} words, the limit is {cap} - cut, do not squeeze")
         for n, kind, size in prose_blocks(prose):
@@ -759,6 +785,13 @@ def self_test() -> int:
     assert scope_of(ROOT / "docs" / "design" / "03-x.md") == "design"
     assert scope_of(ROOT / "docs" / "design" / "research" / "citadel.md") == "evidence"
     assert scope_of(ROOT / "docs" / "experience" / "04-x.md") == "experience"
+    assert scope_of(ROOT / "docs" / "build-plan" / "01-x.md") == "build-plan"
+    assert scope_of(ROOT / "docs" / "build-plan" / "sub" / "x.md") == "evidence"
+    for text in ["about €1,200 a month", "EUR 300 a month", "300 EUR", "a walking skeleton", "a pre-registered count"]:
+        assert design_text_problems(text, PLAN_FORBIDDEN), f"plan guard missed: {text!r}"
+    for text in ["the cost document's Pilot column", "the thin path end to end", "written down before the measurement",
+                 "five to ten findings", "the EUR-denominated price list"]:
+        assert not design_text_problems(text, PLAN_FORBIDDEN), f"plan guard false positive: {text!r}"
     assert scope_of(ROOT / "docs" / "experience" / "cards" / "x.md") == "evidence"
     assert scope_of(ROOT / "docs" / "05-x.md") == "ideation"
     assert not any(re.search(p, "a Log Analytics workspace behind a virtual hub", re.I) for p in DESIGN_ANCHOR_PATTERNS)

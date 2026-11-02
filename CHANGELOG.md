@@ -1,6 +1,40 @@
 # Changelog
 
-All notable changes, newest first. Versions are git tags: `ideation-vN` for the ideation (`docs/01` to `docs/10` and the research), `design-vN` for the design (`docs/design/`; `design-v1` was withdrawn) and `experience-vN` for the experience design (`docs/experience/`). The previous editions stay available at their tags, and the earliest are archived under [`docs/_archive/`](docs/_archive/), which is never edited.
+All notable changes, newest first. Versions are git tags: `ideation-vN` for the ideation (`docs/01` to `docs/10` and the research), `design-vN` for the design (`docs/design/`; `design-v1` was withdrawn), `experience-vN` for the experience design (`docs/experience/`) and `build-plan-vN` for the build plan (`docs/build-plan/`). The previous editions stay available at their tags, and the earliest are archived under [`docs/_archive/`](docs/_archive/), which is never edited.
+
+## build-plan-v1 — 2026-11-02 (tag `build-plan-v1`)
+
+**Why.** The ideation says what the system is for, the design how it works and the experience design what people see. None of them says what to build first, in what order, or how to know that each step works. This edition is that plan for the first two phases of the roadmap. It is a plan only: nothing is built or deployed.
+
+**What.**
+
+- **[`docs/build-plan/`](docs/build-plan/README.md)**: an index and four documents. The slices (fifteen: six in phase 0 and nine in phase 1a, each with what exists at its end, who is shown it, what it starts after and how big it is); what the adopting organisation must provide, decide and name before and during the work (requests, decisions, how to choose the first estate, who does what, when a slice is done); thirteen first checks, each with a how, a pass condition and a fallback, seven of them answering one of the roadmap's ten proof points; and cost, effort and risks.
+- **The path.** Phase 0 builds the Evaluate profile from code and one thin path from a synthetic lead to a test e-mail, with a first kill-switch drill. Phase 1a reads one real estate and only reports: the cost lake, the Estate model, Atlas v0, Detectors in shadow, the price simulator, Cases that report, and the Monday digest to the FinOps lead. It ends only when the FinOps lead has confirmed the number of findings that was written down beforehand. The first stretch is 56 to 76 person-weeks, a scenario parameter, which is roughly eight to eleven months for two builders.
+- **Corrections it forced on the design and the experience design.** The roadmap's phase 0 lists the thin path and the first drill, and its phase 1a exit says zero writes to the estate; the Operate network lists its three subnets (agents, Functions, private endpoints); the cost lake's copy scope is stated; a private repository needs GitHub Enterprise Cloud for the required reviewer of the production environment; the Monday letter of phase 1a has no links, because the pages do not exist yet.
+- **Guards.** `tools/check-docs.py` has a `build-plan` scope (README 1,200 words, any document 3,400, the folder 13,100; no euro figure of its own; no table row over 800 characters), and [AGENTS.md](AGENTS.md) rule 14 records the rules. The folder limit moved from 12,000 to 13,100 words because the readers asked for specifics (networks, regions, exports, checks) that the first limit could not hold.
+
+**How it was reviewed.** Two reviewers on different model families read the specification before any plan document was written (25 findings, each checked and answered). Five cold readers on five more model families then read the written plan and filed 84 findings (14 Blockers). Each was checked against the files, and each claim about a Microsoft product was re-read on Learn first. One reader's claim, that hosted agents need a container registry, was wrong, and another's was right: Learn marks the default region as in high demand for new search services. A third reader showed that a Learn page was cited for more than it says, and the sentence was corrected. Two closure checkers on other models then verified every finding against the fixed plan: 58 closed, 20 closed only in part or open and 9 new defects, one of them a Blocker in the mail check (Graph answers `202` before a mail-flow rule runs, so a `202` cannot show that the recipient protection failed). All were fixed, and a final checker read the fixes: 24 of 25 closed, the last one and one new minor defect fixed afterwards ([the record](docs/reviews/README.md)).
+
+**Not adopted.** A check for slice 0.1; a dependency from the cost lake to Atlas v0; moving the approval page's sign-in test to later phases; hosted agents in a container registry.
+
+**Not claimed.** Nothing is built, and no size, duration or cost in the plan is a result: sizes are scenario parameters until the first slices are measured. None of the checks has been run. Which region works on the day depends on Azure's capacity then.
+
+## design-v5 — 2026-11-02 (tag `design-v5`)
+
+**Why.** The experience design (`experience-v1`) needs 29 things of the system that the technical design did not say ([the list](docs/experience/15-asks-of-the-technical-design.md)). A builder who reads the design alone must build what the experience promises, so this edition places each ask in the document that owns it.
+
+**What.**
+
+- **The 29 asks, placed.** Preferences and a notification policy that counts and holds; coverage routing instead of escalation; one contract for every verb; one decision per approver on one plan, with the plan code as a display reference; the daily cap and its one alarm; the rollback grant; "I did not approve this"; the page where two people write, review and end a Credential; the send-step rules, the Teams delivery contract and the AI marks; e-mail to a partner or a billing owner; first contact; Atlas proposals from a fork; report events with 13 months of retention; the saving rule; the monthly letter and its CSV; approver readiness; and the kill switch page. The roadmap says in which phase each is needed, and the cost document says which line carries each new store (none adds a meter).
+- **What the reviews added.** A delegate is named only on the Settings page after the R2 sign-in; Undo has its own use record and a named holder, including for a change made under a Credential; a page decision is refused unless the signed-in person is the designated approver or a named delegate; the merge rules for proposals from a fork are written down; an administrator consents to the app's permissions before first contact; the rules for a partner request agree; reconciliation accounts for what Cost Management leaves out; two trust-anchor risks are admitted. Approver readiness is a test sign-in, because the registration report needs a permission that also reads sign-in logs.
+- **Facts about agreements and access were re-read on Learn and corrected**: who can see a spending commitment and what a shortfall does, pay-as-you-go commitment purchases, management-group scopes, what a partner customer sees of a purchase, what Cost Management leaves out.
+- **Size.** The design budget moved from 49,000 to 52,500 words, enforced by `tools/check-docs.py`; the experience budget is unchanged at 38,500.
+
+**How it was reviewed.** Nine writers worked from one sheet of settled wording. Two reviewers on different model families then read the result: one checked every ask and the contradictions with the older text and the experience design (23 of the 29 landed at first, 11 Majors), one attacked it for security, cost and Microsoft facts (2 Blockers, 5 Majors; 20 of 21 facts right). Each finding was checked against the files and each claim about a Microsoft product re-read on Learn before it was acted on. A closure checker on another model then verified every finding against the fixed text: 14 closed, 5 closed in part and 12 new defects, all fixed ([the record](docs/reviews/README.md)).
+
+**Not adopted.** Moving the Undo of an R2 change from the card to the page (the residual risk is stated); a structural split of the purchase switch (the Approval service identity is the trust anchor, and the text says so).
+
+**Not claimed.** Nothing is built. The Teams client matrix has not been run, so how each client opens the approval link is still a first check.
 
 ## experience-v1 — 2026-11-02 (tag `experience-v1`)
 

@@ -68,7 +68,7 @@ level: documented
 recheck: {kind: semantic, trigger: source changed, schedule: quarterly}
 ```
 
-The scope line matters: on an account that uses [smart tier](https://learn.microsoft.com/azure/storage/blobs/access-tiers-smart), the same documentation says versions are billed at full length. The last rule shows why levers need pricing: moving old versions to a cooler tier lowers the rate, yet an explicitly tiered version is billed in full.
+The scope line matters: on an account that uses [smart tier](https://learn.microsoft.com/azure/storage/blobs/access-tiers-smart), the same documentation says versions are billed at full length.
 
 ### The Service Cost Profile
 
@@ -164,7 +164,7 @@ Agents propose; people merge. A change to the Atlas travels like a change to cod
 
 ## 3. Learning a new service
 
-A new service is learned from evidence that already exists: its documentation, the new meters in the price list and, as soon as anyone uses it, the bills. Nothing is deployed to find out; learning costs the platform's own running cost and model tokens, and nothing is provisioned just to measure. The chain ends in one honest oracle: the first adopter's bill, which says what was charged, not why.
+A new service is learned from evidence that already exists: its documentation, the new meters in the price list and, as soon as anyone uses it, the bills. Nothing is deployed to find out. The chain ends in one honest oracle: the first adopter's bill, which says what was charged, not why.
 
 The Study workflow reads six kinds of public source, daily and on source-change events.
 
@@ -275,7 +275,7 @@ The Estate model is the system's understanding of one estate: not an inventory b
 
 **Rhythm** decides how long to look. A resource quiet in March can be the star of November, so no Case calls something unused on less than one full cycle of its rhythm. The business calendar (quarter close, launch, audit week, freeze) comes from usage history and owners. With less history than a cycle, the Case says "not enough history" and the question goes to the Agenda.
 
-**Owners** come from the directory. No inference counts as confirmed until a person says so. People are stored as Entra object ids. A resource nobody owns gets a named custodian, never a countdown that deletes it.
+**Owners** come from the directory. No inference counts as confirmed until a person says so. A resource nobody owns gets a named custodian, never a countdown that deletes it.
 
 **Sacred flags** mark what must not be touched: a disaster-recovery replica, a compliance hold, a frozen quarter-end system. Signals such as a resource lock or an owner's answer can set a flag; only a person can clear it. Cases treat a flag as a stop, and the planner reads it as a precondition.
 
@@ -298,15 +298,15 @@ Storing a lesson is not learning. The system has learned only if something that 
 
 **Frozen against updated memory.** [Testing and evaluation](08-testing-and-evaluation.md) runs the same sealed cases twice, once with the Atlas, Lessons, Detectors and priors frozen at an earlier date and once with everything learned since. The gap is what learning added, and a negative gap exposes a harmful update.
 
-The Monday digest makes learning visible (the numbers are illustrative).
+The Monday digest makes learning visible, in the words people see on screen (the numbers are illustrative).
 
 ```
 This week I learned
-  - New profile: Azure Prism (provisional, documented only)
-  - A belief was refuted: "scaling down refunds a started hour" (a bill showed otherwise)
-  - Two Lessons from your team. I would like to widen one: "weekend idleness is expected
+  - New: I read up on Azure Prism (from Microsoft's documentation only; not yet seen on a bill)
+  - I corrected myself: "scaling down refunds a started hour" (a bill showed otherwise)
+  - Two Notes from your team. I would like to widen one: "weekend idleness is expected
     in development subscriptions" - for all development subscriptions? [Yes] [Only this team] [No]
-  - Detector retired: it rested on a claim that went stale
+  - A routine check retired: it rested on a claim that went stale
 Report card: predictions right 81 % of the time (I said 79 %) - explained spend 72 % (+3 points)
 ```
 
@@ -323,4 +323,4 @@ Learning from bills, replays and small trials has limits. Beyond the point that 
 | Bills lag and change | Cost data typically arrives [within 8 to 24 hours, up to 72 on pay-as-you-go](https://learn.microsoft.com/azure/cost-management-billing/costs/understand-cost-mgt-data); the open month is an estimate, rerated until the invoice closes | `bill-observed` waits, and can be withdrawn on restatement; fast clocks use metrics and activity |
 | Review is not infallible | A reviewer can merge a plausible wrong claim; an attacker can plant text in a public page | Levels, bill checks and re-checks are a second line; text is screened where it enters ([06](06-security-and-governance.md)); a claim cannot fill an Action parameter or alone qualify an Action for autopilot, so the worst case is a wrong proposal that a person reads, or one that a credential's guards and cap bound |
 
-Each limit shows on the Recommendation as a label: *documented only*, *bill-observed here*, *trial proposed*. A stale claim is knowledge drift, and [07](07-safeguards-and-drift.md) has its controls. Still unproven ([roadmap](13-roadmap.md)): whether back-tests fit at volume (P4), whether the semantic ranker pays (P5), whether the Detective and Skeptic beat the baselines on the cost-trap bank (P6), and what a Case costs in tokens (P10); the proof points are measurements scheduled in the [roadmap](13-roadmap.md).
+Each limit shows on the Recommendation as a label: *documented only*, *bill-observed here*, *trial proposed*. A stale claim is knowledge drift, and [07](07-safeguards-and-drift.md) has its controls. Still unproven ([roadmap](13-roadmap.md)): whether back-tests fit at volume (P4), whether the semantic ranker pays (P5), whether the Detective and Skeptic beat the baselines on the cost-trap bank (P6), and what a Case costs in tokens (P10).

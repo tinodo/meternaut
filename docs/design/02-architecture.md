@@ -34,7 +34,7 @@ flowchart TB
     act <--> people
 ```
 
-Two rules shape everything. **Agents never change the Azure estate**: they hold read tools, three *propose* tools that only the Engineer holds (`plan`, `pr-draft`, `ledger-propose`) and one message-draft tool that the Diplomat holds; a workflow sends what an agent drafts. **Nothing talks to a model or a tool except through the hub**: quotas, safety checks and logs live there, not in each agent. Every component keeps its own state (workflow state, records, the cost lake); only the action plane changes the resources of the estate being managed.
+Two rules shape everything. **Agents never change the Azure estate**: they hold read tools, three *propose* tools that only the Engineer holds (`plan`, `pr-draft`, `ledger-propose`) and one message-draft tool that the Diplomat holds; a workflow sends what an agent drafts. **Nothing talks to a model or a tool except through the hub**: quotas, safety checks and logs live there, not in each agent.
 
 ## 2. Planes and components
 
@@ -56,11 +56,11 @@ All of our own code runs on Azure Functions (Flex Consumption, zip deployment), 
 |---|---|---|---|
 | `workflows` | Durable orchestrations and their activities; the send step for messages | Invoke the five hosted agents; read and write workflow state; send e-mail through Graph and queue Teams messages for the `bot`; call the approval service | Nobody: no inbound trigger |
 | `tools` | Read tool services, the price simulator, DuckDB analysis, the front of the `plan` tool | Read the estate with Reader, Cost Management Reader, Monitoring Reader, Log Analytics Reader; read the stores | The hub only: private endpoint |
-| `approvals` | Approval service, the web page | Write approval records and credentials; start the runner through a queue | People on the organisation's network (Entra sign-in, Conditional Access) and the `bot`: private endpoint |
+| `approvals` | Approval service, the web pages | Write approval records, credentials and preferences; read the estate model to resolve a page's scope; send to the `inbound` queue; start the runner through a queue | People on the organisation's network (Entra sign-in, Conditional Access) and the `bot`: private endpoint |
 | `runner` | Action runner (identities per action family), verifier, a what-if-only function for `plan` | Change Azure within opted-in scopes; record that an approval was consumed | `tools`, for what-if by plan id only: private endpoint. Otherwise nobody |
 | `bot` | The Teams bot endpoint (C# or TypeScript, as the Agents SDK needs) | Call the approval service with the tapper's own token; put replies on an `inbound` queue; post what `workflows` leaves on an `outbound` queue; install itself for a person | Teams, over the public internet: token-validated ([06](06-security-and-governance.md)) |
 
-A workflow that waits days for a person runs no orchestration code while it waits: Durable Functions stores its state and wakes on an event or timer (storage transactions and any always-ready instance still bill). A hosted-agent session can idle and resume, but it is deleted after 30 idle days and is not where a person's deadline belongs, so waiting lives in workflows ([03](03-agents-and-workflows.md)). [Hosted agents](https://learn.microsoft.com/azure/foundry/agents/concepts/hosted-agents) · [Flex Consumption](https://learn.microsoft.com/azure/azure-functions/flex-consumption-plan)
+A workflow that waits days for a person runs no orchestration code while it waits, and a hosted-agent session is not where a person's deadline belongs, so waiting lives in workflows ([03](03-agents-and-workflows.md)). [Hosted agents](https://learn.microsoft.com/azure/foundry/agents/concepts/hosted-agents) · [Flex Consumption](https://learn.microsoft.com/azure/azure-functions/flex-consumption-plan)
 
 ## 4. What goes through the hub, and what does not
 
@@ -114,7 +114,7 @@ sequenceDiagram
     W->>W: verify now, verify savings later
 ```
 
-Every model request and tool call from an agent goes through the hub. The workflow, not an agent, decides to stop the loop (rounds, convergence, budget). If the plan, an etag or the live state no longer matches, the runner **fails closed** and a new plan needs a new approval ([06](06-security-and-governance.md)).
+The workflow, not an agent, decides to stop the loop (rounds, convergence, budget). If the plan, an etag or the live state no longer matches, the runner **fails closed** and a new plan needs a new approval ([06](06-security-and-governance.md)).
 
 ## 6. The landing zone and the hub
 
@@ -128,7 +128,7 @@ The solution onboards to the **Citadel governance hub of the adopting organisati
 | Monitoring | Central Log Analytics and monitor scope | Diagnostic settings, workbooks, alerts |
 | Policy | Azure Policy and Defender for Cloud baselines | Policy that denies model deployments in the spoke |
 
-**If the organisation has no hub**, phase 0 adds a `hub/` folder to the repository that deploys the accelerator at a pinned commit. It has no releases and its defaults loosen security (public endpoints, prompt and completion capture), so we override them. Its always-on usage pipeline is its main fixed cost, priced separately in [the cost document](10-cost-and-finops.md). The Publish Contract that exposes tools as MCP is in preview; the fallback is to import the tool API natively in API Management.
+**If the organisation has no hub**, phase 0 adds a `hub/` folder to the repository that deploys the accelerator at a pinned commit. It has no releases and its defaults loosen security (public endpoints, prompt and completion capture), so we override them. Its always-on usage pipeline is its main fixed cost, priced separately in [the cost document](10-cost-and-finops.md).
 
 ## 7. Two profiles, one codebase
 
@@ -144,7 +144,7 @@ The solution onboards to the **Citadel governance hub of the adopting organisati
 
 The network setting is chosen when the Foundry account is created and cannot be added later. **Moving between profiles means a new account, not a parameter flip.** A pre-release check counts the private endpoints of a short-lived Operate environment against this table (the total is our own sum of Learn's per-resource rules). Foundry's own agent data can also be bring-your-own (Cosmos DB and Storage in the organisation's tenant); that adds two private endpoints and is a parameter.
 
-The default region is Sweden Central: hosted agents, the hub accelerator and the AI landing zone all list it. It is a default, not a requirement ([delivery](09-delivery-and-operations.md) says how to check).
+The default region is Sweden Central: hosted agents, the hub accelerator and the AI landing zone all list it ([delivery](09-delivery-and-operations.md) says how to check).
 
 ## 8. Failure modes
 
@@ -162,4 +162,4 @@ The default region is Sweden Central: hosted agents, the hub accelerator and the
 
 ## 9. What the architecture does not do
 
-It does not deploy resources to learn, let any agent change Azure, or allow direct model access. It is single-tenant (one organisation, many subscriptions) and not real time: cost data lags by 8 to 72 hours, so metrics and activity serve the fast clock and the bill confirms later. Platform choices are in [the technology register](11-technology-register.md), the reasons in [the decisions](12-decisions.md).
+It is single-tenant (one organisation, many subscriptions) and not real time: cost data lags by 8 to 72 hours, so metrics and activity serve the fast clock and the bill confirms later. Platform choices are in [the technology register](11-technology-register.md), the reasons in [the decisions](12-decisions.md).

@@ -1,28 +1,28 @@
 # Decisions
 
-**What this document answers.** The decisions that shape the design: what was chosen, what was rejected, what it costs, what it means for security, and how hard it is to reverse. Status is *Accepted* unless marked *Proposed* (settled by a proof point in [the roadmap](13-roadmap.md)). How the decisions were challenged is recorded in [the review record](../reviews/README.md).
+**What this document answers.** The decisions that shape the design: what was chosen, what was rejected, what it costs, what it means for security, and how hard it is to reverse. How the decisions were challenged is recorded in [the review record](../reviews/README.md). Decisions about what people see and receive are in [the experience design](../experience/14-decisions.md).
 
 ## 1. Workflows are code, agents think, one component writes · Accepted
 
-- **Decision.** Order, retries, timers, loops, budgets and waiting for people are ordinary code. Agents return typed result records and hold only read tools and a few propose tools. The action plane is the only thing that changes Azure.
+- **Decision.** Order, retries, timers, loops, budgets and waiting for people are ordinary code. Agents return typed result records and hold only read tools and a few propose tools. Only the action plane changes Azure.
 - **Instead of.** Agent-driven orchestration: non-deterministic, unbounded in cost, and an injection can steer control flow.
 - **Cost · security · reversibility.** Cheap and testable · bounds what a compromised agent can do · high ([agents](03-agents-and-workflows.md), [security](06-security-and-governance.md)).
 
 ## 2. Our code runs on Azure Functions; Durable Functions on the Azure Storage provider · Accepted
 
-- **Decision.** Five Function apps (Flex Consumption, Python, zip deployment; the Teams `bot` follows the Agents SDK language): `workflows`, `tools`, `approvals`, `runner` and `bot`, each with its own identity. A workflow that waits days for a person runs no orchestration code while it waits.
-- **Instead of.** Foundry workflow agents (retire 1 December 2026); Agent Framework workflows inside hosted agents (sessions time out; the hosting and durable packages are prerelease); Logic Apps Standard (always-on floor); Container Apps with a registry (extra service and, behind a private link, a premium registry). Durable Task Scheduler Consumption is preview, has no high availability and keeps 30 days: an option, not the default.
+- **Decision.** Five Function apps (Flex Consumption, Python, zip deployment; the Teams `bot` follows the Agents SDK language): `workflows`, `tools`, `approvals`, `runner` and `bot`.
+- **Instead of.** Foundry workflow agents (retire 1 December 2026); Agent Framework workflows inside hosted agents (sessions time out; the hosting and durable packages are prerelease); Logic Apps Standard (always-on floor); Container Apps (a registry, premium behind a private link). Durable Task Scheduler Consumption is preview, has no high availability and keeps 30 days: an option, not the default.
 - **Cost · security · reversibility.** Scales to zero · separate identity per app · medium (the Agent Framework durable extension is the planned switch).
 
 ## 3. Five hosted agents, one per trust boundary, hosting ten roles · Accepted
 
-- **Decision.** `study`, `investigate`, `skeptic`, `diplomat`, `engineer` as Foundry hosted agents built with Agent Framework 1.0, zip-deployed, small, with a short idle timeout and one session per workflow run. Each has its own agent identity and hub contract. The Engineer alone holds propose tools and never sees free text. The Librarian returns a change set and the Study workflow opens the pull request, so no role in `study` holds a propose tool.
+- **Decision.** `study`, `investigate`, `skeptic`, `diplomat`, `engineer` as Foundry hosted agents built with Agent Framework 1.0, zip-deployed, small, with a short idle timeout and one session per workflow run. The Engineer alone holds propose tools and never sees free text.
 - **Instead of.** One hosted agent per role (idle tails, ten deployments); one agent for everything (no separation); prompt agents (the hub's bring-your-own-model route is Chat Completions only), so hosted or prompt is chosen by capability.
 - **Cost · security · reversibility.** Fewer idle hours · identities follow trust boundaries · high (a role can move into its own agent if testing finds an injection path).
 
 ## 4. The Citadel hub is the only door to models and tools; one contract per hosted agent · Accepted
 
-- **Decision.** Contracts `study`, `investigate`, `skeptic`, `diplomat`, `engineer`, `evaluation`, each in dev and prod. Identity is the agent's Entra token; the key Citadel requires is a secret, not identity. Hard token quotas per contract. The dev environment also uses the hub.
+- **Decision.** Contracts `study`, `investigate`, `skeptic`, `diplomat`, `engineer`, `evaluation`, each in dev and prod. Identity is the agent's Entra token; the key Citadel requires is a secret, not identity. Hard token quotas per contract.
 - **Instead of.** Direct model access; the Foundry portal gateway; the new `aigateways` product (preview, no feature parity); one shared contract (a leaked key or forged header becomes the whole estate).
 - **Cost · security · reversibility.** The hub is shared platform cost; an organisation without one budgets the accelerator ([cost](10-cost-and-finops.md)) · strongest single control · contracts are code, so moving gateways re-implements three contract types.
 
@@ -34,20 +34,20 @@
 
 ## 6. The Atlas lives in Git and is served from AI Search; humans merge · Accepted
 
-- **Decision.** Claims, profiles, Detectors and Action templates are files; agents propose by pull request; a person merges, never automatically; a claim can never fill an Action parameter; a release rebuilds the index. One AI Search Basic service.
+- **Decision.** Claims, profiles, Detectors and Action templates are files; agents propose by pull request from a fork, so a person merges, never automatically; a claim can never fill an Action parameter; a release rebuilds the index. One AI Search Basic service.
 - **Instead of.** Vector stores inside agents; Foundry Memory (preview, no virtual-network support); a wiki.
-- **Cost · security · reversibility.** One search unit is the main fixed knowledge cost · a poisoned claim needs a human to merge it · high. AI Search Basic is the baseline; Serverless and Foundry IQ retrieval are evaluated under P5.
+- **Cost · security · reversibility.** One search unit is the main fixed knowledge cost · a poisoned claim needs a human to merge it · high. AI Search Serverless and Foundry IQ are evaluated under P5.
 
 ## 7. Estate knowledge in Cosmos DB serverless; the audit log holds ids, never names · Accepted
 
-- **Decision.** Our own account; approvals and credentials written only by the approval service; one open plan per resource. Immutable blob for the audit log, ids and hashes only.
+- **Decision.** Our own account; approvals and credentials written only by the approval service; one open plan per resource. Immutable blob for the audit log, ids and hashes only. [Preferences](05-data-and-integrations.md#8-privacy-retention-and-recovery) are one record per directory object id; a person can export or delete theirs and their own Lessons.
 - **Instead of.** Sharing Foundry's agent-state store (blast radius); SQL or a graph database (not needed).
 - **Cost · security · reversibility.** Pay per use · separation of writers, erasure possible · medium (a provisioned-throughput switch exists for very large estates).
 
 ## 8. Cost data: FOCUS exports to Blob, DuckDB in the `tools` app · Accepted
 
 - **Decision.** Manifest-based replacement ingestion; where the agreement offers no FOCUS export, the Cost Details, Usage Details or Query API fills the same layout; billed and effective cost kept apart; monthly reconciliation. DuckDB (MIT) is the one non-Microsoft engine.
-- **Instead of.** Azure Data Explorer, Fabric, Databricks, FinOps hubs: more engine than phase-1 volumes need; P4 measures the volume at which one would pay for itself; a hub adapter is phase 4.
+- **Instead of.** Azure Data Explorer, Fabric, Databricks, FinOps hubs: more engine than phase-1 volumes need; P4 measures the volume at which one would pay for itself.
 - **Cost · security · reversibility.** Storage only · no standing cluster to secure · high (adapters).
 
 ## 9. Tools are HTTPS APIs published through the hub as MCP; structured fields only · Accepted
@@ -58,33 +58,34 @@
 
 ## 10. The action plane is the only writer and fails closed · Accepted
 
-- **Decision.** Catalogue → plan (what-if, hash, etags) → approval → runner → verifier → audit. Any mismatch aborts; the runner never refreshes and proceeds. Idempotent runs; a purchase is never retried automatically.
+- **Decision.** Catalogue → plan → approval → runner → verifier → audit. Any mismatch aborts; the runner never refreshes and proceeds. Idempotent runs; a purchase is never retried automatically.
 - **Instead of.** Letting agents run commands; "refresh and proceed".
 - **Cost · security · reversibility.** Runner cost is small · the control that matters most · the catalogue grows by pull request.
 
 ## 11. Approval is a bound, displayed, single-use authorization · Accepted
 
 - **Decision.** The approval service renders the canonical plan; cards carry an opaque id; the record binds plan hash, etags, quote, approver id and role, and the authentication claim; consumed once, through a create-only item that only the runner can write. The approver comes from the approver's own token, never from the bot. Purchases need two distinct directory roles. Credentials (autopilot) are policies evaluated in code on facts the model cannot set, never for purchases.
+- **Limits and undo.** One-tap approvals are [capped at five per approver per day](06-security-and-governance.md#approval-classes) (a starting value), and one alarm catches an approval with no card tap or page sign-in behind it (a stolen signed-in session escapes it). Only an R1 change rolls back by itself on a failed check; for R2 and R3 the approver restores with a [rollback grant](05-data-and-integrations.md#7-the-approval-record), usable once; a purchase cannot be undone.
 - **Instead of.** Trusting a row plus a card; tags or lessons deciding scope.
 - **Cost · security · reversibility.** Small · closes replay, swap and confused-deputy paths · signing the record is a later hardening.
 
 ## 12. Runner roles per action family; no standing purchase role · Accepted
 
-- **Decision.** One narrow custom role per action family at scopes the organisation opts in. Purchases: a role assignment with an end time, created and removed by the approval service, bound to a stored quote that includes the billing and applied scopes; alarms disable the identity. Where the agreement or the organisation's policy keeps the purchase right from the identity, the same approved quote goes as a request to whoever can buy. P8 settles propagation and revocation.
-- **Instead of.** One broad role; a standing purchaser. Privileged Identity Management cannot make service principals eligible.
+- **Decision.** One narrow custom role per action family at scopes the organisation opts in. Purchases: a role assignment with an end time, created and removed by the approval service and bound to a stored quote; alarms disable the identity. Where the identity cannot buy, the same approved quote goes as a request to [whoever can buy](14-agreements-and-access.md#four-purchase-paths). P8 settles propagation and revocation.
+- **Instead of.** One broad role; a standing purchaser.
 - **Cost · security · reversibility.** Role assignments are free · limits blast radius; a compromised runner can still perform its family's actions in opted-in scopes · high.
 
 ## 13. Agents draft, workflows send; recipients come from the directory · Accepted
 
-- **Decision.** A model never chooses or supplies a recipient; free text never approves. Teams cards use the Agents SDK in .NET or JavaScript (card routing is not in the Python SDK), in a small `bot` app that validates the Bot Framework token; a tap carries the tapper's own token to the approval service; Azure Bot Service offers no IP allow-list, so token validation is the control. Approvals above R1 open the web page. Email uses an app-only mailbox with a recipient allow-list; Azure Communication Services Email is not used.
+- **Decision.** A model never chooses or supplies a recipient or a link; free text never approves. Teams cards use the Agents SDK in .NET or JavaScript, in a small `bot` app that validates the Bot Framework token; Azure Bot Service offers no IP allow-list, so token validation is the control. Email uses an app-only mailbox with a recipient allow-list; Azure Communication Services Email is not used. Cards go only to members of the directory; outsiders get plain-text e-mail.
 - **Instead of.** Agents sending messages; approval by reply.
 - **Cost · security · reversibility.** Small · stops exfiltration by mail and forged approvals · high.
 
 ## 14. Two profiles; Operate uses platform-managed Foundry data · Accepted
 
-- **Decision.** Evaluate (synthetic data, public with Entra sign-in, no private endpoints, dev contracts, no production roles) and Operate (bring-your-own virtual network, platform-managed agent data, private endpoints). The network setting is fixed at account creation, so a profile change is a new account.
+- **Decision.** Evaluate (synthetic data, public with Entra sign-in, no production roles) and Operate (bring-your-own virtual network, platform-managed agent data, private endpoints).
 - **Instead of.** Bring-your-own Cosmos DB, Storage and Search for Foundry by default (adds endpoints and stores; available as a parameter).
-- **Cost · security · reversibility.** Dev costs little · dev cannot reach prod, tested · a one-way door per account.
+- **Cost · security · reversibility.** Dev costs little · dev cannot reach prod, tested · a one-way door per account (a profile change is a new account).
 
 ## 15. Evaluation in three tiers; learning shown by frozen versus updated memory · Accepted
 
@@ -94,24 +95,24 @@
 
 ## 16. Drift controls name their check, interval, owner and response · Accepted
 
-- **Decision.** Every kind of drift (models, prompts, tools, knowledge, prices, infrastructure, Entra and portal edits, hub contracts, behaviour, savings, permissions, own spend) has a check, an interval, an owner and a fail-closed response ([drift](07-safeguards-and-drift.md)).
+- **Decision.** Every kind of drift has a check, an interval, an owner and a fail-closed response ([drift](07-safeguards-and-drift.md)).
 - **Instead of.** A list of things to watch.
 - **Cost · security · reversibility.** Small · catches silent loosening · high.
 
 ## 17. Learning never provisions anything just to measure it · Accepted
 
-- **Decision.** Learning comes from documents, price lists, schemas, release notes, bills, replays, owners' answers and small owner-approved reversible trials. A trial changes only a non-production resource an owner already runs (an R1 change), after the owner has seen a cost ceiling. Known limit: a meter nobody has used cannot be discovered this way, and the first organisation to use a new service meets surprises, so its advice is labelled.
+- **Decision.** Learning comes from documents, price lists, schemas, release notes, bills, replays, owners' answers and small owner-approved reversible trials. Known limit: a meter nobody has used cannot be discovered this way, so advice about a new service is labelled.
 - **Instead of.** A budget-capped sandbox subscription running billing experiments (spends money to learn what money is spent on; needs its own governance).
 - **Cost · security · reversibility.** No sandbox spend · no sandbox estate to secure · a trial can still move the bill of the one resource it changes · reversible: an organisation that wants experiments can add its own environment later ([knowledge](04-knowledge-and-learning.md)).
 
 ## 18. Cost is a design constraint · Accepted
 
-- **Decision.** Scale to zero; Detectors for cheap leads; small model first; Batch and Flex for non-urgent work; evaluation on change plus sampling; one Key Vault, one AI Search, no container registry; the solution watches its own bill. Azure budgets only alert, so hard stops are the hub's token quotas and a run-rate trip.
-- **Cost · security · reversibility.** The idle floor (search, private endpoints, one always-ready instance) is the fixed cost that remains · quotas double as safety limits · high.
+- **Decision.** Scale to zero; Detectors for cheap leads; small model first; Batch and Flex for non-urgent work; evaluation on change plus sampling; one Key Vault, one AI Search, no container registry; the solution watches its own bill.
+- **Cost · security · reversibility.** The [idle floor](10-cost-and-finops.md) is the fixed cost that remains · quotas double as safety limits · high.
 
 ## 19. Licences and non-Microsoft parts are listed, not presumed · Accepted
 
-- **Decision.** [Goals and scope](01-goals-and-scope.md) lists what each feature needs (Entra P1, P2, Agent 365, Microsoft 365); [the register](11-technology-register.md) lists non-Microsoft parts with a Microsoft alternative.
+- **Decision.** [Goals and scope](01-goals-and-scope.md) lists what each feature needs; [the register](11-technology-register.md) lists non-Microsoft parts with a Microsoft alternative.
 - **Cost · security · reversibility.** n/a · no hidden dependency · high.
 
 ## 20. Single-tenant; one organisation, many subscriptions · Accepted
@@ -122,6 +123,17 @@
 
 ## 21. Each scope's agreement and access are probed, and the system adapts · Accepted
 
-- **Decision.** For every scope the Estate refresh workflow runs read-only probes (plain code in the `tools` app) for the agreement family, the cost reach (billing, subscription, none), the cost data path, the price basis and the purchase path; it stores a capability profile and probes again weekly and after any 401 or 403. Every number names the prices it rests on, and where the system may not act it prepares the request for whoever may ([agreements and access](14-agreements-and-access.md)).
+- **Decision.** For every scope the Estate refresh workflow runs read-only probes for the agreement family, the cost reach (billing, subscription, none), the cost data path, the price basis and the purchase path; it stores a capability profile and probes again weekly and after any 401 or 403. Every number names the [prices it rests on](14-agreements-and-access.md).
 - **Instead of.** Assuming one agreement and full billing access; asking an administrator to enter the agreement type by hand (it goes stale and is often wrong).
 - **Cost · security · reversibility.** A few read-only calls per scope a week · no scope is asked for more access than a question needs, and one scope's data never reaches another's · high.
+
+## 22. Coverage routing replaces escalation up a management line; the attention budget is code · Accepted
+
+- **Decision.** A waiting Case is [reminded once, then parked](03-agents-and-workflows.md#4-seven-workflows); cover (the owner's delegate, else the custodian queue) is asked to confirm ownership. [Code counts unprompted messages per person](05-data-and-integrations.md#6-channels); humans set the ceilings.
+- **Cost · security · reversibility.** A custodian queue to staff · no message says that someone did not answer; routing authorises nothing · easy: starting values.
+
+## 23. Every card has one page and one verb contract · Accepted
+
+- **Decision.** [A request's page](05-data-and-integrations.md#6-channels) shows the exact plan for a decision and the card's own words otherwise, and opening it records nothing; [the card manifest](05-data-and-integrations.md#7-the-approval-record) lists, for each verb, who may tap, what a repeat does and what a tap returns.
+- **Instead of.** Buttons that carry the plan.
+- **Cost · security · reversibility.** Pages run in the `approvals` app · a forwarded or repeated tap does no harm · moderate: the routes are the contract.

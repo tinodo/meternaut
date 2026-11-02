@@ -45,8 +45,9 @@ It is a research programme with hands: agents on Microsoft Foundry that study, t
 | [08 · The outer rims](docs/08-outer-rims.md) | "What if?" ideas — default-drift radar, polite scream tests, the renewal radar, the cost weather map… |
 | [09 · The learning contract](docs/09-the-learning-contract.md) | **What exactly changes when it learns** — six things, how each updates, when it is relied on, how it is tested |
 | [10 · The press release from the future](docs/10-press-release-from-the-future.md) | A fictional announcement and the tough questions |
-| **[The design](docs/design/README.md)** | How it is built: architecture, agents and workflows, security, safeguards, testing, cost, decisions and the build plan |
+| **[The design](docs/design/README.md)** | How it is built: architecture, agents and workflows, security, safeguards, testing, cost, decisions and the roadmap |
 | **[The experience design](docs/experience/README.md)** | What people see, receive and decide: personas and journeys, Teams cards, letters, web pages, dashboards, attention and trust, accessibility, testing |
+| **[The build plan](docs/build-plan/README.md)** | What is built first: the slices of phases 0 and 1a, what the adopting organisation provides and decides, the first checks, cost and effort. A plan only |
 | Research | [the landscape through the lens of learning](docs/research/landscape.md) · [inspirations: how agents learn](docs/research/inspirations.md) · [the cost-trap bank: 145 sourced cost traps](docs/research/cost-trap-bank.md) |
 
 **Short on time?** The picture above, then [the first minute of the north star](docs/01-north-star.md#in-one-minute).
@@ -57,13 +58,18 @@ The [design](docs/design/README.md) is an index and fourteen short documents in 
 
 ## The experience
 
-The [experience design](docs/experience/README.md) is an index and fifteen short documents on what each person sees, receives and decides: personas and journeys, seventeen Teams card templates with renderings, e-mail letters, the approval and notes pages, dashboards, the attention budget and the trust mechanics, reviewers' surfaces, optional voice and meetings, accessibility and language, and how the experience is tested. At its centre is a message that carries one decision for one person, with its evidence one tap away, and asks for nothing that person has not seen in full. [Asks of the technical design](docs/experience/15-asks-of-the-technical-design.md) lists what it needs added to the design.
+The [experience design](docs/experience/README.md) is an index and fifteen short documents on what each person sees, receives and decides: personas and journeys, seventeen Teams card templates with renderings, e-mail letters, the approval and notes pages, dashboards, the attention budget and the trust mechanics, reviewers' surfaces, optional voice and meetings, accessibility and language, and how the experience is tested. At its centre is a message that carries one decision for one person, with its evidence one tap away, and asks for nothing that person has not seen in full. [What the experience needs of the technical design](docs/experience/15-asks-of-the-technical-design.md) lists what the system must do for it, and where the design says so.
+
+## The build plan
+
+The [build plan](docs/build-plan/README.md) is an index and four documents on what to build first and how to know that each step works: fifteen slices across phase 0 (foundations) and phase 1a (first value on one estate, ending with a Monday digest and findings that the FinOps lead confirms), what the adopting organisation provides and decides before starting, thirteen first checks with their pass conditions and fallbacks, and what it costs and where it can go wrong. It is a plan only: nothing in it is built.
 
 ## Status
 
 - **Ideation (v5)** — the north star, a deep-dive per faculty and the learning contract. It is the idea the design answers to.
-- **Design (v4)** — the architecture, security and governance, testing, cost model, decisions and roadmap. Nothing is built yet; the end of the [design index](docs/design/README.md) lists what is unproven.
+- **Design (v5)** — the architecture, security and governance, testing, cost model, decisions and roadmap, with what the experience needs of the system placed in it. Nothing is built yet; the end of the [design index](docs/design/README.md) lists what is unproven.
 - **Experience design (v1)** — personas, journeys, cards, letters, pages, dashboards, attention and trust, accessibility and testing. Nothing is built; the cards are templates that tools check and render.
+- **Build plan (v1)** — the first two phases as slices, with the first checks. Nothing is built.
 - **Version numbers** are release tags in this repository; the [changelog](CHANGELOG.md) says what each one changed.
 - **Licence:** MIT ([LICENSE](LICENSE)) covers everything in this repository, the documents included.
 - **Principles:** Microsoft technology for the product (open standards and repository tooling are the exceptions) · aligned with the Cloud Adoption Framework and the Well-Architected Framework · open source · fully AI-infused · human-in-the-loop.
