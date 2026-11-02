@@ -9,6 +9,7 @@ run, so a changed price list can never silently change a number.
     python tools/cost-model.py                          # markdown report to stdout
     python tools/cost-model.py --json                   # machine-readable
     python tools/cost-model.py --lines Pilot            # every line item of one scenario
+    python tools/cost-model.py --dev-hub                # one month of the development hub that hub/ deploys
     python tools/cost-model.py --update-doc docs/design/10-cost-and-finops.md
     python tools/cost-model.py --check docs/design/10-cost-and-finops.md     # fails when the generated block is stale
     python tools/cost-model.py --self-test              # negative fixtures: each defect above must be caught
@@ -533,6 +534,62 @@ def check_doc(text: str, prices: Prices) -> list[str]:
     return [] if cur == block(prices) else ["the generated cost block is stale: run `python tools/cost-model.py --update-doc <file>`"]
 
 
+# The development hub that hub/ deploys (hub/README.md): one Developer gateway, one Event Hubs throughput unit (no
+# auto-inflate), three private endpoints, the private DNS zones of its network and a Log Analytics workspace with a daily
+# cap. A sizing from stated volumes, not a billing guarantee; model tokens are billed by use and shown apart.
+DEV_HUB = dict(throughput_units=1, private_endpoints=3, dns_zones=13, dns_million_queries=1.0, kv_ops_10k=1, log_cap_gb_a_day=0.1)
+CONTRACT_POLICY = ROOT / "hub" / "contracts" / "learning-demo-dev" / "ai-product-policy.xml"
+
+
+def contract_token_quota(path: Path = CONTRACT_POLICY) -> int:
+    """The monthly token quota that the development contract's policy sets."""
+    found = re.search(r'token-quota="(\d+)"', path.read_text(encoding="utf-8"))
+    if not found:
+        raise ValueError(f"{path} sets no token-quota")
+    return int(found.group(1))
+
+
+def dev_hub(prices: Prices) -> list[tuple[str, float, str]]:
+    """Monthly cost lines of the development hub as (label, EUR, note), before model tokens."""
+    P, d = prices, DEV_HUB
+    apim = P.get("API Management", product="API Management", sku="Developer", meter="Developer Unit")
+    eh = P.get("Event Hubs", product="Event Hubs", sku="Standard", meter="Standard Throughput Unit")
+    pe = P.get("Virtual Network", region="Global", product="Virtual Network Private Link", sku="Standard", meter="Standard Private Endpoint")
+    zone = P.get("Azure DNS", region="", product="Azure DNS", sku="Private", meter="Private Zone", pick="max")
+    queries = P.get("Azure DNS", region="", product="Azure DNS", sku="Private", meter="Private Queries", pick="max")
+    kv = P.get("Key Vault", product="Key Vault", sku="Standard", meter="Operations")
+    ingest = P.get("Log Analytics", product="Log Analytics", sku="Analytics Logs", meter="Analytics Logs Data Ingestion", pick="max")
+    gb = d["log_cap_gb_a_day"] * DAYS
+    return [
+        ("API Management, Developer tier (no SLA)", apim * HOURS, "one unit, always on"),
+        ("Event Hubs Standard", eh * d["throughput_units"] * HOURS, f"{d['throughput_units']} throughput unit, always on, no auto-inflate"),
+        ("Private endpoints", pe * d["private_endpoints"] * HOURS,
+         f"{d['private_endpoints']} endpoints: the model account, the vault, the event hub; the data they process is left out"),
+        ("Private DNS zones", zone * d["dns_zones"] + queries * d["dns_million_queries"],
+         f"{d['dns_zones']} zones, and {d['dns_million_queries']:g} million queries (assumed)"),
+        ("Key Vault", kv * d["kv_ops_10k"], f"{d['kv_ops_10k'] * 10}k operations (assumed)"),
+        ("Log Analytics ingestion", ingest * gb,
+         f"the workspace's daily cap of {d['log_cap_gb_a_day']:g} GB taken in every day; the free allowance is not counted"),
+    ]
+
+
+def dev_hub_tokens(prices: Prices) -> tuple[int, float]:
+    """The contract's monthly token quota, and what it costs if used in full with every token priced as an output token."""
+    quota = contract_token_quota()
+    return quota, quota * Model(prices).price("triage", "DZ", "Std")["out"] / 1e6
+
+
+def dev_hub_report(prices: Prices) -> str:
+    lines = dev_hub(prices)
+    quota, tokens_eur = dev_hub_tokens(prices)
+    out = [f"Development hub, one month at list prices ({REGION}, EUR, {HOURS:g} hours; price snapshot of {prices.generated[:10]}):", ""]
+    out += [f"{eur:>9,.2f}  {label}: {note}" for label, eur, note in lines]
+    out += ["", f"{sum(eur for _, eur, _ in lines):>9,.2f}  total of the lines above: a sizing from the stated volumes, not a billing guarantee",
+            f"{tokens_eur:>9,.2f}  plus model tokens if the contract's monthly quota of {quota:,} tokens is used in full, "
+            "every token priced as an output token"]
+    return "\n".join(out)
+
+
 def self_test() -> int:
     p = Prices(SNAP)
     for bad in (dict(service="Foundry Models", product="No Such Product", sku="x"),
@@ -585,6 +642,18 @@ def self_test() -> int:
     assert check_doc("no markers", p), "a missing block must be reported"
     md = meters_doc(p)
     assert md == meters_doc(p) and md.count("\n| ") > 20, "the meters file must be deterministic and list the meters"
+    hub = dev_hub(p)
+    assert len(hub) == 6 and all(eur > 0 for _, eur, _ in hub), "every line of the development hub must be priced"
+    assert abs(hub[0][1] - p.get("API Management", product="API Management", sku="Developer", meter="Developer Unit") * HOURS) < 1e-9
+    quota, token_eur = dev_hub_tokens(p)
+    assert quota > 0 and token_eur > 0, "the contract's token quota must be read and priced"
+    assert contract_token_quota(CONTRACT_POLICY) == quota
+    try:
+        contract_token_quota(ROOT / "README.md")
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("a policy without a token-quota must fail")
     print("self-test OK")
     return 0
 
@@ -593,6 +662,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--lines", metavar="SCENARIO")
+    ap.add_argument("--dev-hub", action="store_true")
     ap.add_argument("--update-doc", metavar="FILE")
     ap.add_argument("--check", metavar="FILE")
     ap.add_argument("--self-test", action="store_true")
@@ -600,7 +670,9 @@ def main() -> int:
     if a.self_test:
         return self_test()
     prices = Prices(SNAP)
-    if a.json:
+    if a.dev_hub:
+        print(dev_hub_report(prices))
+    elif a.json:
         print(json.dumps(run_all(prices), indent=1))
     elif a.lines:
         for r in run_all(prices)[a.lines]["lines"]:

@@ -7,8 +7,9 @@
     python evaluation/c14/run.py report DIR              render report.md again; the verdict is worked out again from review.json,
                                                          where a person records the reading of the updated answers
     python evaluation/c14/run.py demo [--out DIR]        the whole flow on pack-template with a scripted model; keeps nothing without --out
+    python evaluation/c14/run.py hub-check               one small call through the hub (about a hundred tokens, no pack): shows that the route and the credentials work
 
-`propose` and `run` call the model through the hub; the environment names the route (see harness/client.py).
+`propose`, `run` and `hub-check` call the model through the hub; the environment names the route (see harness/client.py).
 A real run needs a spending cap, the token prices, a reply limit and a call limit in the pack's params.json, written by pull
 request first, and it exits 0 only when every pass condition holds, a person's reading of the answers included.
 """
@@ -140,6 +141,22 @@ def cmd_report(args) -> int:
     return 0 if verdict and verdict["passed"] else 1
 
 
+def _positive_int(value: str) -> int:
+    number = int(value)
+    if number < 1:
+        raise argparse.ArgumentTypeError("must be a whole number of at least 1")
+    return number
+
+
+def cmd_hub_check(args) -> int:
+    """One small call with the environment's route and credentials. It needs no pack and writes nothing."""
+    client = HubClient(max_tokens=args.max_tokens)
+    completion = client.complete("Answer with one word.", "Say ready.")
+    print(f"The hub answered after {client.requests} request(s): {completion.prompt_tokens} prompt tokens, "
+          f"{completion.completion_tokens} reply tokens, {len(completion.text)} characters of reply.")
+    return 0
+
+
 def cmd_demo(args) -> int:
     if args.out:
         return _demo(Path(args.out), f"Output: {args.out}")
@@ -179,6 +196,9 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("demo")
     p.add_argument("--out")
     p.set_defaults(fn=cmd_demo)
+    p = sub.add_parser("hub-check")
+    p.add_argument("--max-tokens", type=_positive_int, default=64, help="limit on the reply, at least 1 (default 64)")
+    p.set_defaults(fn=cmd_hub_check)
     args = parser.parse_args(argv)
     try:
         return args.fn(args)

@@ -111,3 +111,12 @@ After the plan was read, four adjustments were asked for: a small learning demon
 | **Build plan v2 · Final check** — the items the closure round left open or found | The same checker: 15 of 15 closed, 8 new small defects (5 Minor, 3 Nit); fixed | [final-1](build-plan-v2/final-1.md) | [disposition](build-plan-v2/disposition-final.md) |
 | **Build review 1** — the code and the templates built so far ([brief](build-plan-v2/brief-build.md)): 13 findings, 4 Blockers, 7 Majors, 2 Minors | One reviewer (gemini-4-argon), against the plan text each part implements | [build-review-1](build-plan-v2/build-review-1.md) | [disposition](build-plan-v2/build-disposition.md) |
 | **Build review 1 · Closure** — every finding checked against the fixed files, and the fixes read for what they broke | The same reviewer: 13 closed, 3 new minor defects, fixed | [build-closure-1](build-plan-v2/build-closure-1.md) | [disposition](build-plan-v2/build-disposition-closure.md) |
+
+## The development hub
+
+The hub that every model call of the learning demonstration goes through ([`hub/`](../../hub/README.md)) was deployed to a resource group of its own and checked with calls and refusals. A reviewer on another model family then read its files, the patch to the accelerator, the access contract and the harness's client against the plan text they implement.
+
+| Round | Reviewer (model) | Raw report | Disposition |
+|---|---|---|---|
+| **Hub review 1** — the files and the patch as built: 18 findings, 1 Blocker, 8 Majors, 9 Minors | One reviewer (gpt-6.1-sol) | [hub-review-1](hub-v1/hub-review-1.md) | [disposition](hub-v1/hub-disposition.md) |
+| **Hub review 1 · Closure** — every finding checked against the fixed files, and the fixes read for what they broke: 8 closed, 9 in part, 1 open, 5 new (3 Majors, 2 Minors) | The same reviewer | [hub-closure-1](hub-v1/hub-closure-1.md) | [disposition](hub-v1/hub-disposition-closure.md) |

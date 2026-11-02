@@ -13,7 +13,7 @@ sys.path.insert(0, str(C14))
 
 import run  # noqa: E402
 from harness import demo  # noqa: E402
-from harness.client import ScriptedClient  # noqa: E402
+from harness.client import Completion, ScriptedClient  # noqa: E402
 
 REAL_LIMITS = {"spending_cap_eur": 50, "max_completion_tokens": 1000, "price_per_million_tokens_eur": {"input": 1.0, "output": 4.0}}
 
@@ -94,6 +94,55 @@ class CliTests(unittest.TestCase):
         code, _, err = self.call("check", str(self.out))
         self.assertEqual(code, 2)
         self.assertIn("error:", err)
+
+    def test_hub_check_makes_one_small_call_and_does_not_print_the_reply(self):
+        class FakeHub:
+            seen_limit = None
+
+            def __init__(self, max_tokens=None):
+                self.requests = 0
+                FakeHub.seen_limit = max_tokens
+
+            def complete(self, system, user):
+                self.requests += 1
+                return Completion("UNIQUE-REPLY", 9, 2)
+
+        with mock.patch.object(run, "HubClient", FakeHub):
+            code, out, _ = self.call("hub-check", "--max-tokens", "16")
+            default_code, _, _ = self.call("hub-check")
+        self.assertEqual(code, 0)
+        self.assertEqual(FakeHub.seen_limit, 64)
+        self.assertEqual(default_code, 0)
+        self.assertIn("1 request(s): 9 prompt tokens, 2 reply tokens", out)
+        self.assertNotIn("UNIQUE-REPLY", out)
+
+    def test_hub_check_passes_the_exact_limit_it_was_given(self):
+        seen = []
+
+        class FakeHub:
+            def __init__(self, max_tokens=None):
+                seen.append(max_tokens)
+                self.requests = 0
+
+            def complete(self, system, user):
+                self.requests += 1
+                return Completion("x", 1, 1)
+
+        with mock.patch.object(run, "HubClient", FakeHub):
+            self.call("hub-check", "--max-tokens", "16")
+        self.assertEqual(seen, [16])
+
+    def test_hub_check_refuses_a_limit_below_one(self):
+        for value in ("0", "-5", "x"):
+            code, _, err = self.call("hub-check", "--max-tokens", value)
+            self.assertEqual(code, 2, value)
+            self.assertIn("max-tokens", err)
+
+    def test_hub_check_without_a_route_is_an_error_not_a_trace(self):
+        with mock.patch.dict("os.environ", {}, clear=True):
+            code, _, err = self.call("hub-check")
+        self.assertEqual(code, 2)
+        self.assertIn("C14_HUB_CHAT_URL", err)
 
     def test_the_report_can_be_rendered_again(self):
         self.call("demo", "--out", str(self.out))
