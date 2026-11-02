@@ -69,6 +69,14 @@ class CliTests(unittest.TestCase):
         self.assertEqual(results["review"]["decision"], "accepted")
         self.assertIn("demo-reviewer", (self.out / "review.json").read_text(encoding="utf-8"))
 
+    def test_the_demo_without_an_output_folder_keeps_nothing(self):
+        scratch = Path(tempfile.gettempdir())
+        before = {p.name for p in scratch.glob("c14-demo-*")}
+        code, out, _ = self.call("demo")
+        self.assertEqual(code, 0, out)
+        self.assertIn("Nothing was kept", out)
+        self.assertEqual({p.name for p in scratch.glob("c14-demo-*")}, before)
+
     def test_a_real_run_refuses_to_start_without_a_cap_prices_or_a_reply_limit(self):
         for command in ("propose", "run"):
             code, _, err = self.call(command, str(C14 / "pack-template"), "--out", str(self.out))

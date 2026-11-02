@@ -2,6 +2,7 @@ import datetime as dt
 import importlib.util
 import io
 import json
+import shutil
 import sys
 import tempfile
 import unittest
@@ -310,6 +311,7 @@ class DetailsApiTests(unittest.TestCase):
 class RunTests(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix="feasibility-"))
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
         self.csv = self.tmp / "lines.csv"
         self.csv.write_text(MCA_CSV, encoding="utf-8")
 
@@ -365,6 +367,23 @@ class RunTests(unittest.TestCase):
             pf.run(self.args(inside), FakeTransport([]), TODAY)
         self.assertIn("inside this repository", str(raised.exception))
         self.assertFalse(inside.exists())
+
+    def test_the_local_folder_takes_a_record_only_while_git_ignores_it(self):
+        with mock.patch.object(pf, "ROOT", self.tmp.resolve()):
+            record = self.tmp / "local" / "records" / "feasibility.json"
+            pf.refuse_where_git_tracks(record, ignored=lambda path: True)
+            with self.assertRaises(pf.Problem) as not_ignored:
+                pf.refuse_where_git_tracks(record, ignored=lambda path: False)
+            self.assertIn("does not ignore", str(not_ignored.exception))
+            with self.assertRaises(pf.Problem) as elsewhere:
+                pf.refuse_where_git_tracks(self.tmp / "docs" / "feasibility.json", ignored=lambda path: True)
+            self.assertIn("inside this repository", str(elsewhere.exception))
+            pf.refuse_where_git_tracks(self.tmp.parent / "outside.json", ignored=lambda path: False)
+
+    @unittest.skipUnless((pf.ROOT / ".git").exists() and shutil.which("git"), "needs a git checkout")
+    def test_git_ignores_the_local_folder_of_this_repository(self):
+        self.assertTrue(pf.git_ignores(pf.ROOT / "local" / "records" / "feasibility.json"))
+        self.assertFalse(pf.git_ignores(pf.ROOT / "docs" / "feasibility.json"))
 
     def test_an_open_month_is_refused_before_any_call(self):
         transport = FakeTransport([])

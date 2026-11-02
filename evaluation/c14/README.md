@@ -10,7 +10,7 @@ A small, early look at the project's central idea: when the system meets new evi
 4. **A stop test, then the arms.** `run.py run PACK --out DIR --max-calls 2` shows that the call limit stops a run. Then `run.py run PACK --out DIR` answers every case, several times, in three arms: **frozen** (the snapshot), **control** (the snapshot plus the unrelated claim) and **updated** (the snapshot plus the accepted claim). Runs are interleaved so that a change in the model hits every arm alike, and the model alias, the prompts and the settings are the same in every arm. The title of a case is for the person reading the report; the finder sees only the facts.
 5. **The report and a person's reading.** `DIR/report.md` shows a before-and-after table, each pass condition, the cost, the limits, and every updated answer that found a case. A person who did not build the harness reads each one and, in `review.json`, sets `answers_read_by` to their name and `answers_rest_on_the_claim` to `true` or `false`. `run.py report DIR` then works the verdict out again. `DIR/results.json` keeps every reply.
 
-`python evaluation/c14/run.py demo` runs the whole flow on the invented template pack with a scripted stand-in for a model. It shows how the flow works and says nothing about a real model.
+`python evaluation/c14/run.py demo` runs the whole flow on the invented template pack with a scripted stand-in for a model. It shows how the flow works and says nothing about a real model. It keeps nothing unless you add `--out DIR`.
 
 ## A pack
 

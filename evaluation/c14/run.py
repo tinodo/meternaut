@@ -6,7 +6,7 @@
     python evaluation/c14/run.py run PACK --out DIR      run the three arms once a reviewer has decided
     python evaluation/c14/run.py report DIR              render report.md again; the verdict is worked out again from review.json,
                                                          where a person records the reading of the updated answers
-    python evaluation/c14/run.py demo [--out DIR]        the whole flow on pack-template with a scripted model
+    python evaluation/c14/run.py demo [--out DIR]        the whole flow on pack-template with a scripted model; keeps nothing without --out
 
 `propose` and `run` call the model through the hub; the environment names the route (see harness/client.py).
 A real run needs a spending cap, the token prices, a reply limit and a call limit in the pack's params.json, written by pull
@@ -141,8 +141,14 @@ def cmd_report(args) -> int:
 
 
 def cmd_demo(args) -> int:
+    if args.out:
+        return _demo(Path(args.out), f"Output: {args.out}")
+    with tempfile.TemporaryDirectory(prefix="c14-demo-") as scratch:
+        return _demo(Path(scratch), "Nothing was kept: add --out DIR to keep the report.")
+
+
+def _demo(out: Path, where: str) -> int:
     pack = load_pack(TEMPLATE)
-    out = Path(args.out) if args.out else Path(tempfile.mkdtemp(prefix="c14-demo-"))
     client = GuardedClient(ScriptedClient(demo.handler), max_calls=int(pack.params["max_model_calls"]), prices=DEMO_PRICES)
     proposal = runner.propose_claim(client, pack.source, pack.cases, pack.key)
     runner.write_proposal(out, proposal, pack)
@@ -152,7 +158,7 @@ def cmd_demo(args) -> int:
     (out / "review.json").write_text(json.dumps(review, indent=2) + "\n", encoding="utf-8")
     code = _run(pack, client, out)
     print("Demo with a scripted model, invented prices and a script standing in for the two people, on the invented "
-          f"pack-template; nothing here says anything about a real model. Output: {out}")
+          f"pack-template; nothing here says anything about a real model. {where}")
     return code
 
 

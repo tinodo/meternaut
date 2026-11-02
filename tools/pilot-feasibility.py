@@ -3,10 +3,10 @@
 
 Reads one closed month of the first estate's bill lines, with the read-only roles of the person who runs it,
 and reconciles the total with what Cost Management shows for the same scope and month. It writes a
-feasibility record for the adopting organisation's tenant: it refuses to write inside this repository,
-because the record names the estate. It changes nothing in Azure.
+feasibility record that names the estate, so it writes only outside this repository or in local/, the folder
+that git ignores, and refuses anywhere else in the repository. It changes nothing in Azure.
 
-    python tools/pilot-feasibility.py --scope /subscriptions/<id> --month 2026-09 --out C:\\records\\feasibility.json
+    python tools/pilot-feasibility.py --scope /subscriptions/<id> --month 2026-09 --out local/records/feasibility.json
     python tools/pilot-feasibility.py --scope ... --month 2026-09 --file export.csv --out ...
 
 Routes for the per-resource lines:
@@ -362,24 +362,44 @@ def build_record(scope: str, month: str, route: str, stats: dict, query: dict[st
             "pilot_owner": None, "access": None, "hub": None, "region": None, "model_quota": None,
         },
         "passed_by_the_tool": bool(result["pass"] and stats["resources"] > 0),
-        "note": "The Query API gives totals only and does not count as a per-resource bill path. This record names the estate: keep it in the organisation's tenant, not in the repository.",
+        "note": "The Query API gives totals only and does not count as a per-resource bill path. This record names the estate: keep it outside the repository or in local/, which git ignores.",
     }
 
 
-def refuse_inside_repo(out: Path) -> None:
+def git_ignores(path: Path) -> bool:
+    """True when git, asked in this repository, ignores the path. What it cannot confirm counts as not ignored."""
+    git = shutil.which("git")
+    if not git:
+        return False
     try:
-        out.resolve().relative_to(ROOT)
+        relative = path.resolve().relative_to(ROOT).as_posix()
+        done = subprocess.run([git, "-C", str(ROOT), "check-ignore", "-q", "--", relative], capture_output=True, timeout=30)
+    except (ValueError, OSError, subprocess.SubprocessError):
+        return False
+    return done.returncode == 0
+
+
+def refuse_where_git_tracks(out: Path, ignored=git_ignores) -> None:
+    """The record names the estate: it goes outside the repository, or into local/, which git ignores."""
+    target = out.resolve()
+    try:
+        target.relative_to(ROOT)
     except ValueError:
         return
-    raise Problem("--out is inside this repository: the record names the estate, so write it in the organisation's tenant")
+    try:
+        target.relative_to(ROOT / "local")
+    except ValueError:
+        raise Problem("--out is inside this repository: the record names the estate, so write it in local/ (git ignores it) or outside the repository") from None
+    if not ignored(target):
+        raise Problem("--out is in local/, but git does not ignore it: add /local/ to .gitignore first")
 
 
-def run(args, transport: Transport | None = None, today: dt.date | None = None) -> int:
+def run(args, transport: Transport | None = None, today: dt.date | None = None, ignored=git_ignores) -> int:
     transport = transport or Transport()
     scope = check_scope(args.scope)
     first, last = month_bounds(args.month, today)
     out = Path(args.out)
-    refuse_inside_repo(out)
+    refuse_where_git_tracks(out, ignored)
     if args.file:
         csv_text, route = Path(args.file).read_text(encoding="utf-8-sig"), "file"
     else:
@@ -406,7 +426,7 @@ def main(argv=None) -> int:
     parser.add_argument("--scope")
     parser.add_argument("--month")
     parser.add_argument("--file", help="a CSV of bill lines instead of the Cost Details API")
-    parser.add_argument("--out", help="where to write the record, outside this repository")
+    parser.add_argument("--out", help="where to write the record: outside this repository, or in local/")
     parser.add_argument("--tolerance-pct", type=float, default=DEFAULT_TOLERANCE_PCT)
     args = parser.parse_args(argv)
     if not (args.scope and args.month and args.out):

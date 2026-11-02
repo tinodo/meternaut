@@ -3,3 +3,6 @@ __pycache__/
 node_modules/
 tools/render-cards/out/
 tools/render-cards/package-lock.json
+
+# Stays on one machine: records that name an estate and the working files (AGENTS.md rule 17)
+/local/

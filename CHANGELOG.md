@@ -2,6 +2,14 @@
 
 All notable changes, newest first. Versions are git tags: `ideation-vN` for the ideation (`docs/01` to `docs/10` and the research), `design-vN` for the design (`docs/design/`; `design-v1` was withdrawn), `experience-vN` for the experience design (`docs/experience/`) and `build-plan-vN` for the build plan (`docs/build-plan/`). A heading without a tag records a change that is not a new edition. The previous editions stay available at their tags, and the earliest are archived under [`docs/_archive/`](docs/_archive/), which is never edited.
 
+## Where files live — 2026-11-02
+
+**What.** A folder `local/` in the repository folder, ignored by git, holds what stays on one machine: the records that name an estate (`local/records/`) and working files (`local/working-files/`). [AGENTS.md](AGENTS.md) rule 17 says that nothing of the project is kept anywhere else: not in an agent's session folder, not in the system's temp folder. `tools/pilot-feasibility.py` now writes a record only outside the repository or in `local/`, and in `local/` only while git ignores it; before, it refused anywhere in the repository. Its tests and the demonstration of check C14 no longer leave temp folders behind.
+
+**Why.** The first bill check's record, and the working files of the earlier phases, were in an agent's hidden session folder. They are now where the owner can see them, and what can be made again (browser profiles, `node_modules`) is deleted.
+
+**Not changed.** Review records that name the old path of a working file keep it: they say what was true when they were written.
+
 ## Reviews by event, and the first bill check — 2026-11-02
 
 **What.**
@@ -9,7 +17,7 @@ All notable changes, newest first. Versions are git tags: `ideation-vN` for the 
 - **A review point is an event, never a date.** A funded stage goes to its review when its work is finished, its budget's warning alert fires or one of its checks fails, whichever comes first. The build plan says so in [01](docs/build-plan/01-the-slices.md), [02](docs/build-plan/02-before-you-start.md) and [04](docs/build-plan/04-cost-effort-and-risks.md), and the exit of phase 1a is judged at the review point of the stage that is running, not by a date that the organisation sets. The plan still sets no calendar dates.
 - **`evaluation/stages.json` is removed.** It held proposed limits for the project owner to confirm in a file. The standing limits are now written in [AGENTS.md](AGENTS.md) rule 15 (g), and rule 16 says that a decision which only the owner can take goes to him in the conversation, in plain words, never as a file to read.
 - **Only the project's own resource groups in a subscription that it does not own** (rule 15 (b)). The templates in [`infra/`](infra/README.md) deploy at subscription scope, so they are for subscriptions that the solution owns; the README says what a budget on a resource group can do instead.
-- **The first bill check ran.** The probe of slice 0.0 read one closed month of one estate through the Cost Details API, with the read access of the person who ran it, and created and changed nothing. It found 740 bill lines on 7 resources, equal to Cost Management's total for the month (368.58 USD), every line at pay-as-you-go prices. The estate is small: enough to show that the path and the price basis work, too little to show how many findings a larger estate holds. The record names the estate, so it is kept outside the repository.
+- **The first bill check ran.** The probe of slice 0.0 read one closed month of one estate through the Cost Details API, with the read access of the person who ran it, and created and changed nothing. Its lines matched Cost Management's total for the month to the cent, all at pay-as-you-go prices. The estate is small: enough to show that the path and the price basis work, too little to show how many findings a larger estate holds. The record names the estate, so it is not in the repository.
 
 **Not changed.** The `build-plan-v2` entry below keeps what was true when it was written, including that the proposals were in the file and that the probe had not seen an estate; the tag still holds them.
 
