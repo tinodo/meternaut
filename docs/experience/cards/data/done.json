@@ -1,0 +1,16 @@
+{
+  "_invented": true,
+  "senderName": "Cost in Action (AI)",
+  "requestId": "r_9vK2xQ",
+  "pageUrl": "https://cost-in-action.contoso.example/ok/r_9vK2xQ",
+  "challengeExample": "For example: the job on the last Tuesday is real",
+  "teachExample": "For example: this is our disaster-recovery environment",
+  "headline": "Done: the QA environment now sleeps outside 07:30 to 19:30",
+  "planCode": "7F3K-92QD",
+  "whatHappened": "The change ran at Thursday 19:30 CET on vm-qa-web-01, vm-qa-web-02 and sql-qa-orders, on the plan you approved (plan code 7F3K-92QD). My checks found nothing unexpected.",
+  "undoWindow": "You can undo it with one tap until Friday 19:30 CET. That is after your working day, so I will remind you once, on Friday at 09:00. After that, tell me and I will plan the way back with you.",
+  "next": "I will check the bill after the next billing cycle and send you the result. If you did not approve this change, tap I did not approve this: it starts the incident path, pauses your one-tap approvals and tells the platform team. Undo, not that button, reverses the change.",
+  "_scenario": "E1",
+  "notificationText": "Done: the QA environment now sleeps outside 07:30 to 19:30",
+  "whyYouGetThis": "you gave your OK to this change."
+}

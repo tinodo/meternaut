@@ -1,0 +1,146 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1260 1160" width="1260" height="1160" role="img" aria-labelledby="t d" font-family="Segoe UI, system-ui, -apple-system, Arial, sans-serif">
+  <title id="t">A Recommendation card in a Teams chat, with its eight parts numbered</title>
+  <desc id="d">An invented example of the Recommendation card: sender and AI label, headline, value tile with price basis, saving word and what waiting forgoes, why and what was checked, one row of three decision buttons of equal size, one row of Details, Explain, Challenge and Teach, the Details panel opened with two other options, a way to ask for fewer messages, and the footer with why the person got the message, a way to reach a person and the AI line.</desc>
+  <rect width="1260" height="1160" fill="#F3F2F1"/>
+  <rect x="24" y="24" width="700" height="1115" rx="10" fill="#FAF9F8" stroke="#D1D1D1" stroke-width="1"/>
+  <text x="48" y="56" font-size="13" font-weight="600" fill="#5C5C5C" text-anchor="start">Teams, chat with Cost in Action (AI)</text>
+  <line x1="24" y1="70" x2="724" y2="70" stroke="#D1D1D1" stroke-width="1"/>
+  <rect x="52" y="92" width="644" height="1025" rx="8" fill="#FFFFFF" stroke="#D1D1D1" stroke-width="1"/>
+  <rect x="52" y="92" width="5" height="1025" rx="2" fill="#0F6CBD"/>
+  <text x="76" y="122" font-size="14" font-weight="700" fill="#242424" text-anchor="start">Cost in Action (AI)</text>
+  <rect x="242" y="106" width="91" height="21" rx="10" fill="#F0F0F0" stroke="#D1D1D1" stroke-width="1"/>
+  <text x="251" y="118" font-size="11" font-weight="600" fill="#5C5C5C" text-anchor="start">AI-generated</text>
+  <text x="672" y="122" font-size="13" font-weight="600" fill="#5C5C5C" text-anchor="end">Recommendation</text>
+  <circle cx="700" cy="116" r="11" fill="#5C2E91"/>
+  <text x="700" y="120.5" font-size="12" font-weight="700" fill="#FFFFFF" text-anchor="middle">1</text>
+  <text x="76" y="158" font-size="19" font-weight="700" fill="#242424" text-anchor="start">Switch off the web-shop QA environment at night and at</text>
+  <text x="76" y="184" font-size="19" font-weight="700" fill="#242424" text-anchor="start">weekends, except the last Tuesday?</text>
+  <text x="76" y="210" font-size="12.5" font-weight="400" fill="#5C5C5C" text-anchor="start">For you, 14 resources in rg-webshop-qa</text>
+  <circle cx="700" cy="154" r="11" fill="#5C2E91"/>
+  <text x="700" y="158.5" font-size="12" font-weight="700" fill="#FFFFFF" text-anchor="middle">2</text>
+  <rect x="76" y="228" width="596" height="112" rx="6" fill="#EBF3FC" stroke="#9FC7EE" stroke-width="1"/>
+  <text x="94" y="264" font-size="26" font-weight="700" fill="#0F6CBD" text-anchor="start">About €690 a month</text>
+  <text x="654" y="262" font-size="14" font-weight="600" fill="#5C5C5C" text-anchor="end">Range €620 to €760</text>
+  <rect x="94" y="280" width="186" height="22" rx="11" fill="#FFFFFF" stroke="#9FC7EE" stroke-width="1"/>
+  <text x="103" y="293" font-size="12" font-weight="600" fill="#0F6CBD" text-anchor="start">At the rates on your bill</text>
+  <rect x="288" y="280" width="118" height="22" rx="11" fill="#FFFFFF" stroke="#9FC7EE" stroke-width="1"/>
+  <text x="297" y="293" font-size="12" font-weight="600" fill="#0F6CBD" text-anchor="start">Expected saving</text>
+  <text x="94" y="326" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">Keeping things as they are forgoes about €23 a day, at the rates on your bill.</text>
+  <circle cx="700" cy="284" r="11" fill="#5C2E91"/>
+  <text x="700" y="288.5" font-size="12" font-weight="700" fill="#FFFFFF" text-anchor="middle">3</text>
+  <text x="76" y="370" font-size="13" font-weight="700" fill="#242424" text-anchor="start">Why I think so</text>
+  <text x="76" y="390" font-size="13.5" font-weight="400" fill="#242424" text-anchor="start">Six people use it, 07:45 to 18:30 on weekdays only (11 weeks of access records). I</text>
+  <text x="76" y="410" font-size="13.5" font-weight="400" fill="#242424" text-anchor="start">prefer this to option C, which saves more but needs about two days of engineering.</text>
+  <text x="76" y="438" font-size="13" font-weight="700" fill="#242424" text-anchor="start">What I checked</text>
+  <text x="76" y="458" font-size="13.5" font-weight="400" fill="#242424" text-anchor="start">11 weeks of access records show nothing outside those hours except the last Tuesday</text>
+  <text x="76" y="478" font-size="13.5" font-weight="400" fill="#242424" text-anchor="start">of the month. Strongest doubt: a job on that night. You told me one runs, so the</text>
+  <text x="76" y="498" font-size="13.5" font-weight="400" fill="#242424" text-anchor="start">schedule leaves it on.</text>
+  <circle cx="700" cy="488" r="11" fill="#5C2E91"/>
+  <text x="700" y="492.5" font-size="12" font-weight="700" fill="#FFFFFF" text-anchor="middle">4</text>
+  <rect x="76" y="526" width="140" height="32" rx="4" fill="#FFFFFF" stroke="#8A8886" stroke-width="1"/>
+  <text x="146.0" y="546.55" font-size="13" font-weight="600" fill="#242424" text-anchor="middle">Review the plan</text>
+  <rect x="226" y="526" width="176" height="32" rx="4" fill="#FFFFFF" stroke="#8A8886" stroke-width="1"/>
+  <text x="314.0" y="546.55" font-size="13" font-weight="600" fill="#242424" text-anchor="middle">No, leave it as it is</text>
+  <rect x="412" y="526" width="100" height="32" rx="4" fill="#FFFFFF" stroke="#8A8886" stroke-width="1"/>
+  <text x="462.0" y="546.55" font-size="13" font-weight="600" fill="#242424" text-anchor="middle">Not mine</text>
+  <text x="76" y="580" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start" font-style="italic">“Review the plan” authorises nothing: the exact plan replaces this card, and a button brings it back.</text>
+  <circle cx="700" cy="542" r="11" fill="#5C2E91"/>
+  <text x="700" y="546.5" font-size="12" font-weight="700" fill="#FFFFFF" text-anchor="middle">5</text>
+  <rect x="76" y="602" width="79" height="32" rx="4" fill="#FFFFFF" stroke="#8A8886" stroke-width="1"/>
+  <text x="115.5" y="622.55" font-size="13" font-weight="600" fill="#242424" text-anchor="middle">Details</text>
+  <rect x="163" y="602" width="93" height="32" rx="4" fill="#FFFFFF" stroke="#8A8886" stroke-width="1"/>
+  <text x="209.5" y="622.55" font-size="13" font-weight="600" fill="#242424" text-anchor="middle">Explain ▾</text>
+  <rect x="264" y="602" width="107" height="32" rx="4" fill="#FFFFFF" stroke="#8A8886" stroke-width="1"/>
+  <text x="317.5" y="622.55" font-size="13" font-weight="600" fill="#242424" text-anchor="middle">Challenge ▾</text>
+  <rect x="379" y="602" width="79" height="32" rx="4" fill="#FFFFFF" stroke="#8A8886" stroke-width="1"/>
+  <text x="418.5" y="622.55" font-size="13" font-weight="600" fill="#242424" text-anchor="middle">Teach ▾</text>
+  <circle cx="700" cy="618" r="11" fill="#5C2E91"/>
+  <text x="700" y="622.5" font-size="12" font-weight="700" fill="#FFFFFF" text-anchor="middle">6</text>
+  <rect x="76" y="650" width="596" height="305" rx="6" fill="#FAFAFA" stroke="#8A8886" stroke-width="1" stroke-dasharray="5 4"/>
+  <text x="90" y="672" font-size="11.5" font-weight="600" fill="#5C5C5C" text-anchor="start" font-style="italic">Inside Details (hidden until you tap Details)</text>
+  <text x="90" y="700" font-size="13" font-weight="700" fill="#242424" text-anchor="start">Other options</text>
+  <rect x="90" y="712" width="568" height="58" rx="4" fill="#FFFFFF" stroke="#D1D1D1" stroke-width="1"/>
+  <rect x="98" y="729" width="24" height="24" rx="12" fill="#0F6CBD"/>
+  <text x="110" y="746" font-size="13" font-weight="700" fill="#FFFFFF" text-anchor="middle">B</text>
+  <text x="132" y="731" font-size="13.5" font-weight="600" fill="#242424" text-anchor="start">Switch off at weekends only</text>
+  <text x="132" y="747" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">Saves about €320 a month, range €280 to €360, Expected,</text>
+  <text x="132" y="762" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">at the rates on your bill. Undo in minutes.</text>
+  <rect x="560" y="725" width="88" height="32" rx="4" fill="#FFFFFF" stroke="#8A8886" stroke-width="1"/>
+  <text x="604.0" y="745.55" font-size="13" font-weight="600" fill="#242424" text-anchor="middle">Choose B</text>
+  <rect x="90" y="778" width="568" height="58" rx="4" fill="#FFFFFF" stroke="#D1D1D1" stroke-width="1"/>
+  <rect x="98" y="795" width="24" height="24" rx="12" fill="#0F6CBD"/>
+  <text x="110" y="812" font-size="13" font-weight="700" fill="#FFFFFF" text-anchor="middle">C</text>
+  <text x="132" y="797" font-size="13.5" font-weight="600" fill="#242424" text-anchor="start">Create it for each test run instead</text>
+  <text x="132" y="813" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">Saves about €940 a month, range €820 to €1,060, Expected,</text>
+  <text x="132" y="828" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">at the rates on your bill. About two days of engineering.</text>
+  <rect x="560" y="791" width="88" height="32" rx="4" fill="#FFFFFF" stroke="#8A8886" stroke-width="1"/>
+  <text x="604.0" y="811.55" font-size="13" font-weight="600" fill="#242424" text-anchor="middle">Choose C</text>
+  <text x="90" y="864" font-size="13" font-weight="700" fill="#242424" text-anchor="start">What each part means for you</text>
+  <text x="90" y="884" font-size="12.5" font-weight="400" fill="#5C5C5C" text-anchor="start">Consequences, what was tested, what would change my mind, effort, undo, what</text>
+  <text x="90" y="901" font-size="12.5" font-weight="400" fill="#5C5C5C" text-anchor="start">happens on your yes, how we will both know</text>
+  <rect x="90" y="930" width="130" height="30" rx="4" fill="#FFFFFF" stroke="#8A8886" stroke-width="1"/>
+  <text x="155.0" y="949.375" font-size="12.5" font-weight="600" fill="#242424" text-anchor="middle">Fewer like this</text>
+  <circle cx="700" cy="770" r="11" fill="#5C2E91"/>
+  <text x="700" y="774.5" font-size="12" font-weight="700" fill="#FFFFFF" text-anchor="middle">7</text>
+  <line x1="76" y1="977" x2="672" y2="977" stroke="#D1D1D1" stroke-width="1"/>
+  <text x="76" y="999" font-size="11.5" font-weight="400" fill="#5C5C5C" text-anchor="start">Why you are getting this: you confirmed on Monday that you look after rg-webshop-qa (the</text>
+  <text x="76" y="1015" font-size="11.5" font-weight="400" fill="#5C5C5C" text-anchor="start">directory lists you for 3 of its 14 resources, and you created the other 11).</text>
+  <rect x="76" y="1035" width="140" height="30" rx="4" fill="#FFFFFF" stroke="#8A8886" stroke-width="1"/>
+  <text x="146.0" y="1054.375" font-size="12.5" font-weight="600" fill="#242424" text-anchor="middle">Talk to a person</text>
+  <text x="76" y="1089" font-size="11.5" font-weight="400" fill="#5C5C5C" text-anchor="start">Written by an AI. Figures are computed by tools, not guessed by the AI. Estimates can still be wrong.</text>
+  <circle cx="700" cy="995" r="11" fill="#5C2E91"/>
+  <text x="700" y="999.5" font-size="12" font-weight="700" fill="#FFFFFF" text-anchor="middle">8</text>
+  <circle cx="781" cy="66" r="11" fill="#5C2E91"/>
+  <text x="781" y="70.5" font-size="12" font-weight="700" fill="#FFFFFF" text-anchor="middle">1</text>
+  <text x="800" y="70" font-size="13" font-weight="700" fill="#242424" text-anchor="start">Sender and AI label</text>
+  <text x="800" y="90" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">The name ends in (AI). The app marks the message</text>
+  <text x="800" y="107" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">as AI-generated; Teams then shows its own label</text>
+  <text x="800" y="124" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">and, when feedback is on, thumbs under the</text>
+  <text x="800" y="141" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">message. A machine-readable mark travels in the</text>
+  <text x="800" y="158" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">message data.</text>
+  <circle cx="781" cy="181" r="11" fill="#5C2E91"/>
+  <text x="781" y="185.5" font-size="12" font-weight="700" fill="#FFFFFF" text-anchor="middle">2</text>
+  <text x="800" y="185" font-size="13" font-weight="700" fill="#242424" text-anchor="start">Headline</text>
+  <text x="800" y="205" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">The one change I propose, as a sentence in the</text>
+  <text x="800" y="222" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">owner's words, ending in a question. An unresolved</text>
+  <text x="800" y="239" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">fact is asked first, as a Question.</text>
+  <circle cx="781" cy="262" r="11" fill="#5C2E91"/>
+  <text x="781" y="266.5" font-size="12" font-weight="700" fill="#FFFFFF" text-anchor="middle">3</text>
+  <text x="800" y="266" font-size="13" font-weight="700" fill="#242424" text-anchor="start">Value tile</text>
+  <text x="800" y="286" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">A range, never a point, with the price basis, one</text>
+  <text x="800" y="303" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">of three words (Scenario, Expected, Verified) and</text>
+  <text x="800" y="320" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">what keeping things as they are forgoes.</text>
+  <circle cx="781" cy="343" r="11" fill="#5C2E91"/>
+  <text x="781" y="347.5" font-size="12" font-weight="700" fill="#FFFFFF" text-anchor="middle">4</text>
+  <text x="800" y="347" font-size="13" font-weight="700" fill="#242424" text-anchor="start">Why, and what I checked</text>
+  <text x="800" y="367" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">Two short paragraphs: the evidence, and what I</text>
+  <text x="800" y="384" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">checked, including the strongest reason I might be</text>
+  <text x="800" y="401" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">wrong and what I did about it.</text>
+  <circle cx="781" cy="424" r="11" fill="#5C2E91"/>
+  <text x="781" y="428.5" font-size="12" font-weight="700" fill="#FFFFFF" text-anchor="middle">5</text>
+  <text x="800" y="428" font-size="13" font-weight="700" fill="#242424" text-anchor="start">Decisions</text>
+  <text x="800" y="448" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">Three buttons of equal size and weight, one tap</text>
+  <text x="800" y="465" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">each. "No, leave it as it is" closes the ask and</text>
+  <text x="800" y="482" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">nothing follows; "Not mine" hands it to cover. A</text>
+  <text x="800" y="499" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">reason can be given afterwards.</text>
+  <circle cx="781" cy="522" r="11" fill="#5C2E91"/>
+  <text x="781" y="526.5" font-size="12" font-weight="700" fill="#FFFFFF" text-anchor="middle">6</text>
+  <text x="800" y="526" font-size="13" font-weight="700" fill="#242424" text-anchor="start">Talk back</text>
+  <text x="800" y="546" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">Details opens the rest inside the card. Explain,</text>
+  <text x="800" y="563" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">Challenge and Teach each open a small input and</text>
+  <text x="800" y="580" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">start a conversation.</text>
+  <circle cx="781" cy="603" r="11" fill="#5C2E91"/>
+  <text x="781" y="607.5" font-size="12" font-weight="700" fill="#FFFFFF" text-anchor="middle">7</text>
+  <text x="800" y="607" font-size="13" font-weight="700" fill="#242424" text-anchor="start">Inside Details</text>
+  <text x="800" y="627" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">Up to two other options, each with its own button,</text>
+  <text x="800" y="644" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">range and price basis; the other seven of the ten</text>
+  <text x="800" y="661" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">parts of the Recommendation; a way to get fewer</text>
+  <text x="800" y="678" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">messages like it.</text>
+  <circle cx="781" cy="701" r="11" fill="#5C2E91"/>
+  <text x="781" y="705.5" font-size="12" font-weight="700" fill="#FFFFFF" text-anchor="middle">8</text>
+  <text x="800" y="705" font-size="13" font-weight="700" fill="#242424" text-anchor="start">Footer</text>
+  <text x="800" y="725" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">Why you are getting this, then "Talk to a person"</text>
+  <text x="800" y="742" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">(the last button, in the same place on every</text>
+  <text x="800" y="759" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">card), then the AI line and a reminder that</text>
+  <text x="800" y="776" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">estimates can be wrong.</text>
+</svg>

@@ -1,0 +1,18 @@
+{
+  "_invented": true,
+  "senderName": "Cost in Action (AI)",
+  "requestId": "r_9vK2xQ",
+  "pageUrl": "https://cost-in-action.contoso.example/ok/r_9vK2xQ",
+  "challengeExample": "For example: the job on the last Tuesday is real",
+  "teachExample": "For example: this is our disaster-recovery environment",
+  "headline": "Still open: switch off the web-shop QA environment at night and at weekends, except the last Tuesday",
+  "value": "About €690 a month",
+  "range": "Range €620 to €760",
+  "priceBasis": "At the rates on your bill",
+  "savingWord": "Expected saving",
+  "waiting": "Keeping things as they are forgoes about €23 a day, at the rates on your bill.",
+  "nextStep": "This is my only reminder. If it is still open on Tuesday 24 November, I will park it, tell you once and ask your cover to confirm who owns it. I will not say that you did not answer.",
+  "_scenario": "E1",
+  "notificationText": "Still open: switch off the web-shop QA environment at night and at weekends, except the last Tuesday",
+  "whyYouGetThis": "you confirmed on Monday that you look after rg-webshop-qa (the directory lists you for 3 of its 14 resources, and you created the other 11)."
+}

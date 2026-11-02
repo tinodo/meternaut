@@ -1,0 +1,113 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1300 1090" width="1300" height="1090" role="img" aria-labelledby="t d" font-family="Segoe UI, system-ui, -apple-system, Arial, sans-serif">
+  <title id="t">The Monday letter in an e-mail client, with its parts numbered</title>
+  <desc id="d">An invented example of the Monday letter to a FinOps lead: subject line, what was learned, what moved in the bill, decisions waiting, what the AI did, verified wins, what it got wrong, what it needs, what it costs, and the footer.</desc>
+  <rect width="1300" height="1090" fill="#F3F2F1"/>
+  <rect x="24" y="24" width="780" height="1040" rx="10" fill="#FFFFFF" stroke="#D1D1D1" stroke-width="1"/>
+  <rect x="24" y="24" width="780" height="118" rx="10" fill="#FAF9F8" stroke="#D1D1D1" stroke-width="1"/>
+  <text x="48" y="54" font-size="12.5" font-weight="400" fill="#5C5C5C" text-anchor="start">From:  Cost in Action (AI)  &lt;cost-in-action@contoso.example&gt;</text>
+  <text x="48" y="76" font-size="12.5" font-weight="400" fill="#5C5C5C" text-anchor="start">To:  Nadia (FinOps lead)</text>
+  <text x="48" y="106" font-size="16" font-weight="700" fill="#242424" text-anchor="start">Monday letter: 6 decisions waiting and one correction</text>
+  <text x="48" y="128" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start" font-style="italic">An invented example, Monday 08:00 CET, week 45</text>
+  <circle cx="808" cy="104" r="11" fill="#5C2E91"/>
+  <text x="808" y="108.5" font-size="12" font-weight="700" fill="#FFFFFF" text-anchor="middle">1</text>
+  <text x="56" y="172" font-size="14.5" font-weight="700" fill="#0F6CBD" text-anchor="start">This week I learned</text>
+  <text x="70" y="194" font-size="13" font-weight="400" fill="#242424" text-anchor="start">•  One service changed how it bills a minimum charge. The profile is updated; it rests on From</text>
+  <text x="70" y="213" font-size="13" font-weight="400" fill="#242424" text-anchor="start">Microsoft's documentation and Price confirmed, not yet on Seen on your bills.</text>
+  <text x="70" y="246" font-size="13" font-weight="400" fill="#242424" text-anchor="start">•  Two answers from owners changed my picture of the QA estate: the last Tuesday of the month is a real</text>
+  <text x="70" y="265" font-size="13" font-weight="400" fill="#242424" text-anchor="start">job.</text>
+  <circle cx="808" cy="180" r="11" fill="#5C2E91"/>
+  <text x="808" y="184.5" font-size="12" font-weight="700" fill="#FFFFFF" text-anchor="middle">2</text>
+  <text x="56" y="298" font-size="14.5" font-weight="700" fill="#0F6CBD" text-anchor="start">What moved in the bill</text>
+  <text x="70" y="320" font-size="13" font-weight="400" fill="#242424" text-anchor="start">•  €412k this four weeks, an estimate at the rates on your bills (the period is not invoiced yet), 3.1 %</text>
+  <text x="70" y="339" font-size="13" font-weight="400" fill="#242424" text-anchor="start">above the average. I can explain 83 % of the spend (up 2 points); 17 % is unallocated. The largest</text>
+  <text x="70" y="358" font-size="13" font-weight="400" fill="#242424" text-anchor="start">unexplained lines are on the report card.</text>
+  <circle cx="808" cy="306" r="11" fill="#5C2E91"/>
+  <text x="808" y="310.5" font-size="12" font-weight="700" fill="#FFFFFF" text-anchor="middle">3</text>
+  <text x="56" y="391" font-size="14.5" font-weight="700" fill="#0F6CBD" text-anchor="start">Decisions waiting</text>
+  <text x="70" y="413" font-size="13" font-weight="400" fill="#242424" text-anchor="start">•  6 Recommendations wait on 3 teams; the oldest has waited 9 days. Together about €3,100 a month,</text>
+  <text x="70" y="432" font-size="13" font-weight="400" fill="#242424" text-anchor="start">Expected, at the rates on the bills.</text>
+  <text x="70" y="465" font-size="13" font-weight="400" fill="#242424" text-anchor="start">•  Next step for the two oldest, on Thursday: I park them and ask each team's cover to confirm who owns</text>
+  <text x="70" y="484" font-size="13" font-weight="400" fill="#242424" text-anchor="start">them. I name nobody who did not answer.</text>
+  <circle cx="808" cy="399" r="11" fill="#5C2E91"/>
+  <text x="808" y="403.5" font-size="12" font-weight="700" fill="#FFFFFF" text-anchor="middle">4</text>
+  <text x="56" y="517" font-size="14.5" font-weight="700" fill="#0F6CBD" text-anchor="start">What I did</text>
+  <text x="70" y="539" font-size="13" font-weight="400" fill="#242424" text-anchor="start">•  Two changes ran under standing permissions: dev storage tiering (3 containers) and night shutdown of</text>
+  <text x="70" y="558" font-size="13" font-weight="400" fill="#242424" text-anchor="start">11 dev VMs. Nobody undid them.</text>
+  <circle cx="808" cy="525" r="11" fill="#5C2E91"/>
+  <text x="808" y="529.5" font-size="12" font-weight="700" fill="#FFFFFF" text-anchor="middle">5</text>
+  <text x="56" y="591" font-size="14.5" font-weight="700" fill="#0F6CBD" text-anchor="start">Wins, verified</text>
+  <text x="70" y="613" font-size="13" font-weight="400" fill="#242424" text-anchor="start">•  €1,840 a month. Verified saving, at the rates on your bills, measured against comparison groups, from</text>
+  <text x="70" y="632" font-size="13" font-weight="400" fill="#242424" text-anchor="start">two changes approved in October.</text>
+  <circle cx="808" cy="599" r="11" fill="#5C2E91"/>
+  <text x="808" y="603.5" font-size="12" font-weight="700" fill="#FFFFFF" text-anchor="middle">6</text>
+  <text x="56" y="665" font-size="14.5" font-weight="700" fill="#0F6CBD" text-anchor="start">What I got wrong</text>
+  <text x="70" y="687" font-size="13" font-weight="400" fill="#242424" text-anchor="start">•  One Expected saving came in €320 a month lower than predicted, at the rates on your bills: a</text>
+  <text x="70" y="706" font-size="13" font-weight="400" fill="#242424" text-anchor="start">reservation already covered the machines. I said 80 % and was right 74 % of the time this month.</text>
+  <circle cx="808" cy="673" r="11" fill="#5C2E91"/>
+  <text x="808" y="677.5" font-size="12" font-weight="700" fill="#FFFFFF" text-anchor="middle">7</text>
+  <text x="56" y="739" font-size="14.5" font-weight="700" fill="#0F6CBD" text-anchor="start">What I need from you</text>
+  <text x="70" y="761" font-size="13" font-weight="400" fill="#242424" text-anchor="start">•  Confirm who covers the orders team: two Recommendations have waited 9 days and ownership needs</text>
+  <text x="70" y="780" font-size="13" font-weight="400" fill="#242424" text-anchor="start">confirming.</text>
+  <text x="70" y="813" font-size="13" font-weight="400" fill="#242424" text-anchor="start">•  With the price sheet I could replace list prices with your rates on 14 Recommendations. Who could</text>
+  <text x="70" y="832" font-size="13" font-weight="400" fill="#242424" text-anchor="start">share it?</text>
+  <text x="70" y="865" font-size="13" font-weight="400" fill="#242424" text-anchor="start">•  Renew or let lapse the dev storage standing permission: it ends in 21 days.</text>
+  <circle cx="808" cy="747" r="11" fill="#5C2E91"/>
+  <text x="808" y="751.5" font-size="12" font-weight="700" fill="#FFFFFF" text-anchor="middle">8</text>
+  <text x="56" y="898" font-size="14.5" font-weight="700" fill="#0F6CBD" text-anchor="start">What I cost</text>
+  <text x="70" y="920" font-size="13" font-weight="400" fill="#242424" text-anchor="start">•  About €332 in cloud cost this month, an estimate until the invoice, plus 8.2 million tokens. The</text>
+  <text x="70" y="939" font-size="13" font-weight="400" fill="#242424" text-anchor="start">report card shows it next to verified savings.</text>
+  <circle cx="808" cy="906" r="11" fill="#5C2E91"/>
+  <text x="808" y="910.5" font-size="12" font-weight="700" fill="#FFFFFF" text-anchor="middle">9</text>
+  <line x1="56" y1="972" x2="772" y2="972" stroke="#D1D1D1" stroke-width="1"/>
+  <text x="56" y="996" font-size="13" font-weight="600" fill="#0F6CBD" text-anchor="start">Open the report card</text>
+  <text x="216" y="996" font-size="13" font-weight="600" fill="#0F6CBD" text-anchor="start">Talk to a person</text>
+  <text x="346" y="996" font-size="13" font-weight="600" fill="#0F6CBD" text-anchor="start">Settings</text>
+  <text x="56" y="1018" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">Written by an AI. Figures are computed by tools, not guessed by the AI. Estimates can still be wrong.</text>
+  <text x="56" y="1038" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">This letter has no buttons that change anything. Replies are read as questions, never as approvals.</text>
+  <circle cx="861" cy="66" r="11" fill="#5C2E91"/>
+  <text x="861" y="70.5" font-size="12" font-weight="700" fill="#FFFFFF" text-anchor="middle">1</text>
+  <text x="880" y="70" font-size="13" font-weight="700" fill="#242424" text-anchor="start">Subject line</text>
+  <text x="880" y="90" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">Specific and calm: counts, never amounts, never</text>
+  <text x="880" y="107" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">urgent wording.</text>
+  <circle cx="861" cy="130" r="11" fill="#5C2E91"/>
+  <text x="861" y="134.5" font-size="12" font-weight="700" fill="#FFFFFF" text-anchor="middle">2</text>
+  <text x="880" y="134" font-size="13" font-weight="700" fill="#242424" text-anchor="start">What I learned</text>
+  <text x="880" y="154" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">At most three bullets. Each says how well it is</text>
+  <text x="880" y="171" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">known: From Microsoft's documentation, Price</text>
+  <text x="880" y="188" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">confirmed, Seen on your bills.</text>
+  <circle cx="861" cy="211" r="11" fill="#5C2E91"/>
+  <text x="861" y="215.5" font-size="12" font-weight="700" fill="#FFFFFF" text-anchor="middle">3</text>
+  <text x="880" y="215" font-size="13" font-weight="700" fill="#242424" text-anchor="start">What moved in the bill</text>
+  <text x="880" y="235" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">The movement, the share I can explain, and where</text>
+  <text x="880" y="252" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">the unexplained lines are.</text>
+  <circle cx="861" cy="275" r="11" fill="#5C2E91"/>
+  <text x="861" y="279.5" font-size="12" font-weight="700" fill="#FFFFFF" text-anchor="middle">4</text>
+  <text x="880" y="279" font-size="13" font-weight="700" fill="#242424" text-anchor="start">Decisions waiting</text>
+  <text x="880" y="299" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">Counts by team and age, never names; a group under</text>
+  <text x="880" y="316" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">five people is rolled up. A parked item goes to</text>
+  <text x="880" y="333" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">the owner's cover or the custodian queue.</text>
+  <circle cx="861" cy="356" r="11" fill="#5C2E91"/>
+  <text x="861" y="360.5" font-size="12" font-weight="700" fill="#FFFFFF" text-anchor="middle">5</text>
+  <text x="880" y="360" font-size="13" font-weight="700" fill="#242424" text-anchor="start">What I did</text>
+  <text x="880" y="380" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">Everything done under a standing permission, and</text>
+  <text x="880" y="397" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">whether anyone undid it.</text>
+  <circle cx="861" cy="420" r="11" fill="#5C2E91"/>
+  <text x="861" y="424.5" font-size="12" font-weight="700" fill="#FFFFFF" text-anchor="middle">6</text>
+  <text x="880" y="424" font-size="13" font-weight="700" fill="#242424" text-anchor="start">Wins, verified</text>
+  <text x="880" y="444" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">Only verified savings are called wins. Expected</text>
+  <text x="880" y="461" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">and scenario figures live elsewhere.</text>
+  <circle cx="861" cy="484" r="11" fill="#5C2E91"/>
+  <text x="861" y="488.5" font-size="12" font-weight="700" fill="#FFFFFF" text-anchor="middle">7</text>
+  <text x="880" y="488" font-size="13" font-weight="700" fill="#242424" text-anchor="start">What I got wrong</text>
+  <text x="880" y="508" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">Lead with misses: a saving that came in lower, and</text>
+  <text x="880" y="525" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">calibration in one sentence.</text>
+  <circle cx="861" cy="548" r="11" fill="#5C2E91"/>
+  <text x="861" y="552.5" font-size="12" font-weight="700" fill="#FFFFFF" text-anchor="middle">8</text>
+  <text x="880" y="552" font-size="13" font-weight="700" fill="#242424" text-anchor="start">What I need from you</text>
+  <text x="880" y="572" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">At most three asks, including what more access</text>
+  <text x="880" y="589" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">would buy.</text>
+  <circle cx="861" cy="612" r="11" fill="#5C2E91"/>
+  <text x="861" y="616.5" font-size="12" font-weight="700" fill="#FFFFFF" text-anchor="middle">9</text>
+  <text x="880" y="616" font-size="13" font-weight="700" fill="#242424" text-anchor="start">What I cost</text>
+  <text x="880" y="636" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">The system's own cost, beside what it verified.</text>
+</svg>

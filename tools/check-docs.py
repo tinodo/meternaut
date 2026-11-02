@@ -16,10 +16,14 @@ Checks
      by the AI (AGENTS.md rule 10); the older "executed by humans" wording is rejected.
   8. State diagrams: no ';' in a transition label (Mermaid ends the description there) and no
      straight-line state diagram without a back-edge.
-  9. Live guards (every live document, ideation and design): the vocabulary of ideas that were
-     dropped (a lab, exams) and of the old names (Brief, Move), text addressed to the person who
+  9. Live guards (every live document, ideation, design and experience): the vocabulary of ideas that
+     were dropped (a lab, exams) and of the old names (Brief, Move), text addressed to the person who
      commissioned the project, and project history (versions, withdrawals) - none of it belongs in
      a document written for strangers (AGENTS.md rule 11 (c), (j), (k)).
+ 10. Card templates (docs/experience/cards/, tools/cardlint.py): Adaptive Card schema and size rules,
+     the elements and actions Teams renders, labelled inputs, the AI label and footer, the three
+     conversation verbs, a price basis and a saving word beside every money figure, one link only
+     (the approval page), no urgency wording, invented sample data (AGENTS.md rule 13).
 
 Limits (a guard is a safety net, not a substitute for judgement): AGENTS.md, CHANGELOG.md and
 docs/reviews/ describe the rules and the review record, so the pattern guards skip them; paraphrase
@@ -34,7 +38,9 @@ that the first design taught (AGENTS.md rule 11 a-d, g): write for the community
 references, no "the operator"), never invent (no "assumptions", no hedge hardened into a ban on
 Databricks or Fabric), plain words (no invented jargon), no review history, a size budget
 (README and every document, and the whole design) and no wall of text (paragraph and table-row
-length). Both scopes get the live guards. Anything under docs/design/ other than the documents
+length). The experience documents (docs/experience/*.md, AGENTS.md rule 13) get the same design
+guards with their own budget (README and every document, and the whole folder) and the card
+checks above. All scopes get the live guards. Anything under docs/design/ other than the documents
 themselves (the price snapshot) is third-party data and is not checked.
 
 Usage:  python tools/check-docs.py [--strict] [--self-test]
@@ -48,6 +54,9 @@ import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from urllib.parse import unquote
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import cardlint  # noqa: E402  (the card-template checks of the experience design)
 
 ROOT = Path(__file__).resolve().parent.parent
 DOCS = ROOT / "docs"
@@ -159,6 +168,12 @@ LIST_ITEM = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s")
 DESIGN_MAX_WORDS_README = 1800
 DESIGN_MAX_WORDS_DOC = 6000
 DESIGN_MAX_WORDS_TOTAL = 49000
+EXPERIENCE_MAX_WORDS_TOTAL = 38500
+# scope -> (the folder's README, the limit for the whole folder); both folders share the per-document limits
+BUDGETS = {
+    "design": ("docs/design/README.md", DESIGN_MAX_WORDS_TOTAL),
+    "experience": ("docs/experience/README.md", EXPERIENCE_MAX_WORDS_TOTAL),
+}
 DESIGN_MAX_PARAGRAPH_CHARS = 1100
 DESIGN_MAX_TABLE_ROW_CHARS = 800
 MERMAID_TYPES = (
@@ -504,10 +519,11 @@ def guarded_files(files):
 
 
 def scope_of(f: Path) -> str:
-    """'ideation' (default), 'design' (docs/design/*.md) or 'evidence' (docs/design/research|cost)."""
+    """'ideation' (default), 'design' (docs/design/*.md), 'experience' (docs/experience/*.md) or
+    'evidence' (anything deeper in those two folders: the price snapshot, the card templates)."""
     parts = f.resolve().relative_to(ROOT).parts
-    if len(parts) >= 3 and parts[0] == "docs" and parts[1] == "design":
-        return "design" if len(parts) == 3 else "evidence"
+    if len(parts) >= 3 and parts[0] == "docs" and parts[1] in ("design", "experience"):
+        return parts[1] if len(parts) == 3 else "evidence"
     return "ideation"
 
 
@@ -589,16 +605,18 @@ def prose_blocks(prose):
 
 
 def check_design(files, parsed, rep: Report):
-    """Vocabulary, size and wall-of-text guards for the design documents (docs/design/*.md)."""
-    total = 0
+    """Vocabulary, size and wall-of-text guards for the design (docs/design/*.md) and the
+    experience design (docs/experience/*.md); each folder has its own total."""
+    totals = {scope: 0 for scope in BUDGETS}
     for f in files:
-        if scope_of(f) != "design":
+        scope = scope_of(f)
+        if scope not in BUDGETS:
             continue
         for n, msg in design_text_problems(f.read_text(encoding="utf-8")):
-            rep.error(f, n, f"design guard: {msg}")
+            rep.error(f, n, f"{scope} guard: {msg}")
         prose = parsed[f][0]
         words = sum(len(line.split()) for _, line in prose)
-        total += words
+        totals[scope] += words
         cap = DESIGN_MAX_WORDS_README if f.name == "README.md" else DESIGN_MAX_WORDS_DOC
         if words > cap:
             rep.error(f, 1, f"size budget: {words} words, the limit is {cap} - cut, do not squeeze")
@@ -606,9 +624,9 @@ def check_design(files, parsed, rep: Report):
             limit = DESIGN_MAX_TABLE_ROW_CHARS if kind == "table row" else DESIGN_MAX_PARAGRAPH_CHARS
             if size > limit:
                 rep.warn(f, n, f"{kind} of {size} characters (limit {limit}) - split it or turn it into a table")
-    if total > DESIGN_MAX_WORDS_TOTAL:
-        rep.error(DOCS / "design" / "README.md", 1,
-                  f"size budget: the design is {total} words in total, the limit is {DESIGN_MAX_WORDS_TOTAL}")
+    for scope, (readme, limit) in BUDGETS.items():
+        if totals[scope] > limit:
+            rep.error(ROOT / readme, 1, f"size budget: the {scope} is {totals[scope]} words in total, the limit is {limit}")
 
 
 def bank_counts(text: str) -> dict:
@@ -655,6 +673,12 @@ def check_svgs(rep: Report):
 UNCHECKED_LINKS = re.compile(r"\]\[[^\]]*\]|<a\s+href=|<https?://", re.I)
 
 
+def check_cards(rep: Report):
+    """The Adaptive Card templates of the experience design (docs/experience/cards)."""
+    for path, msg in cardlint.check():
+        rep.error(path, 1, f"card guard: {msg}")
+
+
 def check_link_forms(files, parsed, rep: Report):
     for f in files:
         if scope_of(f) == "evidence":
@@ -685,6 +709,7 @@ def run(strict: bool) -> int:
     check_guards(files, rep)
     check_design(files, parsed, rep)
     check_svgs(rep)
+    check_cards(rep)
     check_bank_counts(files, rep)
     check_link_forms(files, parsed, rep)
     check_headings(files, parsed, rep)
@@ -733,6 +758,8 @@ def self_test() -> int:
     assert UNCHECKED_LINKS.search("see [text][ref] here")
     assert scope_of(ROOT / "docs" / "design" / "03-x.md") == "design"
     assert scope_of(ROOT / "docs" / "design" / "research" / "citadel.md") == "evidence"
+    assert scope_of(ROOT / "docs" / "experience" / "04-x.md") == "experience"
+    assert scope_of(ROOT / "docs" / "experience" / "cards" / "x.md") == "evidence"
     assert scope_of(ROOT / "docs" / "05-x.md") == "ideation"
     assert not any(re.search(p, "a Log Analytics workspace behind a virtual hub", re.I) for p in DESIGN_ANCHOR_PATTERNS)
     assert any(re.search(p, "a stream nobody reads", re.I) for p in DESIGN_ANCHOR_PATTERNS)
@@ -792,6 +819,7 @@ def self_test() -> int:
     assert (3, "paragraph", 1201) in blocks and (6, "paragraph", 11) in blocks
     assert any(k == "table row" and s > DESIGN_MAX_TABLE_ROW_CHARS for _, k, s in blocks)
     assert (12, "paragraph", 13) in blocks
+    assert cardlint.self_test() == 0
     print("self-test OK")
     return 0
 

@@ -1,0 +1,415 @@
+{
+  "type": "AdaptiveCard",
+  "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+  "version": "1.5",
+  "fallbackText": "Hello from Cost in Action (AI): ${headline} Open it on the page: ${pageUrl} Written by an AI.",
+  "msteams": {
+    "width": "Full"
+  },
+  "body": [
+    {
+      "type": "ColumnSet",
+      "columns": [
+        {
+          "type": "Column",
+          "width": "stretch",
+          "items": [
+            {
+              "type": "TextBlock",
+              "text": "${senderName}",
+              "wrap": true,
+              "id": "ai-label",
+              "weight": "Bolder"
+            }
+          ]
+        },
+        {
+          "type": "Column",
+          "width": "auto",
+          "items": [
+            {
+              "type": "TextBlock",
+              "text": "Hello",
+              "wrap": true,
+              "id": "kind",
+              "isSubtle": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "TextBlock",
+      "text": "${headline}",
+      "wrap": true,
+      "id": "headline",
+      "size": "Large",
+      "weight": "Bolder",
+      "style": "heading"
+    },
+    {
+      "type": "TextBlock",
+      "text": "${intro}",
+      "wrap": true,
+      "id": "intro"
+    },
+    {
+      "type": "TextBlock",
+      "text": "${whatIDo}",
+      "wrap": true,
+      "id": "what-i-do"
+    },
+    {
+      "type": "TextBlock",
+      "text": "${whatIDoNot}",
+      "wrap": true,
+      "id": "what-i-do-not"
+    },
+    {
+      "type": "TextBlock",
+      "text": "${whatIKeep}",
+      "wrap": true,
+      "id": "what-i-keep"
+    },
+    {
+      "type": "TextBlock",
+      "text": "${control}",
+      "wrap": true,
+      "id": "control",
+      "isSubtle": true
+    },
+    {
+      "type": "ActionSet",
+      "actions": [
+        {
+          "type": "Action.Execute",
+          "title": "Yes, I look after these",
+          "verb": "me",
+          "data": {
+            "requestId": "${requestId}"
+          },
+          "associatedInputs": "none",
+          "fallback": {
+            "type": "Action.OpenUrl",
+            "title": "Open on the page",
+            "url": "${pageUrl}"
+          }
+        },
+        {
+          "type": "Action.Execute",
+          "title": "Not mine",
+          "verb": "not-mine",
+          "data": {
+            "requestId": "${requestId}"
+          },
+          "associatedInputs": "none",
+          "fallback": {
+            "type": "Action.OpenUrl",
+            "title": "Open on the page",
+            "url": "${pageUrl}"
+          }
+        }
+      ],
+      "id": "first-actions"
+    },
+    {
+      "type": "ActionSet",
+      "actions": [
+        {
+          "type": "Action.ShowCard",
+          "title": "Pause messages",
+          "card": {
+            "type": "AdaptiveCard",
+            "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+            "version": "1.5",
+            "body": [
+              {
+                "type": "Input.ChoiceSet",
+                "id": "pause-days",
+                "label": "For how long?",
+                "style": "compact",
+                "choices": [
+                  {
+                    "title": "A week",
+                    "value": "7"
+                  },
+                  {
+                    "title": "Two weeks",
+                    "value": "14"
+                  },
+                  {
+                    "title": "A month",
+                    "value": "30"
+                  }
+                ],
+                "isRequired": true,
+                "errorMessage": "Pick one",
+                "value": "14"
+              }
+            ],
+            "actions": [
+              {
+                "type": "Action.Execute",
+                "title": "Pause messages",
+                "verb": "pause",
+                "data": {
+                  "requestId": "${requestId}"
+                },
+                "associatedInputs": "auto",
+                "fallback": {
+                  "type": "Action.OpenUrl",
+                  "title": "Open on the page",
+                  "url": "${pageUrl}"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "Action.ShowCard",
+          "title": "My hours and language",
+          "card": {
+            "type": "AdaptiveCard",
+            "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+            "version": "1.5",
+            "body": [
+              {
+                "type": "Input.ChoiceSet",
+                "id": "days",
+                "label": "Which days do you work?",
+                "style": "expanded",
+                "choices": [
+                  {
+                    "title": "Monday",
+                    "value": "mon"
+                  },
+                  {
+                    "title": "Tuesday",
+                    "value": "tue"
+                  },
+                  {
+                    "title": "Wednesday",
+                    "value": "wed"
+                  },
+                  {
+                    "title": "Thursday",
+                    "value": "thu"
+                  },
+                  {
+                    "title": "Friday",
+                    "value": "fri"
+                  },
+                  {
+                    "title": "Saturday",
+                    "value": "sat"
+                  },
+                  {
+                    "title": "Sunday",
+                    "value": "sun"
+                  }
+                ],
+                "isMultiSelect": true,
+                "isRequired": true,
+                "errorMessage": "Pick at least one",
+                "value": "mon,tue,wed,thu,fri"
+              },
+              {
+                "type": "Input.ChoiceSet",
+                "id": "time-zone",
+                "label": "Which time zone are you in?",
+                "style": "compact",
+                "isRequired": true,
+                "errorMessage": "Pick one",
+                "value": "${defaults.timeZone}",
+                "choices": [
+                  {
+                    "$data": "${timeZones}",
+                    "title": "${label}",
+                    "value": "${value}"
+                  }
+                ]
+              },
+              {
+                "type": "Input.ChoiceSet",
+                "id": "desk-day",
+                "label": "Which day suits a weekly summary?",
+                "style": "compact",
+                "choices": [
+                  {
+                    "title": "Monday",
+                    "value": "mon"
+                  },
+                  {
+                    "title": "Tuesday",
+                    "value": "tue"
+                  },
+                  {
+                    "title": "Wednesday",
+                    "value": "wed"
+                  },
+                  {
+                    "title": "Thursday",
+                    "value": "thu"
+                  },
+                  {
+                    "title": "Friday",
+                    "value": "fri"
+                  },
+                  {
+                    "title": "Saturday",
+                    "value": "sat"
+                  },
+                  {
+                    "title": "Sunday",
+                    "value": "sun"
+                  }
+                ],
+                "isRequired": true,
+                "errorMessage": "Pick one",
+                "value": "tue"
+              },
+              {
+                "type": "Input.ChoiceSet",
+                "id": "quiet",
+                "label": "When should I stay quiet?",
+                "style": "compact",
+                "choices": [
+                  {
+                    "title": "Evenings and days I do not work",
+                    "value": "default"
+                  },
+                  {
+                    "title": "I will set it on the page",
+                    "value": "page"
+                  }
+                ],
+                "isRequired": true,
+                "errorMessage": "Pick one",
+                "value": "default"
+              },
+              {
+                "type": "Input.ChoiceSet",
+                "id": "language",
+                "label": "Which language do you prefer?",
+                "style": "compact",
+                "isRequired": true,
+                "errorMessage": "Pick one",
+                "value": "${defaults.language}",
+                "choices": [
+                  {
+                    "$data": "${languages}",
+                    "title": "${label}",
+                    "value": "${value}"
+                  }
+                ]
+              }
+            ],
+            "actions": [
+              {
+                "type": "Action.Execute",
+                "title": "Save",
+                "verb": "save-prefs",
+                "data": {
+                  "requestId": "${requestId}"
+                },
+                "associatedInputs": "auto",
+                "fallback": {
+                  "type": "Action.OpenUrl",
+                  "title": "Open on the page",
+                  "url": "${pageUrl}"
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "id": "first-settings"
+    },
+    {
+      "type": "ActionSet",
+      "actions": [
+        {
+          "type": "Action.ShowCard",
+          "title": "Explain",
+          "card": {
+            "type": "AdaptiveCard",
+            "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+            "version": "1.5",
+            "body": [
+              {
+                "type": "Input.ChoiceSet",
+                "id": "level",
+                "label": "How should I explain it?",
+                "style": "expanded",
+                "choices": [
+                  {
+                    "title": "In simple words",
+                    "value": "simple"
+                  },
+                  {
+                    "title": "With the technical detail",
+                    "value": "technical"
+                  },
+                  {
+                    "title": "In financial terms",
+                    "value": "finance"
+                  }
+                ],
+                "isRequired": true,
+                "errorMessage": "Pick one",
+                "value": "simple"
+              }
+            ],
+            "actions": [
+              {
+                "type": "Action.Execute",
+                "title": "Explain",
+                "verb": "explain",
+                "data": {
+                  "requestId": "${requestId}"
+                },
+                "associatedInputs": "auto",
+                "fallback": {
+                  "type": "Action.OpenUrl",
+                  "title": "Open on the page",
+                  "url": "${pageUrl}"
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "id": "conversation"
+    },
+    {
+      "type": "ActionSet",
+      "actions": [
+        {
+          "type": "Action.Execute",
+          "title": "Talk to a person",
+          "verb": "human",
+          "data": {
+            "requestId": "${requestId}"
+          },
+          "associatedInputs": "none",
+          "fallback": {
+            "type": "Action.OpenUrl",
+            "title": "Open on the page",
+            "url": "${pageUrl}"
+          }
+        }
+      ],
+      "id": "talk-to-a-person"
+    },
+    {
+      "type": "TextBlock",
+      "text": "Written by an AI. Figures are computed by tools, not guessed by the AI. Estimates can still be wrong.",
+      "wrap": true,
+      "id": "ai-footer",
+      "isSubtle": true,
+      "size": "Small",
+      "separator": true,
+      "spacing": "Medium"
+    }
+  ]
+}

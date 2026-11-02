@@ -198,7 +198,7 @@ If you cannot buy this, one line on why is enough: I will ask the next person.
 
 ### The letters — what I learned, what I did
 
-Three letters, each *short and specific*: **the Monday letter** (what I learned this week — see the [north star](01-north-star.md)), **the weekly desk** (the person's own decisions) and **the monthly letter** to the FinOps lead and Finance (the Actions of a month, in [recommend, act, verify](05-recommend-act-verify.md)). Subject lines are specific and calm: *"2 decisions and 1 question, about €215 a month"* — never *"URGENT: action required"*.
+Three letters, each *short and specific*: **the Monday letter** (what I learned this week — see the [north star](01-north-star.md)), **the weekly desk** (the person's own decisions) and **the monthly letter** to the FinOps lead and Finance (the Actions of a month, in [recommend, act, verify](05-recommend-act-verify.md)). Subject lines are specific and calm and carry no figure, because a subject shows on lock screens: *"2 decisions and 1 question"* — never *"URGENT: action required"*.
 
 ```
 (an invented example)

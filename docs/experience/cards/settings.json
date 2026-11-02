@@ -1,0 +1,305 @@
+{
+  "type": "AdaptiveCard",
+  "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+  "version": "1.5",
+  "fallbackText": "Your settings: ${headline} Open it on the page: ${pageUrl} Written by an AI.",
+  "msteams": {
+    "width": "Full"
+  },
+  "body": [
+    {
+      "type": "ColumnSet",
+      "columns": [
+        {
+          "type": "Column",
+          "width": "stretch",
+          "items": [
+            {
+              "type": "TextBlock",
+              "text": "${senderName}",
+              "wrap": true,
+              "id": "ai-label",
+              "weight": "Bolder"
+            }
+          ]
+        },
+        {
+          "type": "Column",
+          "width": "auto",
+          "items": [
+            {
+              "type": "TextBlock",
+              "text": "Settings",
+              "wrap": true,
+              "id": "kind",
+              "isSubtle": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "TextBlock",
+      "text": "${headline}",
+      "wrap": true,
+      "id": "headline",
+      "size": "Large",
+      "weight": "Bolder",
+      "style": "heading"
+    },
+    {
+      "type": "Input.ChoiceSet",
+      "id": "channel",
+      "label": "Where should I write to you?",
+      "style": "compact",
+      "choices": [
+        {
+          "title": "In Teams",
+          "value": "teams"
+        },
+        {
+          "title": "By e-mail",
+          "value": "email"
+        },
+        {
+          "title": "Only in the weekly desk",
+          "value": "digest"
+        }
+      ],
+      "isRequired": true,
+      "errorMessage": "Pick one",
+      "value": "${prefs.channel}"
+    },
+    {
+      "type": "Input.ChoiceSet",
+      "id": "language",
+      "label": "Which language do you prefer?",
+      "style": "compact",
+      "isRequired": true,
+      "errorMessage": "Pick one",
+      "value": "${prefs.language}",
+      "choices": [
+        {
+          "$data": "${languages}",
+          "title": "${label}",
+          "value": "${value}"
+        }
+      ]
+    },
+    {
+      "type": "Input.ChoiceSet",
+      "id": "days",
+      "label": "Which days do you work?",
+      "style": "expanded",
+      "choices": [
+        {
+          "title": "Monday",
+          "value": "mon"
+        },
+        {
+          "title": "Tuesday",
+          "value": "tue"
+        },
+        {
+          "title": "Wednesday",
+          "value": "wed"
+        },
+        {
+          "title": "Thursday",
+          "value": "thu"
+        },
+        {
+          "title": "Friday",
+          "value": "fri"
+        },
+        {
+          "title": "Saturday",
+          "value": "sat"
+        },
+        {
+          "title": "Sunday",
+          "value": "sun"
+        }
+      ],
+      "isMultiSelect": true,
+      "isRequired": true,
+      "errorMessage": "Pick at least one",
+      "value": "${prefs.days}"
+    },
+    {
+      "type": "Input.ChoiceSet",
+      "id": "time-zone",
+      "label": "Which time zone are you in?",
+      "style": "compact",
+      "isRequired": true,
+      "errorMessage": "Pick one",
+      "value": "${prefs.timeZone}",
+      "choices": [
+        {
+          "$data": "${timeZones}",
+          "title": "${label}",
+          "value": "${value}"
+        }
+      ]
+    },
+    {
+      "type": "Input.ChoiceSet",
+      "id": "budget",
+      "label": "How many new messages a week are fine?",
+      "style": "compact",
+      "isRequired": true,
+      "errorMessage": "Pick one",
+      "value": "${prefs.budget}",
+      "choices": [
+        {
+          "$data": "${budgetChoices}",
+          "title": "${label}",
+          "value": "${value}"
+        }
+      ]
+    },
+    {
+      "type": "Input.ChoiceSet",
+      "id": "desk-day",
+      "label": "Which day suits a weekly summary?",
+      "style": "compact",
+      "choices": [
+        {
+          "title": "Monday",
+          "value": "mon"
+        },
+        {
+          "title": "Tuesday",
+          "value": "tue"
+        },
+        {
+          "title": "Wednesday",
+          "value": "wed"
+        },
+        {
+          "title": "Thursday",
+          "value": "thu"
+        },
+        {
+          "title": "Friday",
+          "value": "fri"
+        },
+        {
+          "title": "Saturday",
+          "value": "sat"
+        },
+        {
+          "title": "Sunday",
+          "value": "sun"
+        }
+      ],
+      "isRequired": true,
+      "errorMessage": "Pick one",
+      "value": "${prefs.deskDay}"
+    },
+    {
+      "type": "Input.ChoiceSet",
+      "id": "quiet",
+      "label": "When should I stay quiet?",
+      "style": "compact",
+      "choices": [
+        {
+          "title": "Evenings and days I do not work",
+          "value": "default"
+        },
+        {
+          "title": "I will set it on the page",
+          "value": "page"
+        }
+      ],
+      "isRequired": true,
+      "errorMessage": "Pick one",
+      "value": "${prefs.quiet}"
+    },
+    {
+      "type": "ActionSet",
+      "actions": [
+        {
+          "type": "Action.Execute",
+          "title": "Save",
+          "verb": "save-prefs",
+          "data": {
+            "requestId": "${requestId}"
+          },
+          "associatedInputs": "auto",
+          "fallback": {
+            "type": "Action.OpenUrl",
+            "title": "Open on the page",
+            "url": "${pageUrl}"
+          }
+        },
+        {
+          "type": "Action.OpenUrl",
+          "title": "More settings",
+          "url": "${pageUrl}"
+        }
+      ],
+      "id": "settings-actions"
+    },
+    {
+      "type": "ActionSet",
+      "actions": [
+        {
+          "type": "Action.Execute",
+          "title": "Explain",
+          "verb": "explain",
+          "data": {
+            "requestId": "${requestId}"
+          },
+          "associatedInputs": "none",
+          "fallback": {
+            "type": "Action.OpenUrl",
+            "title": "Open on the page",
+            "url": "${pageUrl}"
+          }
+        }
+      ],
+      "id": "conversation"
+    },
+    {
+      "type": "TextBlock",
+      "text": "Why you are getting this: ${whyYouGetThis}",
+      "wrap": true,
+      "id": "why-you-get-this",
+      "isSubtle": true,
+      "size": "Small",
+      "separator": true,
+      "spacing": "Medium"
+    },
+    {
+      "type": "ActionSet",
+      "actions": [
+        {
+          "type": "Action.Execute",
+          "title": "Talk to a person",
+          "verb": "human",
+          "data": {
+            "requestId": "${requestId}"
+          },
+          "associatedInputs": "none",
+          "fallback": {
+            "type": "Action.OpenUrl",
+            "title": "Open on the page",
+            "url": "${pageUrl}"
+          }
+        }
+      ],
+      "id": "talk-to-a-person"
+    },
+    {
+      "type": "TextBlock",
+      "text": "Written by an AI. Figures are computed by tools, not guessed by the AI. Estimates can still be wrong.",
+      "wrap": true,
+      "id": "ai-footer",
+      "isSubtle": true,
+      "size": "Small",
+      "separator": false,
+      "spacing": "Medium"
+    }
+  ]
+}

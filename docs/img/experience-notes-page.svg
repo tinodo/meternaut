@@ -1,0 +1,117 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1340 960" width="1340" height="960" role="img" aria-labelledby="t d" font-family="Segoe UI, system-ui, -apple-system, Arial, sans-serif">
+  <title id="t">The page that lists what the system knows about your resources</title>
+  <desc id="d">An invented example of the notes page: a navigation list, a heading, filter chips, three notes with scope, source, expiry and use and edit, expire and delete buttons, a do-not-touch mark that only a person can clear, and a box to teach something new.</desc>
+  <rect width="1340" height="960" fill="#F3F2F1"/>
+  <rect x="24" y="24" width="860" height="910" rx="10" fill="#FFFFFF" stroke="#D1D1D1" stroke-width="1"/>
+  <rect x="24" y="24" width="860" height="44" rx="10" fill="#EDEBE9" stroke="#D1D1D1" stroke-width="1"/>
+  <rect x="36" y="33" width="836" height="26" rx="13" fill="#FFFFFF" stroke="#D1D1D1" stroke-width="1"/>
+  <text x="54" y="51" font-size="12.5" font-weight="400" fill="#5C5C5C" text-anchor="start">https://cost-in-action.contoso.example/me/notes</text>
+  <rect x="48" y="100" width="172" height="200" rx="6" fill="#FAFAFA" stroke="#D1D1D1" stroke-width="1"/>
+  <text x="66" y="126" font-size="12.5" font-weight="400" fill="#242424" text-anchor="start">My decisions</text>
+  <rect x="54" y="154" width="160" height="46" rx="4" fill="#EBF3FC"/>
+  <rect x="54" y="154" width="4" height="46" rx="2" fill="#0F6CBD"/>
+  <text x="66" y="172" font-size="12.5" font-weight="700" fill="#0F6CBD" text-anchor="start">What I know about</text>
+  <text x="66" y="188" font-size="12.5" font-weight="700" fill="#0F6CBD" text-anchor="start">your resources</text>
+  <text x="66" y="232" font-size="12.5" font-weight="400" fill="#242424" text-anchor="start">What I did here</text>
+  <text x="66" y="278" font-size="12.5" font-weight="400" fill="#242424" text-anchor="start">Settings</text>
+  <circle cx="134" cy="314" r="11" fill="#5C2E91"/>
+  <text x="134" y="318.5" font-size="12" font-weight="700" fill="#FFFFFF" text-anchor="middle">1</text>
+  <text x="236" y="118" font-size="20" font-weight="700" fill="#242424" text-anchor="start">What I know about your resources</text>
+  <text x="236" y="142" font-size="13" font-weight="400" fill="#5C5C5C" text-anchor="start">Notes you taught me, and notes I made from your answers. Each one has a scope</text>
+  <text x="236" y="160" font-size="13" font-weight="400" fill="#5C5C5C" text-anchor="start">and an expiry. You can change or remove any of them.</text>
+  <rect x="236" y="192" width="98" height="22" rx="11" fill="#FFFFFF" stroke="#8A8886" stroke-width="1"/>
+  <text x="245" y="205" font-size="12" font-weight="600" fill="#242424" text-anchor="start">Your notes ▾</text>
+  <rect x="342" y="192" width="98" height="22" rx="11" fill="#FFFFFF" stroke="#8A8886" stroke-width="1"/>
+  <text x="351" y="205" font-size="12" font-weight="600" fill="#242424" text-anchor="start">Scope: all ▾</text>
+  <rect x="448" y="192" width="105" height="22" rx="11" fill="#FFFFFF" stroke="#8A8886" stroke-width="1"/>
+  <text x="457" y="205" font-size="12" font-weight="600" fill="#242424" text-anchor="start">Expiring soon</text>
+  <circle cx="888" cy="120" r="11" fill="#5C2E91"/>
+  <text x="888" y="124.5" font-size="12" font-weight="700" fill="#FFFFFF" text-anchor="middle">2</text>
+  <rect x="236" y="236" width="624" height="132" rx="6" fill="#FFFFFF" stroke="#D1D1D1" stroke-width="1"/>
+  <text x="252" y="262" font-size="13.5" font-weight="700" fill="#242424" text-anchor="start">“That is our disaster-recovery environment.”</text>
+  <rect x="739" y="246" width="105" height="22" rx="11" fill="#EBF3FC" stroke="#9FC7EE" stroke-width="1"/>
+  <text x="748" y="259" font-size="12" font-weight="600" fill="#0F6CBD" text-anchor="start">this resource</text>
+  <text x="252" y="284" font-size="12.5" font-weight="400" fill="#242424" text-anchor="start">I understood: rg-orders-dr is a standby. I will not suggest shutting it</text>
+  <text x="252" y="301" font-size="12.5" font-weight="400" fill="#242424" text-anchor="start">down or resizing it.</text>
+  <text x="252" y="348" font-size="11.5" font-weight="400" fill="#5C5C5C" text-anchor="start">You taught me on 12 Oct, expires 12 Jan, used 3 times</text>
+  <rect x="768" y="328" width="76" height="28" rx="4" fill="#FFFFFF" stroke="#8A8886" stroke-width="1"/>
+  <text x="806.0" y="346.2" font-size="12" font-weight="600" fill="#242424" text-anchor="middle">Delete</text>
+  <rect x="654" y="328" width="108" height="28" rx="4" fill="#FFFFFF" stroke="#8A8886" stroke-width="1"/>
+  <text x="708.0" y="346.2" font-size="12" font-weight="600" fill="#242424" text-anchor="middle">Expire now</text>
+  <rect x="588" y="328" width="60" height="28" rx="4" fill="#FFFFFF" stroke="#8A8886" stroke-width="1"/>
+  <text x="618.0" y="346.2" font-size="12" font-weight="600" fill="#242424" text-anchor="middle">Edit</text>
+  <rect x="236" y="382" width="624" height="132" rx="6" fill="#FFFFFF" stroke="#D1D1D1" stroke-width="1"/>
+  <text x="252" y="408" font-size="13.5" font-weight="700" fill="#242424" text-anchor="start">“The QA environment runs a month-end regression.”</text>
+  <rect x="739" y="392" width="105" height="22" rx="11" fill="#EBF3FC" stroke="#9FC7EE" stroke-width="1"/>
+  <text x="748" y="405" font-size="12" font-weight="600" fill="#0F6CBD" text-anchor="start">rg-webshop-qa</text>
+  <text x="252" y="430" font-size="12.5" font-weight="400" fill="#242424" text-anchor="start">I understood: activity at 02:10 to 02:50 on the last Tuesday of the month</text>
+  <text x="252" y="447" font-size="12.5" font-weight="400" fill="#242424" text-anchor="start">is expected.</text>
+  <text x="252" y="494" font-size="11.5" font-weight="400" fill="#5C5C5C" text-anchor="start">You taught me on 3 Sep, expires 3 Dec, used once</text>
+  <rect x="768" y="474" width="76" height="28" rx="4" fill="#FFFFFF" stroke="#8A8886" stroke-width="1"/>
+  <text x="806.0" y="492.2" font-size="12" font-weight="600" fill="#242424" text-anchor="middle">Delete</text>
+  <rect x="654" y="474" width="108" height="28" rx="4" fill="#FFFFFF" stroke="#8A8886" stroke-width="1"/>
+  <text x="708.0" y="492.2" font-size="12" font-weight="600" fill="#242424" text-anchor="middle">Expire now</text>
+  <rect x="588" y="474" width="60" height="28" rx="4" fill="#FFFFFF" stroke="#8A8886" stroke-width="1"/>
+  <text x="618.0" y="492.2" font-size="12" font-weight="600" fill="#242424" text-anchor="middle">Edit</text>
+  <rect x="236" y="528" width="624" height="132" rx="6" fill="#FFFFFF" stroke="#D1D1D1" stroke-width="1"/>
+  <text x="252" y="554" font-size="13.5" font-weight="700" fill="#242424" text-anchor="start">“Do not propose changes to anything tagged legal.”</text>
+  <rect x="753" y="538" width="91" height="22" rx="11" fill="#EBF3FC" stroke="#9FC7EE" stroke-width="1"/>
+  <text x="762" y="551" font-size="12" font-weight="600" fill="#0F6CBD" text-anchor="start">all you own</text>
+  <text x="252" y="576" font-size="12.5" font-weight="400" fill="#242424" text-anchor="start">I understood: I will not propose changes to resources tagged legal. Other</text>
+  <text x="252" y="593" font-size="12.5" font-weight="400" fill="#242424" text-anchor="start">tags are only hints, so I ask before treating one as a rule.</text>
+  <text x="252" y="640" font-size="11.5" font-weight="400" fill="#5C5C5C" text-anchor="start">You taught me on 30 Sep, expires 30 Mar, used twice</text>
+  <rect x="768" y="620" width="76" height="28" rx="4" fill="#FFFFFF" stroke="#8A8886" stroke-width="1"/>
+  <text x="806.0" y="638.2" font-size="12" font-weight="600" fill="#242424" text-anchor="middle">Delete</text>
+  <rect x="654" y="620" width="108" height="28" rx="4" fill="#FFFFFF" stroke="#8A8886" stroke-width="1"/>
+  <text x="708.0" y="638.2" font-size="12" font-weight="600" fill="#242424" text-anchor="middle">Expire now</text>
+  <rect x="588" y="620" width="60" height="28" rx="4" fill="#FFFFFF" stroke="#8A8886" stroke-width="1"/>
+  <text x="618.0" y="638.2" font-size="12" font-weight="600" fill="#242424" text-anchor="middle">Edit</text>
+  <circle cx="888" cy="290" r="11" fill="#5C2E91"/>
+  <text x="888" y="294.5" font-size="12" font-weight="700" fill="#FFFFFF" text-anchor="middle">3</text>
+  <rect x="236" y="674" width="624" height="96" rx="6" fill="#FFF4CE" stroke="#E3C36A" stroke-width="1"/>
+  <rect x="236" y="674" width="5" height="96" rx="2" fill="#7A5200"/>
+  <text x="256" y="702" font-size="13.5" font-weight="700" fill="#7A5200" text-anchor="start">Do not touch: rg-orders-dr</text>
+  <text x="256" y="724" font-size="12.5" font-weight="400" fill="#242424" text-anchor="start">A person set this mark. Only a person can clear it, and the system never clears</text>
+  <text x="256" y="741" font-size="12.5" font-weight="400" fill="#242424" text-anchor="start">it. It has no expiry.</text>
+  <rect x="724" y="732" width="120" height="28" rx="4" fill="#FFFFFF" stroke="#8A8886" stroke-width="1"/>
+  <text x="784.0" y="750.2" font-size="12" font-weight="600" fill="#242424" text-anchor="middle">Clear the mark</text>
+  <circle cx="888" cy="718" r="11" fill="#5C2E91"/>
+  <text x="888" y="722.5" font-size="12" font-weight="700" fill="#FFFFFF" text-anchor="middle">4</text>
+  <rect x="236" y="786" width="624" height="100" rx="6" fill="#FAFAFA" stroke="#D1D1D1" stroke-width="1"/>
+  <text x="252" y="812" font-size="13.5" font-weight="700" fill="#242424" text-anchor="start">Teach me something</text>
+  <rect x="252" y="824" width="472" height="46" rx="4" fill="#FFFFFF" stroke="#8A8886" stroke-width="1"/>
+  <text x="264" y="852" font-size="12.5" font-weight="400" fill="#5C5C5C" text-anchor="start" font-style="italic">Write it in your own words. I will read it back before I keep it.</text>
+  <rect x="736" y="830" width="108" height="34" rx="4" fill="#0F6CBD" stroke="#0F6CBD" stroke-width="1"/>
+  <text x="790.0" y="851.375" font-size="12.5" font-weight="600" fill="#FFFFFF" text-anchor="middle">Add a note</text>
+  <circle cx="888" cy="836" r="11" fill="#5C2E91"/>
+  <text x="888" y="840.5" font-size="12" font-weight="700" fill="#FFFFFF" text-anchor="middle">5</text>
+  <circle cx="941" cy="66" r="11" fill="#5C2E91"/>
+  <text x="941" y="70.5" font-size="12" font-weight="700" fill="#FFFFFF" text-anchor="middle">1</text>
+  <text x="960" y="70" font-size="13" font-weight="700" fill="#242424" text-anchor="start">Where this page sits</text>
+  <text x="960" y="90" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">Four pages for the owner: decisions, what I</text>
+  <text x="960" y="107" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">know, what I did, settings.</text>
+  <circle cx="941" cy="130" r="11" fill="#5C2E91"/>
+  <text x="941" y="134.5" font-size="12" font-weight="700" fill="#FFFFFF" text-anchor="middle">2</text>
+  <text x="960" y="134" font-size="13" font-weight="700" fill="#242424" text-anchor="start">Why it exists</text>
+  <text x="960" y="154" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">A person can see everything the system has kept</text>
+  <text x="960" y="171" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">about their resources, and change or remove it.</text>
+  <circle cx="941" cy="194" r="11" fill="#5C2E91"/>
+  <text x="941" y="198.5" font-size="12" font-weight="700" fill="#FFFFFF" text-anchor="middle">3</text>
+  <text x="960" y="198" font-size="13" font-weight="700" fill="#242424" text-anchor="start">A note</text>
+  <text x="960" y="218" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">The owner's words, the read-back, a scope no</text>
+  <text x="960" y="235" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">wider than what its author owns, a source and</text>
+  <text x="960" y="252" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">date, an expiry and how often it was used. A</text>
+  <text x="960" y="269" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">wider scope is a request to the person who owns</text>
+  <text x="960" y="286" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">it.</text>
+  <circle cx="941" cy="309" r="11" fill="#5C2E91"/>
+  <text x="941" y="313.5" font-size="12" font-weight="700" fill="#FFFFFF" text-anchor="middle">4</text>
+  <text x="960" y="313" font-size="13" font-weight="700" fill="#242424" text-anchor="start">Do not touch</text>
+  <text x="960" y="333" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">Only a person can set or clear it. It stops</text>
+  <text x="960" y="350" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">Recommendations and standing permissions for</text>
+  <text x="960" y="367" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">that resource.</text>
+  <circle cx="941" cy="390" r="11" fill="#5C2E91"/>
+  <text x="941" y="394.5" font-size="12" font-weight="700" fill="#FFFFFF" text-anchor="middle">5</text>
+  <text x="960" y="394" font-size="13" font-weight="700" fill="#242424" text-anchor="start">Teach</text>
+  <text x="960" y="414" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">Free text is read back and confirmed before it</text>
+  <text x="960" y="431" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">is kept. It never changes a standing permission.</text>
+</svg>

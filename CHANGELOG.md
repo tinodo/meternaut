@@ -1,6 +1,24 @@
 # Changelog
 
-All notable changes, newest first. Versions are git tags: `ideation-vN` for the ideation (`docs/01` to `docs/10` and the research) and `design-vN` for the design (`docs/design/`); `design-v1` was withdrawn. The previous editions stay available at their tags, and the earliest are archived under [`docs/_archive/`](docs/_archive/), which is never edited.
+All notable changes, newest first. Versions are git tags: `ideation-vN` for the ideation (`docs/01` to `docs/10` and the research), `design-vN` for the design (`docs/design/`; `design-v1` was withdrawn) and `experience-vN` for the experience design (`docs/experience/`). The previous editions stay available at their tags, and the earliest are archived under [`docs/_archive/`](docs/_archive/), which is never edited.
+
+## experience-v1 — 2026-11-02 (tag `experience-v1`)
+
+**Why.** The idea says why an AI should ask people to decide, and the design says how the system works; neither says what a person sees, receives and decides. This edition designs that, on top of `design-v4`: what each person gets, in which channel and in what words, and how the system spends and protects people's attention.
+
+**What.**
+
+- **[`docs/experience/`](docs/experience/README.md)**: an index and fifteen documents. The people and what changes with their access to the bill; the journeys of an owner and of an organisation; the anatomy of a message and the seventeen Teams cards; letters and requests to partners; the web pages and the approval page; reports and dashboards; the attention budget and trust; reviewers and contributors; voice and meetings; access, language and inclusion; testing the experience; a register of the Microsoft features relied on (with their status and fallbacks); the decisions with their alternatives; and the asks of the technical design.
+- **Seventeen Adaptive Card templates** in [`docs/experience/cards/`](docs/experience/cards/manifest.json) with invented sample data, and a manifest that is the action contract: for every verb its inputs, whether it carries the plan code and what a tap returns, and for all verbs who may tap, what a repeat does and when a verb is refused. Reference renderings of every card (two also at 360 px) and six wireframes in `docs/img/`.
+- **Tools.** [`tools/cardlint.py`](tools/cardlint.py) checks the templates against the experience rules and has its own self-test; [`tools/render-cards`](tools/render-cards/validate-cards.cjs) runs every template through Microsoft's own Adaptive Cards libraries at desktop and phone width; [`tools/check-docs.py`](tools/check-docs.py) guards the folder (vocabulary, size, links, diagrams) and runs the card lint.
+- **Pointers and rules.** The root and design READMEs link the folder; the subject line of ideation 06 was corrected; [AGENTS.md](AGENTS.md) rule 13 records what the work taught.
+- **Size budget.** The experience folder is limited to 38,500 words in all (README 1,800, any document 6,000), enforced by `check-docs.py`, so that each document stays short enough to read.
+
+**How it was reviewed.** Four reviewers on different model families challenged the decisions before any document was written. Eight cold readers on eight models then read the finished folder, each with a different lens, and filed 126 findings (24 blockers). Each was checked against the files, and claims about Microsoft products were read on Learn first: one reviewer claim, that Teams offers an agent no read receipts, was wrong; two statements that Learn does not support were removed or hedged. Four closure checkers on other models re-read every finding against the fixed text: 89 closed, 2 closed by deleting the sentence, 4 rejected rightly and kept, 30 closed only in part and 1 open, plus 25 new defects (20 distinct) that the fixes had left or caused. All were fixed. Two final checkers on two more models then checked the 56 part-closed or new items again (49 fixed, 7 fixed differently and soundly, none left) and found one more defect, in the savings-plan scope example, which was fixed ([the record](docs/reviews/README.md)).
+
+**Not adopted.** One primary ask in the Monday letter; `isRequired` on the optional text boxes; an `Action.Submit` fallback; an SDK example for each card; a Result card where costs cannot be read.
+
+**Not claimed.** Nothing is built. The client matrix (how each Teams client wraps buttons, opens links and labels an AI card message, and right-to-left languages) has not been run, and the renderings are reference renderings of invented data, not Teams' own.
 
 ## design-v4 — 2026-11-01 (tag `design-v4`)
 

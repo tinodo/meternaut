@@ -1,0 +1,492 @@
+{
+  "type": "AdaptiveCard",
+  "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+  "version": "1.5",
+  "fallbackText": "Recommendation from Cost in Action (AI): ${headline} Open it on the page: ${pageUrl} Written by an AI.",
+  "msteams": {
+    "width": "Full"
+  },
+  "body": [
+    {
+      "type": "ColumnSet",
+      "columns": [
+        {
+          "type": "Column",
+          "width": "stretch",
+          "items": [
+            {
+              "type": "TextBlock",
+              "text": "${senderName}",
+              "wrap": true,
+              "id": "ai-label",
+              "weight": "Bolder"
+            }
+          ]
+        },
+        {
+          "type": "Column",
+          "width": "auto",
+          "items": [
+            {
+              "type": "TextBlock",
+              "text": "Recommendation",
+              "wrap": true,
+              "id": "kind",
+              "isSubtle": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "TextBlock",
+      "text": "${headline}",
+      "wrap": true,
+      "id": "headline",
+      "size": "Large",
+      "weight": "Bolder",
+      "style": "heading"
+    },
+    {
+      "type": "TextBlock",
+      "text": "${scopeLine}",
+      "wrap": true,
+      "id": "scope",
+      "isSubtle": true,
+      "spacing": "None"
+    },
+    {
+      "type": "Container",
+      "style": "emphasis",
+      "id": "value-tile",
+      "items": [
+        {
+          "type": "TextBlock",
+          "text": "${value}",
+          "wrap": true,
+          "id": "value",
+          "size": "ExtraLarge",
+          "weight": "Bolder"
+        },
+        {
+          "type": "TextBlock",
+          "text": "${range}",
+          "wrap": true,
+          "id": "range",
+          "isSubtle": true,
+          "spacing": "None"
+        },
+        {
+          "type": "ColumnSet",
+          "columns": [
+            {
+              "type": "Column",
+              "width": "auto",
+              "items": [
+                {
+                  "type": "TextBlock",
+                  "text": "${priceBasis}",
+                  "wrap": true,
+                  "id": "price-basis",
+                  "weight": "Bolder"
+                }
+              ]
+            },
+            {
+              "type": "Column",
+              "width": "auto",
+              "items": [
+                {
+                  "type": "TextBlock",
+                  "text": "${savingWord}",
+                  "wrap": true,
+                  "id": "saving-word",
+                  "weight": "Bolder"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "TextBlock",
+          "text": "${waiting}",
+          "wrap": true,
+          "id": "waiting",
+          "isSubtle": true,
+          "size": "Small"
+        }
+      ]
+    },
+    {
+      "type": "TextBlock",
+      "text": "Why I think so: ${why}",
+      "wrap": true,
+      "id": "why"
+    },
+    {
+      "type": "TextBlock",
+      "text": "What I checked: ${checked}",
+      "wrap": true,
+      "id": "checked"
+    },
+    {
+      "type": "ActionSet",
+      "actions": [
+        {
+          "type": "Action.Execute",
+          "title": "Review the plan",
+          "verb": "option",
+          "data": {
+            "requestId": "${requestId}",
+            "option": "${mainOption}"
+          },
+          "associatedInputs": "none",
+          "fallback": {
+            "type": "Action.OpenUrl",
+            "title": "Open on the page",
+            "url": "${pageUrl}"
+          }
+        },
+        {
+          "type": "Action.Execute",
+          "title": "No, leave it as it is",
+          "verb": "decline",
+          "data": {
+            "requestId": "${requestId}"
+          },
+          "associatedInputs": "none",
+          "fallback": {
+            "type": "Action.OpenUrl",
+            "title": "Open on the page",
+            "url": "${pageUrl}"
+          }
+        },
+        {
+          "type": "Action.Execute",
+          "title": "Not mine",
+          "verb": "not-mine",
+          "data": {
+            "requestId": "${requestId}"
+          },
+          "associatedInputs": "none",
+          "fallback": {
+            "type": "Action.OpenUrl",
+            "title": "Open on the page",
+            "url": "${pageUrl}"
+          }
+        }
+      ],
+      "id": "decisions"
+    },
+    {
+      "type": "ActionSet",
+      "actions": [
+        {
+          "type": "Action.ToggleVisibility",
+          "title": "Details",
+          "tooltip": "Show or hide other options and the full reasoning",
+          "targetElements": [
+            "details"
+          ]
+        },
+        {
+          "type": "Action.ShowCard",
+          "title": "Explain",
+          "card": {
+            "type": "AdaptiveCard",
+            "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+            "version": "1.5",
+            "body": [
+              {
+                "type": "Input.ChoiceSet",
+                "id": "level",
+                "label": "How should I explain it?",
+                "style": "expanded",
+                "choices": [
+                  {
+                    "title": "In simple words",
+                    "value": "simple"
+                  },
+                  {
+                    "title": "With the technical detail",
+                    "value": "technical"
+                  },
+                  {
+                    "title": "In financial terms",
+                    "value": "finance"
+                  }
+                ],
+                "isRequired": true,
+                "errorMessage": "Pick one",
+                "value": "simple"
+              }
+            ],
+            "actions": [
+              {
+                "type": "Action.Execute",
+                "title": "Explain",
+                "verb": "explain",
+                "data": {
+                  "requestId": "${requestId}"
+                },
+                "associatedInputs": "auto",
+                "fallback": {
+                  "type": "Action.OpenUrl",
+                  "title": "Open on the page",
+                  "url": "${pageUrl}"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "Action.ShowCard",
+          "title": "Challenge",
+          "card": {
+            "type": "AdaptiveCard",
+            "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+            "version": "1.5",
+            "body": [
+              {
+                "type": "Input.Text",
+                "id": "challenge",
+                "label": "What do you think I got wrong?",
+                "isMultiline": true,
+                "maxLength": 1000,
+                "placeholder": "${challengeExample}"
+              }
+            ],
+            "actions": [
+              {
+                "type": "Action.Execute",
+                "title": "Argue the other side",
+                "verb": "challenge",
+                "data": {
+                  "requestId": "${requestId}"
+                },
+                "associatedInputs": "auto",
+                "fallback": {
+                  "type": "Action.OpenUrl",
+                  "title": "Open on the page",
+                  "url": "${pageUrl}"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "Action.ShowCard",
+          "title": "Teach",
+          "card": {
+            "type": "AdaptiveCard",
+            "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+            "version": "1.5",
+            "body": [
+              {
+                "type": "Input.Text",
+                "id": "teach",
+                "label": "What should I know?",
+                "isMultiline": true,
+                "maxLength": 1000,
+                "placeholder": "${teachExample}",
+                "isRequired": true,
+                "errorMessage": "Write a few words so I can understand"
+              }
+            ],
+            "actions": [
+              {
+                "type": "Action.Execute",
+                "title": "Read it back to me",
+                "verb": "teach",
+                "data": {
+                  "requestId": "${requestId}"
+                },
+                "associatedInputs": "auto",
+                "fallback": {
+                  "type": "Action.OpenUrl",
+                  "title": "Open on the page",
+                  "url": "${pageUrl}"
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "id": "conversation"
+    },
+    {
+      "type": "Container",
+      "id": "details",
+      "isVisible": false,
+      "separator": true,
+      "items": [
+        {
+          "type": "TextBlock",
+          "text": "Other options",
+          "wrap": true,
+          "weight": "Bolder"
+        },
+        {
+          "type": "Container",
+          "$data": "${options}",
+          "separator": true,
+          "items": [
+            {
+              "type": "ColumnSet",
+              "columns": [
+                {
+                  "type": "Column",
+                  "width": "stretch",
+                  "items": [
+                    {
+                      "type": "TextBlock",
+                      "text": "${key}. ${label}",
+                      "wrap": true,
+                      "weight": "Bolder"
+                    },
+                    {
+                      "type": "TextBlock",
+                      "text": "${effect}",
+                      "wrap": true,
+                      "isSubtle": true,
+                      "spacing": "None"
+                    }
+                  ]
+                },
+                {
+                  "type": "Column",
+                  "width": "auto",
+                  "verticalContentAlignment": "Center",
+                  "items": [
+                    {
+                      "type": "ActionSet",
+                      "actions": [
+                        {
+                          "type": "Action.Execute",
+                          "title": "Choose ${key}",
+                          "verb": "option",
+                          "data": {
+                            "requestId": "${$root.requestId}",
+                            "option": "${key}"
+                          },
+                          "associatedInputs": "none",
+                          "fallback": {
+                            "type": "Action.OpenUrl",
+                            "title": "Open on the page",
+                            "url": "${$root.pageUrl}"
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "TextBlock",
+          "text": "What each part means for you",
+          "wrap": true,
+          "weight": "Bolder",
+          "spacing": "Medium"
+        },
+        {
+          "type": "TextBlock",
+          "text": "Consequences: ${details.consequences}",
+          "wrap": true
+        },
+        {
+          "type": "TextBlock",
+          "text": "What was tested: ${details.tested}",
+          "wrap": true
+        },
+        {
+          "type": "TextBlock",
+          "text": "What would change my mind: ${details.changeMyMind}",
+          "wrap": true
+        },
+        {
+          "type": "TextBlock",
+          "text": "Effort: ${details.effort}",
+          "wrap": true
+        },
+        {
+          "type": "TextBlock",
+          "text": "Undo: ${details.reversibility}",
+          "wrap": true
+        },
+        {
+          "type": "TextBlock",
+          "text": "What happens on your yes: ${details.onYes}",
+          "wrap": true
+        },
+        {
+          "type": "TextBlock",
+          "text": "How we will both know: ${details.howWeKnow}",
+          "wrap": true
+        },
+        {
+          "type": "ActionSet",
+          "actions": [
+            {
+              "type": "Action.Execute",
+              "title": "Fewer like this",
+              "verb": "fewer",
+              "data": {
+                "requestId": "${requestId}"
+              },
+              "associatedInputs": "none",
+              "fallback": {
+                "type": "Action.OpenUrl",
+                "title": "Open on the page",
+                "url": "${pageUrl}"
+              }
+            }
+          ],
+          "id": "details-actions"
+        }
+      ]
+    },
+    {
+      "type": "TextBlock",
+      "text": "Why you are getting this: ${whyYouGetThis}",
+      "wrap": true,
+      "id": "why-you-get-this",
+      "isSubtle": true,
+      "size": "Small",
+      "separator": true,
+      "spacing": "Medium"
+    },
+    {
+      "type": "ActionSet",
+      "actions": [
+        {
+          "type": "Action.Execute",
+          "title": "Talk to a person",
+          "verb": "human",
+          "data": {
+            "requestId": "${requestId}"
+          },
+          "associatedInputs": "none",
+          "fallback": {
+            "type": "Action.OpenUrl",
+            "title": "Open on the page",
+            "url": "${pageUrl}"
+          }
+        }
+      ],
+      "id": "talk-to-a-person"
+    },
+    {
+      "type": "TextBlock",
+      "text": "Written by an AI. Figures are computed by tools, not guessed by the AI. Estimates can still be wrong.",
+      "wrap": true,
+      "id": "ai-footer",
+      "isSubtle": true,
+      "size": "Small",
+      "separator": false,
+      "spacing": "Medium"
+    }
+  ]
+}

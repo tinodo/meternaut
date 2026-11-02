@@ -1,0 +1,24 @@
+{
+  "_invented": true,
+  "senderName": "Cost in Action (AI)",
+  "requestId": "r_Rb4Yt6",
+  "pageUrl": "https://cost-in-action.contoso.example/ok/r_Rb4Yt6",
+  "challengeExample": "For example: the job on the last Tuesday is real",
+  "teachExample": "For example: this is our disaster-recovery environment",
+  "headline": "Please check what I understood",
+  "understood": "rg-orders-dr is a standby environment. I will not suggest shutting it down or resizing it.",
+  "scopes": [
+    {
+      "label": "Only this resource",
+      "value": "resource"
+    },
+    {
+      "label": "Everything I own in rg-orders",
+      "value": "group"
+    }
+  ],
+  "expiry": "12 January",
+  "_scenario": "a note about a standby environment",
+  "notificationText": "Please check what I understood",
+  "whyYouGetThis": "you told me this, and I read back what I understood before I keep it."
+}

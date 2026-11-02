@@ -1,0 +1,172 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1300 1395" width="1300" height="1395" role="img" aria-labelledby="t d" font-family="Segoe UI, system-ui, -apple-system, Arial, sans-serif">
+  <title id="t">The approval page for a commitment purchase, with its parts numbered</title>
+  <desc id="d">An invented example of the approval page for a one-year compute savings plan. It shows the address and plan code, a title with a verb and an object, who must approve, what changes, what it saves, what could go wrong, that it cannot be undone, a check-your-answers summary, the buttons and the footer.</desc>
+  <rect width="1300" height="1395" fill="#F3F2F1"/>
+  <rect x="24" y="24" width="760" height="1345" rx="10" fill="#FFFFFF" stroke="#D1D1D1" stroke-width="1"/>
+  <rect x="24" y="24" width="760" height="44" rx="10" fill="#EDEBE9" stroke="#D1D1D1" stroke-width="1"/>
+  <rect x="36" y="33" width="736" height="26" rx="13" fill="#FFFFFF" stroke="#D1D1D1" stroke-width="1"/>
+  <text x="54" y="51" font-size="12.5" font-weight="400" fill="#5C5C5C" text-anchor="start">https://cost-in-action.contoso.example/ok/r_Hn4c7T…</text>
+  <circle cx="788" cy="46" r="11" fill="#5C2E91"/>
+  <text x="788" y="50.5" font-size="12" font-weight="700" fill="#FFFFFF" text-anchor="middle">1</text>
+  <text x="60" y="112" font-size="15" font-weight="700" fill="#0F6CBD" text-anchor="start">Cost in Action (AI)</text>
+  <text x="748" y="112" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="end">Signed in as Lars (finance approver)</text>
+  <line x1="60" y1="124" x2="748" y2="124" stroke="#D1D1D1" stroke-width="1"/>
+  <text x="60" y="160" font-size="22" font-weight="700" fill="#242424" text-anchor="start">Buy a one-year compute savings plan for the order</text>
+  <text x="60" y="188" font-size="22" font-weight="700" fill="#242424" text-anchor="start">platform</text>
+  <circle cx="788" cy="152" r="11" fill="#5C2E91"/>
+  <text x="788" y="156.5" font-size="12" font-weight="700" fill="#FFFFFF" text-anchor="middle">2</text>
+  <rect x="60" y="208" width="688" height="58" rx="4" fill="#EBF3FC" stroke="#9FC7EE" stroke-width="1"/>
+  <rect x="60" y="208" width="5" height="58" rx="2" fill="#0F6CBD"/>
+  <text x="80" y="232" font-size="14" font-weight="700" fill="#242424" text-anchor="start">This needs two people, each on their own. You are one of them (finance).</text>
+  <text x="80" y="252" font-size="13" font-weight="400" fill="#5C5C5C" text-anchor="start">You will not see the other answer, or any note, until you have given yours.</text>
+  <circle cx="788" cy="236" r="11" fill="#5C2E91"/>
+  <text x="788" y="240.5" font-size="12" font-weight="700" fill="#FFFFFF" text-anchor="middle">3</text>
+  <text x="60" y="294" font-size="16" font-weight="700" fill="#242424" text-anchor="start">What changes</text>
+  <line x1="60" y1="308" x2="748" y2="308" stroke="#D1D1D1" stroke-width="1"/>
+  <text x="64" y="330" font-size="13" font-weight="700" fill="#242424" text-anchor="start">Buys</text>
+  <text x="180" y="330" font-size="13" font-weight="400" fill="#242424" text-anchor="start">One-year compute savings plan, USD 25.00 an hour (USD 219,000 in total)</text>
+  <line x1="60" y1="342" x2="748" y2="342" stroke="#D1D1D1" stroke-width="1"/>
+  <text x="64" y="364" font-size="13" font-weight="700" fill="#242424" text-anchor="start">In euro</text>
+  <text x="180" y="364" font-size="12.5" font-weight="400" fill="#242424" text-anchor="start">About €205,860 at 0.94 euro to the dollar. An estimate: your approval binds the dollar amount</text>
+  <line x1="60" y1="376" x2="748" y2="376" stroke="#D1D1D1" stroke-width="1"/>
+  <text x="64" y="398" font-size="13" font-weight="700" fill="#242424" text-anchor="start">Payment</text>
+  <text x="180" y="398" font-size="12.5" font-weight="400" fill="#242424" text-anchor="start">Monthly, about €17,155 as invoiced for 12 months; the amount follows the exchange rate</text>
+  <line x1="60" y1="410" x2="748" y2="410" stroke="#D1D1D1" stroke-width="1"/>
+  <text x="64" y="432" font-size="13" font-weight="700" fill="#242424" text-anchor="start">Benefits</text>
+  <text x="180" y="432" font-size="13" font-weight="400" fill="#242424" text-anchor="start">Management group Order platform (mg-order-platform)</text>
+  <text x="180" y="450" font-size="13" font-weight="400" fill="#242424" text-anchor="start">Subscriptions a1f0-0001, a1f0-0002 and a1f0-0003 today</text>
+  <text x="180" y="468" font-size="13" font-weight="400" fill="#242424" text-anchor="start">A later member also benefits if it is on billing profile BP-ORD-01</text>
+  <line x1="60" y1="480" x2="748" y2="480" stroke="#D1D1D1" stroke-width="1"/>
+  <text x="64" y="502" font-size="13" font-weight="700" fill="#242424" text-anchor="start">Paid by</text>
+  <text x="180" y="502" font-size="12.5" font-weight="400" fill="#242424" text-anchor="start">Subscription a1f0-0001 (Order platform prod 1), billing profile BP-ORD-01 (Contoso Orders)</text>
+  <line x1="60" y1="514" x2="748" y2="514" stroke="#D1D1D1" stroke-width="1"/>
+  <text x="64" y="536" font-size="13" font-weight="700" fill="#242424" text-anchor="start">Renews</text>
+  <text x="180" y="536" font-size="13" font-weight="400" fill="#242424" text-anchor="start">No: auto-renew is off</text>
+  <line x1="60" y1="548" x2="748" y2="548" stroke="#D1D1D1" stroke-width="1"/>
+  <text x="64" y="570" font-size="13" font-weight="700" fill="#242424" text-anchor="start">When</text>
+  <text x="180" y="570" font-size="13" font-weight="400" fill="#242424" text-anchor="start">On approval. The purchase uses the price check stored on Thursday 09:12 CEST</text>
+  <line x1="60" y1="582" x2="748" y2="582" stroke="#D1D1D1" stroke-width="1"/>
+  <text x="64" y="604" font-size="13" font-weight="700" fill="#242424" text-anchor="start">Made by</text>
+  <text x="180" y="604" font-size="13" font-weight="400" fill="#242424" text-anchor="start">A separate system. The AI that wrote this Recommendation cannot buy anything</text>
+  <line x1="60" y1="616" x2="748" y2="616" stroke="#D1D1D1" stroke-width="1"/>
+  <circle cx="788" cy="486" r="11" fill="#5C2E91"/>
+  <text x="788" y="490.5" font-size="12" font-weight="700" fill="#FFFFFF" text-anchor="middle">4</text>
+  <text x="60" y="646" font-size="16" font-weight="700" fill="#242424" text-anchor="start">What it saves</text>
+  <text x="60" y="680" font-size="20" font-weight="700" fill="#0F6CBD" text-anchor="start">About €4,300 a month</text>
+  <rect x="290" y="662" width="186" height="22" rx="11" fill="#E7F4E7" stroke="#9BCB9B" stroke-width="1"/>
+  <text x="299" y="675" font-size="12" font-weight="600" fill="#0E700E" text-anchor="start">At your agreement's rates</text>
+  <rect x="484" y="662" width="118" height="22" rx="11" fill="#E7F4E7" stroke="#9BCB9B" stroke-width="1"/>
+  <text x="493" y="675" font-size="12" font-weight="600" fill="#0E700E" text-anchor="start">Expected saving</text>
+  <text x="60" y="704" font-size="13" font-weight="400" fill="#5C5C5C" text-anchor="start">Range €3,700 to €4,900, amortised. Each hour's benefit is lost if unused. Until 30 June the current</text>
+  <text x="60" y="723" font-size="13" font-weight="400" fill="#5C5C5C" text-anchor="start">reservation covers part of this usage: the plan then saves about €700 a month, and about USD 4,500 a</text>
+  <text x="60" y="742" font-size="13" font-weight="400" fill="#5C5C5C" text-anchor="start">month of the commitment goes unused. From 1 July it saves about €4,300 a month, so waiting past then</text>
+  <text x="60" y="761" font-size="13" font-weight="400" fill="#5C5C5C" text-anchor="start">forgoes about €140 a day.</text>
+  <circle cx="788" cy="676" r="11" fill="#5C2E91"/>
+  <text x="788" y="680.5" font-size="12" font-weight="700" fill="#FFFFFF" text-anchor="middle">5</text>
+  <text x="60" y="802" font-size="16" font-weight="700" fill="#242424" text-anchor="start">What could go wrong</text>
+  <text x="60" y="826" font-size="13" font-weight="400" fill="#242424" text-anchor="start">The strongest reason I might be wrong: usage can drop below the commitment after the planned</text>
+  <text x="60" y="845" font-size="13" font-weight="400" fill="#242424" text-anchor="start">migration in March. I will check utilisation every month and tell you if it falls below 90%.</text>
+  <circle cx="788" cy="844" r="11" fill="#5C2E91"/>
+  <text x="788" y="848.5" font-size="12" font-weight="700" fill="#FFFFFF" text-anchor="middle">6</text>
+  <rect x="60" y="872" width="688" height="40" rx="4" fill="#FDE7E9" stroke="#E6A5A9" stroke-width="1"/>
+  <rect x="60" y="872" width="5" height="40" rx="2" fill="#A4262C"/>
+  <text x="80" y="898" font-size="13.5" font-weight="700" fill="#A4262C" text-anchor="start">This cannot be undone. A savings plan cannot be cancelled, refunded or exchanged.</text>
+  <circle cx="788" cy="892" r="11" fill="#5C2E91"/>
+  <text x="788" y="896.5" font-size="12" font-weight="700" fill="#FFFFFF" text-anchor="middle">7</text>
+  <text x="60" y="930" font-size="13" font-weight="600" fill="#0F6CBD" text-anchor="start">Open the evidence (a link to its own page: your last 12 months checked against this plan, 94 to 97 % used)</text>
+  <text x="60" y="964" font-size="16" font-weight="700" fill="#242424" text-anchor="start">Who else</text>
+  <text x="60" y="988" font-size="13" font-weight="400" fill="#242424" text-anchor="start">Two people approve this, each on their own. The other answer is shown after you have both decided.</text>
+  <circle cx="788" cy="982" r="11" fill="#5C2E91"/>
+  <text x="788" y="986.5" font-size="12" font-weight="700" fill="#FFFFFF" text-anchor="middle">8</text>
+  <rect x="60" y="1022" width="688" height="104" rx="4" fill="#FAFAFA" stroke="#D1D1D1" stroke-width="1"/>
+  <text x="76" y="1048" font-size="14" font-weight="700" fill="#242424" text-anchor="start">Check before you approve</text>
+  <text x="76" y="1072" font-size="13" font-weight="400" fill="#242424" text-anchor="start">Buy a one-year compute savings plan at USD 25.00 an hour for the order platform.</text>
+  <text x="76" y="1092" font-size="13" font-weight="400" fill="#242424" text-anchor="start">USD 219,000 in total (about €205,860), paid monthly. It cannot be cancelled, refunded or exchanged.</text>
+  <text x="76" y="1112" font-size="13" font-weight="600" fill="#5C5C5C" text-anchor="start">Plan code K4M8-R6TW</text>
+  <circle cx="788" cy="1072" r="11" fill="#5C2E91"/>
+  <text x="788" y="1076.5" font-size="12" font-weight="700" fill="#FFFFFF" text-anchor="middle">9</text>
+  <rect x="60" y="1150" width="280" height="38" rx="4" fill="#0F6CBD" stroke="#0F6CBD" stroke-width="1"/>
+  <text x="200.0" y="1173.9" font-size="14" font-weight="600" fill="#FFFFFF" text-anchor="middle">Approve this exact purchase</text>
+  <rect x="350" y="1150" width="280" height="38" rx="4" fill="#FFFFFF" stroke="#8A8886" stroke-width="1"/>
+  <text x="490.0" y="1173.9" font-size="14" font-weight="600" fill="#242424" text-anchor="middle">Decline</text>
+  <rect x="60" y="1198" width="280" height="38" rx="4" fill="#FFFFFF" stroke="#8A8886" stroke-width="1"/>
+  <text x="200.0" y="1221.9" font-size="14" font-weight="600" fill="#242424" text-anchor="middle">Ask or suggest</text>
+  <rect x="350" y="1198" width="280" height="38" rx="4" fill="#FFFFFF" stroke="#8A8886" stroke-width="1"/>
+  <text x="490.0" y="1221.9" font-size="14" font-weight="600" fill="#242424" text-anchor="middle">Not mine</text>
+  <circle cx="788" cy="1190" r="11" fill="#5C2E91"/>
+  <text x="788" y="1194.5" font-size="12" font-weight="700" fill="#FFFFFF" text-anchor="middle">10</text>
+  <line x1="60" y1="1268" x2="748" y2="1268" stroke="#D1D1D1" stroke-width="1"/>
+  <text x="60" y="1290" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">Plan code K4M8-R6TW, the same as on your Teams card. Expires Thursday 10 June, 09:00 CEST; a later decision gets a fresh price check.</text>
+  <text x="60" y="1310" font-size="12" font-weight="400" fill="#0F6CBD" text-anchor="start">Why you are seeing this</text>
+  <text x="210" y="1310" font-size="12" font-weight="400" fill="#0F6CBD" text-anchor="start">Talk to a person</text>
+  <text x="60" y="1332" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">Written by an AI. Figures are computed by tools, not guessed by the AI. Estimates can still be wrong.</text>
+  <circle cx="788" cy="1298" r="11" fill="#5C2E91"/>
+  <text x="788" y="1302.5" font-size="12" font-weight="700" fill="#FFFFFF" text-anchor="middle">11</text>
+  <circle cx="841" cy="66" r="11" fill="#5C2E91"/>
+  <text x="841" y="70.5" font-size="12" font-weight="700" fill="#FFFFFF" text-anchor="middle">1</text>
+  <text x="860" y="70" font-size="13" font-weight="700" fill="#242424" text-anchor="start">Address and plan code</text>
+  <text x="860" y="90" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">One address for every approval, named in the announcement.</text>
+  <text x="860" y="107" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">The plan code is a reference, not a secret: it is echoed</text>
+  <text x="860" y="124" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">on every submit, and each approver records one decision</text>
+  <text x="860" y="141" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">against it. A stale plan, or a person who is not the</text>
+  <text x="860" y="158" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">designated approver, is refused; a forwarded link</text>
+  <text x="860" y="175" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">authorises nobody, but the designated approver may use it</text>
+  <text x="860" y="192" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">after signing in.</text>
+  <circle cx="841" cy="215" r="11" fill="#5C2E91"/>
+  <text x="841" y="219.5" font-size="12" font-weight="700" fill="#FFFFFF" text-anchor="middle">2</text>
+  <text x="860" y="219" font-size="13" font-weight="700" fill="#242424" text-anchor="start">Title: verb, object, place</text>
+  <text x="860" y="239" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">It says what will happen, not what the AI feels. The same</text>
+  <text x="860" y="256" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">words are on the button.</text>
+  <circle cx="841" cy="279" r="11" fill="#5C2E91"/>
+  <text x="841" y="283.5" font-size="12" font-weight="700" fill="#FFFFFF" text-anchor="middle">3</text>
+  <text x="860" y="283" font-size="13" font-weight="700" fill="#242424" text-anchor="start">Who must approve</text>
+  <text x="860" y="303" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">The class in plain words, and what you will and will not</text>
+  <text x="860" y="320" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">see of the other approver's answer.</text>
+  <circle cx="841" cy="343" r="11" fill="#5C2E91"/>
+  <text x="841" y="347.5" font-size="12" font-weight="700" fill="#FFFFFF" text-anchor="middle">4</text>
+  <text x="860" y="347" font-size="13" font-weight="700" fill="#242424" text-anchor="start">What changes</text>
+  <text x="860" y="367" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">The exact change in the currency it is bought in, the euro</text>
+  <text x="860" y="384" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">estimate and its rate, what benefits and who pays, when,</text>
+  <text x="860" y="401" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">and who makes it. The AI that wrote the Recommendation is</text>
+  <text x="860" y="418" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">not that actor.</text>
+  <circle cx="841" cy="441" r="11" fill="#5C2E91"/>
+  <text x="841" y="445.5" font-size="12" font-weight="700" fill="#FFFFFF" text-anchor="middle">5</text>
+  <text x="860" y="445" font-size="13" font-weight="700" fill="#242424" text-anchor="start">What it saves</text>
+  <text x="860" y="465" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">A range, the price basis and the saving word, and what</text>
+  <text x="860" y="482" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">keeping things as they are forgoes, said only for the time</text>
+  <text x="860" y="499" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">it is true.</text>
+  <circle cx="841" cy="522" r="11" fill="#5C2E91"/>
+  <text x="841" y="526.5" font-size="12" font-weight="700" fill="#FFFFFF" text-anchor="middle">6</text>
+  <text x="860" y="526" font-size="13" font-weight="700" fill="#242424" text-anchor="start">What could go wrong</text>
+  <text x="860" y="546" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">Always visible for a change of this size. It carries the</text>
+  <text x="860" y="563" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">strongest objection, not a reassurance.</text>
+  <circle cx="841" cy="586" r="11" fill="#5C2E91"/>
+  <text x="841" y="590.5" font-size="12" font-weight="700" fill="#FFFFFF" text-anchor="middle">7</text>
+  <text x="860" y="590" font-size="13" font-weight="700" fill="#242424" text-anchor="start">Cannot be undone</text>
+  <text x="860" y="610" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">Said once, in words, before the button. A change that can</text>
+  <text x="860" y="627" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">be undone says how long the window stays open.</text>
+  <circle cx="841" cy="650" r="11" fill="#5C2E91"/>
+  <text x="841" y="654.5" font-size="12" font-weight="700" fill="#FFFFFF" text-anchor="middle">8</text>
+  <text x="860" y="654" font-size="13" font-weight="700" fill="#242424" text-anchor="start">Who else</text>
+  <text x="860" y="674" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">Two independent approvers, asked in parallel. Each sees</text>
+  <text x="860" y="691" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">the same plan and evidence; neither sees the other answer</text>
+  <text x="860" y="708" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">until both have decided. One person cannot fill both</text>
+  <text x="860" y="725" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">roles.</text>
+  <circle cx="841" cy="748" r="11" fill="#5C2E91"/>
+  <text x="841" y="752.5" font-size="12" font-weight="700" fill="#FFFFFF" text-anchor="middle">9</text>
+  <text x="860" y="752" font-size="13" font-weight="700" fill="#242424" text-anchor="start">Check before you approve</text>
+  <text x="860" y="772" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">The whole decision in three lines.</text>
+  <circle cx="841" cy="795" r="11" fill="#5C2E91"/>
+  <text x="841" y="799.5" font-size="12" font-weight="700" fill="#FFFFFF" text-anchor="middle">10</text>
+  <text x="860" y="799" font-size="13" font-weight="700" fill="#242424" text-anchor="start">Buttons</text>
+  <text x="860" y="819" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">The first button repeats the action. All four are the same</text>
+  <text x="860" y="836" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">size. Decline takes one tap and an optional reason on a</text>
+  <text x="860" y="853" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">second page. Ask or suggest sends a question or another</text>
+  <text x="860" y="870" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">way back; nothing is approved. Without script each button</text>
+  <text x="860" y="887" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">is a form post that carries the plan code.</text>
+  <circle cx="841" cy="910" r="11" fill="#5C2E91"/>
+  <text x="841" y="914.5" font-size="12" font-weight="700" fill="#FFFFFF" text-anchor="middle">11</text>
+  <text x="860" y="914" font-size="13" font-weight="700" fill="#242424" text-anchor="start">Footer</text>
+  <text x="860" y="934" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">Expiry with a time zone, why you are seeing this, a person</text>
+  <text x="860" y="951" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">to talk to, and the AI line.</text>
+</svg>

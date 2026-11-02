@@ -1,0 +1,47 @@
+{
+  "_invented": true,
+  "senderName": "Cost in Action (AI)",
+  "requestId": "r_9vK2xQ",
+  "pageUrl": "https://cost-in-action.contoso.example/ok/r_9vK2xQ",
+  "challengeExample": "For example: the job on the last Tuesday is real",
+  "teachExample": "For example: this is our disaster-recovery environment",
+  "headline": "Switch off the web-shop QA environment 19:30 to 07:30 and at weekends, except the last Tuesday",
+  "okLabel": "OK, switch it off",
+  "plan": {
+    "when": "Thursday 19:30 CET, then each weekday at 19:30",
+    "rows": [
+      {
+        "resource": "vm-qa-web-01",
+        "setting": "Power",
+        "from": "Running all day",
+        "to": "Deallocated (compute is not billed) from 19:30 to 07:30 and all weekend, started at 07:30 on weekdays; stays on from Monday 19:30 to Tuesday 07:30 before the last Tuesday of the month, for the month-end job"
+      },
+      {
+        "resource": "vm-qa-web-02",
+        "setting": "Power",
+        "from": "Running all day",
+        "to": "Deallocated (compute is not billed) from 19:30 to 07:30 and all weekend, started at 07:30 on weekdays; stays on from Monday 19:30 to Tuesday 07:30 before the last Tuesday of the month, for the month-end job"
+      },
+      {
+        "resource": "sql-qa-orders",
+        "setting": "Auto-pause",
+        "from": "Never",
+        "to": "After 60 idle minutes; does not pause from Monday 19:30 to Tuesday 07:30 before the last Tuesday of the month, for the month-end job"
+      }
+    ],
+    "couldGoWrong": "a late test run could find the environment off. If activity appears after 19:30, I ask you before I switch anything on; I do not do it myself.",
+    "undo": "tap Undo on the Done message, or switch it on in the portal. Undo stays open until Friday 19:30 CET."
+  },
+  "cap": {
+    "used": 2,
+    "max": 5
+  },
+  "planCode": "7F3K-92QD",
+  "value": "About €690 a month",
+  "range": "Range €620 to €760",
+  "priceBasis": "At the rates on your bill",
+  "savingWord": "Expected saving",
+  "_scenario": "E1",
+  "notificationText": "Switch off the web-shop QA environment 19:30 to 07:30 and at weekends, except the last Tuesday",
+  "whyYouGetThis": "you confirmed on Monday that you look after rg-webshop-qa (the directory lists you for 3 of its 14 resources, and you created the other 11), and this plan changes 3 of them."
+}

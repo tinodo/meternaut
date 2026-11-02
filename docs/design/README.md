@@ -63,7 +63,7 @@ The full list, with alternatives, cost, security and reversibility, is in [decis
 | **Agent** | An AI worker with a role (its job), a set of tools and an identity; ten roles live in five hosted agents ([agents and workflows](03-agents-and-workflows.md)). A set of Azure permissions is an *RBAC role* and a group of people a *directory group* |
 | **Credential** | An autopilot rule a person wrote: which Actions may run without a fresh approval, where, and up to what value. (Passwords and keys are called keys and secrets) |
 | **Workflow** | Plain code that sequences agents and people and waits for answers |
-| **Hub** | The Citadel governance hub in the landing zone, an API Management based gateway that Microsoft publishes as an open-source sample: the only route to models and tools |
+| **Hub** | The Citadel governance hub in the landing zone: the only route to models and tools |
 | **Contract** | The hub's per-agent configuration (Citadel calls it an access contract): what one agent may use and how much. It has nothing to do with an Azure agreement |
 | **Approval** | A person's decision, bound to one exact plan and the facts it was made against (a hash and the live state); it can be used once |
 | **Runner** | The only component that changes Azure, and only what an approval names |
@@ -96,6 +96,7 @@ An Azure subscription with deploy rights, read access to cost data (subscription
 | What drifts and how it is stopped | [Safeguards and drift controls](07-safeguards-and-drift.md) |
 | How it is shown to work and to learn | [Testing and evaluation](08-testing-and-evaluation.md) |
 | How it is built, run and recovered | [Delivery and operations](09-delivery-and-operations.md) |
+| What people see, receive and decide | [Experience design](../experience/README.md) |
 | What it costs to run | [Cost and FinOps](10-cost-and-finops.md) |
 | Which technologies, and their status | [Technology register](11-technology-register.md) |
 | Why each choice was made | [Decisions](12-decisions.md) |

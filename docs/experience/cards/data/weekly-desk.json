@@ -1,0 +1,30 @@
+{
+  "_invented": true,
+  "senderName": "Cost in Action (AI)",
+  "requestId": "r_Wk2Mn8",
+  "pageUrl": "https://cost-in-action.contoso.example/ok/r_Wk2Mn8",
+  "challengeExample": "For example: the job on the last Tuesday is real",
+  "teachExample": "For example: this is our disaster-recovery environment",
+  "headline": "2 decisions and 1 question, about 10 minutes",
+  "total": "Together about €215 a month. Expected, at the rates on your bill.",
+  "items": [
+    {
+      "key": "1",
+      "title": "Resize vm-orders-api-03",
+      "line": "Saves about €135 a month. Expected, at the rates on your bill. Reversible."
+    },
+    {
+      "key": "2",
+      "title": "Put dev database backups on a cooler tier",
+      "line": "Saves about €80 a month. Expected, at the rates on your bill. Reversible."
+    },
+    {
+      "key": "3",
+      "title": "Is vm-batch-07 yours?",
+      "line": "A question: it decides who gets suggestions about it"
+    }
+  ],
+  "_scenario": "weekly desk",
+  "notificationText": "2 decisions and 1 question, about 10 minutes",
+  "whyYouGetThis": "this is your weekly summary, sent on the day you chose."
+}

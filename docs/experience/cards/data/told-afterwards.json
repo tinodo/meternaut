@@ -1,0 +1,19 @@
+{
+  "_invented": true,
+  "senderName": "Cost in Action (AI)",
+  "requestId": "r_Ts5Bk2",
+  "pageUrl": "https://cost-in-action.contoso.example/ok/r_Ts5Bk2",
+  "challengeExample": "For example: these containers hold records we must keep",
+  "teachExample": "For example: this storage account is read every day by a report",
+  "headline": "I moved three dev containers to a cooler storage tier",
+  "planCode": "P2WX-5HNC",
+  "permission": "Your FinOps lead and platform owner gave me a standing permission for storage tier changes in dev subscriptions, up to about €500 a month in Expected saving per change at the rates on your bill (a ceiling, not a forecast), until 12 March. I told you about it on 3 February, before its first run, and I checked every condition before I acted.",
+  "value": "About €41 a month",
+  "range": "Range €35 to €48",
+  "priceBasis": "At the rates on your bill",
+  "savingWord": "Expected saving",
+  "undoWindow": "You can undo this change until Friday 17:00 CET. Undo also pauses this standing permission until a person has reviewed it. Pause changes here stops my standing permissions for these resources without undoing anything; it does not stop my suggestions.",
+  "_scenario": "E6 run",
+  "notificationText": "I moved three dev containers to a cooler storage tier",
+  "whyYouGetThis": "a standing permission covers this kind of change in your development subscription."
+}

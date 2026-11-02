@@ -1,0 +1,14 @@
+{
+  "_invented": true,
+  "senderName": "Cost in Action (AI)",
+  "requestId": "r_Cn8Zb1",
+  "pageUrl": "https://cost-in-action.contoso.example/ok/r_Cn8Zb1",
+  "challengeExample": "For example: the job on the last Tuesday is real",
+  "teachExample": "For example: this is our disaster-recovery environment",
+  "headline": "I could not prepare the change",
+  "whatHappened": "The environment changed after I made the plan, so the plan no longer matches. I stopped before changing anything.",
+  "whatNow": "Nothing has changed in Azure. I can prepare a new plan, or a person can look at it with you.",
+  "_scenario": "a plan that no longer matches",
+  "notificationText": "I could not prepare the change",
+  "whyYouGetThis": "you chose to review this change, and I could not prepare it."
+}

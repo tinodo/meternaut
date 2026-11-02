@@ -1,0 +1,225 @@
+{
+  "type": "AdaptiveCard",
+  "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+  "version": "1.5",
+  "fallbackText": "Please check what I understood: ${headline} Open it on the page: ${pageUrl} Written by an AI.",
+  "msteams": {
+    "width": "Full"
+  },
+  "body": [
+    {
+      "type": "ColumnSet",
+      "columns": [
+        {
+          "type": "Column",
+          "width": "stretch",
+          "items": [
+            {
+              "type": "TextBlock",
+              "text": "${senderName}",
+              "wrap": true,
+              "id": "ai-label",
+              "weight": "Bolder"
+            }
+          ]
+        },
+        {
+          "type": "Column",
+          "width": "auto",
+          "items": [
+            {
+              "type": "TextBlock",
+              "text": "Read-back",
+              "wrap": true,
+              "id": "kind",
+              "isSubtle": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "TextBlock",
+      "text": "${headline}",
+      "wrap": true,
+      "id": "headline",
+      "size": "Large",
+      "weight": "Bolder",
+      "style": "heading"
+    },
+    {
+      "type": "TextBlock",
+      "text": "I understood: ${understood}",
+      "wrap": true,
+      "id": "understood"
+    },
+    {
+      "type": "Input.ChoiceSet",
+      "id": "scope",
+      "label": "Where should I use this?",
+      "style": "expanded",
+      "isRequired": true,
+      "errorMessage": "Pick one",
+      "value": "resource",
+      "choices": [
+        {
+          "$data": "${scopes}",
+          "title": "${label}",
+          "value": "${value}"
+        }
+      ]
+    },
+    {
+      "type": "TextBlock",
+      "text": "I will keep it until ${expiry}. You can change or remove it on the page at any time.",
+      "wrap": true,
+      "id": "expiry",
+      "isSubtle": true
+    },
+    {
+      "type": "ActionSet",
+      "actions": [
+        {
+          "type": "Action.Execute",
+          "title": "Yes, that is right",
+          "verb": "confirm",
+          "data": {
+            "requestId": "${requestId}"
+          },
+          "associatedInputs": "auto",
+          "fallback": {
+            "type": "Action.OpenUrl",
+            "title": "Open on the page",
+            "url": "${pageUrl}"
+          }
+        },
+        {
+          "type": "Action.ShowCard",
+          "title": "Not quite",
+          "card": {
+            "type": "AdaptiveCard",
+            "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+            "version": "1.5",
+            "body": [
+              {
+                "type": "Input.Text",
+                "id": "fix",
+                "label": "What should I change?",
+                "isMultiline": true,
+                "maxLength": 1000,
+                "placeholder": "In your own words",
+                "isRequired": true,
+                "errorMessage": "Write a few words so I can understand"
+              }
+            ],
+            "actions": [
+              {
+                "type": "Action.Execute",
+                "title": "Read it back again",
+                "verb": "teach",
+                "data": {
+                  "requestId": "${requestId}"
+                },
+                "associatedInputs": "auto",
+                "fallback": {
+                  "type": "Action.OpenUrl",
+                  "title": "Open on the page",
+                  "url": "${pageUrl}"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "Action.Execute",
+          "title": "No, forget it",
+          "verb": "forget",
+          "data": {
+            "requestId": "${requestId}"
+          },
+          "associatedInputs": "none",
+          "fallback": {
+            "type": "Action.OpenUrl",
+            "title": "Open on the page",
+            "url": "${pageUrl}"
+          }
+        },
+        {
+          "type": "Action.Execute",
+          "title": "Ask for a wider scope",
+          "verb": "widen-request",
+          "data": {
+            "requestId": "${requestId}"
+          },
+          "associatedInputs": "none",
+          "fallback": {
+            "type": "Action.OpenUrl",
+            "title": "Open on the page",
+            "url": "${pageUrl}"
+          }
+        }
+      ],
+      "id": "readback-actions"
+    },
+    {
+      "type": "ActionSet",
+      "actions": [
+        {
+          "type": "Action.Execute",
+          "title": "Explain",
+          "verb": "explain",
+          "data": {
+            "requestId": "${requestId}"
+          },
+          "associatedInputs": "none",
+          "fallback": {
+            "type": "Action.OpenUrl",
+            "title": "Open on the page",
+            "url": "${pageUrl}"
+          }
+        }
+      ],
+      "id": "conversation"
+    },
+    {
+      "type": "TextBlock",
+      "text": "Why you are getting this: ${whyYouGetThis}",
+      "wrap": true,
+      "id": "why-you-get-this",
+      "isSubtle": true,
+      "size": "Small",
+      "separator": true,
+      "spacing": "Medium"
+    },
+    {
+      "type": "ActionSet",
+      "actions": [
+        {
+          "type": "Action.Execute",
+          "title": "Talk to a person",
+          "verb": "human",
+          "data": {
+            "requestId": "${requestId}"
+          },
+          "associatedInputs": "none",
+          "fallback": {
+            "type": "Action.OpenUrl",
+            "title": "Open on the page",
+            "url": "${pageUrl}"
+          }
+        }
+      ],
+      "id": "talk-to-a-person"
+    },
+    {
+      "type": "TextBlock",
+      "text": "Written by an AI. Figures are computed by tools, not guessed by the AI. Estimates can still be wrong.",
+      "wrap": true,
+      "id": "ai-footer",
+      "isSubtle": true,
+      "size": "Small",
+      "separator": false,
+      "spacing": "Medium"
+    }
+  ]
+}

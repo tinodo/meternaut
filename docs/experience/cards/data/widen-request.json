@@ -1,0 +1,16 @@
+{
+  "_invented": true,
+  "senderName": "Cost in Action (AI)",
+  "requestId": "r_Wd9Pc5",
+  "pageUrl": "https://cost-in-action.contoso.example/ok/r_Wd9Pc5",
+  "challengeExample": "For example: the job on the last Tuesday is real",
+  "teachExample": "For example: this is our disaster-recovery environment",
+  "headline": "Should a note about weekend idleness apply to all development subscriptions?",
+  "evidence": "Three owners told me that weekend idleness is expected in their own development resources, and the usage records agree.",
+  "affected": "You own this scope. The note would apply to 38 resources owned by 9 people. They would be told, and each could opt a resource out.",
+  "effect": "If you widen it, I stop asking about weekend idleness in those subscriptions. The note expires on 12 March unless you renew it.",
+  "proposedScope": "s_dev",
+  "_scenario": "a note about weekend idleness",
+  "notificationText": "Should a note about weekend idleness apply to all development subscriptions?",
+  "whyYouGetThis": "you own the wider scope this note would reach."
+}

@@ -1,0 +1,140 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1340 820" width="1340" height="820" role="img" aria-labelledby="t d" font-family="Segoe UI, system-ui, -apple-system, Arial, sans-serif">
+  <title id="t">The report card dashboard with its tiles</title>
+  <desc id="d">An invented example of the report card workbook: what the system is worst at, a calibration reliability diagram, the savings funnel from scenario to expected to verified, regrets and surprises,             explained spend, decision burden, learning against frozen memory, the spending-commitment pace, autonomy per domain, the system's own cost, and experience health.</desc>
+  <rect width="1340" height="820" fill="#F3F2F1"/>
+  <text x="28" y="40" font-size="24" font-weight="700" fill="#242424" text-anchor="start">Report card</text>
+  <text x="28" y="64" font-size="13" font-weight="400" fill="#5C5C5C" text-anchor="start">All estates, last 90 days, as of Monday 08:00 CET. One currency (EUR). Savings are amortised and name their price basis; a list-price scenario is its own row, never in a total.</text>
+  <rect x="640" y="28" width="98" height="22" rx="11" fill="#FFFFFF" stroke="#8A8886" stroke-width="1"/>
+  <text x="649" y="41" font-size="12" font-weight="600" fill="#242424" text-anchor="start">Scope: all ▾</text>
+  <rect x="746" y="28" width="132" height="22" rx="11" fill="#FFFFFF" stroke="#8A8886" stroke-width="1"/>
+  <text x="755" y="41" font-size="12" font-weight="600" fill="#242424" text-anchor="start">Period: 90 days ▾</text>
+  <rect x="886" y="28" width="186" height="22" rx="11" fill="#FFFFFF" stroke="#8A8886" stroke-width="1"/>
+  <text x="895" y="41" font-size="12" font-weight="600" fill="#242424" text-anchor="start">Price basis: your bills ▾</text>
+  <rect x="1080" y="28" width="118" height="22" rx="11" fill="#FFFFFF" stroke="#8A8886" stroke-width="1"/>
+  <text x="1089" y="41" font-size="12" font-weight="600" fill="#242424" text-anchor="start">Currency: EUR ▾</text>
+  <rect x="24" y="88" width="420" height="210" rx="8" fill="#FDE7E9" stroke="#E6A5A9" stroke-width="1"/>
+  <text x="40" y="116" font-size="14" font-weight="700" fill="#242424" text-anchor="start">What I am worst at</text>
+  <text x="40" y="140" font-size="12.5" font-weight="400" fill="#242424" text-anchor="start">•  Forecasting shared-cluster savings: 4 of 9 landed</text>
+  <text x="40" y="157" font-size="12.5" font-weight="400" fill="#242424" text-anchor="start">outside my range.</text>
+  <text x="40" y="184" font-size="12.5" font-weight="400" fill="#242424" text-anchor="start">•  Weekend rhythms in small estates: 3 wrong 'idle'</text>
+  <text x="40" y="201" font-size="12.5" font-weight="400" fill="#242424" text-anchor="start">calls, all caught before any action.</text>
+  <text x="40" y="228" font-size="12.5" font-weight="400" fill="#242424" text-anchor="start">•  Saying 'I do not know' early: 2 Recommendations</text>
+  <text x="40" y="245" font-size="12.5" font-weight="400" fill="#242424" text-anchor="start">should have been Questions.</text>
+  <rect x="456" y="88" width="300" height="210" rx="8" fill="#FFFFFF" stroke="#D1D1D1" stroke-width="1"/>
+  <text x="472" y="116" font-size="14" font-weight="700" fill="#242424" text-anchor="start">Calibration: when I say 80 %</text>
+  <line x1="496" y1="260" x2="710" y2="260" stroke="#8A8886" stroke-width="1"/>
+  <line x1="496" y1="140" x2="496" y2="260" stroke="#8A8886" stroke-width="1"/>
+  <line x1="496" y1="260" x2="710" y2="140" stroke="#B8B8B8" stroke-width="1" stroke-dasharray="4 4"/>
+  <polyline points="528,236 571,224 614,200 646,186 678,168 699,152" fill="none" stroke="#0F6CBD" stroke-width="2"/>
+  <circle cx="528" cy="236" r="4" fill="#0F6CBD"/>
+  <circle cx="571" cy="224" r="4" fill="#0F6CBD"/>
+  <circle cx="614" cy="200" r="4" fill="#0F6CBD"/>
+  <circle cx="646" cy="186" r="4" fill="#0F6CBD"/>
+  <circle cx="678" cy="168" r="4" fill="#0F6CBD"/>
+  <circle cx="699" cy="152" r="4" fill="#0F6CBD"/>
+  <text x="710" y="276" font-size="11" font-weight="400" fill="#5C5C5C" text-anchor="end">what I said</text>
+  <text x="488" y="150" font-size="11" font-weight="400" fill="#5C5C5C" text-anchor="end">right</text>
+  <text x="504" y="154" font-size="11" font-weight="400" fill="#5C5C5C" text-anchor="start">Brier 0.17, coverage 91 %</text>
+  <rect x="768" y="88" width="548" height="210" rx="8" fill="#FFFFFF" stroke="#D1D1D1" stroke-width="1"/>
+  <text x="784" y="116" font-size="14" font-weight="700" fill="#242424" text-anchor="start">Savings, a month: scenario, expected, verified</text>
+  <text x="784" y="152" font-size="12.5" font-weight="600" fill="#242424" text-anchor="start">Scenario</text>
+  <text x="784" y="165" font-size="10" font-weight="400" fill="#5C5C5C" text-anchor="start">at list prices</text>
+  <rect x="970" y="140" width="250" height="24" rx="3" fill="#FFF4CE" stroke="#D1D1D1" stroke-width="1"/>
+  <text x="1228" y="157" font-size="12.5" font-weight="700" fill="#242424" text-anchor="start">€14,200</text>
+  <text x="784" y="186" font-size="12.5" font-weight="600" fill="#242424" text-anchor="start">Expected</text>
+  <text x="784" y="199" font-size="10" font-weight="400" fill="#5C5C5C" text-anchor="start">at the rates on your bills</text>
+  <rect x="970" y="174" width="115" height="24" rx="3" fill="#E7F4E7" stroke="#D1D1D1" stroke-width="1"/>
+  <text x="1093" y="191" font-size="12.5" font-weight="700" fill="#242424" text-anchor="start">€6,100</text>
+  <text x="784" y="220" font-size="12.5" font-weight="600" fill="#242424" text-anchor="start">Verified</text>
+  <text x="784" y="233" font-size="10" font-weight="400" fill="#5C5C5C" text-anchor="start">measured, at the rates on your bills</text>
+  <rect x="970" y="208" width="64" height="24" rx="3" fill="#C7E6C7" stroke="#D1D1D1" stroke-width="1"/>
+  <text x="1042" y="225" font-size="12.5" font-weight="700" fill="#242424" text-anchor="start">€3,100</text>
+  <text x="784" y="252" font-size="12" font-weight="700" fill="#A4262C" text-anchor="start">Claimed at approval €3,800, verified €3,100, gap 18 %</text>
+  <text x="784" y="274" font-size="11.5" font-weight="400" fill="#5C5C5C" text-anchor="start">Scenarios are never added to expected or verified savings.</text>
+  <rect x="24" y="312" width="226" height="150" rx="8" fill="#FFFFFF" stroke="#D1D1D1" stroke-width="1"/>
+  <text x="40" y="340" font-size="14" font-weight="700" fill="#242424" text-anchor="start">Regrets, boomerangs, surprises</text>
+  <text x="40" y="392" font-size="30" font-weight="700" fill="#A4262C" text-anchor="start">1</text>
+  <text x="40" y="412" font-size="11.5" font-weight="400" fill="#5C5C5C" text-anchor="start">regret</text>
+  <text x="110" y="392" font-size="30" font-weight="700" fill="#242424" text-anchor="start">2</text>
+  <text x="110" y="412" font-size="11.5" font-weight="400" fill="#5C5C5C" text-anchor="start">boomerangs</text>
+  <text x="180" y="392" font-size="30" font-weight="700" fill="#242424" text-anchor="start">5</text>
+  <text x="180" y="412" font-size="11.5" font-weight="400" fill="#5C5C5C" text-anchor="start">surprises</text>
+  <text x="40" y="444" font-size="11.5" font-weight="400" fill="#5C5C5C" text-anchor="start">Each one lists what it taught me.</text>
+  <rect x="262" y="312" width="330" height="150" rx="8" fill="#FFFFFF" stroke="#D1D1D1" stroke-width="1"/>
+  <text x="278" y="340" font-size="14" font-weight="700" fill="#242424" text-anchor="start">Explained spend</text>
+  <rect x="278" y="364" width="296" height="22" rx="3" fill="#F0F0F0" stroke="#D1D1D1" stroke-width="1"/>
+  <rect x="278" y="364" width="183" height="22" rx="3" fill="#9ACD9A"/>
+  <rect x="461" y="364" width="62" height="22" rx="0" fill="#F2D27A"/>
+  <rect x="523" y="364" width="51" height="22" rx="0" fill="#E6A5A9"/>
+  <text x="278" y="410" font-size="12" font-weight="600" fill="#242424" text-anchor="start">62 % allocated to an owner or cost centre</text>
+  <text x="278" y="428" font-size="12" font-weight="600" fill="#242424" text-anchor="start">21 % shared by a rule, 17 % unallocated</text>
+  <text x="278" y="448" font-size="11.5" font-weight="400" fill="#5C5C5C" text-anchor="start">Tag inheritance could cover part of the 17 %.</text>
+  <rect x="604" y="312" width="216" height="150" rx="8" fill="#FFFFFF" stroke="#D1D1D1" stroke-width="1"/>
+  <text x="620" y="340" font-size="14" font-weight="700" fill="#242424" text-anchor="start">Decision burden</text>
+  <text x="620" y="392" font-size="30" font-weight="700" fill="#0F6CBD" text-anchor="start">1.8 min</text>
+  <text x="620" y="412" font-size="11.5" font-weight="400" fill="#5C5C5C" text-anchor="start">median time to decide</text>
+  <text x="620" y="436" font-size="12" font-weight="400" fill="#242424" text-anchor="start">12 waiting</text>
+  <text x="620" y="454" font-size="12" font-weight="400" fill="#242424" text-anchor="start">4 % later corrected</text>
+  <rect x="832" y="312" width="216" height="150" rx="8" fill="#FFFFFF" stroke="#D1D1D1" stroke-width="1"/>
+  <text x="848" y="340" font-size="14" font-weight="700" fill="#242424" text-anchor="start">Learning</text>
+  <text x="848" y="392" font-size="30" font-weight="700" fill="#0E700E" text-anchor="start">+6 points</text>
+  <text x="848" y="412" font-size="11.5" font-weight="400" fill="#5C5C5C" text-anchor="start">updated against frozen memory</text>
+  <text x="848" y="436" font-size="12" font-weight="400" fill="#242424" text-anchor="start">on test cases it has not seen</text>
+  <rect x="1060" y="312" width="256" height="150" rx="8" fill="#FFFFFF" stroke="#D1D1D1" stroke-width="1"/>
+  <text x="1076" y="340" font-size="14" font-weight="700" fill="#242424" text-anchor="start">Spending-commitment pace</text>
+  <text x="1076" y="388" font-size="28" font-weight="700" fill="#0E700E" text-anchor="start">On track</text>
+  <text x="1076" y="406" font-size="11.5" font-weight="400" fill="#5C5C5C" text-anchor="start">as of the 30 Oct invoice</text>
+  <text x="1076" y="424" font-size="12" font-weight="400" fill="#242424" text-anchor="start">Commitment €4.0 M, spent €2.9 M</text>
+  <text x="1076" y="440" font-size="12" font-weight="400" fill="#242424" text-anchor="start">Next milestone 31 Jan: forecast met</text>
+  <text x="1076" y="456" font-size="12" font-weight="400" fill="#242424" text-anchor="start">Projected shortfall: none</text>
+  <rect x="24" y="476" width="736" height="262" rx="8" fill="#FFFFFF" stroke="#D1D1D1" stroke-width="1"/>
+  <text x="40" y="504" font-size="14" font-weight="700" fill="#242424" text-anchor="start">Autonomy per domain</text>
+  <text x="40" y="536" font-size="12" font-weight="700" fill="#5C5C5C" text-anchor="start">Domain</text>
+  <text x="296" y="536" font-size="12" font-weight="700" fill="#5C5C5C" text-anchor="start">Rung now</text>
+  <text x="440" y="536" font-size="12" font-weight="700" fill="#5C5C5C" text-anchor="start">Evidence</text>
+  <text x="650" y="536" font-size="12" font-weight="700" fill="#5C5C5C" text-anchor="start">Trend</text>
+  <line x1="40" y1="550" x2="744" y2="550" stroke="#D1D1D1" stroke-width="1"/>
+  <text x="40" y="568" font-size="12.5" font-weight="600" fill="#242424" text-anchor="start">Stop dev machines out of hours</text>
+  <text x="296" y="568" font-size="12.5" font-weight="400" fill="#242424" text-anchor="start">Standing permission</text>
+  <text x="440" y="568" font-size="12.5" font-weight="400" fill="#242424" text-anchor="start">31 runs, 0 regrets, calibrated</text>
+  <text x="650" y="568" font-size="12.5" font-weight="400" fill="#242424" text-anchor="start">steady</text>
+  <line x1="40" y1="592" x2="744" y2="592" stroke="#D1D1D1" stroke-width="1"/>
+  <text x="40" y="610" font-size="12.5" font-weight="600" fill="#242424" text-anchor="start">Change storage tiers in dev</text>
+  <text x="296" y="610" font-size="12.5" font-weight="400" fill="#242424" text-anchor="start">Standing permission</text>
+  <text x="440" y="610" font-size="12.5" font-weight="400" fill="#242424" text-anchor="start">18 runs, 0 regrets</text>
+  <text x="650" y="610" font-size="12.5" font-weight="400" fill="#242424" text-anchor="start">steady</text>
+  <line x1="40" y1="634" x2="744" y2="634" stroke="#D1D1D1" stroke-width="1"/>
+  <text x="40" y="652" font-size="12.5" font-weight="600" fill="#242424" text-anchor="start">Resize production databases</text>
+  <text x="296" y="652" font-size="12.5" font-weight="400" fill="#242424" text-anchor="start">Your OK on a page</text>
+  <text x="440" y="652" font-size="12.5" font-weight="400" fill="#242424" text-anchor="start">6 changes, 1 regret</text>
+  <text x="650" y="652" font-size="12.5" font-weight="400" fill="#242424" text-anchor="start">stepped down</text>
+  <line x1="40" y1="676" x2="744" y2="676" stroke="#D1D1D1" stroke-width="1"/>
+  <text x="40" y="694" font-size="12.5" font-weight="600" fill="#242424" text-anchor="start">Commitment purchases</text>
+  <text x="296" y="694" font-size="12.5" font-weight="400" fill="#242424" text-anchor="start">Two people</text>
+  <text x="440" y="694" font-size="12.5" font-weight="400" fill="#242424" text-anchor="start">2 purchases, both on target</text>
+  <text x="650" y="694" font-size="12.5" font-weight="400" fill="#242424" text-anchor="start">never automatic</text>
+  <text x="40" y="722" font-size="11.5" font-weight="400" fill="#5C5C5C" text-anchor="start">Narrowing is automatic; widening is a person's decision.</text>
+  <rect x="772" y="476" width="250" height="262" rx="8" fill="#FFFFFF" stroke="#D1D1D1" stroke-width="1"/>
+  <text x="788" y="504" font-size="14" font-weight="700" fill="#242424" text-anchor="start">What the system costs</text>
+  <text x="788" y="558" font-size="30" font-weight="700" fill="#242424" text-anchor="start">€332</text>
+  <text x="788" y="580" font-size="11.5" font-weight="400" fill="#5C5C5C" text-anchor="start">cloud cost this month, 8.2 M tokens</text>
+  <rect x="788" y="596" width="218" height="20" rx="3" fill="#F0F0F0" stroke="#D1D1D1" stroke-width="1"/>
+  <rect x="788" y="596" width="148" height="20" rx="3" fill="#9FC7EE"/>
+  <text x="788" y="642" font-size="12.5" font-weight="600" fill="#242424" text-anchor="start">Verified savings: €3,100 a month</text>
+  <text x="788" y="668" font-size="11.5" font-weight="400" fill="#5C5C5C" text-anchor="start">People's hours, counted apart:</text>
+  <text x="788" y="686" font-size="11.5" font-weight="400" fill="#242424" text-anchor="start">platform 6 h, FinOps 4 h, owners 31 h</text>
+  <rect x="1034" y="476" width="282" height="262" rx="8" fill="#FFFFFF" stroke="#D1D1D1" stroke-width="1"/>
+  <text x="1050" y="504" font-size="14" font-weight="700" fill="#242424" text-anchor="start">Experience health</text>
+  <text x="1050" y="528" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">Stop or mute rate</text>
+  <text x="1050" y="546" font-size="13" font-weight="700" fill="#242424" text-anchor="start">2 % of recipients</text>
+  <text x="1050" y="566" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">Fatigue-review triggers</text>
+  <text x="1050" y="584" font-size="13" font-weight="700" fill="#242424" text-anchor="start">0 this quarter</text>
+  <text x="1050" y="604" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">Decided within 7 days</text>
+  <text x="1050" y="622" font-size="13" font-weight="700" fill="#242424" text-anchor="start">73 %</text>
+  <text x="1050" y="642" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">Explain taps per decision</text>
+  <text x="1050" y="660" font-size="13" font-weight="700" fill="#242424" text-anchor="start">0.6</text>
+  <text x="1050" y="680" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">Languages in use</text>
+  <text x="1050" y="698" font-size="13" font-weight="700" fill="#242424" text-anchor="start">English, Dutch</text>
+  <text x="28" y="770" font-size="12.5" font-weight="400" fill="#5C5C5C" text-anchor="start">Each tile says who it is for, which question it answers, its as-of time and its price basis. A tile with too little data says so instead of showing a number.</text>
+  <text x="28" y="792" font-size="12.5" font-weight="400" fill="#5C5C5C" text-anchor="start" font-style="italic">Built as an Azure Monitor workbook from small business events. An invented example.</text>
+</svg>

@@ -1,0 +1,91 @@
+{
+  "_invented": true,
+  "senderName": "Cost in Action (AI)",
+  "requestId": "r_Se7Ud2",
+  "pageUrl": "https://cost-in-action.contoso.example/ok/r_Se7Ud2",
+  "challengeExample": "For example: the job on the last Tuesday is real",
+  "teachExample": "For example: this is our disaster-recovery environment",
+  "headline": "Your settings",
+  "timeZones": [
+    {
+      "label": "Amsterdam, Berlin, Paris (CET/CEST)",
+      "value": "Europe/Amsterdam"
+    },
+    {
+      "label": "London, Lisbon (GMT/BST)",
+      "value": "Europe/London"
+    },
+    {
+      "label": "Athens, Helsinki (EET/EEST)",
+      "value": "Europe/Athens"
+    },
+    {
+      "label": "New York (ET)",
+      "value": "America/New_York"
+    },
+    {
+      "label": "Los Angeles (PT)",
+      "value": "America/Los_Angeles"
+    },
+    {
+      "label": "Mumbai (IST)",
+      "value": "Asia/Kolkata"
+    },
+    {
+      "label": "Another time zone: I will ask on the page",
+      "value": "page"
+    }
+  ],
+  "languages": [
+    {
+      "label": "English",
+      "value": "en"
+    },
+    {
+      "label": "Nederlands",
+      "value": "nl"
+    },
+    {
+      "label": "Deutsch",
+      "value": "de"
+    },
+    {
+      "label": "Français",
+      "value": "fr"
+    }
+  ],
+  "prefs": {
+    "channel": "teams",
+    "language": "en",
+    "days": "mon,tue,wed,thu,fri",
+    "timeZone": "Europe/Amsterdam",
+    "budget": "1",
+    "deskDay": "tue",
+    "quiet": "default"
+  },
+  "budgetChoices": [
+    {
+      "label": "Only the weekly desk",
+      "value": "0"
+    },
+    {
+      "label": "1",
+      "value": "1"
+    },
+    {
+      "label": "2",
+      "value": "2"
+    },
+    {
+      "label": "3",
+      "value": "3"
+    },
+    {
+      "label": "5",
+      "value": "5"
+    }
+  ],
+  "_scenario": "settings",
+  "notificationText": "Your settings",
+  "whyYouGetThis": "you asked to see your settings."
+}

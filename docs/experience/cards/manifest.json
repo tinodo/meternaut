@@ -1,0 +1,859 @@
+{
+  "limits": {
+    "max_schema_version": "1.5",
+    "max_bytes": 20000,
+    "max_title_chars": 24,
+    "max_top_actions": 6,
+    "max_visible_actions": 8,
+    "max_hidden_actions": 4,
+    "max_options": 2
+  },
+  "contract": {
+    "who": "The card's addressee; a decision verb (ok, cancel, undo, not-me) also needs the designated approver or a named delegate, checked by directory object id, never by name.",
+    "repeat": "A repeated tap changes nothing: the service answers that it is already recorded.",
+    "refused": "A verb is refused when its request is expired, changed, answered or paused, and the refusal says why.",
+    "response": "One immediate response per tap, as listed under returns; the outcome follows by updating the same message.",
+    "words": "Only Challenge, Teach and the text boxes send words: bounded, screened and quoted as untrusted data. Free text never approves."
+  },
+  "cards": {
+    "C1": {
+      "file": "hello.json",
+      "title": "Hello",
+      "conversation": "light",
+      "requires": [
+        "intro",
+        "what-i-do",
+        "what-i-do-not",
+        "what-i-keep",
+        "control"
+      ],
+      "displayTitle": "Hello",
+      "verbs": {
+        "me": {
+          "inputs": [],
+          "plan": false,
+          "returns": "receipt"
+        },
+        "not-mine": {
+          "inputs": [],
+          "plan": false,
+          "returns": "receipt"
+        },
+        "pause": {
+          "inputs": [
+            "pause-days"
+          ],
+          "plan": false,
+          "returns": "receipt"
+        },
+        "save-prefs": {
+          "inputs": [
+            "days",
+            "time-zone",
+            "desk-day",
+            "quiet",
+            "language"
+          ],
+          "plan": false,
+          "returns": "receipt"
+        },
+        "explain": {
+          "inputs": [
+            "level"
+          ],
+          "plan": false,
+          "returns": "answer"
+        },
+        "human": {
+          "inputs": [],
+          "plan": false,
+          "returns": "handoff"
+        }
+      }
+    },
+    "C2": {
+      "file": "question.json",
+      "title": "Question",
+      "conversation": "light",
+      "requires": [
+        "question",
+        "why-i-ask",
+        "why-you-get-this"
+      ],
+      "displayTitle": "Question",
+      "verbs": {
+        "yes": {
+          "inputs": [],
+          "plan": false,
+          "returns": "receipt"
+        },
+        "no": {
+          "inputs": [],
+          "plan": false,
+          "returns": "receipt"
+        },
+        "not-sure": {
+          "inputs": [],
+          "plan": false,
+          "returns": "receipt"
+        },
+        "other": {
+          "inputs": [
+            "other"
+          ],
+          "plan": false,
+          "returns": "receipt"
+        },
+        "not-mine": {
+          "inputs": [],
+          "plan": false,
+          "returns": "receipt"
+        },
+        "explain": {
+          "inputs": [
+            "level"
+          ],
+          "plan": false,
+          "returns": "answer"
+        },
+        "human": {
+          "inputs": [],
+          "plan": false,
+          "returns": "handoff"
+        }
+      }
+    },
+    "C3": {
+      "file": "recommendation.json",
+      "title": "Recommendation",
+      "conversation": "full",
+      "money": true,
+      "requires": [
+        "headline",
+        "why",
+        "checked",
+        "waiting",
+        "details",
+        "decisions",
+        "why-you-get-this"
+      ],
+      "displayTitle": "Recommendation",
+      "verbs": {
+        "option": {
+          "inputs": [],
+          "plan": false,
+          "returns": "card",
+          "card": "C4 or C5"
+        },
+        "decline": {
+          "inputs": [],
+          "plan": false,
+          "returns": "receipt"
+        },
+        "not-mine": {
+          "inputs": [],
+          "plan": false,
+          "returns": "receipt"
+        },
+        "explain": {
+          "inputs": [
+            "level"
+          ],
+          "plan": false,
+          "returns": "answer"
+        },
+        "challenge": {
+          "inputs": [
+            "challenge"
+          ],
+          "plan": false,
+          "returns": "answer"
+        },
+        "teach": {
+          "inputs": [
+            "teach"
+          ],
+          "plan": false,
+          "returns": "answer"
+        },
+        "fewer": {
+          "inputs": [],
+          "plan": false,
+          "returns": "receipt"
+        },
+        "human": {
+          "inputs": [],
+          "plan": false,
+          "returns": "handoff"
+        }
+      }
+    },
+    "C4": {
+      "file": "your-ok.json",
+      "title": "Your OK (one tap)",
+      "conversation": "full",
+      "money": true,
+      "requires": [
+        "headline",
+        "plan",
+        "when",
+        "undo",
+        "plan-code",
+        "could-go-wrong",
+        "cap",
+        "why-you-get-this"
+      ],
+      "displayTitle": "Your OK",
+      "verbs": {
+        "ok": {
+          "inputs": [],
+          "plan": true,
+          "returns": "receipt"
+        },
+        "cancel": {
+          "inputs": [],
+          "plan": true,
+          "returns": "receipt"
+        },
+        "reopen": {
+          "inputs": [],
+          "plan": false,
+          "returns": "card",
+          "card": "C3"
+        },
+        "explain": {
+          "inputs": [
+            "level"
+          ],
+          "plan": false,
+          "returns": "answer"
+        },
+        "challenge": {
+          "inputs": [
+            "challenge"
+          ],
+          "plan": false,
+          "returns": "answer"
+        },
+        "teach": {
+          "inputs": [
+            "teach"
+          ],
+          "plan": false,
+          "returns": "answer"
+        },
+        "human": {
+          "inputs": [],
+          "plan": false,
+          "returns": "handoff"
+        }
+      }
+    },
+    "C5": {
+      "file": "ok-on-page.json",
+      "title": "Your OK on a page",
+      "conversation": "full",
+      "money": true,
+      "requires": [
+        "headline",
+        "class-line",
+        "plan-code",
+        "browser-note",
+        "page-button",
+        "why-you-get-this"
+      ],
+      "displayTitle": "${classLabel}",
+      "verbs": {
+        "decline": {
+          "inputs": [],
+          "plan": false,
+          "returns": "receipt"
+        },
+        "not-mine": {
+          "inputs": [],
+          "plan": false,
+          "returns": "receipt"
+        },
+        "explain": {
+          "inputs": [
+            "level"
+          ],
+          "plan": false,
+          "returns": "answer"
+        },
+        "challenge": {
+          "inputs": [
+            "challenge"
+          ],
+          "plan": false,
+          "returns": "answer"
+        },
+        "teach": {
+          "inputs": [
+            "teach"
+          ],
+          "plan": false,
+          "returns": "answer"
+        },
+        "human": {
+          "inputs": [],
+          "plan": false,
+          "returns": "handoff"
+        }
+      },
+      "openUrl": [
+        "page-button"
+      ]
+    },
+    "C6": {
+      "file": "done.json",
+      "title": "Done",
+      "conversation": "full",
+      "requires": [
+        "headline",
+        "undo-window",
+        "why-you-get-this"
+      ],
+      "displayTitle": "Done",
+      "verbs": {
+        "undo": {
+          "inputs": [],
+          "plan": true,
+          "returns": "receipt"
+        },
+        "not-me": {
+          "inputs": [],
+          "plan": true,
+          "returns": "receipt"
+        },
+        "explain": {
+          "inputs": [
+            "level"
+          ],
+          "plan": false,
+          "returns": "answer"
+        },
+        "challenge": {
+          "inputs": [
+            "challenge"
+          ],
+          "plan": false,
+          "returns": "answer"
+        },
+        "teach": {
+          "inputs": [
+            "teach"
+          ],
+          "plan": false,
+          "returns": "answer"
+        },
+        "human": {
+          "inputs": [],
+          "plan": false,
+          "returns": "handoff"
+        }
+      }
+    },
+    "C7": {
+      "file": "result.json",
+      "title": "Result",
+      "conversation": "full",
+      "money": true,
+      "requires": [
+        "headline",
+        "predicted",
+        "why-you-get-this"
+      ],
+      "displayTitle": "Result",
+      "verbs": {
+        "matches": {
+          "inputs": [],
+          "plan": false,
+          "returns": "receipt"
+        },
+        "differs": {
+          "inputs": [
+            "differs"
+          ],
+          "plan": false,
+          "returns": "receipt"
+        },
+        "explain": {
+          "inputs": [
+            "level"
+          ],
+          "plan": false,
+          "returns": "answer"
+        },
+        "challenge": {
+          "inputs": [
+            "challenge"
+          ],
+          "plan": false,
+          "returns": "answer"
+        },
+        "teach": {
+          "inputs": [
+            "teach"
+          ],
+          "plan": false,
+          "returns": "answer"
+        },
+        "human": {
+          "inputs": [],
+          "plan": false,
+          "returns": "handoff"
+        }
+      }
+    },
+    "C8": {
+      "file": "told-afterwards.json",
+      "title": "Told afterwards",
+      "conversation": "full",
+      "money": true,
+      "requires": [
+        "headline",
+        "permission",
+        "undo-window",
+        "why-you-get-this"
+      ],
+      "displayTitle": "Done under a standing permission",
+      "verbs": {
+        "undo": {
+          "inputs": [],
+          "plan": true,
+          "returns": "receipt"
+        },
+        "pause-here": {
+          "inputs": [],
+          "plan": false,
+          "returns": "receipt"
+        },
+        "explain": {
+          "inputs": [
+            "level"
+          ],
+          "plan": false,
+          "returns": "answer"
+        },
+        "challenge": {
+          "inputs": [
+            "challenge"
+          ],
+          "plan": false,
+          "returns": "answer"
+        },
+        "teach": {
+          "inputs": [
+            "teach"
+          ],
+          "plan": false,
+          "returns": "answer"
+        },
+        "human": {
+          "inputs": [],
+          "plan": false,
+          "returns": "handoff"
+        }
+      }
+    },
+    "C9": {
+      "file": "reminder.json",
+      "title": "Reminder",
+      "conversation": "full",
+      "money": true,
+      "requires": [
+        "headline",
+        "next-step",
+        "waiting",
+        "why-you-get-this"
+      ],
+      "displayTitle": "Reminder",
+      "verbs": {
+        "reopen": {
+          "inputs": [],
+          "plan": false,
+          "returns": "card",
+          "card": "C3"
+        },
+        "decline": {
+          "inputs": [],
+          "plan": false,
+          "returns": "receipt"
+        },
+        "not-mine": {
+          "inputs": [],
+          "plan": false,
+          "returns": "receipt"
+        },
+        "explain": {
+          "inputs": [
+            "level"
+          ],
+          "plan": false,
+          "returns": "answer"
+        },
+        "challenge": {
+          "inputs": [
+            "challenge"
+          ],
+          "plan": false,
+          "returns": "answer"
+        },
+        "teach": {
+          "inputs": [
+            "teach"
+          ],
+          "plan": false,
+          "returns": "answer"
+        },
+        "human": {
+          "inputs": [],
+          "plan": false,
+          "returns": "handoff"
+        }
+      }
+    },
+    "C10": {
+      "file": "read-back.json",
+      "title": "Read-back",
+      "conversation": "light",
+      "rootInputs": true,
+      "requires": [
+        "understood",
+        "scope",
+        "why-you-get-this"
+      ],
+      "displayTitle": "Read-back",
+      "verbs": {
+        "confirm": {
+          "inputs": [
+            "scope"
+          ],
+          "plan": false,
+          "returns": "receipt"
+        },
+        "teach": {
+          "inputs": [
+            "scope",
+            "fix"
+          ],
+          "plan": false,
+          "returns": "answer"
+        },
+        "forget": {
+          "inputs": [],
+          "plan": false,
+          "returns": "receipt"
+        },
+        "widen-request": {
+          "inputs": [],
+          "plan": false,
+          "returns": "receipt"
+        },
+        "explain": {
+          "inputs": [],
+          "plan": false,
+          "returns": "answer"
+        },
+        "human": {
+          "inputs": [],
+          "plan": false,
+          "returns": "handoff"
+        }
+      }
+    },
+    "C11": {
+      "file": "widen-request.json",
+      "title": "Widen request",
+      "conversation": "light",
+      "requires": [
+        "headline",
+        "evidence",
+        "affected",
+        "why-you-get-this"
+      ],
+      "displayTitle": "A request about a note",
+      "verbs": {
+        "widen": {
+          "inputs": [],
+          "plan": false,
+          "returns": "receipt"
+        },
+        "keep-narrow": {
+          "inputs": [],
+          "plan": false,
+          "returns": "receipt"
+        },
+        "explain": {
+          "inputs": [
+            "level"
+          ],
+          "plan": false,
+          "returns": "answer"
+        },
+        "human": {
+          "inputs": [],
+          "plan": false,
+          "returns": "handoff"
+        }
+      },
+      "openUrl": [
+        "Show the resources"
+      ]
+    },
+    "C12": {
+      "file": "weekly-desk.json",
+      "title": "Weekly desk",
+      "conversation": "light",
+      "requires": [
+        "headline",
+        "total",
+        "why-you-get-this"
+      ],
+      "displayTitle": "Your weekly desk",
+      "verbs": {
+        "open": {
+          "inputs": [],
+          "plan": false,
+          "returns": "card",
+          "card": "C2 or C3"
+        },
+        "explain": {
+          "inputs": [
+            "level"
+          ],
+          "plan": false,
+          "returns": "answer"
+        },
+        "human": {
+          "inputs": [],
+          "plan": false,
+          "returns": "handoff"
+        }
+      }
+    },
+    "C13": {
+      "file": "heads-up.json",
+      "title": "Heads-up",
+      "conversation": "full",
+      "money": true,
+      "requires": [
+        "headline",
+        "what-i-did",
+        "why-you-get-this"
+      ],
+      "displayTitle": "Heads-up",
+      "verbs": {
+        "expected": {
+          "inputs": [],
+          "plan": false,
+          "returns": "receipt"
+        },
+        "not-expected": {
+          "inputs": [
+            "note"
+          ],
+          "plan": false,
+          "returns": "receipt"
+        },
+        "not-sure": {
+          "inputs": [],
+          "plan": false,
+          "returns": "receipt"
+        },
+        "explain": {
+          "inputs": [
+            "level"
+          ],
+          "plan": false,
+          "returns": "answer"
+        },
+        "challenge": {
+          "inputs": [
+            "challenge"
+          ],
+          "plan": false,
+          "returns": "answer"
+        },
+        "teach": {
+          "inputs": [
+            "teach"
+          ],
+          "plan": false,
+          "returns": "answer"
+        },
+        "human": {
+          "inputs": [],
+          "plan": false,
+          "returns": "handoff"
+        }
+      }
+    },
+    "C14": {
+      "file": "settings.json",
+      "title": "Settings",
+      "conversation": "light",
+      "rootInputs": true,
+      "requires": [
+        "headline",
+        "why-you-get-this"
+      ],
+      "displayTitle": "Settings",
+      "verbs": {
+        "save-prefs": {
+          "inputs": [
+            "channel",
+            "language",
+            "days",
+            "time-zone",
+            "budget",
+            "desk-day",
+            "quiet"
+          ],
+          "plan": false,
+          "returns": "receipt"
+        },
+        "explain": {
+          "inputs": [],
+          "plan": false,
+          "returns": "answer"
+        },
+        "human": {
+          "inputs": [],
+          "plan": false,
+          "returns": "handoff"
+        }
+      },
+      "openUrl": [
+        "More settings"
+      ]
+    },
+    "C15": {
+      "file": "could-not.json",
+      "title": "I could not",
+      "conversation": "light",
+      "requires": [
+        "headline",
+        "what-happened",
+        "what-now",
+        "why-you-get-this"
+      ],
+      "displayTitle": "I could not do that",
+      "verbs": {
+        "retry": {
+          "inputs": [],
+          "plan": false,
+          "returns": "receipt"
+        },
+        "explain": {
+          "inputs": [
+            "level"
+          ],
+          "plan": false,
+          "returns": "answer"
+        },
+        "human": {
+          "inputs": [],
+          "plan": false,
+          "returns": "handoff"
+        }
+      }
+    },
+    "C16": {
+      "file": "our-mistake.json",
+      "title": "Our mistake",
+      "conversation": "full",
+      "requires": [
+        "headline",
+        "what-happened",
+        "state",
+        "paused",
+        "who-updates",
+        "why-you-get-this"
+      ],
+      "displayTitle": "Our mistake",
+      "verbs": {
+        "explain": {
+          "inputs": [
+            "level"
+          ],
+          "plan": false,
+          "returns": "answer"
+        },
+        "challenge": {
+          "inputs": [
+            "challenge"
+          ],
+          "plan": false,
+          "returns": "answer"
+        },
+        "teach": {
+          "inputs": [
+            "teach"
+          ],
+          "plan": false,
+          "returns": "answer"
+        },
+        "human": {
+          "inputs": [],
+          "plan": false,
+          "returns": "handoff"
+        }
+      },
+      "openUrl": [
+        "What was affected"
+      ]
+    },
+    "C17": {
+      "file": "permission-starts.json",
+      "title": "A standing permission starts",
+      "conversation": "full",
+      "requires": [
+        "headline",
+        "permission",
+        "how",
+        "why-you-get-this"
+      ],
+      "displayTitle": "A standing permission starts",
+      "verbs": {
+        "pause-here": {
+          "inputs": [],
+          "plan": false,
+          "returns": "receipt"
+        },
+        "not-mine": {
+          "inputs": [],
+          "plan": false,
+          "returns": "receipt"
+        },
+        "explain": {
+          "inputs": [
+            "level"
+          ],
+          "plan": false,
+          "returns": "answer"
+        },
+        "challenge": {
+          "inputs": [
+            "challenge"
+          ],
+          "plan": false,
+          "returns": "answer"
+        },
+        "teach": {
+          "inputs": [
+            "teach"
+          ],
+          "plan": false,
+          "returns": "answer"
+        },
+        "human": {
+          "inputs": [],
+          "plan": false,
+          "returns": "handoff"
+        }
+      }
+    }
+  }
+}

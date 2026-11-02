@@ -1,0 +1,42 @@
+{
+  "_invented": true,
+  "senderName": "Cost in Action (AI)",
+  "requestId": "r_9vK2xQ",
+  "pageUrl": "https://cost-in-action.contoso.example/ok/r_9vK2xQ",
+  "challengeExample": "For example: the job on the last Tuesday is real",
+  "teachExample": "For example: this is our disaster-recovery environment",
+  "headline": "Switch off the web-shop QA environment at night and at weekends, except the last Tuesday?",
+  "scopeLine": "For you, 14 resources in rg-webshop-qa",
+  "value": "About €690 a month",
+  "range": "Range €620 to €760",
+  "priceBasis": "At the rates on your bill",
+  "savingWord": "Expected saving",
+  "waiting": "Keeping things as they are forgoes about €23 a day, at the rates on your bill.",
+  "why": "Six people use it, 07:45 to 18:30 on weekdays only (11 weeks of access records). I prefer this to option C, which saves more but needs about two days of engineering.",
+  "checked": "11 weeks of access records show nothing outside those hours except the last Tuesday of the month. Strongest doubt: a job on that night. You told me one runs, so the schedule leaves it on.",
+  "mainOption": "A",
+  "options": [
+    {
+      "key": "B",
+      "label": "Switch off at weekends only",
+      "effect": "Saves about €320 a month, range €280 to €360, Expected, at the rates on your bill. Undo in minutes."
+    },
+    {
+      "key": "C",
+      "label": "Create it for each test run instead",
+      "effect": "Saves about €940 a month, range €820 to €1,060, Expected, at the rates on your bill. About two days of engineering."
+    }
+  ],
+  "details": {
+    "consequences": "the saving above; no effect on production; the month-end run keeps working",
+    "tested": "I re-ran last month's usage with the environment off outside 07:30 to 19:30 and on the last Tuesday",
+    "changeMyMind": "any weekday activity after 19:30 in the next two weeks",
+    "effort": "one tap, no engineering",
+    "reversibility": "switch it back on in minutes, any time",
+    "onYes": "I show you the exact plan and ask for your OK on it",
+    "howWeKnow": "I check the bill after the next billing cycle and tell you the result"
+  },
+  "_scenario": "E1",
+  "notificationText": "Switch off the web-shop QA environment at night and at weekends, except the last Tuesday?",
+  "whyYouGetThis": "you confirmed on Monday that you look after rg-webshop-qa (the directory lists you for 3 of its 14 resources, and you created the other 11)."
+}
