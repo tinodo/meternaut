@@ -157,9 +157,10 @@ jobs:
               --parameters "@$RUNNER_TEMP/hub.parameters.json" "$@" \
               --query properties.outputs.endpoint.value --output tsv
           }
-          # Two answers of the service are not failures of the template. A soft-deleted account of the name is restored with
-          # restoreAccount=true. A write to the account that collides with another change to it (IfMatchPreconditionFailed)
-          # is made again after a minute: the deployment is idempotent. Anything else stops the run at once.
+          # Three answers of the service are not failures of the template. A soft-deleted account of the name is restored with
+          # restoreAccount=true. A write to the account that collides with another change to it (IfMatchPreconditionFailed), and a
+          # stop of the Azure CLI itself on the runner ("deadlock detected by _ModuleLock", an import lock of its Python, seen once),
+          # are made again after a minute: the deployment is idempotent. Anything else stops the run at once.
           extra=()
           endpoint=""
           for attempt in 1 2 3; do
@@ -170,8 +171,8 @@ jobs:
             if [ "${#extra[@]}" -eq 0 ] && grep -q FlagMustBeSetForRestore "$RUNNER_TEMP/deploy.err"; then
               echo "A soft-deleted account of this name is left from an earlier removal; it is restored (it holds nothing)."
               extra=(restoreAccount=true)
-            elif [ "$attempt" -lt 3 ] && grep -q IfMatchPreconditionFailed "$RUNNER_TEMP/deploy.err"; then
-              echo "A write to the model account collided with another change to it (IfMatchPreconditionFailed). Trying again in a minute (attempt $attempt of 3)."
+            elif [ "$attempt" -lt 3 ] && grep -qE 'IfMatchPreconditionFailed|deadlock detected by _ModuleLock' "$RUNNER_TEMP/deploy.err"; then
+              echo "The deployment stopped on an answer that a second try usually clears (a write to the model account that collided with another change to it, or the Azure CLI stopping on its own). Trying again in a minute (attempt $attempt of 3)."
               sleep 60
             else
               cat "$RUNNER_TEMP/deploy.err" >&2

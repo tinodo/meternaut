@@ -47,6 +47,10 @@ class FakeHub:
             if self.backend_throttles:
                 return 429, BACKEND_429
             return 429, b'{"statusCode":429,"message":"Token limit is exceeded. Try again in 30 seconds."}'
+        if body.get("max_completion_tokens", 1000) < 8:
+            # the real model reasons before it answers: with no room to finish it refuses with this 400 (seen in the first real run)
+            return 400, (b'{ "error": { "message": "Could not finish the message because max_tokens or model output limit was reached. '
+                         b'Please try again with higher max_tokens.", "type": "invalid_request_error", "param": null, "code": null } }')
         if words > 20:
             if self.big_status:
                 return self.big_status, (b'{"statusCode":429,"message":"Token limit is exceeded."}' if self.big_status == 429 else b'{"error":"too large"}')
@@ -235,7 +239,9 @@ class Checks(unittest.TestCase):
         big = [b for b, _ in hub.sent if len(b["messages"][0]["content"].split()) > 20]
         self.assertEqual(len(big), 1)
         self.assertGreater(len(big[0]["messages"][0]["content"].split()), CONTRACT["tokensPerMinute"])
-        self.assertEqual(big[0]["max_completion_tokens"], 1)
+        # the model reasons before it answers: a cap of one token cannot hold even that, and the real service answers 400
+        self.assertGreaterEqual(big[0]["max_completion_tokens"], 64)
+        self.assertTrue(big[0]["messages"][0]["content"].endswith("Reply with the single word: ok"))
         self.assertEqual(hub.sent[-1][0]["messages"][0]["content"], "Reply with the single word: ok")  # the limit check runs last
 
     def test_a_hub_that_never_refuses_fails_the_limit_check(self):

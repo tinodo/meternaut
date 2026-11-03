@@ -313,7 +313,12 @@ class Apim:
         raise Problem(f"{path}: still there after {int(tries * pause)} seconds, although the service accepted its removal")
 
     def delete(self, path: str) -> str:
-        """DELETE one object. Never the subscriptions of a product or anything else the manifest does not name."""
+        """DELETE one object that is there. Never the subscriptions of a product or anything else the manifest does not name.
+
+        The object is read first: the service answers a DELETE of an object that does not exist with 204, which would read
+        as "deleted". What was not there is "absent" and no DELETE is sent for it."""
+        if self.read(path) is None:
+            return "absent"
         query = {"deleteRevisions": "true"} if re.fullmatch(r"apis/[^/]+", path) else {}
         headers = None if LINK.fullmatch(path) else {"If-Match": "*"}
         status, _, raw = self.transport.request("DELETE", self.url(path, **query), None, headers)
