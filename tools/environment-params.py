@@ -42,13 +42,20 @@ The settings of the kit's module are chosen here and explained here, not in the 
     and the inference APIs' policies include that fragment unconditionally. The Language and Content Safety addresses are
     the model account's own (a named value may not be empty).
   - No prompt and no answer is logged: the LLM log settings say `none` for both, so only token counts and the model's name
-    are kept.
+    are kept. The service refuses the value `none` for the messages, so environment/kit-patches/llm-log-messages-none.patch
+    makes the kit's inference-api.bicep leave the request and response settings out when the parameter says `none`.
   - The two policy fragments that send usage records to an Event Hub (`ai-usage`, `pii-state-saving`) are not created: the
     kit's own deployment makes the loggers that they need together with the Event Hub, the module does not, and the service
     refuses a fragment whose logger is missing. The usage recording is left out, and no API here includes them; the patch
     environment/kit-patches/no-usage-recording-fragments.patch (applied to the kit's checkout) does it.
-  - JWT checking is off (callers use the contract's key) until an app registration exists; the Unified AI, Realtime,
-    Redis, embeddings and release-version parts are off; no second logger and no diagnostic setting is made for Azure Monitor.
+  - The Unified AI API is not deployed (its update flag is off), but its enable flag is on: the module creates the
+    `set-response-headers` policy fragment only with that flag, and the policies of both inference APIs include it, so
+    without it the service refuses their policies ("Policy fragment ... could not be found").
+  - A call that is not made with a contract's key is refused on the two inference APIs by
+    environment/kit-patches/contract-required.patch: the key of the instance itself and any key that is not tied to a product
+    never run a contract's policy, so its models and limits would not apply to them.
+  - JWT checking is off (callers use the contract's key) until an app registration exists; the Realtime, Redis, embeddings
+    and release-version parts are off; no second logger and no diagnostic setting is made for Azure Monitor.
 """
 from __future__ import annotations
 
@@ -379,7 +386,7 @@ def build(env, models: list[dict], preview: bool = False, contract: dict | None 
         "updateUniversalLLMApi": True,
         "updateAzureOpenAIApi": True,
         "updateUnifiedAiApi": False,
-        "enableUnifiedAiApi": False,
+        "enableUnifiedAiApi": True,
         "updateReleaseVersionApi": False,
         "updateOpenAIRealtimeApi": False,
         "updateRedisCache": False,

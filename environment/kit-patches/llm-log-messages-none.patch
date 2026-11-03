@@ -1,0 +1,28 @@
+Lets the two inference APIs of the Citadel gateway-upgrade module log token counts without logging a prompt or an answer.
+
+The module passes the LLM log settings of its parameters straight to the API-level Azure Monitor diagnostic. The service
+refuses the value "none" for the messages of a request or a response ("Invalid field
+'largeLanguageModel.requests.messages' specified"): to log no messages, the request and the response settings have to be left
+out. The patch leaves them out when the parameter says "none", and passes them on as before for any other value.
+
+It applies to bicep/infra/modules/apim/inference-api.bicep of the kit at the commit that the workflows check out
+(Azure-Samples/ai-hub-gateway-solution-accelerator, citadel-v1); the checks apply it for real. The kit's unified-ai-api.bicep has
+the same two lines; that API is not deployed here, so it is not patched.
+
+diff --git a/bicep/infra/modules/apim/inference-api.bicep b/bicep/infra/modules/apim/inference-api.bicep
+--- a/bicep/infra/modules/apim/inference-api.bicep
++++ b/bicep/infra/modules/apim/inference-api.bicep
+@@ -195,11 +195,11 @@ resource apiDiagnostics 'Microsoft.ApiManagement/service/apis/diagnostics@2024-0
+     }
+     largeLanguageModel: {
+       logs: azureMonitorLogSettings.largeLanguageModel.logs
+-      requests: {
++      requests: azureMonitorLogSettings.largeLanguageModel.requests.messages == 'none' ? null : {
+         messages: azureMonitorLogSettings.largeLanguageModel.requests.messages
+         maxSizeInBytes: azureMonitorLogSettings.largeLanguageModel.requests.maxSizeInBytes
+       }
+-      responses: {
++      responses: azureMonitorLogSettings.largeLanguageModel.responses.messages == 'none' ? null : {
+         messages: azureMonitorLogSettings.largeLanguageModel.responses.messages
+         maxSizeInBytes: azureMonitorLogSettings.largeLanguageModel.responses.maxSizeInBytes
+       }

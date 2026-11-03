@@ -27,10 +27,12 @@ jobs:
           ref: 81599b31dfbaee20ebd3a6d2ba9b07dde3c31814
           path: kit
           persist-credentials: false
-      - name: Leave out the two usage-recording fragments of the kit's module, as the deploy workflow does
+      - name: Apply the patches to the kit's module, as the deploy workflow does
         run: |
-          git -C kit apply --check ../environment/kit-patches/no-usage-recording-fragments.patch
-          git -C kit apply ../environment/kit-patches/no-usage-recording-fragments.patch
+          for patch in environment/kit-patches/*.patch; do
+            git -C kit apply --check "../$patch"
+            git -C kit apply "../$patch"
+          done
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.13"

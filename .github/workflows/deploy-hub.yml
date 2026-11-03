@@ -72,12 +72,13 @@ jobs:
           path: kit
           persist-credentials: false
 
-      - name: Leave out the two usage-recording fragments of the kit's module
+      - name: Apply the patches to the kit's module
         run: |
-          # The module's fragments ai-usage and pii-state-saving need an Event Hub that this environment does not have
-          # (environment/kit-patches/no-usage-recording-fragments.patch says why); a patch that does not apply stops the run.
-          git -C kit apply --check ../environment/kit-patches/no-usage-recording-fragments.patch
-          git -C kit apply ../environment/kit-patches/no-usage-recording-fragments.patch
+          # environment/kit-patches/*.patch: what each one does, and why, is at its top. A patch that does not apply stops the run.
+          for patch in environment/kit-patches/*.patch; do
+            git -C kit apply --check "../$patch"
+            git -C kit apply "../$patch"
+          done
 
       - name: The tools, the templates and the kit's module pass their checks
         run: |
@@ -300,6 +301,19 @@ jobs:
         run: |
           az rest --method get --url "https://management.azure.com${GATEWAY_RESOURCE_ID}/apis?api-version=2024-05-01" --query "value[].{name:name, path:properties.path}" --output table
 
+      - name: The two model APIs refuse a call that is not made with a contract's key
+        if: inputs.action == 'gateway'
+        run: |
+          # The rule is in the kit's API policies through environment/kit-patches/contract-required.patch; this reads it back from the instance.
+          for api in universal-llm-api azure-openai-api; do
+            policy=$(az rest --method get --url "https://management.azure.com${GATEWAY_RESOURCE_ID}/apis/${api}/policies/policy?api-version=2024-05-01&format=rawxml" --query properties.value --output tsv)
+            if ! grep -q 'contract_required' <<< "$policy"; then
+              echo "::error::The policy of $api does not hold the rule that refuses a call without a contract's key."
+              exit 1
+            fi
+            echo "$api: a call that is not made with a contract's key is refused."
+          done
+
       - name: What the first contract would change in the gateway
         if: inputs.action == 'what-if' || inputs.action == 'contract'
         env:
@@ -384,7 +398,7 @@ jobs:
                 what-if) echo "Nothing was changed. Read the lists above: what the next steps would create, and the gateway as it is now." ;;
                 model-side) echo "The model account \`$ACCOUNT_NAME\` is behind a private endpoint in resource group \`$ENV_RESOURCE_GROUP\`, the gateway identity has its role on it, and the landing zone has registered the endpoint's name. The gateway has not been touched." ;;
                 gateway-prepare) echo "The identity is attached to the gateway (its own identity is kept) and the logger is there. The Citadel module has not been applied: a what-if now shows its exact diff." ;;
-                gateway) echo "The Citadel module's objects are in the gateway. Nobody can call the new APIs but the instance's all-access key until the first contract exists." ;;
+                gateway) echo "The Citadel module's objects are in the gateway, without its two usage-recording fragments. A call to the two model APIs is refused unless it is made with the key of a contract, so nobody can call them (the instance's all-access key included) until the first contract exists." ;;
                 contract) echo "The contract \`$CONTRACT_NAME\` is in the gateway: a product that grants the two inference APIs, its policy (the models and the token limits) and one subscription. The checks above ran against the gateway with that subscription's key, which is stored nowhere." ;;
               esac
             fi

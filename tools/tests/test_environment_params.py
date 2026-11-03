@@ -148,9 +148,15 @@ class KitSettings(unittest.TestCase):
 
     def test_only_the_two_inference_apis_are_deployed(self):
         self.assertTrue(self.kit["updateUniversalLLMApi"] and self.kit["updateAzureOpenAIApi"])
-        for key in ("updateUnifiedAiApi", "enableUnifiedAiApi", "updateReleaseVersionApi", "updateOpenAIRealtimeApi",
+        for key in ("updateUnifiedAiApi", "updateReleaseVersionApi", "updateOpenAIRealtimeApi",
                     "updateRedisCache", "enableRedisCache", "updateEmbeddingsBackend", "enableEmbeddingsBackend"):
             self.assertIs(self.kit[key], False, key)
+
+    def test_the_unified_api_is_not_deployed_but_its_fragments_are_because_the_two_apis_include_one(self):
+        # The service refused the policies of both inference APIs, in a real run, because set-response-headers did not exist:
+        # the module creates it only with enableUnifiedAiApi, and both policies include it.
+        self.assertIs(self.kit["updateUnifiedAiApi"], False)
+        self.assertIs(self.kit["enableUnifiedAiApi"], True)
 
     def test_callers_use_the_contracts_key_and_no_second_azure_monitor_logger_is_made(self):
         self.assertIs(self.kit["enableJwtAuth"], False)
