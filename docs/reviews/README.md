@@ -114,7 +114,7 @@ After the plan was read, four adjustments were asked for: a small learning demon
 
 ## The development hub
 
-The hub that every model call of the learning demonstration goes through ([`hub/`](../../hub/README.md)) was deployed to a resource group of its own and checked with calls and refusals. A reviewer on another model family then read its files, the patch to the accelerator, the access contract and the harness's client against the plan text they implement.
+The hub that every model call of the learning demonstration goes through ([`hub/`](../../hub/README.md)) was deployed to a resource group of its own and checked with calls and refusals; it was withdrawn on 2026-11-03 (see the [changelog](../../CHANGELOG.md)). A reviewer on another model family then read its files, the patch to the accelerator, the access contract and the harness's client against the plan text they implement.
 
 | Round | Reviewer (model) | Raw report | Disposition |
 |---|---|---|---|

@@ -2,7 +2,7 @@
 
 Infrastructure as code for Meternaut, in Bicep. The platform team owns this folder ([design 09](../docs/design/09-delivery-and-operations.md#1-the-repository)).
 
-**Nothing here is deployed by CI.** One template has been deployed by hand: the budget of the development hub's resource group ([`hub/`](../hub/README.md)). A deployment follows [AGENTS.md](../AGENTS.md) rule 15: the owner names the subscription, anything that bills is described first with its cost and where it stops, and in a subscription that the solution does not own only resource groups made for it are touched. CI only compiles the templates.
+**Nothing here is deployed.** A deployment goes through a GitHub Actions workflow that the owner approves ([AGENTS.md](../AGENTS.md) rules 15 and 18): the owner names the subscription, anything that bills is described first with its cost and where it stops, and in a subscription that the solution does not own only resource groups made for it are touched. CI only compiles the templates.
 
 | Path | What it creates | Scope |
 |---|---|---|

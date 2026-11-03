@@ -2,6 +2,16 @@
 
 All notable changes, newest first. Versions are git tags: `ideation-vN` for the ideation (`docs/01` to `docs/10` and the research), `design-vN` for the design (`docs/design/`; `design-v1` was withdrawn), `experience-vN` for the experience design (`docs/experience/`) and `build-plan-vN` for the build plan (`docs/build-plan/`). A heading without a tag records a change that is not a new edition. The previous editions stay available at their tags, and the earliest are archived under [`docs/_archive/`](docs/_archive/), which is never edited.
 
+## The first hub withdrawn, and the rules it taught — 2026-11-03
+
+**What.** The development hub of 2026-11-02 no longer exists: the owner deleted its resource group. It had been deployed by hand from an agent's machine, it added a second API Management instance next to the owner's own, and it created private DNS zones and a virtual network without the landing zone's DNS server, in a landing zone where an audit policy flags such zones and a policy registers every private endpoint in the central zones. [`hub/README.md`](hub/README.md) says so at its top, and the folder is replaced when the new hub is built.
+
+**Rules.** [AGENTS.md](AGENTS.md) now says: rule 18, every change to Azure goes through a GitHub Actions workflow that the owner has approved, and an agent only reads Azure; rule 19, the environment is studied and its shared services are reused before anything is built in it, with no private DNS zone, link or zone group in a landing zone and soft-deleted names checked first; rule 20, the owner's messages are answered at once. Rule 15 no longer allows a link from a private DNS zone to a landing-zone network.
+
+**What is left in Azure.** A key vault, soft-deleted with purge protection, keeps its name until 2027-02-01 and costs nothing; the name is not used again. A soft-deleted Log Analytics workspace expires on its own. The `Microsoft.ApiManagement` resource provider stays registered on the subscription. The Foundry account of the hub was purged from a machine, which rule 18 would not allow, and is reported here for that reason.
+
+**Not changed.** The earlier entry and the review records keep what was true when they were written.
+
 ## The hub — 2026-11-02
 
 **What.** The hub is the one API Management service that stands in front of every AI model (an AI gateway; Microsoft's open-source Citadel governance hub is the accelerator for it). It is not a network hub. [`hub/`](hub/README.md) deploys a development version from the accelerator at a pinned commit, with a patch of seven files. It was deployed to a resource group of its own in a landing-zone subscription, with no exemption from any policy, and checked: a call with a contract's key succeeds; a call with no key, a wrong key, a model the contract does not allow, its alias, or a prompt over the minute's token limit is refused; the model's own endpoint refuses a caller that bypasses the gateway, the person who deployed it included; token counts are logged and prompts are not.

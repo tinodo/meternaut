@@ -1,5 +1,7 @@
 # hub/
 
+> **Withdrawn on 2026-11-03. Do not follow the steps on this page.** The hub it describes was deployed by hand from a machine, it added a second API Management instance next to the owner's own, and it created private DNS zones and a virtual network that the landing zone does not want. Its resource group was deleted. Every change to Azure goes through a GitHub Actions workflow ([AGENTS.md](../AGENTS.md) rule 18), the landing zone provides private DNS and the network (rule 19), and the owner's existing API Management instance is used. This folder is rewritten when the new hub is built.
+
 The hub is the one door to every AI model that Meternaut uses. It is an API Management service: it checks who is calling, allows only the models a contract names, limits the tokens each contract may use, and records how many tokens each call used. Agents never call a model directly. Other names for the same thing are the *AI gateway* and, for Microsoft's open-source accelerator that provides it, the *Citadel governance hub*. It is not a network hub and not a Foundry hub.
 
 An adopting organisation normally brings its own hub ([architecture](../docs/design/02-architecture.md#6-the-landing-zone-and-the-hub)). This folder deploys the smallest hub that works for development, for an organisation that has none ([before you start](../docs/build-plan/02-before-you-start.md)). It is built from [the accelerator](https://github.com/Azure-Samples/ai-hub-gateway-solution-accelerator) at the commit pinned in [`accelerator.json`](accelerator.json), plus a small patch.
