@@ -1,121 +1,96 @@
 # hub/
 
-> **Withdrawn on 2026-11-03. Do not follow the steps on this page.** The hub it describes was deployed by hand from a machine, it added a second API Management instance next to the owner's own, and it created private DNS zones and a virtual network that the landing zone does not want. Its resource group was deleted. Every change to Azure goes through a GitHub Actions workflow ([AGENTS.md](../AGENTS.md) rule 18), the landing zone provides private DNS and the network (rule 19), and the owner's existing API Management instance is used. This folder is rewritten when the new hub is built.
-
 The hub is the one door to every AI model that Meternaut uses. It is an API Management service: it checks who is calling, allows only the models a contract names, limits the tokens each contract may use, and records how many tokens each call used. Agents never call a model directly. Other names for the same thing are the *AI gateway* and, for Microsoft's open-source accelerator that provides it, the *Citadel governance hub*. It is not a network hub and not a Foundry hub.
 
-An adopting organisation normally brings its own hub ([architecture](../docs/design/02-architecture.md#6-the-landing-zone-and-the-hub)). This folder deploys the smallest hub that works for development, for an organisation that has none ([before you start](../docs/build-plan/02-before-you-start.md)). It is built from [the accelerator](https://github.com/Azure-Samples/ai-hub-gateway-solution-accelerator) at the commit pinned in [`accelerator.json`](accelerator.json), plus a small patch.
+An adopting organisation normally brings its own hub ([architecture](../docs/design/02-architecture.md#6-the-landing-zone-and-the-hub)). This folder builds what development needs on top of an API Management instance that already exists: it does not create a gateway, a DNS zone, a peering or a route, because the landing zone provides them.
 
-## What gets deployed
+## What it builds
 
-| Part | What it is | Why it is there |
+| Part | What it is |
+|---|---|
+| **The gateway** | The existing API Management instance. Meternaut adds a handful of objects whose names start with `meternaut-` ([listed below](#what-is-added-to-the-api-management-instance)) and touches nothing else on it |
+| **The model** | One Microsoft Foundry account in a resource group of its own, with one model, `gpt-6-luna` (EU data zone). Public access and key access are off; the instance's own identity is the only caller, with the one role that runs chat completions |
+| **A private endpoint** | The only way to the model account. The landing zone's policy registers its name in the central private DNS zone about ten minutes after it exists; the template creates no DNS zone, link or zone group |
+| **A small network** | One virtual network with one subnet for the endpoint, on the landing zone's DNS server. The landing zone's network manager peers and routes it by itself |
+| **A budget** | One monthly budget on the resource group, with alerts to the owner |
+
+[`main.bicep`](main.bicep) is the template. [`contract.json`](contract.json) is the development contract: one model, 30,000 tokens a minute and 2,000,000 a month. [`apim/`](apim/) holds the objects added to the instance.
+
+## How a change reaches Azure
+
+Only through the workflow [`deploy-hub.yml`](../.github/workflows/deploy-hub.yml) ([AGENTS.md](../AGENTS.md) rule 18). Nobody deploys from a machine. The owner starts it from the Actions tab (*Hub*, *Run workflow*) and picks one action:
+
+| Action | What it does |
+|---|---|
+| `what-if` | Shows what a deploy would create in Azure and in the instance. Changes nothing. An agent may start this one |
+| `deploy` | Builds or updates the network, the model account and the endpoint; waits until the landing zone has registered the endpoint's name (up to 40 minutes); adds the Meternaut objects to the instance; then checks the hub with real calls ([`tools/hub-smoke.py`](../tools/hub-smoke.py)); a check passes only with evidence, such as the model's own token usage in the reply. Tick `check_limits` to also check that the token rate is enforced: the gateway itself must refuse the second request with a 429. It uses about a minute's allowance of tokens and blocks the key for up to a minute |
+| `pause` | Takes the Meternaut objects out of the instance and deletes the private endpoint, the only fixed cost. Everything else stays and costs nothing while idle. `deploy` brings it back |
+| `remove` | Takes everything away: the objects, the endpoint, the model account, the network and the budget, each by name. Anything else in the resource group is left alone. The account is soft-deleted; the next `deploy` restores it by itself |
+
+What the workflow does first, every time: the tests of the tools and the Bicep compile ([`tools/workflow-lint.py`](../tools/workflow-lint.py) also checks the workflow itself), then it signs in with OpenID Connect as an identity that can act only in the hub's resource group and on the `meternaut-` objects of the instance. It runs only on `main`, only for the owner, and never two at once. It touches the instance only after the endpoint's name is registered: if that never happens, nothing has been added to it. The objects are then written one after another and the hub is checked afterwards, so a failed run can leave some of them in place and the endpoint running. Running `deploy` again is safe and repeats only what is missing, and the run's summary says plainly when it did not finish and what may still exist.
+
+The identity and the workflow's settings are made once, by hand, with the owner's yes: [`BOOTSTRAP.md`](BOOTSTRAP.md). It is the only manual step, and it lists the identity's rights and what they cannot do. It was taken on 2026-11-03 ([changelog](../CHANGELOG.md)).
+
+| Setting | Kind | What it holds |
 |---|---|---|
-| API Management, Developer tier | The gateway, injected in the hub's own network in internal mode: no public gateway address. No service level agreement | The one door to the models |
-| Microsoft Foundry account | One model, `gpt-6-luna` (EU data zone). Public access and key access are off; only the gateway's managed identity may call it | The model |
-| Event Hubs, Standard, one throughput unit | Where the gateway's usage logger writes | The accelerator's logging fragments need it |
-| Key Vault | Each contract's key and endpoint | Secrets stay out of deployment outputs |
-| Log Analytics and Application Insights | Token counts and request metadata, with a daily cap on ingestion | Spend is counted from these logs |
-| Three private endpoints, private DNS zones | For the model account, the vault and the event hub | A landing zone that denies public access to these services |
-| A virtual network of its own | Holds the gateway and the endpoints | Peering to the rest of the landing zone is up to that landing zone |
+| `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID` | secret | The identity and where it signs in |
+| `HUB_APIM_RESOURCE_ID` | secret | The resource id of the API Management instance |
+| `HUB_RESOURCE_GROUP`, `HUB_LOCATION` | variable | The hub's resource group and region |
+| `HUB_VNET_PREFIX`, `HUB_PE_SUBNET_PREFIX` | variable | The network's address range and the endpoint's subnet, inside `10.0.0.0/8` |
+| `HUB_DNS_SERVERS` | variable | The landing zone's DNS server. A network without it cannot resolve the central private DNS zones |
+| `HUB_OWNER`, `HUB_ALERT_EMAILS`, `HUB_BUDGET_AMOUNT` | variable | The owner tag, the budget's alert addresses and its monthly amount |
+| `HUB_APIM_LOGGER` | variable | The name of the instance's Application Insights logger, where the Meternaut API sends its metrics |
 
-## What the patch changes
+[`tools/hub-params.py`](../tools/hub-params.py) checks every value before anything is deployed, works out the model account's name from the subscription and the group so that it is the same on every run, and passes on the budget's start date, which the workflow reads from the existing budget (a budget keeps the date it started with).
 
-[`accelerator-changes.patch`](accelerator-changes.patch) is the only difference from the pinned commit, applied by the steps below.
+## What is added to the API Management instance
 
-- **A switch for the usage-ingestion add-on** (`deployUsageIngestion`). It is on upstream and off here: it adds Cosmos DB, a Logic App, a storage account and an identity that nothing in the build plan reads, and together they cost more than the rest of the hub.
-- **Event Hubs:** minimum TLS 1.2 and no local keys, which a landing zone with a TLS policy requires, and no auto-inflate, so the namespace stays at its one throughput unit.
-- **Model logging:** the request and response objects are left out when message capture is `none`, because API Management rejects the value `none`. Token counts and the model are always logged.
-- **Foundry:** key access is off, and two switches (`grantFoundryKeyVaultAccess`, `grantDeployerFoundryAccess`) turn off grants that nothing uses: the account's access to the vault, and the deploying person's role on the account, which would allow calling the model past the gateway.
-- **Log Analytics:** a daily ingestion cap.
+[`tools/apim-sync.py`](../tools/apim-sync.py) writes these, and removes them again. It refuses any object whose name does not start with `meternaut-`, the instance itself, its global policy, its network, its loggers and every other API and product, and it refuses to write (`apply`, `remove`) anywhere but GitHub Actions. After each write it reads the object until the service reports it finished, because the service may answer before it is done; an object that reports failed is made again from the approved definition.
 
-## Deploy it
+| Object | What it is |
+|---|---|
+| Product `meternaut-learning-demo-dev` | The contract: published, a key required, one key. Its policy names the allowed models and counts tokens |
+| API `meternaut-llm` | The route `/meternaut/llm/v1/chat/completions`, a key in the `api-key` header. Its policy checks the model, sends the call to the model account on the instance's own identity and drops the caller's key |
+| Operation `chat-completions` | The one operation of the API |
+| Subscription `meternaut-learning-demo-dev-sub-01` | The contract's key. It is read only through the workflow's check and never printed |
+| Diagnostic `applicationinsights` on the API | Request metadata and token metrics to the instance's logger; no prompts or answers |
 
-You need the Azure CLI with Bicep, Owner (or Contributor plus User Access Administrator) on the subscription, the `Microsoft.ApiManagement` resource provider registered, and quota for the model in the region.
+`python tools/apim-sync.py plan` (the workflow's `what-if` runs it) shows each object as `create`, `update` or `unchanged` before anything is written.
 
-1. **Fetch the accelerator at the pin and apply the patch.** `local/` is ignored by git.
+## How a call is checked
 
-   ```text
-   git init local/accelerator
-   git -C local/accelerator fetch --depth 1 https://github.com/Azure-Samples/ai-hub-gateway-solution-accelerator <commit in accelerator.json>
-   git -C local/accelerator checkout FETCH_HEAD
-   git -C local/accelerator apply --ignore-whitespace ../../hub/accelerator-changes.patch
-   ```
+1. The instance asks for a key (a missing or wrong key is a 401). Only the contract's key reaches the Meternaut API with a list of allowed models; the instance's all-access key and every other key carry none, so the API's own check (step 4) refuses them.
+2. The contract's policy reads the request once. The model must be a JSON string on the contract's list, otherwise the answer is 403 and the model is never called; a body it cannot read has no model, so that is a 403 too. Streaming is refused with 400 (a streamed reply's tokens would be estimated, not counted).
+3. Only then does it count the key's tokens, from what the model reports, against 30,000 a minute and 2,000,000 a month (a 429 past the rate, a 403 past the quota). A refused call is never counted.
+4. The API's policy checks again, and fails closed: no model or no list at all is a 403. Then the call goes to the model account's private endpoint on the instance's own identity, and the caller's key is dropped first.
+5. The reply's token counts go to the instance's logger as metrics.
 
-2. **Name what is specific to you in the environment.** The variables are listed at the top of [`meternaut-dev.bicepparam`](meternaut-dev.bicepparam): `HUB_OWNER` (required), the resource group, the names of the gateway and the vault, and the hub's address ranges, which must not overlap a network that peers with it. Nothing in the repository names a subscription.
+## Use it
 
-3. **Check, then deploy** at subscription scope. Use `az deployment`, not `azd up`: the accelerator's `azure.yaml` also lists the Logic App that this profile does not create. The first deployment takes about 35 minutes, because API Management takes that long to create; a repeat takes about 7. A switch suppresses creation, never deletion: if the add-on or a grant was ever on in this group, delete what it made by hand (the Cosmos DB, the Logic App, the storage account, the identity and its role assignments), and read the group's resources and role assignments afterwards.
+For check C14 ([`evaluation/c14/`](../evaluation/c14/README.md)): `C14_HUB_CHAT_URL` is `<the instance's gateway address>/meternaut/llm/v1/chat/completions`, `C14_HUB_MODEL` is `gpt-6-luna` and `C14_HUB_KEY` is the contract's key. `python tools/apim-sync.py key --apim <resource id>` prints the key; it needs the signed-in person's right to read subscription keys on the instance. Put it in the environment of the one process that needs it, and nowhere else. Then `python evaluation/c14/run.py hub-check` makes one call of about a hundred tokens.
 
-   ```text
-   az deployment sub what-if --subscription <id> --location <region> --template-file local/accelerator/bicep/infra/main.bicep --parameters hub/meternaut-dev.bicepparam
-   az deployment sub create  --subscription <id> --location <region> --template-file local/accelerator/bicep/infra/main.bicep --parameters hub/meternaut-dev.bicepparam
-   ```
+## What has been checked, and what has not
 
-4. **Make the gateway's name resolve.** The gateway's host name, `<name>.azure-api.net`, resolves to nothing inside a private network. [`dns-gateway.bicep`](dns-gateway.bicep) creates a private DNS zone for that one name (no other `azure-api.net` name is affected), an A record with the gateway's private address, read from the instance, and a link to each network that must resolve it: the hub's own network and the network whose resolver the landing zone uses. Deploy it into the hub's resource group. If the gateway's address ever changes, for example when the instance is re-created, deploy it again to update the record; callers keep the old answer for up to five minutes.
+Nothing is deployed: the identity and the settings exist, and the workflow has not run yet. The tests that run on every change use no Azure: the gateway tool against a stand-in for the management service (what it writes, what it refuses, that a second run changes nothing, that it removes only what it made), the smoke test against a stand-in for the hub, the parameter checks, the workflow rules, and the Bicep compile and lint. The workflow's own shell steps were also run under the runner's shell flags against a fake Azure CLI (the restore retry, the not-found handling, the order of removal, the polling, the key never printed); that harness is not part of the repository. The policies follow the accelerator's working fragments and Microsoft's reference for `llm-token-limit` and `llm-emit-token-metric`. The instance checks a policy when it is saved, but only in part: some expression errors show only when a request runs, so a saved policy is no proof that it works. The smoke test, with real calls, is that proof. A read-only `what-if` of the template against the real hub group listed the seven creations it should (no DNS zone, zone group, peering, route table or second instance) and no error.
 
-   ```text
-   az deployment group create --subscription <id> -g <resource group> --template-file hub/dns-gateway.bicep --parameters apimName=<gateway name> linkedVirtualNetworkIds='["<hub network id>","<resolver network id>"]'
-   ```
-
-   A machine whose DNS server does not forward to that resolver can still call the hub: the harness takes the gateway's address (`C14_HUB_CONNECT_ADDRESS`) and keeps the name for TLS. That address changes with the gateway's too.
-
-5. **Add a contract**, at subscription scope. [`contracts/learning-demo-dev/`](contracts/learning-demo-dev/) is the contract of the learning demonstration: one model, 30,000 tokens a minute and 2,000,000 a month. Its key and endpoint go to the vault, and no key appears in the deployment's output.
-
-   ```text
-   az deployment sub create --subscription <id> --location <region> --template-file local/accelerator/bicep/infra/citadel-access-contracts/main.bicep --parameters hub/contracts/learning-demo-dev/main.bicepparam
-   ```
-
-   Then suspend the key that API Management made for the administrator on the accelerator's default product, `unified-ai-product`, which has no limits: list the instance's subscriptions (`az rest --method get` on `.../service/<name>/subscriptions?api-version=2022-08-01`), find the one whose scope ends in `/products/unified-ai-product`, and patch its `state` to `suspended` (`az rest --method patch`, header `If-Match=*`).
-
-   The contract template reads `HUB_SUBSCRIPTION_ID` and the names of the group, the instance and the vault from the environment: the same `HUB_RESOURCE_GROUP`, `HUB_APIM_NAME` and `HUB_KEY_VAULT_NAME` as in step 2. If you left a name empty there, read the derived one from the resource group first. The key is a secret in the vault, which only the private network reaches; an authorised person can also read it with the management API (`listSecrets` on the contract's subscription in the instance). Put it in the environment of the one process that needs it and nowhere else.
-
-6. **Put a budget on the group** with [`infra/budgets/rg-budget.bicep`](../infra/budgets/rg-budget.bicep), whose parameters are the budget's name, the monthly cap in the subscription's billing currency and the addresses that receive the alerts. A budget only alerts; deleting the resource group is what stops the cost.
-
-   ```text
-   az deployment group create --subscription <id> -g <resource group> --template-file infra/budgets/rg-budget.bicep --parameters budgetName=<name> amount=<monthly cap> contactEmails='["<owner address>"]'
-   ```
-
-7. **Try it** with the harness of check C14: set `C14_HUB_CHAT_URL` (the gateway's `/unified-ai/v1/chat/completions` route), `C14_HUB_MODEL`, `C14_HUB_KEY` and, if needed, `C14_HUB_CONNECT_ADDRESS`, then run `python evaluation/c14/run.py hub-check`. It makes one call of about a hundred tokens.
-
-CI does the first step on every change: it fetches the pin, applies the patch and compiles the template, the parameter files and the DNS template, so a patch that no longer applies fails the build.
-
-## What was checked
-
-On the deployed hub, from a machine with a network path to it. A refused call is not a model call: no prompt reaches the model.
-
-| Check | Expected | Result |
-|---|---|---|
-| A chat completion with the contract's key | 200, the reply and its token counts | Passed |
-| No key; a wrong key; the contract's key on another API of the instance | 401 | Passed |
-| A route that does not exist | 404 | Passed |
-| A model the contract does not allow; the model's alias `triage` | 403 | Passed |
-| A prompt whose estimated tokens exceed the minute's limit | 429 from the gateway, no model call | Passed |
-| The model account directly, without credentials, with the hub's key, and with the token of the person who deployed it | 401 | Passed |
-| The workspace after the calls | The model and the token counts of each call in the model log, the caller and the status in the gateway log; the prompt and answer columns are empty | Passed |
-
-What these checks do not show: slice 0.2 of the build plan also calls for the solution's own Foundry account without any model deployment, a policy that refuses a deployment there, and a limit on what the agents' network may reach. Those belong to the Evaluate profile and are not built, so check C1 is open ([first checks](../docs/build-plan/03-first-checks.md#c1-the-hub-path-works-end-to-end)).
+Not yet seen, and the reason the first run is `what-if` and the second a `deploy` with `check_limits`: that the identity, with only its narrow rights, can do every step (the preview and the restore included); that the landing zone's policy registers this endpoint and the name then resolves from the instance (the workflow waits for the zone group, which is not the same as a resolving name, and the smoke test retries for fifteen minutes); that the instance reaches the model through the lab's DNS and routes; that the v1 chat route answers on this account and its reply carries token usage; that the instance accepts the exact objects and policy expressions, and runs the typed model and streaming checks as written; which provisioning states the instance reports while it makes an object (the tool waits for the words that clearly mean "working", stops on the ones that mean "failed", takes any other word as final and prints it as a note, so the first run shows the real words; a following write that starts too early fails and stops the run, and a second run finishes it); that the role assignment the template makes satisfies the identity's condition (Azure accepted the condition itself when the identity was made); that the budget step reads the real start date and the real not-found answer; that the token limit refuses as designed, with the large request crossing the contract's 30,000 tokens a minute without first meeting the model's own 50,000; and a whole lifecycle (deploy, deploy again, pause, deploy, remove, deploy). Each is a step of the workflow that stops with a plain message.
 
 ## What it does not do
 
-- **Callers are identified by a subscription key.** Validating an Entra token needs an app registration and the contract's token and role settings, which this contract does not set; until they are, a contract's key is the only proof of who calls. Keep the key out of anything but the vault and the process that uses it.
-- **Other subscriptions of the instance are not bound to a contract.** The contract's limits apply to calls made with the contract's key. API Management also makes a key for the administrator on each product, and the accelerator's default product, `unified-ai-product`, carries no limits: step 5 suspends the key on it. The built-in all-access subscription stays active for the instance's administrators, so treat access to the instance as access to every model behind it.
-- **Aliases are not onboarded.** The contract allows the model's own name, not `triage`. The hub also adds debugging headers (the model and backend that served the call); they are for development.
-- **The gateway has no service level agreement.** The Developer tier is for development.
-- **Not everything is private.** The gateway, the model account, the event hub and the vault are. Log Analytics and Application Insights accept authenticated ingestion and queries over the public network, and the API Management management endpoint is public.
-- **What is logged.** Token counts, the model, the caller and request metadata such as the client address. Prompts and answers are not logged. A call that the gateway refuses is logged with its *estimated* tokens and no model name, so spend is the sum of the tokens of the rows that name a model. That is a floor, not a guarantee: a call that fails after the model has started may report no usage, and the Azure bill is what settles the count.
-- **Private-endpoint DNS belongs to the hub's own network.** The template creates the zones and the zone group of each private endpoint itself and links the zones to the hub's network only. A landing zone that also creates zone groups by policy reports a failed `PolicyDeployment_` deployment in the group ("more than one private dns zone group"): the endpoint already has one, and the hub works. The price is that the landing zone's central zones hold no records for these endpoints, so nothing outside the hub's network resolves them by name. A platform team that wants central records deploys the accelerator's existing-network path instead: it brings its own network, with its DNS servers, and passes in the central zones.
+- **Callers are identified by a subscription key.** Checking an Entra token needs an app registration and settings that this contract does not have.
+- **The gateway is the instance's public address.** The workflow's check calls it from a GitHub-hosted runner, so the instance's gateway must be reachable from the internet; for an instance reachable only from inside a network, the check would have to run from inside it, which is not built. The model account has no public access either way.
+- **The token limit counts what the model reports.** The request that crosses the limit still completes; the next one is refused. Calls that run at the same moment can overshoot a little. It is accounting, not a spending guarantee: the budget alerts, and the model deployment's own capacity (50,000 tokens a minute) is a ceiling. Streaming is refused, so no estimate ever stands in for a count.
+- **The model name is read by a JSON parser that keeps the last of two duplicate keys.** The model account holds only the one allowed deployment, so a request that the model reads differently reaches nothing else; a second deployment in the account would need a stricter check first.
+- **The role on the instance is wide.** *API Management Service Contributor* covers the whole instance. The tool's prefix rule, the plan and the owner's click are what hold the workflow to the `meternaut-` objects ([bootstrap](BOOTSTRAP.md#what-the-identity-can-and-cannot-do)).
+- **The instance has its own limits.** A Developer-tier instance has no service level agreement, and what else runs on it is the owner's business.
+- **Dimensions in the token metrics** (the model, the key) show in the metrics explorer only if the Application Insights resource has *alerting on custom metric dimensions* turned on. Without it the metric is still emitted.
+- **Aliases are not onboarded.** The contract allows the model's own name, not `triage`.
+- **What is logged.** Token counts, the model, the key and request metadata. Prompts and answers are not logged.
 
 ## What it costs
 
-`python tools/cost-model.py --dev-hub` prices one month of the gateway, the event hub, the endpoints, the DNS zones, the vault and the log ingestion at list prices from the repository's price snapshot, and says which volumes it assumes. It is a sizing, not a billing guarantee: the log ingestion is priced as if the workspace took in its daily cap every day, DNS queries and vault operations are assumed, and the data that the endpoints process is left out. It also prices the contract's monthly token quota, read from the contract's policy, as if all of it were used. A hub that stays after its work is done is the cost to watch: delete it as soon as the learning demonstration is finished.
+`python tools/cost-model.py --dev-hub` prices one month at list prices from the repository's price snapshot: the private endpoint, about 6.4 euros, and the contract's monthly token quota if it were used in full, about 1 euro. The instance, the private DNS zones and the Log Analytics workspace belong to the landing zone and cost the same without Meternaut. Virtual network, subnet security group and budget are free. It is a sizing, not a billing guarantee: the data the endpoint processes, and any charge of the landing zone's central logging or network manager for this traffic, are not counted. `pause` ends the endpoint's cost.
 
-To add up the tokens that the hub has served, run this in the workspace (the portal's Logs page, or the Log Analytics query API). Rows without a model name are calls that the gateway refused and carry an estimate:
+## Pause and remove
 
-```text
-ApiManagementGatewayLlmLog
-| where isnotempty(ModelName)
-| summarize PromptTokens = sum(PromptTokens), CompletionTokens = sum(CompletionTokens) by bin(TimeGenerated, 1d)
-```
-
-## Remove it
-
-Delete the links that [`dns-gateway.bicep`](dns-gateway.bicep) made to networks outside the group, then delete the resource group. API Management, the Foundry account and the Key Vault stay soft-deleted for a while: purge the first two if the names are needed again. A vault with purge protection keeps its name for 90 days, so give the next one a numbered name.
+Start the workflow with `pause` to stop the only fixed cost and keep everything else, or with `remove` to take the hub away. To take away the identity and the settings as well, see [Undoing it](BOOTSTRAP.md#undoing-it). A removed model account is soft-deleted and keeps its name for a while; the workflow restores it on the next `deploy`, and the owner can purge it at once.

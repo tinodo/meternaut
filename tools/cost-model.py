@@ -534,42 +534,32 @@ def check_doc(text: str, prices: Prices) -> list[str]:
     return [] if cur == block(prices) else ["the generated cost block is stale: run `python tools/cost-model.py --update-doc <file>`"]
 
 
-# The development hub that hub/ deploys (hub/README.md): one Developer gateway, one Event Hubs throughput unit (no
-# auto-inflate), three private endpoints, the private DNS zones of its network and a Log Analytics workspace with a daily
-# cap. A sizing from stated volumes, not a billing guarantee; model tokens are billed by use and shown apart.
-DEV_HUB = dict(throughput_units=1, private_endpoints=3, dns_zones=13, dns_million_queries=1.0, kv_ops_10k=1, log_cap_gb_a_day=0.1)
-CONTRACT_POLICY = ROOT / "hub" / "contracts" / "learning-demo-dev" / "ai-product-policy.xml"
+# The development hub that hub/ deploys (hub/README.md): one private endpoint, for the model account. The API Management
+# instance that carries the gateway objects, the private DNS zones and the Log Analytics workspace belong to the
+# landing zone and cost the same with or without Meternaut, so they are not counted here. A sizing from stated
+# volumes, not a billing guarantee; model tokens are billed by use and shown apart.
+DEV_HUB = dict(private_endpoints=1)
+CONTRACT_FILE = ROOT / "hub" / "contract.json"
 
 
-def contract_token_quota(path: Path = CONTRACT_POLICY) -> int:
-    """The monthly token quota that the development contract's policy sets."""
-    found = re.search(r'token-quota="(\d+)"', path.read_text(encoding="utf-8"))
-    if not found:
-        raise ValueError(f"{path} sets no token-quota")
-    return int(found.group(1))
+def contract_token_quota(path: Path = CONTRACT_FILE) -> int:
+    """The monthly token quota that the development contract sets."""
+    try:
+        quota = json.loads(path.read_text(encoding="utf-8"))["tokenQuotaPerMonth"]
+        if isinstance(quota, bool) or int(quota) <= 0:
+            raise ValueError
+        return int(quota)
+    except (KeyError, TypeError, ValueError):
+        raise ValueError(f"{path} sets no tokenQuotaPerMonth (a positive whole number)")
 
 
 def dev_hub(prices: Prices) -> list[tuple[str, float, str]]:
     """Monthly cost lines of the development hub as (label, EUR, note), before model tokens."""
     P, d = prices, DEV_HUB
-    apim = P.get("API Management", product="API Management", sku="Developer", meter="Developer Unit")
-    eh = P.get("Event Hubs", product="Event Hubs", sku="Standard", meter="Standard Throughput Unit")
     pe = P.get("Virtual Network", region="Global", product="Virtual Network Private Link", sku="Standard", meter="Standard Private Endpoint")
-    zone = P.get("Azure DNS", region="", product="Azure DNS", sku="Private", meter="Private Zone", pick="max")
-    queries = P.get("Azure DNS", region="", product="Azure DNS", sku="Private", meter="Private Queries", pick="max")
-    kv = P.get("Key Vault", product="Key Vault", sku="Standard", meter="Operations")
-    ingest = P.get("Log Analytics", product="Log Analytics", sku="Analytics Logs", meter="Analytics Logs Data Ingestion", pick="max")
-    gb = d["log_cap_gb_a_day"] * DAYS
     return [
-        ("API Management, Developer tier (no SLA)", apim * HOURS, "one unit, always on"),
-        ("Event Hubs Standard", eh * d["throughput_units"] * HOURS, f"{d['throughput_units']} throughput unit, always on, no auto-inflate"),
-        ("Private endpoints", pe * d["private_endpoints"] * HOURS,
-         f"{d['private_endpoints']} endpoints: the model account, the vault, the event hub; the data they process is left out"),
-        ("Private DNS zones", zone * d["dns_zones"] + queries * d["dns_million_queries"],
-         f"{d['dns_zones']} zones, and {d['dns_million_queries']:g} million queries (assumed)"),
-        ("Key Vault", kv * d["kv_ops_10k"], f"{d['kv_ops_10k'] * 10}k operations (assumed)"),
-        ("Log Analytics ingestion", ingest * gb,
-         f"the workspace's daily cap of {d['log_cap_gb_a_day']:g} GB taken in every day; the free allowance is not counted"),
+        ("Private endpoint", pe * d["private_endpoints"] * HOURS,
+         f"{d['private_endpoints']} endpoint, for the model account, always on; the data it processes is left out"),
     ]
 
 
@@ -586,7 +576,9 @@ def dev_hub_report(prices: Prices) -> str:
     out += [f"{eur:>9,.2f}  {label}: {note}" for label, eur, note in lines]
     out += ["", f"{sum(eur for _, eur, _ in lines):>9,.2f}  total of the lines above: a sizing from the stated volumes, not a billing guarantee",
             f"{tokens_eur:>9,.2f}  plus model tokens if the contract's monthly quota of {quota:,} tokens is used in full, "
-            "every token priced as an output token"]
+            "every token priced as an output token",
+            "", "Not counted: the existing API Management instance, the central private DNS zones and the central Log Analytics "
+            "workspace, which cost the same without Meternaut."]
     return "\n".join(out)
 
 
@@ -643,17 +635,18 @@ def self_test() -> int:
     md = meters_doc(p)
     assert md == meters_doc(p) and md.count("\n| ") > 20, "the meters file must be deterministic and list the meters"
     hub = dev_hub(p)
-    assert len(hub) == 6 and all(eur > 0 for _, eur, _ in hub), "every line of the development hub must be priced"
-    assert abs(hub[0][1] - p.get("API Management", product="API Management", sku="Developer", meter="Developer Unit") * HOURS) < 1e-9
+    assert len(hub) == 1 and all(eur > 0 for _, eur, _ in hub), "every line of the development hub must be priced"
+    pe_price = p.get("Virtual Network", region="Global", product="Virtual Network Private Link", sku="Standard", meter="Standard Private Endpoint")
+    assert abs(hub[0][1] - pe_price * DEV_HUB["private_endpoints"] * HOURS) < 1e-9
     quota, token_eur = dev_hub_tokens(p)
     assert quota > 0 and token_eur > 0, "the contract's token quota must be read and priced"
-    assert contract_token_quota(CONTRACT_POLICY) == quota
+    assert contract_token_quota(CONTRACT_FILE) == quota
     try:
         contract_token_quota(ROOT / "README.md")
     except ValueError:
         pass
     else:
-        raise AssertionError("a policy without a token-quota must fail")
+        raise AssertionError("a file without a tokenQuotaPerMonth must fail")
     print("self-test OK")
     return 0
 
