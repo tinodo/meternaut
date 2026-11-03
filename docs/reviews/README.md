@@ -123,10 +123,11 @@ The hub that every model call of the learning demonstration goes through ([`hub/
 
 ## The rebuilt hub
 
-The first hub was withdrawn, and the hub was rebuilt as one workflow that only the owner starts, on top of his own API Management instance and a model account behind one private endpoint ([`hub/`](../../hub/README.md)). Nothing in Azure was changed to build it: the work was done and tested offline. A reviewer on another model family read the rebuilt package against the rules and the facts about the landing zone.
+The first hub was withdrawn, and the hub was rebuilt as one workflow, on top of the owner's own API Management instance and a model account behind one private endpoint ([`hub/`](../../hub/README.md)). Nothing in Azure was changed while it was built and reviewed: the work was done and tested offline, and the first run came after the rounds below (what the real services showed is in [the changelog](../../CHANGELOG.md)). A reviewer on another model family read the rebuilt package against the rules and the facts about the landing zone.
 
 | Round | Reviewer (model) | Raw report | Disposition |
 |---|---|---|---|
 | **Hub review 2** — the rebuilt hub as built: 13 findings, 1 Blocker, 8 Majors, 4 Minors | One reviewer (gpt-6.1-sol) | [hub-review-1](hub-v2/hub-review-1.md) | [disposition](hub-v2/hub-disposition.md) |
 | **Hub review 2 · Closure** — every finding checked against the fixed files, and the fixes read for what they broke: 10 closed, 3 in part, 3 new (1 Major, 2 Minors) | The same reviewer | [hub-closure-1](hub-v2/hub-closure-1.md) | [disposition](hub-v2/hub-disposition-closure.md) |
 | **Hub review 2 · Final check** — the tip of the branch read once more, narrowly: safe to hand to the owner, 1 new Minor (a guard hidden in a quoted value), 2 findings still in part until it was fixed | The same reviewer | [hub-final-1](hub-v2/hub-final-1.md) | [disposition](hub-v2/hub-disposition-final.md) |
+| **Hub review 2 · First-run fixes** — the fixes made after the first runs against the real services, read narrowly: no Blocker or Major, 1 Minor (a budget list that failed was taken for "exists" in the removal) | The same reviewer | [hub-firstruns-1](hub-v2/hub-firstruns-1.md) | [disposition](hub-v2/hub-disposition-firstruns.md) |
