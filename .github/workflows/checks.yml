@@ -1,0 +1,98 @@
+name: Checks
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: checks-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check out the Citadel kit at the commit that the deploy workflow uses
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: Azure-Samples/ai-hub-gateway-solution-accelerator
+          ref: 81599b31dfbaee20ebd3a6d2ba9b07dde3c31814
+          path: kit
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+      - name: Documentation lint
+        run: python tools/check-docs.py --strict
+      - name: Card lint
+        run: python tools/cardlint.py
+      - name: The cost document matches the cost model
+        run: python tools/cost-model.py --check docs/design/10-cost-and-finops.md
+      - name: Unit tests of the tools
+        run: python -m unittest discover -s tools/tests
+      - name: The workflows follow the rules, and are valid YAML
+        run: |
+          python tools/workflow-lint.py
+          ruby -ryaml -e 'ARGV.each { |f| YAML.load_file(f); puts "#{f}: valid YAML" }' .github/workflows/*.yml
+      - name: A real YAML parser agrees that the deploy workflow is guarded
+        run: |
+          ruby - <<'RUBY'
+          require "yaml"
+          file = ".github/workflows/deploy-hub.yml"
+          doc = YAML.load_file(file)
+          guard = "github.actor == 'tinodo' && github.ref == 'refs/heads/main'"
+          problems = []
+          jobs = doc["jobs"]
+          problems << "it must have exactly one job" unless jobs.is_a?(Hash) && jobs.size == 1
+          (jobs.is_a?(Hash) ? jobs : {}).each do |name, job|
+            condition = job["if"].to_s.strip.sub(/\A\$\{\{\s*(.*?)\s*\}\}\z/m, '\1')
+            problems << "job #{name}: its if is not the owner-and-main guard" unless condition == guard
+            problems << "job #{name}: continue-on-error is set" if job["continue-on-error"].to_s == "true"
+          end
+          trigger = doc.key?("on") ? doc["on"] : doc[true]
+          events = trigger.is_a?(Hash) ? trigger.keys : Array(trigger)
+          problems << "it must run on workflow_dispatch alone, not on #{events.inspect}" unless events == ["workflow_dispatch"]
+          problems << "it has no concurrency group" unless doc["concurrency"]
+          problems.each { |problem| puts "#{file}: #{problem}" }
+          abort "#{file}: not guarded as the rules say" unless problems.empty?
+          puts "#{file}: one job, for the owner on main only, started by hand alone"
+          RUBY
+      - name: The Bicep templates compile and lint
+        run: |
+          for template in environment/main.bicep environment/gateway/identity.bicep environment/gateway/logger.bicep infra/budgets/*.bicep; do
+            az bicep build --file "$template" --stdout > /dev/null
+            az bicep lint --file "$template"
+          done
+      - name: The parameter files fit the compiled templates, the kit's module included
+        env:
+          ENV_SUBSCRIPTION_ID: 11111111-2222-3333-4444-555555555555
+          ENV_RESOURCE_GROUP: rg-example
+          ENV_LOCATION: swedencentral
+          ENV_VNET_PREFIX: 10.53.0.0/24
+          ENV_PE_SUBNET_PREFIX: 10.53.0.0/27
+          ENV_DNS_SERVERS: 10.20.0.4
+          ENV_OWNER: owner@example.com
+          ENV_BUDGET_AMOUNT: "25"
+          ENV_ALERT_EMAILS: owner@example.com
+          ENV_BUDGET_START: "2026-11-01"
+          GATEWAY_RESOURCE_ID: /subscriptions/66666666-7777-8888-9999-000000000000/resourceGroups/rg-gateway/providers/Microsoft.ApiManagement/service/example-apim
+          GATEWAY_APPINSIGHTS_ID: /subscriptions/66666666-7777-8888-9999-000000000000/resourceGroups/rg-gateway/providers/microsoft.insights/components/example-insights
+          GATEWAY_PRINCIPAL_ID: aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee
+        run: |
+          out="$RUNNER_TEMP/params"
+          mkdir -p "$out"
+          python tools/environment-params.py build --models environment/models.json --out-dir "$out" > /dev/null
+          az bicep build --file environment/main.bicep --outfile "$out/environment.json"
+          az bicep build --file environment/gateway/logger.bicep --outfile "$out/logger.json"
+          az bicep build --file kit/bicep/infra/apim-gateway-upgrade/main.bicep --outfile "$out/kit.json"
+          python tools/environment-params.py check --params "$out/environment.parameters.json" --template "$out/environment.json" --label environment
+          python tools/environment-params.py check --params "$out/logger.parameters.json" --template "$out/logger.json" --label logger
+          python tools/environment-params.py check --params "$out/kit.parameters.json" --template "$out/kit.json" --label kit

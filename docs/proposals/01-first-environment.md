@@ -1,6 +1,6 @@
 # The first environment — a proposal
 
-**Status: proposed. Nothing is deployed.** This page says what would be set up first, in what order, and what has to be approved before each step. It follows [decision 4 of the design](../design/12-decisions.md) (the Citadel hub is the only door for model calls) and slice 0.2 of the [build plan](../build-plan/01-the-slices.md).
+**Status: approved on 2026-11-03 (the owner: "deploy it"), in progress; the changelog says what is deployed.** This page says what is set up first, in what order, and what is checked at each step. It follows [decision 4 of the design](../design/12-decisions.md) (the Citadel hub is the only door for model calls) and slice 0.2 of the [build plan](../build-plan/01-the-slices.md).
 
 ## Why there is a gateway at all
 
