@@ -112,6 +112,7 @@ def facts(apim: str, insights: str) -> tuple[dict, str]:
         "serviceLevelLogging": diag,
         "loggers": sorted(item.get("name", "") for item in loggers),
         "customMetricsOptedInType": component.get("CustomMetricsOptedInType"),
+        "keptByTheIdentityChange": fingerprint(service),
     }
     dimensions = (document["customMetricsOptedInType"] or "").lower() == "withdimensions"
     lines = [
@@ -126,6 +127,12 @@ def facts(apim: str, insights: str) -> tuple[dict, str]:
         json.dumps(document["serviceLevelLogging"], indent=2),
         "```",
         "",
+        "- Settings of the instance that the change of its identity must keep (recorded here; the run compares them after the update):",
+        "",
+        "```json",
+        json.dumps(document["keptByTheIdentityChange"], indent=2),
+        "```",
+        "",
         f"- Custom metrics with dimensions on the Application Insights component: **{'on' if dimensions else 'off'}** (`{document['customMetricsOptedInType']}`)."
         + ("" if dimensions else " Token counts are still emitted, but cannot be split by contract or model until the owner turns on alerting on custom metric dimensions for the component; nothing here changes it."),
     ]
@@ -134,10 +141,27 @@ def facts(apim: str, insights: str) -> tuple[dict, str]:
     return document, "\n".join(lines) + "\n"
 
 
+def fingerprint(service: dict) -> dict:
+    """What a change of the identity must leave as it is: the settings that a partial update can reset or drop. The update's
+    contract says that custom properties left out of it return to their defaults (TLS versions, ciphers, HTTP/2), so they
+    are sent again; the rest is compared before and after."""
+    props = service.get("properties") or {}
+    return {
+        "customProperties": props.get("customProperties") or {},
+        "hostnames": sorted([h.get("type", ""), (h.get("hostName") or "").lower()] for h in props.get("hostnameConfigurations") or []),
+        "virtualNetworkType": props.get("virtualNetworkType"),
+        "subnet": ((props.get("virtualNetworkConfiguration") or {}).get("subnetResourceId") or "").lower(),
+        "publicNetworkAccess": props.get("publicNetworkAccess"),
+        "sku": service.get("sku") or {},
+        "zones": sorted(service.get("zones") or []),
+    }
+
+
 def attach_identity(apim: str, identity_id: str, minutes: float, tries: int = 3, sleep=None) -> None:
     """Adds the identity with one conditional write: the identity block is read together with its ETag, and the write
     carries it as If-Match, so a change made to the instance in between (another identity attached, say) fails the write
-    with 412 instead of being overwritten by a stale copy. The read is then made again, up to three times."""
+    with 412 instead of being overwritten by a stale copy. The read is then made again, up to three times. The write also
+    carries the instance's current custom properties, and the instance is compared with itself afterwards."""
     for attempt in range(1, tries + 1):
         service = az_rest("get", apim)
         state = service.get("properties", {}).get("provisioningState", "")
@@ -148,9 +172,14 @@ def attach_identity(apim: str, identity_id: str, minutes: float, tries: int = 3,
             print("The identity is attached already; nothing to do.")
             return
         etag = service.get("etag")
+        patch = {"identity": body}
+        custom = (service.get("properties") or {}).get("customProperties")
+        if custom is not None:
+            patch["properties"] = {"customProperties": custom}
+        before = fingerprint(service)
         print(f"Adding the user-assigned identity; the identity block becomes: {body['type']}.")
         try:
-            az_rest("patch", apim, body={"identity": body}, headers={"If-Match": etag} if etag else None)
+            az_rest("patch", apim, body=patch, headers={"If-Match": etag} if etag else None)
         except Problem as e:
             if attempt < tries and ("PreconditionFailed" in str(e) or "412" in str(e)):
                 print("The instance changed while it was being read; reading it again.")
@@ -158,7 +187,11 @@ def attach_identity(apim: str, identity_id: str, minutes: float, tries: int = 3,
                 continue
             raise
         wait_until_succeeded(lambda: provisioning_state(apim), minutes)
-        print("The update has finished.")
+        after = fingerprint(az_rest("get", apim))
+        moved = [key for key in before if before[key] != after.get(key)]
+        if moved:
+            raise Problem(f"the update changed more than the identity: {', '.join(moved)}. The values from before are in the first list of this run's page; put them back before anything else is written to the instance")
+        print("The update has finished, and nothing else of the instance changed.")
         return
 
 

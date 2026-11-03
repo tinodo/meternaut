@@ -87,9 +87,20 @@ class Fake:
         "backend": {"request": {"headers": [], "body": {"bytes": 128}}, "response": {"headers": ["X-A"], "body": {"bytes": 0}}},
     }
 
-    def __init__(self, state="Succeeded", identity=None, dimensions="WithDimensions", loggers=("azuremonitor", "old"), patch_failures=()):
+    CUSTOM = {
+        "Microsoft.WindowsAzure.ApiManagement.Gateway.Protocols.Server.Http2": "True",
+        "Microsoft.WindowsAzure.ApiManagement.Gateway.Security.Protocols.Tls10": "False",
+        "Microsoft.WindowsAzure.ApiManagement.Gateway.Security.Ciphers.TripleDes168": "False",
+    }
+    HOSTNAMES = [{"type": "Proxy", "hostName": "gw.example.com"}, {"type": "Scm", "hostName": "scm.example.com"}]
+
+    def __init__(self, state="Succeeded", identity=None, dimensions="WithDimensions", loggers=("azuremonitor", "old"), patch_failures=(),
+                 custom="default", drop_hostnames=False):
         self.state, self.identity, self.dimensions, self.loggers = state, identity, dimensions, list(loggers)
         self.patch_failures = list(patch_failures)
+        self.custom = dict(self.CUSTOM) if custom == "default" else custom
+        self.hostnames = [dict(h) for h in self.HOSTNAMES]
+        self.drop_hostnames = drop_hostnames
         self.etag = 1
         self.calls = []
 
@@ -103,6 +114,11 @@ class Fake:
                     self.etag += 1
                 raise gp.Problem("patch service/example-apim failed: (PreconditionFailed) The ETag does not match")
             self.identity = {"type": body["identity"]["type"], "userAssignedIdentities": body["identity"]["userAssignedIdentities"]}
+            # what the real service does: custom properties that the update leaves out return to their defaults
+            sent = (body.get("properties") or {}).get("customProperties")
+            self.custom = sent if sent is not None else {}
+            if self.drop_hostnames:
+                self.hostnames = []
             self.state = "Succeeded"
             self.etag += 1
             return {}
@@ -112,8 +128,10 @@ class Fake:
             return {"properties": dict(self.DIAGNOSTIC)}
         if suffix == "/loggers":
             return {"value": [{"name": name} for name in self.loggers]}
-        return {"etag": f"etag{self.etag}", "sku": {"name": "Developer", "capacity": 1}, "identity": self.identity,
-                "properties": {"provisioningState": self.state, "virtualNetworkType": "External"}}
+        properties = {"provisioningState": self.state, "virtualNetworkType": "External", "hostnameConfigurations": self.hostnames}
+        if self.custom is not None:
+            properties["customProperties"] = self.custom
+        return {"etag": f"etag{self.etag}", "sku": {"name": "Developer", "capacity": 1}, "identity": self.identity, "properties": properties}
 
     def writes(self):
         return [c for c in self.calls if c[0] != "get"]
@@ -155,6 +173,18 @@ class Facts(unittest.TestCase):
         self.assertEqual(recorded["frontend"]["request"]["body"]["bytes"], 512)
         self.assertEqual(recorded["backend"]["response"]["headers"], ["X-A"])
 
+    def test_the_settings_that_a_change_of_identity_must_keep_are_recorded_too(self):
+        fake = Fake()
+        with tempfile.TemporaryDirectory() as tmp:
+            summary = Path(tmp) / "summary.md"
+            code, out, _ = run(["facts", "--apim", APIM, "--insights", INSIGHTS, "--summary", str(summary)], fake)
+            text = summary.read_text(encoding="utf-8")
+        self.assertEqual(code, 0)
+        kept = json.loads(out)["keptByTheIdentityChange"]
+        self.assertEqual(kept["customProperties"], Fake.CUSTOM)
+        self.assertIn(["Proxy", "gw.example.com"], kept["hostnames"])
+        self.assertIn("TripleDes168", text)
+
     def test_it_says_when_metrics_cannot_carry_dimensions_and_changes_nothing(self):
         fake = Fake(dimensions="WithoutDimensions")
         with tempfile.TemporaryDirectory() as tmp:
@@ -182,8 +212,44 @@ class Attach(unittest.TestCase):
         self.assertEqual((code, err), (0, ""))
         (write,) = fake.writes()
         self.assertEqual(write[0], "patch")
-        self.assertEqual(write[3], {"identity": {"type": "SystemAssigned, UserAssigned", "userAssignedIdentities": {UAMI: {}}}})
+        self.assertEqual(write[3]["identity"], {"type": "SystemAssigned, UserAssigned", "userAssignedIdentities": {UAMI: {}}})
         self.assertIn("The update has finished", out)
+
+    def test_the_custom_properties_are_sent_again_so_that_the_update_does_not_reset_them(self):
+        # the update's contract: custom properties that it leaves out return to their defaults (TLS versions, ciphers, HTTP/2)
+        fake = Fake(identity={"type": "SystemAssigned"})
+        before = dict(fake.custom)
+        code, out, err = run(["attach-identity", "--apim", APIM, "--identity", UAMI], fake, self.ACTIONS)
+        self.assertEqual((code, err), (0, ""))
+        (write,) = fake.writes()
+        self.assertEqual(write[3]["properties"], {"customProperties": before})
+        self.assertEqual(fake.custom, before)
+        self.assertEqual(before["Microsoft.WindowsAzure.ApiManagement.Gateway.Protocols.Server.Http2"], "True")
+        self.assertIn("nothing else of the instance changed", out)
+
+    def test_an_instance_that_reads_without_custom_properties_gets_only_the_identity(self):
+        fake = Fake(identity={"type": "SystemAssigned"}, custom=None)
+        code, _, err = run(["attach-identity", "--apim", APIM, "--identity", UAMI], fake, self.ACTIONS)
+        (write,) = fake.writes()
+        self.assertEqual(list(write[3]), ["identity"])
+
+    def test_a_change_of_anything_else_is_noticed_after_the_update(self):
+        fake = Fake(identity={"type": "SystemAssigned"}, drop_hostnames=True)
+        code, _, err = run(["attach-identity", "--apim", APIM, "--identity", UAMI], fake, self.ACTIONS)
+        self.assertEqual(code, 2)
+        self.assertIn("changed more than the identity", err)
+        self.assertIn("hostnames", err)
+
+    def test_the_fingerprint_sees_what_a_partial_update_can_reset(self):
+        service = Fake()("get", APIM)
+        same = Fake()("get", APIM)
+        self.assertEqual(gp.fingerprint(service), gp.fingerprint(same))
+        for change in ({"properties": {**service["properties"], "customProperties": {}}},
+                       {"properties": {**service["properties"], "hostnameConfigurations": []}},
+                       {"properties": {**service["properties"], "publicNetworkAccess": "Disabled"}},
+                       {"sku": {"name": "Premium", "capacity": 1}},
+                       {"zones": ["1"]}):
+            self.assertNotEqual(gp.fingerprint(service), gp.fingerprint({**service, **change}), change)
 
     def test_the_write_is_conditional_on_the_etag_that_was_read(self):
         fake = Fake(identity={"type": "SystemAssigned"})

@@ -8,6 +8,8 @@ All notable changes, newest first. Versions are git tags: `ideation-vN` for the 
 
 **What it leaves out on purpose.** Citadel's call-recording part (a Logic App on a Standard plan, Event Hub, Cosmos DB, Key Vault and nine private endpoints: about 265 euros a month at list prices) is not part of this change. The owner's word adds it.
 
+**Found by the last review, fixed before the first write to the instance.** The update that attaches the new identity to the owner's API Management instance would have reset its custom properties (TLS versions, ciphers, HTTP/2) to their defaults, because the service's update contract says that properties left out of it return to their defaults. The instance's own values are read, sent again, and compared with the instance after the update; a difference stops the run. The same read keeps the instance's custom host names in view for that comparison.
+
 **Rules.** [AGENTS.md](AGENTS.md) rule 21 records the approval; rules 15, 18 and 19 apply.
 
 ## The first environment, studied and made lean — 2026-11-03
