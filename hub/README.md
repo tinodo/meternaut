@@ -95,4 +95,4 @@ Not yet seen, and the reason the first run is `what-if` and the second a `deploy
 
 ## Pause and remove
 
-Start the workflow with `pause` to stop the only fixed cost and keep everything else, or with `remove` to take the hub away. To take away the identity and the settings as well, see [Undoing it](BOOTSTRAP.md#undoing-it). A removed model account is soft-deleted and keeps its name for a while; the workflow restores it on the next `deploy`, and the owner can purge it at once.
+Start the workflow with `pause` to stop the only fixed cost and keep everything else, or with `remove` to take the hub away. If a run leaves the private endpoint in a failed state (the first deploy did, after a collision on the account, and a second `deploy` could not repair it), start `pause`, which deletes the endpoint, and then `deploy`. To take away the identity and the settings as well, see [Undoing it](BOOTSTRAP.md#undoing-it). A removed model account is soft-deleted and keeps its name for a while; the workflow restores it on the next `deploy`, and the owner can purge it at once.

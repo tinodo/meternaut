@@ -31,10 +31,11 @@ class FakeService:
     the first real read of it, on the real instance, found that out.
     """
 
-    def __init__(self, secrets=None, async_paths=(), ready_after=2, states=None, async_deletes=()):
+    def __init__(self, secrets=None, async_paths=(), ready_after=2, states=None, async_deletes=(), delete_missing_204=False):
         self.objects, self.calls, self.secrets = {}, [], secrets or {}
         self.async_paths, self.ready_after = set(async_paths), ready_after
         self.async_deletes, self.deleting = set(async_deletes), {}
+        self.delete_missing_204 = delete_missing_204  # the real service answers 204, not 404, to a DELETE of what is not there
         self.states = {path: list(script) for path, script in (states or {}).items()}  # provisioningState of successive reads
         self.pending, self.polls, self.slept = {}, {}, []
 
@@ -103,7 +104,7 @@ class FakeService:
             else:
                 assert (headers or {}).get("If-Match") == "*"
             if path not in self.objects:
-                return 404, {}, b"{}"
+                return (204 if self.delete_missing_204 else 404), {}, b"{}"
             if path.startswith("products/") and "/" not in path[len("products/"):]:
                 using = [p for p, v in self.objects.items() if p.startswith("subscriptions/") and v["properties"].get("scope") == f"/{path}"]
                 if using and params.get("deleteSubscriptions") != "true":
@@ -646,6 +647,27 @@ class Service(unittest.TestCase):
         self.assertEqual(service.objects, {})
 
     LINK = "products/meternaut-learning-demo-dev/apis/meternaut-llm"
+
+    def test_what_is_not_there_is_absent_and_no_delete_is_sent_for_it(self):
+        # the real service answers a DELETE of an object that does not exist with 204, which would read as "deleted"
+        service = FakeService(delete_missing_204=True)
+        code, out, err = run(["remove", *vars_args()], service)
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(rows(out, "absent"), 6)
+        self.assertEqual(rows(out, "deleted"), 0)
+        self.assertEqual(service.writes(), [])
+
+    def test_a_part_removed_instance_reports_each_object_as_it_is(self):
+        service = FakeService(delete_missing_204=True)
+        run(["apply", *vars_args()], service)
+        del service.objects["subscriptions/meternaut-learning-demo-dev-sub-01"]
+        del service.objects[self.LINK]
+        code, out, err = run(["remove", *vars_args()], service)
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual((rows(out, "deleted"), rows(out, "absent")), (4, 2))
+        self.assertIn("absent    subscriptions/meternaut-learning-demo-dev-sub-01\n", out)
+        self.assertIn(f"absent    {self.LINK}\n", out)
+        self.assertEqual(service.objects, {})
 
     def test_only_the_link_between_a_product_and_an_api_is_the_link(self):
         self.assertTrue(aps.LINK.fullmatch(self.LINK))

@@ -153,7 +153,10 @@ def expect(wanted: int, client, body: dict, sent_key: str | None, real_key: str,
 
 def check_limit(client, key, model, tokens_per_minute, sleep):
     words = int(tokens_per_minute * 1.2)
-    status, data = client.post(chat(model, "word " * words, max_tokens=1), key)
+    # The model reasons before it answers: a cap of one token cannot hold even that, and the service refuses with a 400
+    # ("Could not finish the message because max_tokens or model output limit was reached"; seen in the first real run).
+    # So the reply gets room, and the prompt ends with the short instruction that the first check uses.
+    status, data = client.post(chat(model, "word " * words + "\nReply with the single word: ok", max_tokens=256), key)
     if status == 429:
         if from_gateway(data):
             return True, "429 from the gateway already for the large request"
