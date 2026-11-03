@@ -38,7 +38,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 HOST_SUFFIX = ".azure-api.net"
-KEY = re.compile(r"^[A-Za-z0-9_-]{16,128}$")
+KEY = re.compile(r"[A-Za-z0-9_-]{16,128}")
 TRANSIENT = (0, 500, 502, 503, 504)
 
 
@@ -201,7 +201,7 @@ def main(argv=None, client=None, environ=None, sleep=time.sleep, now=time.monoto
     environ = os.environ if environ is None else environ
     try:
         key = environ.get("HUB_SMOKE_KEY", "")
-        if not KEY.match(key):
+        if not KEY.fullmatch(key):
             raise Problem("HUB_SMOKE_KEY is the contract's key (letters and digits, 16 to 128 characters)")
         try:
             contract = json.loads(Path(args.contract).read_text(encoding="utf-8"))

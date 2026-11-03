@@ -128,3 +128,4 @@ The first hub was withdrawn, and the hub was rebuilt as one workflow that only t
 | Round | Reviewer (model) | Raw report | Disposition |
 |---|---|---|---|
 | **Hub review 2** — the rebuilt hub as built: 13 findings, 1 Blocker, 8 Majors, 4 Minors | One reviewer (gpt-6.1-sol) | [hub-review-1](hub-v2/hub-review-1.md) | [disposition](hub-v2/hub-disposition.md) |
+| **Hub review 2 · Closure** — every finding checked against the fixed files, and the fixes read for what they broke: 10 closed, 3 in part, 3 new (1 Major, 2 Minors) | The same reviewer | [hub-closure-1](hub-v2/hub-closure-1.md) | [disposition](hub-v2/hub-disposition-closure.md) |

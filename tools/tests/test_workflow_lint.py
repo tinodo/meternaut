@@ -175,6 +175,29 @@ class Lint(unittest.TestCase):
         self.assertFinding(problems, "job `other` must run only for the owner")
         self.assertFinding(self.lint(GOOD_DEPLOY.replace("jobs:\n  hub:", "jobs:\n  hub:\n    needs: []") .replace("    if: github.actor == 'tinodo' && github.ref == 'refs/heads/main'\n", ""), "deploy-hub.yml"), "only for the owner")
 
+    def test_valid_yaml_that_this_reader_does_not_follow_is_refused_not_ignored(self):
+        body = "    runs-on: ubuntu-latest\n    steps:\n      - run: echo hi\n"
+        for header in ("  probe: # a comment\n", "  probe: &anchor\n", "  \"probe\":\n", "  'probe':\n", "  probe : \n", "   probe:\n", "  ? probe\n  :\n"):
+            problems = self.lint(GOOD_DEPLOY + header + body, "deploy-hub.yml")
+            self.assertFinding(problems, "not a plain job header")
+        flow = GOOD_DEPLOY.split("jobs:")[0] + "jobs: {hub: {runs-on: ubuntu-latest, steps: []}}\n"
+        self.assertFinding(self.lint(flow, "deploy-hub.yml"), "exactly one job, not 0")
+        commented = GOOD_DEPLOY.replace("jobs:\n", "jobs: # all of them\n")
+        self.assertFinding(self.lint(commented, "deploy-hub.yml"), "exactly one job, not 0")
+
+    def test_a_condition_that_goes_on_is_not_the_guard(self):
+        guard = "    if: github.actor == 'tinodo' && github.ref == 'refs/heads/main'\n"
+        for tail in ("      || true\n", "      || github.ref == 'refs/heads/x'\n", "      # a comment, then\n      || true\n"):
+            self.assertFinding(self.lint(GOOD_DEPLOY.replace(guard, guard + tail), "deploy-hub.yml"), "only for the owner")
+        folded = GOOD_DEPLOY.replace(guard, "    if: >-\n      github.actor == 'tinodo' && github.ref == 'refs/heads/main'\n")
+        self.assertFinding(self.lint(folded, "deploy-hub.yml"), "only for the owner")
+        commented = GOOD_DEPLOY.replace(guard, guard.rstrip("\n") + "  # the owner, on main\n")
+        self.assertEqual(self.lint(commented, "deploy-hub.yml"), [])
+
+    def test_a_tab_in_the_indentation_is_refused(self):
+        self.assertFinding(self.lint(GOOD_CHECKS.replace("    runs-on: ubuntu-latest", "\truns-on: ubuntu-latest")), "a tab in the indentation")
+        self.assertFinding(self.lint(GOOD_DEPLOY.replace("    steps:", "  \tsteps:"), "deploy-hub.yml"), "a tab in the indentation")
+
     def test_the_deploy_workflow_that_does_not_sign_in_is_a_finding(self):
         text = GOOD_DEPLOY.replace(f"      - name: Sign in\n        uses: azure/login@{LOGIN} # v3.1.0\n        with:\n          client-id: ${{{{ secrets.AZURE_CLIENT_ID }}}}\n", "")
         self.assertFinding(self.lint(text, "deploy-hub.yml"), "does not sign in")

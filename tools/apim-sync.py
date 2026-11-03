@@ -35,7 +35,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 ARM = "https://management.azure.com"
 GUID = r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
-APIM_ID = re.compile(rf"^/subscriptions/{GUID}/resourceGroups/[A-Za-z0-9._()-]{{1,90}}/providers/Microsoft\.ApiManagement/service/[A-Za-z][A-Za-z0-9-]{{0,49}}$", re.I)
+APIM_ID = re.compile(rf"/subscriptions/{GUID}/resourceGroups/[A-Za-z0-9._()-]{{1,90}}/providers/Microsoft\.ApiManagement/service/[A-Za-z][A-Za-z0-9-]{{0,49}}", re.I)
 VALUE = re.compile(r"^[A-Za-z0-9._:/,-]*$")
 PREFIX = "meternaut-"  # the only objects this tool touches; a manifest cannot choose another
 NAME = r"[A-Za-z0-9._-]"
@@ -237,7 +237,7 @@ def covers(wanted, actual, field: str = "") -> bool:
 
 class Apim:
     def __init__(self, transport: Transport, apim_id: str, api_version: str, sleep=time.sleep):
-        if not APIM_ID.match(apim_id):
+        if not APIM_ID.fullmatch(apim_id):
             raise Problem("--apim is the resource id of the instance: /subscriptions/<id>/resourceGroups/<group>/providers/Microsoft.ApiManagement/service/<name>")
         if not re.fullmatch(r"\d{4}-\d{2}-\d{2}(-preview)?", api_version):
             raise Problem("the API version is a date such as 2024-05-01")
@@ -264,28 +264,28 @@ class Apim:
             return text if text.lstrip().startswith("<") else json.loads(text)["properties"]["value"]
         return json.loads(text)
 
+    def settled(self, path: str, must_exist: bool = False, tries: int = 30, pause: float = 10.0):
+        """Reads an object, waiting while the service is still making it, and returns the last read (None: it is not there).
+
+        The service may answer a write with 200, 201 or 202 and still be working: the object then reports a state
+        that is not final, or is not visible yet. Whatever depends on it waits for the end."""
+        for _ in range(tries):
+            found = self.read(path)
+            if (found is None and not must_exist) or (found is not None and state_of(found) in FINAL_STATES):
+                return found
+            self.sleep(pause)
+        raise Problem(f"{path}: still not ready after {int(tries * pause)} seconds")
+
     def write(self, item: dict, exists: bool = False) -> None:
-        """PUT one object. An object that is there is replaced only with If-Match, which the service wants for an update."""
+        """PUT one object and wait until the service has made it. An object that is there is replaced only with If-Match."""
         body = {"properties": {"format": "rawxml", "value": item["policy"]}} if "policy" in item else (item["body"] or None)
         headers = {"If-Match": "*"} if exists and body is not None else None
         status, _, raw = self.transport.request("PUT", self.url(item["path"]), body, headers)
         if status not in (200, 201, 202):
             raise Problem(f"{item['path']}: writing it gave {status}: {raw.decode('utf-8', 'replace')[:500]}")
-        if status == 202:
-            self.wait_until_ready(item["path"])
-
-    def wait_until_ready(self, path: str, tries: int = 30, pause: float = 10.0) -> None:
-        """A write the service only accepted is not done: later objects depend on it, so wait for it to be there."""
-        for _ in range(tries):
-            found = self.read(path)
-            if found is not None:
-                state = found.get("properties", {}).get("provisioningState") if isinstance(found, dict) else None
-                if state in (None, "Succeeded"):
-                    return
-                if state == "Failed":
-                    raise Problem(f"{path}: the service reports that creating it failed")
-            self.sleep(pause)
-        raise Problem(f"{path}: still not ready after {int(tries * pause)} seconds")
+        state = state_of(self.settled(item["path"], must_exist=True))
+        if state in BAD_STATES:
+            raise Problem(f"{item['path']}: the service reports that making it {state.lower()}")
 
     def delete(self, path: str) -> str:
         """DELETE one object. Never the subscriptions of a product or anything else the manifest does not name."""
@@ -299,12 +299,23 @@ class Apim:
         raise Problem(f"{path}: removing it gave {status}: {raw.decode('utf-8', 'replace')[:300]}{hint}")
 
 
+def state_of(found) -> str | None:
+    """The state the service reports for an object it is making or has made (a policy, read as text, reports none)."""
+    return found.get("properties", {}).get("provisioningState") if isinstance(found, dict) else None
+
+
+FINAL_STATES = (None, "Succeeded", "Failed", "Canceled")
+BAD_STATES = ("Failed", "Canceled")
+
+
 def plan(apim: Apim, objects: list[dict]) -> list[tuple[str, str]]:
     result = []
     for item in objects:
-        existing = apim.read(item["path"])
+        existing = apim.settled(item["path"])
         if existing is None:
             action = "create"
+        elif state_of(existing) in BAD_STATES:
+            action = "update"  # whatever it matches, a failed object is made again from the approved definition
         elif "policy" in item:
             action = "unchanged" if normal_xml(existing) == normal_xml(item["policy"]) else "update"
         else:

@@ -29,9 +29,10 @@ class FakeService:
     only accepted (202) shows up later.
     """
 
-    def __init__(self, secrets=None, async_paths=(), ready_after=2, failed_paths=()):
+    def __init__(self, secrets=None, async_paths=(), ready_after=2, states=None):
         self.objects, self.calls, self.secrets = {}, [], secrets or {}
-        self.async_paths, self.ready_after, self.failed_paths = set(async_paths), ready_after, set(failed_paths)
+        self.async_paths, self.ready_after = set(async_paths), ready_after
+        self.states = {path: list(script) for path, script in (states or {}).items()}  # provisioningState of successive reads
         self.pending, self.polls, self.slept = {}, {}, []
 
     def sleep(self, seconds):
@@ -59,7 +60,8 @@ class FakeService:
                 if field in properties:
                     properties[field] = f"{APIM}{properties[field]}"
             properties["addedByTheService"] = True
-            properties["provisioningState"] = "Failed" if path in self.failed_paths else "Succeeded"
+            script = self.states.get(path)
+            properties["provisioningState"] = (script.pop(0) if len(script) > 1 else script[0]) if script else "Succeeded"
             return 200, {}, json.dumps({"id": f"{APIM}/{path}", "name": path.rsplit("/", 1)[-1], "properties": properties}).encode()
         if method == "PUT":
             if path.endswith("/policies/policy"):
@@ -417,7 +419,7 @@ class Service(unittest.TestCase):
         self.assertTrue(all(i < dependent for i in polls), "the operation is written after the API is there")
 
     def test_an_accepted_write_that_fails_or_never_finishes_stops_the_apply(self):
-        failed = FakeService(async_paths={"apis/meternaut-llm"}, ready_after=0, failed_paths={"apis/meternaut-llm"})
+        failed = FakeService(async_paths={"apis/meternaut-llm"}, ready_after=0, states={"apis/meternaut-llm": ["Failed"]})
         code, _, err = run(["apply", *vars_args()], failed)
         self.assertEqual(code, 2)
         self.assertIn("failed", err)
@@ -428,6 +430,66 @@ class Service(unittest.TestCase):
         self.assertIn("still not ready", err)
         self.assertEqual(len(stuck.slept), 30)
         self.assertNotIn("apis/meternaut-llm/operations/chat-completions", [p for _, p in stuck.writes()])
+
+    def test_a_201_that_reports_in_progress_is_waited_for_like_a_202(self):
+        # Microsoft's reference for creating an API answers 200 or 201 with provisioningState InProgress
+        service = FakeService(states={"apis/meternaut-llm": ["InProgress", "InProgress", "Succeeded"]})
+        code, out, err = run(["apply", *vars_args()], service)
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(service.slept, [10.0, 10.0])
+        calls = [(m, p) for m, p, *_ in service.calls]
+        created = calls.index(("PUT", "apis/meternaut-llm"))
+        dependent = calls.index(("PUT", "apis/meternaut-llm/operations/chat-completions"))
+        polls = [i for i, c in enumerate(calls) if c == ("GET", "apis/meternaut-llm") and i > created]
+        self.assertEqual(len(polls), 3)
+        self.assertTrue(all(i < dependent for i in polls), "nothing that depends on the API is written while it is being made")
+
+    def test_every_write_is_followed_by_a_read_that_must_come_back_final(self):
+        service = FakeService()
+        run(["apply", *vars_args()], service)
+        calls = [(m, p) for m, p, *_ in service.calls]
+        for put in [c for c in calls if c[0] == "PUT"]:
+            nxt = calls[calls.index(put) + 1]
+            self.assertEqual(nxt, ("GET", put[1]), put)
+
+    def test_a_write_that_ends_failed_or_cancelled_is_an_error(self):
+        for state in ("Failed", "Canceled"):
+            service = FakeService(states={"apis/meternaut-llm": ["InProgress", state]})
+            code, _, err = run(["apply", *vars_args()], service)
+            self.assertEqual(code, 2, state)
+            self.assertIn(state.lower(), err)
+            self.assertNotIn("apis/meternaut-llm/operations/chat-completions", [p for _, p in service.writes()])
+
+    def test_an_existing_object_that_reports_failed_is_made_again_not_skipped(self):
+        service = FakeService()
+        run(["apply", *vars_args()], service)
+        service.states["apis/meternaut-llm"] = ["Failed", "Succeeded"]  # it matches the definition, and still failed
+        code, out, _ = run(["plan", *vars_args()], service)
+        self.assertEqual(code, 0)
+        self.assertIn("update    apis/meternaut-llm\n", out)
+        service.states["apis/meternaut-llm"] = ["Failed", "Succeeded"]
+        service.calls.clear()
+        code, out, err = run(["apply", *vars_args()], service)
+        self.assertEqual((code, err), (0, ""))
+        puts = [(p, h) for m, p, _, _, h in service.calls if m == "PUT"]
+        self.assertEqual(puts, [("apis/meternaut-llm", {"If-Match": "*"})])
+        self.assertEqual(rows(out, "updated"), 1)
+        service.states["apis/meternaut-llm"] = ["Failed"]  # and made again, but failing again
+        code, _, err = run(["apply", *vars_args()], service)
+        self.assertEqual(code, 2)
+        self.assertIn("failed", err)
+
+    def test_an_existing_object_that_is_still_in_progress_is_waited_for_before_it_is_compared(self):
+        service = FakeService()
+        run(["apply", *vars_args()], service)
+        service.states["apis/meternaut-llm"] = ["InProgress", "Succeeded"]
+        service.slept.clear()
+        service.calls.clear()
+        code, out, err = run(["apply", *vars_args()], service)
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(service.slept, [10.0])
+        self.assertEqual(service.writes(), [])
+        self.assertEqual(rows(out, "unchanged"), 8, out)
 
     def test_whitespace_alone_is_not_a_policy_change(self):
         service = FakeService()
@@ -540,7 +602,10 @@ class Service(unittest.TestCase):
                 self.assertEqual(code, 2, (command, tail))
                 self.assertEqual(service.calls, [], (command, tail))
         for bad_group in ("rg?x", "rg#", "rg/x", "rg x", "rg%2f"):
-            self.assertIsNone(aps.APIM_ID.match(APIM.replace("rg-test", bad_group)), bad_group)
+            self.assertIsNone(aps.APIM_ID.fullmatch(APIM.replace("rg-test", bad_group)), bad_group)
+        for tail in ("\n", "\r\n", "\t", "\x00", "\u00e9"):  # a pattern that ends in $ lets a trailing newline through; this one must not
+            self.assertIsNone(aps.APIM_ID.fullmatch(APIM + tail), repr(tail))
+        self.assertIsNotNone(aps.APIM_ID.fullmatch(APIM))
 
     def test_an_address_is_always_inside_the_instance_whatever_the_path(self):
         apim = aps.Apim(FakeService(), APIM, "2024-05-01")

@@ -291,7 +291,8 @@ class Secrets(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
 
     def test_the_key_is_needed_and_is_checked_before_anything_is_sent(self):
-        for environ in ({}, {"HUB_SMOKE_KEY": ""}, {"HUB_SMOKE_KEY": "short"}, {"HUB_SMOKE_KEY": "a" * 32 + "\nX-Evil: 1"}, {"HUB_SMOKE_KEY": "a b" * 10}):
+        for environ in ({}, {"HUB_SMOKE_KEY": ""}, {"HUB_SMOKE_KEY": "short"}, {"HUB_SMOKE_KEY": "a" * 32 + "\nX-Evil: 1"}, {"HUB_SMOKE_KEY": "a b" * 10},
+                        {"HUB_SMOKE_KEY": "a" * 32 + "\n"}, {"HUB_SMOKE_KEY": "a" * 32 + "\r\n"}):
             hub = FakeHub()
             code, out, err, _ = run(hub, environ=environ, tmp=self.tmp.name)
             self.assertEqual(code, 2, environ)

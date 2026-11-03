@@ -106,36 +106,50 @@ def permission_writes(lines: list[str]) -> list[tuple[int, str]]:
     return found
 
 
-def jobs_of(lines: list[str]) -> dict[str, list[str]]:
-    """The top-level jobs: each name with its lines."""
+def jobs_of(lines: list[str]) -> tuple[dict[str, list[str]], list[int]]:
+    """The top-level jobs, each with its lines, and the numbers of the lines under `jobs:` that are not a plain job header.
+
+    A plain header is two spaces, a name and a colon, and nothing else on the line. A comment, an anchor, a quoted
+    name or flow style is valid YAML that this reader does not follow, so it is reported and never ignored."""
     start = next((i for i, line in enumerate(lines) if re.match(r"^jobs:\s*$", line)), None)
     jobs: dict[str, list[str]] = {}
+    odd: list[int] = []
     if start is None:
-        return jobs
+        return jobs, odd
     current = None
-    for line in lines[start + 1:]:
-        if line.strip() and indent(line) == 0 and not line.lstrip().startswith("#"):
+    for number, line in enumerate(lines[start + 1:], start + 2):
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        if indent(line) == 0:
             break
-        match = re.match(r"^ {2}([A-Za-z_][\w-]*):\s*$", line)
-        if match:
-            current = match.group(1)
-            jobs[current] = []
+        if indent(line) < 4:
+            match = re.fullmatch(r" {2}([A-Za-z_][\w-]*):", line.rstrip())
+            if match:
+                current = match.group(1)
+                jobs[current] = []
+            else:
+                odd.append(number)
+                current = None
         elif current is not None:
             jobs[current].append(line)
-    return jobs
+    return jobs, odd
 
 
 def job_conditions(body: list[str]) -> list[str]:
-    """The job's own `if:` (four spaces in), with quotes and a ${{ }} wrapper taken off."""
+    """The job's own `if:` (four spaces in), with quotes and a ${{ }} wrapper taken off.
+
+    A condition that goes on over the next line is returned with a mark that no guard equals."""
     found = []
-    for line in body:
+    for i, line in enumerate(body):
         match = re.match(r"^ {4}if:\s*(.+?)\s*$", code(line))
         if match:
             value = match.group(1)
             if len(value) >= 2 and value[0] in "\"'" and value[-1] == value[0]:
                 value = value[1:-1]
             wrapped = re.fullmatch(r"\$\{\{\s*(.*?)\s*\}\}", value)
-            found.append(wrapped.group(1) if wrapped else value)
+            value = wrapped.group(1) if wrapped else value
+            following = next((b for b in body[i + 1:] if b.strip() and not b.lstrip().startswith("#")), "")
+            found.append(value + " <continued on the next line>" if following and indent(following) > 4 else value)
     return found
 
 
@@ -146,6 +160,10 @@ def lint_file(path: Path) -> list[str]:
 
     def add(number: int, message: str) -> None:
         problems.append(f"{name}:{number}: {message}")
+
+    for i, line in enumerate(lines):
+        if re.match(r"^ *\t", line):
+            add(i + 1, "a tab in the indentation: YAML does not allow it, and this reader would misplace the line")
 
     for i, line in enumerate(lines):
         match = re.match(r"^\s*(?:- )?uses:\s*([^\s#]+)", line)
@@ -180,7 +198,9 @@ def lint_file(path: Path) -> list[str]:
         if triggers != {"workflow_dispatch"}:
             add(1, f"must run on `workflow_dispatch` alone, not on {sorted(triggers) or 'nothing'}")
         text = "\n".join(lines)
-        jobs = jobs_of(lines)
+        jobs, odd = jobs_of(lines)
+        for number in odd:
+            add(number, "a line under `jobs:` that is not a plain job header (two spaces, a name, a colon): a comment, an anchor, a quoted name or flow style is not followed here, so it is refused")
         if len(jobs) != 1:
             add(1, f"must have exactly one job, not {len(jobs)}: the guard below is checked on that job, so a second one would go unchecked")
         for job, body in jobs.items():
