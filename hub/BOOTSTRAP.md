@@ -98,6 +98,10 @@ gh variable set HUB_APIM_LOGGER      --repo $repo --body $logger
 
 The DNS server is the landing zone's own: a virtual network that does not use it cannot resolve the central private DNS zones. Read the result back before the first run: `az role assignment list --assignee $principal --all --output table` shows three assignments, `gh secret list --repo $repo` four secrets and `gh variable list --repo $repo` nine variables. The budget's start date is not a setting: the workflow reads it from the budget once it exists.
 
+## Done
+
+Taken on 2026-11-03, after the owner's yes, as the commands above, with two differences: each command carries `--subscription` instead of a first `az account set`, so that the Azure CLI's own default subscription did not change; and the output filter of the last role assignment failed after Azure had made it, so the assignment was read back and not made again. Read back afterwards: three role assignments, the condition equal to the text above character for character, four secrets and nine variables. The values of this environment are in a local note that is not in the repository.
+
 ## After it
 
 Merge the branch that holds this page to `main`, then start the workflow from the Actions tab: *Hub*, *Run workflow*, action `what-if`. It shows what a deploy would create in Azure and in the API Management instance, and changes nothing. A `deploy` follows when the owner has read it, and the first one is run with `check_limits` ticked.
