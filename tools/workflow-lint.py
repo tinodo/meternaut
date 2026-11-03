@@ -15,6 +15,10 @@ The rules, each of which a workflow file can break by accident and a reviewer ca
      exactly one job whose `if:` is exactly the owner-and-main guard, a `concurrency` group and no
      `continue-on-error: true`.
 
+  7. No quoted value, and no list or map in brackets, goes on over several lines, and no character that some readers
+     take for a line break: this tool reads one line at a time, so a line inside such a value could pass for a setting
+     (an `if:` inside a quoted name) or a script line it never sees.
+
 It reads the files as text, because a YAML parser is not part of the standard library; the layout it relies on
 (two-space indentation, one key per line) is the one the workflows use, and a structure it does not understand is
 reported rather than accepted. The exit code is 0 for no findings, 1 for findings, 2 when there is nothing to check.
@@ -33,6 +37,11 @@ STEP_START = re.compile(r"^(\s*)- (?:name|uses|run|id|if|env|with|shell|working-
 FORBIDDEN_EVENTS = {"pull_request_target", "workflow_run", "issue_comment"}
 ALLOWED_WRITES = {DEPLOY: {"id-token"}}
 OWNER_GUARD = "github.actor == 'tinodo' && github.ref == 'refs/heads/main'"
+# Control characters, and the line breaks that Python splits on and YAML readers do not all agree about.
+ODD_CHARACTERS = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f\x7f\x85\u2028\u2029]")
+BLOCK_HEADER = re.compile(r"[|>](?:[+-]\d?|\d[+-]?)?(?:\s+#.*)?")
+MARKERS = re.compile(r"^\s*(?:[-?:]\s+)*")
+KEY = re.compile(r"""("(?:[^"\\]|\\.)*"|'(?:[^']|'')*'|[^\s"'\[\]{},#&*!|>%@`][^#]*?)\s*:(?:\s+|$)""")
 
 
 def indent(line: str) -> int:
@@ -59,6 +68,64 @@ def steps(lines: list[str]):
         yield start, lines[start:end]
 
 
+def closes(value: str) -> bool:
+    """False when a quoted value, or a list or map in brackets, that starts this value is still open at the end of the line.
+
+    A quote mark opens a string only where YAML lets a string start (the first thing in the value, or after `[`, `{`, `,`
+    or `:` inside brackets), so an apostrophe inside a plain value, as in `it's` or `== 'main'`, is just a character."""
+    if not value or value[0] not in "\"'[{":
+        return True
+    quote, depth, previous, i = "", 0, "", 0
+    while i < len(value):
+        c = value[i]
+        if quote:
+            if quote == '"' and c == "\\":
+                i += 2
+                continue
+            if c == quote:
+                if quote == "'" and value[i + 1:i + 2] == "'":
+                    i += 2
+                    continue
+                quote, previous = "", c
+                if depth == 0:
+                    return True
+        elif c in "\"'" and (previous == "" or previous in "[{,:"):
+            quote = c
+        elif c in "[{":
+            depth, previous = depth + 1, c
+        elif c in "]}":
+            depth, previous = depth - 1, c
+            if depth <= 0:
+                return True
+        elif c != " ":
+            previous = c
+        i += 1
+    return False
+
+
+def open_values(lines: list[str]) -> list[int]:
+    """Numbers of the lines on which a quoted value, or a list or map in brackets, is opened and not closed on that line.
+
+    A value that goes on over the next lines can hold a line that only looks like a setting, or a script line this
+    reader never sees, so it is refused. Block scalars (`|`, `>`) are skipped: their lines are text, not YAML."""
+    found, body_of = [], None
+    for number, line in enumerate(lines, 1):
+        if body_of is not None:
+            if not line.strip() or indent(line) > body_of:
+                continue
+            body_of = None
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        rest = MARKERS.sub("", line.rstrip(), count=1)
+        key = KEY.match(rest)
+        value = (rest[key.end():] if key else rest).strip()
+        if BLOCK_HEADER.fullmatch(value):
+            body_of = len(line.rstrip()) - len(rest) if key else indent(line)
+        elif not closes(value):
+            found.append(number)
+    return found
+
+
 def script_lines(block: list[str], first: int):
     """Yields (line number, text) of every `run:` script in a step."""
     for i, line in enumerate(block):
@@ -67,13 +134,13 @@ def script_lines(block: list[str], first: int):
             continue
         key_indent = len(match.group(1)) + (2 if line.lstrip().startswith("- ") else 0)
         value = match.group(2)
-        if re.fullmatch(r"[|>][+-]?\d*", value.strip()):
-            for j in range(i + 1, len(block)):
-                if block[j].strip() and indent(block[j]) <= key_indent:
-                    break
-                yield first + j + 1, block[j]
-        else:
+        if not re.fullmatch(r"[|>][+-]?\d*", value.strip()):
             yield first + i + 1, value
+        # a block script, or a plain value that goes on over lines indented deeper than its key: read to the end of it
+        for j in range(i + 1, len(block)):
+            if block[j].strip() and indent(block[j]) <= key_indent:
+                break
+            yield first + j + 1, block[j]
 
 
 def events(lines: list[str]) -> set[str]:
@@ -155,15 +222,23 @@ def job_conditions(body: list[str]) -> list[str]:
 
 def lint_file(path: Path) -> list[str]:
     name = path.name
-    lines = path.read_text(encoding="utf-8").splitlines()
+    text_of_file = path.read_text(encoding="utf-8")
+    lines = text_of_file.splitlines()
     problems: list[str] = []
 
     def add(number: int, message: str) -> None:
         problems.append(f"{name}:{number}: {message}")
 
+    odd = ODD_CHARACTERS.search(text_of_file)
+    if odd:
+        add(text_of_file.count("\n", 0, odd.start()) + 1, f"the character U+{ord(odd.group()):04X}: a control character, or a line break that readers do not agree about, so the lines as this tool counts them may not be the lines GitHub reads")
+
     for i, line in enumerate(lines):
         if re.match(r"^ *\t", line):
             add(i + 1, "a tab in the indentation: YAML does not allow it, and this reader would misplace the line")
+
+    for number in open_values(lines):
+        add(number, "a quoted value, or a list or map in brackets, that goes on over the next lines: this reader sees one line at a time, so a line inside it could pass for a setting or a script line; put it on one line")
 
     for i, line in enumerate(lines):
         match = re.match(r"^\s*(?:- )?uses:\s*([^\s#]+)", line)

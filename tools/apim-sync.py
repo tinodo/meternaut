@@ -242,6 +242,7 @@ class Apim:
         if not re.fullmatch(r"\d{4}-\d{2}-\d{2}(-preview)?", api_version):
             raise Problem("the API version is a date such as 2024-05-01")
         self.transport, self.apim_id, self.api_version, self.sleep = transport, apim_id, api_version, sleep
+        self.notes: list[str] = []
 
     def url(self, path: str, **query) -> str:
         """The address of an object. It is built, then read back: the path must be exactly the instance's, with nothing after it."""
@@ -271,7 +272,13 @@ class Apim:
         that is not final, or is not visible yet. Whatever depends on it waits for the end."""
         for _ in range(tries):
             found = self.read(path)
-            if (found is None and not must_exist) or (found is not None and state_of(found) not in WORKING_STATES):
+            state = state_of(found)
+            if (found is None and not must_exist) or (found is not None and state not in WORKING_STATES):
+                if state is not None and state not in FINAL_STATES + BAD_STATES:
+                    word = re.sub(r"[^A-Za-z0-9 _.-]", "?", raw_state(found))[:40]
+                    note = f"{path} reports the state {word!r}, which this tool does not know; it is taken as a final state"
+                    if note not in self.notes:
+                        self.notes.append(note)
                 return found
             self.sleep(pause)
         raise Problem(f"{path}: still not ready after {int(tries * pause)} seconds")
@@ -299,17 +306,26 @@ class Apim:
         raise Problem(f"{path}: removing it gave {status}: {raw.decode('utf-8', 'replace')[:300]}{hint}")
 
 
-def state_of(found) -> str | None:
-    """The state the service reports for an object it is making or has made, in lower case (a policy, read as text, has none)."""
+def raw_state(found) -> str | None:
+    """The state the service reports for an object it is making or has made, as it wrote it (a policy, read as text, has none)."""
     state = found.get("properties", {}).get("provisioningState") if isinstance(found, dict) else None
-    return state.lower() if isinstance(state, str) else None
+    return state if isinstance(state, str) else None
+
+
+def state_of(found) -> str | None:
+    """The same, without case, spaces, underscores and hyphens, so that 'InProgress', 'In Progress' and 'in_progress' are one word."""
+    state = raw_state(found)
+    return re.sub(r"[\s_-]", "", state).lower() if state is not None else None
 
 
 # The reference names no final state for an API ("The provisioning state"), so only what clearly means "still working"
 # is waited for and only what clearly means "did not work" stops the run. Any other word is a final state: waiting on
-# an unknown word would fail every run for a perfectly good object.
-WORKING_STATES = ("inprogress", "accepted", "creating", "updating", "provisioning", "pending", "running", "activating", "starting")
-BAD_STATES = ("failed", "canceled", "cancelled")
+# an unknown word would fail every run for a perfectly good object. Such a word is printed as a note, so that the first
+# real run shows which words the service uses; a dependent write that then starts too early fails and stops the run.
+WORKING_STATES = ("inprogress", "accepted", "creating", "updating", "provisioning", "pending", "running", "activating", "starting",
+                  "queued", "notstarted", "waiting", "submitted", "deploying", "validating", "migrating", "scaling", "restarting", "deleting")
+BAD_STATES = ("failed", "canceled", "cancelled", "error", "errored", "rejected", "aborted", "timedout")
+FINAL_STATES = ("succeeded", "created", "completed", "ready", "active")
 
 
 def plan(apim: Apim, objects: list[dict]) -> list[tuple[str, str]]:
@@ -370,6 +386,7 @@ def main(argv: list[str] | None = None, transport: Transport | None = None, envi
     parser.add_argument("--var", action="append", default=[], help="NAME=VALUE for ${NAME} in the manifest and the policies")
     args = parser.parse_args(argv)
     environ = os.environ if environ is None else environ
+    apim = None
     try:
         if args.command in ("apply", "remove") and environ.get("GITHUB_ACTIONS") != "true":
             raise Problem(f"{args.command} runs only from the deployment workflow (AGENTS.md rule 18); use plan to see what it would do")
@@ -396,7 +413,11 @@ def main(argv: list[str] | None = None, transport: Transport | None = None, envi
         else:
             rows = [(apim.delete(item["path"]), item["path"]) for item in reversed(objects) if not item["path"].endswith("/policies/policy")]
             print(report(rows, "Only objects named in the manifest were removed."))
+        for note in apim.notes:
+            print(f"note: {note}")
     except Problem as e:
+        for note in getattr(apim, "notes", []):
+            print(f"note: {note}", file=sys.stderr)
         print(f"error: {e}", file=sys.stderr)
         return 2
     return 0

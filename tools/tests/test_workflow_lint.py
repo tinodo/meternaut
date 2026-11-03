@@ -6,6 +6,10 @@ import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
+try:
+    import yaml
+except ImportError:  # the standard library has no YAML parser; checks.yml parses the deploy workflow with Ruby on CI
+    yaml = None
 TOOL = Path(__file__).resolve().parents[1] / "workflow-lint.py"
 spec = importlib.util.spec_from_file_location("workflow_lint", TOOL)
 wl = importlib.util.module_from_spec(spec)
@@ -193,6 +197,70 @@ class Lint(unittest.TestCase):
         self.assertFinding(self.lint(folded, "deploy-hub.yml"), "only for the owner")
         commented = GOOD_DEPLOY.replace(guard, guard.rstrip("\n") + "  # the owner, on main\n")
         self.assertEqual(self.lint(commented, "deploy-hub.yml"), [])
+
+    def test_a_guard_that_is_only_text_inside_a_quoted_value_is_refused(self):
+        guard = "    if: github.actor == 'tinodo' && github.ref == 'refs/heads/main'\n"
+        name = "    name: Hub ({{ inputs.action }})\n"
+        unguarded = GOOD_DEPLOY.replace(guard, "")
+        self.assertIn(name, unguarded)
+        # YAML reads each of these as one string, so the job has no `if:` at all, yet every word of the guard is still on a line of its own
+        decoys = {
+            "the job's name": unguarded.replace(name, '    name: "Hub\n' + guard + '    "\n'),
+            "runs-on": unguarded.replace("    runs-on: ubuntu-latest\n", '    runs-on: "ubuntu-latest\n' + guard + '    "\n'),
+            "a single-quoted value": unguarded.replace(name, "    name: 'Hub\n" + guard + "    '\n"),
+            "a map in braces": unguarded.replace("    runs-on: ubuntu-latest\n", "    runs-on: ubuntu-latest\n    outputs: {\n" + guard + "    }\n"),
+            "a list in brackets": unguarded.replace("    runs-on: ubuntu-latest\n", "    runs-on: ubuntu-latest\n    needs: [\n" + guard + "    ]\n"),
+        }
+        for where, text in decoys.items():
+            self.assertIn(guard, text, where)
+            self.assertFinding(self.lint(text, "deploy-hub.yml"), "goes on over the next lines")
+            if yaml:  # where a real parser can read the file, it agrees that the job has no `if` of its own
+                try:
+                    job = yaml.safe_load(text)["jobs"]["hub"]
+                except yaml.YAMLError:
+                    continue
+                self.assertNotIn("if", job, where)
+
+    @unittest.skipUnless(yaml, "no YAML parser on this machine: CI parses the deploy workflow with Ruby (checks.yml)")
+    def test_a_real_parser_agrees_that_the_deploy_workflow_is_guarded(self):
+        document = yaml.safe_load((ROOT / ".github" / "workflows" / "deploy-hub.yml").read_text(encoding="utf-8"))
+        jobs = document["jobs"]
+        self.assertEqual(len(jobs), 1)
+        self.assertEqual(next(iter(jobs.values()))["if"], wl.OWNER_GUARD)
+        self.assertEqual(list(document.get("on", document.get(True))), ["workflow_dispatch"])  # YAML 1.1 reads the key `on` as true
+        self.assertIn("concurrency", document)
+
+    def test_a_script_that_goes_on_over_several_lines_is_read_to_its_end(self):
+        one_line = 'run: |\n          echo "$VALUE"'
+        self.assertIn(one_line, GOOD_CHECKS)
+        plain = GOOD_CHECKS.replace(one_line, "run: echo hi\n            ${{ github.event.issue.title }}")
+        self.assertFinding(self.lint(plain), "expression inside a run script")
+        quoted = GOOD_CHECKS.replace(one_line, 'run: "echo hi\n            ${{ github.event.issue.title }}"')
+        self.assertFinding(self.lint(quoted), "goes on over the next lines")
+        self.assertEqual(self.lint(GOOD_CHECKS.replace(one_line, "run: echo hi\n            echo there")), [])
+
+    def test_quotes_that_close_on_their_line_and_quotes_inside_scripts_are_fine(self):
+        values = [
+            'run-name: "the owner\'s \\"quoted\\" name"',
+            "run-name: 'it''s'",
+            "run-name: it's plain",
+            "run-name: \"x\" # it's",
+            "run-name: contains(github.ref, 'x')",
+            "run-name: ''",
+            'run-name: ""',
+            "env: {A: \"1\", B: '2', C: [x, \"y\"]}",
+            "env: [a, 'b', \"c\"] # [",
+        ]
+        for value in values:
+            self.assertEqual(self.lint(GOOD_CHECKS.replace("name: Checks\n", "name: Checks\n" + value + "\n")), [], value)
+        script = GOOD_CHECKS.replace('echo "$VALUE"', "echo \"it's\" 'half\n          echo \"half\n          echo {")
+        self.assertEqual(self.lint(script), [])
+
+    def test_a_character_that_readers_do_not_agree_about_is_refused(self):
+        for char in ("\u2028", "\u2029", "\x85", "\x0c", "\x00", "\x1c"):
+            problems = self.lint(GOOD_CHECKS.replace("name: Checks", "name: Che" + char + "cks"))
+            self.assertFinding(problems, f"U+{ord(char):04X}")
+            self.assertTrue(problems[0].startswith("checks.yml:1:"), problems)
 
     def test_a_tab_in_the_indentation_is_refused(self):
         self.assertFinding(self.lint(GOOD_CHECKS.replace("    runs-on: ubuntu-latest", "\truns-on: ubuntu-latest")), "a tab in the indentation")

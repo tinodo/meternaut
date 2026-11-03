@@ -461,13 +461,55 @@ class Service(unittest.TestCase):
             self.assertEqual(rows(out, "created"), 8, word)
 
     def test_states_that_mean_working_are_waited_for_whatever_their_case(self):
-        for word in ("InProgress", "inprogress", "INPROGRESS", "Updating", "Creating", "Accepted"):
+        for word in ("InProgress", "inprogress", "INPROGRESS", "Updating", "Creating", "Accepted",
+                     "In Progress", "in_progress", "In-Progress", "Queued", "NotStarted", "Not Started", "Deploying"):
             service = FakeService(states={"apis/meternaut-llm": [word, "Created"]})
             code, _, err = run(["apply", *vars_args()], service)
             self.assertEqual((code, err, service.slept), (0, "", [10.0]), word)
 
+    def test_a_state_is_compared_without_case_spaces_underscores_and_hyphens(self):
+        for word in ("InProgress", "In Progress", "in_progress", "In-Progress", " inprogress "):
+            self.assertEqual(aps.state_of({"properties": {"provisioningState": word}}), "inprogress", word)
+        self.assertEqual(aps.raw_state({"properties": {"provisioningState": "In Progress"}}), "In Progress")
+        self.assertIsNone(aps.state_of("<policies/>"))
+        self.assertIsNone(aps.state_of({"properties": {}}))
+
+    def test_a_state_word_nobody_listed_is_printed_once_so_the_first_run_shows_the_vocabulary(self):
+        for word in ("Succeeded", "Created", "Ready", "Completed", "Active", "InProgress", "Failed"):
+            service = FakeService(states={"apis/meternaut-llm": [word, "Succeeded"]})
+            _, out, _ = run(["plan", *vars_args()], service)
+            self.assertNotIn("note:", out, word)
+        service = FakeService(states={"apis/meternaut-llm": ["Brand New"]})
+        code, out, err = run(["apply", *vars_args()], service)
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(out.count("note: "), 1, out)  # once, though the object was read several times
+        self.assertIn("note: apis/meternaut-llm reports the state 'Brand New', which this tool does not know", out)
+        _, out, _ = run(["plan", *vars_args()], service)  # an existing object is noted by plan as well
+        self.assertEqual(out.count("note: "), 1, out)
+
+    def test_a_state_word_that_is_not_plain_text_cannot_become_a_workflow_command(self):
+        hostile = "x\n::add-mask::secret\r\n::error::boom"
+        service = FakeService(states={"apis/meternaut-llm": [hostile]})
+        _, out, _ = run(["apply", *vars_args()], service)
+        self.assertNotIn("::", out)
+        self.assertTrue(all(line.startswith(("note: ", "created ", "unchanged ", "updated ", "8 created")) for line in out.splitlines() if line), out)
+
+    def test_the_notes_are_printed_when_the_run_stops_too(self):
+        class Refuses(FakeService):
+            def request(self, method, url, body=None, headers=None):
+                if method == "PUT" and "/operations/" in url:
+                    return 409, {}, b'{"error":{"code":"Conflict"}}'
+                return super().request(method, url, body, headers)
+
+        service = Refuses(states={"apis/meternaut-llm": ["Brand New"]})
+        code, out, err = run(["apply", *vars_args()], service)
+        self.assertEqual(code, 2)
+        self.assertIn("note: apis/meternaut-llm reports the state 'Brand New'", err)
+        self.assertIn("error: ", err)
+        self.assertLess(err.index("note: "), err.index("error: "))
+
     def test_a_write_that_ends_failed_or_cancelled_is_an_error(self):
-        for state in ("Failed", "Canceled", "Cancelled", "failed"):
+        for state in ("Failed", "Canceled", "Cancelled", "failed", "Error", "Rejected", "Aborted", "TimedOut"):
             service = FakeService(states={"apis/meternaut-llm": ["InProgress", state]})
             code, _, err = run(["apply", *vars_args()], service)
             self.assertEqual(code, 2, state)
