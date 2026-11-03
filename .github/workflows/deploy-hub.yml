@@ -157,13 +157,29 @@ jobs:
               --parameters "@$RUNNER_TEMP/hub.parameters.json" "$@" \
               --query properties.outputs.endpoint.value --output tsv
           }
-          if endpoint=$(deploy 2> "$RUNNER_TEMP/deploy.err"); then
-            cat "$RUNNER_TEMP/deploy.err" >&2
-          elif grep -q FlagMustBeSetForRestore "$RUNNER_TEMP/deploy.err"; then
-            echo "A soft-deleted account of this name is left from an earlier removal; it is restored (it holds nothing)."
-            endpoint=$(deploy restoreAccount=true)
-          else
-            cat "$RUNNER_TEMP/deploy.err" >&2
+          # Two answers of the service are not failures of the template. A soft-deleted account of the name is restored with
+          # restoreAccount=true. A write to the account that collides with another change to it (IfMatchPreconditionFailed)
+          # is made again after a minute: the deployment is idempotent. Anything else stops the run at once.
+          extra=()
+          endpoint=""
+          for attempt in 1 2 3; do
+            if endpoint=$(deploy "${extra[@]}" 2> "$RUNNER_TEMP/deploy.err"); then
+              cat "$RUNNER_TEMP/deploy.err" >&2
+              break
+            fi
+            if [ "${#extra[@]}" -eq 0 ] && grep -q FlagMustBeSetForRestore "$RUNNER_TEMP/deploy.err"; then
+              echo "A soft-deleted account of this name is left from an earlier removal; it is restored (it holds nothing)."
+              extra=(restoreAccount=true)
+            elif [ "$attempt" -lt 3 ] && grep -q IfMatchPreconditionFailed "$RUNNER_TEMP/deploy.err"; then
+              echo "A write to the model account collided with another change to it (IfMatchPreconditionFailed). Trying again in a minute (attempt $attempt of 3)."
+              sleep 60
+            else
+              cat "$RUNNER_TEMP/deploy.err" >&2
+              exit 1
+            fi
+          done
+          if [ -z "$endpoint" ]; then
+            echo "::error::The deployment did not finish after three tries."
             exit 1
           fi
           if [ "${endpoint%/}" != "$EXPECTED_ENDPOINT" ]; then
@@ -273,12 +289,19 @@ jobs:
               echo "The network security group $NSG_NAME is not there."
             fi
             budgets="https://management.azure.com/subscriptions/$(az account show --query id --output tsv)/resourceGroups/$HUB_RESOURCE_GROUP/providers/Microsoft.Consumption/budgets"
-            if [ "$(az rest --method get --url "$budgets?api-version=2024-08-01" --query "length(value[?name=='meternaut-hub'])" --output tsv)" != "0" ]; then
-              az rest --method delete --url "$budgets/meternaut-hub?api-version=2024-08-01"
-              echo "Deleted the budget meternaut-hub."
-            else
-              echo "The budget meternaut-hub is not there."
-            fi
+            # A plain assignment, not a command inside a condition: if the list cannot be read, the step stops here.
+            found=$(az rest --method get --url "$budgets?api-version=2024-08-01" --query "length(value[?name=='meternaut-hub'])" --output tsv)
+            case "$found" in
+              0) echo "The budget meternaut-hub is not there." ;;
+              1)
+                az rest --method delete --url "$budgets/meternaut-hub?api-version=2024-08-01"
+                echo "Deleted the budget meternaut-hub."
+                ;;
+              *)
+                echo "::error::Could not tell whether the budget meternaut-hub exists (the list gave '$found')."
+                exit 1
+                ;;
+            esac
           fi
 
       - name: What was done
