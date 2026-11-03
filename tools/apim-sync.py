@@ -13,8 +13,9 @@ manifest that tries to.
     python tools/apim-sync.py key    --apim RESOURCE_ID      prints the contract's primary key and nothing else
 
 `plan` only reads. The tool runs from the deployment workflow, which signs in with OpenID Connect; nobody runs
-`apply` or `remove` from a machine (AGENTS.md rule 18), and the tool refuses to outside GitHub Actions. Every
-object is written with PUT, so a repeated run changes nothing that is already right.
+`apply` or `remove` from a machine (AGENTS.md rule 18), and the tool refuses to outside GitHub Actions. `apply`
+writes what the plan says and nothing else, so a second run changes nothing. `remove` deletes only the objects
+the manifest names: a subscription of the product that the manifest does not name stops the removal.
 """
 from __future__ import annotations
 
@@ -27,14 +28,16 @@ import subprocess
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 ARM = "https://management.azure.com"
-APIM_ID = re.compile(r"^/subscriptions/[0-9a-fA-F-]{36}/resourceGroups/[^/]+/providers/Microsoft\.ApiManagement/service/[^/]+$", re.I)
+GUID = r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
+APIM_ID = re.compile(rf"^/subscriptions/{GUID}/resourceGroups/[A-Za-z0-9._()-]{{1,90}}/providers/Microsoft\.ApiManagement/service/[A-Za-z][A-Za-z0-9-]{{0,49}}$", re.I)
 VALUE = re.compile(r"^[A-Za-z0-9._:/,-]*$")
-PREFIX = re.compile(r"^[a-z][a-z0-9]*-$")
+PREFIX = "meternaut-"  # the only objects this tool touches; a manifest cannot choose another
 NAME = r"[A-Za-z0-9._-]"
 VARIABLE = re.compile(r"\$\{([A-Z][A-Z0-9_]*)\}")
 
@@ -81,8 +84,9 @@ class Transport:
 
     def request(self, method: str, url: str, body: dict | None = None, headers: dict | None = None):
         """Returns (status, headers, bytes). Retries 429 and 5xx. The token goes only to management.azure.com."""
-        if not url.startswith(ARM + "/"):
-            raise Problem("refusing to send the token to a host other than management.azure.com")
+        parts = urllib.parse.urlsplit(url)
+        if parts.scheme != "https" or parts.netloc != "management.azure.com" or parts.fragment or parts.username or parts.password:
+            raise Problem("refusing to send the token anywhere but https://management.azure.com, and never with a fragment in the address")
         if body is not None:
             data = json.dumps(body).encode("utf-8")
         elif method in ("POST", "PUT", "PATCH"):
@@ -123,10 +127,10 @@ def substitute(value, variables: dict[str, str]):
     return value
 
 
-def allowed_path(path: str, prefix: str) -> bool:
+def allowed_path(path: str, prefix: str = PREFIX) -> bool:
     """Only an object of ours, or a child of one of ours that this tool knows. Nothing at the level of the service."""
     p = re.escape(prefix)
-    owned = rf"{p}{NAME}*"
+    owned = rf"{p}{NAME}+"
     patterns = [
         rf"(products|apis|subscriptions|backends|namedValues)/{owned}",
         rf"apis/{owned}/operations/{NAME}+",
@@ -181,12 +185,11 @@ def load_variables(contract_file: Path, extra: list[str]) -> dict[str, str]:
 
 def manifest_header(path: Path) -> tuple[dict, str]:
     raw = read_json(path)
-    prefix = raw.get("prefix", "")
-    if not PREFIX.match(prefix):
-        raise Problem("the manifest's prefix is a lower-case word ending in a hyphen, such as meternaut-")
+    if raw.get("prefix") != PREFIX:
+        raise Problem(f"the manifest's prefix is {PREFIX}: this tool touches no other objects, whatever a manifest says")
     if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(raw.get("apiVersion", ""))):
         raise Problem("the manifest's apiVersion is a date such as 2024-05-01")
-    return raw, prefix
+    return raw, PREFIX
 
 
 def load_manifest(path: Path, variables: dict[str, str]) -> dict:
@@ -233,14 +236,21 @@ def covers(wanted, actual, field: str = "") -> bool:
 
 
 class Apim:
-    def __init__(self, transport: Transport, apim_id: str, api_version: str):
+    def __init__(self, transport: Transport, apim_id: str, api_version: str, sleep=time.sleep):
         if not APIM_ID.match(apim_id):
             raise Problem("--apim is the resource id of the instance: /subscriptions/<id>/resourceGroups/<group>/providers/Microsoft.ApiManagement/service/<name>")
-        self.transport, self.apim_id, self.api_version = transport, apim_id, api_version
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}(-preview)?", api_version):
+            raise Problem("the API version is a date such as 2024-05-01")
+        self.transport, self.apim_id, self.api_version, self.sleep = transport, apim_id, api_version, sleep
 
     def url(self, path: str, **query) -> str:
-        extra = "".join(f"&{k}={v}" for k, v in query.items())
-        return f"{ARM}{self.apim_id}/{path}?api-version={self.api_version}{extra}"
+        """The address of an object. It is built, then read back: the path must be exactly the instance's, with nothing after it."""
+        wanted = f"{self.apim_id}/{path}"
+        url = urllib.parse.urlunsplit(("https", "management.azure.com", wanted, urllib.parse.urlencode({"api-version": self.api_version, **query}), ""))
+        parts = urllib.parse.urlsplit(url)
+        if parts.path != wanted or parts.fragment or parts.netloc != "management.azure.com" or any(c in path for c in "?#%\\ "):
+            raise Problem(f"{path}: not an address inside the instance")
+        return url
 
     def read(self, path: str):
         is_policy = path.endswith("/policies/policy")
@@ -254,24 +264,39 @@ class Apim:
             return text if text.lstrip().startswith("<") else json.loads(text)["properties"]["value"]
         return json.loads(text)
 
-    def write(self, item: dict) -> None:
+    def write(self, item: dict, exists: bool = False) -> None:
+        """PUT one object. An object that is there is replaced only with If-Match, which the service wants for an update."""
         body = {"properties": {"format": "rawxml", "value": item["policy"]}} if "policy" in item else (item["body"] or None)
-        status, _, raw = self.transport.request("PUT", self.url(item["path"]), body)
+        headers = {"If-Match": "*"} if exists and body is not None else None
+        status, _, raw = self.transport.request("PUT", self.url(item["path"]), body, headers)
         if status not in (200, 201, 202):
             raise Problem(f"{item['path']}: writing it gave {status}: {raw.decode('utf-8', 'replace')[:500]}")
+        if status == 202:
+            self.wait_until_ready(item["path"])
+
+    def wait_until_ready(self, path: str, tries: int = 30, pause: float = 10.0) -> None:
+        """A write the service only accepted is not done: later objects depend on it, so wait for it to be there."""
+        for _ in range(tries):
+            found = self.read(path)
+            if found is not None:
+                state = found.get("properties", {}).get("provisioningState") if isinstance(found, dict) else None
+                if state in (None, "Succeeded"):
+                    return
+                if state == "Failed":
+                    raise Problem(f"{path}: the service reports that creating it failed")
+            self.sleep(pause)
+        raise Problem(f"{path}: still not ready after {int(tries * pause)} seconds")
 
     def delete(self, path: str) -> str:
-        query = {}
-        if re.fullmatch(r"products/[^/]+", path):
-            query = {"deleteSubscriptions": "true"}
-        elif re.fullmatch(r"apis/[^/]+", path):
-            query = {"deleteRevisions": "true"}
+        """DELETE one object. Never the subscriptions of a product or anything else the manifest does not name."""
+        query = {"deleteRevisions": "true"} if re.fullmatch(r"apis/[^/]+", path) else {}
         status, _, raw = self.transport.request("DELETE", self.url(path, **query), None, {"If-Match": "*"})
         if status in (200, 204):
             return "deleted"
         if status == 404:
             return "absent"
-        raise Problem(f"{path}: removing it gave {status}: {raw.decode('utf-8', 'replace')[:300]}")
+        hint = " (a subscription that is not in the manifest may still use the product; it is not deleted)" if path.startswith("products/") else ""
+        raise Problem(f"{path}: removing it gave {status}: {raw.decode('utf-8', 'replace')[:300]}{hint}")
 
 
 def plan(apim: Apim, objects: list[dict]) -> list[tuple[str, str]]:
@@ -286,6 +311,18 @@ def plan(apim: Apim, objects: list[dict]) -> list[tuple[str, str]]:
             action = "unchanged" if covers(item["body"].get("properties", {}), existing.get("properties", {})) else "update"
         result.append((action, item["path"]))
     return result
+
+
+def apply(apim: Apim, objects: list[dict]) -> list[tuple[str, str]]:
+    """What the plan says, and only that: an object that is already right is not written again."""
+    rows = []
+    for (action, path), item in zip(plan(apim, objects), objects):
+        if action == "unchanged":
+            rows.append(("unchanged", path))
+            continue
+        apim.write(item, exists=(action == "update"))
+        rows.append(("created" if action == "create" else "updated", path))
+    return rows
 
 
 def report(rows: list[tuple[str, str]], closing: str) -> str:
@@ -322,9 +359,11 @@ def main(argv: list[str] | None = None, transport: Transport | None = None, envi
         if args.command in ("apply", "remove") and environ.get("GITHUB_ACTIONS") != "true":
             raise Problem(f"{args.command} runs only from the deployment workflow (AGENTS.md rule 18); use plan to see what it would do")
         variables = load_variables(Path(args.contract), args.var)
+        transport = transport or Transport()
+        sleep = getattr(transport, "sleep", time.sleep)
         if args.command == "key":
             raw, prefix = manifest_header(Path(args.manifest))
-            apim = Apim(transport or Transport(), args.apim, str(raw["apiVersion"]))
+            apim = Apim(transport, args.apim, str(raw["apiVersion"]), sleep)
             print(contract_key(apim, f"{variables['CONTRACT']}-sub-01", prefix))
             return 0
         for needed in ("FOUNDRY_ENDPOINT", "APPINSIGHTS_LOGGER"):
@@ -333,16 +372,12 @@ def main(argv: list[str] | None = None, transport: Transport | None = None, envi
             if not variables[needed].strip():
                 raise Problem(f"{needed} is empty: is the repository variable set?")
         manifest = load_manifest(Path(args.manifest), variables)
-        apim = Apim(transport or Transport(), args.apim, manifest["apiVersion"])
+        apim = Apim(transport, args.apim, manifest["apiVersion"], sleep)
         objects = manifest["objects"]
         if args.command == "plan":
             print(report(plan(apim, objects), "Nothing was changed."))
         elif args.command == "apply":
-            rows = []
-            for item in objects:
-                apim.write(item)
-                rows.append(("written", item["path"]))
-            print(report(rows, "Every object is written again on the next run without a change."))
+            print(report(apply(apim, objects), "Only what says created or updated was written; a second run changes nothing."))
         else:
             rows = [(apim.delete(item["path"]), item["path"]) for item in reversed(objects) if not item["path"].endswith("/policies/policy")]
             print(report(rows, "Only objects named in the manifest were removed."))

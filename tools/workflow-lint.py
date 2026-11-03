@@ -11,12 +11,13 @@ The rules, each of which a workflow file can break by accident and a reviewer ca
      part of the script. A value reaches a script through `env:` and is read as a shell variable.
   4. Each workflow sets `permissions:`; nothing is granted `write` except `id-token` in deploy-hub.yml.
   5. No workflow runs on `pull_request_target`, `workflow_run` or `issue_comment`.
-  6. Only deploy-hub.yml signs in to Azure (`azure/login`, `az login`), and it runs on `workflow_dispatch` alone,
-     only on main and only for the owner, with a `concurrency` group and without `continue-on-error: true`.
+  6. Only deploy-hub.yml signs in to Azure (`azure/login`, `az login`), and it runs on `workflow_dispatch` alone, with
+     exactly one job whose `if:` is exactly the owner-and-main guard, a `concurrency` group and no
+     `continue-on-error: true`.
 
 It reads the files as text, because a YAML parser is not part of the standard library; the layout it relies on
-(two-space indentation, one key per line) is the one the workflows use. The exit code is 0 for no findings, 1 for
-findings, 2 when there is nothing to check.
+(two-space indentation, one key per line) is the one the workflows use, and a structure it does not understand is
+reported rather than accepted. The exit code is 0 for no findings, 1 for findings, 2 when there is nothing to check.
 """
 from __future__ import annotations
 
@@ -31,6 +32,7 @@ PINNED = re.compile(r"^[\w.-]+/[\w./-]+@[0-9a-f]{40}$")
 STEP_START = re.compile(r"^(\s*)- (?:name|uses|run|id|if|env|with|shell|working-directory|continue-on-error|timeout-minutes):")
 FORBIDDEN_EVENTS = {"pull_request_target", "workflow_run", "issue_comment"}
 ALLOWED_WRITES = {DEPLOY: {"id-token"}}
+OWNER_GUARD = "github.actor == 'tinodo' && github.ref == 'refs/heads/main'"
 
 
 def indent(line: str) -> int:
@@ -104,6 +106,39 @@ def permission_writes(lines: list[str]) -> list[tuple[int, str]]:
     return found
 
 
+def jobs_of(lines: list[str]) -> dict[str, list[str]]:
+    """The top-level jobs: each name with its lines."""
+    start = next((i for i, line in enumerate(lines) if re.match(r"^jobs:\s*$", line)), None)
+    jobs: dict[str, list[str]] = {}
+    if start is None:
+        return jobs
+    current = None
+    for line in lines[start + 1:]:
+        if line.strip() and indent(line) == 0 and not line.lstrip().startswith("#"):
+            break
+        match = re.match(r"^ {2}([A-Za-z_][\w-]*):\s*$", line)
+        if match:
+            current = match.group(1)
+            jobs[current] = []
+        elif current is not None:
+            jobs[current].append(line)
+    return jobs
+
+
+def job_conditions(body: list[str]) -> list[str]:
+    """The job's own `if:` (four spaces in), with quotes and a ${{ }} wrapper taken off."""
+    found = []
+    for line in body:
+        match = re.match(r"^ {4}if:\s*(.+?)\s*$", code(line))
+        if match:
+            value = match.group(1)
+            if len(value) >= 2 and value[0] in "\"'" and value[-1] == value[0]:
+                value = value[1:-1]
+            wrapped = re.fullmatch(r"\$\{\{\s*(.*?)\s*\}\}", value)
+            found.append(wrapped.group(1) if wrapped else value)
+    return found
+
+
 def lint_file(path: Path) -> list[str]:
     name = path.name
     lines = path.read_text(encoding="utf-8").splitlines()
@@ -145,8 +180,12 @@ def lint_file(path: Path) -> list[str]:
         if triggers != {"workflow_dispatch"}:
             add(1, f"must run on `workflow_dispatch` alone, not on {sorted(triggers) or 'nothing'}")
         text = "\n".join(lines)
-        if not re.search(r"^\s+if:.*github\.actor == 'tinodo'.*", text, re.M) or "github.ref == 'refs/heads/main'" not in text:
-            add(1, "the job must run only for the owner (`github.actor == 'tinodo'`) and only on main (`github.ref == 'refs/heads/main'`)")
+        jobs = jobs_of(lines)
+        if len(jobs) != 1:
+            add(1, f"must have exactly one job, not {len(jobs)}: the guard below is checked on that job, so a second one would go unchecked")
+        for job, body in jobs.items():
+            if job_conditions(body) != [OWNER_GUARD]:
+                add(1, f"job `{job}` must run only for the owner and only on main: its `if:` is exactly `{OWNER_GUARD}`")
         if not re.search(r"^concurrency:", text, re.M):
             add(1, "no `concurrency:` group: two runs could change the same resources at once")
         for i, line in enumerate(lines):

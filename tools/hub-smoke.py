@@ -5,16 +5,18 @@
 
 It sends a few small requests to the hub's chat route and prints one line for each:
 
-    valid        the contract's key and model get a completion (200). A new private endpoint, its DNS record and the
-                 gateway's role on the model account take a while to settle, so a gateway or access error is retried
-                 until --wait seconds have passed; an error that cannot settle (the contract refusing, a wrong key) is not.
+    valid        the contract's key and model get a completion (200) that carries token usage. A new private endpoint, its
+                 DNS record and the gateway's role on the model account take a while to settle, so a gateway or access
+                 error is retried until --wait seconds have passed; an error that cannot settle (the contract refusing,
+                 a wrong key) is not.
     no key       401
     wrong key    401
     other model  403, from the contract (the model is never called)
     no model     403, from the contract
-    limit        only with --limits: one request that uses more tokens than the contract allows per minute, then a
-                 small one that must be refused with 429. It costs about one minute's allowance of tokens and
-                 blocks the key for up to a minute, so it is opt-in and runs last.
+    limit        only with --limits: one request whose reported usage is more than the contract allows per minute, then a
+                 small one that the gateway itself must refuse with 429 ({"statusCode":429,...}; a 429 from the model is
+                 not a pass). It costs about one minute's allowance of tokens and blocks the key for up to a minute, so it
+                 is opt-in and runs last.
 
 The key comes from the environment, never from an argument, and is never printed. A request goes only to an
 https address under .azure-api.net, and a redirect is an error, so the key cannot travel anywhere else.
@@ -102,6 +104,24 @@ def settles(status: int, data: bytes) -> bool:
     return status in (401, 403)
 
 
+def usage_of(data: bytes) -> int | None:
+    """The total tokens the model reported for a completion, if it reported any."""
+    try:
+        total = (json.loads(data).get("usage") or {}).get("total_tokens")
+    except (ValueError, AttributeError):
+        return None
+    return total if isinstance(total, int) and not isinstance(total, bool) and total > 0 else None
+
+
+def from_gateway(data: bytes) -> bool:
+    """The gateway's own refusal, {"statusCode":429,"message":...}, and not the model's, {"error":{...}}."""
+    try:
+        body = json.loads(data)
+    except ValueError:
+        return False
+    return isinstance(body, dict) and body.get("statusCode") == 429 and "error" not in body
+
+
 def check_valid(client, key, model, wait, sleep, now):
     deadline = now() + wait
     attempt = 0
@@ -110,13 +130,15 @@ def check_valid(client, key, model, wait, sleep, now):
         status, data = client.post(chat(model), key)
         if status == 200:
             try:
-                reply = json.loads(data)
-                tokens = (reply.get("usage") or {}).get("total_tokens")
-                if isinstance(reply.get("choices"), list) and reply["choices"]:
-                    return True, f"200 after {attempt} attempt(s), {tokens} tokens"
-            except ValueError:
-                pass
-            return False, "200, but the answer is not a completion"
+                has_choice = isinstance(json.loads(data).get("choices"), list) and bool(json.loads(data)["choices"])
+            except (ValueError, AttributeError):
+                has_choice = False
+            if not has_choice:
+                return False, "200, but the answer is not a completion"
+            tokens = usage_of(data)
+            if tokens is None:
+                return False, "200, but the reply carries no token usage: the contract's limits and the metrics would have nothing to count"
+            return True, f"200 after {attempt} attempt(s), {tokens} tokens"
         if not settles(status, data) or now() >= deadline:
             return False, f"{status or 'no answer'}: {snippet(data, key)}" + (f" (gave up after {attempt} attempts)" if attempt > 1 else "")
         print(f"  waiting ({status or 'no answer'}): the endpoint, its DNS record or the gateway's role may still be settling", flush=True)
@@ -133,15 +155,23 @@ def check_limit(client, key, model, tokens_per_minute, sleep):
     words = int(tokens_per_minute * 1.2)
     status, data = client.post(chat(model, "word " * words, max_tokens=1), key)
     if status == 429:
-        return True, "429 already for the large request"
+        if from_gateway(data):
+            return True, "429 from the gateway already for the large request"
+        return False, f"429, but not the gateway's own refusal (the model may be throttling): {snippet(data, key)}"
     if status != 200:
         return False, f"the large request was not accepted ({status or 'no answer'}): {snippet(data, key)}"
+    used = usage_of(data)
+    if used is None or used < tokens_per_minute:
+        return False, (f"the large request used {used or 'an unknown number of'} tokens, fewer than the {tokens_per_minute} a minute "
+                       "that the contract allows, so the check proves nothing: the prompt has to be larger")
     for attempt in range(1, 4):
         status, data = client.post(chat(model), key)
         if status == 429:
-            return True, f"large request 200, the next one 429 (attempt {attempt})"
+            if from_gateway(data):
+                return True, f"the large request used {used} tokens (200), the next one was refused by the gateway with 429 (attempt {attempt})"
+            return False, f"429, but not the gateway's own refusal (the model may be throttling): {snippet(data, key)}"
         sleep(2)
-    return False, f"large request 200, but the next ones were {status or 'no answer'}, not 429: {snippet(data, key)}"
+    return False, f"the large request used {used} tokens, but the next ones were {status or 'no answer'}, not 429: {snippet(data, key)}"
 
 
 def run_checks(client, key, contract: dict, limits: bool, wait: float, sleep=time.sleep, now=time.monotonic) -> list[tuple[str, bool, str]]:

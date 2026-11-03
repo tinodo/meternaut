@@ -1,19 +1,12 @@
 <policies>
     <inbound>
         <base />
-        <!-- The product (the contract) has already set allowedModels and counted the tokens against its limits. -->
-        <set-variable name="requestedModel" value="@{
-            try {
-                var body = context.Request.Body?.As<JObject>(preserveContent: true);
-                return body?["model"]?.ToString() ?? string.Empty;
-            } catch (Exception) {
-                return string.Empty;
-            }
-        }" />
-        <!-- Fails closed: a request without a model, or a key that is not under a contract (no list), is refused. -->
+        <!-- Fails closed. The contract's policy has already read the model, refused what it does not allow and counted
+             the tokens. A key that is not under the contract never ran that policy, so there is no model and no list,
+             and the call stops here. -->
         <choose>
             <when condition="@{
-                var requested = (string)context.Variables["requestedModel"];
+                var requested = context.Variables.GetValueOrDefault<string>("requestedModel", string.Empty);
                 var allowed = context.Variables.GetValueOrDefault<string>("allowedModels", string.Empty).Split(',').Select(m => m.Trim()).ToArray();
                 return requested.Length == 0 || !allowed.Any(m => m == requested);
             }">

@@ -154,6 +154,27 @@ class Lint(unittest.TestCase):
         self.assertFinding(self.lint(GOOD_DEPLOY.replace("concurrency:\n  group: hub\n", ""), "deploy-hub.yml"), "concurrency")
         self.assertFinding(self.lint(GOOD_DEPLOY.replace("    runs-on: ubuntu-latest\n", "    runs-on: ubuntu-latest\n    continue-on-error: true\n"), "deploy-hub.yml"), "continue-on-error")
 
+    def test_the_guard_is_checked_for_what_it_says_not_for_the_words_in_it(self):
+        # "&&" turned into "||" lets anyone on main, or the owner on any branch, through: the words are all still there
+        self.assertFinding(self.lint(GOOD_DEPLOY.replace("'tinodo' && github.ref", "'tinodo' || github.ref"), "deploy-hub.yml"), "only for the owner")
+        self.assertFinding(self.lint(GOOD_DEPLOY.replace("github.ref == 'refs/heads/main'", "github.ref != 'refs/heads/main'"), "deploy-hub.yml"), "only for the owner")
+        self.assertFinding(self.lint(GOOD_DEPLOY.replace("github.actor == 'tinodo'", "github.actor == 'someone'"), "deploy-hub.yml"), "only for the owner")
+        self.assertFinding(self.lint(GOOD_DEPLOY.replace("github.actor == 'tinodo' && github.ref == 'refs/heads/main'", "always()"), "deploy-hub.yml"), "only for the owner")
+        # the same words in a step's own condition do not make the job guarded
+        moved = GOOD_DEPLOY.replace("    if: github.actor == 'tinodo' && github.ref == 'refs/heads/main'\n", "") \
+                           .replace("        if: inputs.action == 'deploy'", "        if: github.actor == 'tinodo' && github.ref == 'refs/heads/main'")
+        self.assertFinding(self.lint(moved, "deploy-hub.yml"), "only for the owner")
+        # quotes and a ${{ }} wrapper are the same condition
+        self.assertEqual(self.lint(GOOD_DEPLOY.replace("if: github.actor == 'tinodo' && github.ref == 'refs/heads/main'",
+                                                       "if: ${{ github.actor == 'tinodo' && github.ref == 'refs/heads/main' }}"), "deploy-hub.yml"), [])
+
+    def test_a_second_job_cannot_slip_past_the_guard(self):
+        second = GOOD_DEPLOY + "  other:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo hi\n"
+        problems = self.lint(second, "deploy-hub.yml")
+        self.assertFinding(problems, "exactly one job")
+        self.assertFinding(problems, "job `other` must run only for the owner")
+        self.assertFinding(self.lint(GOOD_DEPLOY.replace("jobs:\n  hub:", "jobs:\n  hub:\n    needs: []") .replace("    if: github.actor == 'tinodo' && github.ref == 'refs/heads/main'\n", ""), "deploy-hub.yml"), "only for the owner")
+
     def test_the_deploy_workflow_that_does_not_sign_in_is_a_finding(self):
         text = GOOD_DEPLOY.replace(f"      - name: Sign in\n        uses: azure/login@{LOGIN} # v3.1.0\n        with:\n          client-id: ${{{{ secrets.AZURE_CLIENT_ID }}}}\n", "")
         self.assertFinding(self.lint(text, "deploy-hub.yml"), "does not sign in")

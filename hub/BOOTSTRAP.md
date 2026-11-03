@@ -13,14 +13,14 @@ Every change to Azure goes through the workflow [`deploy-hub.yml`](../.github/wo
 | One managed identity, in the first group | The identity the workflow signs in as. It has no password and no secret |
 | One credential on that identity | It lets a run of the workflow on the `main` branch of this repository sign in as the identity, and nothing else: not another branch, not a pull request, not another repository |
 | Role *Contributor* on the hub's group | To create the network, the model account and its private endpoint, and to delete them again |
-| Role *Role Based Access Control Administrator* on the hub's group, limited by a condition | To give the API Management instance's identity the one role that lets it call the model (*Cognitive Services OpenAI User*). The condition makes any other role impossible |
+| Role *Role Based Access Control Administrator* on the hub's group, limited by a condition | To give the API Management instance's identity the one role that lets it call the model (*Cognitive Services OpenAI User*). The condition allows that one role and only for a service principal: any other role, and any grant to a person or a group, is impossible |
 | Role *API Management Service Contributor* on the existing API Management instance | To add and remove the objects whose names start with `meternaut-` (listed in the [README](README.md#what-is-added-to-the-api-management-instance)) |
 
 **In GitHub**, on this repository: four secrets (the identity's client id, the tenant id, the subscription id and the resource id of the API Management instance; no one of them is a password) and nine variables (the group name, the region, two address ranges, the DNS server, the owner's address twice, the budget and the name of the instance's Application Insights logger). The workflow reads them; none is in the repository.
 
 ## What the identity can and cannot do
 
-It can create, change and delete resources in the hub's group, and it can add and remove `meternaut-` objects on the API Management instance. It cannot create or delete resource groups, change anything else in the subscription, register a resource provider, purge a soft-deleted account, or assign any role except *Cognitive Services OpenAI User* inside the hub's group.
+It can create, change and delete resources in the hub's group, and it can add and remove `meternaut-` objects on the API Management instance. It can also delete the hub's resource group itself with everything in it, because *Contributor* covers that; the workflow never does, and a budget alert is the only warning. It cannot create other resource groups, change anything else in the subscription, register a resource provider, purge a soft-deleted account, or assign any role except *Cognitive Services OpenAI User*, to a service principal, inside the hub's group.
 
 Two limits to know:
 
@@ -74,7 +74,7 @@ az identity federated-credential create --resource-group $idRg --identity-name $
 $scope = "/subscriptions/$sub/resourceGroups/$hubRg"
 az role assignment create --assignee-object-id $principal --assignee-principal-type ServicePrincipal --role 'Contributor' --scope $scope
 $condition = @'
-((!(ActionMatches{'Microsoft.Authorization/roleAssignments/write'})) OR (@Request[Microsoft.Authorization/roleAssignments:RoleDefinitionId] ForAnyOfAnyValues:GuidEquals {5e0bd9bd-7b93-4f28-af87-19fc36ad61bd})) AND ((!(ActionMatches{'Microsoft.Authorization/roleAssignments/delete'})) OR (@Resource[Microsoft.Authorization/roleAssignments:RoleDefinitionId] ForAnyOfAnyValues:GuidEquals {5e0bd9bd-7b93-4f28-af87-19fc36ad61bd}))
+((!(ActionMatches{'Microsoft.Authorization/roleAssignments/write'})) OR (@Request[Microsoft.Authorization/roleAssignments:RoleDefinitionId] ForAnyOfAnyValues:GuidEquals {5e0bd9bd-7b93-4f28-af87-19fc36ad61bd} AND @Request[Microsoft.Authorization/roleAssignments:PrincipalType] ForAnyOfAnyValues:StringEqualsIgnoreCase {'ServicePrincipal'})) AND ((!(ActionMatches{'Microsoft.Authorization/roleAssignments/delete'})) OR (@Resource[Microsoft.Authorization/roleAssignments:RoleDefinitionId] ForAnyOfAnyValues:GuidEquals {5e0bd9bd-7b93-4f28-af87-19fc36ad61bd} AND @Resource[Microsoft.Authorization/roleAssignments:PrincipalType] ForAnyOfAnyValues:StringEqualsIgnoreCase {'ServicePrincipal'}))
 '@
 az role assignment create --assignee-object-id $principal --assignee-principal-type ServicePrincipal --role 'Role Based Access Control Administrator' --scope $scope --condition $condition --condition-version 2.0
 az role assignment create --assignee-object-id $principal --assignee-principal-type ServicePrincipal --role 'API Management Service Contributor' --scope $apim
@@ -96,7 +96,7 @@ gh variable set HUB_BUDGET_AMOUNT    --repo $repo --body 20
 gh variable set HUB_APIM_LOGGER      --repo $repo --body $logger
 ```
 
-The DNS server is the landing zone's own: a virtual network that does not use it cannot resolve the central private DNS zones. Read the result back before the first run: `az role assignment list --assignee $principal --all --output table` shows three assignments, `gh secret list --repo $repo` four secrets and `gh variable list --repo $repo` nine variables.
+The DNS server is the landing zone's own: a virtual network that does not use it cannot resolve the central private DNS zones. Read the result back before the first run: `az role assignment list --assignee $principal --all --output table` shows three assignments, `gh secret list --repo $repo` four secrets and `gh variable list --repo $repo` nine variables. The budget's start date is not a setting: the workflow reads it from the budget once it exists.
 
 ## After it
 
@@ -104,7 +104,9 @@ Merge the branch that holds this page to `main`, then start the workflow from th
 
 ## Undoing it
 
-Run the workflow with action `remove` first. Then, as the same person:
+Taking the hub away is the workflow's job: start it with action `remove` (or `pause` to keep everything but the private endpoint). That needs no manual step.
+
+Taking the identity and the settings away is the other half of the bootstrap, so it is a manual step of the same kind, and it needs the owner's own plain-word yes, given separately from the one that created the identity. Run `remove` first; then, as the person who was asked:
 
 ```powershell
 az role assignment delete --assignee $principal --scope $apim
@@ -112,4 +114,6 @@ az group delete --name $hubRg --yes
 az group delete --name $idRg --yes
 ```
 
-The first line removes the identity's rights on the instance, which deleting the identity would otherwise leave behind as an orphan. A model account that the workflow or the group deletion removed is soft-deleted and keeps its name for a while; `az cognitiveservices account purge --location $region --resource-group $hubRg --name <account>` frees it at once. Delete the secrets and variables with `gh secret delete` and `gh variable delete`.
+The first line removes the identity's rights on the instance, which deleting the identity would otherwise leave behind as an orphan; the next two delete the two resource groups, and with the second the identity and its credential. Delete the secrets and variables with `gh secret delete` and `gh variable delete`.
+
+A model account that `remove` or the group deletion took away is soft-deleted and keeps its name for a while. The workflow restores it by itself on the next `deploy`, so nothing has to be purged. Purging frees the name for another use at once; it needs a right on the subscription that the identity does not have, so it is another manual step that waits for its own yes: `az cognitiveservices account purge --location $region --resource-group $hubRg --name <account>`.

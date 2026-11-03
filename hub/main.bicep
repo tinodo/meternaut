@@ -68,6 +68,11 @@ param budgetAmount int
 @minLength(1)
 param alertEmails array
 
+@description('First day of the month in which the budget was first made, as YYYY-MM-01. A budget keeps its start date, so the workflow reads it from the existing budget and passes it on again; only a new budget starts in the current month.')
+@minLength(10)
+@maxLength(10)
+param budgetStartDate string
+
 var tags = {
   workload: workload
   component: 'hub-backend'
@@ -198,6 +203,7 @@ module budget '../infra/budgets/rg-budget.bicep' = {
     budgetName: '${workload}-hub'
     amount: budgetAmount
     contactEmails: alertEmails
+    startDate: budgetStartDate
   }
 }
 

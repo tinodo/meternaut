@@ -16,14 +16,21 @@ URL = "https://apim-test.azure-api.net/meternaut/llm/v1/chat/completions"
 KEY = "k" * 32
 CONTRACT = {"name": "meternaut-test", "models": ["model-a"], "tokensPerMinute": 1000, "tokenQuotaPerMonth": 10000}
 COMPLETION = json.dumps({"choices": [{"message": {"content": "ok"}}], "usage": {"total_tokens": 12}}).encode()
+BACKEND_429 = b'{"error":{"code":"429","message":"Requests to the Chat Completions operation have exceeded the token rate limit of your current deployment."}}'
+
+
+def completion_using(tokens):
+    return json.dumps({"choices": [{"message": {"content": "ok"}}], "usage": {"total_tokens": tokens}}).encode()
 
 
 class FakeHub:
     """A hub that keeps its contract: the right key and model get a completion, anything else the answers the gateway gives."""
 
-    def __init__(self, tokens_per_minute=1000, enforce_rate=True, valid_after=1, wrong_model_allowed=False, big_status=None):
+    def __init__(self, tokens_per_minute=1000, enforce_rate=True, valid_after=1, wrong_model_allowed=False, big_status=None,
+                 backend_throttles=False, big_usage=None, valid_reply=None):
         self.sent, self.used, self.rate = [], 0, tokens_per_minute
         self.enforce_rate, self.valid_after, self.wrong_model_allowed, self.big_status = enforce_rate, valid_after, wrong_model_allowed, big_status
+        self.backend_throttles, self.big_usage, self.valid_reply = backend_throttles, big_usage, valid_reply
         self.valid_calls = 0
 
     def post(self, body, key):
@@ -37,16 +44,18 @@ class FakeHub:
             return 403, b'{"error":{"code":"model_not_allowed","message":"no"}}'
         words = len(body["messages"][0]["content"].split())
         if self.enforce_rate and self.used >= self.rate:
+            if self.backend_throttles:
+                return 429, BACKEND_429
             return 429, b'{"statusCode":429,"message":"Token limit is exceeded. Try again in 30 seconds."}'
         if words > 20:
             if self.big_status:
-                return self.big_status, b'{"error":"too large"}'
+                return self.big_status, (b'{"statusCode":429,"message":"Token limit is exceeded."}' if self.big_status == 429 else b'{"error":"too large"}')
             self.used += words
-            return 200, COMPLETION
+            return 200, completion_using(words if self.big_usage is None else self.big_usage)
         self.valid_calls += 1
         if self.valid_calls < self.valid_after:
             return 502, b"bad gateway"
-        return 200, COMPLETION
+        return 200, self.valid_reply if self.valid_reply is not None else COMPLETION
 
 
 class Clock:
@@ -245,6 +254,34 @@ class Checks(unittest.TestCase):
         hub = FakeHub(big_status=429)
         code, out, _, _ = self.run_(hub, "--limits")
         self.assertEqual((code, out.count("ok   limit")), (0, 1), out)
+
+    def test_a_429_from_the_model_is_not_the_gateways_limit(self):
+        code, out, _, _ = self.run_(FakeHub(backend_throttles=True), "--limits")
+        self.assertEqual(code, 1)
+        self.assertIn("not the gateway's own refusal", out)
+        code, out, _, _ = self.run_(FakeHub(big_status=429, backend_throttles=True), "--limits")
+        self.assertEqual(code, 0, "a gateway-shaped 429 on the large request counts: big_status sets the gateway's body")
+        self.assertTrue(hs.from_gateway(b'{"statusCode":429,"message":"Token limit is exceeded."}'))
+        for body in (BACKEND_429, b"", b"not json", b'[429]', b'{"statusCode":429,"error":{"code":"429"}}', b'{"statusCode":"429"}', b'{"statusCode":503}'):
+            self.assertFalse(hs.from_gateway(body), body)
+
+    def test_a_large_request_that_does_not_cross_the_allowance_proves_nothing(self):
+        for usage in (10, 999, 0):
+            code, out, _, _ = self.run_(FakeHub(big_usage=usage, enforce_rate=False), "--limits")
+            self.assertEqual(code, 1, usage)
+            self.assertIn("the check proves nothing", out)
+        code, out, _, _ = self.run_(FakeHub(big_usage=1000), "--limits")
+        self.assertEqual(code, 0, out)
+
+    def test_a_completion_without_token_usage_fails_the_valid_check(self):
+        for usage in ({}, {"total_tokens": 0}, {"total_tokens": "12"}, {"total_tokens": True}, None):
+            reply = {"choices": [{"message": {"content": "ok"}}]}
+            if usage is not None:
+                reply["usage"] = usage
+            code, out, _, _ = self.run_(FakeHub(valid_reply=json.dumps(reply).encode()))
+            self.assertEqual(code, 1, usage)
+            self.assertIn("no token usage", out)
+        self.assertEqual(hs.usage_of(COMPLETION), 12)
 
 
 class Secrets(unittest.TestCase):

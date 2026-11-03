@@ -8,7 +8,10 @@ that no address, name or mail address is in the repository:
 
     HUB_SUBSCRIPTION_ID, HUB_RESOURCE_GROUP, HUB_LOCATION, HUB_VNET_PREFIX, HUB_PE_SUBNET_PREFIX,
     HUB_DNS_SERVERS (comma separated), HUB_OWNER, HUB_BUDGET_AMOUNT, HUB_ALERT_EMAILS (comma separated),
-    HUB_APIM_PRINCIPAL_ID
+    HUB_APIM_PRINCIPAL_ID, HUB_BUDGET_START
+
+HUB_BUDGET_START is the first day of the month in which the budget was first made, which the workflow reads from the
+existing budget (a budget keeps its start date) or, for a new budget, takes from the current month.
 
 Every value is checked before anything is deployed. The name of the model account is worked out here, from the
 subscription and the resource group, so it is the same on every run (a run after a removal finds, and the
@@ -33,6 +36,7 @@ GROUP = re.compile(r"^[A-Za-z0-9._-]{1,89}[A-Za-z0-9_-]$")
 LOCATION = re.compile(r"^[a-z0-9]{3,30}$")
 OWNER = re.compile(r"^[A-Za-z0-9@._+ -]{1,64}$")
 EMAIL = re.compile(r"^[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}$")
+BUDGET_START = re.compile(r"^(?:19|20)\d{2}-(?:0[1-9]|1[0-2])-01$")
 PRIVATE_SPACE = ipaddress.ip_network("10.0.0.0/8")
 
 
@@ -111,6 +115,9 @@ def build(env) -> tuple[dict, dict]:
         budget = 0
     if not 1 <= budget <= 10000:
         raise Problem("HUB_BUDGET_AMOUNT is a whole number from 1 to 10000")
+    start = need(env, "HUB_BUDGET_START")
+    if not BUDGET_START.match(start):
+        raise Problem("HUB_BUDGET_START is the first day of a month, as YYYY-MM-01")
 
     name = account_name(subscription, group)
     parameters = {
@@ -123,6 +130,7 @@ def build(env) -> tuple[dict, dict]:
         "owner": owner,
         "budgetAmount": budget,
         "alertEmails": emails,
+        "budgetStartDate": start,
     }
     outputs = {
         "account_name": name,

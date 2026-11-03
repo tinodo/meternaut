@@ -91,11 +91,29 @@ jobs:
           echo "principal_id=$principal" >> "$GITHUB_OUTPUT"
           echo "gateway_url=$gateway" >> "$GITHUB_OUTPUT"
 
+      - name: Read the start date of the budget
+        id: budget
+        run: |
+          # A budget keeps its start date, so an existing one is read and passed on again; a new one starts in the current month.
+          url="https://management.azure.com/subscriptions/$(az account show --query id --output tsv)/resourceGroups/$HUB_RESOURCE_GROUP/providers/Microsoft.Consumption/budgets/meternaut-hub?api-version=2024-08-01"
+          if start=$(az rest --method get --url "$url" --query "properties.timePeriod.startDate" --output tsv 2> "$RUNNER_TEMP/budget.err"); then
+            start="${start:0:10}"
+            echo "The budget exists and started on $start."
+          elif grep -qE 'NotFound|was not found|could not be found' "$RUNNER_TEMP/budget.err"; then
+            start="$(date -u +%Y-%m-01)"
+            echo "There is no budget yet; a new one starts on $start."
+          else
+            cat "$RUNNER_TEMP/budget.err" >&2
+            exit 1
+          fi
+          echo "start=$start" >> "$GITHUB_OUTPUT"
+
       - name: Work out the settings
         id: params
         env:
           HUB_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           HUB_APIM_PRINCIPAL_ID: ${{ steps.apim.outputs.principal_id }}
+          HUB_BUDGET_START: ${{ steps.budget.outputs.start }}
         run: python3 tools/hub-params.py --out "$RUNNER_TEMP/hub.parameters.json" >> "$GITHUB_OUTPUT"
 
       - name: The resource group is there
@@ -104,9 +122,20 @@ jobs:
       - name: What a deploy would change in Azure
         if: inputs.action == 'what-if' || inputs.action == 'deploy'
         run: |
-          az deployment group what-if --only-show-errors --resource-group "$HUB_RESOURCE_GROUP" \
-            --template-file hub/main.bicep --parameters "@$RUNNER_TEMP/hub.parameters.json" \
-            --result-format FullResourcePayloads
+          whatif() {
+            az deployment group what-if --only-show-errors --resource-group "$HUB_RESOURCE_GROUP" \
+              --template-file hub/main.bicep --parameters "@$RUNNER_TEMP/hub.parameters.json" "$@" \
+              --result-format FullResourcePayloads
+          }
+          if whatif 2> "$RUNNER_TEMP/whatif.err"; then
+            cat "$RUNNER_TEMP/whatif.err" >&2
+          elif grep -q FlagMustBeSetForRestore "$RUNNER_TEMP/whatif.err"; then
+            echo "A soft-deleted account of this name is left from an earlier removal; the preview, like the deploy, restores it (it holds nothing)."
+            whatif restoreAccount=true
+          else
+            cat "$RUNNER_TEMP/whatif.err" >&2
+            exit 1
+          fi
 
       - name: What would change in the API Management instance
         if: inputs.action == 'what-if'
@@ -263,13 +292,22 @@ jobs:
           {
             echo "### Hub: $ACTION, $JOB_STATUS"
             echo
-            case "$ACTION" in
-              what-if) echo "Nothing was changed. Read the two lists above: what a deploy would do in Azure, and in the API Management instance." ;;
-              deploy)
-                echo "The model account \`$ACCOUNT_NAME\` is behind a private endpoint in resource group \`$HUB_RESOURCE_GROUP\`, and the Meternaut objects are in the API Management instance."
-                echo "Route for the learning demonstration: \`${GATEWAY_URL%/}/meternaut/llm/v1/chat/completions\` (the key is the \`meternaut-learning-demo-dev-sub-01\` subscription; it is not shown here)."
-                if [ "$CHECK_LIMITS" = "true" ]; then echo "The token rate was checked."; else echo "The token rate was not checked in this run (check_limits)."; fi ;;
-              pause) echo "The Meternaut objects and the private endpoint are gone. The model account, the network and the budget stay and cost nothing while idle. Deploy again to bring it back." ;;
-              remove) echo "Everything this workflow made is gone, and the Meternaut objects are out of the API Management instance. The model account is soft-deleted; the next deploy restores it by itself." ;;
-            esac
+            if [ "$JOB_STATUS" != "success" ]; then
+              echo "**The run did not finish.** The log shows the step that failed; nothing below is promised."
+              case "$ACTION" in
+                what-if) echo "A what-if changes nothing." ;;
+                deploy) echo "The network, the model account and the private endpoint may exist now (the endpoint costs a few euros a month while it does), and some Meternaut objects may already be in the API Management instance. Running \`deploy\` again is safe and repeats only what is missing. \`what-if\` shows what is there; \`pause\` and \`remove\` take it away." ;;
+                pause|remove) echo "Part of it may still exist, the private endpoint included: it costs a few euros a month while it does. Running the same action again is safe." ;;
+              esac
+            else
+              case "$ACTION" in
+                what-if) echo "Nothing was changed. Read the two lists above: what a deploy would do in Azure, and in the API Management instance." ;;
+                deploy)
+                  echo "The model account \`$ACCOUNT_NAME\` is behind a private endpoint in resource group \`$HUB_RESOURCE_GROUP\`, the Meternaut objects are in the API Management instance, and the checks of the hub passed."
+                  echo "Route for the learning demonstration: \`${GATEWAY_URL%/}/meternaut/llm/v1/chat/completions\` (the key is the \`meternaut-learning-demo-dev-sub-01\` subscription; it is not shown here)."
+                  if [ "$CHECK_LIMITS" = "true" ]; then echo "The token rate was checked and the gateway refused as designed."; else echo "The token rate was not checked in this run (check_limits)."; fi ;;
+                pause) echo "The Meternaut objects and the private endpoint are gone. The model account, the network and the budget stay and cost nothing while idle. Deploy again to bring it back." ;;
+                remove) echo "Everything this workflow made is gone, and the Meternaut objects are out of the API Management instance. The model account is soft-deleted; the next deploy restores it by itself." ;;
+              esac
+            fi
           } >> "$GITHUB_STEP_SUMMARY"

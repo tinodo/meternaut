@@ -1,8 +1,54 @@
 <policies>
     <inbound>
         <base />
-        <!-- The models this contract's key may use; the API's policy checks every request against the list. -->
+        <!-- The models this contract's key may use. -->
         <set-variable name="allowedModels" value="${ALLOWED_MODELS}" />
+        <!-- What the request asks for, read once. The model counts only as a JSON string; streaming counts as anything but
+             an absent, null or false value, and an unreadable body counts as both a missing model and streaming. -->
+        <set-variable name="requestedModel" value="@{
+            try {
+                var body = context.Request.Body?.As<JObject>(preserveContent: true);
+                var model = body?["model"];
+                return model != null && model.Type == JTokenType.String ? (string)model : string.Empty;
+            } catch (Exception) {
+                return string.Empty;
+            }
+        }" />
+        <set-variable name="streamRequested" value="@{
+            try {
+                var body = context.Request.Body?.As<JObject>(preserveContent: true);
+                var stream = body?["stream"];
+                return stream != null && stream.Type != JTokenType.Null && !(stream.Type == JTokenType.Boolean && !(bool)stream);
+            } catch (Exception) {
+                return true;
+            }
+        }" />
+        <!-- Refused before anything is counted or sent: a model that is not on the list (or none), and streaming, whose
+             tokens the limiter would estimate instead of counting what the model reports. -->
+        <choose>
+            <when condition="@{
+                var requested = (string)context.Variables["requestedModel"];
+                var allowed = ((string)context.Variables["allowedModels"]).Split(',').Select(m => m.Trim()).ToArray();
+                return requested.Length == 0 || !allowed.Any(m => m == requested);
+            }">
+                <return-response>
+                    <set-status code="403" reason="Forbidden" />
+                    <set-header name="Content-Type" exists-action="override">
+                        <value>application/json</value>
+                    </set-header>
+                    <set-body>{"error":{"code":"model_not_allowed","message":"The contract of this key does not allow the requested model."}}</set-body>
+                </return-response>
+            </when>
+            <when condition="@((bool)context.Variables["streamRequested"])">
+                <return-response>
+                    <set-status code="400" reason="Bad Request" />
+                    <set-header name="Content-Type" exists-action="override">
+                        <value>application/json</value>
+                    </set-header>
+                    <set-body>{"error":{"code":"streaming_not_supported","message":"The contract does not allow streaming: ask for the complete reply."}}</set-body>
+                </return-response>
+            </when>
+        </choose>
         <!-- A rate per minute and a quota per month, counted for the contract's key from the tokens the model
              reports. Past the rate the answer is 429, past the quota 403. The request that crosses a limit
              still completes; the next one is refused. -->

@@ -22,10 +22,20 @@ IN_ACTIONS = {"GITHUB_ACTIONS": "true"}
 
 
 class FakeService:
-    """The part of the API Management management API that the tool uses, with the shapes the real one answers with."""
+    """The part of the API Management management API that the tool uses, with the shapes the real one answers with.
 
-    def __init__(self, secrets=None):
+    It also keeps the service's rules that the tool has to honour: an update needs If-Match, a product that
+    still has subscriptions cannot be deleted unless the caller says to delete them too, and a write that is
+    only accepted (202) shows up later.
+    """
+
+    def __init__(self, secrets=None, async_paths=(), ready_after=2, failed_paths=()):
         self.objects, self.calls, self.secrets = {}, [], secrets or {}
+        self.async_paths, self.ready_after, self.failed_paths = set(async_paths), ready_after, set(failed_paths)
+        self.pending, self.polls, self.slept = {}, {}, []
+
+    def sleep(self, seconds):
+        self.slept.append(seconds)
 
     def request(self, method, url, body=None, headers=None):
         assert url.startswith(aps.ARM + APIM + "/"), url
@@ -34,6 +44,11 @@ class FakeService:
         self.calls.append((method, path, params, body, headers))
         assert params["api-version"] == "2024-05-01"
         if method == "GET":
+            if path in self.pending:
+                self.polls[path] = self.polls.get(path, 0) + 1
+                if self.polls[path] <= self.ready_after:
+                    return 404, {}, b'{"error":{"code":"ResourceNotFound"}}'
+                self.objects[path] = self.pending.pop(path)
             if path not in self.objects:
                 return 404, {}, b'{"error":{"code":"ResourceNotFound"}}'
             stored = self.objects[path]
@@ -44,6 +59,7 @@ class FakeService:
                 if field in properties:
                     properties[field] = f"{APIM}{properties[field]}"
             properties["addedByTheService"] = True
+            properties["provisioningState"] = "Failed" if path in self.failed_paths else "Succeeded"
             return 200, {}, json.dumps({"id": f"{APIM}/{path}", "name": path.rsplit("/", 1)[-1], "properties": properties}).encode()
         if method == "PUT":
             if path.endswith("/policies/policy"):
@@ -52,13 +68,24 @@ class FakeService:
             else:
                 assert body is None or "properties" in body, path
                 value = body or {}
-            created = path not in self.objects
+            exists = path in self.objects
+            if exists and body is not None and (headers or {}).get("If-Match") != "*":
+                return 412, {}, b'{"error":{"code":"PreconditionFailed","message":"If-Match is required to update an entity"}}'
+            if path in self.async_paths and not exists:
+                self.pending[path] = value
+                return 202, {}, b"{}"
             self.objects[path] = value
-            return (201 if created else 200), {}, b"{}"
+            return (200 if exists else 201), {}, b"{}"
         if method == "DELETE":
             assert (headers or {}).get("If-Match") == "*"
             if path not in self.objects:
                 return 404, {}, b"{}"
+            if path.startswith("products/") and "/" not in path[len("products/"):]:
+                using = [p for p, v in self.objects.items() if p.startswith("subscriptions/") and v["properties"].get("scope") == f"/{path}"]
+                if using and params.get("deleteSubscriptions") != "true":
+                    return 409, {}, b'{"error":{"code":"Conflict","message":"The product has subscriptions"}}'
+                for p in using:
+                    del self.objects[p]
             for key in [k for k in self.objects if k == path or k.startswith(path + "/")]:
                 del self.objects[key]
             return 200, {}, b""
@@ -111,12 +138,18 @@ class Paths(unittest.TestCase):
             self.assertTrue(aps.allowed_path(path, "meternaut-"), path)
 
     def test_everything_else_is_refused(self):
-        for path in ("", "policies/policy", "apis/other", "apis/meternaut", "products/other-a", "loggers/meternaut-x", "properties/x",
+        for path in ("", "policies/policy", "apis/other", "apis/meternaut", "apis/meternaut-", "products/meternaut-", "subscriptions/meternaut-",
+                     "products/other-a", "loggers/meternaut-x", "properties/x",
                      "apis/meternaut-llm/policies/other", "apis/meternaut-llm/diagnostics/azuremonitor", "apis/other/operations/x",
                      "products/meternaut-a/policies/policy/extra", "products/meternaut-a/apis/other", "products/other/apis/meternaut-llm",
                      "apis/meternaut-llm/../other", "apis/meternaut-llm/operations/", "tenant/access", "subscriptions/master",
-                     "apis/meternaut-llm?x=1", "apis/meternaut-%2e%2e", "Apis/meternaut-llm/operations/x/policies/policy"):
+                     "apis/meternaut-llm?x=1", "apis/meternaut-llm#x", "apis/meternaut-%2e%2e", "Apis/meternaut-llm/operations/x/policies/policy"):
             self.assertFalse(aps.allowed_path(path, "meternaut-"), path)
+
+    def test_the_prefix_is_a_constant_of_the_tool(self):
+        self.assertEqual(aps.PREFIX, "meternaut-")
+        self.assertTrue(aps.allowed_path("apis/meternaut-llm"))
+        self.assertFalse(aps.allowed_path("apis/another-project-gateway"))
 
 
 class Loading(unittest.TestCase):
@@ -180,10 +213,15 @@ class Loading(unittest.TestCase):
             with self.assertRaises(aps.Problem, msg=path):
                 aps.load_manifest(self.manifest([{"path": path, "body": {}}]), {})
 
-    def test_the_prefix_must_be_a_word_with_a_hyphen(self):
-        for bad in ("", "meternaut", "Meternaut-", "a/b-", "-"):
+    def test_the_manifests_prefix_is_the_tools_own_and_cannot_be_another(self):
+        for bad in ("", "meternaut", "Meternaut-", "a/b-", "-", "another-project-", "another-project-", "meternaut-x-"):
             with self.assertRaises(aps.Problem, msg=bad):
-                aps.load_manifest(self.manifest([], prefix=bad), {})
+                aps.load_manifest(self.manifest([{"path": "apis/another-project-gateway", "body": {}}], prefix=bad), {})
+        with self.assertRaises(aps.Problem):  # an object of another team under their own prefix, as the manifest would declare it
+            aps.load_manifest(self.manifest([{"path": "apis/another-project-gateway", "body": {}}], prefix="another-project-"), {})
+        with self.assertRaises(aps.Problem):  # and the key of one of their subscriptions
+            aps.manifest_header(self.manifest([], prefix="another-project-"))
+        self.assertEqual(aps.manifest_header(self.manifest([]))[1], "meternaut-")
 
     def test_a_policy_file_must_live_next_to_the_manifest(self):
         (self.dir.parent / "outside.xml").write_text("<policies/>", encoding="utf-8")
@@ -221,6 +259,28 @@ class Loading(unittest.TestCase):
             self.assertIn("<base />", text)
         self.assertIn('exists-action="delete"', api)  # the caller's key does not travel on to the model
         self.assertNotIn("subscription-key", api)
+
+    def test_the_real_policies_refuse_before_they_count_and_before_they_route(self):
+        variables = aps.load_variables(ROOT / "hub" / "contract.json", VARS)
+        manifest = aps.load_manifest(ROOT / "hub" / "apim" / "manifest.json", variables)
+        policies = {o["path"].split("/")[0]: o["policy"] for o in manifest["objects"] if "policy" in o}
+        product, api = policies["products"], policies["apis"]
+        # contract: read the request, refuse a model that is not allowed and streaming, and only then count tokens
+        order = [product.index(x) for x in ('name="requestedModel"', 'name="streamRequested"', "model_not_allowed", "streaming_not_supported", "<llm-token-limit")]
+        self.assertEqual(order, sorted(order), "the contract refuses before the token limiter counts")
+        self.assertIn("JTokenType.String", product)  # a model that is not a string is no model
+        self.assertIn('code="403"', product)
+        self.assertIn('code="400"', product)
+        self.assertIn('estimate-prompt-tokens="false"', product)  # the limiter counts what the model reports
+        # API: fails closed for a key that never ran the contract's policy, before anything is routed or authenticated
+        gate = api.index("model_not_allowed")
+        for later in ("<set-backend-service", "<rewrite-uri", "<authentication-managed-identity", "<llm-emit-token-metric"):
+            self.assertLess(gate, api.index(later), later)
+        self.assertIn('GetValueOrDefault<string>("requestedModel", string.Empty)', api)
+        self.assertIn('GetValueOrDefault<string>("allowedModels", string.Empty)', api)
+        self.assertIn("requested.Length == 0", api)
+        self.assertNotIn("<set-body>@", api)  # nothing of the request is echoed back
+        self.assertNotIn("log-to-eventhub", api + product)
 
 
 class Wording(unittest.TestCase):
@@ -304,6 +364,71 @@ class Service(unittest.TestCase):
         self.assertIn("update    products/meternaut-learning-demo-dev/policies/policy", out)
         self.assertEqual(rows(out, "unchanged"), 6)
 
+    def test_a_second_apply_writes_nothing(self):
+        service = FakeService()
+        run(["apply", *vars_args()], service)
+        service.calls.clear()
+        code, out, err = run(["apply", *vars_args()], service)
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(service.writes(), [])
+        self.assertEqual(rows(out, "unchanged"), 8, out)
+
+    def test_apply_writes_only_what_the_plan_shows_and_an_update_carries_if_match(self):
+        first = FakeService()
+        run(["apply", *vars_args()], first)
+        self.assertEqual(rows(run(["plan", *vars_args()], first)[1], "unchanged"), 8)
+        creates = [h for m, _, _, _, h in first.calls if m == "PUT"]
+        self.assertEqual(len(creates), 8)
+        self.assertTrue(all(h is None for h in creates), "a new object is written without If-Match")
+
+        service = FakeService()
+        run(["apply", *vars_args()], service)
+        service.objects["apis/meternaut-llm"]["properties"]["subscriptionRequired"] = False
+        service.objects["products/meternaut-learning-demo-dev/policies/policy"] = "<policies><inbound><base /></inbound></policies>"
+        service.calls.clear()
+        code, out, err = run(["apply", *vars_args()], service)
+        self.assertEqual((code, err), (0, ""))
+        puts = [(p, h) for m, p, _, _, h in service.calls if m == "PUT"]
+        self.assertEqual([p for p, _ in puts], ["apis/meternaut-llm", "products/meternaut-learning-demo-dev/policies/policy"])
+        self.assertTrue(all(h == {"If-Match": "*"} for _, h in puts), "an update says it replaces what is there")
+        self.assertEqual((rows(out, "updated"), rows(out, "unchanged"), rows(out, "created")), (2, 6, 0))
+
+    def test_the_service_refusing_an_update_is_an_error_not_a_success(self):
+        service = FakeService()
+        run(["apply", *vars_args()], service)
+        apim = aps.Apim(service, APIM, "2024-05-01")
+        item = {"path": "apis/meternaut-llm", "body": {"properties": {"displayName": "x"}}}
+        with self.assertRaises(aps.Problem) as ctx:
+            apim.write(item)
+        self.assertIn("412", str(ctx.exception))
+        apim.write(item, exists=True)
+
+    def test_a_write_that_is_only_accepted_is_waited_for_before_the_next_object(self):
+        service = FakeService(async_paths={"apis/meternaut-llm"}, ready_after=2)
+        code, out, err = run(["apply", *vars_args()], service)
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(service.slept, [10.0, 10.0])
+        self.assertEqual(rows(out, "created"), 8)
+        calls = [(m, p) for m, p, *_ in service.calls]
+        accepted = calls.index(("PUT", "apis/meternaut-llm"))
+        dependent = calls.index(("PUT", "apis/meternaut-llm/operations/chat-completions"))
+        polls = [i for i, c in enumerate(calls) if c == ("GET", "apis/meternaut-llm") and i > accepted]
+        self.assertEqual(len(polls), 3)
+        self.assertTrue(all(i < dependent for i in polls), "the operation is written after the API is there")
+
+    def test_an_accepted_write_that_fails_or_never_finishes_stops_the_apply(self):
+        failed = FakeService(async_paths={"apis/meternaut-llm"}, ready_after=0, failed_paths={"apis/meternaut-llm"})
+        code, _, err = run(["apply", *vars_args()], failed)
+        self.assertEqual(code, 2)
+        self.assertIn("failed", err)
+        self.assertNotIn("apis/meternaut-llm/operations/chat-completions", [p for _, p in failed.writes()])
+        stuck = FakeService(async_paths={"apis/meternaut-llm"}, ready_after=10 ** 6)
+        code, _, err = run(["apply", *vars_args()], stuck)
+        self.assertEqual(code, 2)
+        self.assertIn("still not ready", err)
+        self.assertEqual(len(stuck.slept), 30)
+        self.assertNotIn("apis/meternaut-llm/operations/chat-completions", [p for _, p in stuck.writes()])
+
     def test_whitespace_alone_is_not_a_policy_change(self):
         service = FakeService()
         run(["apply", *vars_args()], service)
@@ -353,9 +478,21 @@ class Service(unittest.TestCase):
             "apis/meternaut-llm",
             "products/meternaut-learning-demo-dev",
         ])
-        self.assertEqual(dict(deleted)["products/meternaut-learning-demo-dev"].get("deleteSubscriptions"), "true")
+        self.assertTrue(all("deleteSubscriptions" not in params for _, params in deleted), "no cascade into subscriptions")
         self.assertEqual(dict(deleted)["apis/meternaut-llm"].get("deleteRevisions"), "true")
         self.assertEqual(sorted(service.objects), ["apis/other-team-api", "products/other-team-product"])
+
+    def test_remove_never_deletes_a_subscription_the_manifest_does_not_name(self):
+        service = FakeService()
+        run(["apply", *vars_args()], service)
+        service.objects["subscriptions/someone-elses-key"] = {"properties": {"scope": "/products/meternaut-learning-demo-dev", "state": "active"}}
+        code, out, err = run(["remove", *vars_args()], service)
+        self.assertEqual(code, 2)
+        self.assertIn("409", err)
+        self.assertIn("not in the manifest", err)
+        self.assertIn("subscriptions/someone-elses-key", service.objects)  # still there
+        self.assertNotIn("subscriptions/meternaut-learning-demo-dev-sub-01", service.objects)  # ours went first
+        self.assertTrue(all("deleteSubscriptions" not in params for _, _, params, *_ in service.calls))
 
     def test_remove_twice_reports_absent_and_succeeds(self):
         service = FakeService()
@@ -391,6 +528,35 @@ class Service(unittest.TestCase):
             code, _, err = run(["plan", f"--apim={bad}", *VARS_AS_ARGS], service)
             self.assertEqual(code, 2, bad)
             self.assertEqual(service.calls, [])
+
+    def test_a_query_a_fragment_or_a_separator_in_the_instance_id_is_refused_before_anything_is_sent(self):
+        # The id comes from a repository secret. Once an id ending in ?api-version=...# was accepted: everything after
+        # the # is dropped on the wire, so the DELETE of a meternaut- object became a DELETE of the instance itself.
+        for tail in ("?api-version=2024-05-01#", "#", "?x=1", "%3Fx", "%23", "\\x", " x", "x/../y", "x;y", "x\n", "x?", "x:y", "x@y"):
+            bad = APIM + tail
+            for command in ("plan", "remove", "key"):
+                service = FakeService()
+                code, _, err = run([command, f"--apim={bad}", *VARS_AS_ARGS], service)
+                self.assertEqual(code, 2, (command, tail))
+                self.assertEqual(service.calls, [], (command, tail))
+        for bad_group in ("rg?x", "rg#", "rg/x", "rg x", "rg%2f"):
+            self.assertIsNone(aps.APIM_ID.match(APIM.replace("rg-test", bad_group)), bad_group)
+
+    def test_an_address_is_always_inside_the_instance_whatever_the_path(self):
+        apim = aps.Apim(FakeService(), APIM, "2024-05-01")
+        url = apim.url("products/meternaut-x", deleteRevisions="true")
+        wire = urllib.request.Request(url, method="DELETE")
+        self.assertTrue(wire.selector.startswith(APIM + "/products/meternaut-x?"), wire.selector)
+        self.assertEqual(wire.host, "management.azure.com")
+        for bad_path in ("products/meternaut-x?y=1", "products/meternaut-x#z", "products/meternaut-x%2f", "products/meternaut x", "a\\b"):
+            with self.assertRaises(aps.Problem, msg=bad_path):
+                apim.url(bad_path)
+
+    def test_the_api_version_is_a_date(self):
+        for bad in ("", "latest", "2024-05-01&x=1", "2024-05-01#", "../2024-05-01"):
+            with self.assertRaises(aps.Problem, msg=bad):
+                aps.Apim(FakeService(), APIM, bad)
+        aps.Apim(FakeService(), APIM, "2024-06-01-preview")
 
 
 VARS_AS_ARGS = ["--var", VARS[0], "--var", VARS[1]]
@@ -472,7 +638,9 @@ class Network(unittest.TestCase):
 
     def test_the_token_goes_to_the_management_host_only(self):
         t = self.transport([self.response()])
-        for url in ("https://evil.example.com/x", "http://management.azure.com/x", aps.ARM + ".evil.com/x", "https://management.azure.com@evil.com/x"):
+        for url in ("https://evil.example.com/x", "http://management.azure.com/x", aps.ARM + ".evil.com/x", "https://management.azure.com@evil.com/x",
+                    "https://management.azure.com/x#fragment", "https://management.azure.com/x?y=1#/z", "https://user:pw@management.azure.com/x",
+                    "https://management.azure.com:8443/x"):
             with self.assertRaises(aps.Problem, msg=url):
                 t.request("GET", url)
         self.assertEqual(self.sent, [])

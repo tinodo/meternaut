@@ -24,6 +24,7 @@ ENV = {
     "HUB_BUDGET_AMOUNT": "20",
     "HUB_ALERT_EMAILS": "owner@example.com",
     "HUB_APIM_PRINCIPAL_ID": "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE",
+    "HUB_BUDGET_START": "2026-11-01",
 }
 
 
@@ -96,7 +97,12 @@ class Build(unittest.TestCase):
         self.assertEqual(lines["vnet_name"], "vnet-meternaut")
         self.assertEqual(lines["nsg_name"], "nsg-meternaut-pe")
 
-    def test_the_restore_switch_is_a_template_parameter_the_file_leaves_alone(self):
+    def test_the_budget_keeps_the_start_date_it_was_given(self):
+        # a template that took the date from the clock would try to move an existing budget's start in the next month
+        self.assertNotIn("utcNow", BICEP)
+        self.assertEqual(run(ENV)[3]["parameters"]["budgetStartDate"]["value"], "2026-11-01")
+        self.assertEqual(run({**ENV, "HUB_BUDGET_START": "2027-02-01"})[3]["parameters"]["budgetStartDate"]["value"], "2027-02-01")
+        self.assertIn("startDate: budgetStartDate", BICEP)
         self.assertEqual(bicep_params()["restoreAccount"], ("bool", True))
         self.assertNotIn("restoreAccount", run(ENV)[3]["parameters"])
 
@@ -146,6 +152,10 @@ class Refusals(unittest.TestCase):
             self.refused(HUB_BUDGET_AMOUNT=bad)
         for bad in ("not-a-mail", "a@b", "a@b.c", "a b@example.com", "a@example.com,", "a@example.com;b@example.com", "a@x.com," * 6 + "a@x.com"):
             self.refused(HUB_ALERT_EMAILS=bad)
+
+    def test_the_budget_start_is_the_first_day_of_a_month(self):
+        for bad in ("2026-11-02", "2026-13-01", "2026-00-01", "26-11-01", "2026-11-1", "2026-11-01T00:00:00Z", "tomorrow", "1899-01-01"):
+            self.refused(HUB_BUDGET_START=bad)
 
     def test_the_messages_name_the_setting_and_never_echo_a_value(self):
         err = self.refused(HUB_OWNER='o"wner<secret>')
