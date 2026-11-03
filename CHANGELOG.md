@@ -2,6 +2,16 @@
 
 All notable changes, newest first. Versions are git tags: `ideation-vN` for the ideation (`docs/01` to `docs/10` and the research), `design-vN` for the design (`docs/design/`; `design-v1` was withdrawn), `experience-vN` for the experience design (`docs/experience/`) and `build-plan-vN` for the build plan (`docs/build-plan/`). A heading without a tag records a change that is not a new edition. The previous editions stay available at their tags, and the earliest are archived under [`docs/_archive/`](docs/_archive/), which is never edited.
 
+## The first environment, studied and made lean — 2026-11-03
+
+**What.** The owner said "deploy it". The agent took that as the word to start step 0 of [the first-environment proposal](docs/proposals/01-first-environment.md), which only reads, and stopped there: the next steps need his yes to a specific list (rule 18: the identity that runs the workflow, what each of its roles may change, and the objects that the owner's own API Management instance would receive). The study read the landing zone's policies and network manager, the existing instance, the kit's gateway-upgrade module and live prices. **Nothing in Azure was changed, and no code or pipeline was added.**
+
+**What it found.** The existing instance holds only a sample API, so no other team depends on it. The module needs three things that an instance it did not create lacks (an attached user-assigned identity, a logger of a given name, and a policy fragment that only one of its flags creates), and it replaces the instance's service-level logging setting. The landing zone joins a new network to the hub, registers private endpoints in the central DNS and denies public access to new services by itself, so the first environment creates no DNS zone, peering or route. The kit's usage pipeline costs about 250 to 270 euros a month at list prices; the module needs none of it.
+
+**What changed in the documents.** The proposal has a section "Lean first, full later", steps 1 and 2 are re-cut around it, and the study's findings are there in general terms. Facts about the owner's environment stay in `local/`.
+
+**Next.** One yes from the owner on a short list (what, where, what it costs, and the way back). Until then Azure is left alone.
+
 ## Everything of Meternaut's in Azure is deleted — 2026-11-03
 
 **What.** The owner ordered it in so many words ("Delete all your crap.... ALL.... Delete the role assignments"), so the agent deleted what was still there, on his written word: break-glass under [AGENTS.md](AGENTS.md) rule 18, reported at once. The owner had already deleted both resource groups himself, which removed the model account, its private endpoint and network, and the deployment identity with its credential; the product and the API in his API Management instance were gone as well. Deleted now: the role assignment on that instance (an orphan: its identity no longer existed), the two budgets (a budget outlives its group), and, by purge, the soft-deleted model account and the soft-deleted API Management instance of the first attempt.

@@ -40,19 +40,31 @@ The usage records are the main fixed cost ([cost and FinOps](../design/10-cost-a
 
 | | What it means | What it costs and risks |
 |---|---|---|
-| **A. Add Citadel to the existing gateway** (proposed) | The organisation already runs an API Management instance. The kit's gateway-upgrade module (preview) applies Citadel's gateway configuration to it, and a companion module adds the services around it. Neither creates a gateway or changes the network | No second gateway. Other teams already use that instance, so a read-only study comes first and lists everything that would be added |
+| **A. Add Citadel to the existing gateway** (proposed) | The organisation already runs an API Management instance. The kit's gateway-upgrade module (preview) applies Citadel's gateway configuration to it, and a companion module adds the services around it. Neither creates a gateway or changes the network | No second gateway. Other teams may already use that instance, so a read-only study comes first and lists everything that would be added |
 | **B. Deploy the full kit** | The kit's main deployment builds its own gateway and everything around it | The cleanest separation, a second gateway, the highest fixed cost |
 | **C. Onboard Meternaut on a gateway without Citadel** | Only a product, a key and a policy | Not proposed: no usage records, no shared policies, no content safety |
 
 For the first environment the kit's smallest size applies: development only, no service level agreement, full network isolation supported.
+
+## Lean first, full later
+
+The gateway-upgrade module needs none of the supporting services. They are what make Citadel expensive to leave idle: the usage pipeline (Event Hub, Cosmos DB, and a Logic App on a Standard plan, each with private endpoints) costs on the order of 250 to 270 euros a month at list prices of 2026-11 (the Logic App about 160, nine private endpoints about 60, Cosmos DB at 400 request units about 21, Event Hub about 20). The first environment therefore takes the **lean** variant:
+
+| Lean (first) | Full (later, on a stated need) |
+|---|---|
+| The gateway rules from the module, one managed identity for the gateway, one private model account with the first models, a budget | Adds the usage pipeline: a record of every call, by caller, for billing and audit |
+| Token use is seen as custom metrics in the Application Insights that the gateway already writes to; no prompt or answer is logged | Adds Event Hub, Logic App, Cosmos DB, Key Vault and their private endpoints |
+| About 7 to 10 euros a month idle (almost all of it the model account's private endpoint), plus tokens | About 250 to 270 euros a month more |
+
+The full pipeline is added when a real need for per-call records appears. That is a decision with its own cost, its own list and its own approval.
 
 ## The order
 
 | Step | What happens | What is approved first |
 |---|---|---|
 | 0. Study | Read-only. List what the gateway-upgrade module would add to the existing instance (APIs, policy fragments, named values, backends), which supporting services it needs, which of them already exist (network, DNS, workspace), what they cost each month, and which landing-zone policies apply | Nothing changes, so nothing |
-| 1. Supporting services | Event Hub, Cosmos DB, Logic App with storage, Key Vault, managed identities, and the primary Foundry account with one model behind a private endpoint, placed where the study says (the module expects its managed identity in the gateway's resource group) | The study's list |
-| 2. Gateway configuration | The kit's gateway-upgrade module on the existing instance | The study's list again, as a diff |
+| 1. Model side (lean) | A resource group of the project's own with a small network, the primary Foundry account with the first models behind a private endpoint (no private DNS zone: the landing zone's policy registers the name), and a budget. The usage pipeline is not part of this step | The study's list, and the identity that runs the workflow with what each of its roles may change |
+| 2. Gateway configuration | One user-assigned managed identity in the gateway's resource group, attached to the instance; a second Application Insights logger with the name the module expects, on the same Application Insights; then the module on the existing instance (the inference APIs, policy fragments, backends and pools, named values). The instance's service-level logging setting is replaced by an equivalent one | The study's list again, as a diff (what-if) |
 | 3. Meternaut's first onboarding | One key for the first agent, the listed models, token limits per minute and per month. More follow, one per hosted agent ([decision 4](../design/12-decisions.md)) | The limits |
 | 4. Proof | A call passes; an unlisted model is refused; a call over the limit is refused; the call appears in the usage records ([check C1](../build-plan/03-first-checks.md)) | The result |
 
@@ -70,6 +82,13 @@ Only after step 4 does the first agent exist.
 - Which of the three ways: A is proposed.
 - How changes reach Azure: a pipeline that shows its list before it runs and waits for approval, or the kit's own command run by a person.
 - Where it goes: the region and the names.
+
+## What the study found (2026-11-03), in general terms
+
+- **What an instance the kit did not create lacks.** A user-assigned managed identity attached to the instance; an Application Insights logger named `appinsights-logger` (an instance usually has a logger under another name, so a second one is added on the same Application Insights); and an `ai-foundry-compatibility` policy fragment, which the module creates only when its personal-data flag is on, although the inference APIs' policies include it unconditionally, so the flag stays on and the Language and Content Safety addresses must be real (a named value may not be empty).
+- **What the module replaces.** The instance's service-level Application Insights diagnostic: its logger link, and it turns custom metrics on. Everything else is added beside what is there.
+- **What the landing zone does by itself.** A policy joins every new virtual network of the region to the network manager's group (hub peering and default routes); another registers a private endpoint in the central private DNS zones; and public access to new platform services is denied. Nothing in the first environment creates a DNS zone, a peering or a route.
+- **What stays unknown until a call is made.** The path from a workload network to the gateway's public address through the hub firewall (the other direction, from the gateway to a model account behind a private endpoint, has been seen to work).
 
 ## What is not known yet
 
