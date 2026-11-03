@@ -9,25 +9,34 @@ address, name or mail address is in the repository:
 
     ENV_SUBSCRIPTION_ID, ENV_RESOURCE_GROUP, ENV_LOCATION, ENV_VNET_PREFIX, ENV_PE_SUBNET_PREFIX,
     ENV_DNS_SERVERS (comma separated), ENV_OWNER, ENV_BUDGET_AMOUNT, ENV_ALERT_EMAILS (comma separated),
-    ENV_BUDGET_START, GATEWAY_RESOURCE_ID, GATEWAY_APPINSIGHTS_ID, GATEWAY_PRINCIPAL_ID
+    ENV_BUDGET_START, GATEWAY_RESOURCE_ID, GATEWAY_APPINSIGHTS_ID, GATEWAY_PRINCIPAL_ID, GATEWAY_CLIENT_ID
 
 ENV_BUDGET_START is the first day of the month in which the budget was first made, which the workflow reads from the
 existing budget (a budget keeps its start date) or, for a new budget, takes from the current month.
 GATEWAY_RESOURCE_ID is the resource id of the owner's existing API Management instance; GATEWAY_APPINSIGHTS_ID is the
 resource id of the Application Insights component that the instance already logs to; GATEWAY_PRINCIPAL_ID is the object
 id of the gateway's user-assigned identity, which does not exist before the first deploy (a `--preview`, for a
-what-if, then uses a placeholder, and says so).
+what-if, then uses a placeholder, and says so). GATEWAY_CLIENT_ID is the same identity's client id, which the two
+placeholder usage loggers name as their credential; it may be left out while the identity does not exist (the output
+client_id_known says whether it was given, and the step that adds the loggers refuses a placeholder).
 
-It writes three ARM parameter files into --out-dir:
+It writes three ARM parameter files into --out-dir (four, with --contract):
 
     environment.parameters.json   for environment/main.bicep (the model side)
     logger.parameters.json        for environment/gateway/logger.bicep
     kit.parameters.json           for the Citadel gateway-upgrade module (the kit's bicep/infra/apim-gateway-upgrade/main.bicep)
+    contract.parameters.json      for environment/gateway/contract.bicep, from --contract (environment/contract.json) and
+                                  --contract-policy (environment/gateway/contract-policy.xml)
 
 Every value is checked before anything is deployed. The name of the model account is worked out here, from the
 subscription and the resource group, so it is the same on every run (a run after a removal finds, and the workflow
 restores, the soft-deleted account of that name instead of leaving a second one behind). It prints key=value lines for
 GitHub to read as step outputs.
+
+The contract names only models that are deployed (environment/models.json) and only the two inference APIs that the
+kit's module makes here, asks for a token rate that the smallest of its model deployments can serve, and its policy is
+the template with the contract's numbers put in and then read back as XML, so a template that lost a rule, or counted
+the tokens of all consumers together, is refused here.
 
 The settings of the kit's module are chosen here and explained here, not in the workflow, so that a test can hold them:
   - The personal-data flag stays on, because the module creates the `ai-foundry-compatibility` policy fragment only then,
@@ -47,6 +56,7 @@ import json
 import os
 import re
 import sys
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 SCHEMA = "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#"
@@ -65,6 +75,11 @@ PRIVATE_SPACE = ipaddress.ip_network("10.0.0.0/8")
 SKUS = ("DataZoneStandard", "GlobalStandard")
 PLACEHOLDER = "00000000-0000-0000-0000-000000000000"
 IDENTITY_NAME = "id-meternaut-gateway"
+CONTRACT_NAME = re.compile(r"^[a-z][a-z0-9-]{1,58}[a-z0-9]$")
+CONTRACT_KEYS = {"name", "description", "apis", "allowedModels", "tokensPerMinute", "tokenQuotaPerMonth"}
+CONTRACT_APIS = ("universal-llm-api", "azure-openai-api")
+POLICY_PLACEHOLDERS = ("@@ALLOWED_MODELS@@", "@@TOKENS_PER_MINUTE@@", "@@TOKEN_QUOTA@@")
+MAX_QUOTA = 1_000_000_000
 
 AZURE_MONITOR_LOG_SETTINGS = {
     "frontend": {"request": {"headers": [], "body": {"bytes": 0}}, "response": {"headers": [], "body": {"bytes": 0}}},
@@ -145,7 +160,85 @@ def parameters(values: dict) -> dict:
     return {"$schema": SCHEMA, "contentVersion": "1.0.0.0", "parameters": {k: {"value": v} for k, v in values.items()}}
 
 
-def build(env, models: list[dict], preview: bool = False) -> tuple[dict[str, dict], dict[str, str]]:
+def read_contract(path: Path, models: list[dict]) -> dict:
+    """The contract of environment/contract.json, checked against the models that are deployed."""
+    try:
+        contract = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        raise Problem(f"{path} is not a readable JSON contract")
+    if not isinstance(contract, dict) or set(contract) != CONTRACT_KEYS:
+        raise Problem("the contract has exactly: " + ", ".join(sorted(CONTRACT_KEYS)))
+    name, description, apis = contract["name"], contract["description"], contract["apis"]
+    if not isinstance(name, str) or not CONTRACT_NAME.match(name):
+        raise Problem("the contract's name is 3 to 60 lowercase letters, digits and hyphens, starting with a letter")
+    if not isinstance(description, str) or not 1 <= len(description) <= 400 or any(ord(c) < 32 for c in description):
+        raise Problem("the contract's description is 1 to 400 characters on one line")
+    if not isinstance(apis, list) or not 1 <= len(apis) <= len(CONTRACT_APIS) or len(set(map(str, apis))) != len(apis) or any(a not in CONTRACT_APIS for a in apis):
+        raise Problem(f"the contract's apis are some of {', '.join(CONTRACT_APIS)}, each once")
+    deployed = {m["name"]: m for m in models}
+    allowed = contract["allowedModels"]
+    if (not isinstance(allowed, list) or not 1 <= len(allowed) <= len(deployed) or len(set(map(str, allowed))) != len(allowed)
+            or any(not isinstance(m, str) or m not in deployed for m in allowed)):
+        raise Problem("the contract's allowedModels are models of environment/models.json, each once")
+    rate, quota = contract["tokensPerMinute"], contract["tokenQuotaPerMonth"]
+    for label, value in (("tokensPerMinute", rate), ("tokenQuotaPerMonth", quota)):
+        if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+            raise Problem(f"the contract's {label} is a whole number of at least 1")
+    ceiling = min(deployed[m]["capacity"] for m in allowed) * 1000
+    if rate > ceiling:
+        raise Problem(f"the contract's tokensPerMinute ({rate}) is more than the smallest of its model deployments can serve ({ceiling} a minute)")
+    if not rate <= quota <= MAX_QUOTA:
+        raise Problem(f"the contract's tokenQuotaPerMonth is at least its tokensPerMinute and at most {MAX_QUOTA}")
+    return dict(contract)
+
+
+def contract_policy(template: str, contract: dict) -> str:
+    """The product policy: the template with the contract's numbers in it, read back as XML to see that its rules are all there."""
+    for placeholder in POLICY_PLACEHOLDERS:
+        if template.count(placeholder) != 1:
+            raise Problem(f"the policy template holds {placeholder} exactly once")
+    policy = (template.replace("@@ALLOWED_MODELS@@", ",".join(contract["allowedModels"]))
+              .replace("@@TOKENS_PER_MINUTE@@", str(contract["tokensPerMinute"]))
+              .replace("@@TOKEN_QUOTA@@", str(contract["tokenQuotaPerMonth"])))
+    if "@@" in policy:
+        raise Problem("the policy template holds a placeholder that the contract does not fill")
+    try:
+        inbound = ET.fromstring(policy).find("inbound")
+    except ET.ParseError as e:
+        raise Problem(f"the contract's policy is not well-formed XML: {e}")
+    if inbound is None:
+        raise Problem("the contract's policy has no inbound section")
+    models = [v for v in inbound.findall("set-variable") if v.get("name") == "allowedModels"]
+    limits = inbound.findall("llm-token-limit")
+    fragments = [f.get("fragment-id") for f in inbound.findall("include-fragment")]
+    if len(models) != 1 or models[0].get("value") != ",".join(contract["allowedModels"]):
+        raise Problem("the contract's policy sets allowedModels once, to the contract's models")
+    if "set-llm-requested-model" not in fragments:
+        raise Problem("the contract's policy includes set-llm-requested-model: the gateway reads the requested model with it")
+    if len(limits) != 1:
+        raise Problem("the contract's policy has exactly one llm-token-limit")
+    expected = {"counter-key": "@(context.Subscription.Id)", "tokens-per-minute": str(contract["tokensPerMinute"]),
+                "token-quota": str(contract["tokenQuotaPerMonth"]), "token-quota-period": "Monthly", "estimate-prompt-tokens": "false"}
+    if {k: limits[0].get(k) for k in expected} != expected:
+        raise Problem("the contract's token limit counts for each subscription, per minute and per month, as the contract says")
+    return policy
+
+
+def contract_files(contract: dict, template: str, gateway_name: str) -> tuple[dict, dict[str, str]]:
+    subscription_name = f"{contract['name']}-sub-01"
+    document = parameters({
+        "apimName": gateway_name,
+        "contractName": contract["name"],
+        "subscriptionName": subscription_name,
+        "contractDescription": contract["description"],
+        "apiNames": contract["apis"],
+        "policyXml": contract_policy(template, contract),
+    })
+    outputs = {"contract_name": contract["name"], "contract_subscription": subscription_name, "contract_apis": ",".join(contract["apis"])}
+    return document, outputs
+
+
+def build(env, models: list[dict], preview: bool = False, contract: dict | None = None, policy_template: str | None = None) -> tuple[dict[str, dict], dict[str, str]]:
     subscription = need(env, "ENV_SUBSCRIPTION_ID")
     group = need(env, "ENV_RESOURCE_GROUP")
     location = need(env, "ENV_LOCATION")
@@ -175,6 +268,12 @@ def build(env, models: list[dict], preview: bool = False) -> tuple[dict[str, dic
         principal = PLACEHOLDER
     if not GUID.match(principal):
         raise Problem("GATEWAY_PRINCIPAL_ID is the object id of the gateway's user-assigned identity")
+    client_id = (env.get("GATEWAY_CLIENT_ID") or "").strip()
+    client_id_known = bool(client_id)
+    if not client_id_known:
+        client_id = PLACEHOLDER
+    if not GUID.match(client_id):
+        raise Problem("GATEWAY_CLIENT_ID is the client id of the gateway's user-assigned identity")
 
     vnet = network(need(env, "ENV_VNET_PREFIX"), "ENV_VNET_PREFIX")
     subnet = network(need(env, "ENV_PE_SUBNET_PREFIX"), "ENV_PE_SUBNET_PREFIX")
@@ -226,6 +325,7 @@ def build(env, models: list[dict], preview: bool = False) -> tuple[dict[str, dic
         "apimName": gateway.group(3),
         "appInsightsName": insights.group(3),
         "appInsightsResourceGroup": insights.group(2),
+        "gatewayIdentityClientId": client_id.lower(),
     }
     backend = {
         "backendId": name,
@@ -287,12 +387,19 @@ def build(env, models: list[dict], preview: bool = False) -> tuple[dict[str, dic
         "gateway_name": gateway.group(3),
         "identity_name": IDENTITY_NAME,
         "principal_known": "true" if principal_known else "false",
+        "client_id_known": "true" if client_id_known else "false",
     }
-    return {
+    files = {
         "environment.parameters.json": parameters(environment),
         "logger.parameters.json": parameters(logger),
         "kit.parameters.json": parameters(kit),
-    }, outputs
+    }
+    if contract is not None:
+        if policy_template is None:
+            raise Problem("a contract needs its policy template")
+        files["contract.parameters.json"], contract_outputs = contract_files(contract, policy_template, gateway.group(3))
+        outputs.update(contract_outputs)
+    return files, outputs
 
 
 TYPES = {"string": str, "securestring": str, "int": int, "bool": bool, "array": list, "object": dict, "secureObject": dict}
@@ -334,7 +441,17 @@ def run_check(args) -> int:
 
 def run_build(args, environ) -> int:
     try:
-        files, outputs = build(environ, read_models(Path(args.models)), preview=args.preview)
+        models = read_models(Path(args.models))
+        contract = policy_template = None
+        if args.contract or args.contract_policy:
+            if not (args.contract and args.contract_policy):
+                raise Problem("--contract and --contract-policy go together")
+            contract = read_contract(Path(args.contract), models)
+            try:
+                policy_template = Path(args.contract_policy).read_text(encoding="utf-8")
+            except OSError:
+                raise Problem(f"{args.contract_policy} is not a readable policy template")
+        files, outputs = build(environ, models, preview=args.preview, contract=contract, policy_template=policy_template)
     except Problem as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
@@ -354,6 +471,8 @@ def main(argv=None, environ=None) -> int:
     build_parser.add_argument("--models", required=True, help="the JSON list of models (environment/models.json)")
     build_parser.add_argument("--out-dir", required=True, help="where to write the ARM parameter files")
     build_parser.add_argument("--preview", action="store_true", help="for a what-if: the gateway identity may not exist yet")
+    build_parser.add_argument("--contract", help="the contract (environment/contract.json); also writes contract.parameters.json")
+    build_parser.add_argument("--contract-policy", help="the contract's policy template (environment/gateway/contract-policy.xml)")
     check_parser = commands.add_parser("check", help="check a parameter file against a compiled template (az bicep build --outfile)")
     check_parser.add_argument("--params", required=True)
     check_parser.add_argument("--template", required=True)

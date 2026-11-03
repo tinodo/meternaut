@@ -16,8 +16,9 @@ attach-identity  Adds one user-assigned identity to the instance and keeps every
                  system-assigned identity that is there stays, and so does every other user-assigned identity. The write is
                  conditional on the ETag that was read with the identity, so a concurrent change fails it instead of being
                  overwritten. It does nothing when the identity is attached already. Then it waits until the update has finished.
-prepared         Read only. Checks that the instance is in the state Succeeded, has the identity attached and has the logger
-                 appinsights-logger, which the Citadel module needs; says what is missing.
+prepared         Read only. Checks that the instance is in the state Succeeded, has the identity attached and has the three
+                 loggers that the Citadel module needs (appinsights-logger, and the two Event Hub loggers that its policy
+                 fragments name); says what is missing.
 wait             Waits until the instance is in the state Succeeded; fails on Failed or Canceled and when the time is up.
                  A Developer-tier instance inside a network can take a long time for an update and has no service level.
 """
@@ -36,6 +37,7 @@ API = "2024-05-01"
 APIM_ID = re.compile(r"^/subscriptions/[0-9a-fA-F-]{36}/resourceGroups/[A-Za-z0-9._()-]{1,90}/providers/Microsoft\.ApiManagement/service/[A-Za-z0-9-]{1,50}$", re.I)
 INSIGHTS_ID = re.compile(r"^/subscriptions/[0-9a-fA-F-]{36}/resourceGroups/[A-Za-z0-9._()-]{1,90}/providers/microsoft\.insights/components/[A-Za-z0-9._()-]{1,260}$", re.I)
 IDENTITY_ID = re.compile(r"^/subscriptions/[0-9a-fA-F-]{36}/resourceGroups/[A-Za-z0-9._()-]{1,90}/providers/Microsoft\.ManagedIdentity/userAssignedIdentities/[A-Za-z0-9_-]{1,128}$", re.I)
+REQUIRED_LOGGERS = ("appinsights-logger", "usage-eventhub-logger", "pii-usage-eventhub-logger")
 TERMINAL_BAD = {"failed", "canceled", "cancelled"}
 CANON = {"systemassigned": "SystemAssigned", "userassigned": "UserAssigned"}
 
@@ -196,7 +198,7 @@ def attach_identity(apim: str, identity_id: str, minutes: float, tries: int = 3,
 
 
 def prepared(apim: str, identity_id: str) -> list[str]:
-    """What is missing before the Citadel module may be applied: the state, the attached identity and the logger."""
+    """What is missing before the Citadel module may be applied: the state, the attached identity and the loggers."""
     service = az_rest("get", apim)
     missing = []
     state = service.get("properties", {}).get("provisioningState", "")
@@ -206,8 +208,9 @@ def prepared(apim: str, identity_id: str) -> list[str]:
     if identity_id.lower() not in attached:
         missing.append("the gateway identity is not attached to the instance")
     names = {item.get("name") for item in az_rest("get", apim, suffix="/loggers").get("value", [])}
-    if "appinsights-logger" not in names:
-        missing.append("the logger appinsights-logger is not on the instance")
+    for logger in REQUIRED_LOGGERS:
+        if logger not in names:
+            missing.append(f"the logger {logger} is not on the instance")
     return missing
 
 
