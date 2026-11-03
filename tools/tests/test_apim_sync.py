@@ -151,7 +151,7 @@ class Paths(unittest.TestCase):
     def test_the_prefix_is_a_constant_of_the_tool(self):
         self.assertEqual(aps.PREFIX, "meternaut-")
         self.assertTrue(aps.allowed_path("apis/meternaut-llm"))
-        self.assertFalse(aps.allowed_path("apis/another-project-gateway"))
+        self.assertFalse(aps.allowed_path("apis/otherteam-gateway"))
 
 
 class Loading(unittest.TestCase):
@@ -216,13 +216,13 @@ class Loading(unittest.TestCase):
                 aps.load_manifest(self.manifest([{"path": path, "body": {}}]), {})
 
     def test_the_manifests_prefix_is_the_tools_own_and_cannot_be_another(self):
-        for bad in ("", "meternaut", "Meternaut-", "a/b-", "-", "another-project-", "another-project-", "meternaut-x-"):
+        for bad in ("", "meternaut", "Meternaut-", "a/b-", "-", "otherteam-", "another-", "meternaut-x-"):
             with self.assertRaises(aps.Problem, msg=bad):
-                aps.load_manifest(self.manifest([{"path": "apis/another-project-gateway", "body": {}}], prefix=bad), {})
+                aps.load_manifest(self.manifest([{"path": "apis/otherteam-gateway", "body": {}}], prefix=bad), {})
         with self.assertRaises(aps.Problem):  # an object of another team under their own prefix, as the manifest would declare it
-            aps.load_manifest(self.manifest([{"path": "apis/another-project-gateway", "body": {}}], prefix="another-project-"), {})
+            aps.load_manifest(self.manifest([{"path": "apis/otherteam-gateway", "body": {}}], prefix="otherteam-"), {})
         with self.assertRaises(aps.Problem):  # and the key of one of their subscriptions
-            aps.manifest_header(self.manifest([], prefix="another-project-"))
+            aps.manifest_header(self.manifest([], prefix="otherteam-"))
         self.assertEqual(aps.manifest_header(self.manifest([]))[1], "meternaut-")
 
     def test_a_policy_file_must_live_next_to_the_manifest(self):
