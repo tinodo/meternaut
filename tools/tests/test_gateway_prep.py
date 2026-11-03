@@ -309,21 +309,31 @@ class Attach(unittest.TestCase):
 
 
 class Prepared(unittest.TestCase):
+    LOGGERS = ("azuremonitor", "appinsights-logger", "usage-eventhub-logger", "pii-usage-eventhub-logger")
+
     def test_a_ready_gateway_passes(self):
-        fake = Fake(identity={"type": "SystemAssigned, UserAssigned", "userAssignedIdentities": {UAMI.upper(): {}}}, loggers=("azuremonitor", "appinsights-logger"))
+        fake = Fake(identity={"type": "SystemAssigned, UserAssigned", "userAssignedIdentities": {UAMI.upper(): {}}}, loggers=self.LOGGERS)
         code, out, err = run(["prepared", "--apim", APIM, "--identity", UAMI], fake)
         self.assertEqual((code, err), (0, ""))
         self.assertIn("ready", out)
         self.assertEqual(fake.writes(), [])
+
+    def test_each_of_the_three_loggers_is_needed(self):
+        for left_out in self.LOGGERS[1:]:
+            fake = Fake(identity={"userAssignedIdentities": {UAMI: {}}}, loggers=[name for name in self.LOGGERS if name != left_out])
+            code, _, err = run(["prepared", "--apim", APIM, "--identity", UAMI], fake)
+            self.assertEqual(code, 2, left_out)
+            self.assertIn(f"the logger {left_out} is not on the instance", err)
 
     def test_what_is_missing_is_named(self):
         code, _, err = run(["prepared", "--apim", APIM, "--identity", UAMI], Fake(identity={"type": "SystemAssigned"}))
         self.assertEqual(code, 2)
         self.assertIn("identity is not attached", err)
         self.assertIn("appinsights-logger", err)
+        self.assertIn("usage-eventhub-logger", err)
         self.assertIn("gateway-prepare", err)
         code, _, err = run(["prepared", "--apim", APIM, "--identity", UAMI],
-                           Fake(state="Updating", identity={"userAssignedIdentities": {UAMI: {}}}, loggers=("appinsights-logger",)))
+                           Fake(state="Updating", identity={"userAssignedIdentities": {UAMI: {}}}, loggers=self.LOGGERS))
         self.assertEqual(code, 2)
         self.assertIn("Updating", err)
 

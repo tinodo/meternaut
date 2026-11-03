@@ -4,6 +4,7 @@ import json
 import re
 import tempfile
 import unittest
+import xml.etree.ElementTree as ET
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
@@ -14,8 +15,11 @@ ep = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(ep)
 
 MODELS = ROOT / "environment" / "models.json"
+CONTRACT_FILE = ROOT / "environment" / "contract.json"
+POLICY_FILE = ROOT / "environment" / "gateway" / "contract-policy.xml"
 BICEP = (ROOT / "environment" / "main.bicep").read_text(encoding="utf-8")
 LOGGER = (ROOT / "environment" / "gateway" / "logger.bicep").read_text(encoding="utf-8")
+CONTRACT_BICEP = (ROOT / "environment" / "gateway" / "contract.bicep").read_text(encoding="utf-8")
 SETTINGS = {
     "ENV_SUBSCRIPTION_ID": "11111111-2222-3333-4444-555555555555",
     "ENV_RESOURCE_GROUP": "rg-example",
@@ -30,6 +34,7 @@ SETTINGS = {
     "GATEWAY_RESOURCE_ID": "/subscriptions/66666666-7777-8888-9999-000000000000/resourceGroups/rg-gateway/providers/Microsoft.ApiManagement/service/example-apim",
     "GATEWAY_APPINSIGHTS_ID": "/subscriptions/66666666-7777-8888-9999-000000000000/resourceGroups/rg-gateway/providers/microsoft.insights/components/example-insights",
     "GATEWAY_PRINCIPAL_ID": "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE",
+    "GATEWAY_CLIENT_ID": "BBBBBBBB-CCCC-DDDD-EEEE-FFFFFFFFFFFF",
 }
 
 
@@ -72,6 +77,7 @@ class Build(unittest.TestCase):
         self.assertEqual(lines["gateway_name"], "example-apim")
         self.assertEqual(lines["gateway_resource_group"], "rg-gateway")
         self.assertEqual(lines["principal_known"], "true")
+        self.assertEqual(lines["client_id_known"], "true")
 
     def test_the_account_name_is_a_valid_host_name_and_the_same_on_every_run(self):
         names = {values(run(SETTINGS)[3]["environment.parameters.json"])["accountName"] for _ in range(3)}
@@ -102,7 +108,16 @@ class Build(unittest.TestCase):
         given = run(SETTINGS)[3]["logger.parameters.json"]["parameters"]
         self.assertEqual(set(given), set(declared))
         self.assertEqual(values(run(SETTINGS)[3]["logger.parameters.json"]), {
-            "apimName": "example-apim", "appInsightsName": "example-insights", "appInsightsResourceGroup": "rg-gateway"})
+            "apimName": "example-apim", "appInsightsName": "example-insights", "appInsightsResourceGroup": "rg-gateway",
+            "gatewayIdentityClientId": "bbbbbbbb-cccc-dddd-eeee-ffffffffffff"})
+
+    def test_a_client_id_that_was_left_out_is_a_placeholder_and_says_so(self):
+        env = {k: v for k, v in SETTINGS.items() if k != "GATEWAY_CLIENT_ID"}
+        code, out, err, files = run(env)
+        self.assertEqual((code, err), (0, ""))
+        self.assertIn("client_id_known=false", out)
+        self.assertEqual(values(files["logger.parameters.json"])["gatewayIdentityClientId"], ep.PLACEHOLDER)
+        self.assertEqual(values(run({**env, "GATEWAY_CLIENT_ID": "  "})[3]["logger.parameters.json"])["gatewayIdentityClientId"], ep.PLACEHOLDER)
 
     def test_the_names_the_workflow_removes_are_the_ones_the_template_gives(self):
         lines = dict(line.split("=", 1) for line in run(SETTINGS)[1].splitlines())
@@ -197,7 +212,7 @@ class Refusals(unittest.TestCase):
 
     def test_a_missing_setting_is_named(self):
         for name in SETTINGS:
-            if name == "GATEWAY_PRINCIPAL_ID":
+            if name in ("GATEWAY_PRINCIPAL_ID", "GATEWAY_CLIENT_ID"):
                 continue
             env = {k: v for k, v in SETTINGS.items() if k != name}
             code, _, err, _ = run(env)
@@ -208,6 +223,7 @@ class Refusals(unittest.TestCase):
     def test_bad_ids_names_and_labels(self):
         self.refused(ENV_SUBSCRIPTION_ID="not-a-guid")
         self.refused(GATEWAY_PRINCIPAL_ID="1234")
+        self.refused(GATEWAY_CLIENT_ID="1234")
         for bad in ("rg name", "rg/x", "rg;x", "-", "a" * 91, "rg.", "$(x)"):
             self.refused(ENV_RESOURCE_GROUP=bad)
         for bad in ("Sweden Central", "sweden_central", "x", "https://x"):
@@ -278,6 +294,119 @@ class Models(unittest.TestCase):
     def test_a_file_that_is_not_json_is_refused(self):
         code, _, err, _ = run(SETTINGS, models=self.write("{"))
         self.assertEqual(code, 2)
+
+
+class Contract(unittest.TestCase):
+    """The contract of environment/contract.json and its policy: what reaches the gateway is what the contract says."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tmp = Path(tmp.name)
+
+    def write(self, name, text):
+        path = self.tmp / name
+        path.write_text(text, encoding="utf-8")
+        return path
+
+    def contract(self, **changes):
+        return {**json.loads(CONTRACT_FILE.read_text(encoding="utf-8")), **changes}
+
+    def build(self, contract=None, policy=None, models=MODELS):
+        contract_path = self.write("contract.json", json.dumps(self.contract() if contract is None else contract))
+        policy_path = self.write("policy.xml", POLICY_FILE.read_text(encoding="utf-8") if policy is None else policy)
+        return run(SETTINGS, "--contract", str(contract_path), "--contract-policy", str(policy_path), models=models)
+
+    def refused(self, contract=None, policy=None, **kw):
+        code, out, err, files = self.build(contract, policy, **kw)
+        self.assertEqual((code, out, files), (2, "", {}), (contract, policy))
+        return err
+
+    def test_the_contract_of_the_repository_gives_a_fourth_file_that_fits_its_template(self):
+        code, out, err, files = self.build()
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(set(files), {"environment.parameters.json", "logger.parameters.json", "kit.parameters.json", "contract.parameters.json"})
+        given = files["contract.parameters.json"]["parameters"]
+        declared = bicep_params(CONTRACT_BICEP)
+        self.assertEqual(set(given), set(declared))
+        self.assertTrue(all(not has_default for _, has_default in declared.values()), "every setting of the contract is given, none is left to a default")
+        types = {"string": str, "array": list}
+        for name, wrapped in given.items():
+            self.assertIsInstance(wrapped["value"], types[declared[name][0]], name)
+        lines = dict(line.split("=", 1) for line in out.splitlines())
+        self.assertEqual((lines["contract_name"], lines["contract_subscription"]), ("meternaut-agents", "meternaut-agents-sub-01"))
+        self.assertEqual(lines["contract_apis"], "universal-llm-api,azure-openai-api")
+        self.assertEqual(values(files["contract.parameters.json"])["apimName"], "example-apim")
+
+    def test_without_a_contract_there_is_no_contract_file(self):
+        self.assertNotIn("contract.parameters.json", run(SETTINGS)[3])
+
+    def test_the_policy_carries_the_contracts_models_and_limits_and_counts_for_each_subscription(self):
+        contract = self.contract()
+        policy = values(self.build()[3]["contract.parameters.json"])["policyXml"]
+        self.assertNotIn("@@", policy)
+        inbound = ET.fromstring(policy).find("inbound")
+        (models,) = [v for v in inbound.findall("set-variable") if v.get("name") == "allowedModels"]
+        self.assertEqual(models.get("value"), ",".join(contract["allowedModels"]))
+        (limit,) = inbound.findall("llm-token-limit")
+        self.assertEqual(limit.get("tokens-per-minute"), str(contract["tokensPerMinute"]))
+        self.assertEqual(limit.get("token-quota"), str(contract["tokenQuotaPerMonth"]))
+        self.assertEqual((limit.get("token-quota-period"), limit.get("estimate-prompt-tokens")), ("Monthly", "false"))
+        self.assertEqual(limit.get("counter-key"), "@(context.Subscription.Id)")
+        self.assertIn("set-llm-requested-model", [f.get("fragment-id") for f in inbound.findall("include-fragment")])
+
+    def test_a_contract_that_names_a_model_that_is_not_deployed_is_refused(self):
+        for models in (["gpt-9"], [], ["gpt-6-luna", "gpt-6-luna"], "gpt-6-luna", [1], [["gpt-6-luna"]], ["gpt-6-luna", "gpt-6.1-sol", "x"]):
+            self.refused(self.contract(allowedModels=models))
+
+    def test_the_token_rate_may_not_be_more_than_the_smallest_deployment_can_serve(self):
+        self.assertEqual(self.build(self.contract(tokensPerMinute=20000))[0], 0)
+        self.assertIn("20000", self.refused(self.contract(tokensPerMinute=20001)))
+        models = [{"name": "big", "version": "2026-09-22", "sku": "DataZoneStandard", "capacity": 20, "retirementDate": "2028-03-11"},
+                  {"name": "small", "version": "2026-09-22", "sku": "DataZoneStandard", "capacity": 5, "retirementDate": "2028-03-11"}]
+        path = self.write("models.json", json.dumps(models))
+        self.assertIn("5000", self.refused(self.contract(allowedModels=["big", "small"], tokensPerMinute=10000), models=path))
+        self.assertEqual(self.build(self.contract(allowedModels=["big"], tokensPerMinute=10000), models=path)[0], 0)
+
+    def test_numbers_names_and_apis_are_checked(self):
+        for changes in ({"tokensPerMinute": 0}, {"tokensPerMinute": True}, {"tokensPerMinute": "10000"}, {"tokensPerMinute": 10.5},
+                        {"tokenQuotaPerMonth": 9999}, {"tokenQuotaPerMonth": 1_000_000_001}, {"tokenQuotaPerMonth": None},
+                        {"name": "Meternaut"}, {"name": "ab"}, {"name": "-ab"}, {"name": "a" * 61}, {"name": "a b"}, {"name": "x;y"}, {"name": "ab-"},
+                        {"description": ""}, {"description": "a\nb"}, {"description": "x" * 401}, {"description": 5},
+                        {"apis": []}, {"apis": ["unified-ai-api"]}, {"apis": ["universal-llm-api", "universal-llm-api"]},
+                        {"apis": "universal-llm-api"}, {"apis": [["x"]]}):
+            self.refused(self.contract(**changes))
+        self.refused({**self.contract(), "key": "x"})
+        missing = self.contract()
+        del missing["name"]
+        self.refused(missing)
+        self.assertEqual(self.build(self.contract(apis=["universal-llm-api"], tokenQuotaPerMonth=10000))[0], 0)
+
+    def test_a_policy_template_that_lost_a_rule_is_refused(self):
+        template = POLICY_FILE.read_text(encoding="utf-8")
+        for broken in (template.replace("@@TOKEN_QUOTA@@", "1000"),
+                       template.replace("@@ALLOWED_MODELS@@", "@@ALLOWED_MODELS@@,@@ALLOWED_MODELS@@"),
+                       template.replace('counter-key="@(context.Subscription.Id)"', 'counter-key="shared"'),
+                       template.replace('<include-fragment fragment-id="set-llm-requested-model" />', ""),
+                       template.replace('name="allowedModels"', 'name="allowed"'),
+                       template.replace('token-quota-period="Monthly"', 'token-quota-period="Daily"'),
+                       template.replace('estimate-prompt-tokens="false"', 'estimate-prompt-tokens="true"'),
+                       template.replace("<inbound>", '<inbound><llm-token-limit counter-key="x" tokens-per-minute="1" />'),
+                       template.replace("<inbound>", "<inbound>@@EXTRA@@"),
+                       template.replace("</policies>", ""),
+                       "<policies><backend /></policies>",
+                       ""):
+            self.refused(policy=broken)
+
+    def test_the_two_files_go_together_and_must_be_readable(self):
+        for extra in (("--contract", str(CONTRACT_FILE)), ("--contract-policy", str(POLICY_FILE))):
+            code, _, err, files = run(SETTINGS, *extra)
+            self.assertEqual((code, files), (2, {}))
+            self.assertIn("go together", err)
+        missing = str(self.tmp / "missing")
+        self.assertEqual(run(SETTINGS, "--contract", missing, "--contract-policy", str(POLICY_FILE))[0], 2)
+        self.assertEqual(run(SETTINGS, "--contract", str(CONTRACT_FILE), "--contract-policy", missing)[0], 2)
+        self.assertEqual(run(SETTINGS, "--contract", str(self.write("c.json", "{")), "--contract-policy", str(POLICY_FILE))[0], 2)
 
 
 class CheckAgainst(unittest.TestCase):

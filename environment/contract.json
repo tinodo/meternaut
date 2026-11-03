@@ -1,0 +1,8 @@
+{
+  "name": "meternaut-agents",
+  "description": "Meternaut's agents and workflows call the models through the gateway with this contract. Two models, a token rate below what the model deployments can serve, and a monthly allowance.",
+  "apis": ["universal-llm-api", "azure-openai-api"],
+  "allowedModels": ["gpt-6-luna", "gpt-6.1-sol"],
+  "tokensPerMinute": 10000,
+  "tokenQuotaPerMonth": 500000
+}
