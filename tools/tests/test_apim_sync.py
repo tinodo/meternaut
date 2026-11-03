@@ -25,18 +25,25 @@ class FakeService:
     """The part of the API Management management API that the tool uses, with the shapes the real one answers with.
 
     It also keeps the service's rules that the tool has to honour: an update needs If-Match, a product that
-    still has subscriptions cannot be deleted unless the caller says to delete them too, and a write that is
-    only accepted (202) shows up later.
+    still has subscriptions cannot be deleted unless the caller says to delete them too, a write that is
+    only accepted (202) shows up later, deleting an API may only be accepted (202) and take a while, and the
+    link between a product and an API has HEAD, PUT and DELETE only (a GET is a 405, and it takes no If-Match):
+    the first real read of it, on the real instance, found that out.
     """
 
-    def __init__(self, secrets=None, async_paths=(), ready_after=2, states=None):
+    def __init__(self, secrets=None, async_paths=(), ready_after=2, states=None, async_deletes=()):
         self.objects, self.calls, self.secrets = {}, [], secrets or {}
         self.async_paths, self.ready_after = set(async_paths), ready_after
+        self.async_deletes, self.deleting = set(async_deletes), {}
         self.states = {path: list(script) for path, script in (states or {}).items()}  # provisioningState of successive reads
         self.pending, self.polls, self.slept = {}, {}, []
 
     def sleep(self, seconds):
         self.slept.append(seconds)
+
+    def _remove(self, path):
+        for key in [k for k in self.objects if k == path or k.startswith(path + "/")]:
+            del self.objects[key]
 
     def request(self, method, url, body=None, headers=None):
         assert url.startswith(aps.ARM + APIM + "/"), url
@@ -44,12 +51,24 @@ class FakeService:
         params = dict(p.partition("=")[::2] for p in query.split("&"))
         self.calls.append((method, path, params, body, headers))
         assert params["api-version"] == "2024-05-01"
+        link = bool(aps.LINK.fullmatch(path))
+        if link and method == "GET":
+            return 405, {}, b'{"Message":"The requested resource does not support http method \'GET\'."}'
+        if link and method == "HEAD":
+            return (204, {}, b"") if path in self.objects else (404, {}, b"")
+        assert method != "HEAD", f"the reference defines HEAD only for the link, not for {path}"
         if method == "GET":
             if path in self.pending:
                 self.polls[path] = self.polls.get(path, 0) + 1
                 if self.polls[path] <= self.ready_after:
                     return 404, {}, b'{"error":{"code":"ResourceNotFound"}}'
                 self.objects[path] = self.pending.pop(path)
+            if path in self.deleting:
+                if self.deleting[path] <= 0:
+                    self._remove(path)
+                    del self.deleting[path]
+                else:
+                    self.deleting[path] -= 1
             if path not in self.objects:
                 return 404, {}, b'{"error":{"code":"ResourceNotFound"}}'
             stored = self.objects[path]
@@ -79,7 +98,10 @@ class FakeService:
             self.objects[path] = value
             return (200 if exists else 201), {}, b"{}"
         if method == "DELETE":
-            assert (headers or {}).get("If-Match") == "*"
+            if link:
+                assert "If-Match" not in (headers or {}), "the reference defines no If-Match for the link"
+            else:
+                assert (headers or {}).get("If-Match") == "*"
             if path not in self.objects:
                 return 404, {}, b"{}"
             if path.startswith("products/") and "/" not in path[len("products/"):]:
@@ -88,8 +110,10 @@ class FakeService:
                     return 409, {}, b'{"error":{"code":"Conflict","message":"The product has subscriptions"}}'
                 for p in using:
                     del self.objects[p]
-            for key in [k for k in self.objects if k == path or k.startswith(path + "/")]:
-                del self.objects[key]
+            if path in self.async_deletes:
+                self.deleting[path] = self.ready_after
+                return 202, {}, b"{}"
+            self._remove(path)
             return 200, {}, b""
         if method == "POST" and path.endswith("/listSecrets"):
             name = path.split("/")[1]
@@ -450,7 +474,7 @@ class Service(unittest.TestCase):
         calls = [(m, p) for m, p, *_ in service.calls]
         for put in [c for c in calls if c[0] == "PUT"]:
             nxt = calls[calls.index(put) + 1]
-            self.assertEqual(nxt, ("GET", put[1]), put)
+            self.assertEqual(nxt, ("HEAD" if aps.LINK.fullmatch(put[1]) else "GET", put[1]), put)
 
     def test_a_state_the_reference_does_not_name_is_final_not_a_reason_to_wait(self):
         # the reference gives no list of final states for an API; waiting on an unknown word would fail every run
@@ -620,6 +644,79 @@ class Service(unittest.TestCase):
         self.assertEqual((code, err), (0, ""))
         self.assertEqual(rows(out, "absent"), 6)
         self.assertEqual(service.objects, {})
+
+    LINK = "products/meternaut-learning-demo-dev/apis/meternaut-llm"
+
+    def test_only_the_link_between_a_product_and_an_api_is_the_link(self):
+        self.assertTrue(aps.LINK.fullmatch(self.LINK))
+        for other in ("products/meternaut-learning-demo-dev", "apis/meternaut-llm", "apis/meternaut-llm/operations/chat-completions",
+                      "products/meternaut-learning-demo-dev/policies/policy", "apis/meternaut-llm/policies/policy",
+                      "products/a/apis/b/c", "products/a/apis/", "xproducts/a/apis/b"):
+            self.assertFalse(aps.LINK.fullmatch(other), other)
+
+    def test_the_link_between_a_product_and_an_api_is_looked_for_with_head_never_get(self):
+        # the real instance answers a GET on it with 405; the reference defines HEAD (204), PUT and DELETE only
+        service = FakeService()
+        code, out, err = run(["plan", *vars_args()], service)
+        self.assertEqual((code, err), (0, ""))
+        self.assertIn(f"create    {self.LINK}\n", out)
+        self.assertEqual({m for m, p, *_ in service.calls if p == self.LINK}, {"HEAD"})
+        code, out, err = run(["apply", *vars_args()], service)
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual([m for m, p, *_ in service.calls if p == self.LINK], ["HEAD", "HEAD", "PUT", "HEAD"])  # plan, apply's plan, the write, the check
+        code, out, err = run(["plan", *vars_args()], service)
+        self.assertEqual((code, err), (0, ""))
+        self.assertIn(f"unchanged {self.LINK}\n", out)
+        self.assertNotIn("GET", {m for m, p, *_ in service.calls if p == self.LINK})
+
+    def test_a_405_or_any_other_answer_to_looking_for_the_link_is_an_error_not_a_guess(self):
+        class Odd(FakeService):
+            def request(self, method, url, body=None, headers=None):
+                if method == "HEAD":
+                    return 403, {}, b""
+                return super().request(method, url, body, headers)
+
+        code, _, err = run(["plan", *vars_args()], Odd())
+        self.assertEqual(code, 2)
+        self.assertIn(f"{self.LINK}: looking for it gave 403", err)
+
+    def test_the_link_is_removed_without_if_match_and_everything_else_with_it(self):
+        service = FakeService()
+        run(["apply", *vars_args()], service)
+        service.calls.clear()
+        code, out, err = run(["remove", *vars_args()], service)
+        self.assertEqual((code, err), (0, ""))
+        deletes = {p: h for m, p, _, _, h in service.calls if m == "DELETE"}
+        self.assertIsNone(deletes[self.LINK])
+        self.assertTrue(all(h == {"If-Match": "*"} for p, h in deletes.items() if p != self.LINK), deletes)
+
+    def test_an_api_whose_removal_is_only_accepted_is_waited_for_before_the_product_goes(self):
+        # the reference answers a delete of an API with 202 or 204
+        service = FakeService(async_deletes={"apis/meternaut-llm"}, ready_after=2)
+        run(["apply", *vars_args()], service)
+        service.calls.clear()
+        service.slept.clear()
+        code, out, err = run(["remove", *vars_args()], service)
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(service.slept, [10.0, 10.0])
+        calls = [(m, p) for m, p, *_ in service.calls]
+        deleted_api = calls.index(("DELETE", "apis/meternaut-llm"))
+        deleted_product = calls.index(("DELETE", "products/meternaut-learning-demo-dev"))
+        polls = [i for i, c in enumerate(calls) if c == ("GET", "apis/meternaut-llm") and i > deleted_api]
+        self.assertEqual(len(polls), 3)  # two reads that still see it, one that does not
+        self.assertTrue(all(i < deleted_product for i in polls), "the product is removed after the API is gone")
+        self.assertEqual(rows(out, "deleted"), 6)
+        self.assertEqual(service.objects, {})
+
+    def test_an_api_that_is_never_gone_is_an_error_not_a_hang(self):
+        service = FakeService(async_deletes={"apis/meternaut-llm"}, ready_after=10 ** 6)
+        run(["apply", *vars_args()], service)
+        service.slept.clear()
+        code, _, err = run(["remove", *vars_args()], service)
+        self.assertEqual(code, 2)
+        self.assertIn("apis/meternaut-llm: still there after 300 seconds", err)
+        self.assertEqual(len(service.slept), 30)
+        self.assertNotIn(("DELETE", "products/meternaut-learning-demo-dev"), service.writes())
 
     def test_apply_and_remove_run_only_from_github_actions(self):
         for command in ("apply", "remove"):

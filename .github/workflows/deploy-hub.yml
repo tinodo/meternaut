@@ -95,16 +95,16 @@ jobs:
         id: budget
         run: |
           # A budget keeps its start date, so an existing one is read and passed on again; a new one starts in the current month.
-          url="https://management.azure.com/subscriptions/$(az account show --query id --output tsv)/resourceGroups/$HUB_RESOURCE_GROUP/providers/Microsoft.Consumption/budgets/meternaut-hub?api-version=2024-08-01"
-          if start=$(az rest --method get --url "$url" --query "properties.timePeriod.startDate" --output tsv 2> "$RUNNER_TEMP/budget.err"); then
+          # The group's budgets are listed and filtered by name: a missing budget is an empty answer, so no error text is read
+          # (the service's text for "not found" differs from one API to the next).
+          url="https://management.azure.com/subscriptions/$(az account show --query id --output tsv)/resourceGroups/$HUB_RESOURCE_GROUP/providers/Microsoft.Consumption/budgets?api-version=2024-08-01"
+          start=$(az rest --method get --url "$url" --query "value[?name=='meternaut-hub'].properties.timePeriod.startDate | [0]" --output tsv)
+          if [ -n "$start" ] && [ "$start" != "None" ]; then
             start="${start:0:10}"
             echo "The budget exists and started on $start."
-          elif grep -qE 'NotFound|was not found|could not be found' "$RUNNER_TEMP/budget.err"; then
+          else
             start="$(date -u +%Y-%m-01)"
             echo "There is no budget yet; a new one starts on $start."
-          else
-            cat "$RUNNER_TEMP/budget.err" >&2
-            exit 1
           fi
           echo "start=$start" >> "$GITHUB_OUTPUT"
 
@@ -243,7 +243,7 @@ jobs:
             local err
             if err=$("$@" 2>&1 > /dev/null); then return 0; fi
             case "$err" in
-              *NotFound*|*"was not found"*|*"could not be found"*) return 1 ;;
+              *NotFound*|*"Not Found"*|*"was not found"*|*"could not be found"*) return 1 ;;
               *) echo "$err" >&2; exit 1 ;;
             esac
           }
@@ -272,9 +272,9 @@ jobs:
             else
               echo "The network security group $NSG_NAME is not there."
             fi
-            budget="https://management.azure.com/subscriptions/$(az account show --query id --output tsv)/resourceGroups/$HUB_RESOURCE_GROUP/providers/Microsoft.Consumption/budgets/meternaut-hub?api-version=2024-08-01"
-            if present az rest --method get --url "$budget" --output none; then
-              az rest --method delete --url "$budget"
+            budgets="https://management.azure.com/subscriptions/$(az account show --query id --output tsv)/resourceGroups/$HUB_RESOURCE_GROUP/providers/Microsoft.Consumption/budgets"
+            if [ "$(az rest --method get --url "$budgets?api-version=2024-08-01" --query "length(value[?name=='meternaut-hub'])" --output tsv)" != "0" ]; then
+              az rest --method delete --url "$budgets/meternaut-hub?api-version=2024-08-01"
               echo "Deleted the budget meternaut-hub."
             else
               echo "The budget meternaut-hub is not there."

@@ -11,7 +11,7 @@ Every change to Azure goes through the workflow [`deploy-hub.yml`](../.github/wo
 | A resource group for the identity | Kept apart from the hub's group, so that removing the hub can never remove the identity |
 | A resource group for the hub | The only place where the workflow builds anything |
 | One managed identity, in the first group | The identity the workflow signs in as. It has no password and no secret |
-| One credential on that identity | It lets a run of the workflow on the `main` branch of this repository sign in as the identity, and nothing else: not another branch, not a pull request, not another repository |
+| One credential on that identity | It lets a run of the workflow on the `main` branch of this repository sign in as the identity, and nothing else: not another branch, not a pull request, not another repository, and not a repository that later gets the same name (the credential names the owner and the repository by their numeric ids) |
 | Role *Contributor* on the hub's group | To create the network, the model account and its private endpoint, and to delete them again |
 | Role *Role Based Access Control Administrator* on the hub's group, limited by a condition | To give the API Management instance's identity the one role that lets it call the model (*Cognitive Services OpenAI User*). The condition allows that one role and only for a service principal: any other role, and any grant to a person or a group, is impossible |
 | Role *API Management Service Contributor* on the existing API Management instance | To add and remove the objects whose names start with `meternaut-` (listed in the [README](README.md#what-is-added-to-the-api-management-instance)) |
@@ -27,7 +27,7 @@ Two limits to know:
 - *API Management Service Contributor* cannot be narrowed to the `meternaut-` objects: the role covers the whole instance, so the identity could change or read anything on it. What holds it to the `meternaut-` objects is [`tools/apim-sync.py`](../tools/apim-sync.py), which refuses any other path and refuses to write outside GitHub Actions, and the plan the workflow prints before it writes.
 - *Contributor* covers every resource type in the group. The group is dedicated, and a budget alerts on its cost.
 
-Who can use the credential: any run of the workflow on `main`. The repository is private, the workflow starts only by hand and only for the owner ([`tools/workflow-lint.py`](../tools/workflow-lint.py) fails a change that would make it start any other way), and the owner merges to `main`. GitHub's Free plan has no required reviewer for a private repository, so the approval is the owner's own click on *Run workflow*. An agent may start `what-if`, which reads and changes nothing; only the owner starts `deploy`, `pause` and `remove`.
+Who can use the credential: any run of the workflow on `main`. The repository is private, and the workflow starts only by hand and only as the owner's account ([`tools/workflow-lint.py`](../tools/workflow-lint.py) fails a change that would make it start any other way). GitHub's Free plan has no required reviewer for a private repository, and the guard cannot tell the owner's click from a run that an agent starts with his token, so the approval is a rule of process and not a technical barrier. The owner has said that he merges and clicks nothing himself (2026-11-03): he tells the agent in plain words in the conversation, and the agent merges and starts the run. An agent starts `what-if`, which reads and changes nothing, on its own; `deploy`, `pause` and `remove` each need his words.
 
 ## Checked first, read-only
 
@@ -66,9 +66,12 @@ az identity create --resource-group $idRg --name $uami --location $region --tags
 $principal = az identity show --resource-group $idRg --name $uami --query principalId --output tsv
 $client    = az identity show --resource-group $idRg --name $uami --query clientId --output tsv
 
-# 3. The credential: a run of the workflow on the main branch of this repository
+# 3. The credential: a run of the workflow on the main branch of this repository. GitHub names the repository in the
+#    subject by its owner's and its own numeric id too (repo:<owner>@<id>/<repository>@<id>); the repository's own setting
+#    gives that prefix. The plain form repo:<owner>/<repository> does not match: Azure answers AADSTS700213.
+$prefix = (gh api "repos/$repo/actions/oidc/customization/sub" | ConvertFrom-Json).sub_claim_prefix
 az identity federated-credential create --resource-group $idRg --identity-name $uami --name github-main `
-  --issuer https://token.actions.githubusercontent.com --subject "repo:${repo}:ref:refs/heads/main" --audiences api://AzureADTokenExchange
+  --issuer https://token.actions.githubusercontent.com --subject "${prefix}:ref:refs/heads/main" --audiences api://AzureADTokenExchange
 
 # 4. The rights
 $scope = "/subscriptions/$sub/resourceGroups/$hubRg"
@@ -100,11 +103,11 @@ The DNS server is the landing zone's own: a virtual network that does not use it
 
 ## Done
 
-Taken on 2026-11-03, after the owner's yes, as the commands above, with two differences: each command carries `--subscription` instead of a first `az account set`, so that the Azure CLI's own default subscription did not change; and the output filter of the last role assignment failed after Azure had made it, so the assignment was read back and not made again. Read back afterwards: three role assignments, the condition equal to the text above character for character, four secrets and nine variables. The values of this environment are in a local note that is not in the repository.
+Taken on 2026-11-03, after the owner's yes, as the commands above, with these differences: each command carries `--subscription` instead of a first `az account set`, so that the Azure CLI's own default subscription did not change; the output filter of the last role assignment failed after Azure had made it, so the assignment was read back and not made again; and the credential was first made with the plain subject `repo:<owner>/<repository>:ref:refs/heads/main`, which is what this page said then. The first sign-in of the workflow failed with AADSTS700213, because GitHub presents this repository with the ids in the subject, and its own setting says so; the credential's subject was then corrected, in place, to that form, and the page above now reads it from the setting. Read back afterwards: three role assignments, the condition equal to the text above character for character, four secrets and nine variables. The values of this environment are in a local note that is not in the repository.
 
 ## After it
 
-Merge the branch that holds this page to `main`, then start the workflow from the Actions tab: *Hub*, *Run workflow*, action `what-if`. It shows what a deploy would create in Azure and in the API Management instance, and changes nothing. A `deploy` follows when the owner has read it, and the first one is run with `check_limits` ticked.
+The branch that holds this page is merged to `main` (the workflow runs only there, and the credential exists only for `main`), and the workflow is started with the action `what-if`, from the Actions tab (*Hub*, *Run workflow*) or with `gh workflow run deploy-hub.yml --ref main -f action=what-if`. It shows what a deploy would create in Azure and in the API Management instance, and changes nothing. A `deploy` follows on the owner's word, and the first one is run with `check_limits` ticked.
 
 ## Undoing it
 
