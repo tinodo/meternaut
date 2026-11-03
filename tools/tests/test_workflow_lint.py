@@ -262,6 +262,17 @@ class Lint(unittest.TestCase):
             self.assertFinding(problems, f"U+{ord(char):04X}")
             self.assertTrue(problems[0].startswith("checks.yml:1:"), problems)
 
+    def test_the_deploy_workflow_never_reads_a_budget_by_name_or_the_text_of_a_not_found_answer(self):
+        # The Budgets API answers a missing budget with "Not Found(...)", and the first run failed on a pattern that expected
+        # other words. A budget is looked for in the list of the group's budgets; only the delete addresses it by name.
+        text = (ROOT / ".github" / "workflows" / "deploy-hub.yml").read_text(encoding="utf-8")
+        for line in text.splitlines():
+            if "budgets/meternaut-hub" in line:
+                self.assertIn("--method delete", line, line)
+        self.assertNotIn("budget.err", text)
+        self.assertGreaterEqual(text.count("value[?name=='meternaut-hub']"), 1)
+        self.assertIn('*"Not Found"*', text)  # a generic 404 from az rest is an absence for the other resources too
+
     def test_a_tab_in_the_indentation_is_refused(self):
         self.assertFinding(self.lint(GOOD_CHECKS.replace("    runs-on: ubuntu-latest", "\truns-on: ubuntu-latest")), "a tab in the indentation")
         self.assertFinding(self.lint(GOOD_DEPLOY.replace("    steps:", "  \tsteps:"), "deploy-hub.yml"), "a tab in the indentation")

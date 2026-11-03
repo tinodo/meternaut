@@ -40,6 +40,9 @@ VALUE = re.compile(r"^[A-Za-z0-9._:/,-]*$")
 PREFIX = "meternaut-"  # the only objects this tool touches; a manifest cannot choose another
 NAME = r"[A-Za-z0-9._-]"
 VARIABLE = re.compile(r"\$\{([A-Z][A-Z0-9_]*)\}")
+# The link between a product and an API. Microsoft's reference defines HEAD (204: it is there), PUT and DELETE for it:
+# no GET (the instance answers 405) and no If-Match.
+LINK = re.compile(r"products/[^/]+/apis/[^/]+")
 
 
 def clean(text) -> str:
@@ -254,6 +257,13 @@ class Apim:
         return url
 
     def read(self, path: str):
+        if LINK.fullmatch(path):
+            status, _, raw = self.transport.request("HEAD", self.url(path))
+            if status == 404:
+                return None
+            if status not in (200, 204):
+                raise Problem(f"{path}: looking for it gave {status}")
+            return {"properties": {}}
         is_policy = path.endswith("/policies/policy")
         status, _, raw = self.transport.request("GET", self.url(path, **({"format": "rawxml"} if is_policy else {})))
         if status == 404:
@@ -294,11 +304,22 @@ class Apim:
         if state in BAD_STATES:
             raise Problem(f"{item['path']}: the service reports that making it {state}")
 
+    def gone(self, path: str, tries: int = 30, pause: float = 10.0) -> None:
+        """Waits until an object whose removal the service has only accepted is no longer there."""
+        for _ in range(tries):
+            if self.read(path) is None:
+                return
+            self.sleep(pause)
+        raise Problem(f"{path}: still there after {int(tries * pause)} seconds, although the service accepted its removal")
+
     def delete(self, path: str) -> str:
         """DELETE one object. Never the subscriptions of a product or anything else the manifest does not name."""
         query = {"deleteRevisions": "true"} if re.fullmatch(r"apis/[^/]+", path) else {}
-        status, _, raw = self.transport.request("DELETE", self.url(path, **query), None, {"If-Match": "*"})
-        if status in (200, 204):
+        headers = None if LINK.fullmatch(path) else {"If-Match": "*"}
+        status, _, raw = self.transport.request("DELETE", self.url(path, **query), None, headers)
+        if status in (200, 202, 204):
+            if status == 202:  # deleting an API answers 202 or 204: with 202 the service is still taking it away
+                self.gone(path)
             return "deleted"
         if status == 404:
             return "absent"
