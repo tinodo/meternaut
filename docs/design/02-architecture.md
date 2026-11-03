@@ -128,7 +128,7 @@ The solution onboards to the **Citadel governance hub of the adopting organisati
 | Monitoring | Central Log Analytics and monitor scope | Diagnostic settings, workbooks, alerts |
 | Policy | Azure Policy and Defender for Cloud baselines | Policy that denies model deployments in the spoke |
 
-**If the organisation has no hub**, phase 0 adds a `hub/` folder to the repository that deploys the accelerator at a pinned commit. It has no releases and its defaults loosen security (public endpoints, prompt and completion capture), so we override them. Its always-on usage pipeline is its main fixed cost, priced separately in [the cost document](10-cost-and-finops.md).
+**If the organisation has no hub**, it deploys the accelerator from upstream at a pinned commit. The accelerator has no releases and its defaults loosen security (public endpoints, prompt and completion capture), so we override them. Its always-on usage pipeline is its main fixed cost, priced separately in [the cost document](10-cost-and-finops.md). The repository's `hub/` folder does not do this: it adds a development contract and one model to an API Management instance that already exists ([hub](../../hub/README.md)).
 
 ## 7. Two profiles, one codebase
 

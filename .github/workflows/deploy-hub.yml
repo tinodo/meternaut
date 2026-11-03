@@ -1,0 +1,275 @@
+name: Hub
+
+# The only way anything of the hub reaches Azure (AGENTS.md rule 18). Nothing starts it but a click on "Run workflow"
+# in the Actions tab. It signs in to Azure with OpenID Connect and a credential that exists only for the main
+# branch, so a copy of this file on any other branch cannot sign in. "what-if" reads and changes nothing.
+# What it does, and what to set up once before the first run: hub/README.md and hub/BOOTSTRAP.md.
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "what-if: show what a deploy would change and change nothing. deploy: build or update the hub. pause: take the gateway objects and the private endpoint away, the only fixed cost. remove: take everything away."
+        type: choice
+        required: true
+        default: what-if
+        options:
+          - what-if
+          - deploy
+          - pause
+          - remove
+      check_limits:
+        description: "With deploy: also check that the token rate is enforced. It uses about a minute's allowance of tokens and blocks the key for up to a minute."
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: hub
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  hub:
+    name: Hub (${{ inputs.action }})
+    if: github.actor == 'tinodo' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      ACTION: ${{ inputs.action }}
+      HUB_RESOURCE_GROUP: ${{ vars.HUB_RESOURCE_GROUP }}
+      HUB_LOCATION: ${{ vars.HUB_LOCATION }}
+      HUB_VNET_PREFIX: ${{ vars.HUB_VNET_PREFIX }}
+      HUB_PE_SUBNET_PREFIX: ${{ vars.HUB_PE_SUBNET_PREFIX }}
+      HUB_DNS_SERVERS: ${{ vars.HUB_DNS_SERVERS }}
+      HUB_OWNER: ${{ vars.HUB_OWNER }}
+      HUB_BUDGET_AMOUNT: ${{ vars.HUB_BUDGET_AMOUNT }}
+      HUB_ALERT_EMAILS: ${{ vars.HUB_ALERT_EMAILS }}
+      HUB_APIM_LOGGER: ${{ vars.HUB_APIM_LOGGER }}
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: The tools and the template pass their checks
+        run: |
+          python3 -m unittest discover -s tools/tests
+          python3 tools/workflow-lint.py
+          az bicep build --file hub/main.bicep --stdout > /dev/null
+
+      - name: Sign in to Azure
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Read the API Management instance
+        id: apim
+        env:
+          HUB_APIM_RESOURCE_ID: ${{ secrets.HUB_APIM_RESOURCE_ID }}
+        run: |
+          url="https://management.azure.com${HUB_APIM_RESOURCE_ID}?api-version=2024-05-01"
+          principal=$(az rest --method get --url "$url" --query "identity.principalId" --output tsv)
+          gateway=$(az rest --method get --url "$url" --query "properties.gatewayUrl" --output tsv)
+          if [ -z "$principal" ] || [ "$principal" = "None" ]; then
+            echo "::error::The API Management instance has no system-assigned identity. This workflow does not change the instance itself, so its owner turns the identity on once, and the workflow is run again."
+            exit 1
+          fi
+          case "$gateway" in
+            https://*.azure-api.net) ;;
+            *) echo "::error::The instance's gateway address is not an azure-api.net address."; exit 1 ;;
+          esac
+          echo "principal_id=$principal" >> "$GITHUB_OUTPUT"
+          echo "gateway_url=$gateway" >> "$GITHUB_OUTPUT"
+
+      - name: Work out the settings
+        id: params
+        env:
+          HUB_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          HUB_APIM_PRINCIPAL_ID: ${{ steps.apim.outputs.principal_id }}
+        run: python3 tools/hub-params.py --out "$RUNNER_TEMP/hub.parameters.json" >> "$GITHUB_OUTPUT"
+
+      - name: The resource group is there
+        run: az group show --name "$HUB_RESOURCE_GROUP" --query "{name:name, location:location, state:properties.provisioningState}" --output table
+
+      - name: What a deploy would change in Azure
+        if: inputs.action == 'what-if' || inputs.action == 'deploy'
+        run: |
+          az deployment group what-if --only-show-errors --resource-group "$HUB_RESOURCE_GROUP" \
+            --template-file hub/main.bicep --parameters "@$RUNNER_TEMP/hub.parameters.json" \
+            --result-format FullResourcePayloads
+
+      - name: What would change in the API Management instance
+        if: inputs.action == 'what-if'
+        env:
+          HUB_APIM_RESOURCE_ID: ${{ secrets.HUB_APIM_RESOURCE_ID }}
+          FOUNDRY_ENDPOINT: ${{ steps.params.outputs.endpoint }}
+        run: |
+          python3 tools/apim-sync.py plan --apim "$HUB_APIM_RESOURCE_ID" \
+            --var "FOUNDRY_ENDPOINT=$FOUNDRY_ENDPOINT" --var "APPINSIGHTS_LOGGER=$HUB_APIM_LOGGER"
+
+      - name: Deploy the network, the model account and its private endpoint
+        if: inputs.action == 'deploy'
+        env:
+          EXPECTED_ENDPOINT: ${{ steps.params.outputs.endpoint }}
+        run: |
+          deploy() {
+            az deployment group create --only-show-errors --resource-group "$HUB_RESOURCE_GROUP" \
+              --name "hub-$GITHUB_RUN_ID" --template-file hub/main.bicep \
+              --parameters "@$RUNNER_TEMP/hub.parameters.json" "$@" \
+              --query properties.outputs.endpoint.value --output tsv
+          }
+          if endpoint=$(deploy 2> "$RUNNER_TEMP/deploy.err"); then
+            cat "$RUNNER_TEMP/deploy.err" >&2
+          elif grep -q FlagMustBeSetForRestore "$RUNNER_TEMP/deploy.err"; then
+            echo "A soft-deleted account of this name is left from an earlier removal; it is restored (it holds nothing)."
+            endpoint=$(deploy restoreAccount=true)
+          else
+            cat "$RUNNER_TEMP/deploy.err" >&2
+            exit 1
+          fi
+          if [ "${endpoint%/}" != "$EXPECTED_ENDPOINT" ]; then
+            echo "::error::The deployed account answers on ${endpoint%/}, not on $EXPECTED_ENDPOINT. Nothing was added to the API Management instance."
+            exit 1
+          fi
+
+      - name: Wait until the landing zone has registered the endpoint's name
+        if: inputs.action == 'deploy'
+        env:
+          PRIVATE_ENDPOINT: ${{ steps.params.outputs.private_endpoint }}
+        run: |
+          for attempt in $(seq 1 40); do
+            zones=$(az network private-endpoint dns-zone-group list --resource-group "$HUB_RESOURCE_GROUP" \
+              --endpoint-name "$PRIVATE_ENDPOINT" --query "[].privateDnsZoneConfigs[].privateDnsZoneId" --output tsv || true)
+            if grep -qi 'privatelink.cognitiveservices.azure.com' <<< "$zones"; then
+              echo "The landing zone's policy has registered $PRIVATE_ENDPOINT in the central private DNS zone."
+              exit 0
+            fi
+            echo "Not registered yet (check $attempt of 40). The policy acts about ten minutes after the endpoint exists."
+            sleep 60
+          done
+          echo "::error::The landing zone's policy has not registered $PRIVATE_ENDPOINT in the central private DNS zone after 40 minutes. Nothing was added to the API Management instance. Look at the policy compliance of the endpoint; do not create a private DNS zone."
+          exit 1
+
+      - name: What changes in the API Management instance
+        if: inputs.action == 'deploy'
+        env:
+          HUB_APIM_RESOURCE_ID: ${{ secrets.HUB_APIM_RESOURCE_ID }}
+          FOUNDRY_ENDPOINT: ${{ steps.params.outputs.endpoint }}
+        run: |
+          python3 tools/apim-sync.py plan --apim "$HUB_APIM_RESOURCE_ID" \
+            --var "FOUNDRY_ENDPOINT=$FOUNDRY_ENDPOINT" --var "APPINSIGHTS_LOGGER=$HUB_APIM_LOGGER"
+
+      - name: Add the Meternaut objects to the API Management instance
+        if: inputs.action == 'deploy'
+        env:
+          HUB_APIM_RESOURCE_ID: ${{ secrets.HUB_APIM_RESOURCE_ID }}
+          FOUNDRY_ENDPOINT: ${{ steps.params.outputs.endpoint }}
+        run: |
+          python3 tools/apim-sync.py apply --apim "$HUB_APIM_RESOURCE_ID" \
+            --var "FOUNDRY_ENDPOINT=$FOUNDRY_ENDPOINT" --var "APPINSIGHTS_LOGGER=$HUB_APIM_LOGGER"
+
+      - name: The hub answers as its contract says
+        if: inputs.action == 'deploy'
+        env:
+          HUB_APIM_RESOURCE_ID: ${{ secrets.HUB_APIM_RESOURCE_ID }}
+          GATEWAY_URL: ${{ steps.apim.outputs.gateway_url }}
+          CHECK_LIMITS: ${{ inputs.check_limits }}
+        run: |
+          key="$(python3 tools/apim-sync.py key --apim "$HUB_APIM_RESOURCE_ID")"
+          echo "::add-mask::$key"
+          flags=()
+          if [ "$CHECK_LIMITS" = "true" ]; then flags+=(--limits); fi
+          HUB_SMOKE_KEY="$key" python3 tools/hub-smoke.py --url "${GATEWAY_URL%/}/meternaut/llm/v1/chat/completions" "${flags[@]}"
+
+      - name: Take the Meternaut objects out of the API Management instance
+        if: inputs.action == 'pause' || inputs.action == 'remove'
+        env:
+          HUB_APIM_RESOURCE_ID: ${{ secrets.HUB_APIM_RESOURCE_ID }}
+          FOUNDRY_ENDPOINT: ${{ steps.params.outputs.endpoint }}
+        run: |
+          python3 tools/apim-sync.py remove --apim "$HUB_APIM_RESOURCE_ID" \
+            --var "FOUNDRY_ENDPOINT=$FOUNDRY_ENDPOINT" --var "APPINSIGHTS_LOGGER=$HUB_APIM_LOGGER"
+
+      - name: Take the resources away
+        if: inputs.action == 'pause' || inputs.action == 'remove'
+        env:
+          ACCOUNT_NAME: ${{ steps.params.outputs.account_name }}
+          PRIVATE_ENDPOINT: ${{ steps.params.outputs.private_endpoint }}
+          VNET_NAME: ${{ steps.params.outputs.vnet_name }}
+          NSG_NAME: ${{ steps.params.outputs.nsg_name }}
+        run: |
+          # Only what hub/main.bicep names is deleted, in the order that lets each delete succeed.
+          # present: success when the resource exists, failure when the platform says it does not, and a stop on any other error.
+          present() {
+            local err
+            if err=$("$@" 2>&1 > /dev/null); then return 0; fi
+            case "$err" in
+              *NotFound*|*"was not found"*|*"could not be found"*) return 1 ;;
+              *) echo "$err" >&2; exit 1 ;;
+            esac
+          }
+          if present az network private-endpoint show --resource-group "$HUB_RESOURCE_GROUP" --name "$PRIVATE_ENDPOINT"; then
+            az network private-endpoint delete --resource-group "$HUB_RESOURCE_GROUP" --name "$PRIVATE_ENDPOINT"
+            echo "Deleted the private endpoint $PRIVATE_ENDPOINT."
+          else
+            echo "The private endpoint $PRIVATE_ENDPOINT is not there."
+          fi
+          if [ "$ACTION" = "remove" ]; then
+            if present az cognitiveservices account show --resource-group "$HUB_RESOURCE_GROUP" --name "$ACCOUNT_NAME"; then
+              az cognitiveservices account delete --resource-group "$HUB_RESOURCE_GROUP" --name "$ACCOUNT_NAME"
+              echo "Deleted the model account $ACCOUNT_NAME. It is soft-deleted; the next deploy restores it by itself."
+            else
+              echo "The model account $ACCOUNT_NAME is not there."
+            fi
+            if present az network vnet show --resource-group "$HUB_RESOURCE_GROUP" --name "$VNET_NAME"; then
+              az network vnet delete --resource-group "$HUB_RESOURCE_GROUP" --name "$VNET_NAME"
+              echo "Deleted the virtual network $VNET_NAME."
+            else
+              echo "The virtual network $VNET_NAME is not there."
+            fi
+            if present az network nsg show --resource-group "$HUB_RESOURCE_GROUP" --name "$NSG_NAME"; then
+              az network nsg delete --resource-group "$HUB_RESOURCE_GROUP" --name "$NSG_NAME"
+              echo "Deleted the network security group $NSG_NAME."
+            else
+              echo "The network security group $NSG_NAME is not there."
+            fi
+            budget="https://management.azure.com/subscriptions/$(az account show --query id --output tsv)/resourceGroups/$HUB_RESOURCE_GROUP/providers/Microsoft.Consumption/budgets/meternaut-hub?api-version=2024-08-01"
+            if present az rest --method get --url "$budget" --output none; then
+              az rest --method delete --url "$budget"
+              echo "Deleted the budget meternaut-hub."
+            else
+              echo "The budget meternaut-hub is not there."
+            fi
+          fi
+
+      - name: What was done
+        if: always()
+        env:
+          JOB_STATUS: ${{ job.status }}
+          CHECK_LIMITS: ${{ inputs.check_limits }}
+          ACCOUNT_NAME: ${{ steps.params.outputs.account_name }}
+          GATEWAY_URL: ${{ steps.apim.outputs.gateway_url }}
+        run: |
+          {
+            echo "### Hub: $ACTION, $JOB_STATUS"
+            echo
+            case "$ACTION" in
+              what-if) echo "Nothing was changed. Read the two lists above: what a deploy would do in Azure, and in the API Management instance." ;;
+              deploy)
+                echo "The model account \`$ACCOUNT_NAME\` is behind a private endpoint in resource group \`$HUB_RESOURCE_GROUP\`, and the Meternaut objects are in the API Management instance."
+                echo "Route for the learning demonstration: \`${GATEWAY_URL%/}/meternaut/llm/v1/chat/completions\` (the key is the \`meternaut-learning-demo-dev-sub-01\` subscription; it is not shown here)."
+                if [ "$CHECK_LIMITS" = "true" ]; then echo "The token rate was checked."; else echo "The token rate was not checked in this run (check_limits)."; fi ;;
+              pause) echo "The Meternaut objects and the private endpoint are gone. The model account, the network and the budget stay and cost nothing while idle. Deploy again to bring it back." ;;
+              remove) echo "Everything this workflow made is gone, and the Meternaut objects are out of the API Management instance. The model account is soft-deleted; the next deploy restores it by itself." ;;
+            esac
+          } >> "$GITHUB_STEP_SUMMARY"

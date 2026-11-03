@@ -37,27 +37,13 @@ jobs:
         run: python -m unittest discover -s evaluation/c14/tests -t evaluation/c14
       - name: The learning demonstration runs end to end on its template pack
         run: python evaluation/c14/run.py demo --out "$RUNNER_TEMP/c14-demo"
+      - name: The workflows follow the rules, and are valid YAML
+        run: |
+          python tools/workflow-lint.py
+          ruby -ryaml -e 'ARGV.each { |f| YAML.load_file(f); puts "#{f}: valid YAML" }' .github/workflows/*.yml
       - name: The Bicep templates compile and lint
         run: |
-          for template in infra/budgets/*.bicep; do
+          for template in infra/budgets/*.bicep hub/main.bicep; do
             az bicep build --file "$template" --stdout > /dev/null
             az bicep lint --file "$template"
           done
-      - name: The hub's patch applies to the pinned accelerator, and its files compile
-        env:
-          HUB_OWNER: ci
-          HUB_RESOURCE_GROUP: ci-hub-rg
-          HUB_APIM_NAME: ci-hub
-          HUB_KEY_VAULT_NAME: ci-hub-kv
-          HUB_SUBSCRIPTION_ID: 00000000-0000-0000-0000-000000000000
-        run: |
-          commit=$(python -c "import json; print(json.load(open('hub/accelerator.json'))['commit'])")
-          git init --quiet local/accelerator
-          git -C local/accelerator fetch --quiet --depth 1 https://github.com/Azure-Samples/ai-hub-gateway-solution-accelerator "$commit"
-          git -C local/accelerator checkout --quiet FETCH_HEAD
-          git -C local/accelerator apply --ignore-whitespace ../../hub/accelerator-changes.patch
-          az bicep build --file local/accelerator/bicep/infra/main.bicep --stdout > /dev/null
-          az bicep build-params --file hub/meternaut-dev.bicepparam --stdout > /dev/null
-          az bicep build-params --file hub/contracts/learning-demo-dev/main.bicepparam --stdout > /dev/null
-          az bicep build --file hub/dns-gateway.bicep --stdout > /dev/null
-          az bicep lint --file hub/dns-gateway.bicep

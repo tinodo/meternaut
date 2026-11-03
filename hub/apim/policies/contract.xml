@@ -1,0 +1,20 @@
+<policies>
+    <inbound>
+        <base />
+        <!-- The models this contract's key may use; the API's policy checks every request against the list. -->
+        <set-variable name="allowedModels" value="${ALLOWED_MODELS}" />
+        <!-- A rate per minute and a quota per month, counted for the contract's key from the tokens the model
+             reports. Past the rate the answer is 429, past the quota 403. The request that crosses a limit
+             still completes; the next one is refused. -->
+        <llm-token-limit counter-key="@(context.Subscription.Id)" tokens-per-minute="${TOKENS_PER_MINUTE}" estimate-prompt-tokens="false" token-quota="${TOKEN_QUOTA_PER_MONTH}" token-quota-period="Monthly" />
+    </inbound>
+    <backend>
+        <base />
+    </backend>
+    <outbound>
+        <base />
+    </outbound>
+    <on-error>
+        <base />
+    </on-error>
+</policies>

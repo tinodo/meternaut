@@ -1,0 +1,69 @@
+{
+  "apiVersion": "2024-05-01",
+  "prefix": "meternaut-",
+  "objects": [
+    {
+      "path": "products/${CONTRACT}",
+      "body": {
+        "properties": {
+          "displayName": "Meternaut learning demonstration (dev)",
+          "description": "Development contract: synthetic data only, one model, token limits in the product policy.",
+          "state": "published",
+          "subscriptionRequired": true,
+          "approvalRequired": false,
+          "subscriptionsLimit": 1
+        }
+      }
+    },
+    {
+      "path": "apis/meternaut-llm",
+      "body": {
+        "properties": {
+          "displayName": "Meternaut LLM",
+          "description": "Chat completions for Meternaut. The model is read from the body; the product says which models the key may use.",
+          "path": "meternaut/llm",
+          "protocols": ["https"],
+          "subscriptionRequired": true,
+          "subscriptionKeyParameterNames": { "header": "api-key" },
+          "serviceUrl": "${FOUNDRY_ENDPOINT}"
+        }
+      }
+    },
+    {
+      "path": "apis/meternaut-llm/operations/chat-completions",
+      "body": {
+        "properties": {
+          "displayName": "Chat completions",
+          "method": "POST",
+          "urlTemplate": "/v1/chat/completions"
+        }
+      }
+    },
+    { "path": "products/${CONTRACT}/apis/meternaut-llm", "body": {} },
+    { "path": "apis/meternaut-llm/policies/policy", "policy": "policies/llm-api.xml" },
+    { "path": "products/${CONTRACT}/policies/policy", "policy": "policies/contract.xml" },
+    {
+      "path": "subscriptions/${CONTRACT}-sub-01",
+      "body": {
+        "properties": {
+          "displayName": "Meternaut learning demonstration (dev), key 1",
+          "scope": "/products/${CONTRACT}",
+          "state": "active"
+        }
+      }
+    },
+    {
+      "path": "apis/meternaut-llm/diagnostics/applicationinsights",
+      "body": {
+        "properties": {
+          "loggerId": "/loggers/${APPINSIGHTS_LOGGER}",
+          "alwaysLog": "allErrors",
+          "sampling": { "samplingType": "fixed", "percentage": 100 },
+          "metrics": true,
+          "verbosity": "error",
+          "logClientIp": false
+        }
+      }
+    }
+  ]
+}

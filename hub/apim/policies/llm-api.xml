@@ -1,0 +1,53 @@
+<policies>
+    <inbound>
+        <base />
+        <!-- The product (the contract) has already set allowedModels and counted the tokens against its limits. -->
+        <set-variable name="requestedModel" value="@{
+            try {
+                var body = context.Request.Body?.As<JObject>(preserveContent: true);
+                return body?["model"]?.ToString() ?? string.Empty;
+            } catch (Exception) {
+                return string.Empty;
+            }
+        }" />
+        <!-- Fails closed: a request without a model, or a key that is not under a contract (no list), is refused. -->
+        <choose>
+            <when condition="@{
+                var requested = (string)context.Variables["requestedModel"];
+                var allowed = context.Variables.GetValueOrDefault<string>("allowedModels", string.Empty).Split(',').Select(m => m.Trim()).ToArray();
+                return requested.Length == 0 || !allowed.Any(m => m == requested);
+            }">
+                <return-response>
+                    <set-status code="403" reason="Forbidden" />
+                    <set-header name="Content-Type" exists-action="override">
+                        <value>application/json</value>
+                    </set-header>
+                    <set-body>{"error":{"code":"model_not_allowed","message":"The contract of this key does not allow the requested model."}}</set-body>
+                </return-response>
+            </when>
+        </choose>
+        <!-- The model account answers only on its private endpoint; the instance reaches it through the landing zone's network. -->
+        <set-backend-service base-url="${FOUNDRY_ENDPOINT}" />
+        <rewrite-uri template="/openai/v1/chat/completions" copy-unmatched-params="false" />
+        <set-query-parameter name="api-version" exists-action="override">
+            <value>v1</value>
+        </set-query-parameter>
+        <!-- The caller's key stops here; the instance's own identity calls the model. -->
+        <set-header name="api-key" exists-action="delete" />
+        <authentication-managed-identity resource="https://cognitiveservices.azure.com" />
+        <llm-emit-token-metric namespace="meternaut">
+            <dimension name="Subscription ID" />
+            <dimension name="API ID" />
+            <dimension name="Model" value="@((string)context.Variables["requestedModel"])" />
+        </llm-emit-token-metric>
+    </inbound>
+    <backend>
+        <base />
+    </backend>
+    <outbound>
+        <base />
+    </outbound>
+    <on-error>
+        <base />
+    </on-error>
+</policies>
