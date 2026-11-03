@@ -6,16 +6,19 @@
 It sends a few small requests to the gateway's chat route and prints one line for each:
 
     valid        the contract's key and model get a completion (200) that carries token usage. A new private endpoint, its
-                 DNS record and the gateway's role on the model account take a while to settle, so a gateway or access
-                 error is retried until --wait seconds have passed; an error that cannot settle (the contract refusing,
-                 a wrong key) is not.
+                 DNS record and the gateway's role on the model account take a while to settle, a new key is not known to
+                 every part of the gateway at once (a 401 for a short while), and a key that went over its allowance in an
+                 earlier run is refused by the gateway itself (429) until the minute is over; all of that is retried until
+                 --wait seconds have passed. An error that cannot settle (the contract refusing a model, the model's own 429)
+                 is not.
     no key       401
     wrong key    401
     other model  403, from the contract (the model is never called)
     no model     400 or 403, from the gateway (the model is never called)
     limit        only with --limits: one request whose reported usage is more than the contract allows per minute, then a
                  small one that the gateway itself must refuse with 429 ({"statusCode":429,...}; a 429 from the model is
-                 not a pass). It costs about one minute's allowance of tokens and blocks the key for up to a minute, so it
+                 not a pass; a failure that may settle is retried until --wait seconds have passed). It costs about one
+                 minute's allowance of tokens and blocks the key for up to a minute (a run after it waits that out), so it
                  is opt-in and runs last.
 
 The key comes from the environment, never from an argument, and is never printed. A request goes only to an
@@ -93,13 +96,16 @@ def snippet(data: bytes, key: str) -> str:
 
 
 def settles(status: int, data: bytes) -> bool:
-    """Whether a failed answer may still turn into a good one: the network, the gateway or the role is not ready yet."""
+    """Whether a failed answer may still turn into a good one: the network, the gateway or the role is not ready yet.
+    A new key can be refused for a while before every part of the gateway knows it, and a key that went over its allowance
+    (in an earlier run of --limits) is refused by the gateway itself until the minute is over. The model's own refusals do
+    not settle: its 429, and a model that the contract does not list."""
     text = data.decode("utf-8", "replace").lower()
     if status in TRANSIENT:
         return True
+    if status == 429:
+        return from_gateway(data)
     if status == 403 and NOT_ALLOWED in text:
-        return False
-    if status == 401 and "subscription key" in text:
         return False
     if status == 404:
         return "resource not found" in text  # the gateway has not picked up the new API yet; the model's own 404 names a deployment
@@ -153,7 +159,7 @@ def expect(wanted: tuple[int, ...], client, body: dict, sent_key: str | None, re
     return ok, f"{status or 'no answer'}" + ("" if ok else f" (wanted {' or '.join(map(str, wanted))}): {snippet(data, real_key)}")
 
 
-def check_limit(client, key, model, tokens_per_minute, sleep):
+def check_limit(client, key, model, tokens_per_minute, wait, sleep, now):
     words = int(tokens_per_minute * 1.2)
     status, data = client.post(chat(model, "word " * words + "\nReply with the single word: ok"), key)
     if status == 429:
@@ -166,14 +172,20 @@ def check_limit(client, key, model, tokens_per_minute, sleep):
     if used is None or used < tokens_per_minute:
         return False, (f"the large request used {used or 'an unknown number of'} tokens, fewer than the {tokens_per_minute} a minute "
                        "that the contract allows, so the check proves nothing: the prompt has to be larger")
-    for attempt in range(1, 4):
+    # The limit counts the large request after its answer: a small request may still be let through for a moment (a few
+    # tries), and a failure that may settle (the network, the gateway) is tried again until the wait is over.
+    deadline, accepted, attempt = now() + wait, 0, 0
+    while True:
+        attempt += 1
         status, data = client.post(chat(model), key)
         if status == 429:
             if from_gateway(data):
                 return True, f"the large request used {used} tokens (200), the next one was refused by the gateway with 429 (attempt {attempt})"
             return False, f"429, but not the gateway's own refusal (the model may be throttling): {snippet(data, key)}"
-        sleep(2)
-    return False, f"the large request used {used} tokens, but the next ones were {status or 'no answer'}, not 429: {snippet(data, key)}"
+        accepted += status == 200
+        if accepted >= 5 or not (status == 200 or settles(status, data)) or now() >= deadline:
+            return False, f"the large request used {used} tokens, but the next ones were {status or 'no answer'}, not 429: {snippet(data, key)}"
+        sleep(5 if status == 200 else 30)
 
 
 def run_checks(client, key, contract: dict, limits: bool, wait: float, sleep=time.sleep, now=time.monotonic) -> list[tuple[str, bool, str]]:
@@ -189,7 +201,7 @@ def run_checks(client, key, contract: dict, limits: bool, wait: float, sleep=tim
         ("no model", *expect((400, 403), client, chat(None), key, key)),
     ]
     if limits:
-        results.append(("limit", *check_limit(client, key, model, int(contract["tokensPerMinute"]), sleep)))
+        results.append(("limit", *check_limit(client, key, model, int(contract["tokensPerMinute"]), wait, sleep, now)))
     return results
 
 

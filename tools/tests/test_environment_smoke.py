@@ -201,7 +201,7 @@ class Checks(unittest.TestCase):
         self.assertIn("gave up after", out)
         self.assertLessEqual(sum(clock.sleeps), 130)
 
-    def test_a_backend_that_refuses_the_role_is_retried_but_the_gateways_own_refusals_are_not(self):
+    def test_what_may_settle_is_retried_and_what_the_contract_or_the_model_decides_is_not(self):
         calls = []
 
         class Gateway:
@@ -212,21 +212,57 @@ class Checks(unittest.TestCase):
                 calls.append(1)
                 return self.answer
 
-        self.run_(Gateway(401, b'{"error":{"code":"PermissionDenied"}}'), "--wait", "60")
-        retried = len(calls)
-        calls.clear()
-        self.run_(Gateway(401, b'{"message":"Access denied due to invalid subscription key."}'), "--wait", "60")
-        self.assertGreater(retried, 1)
-        self.assertEqual(len(calls), 1)
-        calls.clear()
-        self.run_(Gateway(403, NOT_ALLOWED), "--wait", "60")
-        self.assertEqual(len(calls), 1)
-        calls.clear()
-        self.run_(Gateway(404, b'{ "statusCode": 404, "message": "Resource not found" }'), "--wait", "60")
-        self.assertGreater(len(calls), 1)  # the gateway has not picked up the new API yet
-        calls.clear()
-        self.run_(Gateway(404, b'{"error":{"code":"DeploymentNotFound"}}'), "--wait", "60")
-        self.assertEqual(len(calls), 1)  # the model's own 404 will not settle
+        def tries(status, body):
+            calls.clear()
+            self.run_(Gateway(status, body), "--wait", "60")
+            return len(calls)
+
+        self.assertGreater(tries(401, b'{"error":{"code":"PermissionDenied"}}'), 1)  # the gateway's role on the model is not there yet
+        self.assertGreater(tries(401, b'{"message":"Access denied due to invalid subscription key."}'), 1)  # a new key is not known everywhere yet
+        self.assertGreater(tries(429, b'{"statusCode":429,"message":"Token limit is exceeded. Try again in 30 seconds."}'), 1)  # still over the allowance of an earlier run
+        self.assertEqual(tries(429, BACKEND_429), 1)  # the model's own throttling is not waited for
+        self.assertEqual(tries(403, NOT_ALLOWED), 1)
+        self.assertGreater(tries(404, b'{ "statusCode": 404, "message": "Resource not found" }'), 1)  # the gateway has not picked up the new API yet
+        self.assertEqual(tries(404, b'{"error":{"code":"DeploymentNotFound"}}'), 1)  # the model's own 404 will not settle
+
+    def test_a_new_key_that_the_gateway_does_not_know_yet_is_waited_for(self):
+        class Gateway(FakeGateway):
+            unknown_calls = 2
+
+            def post(self, body, key):
+                if key == KEY and self.unknown_calls > 0:
+                    self.unknown_calls -= 1
+                    return 401, b'{"statusCode":401,"message":"Access denied due to invalid subscription key. Make sure to provide a valid key for an active subscription."}'
+                return super().post(body, key)
+
+        code, out, _, clock = self.run_(Gateway())
+        self.assertEqual(code, 0, out)
+        self.assertIn("200 after 3 attempt(s)", out)
+        self.assertEqual(clock.sleeps, [30, 30])
+
+    def test_a_key_that_is_still_over_its_allowance_from_an_earlier_run_is_waited_for(self):
+        class Gateway(FakeGateway):
+            throttled_calls = 2
+
+            def post(self, body, key):
+                if key == KEY and self.throttled_calls > 0:
+                    self.throttled_calls -= 1
+                    return 429, b'{"statusCode":429,"message":"Token limit is exceeded. Try again in 30 seconds."}'
+                return super().post(body, key)
+
+        code, out, _, clock = self.run_(Gateway(), "--limits")
+        self.assertEqual(code, 0, out)
+        self.assertIn("200 after 3 attempt(s)", out)
+        self.assertIn("ok   limit", out)
+        self.assertEqual(clock.sleeps, [30, 30])
+
+    def test_the_models_own_429_on_the_first_request_fails_at_once(self):
+        gateway = FakeGateway(backend_throttles=True)
+        gateway.used = gateway.rate
+        code, out, _, clock = self.run_(gateway, "--wait", "900")
+        self.assertEqual(code, 1)
+        self.assertIn("FAIL valid", out)
+        self.assertEqual((len(gateway.sent), clock.sleeps), (1, []))
 
     def test_a_200_that_is_not_a_completion_fails(self):
         class Gateway:
@@ -268,7 +304,35 @@ class Checks(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("FAIL limit", out)
         self.assertIn("not 429", out)
-        self.assertEqual(clock.sleeps, [2, 2, 2])
+        self.assertEqual(clock.sleeps, [5, 5, 5, 5])
+
+    def test_the_refusal_after_the_large_request_is_waited_for_through_a_hiccup_of_the_gateway(self):
+        class Gateway(FakeGateway):
+            hiccups = 2
+
+            def post(self, body, key):
+                if self.used >= self.rate and self.hiccups > 0:
+                    self.hiccups -= 1
+                    return 502, b"bad gateway"
+                return super().post(body, key)
+
+        code, out, _, clock = self.run_(Gateway(), "--limits")
+        self.assertEqual(code, 0, out)
+        self.assertIn("ok   limit", out)
+        self.assertEqual(clock.sleeps, [30, 30])
+
+    def test_the_wait_ends_the_retries_of_the_refusal_after_the_large_request(self):
+        class Gateway(FakeGateway):
+            def post(self, body, key):
+                if self.used >= self.rate:
+                    return 502, b"bad gateway"
+                return super().post(body, key)
+
+        code, out, _, clock = self.run_(Gateway(), "--limits", "--wait", "60")
+        self.assertEqual(code, 1)
+        self.assertIn("FAIL limit", out)
+        self.assertIn("not 429", out)
+        self.assertEqual(clock.sleeps, [30, 30])
 
     def test_a_large_request_the_model_cannot_take_is_reported_as_such(self):
         code, out, _, _ = self.run_(FakeGateway(big_status=400), "--limits")

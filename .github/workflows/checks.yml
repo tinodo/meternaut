@@ -27,6 +27,10 @@ jobs:
           ref: 81599b31dfbaee20ebd3a6d2ba9b07dde3c31814
           path: kit
           persist-credentials: false
+      - name: Leave out the two usage-recording fragments of the kit's module, as the deploy workflow does
+        run: |
+          git -C kit apply --check ../environment/kit-patches/no-usage-recording-fragments.patch
+          git -C kit apply ../environment/kit-patches/no-usage-recording-fragments.patch
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.13"
@@ -86,7 +90,6 @@ jobs:
           GATEWAY_RESOURCE_ID: /subscriptions/66666666-7777-8888-9999-000000000000/resourceGroups/rg-gateway/providers/Microsoft.ApiManagement/service/example-apim
           GATEWAY_APPINSIGHTS_ID: /subscriptions/66666666-7777-8888-9999-000000000000/resourceGroups/rg-gateway/providers/microsoft.insights/components/example-insights
           GATEWAY_PRINCIPAL_ID: aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee
-          GATEWAY_CLIENT_ID: bbbbbbbb-cccc-dddd-eeee-ffffffffffff
         run: |
           out="$RUNNER_TEMP/params"
           mkdir -p "$out"
