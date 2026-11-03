@@ -11,7 +11,7 @@ on:
   workflow_dispatch:
     inputs:
       action:
-        description: "what-if: show what the next steps would change and change nothing. model-side: the gateway's identity, then the network, the model account with its private endpoint and the budget. gateway-prepare: attach the identity to the gateway and add the loggers. gateway: add the Citadel module's objects to the gateway. contract: add the first contract (a product, its policy and its key) and test the gateway with that key."
+        description: "what-if: show what the next steps would change and change nothing. model-side: the gateway's identity, then the network, the model account with its private endpoint and the budget. gateway-prepare: attach the identity to the gateway and add the logger. gateway: add the Citadel module's objects to the gateway (without the two fragments that need the usage recording's Event Hub). contract: add the first contract (a product, its policy and its key) and test the gateway with that key."
         type: choice
         required: true
         default: what-if
@@ -72,6 +72,13 @@ jobs:
           path: kit
           persist-credentials: false
 
+      - name: Leave out the two usage-recording fragments of the kit's module
+        run: |
+          # The module's fragments ai-usage and pii-state-saving need an Event Hub that this environment does not have
+          # (environment/kit-patches/no-usage-recording-fragments.patch says why); a patch that does not apply stops the run.
+          git -C kit apply --check ../environment/kit-patches/no-usage-recording-fragments.patch
+          git -C kit apply ../environment/kit-patches/no-usage-recording-fragments.patch
+
       - name: The tools, the templates and the kit's module pass their checks
         run: |
           python3 -m unittest discover -s tools/tests
@@ -127,14 +134,13 @@ jobs:
           gateway_subscription=$(sed -n 's/^gateway_subscription=//p' <<< "$outputs")
           gateway_group=$(sed -n 's/^gateway_resource_group=//p' <<< "$outputs")
           identity_name=$(sed -n 's/^identity_name=//p' <<< "$outputs")
-          # Where the identity exists already, its principal id and client id go into the files, so that a what-if shows the real role assignment and the real loggers.
+          # Where the identity exists already, its principal id goes into the files, so that a what-if shows the real role assignment.
           principal=$(az identity list --subscription "$gateway_subscription" --resource-group "$gateway_group" --query "[?name=='$identity_name'].principalId | [0]" --output tsv)
-          client=$(az identity list --subscription "$gateway_subscription" --resource-group "$gateway_group" --query "[?name=='$identity_name'].clientId | [0]" --output tsv)
-          if [ -n "$principal" ] && [ "$principal" != "None" ] && [ -n "$client" ] && [ "$client" != "None" ]; then
-            echo "The gateway identity exists; its principal id and client id are used."
-            GATEWAY_PRINCIPAL_ID="$principal" GATEWAY_CLIENT_ID="$client" python3 tools/environment-params.py build --models environment/models.json --out-dir "$RUNNER_TEMP" $contract_files > /dev/null
+          if [ -n "$principal" ] && [ "$principal" != "None" ]; then
+            echo "The gateway identity exists; its principal id is used."
+            GATEWAY_PRINCIPAL_ID="$principal" python3 tools/environment-params.py build --models environment/models.json --out-dir "$RUNNER_TEMP" $contract_files > /dev/null
           else
-            echo "The gateway identity does not exist yet; the role assignment and the loggers are shown with a placeholder."
+            echo "The gateway identity does not exist yet; the role assignment is shown with a placeholder."
           fi
           # The files are checked against the templates that were compiled above, so a setting that no template takes is found before Azure is asked.
           python3 tools/environment-params.py check --params "$RUNNER_TEMP/environment.parameters.json" --template "$RUNNER_TEMP/environment.json" --label environment
@@ -156,7 +162,7 @@ jobs:
           python3 tools/az-deploy.py what-if --subscription "$ENV_SUBSCRIPTION_ID" --resource-group "$ENV_RESOURCE_GROUP" \
             --template environment/main.bicep --parameters "$RUNNER_TEMP/environment.parameters.json" --restore-param restoreAccount
           echo "::endgroup::"
-          echo "::group::The loggers, in the gateway's resource group"
+          echo "::group::The Application Insights logger, in the gateway's resource group"
           python3 tools/az-deploy.py what-if --subscription "$GATEWAY_SUBSCRIPTION" --resource-group "$GATEWAY_GROUP" \
             --template environment/gateway/logger.bicep --parameters "$RUNNER_TEMP/logger.parameters.json"
           echo "::endgroup::"
@@ -245,17 +251,12 @@ jobs:
           IDENTITY_ID: ${{ steps.found.outputs.identity_id }}
         run: python3 tools/gateway-prep.py attach-identity --apim "$GATEWAY_RESOURCE_ID" --identity "$IDENTITY_ID"
 
-      - name: Add the loggers that the module expects
+      - name: Add the Application Insights logger that the module expects
         if: inputs.action == 'gateway-prepare'
         env:
           GATEWAY_SUBSCRIPTION: ${{ steps.params.outputs.gateway_subscription }}
           GATEWAY_GROUP: ${{ steps.params.outputs.gateway_resource_group }}
         run: |
-          # The two Event Hub loggers name the gateway identity's client id as their credential, so a placeholder is refused.
-          if grep -q '00000000-0000-0000-0000-000000000000' "$RUNNER_TEMP/logger.parameters.json"; then
-            echo "::error::The client id of the gateway identity was not read, so the loggers would name a placeholder. Nothing was added. Run model-side first."
-            exit 1
-          fi
           python3 tools/az-deploy.py create --subscription "$GATEWAY_SUBSCRIPTION" --resource-group "$GATEWAY_GROUP" \
             --template environment/gateway/logger.bicep --parameters "$RUNNER_TEMP/logger.parameters.json" --name "logger-$GITHUB_RUN_ID"
 
@@ -374,7 +375,7 @@ jobs:
               case "$ACTION" in
                 what-if) echo "A what-if changes nothing." ;;
                 model-side) echo "The gateway identity, the network, the model account and the private endpoint may exist now (the endpoint costs a few euros a month while it does). Running \`model-side\` again is safe and repeats only what is missing. \`what-if\` shows what is there." ;;
-                gateway-prepare) echo "The identity may be attached to the gateway and the loggers may exist. Running \`gateway-prepare\` again is safe and repeats only what is missing. The gateway's service-level logging setting before the change is in the first list of this page." ;;
+                gateway-prepare) echo "The identity may be attached to the gateway and the logger may exist. Running \`gateway-prepare\` again is safe and repeats only what is missing. The gateway's service-level logging setting before the change is in the first list of this page." ;;
                 gateway) echo "Some of the module's objects may be in the gateway already. Running \`gateway\` again is safe and repeats only what is missing. The gateway's service-level logging setting before the change is in the first list of this page." ;;
                 contract) echo "The contract's product, its policy and its subscription may be in the gateway already, and the test of the gateway with its key may have failed after that. Running \`contract\` again is safe: it repeats only what is missing and runs the test again." ;;
               esac
@@ -382,7 +383,7 @@ jobs:
               case "$ACTION" in
                 what-if) echo "Nothing was changed. Read the lists above: what the next steps would create, and the gateway as it is now." ;;
                 model-side) echo "The model account \`$ACCOUNT_NAME\` is behind a private endpoint in resource group \`$ENV_RESOURCE_GROUP\`, the gateway identity has its role on it, and the landing zone has registered the endpoint's name. The gateway has not been touched." ;;
-                gateway-prepare) echo "The identity is attached to the gateway (its own identity is kept) and the loggers are there: the Application Insights one, and two placeholders for usage recording, which is not deployed. The Citadel module has not been applied: a what-if now shows its exact diff." ;;
+                gateway-prepare) echo "The identity is attached to the gateway (its own identity is kept) and the logger is there. The Citadel module has not been applied: a what-if now shows its exact diff." ;;
                 gateway) echo "The Citadel module's objects are in the gateway. Nobody can call the new APIs but the instance's all-access key until the first contract exists." ;;
                 contract) echo "The contract \`$CONTRACT_NAME\` is in the gateway: a product that grants the two inference APIs, its policy (the models and the token limits) and one subscription. The checks above ran against the gateway with that subscription's key, which is stored nowhere." ;;
               esac

@@ -92,20 +92,25 @@ class Templates(unittest.TestCase):
     def test_the_logger_has_the_name_the_module_expects(self):
         self.assertIn("name: 'appinsights-logger'", text("environment/gateway/logger.bicep"))
 
-    def test_the_two_event_hub_loggers_are_placeholders_made_one_after_the_other(self):
+    def test_the_logger_template_makes_the_one_logger_of_the_module_and_no_event_hub_logger(self):
         source = text("environment/gateway/logger.bicep")
-        for name in ("usage-eventhub-logger", "pii-usage-eventhub-logger"):
-            self.assertIn(f"name: '{name}'", source)
-        self.assertIn("var placeholderAddress = 'usage-recording-not-deployed.invalid'", source)
-        self.assertEqual(re.findall(r"endpointAddress: (\S+)", source), ["placeholderAddress", "placeholderAddress"])
-        self.assertEqual(source.count("loggerType: 'azureEventHub'"), 2)
-        found = resources(source)
-        self.assertEqual(set(found), {"apim", "appInsights", "logger", "usageLogger", "piiUsageLogger"})
-        # the service takes one write to the instance at a time
-        self.assertEqual(depends_on(found["usageLogger"][1]), {"logger"})
-        self.assertEqual(depends_on(found["piiUsageLogger"][1]), {"usageLogger"})
+        self.assertEqual(set(resources(source)), {"apim", "appInsights", "logger"})
+        self.assertNotIn("azureEventHub", re.sub(r"//.*", "", source))
 
-    def test_no_policy_of_ours_includes_the_fragments_whose_loggers_are_placeholders(self):
+    def test_the_kit_patch_leaves_out_exactly_the_two_usage_recording_fragments(self):
+        patch = text("environment/kit-patches/no-usage-recording-fragments.patch")
+        self.assertEqual(re.findall(r"(?m)^diff --git a/(\S+) b/(\S+)$", patch), [("bicep/infra/modules/apim/policy-fragments.bicep",) * 2])
+        added = [line[1:] for line in patch.splitlines() if line.startswith("+") and not line.startswith("+++")]
+        removed = [line[1:] for line in patch.splitlines() if line.startswith("-") and not line.startswith("---")]
+        self.assertIn("param deployUsageRecordingFragments bool = false", added)  # off unless somebody asks
+        self.assertEqual(sorted(line.split()[1] for line in removed if line.startswith("resource")), ["aiUsagePolicyFragment", "piiStateSavingPolicyFragment"])
+        self.assertEqual(sorted(line.split()[1] for line in removed if line.startswith("output")), ["aiUsagePolicyFragmentName", "piiStateSavingPolicyFragmentName"])
+        self.assertEqual(len(removed), 4, "nothing else of the kit's file is touched")
+        for line in added:
+            if line.startswith("resource"):
+                self.assertIn("deployUsageRecordingFragments", line)
+
+    def test_no_policy_of_ours_includes_the_fragments_that_the_kit_patch_leaves_out(self):
         policy = text("environment/gateway/contract-policy.xml")
         for fragment in ("ai-usage", "pii-state-saving"):
             self.assertNotIn(f'fragment-id="{fragment}"', policy)
@@ -195,14 +200,15 @@ class Workflow(unittest.TestCase):
             if other is not block:
                 self.assertNotIn("$key", other)
 
-    def test_the_loggers_are_added_only_with_the_real_client_id_of_the_identity(self):
-        (block,) = [b for b in self.steps if b.startswith("name: Add the loggers that the module expects")]
-        self.assertIn("if: inputs.action == 'gateway-prepare'", block)
-        self.assertLess(block.index("00000000-0000-0000-0000-000000000000"), block.index("az-deploy.py create"))
-        self.assertIn("exit 1", block.split("az-deploy.py create")[0])
-        settings = [b for b in self.steps if b.startswith("name: Work out the settings\n")][0]
-        self.assertIn("clientId", settings)
-        self.assertIn('GATEWAY_CLIENT_ID="$client"', settings)
+    def test_the_kit_is_patched_before_anything_reads_it_in_the_deploy_workflow_and_in_the_checks(self):
+        for path in (".github/workflows/deploy-hub.yml", ".github/workflows/checks.yml"):
+            source = text(path)
+            check = "git -C kit apply --check ../environment/kit-patches/no-usage-recording-fragments.patch"
+            apply_ = "git -C kit apply ../environment/kit-patches/no-usage-recording-fragments.patch"
+            self.assertIn(check, source, path)
+            self.assertEqual(source.count(apply_), 1, path)
+            self.assertLess(source.index(check), source.index(apply_), path)
+            self.assertLess(source.index(apply_), source.index("kit/bicep/infra/apim-gateway-upgrade/main.bicep"), path)
 
     def test_the_contract_is_added_only_after_the_gateway_has_the_apis_it_grants(self):
         first, second = [b for b in self.steps if b.startswith("name: What the first contract would change")], self.contract_steps()

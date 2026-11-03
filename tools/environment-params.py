@@ -9,16 +9,14 @@ address, name or mail address is in the repository:
 
     ENV_SUBSCRIPTION_ID, ENV_RESOURCE_GROUP, ENV_LOCATION, ENV_VNET_PREFIX, ENV_PE_SUBNET_PREFIX,
     ENV_DNS_SERVERS (comma separated), ENV_OWNER, ENV_BUDGET_AMOUNT, ENV_ALERT_EMAILS (comma separated),
-    ENV_BUDGET_START, GATEWAY_RESOURCE_ID, GATEWAY_APPINSIGHTS_ID, GATEWAY_PRINCIPAL_ID, GATEWAY_CLIENT_ID
+    ENV_BUDGET_START, GATEWAY_RESOURCE_ID, GATEWAY_APPINSIGHTS_ID, GATEWAY_PRINCIPAL_ID
 
 ENV_BUDGET_START is the first day of the month in which the budget was first made, which the workflow reads from the
 existing budget (a budget keeps its start date) or, for a new budget, takes from the current month.
 GATEWAY_RESOURCE_ID is the resource id of the owner's existing API Management instance; GATEWAY_APPINSIGHTS_ID is the
 resource id of the Application Insights component that the instance already logs to; GATEWAY_PRINCIPAL_ID is the object
 id of the gateway's user-assigned identity, which does not exist before the first deploy (a `--preview`, for a
-what-if, then uses a placeholder, and says so). GATEWAY_CLIENT_ID is the same identity's client id, which the two
-placeholder usage loggers name as their credential; it may be left out while the identity does not exist (the output
-client_id_known says whether it was given, and the step that adds the loggers refuses a placeholder).
+what-if, then uses a placeholder, and says so).
 
 It writes three ARM parameter files into --out-dir (four, with --contract):
 
@@ -35,7 +33,8 @@ GitHub to read as step outputs.
 
 The contract names only models that are deployed (environment/models.json) and only the two inference APIs that the
 kit's module makes here, asks for a token rate that the smallest of its model deployments can serve, and its policy is
-the template with the contract's numbers put in and then read back as XML, so a template that lost a rule, or counted
+the template with the contract's numbers put in and then read back as XML, so a template that lost a rule, that gained
+one (a branch, a second assignment of the models, anything the template does not have, at any depth), or that counted
 the tokens of all consumers together, is refused here.
 
 The settings of the kit's module are chosen here and explained here, not in the workflow, so that a test can hold them:
@@ -44,6 +43,10 @@ The settings of the kit's module are chosen here and explained here, not in the 
     the model account's own (a named value may not be empty).
   - No prompt and no answer is logged: the LLM log settings say `none` for both, so only token counts and the model's name
     are kept.
+  - The two policy fragments that send usage records to an Event Hub (`ai-usage`, `pii-state-saving`) are not created: the
+    kit's own deployment makes the loggers that they need together with the Event Hub, the module does not, and the service
+    refuses a fragment whose logger is missing. The usage recording is left out, and no API here includes them; the patch
+    environment/kit-patches/no-usage-recording-fragments.patch (applied to the kit's checkout) does it.
   - JWT checking is off (callers use the contract's key) until an app registration exists; the Unified AI, Realtime,
     Redis, embeddings and release-version parts are off; no second logger and no diagnostic setting is made for Azure Monitor.
 """
@@ -79,6 +82,7 @@ CONTRACT_NAME = re.compile(r"^[a-z][a-z0-9-]{1,58}[a-z0-9]$")
 CONTRACT_KEYS = {"name", "description", "apis", "allowedModels", "tokensPerMinute", "tokenQuotaPerMonth"}
 CONTRACT_APIS = ("universal-llm-api", "azure-openai-api")
 POLICY_PLACEHOLDERS = ("@@ALLOWED_MODELS@@", "@@TOKENS_PER_MINUTE@@", "@@TOKEN_QUOTA@@")
+POLICY_TAGS = {"policies", "inbound", "backend", "outbound", "on-error", "base", "include-fragment", "set-variable", "llm-token-limit"}
 MAX_QUOTA = 1_000_000_000
 
 AZURE_MONITOR_LOG_SETTINGS = {
@@ -203,9 +207,15 @@ def contract_policy(template: str, contract: dict) -> str:
     if "@@" in policy:
         raise Problem("the policy template holds a placeholder that the contract does not fill")
     try:
-        inbound = ET.fromstring(policy).find("inbound")
+        root = ET.fromstring(policy)
     except ET.ParseError as e:
         raise Problem(f"the contract's policy is not well-formed XML: {e}")
+    # Only the rules of the template may be in the policy, at any depth: a <choose>, a <return-response> or a second
+    # set-variable could undo the models and the limits below, and a contract is only worth what its policy holds.
+    for element in root.iter():
+        if element.tag not in POLICY_TAGS:
+            raise Problem(f"the contract's policy holds <{element.tag}>, a rule that the policy template does not have: only {', '.join(sorted(POLICY_TAGS))} are allowed")
+    inbound = root.find("inbound")
     if inbound is None:
         raise Problem("the contract's policy has no inbound section")
     models = [v for v in inbound.findall("set-variable") if v.get("name") == "allowedModels"]
@@ -221,6 +231,18 @@ def contract_policy(template: str, contract: dict) -> str:
                 "token-quota": str(contract["tokenQuotaPerMonth"]), "token-quota-period": "Monthly", "estimate-prompt-tokens": "false"}
     if {k: limits[0].get(k) for k in expected} != expected:
         raise Problem("the contract's token limit counts for each subscription, per minute and per month, as the contract says")
+    # The whole shape, as a last check: the four sections in order, nothing but <base /> after the inbound section, and
+    # exactly these rules, with exactly these attributes, in the inbound section.
+    if root.tag != "policies" or [c.tag for c in root] != ["inbound", "backend", "outbound", "on-error"]:
+        raise Problem("the contract's policy has the sections inbound, backend, outbound and on-error, in this order")
+    for section in list(root)[1:]:
+        if [(c.tag, dict(c.attrib), len(c)) for c in section] != [("base", {}, 0)]:
+            raise Problem(f"the contract's policy has nothing but <base /> in its {section.tag} section")
+    rules = [("base", {}), ("include-fragment", {"fragment-id": "set-llm-requested-model"}),
+             ("set-variable", {"name": "allowedModels", "value": ",".join(contract["allowedModels"])}),
+             ("llm-token-limit", expected), ("set-variable", {"name": "enableResponseHeaders", "value": "@(true)"})]
+    if [(c.tag, dict(c.attrib), len(c)) for c in inbound] != [(tag, attributes, 0) for tag, attributes in rules]:
+        raise Problem("the contract's inbound section has exactly the rules of the policy template, in its order: base, set-llm-requested-model, allowedModels, the token limit, enableResponseHeaders")
     return policy
 
 
@@ -268,12 +290,6 @@ def build(env, models: list[dict], preview: bool = False, contract: dict | None 
         principal = PLACEHOLDER
     if not GUID.match(principal):
         raise Problem("GATEWAY_PRINCIPAL_ID is the object id of the gateway's user-assigned identity")
-    client_id = (env.get("GATEWAY_CLIENT_ID") or "").strip()
-    client_id_known = bool(client_id)
-    if not client_id_known:
-        client_id = PLACEHOLDER
-    if not GUID.match(client_id):
-        raise Problem("GATEWAY_CLIENT_ID is the client id of the gateway's user-assigned identity")
 
     vnet = network(need(env, "ENV_VNET_PREFIX"), "ENV_VNET_PREFIX")
     subnet = network(need(env, "ENV_PE_SUBNET_PREFIX"), "ENV_PE_SUBNET_PREFIX")
@@ -325,7 +341,6 @@ def build(env, models: list[dict], preview: bool = False, contract: dict | None 
         "apimName": gateway.group(3),
         "appInsightsName": insights.group(3),
         "appInsightsResourceGroup": insights.group(2),
-        "gatewayIdentityClientId": client_id.lower(),
     }
     backend = {
         "backendId": name,
@@ -387,7 +402,6 @@ def build(env, models: list[dict], preview: bool = False, contract: dict | None 
         "gateway_name": gateway.group(3),
         "identity_name": IDENTITY_NAME,
         "principal_known": "true" if principal_known else "false",
-        "client_id_known": "true" if client_id_known else "false",
     }
     files = {
         "environment.parameters.json": parameters(environment),

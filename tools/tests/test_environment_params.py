@@ -34,7 +34,6 @@ SETTINGS = {
     "GATEWAY_RESOURCE_ID": "/subscriptions/66666666-7777-8888-9999-000000000000/resourceGroups/rg-gateway/providers/Microsoft.ApiManagement/service/example-apim",
     "GATEWAY_APPINSIGHTS_ID": "/subscriptions/66666666-7777-8888-9999-000000000000/resourceGroups/rg-gateway/providers/microsoft.insights/components/example-insights",
     "GATEWAY_PRINCIPAL_ID": "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE",
-    "GATEWAY_CLIENT_ID": "BBBBBBBB-CCCC-DDDD-EEEE-FFFFFFFFFFFF",
 }
 
 
@@ -77,7 +76,6 @@ class Build(unittest.TestCase):
         self.assertEqual(lines["gateway_name"], "example-apim")
         self.assertEqual(lines["gateway_resource_group"], "rg-gateway")
         self.assertEqual(lines["principal_known"], "true")
-        self.assertEqual(lines["client_id_known"], "true")
 
     def test_the_account_name_is_a_valid_host_name_and_the_same_on_every_run(self):
         names = {values(run(SETTINGS)[3]["environment.parameters.json"])["accountName"] for _ in range(3)}
@@ -108,16 +106,7 @@ class Build(unittest.TestCase):
         given = run(SETTINGS)[3]["logger.parameters.json"]["parameters"]
         self.assertEqual(set(given), set(declared))
         self.assertEqual(values(run(SETTINGS)[3]["logger.parameters.json"]), {
-            "apimName": "example-apim", "appInsightsName": "example-insights", "appInsightsResourceGroup": "rg-gateway",
-            "gatewayIdentityClientId": "bbbbbbbb-cccc-dddd-eeee-ffffffffffff"})
-
-    def test_a_client_id_that_was_left_out_is_a_placeholder_and_says_so(self):
-        env = {k: v for k, v in SETTINGS.items() if k != "GATEWAY_CLIENT_ID"}
-        code, out, err, files = run(env)
-        self.assertEqual((code, err), (0, ""))
-        self.assertIn("client_id_known=false", out)
-        self.assertEqual(values(files["logger.parameters.json"])["gatewayIdentityClientId"], ep.PLACEHOLDER)
-        self.assertEqual(values(run({**env, "GATEWAY_CLIENT_ID": "  "})[3]["logger.parameters.json"])["gatewayIdentityClientId"], ep.PLACEHOLDER)
+            "apimName": "example-apim", "appInsightsName": "example-insights", "appInsightsResourceGroup": "rg-gateway"})
 
     def test_the_names_the_workflow_removes_are_the_ones_the_template_gives(self):
         lines = dict(line.split("=", 1) for line in run(SETTINGS)[1].splitlines())
@@ -212,7 +201,7 @@ class Refusals(unittest.TestCase):
 
     def test_a_missing_setting_is_named(self):
         for name in SETTINGS:
-            if name in ("GATEWAY_PRINCIPAL_ID", "GATEWAY_CLIENT_ID"):
+            if name == "GATEWAY_PRINCIPAL_ID":
                 continue
             env = {k: v for k, v in SETTINGS.items() if k != name}
             code, _, err, _ = run(env)
@@ -223,7 +212,6 @@ class Refusals(unittest.TestCase):
     def test_bad_ids_names_and_labels(self):
         self.refused(ENV_SUBSCRIPTION_ID="not-a-guid")
         self.refused(GATEWAY_PRINCIPAL_ID="1234")
-        self.refused(GATEWAY_CLIENT_ID="1234")
         for bad in ("rg name", "rg/x", "rg;x", "-", "a" * 91, "rg.", "$(x)"):
             self.refused(ENV_RESOURCE_GROUP=bad)
         for bad in ("Sweden Central", "sweden_central", "x", "https://x"):
@@ -393,6 +381,22 @@ class Contract(unittest.TestCase):
                        template.replace('estimate-prompt-tokens="false"', 'estimate-prompt-tokens="true"'),
                        template.replace("<inbound>", '<inbound><llm-token-limit counter-key="x" tokens-per-minute="1" />'),
                        template.replace("<inbound>", "<inbound>@@EXTRA@@"),
+                       # a rule the template does not have, nested or not, in any section
+                       template.replace("</inbound>", '<choose><when condition="@(true)"><set-variable name="allowedModels" value="" /></when></choose></inbound>'),
+                       template.replace("</inbound>", '<return-response><set-status code="200" /></return-response></inbound>'),
+                       template.replace("</inbound>", '<set-variable name="allowedModels" value="" /></inbound>'),
+                       template.replace("</inbound>", '<set-header name="x" exists-action="override"><value>1</value></set-header></inbound>'),
+                       template.replace("</outbound>", '<set-variable name="allowedModels" value="" /></outbound>'),
+                       template.replace("</backend>", '<set-variable name="allowedModels" value="" /></backend>'),
+                       template.replace("</on-error>", '<llm-token-limit counter-key="x" tokens-per-minute="1" /></on-error>'),
+                       template.replace("<base />", '<base><set-variable name="allowedModels" value="" /></base>', 1),
+                       template.replace('<include-fragment fragment-id="set-llm-requested-model" />', '<include-fragment fragment-id="set-llm-requested-model" /><include-fragment fragment-id="ai-usage" />'),
+                       template.replace('<set-variable name="enableResponseHeaders" value="@(true)" />', '<set-variable name="enableResponseHeaders" value="@(true)" /><set-variable name="other" value="1" />'),
+                       template.replace('<set-variable name="enableResponseHeaders" value="@(true)" />', '<set-variable name="enableResponseHeaders" value="@(false)" />'),
+                       template.replace("<llm-token-limit ", '<llm-token-limit retry-after-variable-name="x" '),
+                       # the same rules in another order
+                       template.replace('<set-variable name="enableResponseHeaders" value="@(true)" />', "").replace("<base />", '<base /><set-variable name="enableResponseHeaders" value="@(true)" />', 1),
+                       template.replace("<inbound>", "<inbound><backend />"),
                        template.replace("</policies>", ""),
                        "<policies><backend /></policies>",
                        ""):
