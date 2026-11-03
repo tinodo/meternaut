@@ -2,6 +2,14 @@
 
 All notable changes, newest first. Versions are git tags: `ideation-vN` for the ideation (`docs/01` to `docs/10` and the research), `design-vN` for the design (`docs/design/`; `design-v1` was withdrawn), `experience-vN` for the experience design (`docs/experience/`) and `build-plan-vN` for the build plan (`docs/build-plan/`). A heading without a tag records a change that is not a new edition. The previous editions stay available at their tags, and the earliest are archived under [`docs/_archive/`](docs/_archive/), which is never edited.
 
+## The first environment is approved, and the workflow is back — 2026-11-03
+
+**What.** The owner said "deploy it" and, when the agent came back with a smaller plan and asked again, "deploy the solution". That is his approval of [the first-environment proposal](docs/proposals/01-first-environment.md) ([AGENTS.md](AGENTS.md) rule 21). The workflow [`deploy-hub.yml`](.github/workflows/deploy-hub.yml), the templates in [`environment/`](environment/) and the tools they need are back in the repository (the workflow lint and the budget template restored from the tag `implementation-v0`, the rest new; the plan and the code were reviewed twice by an independent model, and its blocking findings fixed). The workflow does four things: `what-if` (reads, changes nothing); `model-side` (a small network, the private model account with two models, its private endpoint and a budget, in a resource group of its own); `gateway-prepare` (one managed identity attached to the owner's API Management instance without touching the identity it has, and a second logger on the Application Insights it already uses); `gateway` (Citadel's gateway-upgrade module at a pinned commit). The entries above this one say what has been deployed.
+
+**What it leaves out on purpose.** Citadel's call-recording part (a Logic App on a Standard plan, Event Hub, Cosmos DB, Key Vault and nine private endpoints: about 265 euros a month at list prices) is not part of this change. The owner's word adds it.
+
+**Rules.** [AGENTS.md](AGENTS.md) rule 21 records the approval; rules 15, 18 and 19 apply.
+
 ## The first environment, studied and made lean — 2026-11-03
 
 **What.** The owner said "deploy it". The agent took that as the word to start step 0 of [the first-environment proposal](docs/proposals/01-first-environment.md), which only reads, and stopped there: the next steps need his yes to a specific list (rule 18: the identity that runs the workflow, what each of its roles may change, and the objects that the owner's own API Management instance would receive). The study read the landing zone's policies and network manager, the existing instance, the kit's gateway-upgrade module and live prices. **Nothing in Azure was changed, and no code or pipeline was added.**

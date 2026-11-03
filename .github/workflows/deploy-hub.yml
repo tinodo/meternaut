@@ -1,0 +1,312 @@
+name: Hub
+
+# The only way anything of the hub reaches Azure (AGENTS.md rule 18). "The hub" is the Citadel governance hub: the one
+# gateway for every model call, here the owner's existing API Management instance with Microsoft's Citadel rules, and the
+# private model account behind it. Nothing starts this workflow but a click on "Run workflow" in the Actions tab. It signs
+# in to Azure with OpenID Connect and a credential that exists only for the main branch, so a copy of this file on any
+# other branch cannot sign in. "what-if" reads and changes nothing.
+# What it does, and what to set up once before the first run: environment/BOOTSTRAP.md.
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "what-if: show what the next steps would change and change nothing. model-side: the gateway's identity, then the network, the model account with its private endpoint and the budget. gateway-prepare: attach the identity to the gateway and add the logger. gateway: add the Citadel module's objects to the gateway."
+        type: choice
+        required: true
+        default: what-if
+        options:
+          - what-if
+          - model-side
+          - gateway-prepare
+          - gateway
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: hub
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  hub:
+    name: Hub (${{ inputs.action }})
+    if: github.actor == 'tinodo' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    env:
+      ACTION: ${{ inputs.action }}
+      ENV_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      ENV_RESOURCE_GROUP: ${{ vars.ENV_RESOURCE_GROUP }}
+      ENV_LOCATION: ${{ vars.ENV_LOCATION }}
+      ENV_VNET_PREFIX: ${{ vars.ENV_VNET_PREFIX }}
+      ENV_PE_SUBNET_PREFIX: ${{ vars.ENV_PE_SUBNET_PREFIX }}
+      ENV_DNS_SERVERS: ${{ vars.ENV_DNS_SERVERS }}
+      ENV_OWNER: ${{ vars.ENV_OWNER }}
+      ENV_BUDGET_AMOUNT: ${{ vars.ENV_BUDGET_AMOUNT }}
+      ENV_ALERT_EMAILS: ${{ vars.ENV_ALERT_EMAILS }}
+      GATEWAY_RESOURCE_ID: ${{ secrets.GATEWAY_RESOURCE_ID }}
+      GATEWAY_APPINSIGHTS_ID: ${{ secrets.GATEWAY_APPINSIGHTS_ID }}
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check out the Citadel kit at the commit that was read
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: Azure-Samples/ai-hub-gateway-solution-accelerator
+          ref: 81599b31dfbaee20ebd3a6d2ba9b07dde3c31814
+          path: kit
+          persist-credentials: false
+
+      - name: The tools, the templates and the kit's module pass their checks
+        run: |
+          python3 -m unittest discover -s tools/tests
+          python3 tools/workflow-lint.py
+          for template in environment/main.bicep environment/gateway/identity.bicep environment/gateway/logger.bicep; do
+            az bicep build --file "$template" --stdout > /dev/null
+            az bicep lint --file "$template"
+          done
+          az bicep build --file environment/main.bicep --outfile "$RUNNER_TEMP/environment.json"
+          az bicep build --file environment/gateway/logger.bicep --outfile "$RUNNER_TEMP/logger.json"
+          az bicep build --file kit/bicep/infra/apim-gateway-upgrade/main.bicep --outfile "$RUNNER_TEMP/kit.json"
+
+      - name: Sign in to Azure
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Read the gateway and its Application Insights
+        run: python3 tools/gateway-prep.py facts --apim "$GATEWAY_RESOURCE_ID" --insights "$GATEWAY_APPINSIGHTS_ID" --summary "$GITHUB_STEP_SUMMARY" > /dev/null
+
+      - name: The resource group is there
+        run: az group show --name "$ENV_RESOURCE_GROUP" --query "{name:name, location:location, state:properties.provisioningState}" --output table
+
+      - name: Read the start date of the budget
+        id: budget
+        run: |
+          # A budget keeps its start date, so an existing one is read and passed on again; a new one starts in the current month.
+          # The group's budgets are listed and filtered by name: a missing budget is an empty answer, so no error text is read
+          # (the service's text for "not found" differs from one API to the next).
+          url="https://management.azure.com/subscriptions/$ENV_SUBSCRIPTION_ID/resourceGroups/$ENV_RESOURCE_GROUP/providers/Microsoft.Consumption/budgets?api-version=2024-08-01"
+          start=$(az rest --method get --url "$url" --query "value[?name=='meternaut-hub'].properties.timePeriod.startDate | [0]" --output tsv)
+          if [ -n "$start" ] && [ "$start" != "None" ]; then
+            start="${start:0:10}"
+            echo "The budget exists and started on $start."
+          else
+            start="$(date -u +%Y-%m-01)"
+            echo "There is no budget yet; a new one starts on $start."
+          fi
+          echo "start=$start" >> "$GITHUB_OUTPUT"
+
+      - name: Work out the settings
+        id: params
+        env:
+          ENV_BUDGET_START: ${{ steps.budget.outputs.start }}
+        run: |
+          # The gateway identity does not exist before model-side has run, so this first pass is a preview: it gives the names.
+          outputs=$(python3 tools/environment-params.py build --models environment/models.json --out-dir "$RUNNER_TEMP" --preview)
+          echo "$outputs" >> "$GITHUB_OUTPUT"
+          gateway_subscription=$(sed -n 's/^gateway_subscription=//p' <<< "$outputs")
+          gateway_group=$(sed -n 's/^gateway_resource_group=//p' <<< "$outputs")
+          identity_name=$(sed -n 's/^identity_name=//p' <<< "$outputs")
+          # Where the identity exists already, its principal id goes into the files, so that a what-if shows the real role assignment.
+          principal=$(az identity list --subscription "$gateway_subscription" --resource-group "$gateway_group" --query "[?name=='$identity_name'].principalId | [0]" --output tsv)
+          if [ -n "$principal" ] && [ "$principal" != "None" ]; then
+            echo "The gateway identity exists; its principal id is used."
+            GATEWAY_PRINCIPAL_ID="$principal" python3 tools/environment-params.py build --models environment/models.json --out-dir "$RUNNER_TEMP" > /dev/null
+          else
+            echo "The gateway identity does not exist yet; the role assignment is shown with a placeholder."
+          fi
+          # The files are checked against the templates that were compiled above, so a setting that no template takes is found before Azure is asked.
+          python3 tools/environment-params.py check --params "$RUNNER_TEMP/environment.parameters.json" --template "$RUNNER_TEMP/environment.json" --label environment
+          python3 tools/environment-params.py check --params "$RUNNER_TEMP/logger.parameters.json" --template "$RUNNER_TEMP/logger.json" --label logger
+          python3 tools/environment-params.py check --params "$RUNNER_TEMP/kit.parameters.json" --template "$RUNNER_TEMP/kit.json" --label kit
+
+      - name: What the identity, the model side and the logger would change
+        if: inputs.action == 'what-if'
+        env:
+          GATEWAY_SUBSCRIPTION: ${{ steps.params.outputs.gateway_subscription }}
+          GATEWAY_GROUP: ${{ steps.params.outputs.gateway_resource_group }}
+        run: |
+          echo "::group::The gateway identity, in the gateway's resource group"
+          python3 tools/az-deploy.py what-if --subscription "$GATEWAY_SUBSCRIPTION" --resource-group "$GATEWAY_GROUP" \
+            --template environment/gateway/identity.bicep
+          echo "::endgroup::"
+          echo "::group::The model side, in the project's resource group (the gateway identity's role is shown with a placeholder: the identity does not exist yet)"
+          python3 tools/az-deploy.py what-if --subscription "$ENV_SUBSCRIPTION_ID" --resource-group "$ENV_RESOURCE_GROUP" \
+            --template environment/main.bicep --parameters "$RUNNER_TEMP/environment.parameters.json" --restore-param restoreAccount
+          echo "::endgroup::"
+          echo "::group::The Application Insights logger, in the gateway's resource group"
+          python3 tools/az-deploy.py what-if --subscription "$GATEWAY_SUBSCRIPTION" --resource-group "$GATEWAY_GROUP" \
+            --template environment/gateway/logger.bicep --parameters "$RUNNER_TEMP/logger.parameters.json"
+          echo "::endgroup::"
+
+      - name: Make the gateway identity
+        id: identity
+        if: inputs.action == 'model-side'
+        env:
+          GATEWAY_SUBSCRIPTION: ${{ steps.params.outputs.gateway_subscription }}
+          GATEWAY_GROUP: ${{ steps.params.outputs.gateway_resource_group }}
+        run: |
+          principal=$(python3 tools/az-deploy.py create --subscription "$GATEWAY_SUBSCRIPTION" --resource-group "$GATEWAY_GROUP" \
+            --template environment/gateway/identity.bicep --name "identity-$GITHUB_RUN_ID" --output principalId)
+          if ! printf '%s' "$principal" | grep -Eq '^[0-9a-fA-F-]{36}$'; then
+            echo "::error::The deployment did not return the principal id of the gateway identity."
+            exit 1
+          fi
+          echo "principal=$principal" >> "$GITHUB_OUTPUT"
+
+      - name: Work out the settings with the identity's principal
+        if: inputs.action == 'model-side'
+        env:
+          GATEWAY_PRINCIPAL_ID: ${{ steps.identity.outputs.principal }}
+          ENV_BUDGET_START: ${{ steps.budget.outputs.start }}
+        run: |
+          python3 tools/environment-params.py build --models environment/models.json --out-dir "$RUNNER_TEMP" > /dev/null
+          python3 tools/environment-params.py check --params "$RUNNER_TEMP/environment.parameters.json" --template "$RUNNER_TEMP/environment.json" --label environment
+
+      - name: Deploy the network, the model account, its private endpoint and the budget
+        if: inputs.action == 'model-side'
+        env:
+          EXPECTED_ENDPOINT: ${{ steps.params.outputs.endpoint }}
+        run: |
+          endpoint=$(python3 tools/az-deploy.py create --subscription "$ENV_SUBSCRIPTION_ID" --resource-group "$ENV_RESOURCE_GROUP" \
+            --template environment/main.bicep --parameters "$RUNNER_TEMP/environment.parameters.json" \
+            --name "environment-$GITHUB_RUN_ID" --output endpoint --restore-param restoreAccount)
+          if [ "${endpoint%/}" != "$EXPECTED_ENDPOINT" ]; then
+            echo "::error::The deployed account answers on ${endpoint%/}, not on $EXPECTED_ENDPOINT. Nothing was added to the gateway."
+            exit 1
+          fi
+
+      - name: Wait until the landing zone has registered the endpoint's name
+        if: inputs.action == 'model-side' || inputs.action == 'gateway-prepare' || inputs.action == 'gateway'
+        env:
+          PRIVATE_ENDPOINT: ${{ steps.params.outputs.private_endpoint }}
+        run: |
+          found=$(az network private-endpoint list --resource-group "$ENV_RESOURCE_GROUP" --query "[?name=='$PRIVATE_ENDPOINT'].name | [0]" --output tsv)
+          if [ -z "$found" ] || [ "$found" = "None" ]; then
+            echo "::error::The private endpoint $PRIVATE_ENDPOINT is not there. Run model-side first."
+            exit 1
+          fi
+          # After model-side the policy needs about ten minutes, so it is waited for; for the later actions it must be done.
+          attempts=40
+          if [ "$ACTION" != "model-side" ]; then attempts=1; fi
+          for attempt in $(seq 1 "$attempts"); do
+            zones=$(az network private-endpoint dns-zone-group list --resource-group "$ENV_RESOURCE_GROUP" \
+              --endpoint-name "$PRIVATE_ENDPOINT" --query "[].privateDnsZoneConfigs[].privateDnsZoneId" --output tsv || true)
+            if grep -qi 'privatelink.cognitiveservices.azure.com' <<< "$zones"; then
+              echo "The landing zone's policy has registered $PRIVATE_ENDPOINT in the central private DNS zone."
+              exit 0
+            fi
+            echo "Not registered yet (check $attempt of $attempts)."
+            if [ "$attempt" -lt "$attempts" ]; then sleep 60; fi
+          done
+          echo "::error::The landing zone's policy has not registered $PRIVATE_ENDPOINT in the central private DNS zone. Nothing was added to the gateway. Wait, or look at the policy compliance of the endpoint; do not create a private DNS zone."
+          exit 1
+
+      - name: Find the gateway identity
+        id: found
+        if: inputs.action == 'gateway-prepare' || inputs.action == 'gateway'
+        env:
+          GATEWAY_SUBSCRIPTION: ${{ steps.params.outputs.gateway_subscription }}
+          GATEWAY_GROUP: ${{ steps.params.outputs.gateway_resource_group }}
+          IDENTITY_NAME: ${{ steps.params.outputs.identity_name }}
+        run: |
+          identity=$(az identity list --subscription "$GATEWAY_SUBSCRIPTION" --resource-group "$GATEWAY_GROUP" --query "[?name=='$IDENTITY_NAME'].id | [0]" --output tsv)
+          if [ -z "$identity" ] || [ "$identity" = "None" ]; then
+            echo "::error::The gateway identity $IDENTITY_NAME is not there. Run model-side first: it makes the identity and gives it its role on the model account."
+            exit 1
+          fi
+          echo "identity_id=$identity" >> "$GITHUB_OUTPUT"
+
+      - name: Attach the identity to the gateway, keeping what it has
+        if: inputs.action == 'gateway-prepare'
+        env:
+          IDENTITY_ID: ${{ steps.found.outputs.identity_id }}
+        run: python3 tools/gateway-prep.py attach-identity --apim "$GATEWAY_RESOURCE_ID" --identity "$IDENTITY_ID"
+
+      - name: Add the Application Insights logger that the module expects
+        if: inputs.action == 'gateway-prepare'
+        env:
+          GATEWAY_SUBSCRIPTION: ${{ steps.params.outputs.gateway_subscription }}
+          GATEWAY_GROUP: ${{ steps.params.outputs.gateway_resource_group }}
+        run: |
+          python3 tools/az-deploy.py create --subscription "$GATEWAY_SUBSCRIPTION" --resource-group "$GATEWAY_GROUP" \
+            --template environment/gateway/logger.bicep --parameters "$RUNNER_TEMP/logger.parameters.json" --name "logger-$GITHUB_RUN_ID"
+
+      - name: Wait until the gateway has finished updating
+        if: inputs.action == 'gateway-prepare'
+        run: python3 tools/gateway-prep.py wait --apim "$GATEWAY_RESOURCE_ID"
+
+      - name: The gateway is ready for the Citadel module
+        if: inputs.action == 'gateway'
+        env:
+          IDENTITY_ID: ${{ steps.found.outputs.identity_id }}
+        run: python3 tools/gateway-prep.py prepared --apim "$GATEWAY_RESOURCE_ID" --identity "$IDENTITY_ID"
+
+      - name: What the Citadel module would change in the gateway
+        if: inputs.action == 'what-if' || inputs.action == 'gateway'
+        env:
+          GATEWAY_SUBSCRIPTION: ${{ steps.params.outputs.gateway_subscription }}
+          GATEWAY_GROUP: ${{ steps.params.outputs.gateway_resource_group }}
+          IDENTITY_NAME: ${{ steps.params.outputs.identity_name }}
+        run: |
+          identity=$(az identity list --subscription "$GATEWAY_SUBSCRIPTION" --resource-group "$GATEWAY_GROUP" --query "[?name=='$IDENTITY_NAME'].id | [0]" --output tsv)
+          logger=$(az rest --method get --url "https://management.azure.com${GATEWAY_RESOURCE_ID}/loggers?api-version=2024-05-01" --query "value[?name=='appinsights-logger'].name | [0]" --output tsv)
+          if [ -z "$identity" ] || [ "$identity" = "None" ] || [ -z "$logger" ] || [ "$logger" = "None" ]; then
+            echo "The Citadel module cannot be previewed yet: it looks up the gateway identity and the logger appinsights-logger, and they do not exist before model-side and gateway-prepare have run. Its list is the module's own: two inference APIs, policy fragments, backends and pools, named values, and the service-level logging setting. A what-if after those two shows the exact diff."
+            exit 0
+          fi
+          python3 tools/az-deploy.py what-if --subscription "$GATEWAY_SUBSCRIPTION" --resource-group "$GATEWAY_GROUP" \
+            --template kit/bicep/infra/apim-gateway-upgrade/main.bicep --parameters "$RUNNER_TEMP/kit.parameters.json"
+
+      - name: Add the Citadel module's objects to the gateway
+        if: inputs.action == 'gateway'
+        env:
+          GATEWAY_SUBSCRIPTION: ${{ steps.params.outputs.gateway_subscription }}
+          GATEWAY_GROUP: ${{ steps.params.outputs.gateway_resource_group }}
+        run: |
+          python3 tools/az-deploy.py create --subscription "$GATEWAY_SUBSCRIPTION" --resource-group "$GATEWAY_GROUP" \
+            --template kit/bicep/infra/apim-gateway-upgrade/main.bicep --parameters "$RUNNER_TEMP/kit.parameters.json" --name "gateway-$GITHUB_RUN_ID"
+
+      - name: What the gateway holds now
+        if: inputs.action == 'gateway'
+        run: |
+          az rest --method get --url "https://management.azure.com${GATEWAY_RESOURCE_ID}/apis?api-version=2024-05-01" --query "value[].{name:name, path:properties.path}" --output table
+
+      - name: What was done
+        if: always()
+        env:
+          JOB_STATUS: ${{ job.status }}
+          ACCOUNT_NAME: ${{ steps.params.outputs.account_name }}
+        run: |
+          {
+            echo "### Hub: $ACTION, $JOB_STATUS"
+            echo
+            if [ "$JOB_STATUS" != "success" ]; then
+              echo "**The run did not finish.** The log shows the step that failed; nothing below is promised."
+              case "$ACTION" in
+                what-if) echo "A what-if changes nothing." ;;
+                model-side) echo "The gateway identity, the network, the model account and the private endpoint may exist now (the endpoint costs a few euros a month while it does). Running \`model-side\` again is safe and repeats only what is missing. \`what-if\` shows what is there." ;;
+                gateway-prepare) echo "The identity may be attached to the gateway and the logger may exist. Running \`gateway-prepare\` again is safe and repeats only what is missing. The gateway's service-level logging setting before the change is in the first list of this page." ;;
+                gateway) echo "Some of the module's objects may be in the gateway already. Running \`gateway\` again is safe and repeats only what is missing. The gateway's service-level logging setting before the change is in the first list of this page." ;;
+              esac
+            else
+              case "$ACTION" in
+                what-if) echo "Nothing was changed. Read the lists above: what the next steps would create, and the gateway as it is now." ;;
+                model-side) echo "The model account \`$ACCOUNT_NAME\` is behind a private endpoint in resource group \`$ENV_RESOURCE_GROUP\`, the gateway identity has its role on it, and the landing zone has registered the endpoint's name. The gateway has not been touched." ;;
+                gateway-prepare) echo "The identity is attached to the gateway (its own identity is kept) and the logger is there. The Citadel module has not been applied: a what-if now shows its exact diff." ;;
+                gateway) echo "The Citadel module's objects are in the gateway. Nobody can call the new APIs but the instance's all-access key until the first contract exists." ;;
+              esac
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

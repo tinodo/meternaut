@@ -2,7 +2,7 @@
 
 > **Every euro spent on Azure has a reason. This AI learns the reasons — and finds, tests and fixes the euros that have none.**
 >
-> *Status: an idea, a design and a plan. Nothing is built and nothing is deployed — see [Status](#status).*
+> *Status: an idea, a design and a plan; the first environment (the Citadel gateway and its model) is being built and deployed through a workflow — see [Status](#status).*
 
 ## Read this first
 
@@ -10,7 +10,7 @@
 
 **What exists today.** Documents only: the idea, the design, the experience design and the build plan below. There is no code, no pipeline and nothing deployed. A first set of tools and a small gateway were built and then removed on 2026-11-03, so that the design comes first; they stay in the history at the git tag `implementation-v0`.
 
-**What comes next.** One proposal to read and decide on: [the first environment](docs/proposals/01-first-environment.md). It says what would be set up first, in what order, and what has to be approved before each step. Nothing is built until it is approved.
+**What comes next.** [The first environment](docs/proposals/01-first-environment.md) was approved on 2026-11-03 and is being built: what is set up first, in what order, and what is checked at each step. The changelog says how far it is.
 
 ![Five faculties — STUDY, SURVEY, TEST, ACT, GROW — around one shared memory, with the world, the Commons, the estate, the agreement and the people around them](docs/img/living-system.svg)
 
@@ -56,7 +56,7 @@ It is a research programme with hands: agents on Microsoft Foundry that study, t
 | **[The design](docs/design/README.md)** | How it is built: architecture, agents and workflows, security, safeguards, testing, cost, decisions and the roadmap |
 | **[The experience design](docs/experience/README.md)** | What people see, receive and decide: personas and journeys, Teams cards, letters, web pages, dashboards, attention and trust, accessibility, testing |
 | **[The build plan](docs/build-plan/README.md)** | What is built first: the slices of phases 0 and 1a, what the adopting organisation provides and decides, the first checks, cost and effort. A plan only |
-| **[The first environment](docs/proposals/01-first-environment.md)** | A proposal: what would be set up first (the central AI gateway, Citadel), in what order, and what has to be approved before each step. Nothing is deployed |
+| **[The first environment](docs/proposals/01-first-environment.md)** | The approved plan for what is set up first (the central AI gateway, Citadel), in what order, and what is checked at each step. Deployed only through a workflow; the changelog says how far it is |
 | Research | [the landscape through the lens of learning](docs/research/landscape.md) · [inspirations: how agents learn](docs/research/inspirations.md) · [the cost-trap bank: 145 sourced cost traps](docs/research/cost-trap-bank.md) |
 
 **Short on time?** The picture above, then [the first minute of the north star](docs/01-north-star.md#in-one-minute).
@@ -78,8 +78,8 @@ The [build plan](docs/build-plan/README.md) is an index and four documents on wh
 - **Ideation (v5)** — the north star, a deep-dive per faculty and the learning contract. It is the idea the design answers to.
 - **Design (v5)** — the architecture, security and governance, testing, cost model, decisions and roadmap, with what the experience needs of the system placed in it. The system itself is not built; the end of the [design index](docs/design/README.md) lists what is unproven.
 - **Experience design (v1)** — personas, journeys, cards, letters, pages, dashboards, attention and trust, accessibility and testing. Nothing is built; the cards are templates that tools check and render.
-- **Build plan (v2)** — the first two phases as slices, with the first checks, a week-0 check of the pilot's bill and an early demonstration of learning. A first set of tools, a test harness and a small development gateway were built from it and removed on 2026-11-03, because the design comes first; they stay in the history at the git tag `implementation-v0`, and the [changelog](CHANGELOG.md) says what they were. The repository holds no code and no pipelines now; what was deployed from them has been deleted from Azure.
-- **First environment (proposed)** — what would be set up first, in what order, and what has to be approved before each step: [the proposal](docs/proposals/01-first-environment.md). Nothing in it is done.
+- **Build plan (v2)** — the first two phases as slices, with the first checks, a week-0 check of the pilot's bill and an early demonstration of learning. A first set of tools, a test harness and a small development gateway were built from it and removed on 2026-11-03, because the design comes first; they stay in the history at the git tag `implementation-v0`, and the [changelog](CHANGELOG.md) says what they were. The repository held no code and no pipelines for a day; the first environment's workflow, templates and tools came back on 2026-11-03 (see the next item). What was deployed from the first ones has been deleted from Azure.
+- **First environment (approved, in progress)** — what is set up first and in what order: [the proposal](docs/proposals/01-first-environment.md). The workflow ([`deploy-hub.yml`](.github/workflows/deploy-hub.yml)), the templates ([`environment/`](environment/)) and the tools ([`tools/`](tools/)) are in the repository; the [changelog](CHANGELOG.md) says what has been deployed and checked.
 - **Version numbers** are release tags in this repository; the [changelog](CHANGELOG.md) says what each one changed.
 - **Licence:** MIT ([LICENSE](LICENSE)) covers everything in this repository, the documents included.
 - **Principles:** Microsoft technology for the product (open standards and repository tooling are the exceptions) · aligned with the Cloud Adoption Framework and the Well-Architected Framework · open source · fully AI-infused · human-in-the-loop.
