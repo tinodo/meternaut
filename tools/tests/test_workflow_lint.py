@@ -1,5 +1,6 @@
 import importlib.util
 import io
+import re
 import tempfile
 import textwrap
 import unittest
@@ -270,6 +271,8 @@ class Lint(unittest.TestCase):
             if "budgets/meternaut-hub" in line:
                 self.assertIn("--method delete", line, line)
         self.assertNotIn("budget.err", text)
+        # a command inside a condition has its failure swallowed (set -e does not apply there): the list is read by an assignment
+        self.assertIsNone(re.search(r'\[\s*"\$\(az ', text))
         self.assertGreaterEqual(text.count("value[?name=='meternaut-hub']"), 1)
         self.assertIn('*"Not Found"*', text)  # a generic 404 from az rest is an absence for the other resources too
 

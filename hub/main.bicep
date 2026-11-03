@@ -187,6 +187,8 @@ resource privateEndpoint 'Microsoft.Network/privateEndpoints@2025-05-01' = {
   ]
 }
 
+// After the private endpoint, not beside it: the endpoint's connection is written to the account with an If-Match, and a role
+// assignment made on the account at the same moment changed it first (IfMatchPreconditionFailed, seen in the first deploy).
 resource apimMayCallTheModel 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   scope: account
   name: guid(account.id, apimPrincipalId, openAiUserRoleId)
@@ -195,6 +197,9 @@ resource apimMayCallTheModel 'Microsoft.Authorization/roleAssignments@2022-04-01
     principalId: apimPrincipalId
     principalType: 'ServicePrincipal'
   }
+  dependsOn: [
+    privateEndpoint
+  ]
 }
 
 module budget '../infra/budgets/rg-budget.bicep' = {
