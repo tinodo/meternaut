@@ -33,4 +33,4 @@ The reviewer's own checks passed: 168 of 168 tests, both Bicep templates, readin
 
 ## What only the first run can prove
 
-That the instance's ordinary read reports a current state after each write, and which words it uses (they are printed now). The other open points are unchanged and are listed in [the README](../../../hub/README.md#what-has-been-checked-and-what-has-not).
+That the instance's ordinary read reports a current state after each write, and which words it uses (they are printed now). The other open points are unchanged and are listed in [the README](https://github.com/tinodo/meternaut/blob/implementation-v0/hub/README.md#what-has-been-checked-and-what-has-not).

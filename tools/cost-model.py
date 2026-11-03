@@ -9,7 +9,6 @@ run, so a changed price list can never silently change a number.
     python tools/cost-model.py                          # markdown report to stdout
     python tools/cost-model.py --json                   # machine-readable
     python tools/cost-model.py --lines Pilot            # every line item of one scenario
-    python tools/cost-model.py --dev-hub                # one month of the development hub that hub/ deploys
     python tools/cost-model.py --update-doc docs/design/10-cost-and-finops.md
     python tools/cost-model.py --check docs/design/10-cost-and-finops.md     # fails when the generated block is stale
     python tools/cost-model.py --self-test              # negative fixtures: each defect above must be caught
@@ -534,54 +533,6 @@ def check_doc(text: str, prices: Prices) -> list[str]:
     return [] if cur == block(prices) else ["the generated cost block is stale: run `python tools/cost-model.py --update-doc <file>`"]
 
 
-# The development hub that hub/ deploys (hub/README.md): one private endpoint, for the model account. The API Management
-# instance that carries the gateway objects, the private DNS zones and the Log Analytics workspace belong to the
-# landing zone and cost the same with or without Meternaut, so they are not counted here. A sizing from stated
-# volumes, not a billing guarantee; model tokens are billed by use and shown apart.
-DEV_HUB = dict(private_endpoints=1)
-CONTRACT_FILE = ROOT / "hub" / "contract.json"
-
-
-def contract_token_quota(path: Path = CONTRACT_FILE) -> int:
-    """The monthly token quota that the development contract sets."""
-    try:
-        quota = json.loads(path.read_text(encoding="utf-8"))["tokenQuotaPerMonth"]
-        if isinstance(quota, bool) or int(quota) <= 0:
-            raise ValueError
-        return int(quota)
-    except (KeyError, TypeError, ValueError):
-        raise ValueError(f"{path} sets no tokenQuotaPerMonth (a positive whole number)")
-
-
-def dev_hub(prices: Prices) -> list[tuple[str, float, str]]:
-    """Monthly cost lines of the development hub as (label, EUR, note), before model tokens."""
-    P, d = prices, DEV_HUB
-    pe = P.get("Virtual Network", region="Global", product="Virtual Network Private Link", sku="Standard", meter="Standard Private Endpoint")
-    return [
-        ("Private endpoint", pe * d["private_endpoints"] * HOURS,
-         f"{d['private_endpoints']} endpoint, for the model account, always on; the data it processes is left out"),
-    ]
-
-
-def dev_hub_tokens(prices: Prices) -> tuple[int, float]:
-    """The contract's monthly token quota, and what it costs if used in full with every token priced as an output token."""
-    quota = contract_token_quota()
-    return quota, quota * Model(prices).price("triage", "DZ", "Std")["out"] / 1e6
-
-
-def dev_hub_report(prices: Prices) -> str:
-    lines = dev_hub(prices)
-    quota, tokens_eur = dev_hub_tokens(prices)
-    out = [f"Development hub, one month at list prices ({REGION}, EUR, {HOURS:g} hours; price snapshot of {prices.generated[:10]}):", ""]
-    out += [f"{eur:>9,.2f}  {label}: {note}" for label, eur, note in lines]
-    out += ["", f"{sum(eur for _, eur, _ in lines):>9,.2f}  total of the lines above: a sizing from the stated volumes, not a billing guarantee",
-            f"{tokens_eur:>9,.2f}  plus model tokens if the contract's monthly quota of {quota:,} tokens is used in full, "
-            "every token priced as an output token",
-            "", "Not counted: the existing API Management instance, the central private DNS zones and the central Log Analytics "
-            "workspace, which cost the same without Meternaut."]
-    return "\n".join(out)
-
-
 def self_test() -> int:
     p = Prices(SNAP)
     for bad in (dict(service="Foundry Models", product="No Such Product", sku="x"),
@@ -634,19 +585,6 @@ def self_test() -> int:
     assert check_doc("no markers", p), "a missing block must be reported"
     md = meters_doc(p)
     assert md == meters_doc(p) and md.count("\n| ") > 20, "the meters file must be deterministic and list the meters"
-    hub = dev_hub(p)
-    assert len(hub) == 1 and all(eur > 0 for _, eur, _ in hub), "every line of the development hub must be priced"
-    pe_price = p.get("Virtual Network", region="Global", product="Virtual Network Private Link", sku="Standard", meter="Standard Private Endpoint")
-    assert abs(hub[0][1] - pe_price * DEV_HUB["private_endpoints"] * HOURS) < 1e-9
-    quota, token_eur = dev_hub_tokens(p)
-    assert quota > 0 and token_eur > 0, "the contract's token quota must be read and priced"
-    assert contract_token_quota(CONTRACT_FILE) == quota
-    try:
-        contract_token_quota(ROOT / "README.md")
-    except ValueError:
-        pass
-    else:
-        raise AssertionError("a file without a tokenQuotaPerMonth must fail")
     print("self-test OK")
     return 0
 
@@ -655,7 +593,6 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--lines", metavar="SCENARIO")
-    ap.add_argument("--dev-hub", action="store_true")
     ap.add_argument("--update-doc", metavar="FILE")
     ap.add_argument("--check", metavar="FILE")
     ap.add_argument("--self-test", action="store_true")
@@ -663,9 +600,7 @@ def main() -> int:
     if a.self_test:
         return self_test()
     prices = Prices(SNAP)
-    if a.dev_hub:
-        print(dev_hub_report(prices))
-    elif a.json:
+    if a.json:
         print(json.dumps(run_all(prices), indent=1))
     elif a.lines:
         for r in run_all(prices)[a.lines]["lines"]:

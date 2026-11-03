@@ -1,7 +1,0 @@
-{
-  "name": "meternaut-learning-demo-dev",
-  "description": "Development contract of the learning demonstration: synthetic data only, one model, token limits.",
-  "models": ["gpt-6-luna"],
-  "tokensPerMinute": 30000,
-  "tokenQuotaPerMonth": 2000000
-}

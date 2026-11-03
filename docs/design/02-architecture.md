@@ -128,7 +128,7 @@ The solution onboards to the **Citadel governance hub of the adopting organisati
 | Monitoring | Central Log Analytics and monitor scope | Diagnostic settings, workbooks, alerts |
 | Policy | Azure Policy and Defender for Cloud baselines | Policy that denies model deployments in the spoke |
 
-**If the organisation has no hub**, it deploys the accelerator from upstream at a pinned commit. The accelerator has no releases and its defaults loosen security (public endpoints, prompt and completion capture), so we override them. Its always-on usage pipeline is its main fixed cost, priced separately in [the cost document](10-cost-and-finops.md). The repository's `hub/` folder does not do this: it adds a development contract and one model to an API Management instance that already exists ([hub](../../hub/README.md)).
+**If the organisation has no hub**, it deploys the accelerator from upstream at a pinned commit. The accelerator has no releases and its defaults loosen security (public endpoints, prompt and completion capture), so we override them. Its always-on usage pipeline is its main fixed cost, priced separately in [the cost document](10-cost-and-finops.md). For an API Management instance that already exists, the kit's gateway-upgrade module (preview) applies its gateway configuration without creating the service or changing its network; a companion module adds the services around it. A use case onboards through an *access contract*: a key, its models and its limits.
 
 ## 7. Two profiles, one codebase
 

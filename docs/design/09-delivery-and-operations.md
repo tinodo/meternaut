@@ -12,7 +12,7 @@ One repository defines the system, so a release is one set of pins. Every path h
 | `actions/` | The Action catalogue: Bicep Action templates, schemas, preconditions, predicted effect, rollback, risk class | Security reviewers |
 | `prompts/`, `agents/` | Role prompts and output schemas; sources of the five hosted agents | Platform team |
 | `contracts/` | Hub contracts per hosted agent and environment; tool pins | Security reviewers |
-| `infra/`, `hub/` | Bicep, profiles, Deployment Stacks, runner role definitions, onboarding modules; the development hub (a model account, and gateway objects added to an existing API Management instance) and its workflow | Platform team |
+| `infra/`, `hub/` | Bicep, profiles, Deployment Stacks, runner role definitions, onboarding modules; hub instructions and pinned commit | Platform team |
 | `apps/workflows`, `apps/tools` | Durable orchestrations; read tools, price simulator, planner | Platform team |
 | `apps/approvals`, `apps/runner` | Approval service and credential evaluator, web page; action runner, verifier | Security reviewers |
 | `apps/bot` | Teams bot endpoint (C# or TypeScript); calls the approval service and carries messages through two queues | Security reviewers |

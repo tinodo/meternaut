@@ -1,5 +1,0 @@
-Azure Prism: pricing and billing (an invented page, for the template)
-
-A Prism index is served by one or more replicas. Each replica is billed per hour for every hour it is provisioned, whether or not it serves any query. A replica that has served no query for a month costs the same as a busy one.
-
-The replica count of an index can be changed at any time, and a change applies within minutes. Billing for a removed replica stops at the hour it is removed. Keep more replicas than the load needs only for a window in which the load needs them, such as a scheduled nightly batch, and keep at least two replicas where an availability agreement requires it.
