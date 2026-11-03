@@ -452,8 +452,22 @@ class Service(unittest.TestCase):
             nxt = calls[calls.index(put) + 1]
             self.assertEqual(nxt, ("GET", put[1]), put)
 
+    def test_a_state_the_reference_does_not_name_is_final_not_a_reason_to_wait(self):
+        # the reference gives no list of final states for an API; waiting on an unknown word would fail every run
+        for word in ("Succeeded", "Created", "Ready", "OK", "something-new"):
+            service = FakeService(states={"apis/meternaut-llm": [word]})
+            code, out, err = run(["apply", *vars_args()], service)
+            self.assertEqual((code, err, service.slept), (0, "", []), word)
+            self.assertEqual(rows(out, "created"), 8, word)
+
+    def test_states_that_mean_working_are_waited_for_whatever_their_case(self):
+        for word in ("InProgress", "inprogress", "INPROGRESS", "Updating", "Creating", "Accepted"):
+            service = FakeService(states={"apis/meternaut-llm": [word, "Created"]})
+            code, _, err = run(["apply", *vars_args()], service)
+            self.assertEqual((code, err, service.slept), (0, "", [10.0]), word)
+
     def test_a_write_that_ends_failed_or_cancelled_is_an_error(self):
-        for state in ("Failed", "Canceled"):
+        for state in ("Failed", "Canceled", "Cancelled", "failed"):
             service = FakeService(states={"apis/meternaut-llm": ["InProgress", state]})
             code, _, err = run(["apply", *vars_args()], service)
             self.assertEqual(code, 2, state)

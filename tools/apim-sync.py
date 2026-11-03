@@ -271,7 +271,7 @@ class Apim:
         that is not final, or is not visible yet. Whatever depends on it waits for the end."""
         for _ in range(tries):
             found = self.read(path)
-            if (found is None and not must_exist) or (found is not None and state_of(found) in FINAL_STATES):
+            if (found is None and not must_exist) or (found is not None and state_of(found) not in WORKING_STATES):
                 return found
             self.sleep(pause)
         raise Problem(f"{path}: still not ready after {int(tries * pause)} seconds")
@@ -285,7 +285,7 @@ class Apim:
             raise Problem(f"{item['path']}: writing it gave {status}: {raw.decode('utf-8', 'replace')[:500]}")
         state = state_of(self.settled(item["path"], must_exist=True))
         if state in BAD_STATES:
-            raise Problem(f"{item['path']}: the service reports that making it {state.lower()}")
+            raise Problem(f"{item['path']}: the service reports that making it {state}")
 
     def delete(self, path: str) -> str:
         """DELETE one object. Never the subscriptions of a product or anything else the manifest does not name."""
@@ -300,12 +300,16 @@ class Apim:
 
 
 def state_of(found) -> str | None:
-    """The state the service reports for an object it is making or has made (a policy, read as text, reports none)."""
-    return found.get("properties", {}).get("provisioningState") if isinstance(found, dict) else None
+    """The state the service reports for an object it is making or has made, in lower case (a policy, read as text, has none)."""
+    state = found.get("properties", {}).get("provisioningState") if isinstance(found, dict) else None
+    return state.lower() if isinstance(state, str) else None
 
 
-FINAL_STATES = (None, "Succeeded", "Failed", "Canceled")
-BAD_STATES = ("Failed", "Canceled")
+# The reference names no final state for an API ("The provisioning state"), so only what clearly means "still working"
+# is waited for and only what clearly means "did not work" stops the run. Any other word is a final state: waiting on
+# an unknown word would fail every run for a perfectly good object.
+WORKING_STATES = ("inprogress", "accepted", "creating", "updating", "provisioning", "pending", "running", "activating", "starting")
+BAD_STATES = ("failed", "canceled", "cancelled")
 
 
 def plan(apim: Apim, objects: list[dict]) -> list[tuple[str, str]]:
