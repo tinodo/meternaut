@@ -115,6 +115,35 @@ class Templates(unittest.TestCase):
         for fragment in ("ai-usage", "pii-state-saving"):
             self.assertNotIn(f'fragment-id="{fragment}"', policy)
 
+    def test_the_kit_patches_are_these_three_and_no_others(self):
+        found = sorted(p.name for p in (ROOT / "environment" / "kit-patches").glob("*"))
+        self.assertEqual(found, ["contract-required.patch", "llm-log-messages-none.patch", "no-usage-recording-fragments.patch"])
+
+    def test_the_llm_log_patch_leaves_the_messages_out_when_the_setting_is_none_and_touches_nothing_else(self):
+        patch = text("environment/kit-patches/llm-log-messages-none.patch")
+        self.assertEqual(re.findall(r"(?m)^diff --git a/(\S+) b/(\S+)$", patch), [("bicep/infra/modules/apim/inference-api.bicep",) * 2])
+        removed = [line[1:].strip() for line in patch.splitlines() if line.startswith("-") and not line.startswith("---")]
+        added = [line[1:].strip() for line in patch.splitlines() if line.startswith("+") and not line.startswith("+++")]
+        self.assertEqual(removed, ["requests: {", "responses: {"])
+        self.assertEqual(added, [
+            "requests: azureMonitorLogSettings.largeLanguageModel.requests.messages == 'none' ? null : {",
+            "responses: azureMonitorLogSettings.largeLanguageModel.responses.messages == 'none' ? null : {"])
+
+    def test_the_contract_required_patch_adds_one_guard_to_each_of_the_two_inference_api_policies(self):
+        patch = text("environment/kit-patches/contract-required.patch")
+        self.assertEqual(
+            re.findall(r"(?m)^diff --git a/(\S+) b/(\S+)$", patch),
+            [(f"bicep/infra/modules/apim/policies/{name}",) * 2 for name in ("universal-llm-api-policy-v2.xml", "azure-open-ai-api-policy.xml")])
+        self.assertEqual([line for line in patch.splitlines() if line.startswith("-") and not line.startswith("---")], [], "nothing of the kit's policies is removed")
+        hunks = re.split(r"(?m)^diff --git .*$", patch)[1:]
+        self.assertEqual(len(hunks), 2)
+        self.assertEqual(hunks[0].split("@@", 2)[2], hunks[1].split("@@", 2)[2], "the same guard in both policies")
+        guard = hunks[0]
+        for needle in ('condition="@(context.Product == null)"', '<set-status code="403" reason="Forbidden" />', '"code":"contract_required"', "<return-response>"):
+            self.assertIn(needle, guard)
+        added = [line for line in guard.splitlines() if line.startswith("+") and not line.startswith("+++")]
+        self.assertEqual(len([line for line in added if "<set-variable" in line or "<forward-request" in line or "<include-fragment" in line]), 0)
+
     def test_the_gateway_identity_template_makes_only_the_identity(self):
         self.assertIn("param identityName string = 'id-meternaut-gateway'", text("environment/gateway/identity.bicep"))
 
@@ -200,15 +229,28 @@ class Workflow(unittest.TestCase):
             if other is not block:
                 self.assertNotIn("$key", other)
 
-    def test_the_kit_is_patched_before_anything_reads_it_in_the_deploy_workflow_and_in_the_checks(self):
+    def test_every_kit_patch_is_checked_and_applied_before_anything_reads_the_kit(self):
         for path in (".github/workflows/deploy-hub.yml", ".github/workflows/checks.yml"):
             source = text(path)
-            check = "git -C kit apply --check ../environment/kit-patches/no-usage-recording-fragments.patch"
-            apply_ = "git -C kit apply ../environment/kit-patches/no-usage-recording-fragments.patch"
-            self.assertIn(check, source, path)
+            loop = "for patch in environment/kit-patches/*.patch; do"
+            check = 'git -C kit apply --check "../$patch"'
+            apply_ = 'git -C kit apply "../$patch"'
+            self.assertEqual(source.count(loop), 1, path)
             self.assertEqual(source.count(apply_), 1, path)
+            self.assertLess(source.index(loop), source.index(check), path)
             self.assertLess(source.index(check), source.index(apply_), path)
             self.assertLess(source.index(apply_), source.index("kit/bicep/infra/apim-gateway-upgrade/main.bicep"), path)
+
+    def test_the_two_model_apis_are_read_back_after_the_module_has_been_applied(self):
+        (block,) = [b for b in self.steps if b.startswith("name: The two model APIs refuse a call that is not made with a contract's key")]
+        self.assertIn("if: inputs.action == 'gateway'", block)
+        self.assertIn("--method get", block)
+        self.assertNotRegex(block, r"--method (put|patch|post|delete)")
+        for api in ("universal-llm-api", "azure-openai-api"):
+            self.assertIn(api, block)
+        self.assertIn("contract_required", block)
+        names = [re.match(r"name: (.+)", b).group(1) for b in self.steps]
+        self.assertLess(names.index("Add the Citadel module's objects to the gateway"), names.index("The two model APIs refuse a call that is not made with a contract's key"))
 
     def test_the_contract_is_added_only_after_the_gateway_has_the_apis_it_grants(self):
         first, second = [b for b in self.steps if b.startswith("name: What the first contract would change")], self.contract_steps()
