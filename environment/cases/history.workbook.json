@@ -1,0 +1,166 @@
+{
+  "version": "Notebook/1.0",
+  "items": [
+    {
+      "type": 1,
+      "content": {
+        "json": "## Meternaut history\n\nWhat Meternaut did, step by step: every run, every lead it found, every case it took up and what each model said. It is read from the telemetry of the cases app and kept for a year. Figures are Cost Management cost lines in US dollars, not invoices. A saving is computed by code, never by a model. Nothing on this page changes Azure."
+      },
+      "name": "intro"
+    },
+    {
+      "type": 9,
+      "content": {
+        "version": "KqlParameterItem/1.0",
+        "parameters": [
+          {
+            "id": "7c1f4a2e-5d3b-4f0a-9a43-0d6c8e2b1a01",
+            "version": "KqlParameterItem/1.0",
+            "name": "TimeRange",
+            "label": "Time range",
+            "type": 4,
+            "isRequired": true,
+            "value": {
+              "durationMs": 2592000000
+            },
+            "typeSettings": {
+              "selectableValues": [
+                { "durationMs": 86400000 },
+                { "durationMs": 604800000 },
+                { "durationMs": 2592000000 },
+                { "durationMs": 7776000000 },
+                { "durationMs": 31536000000 }
+              ],
+              "allowCustom": true
+            }
+          },
+          {
+            "id": "2b8e6d90-3c4a-4e57-b1f2-6a9d0c5e7f12",
+            "version": "KqlParameterItem/1.0",
+            "name": "Run",
+            "label": "Run",
+            "type": 2,
+            "isRequired": true,
+            "value": "*",
+            "query": "let runs = traces\n| where message startswith 'meternaut_event '\n| extend e = parse_json(substring(message, 16))\n| where tostring(e.type) in ('run.started', 'run.failed')\n| summarize Started = min(timestamp) by RunId = tostring(e.runId)\n| project value = RunId, label = strcat(format_datetime(Started, 'yyyy-MM-dd HH:mm'), ' UTC, run ', substring(RunId, 0, 8)), sortKey = 1, Started;\nunion (print value = '*', label = 'All runs', sortKey = 0, Started = now()), runs\n| order by sortKey asc, Started desc\n| project value, label",
+            "typeSettings": {
+              "additionalResourceOptions": [],
+              "showDefault": false
+            },
+            "timeContextFromParameter": "TimeRange",
+            "queryType": 0,
+            "resourceType": "microsoft.insights/components",
+            "crossComponentResources": [
+              "__APPINSIGHTS_ID__"
+            ]
+          }
+        ],
+        "style": "pills",
+        "queryType": 0,
+        "resourceType": "microsoft.insights/components"
+      },
+      "name": "time range"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "title": "Runs",
+        "query": "traces\n| where message startswith 'meternaut_event '\n| extend e = parse_json(substring(message, 16))\n| extend type = tostring(e.type), runId = tostring(e.runId)\n| summarize started = minif(timestamp, type == 'run.started'), finished = maxif(timestamp, type in ('run.finished', 'run.failed')), trigger = anyif(tostring(e.trigger), type == 'run.started'), leads = countif(type == 'lead.found'), cases = countif(type == 'case.result'), proposed = countif(type == 'case.result' and tostring(e.status) == 'proposed'), needsPerson = countif(type == 'case.result' and tostring(e.status) == 'needs_human'), dropped = countif(type == 'case.result' and tostring(e.status) == 'dropped'), errors = countif(type == 'case.result' and tostring(e.status) == 'error'), tokens = sumif(toint(e.tokens), type == 'run.finished'), failed = countif(type == 'run.failed') by runId\n| extend seconds = datetime_diff('second', finished, started)\n| project Started = started, Run = runId, Trigger = trigger, Leads = leads, Cases = cases, Proposed = proposed, ['Needs a person'] = needsPerson, Dropped = dropped, Errors = errors, Tokens = tokens, Seconds = seconds, Failed = failed\n| order by Started desc",
+        "size": 0,
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.insights/components",
+        "crossComponentResources": [
+          "__APPINSIGHTS_ID__"
+        ],
+        "visualization": "table",
+        "gridSettings": {
+          "filter": true
+        }
+      },
+      "name": "runs"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "title": "What Meternaut found and what it decided",
+        "query": "traces\n| where message startswith 'meternaut_event '\n| extend e = parse_json(substring(message, 16))\n| where tostring(e.type) == 'case.result'\n| where '{Run}' == '*' or tostring(e.runId) == '{Run}'\n| project When = timestamp, Resource = tostring(e.resourceName), Type = tostring(e.resourceType), ['Resource group'] = tostring(e.resourceGroup), Kind = tostring(e.detector), ['Cost, last 30 days (USD)'] = todouble(e.costUsd30d), Status = tostring(e.status), Recommendation = tostring(e.recommendation), Confidence = todouble(e.confidence), ['Saving per month if removed (USD)'] = todouble(e.monthlySavingUsd), Summary = tostring(e.summary), Objections = tostring(e.objections), Guards = tostring(e.guards), Run = tostring(e.runId)\n| order by When desc",
+        "size": 0,
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.insights/components",
+        "crossComponentResources": [
+          "__APPINSIGHTS_ID__"
+        ],
+        "visualization": "table",
+        "gridSettings": {
+          "filter": true
+        }
+      },
+      "name": "findings"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "title": "Every step (the latest 1000 lines of the selected run, or of all runs)",
+        "query": "traces\n| where message startswith 'meternaut_event '\n| extend e = parse_json(substring(message, 16))\n| where '{Run}' == '*' or tostring(e.runId) == '{Run}'\n| project When = timestamp, Run = tostring(e.runId), Event = tostring(e.type), Case = tostring(e.caseId), Step = tostring(e.step), Model = tostring(e.model), ['Prompt tokens'] = toint(e.promptTokens), ['Completion tokens'] = toint(e.completionTokens), Milliseconds = toint(e.ms), OK = tobool(e.ok), Detail = coalesce(tostring(e.note), tostring(e.reason), tostring(e.resourceName), tostring(e.summary))\n| order by When desc\n| take 1000",
+        "size": 0,
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.insights/components",
+        "crossComponentResources": [
+          "__APPINSIGHTS_ID__"
+        ],
+        "visualization": "table",
+        "gridSettings": {
+          "filter": true
+        }
+      },
+      "name": "steps"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "title": "What did not work (notes and failures)",
+        "query": "traces\n| where message startswith 'meternaut_event '\n| extend e = parse_json(substring(message, 16))\n| extend type = tostring(e.type)\n| where type in ('run.note', 'run.failed') or (type == 'case.result' and tostring(e.status) == 'error') or (type == 'case.step' and tobool(e.ok) == false)\n| where '{Run}' == '*' or tostring(e.runId) == '{Run}'\n| project When = timestamp, Run = tostring(e.runId), Event = type, Case = tostring(e.caseId), Step = tostring(e.step), Detail = coalesce(tostring(e.note), tostring(e.reason), tostring(e.summary))\n| order by When desc",
+        "size": 0,
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.insights/components",
+        "crossComponentResources": [
+          "__APPINSIGHTS_ID__"
+        ],
+        "visualization": "table",
+        "gridSettings": {
+          "filter": true
+        }
+      },
+      "name": "problems"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "title": "Tokens used by the runs, per day",
+        "query": "traces\n| where message startswith 'meternaut_event '\n| extend e = parse_json(substring(message, 16))\n| where tostring(e.type) == 'run.finished'\n| summarize Tokens = sum(toint(e.tokens)) by Day = bin(timestamp, 1d)\n| order by Day asc",
+        "size": 1,
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.insights/components",
+        "crossComponentResources": [
+          "__APPINSIGHTS_ID__"
+        ],
+        "visualization": "barchart"
+      },
+      "name": "tokens"
+    }
+  ],
+  "fallbackResourceIds": [
+    "__APPINSIGHTS_ID__"
+  ],
+  "$schema": "https://github.com/Microsoft/Application-Insights-Workbooks/blob/master/schema/workbook.json"
+}

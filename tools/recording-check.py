@@ -156,9 +156,9 @@ def wait_for_functions(azure: Azure, site: str, minutes: float, interval: float 
         azure.sleep(interval)
 
 
-def send_control_event(azure: Azure, namespace: str, job: str, request_id: str) -> None:
-    """One event to the control hub, with the workflow's own token (Event Hubs accepts Microsoft Entra tokens for its REST send)."""
-    url = f"https://{namespace_host(namespace)}/{CONTROL_HUB}/messages?timeout=60&api-version=2014-01"
+def send_control_event(azure: Azure, namespace: str, job: str, request_id: str, hub: str = CONTROL_HUB) -> None:
+    """One event to a control hub, with the workflow's own token (Event Hubs accepts Microsoft Entra tokens for its REST send)."""
+    url = f"https://{namespace_host(namespace)}/{hub}/messages?timeout=60&api-version=2014-01"
     headers = {"Authorization": f"Bearer {azure.token('https://eventhubs.azure.net')}", "Content-Type": "application/atom+xml;type=entry;charset=utf-8"}
     body = json.dumps({"job": job, "requestId": request_id}, separators=(",", ":")).encode("utf-8")
     status, answer = azure.post(url, headers, body)

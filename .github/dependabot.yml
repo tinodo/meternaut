@@ -1,9 +1,14 @@
-# Keeps the pins of the function app's four libraries and the pinned commits of the actions current, and opens a pull request for
+# Keeps the pins of the function apps' libraries and the pinned commits of the actions current, and opens a pull request for
 # each update (and for each security advisory). The checks run on every one of them. Nothing is merged without the owner's word.
 version: 2
 updates:
   - package-ecosystem: pip
     directory: /src/usage-functions
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+  - package-ecosystem: pip
+    directory: /src/case-functions
     schedule:
       interval: weekly
     open-pull-requests-limit: 5

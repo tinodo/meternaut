@@ -57,6 +57,7 @@ It is a research programme with hands: agents on Microsoft Foundry that study, t
 | **[The experience design](docs/experience/README.md)** | What people see, receive and decide: personas and journeys, Teams cards, letters, web pages, dashboards, attention and trust, accessibility, testing |
 | **[The build plan](docs/build-plan/README.md)** | What is built first: the slices of phases 0 and 1a, what the adopting organisation provides and decides, the first checks, cost and effort. A plan only |
 | **[The first environment](docs/proposals/01-first-environment.md)** | The approved plan for what is set up first (the central AI gateway, Citadel), in what order, and what is checked at each step. Deployed only through a workflow; the changelog says how far it is |
+| **[The first cases](docs/proposals/02-first-cases.md)** | The approved plan for the first piece of Meternaut's own work: leads from the pilot estate, a Detective and a Skeptic working through the gateway, guards in code, and a History of every step. Read only; the changelog says how far it is |
 | Research | [the landscape through the lens of learning](docs/research/landscape.md) · [inspirations: how agents learn](docs/research/inspirations.md) · [the cost-trap bank: 145 sourced cost traps](docs/research/cost-trap-bank.md) |
 
 **Short on time?** The picture above, then [the first minute of the north star](docs/01-north-star.md#in-one-minute).

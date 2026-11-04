@@ -492,7 +492,7 @@ class Contract(unittest.TestCase):
     def test_the_contract_of_the_repository_gives_a_fifth_file_that_fits_its_template(self):
         code, out, err, files = self.build()
         self.assertEqual((code, err), (0, ""))
-        self.assertEqual(set(files), {"environment.parameters.json", "logger.parameters.json", "kit.parameters.json", "recording.parameters.json", "contract.parameters.json"})
+        self.assertEqual(set(files), {"environment.parameters.json", "logger.parameters.json", "kit.parameters.json", "recording.parameters.json", "contract.parameters.json", "cases.parameters.json"})
         given = files["contract.parameters.json"]["parameters"]
         declared = bicep_params(CONTRACT_BICEP)
         self.assertEqual(set(given), set(declared))
@@ -590,6 +590,86 @@ class Contract(unittest.TestCase):
         self.assertEqual(run(SETTINGS, "--contract", missing, "--contract-policy", str(POLICY_FILE))[0], 2)
         self.assertEqual(run(SETTINGS, "--contract", str(CONTRACT_FILE), "--contract-policy", missing)[0], 2)
         self.assertEqual(run(SETTINGS, "--contract", str(self.write("c.json", "{")), "--contract-policy", str(POLICY_FILE))[0], 2)
+
+
+class FirstCases(unittest.TestCase):
+    """The parameter file of the first cases app (environment/cases/main.bicep): it names what the usage recording made, and the contract's key."""
+
+    CASES = (ROOT / "environment" / "cases" / "main.bicep").read_text(encoding="utf-8")
+
+    def build(self, **changes):
+        with tempfile.TemporaryDirectory() as tmp:
+            contract = Path(tmp) / "contract.json"
+            contract.write_text(CONTRACT_FILE.read_text(encoding="utf-8"), encoding="utf-8")
+            code, out, err, files = run({**SETTINGS, **changes}, "--contract", str(contract), "--contract-policy", str(POLICY_FILE))
+        self.assertEqual((code, err), (0, ""))
+        return files, dict(line.split("=", 1) for line in out.splitlines())
+
+    def test_the_file_fits_the_template_and_every_setting_has_a_value_of_the_right_type(self):
+        files, _ = self.build()
+        declared = bicep_params(self.CASES)
+        given = files["cases.parameters.json"]["parameters"]
+        self.assertTrue(set(given) <= set(declared), set(given) - set(declared))
+        required = {name for name, (_, has_default) in declared.items() if not has_default}
+        self.assertTrue(required <= set(given), required - set(given))
+        types = {"string": str, "int": int, "array": list, "bool": bool}
+        for name, wrapped in given.items():
+            self.assertIsInstance(wrapped["value"], types[declared[name][0]], name)
+
+    def test_it_names_the_storage_the_namespace_and_the_workflow_that_the_recording_has(self):
+        files, lines = self.build()
+        cases, recording = values(files["cases.parameters.json"]), values(files["recording.parameters.json"])
+        self.assertEqual(cases["storageAccountName"], recording["storageAccountName"])
+        self.assertEqual(cases["eventHubNamespaceName"], recording["eventHubNamespaceName"])
+        self.assertEqual(cases["workflowPrincipalId"], recording["workflowPrincipalId"])
+        self.assertEqual(cases["location"], recording["location"])
+        self.assertRegex(cases["functionAppName"], r"^func-meternaut-cases-[0-9a-f]{8}$")
+        self.assertEqual(lines["cases_function_app_name"], cases["functionAppName"])
+        self.assertNotEqual(cases["functionAppName"], recording["functionAppName"])
+        self.assertLessEqual(len(cases["functionAppName"]), 60)
+
+    def test_it_reads_the_pilot_subscription_and_the_gateway_with_the_contracts_key(self):
+        files, lines = self.build()
+        cases = values(files["cases.parameters.json"])
+        self.assertEqual(cases["scopeSubscriptions"], SETTINGS["ENV_SUBSCRIPTION_ID"])
+        self.assertEqual(cases["gatewayUrl"], "https://example-apim.azure-api.net")
+        self.assertEqual(lines["gateway_url"], cases["gatewayUrl"])
+        self.assertEqual(cases["gatewayProductSubscriptionId"], SETTINGS["GATEWAY_RESOURCE_ID"] + "/subscriptions/meternaut-agents-sub-01")
+        contract = json.loads(CONTRACT_FILE.read_text(encoding="utf-8"))
+        self.assertEqual(cases["modelDetective"], contract["allowedModels"][0])
+        self.assertEqual(cases["modelSkeptic"], contract["allowedModels"][1], "the Skeptic is another model than the Detective, so that it is more independent")
+        self.assertNotEqual(cases["modelDetective"], cases["modelSkeptic"])
+
+    def test_a_contract_with_one_model_uses_it_for_both_roles(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            contract = json.loads(CONTRACT_FILE.read_text(encoding="utf-8"))
+            contract["allowedModels"] = contract["allowedModels"][:1]
+            path = Path(tmp) / "contract.json"
+            path.write_text(json.dumps(contract), encoding="utf-8")
+            code, _, err, files = run(SETTINGS, "--contract", str(path), "--contract-policy", str(POLICY_FILE))
+        self.assertEqual((code, err), (0, ""))
+        cases = values(files["cases.parameters.json"])
+        self.assertEqual(cases["modelDetective"], cases["modelSkeptic"])
+
+    def test_the_hub_and_the_identity_are_the_ones_the_template_makes(self):
+        _, lines = self.build()
+        self.assertIn("var controlHubName = '" + lines["cases_hub_name"] + "'", self.CASES)
+        self.assertIn("name: 'id-${workload}-cases'", self.CASES)
+        self.assertEqual(lines["cases_identity_name"], "id-meternaut-cases")
+
+    def test_without_a_contract_there_is_no_cases_file(self):
+        self.assertNotIn("cases.parameters.json", run(SETTINGS)[3])
+
+    def test_the_token_allowance_of_the_contract_covers_a_month_of_runs_and_stays_under_the_standing_limit(self):
+        contract = json.loads(CONTRACT_FILE.read_text(encoding="utf-8"))
+        self.assertGreaterEqual(contract["tokenQuotaPerMonth"], 2_000_000)
+        # AGENTS.md rule 15(g): at most 25 EUR of model calls in total. Even if every token of the month were an output token of the
+        # dearer model (DataZone Standard, the price snapshot's figure), the allowance would stay under that limit.
+        snapshot = json.loads((ROOT / "docs" / "design" / "cost" / "prices-snapshot.json").read_text(encoding="utf-8"))
+        dearest = max(m["prices"]["EUR"] for m in snapshot["meters"]
+                      if m.get("product") == "Azure OpenAI GPT6" and re.fullmatch(r"6(\.1)?-sol ShortCo Opt Std DZ", m.get("sku", "")))
+        self.assertGreater(dearest, 5, "the price was found")
+        self.assertLess(contract["tokenQuotaPerMonth"] / 1_000_000 * dearest, 25)
 
 
 class CheckAgainst(unittest.TestCase):

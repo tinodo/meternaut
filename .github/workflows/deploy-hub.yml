@@ -11,7 +11,7 @@ on:
   workflow_dispatch:
     inputs:
       action:
-        description: "what-if: show what the next steps would change and change nothing. model-side: the gateway's identity, then the network, the model account with its private endpoint and the budget. gateway-prepare: attach the identity to the gateway and add the Application Insights logger, and the two Event Hub loggers when the usage recording's namespace exists. gateway: add the Citadel module's objects to the gateway (with the two fragments that use the Event Hub loggers when both loggers exist, without them otherwise). contract: add the first contract (a product, its policy and its key) and test the gateway with that key. recording: the usage recording of the gateway's calls, which is a Log Analytics workspace, an Event Hubs namespace, a Cosmos DB account, a storage account, an identity and a function app, with private endpoints and without any key; it first removes the key-based Logic App version of it, when that is still there. recording-check: start the copy jobs once through the control hub and read what they say from the function app's telemetry."
+        description: "what-if: show what the next steps would change and change nothing. model-side: the gateway's identity, then the network, the model account with its private endpoint and the budget. gateway-prepare: attach the identity to the gateway and add the Application Insights logger, and the two Event Hub loggers when the usage recording's namespace exists. gateway: add the Citadel module's objects to the gateway (with the two fragments that use the Event Hub loggers when both loggers exist, without them otherwise). contract: add the first contract (a product, its policy and its key) and test the gateway with that key. recording: the usage recording of the gateway's calls, which is a Log Analytics workspace, an Event Hubs namespace, a Cosmos DB account, a storage account, an identity and a function app, with private endpoints and without any key; it first removes the key-based Logic App version of it, when that is still there. recording-check: start the copy jobs once through the control hub and read what they say from the function app's telemetry. cases: the first cases, which is a second function app on the usage recording's network, storage and namespace, with an identity, a control hub, a longer retention of the traces and the History workbook; it only reads, and it needs the usage recording and the contract first. cases-run: start one Watch through the control hub and read its History from the telemetry."
         type: choice
         required: true
         default: what-if
@@ -23,6 +23,8 @@ on:
           - contract
           - recording
           - recording-check
+          - cases
+          - cases-run
       check_limits:
         description: "Only with contract: also prove the token limit, with one request larger than a minute's allowance and then a refusal by the gateway. It uses about a minute of the contract's tokens and blocks the key for up to a minute."
         type: boolean
@@ -92,8 +94,9 @@ jobs:
         run: |
           python3 -m unittest discover -s tools/tests
           python3 -m unittest discover -s src/usage-functions/tests
+          python3 -m unittest discover -s src/case-functions/tests
           python3 tools/workflow-lint.py
-          for template in environment/main.bicep environment/gateway/identity.bicep environment/gateway/logger.bicep environment/gateway/eventhub-loggers.bicep environment/gateway/contract.bicep environment/recording/main.bicep; do
+          for template in environment/main.bicep environment/gateway/identity.bicep environment/gateway/logger.bicep environment/gateway/eventhub-loggers.bicep environment/gateway/contract.bicep environment/recording/main.bicep environment/cases/main.bicep; do
             az bicep build --file "$template" --stdout > /dev/null
             az bicep lint --file "$template"
           done
@@ -102,6 +105,7 @@ jobs:
           az bicep build --file environment/gateway/eventhub-loggers.bicep --outfile "$RUNNER_TEMP/eventhub-loggers.json"
           az bicep build --file environment/gateway/contract.bicep --outfile "$RUNNER_TEMP/contract.json"
           az bicep build --file environment/recording/main.bicep --outfile "$RUNNER_TEMP/recording.json"
+          az bicep build --file environment/cases/main.bicep --outfile "$RUNNER_TEMP/cases.json"
           az bicep build --file kit/bicep/infra/apim-gateway-upgrade/main.bicep --outfile "$RUNNER_TEMP/kit.json"
 
       - name: Sign in to Azure
@@ -179,12 +183,14 @@ jobs:
           python3 tools/environment-params.py check --params "$RUNNER_TEMP/kit.parameters.json" --template "$RUNNER_TEMP/kit.json" --label kit
           python3 tools/environment-params.py check --params "$RUNNER_TEMP/recording.parameters.json" --template "$RUNNER_TEMP/recording.json" --label recording
           python3 tools/environment-params.py check --params "$RUNNER_TEMP/contract.parameters.json" --template "$RUNNER_TEMP/contract.json" --label contract
+          python3 tools/environment-params.py check --params "$RUNNER_TEMP/cases.parameters.json" --template "$RUNNER_TEMP/cases.json" --label cases
 
-      - name: What the identity, the model side, the logger and the usage recording would change
+      - name: What the identity, the model side, the logger, the usage recording and the first cases would change
         if: inputs.action == 'what-if'
         env:
           GATEWAY_SUBSCRIPTION: ${{ steps.params.outputs.gateway_subscription }}
           GATEWAY_GROUP: ${{ steps.params.outputs.gateway_resource_group }}
+          STORAGE_ACCOUNT: ${{ steps.params.outputs.storage_account_name }}
         run: |
           echo "::group::The gateway identity, in the gateway's resource group"
           python3 tools/az-deploy.py what-if --subscription "$GATEWAY_SUBSCRIPTION" --resource-group "$GATEWAY_GROUP" \
@@ -205,6 +211,15 @@ jobs:
           echo "::group::The usage recording, in the project's resource group (the gateway identity's role is shown with a placeholder until model-side has run)"
           python3 tools/az-deploy.py what-if --subscription "$ENV_SUBSCRIPTION_ID" --resource-group "$ENV_RESOURCE_GROUP" \
             --template environment/recording/main.bicep --parameters "$RUNNER_TEMP/recording.parameters.json"
+          echo "::endgroup::"
+          echo "::group::The first cases, in the project's resource group (they use the usage recording's storage account, namespace and subnet)"
+          storage_found=$(az resource list --resource-group "$ENV_RESOURCE_GROUP" --resource-type Microsoft.Storage/storageAccounts --query "[?name=='$STORAGE_ACCOUNT'].name | [0]" --output tsv)
+          if [ -z "$storage_found" ] || [ "$storage_found" = "None" ]; then
+            echo "The first cases cannot be previewed yet: they build on the usage recording's storage account, namespace and subnet, and the action recording makes them."
+          else
+            python3 tools/az-deploy.py what-if --subscription "$ENV_SUBSCRIPTION_ID" --resource-group "$ENV_RESOURCE_GROUP" \
+              --template environment/cases/main.bicep --parameters "$RUNNER_TEMP/cases.parameters.json"
+          fi
           echo "::endgroup::"
 
       - name: Make the gateway identity
@@ -527,8 +542,8 @@ jobs:
       - name: Build the function app's package
         if: inputs.action == 'recording'
         run: |
-          # The code of src/usage-functions and its libraries, built here for the app's runtime (tools/build-usage-functions.sh says how).
-          bash tools/build-usage-functions.sh "$RUNNER_TEMP/usage-functions" "$RUNNER_TEMP/usage-functions.zip"
+          # The code of src/usage-functions and its libraries, built here for the app's runtime (tools/build-function-app.sh says how).
+          bash tools/build-function-app.sh usage-functions usage "$RUNNER_TEMP/usage-functions" "$RUNNER_TEMP/usage-functions.zip"
 
       - name: Publish the usage functions to the function app
         if: inputs.action == 'recording'
@@ -584,6 +599,119 @@ jobs:
           python3 tools/recording-check.py functions --site "$site" --minutes 5
           python3 tools/recording-check.py run --namespace "$EVENT_HUB_NAMESPACE" --insights "$insights" --job all --minutes 20 --summary "$GITHUB_STEP_SUMMARY"
 
+      - name: The usage recording and the contract are there, which the first cases build on
+        if: inputs.action == 'cases'
+        env:
+          STORAGE_ACCOUNT: ${{ steps.params.outputs.storage_account_name }}
+          EVENT_HUB_NAMESPACE: ${{ steps.params.outputs.event_hub_namespace }}
+          CONTRACT_SUBSCRIPTION: ${{ steps.params.outputs.contract_subscription }}
+          EXPECTED_GATEWAY_URL: ${{ steps.params.outputs.gateway_url }}
+        run: |
+          # The app uses the recording's storage account, namespace and subnet, and the contract's subscription (the app reads that
+          # subscription's key at the start of a run), and it is given the gateway's address from the instance's name.
+          missing=""
+          for pair in "Microsoft.Storage/storageAccounts:$STORAGE_ACCOUNT" "Microsoft.EventHub/namespaces:$EVENT_HUB_NAMESPACE"; do
+            kind="${pair%%:*}"
+            name="${pair#*:}"
+            found=$(az resource list --resource-group "$ENV_RESOURCE_GROUP" --resource-type "$kind" --query "[?name=='$name'].name | [0]" --output tsv)
+            if [ -z "$found" ] || [ "$found" = "None" ]; then missing="$missing $name"; fi
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::These are not in $ENV_RESOURCE_GROUP:$missing. Run recording first: the first cases use its storage account and namespace."
+            exit 1
+          fi
+          subscriptions=$(az rest --method get --url "https://management.azure.com${GATEWAY_RESOURCE_ID}/subscriptions?api-version=2024-05-01" --query "value[].name" --output tsv)
+          if ! grep -Fxq "$CONTRACT_SUBSCRIPTION" <<< "$subscriptions"; then
+            echo "::error::The gateway has no subscription named $CONTRACT_SUBSCRIPTION. Run contract first: the app reads that subscription's key at the start of a run."
+            exit 1
+          fi
+          actual=$(az rest --method get --url "https://management.azure.com${GATEWAY_RESOURCE_ID}?api-version=2024-05-01" --query properties.gatewayUrl --output tsv)
+          if [ "${actual%/}" != "${EXPECTED_GATEWAY_URL%/}" ]; then
+            echo "::error::The gateway answers on ${actual%/}, not on $EXPECTED_GATEWAY_URL, which is the address that the app would be given. Nothing was deployed."
+            exit 1
+          fi
+          echo "The usage recording's storage account and namespace are there, the contract's subscription is in the gateway, and the gateway answers on ${actual%/}."
+
+      - name: Deploy the first cases
+        id: cases
+        if: inputs.action == 'cases'
+        run: |
+          # A second function app on the Flex Consumption plan, with its own identity, plan and package container; one more event hub
+          # (the control hub) in the recording's namespace; the roles that connect them; a year of retention for the traces; and the
+          # History workbook (environment/cases/main.bicep). The app only reads Azure. No key anywhere.
+          site=$(python3 tools/az-deploy.py create --subscription "$ENV_SUBSCRIPTION_ID" --resource-group "$ENV_RESOURCE_GROUP" \
+            --template environment/cases/main.bicep --parameters "$RUNNER_TEMP/cases.parameters.json" \
+            --name "cases-$GITHUB_RUN_ID" --output functionAppId)
+          if ! printf '%s' "$site" | grep -Eq '^/subscriptions/[0-9a-fA-F-]{36}/resourceGroups/[^/]+/providers/Microsoft\.Web/sites/[A-Za-z0-9-]+$'; then
+            echo "::error::The deployment did not return the resource id of the function app."
+            exit 1
+          fi
+          echo "site=$site" >> "$GITHUB_OUTPUT"
+
+      - name: Sign in to Azure again for the publish of the cases, because the first sign-in's credential lasts five minutes
+        if: inputs.action == 'cases'
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Build the cases app's package
+        if: inputs.action == 'cases'
+        run: |
+          # The code of src/case-functions and its libraries, built here for the app's runtime (tools/build-function-app.sh says how).
+          bash tools/build-function-app.sh case-functions cases "$RUNNER_TEMP/case-functions" "$RUNNER_TEMP/case-functions.zip"
+
+      - name: Publish the cases to the function app
+        if: inputs.action == 'cases'
+        env:
+          FUNCTION_APP: ${{ steps.params.outputs.cases_function_app_name }}
+        run: |
+          # Like the usage functions: the package goes to the app's deployment endpoint with the signed-in identity's token, and a site
+          # that has just been made may need a minute before it takes a package.
+          for attempt in 1 2 3; do
+            if az functionapp deployment source config-zip --resource-group "$ENV_RESOURCE_GROUP" --name "$FUNCTION_APP" \
+              --src "$RUNNER_TEMP/case-functions.zip" --build-remote false --only-show-errors; then
+              exit 0
+            fi
+            echo "The publish did not go through (attempt $attempt of 3)."
+            if [ "$attempt" -lt 3 ]; then sleep 60; fi
+          done
+          echo "::error::The code could not be published to $FUNCTION_APP."
+          exit 1
+
+      - name: The cases app lists its two functions
+        if: inputs.action == 'cases'
+        env:
+          SITE_ID: ${{ steps.cases.outputs.site }}
+          CASES_IDENTITY: ${{ steps.params.outputs.cases_identity_name }}
+        run: |
+          python3 tools/cases-check.py functions --site "$SITE_ID" --minutes 15 | tee "$RUNNER_TEMP/case-functions.txt"
+          principal=$(az identity show --resource-group "$ENV_RESOURCE_GROUP" --name "$CASES_IDENTITY" --query principalId --output tsv)
+          {
+            echo "### The cases app"
+            echo
+            echo '```'
+            cat "$RUNNER_TEMP/case-functions.txt"
+            echo '```'
+            echo
+            echo "Identity of the cases app (object id): \`$principal\`. It reads the pilot subscription with two roles (Reader and Cost Management Reader) and the contract's key with one role in the gateway's subscription. This workflow gives none of them (environment/BOOTSTRAP.md). Until they exist, a run ends with an authorization error that \`cases-run\` shows."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Start one Watch and read its History
+        if: inputs.action == 'cases-run'
+        env:
+          SITE_NAME: ${{ steps.params.outputs.cases_function_app_name }}
+          EVENT_HUB_NAMESPACE: ${{ steps.params.outputs.event_hub_namespace }}
+          INSIGHTS_NAME: ${{ steps.params.outputs.appinsights_name }}
+        run: |
+          # One event to the control hub starts one Watch now. The app writes the History of the run to its telemetry, which is read here.
+          # The Watch only reads Azure and calls the models through the gateway.
+          site="/subscriptions/$ENV_SUBSCRIPTION_ID/resourceGroups/$ENV_RESOURCE_GROUP/providers/Microsoft.Web/sites/$SITE_NAME"
+          insights="/subscriptions/$ENV_SUBSCRIPTION_ID/resourceGroups/$ENV_RESOURCE_GROUP/providers/Microsoft.Insights/components/$INSIGHTS_NAME"
+          python3 tools/cases-check.py functions --site "$site" --minutes 5
+          python3 tools/cases-check.py run --namespace "$EVENT_HUB_NAMESPACE" --insights "$insights" --minutes 30 --summary "$GITHUB_STEP_SUMMARY"
+
       - name: What was done
         if: always()
         env:
@@ -604,6 +732,8 @@ jobs:
                 contract) echo "The contract's product, its policy and its subscription may be in the gateway already, and the test of the gateway with its key may have failed after that. Running \`contract\` again is safe: it repeats only what is missing and runs the test again." ;;
                 recording) echo "Part of the usage recording may exist now: the Log Analytics workspace, the storage account, the Event Hubs namespace, the Cosmos DB account, the identity, the private endpoints and the function app. They cost money while they exist, the private endpoints most (about 5 euros a month each). The key-based Logic App version may be removed already. Running \`recording\` again is safe and repeats only what is missing; \`what-if\` shows what is there." ;;
                 recording-check) echo "The copy jobs may have run and written nothing, or not at all. The lines above say how each ended, or which warnings and errors the function app logged. Running \`recording-check\` again is safe." ;;
+                cases) echo "Part of the first cases may exist now: the identity, the plan, the function app, the control hub, the longer retention of the traces and the workbook. They cost next to nothing. Running \`cases\` again is safe and repeats only what is missing; \`what-if\` shows what is there." ;;
+                cases-run) echo "The Watch may have run partly or not at all. The lines above say how it ended, or which warnings and errors the cases app logged. It only reads Azure, so nothing was changed. Running \`cases-run\` again is safe." ;;
               esac
             else
               case "$ACTION" in
@@ -614,6 +744,8 @@ jobs:
                 contract) echo "The contract \`$CONTRACT_NAME\` is in the gateway: a product that grants the two inference APIs, its policy (the models and the token limits) and one subscription. The checks above ran against the gateway with that subscription's key, which is stored nowhere." ;;
                 recording) echo "The usage recording is in resource group \`$ENV_RESOURCE_GROUP\`: Event Hubs, a Cosmos DB account (serverless, no public endpoint, no key), a storage account (no public endpoint, no Shared Key), the function app with its six functions on a Flex Consumption plan, its identity, a workspace and an Application Insights component of its own, and five private endpoints that the landing zone has registered in its central zones. The key-based Logic App version is removed. The gateway identity may send to the two usage event hubs and the function app may read them; nothing sends to them yet. The copy jobs need two roles for the function app's identity outside the project's group before they can read the gateway's Application Insights (environment/BOOTSTRAP.md); then \`recording-check\` starts them once and reads what they said." ;;
                 recording-check) echo "The copy jobs ran and the function app wrote what each did to its telemetry; the lines above are that: the window, the rows read, the documents written and the number of documents in the container afterwards. A job writes only what the gateway recorded after its marker, so a first run writes the marker and nothing else." ;;
+                cases) echo "The first cases are in resource group \`$ENV_RESOURCE_GROUP\`: a function app with two functions (a daily timer and a trigger on the control hub), its identity, the control hub in the usage recording's namespace, a year of retention for the traces and the History workbook. The app reads the pilot subscription with two roles and the contract's key with one role in the gateway's subscription; this workflow gives none of them, they are given once on the owner's written word (environment/BOOTSTRAP.md), and until they exist a run ends with an authorization error. The app changes nothing in Azure." ;;
+                cases-run) echo "One Watch ran and wrote its History to the cases app's telemetry; the lines above are that: the leads, what each case came to, what the models said and the tokens that went through the gateway. Nothing in Azure was changed." ;;
               esac
             fi
           } >> "$GITHUB_STEP_SUMMARY"

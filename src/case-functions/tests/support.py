@@ -1,0 +1,219 @@
+"""Helpers shared by the tests: a fake estate that answers the calls of the app, a clock and a log capture.
+
+The tests use the standard library only and need no network and no Azure. Run them from the repository root:
+
+    python -m unittest discover -s src/case-functions/tests
+"""
+from __future__ import annotations
+
+import datetime as dt
+import json
+import logging
+import re
+import sys
+from pathlib import Path
+from urllib.parse import urlsplit
+
+APP_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = APP_ROOT.parents[1]
+if str(APP_ROOT) not in sys.path:
+    sys.path.insert(0, str(APP_ROOT))
+
+# With a handler on the root logger, logging.info() does not configure logging by itself and print to the console.
+logging.getLogger().addHandler(logging.NullHandler())
+
+SUBSCRIPTION = "11111111-2222-3333-4444-555555555555"
+GATEWAY_GROUP = "/subscriptions/66666666-7777-8888-9999-000000000000/resourceGroups/rg-gateway/providers/Microsoft.ApiManagement/service/example-apim"
+PRODUCT_SUBSCRIPTION = f"{GATEWAY_GROUP}/subscriptions/meternaut-agents-sub-01"
+KEY = "K3y-VALUE-that-must-never-be-logged-0123456789abcdef"
+TOKEN = "eyJhbGciOiJub25lIn0.eyJvaWQiOiJ4In0.signature-value-123"
+NOW = dt.datetime(2026, 11, 4, 12, 0, 0, tzinfo=dt.timezone.utc)
+
+ENV = {
+    "AZURE_CLIENT_ID": "99999999-8888-7777-6666-555555555555",
+    "SCOPE_SUBSCRIPTIONS": SUBSCRIPTION,
+    "GATEWAY_URL": "https://example-apim.azure-api.net",
+    "GATEWAY_PRODUCT_SUBSCRIPTION_ID": PRODUCT_SUBSCRIPTION,
+    "MODEL_DETECTIVE": "gpt-6-luna",
+    "MODEL_SKEPTIC": "gpt-6.1-sol",
+    "MAX_CASES_PER_RUN": "3",
+    "EVENTHUB_CASES_CONTROL_NAME": "cases-control",
+    "IDENTITY_ENDPOINT": "http://127.0.0.1:8081/msi/token",
+    "IDENTITY_HEADER": "identity-header-value",
+}
+
+RG = f"/subscriptions/{SUBSCRIPTION}/resourceGroups"
+
+
+def pe_row(name: str, group: str = "rg-app", states=("Disconnected",), groups=("blob",), **changes) -> dict:
+    row = {"id": f"{RG}/{group}/providers/Microsoft.Network/privateEndpoints/{name}", "name": name, "type": "microsoft.network/privateendpoints",
+           "resourceGroup": group, "subscriptionId": SUBSCRIPTION, "location": "swedencentral", "tags": None, "managedBy": "",
+           "states": list(states), "groups": list(groups)}
+    row.update(changes)
+    return row
+
+
+def disk_row(name: str, group: str = "rg-app", **changes) -> dict:
+    row = {"id": f"{RG}/{group}/providers/Microsoft.Compute/disks/{name}", "name": name, "type": "microsoft.compute/disks", "resourceGroup": group,
+           "subscriptionId": SUBSCRIPTION, "location": "swedencentral", "tags": {"owner": "someone"}, "managedBy": "", "skuName": "Premium_LRS",
+           "sizeGb": 256, "timeCreated": "2026-01-02T10:00:00.1234567+00:00"}
+    row.update(changes)
+    return row
+
+
+def model_reply(content: str, prompt: int = 700, completion: int = 150) -> tuple[int, dict]:
+    return 200, {"choices": [{"index": 0, "message": {"role": "assistant", "content": content}, "finish_reason": "stop"}],
+                 "usage": {"prompt_tokens": prompt, "completion_tokens": completion, "total_tokens": prompt + completion}}
+
+
+def detective_says(recommendation: str = "delete", confidence: float = 0.9, summary: str = "The connection was never approved and nothing uses it.") -> str:
+    return json.dumps({"recommendation": recommendation, "confidence": confidence, "summary": summary})
+
+
+def skeptic_says(verdict: str = "agree", objections=(), summary: str = "No reason to keep it.") -> str:
+    return json.dumps({"verdict": verdict, "objections": list(objections), "summary": summary})
+
+
+class FakeEstate:
+    """Answers every call that the app makes, from the lists below, and keeps them in `calls`.
+
+    `graph` maps the name that heads a Resource Graph query (`// meternaut:<name>`) to its rows. `failures` maps a source (`graph:<name>`,
+    `advisor`, `locks`, `costs`, `secrets`, `chat`) to a status that is answered instead (or to a list of statuses, one for each call).
+    """
+
+    def __init__(self) -> None:
+        self.graph: dict[str, list[dict]] = {"orphan-private-endpoint": [], "orphan-managed-disk": [], "orphan-public-ip": [], "load-balancer-without-backends": [],
+                                             "empty-app-service-plan": [], "stopped-vm": [], "recent-creations": [], "managed-groups": []}
+        self.advisor: list[dict] = []
+        self.locks: list[dict] = []
+        self.cost_rows: list[list] = []
+        self.currency = "USD"
+        self.failures: dict[str, object] = {}
+        self.chat_replies: list[tuple[int, object]] = []
+        self.calls: list[dict] = []
+        self.sleeps: list[float] = []
+
+    # -- the answers ---------------------------------------------------------------------------------------------------------------------------
+    def model(self, model: str, system: str, user: str) -> tuple:
+        """The reply to one chat call: (status, body) or (status, headers, body)."""
+        if self.chat_replies:
+            return self.chat_replies.pop(0)
+        if system.startswith("You are the Detective"):
+            return model_reply(detective_says())
+        return model_reply(skeptic_says())
+
+    def _failure(self, source: str):
+        planned = self.failures.get(source)
+        if isinstance(planned, list):
+            return planned.pop(0) if planned else None
+        return planned
+
+    def __call__(self, method: str, url: str, headers, data, timeout):
+        parts = urlsplit(url)
+        body = json.loads(data.decode("utf-8")) if data else None
+        self.calls.append({"method": method, "url": url, "host": parts.netloc, "path": parts.path, "headers": dict(headers), "body": body, "timeout": timeout})
+        path = parts.path.lower()
+        if path.endswith("/providers/microsoft.resourcegraph/resources"):
+            name = re.match(r"// meternaut:(\S+)", body["query"]).group(1)
+            failed = self._failure(f"graph:{name}")
+            return (failed, {}, b'{"error":{"code":"Failed","message":"boom"}}') if failed else self._json({"count": len(self.graph[name]), "data": self.graph[name]})
+        if "/providers/microsoft.costmanagement/query" in path:
+            failed = self._failure("costs")
+            if failed:
+                return failed, {"retry-after": "1"} if failed == 429 else {}, b'{"error":{"code":"Throttled","message":"slow down"}}'
+            return self._json({"properties": {"columns": [{"name": "Cost"}, {"name": "ResourceId"}, {"name": "Currency"}],
+                                              "rows": [[cost, rid, self.currency] for cost, rid in self.cost_rows]}})
+        if "/providers/microsoft.advisor/recommendations" in path:
+            failed = self._failure("advisor")
+            return (failed, {}, b'{"error":{"code":"Failed","message":"boom"}}') if failed else self._json({"value": self.advisor})
+        if "/providers/microsoft.authorization/locks" in path:
+            failed = self._failure("locks")
+            return (failed, {}, b'{"error":{"code":"Failed","message":"boom"}}') if failed else self._json({"value": self.locks})
+        if path.endswith("/listsecrets"):
+            failed = self._failure("secrets")
+            return (failed, {}, b'{"error":{"code":"Forbidden","message":"no right"}}') if failed else self._json({"primaryKey": KEY, "secondaryKey": "other-secret-key-value"})
+        if path.endswith("/models/chat/completions"):
+            failed = self._failure("chat")
+            if failed:
+                return failed, {"retry-after": "1"} if failed == 429 else {}, b'{"statusCode":%d,"message":"refused"}' % failed
+            messages = body["messages"]
+            reply = self.model(body["model"], messages[0]["content"], messages[1]["content"])
+            if len(reply) == 3:
+                status, answer_headers, answer = reply
+                return status, answer_headers, json.dumps(answer).encode("utf-8")
+            return self._json(reply[1], reply[0])
+        return 404, {}, b"{}"
+
+    @staticmethod
+    def _json(document, status: int = 200):
+        return status, {}, json.dumps(document).encode("utf-8")
+
+    # -- what the tests ask -----------------------------------------------------------------------------------------------------------------------
+    def prompts(self) -> list[str]:
+        return [call["body"]["messages"][1]["content"] for call in self.calls if call["path"].endswith("/models/chat/completions")]
+
+    def chat_calls(self) -> list[dict]:
+        return [call for call in self.calls if call["path"].endswith("/models/chat/completions")]
+
+
+def identity_fetch(url, headers, timeout):
+    return 200, json.dumps({"access_token": TOKEN, "expires_on": str(int(NOW.timestamp()) + 3600), "resource": "x"}).encode("utf-8")
+
+
+class Ticker:
+    """A monotonic clock that moves a little at every reading, and a way to move it a lot."""
+
+    def __init__(self, step: float = 0.1) -> None:
+        self.now, self.step = 1000.0, step
+
+    def __call__(self) -> float:
+        self.now += self.step
+        return self.now
+
+    def jump(self, seconds: float) -> None:
+        self.now += seconds
+
+
+def fixed_clock() -> dt.datetime:
+    return NOW
+
+
+class LogCapture(logging.Handler):
+    """Collects the records of the root logger while it is in a with block, also when nothing is logged."""
+
+    def __init__(self) -> None:
+        super().__init__(logging.DEBUG)
+        self.records: list[logging.LogRecord] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.records.append(record)
+
+    def __enter__(self) -> "LogCapture":
+        root = logging.getLogger()
+        self._level = root.level
+        root.setLevel(logging.DEBUG)
+        root.addHandler(self)
+        return self
+
+    def __exit__(self, *exc_info) -> None:
+        root = logging.getLogger()
+        root.removeHandler(self)
+        root.setLevel(self._level)
+
+    def messages(self) -> list[str]:
+        return [record.getMessage() for record in self.records]
+
+    def events(self) -> list[dict]:
+        from cases.events import EVENT_PREFIX
+        return [json.loads(m[len(EVENT_PREFIX):]) for m in self.messages() if m.startswith(EVENT_PREFIX)]
+
+
+def run_watch(estate: FakeEstate, env: dict | None = None, trigger: str = "control", request_id: str | None = "a" * 32, ticker: Ticker | None = None, **overrides):
+    """One whole run against the fake estate. Returns the summary, the History lines and every log message."""
+    from cases import run
+    ids = iter(f"{n:032x}" for n in range(1, 1000))
+    options = dict(clock=fixed_clock, monotonic=ticker or Ticker(), sleep=estate.sleeps.append, transport=estate, fetch=identity_fetch, new_id=lambda: next(ids))
+    options.update(overrides)
+    with LogCapture() as capture:
+        summary = run.run_watch(trigger, request_id, env or dict(ENV), **options)
+    return summary, capture.events(), capture.messages()

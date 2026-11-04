@@ -112,7 +112,7 @@ class WorkOutTheSettings(unittest.TestCase):
         done, lines, _ = self.run_step(f"{PRINCIPAL}\t{CLIENT}", "")
         checks = [line for line in lines if line.startswith("check ")]
         labels = [re.search(r"--label (\S+)", line).group(1) for line in checks]
-        self.assertEqual(labels, ["environment", "logger", "eventhub-loggers", "kit", "recording", "contract"])
+        self.assertEqual(labels, ["environment", "logger", "eventhub-loggers", "kit", "recording", "contract", "cases"])
 
 
 STAND_IN_PYTHON = """#!/bin/bash
@@ -127,9 +127,9 @@ echo "python3 $*" >> "$FAKE_LOG"
 
 @unittest.skipIf(BASH is None, "no bash on this machine")
 class BuildTheFunctionPackage(unittest.TestCase):
-    """tools/build-usage-functions.sh against a stand-in for python3: what it refuses, and the exact install that it asks for."""
+    """tools/build-function-app.sh against a stand-in for python3: what it refuses, and the exact install that it asks for."""
 
-    def run_script(self, python_version):
+    def run_script(self, python_version, arguments=("usage-functions", "usage")):
         with tempfile.TemporaryDirectory() as tmp:
             tmp = Path(tmp)
             bin_dir = tmp / "bin"
@@ -141,7 +141,7 @@ class BuildTheFunctionPackage(unittest.TestCase):
             log.write_text("", encoding="utf-8")
             build = tmp / "build"
             env = {**os.environ, "PATH": f"{bin_dir.as_posix()}{os.pathsep}{os.environ['PATH']}", "FAKE_PYTHON": python_version, "FAKE_LOG": log.as_posix()}
-            done = subprocess.run([BASH, "-e", "-o", "pipefail", (ROOT / "tools" / "build-usage-functions.sh").as_posix(), build.as_posix()],
+            done = subprocess.run([BASH, "-e", "-o", "pipefail", (ROOT / "tools" / "build-function-app.sh").as_posix(), *arguments, build.as_posix()],
                                   capture_output=True, text=True, env=env, cwd=ROOT)
             copied = sorted(p.name for p in build.iterdir()) if build.exists() else []
             return done, log.read_text(encoding="utf-8").splitlines(), copied
@@ -164,6 +164,20 @@ class BuildTheFunctionPackage(unittest.TestCase):
             self.assertIn(flag, install)
         for word in ("--index-url", "--extra-index-url", "--trusted-host", "--no-deps"):
             self.assertNotIn(word, install, word)
+
+    def test_the_cases_app_is_built_from_its_own_lock(self):
+        done, calls, copied = self.run_script("3.13.0", arguments=("case-functions", "cases"))
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(copied, ["cases", "function_app.py", "host.json", "requirements.txt"])
+        (install,) = calls
+        self.assertIn("src/case-functions/requirements.txt", install)
+        self.assertNotIn("usage-functions", install)
+
+    def test_names_that_leave_the_src_folder_or_the_plain_form_are_refused_before_anything_is_built(self):
+        for arguments in (("../tools", "usage"), ("usage-functions", "usage/../x"), ("Usage-Functions", "usage"), ("usage-functions", "Usage"), ("", "usage")):
+            done, calls, copied = self.run_script("3.13.0", arguments=arguments)
+            self.assertNotEqual(done.returncode, 0, arguments)
+            self.assertEqual((calls, copied), ([], []), arguments)
 
 
 if __name__ == "__main__":
