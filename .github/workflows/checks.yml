@@ -46,7 +46,7 @@ jobs:
         run: python -m unittest discover -s tools/tests
       - name: Unit tests of the usage functions, with the libraries that they run with
         run: |
-          python -m pip install --quiet --disable-pip-version-check --requirement src/usage-functions/requirements.txt
+          python -m pip install --quiet --disable-pip-version-check --require-hashes --requirement src/usage-functions/requirements.txt
           python -m unittest discover -s src/usage-functions/tests -v
       - name: The function app's package builds for its runtime, and the app loads from it with its six functions
         run: |
