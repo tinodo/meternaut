@@ -28,11 +28,15 @@ ALLOWED = {
     },
     "infra/budgets/rg-budget.bicep": {"Microsoft.Consumption/budgets"},
     "environment/recording/main.bicep": {
+        "Microsoft.ManagedIdentity/userAssignedIdentities",
+        "Microsoft.Network/virtualNetworks",
+        "Microsoft.Network/virtualNetworks/subnets",
+        "Microsoft.Network/privateEndpoints",
         "Microsoft.OperationalInsights/workspaces",
         "Microsoft.Insights/components",
         "Microsoft.Storage/storageAccounts",
-        "Microsoft.Storage/storageAccounts/fileServices",
-        "Microsoft.Storage/storageAccounts/fileServices/shares",
+        "Microsoft.Storage/storageAccounts/blobServices",
+        "Microsoft.Storage/storageAccounts/blobServices/containers",
         "Microsoft.EventHub/namespaces",
         "Microsoft.EventHub/namespaces/eventhubs",
         "Microsoft.EventHub/namespaces/eventhubs/consumergroups",
@@ -41,12 +45,9 @@ ALLOWED = {
         "Microsoft.DocumentDB/databaseAccounts/sqlDatabases",
         "Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers",
         "Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments",
-        "Microsoft.Web/connections",
-        "Microsoft.Web/connections/accessPolicies",
         "Microsoft.Web/serverfarms",
         "Microsoft.Web/sites",
         "Microsoft.Web/sites/basicPublishingCredentialsPolicies",
-        "Microsoft.Web/sites/config",
     },
 }
 
@@ -82,7 +83,7 @@ class Templates(unittest.TestCase):
 
     def test_the_model_side_has_the_resources_and_the_order_that_a_real_deploy_needed(self):
         found = resources(text("environment/main.bicep"))
-        self.assertEqual(set(found), {"nsg", "vnet", "account", "modelDeployment", "privateEndpoint", "gatewayMayCallTheModels"})
+        self.assertEqual(set(found), {"nsg", "funcNsg", "vnet", "account", "modelDeployment", "privateEndpoint", "gatewayMayCallTheModels"})
         # the private endpoint after every model deployment, the role assignment after the private endpoint
         self.assertIn("modelDeployment", depends_on(found["privateEndpoint"][1]))
         self.assertIn("privateEndpoint", depends_on(found["gatewayMayCallTheModels"][1]))
@@ -227,87 +228,154 @@ class Recording(unittest.TestCase):
         self.source = text("environment/recording/main.bicep")
         self.code = re.sub(r"//.*", "", self.source)
 
-    def test_it_makes_no_dns_no_peering_no_private_endpoint_and_no_gateway_object(self):
-        for word in ("Microsoft.ApiManagement", "privateDnsZones", "virtualNetworkPeerings", "routeTables", "privateDnsZoneGroups", "privateEndpoints", "Microsoft.Network"):
+    def test_it_makes_no_dns_no_peering_no_route_and_no_gateway_object(self):
+        for word in ("Microsoft.ApiManagement", "privateDnsZones", "virtualNetworkPeerings", "routeTables", "privateDnsZoneGroups"):
             self.assertNotIn(word, self.code, word)
 
-    def test_every_service_is_public_on_purpose_and_none_has_a_key_that_something_does_not_need(self):
-        self.assertEqual(self.code.count("publicNetworkAccess: 'Enabled'"), 4)  # storage, event hubs, cosmos, the Logic App
-        self.assertNotIn("publicNetworkAccess: 'Disabled'", self.code)
-        self.assertIn("disableLocalAuth: true", self.code)  # Event Hubs: the gateway and the Logic App use their identities
-        self.assertEqual(self.code.count("allowSharedKeyAccess: true"), 1)  # the Logic App's own storage; its content share cannot be mounted without
+    def test_nothing_is_public_but_event_hubs_and_the_function_apps_own_endpoint_and_none_has_a_key(self):
+        # Storage and Cosmos DB have no public endpoint; Event Hubs keeps one on purpose (the gateway sends to it, the workflow sends one control
+        # event to it; the function app uses a private endpoint, so that it can be switched off later); the function app has the platform's
+        # endpoint, which it needs for its deployment and which serves no function (no HTTP trigger).
+        self.assertEqual(self.code.count("publicNetworkAccess: 'Disabled'"), 2)  # storage, cosmos
+        self.assertEqual(self.code.count("publicNetworkAccess: 'Enabled'"), 2)  # event hubs, the function app
+        found = resources(self.source)
+        self.assertIn("publicNetworkAccess: 'Disabled'", found["storage"][1])
+        self.assertIn("publicNetworkAccess: 'Disabled'", found["cosmos"][1])
+        self.assertIn("publicNetworkAccess: 'Enabled'", found["eventHubs"][1])
+        self.assertIn("allowSharedKeyAccess: false", found["storage"][1])
+        self.assertIn("defaultToOAuthAuthentication: true", found["storage"][1])
+        self.assertIn("disableLocalAuth: true", found["cosmos"][1])
+        self.assertIn("disableLocalAuth: true", found["eventHubs"][1])
+        self.assertIn("DisableLocalAuth: true", found["insights"][1])  # Application Insights takes telemetry only with Entra ID
+        self.assertIn("disableLocalAuth: true", found["workspace"][1])
         self.assertIn("allowBlobPublicAccess: false", self.code)
         self.assertEqual(self.code.count("minimumTlsVersion"), 2)  # storage, event hubs
-        self.assertIn("minimalTlsVersion: 'Tls12'", self.code)
-        self.assertIn("allow: false", self.code)  # neither the deployment endpoint nor FTP takes a password
-        self.assertEqual(self.code.count("allow: false"), 2)
-        self.assertIn("ftpsState: 'Disabled'", self.code)
+        self.assertIn("minTlsVersion: '1.2'", self.code)  # the function app's site
+        self.assertIn("minimalTlsVersion: 'Tls12'", self.code)  # cosmos
+        self.assertEqual(self.code.count("allow: false"), 1)  # the deployment endpoint takes no password; FTP does not exist on a Flex Consumption app
+        self.assertNotIn("ftpsState", self.code)
         self.assertIn("httpsOnly: true", self.code)
+        for word in ("allowSharedKeyAccess: true", "disableLocalAuth: false", "DisableLocalAuth: false"):
+            self.assertNotIn(word, self.code, word)
 
     def test_cosmos_db_is_serverless_and_no_container_has_a_throughput_of_its_own(self):
         self.assertIn("name: 'EnableServerless'", self.code)
         for word in ("throughput", "autoscaleSettings", "maxThroughput", "enableFreeTier", "enableMultipleWriteLocations", "backupPolicy"):
             self.assertNotIn(word, self.code, word)
 
-    def test_the_containers_are_the_ones_the_workflows_of_the_kit_name(self):
+    def test_the_containers_are_the_ones_the_functions_name(self):
         containers = re.findall(r"\{ name: '([a-z-]+)', partitionKey: '(/\w+)' \}", self.code)
         self.assertEqual(sorted(name for name, _ in containers), ["agent-usage-container", "ai-usage-container", "llm-usage-container", "mcp-usage-container",
                                                                  "model-pricing", "pii-usage-container", "streaming-export-config"])
-        settings = dict(re.findall(r"^    (CosmosDBContainer\w+): '([a-z-]+)'$", self.code, re.M))
+        settings = dict(re.findall(r"\{ name: '(COSMOS_CONTAINER_\w+)', value: '([a-z-]+)' \}", self.code))
         self.assertEqual(len(settings), 6)
         self.assertTrue(set(settings.values()) <= {name for name, _ in containers})
-        self.assertEqual(settings["CosmosDBContainerLLMUsage"], "llm-usage-container")
-        self.assertEqual(settings["CosmosDBContainerConfig"], "streaming-export-config")
+        self.assertEqual(settings["COSMOS_CONTAINER_LLM_USAGE"], "llm-usage-container")
+        self.assertEqual(settings["COSMOS_CONTAINER_CONFIG"], "streaming-export-config")
 
     def test_the_roles_are_the_ones_that_each_caller_needs_and_nothing_wider(self):
         guids = set(re.findall(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", self.code))
         self.assertEqual(guids, {
             "2b629674-e913-4c01-ae53-ef4638d8f975",  # Azure Event Hubs Data Sender
             "a638d3c7-ab3a-418d-83e6-5f17a39d4fde",  # Azure Event Hubs Data Receiver
+            "b7e6dc6d-f1e8-4753-8033-0f276bb0955b",  # Storage Blob Data Owner
+            "974c5e8b-45b9-4653-ba55-5f855dd0fb88",  # Storage Queue Data Contributor
+            "0a9a7e1f-b9d0-4cc4-a60d-0319b160aaa3",  # Storage Table Data Contributor
+            "3913510d-42f4-4e42-8a64-420c390055eb",  # Monitoring Metrics Publisher
             "00000000-0000-0000-0000-000000000001",  # Cosmos DB built-in Data Reader
+            "00000000-0000-0000-0000-000000000002",  # Cosmos DB built-in Data Contributor
         })
         found = resources(self.source)
-        for name, (kind, body) in found.items():
-            if kind == "Microsoft.Authorization/roleAssignments":
-                self.assertIn("principalType: 'ServicePrincipal'", body, name)
-                self.assertRegex(body, r"(?m)^  scope: eventHubs$", name)  # on the namespace, never on the group or the subscription
-        self.assertEqual(sorted(n for n, (k, _) in found.items() if k == "Microsoft.Authorization/roleAssignments"), ["gatewaySends", "logicAppReceives"])
+        assignments = {name: body for name, (kind, body) in found.items() if kind == "Microsoft.Authorization/roleAssignments"}
+        self.assertEqual(sorted(assignments), ["functionOwnsBlobs", "functionPublishesTelemetry", "functionReceivesControl", "functionReceivesPii", "functionReceivesUsage",
+                                               "functionUsesQueues", "functionUsesTables", "gatewaySendsPii", "gatewaySendsUsage", "workflowSendsControl"])
+        for name, body in assignments.items():
+            self.assertIn("principalType: 'ServicePrincipal'", body, name)
+            # on the one resource, never on the group, the subscription or the whole namespace
+            self.assertRegex(body, r"(?m)^  scope: (usageHub|piiHub|controlHub|storage|insights)$", name)
         data_roles = sorted(n for n, (k, _) in found.items() if k == "Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments")
-        self.assertEqual(data_roles, ["readersOfTheData"], "nobody gets a role to write the usage documents: the Logic App uses the connection string")
+        self.assertEqual(data_roles, ["functionWritesUsage", "readersOfTheData"])
+        self.assertIn("cosmosDataContributorRoleId", found["functionWritesUsage"][1])
+        self.assertIn("principalId: usageIdentity.properties.principalId", found["functionWritesUsage"][1])
+        self.assertIn("cosmosDataReaderRoleId", found["readersOfTheData"][1])
 
-    def test_the_two_resources_that_the_tenant_would_change_carry_the_opt_out_of_its_own_policies_and_nothing_else_does(self):
-        self.assertEqual(len(re.findall(r"SecurityControl", self.code)), 1)
-        self.assertIn("var optOut = {\n  SecurityControl: 'Ignore'\n}", self.code)
-        found = resources(self.source)
-        tagged = sorted(name for name, (_, body) in found.items() if "optOut" in body)
-        self.assertEqual(tagged, ["cosmos", "storage"])
-        for name in tagged:
-            self.assertIn("tags: union(tags, optOut)", found[name][1], name)
-        self.assertIn("disableLocalAuth: false", found["cosmos"][1])  # said, not left to a default: the kit's workflows use the connection string
-        self.assertIn("allowSharedKeyAccess: true", found["storage"][1])
+    def test_nothing_relies_on_an_opt_out_of_the_tenants_policies(self):
+        for word in ("SecurityControl", "optOut", "Ignore"):
+            self.assertNotIn(word, self.code, word)
+        self.assertNotIn("tags: union(", self.code)
 
-    def test_the_gateway_only_sends_and_the_logic_app_only_receives(self):
+    def test_the_gateway_and_the_workflow_only_send_and_the_function_app_only_receives_each_on_the_hub_it_uses(self):
         found = resources(self.source)
-        self.assertIn("eventHubsDataSenderRoleId", found["gatewaySends"][1])
-        self.assertIn("principalId: gatewayPrincipalId", found["gatewaySends"][1])
-        self.assertIn("eventHubsDataReceiverRoleId", found["logicAppReceives"][1])
-        self.assertIn("principalId: logicApp.identity.principalId", found["logicAppReceives"][1])
+        for name, hub, principal in (("gatewaySendsUsage", "usageHub", "gatewayPrincipalId"), ("gatewaySendsPii", "piiHub", "gatewayPrincipalId"),
+                                     ("workflowSendsControl", "controlHub", "workflowPrincipalId")):
+            body = found[name][1]
+            self.assertIn("eventHubsDataSenderRoleId", body, name)
+            self.assertIn(f"scope: {hub}", body, name)
+            self.assertIn(f"principalId: {principal}", body, name)
+        for name, hub in (("functionReceivesUsage", "usageHub"), ("functionReceivesPii", "piiHub"), ("functionReceivesControl", "controlHub")):
+            body = found[name][1]
+            self.assertIn("eventHubsDataReceiverRoleId", body, name)
+            self.assertIn(f"scope: {hub}", body, name)
+            self.assertIn("principalId: usageIdentity.properties.principalId", body, name)
 
     def test_the_applications_insights_of_the_gateway_is_a_parameter_because_it_is_in_another_subscription(self):
         for name in ("gatewayAppInsightsSubscriptionId", "gatewayAppInsightsResourceGroup", "gatewayAppInsightsName"):
             self.assertRegex(self.code, rf"(?m)^param {name} string$")
-            self.assertRegex(self.code, rf"(?m)^    AppInsights_\w+: {name}$")
-        self.assertNotIn("AppInsights_SubscriptionId: subscription()", self.code)
+        self.assertIn("{ name: 'GATEWAY_APPINSIGHTS_ID', value: resourceId(gatewayAppInsightsSubscriptionId, gatewayAppInsightsResourceGroup, 'Microsoft.Insights/components', gatewayAppInsightsName) }", self.code)
 
-    def test_the_logic_app_runs_on_the_smallest_workflow_plan_with_no_pre_warmed_instance_and_a_ceiling(self):
+    def test_the_function_app_runs_on_flex_consumption_in_a_subnet_of_its_own_with_a_ceiling_and_an_identity_for_everything(self):
         found = resources(self.source)
-        self.assertIn("name: 'WS1'", found["plan"][1])
-        self.assertIn("tier: 'WorkflowStandard'", found["plan"][1])
-        self.assertIn("maximumElasticWorkerCount: 1", found["plan"][1])  # one instance at most: the price has a ceiling
-        self.assertIn("preWarmedInstanceCount: 0", found["logicApp"][1])
-        self.assertIn("minimumElasticInstanceCount: 1", found["logicApp"][1])
-        self.assertIn("type: 'SystemAssigned'", found["logicApp"][1])
-        self.assertIn("kind: 'functionapp,workflowapp'", found["logicApp"][1])
+        self.assertIn("name: 'FC1'", found["plan"][1])
+        self.assertIn("tier: 'FlexConsumption'", found["plan"][1])
+        self.assertIn("reserved: true", found["plan"][1])
+        body = found["functionApp"][1]
+        self.assertIn("kind: 'functionapp,linux'", body)
+        self.assertIn("type: 'UserAssigned'", body)
+        self.assertNotIn("SystemAssigned", body)
+        self.assertIn("maximumInstanceCount: 10", body)  # the price has a ceiling
+        self.assertNotIn("alwaysReady", body)  # nothing runs while nothing is to do
+        self.assertIn("virtualNetworkSubnetId: functionSubnet.id", body)
+        self.assertRegex(body, r"(?s)runtime: \{\s+name: 'python'\s+version: '3\.13'")
+        # the package and the host storage are reached with the identity, and so are the event hubs and the telemetry
+        self.assertIn("type: 'UserAssignedIdentity'", body)
+        self.assertIn("userAssignedIdentityResourceId: usageIdentity.id", body)
+        for setting in ("AzureWebJobsStorage__credential", "AzureWebJobsStorage__clientId", "EventHubConnection__credential", "EventHubConnection__clientId",
+                        "EventHubConnection__fullyQualifiedNamespace", "APPLICATIONINSIGHTS_AUTHENTICATION_STRING", "AZURE_CLIENT_ID"):
+            self.assertIn(f"name: '{setting}'", body, setting)
+        # what a Flex Consumption app must not have, and what would be a key
+        for setting in ("'AzureWebJobsStorage'", "AzureWebJobsDashboard", "FUNCTIONS_WORKER_RUNTIME", "FUNCTIONS_EXTENSION_VERSION", "WEBSITE_CONTENT", "WEBSITE_RUN_FROM_PACKAGE",
+                        "StorageAccountConnectionString", "basicPublishingCredentialsPolicies"):
+            self.assertNotIn(setting, body, setting)
+
+    def test_the_function_app_reaches_every_service_through_a_private_endpoint_and_the_subnets_are_the_two_of_the_model_side(self):
+        found = resources(self.source)
+        self.assertEqual(sorted(n for n, (k, _) in found.items() if k == "Microsoft.Network/privateEndpoints"), ["cosmosEndpoint", "eventHubsEndpoint", "storageEndpoints"])
+        self.assertIn("var storageServices = [\n  'blob'\n  'queue'\n  'table'\n]", self.code)
+        self.assertIn("groupIds: [\n            'Sql'\n          ]", found["cosmosEndpoint"][1])
+        self.assertIn("groupIds: [\n            'namespace'\n          ]", found["eventHubsEndpoint"][1])
+        for name in ("storageEndpoints", "cosmosEndpoint", "eventHubsEndpoint"):
+            self.assertIn("id: privateEndpointSubnet.id", found[name][1], name)
+        self.assertIn("var privateEndpointSubnetName = 'snet-pe'", self.code)
+        self.assertIn("var functionSubnetName = 'snet-func'", self.code)
+        model_side = text("environment/main.bicep")
+        self.assertIn("name: 'snet-pe'", model_side)
+        self.assertIn("name: 'snet-func'", model_side)
+        self.assertIn("serviceName: 'Microsoft.App/environments'", model_side)  # the subnet of a Flex Consumption app is delegated to it
+
+    def test_a_service_is_not_changed_while_its_private_endpoint_is_written_to_it(self):
+        # The endpoint's connection is written to the service with an If-Match; a change of the service at the same time made an earlier deploy
+        # fail with IfMatchPreconditionFailed. So: the endpoint after the last other write to its service, the roles after the endpoint.
+        found = resources(self.source)
+        self.assertIn("deploymentContainer", depends_on(found["storageEndpoints"][1]))
+        self.assertIn("usageContainers", depends_on(found["cosmosEndpoint"][1]))
+        self.assertEqual(depends_on(found["eventHubsEndpoint"][1]), {"usageConsumerGroup", "piiConsumerGroup", "controlConsumerGroup"})
+        for name in ("gatewaySendsUsage", "gatewaySendsPii", "workflowSendsControl", "functionReceivesUsage", "functionReceivesPii", "functionReceivesControl"):
+            self.assertIn("eventHubsEndpoint", depends_on(found[name][1]), name)
+        for name in ("functionOwnsBlobs", "functionUsesQueues", "functionUsesTables"):
+            self.assertIn("storageEndpoints", depends_on(found[name][1]), name)
+        self.assertIn("cosmosEndpoint", depends_on(found["functionWritesUsage"][1]))
+        self.assertIn("functionWritesUsage", depends_on(found["readersOfTheData"][1]))
+        self.assertRegex(self.source, r"@batchSize\(1\)\nresource storageEndpoints ")  # one endpoint after the other on the same account
 
     def test_event_hubs_has_no_auto_inflate_so_its_price_has_a_ceiling(self):
         found = resources(self.source)
@@ -319,30 +387,46 @@ class Recording(unittest.TestCase):
 
     def test_no_output_carries_a_key_or_a_connection_string(self):
         outputs = [line for line in self.code.splitlines() if line.startswith("output ")]
-        self.assertEqual(len(outputs), 7)
+        self.assertEqual(len(outputs), 9)
         for line in outputs:
             for word in ("listKeys", "listConnectionStrings", "ConnectionString", "AccountKey", "primaryKey"):
                 self.assertNotIn(word, line, line)
 
-    def test_the_keys_are_read_for_the_app_settings_of_the_logic_app_alone(self):
-        for call in ("listKeys", "listConnectionStrings"):
-            self.assertEqual(len(re.findall(call, self.code)), 1, call)
-        found = resources(self.source)
-        for name, (_, body) in found.items():
-            if name != "appSettings":
-                self.assertNotIn("listKeys", body, name)
-                self.assertNotIn("listConnectionStrings", body, name)
+    def test_no_key_is_read_or_written_anywhere(self):
+        for word in ("listKeys", "listConnectionStrings", "listSecrets", "listAccountSas", "listServiceSas", "AccountKey", "SharedAccessKey", "primaryKey", "@secure",
+                     "WEBSITE_CONTENTAZUREFILECONNECTIONSTRING"):
+            self.assertNotIn(word, self.code, word)
+        # the one connection string of the template is the telemetry's: it names the component and holds no secret that ingestion accepts (local authentication is off)
+        self.assertEqual(self.code.count("ConnectionString"), 1)
+        self.assertIn("{ name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: insights.properties.ConnectionString }", self.code)
 
     def test_the_order_that_the_services_need_is_in_the_template(self):
         found = resources(self.source)
-        self.assertIn("contentShare", depends_on(found["logicApp"][1]))  # the content share before the first start
-        self.assertIn("usageContainers", depends_on(found["appSettings"][1]))  # the containers before the app that writes to them
+        self.assertEqual(depends_on(found["functionApp"][1]), {"functionReceivesUsage", "functionReceivesPii", "functionReceivesControl", "functionOwnsBlobs", "functionUsesQueues",
+                                                               "functionUsesTables", "functionPublishesTelemetry", "functionWritesUsage"},
+                         "the roles before the first start of the app: it reads its storage and its event hubs with them")
+        self.assertIn("deploymentContainer", depends_on(found["storageEndpoints"][1]))
 
-    def test_the_two_event_hubs_and_their_consumer_groups_are_the_ones_the_workflows_name(self):
+    def test_the_event_hubs_and_their_consumer_groups_are_the_ones_the_functions_name(self):
         self.assertIn("var usageHubName = 'ai-usage'", self.code)
         self.assertIn("var piiHubName = 'pii-usage'", self.code)
-        self.assertIn("name: 'aiUsageIngestion'", self.code)
-        self.assertIn("name: 'piiUsageIngestion'", self.code)
+        self.assertIn("var controlHubName = 'usage-control'", self.code)
+        for group in ("aiUsageIngestion", "piiUsageIngestion", "usageControl"):
+            self.assertIn(f"name: '{group}'", self.code)
+        self.assertIn("{ name: 'EVENTHUB_USAGE_NAME', value: usageHubName }", self.code)
+        self.assertIn("{ name: 'EVENTHUB_PII_NAME', value: piiHubName }", self.code)
+        self.assertIn("{ name: 'EVENTHUB_CONTROL_NAME', value: controlHubName }", self.code)
+
+    def test_every_setting_that_the_functions_read_is_set_by_the_template(self):
+        config = ROOT / "src" / "usage-functions" / "usage" / "config.py"
+        self.assertTrue(config.exists(), "the function app's settings are in src/usage-functions/usage/config.py")
+        read = set(re.findall(r'^([A-Z][A-Z0-9_]+) = "\1"$', config.read_text(encoding="utf-8"), re.M))
+        self.assertGreaterEqual(len(read), 10)
+        found = resources(self.source)
+        given = set(re.findall(r"\{ name: '([A-Za-z0-9_]+)', value: ", found["functionApp"][1]))
+        self.assertEqual(sorted(read - given), [], "the template does not set what the code requires")
+        self.assertEqual(sorted(name for name in given - read if name.isupper() and "__" not in name and not name.startswith(("APPLICATIONINSIGHTS", "EVENTHUB_"))), [],
+                         "the template sets a setting that the code never reads")
 
 
 class Workflow(unittest.TestCase):
@@ -449,7 +533,7 @@ class Workflow(unittest.TestCase):
     def test_every_step_that_publishes_or_starts_a_job_names_the_actions_it_runs_in_and_never_what_if(self):
         found = 0
         for block in self.steps:
-            if "az webapp deploy" in block or "recording-check.py run" in block:
+            if "az functionapp deployment source config-zip" in block or "recording-check.py run" in block:
                 found += 1
                 condition = re.search(r"(?m)^        if: (.+)$", block)
                 self.assertIsNotNone(condition, block[:80])
@@ -457,17 +541,48 @@ class Workflow(unittest.TestCase):
                 self.assertNotIn("always()", condition.group(1))
         self.assertEqual(found, 2)
 
-    def test_the_recording_is_deployed_published_and_listed_in_that_order_and_for_its_action_only(self):
-        order = ["Deploy the usage recording", "Publish the usage workflows to the Logic App", "The Logic App lists its workflows"]
+    def test_the_recording_is_made_ready_deployed_published_and_listed_in_that_order_and_for_its_action_only(self):
+        order = ["Remove the key-based Logic App version of the usage recording, when it is still there", "Deploy the usage recording",
+                 "Wait until the landing zone has registered the usage recording's private endpoints in the central zones",
+                 "Sign in to Azure again for the publish, because the first sign-in's credential lasts five minutes",
+                 "Build the function app's package", "Publish the usage functions to the function app", "The function app lists its six functions"]
         names = self.names()
         positions = [names.index(name) for name in order]
         self.assertEqual(positions, sorted(positions))
         for name in order:
             self.assertIn("if: inputs.action == 'recording'", self.steps[names.index(name)])
-        deploy = self.steps[names.index(order[0])]
+        deploy = self.steps[names.index("Deploy the usage recording")]
         self.assertIn("--template environment/recording/main.bicep", deploy)
         self.assertIn('--parameters "$RUNNER_TEMP/recording.parameters.json"', deploy)
+        self.assertIn("--output functionAppId", deploy)
         self.assertEqual(self.text.count("--template environment/recording/main.bicep"), 2, "the preview and the deploy, nothing else")
+
+    def test_the_key_based_version_is_removed_by_its_four_names_and_nothing_else_is_deleted_anywhere(self):
+        (block,) = [b for b in self.steps if b.startswith("name: Remove the key-based Logic App version")]
+        for variable, output in (("LEGACY_LOGIC_APP", "legacy_logic_app_name"), ("LEGACY_PLAN", "legacy_plan_name"),
+                                 ("LEGACY_CONNECTION", "legacy_connection_name"), ("LEGACY_STORAGE", "legacy_storage_account_name")):
+            self.assertIn(f"{variable}: ${{{{ steps.params.outputs.{output} }}}}", block)
+            self.assertIn(f"[?name=='${variable}']", block)
+        self.assertEqual(re.findall(r'az resource delete --ids "\$(\w+)"', block), ["site", "plan", "connection", "storage"])
+        self.assertEqual(self.text.count("az resource delete"), 4)
+        self.assertEqual(len(re.findall(r"(?m)^\s*az \S+(?: \S+)* delete\b", self.text)), 4, "no other delete, of any kind")
+        self.assertNotIn("--yes", block)
+        for kind in ("Microsoft.Web/sites", "Microsoft.Web/serverfarms", "Microsoft.Web/connections", "Microsoft.Storage/storageAccounts"):
+            self.assertIn(f"--resource-type {kind}", block)
+
+    def test_the_function_app_is_given_its_code_only_after_the_landing_zone_has_registered_every_endpoint(self):
+        (block,) = [b for b in self.steps if b.startswith("name: Wait until the landing zone has registered the usage recording's private endpoints")]
+        self.assertIn("RECORDING_ENDPOINTS: ${{ steps.params.outputs.recording_endpoints }}", block)
+        self.assertIn("az network private-endpoint dns-zone-group list", block)
+        self.assertIn("exit 1", block)
+        self.assertNotIn("--method", block)
+        self.assertNotRegex(block, r"az \S+ (create|delete|update|set)\b")
+
+    def test_nothing_in_the_workflow_reads_a_key_but_the_contracts_and_nothing_writes_one(self):
+        for word in ("listKeys", "listConnectionStrings", "AccountKey", "SharedAccessKey", "primaryMasterKey", "az storage account keys", "--auth-mode key",
+                     "az cosmosdb keys", "az eventhubs namespace authorization-rule", "az functionapp keys", "--connection-string", "az webapp deployment list-publishing"):
+            self.assertNotIn(word, self.text, word)
+        self.assertEqual(self.text.count("listSecrets"), 1, "the contract's own subscription key, read for one test and masked: AGENTS.md rule 23 names it")
 
     def test_the_recording_signs_in_again_before_it_publishes_because_the_first_credential_lasts_five_minutes(self):
         names = self.names()
@@ -477,16 +592,21 @@ class Workflow(unittest.TestCase):
         self.assertIn("uses: azure/login@", block)
         self.assertEqual(self.text.count("uses: azure/login@"), 2)
         self.assertLess(names.index("Deploy the usage recording"), names.index(again))
-        self.assertLess(names.index(again), names.index("Publish the usage workflows to the Logic App"))
+        self.assertLess(names.index(again), names.index("Publish the usage functions to the function app"))
 
-    def test_the_publish_ships_the_kits_workflows_unchanged_and_nothing_of_the_repository(self):
-        (block,) = [b for b in self.steps if b.startswith("name: Publish the usage workflows to the Logic App")]
-        self.assertIn("cd kit/src/usage-ingestion-logicapp && zip -qr", block)
-        self.assertIn("-x 'workflow-designtime/*'", block)
-        self.assertIn("--type zip", block)
-        self.assertNotIn("environment/", block)
-        names = self.names()
-        self.assertLess(names.index("Apply the patches to the kit's module"), names.index("Publish the usage workflows to the Logic App"))
+    def test_the_package_is_built_by_the_script_that_the_checks_use_and_published_with_the_identity_and_no_password(self):
+        (build,) = [b for b in self.steps if b.startswith("name: Build the function app's package")]
+        self.assertIn('bash tools/build-usage-functions.sh "$RUNNER_TEMP/usage-functions" "$RUNNER_TEMP/usage-functions.zip"', build)
+        (publish,) = [b for b in self.steps if b.startswith("name: Publish the usage functions to the function app")]
+        self.assertIn("az functionapp deployment source config-zip", publish)
+        self.assertIn('--src "$RUNNER_TEMP/usage-functions.zip"', publish)
+        self.assertIn("--build-remote false", publish)
+        self.assertIn("FUNCTION_APP: ${{ steps.params.outputs.function_app_name }}", publish)
+        self.assertNotIn("environment/", publish + build)
+        for word in ("az webapp deploy", "publishing-credentials", "--user", "--password", "kit/"):
+            self.assertNotIn(word, publish + build, word)
+        self.assertIn("for attempt in 1 2 3", publish)
+        self.assertEqual(text(".github/workflows/checks.yml").count("bash tools/build-usage-functions.sh"), 1, "the checks build the same package, so a missing wheel is found before a deploy")
 
     def test_the_copy_job_is_started_only_by_its_own_action(self):
         (block,) = [b for b in self.steps if "recording-check.py run" in b]

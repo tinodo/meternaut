@@ -11,7 +11,7 @@ on:
   workflow_dispatch:
     inputs:
       action:
-        description: "what-if: show what the next steps would change and change nothing. model-side: the gateway's identity, then the network, the model account with its private endpoint and the budget. gateway-prepare: attach the identity to the gateway and add the Application Insights logger, and the two Event Hub loggers when the usage recording's namespace exists. gateway: add the Citadel module's objects to the gateway (with the two fragments that use the Event Hub loggers when both loggers exist, without them otherwise). contract: add the first contract (a product, its policy and its key) and test the gateway with that key. recording: the usage recording of the gateway's calls, which is a Log Analytics workspace, an Event Hubs namespace, a Cosmos DB account, a storage account and a Logic App with its workflows. recording-check: start the Logic App's copy job once and read what it wrote to Cosmos DB."
+        description: "what-if: show what the next steps would change and change nothing. model-side: the gateway's identity, then the network, the model account with its private endpoint and the budget. gateway-prepare: attach the identity to the gateway and add the Application Insights logger, and the two Event Hub loggers when the usage recording's namespace exists. gateway: add the Citadel module's objects to the gateway (with the two fragments that use the Event Hub loggers when both loggers exist, without them otherwise). contract: add the first contract (a product, its policy and its key) and test the gateway with that key. recording: the usage recording of the gateway's calls, which is a Log Analytics workspace, an Event Hubs namespace, a Cosmos DB account, a storage account, an identity and a function app, with private endpoints and without any key; it first removes the key-based Logic App version of it, when that is still there. recording-check: start the copy jobs once through the control hub and read what they say from the function app's telemetry."
         type: choice
         required: true
         default: what-if
@@ -86,6 +86,7 @@ jobs:
       - name: The tools, the templates and the kit's module pass their checks
         run: |
           python3 -m unittest discover -s tools/tests
+          python3 -m unittest discover -s src/usage-functions/tests
           python3 tools/workflow-lint.py
           for template in environment/main.bicep environment/gateway/identity.bicep environment/gateway/logger.bicep environment/gateway/eventhub-loggers.bicep environment/gateway/contract.bicep environment/recording/main.bicep; do
             az bicep build --file "$template" --stdout > /dev/null
@@ -109,7 +110,7 @@ jobs:
         id: me
         run: |
           # The workflow's identity may not read the directory, so the id is read from the claims of its own token (nothing else of the
-          # token is read or printed). The usage store is given a data role for this id, so that the check can read what the job wrote.
+          # token is read or printed). The identity may send to the usage recording's control hub: the template gives it that role for this id.
           oid=$(python3 tools/recording-check.py whoami)
           echo "oid=$oid" >> "$GITHUB_OUTPUT"
 
@@ -425,21 +426,90 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
           exit "$status"
 
+      - name: Remove the key-based Logic App version of the usage recording, when it is still there
+        if: inputs.action == 'recording'
+        env:
+          LEGACY_LOGIC_APP: ${{ steps.params.outputs.legacy_logic_app_name }}
+          LEGACY_PLAN: ${{ steps.params.outputs.legacy_plan_name }}
+          LEGACY_CONNECTION: ${{ steps.params.outputs.legacy_connection_name }}
+          LEGACY_STORAGE: ${{ steps.params.outputs.legacy_storage_account_name }}
+        run: |
+          # The first version ran in a Logic App Standard, which needs the account key of its storage and the connection string of Cosmos DB.
+          # No key, ever (AGENTS.md rule 23): the app, its plan, its connection and its storage account go, by these four names and
+          # nothing else. The Cosmos DB account stays, with its documents; the template below changes it in place.
+          site=$(az resource list --resource-group "$ENV_RESOURCE_GROUP" --resource-type Microsoft.Web/sites --query "[?name=='$LEGACY_LOGIC_APP'].id | [0]" --output tsv)
+          if [ -n "$site" ] && [ "$site" != "None" ]; then
+            echo "Removing the Logic App $LEGACY_LOGIC_APP."
+            az resource delete --ids "$site"
+          else
+            echo "No Logic App $LEGACY_LOGIC_APP."
+          fi
+          plan=$(az resource list --resource-group "$ENV_RESOURCE_GROUP" --resource-type Microsoft.Web/serverfarms --query "[?name=='$LEGACY_PLAN'].id | [0]" --output tsv)
+          if [ -n "$plan" ] && [ "$plan" != "None" ]; then
+            echo "Removing the plan $LEGACY_PLAN."
+            az resource delete --ids "$plan"
+          else
+            echo "No plan $LEGACY_PLAN."
+          fi
+          connection=$(az resource list --resource-group "$ENV_RESOURCE_GROUP" --resource-type Microsoft.Web/connections --query "[?name=='$LEGACY_CONNECTION'].id | [0]" --output tsv)
+          if [ -n "$connection" ] && [ "$connection" != "None" ]; then
+            echo "Removing the connection $LEGACY_CONNECTION."
+            az resource delete --ids "$connection"
+          else
+            echo "No connection $LEGACY_CONNECTION."
+          fi
+          storage=$(az resource list --resource-group "$ENV_RESOURCE_GROUP" --resource-type Microsoft.Storage/storageAccounts --query "[?name=='$LEGACY_STORAGE'].id | [0]" --output tsv)
+          if [ -n "$storage" ] && [ "$storage" != "None" ]; then
+            echo "Removing the storage account $LEGACY_STORAGE."
+            az resource delete --ids "$storage"
+          else
+            echo "No storage account $LEGACY_STORAGE."
+          fi
+
       - name: Deploy the usage recording
         id: recording
         if: inputs.action == 'recording'
         run: |
-          # A Log Analytics workspace and an Application Insights component, a storage account, an Event Hubs namespace with its two
-          # hubs, a Cosmos DB account (serverless) with its seven containers, the Logic App on a Workflow Standard plan with its Azure
-          # Monitor Logs connection, and the one role that each caller needs on the one resource it uses (environment/recording/main.bicep).
+          # A Log Analytics workspace and an Application Insights component, a storage account, an Event Hubs namespace with its three
+          # hubs, a Cosmos DB account (serverless) with its seven containers, an identity, a Flex Consumption plan with the function app
+          # in its own subnet, the private endpoints, and the one role that each caller needs on the one resource it uses
+          # (environment/recording/main.bicep). No key anywhere.
           site=$(python3 tools/az-deploy.py create --subscription "$ENV_SUBSCRIPTION_ID" --resource-group "$ENV_RESOURCE_GROUP" \
             --template environment/recording/main.bicep --parameters "$RUNNER_TEMP/recording.parameters.json" \
-            --name "recording-$GITHUB_RUN_ID" --output logicAppId)
+            --name "recording-$GITHUB_RUN_ID" --output functionAppId)
           if ! printf '%s' "$site" | grep -Eq '^/subscriptions/[0-9a-fA-F-]{36}/resourceGroups/[^/]+/providers/Microsoft\.Web/sites/[A-Za-z0-9-]+$'; then
-            echo "::error::The deployment did not return the resource id of the Logic App."
+            echo "::error::The deployment did not return the resource id of the function app."
             exit 1
           fi
           echo "site=$site" >> "$GITHUB_OUTPUT"
+
+      - name: Wait until the landing zone has registered the usage recording's private endpoints in the central zones
+        if: inputs.action == 'recording'
+        env:
+          RECORDING_ENDPOINTS: ${{ steps.params.outputs.recording_endpoints }}
+        run: |
+          # Each endpoint is "name:zone". The function app reaches its storage, Cosmos DB and Event Hubs by name, and the name resolves to
+          # the private address only after the policy has added the endpoint to the zone (about ten minutes). Without that, the app would
+          # be sent to the public address of a service that has none for it, and its first start would fail.
+          attempts=40
+          for attempt in $(seq 1 "$attempts"); do
+            missing=""
+            for pair in ${RECORDING_ENDPOINTS//,/ }; do
+              endpoint="${pair%%:*}"
+              zone="${pair#*:}"
+              zones=$(az network private-endpoint dns-zone-group list --resource-group "$ENV_RESOURCE_GROUP" --endpoint-name "$endpoint" \
+                --query "[].privateDnsZoneConfigs[].privateDnsZoneId" --output tsv || true)
+              if ! grep -qi "/$zone\$" <<< "$zones"; then missing="$missing $endpoint"; fi
+            done
+            if [ -z "$missing" ]; then
+              echo "The landing zone's policy has registered every private endpoint of the usage recording in its central zone."
+              exit 0
+            fi
+            echo "Not registered yet:$missing (check $attempt of $attempts)."
+            if [ "$attempt" -lt "$attempts" ]; then sleep 60; fi
+          done
+          echo "::error::The landing zone's policy has not registered these private endpoints in their central zones:$missing. The function app was not given its code. Wait, or look at the policy compliance of the endpoints; do not create a private DNS zone."
+          exit 1
 
       - name: Sign in to Azure again for the publish, because the first sign-in's credential lasts five minutes
         if: inputs.action == 'recording'
@@ -449,56 +519,65 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Publish the usage workflows to the Logic App
+      - name: Build the function app's package
+        if: inputs.action == 'recording'
+        run: |
+          # The code of src/usage-functions and its libraries, built here for the app's runtime (tools/build-usage-functions.sh says how).
+          bash tools/build-usage-functions.sh "$RUNNER_TEMP/usage-functions" "$RUNNER_TEMP/usage-functions.zip"
+
+      - name: Publish the usage functions to the function app
         if: inputs.action == 'recording'
         env:
-          LOGIC_APP: ${{ steps.params.outputs.logic_app_name }}
+          FUNCTION_APP: ${{ steps.params.outputs.function_app_name }}
         run: |
-          # The five workflows are the kit's own, as they are in src/usage-ingestion-logicapp; only the design-time host that the
-          # folder's own .funcignore names is left out. A site that has just been made may need a minute before it takes a package.
-          package="$RUNNER_TEMP/usage-logicapp.zip"
-          (cd kit/src/usage-ingestion-logicapp && zip -qr "$package" . -x 'workflow-designtime/*' -x '.funcignore')
-          unzip -l "$package" | tail -n 1
+          # The package goes to the app's deployment endpoint with the signed-in identity's token: a Flex Consumption app takes no
+          # basic-authentication deployment. A site that has just been made may need a minute before it takes a package.
           for attempt in 1 2 3; do
-            if az webapp deploy --resource-group "$ENV_RESOURCE_GROUP" --name "$LOGIC_APP" --src-path "$package" --type zip --only-show-errors; then
+            if az functionapp deployment source config-zip --resource-group "$ENV_RESOURCE_GROUP" --name "$FUNCTION_APP" \
+              --src "$RUNNER_TEMP/usage-functions.zip" --build-remote false --only-show-errors; then
               exit 0
             fi
             echo "The publish did not go through (attempt $attempt of 3)."
             if [ "$attempt" -lt 3 ]; then sleep 60; fi
           done
-          echo "::error::The workflows could not be published to $LOGIC_APP."
+          echo "::error::The code could not be published to $FUNCTION_APP."
           exit 1
 
-      - name: The Logic App lists its workflows
+      - name: The function app lists its six functions
         if: inputs.action == 'recording'
         env:
           SITE_ID: ${{ steps.recording.outputs.site }}
-          LOGIC_APP: ${{ steps.params.outputs.logic_app_name }}
+          USAGE_IDENTITY: ${{ steps.params.outputs.usage_identity_name }}
         run: |
-          python3 tools/recording-check.py workflows --site "$SITE_ID" --expect 5 --minutes 10 | tee "$RUNNER_TEMP/workflows.txt"
-          principal=$(az webapp identity show --resource-group "$ENV_RESOURCE_GROUP" --name "$LOGIC_APP" --query principalId --output tsv)
+          python3 tools/recording-check.py functions --site "$SITE_ID" --minutes 15 | tee "$RUNNER_TEMP/functions.txt"
+          principal=$(az identity show --resource-group "$ENV_RESOURCE_GROUP" --name "$USAGE_IDENTITY" --query principalId --output tsv)
           {
-            echo "### The Logic App"
+            echo "### The function app"
             echo
             echo '```'
-            cat "$RUNNER_TEMP/workflows.txt"
+            cat "$RUNNER_TEMP/functions.txt"
             echo '```'
             echo
-            echo "Identity of the Logic App (object id): \`$principal\`. Its copy job reads the gateway's Application Insights with it, which needs two roles outside the project's group: Monitoring Reader on that component, and a role that reads one table of the workspace behind it (environment/BOOTSTRAP.md)."
+            echo "Identity of the function app (object id): \`$principal\`. Its copy jobs read the gateway's Application Insights with it, which needs two roles outside the project's group: Monitoring Reader on that component, and a role that reads one table of the workspace behind it (environment/BOOTSTRAP.md). Until they exist, a copy job ends with an authorization error that \`recording-check\` shows."
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: What the project's resource group holds now
         if: inputs.action == 'recording'
         run: az resource list --resource-group "$ENV_RESOURCE_GROUP" --query "sort_by([].{name:name, type:type}, &type)" --output table
 
-      - name: Start the copy job once and read what it wrote
+      - name: Start the copy jobs once and read what they say
         if: inputs.action == 'recording-check'
         env:
-          LOGIC_APP: ${{ steps.params.outputs.logic_app_name }}
-          COSMOS_ACCOUNT: ${{ steps.params.outputs.cosmos_account_name }}
+          SITE_NAME: ${{ steps.params.outputs.function_app_name }}
+          EVENT_HUB_NAMESPACE: ${{ steps.params.outputs.event_hub_namespace }}
+          INSIGHTS_NAME: ${{ steps.params.outputs.appinsights_name }}
         run: |
-          site="/subscriptions/$ENV_SUBSCRIPTION_ID/resourceGroups/$ENV_RESOURCE_GROUP/providers/Microsoft.Web/sites/$LOGIC_APP"
-          python3 tools/recording-check.py run --site "$site" --cosmos-account "$COSMOS_ACCOUNT" --summary "$GITHUB_STEP_SUMMARY"
+          # One event to the control hub starts the three copy jobs now. They write what they did to the function app's telemetry, which is
+          # read here (the usage store has no public endpoint, so the jobs count their own documents after they wrote them).
+          site="/subscriptions/$ENV_SUBSCRIPTION_ID/resourceGroups/$ENV_RESOURCE_GROUP/providers/Microsoft.Web/sites/$SITE_NAME"
+          insights="/subscriptions/$ENV_SUBSCRIPTION_ID/resourceGroups/$ENV_RESOURCE_GROUP/providers/Microsoft.Insights/components/$INSIGHTS_NAME"
+          python3 tools/recording-check.py functions --site "$site" --minutes 5
+          python3 tools/recording-check.py run --namespace "$EVENT_HUB_NAMESPACE" --insights "$insights" --job all --minutes 20 --summary "$GITHUB_STEP_SUMMARY"
 
       - name: What was done
         if: always()
@@ -518,8 +597,8 @@ jobs:
                 gateway-prepare) echo "The identity may be attached to the gateway and the logger may exist. Running \`gateway-prepare\` again is safe and repeats only what is missing. The gateway's service-level logging setting before the change is in the first list of this page." ;;
                 gateway) echo "Some of the module's objects may be in the gateway already. Running \`gateway\` again is safe and repeats only what is missing. The gateway's service-level logging setting before the change is in the first list of this page." ;;
                 contract) echo "The contract's product, its policy and its subscription may be in the gateway already, and the test of the gateway with its key may have failed after that. Running \`contract\` again is safe: it repeats only what is missing and runs the test again." ;;
-                recording) echo "Part of the usage recording may exist now: the Log Analytics workspace, the storage account, the Event Hubs namespace, the Cosmos DB account, the Logic App and its connection. They cost money while they exist, the Logic App's plan most (about 160 euros a month). Running \`recording\` again is safe and repeats only what is missing; \`what-if\` shows what is there." ;;
-                recording-check) echo "The copy job may have run and written nothing, or not at all. The lines above say how each of its actions ended and what the usage store holds. Running \`recording-check\` again is safe." ;;
+                recording) echo "Part of the usage recording may exist now: the Log Analytics workspace, the storage account, the Event Hubs namespace, the Cosmos DB account, the identity, the private endpoints and the function app. They cost money while they exist, the private endpoints most (about 5 euros a month each). The key-based Logic App version may be removed already. Running \`recording\` again is safe and repeats only what is missing; \`what-if\` shows what is there." ;;
+                recording-check) echo "The copy jobs may have run and written nothing, or not at all. The lines above say how each ended, or which warnings and errors the function app logged. Running \`recording-check\` again is safe." ;;
               esac
             else
               case "$ACTION" in
@@ -528,8 +607,8 @@ jobs:
                 gateway-prepare) echo "The identity is attached to the gateway (its own identity is kept) and the Application Insights logger is there, and so are the two Event Hub loggers if the usage recording's namespace existed (the log of the step says). The Citadel module has not been applied: a what-if now shows its exact diff." ;;
                 gateway) echo "The Citadel module's objects are in the gateway; its two usage-recording fragments are there only if both Event Hub loggers were (the log says). A call to the two model APIs is refused unless it is made with the key of a contract, so nobody can call them (the instance's all-access key included) until the first contract exists." ;;
                 contract) echo "The contract \`$CONTRACT_NAME\` is in the gateway: a product that grants the two inference APIs, its policy (the models and the token limits) and one subscription. The checks above ran against the gateway with that subscription's key, which is stored nowhere." ;;
-                recording) echo "The usage recording is in resource group \`$ENV_RESOURCE_GROUP\`: Event Hubs, a Cosmos DB account (serverless), a storage account, the Logic App with the kit's five workflows, and a workspace and an Application Insights component of its own. The gateway identity may send to the two event hubs and the Logic App may read them; nothing sends to them yet. The copy job needs two roles for the Logic App's identity outside the project's group before it can read the gateway's Application Insights (environment/BOOTSTRAP.md); then \`recording-check\` starts it once and reads what it wrote." ;;
-                recording-check) echo "The copy job ran and the usage store was read with the workflow's identity. The lines above are what is in it. The job writes only what the gateway recorded after its marker, so a first run writes the marker and nothing else." ;;
+                recording) echo "The usage recording is in resource group \`$ENV_RESOURCE_GROUP\`: Event Hubs, a Cosmos DB account (serverless, no public endpoint, no key), a storage account (no public endpoint, no Shared Key), the function app with its six functions on a Flex Consumption plan, its identity, a workspace and an Application Insights component of its own, and five private endpoints that the landing zone has registered in its central zones. The key-based Logic App version is removed. The gateway identity may send to the two usage event hubs and the function app may read them; nothing sends to them yet. The copy jobs need two roles for the function app's identity outside the project's group before they can read the gateway's Application Insights (environment/BOOTSTRAP.md); then \`recording-check\` starts them once and reads what they said." ;;
+                recording-check) echo "The copy jobs ran and the function app wrote what each did to its telemetry; the lines above are that: the window, the rows read, the documents written and the number of documents in the container afterwards. A job writes only what the gateway recorded after its marker, so a first run writes the marker and nothing else." ;;
               esac
             fi
           } >> "$GITHUB_STEP_SUMMARY"

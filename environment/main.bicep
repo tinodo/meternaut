@@ -1,6 +1,7 @@
-// The model side of the first environment: a small network, one Foundry account with the first models, reachable only
-// through a private endpoint, and a budget. The gateway (the owner's existing API Management instance) is configured
-// by the workflow separately (environment/gateway).
+// The model side of the first environment: a small network (a subnet for private endpoints and a subnet that the usage
+// recording's function app is integrated with), one Foundry account with the first models, reachable only through a
+// private endpoint, and a budget. The gateway (the owner's existing API Management instance) is configured by the
+// workflow separately (environment/gateway).
 //
 // Left out on purpose (AGENTS.md rule 19), because the landing zone provides it:
 //  - private DNS zones, virtual network links and the private endpoint's DNS zone group: a policy registers the
@@ -27,6 +28,9 @@ param vnetAddressPrefix string
 
 @description('Address range of the private endpoint subnet, inside the virtual network, for example 10.53.0.0/27.')
 param peSubnetPrefix string
+
+@description('Address range of the subnet that the function app of the usage recording is integrated with, inside the virtual network and apart from the private endpoint subnet, for example 10.53.0.32/27. A Flex Consumption app needs a /27 at least, for itself alone.')
+param funcSubnetPrefix string
 
 @description('DNS servers of the landing zone. A virtual network on Azure-provided DNS cannot resolve the central private zones.')
 @minLength(1)
@@ -82,6 +86,17 @@ resource nsg 'Microsoft.Network/networkSecurityGroups@2025-05-01' = {
   }
 }
 
+// No rule of its own: the default rules let the function app reach the virtual network and the internet (the landing zone's
+// firewall decides there), and nothing is let in.
+resource funcNsg 'Microsoft.Network/networkSecurityGroups@2025-05-01' = {
+  name: 'nsg-${workload}-func'
+  location: location
+  tags: tags
+  properties: {
+    securityRules: []
+  }
+}
+
 resource vnet 'Microsoft.Network/virtualNetworks@2025-05-01' = {
   name: 'vnet-${workload}'
   location: location
@@ -104,6 +119,26 @@ resource vnet 'Microsoft.Network/virtualNetworks@2025-05-01' = {
             id: nsg.id
           }
           privateEndpointNetworkPolicies: 'Disabled'
+          defaultOutboundAccess: false
+        }
+      }
+      {
+        // Delegated to Flex Consumption (not to Microsoft.Web/serverFarms, which is for Premium and Dedicated plans). The
+        // subnet holds nothing else: it cannot hold a private endpoint.
+        name: 'snet-func'
+        properties: {
+          addressPrefix: funcSubnetPrefix
+          networkSecurityGroup: {
+            id: funcNsg.id
+          }
+          delegations: [
+            {
+              name: 'flex-consumption'
+              properties: {
+                serviceName: 'Microsoft.App/environments'
+              }
+            }
+          ]
           defaultOutboundAccess: false
         }
       }
