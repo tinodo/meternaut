@@ -146,13 +146,19 @@ The owner ordered the usage recording built ("build the whole thing, with the 26
    az role assignment delete --ids $old
    az role assignment create --assignee-object-id $principal --assignee-principal-type ServicePrincipal --role 'Role Based Access Control Administrator' --scope $scope --condition $condition --condition-version 2.0
    ```
-3. **One role in the gateway's subscription, after the first `recording` run.** The copy job reads the gateway's Application Insights with the Logic App's own identity, which exists only after the run. That identity gets *Monitoring Reader* on that one Application Insights component and nothing else (the workflow's summary prints its object id):
+3. **Two roles for the Logic App's identity, after the first `recording` run.** The copy job reads the gateway's Application Insights with the Logic App's own identity, which exists only after the run (the workflow's summary prints its object id). The first role is *Monitoring Reader* on that one Application Insights component. The second is needed because the component is workspace-based and its workspace, the central one of the landing zone, is in the mode "Require workspace permissions" (the setting `enableLogAccessUsingOnlyResourcePermissions` is false): with the role on the component alone the query ran and returned nothing (checked: the same query as the owner returned the rows). So a custom role, *Meternaut usage reader*, that reads one table of the workspace (`AppMetrics`, where the metrics of workspace-based Application Insights are kept) is defined on the workspace's resource group and given to the identity on the workspace and nothing else. The table is that of every component that writes to the workspace, not only the gateway's; the owner of the workspace can instead switch it to resource permissions, after which the first role alone suffices:
 
    ```powershell
+   $mgmt = '<subscription id of the central workspace>'; $wsGroup = '<its resource group>'; $ws = '<resource id of the central workspace>'
    az role assignment create --assignee-object-id <object id of the Logic App's identity> --assignee-principal-type ServicePrincipal --role 'Monitoring Reader' --scope $insights
+   $role = @{ Name = 'Meternaut usage reader'; IsCustom = $true; Description = 'Reads one table (AppMetrics) of the central workspace, so that the usage copy job of Meternaut can read the gateway token metrics. Nothing else.'
+     Actions = @('Microsoft.OperationalInsights/workspaces/read', 'Microsoft.OperationalInsights/workspaces/query/read', 'Microsoft.OperationalInsights/workspaces/query/AppMetrics/read')
+     NotActions = @(); DataActions = @(); AssignableScopes = @("/subscriptions/$mgmt/resourceGroups/$wsGroup") }
+   $role | ConvertTo-Json -Depth 5 | Set-Content role.json; az role definition create --role-definition '@role.json'
+   az role assignment create --assignee-object-id <object id of the Logic App's identity> --assignee-principal-type ServicePrincipal --role 'Meternaut usage reader' --scope $ws
    ```
 
-   If the Logic App is ever made again, its identity is new, and this step is done again.
+   Both were done by hand on 2026-11-04 (the second after the first was seen not to be enough). If the Logic App is ever made again, its identity is new, and this step is done again.
 
 One optional repository variable: `RECORDING_READER_IDS`, a comma-separated list of the object ids of the people who may read the usage store in Cosmos DB's Data Explorer (a data role of Cosmos DB, not an Azure role). Without it nobody but the workflow's identity and the Logic App can read it.
 

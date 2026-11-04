@@ -484,7 +484,7 @@ jobs:
             cat "$RUNNER_TEMP/workflows.txt"
             echo '```'
             echo
-            echo "Identity of the Logic App (object id): \`$principal\`. Its copy job reads the gateway's Application Insights with it, which needs one role in the gateway's subscription (environment/BOOTSTRAP.md)."
+            echo "Identity of the Logic App (object id): \`$principal\`. Its copy job reads the gateway's Application Insights with it, which needs two roles outside the project's group: Monitoring Reader on that component, and a role that reads one table of the workspace behind it (environment/BOOTSTRAP.md)."
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: What the project's resource group holds now
@@ -528,7 +528,7 @@ jobs:
                 gateway-prepare) echo "The identity is attached to the gateway (its own identity is kept) and the Application Insights logger is there, and so are the two Event Hub loggers if the usage recording's namespace existed (the log of the step says). The Citadel module has not been applied: a what-if now shows its exact diff." ;;
                 gateway) echo "The Citadel module's objects are in the gateway; its two usage-recording fragments are there only if both Event Hub loggers were (the log says). A call to the two model APIs is refused unless it is made with the key of a contract, so nobody can call them (the instance's all-access key included) until the first contract exists." ;;
                 contract) echo "The contract \`$CONTRACT_NAME\` is in the gateway: a product that grants the two inference APIs, its policy (the models and the token limits) and one subscription. The checks above ran against the gateway with that subscription's key, which is stored nowhere." ;;
-                recording) echo "The usage recording is in resource group \`$ENV_RESOURCE_GROUP\`: Event Hubs, a Cosmos DB account (serverless), a storage account, the Logic App with the kit's five workflows, and a workspace and an Application Insights component of its own. The gateway identity may send to the two event hubs and the Logic App may read them; nothing sends to them yet. The copy job needs one role in the gateway's subscription before it can read the gateway's Application Insights (environment/BOOTSTRAP.md); then \`recording-check\` starts it once and reads what it wrote." ;;
+                recording) echo "The usage recording is in resource group \`$ENV_RESOURCE_GROUP\`: Event Hubs, a Cosmos DB account (serverless), a storage account, the Logic App with the kit's five workflows, and a workspace and an Application Insights component of its own. The gateway identity may send to the two event hubs and the Logic App may read them; nothing sends to them yet. The copy job needs two roles for the Logic App's identity outside the project's group before it can read the gateway's Application Insights (environment/BOOTSTRAP.md); then \`recording-check\` starts it once and reads what it wrote." ;;
                 recording-check) echo "The copy job ran and the usage store was read with the workflow's identity. The lines above are what is in it. The job writes only what the gateway recorded after its marker, so a first run writes the marker and nothing else." ;;
               esac
             fi
