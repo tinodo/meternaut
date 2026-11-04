@@ -440,6 +440,16 @@ class Workflow(unittest.TestCase):
         self.assertIn('--parameters "$RUNNER_TEMP/recording.parameters.json"', deploy)
         self.assertEqual(self.text.count("--template environment/recording/main.bicep"), 2, "the preview and the deploy, nothing else")
 
+    def test_the_recording_signs_in_again_before_it_publishes_because_the_first_credential_lasts_five_minutes(self):
+        names = self.names()
+        again = "Sign in to Azure again for the publish, because the first sign-in's credential lasts five minutes"
+        block = self.steps[names.index(again)]
+        self.assertIn("if: inputs.action == 'recording'", block)
+        self.assertIn("uses: azure/login@", block)
+        self.assertEqual(self.text.count("uses: azure/login@"), 2)
+        self.assertLess(names.index("Deploy the usage recording"), names.index(again))
+        self.assertLess(names.index(again), names.index("Publish the usage workflows to the Logic App"))
+
     def test_the_publish_ships_the_kits_workflows_unchanged_and_nothing_of_the_repository(self):
         (block,) = [b for b in self.steps if b.startswith("name: Publish the usage workflows to the Logic App")]
         self.assertIn("cd kit/src/usage-ingestion-logicapp && zip -qr", block)
