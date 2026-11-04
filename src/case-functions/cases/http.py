@@ -19,6 +19,8 @@ from urllib.parse import urlsplit
 
 ARM_HOST = "management.azure.com"
 GUID = r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
+# A subscription, a resource group of it, or one resource of it (a child resource has more name segments).
+SCOPE = rf"/subscriptions/{GUID}(?:/resourceGroups/[A-Za-z0-9._()-]{{1,90}}(?:/providers/[A-Za-z0-9.]{{1,80}}(?:/[A-Za-z0-9._()~-]{{1,100}}){{2,16}})?)?"
 RETRY_STATUSES = frozenset({429, 500, 502, 503, 504})
 
 Transport = Callable[[str, str, Mapping[str, str], "bytes | None", float], "tuple[int, Mapping[str, str], bytes]"]
@@ -57,7 +59,7 @@ def allowed_calls(gateway_host: str, key_path: str) -> tuple[tuple[str, "re.Patt
         ("POST", re.compile(arm + r"/providers/Microsoft\.ResourceGraph/resources", re.I)),
         ("POST", re.compile(arm + rf"/subscriptions/{GUID}/providers/Microsoft\.CostManagement/query", re.I)),
         ("GET", re.compile(arm + rf"/subscriptions/{GUID}/providers/Microsoft\.Advisor/recommendations", re.I)),
-        ("GET", re.compile(arm + rf"/subscriptions/{GUID}/providers/Microsoft\.Authorization/locks", re.I)),
+        ("GET", re.compile(arm + rf"{SCOPE}/providers/Microsoft\.Authorization/locks", re.I)),
         ("POST", re.compile(re.escape(f"https://{ARM_HOST}{key_path}"), re.I)),
         ("POST", re.compile(re.escape(f"https://{gateway_host}/models/chat/completions"), re.I)),
     )
@@ -99,9 +101,14 @@ def error_text(status: int, body: bytes, redact: Callable[[str], str]) -> str:
 
 
 class Client:
+    """Makes the calls of the list. `deadline` is an absolute time on the `monotonic` clock: no call starts after it, no timeout reaches past it and no
+    pause is taken that would end after it."""
+
     def __init__(self, allowed: tuple[tuple[str, "re.Pattern[str]"], ...], redact: Callable[[str], str], *, transport: Transport = default_transport,
-                 sleep: Callable[[float], None] = time.sleep, jitter: Callable[[], float] = random.random) -> None:
-        self.allowed, self.redact, self.transport, self.sleep, self.jitter = allowed, redact, transport, sleep, jitter
+                 sleep: Callable[[float], None] = time.sleep, jitter: Callable[[], float] = random.random,
+                 monotonic: Callable[[], float] = time.monotonic) -> None:
+        self.allowed, self.redact, self.transport, self.sleep, self.jitter, self.monotonic = allowed, redact, transport, sleep, jitter, monotonic
+        self.deadline: float | None = None
 
     def check(self, method: str, url: str) -> None:
         parts = urlsplit(url)
@@ -109,8 +116,12 @@ class Client:
         if parts.scheme != "https" or not any(m == method and pattern.fullmatch(bare) for m, pattern in self.allowed):
             raise Refused(f"the app makes no {method} call to {parts.netloc}{parts.path[:80]}")
 
+    def remaining(self) -> float | None:
+        return None if self.deadline is None else self.deadline - self.monotonic()
+
     def request(self, method: str, url: str, *, headers: Mapping[str, str] | None = None, body: object = None, timeout: float = 30,
-                retries: int = 2, retry_after_max: float = 60) -> Response:
+                retries: int = 2, retry_after_max: float = 60, retry_statuses: frozenset[int] = RETRY_STATUSES, retry_network: bool = True) -> Response:
+        """One call. A call that may already have been carried out (a model call whose answer did not arrive) is made with retry_network=False."""
         self.check(method, url)
         merged = {"Accept": "application/json", **(headers or {})}
         data = None
@@ -119,17 +130,24 @@ class Client:
             merged["Content-Type"] = "application/json"
         attempt = 0
         while True:
+            left = self.remaining()
+            if left is not None and left <= 0:
+                raise HttpError(0, f"{method} {urlsplit(url).netloc}: the deadline of the run was reached")
             try:
-                status, answer_headers, answer = self.transport(method, url, merged, data, timeout)
+                status, answer_headers, answer = self.transport(method, url, merged, data, timeout if left is None else max(1.0, min(timeout, left)))
             except (OSError, TimeoutError, HTTPException, urllib.error.URLError) as error:
                 status, answer_headers, answer = 0, {}, self.redact(f"network error: {type(error).__name__}").encode()
             if 200 <= status < 300:
                 return Response(status, answer_headers, answer)
             wait = retry_after(answer_headers) if status == 429 else None
-            may_retry = (status == 0 or status in RETRY_STATUSES) and not (wait is not None and wait > retry_after_max)
+            retryable = retry_network if status == 0 else status in retry_statuses
+            may_retry = retryable and not (wait is not None and wait > retry_after_max)
             if may_retry and attempt < retries:
-                self.sleep(wait if wait is not None else min(30.0, (2 ** attempt) * (1 + self.jitter())))
-                attempt += 1
-                continue
+                pause = wait if wait is not None else min(30.0, (2 ** attempt) * (1 + self.jitter()))
+                left = self.remaining()
+                if left is None or pause < left:
+                    self.sleep(pause)
+                    attempt += 1
+                    continue
             message = answer.decode("utf-8", "replace") if status == 0 else error_text(status, answer, self.redact)
             raise HttpError(status, f"{method} {urlsplit(url).netloc}: {message}", wait)

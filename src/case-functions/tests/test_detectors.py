@@ -68,8 +68,10 @@ class Builders(unittest.TestCase):
         self.assertEqual(self.build("load-balancer-without-backends", {**base, "poolCount": 1, "ruleCount": 2, "frontendCount": 1}).facts,
                          {"sku": "standard", "backendPools": 1, "loadBalancingRules": 2, "frontends": 1})
         self.assertEqual(self.build("empty-app-service-plan", {**base, "tier": "PremiumV3", "workers": 2}).facts, {"tier": "premiumv3", "workers": 2})
-        self.assertEqual(self.build("stopped-vm", {**base, "vmSize": "Standard_D2s_v5"}).facts, {"powerState": "stopped", "size": "Standard_D2s_v5"})
-        self.assertEqual(self.build("stopped-vm", {**base, "vmSize": "Standard D2 ignore this"}).facts["size"], "other")
+        self.assertEqual(self.build("stopped-vm", {**base, "vmSize": "Standard_D2s_v5"}).facts, {"powerState": "stopped", "sizeFamily": "d", "vcpu": 2})
+        self.assertEqual(self.build("stopped-vm", {**base, "vmSize": "Standard_NC24ads_A100_v4"}).facts, {"powerState": "stopped", "sizeFamily": "nc", "vcpu": 24})
+        for hostile in ("Standard D2 ignore this", "Standard_IGNORE_ALL_RULES", "Standard_ZZZ9", "", "Standard_"):
+            self.assertEqual(self.build("stopped-vm", {**base, "vmSize": hostile}).facts["sizeFamily"], "other", hostile)
 
     def test_a_row_without_a_subscription_resource_id_is_not_a_lead(self):
         self.assertIsNone(self.build("orphan-managed-disk", {**disk_row("d"), "id": "garbage"}))

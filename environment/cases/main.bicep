@@ -69,12 +69,12 @@ param gatewayProductSubscriptionId string
 @description('Model deployment of the Detective.')
 param modelDetective string = 'gpt-6-luna'
 
-@description('Model deployment of the Skeptic.')
-param modelSkeptic string = 'gpt-6-luna'
+@description('Model deployment of the Skeptic. It has to be another model than the Detective: the app refuses to start with the same model for both.')
+param modelSkeptic string = 'gpt-6.1-sol'
 
-@description('Most cases that one run takes up.')
+@description('Most cases that one run takes up. The app refuses a higher number than 3.')
 @minValue(1)
-@maxValue(10)
+@maxValue(3)
 param maxCasesPerRun int = 3
 
 @description('Days that the traces of the workspace are kept: the History lives there.')

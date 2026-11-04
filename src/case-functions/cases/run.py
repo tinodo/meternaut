@@ -16,7 +16,7 @@ from typing import Callable, Mapping
 
 from . import config as cfg
 from . import decide, detectors, evidence, guards, roles
-from .arm import Arm
+from .arm import Arm, scopes_of
 from .detectors import DETECTOR_NAMES, Context, Lead
 from .events import History
 from .evidence import EvidenceError
@@ -34,6 +34,7 @@ LOG = logging.getLogger("meternaut.run")
 @dataclass
 class Services:
     settings: cfg.Settings
+    client: Client
     arm: Arm
     gateway: Gateway
     history: History
@@ -65,6 +66,10 @@ def utc_now() -> dt.datetime:
 
 def _figure(value: float | None) -> float | None:
     return None if value is None else round(value, 2)
+
+
+def _cases(number: int) -> str:
+    return "1 case was" if number == 1 else f"{number} cases were"
 
 
 def work_case(s: Services, number: int, lead: Lead, context: Context, tokens_before: int) -> tuple[str, int]:
@@ -103,7 +108,13 @@ def work_case(s: Services, number: int, lead: Lead, context: Context, tokens_bef
         return answer
 
     started = s.monotonic()
-    flags = guards.evaluate(lead, context)
+    try:
+        scope_locks: list[str] | None = []
+        for scope in scopes_of(lead.resource_id):
+            scope_locks += s.arm.locks_at(lead.subscription_id, scope)
+    except HttpError:
+        scope_locks = None
+    flags = guards.evaluate(lead, context, scope_locks)
     try:
         case = evidence.case_dto(number, lead, flags)
     except EvidenceError as error:
@@ -127,6 +138,8 @@ def work_case(s: Services, number: int, lead: Lead, context: Context, tokens_bef
 def execute(s: Services, trigger: str) -> Summary:
     h, st = s.history, s.settings
     started = s.monotonic()
+    deadline = started + st.deadline_seconds
+    s.client.deadline = deadline
     summary = Summary()
     h.emit("run.started", trigger=trigger, scopes=[x[:8] for x in st.subscriptions], detectors=list(DETECTOR_NAMES))
     try:
@@ -154,7 +167,9 @@ def execute(s: Services, trigger: str) -> Summary:
     for note in notes:
         h.emit("run.note", note=clean_text(note, 300))
     if read == 0:
-        h.emit("run.failed", reason="no detector could read any subscription")
+        too_late = s.monotonic() >= deadline
+        h.emit("run.failed", reason=(f"the deadline of {st.deadline_seconds} seconds was reached before any detector could read" if too_late
+                                     else "no detector could read any subscription"))
         summary.ok = False
         return summary
 
@@ -168,9 +183,14 @@ def execute(s: Services, trigger: str) -> Summary:
         h.emit("run.note", note=f"{len(ranked) - MAX_LEAD_EVENTS} more leads are not listed: " + ", ".join(f"{name} {n}" for name, n in sorted(counts.items())))
 
     tokens = 0
-    for number, lead in enumerate(ranked[:st.max_cases], 1):
-        if s.monotonic() - started > st.deadline_seconds:
-            h.emit("run.note", note=f"the deadline of {st.deadline_seconds} seconds was reached; {len(ranked[:st.max_cases]) - number + 1} cases were not taken up")
+    wanted = ranked[:st.max_cases]
+    for number, lead in enumerate(wanted, 1):
+        left = len(wanted) - number + 1
+        if s.monotonic() >= deadline:
+            h.emit("run.note", note=f"the deadline of {st.deadline_seconds} seconds was reached; {_cases(left)} not taken up")
+            break
+        if tokens + st.max_completion_tokens + PROMPT_TOKEN_RESERVE > st.max_tokens_per_run:
+            h.emit("run.note", note=f"the token budget of {st.max_tokens_per_run} for the run was reached; {_cases(left)} not taken up")
             break
         status, used = work_case(s, number, lead, contexts.get(lead.subscription_id, Context()), tokens)
         tokens += used
@@ -200,8 +220,8 @@ def run_watch(trigger: str, request_id: str | None, env: Mapping[str, str] | Non
     try:
         settings = cfg.load(env)
         identity = Identity(env, **({"fetch": fetch} if fetch else {}))
-        client = Client(allowed_calls(settings.gateway_host, Gateway.key_path(settings)), redact, transport=transport, sleep=sleep)
-        services = Services(settings, Arm(client, identity.token), Gateway(settings, client, identity.token, redact), history, redact, clock, monotonic)
+        client = Client(allowed_calls(settings.gateway_host, Gateway.key_path(settings)), redact, transport=transport, sleep=sleep, monotonic=monotonic)
+        services = Services(settings, client, Arm(client, identity.token), Gateway(settings, client, identity.token, redact), history, redact, clock, monotonic)
         return execute(services, trigger)
     except Exception as error:  # noqa: BLE001 (the History must say how every run ended)
         reason = clean_text(redact(f"{type(error).__name__}: {error}"), 300)

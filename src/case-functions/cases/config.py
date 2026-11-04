@@ -15,14 +15,19 @@ MODEL_SKEPTIC = "MODEL_SKEPTIC"
 MAX_CASES_PER_RUN = "MAX_CASES_PER_RUN"
 EVENTHUB_CASES_CONTROL_NAME = "EVENTHUB_CASES_CONTROL_NAME"
 
-# Settings with a default, which the template may leave out.
+LIMIT_CASES = 3
+LIMIT_TOKENS_PER_RUN = 40000
+LIMIT_COMPLETION_TOKENS = 2000
+LIMIT_DEADLINE_SECONDS = 900
+
+# Settings with a default, which the template may leave out. The limits of the proposal are ceilings: a setting can lower them and never raise them.
 MAX_TOKENS_PER_RUN = "MAX_TOKENS_PER_RUN"
 MAX_COMPLETION_TOKENS = "MAX_COMPLETION_TOKENS"
 RUN_DEADLINE_SECONDS = "RUN_DEADLINE_SECONDS"
 
 REQUIRED = (AZURE_CLIENT_ID, SCOPE_SUBSCRIPTIONS, GATEWAY_URL, GATEWAY_PRODUCT_SUBSCRIPTION_ID, MODEL_DETECTIVE, MODEL_SKEPTIC, MAX_CASES_PER_RUN,
             EVENTHUB_CASES_CONTROL_NAME)
-OPTIONAL = {MAX_TOKENS_PER_RUN: "40000", MAX_COMPLETION_TOKENS: "2000", RUN_DEADLINE_SECONDS: "900"}
+OPTIONAL = {MAX_TOKENS_PER_RUN: str(LIMIT_TOKENS_PER_RUN), MAX_COMPLETION_TOKENS: str(LIMIT_COMPLETION_TOKENS), RUN_DEADLINE_SECONDS: str(LIMIT_DEADLINE_SECONDS)}
 
 GUID = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
 GATEWAY = re.compile(r"^https://([a-z0-9][a-z0-9-]{0,48}[a-z0-9])\.azure-api\.net/?$")
@@ -78,10 +83,12 @@ def load(env: Mapping[str, str] | None = None) -> Settings:
     for name in (MODEL_DETECTIVE, MODEL_SKEPTIC):
         if env.get(name) and not MODEL.match(env[name]):
             problems.append(f"{name} is a model name")
-    max_cases = _integer(env, MAX_CASES_PER_RUN, 1, 10, "3", problems)
-    max_tokens = _integer(env, MAX_TOKENS_PER_RUN, 1000, 200000, OPTIONAL[MAX_TOKENS_PER_RUN], problems)
-    max_completion = _integer(env, MAX_COMPLETION_TOKENS, 100, 8000, OPTIONAL[MAX_COMPLETION_TOKENS], problems)
-    deadline = _integer(env, RUN_DEADLINE_SECONDS, 60, 3600, OPTIONAL[RUN_DEADLINE_SECONDS], problems)
+    if env.get(MODEL_DETECTIVE) and env.get(MODEL_DETECTIVE) == env.get(MODEL_SKEPTIC):
+        problems.append(f"{MODEL_DETECTIVE} and {MODEL_SKEPTIC} are the same model, and the Skeptic has to be another model than the Detective")
+    max_cases = _integer(env, MAX_CASES_PER_RUN, 1, LIMIT_CASES, str(LIMIT_CASES), problems)
+    max_tokens = _integer(env, MAX_TOKENS_PER_RUN, 1000, LIMIT_TOKENS_PER_RUN, OPTIONAL[MAX_TOKENS_PER_RUN], problems)
+    max_completion = _integer(env, MAX_COMPLETION_TOKENS, 100, LIMIT_COMPLETION_TOKENS, OPTIONAL[MAX_COMPLETION_TOKENS], problems)
+    deadline = _integer(env, RUN_DEADLINE_SECONDS, 60, LIMIT_DEADLINE_SECONDS, OPTIONAL[RUN_DEADLINE_SECONDS], problems)
     if problems or gateway is None:
         raise ConfigError("; ".join(problems))
     host = gateway.group(1)

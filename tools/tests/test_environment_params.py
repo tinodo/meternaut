@@ -530,10 +530,11 @@ class Contract(unittest.TestCase):
         self.assertEqual(self.build(self.contract(tokensPerMinute=20000))[0], 0)
         self.assertIn("20000", self.refused(self.contract(tokensPerMinute=20001)))
         models = [{"name": "big", "version": "2026-09-22", "sku": "DataZoneStandard", "capacity": 20, "retirementDate": "2028-03-11"},
+                  {"name": "also-big", "version": "2026-09-22", "sku": "DataZoneStandard", "capacity": 20, "retirementDate": "2028-03-11"},
                   {"name": "small", "version": "2026-09-22", "sku": "DataZoneStandard", "capacity": 5, "retirementDate": "2028-03-11"}]
         path = self.write("models.json", json.dumps(models))
         self.assertIn("5000", self.refused(self.contract(allowedModels=["big", "small"], tokensPerMinute=10000), models=path))
-        self.assertEqual(self.build(self.contract(allowedModels=["big"], tokensPerMinute=10000), models=path)[0], 0)
+        self.assertEqual(self.build(self.contract(allowedModels=["big", "also-big"], tokensPerMinute=10000), models=path)[0], 0)
 
     def test_numbers_names_and_apis_are_checked(self):
         for changes in ({"tokensPerMinute": 0}, {"tokensPerMinute": True}, {"tokensPerMinute": "10000"}, {"tokensPerMinute": 10.5},
@@ -640,16 +641,16 @@ class FirstCases(unittest.TestCase):
         self.assertEqual(cases["modelSkeptic"], contract["allowedModels"][1], "the Skeptic is another model than the Detective, so that it is more independent")
         self.assertNotEqual(cases["modelDetective"], cases["modelSkeptic"])
 
-    def test_a_contract_with_one_model_uses_it_for_both_roles(self):
+    def test_a_contract_with_one_model_is_refused_because_the_skeptic_has_to_be_another_model(self):
         with tempfile.TemporaryDirectory() as tmp:
             contract = json.loads(CONTRACT_FILE.read_text(encoding="utf-8"))
             contract["allowedModels"] = contract["allowedModels"][:1]
             path = Path(tmp) / "contract.json"
             path.write_text(json.dumps(contract), encoding="utf-8")
-            code, _, err, files = run(SETTINGS, "--contract", str(path), "--contract-policy", str(POLICY_FILE))
-        self.assertEqual((code, err), (0, ""))
-        cases = values(files["cases.parameters.json"])
-        self.assertEqual(cases["modelDetective"], cases["modelSkeptic"])
+            code, out, err, files = run(SETTINGS, "--contract", str(path), "--contract-policy", str(POLICY_FILE))
+        self.assertEqual(code, 2)
+        self.assertIn("at least two models", err)
+        self.assertEqual(out, "")
 
     def test_the_hub_and_the_identity_are_the_ones_the_template_makes(self):
         _, lines = self.build()

@@ -35,7 +35,13 @@ MAX_OBJECTIONS = 3
 
 _CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f]+")
 _LINK = re.compile(r"(?i)\b(?:https?://|www\.)\S+")
-_MONEY = re.compile(r"(?i)(?:[$€£]\s?\d[\d.,]*|\d[\d.,]*\s?(?:usd|eur|euros?|dollars?|[$€]))")
+_MAGNITUDE = r"(?:\s?(?:k|m|bn|thousand|million|billion)\b)?"
+_CURRENCY = r"(?:usd|eur|gbp|dollars?|euros?|pounds?)"
+_MONEY = re.compile(
+    rf"(?i)(?:[$€£¥]\s?\d[\d.,]*{_MAGNITUDE}"                      # $50, €1,200.50, $5k
+    rf"|\b{_CURRENCY}\s?[$€£¥]?\s?\d[\d.,]*{_MAGNITUDE}"          # USD 5000, EUR1,200
+    rf"|\d[\d.,]*{_MAGNITUDE}\s?(?:{_CURRENCY}\b|[$€£¥]))"        # 50 USD, 12 $, 3 million euros
+)
 
 
 class RoleError(Exception):

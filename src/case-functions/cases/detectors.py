@@ -86,18 +86,44 @@ TARGET_SERVICES = frozenset({
 })
 DISK_SKUS = frozenset({"standard_lrs", "standardssd_lrs", "premium_lrs", "ultrassd_lrs", "premiumv2_lrs", "standardssd_zrs", "premium_zrs"})
 PLAN_TIERS = frozenset({"basic", "standard", "premium", "premiumv2", "premiumv3", "premiumv4", "isolated", "isolatedv2", "elasticpremium", "workflowstandard"})
-VM_SIZE = re.compile(r"^Standard_[A-Za-z0-9_]{1,30}$")
+VM_FAMILY = re.compile(r"^Standard_([A-Za-z]{1,3})([0-9]{1,3})")
+VM_FAMILIES = frozenset({"a", "b", "d", "dc", "dl", "dp", "e", "ec", "ep", "f", "fx", "g", "h", "hb", "hc", "hx", "l", "m", "nc", "nd", "ng", "np", "nv"})
 GUID = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
 RESOURCE_GROUP = re.compile(r"/resourcegroups/([^/]+)", re.I)
 
+# The resource type of a lead, from a closed list: each Resource Graph detector has one type, and Advisor's own types are those of its cost recommendations.
+DETECTOR_TYPES = {
+    "orphan-private-endpoint": "microsoft.network/privateendpoints",
+    "orphan-managed-disk": "microsoft.compute/disks",
+    "orphan-public-ip": "microsoft.network/publicipaddresses",
+    "load-balancer-without-backends": "microsoft.network/loadbalancers",
+    "empty-app-service-plan": "microsoft.web/serverfarms",
+    "stopped-vm": "microsoft.compute/virtualmachines",
+}
+ADVISOR_TYPES = frozenset({
+    "microsoft.compute/virtualmachines", "microsoft.compute/virtualmachinescalesets", "microsoft.compute/disks", "microsoft.compute/reservedinstances",
+    "microsoft.sql/servers/databases", "microsoft.sql/servers/elasticpools", "microsoft.sql/managedinstances", "microsoft.storage/storageaccounts",
+    "microsoft.web/serverfarms", "microsoft.web/sites", "microsoft.network/publicipaddresses", "microsoft.network/loadbalancers",
+    "microsoft.network/applicationgateways", "microsoft.network/virtualnetworkgateways", "microsoft.network/azurefirewalls", "microsoft.network/privateendpoints",
+    "microsoft.dbforpostgresql/servers", "microsoft.dbforpostgresql/flexibleservers", "microsoft.dbformysql/servers", "microsoft.dbformysql/flexibleservers",
+    "microsoft.documentdb/databaseaccounts", "microsoft.cache/redis", "microsoft.synapse/workspaces", "microsoft.operationalinsights/workspaces",
+    "microsoft.containerservice/managedclusters", "microsoft.subscriptions/subscriptions", "microsoft.eventhub/namespaces", "microsoft.servicebus/namespaces",
+    "microsoft.kusto/clusters", "microsoft.recoveryservices/vaults",
+})
+KNOWN_TYPES = frozenset(DETECTOR_TYPES.values()) | ADVISOR_TYPES | {"other"}
+
 # The closed vocabulary of the facts: every word that a detector may put in a fact, and the few shapes of the rest. A prompt holds nothing else.
-FACT_WORDS = frozenset().union(CONNECTION_STATES, TARGET_SERVICES, DISK_SKUS, PLAN_TIERS,
+FACT_WORDS = frozenset().union(CONNECTION_STATES, TARGET_SERVICES, DISK_SKUS, PLAN_TIERS, VM_FAMILIES,
                                {"basic", "standard", "static", "dynamic", "high", "medium", "low", "other", "none", "unknown", "unattached", "stopped", "cost"})
-FACT_SHAPES = (re.compile(r"^(up to|over) \d{1,5}$"), VM_SIZE, GUID)
+FACT_SHAPES = (re.compile(r"^(up to|over) \d{1,5}$"), GUID)
 
 
 def is_fact_word(value: str) -> bool:
     return value in FACT_WORDS or any(shape.match(value) for shape in FACT_SHAPES)
+
+
+def known_type(value: str) -> str:
+    return value if value in KNOWN_TYPES else "other"
 
 
 @dataclass
@@ -210,8 +236,9 @@ def _plan(row: dict, now: dt.datetime) -> Lead | None:
 
 
 def _vm(row: dict, now: dt.datetime) -> Lead | None:
-    size = str(row.get("vmSize") or "")
-    return _lead("stopped-vm", row, {"powerState": "stopped", "size": size if VM_SIZE.match(size) else "other"})
+    # The number in a size name is the vCPU count for most families (not for a size with constrained vCPUs); the model gets it as a rough size.
+    size = VM_FAMILY.match(str(row.get("vmSize") or ""))
+    return _lead("stopped-vm", row, {"powerState": "stopped", "sizeFamily": pick(size.group(1) if size else "", VM_FAMILIES), "vcpu": int(size.group(2)) if size else None})
 
 
 @dataclass(frozen=True)
