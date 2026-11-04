@@ -47,6 +47,20 @@ class Load(unittest.TestCase):
             with self.assertRaises(config.ConfigError, msg=f"{name}={value}"):
                 config.load({**ENV, name: value})
 
+    def test_the_limits_of_the_proposal_are_ceilings_that_a_setting_can_lower_and_never_raise(self):
+        for name, value in (("MAX_CASES_PER_RUN", "4"), ("MAX_TOKENS_PER_RUN", "40001"), ("MAX_COMPLETION_TOKENS", "2001"), ("RUN_DEADLINE_SECONDS", "901")):
+            with self.assertRaises(config.ConfigError, msg=f"{name}={value}") as raised:
+                config.load({**ENV, name: value})
+            self.assertIn(name, str(raised.exception))
+        for name, value in (("MAX_CASES_PER_RUN", "3"), ("MAX_TOKENS_PER_RUN", "40000"), ("MAX_COMPLETION_TOKENS", "2000"), ("RUN_DEADLINE_SECONDS", "900")):
+            config.load({**ENV, name: value})
+
+    def test_the_skeptic_has_to_be_another_model_than_the_detective(self):
+        with self.assertRaises(config.ConfigError) as raised:
+            config.load({**ENV, "MODEL_SKEPTIC": ENV["MODEL_DETECTIVE"]})
+        self.assertIn("MODEL_SKEPTIC", str(raised.exception))
+        self.assertEqual(config.load({**ENV, "MODEL_SKEPTIC": "gpt-6-sol"}).model_skeptic, "gpt-6-sol")
+
     def test_the_optional_settings_can_be_given(self):
         settings = config.load({**ENV, "MAX_TOKENS_PER_RUN": "20000", "MAX_COMPLETION_TOKENS": "1500", "RUN_DEADLINE_SECONDS": "600"})
         self.assertEqual((settings.max_tokens_per_run, settings.max_completion_tokens, settings.deadline_seconds), (20000, 1500, 600))
@@ -63,6 +77,17 @@ class TemplateAndCode(unittest.TestCase):
 
     def test_the_settings_that_the_environment_gives_are_the_ones_of_the_tests(self):
         self.assertTrue(set(config.REQUIRED) <= set(ENV))
+
+    def test_the_template_cannot_ask_for_more_cases_than_the_code_accepts_and_names_two_different_models(self):
+        template = (REPO_ROOT / "environment" / "cases" / "main.bicep").read_text(encoding="utf-8")
+        cases = re.search(r"@minValue\(1\)\s*\n@maxValue\((\d+)\)\s*\nparam maxCasesPerRun int = (\d+)", template)
+        self.assertIsNotNone(cases, "maxCasesPerRun has a bounded range in the template")
+        self.assertEqual((int(cases.group(1)), int(cases.group(2))), (config.LIMIT_CASES, config.LIMIT_CASES))
+        models = dict(re.findall(r"^param (modelDetective|modelSkeptic) string = '([^']+)'$", template, re.M))
+        self.assertEqual(sorted(models), ["modelDetective", "modelSkeptic"])
+        self.assertNotEqual(models["modelDetective"], models["modelSkeptic"])
+        for name in models.values():
+            self.assertRegex(name, config.MODEL)
 
 
 if __name__ == "__main__":

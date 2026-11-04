@@ -38,11 +38,14 @@ def is_locked(resource_id: str, scopes: list[str]) -> bool:
     return any(target == scope or target.startswith(scope + "/") for scope in scopes)
 
 
-def evaluate(lead: Lead, context: Context) -> Guards:
-    """A guard that cannot be read is a guard that is on: "unverified" stops a lead as much as a lock does."""
+def evaluate(lead: Lead, context: Context, scope_locks: list[str] | None) -> Guards:
+    """A guard that cannot be read is a guard that is on: "unverified" stops a lead as much as a lock does.
+
+    `scope_locks` are the locks that the list of the lead's own scopes returned; None means that they could not be read.
+    """
     target = lead.resource_id.lower()
-    unverified = context.locks is None or context.recent is None or context.managed_groups is None
-    locked = bool(context.locks) and is_locked(lead.resource_id, context.locks or [])
+    unverified = context.locks is None or context.recent is None or context.managed_groups is None or scope_locks is None
+    locked = is_locked(lead.resource_id, (context.locks or []) + (scope_locks or []))
     too_new = (lead.age_days is not None and lead.age_days < RECENT_DAYS) or (context.recent is not None and target in context.recent)
     group = lead.resource_group.lower()
     managed = bool(lead.managed_by) or group.startswith(MANAGED_PREFIXES) or (context.managed_groups is not None and group in context.managed_groups)

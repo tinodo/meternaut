@@ -77,8 +77,10 @@ def skeptic_says(verdict: str = "agree", objections=(), summary: str = "No reaso
 class FakeEstate:
     """Answers every call that the app makes, from the lists below, and keeps them in `calls`.
 
-    `graph` maps the name that heads a Resource Graph query (`// meternaut:<name>`) to its rows. `failures` maps a source (`graph:<name>`,
-    `advisor`, `locks`, `costs`, `secrets`, `chat`) to a status that is answered instead (or to a list of statuses, one for each call).
+    `graph` maps the name that heads a Resource Graph query (`// meternaut:<name>`) to its rows. `locks` is the answer of the subscription-wide list of
+    locks and `locks_at` maps a lower-case scope to the answer of the list of that scope. `failures` maps a source (`graph:<name>`, `advisor`, `locks`,
+    `locks_at`, `costs`, `secrets`, `chat`) to a status that is answered instead (or to a list of statuses, one for each call).
+    `after_chat` and `after_secrets` are called after each answer of the model and after the answer with the key, to move a clock.
     """
 
     def __init__(self) -> None:
@@ -86,12 +88,15 @@ class FakeEstate:
                                              "empty-app-service-plan": [], "stopped-vm": [], "recent-creations": [], "managed-groups": []}
         self.advisor: list[dict] = []
         self.locks: list[dict] = []
+        self.locks_at: dict[str, list[dict]] = {}
         self.cost_rows: list[list] = []
         self.currency = "USD"
         self.failures: dict[str, object] = {}
         self.chat_replies: list[tuple[int, object]] = []
         self.calls: list[dict] = []
         self.sleeps: list[float] = []
+        self.after_chat = None
+        self.after_secrets = None
 
     # -- the answers ---------------------------------------------------------------------------------------------------------------------------
     def model(self, model: str, system: str, user: str) -> tuple:
@@ -127,17 +132,27 @@ class FakeEstate:
             failed = self._failure("advisor")
             return (failed, {}, b'{"error":{"code":"Failed","message":"boom"}}') if failed else self._json({"value": self.advisor})
         if "/providers/microsoft.authorization/locks" in path:
-            failed = self._failure("locks")
-            return (failed, {}, b'{"error":{"code":"Failed","message":"boom"}}') if failed else self._json({"value": self.locks})
+            if path == f"/subscriptions/{SUBSCRIPTION}/providers/microsoft.authorization/locks":
+                failed = self._failure("locks")
+                return (failed, {}, b'{"error":{"code":"Failed","message":"boom"}}') if failed else self._json({"value": self.locks})
+            failed = self._failure("locks_at")
+            scope = path.split("/providers/microsoft.authorization/locks")[0]
+            return (failed, {}, b'{"error":{"code":"Failed","message":"boom"}}') if failed else self._json({"value": self.locks_at.get(scope, [])})
         if path.endswith("/listsecrets"):
             failed = self._failure("secrets")
-            return (failed, {}, b'{"error":{"code":"Forbidden","message":"no right"}}') if failed else self._json({"primaryKey": KEY, "secondaryKey": "other-secret-key-value"})
+            if failed:
+                return failed, {}, b'{"error":{"code":"Forbidden","message":"no right"}}'
+            if self.after_secrets:
+                self.after_secrets()
+            return self._json({"primaryKey": KEY, "secondaryKey": "other-secret-key-value"})
         if path.endswith("/models/chat/completions"):
             failed = self._failure("chat")
             if failed:
                 return failed, {"retry-after": "1"} if failed == 429 else {}, b'{"statusCode":%d,"message":"refused"}' % failed
             messages = body["messages"]
             reply = self.model(body["model"], messages[0]["content"], messages[1]["content"])
+            if self.after_chat:
+                self.after_chat()
             if len(reply) == 3:
                 status, answer_headers, answer = reply
                 return status, answer_headers, json.dumps(answer).encode("utf-8")

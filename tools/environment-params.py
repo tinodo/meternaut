@@ -542,6 +542,8 @@ def build(env, models: list[dict], preview: bool = False, contract: dict | None 
             raise Problem("a contract needs its policy template")
         files["contract.parameters.json"], contract_outputs = contract_files(contract, policy_template, gateway.group(3))
         outputs.update(contract_outputs)
+        if len(contract["allowedModels"]) < 2:
+            raise Problem("the contract's allowedModels hold at least two models: the Skeptic of the first cases has to be another model than the Detective")
         files["cases.parameters.json"] = parameters({
             "location": location,
             "owner": owner,
@@ -553,7 +555,7 @@ def build(env, models: list[dict], preview: bool = False, contract: dict | None 
             "gatewayUrl": outputs["gateway_url"],
             "gatewayProductSubscriptionId": f"{need(env, 'GATEWAY_RESOURCE_ID')}/subscriptions/{contract_outputs['contract_subscription']}",
             "modelDetective": contract["allowedModels"][0],
-            "modelSkeptic": contract["allowedModels"][1] if len(contract["allowedModels"]) > 1 else contract["allowedModels"][0],
+            "modelSkeptic": contract["allowedModels"][1],
         })
     return files, outputs
 

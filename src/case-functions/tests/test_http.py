@@ -138,6 +138,121 @@ class Retries(unittest.TestCase):
         self.assertEqual(len(script.calls), 1)
 
 
+class LockLists(unittest.TestCase):
+    GROUP = f"https://management.azure.com/subscriptions/{SUBSCRIPTION}/resourceGroups/rg-app"
+    RESOURCE = f"{GROUP}/providers/Microsoft.Network/privateEndpoints/pe-one"
+    LOCKS = "providers/Microsoft.Authorization/locks"
+
+    def test_the_locks_of_a_group_a_resource_and_a_child_resource_may_be_read(self):
+        c, script, _ = client(ok())
+        for scope in (self.GROUP, self.RESOURCE, f"{self.RESOURCE}/privateDnsZoneGroups/default"):
+            c.request("GET", f"{scope}/{self.LOCKS}?api-version=2016-09-01&$filter=atScope()")
+        self.assertEqual(len(script.calls), 3)
+
+    def test_a_lock_can_be_neither_made_nor_changed_nor_removed(self):
+        c, script, _ = client(ok())
+        for method in ("PUT", "DELETE", "POST", "PATCH"):
+            for scope in (self.GROUP, self.RESOURCE, f"https://management.azure.com/subscriptions/{SUBSCRIPTION}"):
+                for path in (f"{scope}/{self.LOCKS}/protect", f"{scope}/{self.LOCKS}"):
+                    with self.assertRaises(http.Refused, msg=f"{method} {path}"):
+                        c.request(method, path)
+        self.assertEqual(script.calls, [])
+
+    def test_the_list_of_a_scope_that_is_not_one_of_a_subscription_is_refused(self):
+        c, script, _ = client(ok())
+        arm = "https://management.azure.com"
+        for scope in ("/subscriptions/not-a-guid", "/subscriptions/not-a-guid/resourceGroups/rg", f"/subscriptions/{SUBSCRIPTION}/resourceGroups/rg%20app",
+                      f"/subscriptions/{SUBSCRIPTION}/resourceGroups/rg/providers/Microsoft.Network",
+                      f"/subscriptions/{SUBSCRIPTION}/resourceGroups/rg/providers/Microsoft.Network/privateEndpoints",
+                      "/providers/Microsoft.Management/managementGroups/mg", "", "/"):
+            with self.assertRaises(http.Refused, msg=scope):
+                c.request("GET", f"{arm}{scope}/{self.LOCKS}")
+        self.assertEqual(script.calls, [])
+
+
+def timed(*answers, now=0.0, deadline=None):
+    """A client whose clock stands at `now`, with a deadline, and whose pauses move the clock."""
+    clock = {"now": now}
+    sleeps = []
+
+    def sleep(seconds):
+        sleeps.append(seconds)
+        clock["now"] += seconds
+
+    script = Script(*answers)
+    allowed = http.allowed_calls("example-apim.azure-api.net", f"{PRODUCT_SUBSCRIPTION}/listSecrets")
+    c = http.Client(allowed, Redactor(), transport=script, sleep=sleep, jitter=lambda: 0.5, monotonic=lambda: clock["now"])
+    c.deadline = deadline
+    return c, script, sleeps
+
+
+class Deadline(unittest.TestCase):
+    def test_without_a_deadline_nothing_changes(self):
+        c, script, _ = timed(ok(), now=1e9)
+        c.request("GET", LOCKS, timeout=7)
+        self.assertEqual(script.calls[0][4], 7)
+        self.assertIsNone(c.remaining())
+
+    def test_no_call_starts_when_the_deadline_has_been_reached(self):
+        for now in (100.0, 101.0):
+            c, script, _ = timed(ok(), now=now, deadline=100.0)
+            with self.assertRaises(http.HttpError) as raised:
+                c.request("GET", LOCKS)
+            self.assertEqual((raised.exception.status, script.calls), (0, []))
+            self.assertIn("deadline", str(raised.exception))
+
+    def test_the_timeout_of_a_call_never_reaches_past_the_deadline_and_is_never_less_than_a_second(self):
+        for deadline, expected in ((100.0, 30), (10.0, 10.0), (0.4, 1.0)):
+            c, script, _ = timed(ok(), now=0.0, deadline=deadline)
+            c.request("GET", LOCKS, timeout=30)
+            self.assertEqual(script.calls[0][4], expected, deadline)
+
+    def test_a_pause_that_would_end_at_or_after_the_deadline_is_not_taken(self):
+        for deadline in (1.0, 1.5):
+            c, script, sleeps = timed((503, {}, b"{}"), ok(), now=0.0, deadline=deadline)
+            with self.assertRaises(http.HttpError) as raised:
+                c.request("GET", LOCKS)
+            self.assertEqual((raised.exception.status, len(script.calls), sleeps), (503, 1, []), deadline)
+
+    def test_a_pause_that_ends_before_the_deadline_is_taken(self):
+        c, script, sleeps = timed((503, {}, b"{}"), ok(), now=0.0, deadline=100.0)
+        self.assertEqual(c.request("GET", LOCKS).status, 200)
+        self.assertEqual((len(script.calls), sleeps), (2, [1.5]))
+
+    def test_the_wait_that_a_throttled_call_is_told_to_take_counts_against_the_deadline_too(self):
+        c, script, sleeps = timed((429, {"retry-after": "30"}, b"{}"), ok(), now=0.0, deadline=20.0)
+        with self.assertRaises(http.HttpError) as raised:
+            c.request("POST", COST)
+        self.assertEqual((raised.exception.status, len(script.calls), sleeps), (429, 1, []))
+
+
+class WhatMayBeRepeated(unittest.TestCase):
+    NOT_NOW = frozenset({429, 503})
+
+    def test_a_call_whose_answer_did_not_arrive_is_not_repeated_when_it_may_have_been_carried_out(self):
+        for failure in (urllib.error.URLError("down"), TimeoutError("slow"), ConnectionResetError(), OSError("x")):
+            c, script, sleeps = client(failure, ok())
+            with self.assertRaises(http.HttpError) as raised:
+                c.request("POST", CHAT, retry_statuses=self.NOT_NOW, retry_network=False)
+            self.assertEqual((raised.exception.status, len(script.calls), sleeps), (0, 1, []), failure)
+
+    def test_only_the_statuses_that_were_named_are_repeated(self):
+        for status in (500, 502, 504):
+            c, script, sleeps = client((status, {}, b"{}"), ok())
+            with self.assertRaises(http.HttpError, msg=str(status)):
+                c.request("POST", CHAT, retry_statuses=self.NOT_NOW, retry_network=False)
+            self.assertEqual((len(script.calls), sleeps), (1, []), status)
+        for status in (429, 503):
+            c, script, sleeps = client((status, {}, b"{}"), ok())
+            self.assertEqual(c.request("POST", CHAT, retry_statuses=self.NOT_NOW, retry_network=False).status, 200)
+            self.assertEqual(len(script.calls), 2, status)
+
+    def test_a_call_that_is_a_read_repeats_a_network_error_by_default(self):
+        c, script, _ = client(urllib.error.URLError("down"), ok())
+        self.assertEqual(c.request("GET", LOCKS).status, 200)
+        self.assertEqual(len(script.calls), 2)
+
+
 class Errors(unittest.TestCase):
     def test_an_error_text_holds_the_code_and_a_short_message_and_never_a_header_or_a_secret(self):
         redact = Redactor()

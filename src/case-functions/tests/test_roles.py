@@ -18,8 +18,18 @@ class CleanText(unittest.TestCase):
             self.assertIn("[figure removed]", cleaned, text)
             self.assertNotRegex(cleaned, r"\d", text)
 
+    def test_every_spelling_of_a_figure_about_money_is_removed(self):
+        for text in ("USD 5000", "EUR1,200", "usd $50", "$5k", "$ 5K", "€1.2m", "3 million euros", "5 thousand dollars", "2 bn USD", "about 40 EUR", "GBP 12.50", "¥500",
+                     "1.5 billion pounds", "7 usd", "costs EUR 3 a month", "a saving of 120 € per month"):
+            cleaned = roles.clean_text(text)
+            self.assertIn("[figure removed]", cleaned, text)
+            self.assertNotRegex(cleaned, r"\d", text)
+
     def test_ordinary_numbers_stay(self):
         self.assertEqual(roles.clean_text("The endpoint has been disconnected for 3 weeks."), "The endpoint has been disconnected for 3 weeks.")
+        for text in ("5 months", "10 GB of data", "2 mm", "4 m of cable", "2 cores and 12 hours", "3 europeans", "version 5.2 of 8 k8s nodes", "disk of 256 GiB", "7 days old",
+                     "about 3 eurozone countries"):
+            self.assertEqual(roles.clean_text(text), text)
 
     def test_a_long_text_is_cut_with_dots_and_none_is_empty(self):
         cut = roles.clean_text("word " * 200)

@@ -5,10 +5,11 @@ Nothing here writes. The two POSTs ask a question (a query), and `http.Client` r
 from __future__ import annotations
 
 import datetime as dt
+import re
 from typing import Callable
 from urllib.parse import urlsplit
 
-from .http import ARM_HOST, Client, HttpError
+from .http import ARM_HOST, SCOPE, Client, HttpError
 
 ARM = f"https://{ARM_HOST}"
 GRAPH_API = "2022-10-01"
@@ -16,10 +17,21 @@ COST_API = "2023-11-01"
 ADVISOR_API = "2023-01-01"
 LOCKS_API = "2016-09-01"
 MAX_PAGES = 10
+SCOPE_ID = re.compile(SCOPE, re.I)
+GROUP_SCOPE = re.compile(r"^(/subscriptions/[^/]+/resourceGroups/[^/]+)", re.I)
 
 
 def _bad(what: str) -> HttpError:
     return HttpError(200, f"{what} gave an answer that the app does not understand")
+
+
+def scopes_of(resource_id: str) -> list[str]:
+    """The resource itself and its resource group: the two scopes whose locks are asked for one by one."""
+    group = GROUP_SCOPE.match(resource_id)
+    scopes = [resource_id]
+    if group and group.group(1).lower() != resource_id.lower():
+        scopes.append(group.group(1))
+    return scopes
 
 
 class Arm:
@@ -34,8 +46,9 @@ class Arm:
         if not link:
             return None
         parts = urlsplit(str(link))
-        prefix = f"/subscriptions/{subscription}/providers/{service}/".lower()
-        if parts.scheme != "https" or parts.netloc.lower() != ARM_HOST or not parts.path.lower().startswith(prefix):
+        path = parts.path.lower()
+        if parts.scheme != "https" or parts.netloc.lower() != ARM_HOST or not path.startswith(f"/subscriptions/{subscription}/".lower()) \
+                or f"/providers/{service}/".lower() not in path + "/":
             raise _bad(service)
         return str(link)
 
@@ -116,14 +129,27 @@ class Arm:
                "&$filter=Category%20eq%20%27Cost%27")
         return self._pages(subscription, url, "Microsoft.Advisor")
 
-    def locks(self, subscription: str) -> list[str]:
-        """The scope of every management lock of the subscription, lower case: the subscription, a group or one resource."""
-        url = f"{ARM}/subscriptions/{subscription}/providers/Microsoft.Authorization/locks?api-version={LOCKS_API}"
+    @staticmethod
+    def _lock_scopes(locks: list[dict]) -> list[str]:
         scopes = []
-        for lock in self._pages(subscription, url, "Microsoft.Authorization"):
+        for lock in locks:
             lock_id = str(lock.get("id", ""))
-            marker = "/providers/microsoft.authorization/locks/"
-            index = lock_id.lower().find(marker)
+            index = lock_id.lower().find("/providers/microsoft.authorization/locks/")
             if index > 0:
                 scopes.append(lock_id[:index].lower())
         return scopes
+
+    def locks(self, subscription: str) -> list[str]:
+        """The scope of every management lock that the subscription-wide list returns, lower case. Without a filter the list returns the locks at, above and
+        below its scope (the documentation of Get-AzResourceLock -AtScope says so), but it is paged and can be throttled, so a case also asks for its own
+        scopes one by one (locks_at)."""
+        url = f"{ARM}/subscriptions/{subscription}/providers/Microsoft.Authorization/locks?api-version={LOCKS_API}"
+        return self._lock_scopes(self._pages(subscription, url, "Microsoft.Authorization"))
+
+    def locks_at(self, subscription: str, scope: str) -> list[str]:
+        """The scope of every lock that applies to one scope (a subscription, a group or a resource), lower case. With $filter=atScope() the list returns the
+        locks at and above the scope: the documentation of Get-AzResourceLock -AtScope says "all locks at or above the specified scope"."""
+        if not SCOPE_ID.fullmatch(scope) or not scope.lower().startswith(f"/subscriptions/{subscription}".lower()):
+            raise HttpError(0, "the scope is not an Azure resource id of the subscription")
+        url = f"{ARM}{scope}/providers/Microsoft.Authorization/locks?api-version={LOCKS_API}&$filter=atScope()"
+        return self._lock_scopes(self._pages(subscription, url, "Microsoft.Authorization"))

@@ -17,6 +17,7 @@ from .redact import Redactor
 LIST_SECRETS_API = "2024-05-01"
 ARM_RESOURCE = f"https://{ARM_HOST}"
 CHAT_TIMEOUT = 90
+CHAT_RETRY_STATUSES = frozenset({429, 503})
 
 
 class GatewayError(Exception):
@@ -80,8 +81,9 @@ class Gateway:
     def _post(self, body: dict) -> Chat:
         if not self._key:
             raise GatewayError("the key of the access product has not been read")
+        # A call whose answer did not arrive may have been carried out and paid for, so only a refusal that says "not now" (429, 503) is repeated.
         response = self.client.request("POST", f"{self.settings.gateway_url}/models/chat/completions", headers={"api-key": self._key}, body=body,
-                                       timeout=CHAT_TIMEOUT, retries=2, retry_after_max=60)
+                                       timeout=CHAT_TIMEOUT, retries=2, retry_after_max=60, retry_statuses=CHAT_RETRY_STATUSES, retry_network=False)
         return self._read(response.json())
 
     @staticmethod
@@ -93,7 +95,9 @@ class Gateway:
             prompt, completion, total = (int(usage.get(name, 0)) for name in ("prompt_tokens", "completion_tokens", "total_tokens"))
         except (KeyError, IndexError, TypeError, ValueError, AttributeError) as error:
             raise GatewayError("the answer of the gateway is not a completion") from error
+        if min(prompt, completion, total) < 0:
+            raise GatewayError("the answer of the gateway reports a usage that is not valid")
         if not isinstance(text, str) or not text.strip():
             reason = choice.get("finish_reason") if isinstance(choice, dict) else None
             raise GatewayError("the model gave no text" + (" (it used its whole completion budget on its reasoning)" if reason == "length" else ""))
-        return Chat(text, prompt, completion, total or prompt + completion)
+        return Chat(text, prompt, completion, max(total, prompt + completion))

@@ -11,12 +11,11 @@ import json
 import math
 import re
 
-from .detectors import DETECTOR_NAMES, Lead, is_fact_word
+from .detectors import DETECTOR_NAMES, Lead, is_fact_word, known_type
 from .guards import Guards
 
 MAX_CASE_CHARS = 6000
 KEY = re.compile(r"^[A-Za-z][A-Za-z0-9]{0,30}$")
-RESOURCE_TYPE = re.compile(r"^[a-z0-9]+(\.[a-z0-9]+)*(/[a-z0-9]+)+$")
 CASE_ID = re.compile(r"^c[0-9]{1,3}$")
 
 
@@ -54,7 +53,7 @@ def validate(value: object, path: str = "case") -> None:
 def case_dto(number: int, lead: Lead, guards: Guards) -> dict:
     """The case for the models: what the case is, never what it is called."""
     case_id = f"c{number}"
-    resource_type = lead.resource_type if RESOURCE_TYPE.match(lead.resource_type) else "other"
+    resource_type = known_type(lead.resource_type)
     if not CASE_ID.match(case_id) or lead.detector not in DETECTOR_NAMES:
         raise EvidenceError("the case has an id or a detector that is not one of the app's")
     dto = {

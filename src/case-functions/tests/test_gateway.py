@@ -1,5 +1,6 @@
 import json
 import unittest
+import urllib.error
 
 from support import ENV, KEY, PRODUCT_SUBSCRIPTION, TOKEN
 from cases import config
@@ -106,6 +107,36 @@ class Chat(unittest.TestCase):
         with self.assertRaises(GatewayError) as raised:
             gateway.chat("m", "s", "u", 10)
         self.assertNotIsInstance(raised.exception, GatewayRefused)
+
+    def test_a_call_that_may_already_have_been_carried_out_is_not_made_again(self):
+        for answer in (urllib.error.URLError("down"), TimeoutError("slow"), (500, {}, b"{}"), (502, {}, b"{}"), (504, {}, b"{}")):
+            gateway, script, _ = self.opened(answer, completion("twice"))
+            with self.assertRaises(GatewayError, msg=str(answer)):
+                gateway.chat("m", "s", "u", 10)
+            self.assertEqual(len(script.calls), 2, "the key, and one call of the model")
+
+    def test_a_refusal_that_says_not_now_is_made_again_and_only_twice(self):
+        gateway, script, _ = self.opened((503, {}, b"{}"), completion("later"))
+        self.assertEqual(gateway.chat("m", "s", "u", 10).text, "later")
+        self.assertEqual(len(script.calls), 3)
+        gateway, script, _ = self.opened((503, {}, b"{}"))
+        with self.assertRaises(GatewayError):
+            gateway.chat("m", "s", "u", 10)
+        self.assertEqual(len(script.calls), 4, "the key and three calls of the model")
+
+    def test_a_usage_that_is_not_valid_is_refused(self):
+        for usage in ({"prompt_tokens": -5, "completion_tokens": 4, "total_tokens": -1}, {"prompt_tokens": 5, "completion_tokens": -4},
+                      {"prompt_tokens": 5, "completion_tokens": 4, "total_tokens": -9}):
+            gateway, _, _ = self.opened(ok({"choices": [{"message": {"content": "x"}}], "usage": usage}))
+            with self.assertRaises(GatewayError, msg=str(usage)) as raised:
+                gateway.chat("m", "s", "u", 10)
+            self.assertIn("usage that is not valid", str(raised.exception))
+
+    def test_the_total_is_never_less_than_the_sum_of_the_parts(self):
+        gateway, _, _ = self.opened(ok({"choices": [{"message": {"content": "x"}}], "usage": {"prompt_tokens": 3, "completion_tokens": 4, "total_tokens": 5}}))
+        self.assertEqual(gateway.chat("m", "s", "u", 10).total_tokens, 7)
+        gateway, _, _ = self.opened(ok({"choices": [{"message": {"content": "x"}}], "usage": {"prompt_tokens": 3, "completion_tokens": 4, "total_tokens": 20}}))
+        self.assertEqual(gateway.chat("m", "s", "u", 10).total_tokens, 20)
 
     def test_an_answer_that_is_not_a_completion_is_an_error(self):
         for answer in (ok({}), ok({"choices": []}), ok({"choices": [{}]}), ok({"choices": [{"message": {"content": "x"}}], "usage": {"total_tokens": "many"}}),

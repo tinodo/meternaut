@@ -113,6 +113,62 @@ class AdvisorAndLocks(unittest.TestCase):
             arm.locks(SUBSCRIPTION)
 
 
+class LocksAtAScope(unittest.TestCase):
+    GROUP = f"/subscriptions/{SUBSCRIPTION}/resourceGroups/Rg-App"
+
+    def test_the_locks_of_one_scope_are_asked_for_at_that_scope_with_the_filter_that_adds_the_scopes_above_and_come_back_in_lower_case(self):
+        lock = f"{self.GROUP}/providers/Microsoft.Authorization/locks/protect"
+        inherited = f"/subscriptions/{SUBSCRIPTION}/providers/Microsoft.Authorization/locks/protect"
+        arm, script = arm_with(ok({"value": [{"id": lock}, {"id": inherited}]}))
+        self.assertEqual(arm.locks_at(SUBSCRIPTION, self.GROUP), [self.GROUP.lower(), f"/subscriptions/{SUBSCRIPTION}"])
+        ((method, url, headers, _, _),) = script.calls
+        self.assertEqual(method, "GET")
+        self.assertEqual(url, f"https://management.azure.com{self.GROUP}/providers/Microsoft.Authorization/locks?api-version=2016-09-01&$filter=atScope()")
+        self.assertEqual(headers["Authorization"], f"Bearer {TOKEN}")
+
+    def test_a_resource_and_a_child_resource_are_scopes_too(self):
+        child = f"{RESOURCE}/privateDnsZoneGroups/default"
+        for scope in (RESOURCE, child):
+            arm, script = arm_with(ok({"value": []}))
+            self.assertEqual(arm.locks_at(SUBSCRIPTION, scope), [])
+            self.assertTrue(script.calls[0][1].startswith(f"https://management.azure.com{scope}/providers/Microsoft.Authorization/locks?"))
+
+    def test_a_scope_that_is_not_one_of_the_subscription_is_refused_before_a_call_is_made(self):
+        other = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg"
+        for scope in (other, "/subscriptions/not-a-guid", f"/subscriptions/{SUBSCRIPTION}/resourceGroups/rg/../x", "", "/",
+                      f"/subscriptions/{SUBSCRIPTION}/resourceGroups/rg/providers/Microsoft.Network", f"{self.GROUP}?x=1", f"{self.GROUP}/x y"):
+            arm, script = arm_with(ok({"value": []}))
+            with self.assertRaises(HttpError, msg=scope):
+                arm.locks_at(SUBSCRIPTION, scope)
+            self.assertEqual(script.calls, [], scope)
+
+    def test_the_next_page_of_the_list_stays_on_the_locks_of_the_subscription(self):
+        lock = f"{self.GROUP}/providers/Microsoft.Authorization/locks/a"
+        link = f"https://management.azure.com{self.GROUP}/providers/Microsoft.Authorization/locks?api-version=2016-09-01&$skiptoken=1"
+        arm, script = arm_with(ok({"value": [{"id": lock}], "nextLink": link}), ok({"value": []}))
+        self.assertEqual(arm.locks_at(SUBSCRIPTION, self.GROUP), [self.GROUP.lower()])
+        self.assertEqual(script.calls[1][1], link)
+        arm, _ = arm_with(ok({"value": [], "nextLink": "https://evil.example/subscriptions/x/providers/Microsoft.Authorization/locks"}))
+        with self.assertRaises(HttpError):
+            arm.locks_at(SUBSCRIPTION, self.GROUP)
+
+
+class ScopesOf(unittest.TestCase):
+    GROUP = f"/subscriptions/{SUBSCRIPTION}/resourceGroups/rg-app"
+
+    def test_a_resource_has_itself_and_then_its_group(self):
+        self.assertEqual(arm_module.scopes_of(RESOURCE), [RESOURCE, self.GROUP])
+        child = f"{RESOURCE}/privateDnsZoneGroups/default"
+        self.assertEqual(arm_module.scopes_of(child), [child, self.GROUP])
+
+    def test_a_group_is_its_own_scope_in_any_case(self):
+        self.assertEqual(arm_module.scopes_of(self.GROUP), [self.GROUP])
+        self.assertEqual(arm_module.scopes_of(self.GROUP.upper()), [self.GROUP.upper()])
+
+    def test_an_id_without_a_group_has_only_itself(self):
+        self.assertEqual(arm_module.scopes_of(f"/subscriptions/{SUBSCRIPTION}"), [f"/subscriptions/{SUBSCRIPTION}"])
+
+
 class NothingWrites(unittest.TestCase):
     def test_the_module_only_asks_questions(self):
         import re
