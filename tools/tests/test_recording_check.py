@@ -3,9 +3,9 @@ import importlib.util
 import io
 import json
 import os
+import re
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
-from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import mock
@@ -15,9 +15,12 @@ spec = importlib.util.spec_from_file_location("recording_check", ROOT / "tools" 
 rc = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(rc)
 
-SITE = "/subscriptions/11111111-2222-3333-4444-555555555555/resourceGroups/rg-example/providers/Microsoft.Web/sites/logic-example"
+SITE = "/subscriptions/11111111-2222-3333-4444-555555555555/resourceGroups/rg-example/providers/Microsoft.Web/sites/func-example"
+INSIGHTS = "/subscriptions/11111111-2222-3333-4444-555555555555/resourceGroups/rg-example/providers/Microsoft.Insights/components/appi-example"
+NAMESPACE = "evhns-example"
 OID = "99999999-8888-7777-6666-555555555555"
 SECRET = "SECRET-TOKEN-VALUE"
+ENV = {"GITHUB_ACTIONS": "true"}
 
 
 def jwt(claims):
@@ -39,11 +42,23 @@ class Clock:
 
 def azure(runner, post=None):
     clock = Clock()
-    return rc.Azure(runner=runner, post=post or (lambda *a: (500, b"{}", {})), sleep=clock.sleep, clock=clock)
+    return rc.Azure(runner=runner, post=post or (lambda *a: (500, b"{}")), sleep=clock.sleep, clock=clock)
 
 
-def workflows(count):
-    return [{"name": f"wf-{i}", "kind": "Stateful", "health": {"state": "Healthy"}} for i in range(count)]
+def listed(names):
+    return {"value": [{"name": f"func-example/{n}", "properties": {"name": n}} for n in names]}
+
+
+def result(job, request_id, **changes):
+    document = {"job": job, "requestId": request_id, "trigger": "control", "ok": True, "firstRun": False, "from": "2026-11-04T10:00:00",
+                "to": "2026-11-04T13:00:00", "rows": 3, "written": 3, "containerCount": 5, "marker": "2026-11-04T13:00:00", "error": None}
+    document.update(changes)
+    return document
+
+
+def telemetry(documents):
+    rows = [["2026-11-04T13:01:00Z", rc.RESULT_PREFIX + json.dumps(d, separators=(",", ":"))] for d in documents]
+    return {"tables": [{"name": "PrimaryResult", "columns": [{"name": "timestamp"}, {"name": "message"}], "rows": rows}]}
 
 
 class Whoami(unittest.TestCase):
@@ -72,9 +87,9 @@ class Whoami(unittest.TestCase):
         self.assertNotIn("more lines", err.getvalue())
 
 
-class Workflows(unittest.TestCase):
-    def test_it_waits_until_enough_workflows_are_listed(self):
-        answers = iter([Exception, 2, 5])
+class Functions(unittest.TestCase):
+    def test_it_waits_until_the_six_functions_are_listed(self):
+        answers = iter([Exception, listed(rc.FUNCTIONS[:2]), listed(rc.FUNCTIONS)])
         calls = []
 
         def runner(args):
@@ -82,220 +97,228 @@ class Workflows(unittest.TestCase):
             step = next(answers)
             if step is Exception:
                 return 1, "", "ERROR: BadGateway"
-            return 0, json.dumps(workflows(step)), ""
+            return 0, json.dumps(step), ""
 
         out = io.StringIO()
         with redirect_stdout(out):
-            code = rc.main(["workflows", "--site", SITE, "--expect", "5"], azure(runner))
+            code = rc.main(["functions", "--site", SITE], azure(runner))
         self.assertEqual(code, 0)
         self.assertEqual(len(calls), 3)
-        self.assertIn("lists 5 workflows", out.getvalue())
-        self.assertIn("wf-0 (Stateful, Healthy)", out.getvalue())
-        self.assertIn("/hostruntime/runtime/webhooks/workflow/api/management/workflows?api-version=2018-11-01", calls[0][4])
+        self.assertIn("lists 6 functions", out.getvalue())
+        for name in rc.FUNCTIONS:
+            self.assertIn(name, out.getvalue())
+        self.assertEqual(calls[0][:6], ["rest", "--method", "get", "--url", f"https://management.azure.com{SITE}/functions?api-version=2024-04-01", "--only-show-errors"])
 
-    def test_it_gives_up_with_the_last_reason(self):
+    def test_it_names_what_is_missing_when_it_gives_up(self):
         err = io.StringIO()
         with redirect_stderr(err), redirect_stdout(io.StringIO()):
-            code = rc.main(["workflows", "--site", SITE, "--expect", "5", "--minutes", "1"], azure(lambda args: (0, json.dumps(workflows(1)), "")))
+            code = rc.main(["functions", "--site", SITE, "--minutes", "1"], azure(lambda args: (0, json.dumps(listed(rc.FUNCTIONS[:4])), "")))
         self.assertEqual(code, 1)
-        self.assertIn("1 of 5 workflows are listed", err.getvalue())
+        self.assertIn("missing: pii-usage-ingestion, usage-control", err.getvalue())
 
-    def test_a_site_that_is_not_a_logic_app_is_refused(self):
+    def test_a_site_that_is_not_a_function_app_is_refused(self):
         for bad in ("", "/subscriptions/x", SITE.replace("Microsoft.Web/sites", "Microsoft.Storage/storageAccounts"), SITE + "/slots/x"):
             err = io.StringIO()
             with redirect_stderr(err), redirect_stdout(io.StringIO()):
-                self.assertEqual(rc.main(["workflows", "--site", bad], azure(lambda args: (0, "[]", ""))), 1)
+                self.assertEqual(rc.main(["functions", "--site", bad], azure(lambda args: (0, "[]", ""))), 1)
             self.assertIn("--site", err.getvalue())
 
-    def test_a_workflow_that_is_disabled_is_shown_as_disabled(self):
-        self.assertEqual(rc.describe({"name": "a", "kind": "Stateful", "isDisabled": True}), "a (Stateful, disabled)")
+    def test_the_six_functions_are_the_ones_the_app_and_the_template_name(self):
+        app = (ROOT / "src" / "usage-functions" / "function_app.py").read_text(encoding="utf-8") if (ROOT / "src" / "usage-functions" / "function_app.py").exists() else ""
+        if app:
+            self.assertEqual(sorted(re.findall(r'function_name\(name="([a-z-]+)"\)', app)), sorted(rc.FUNCTIONS))
+        self.assertEqual(rc.CONTROL_HUB, "usage-control")
+        self.assertIn("var controlHubName = 'usage-control'", (ROOT / "environment" / "recording" / "main.bicep").read_text(encoding="utf-8"))
+
+
+class SendingTheEvent(unittest.TestCase):
+    def sent(self, **changes):
+        posts = []
+
+        def runner(args):
+            return 0, SECRET + "\n", ""
+
+        def post(url, headers, body):
+            posts.append((url, headers, body))
+            return changes.get("status", 201), changes.get("answer", b"")
+
+        with mock.patch.dict(os.environ, ENV):
+            rc.send_control_event(azure(runner, post), changes.get("namespace", NAMESPACE), "all", "a" * 32)
+        return posts
+
+    def test_one_event_goes_to_the_control_hub_with_the_workflows_token_and_the_job_and_the_request(self):
+        (url, headers, body), = self.sent()
+        self.assertEqual(url, f"https://{NAMESPACE}.servicebus.windows.net/usage-control/messages?timeout=60&api-version=2014-01")
+        self.assertEqual(headers["Authorization"], f"Bearer {SECRET}")
+        self.assertEqual(json.loads(body), {"job": "all", "requestId": "a" * 32})
+
+    def test_the_token_is_asked_for_the_event_hubs_audience_only(self):
+        asked = []
+
+        def runner(args):
+            asked.append(args)
+            return 0, SECRET + "\n", ""
+
+        rc.send_control_event(azure(runner, lambda *a: (201, b"")), NAMESPACE, "all", "b" * 32)
+        self.assertEqual(asked, [["account", "get-access-token", "--resource", "https://eventhubs.azure.net", "--query", "accessToken", "--output", "tsv", "--only-show-errors"]])
+
+    def test_a_namespace_may_be_given_with_its_host_suffix_and_a_bad_one_is_refused(self):
+        self.assertEqual(rc.namespace_host(f"{NAMESPACE}.servicebus.windows.net"), f"{NAMESPACE}.servicebus.windows.net")
+        for bad in ("", "x", "a b", "evh/ns", "evh.other.net"):
+            with self.assertRaises(rc.Problem):
+                rc.namespace_host(bad)
+
+    def test_a_refusal_says_the_status_and_the_first_line_of_the_answer_and_never_the_token(self):
+        with self.assertRaises(rc.Problem) as raised:
+            self.sent(status=401, answer=b"401:Unauthorized\nsecond line")
+        message = str(raised.exception)
+        self.assertIn("401", message)
+        self.assertIn("Unauthorized", message)
+        self.assertNotIn("second line", message)
+        self.assertNotIn(SECRET, message)
+
+
+class Parsing(unittest.TestCase):
+    def test_only_a_line_with_exactly_the_agreed_keys_is_a_result(self):
+        good = rc.RESULT_PREFIX + json.dumps(result("llm-usage-ingestion", "r"))
+        self.assertEqual(rc.parse_result(good)["job"], "llm-usage-ingestion")
+        missing = result("llm-usage-ingestion", "r")
+        del missing["containerCount"]
+        for bad in (rc.RESULT_PREFIX + json.dumps(missing), rc.RESULT_PREFIX + json.dumps({**result("x", "r"), "extra": 1}), rc.RESULT_PREFIX + "not json",
+                    rc.RESULT_PREFIX + "[1]", "something else", None, 5):
+            self.assertIsNone(rc.parse_result(bad), bad)
+
+    def test_the_keys_are_the_ones_the_functions_write(self):
+        self.assertEqual(rc.RESULT_KEYS, {"job", "requestId", "trigger", "ok", "firstRun", "from", "to", "rows", "written", "containerCount", "marker", "error"})
+        self.assertEqual(rc.RESULT_PREFIX, "usage_job_result ")
 
 
 class Run(unittest.TestCase):
-    ENV = {"GITHUB_ACTIONS": "true"}
+    ID = "c" * 32
 
-    def fake(self, status="Succeeded", cosmos_status=200, pages=None, refuse_first_audience=False):
-        calls = []
-        pages = pages if pages is not None else {
-            rc.USAGE_CONTAINER: [[{"id": "llm-1", "productName": "p", "deploymentName": "gpt-6-luna", "promptTokens": 12, "responseTokens": 5, "totalTokens": 17, "_ts": 1000},
-                                  {"id": "llm-2", "productName": "p", "deploymentName": "gpt-6.1-sol", "promptTokens": 1, "responseTokens": 2, "totalTokens": 3, "_ts": 2000}]],
-            rc.MARKER_CONTAINER: [[{"id": "002", "lastExportDate": "2026-11-04T10:00:00", "totalExportedRecords": 2}]],
-        }
-        posted = []
+    def args(self, *extra):
+        return ["run", "--namespace", NAMESPACE, "--insights", INSIGHTS, *extra]
+
+    def go(self, answers, *extra, post_status=201, env=ENV):
+        """Runs the check. `answers` are the answers of the telemetry, one for each query, the last one repeated."""
+        asked = []
+        queue = list(answers)
 
         def runner(args):
-            calls.append(args)
-            if args[0] == "account":
-                return 0, (SECRET if args[3].startswith("https://cosmos-example") else SECRET + "-general") + "\n", ""
-            method, url = args[2], args[4]
-            if method == "post":
-                return 0, "", ""
-            if "/runs/" in url and url.split("?")[0].endswith("/actions"):
-                return 0, json.dumps({"value": [
-                    {"name": "Read_Export_Config", "properties": {"status": "Succeeded", "startTime": "2026-11-04T10:00:01Z"}},
-                    {"name": "Run_query", "properties": {"status": "Failed", "startTime": "2026-11-04T10:00:02Z", "error": {"code": "Forbidden", "message": "no access\nsecond line"}}}]}), ""
-            if url.split("?")[0].endswith("/runs"):
-                start = (datetime.now(timezone.utc) + timedelta(seconds=30)).strftime("%Y-%m-%dT%H:%M:%SZ")
-                return 0, json.dumps({"value": [{"name": "08585", "properties": {"status": status, "startTime": start}}]}), ""
-            return 0, json.dumps(workflows(5)), ""
+            if args[:2] == ["account", "get-access-token"]:
+                return 0, SECRET + "\n", ""
+            asked.append(args)
+            answer = queue.pop(0) if len(queue) > 1 else queue[0]
+            if answer is Exception:
+                return 1, "", "ERROR: Forbidden\nmore"
+            return 0, json.dumps(answer), ""
 
-        def post(url, headers, body):
-            posted.append((url, headers, json.loads(body)))
-            container = url.split("/colls/")[1].split("/")[0]
-            if refuse_first_audience and headers["Authorization"].endswith(SECRET):
-                return 401, json.dumps({"message": "The input authorization token can't serve the request\nsecond line"}).encode(), {}
-            if cosmos_status != 200:
-                return cosmos_status, json.dumps({"message": "Request blocked by Auth\nactivity id"}).encode(), {}
-            queue = pages[container]
-            page = queue.pop(0)
-            return 200, json.dumps({"Documents": page}).encode(), {"x-ms-continuation": "next"} if queue else {}
-
-        return azure(runner, post), calls, posted
-
-    def run_main(self, fake, *extra, env=None):
         out, err = io.StringIO(), io.StringIO()
-        with mock.patch.dict(os.environ, self.ENV if env is None else env, clear=False), redirect_stdout(out), redirect_stderr(err):
-            code = rc.main(["run", "--site", SITE, "--cosmos-account", "cosmos-example", *extra], fake)
-        return code, out.getvalue(), err.getvalue()
+        with mock.patch.dict(os.environ, env, clear=False), mock.patch.object(rc.uuid, "uuid4", return_value=mock.Mock(hex=self.ID)), \
+                redirect_stdout(out), redirect_stderr(err):
+            code = rc.main(self.args(*extra), azure(runner, lambda *a: (post_status, b"")))
+        return code, out.getvalue(), err.getvalue(), asked
 
-    def test_a_good_run_prints_the_actions_and_the_documents_and_no_token(self):
-        fake, calls, posted = self.fake()
-        code, out, err = self.run_main(fake)
+    def test_three_good_results_pass_and_are_printed_with_their_numbers(self):
+        results = [result(job, self.ID) for job in rc.TIMED_JOBS]
+        code, out, err, asked = self.go([telemetry(results)])
         self.assertEqual((code, err), (0, ""))
-        self.assertIn("Run 08585 of llm-usage-ingestion: Succeeded", out)
-        self.assertIn("Read_Export_Config: Succeeded", out)
-        self.assertIn("llm-usage-container: 2 documents", out)
-        self.assertIn("prompt 1  response 2  total 3", out)
-        self.assertLess(out.index("model gpt-6.1-sol"), out.index("model gpt-6-luna"), "the newest document is listed first")
-        self.assertIn("002: copied up to 2026-11-04T10:00:00, 2 records", out)
-        self.assertNotIn(SECRET, out + err)
-        self.assertTrue(any(c[2] == "post" and c[4].split("?")[0].endswith("/triggers/Recurrence/run") for c in calls if c[0] == "rest"))
+        for job in rc.TIMED_JOBS:
+            self.assertIn(f"{job}: ok", out)
+        self.assertIn("3 rows read, 3 documents written, 5 documents in the container, marker 2026-11-04T13:00:00", out)
+        self.assertNotIn(SECRET, out)
 
-    def test_the_store_is_read_with_the_identity_token_and_plain_queries_only(self):
-        fake, calls, posted = self.fake()
-        self.run_main(fake)
-        self.assertEqual([p[0] for p in posted], [
-            "https://cosmos-example.documents.azure.com/dbs/ai-usage-db/colls/llm-usage-container/docs",
-            "https://cosmos-example.documents.azure.com/dbs/ai-usage-db/colls/streaming-export-config/docs"])
-        for _, headers, body in posted:
-            self.assertEqual(headers["Authorization"], f"type%3Daad%26ver%3D1.0%26sig%3D{SECRET}")
-            self.assertEqual(headers["x-ms-documentdb-query-enablecrosspartition"], "True")
-            for word in ("ORDER BY", "TOP", "COUNT", "DISTINCT", "GROUP BY"):
-                self.assertNotIn(word, body["query"].upper())
-        self.assertIn(["account", "get-access-token", "--resource", "https://cosmos-example.documents.azure.com", "--query", "accessToken", "--output", "tsv", "--only-show-errors"], calls)
+    def test_the_query_is_made_for_this_request_only_and_through_the_resource_manager(self):
+        _, _, _, asked = self.go([telemetry([result(job, self.ID) for job in rc.TIMED_JOBS])])
+        args = asked[0]
+        self.assertEqual(args[:2], ["rest", "--method"])
+        self.assertEqual(args[args.index("--url") + 1], f"https://management.azure.com{INSIGHTS}/query?api-version=2018-04-20")
+        query = json.loads(args[args.index("--body") + 1])["query"]
+        self.assertIn(self.ID, query)
+        self.assertIn("usage_job_result", query)
+        self.assertRegex(query, r"^traces \| where timestamp > ago\(2h\)")
 
-    def test_a_second_page_is_read_by_its_continuation(self):
-        pages = {rc.USAGE_CONTAINER: [[{"id": "a", "_ts": 1}], [{"id": "b", "_ts": 2}]], rc.MARKER_CONTAINER: [[]]}
-        fake, calls, posted = self.fake(pages=pages)
-        code, out, err = self.run_main(fake)
+    def test_a_job_that_failed_fails_the_check_and_shows_its_error(self):
+        failed = result("llm-usage-ingestion", self.ID, ok=False, containerCount=None, marker=None, error="HttpResponseError: (Forbidden) no role")
+        code, out, err, _ = self.go([telemetry([failed, result("mcp-usage-ingestion", self.ID), result("agent-usage-ingestion", self.ID)])])
+        self.assertEqual(code, 1)
+        self.assertIn("llm-usage-ingestion: FAILED; error HttpResponseError: (Forbidden) no role", out)
+
+    def test_a_first_run_is_said_to_have_written_only_its_marker(self):
+        first = result("llm-usage-ingestion", self.ID, firstRun=True, rows=0, written=0, containerCount=0)
+        code, out, _, _ = self.go([telemetry([first])], "--job", "llm-usage-ingestion")
         self.assertEqual(code, 0)
-        self.assertIn("llm-usage-container: 2 documents", out)
-        self.assertEqual(posted[1][1]["x-ms-continuation"], "next")
-        self.assertNotIn("x-ms-continuation", posted[0][1])
+        self.assertIn("first run (marker written, nothing copied)", out)
 
-    def test_a_failed_run_fails_the_check_and_shows_why(self):
-        fake, _, _ = self.fake(status="Failed")
-        code, out, err = self.run_main(fake)
+    def test_it_waits_for_the_telemetry_and_gives_up_with_the_warnings_and_errors_of_the_app(self):
+        empty = {"tables": [{"rows": []}]}
+        problems = {"tables": [{"rows": [["2026-11-04T13:00:00Z", "The Python worker failed to index functions\nand a second line"]]}]}
+        code, out, err, asked = self.go([empty, empty, empty, problems], "--minutes", "1")
         self.assertEqual(code, 1)
-        self.assertIn("Run 08585 of llm-usage-ingestion: Failed", out)
-        self.assertIn("Run_query: Failed: Forbidden no access", out)
+        self.assertIn("0 of 3 results arrived", out)
+        self.assertIn("The last warnings and errors of the function app:", out)
+        self.assertIn("The Python worker failed to index functions", out)
         self.assertNotIn("second line", out)
+        self.assertGreater(len(asked), 3)
 
-    def test_only_a_run_that_succeeded_passes(self):
-        for status in ("Failed", "Cancelled", "Aborted", "Suspended", "Skipped", "TimedOut", "Faulted"):
-            fake, _, _ = self.fake(status=status)
-            self.assertEqual(self.run_main(fake)[0], 1, status)
-        fake, _, _ = self.fake(status="Succeeded")
-        self.assertEqual(self.run_main(fake)[0], 0)
+    def test_a_telemetry_that_cannot_be_read_yet_is_waited_for(self):
+        good = telemetry([result("llm-usage-ingestion", self.ID)])
+        code, out, err, _ = self.go([Exception, good], "--job", "llm-usage-ingestion")
+        self.assertEqual(code, 0)
+        self.assertIn("could not be read yet", out)
 
-    def test_a_refused_token_is_asked_for_again_with_the_services_general_address(self):
-        fake, calls, posted = self.fake(refuse_first_audience=True)
-        code, out, err = self.run_main(fake)
-        self.assertEqual((code, err), (0, ""))
-        resources = [c[3] for c in calls if c[0] == "account"]
-        self.assertEqual(resources[:2], ["https://cosmos-example.documents.azure.com", "https://cosmos.azure.com"])
-        self.assertIn("llm-usage-container: 2 documents", out)
-        self.assertNotIn(SECRET, out + err)
-
-    def test_when_both_addresses_are_refused_the_first_line_of_the_message_is_shown(self):
-        fake, calls, posted = self.fake(cosmos_status=401)
-        code, out, err = self.run_main(fake)
+    def test_a_line_of_another_request_or_of_a_timer_is_not_this_results(self):
+        other = result("llm-usage-ingestion", "d" * 32)
+        timer = result("mcp-usage-ingestion", self.ID, trigger="timer")
+        code, out, _, _ = self.go([telemetry([other, timer])], "--job", "llm-usage-ingestion", "--minutes", "1")
         self.assertEqual(code, 1)
-        self.assertEqual([c[3] for c in calls if c[0] == "account"][:2], ["https://cosmos-example.documents.azure.com", "https://cosmos.azure.com"])
-        self.assertIn("answered 401: Request blocked by Auth", out)
+        self.assertIn("0 of 1 results arrived", out)
 
-    def test_other_refusals_are_not_asked_again(self):
-        fake, calls, posted = self.fake(cosmos_status=403)
-        self.run_main(fake)
-        self.assertEqual([c[3] for c in calls if c[0] == "account"], ["https://cosmos-example.documents.azure.com"])
-
-    def test_a_store_that_cannot_be_read_fails_the_check_and_says_what_the_service_said(self):
-        fake, _, _ = self.fake(cosmos_status=403)
-        code, out, err = self.run_main(fake)
+    def test_a_refused_event_stops_before_anything_is_waited_for(self):
+        code, out, err, asked = self.go([telemetry([])], post_status=403)
         self.assertEqual(code, 1)
-        self.assertIn("The usage store could not be read: reading llm-usage-container answered 403: Request blocked by Auth", out)
-        self.assertNotIn("activity id", out)
-        self.assertNotIn(SECRET, out + err)
+        self.assertIn("403", err)
+        self.assertEqual(asked, [])
 
-    def test_only_a_github_actions_run_may_start_the_job(self):
-        fake, calls, posted = self.fake()
-        code, out, err = self.run_main(fake, env={"GITHUB_ACTIONS": ""})
+    def test_only_a_github_actions_run_may_send_the_event(self):
+        code, out, err, asked = self.go([telemetry([])], env={"GITHUB_ACTIONS": ""})
         self.assertEqual(code, 1)
-        self.assertIn("only a GitHub Actions run", err)
-        self.assertEqual((calls, posted), ([], []), "nothing is asked of Azure")
+        self.assertIn("only a GitHub Actions run may do that", err)
+        self.assertEqual(asked, [])
 
-    def test_bad_names_are_refused_before_anything_is_asked(self):
-        for extra in (("--workflow", "a b"), ("--workflow", "../x"), ("--trigger", "x;y")):
-            fake, calls, _ = self.fake()
-            code, out, err = self.run_main(fake, *extra)
-            self.assertEqual((code, calls), (1, []), extra)
-        fake, calls, _ = self.fake()
-        out, err = io.StringIO(), io.StringIO()
-        with mock.patch.dict(os.environ, self.ENV), redirect_stdout(out), redirect_stderr(err):
-            code = rc.main(["run", "--site", SITE, "--cosmos-account", "Bad_Name"], fake)
-        self.assertEqual((code, calls), (1, []))
+    def test_bad_names_are_refused_before_anything_is_sent(self):
+        for argv in (["run", "--namespace", "x", "--insights", INSIGHTS], ["run", "--namespace", NAMESPACE, "--insights", "/subscriptions/x"],
+                     ["run", "--namespace", NAMESPACE, "--insights", INSIGHTS, "--job", "other"]):
+            err = io.StringIO()
+            sent = []
+            with mock.patch.dict(os.environ, ENV), redirect_stderr(err), redirect_stdout(io.StringIO()):
+                try:
+                    code = rc.main(argv, azure(lambda args: (0, "{}", ""), lambda *a: sent.append(a) or (201, b"")))
+                except SystemExit as stop:
+                    code = stop.code
+            self.assertNotEqual(code, 0, argv)
+            self.assertEqual(sent, [], argv)
 
     def test_the_summary_file_gets_the_same_lines(self):
-        fake, _, _ = self.fake()
+        good = telemetry([result(job, self.ID) for job in rc.TIMED_JOBS])
         with TemporaryDirectory() as tmp:
-            path = Path(tmp) / "summary.md"
-            code, out, err = self.run_main(fake, "--summary", str(path))
-            text = path.read_text(encoding="utf-8")
+            summary = Path(tmp) / "summary.md"
+            code, out, _, _ = self.go([good], "--summary", str(summary))
+            text = summary.read_text(encoding="utf-8")
         self.assertEqual(code, 0)
-        self.assertIn("### The copy job and the usage store", text)
-        self.assertIn("llm-usage-container: 2 documents", text)
-        self.assertNotIn(SECRET, text)
-
-    def test_a_run_that_never_ends_times_out(self):
-        def runner(args):
-            if args[0] == "account":
-                return 0, SECRET, ""
-            if args[2] == "post":
-                return 0, "", ""
-            if args[4].split("?")[0].endswith("/runs"):
-                start = (datetime.now(timezone.utc) + timedelta(seconds=30)).strftime("%Y-%m-%dT%H:%M:%SZ")
-                return 0, json.dumps({"value": [{"name": "1", "properties": {"status": "Running", "startTime": start}}]}), ""
-            return 0, json.dumps(workflows(5)), ""
-
-        code, out, err = self.run_main(azure(runner), "--minutes", "1")
-        self.assertEqual(code, 1)
-        self.assertIn("did not end within 1 minutes", err)
+        self.assertIn("### The copy job, started once, and what it said", text)
+        for line in out.splitlines():
+            if "documents written" in line:
+                self.assertIn(line, text)
 
 
-class Lines(unittest.TestCase):
-    def test_a_time_that_cannot_be_read_is_a_question_mark(self):
-        self.assertEqual(rc.iso(None), "?")
-        self.assertEqual(rc.iso("x"), "?")
-        self.assertEqual(rc.iso(0), "1970-01-01T00:00:00Z")
-
-    def test_only_five_documents_are_listed_but_all_are_counted(self):
-        lines = rc.usage_lines([{"id": str(i), "_ts": i} for i in range(9)])
-        self.assertEqual(len(lines), 6)
-        self.assertEqual(lines[0], "llm-usage-container: 9 documents")
-
-    def test_no_prompt_and_no_answer_is_in_what_is_asked_for(self):
-        for word in ("messages", "prompt\"", "content", "appId", "RequestIp"):
-            self.assertNotIn(word, rc.USAGE_FIELDS)
+class NothingReadsTheStore(unittest.TestCase):
+    def test_the_checker_makes_no_call_to_cosmos_db_and_asks_for_no_key(self):
+        source = (ROOT / "tools" / "recording-check.py").read_text(encoding="utf-8")
+        code = re.sub(r'""".*?"""', "", source, flags=re.S)
+        for word in ("documents.azure.com", "cosmos.azure.com", "listKeys", "listConnectionStrings", "primaryKey", "SharedAccessSignature", "AccountKey"):
+            self.assertNotIn(word, code, word)
+        self.assertEqual(sorted(set(re.findall(r'token\(\s*["\']([^"\']+)["\']', code)) | set(re.findall(r"token\(\s*'([^']+)'\)", code))), ["https://eventhubs.azure.net", "https://management.azure.com"])
 
 
 if __name__ == "__main__":

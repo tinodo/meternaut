@@ -145,42 +145,81 @@ class Recording(unittest.TestCase):
         for name, wrapped in given.items():
             self.assertIsInstance(wrapped["value"], types[declared[name][0]], name)
 
-    def test_the_gateway_the_owner_and_the_deployer_reach_the_template(self):
-        files, _ = self.files(RECORDING_READER_IDS=f"{READER.upper()}")
+    def test_the_gateway_the_workflow_and_the_readers_reach_the_template(self):
+        files, outputs = self.files(RECORDING_READER_IDS=f"{READER.upper()}")
         recording = values(files["recording.parameters.json"])
         self.assertEqual(recording["gatewayPrincipalId"], "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
         self.assertEqual(recording["gatewayAppInsightsSubscriptionId"], "66666666-7777-8888-9999-000000000000")
         self.assertEqual((recording["gatewayAppInsightsResourceGroup"], recording["gatewayAppInsightsName"]), ("rg-gateway", "example-insights"))
-        self.assertEqual(recording["dataReaderPrincipalIds"], [SETTINGS["RECORDING_DEPLOYER_ID"], READER])
-        self.assertNotIn("dataContributorPrincipalIds", recording)
+        self.assertEqual(recording["workflowPrincipalId"], SETTINGS["RECORDING_DEPLOYER_ID"])
+        self.assertEqual(recording["dataReaderPrincipalIds"], [READER])
+        self.assertEqual(recording["functionAppName"], outputs["function_app_name"])
+        for old in ("logicAppName", "dataContributorPrincipalIds"):
+            self.assertNotIn(old, recording)
         self.assertEqual((recording["location"], recording["owner"]), ("swedencentral", "owner@example.com"))
 
-    def test_no_reader_is_a_valid_choice(self):
+    def test_no_reader_is_a_valid_choice_and_the_workflow_is_never_one(self):
         files, _ = self.files()
-        self.assertEqual(values(files["recording.parameters.json"])["dataReaderPrincipalIds"], [SETTINGS["RECORDING_DEPLOYER_ID"]])
+        self.assertEqual(values(files["recording.parameters.json"])["dataReaderPrincipalIds"], [])
         files, _ = self.files(RECORDING_READER_IDS="  ")
-        self.assertEqual(values(files["recording.parameters.json"])["dataReaderPrincipalIds"], [SETTINGS["RECORDING_DEPLOYER_ID"]])
-
-    def test_a_reader_that_is_the_deployer_is_listed_once(self):
-        files, _ = self.files(RECORDING_READER_IDS=SETTINGS["RECORDING_DEPLOYER_ID"].upper())
-        self.assertEqual(values(files["recording.parameters.json"])["dataReaderPrincipalIds"], [SETTINGS["RECORDING_DEPLOYER_ID"]])
+        self.assertEqual(values(files["recording.parameters.json"])["dataReaderPrincipalIds"], [])
 
     def test_the_names_are_host_names_inside_their_limits_and_the_same_on_every_run(self):
         _, first = self.files()
         _, second = self.files()
         for key, pattern, longest in (("storage_account_name", r"^[a-z0-9]{3,24}$", 24), ("event_hub_namespace", r"^[A-Za-z][A-Za-z0-9-]{4,49}$", 50),
-                                      ("cosmos_account_name", r"^[a-z0-9][a-z0-9-]{2,43}$", 44), ("logic_app_name", r"^[A-Za-z0-9][A-Za-z0-9-]{1,59}$", 60)):
+                                      ("cosmos_account_name", r"^[a-z0-9][a-z0-9-]{2,43}$", 44), ("function_app_name", r"^[A-Za-z0-9][A-Za-z0-9-]{1,59}$", 60)):
             self.assertRegex(first[key], pattern, key)
             self.assertLessEqual(len(first[key]), longest, key)
             self.assertEqual(first[key], second[key], key)
-        self.assertEqual(len({first[k] for k in ("storage_account_name", "event_hub_namespace", "cosmos_account_name", "logic_app_name")}), 4)
+        self.assertEqual(len({first[k] for k in ("storage_account_name", "event_hub_namespace", "cosmos_account_name", "function_app_name")}), 4)
+        self.assertNotIn("logic_app_name", first)
 
     def test_the_names_differ_per_subscription_and_group_and_ignore_case(self):
         base = ep.recording_names(SETTINGS["ENV_SUBSCRIPTION_ID"], "rg-a")
         self.assertNotEqual(base, ep.recording_names(SETTINGS["ENV_SUBSCRIPTION_ID"], "rg-b"))
         self.assertNotEqual(base, ep.recording_names("99999999-2222-3333-4444-555555555555", "rg-a"))
         self.assertEqual(base, ep.recording_names(SETTINGS["ENV_SUBSCRIPTION_ID"].upper(), "RG-A"))
-        self.assertTrue(ep.account_name(SETTINGS["ENV_SUBSCRIPTION_ID"], "rg-a").endswith(base["logic_app_name"][-8:]))
+        self.assertTrue(ep.account_name(SETTINGS["ENV_SUBSCRIPTION_ID"], "rg-a").endswith(base["function_app_name"][-8:]))
+
+    def test_the_key_based_version_is_removed_by_the_four_names_it_had_and_by_no_other(self):
+        _, outputs = self.files()
+        token = ep.digest(SETTINGS["ENV_SUBSCRIPTION_ID"], SETTINGS["ENV_RESOURCE_GROUP"])
+        legacy = {key: value for key, value in outputs.items() if key.startswith("legacy_")}
+        # The names that the first version was deployed with (they are in the changelog): the first storage account is not the new one.
+        self.assertEqual(legacy, {"legacy_logic_app_name": f"logic-meternaut-usage-{token}", "legacy_plan_name": "asp-meternaut-usage",
+                                  "legacy_connection_name": "azuremonitorlogs", "legacy_storage_account_name": f"stmeternaut{token}"})
+        self.assertNotEqual(legacy["legacy_storage_account_name"], outputs["storage_account_name"])
+        self.assertNotIn(legacy["legacy_logic_app_name"], RECORDING)
+        self.assertNotIn(legacy["legacy_plan_name"], RECORDING)
+        self.assertNotIn("azuremonitorlogs", RECORDING)
+
+    def test_the_function_app_has_a_subnet_of_its_own_beside_the_endpoint_subnet(self):
+        files, outputs = self.files()
+        env = values(files["environment.parameters.json"])
+        self.assertEqual((env["peSubnetPrefix"], env["funcSubnetPrefix"]), ("10.53.0.0/27", "10.53.0.32/27"))
+        self.assertEqual(outputs["function_subnet_prefix"], "10.53.0.32/27")
+        # whichever /27 the endpoints use, the function app gets another one
+        files, _ = self.files(ENV_PE_SUBNET_PREFIX="10.53.0.32/27")
+        self.assertEqual(values(files["environment.parameters.json"])["funcSubnetPrefix"], "10.53.0.0/27")
+        # no room: a /28 network cannot hold a /27
+        code, out, err, files = run({**SETTINGS, "ENV_VNET_PREFIX": "10.53.0.0/28", "ENV_PE_SUBNET_PREFIX": "10.53.0.0/29"})
+        self.assertEqual((code, out, files), (2, "", {}))
+        self.assertIn("ENV_VNET_PREFIX", err)
+
+    def test_the_private_endpoints_and_their_zones_are_the_ones_the_template_makes(self):
+        _, outputs = self.files()
+        pairs = [pair.split(":") for pair in outputs["recording_endpoints"].split(",")]
+        self.assertEqual(len(pairs), 5)
+        storage, cosmos, hubs = outputs["storage_account_name"], outputs["cosmos_account_name"], outputs["event_hub_namespace"]
+        self.assertEqual(pairs, [[f"pe-{storage}-blob", "privatelink.blob.core.windows.net"], [f"pe-{storage}-queue", "privatelink.queue.core.windows.net"],
+                                 [f"pe-{storage}-table", "privatelink.table.core.windows.net"], [f"pe-{cosmos}", "privatelink.documents.azure.com"],
+                                 [f"pe-{hubs}", "privatelink.servicebus.windows.net"]])
+        for line in ("name: 'pe-${storageAccountName}-${service}'", "name: 'pe-${cosmosAccountName}'", "name: 'pe-${eventHubNamespaceName}'"):
+            self.assertIn(line, RECORDING)
+        self.assertEqual((outputs["usage_identity_name"], outputs["appinsights_name"]), ("id-meternaut-usage", "appi-meternaut"))
+        self.assertIn("name: 'id-${workload}-usage'", RECORDING)
+        self.assertIn("name: 'appi-${workload}'", RECORDING)
 
     def test_the_deployer_and_the_readers_must_be_object_ids(self):
         for changes in ({"RECORDING_DEPLOYER_ID": "me"}, {"RECORDING_READER_IDS": "not-an-id"}, {"RECORDING_READER_IDS": f"{READER},"},

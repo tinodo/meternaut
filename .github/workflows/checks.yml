@@ -44,6 +44,15 @@ jobs:
         run: python tools/cost-model.py --check docs/design/10-cost-and-finops.md
       - name: Unit tests of the tools
         run: python -m unittest discover -s tools/tests
+      - name: Unit tests of the usage functions, with the libraries that they run with
+        run: |
+          python -m pip install --quiet --disable-pip-version-check --requirement src/usage-functions/requirements.txt
+          python -m unittest discover -s src/usage-functions/tests -v
+      - name: The function app's package builds for its runtime, and the app loads from it with its six functions
+        run: |
+          bash tools/build-usage-functions.sh "$RUNNER_TEMP/usage-functions" "$RUNNER_TEMP/usage-functions.zip"
+          cd "$RUNNER_TEMP/usage-functions"
+          PYTHONPATH=.python_packages/lib/site-packages python -c "import function_app; print(sorted(f.get_function_name() for f in function_app.app.get_functions()))"
       - name: The workflows follow the rules, and are valid YAML
         run: |
           python tools/workflow-lint.py

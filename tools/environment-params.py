@@ -22,8 +22,9 @@ name: without it the file for the loggers is not written (and with `--preview` i
 RECORDING_FRAGMENTS is `true` only when both Event Hub loggers exist in the instance: the workflow reads that from the
 instance, and the kit's module then also makes the two policy fragments that use them (default: false).
 RECORDING_DEPLOYER_ID is the object id of the identity that the workflow signs in as (the workflow reads it from its own
-token): it gets the read role on the usage store, so that it can check what the copy job wrote. RECORDING_READER_IDS
-are the object ids of the people who may read the usage store too (the owner).
+token): it gets the right to send to the control hub of the usage recording, so that the check can start a copy job once.
+Nothing reads the usage store with it (the store has no public endpoint). RECORDING_READER_IDS are the object ids of the
+people who may read the usage store (a Cosmos DB data role; they also need a network path to its private endpoint).
 
 It writes four ARM parameter files into --out-dir (five, with --contract; six when the gateway identity's client id is known):
 
@@ -31,14 +32,15 @@ It writes four ARM parameter files into --out-dir (five, with --contract; six wh
     logger.parameters.json            for environment/gateway/logger.bicep
     eventhub-loggers.parameters.json  for environment/gateway/eventhub-loggers.bicep (written when GATEWAY_CLIENT_ID is set, or with --preview)
     kit.parameters.json               for the Citadel gateway-upgrade module (the kit's bicep/infra/apim-gateway-upgrade/main.bicep)
-    recording.parameters.json         for environment/recording/main.bicep (the usage recording: Event Hubs, Logic App, Cosmos DB)
+    recording.parameters.json         for environment/recording/main.bicep (the usage recording: Event Hubs, function app, Cosmos DB)
     contract.parameters.json          for environment/gateway/contract.bicep, from --contract (environment/contract.json) and
                                       --contract-policy (environment/gateway/contract-policy.xml)
 
 Every value is checked before anything is deployed. The name of the model account is worked out here, from the
 subscription and the resource group, so it is the same on every run (a run after a removal finds, and the workflow
 restores, the soft-deleted account of that name instead of leaving a second one behind); so are the names of the usage
-recording's storage account, Event Hubs namespace, Cosmos DB account and Logic App, which are host names too. It prints
+recording's storage account, Event Hubs namespace, Cosmos DB account and function app, which are host names too. The
+function app's subnet is the first /27 of the virtual network that does not overlap the private endpoint subnet. It prints
 key=value lines for GitHub to read as step outputs.
 
 The contract names only models that are deployed (environment/models.json) and only the two inference APIs that the
@@ -160,11 +162,46 @@ def recording_names(subscription: str, group: str) -> dict[str, str]:
     """The names of the usage recording's services that are host names, so unique worldwide, each inside its own length limit."""
     token = digest(subscription, group)
     return {
-        "storage_account_name": f"stmeternaut{token}",
+        "storage_account_name": f"stmeternautfn{token}",
         "event_hub_namespace": f"evhns-meternaut-{token}",
         "cosmos_account_name": f"cosmos-meternaut-{token}",
-        "logic_app_name": f"logic-meternaut-usage-{token}",
+        "function_app_name": f"func-meternaut-usage-{token}",
     }
+
+
+def legacy_names(subscription: str, group: str) -> dict[str, str]:
+    """The key-based usage recording that the keyless one replaced: a Logic App, its plan, its connection and its storage account.
+
+    The workflow removes exactly these four, by these names, before it deploys the keyless one, and nothing else."""
+    token = digest(subscription, group)
+    return {
+        "legacy_logic_app_name": f"logic-meternaut-usage-{token}",
+        "legacy_plan_name": "asp-meternaut-usage",
+        "legacy_connection_name": "azuremonitorlogs",
+        "legacy_storage_account_name": f"stmeternaut{token}",
+    }
+
+
+def function_subnet(vnet: ipaddress.IPv4Network, endpoints: ipaddress.IPv4Network) -> ipaddress.IPv4Network:
+    """The subnet of the function app: the first /27 of the virtual network that does not overlap the private endpoint subnet.
+
+    A Flex Consumption app needs a /27 at least, for itself alone: the subnet is delegated to it and cannot hold a private endpoint."""
+    if vnet.prefixlen > 27:
+        raise Problem("ENV_VNET_PREFIX is at least a /27 wide, so that a /27 subnet fits for the function app")
+    for candidate in vnet.subnets(new_prefix=27):
+        if not candidate.overlaps(endpoints):
+            return candidate
+    raise Problem("ENV_VNET_PREFIX has no free /27 beside the private endpoint subnet, for the function app")
+
+
+def recording_endpoints(names: dict[str, str]) -> list[tuple[str, str]]:
+    """The private endpoints of the usage recording and the central private DNS zone that the landing zone registers each in."""
+    storage = names["storage_account_name"]
+    return [
+        *[(f"pe-{storage}-{service}", f"privatelink.{service}.core.windows.net") for service in ("blob", "queue", "table")],
+        (f"pe-{names['cosmos_account_name']}", "privatelink.documents.azure.com"),
+        (f"pe-{names['event_hub_namespace']}", "privatelink.servicebus.windows.net"),
+    ]
 
 
 def read_models(path: Path) -> list[dict]:
@@ -369,6 +406,7 @@ def build(env, models: list[dict], preview: bool = False, contract: dict | None 
 
     name = account_name(subscription, group)
     names = recording_names(subscription, group)
+    func_subnet = function_subnet(vnet, subnet)
     endpoint = f"https://{name}.cognitiveservices.azure.com"
     deployed = [{k: m[k] for k in ("name", "version", "sku", "capacity")} for m in models]
 
@@ -377,6 +415,7 @@ def build(env, models: list[dict], preview: bool = False, contract: dict | None 
         "accountName": name,
         "vnetAddressPrefix": str(vnet),
         "peSubnetPrefix": str(subnet),
+        "funcSubnetPrefix": str(func_subnet),
         "dnsServers": dns,
         "models": deployed,
         "gatewayPrincipalId": principal.lower(),
@@ -396,12 +435,13 @@ def build(env, models: list[dict], preview: bool = False, contract: dict | None 
         "storageAccountName": names["storage_account_name"],
         "eventHubNamespaceName": names["event_hub_namespace"],
         "cosmosAccountName": names["cosmos_account_name"],
-        "logicAppName": names["logic_app_name"],
+        "functionAppName": names["function_app_name"],
         "gatewayPrincipalId": principal.lower(),
         "gatewayAppInsightsSubscriptionId": insights.group(1).lower(),
         "gatewayAppInsightsResourceGroup": insights.group(2),
         "gatewayAppInsightsName": insights.group(3),
-        "dataReaderPrincipalIds": list(dict.fromkeys([deployer.lower(), *[r.lower() for r in readers]])),
+        "workflowPrincipalId": deployer.lower(),
+        "dataReaderPrincipalIds": list(dict.fromkeys(r.lower() for r in readers)),
     }
     backend = {
         "backendId": name,
@@ -464,7 +504,12 @@ def build(env, models: list[dict], preview: bool = False, contract: dict | None 
         "gateway_name": gateway.group(3),
         "identity_name": IDENTITY_NAME,
         "principal_known": "true" if principal_known else "false",
+        "function_subnet_prefix": str(func_subnet),
+        "recording_endpoints": ",".join(f"{endpoint_name}:{zone}" for endpoint_name, zone in recording_endpoints(names)),
+        "usage_identity_name": "id-meternaut-usage",
+        "appinsights_name": "appi-meternaut",
         **names,
+        **legacy_names(subscription, group),
     }
     files = {
         "environment.parameters.json": parameters(environment),
