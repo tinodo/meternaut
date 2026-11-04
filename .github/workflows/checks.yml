@@ -36,16 +36,6 @@ jobs:
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.13"
-      - name: Compile the lock of the function app's libraries (temporary, once)
-        run: |
-          python -m pip install --quiet --disable-pip-version-check pip-tools==7.6.2
-          cd src/usage-functions
-          pip-compile --quiet --generate-hashes --strip-extras --output-file requirements.txt requirements.in
-      - name: Keep the lock
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: lock
-          path: src/usage-functions/requirements.txt
       - name: Documentation lint
         run: python tools/check-docs.py --strict
       - name: Card lint
@@ -56,7 +46,7 @@ jobs:
         run: python -m unittest discover -s tools/tests
       - name: Unit tests of the usage functions, with the libraries that they run with
         run: |
-          python -m pip install --quiet --disable-pip-version-check --requirement src/usage-functions/requirements.txt
+          python -m pip install --quiet --disable-pip-version-check --require-hashes --requirement src/usage-functions/requirements.txt
           python -m unittest discover -s src/usage-functions/tests -v
       - name: The function app's package builds for its runtime, and the app loads from it with its six functions
         run: |

@@ -24,9 +24,35 @@ def source_files():
 
 
 class FilesOfTheAppTests(unittest.TestCase):
-    def test_the_requirements_are_the_four_direct_pins_and_nothing_else(self):
-        lines = (APP_ROOT / "requirements.txt").read_text(encoding="utf-8").splitlines()
+    def test_the_source_of_the_lock_is_the_four_direct_pins_and_nothing_else(self):
+        lines = (APP_ROOT / "requirements.in").read_text(encoding="utf-8").splitlines()
         self.assertEqual(lines, ["azure-functions==2.3.0", "azure-identity==1.25.3", "azure-cosmos==4.17.1", "azure-monitor-query==2.0.0"])
+
+    def test_the_lock_pins_every_library_at_one_version_with_hashes_and_holds_the_four_pins(self):
+        entries, current = {}, None
+        for line in (APP_ROOT / "requirements.txt").read_text(encoding="utf-8").splitlines():
+            if not line.strip() or line.startswith("#"):
+                continue
+            if not line.startswith(" "):
+                match = re.fullmatch(r"([A-Za-z0-9._-]+)==([0-9][^\s\\;]*) \\", line)
+                self.assertIsNotNone(match, f"not a pinned requirement with its hashes: {line}")
+                current = match.group(1).lower()
+                entries[current] = {"version": match.group(2), "hashes": 0}
+            elif "--hash=" in line:
+                self.assertRegex(line.strip(), r"^--hash=sha256:[0-9a-f]{64}( \\)?$")
+                entries[current]["hashes"] += 1
+        self.assertGreaterEqual(len(entries), 20, "the four libraries and everything that they need")
+        for name, entry in entries.items():
+            self.assertGreater(entry["hashes"], 0, f"{name} has no hash: pip would refuse the file")
+        for pin in (APP_ROOT / "requirements.in").read_text(encoding="utf-8").splitlines():
+            name, version = pin.split("==")
+            self.assertEqual(entries[name]["version"], version, name)
+
+    def test_the_build_installs_only_what_the_lock_holds_and_only_when_the_hashes_match(self):
+        script = (APP_ROOT.parents[1] / "tools" / "build-usage-functions.sh").read_text(encoding="utf-8")
+        self.assertIn("--require-hashes", script)
+        self.assertIn('--requirement "$source_dir/requirements.txt"', script)
+        self.assertIn("--only-binary=:all:", script)
 
     def test_host_json(self):
         host = json.loads((APP_ROOT / "host.json").read_text(encoding="utf-8"))

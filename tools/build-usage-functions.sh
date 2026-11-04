@@ -15,7 +15,10 @@ zip_file="${2:-}"
 rm -rf "$build"
 mkdir -p "$build"
 cp -r "$source_dir/function_app.py" "$source_dir/host.json" "$source_dir/requirements.txt" "$source_dir/usage" "$build/"
-python3 -m pip install --quiet --disable-pip-version-check --no-compile --only-binary=:all: \
+# Built from the lock requirements.txt: every library, direct or not, at one version, installed only when its file matches the hash
+# in the lock (pip --require-hashes). requirements.in holds the four direct pins; the lock is made from it with pip-compile
+# (the command is at the top of the lock), on Linux with Python 3.13, which is the app's runtime.
+python3 -m pip install --quiet --disable-pip-version-check --no-compile --only-binary=:all: --require-hashes \
   --platform manylinux2014_x86_64 --platform manylinux_2_17_x86_64 --platform manylinux_2_28_x86_64 \
   --implementation cp --python-version 3.13 \
   --target "$build/.python_packages/lib/site-packages" --requirement "$source_dir/requirements.txt"
