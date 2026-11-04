@@ -26,6 +26,27 @@ ALLOWED = {
         "Microsoft.ApiManagement/service/subscriptions",
     },
     "infra/budgets/rg-budget.bicep": {"Microsoft.Consumption/budgets"},
+    "environment/recording/main.bicep": {
+        "Microsoft.OperationalInsights/workspaces",
+        "Microsoft.Insights/components",
+        "Microsoft.Storage/storageAccounts",
+        "Microsoft.Storage/storageAccounts/fileServices",
+        "Microsoft.Storage/storageAccounts/fileServices/shares",
+        "Microsoft.EventHub/namespaces",
+        "Microsoft.EventHub/namespaces/eventhubs",
+        "Microsoft.EventHub/namespaces/eventhubs/consumergroups",
+        "Microsoft.Authorization/roleAssignments",
+        "Microsoft.DocumentDB/databaseAccounts",
+        "Microsoft.DocumentDB/databaseAccounts/sqlDatabases",
+        "Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers",
+        "Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments",
+        "Microsoft.Web/connections",
+        "Microsoft.Web/connections/accessPolicies",
+        "Microsoft.Web/serverfarms",
+        "Microsoft.Web/sites",
+        "Microsoft.Web/sites/basicPublishingCredentialsPolicies",
+        "Microsoft.Web/sites/config",
+    },
 }
 
 
@@ -170,6 +191,119 @@ class Templates(unittest.TestCase):
         self.assertNotIn("loadTextContent", source)
 
 
+class Recording(unittest.TestCase):
+    """The usage recording: what it may create, how each caller reaches it, and what it costs while it stands."""
+
+    def setUp(self):
+        self.source = text("environment/recording/main.bicep")
+        self.code = re.sub(r"//.*", "", self.source)
+
+    def test_it_makes_no_dns_no_peering_no_private_endpoint_and_no_gateway_object(self):
+        for word in ("Microsoft.ApiManagement", "privateDnsZones", "virtualNetworkPeerings", "routeTables", "privateDnsZoneGroups", "privateEndpoints", "Microsoft.Network"):
+            self.assertNotIn(word, self.code, word)
+
+    def test_every_service_is_public_on_purpose_and_none_has_a_key_that_something_does_not_need(self):
+        self.assertEqual(self.code.count("publicNetworkAccess: 'Enabled'"), 4)  # storage, event hubs, cosmos, the Logic App
+        self.assertNotIn("publicNetworkAccess: 'Disabled'", self.code)
+        self.assertIn("disableLocalAuth: true", self.code)  # Event Hubs: the gateway and the Logic App use their identities
+        self.assertEqual(self.code.count("allowSharedKeyAccess: true"), 1)  # the Logic App's own storage; its content share cannot be mounted without
+        self.assertIn("allowBlobPublicAccess: false", self.code)
+        self.assertEqual(self.code.count("minimumTlsVersion"), 2)  # storage, event hubs
+        self.assertIn("minimalTlsVersion: 'Tls12'", self.code)
+        self.assertIn("allow: false", self.code)  # neither the deployment endpoint nor FTP takes a password
+        self.assertEqual(self.code.count("allow: false"), 2)
+        self.assertIn("ftpsState: 'Disabled'", self.code)
+        self.assertIn("httpsOnly: true", self.code)
+
+    def test_cosmos_db_is_serverless_and_no_container_has_a_throughput_of_its_own(self):
+        self.assertIn("name: 'EnableServerless'", self.code)
+        for word in ("throughput", "autoscaleSettings", "maxThroughput", "enableFreeTier", "enableMultipleWriteLocations", "backupPolicy"):
+            self.assertNotIn(word, self.code, word)
+
+    def test_the_containers_are_the_ones_the_workflows_of_the_kit_name(self):
+        containers = re.findall(r"\{ name: '([a-z-]+)', partitionKey: '(/\w+)' \}", self.code)
+        self.assertEqual(sorted(name for name, _ in containers), ["agent-usage-container", "ai-usage-container", "llm-usage-container", "mcp-usage-container",
+                                                                 "model-pricing", "pii-usage-container", "streaming-export-config"])
+        settings = dict(re.findall(r"^    (CosmosDBContainer\w+): '([a-z-]+)'$", self.code, re.M))
+        self.assertEqual(len(settings), 6)
+        self.assertTrue(set(settings.values()) <= {name for name, _ in containers})
+        self.assertEqual(settings["CosmosDBContainerLLMUsage"], "llm-usage-container")
+        self.assertEqual(settings["CosmosDBContainerConfig"], "streaming-export-config")
+
+    def test_the_roles_are_the_ones_that_each_caller_needs_and_nothing_wider(self):
+        guids = set(re.findall(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", self.code))
+        self.assertEqual(guids, {
+            "2b629674-e913-4c01-ae53-ef4638d8f975",  # Azure Event Hubs Data Sender
+            "a638d3c7-ab3a-418d-83e6-5f17a39d4fde",  # Azure Event Hubs Data Receiver
+            "00000000-0000-0000-0000-000000000001",  # Cosmos DB built-in Data Reader
+            "00000000-0000-0000-0000-000000000002",  # Cosmos DB built-in Data Contributor
+        })
+        found = resources(self.source)
+        for name, (kind, body) in found.items():
+            if kind == "Microsoft.Authorization/roleAssignments":
+                self.assertIn("principalType: 'ServicePrincipal'", body, name)
+                self.assertRegex(body, r"(?m)^  scope: eventHubs$", name)  # on the namespace, never on the group or the subscription
+        self.assertEqual(sorted(n for n, (k, _) in found.items() if k == "Microsoft.Authorization/roleAssignments"), ["gatewaySends", "logicAppReceives"])
+
+    def test_the_gateway_only_sends_and_the_logic_app_only_receives(self):
+        found = resources(self.source)
+        self.assertIn("eventHubsDataSenderRoleId", found["gatewaySends"][1])
+        self.assertIn("principalId: gatewayPrincipalId", found["gatewaySends"][1])
+        self.assertIn("eventHubsDataReceiverRoleId", found["logicAppReceives"][1])
+        self.assertIn("principalId: logicApp.identity.principalId", found["logicAppReceives"][1])
+
+    def test_the_applications_insights_of_the_gateway_is_a_parameter_because_it_is_in_another_subscription(self):
+        for name in ("gatewayAppInsightsSubscriptionId", "gatewayAppInsightsResourceGroup", "gatewayAppInsightsName"):
+            self.assertRegex(self.code, rf"(?m)^param {name} string$")
+            self.assertRegex(self.code, rf"(?m)^    AppInsights_\w+: {name}$")
+        self.assertNotIn("AppInsights_SubscriptionId: subscription()", self.code)
+
+    def test_the_logic_app_runs_on_the_smallest_workflow_plan_with_no_pre_warmed_instance_and_a_ceiling(self):
+        found = resources(self.source)
+        self.assertIn("name: 'WS1'", found["plan"][1])
+        self.assertIn("tier: 'WorkflowStandard'", found["plan"][1])
+        self.assertIn("maximumElasticWorkerCount: 3", found["plan"][1])
+        self.assertIn("preWarmedInstanceCount: 0", found["logicApp"][1])
+        self.assertIn("minimumElasticInstanceCount: 1", found["logicApp"][1])
+        self.assertIn("type: 'SystemAssigned'", found["logicApp"][1])
+        self.assertIn("kind: 'functionapp,workflowapp'", found["logicApp"][1])
+
+    def test_event_hubs_has_no_auto_inflate_so_its_price_has_a_ceiling(self):
+        found = resources(self.source)
+        self.assertIn("isAutoInflateEnabled: false", found["eventHubs"][1])
+        self.assertIn("capacity: 1", found["eventHubs"][1])
+
+    def test_the_workspace_has_a_daily_cap(self):
+        self.assertIn("dailyQuotaGb", self.code)
+
+    def test_no_output_carries_a_key_or_a_connection_string(self):
+        outputs = [line for line in self.code.splitlines() if line.startswith("output ")]
+        self.assertEqual(len(outputs), 7)
+        for line in outputs:
+            for word in ("listKeys", "listConnectionStrings", "ConnectionString", "AccountKey", "primaryKey"):
+                self.assertNotIn(word, line, line)
+
+    def test_the_keys_are_read_for_the_app_settings_of_the_logic_app_alone(self):
+        for call in ("listKeys", "listConnectionStrings"):
+            self.assertEqual(len(re.findall(call, self.code)), 1, call)
+        found = resources(self.source)
+        for name, (_, body) in found.items():
+            if name != "appSettings":
+                self.assertNotIn("listKeys", body, name)
+                self.assertNotIn("listConnectionStrings", body, name)
+
+    def test_the_order_that_the_services_need_is_in_the_template(self):
+        found = resources(self.source)
+        self.assertIn("contentShare", depends_on(found["logicApp"][1]))  # the content share before the first start
+        self.assertIn("usageContainers", depends_on(found["appSettings"][1]))  # the containers before the app that writes to them
+
+    def test_the_two_event_hubs_and_their_consumer_groups_are_the_ones_the_workflows_name(self):
+        self.assertIn("var usageHubName = 'ai-usage'", self.code)
+        self.assertIn("var piiHubName = 'pii-usage'", self.code)
+        self.assertIn("name: 'aiUsageIngestion'", self.code)
+        self.assertIn("name: 'piiUsageIngestion'", self.code)
+
+
 class Workflow(unittest.TestCase):
     """Structure of the deploy workflow that its lint does not see: what may write, and when."""
 
@@ -267,6 +401,59 @@ class Workflow(unittest.TestCase):
         (block,) = [b for b in self.steps if "CHECK_LIMITS" in b]
         self.assertIn("CHECK_LIMITS: ${{ inputs.check_limits }}", block)
         self.assertNotIn("${{ inputs.check_limits }}", block.split("run:")[1])
+
+    def names(self):
+        return [re.match(r"name: (.+)", b).group(1) for b in self.steps]
+
+    def test_every_step_that_publishes_or_starts_a_job_names_the_actions_it_runs_in_and_never_what_if(self):
+        found = 0
+        for block in self.steps:
+            if "az webapp deploy" in block or "recording-check.py run" in block:
+                found += 1
+                condition = re.search(r"(?m)^        if: (.+)$", block)
+                self.assertIsNotNone(condition, block[:80])
+                self.assertNotIn("what-if", condition.group(1))
+                self.assertNotIn("always()", condition.group(1))
+        self.assertEqual(found, 2)
+
+    def test_the_recording_is_deployed_published_and_listed_in_that_order_and_for_its_action_only(self):
+        order = ["Deploy the usage recording", "Publish the usage workflows to the Logic App", "The Logic App lists its workflows"]
+        names = self.names()
+        positions = [names.index(name) for name in order]
+        self.assertEqual(positions, sorted(positions))
+        for name in order:
+            self.assertIn("if: inputs.action == 'recording'", self.steps[names.index(name)])
+        deploy = self.steps[names.index(order[0])]
+        self.assertIn("--template environment/recording/main.bicep", deploy)
+        self.assertIn('--parameters "$RUNNER_TEMP/recording.parameters.json"', deploy)
+        self.assertEqual(self.text.count("--template environment/recording/main.bicep"), 2, "the preview and the deploy, nothing else")
+
+    def test_the_publish_ships_the_kits_workflows_unchanged_and_nothing_of_the_repository(self):
+        (block,) = [b for b in self.steps if b.startswith("name: Publish the usage workflows to the Logic App")]
+        self.assertIn("cd kit/src/usage-ingestion-logicapp && zip -qr", block)
+        self.assertIn("-x 'workflow-designtime/*'", block)
+        self.assertIn("--type zip", block)
+        self.assertNotIn("environment/", block)
+        names = self.names()
+        self.assertLess(names.index("Apply the patches to the kit's module"), names.index("Publish the usage workflows to the Logic App"))
+
+    def test_the_copy_job_is_started_only_by_its_own_action(self):
+        (block,) = [b for b in self.steps if "recording-check.py run" in b]
+        self.assertIn("if: inputs.action == 'recording-check'", block)
+        self.assertNotIn("listSecrets", block)
+
+    def test_the_identity_of_the_workflow_is_read_after_the_sign_in_and_before_the_settings(self):
+        names = self.names()
+        self.assertLess(names.index("Sign in to Azure"), names.index("Read the object id of the signed-in identity"))
+        self.assertLess(names.index("Read the object id of the signed-in identity"), names.index("Work out the settings"))
+        (block,) = [b for b in self.steps if b.startswith("name: Work out the settings\n")]
+        self.assertIn("RECORDING_DEPLOYER_ID: ${{ steps.me.outputs.oid }}", block)
+        (block,) = [b for b in self.steps if b.startswith("name: Work out the settings with the identity's principal")]
+        self.assertIn("RECORDING_DEPLOYER_ID: ${{ steps.me.outputs.oid }}", block)
+
+    def test_the_recording_needs_the_gateway_identity_to_exist(self):
+        (block,) = [b for b in self.steps if b.startswith("name: Find the gateway identity")]
+        self.assertIn("inputs.action == 'recording'", block)
 
 
 if __name__ == "__main__":

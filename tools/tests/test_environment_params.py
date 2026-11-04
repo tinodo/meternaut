@@ -34,7 +34,10 @@ SETTINGS = {
     "GATEWAY_RESOURCE_ID": "/subscriptions/66666666-7777-8888-9999-000000000000/resourceGroups/rg-gateway/providers/Microsoft.ApiManagement/service/example-apim",
     "GATEWAY_APPINSIGHTS_ID": "/subscriptions/66666666-7777-8888-9999-000000000000/resourceGroups/rg-gateway/providers/microsoft.insights/components/example-insights",
     "GATEWAY_PRINCIPAL_ID": "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE",
+    "RECORDING_DEPLOYER_ID": "99999999-8888-7777-6666-555555555555",
 }
+READER = "12345678-1234-1234-1234-123456789012"
+RECORDING = (ROOT / "environment" / "recording" / "main.bicep").read_text(encoding="utf-8")
 
 
 def run(env, *extra, models=MODELS):
@@ -58,10 +61,10 @@ def bicep_params(text):
 
 
 class Build(unittest.TestCase):
-    def test_good_settings_give_three_files_and_the_outputs(self):
+    def test_good_settings_give_four_files_and_the_outputs(self):
         code, out, err, files = run(SETTINGS)
         self.assertEqual((code, err), (0, ""))
-        self.assertEqual(set(files), {"environment.parameters.json", "logger.parameters.json", "kit.parameters.json"})
+        self.assertEqual(set(files), {"environment.parameters.json", "logger.parameters.json", "kit.parameters.json", "recording.parameters.json"})
         env = values(files["environment.parameters.json"])
         self.assertEqual(env["vnetAddressPrefix"], "10.53.0.0/24")
         self.assertEqual(env["peSubnetPrefix"], "10.53.0.0/27")
@@ -121,6 +124,67 @@ class Build(unittest.TestCase):
         self.assertIn("startDate: budgetStartDate", BICEP)
         again = run({**SETTINGS, "ENV_BUDGET_START": "2027-02-01"})[3]["environment.parameters.json"]
         self.assertEqual(values(again)["budgetStartDate"], "2027-02-01")
+
+
+class Recording(unittest.TestCase):
+    """The parameter file of the usage recording, and the names that it gives to services whose names are host names."""
+
+    def files(self, **changes):
+        code, out, err, files = run({**SETTINGS, **changes})
+        self.assertEqual((code, err), (0, ""))
+        return files, dict(line.split("=", 1) for line in out.splitlines())
+
+    def test_the_file_matches_the_parameters_of_the_template(self):
+        declared = bicep_params(RECORDING)
+        files, _ = self.files(RECORDING_READER_IDS=READER)
+        given = files["recording.parameters.json"]["parameters"]
+        self.assertTrue(set(given) <= set(declared), set(given) - set(declared))
+        required = {name for name, (_, has_default) in declared.items() if not has_default}
+        self.assertTrue(required <= set(given), required - set(given))
+        types = {"string": str, "int": int, "array": list, "bool": bool}
+        for name, wrapped in given.items():
+            self.assertIsInstance(wrapped["value"], types[declared[name][0]], name)
+
+    def test_the_gateway_the_owner_and_the_deployer_reach_the_template(self):
+        files, _ = self.files(RECORDING_READER_IDS=f"{READER.upper()}")
+        recording = values(files["recording.parameters.json"])
+        self.assertEqual(recording["gatewayPrincipalId"], "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
+        self.assertEqual(recording["gatewayAppInsightsSubscriptionId"], "66666666-7777-8888-9999-000000000000")
+        self.assertEqual((recording["gatewayAppInsightsResourceGroup"], recording["gatewayAppInsightsName"]), ("rg-gateway", "example-insights"))
+        self.assertEqual(recording["dataContributorPrincipalIds"], [SETTINGS["RECORDING_DEPLOYER_ID"]])
+        self.assertEqual(recording["dataReaderPrincipalIds"], [READER])
+        self.assertEqual((recording["location"], recording["owner"]), ("swedencentral", "owner@example.com"))
+
+    def test_no_reader_is_a_valid_choice(self):
+        files, _ = self.files()
+        self.assertEqual(values(files["recording.parameters.json"])["dataReaderPrincipalIds"], [])
+        files, _ = self.files(RECORDING_READER_IDS="  ")
+        self.assertEqual(values(files["recording.parameters.json"])["dataReaderPrincipalIds"], [])
+
+    def test_the_names_are_host_names_inside_their_limits_and_the_same_on_every_run(self):
+        _, first = self.files()
+        _, second = self.files()
+        for key, pattern, longest in (("storage_account_name", r"^[a-z0-9]{3,24}$", 24), ("event_hub_namespace", r"^[A-Za-z][A-Za-z0-9-]{4,49}$", 50),
+                                      ("cosmos_account_name", r"^[a-z0-9][a-z0-9-]{2,43}$", 44), ("logic_app_name", r"^[A-Za-z0-9][A-Za-z0-9-]{1,59}$", 60)):
+            self.assertRegex(first[key], pattern, key)
+            self.assertLessEqual(len(first[key]), longest, key)
+            self.assertEqual(first[key], second[key], key)
+        self.assertEqual(len({first[k] for k in ("storage_account_name", "event_hub_namespace", "cosmos_account_name", "logic_app_name")}), 4)
+
+    def test_the_names_differ_per_subscription_and_group_and_ignore_case(self):
+        base = ep.recording_names(SETTINGS["ENV_SUBSCRIPTION_ID"], "rg-a")
+        self.assertNotEqual(base, ep.recording_names(SETTINGS["ENV_SUBSCRIPTION_ID"], "rg-b"))
+        self.assertNotEqual(base, ep.recording_names("99999999-2222-3333-4444-555555555555", "rg-a"))
+        self.assertEqual(base, ep.recording_names(SETTINGS["ENV_SUBSCRIPTION_ID"].upper(), "RG-A"))
+        self.assertTrue(ep.account_name(SETTINGS["ENV_SUBSCRIPTION_ID"], "rg-a").endswith(base["logic_app_name"][-8:]))
+
+    def test_the_deployer_and_the_readers_must_be_object_ids(self):
+        for changes in ({"RECORDING_DEPLOYER_ID": "me"}, {"RECORDING_READER_IDS": "not-an-id"}, {"RECORDING_READER_IDS": f"{READER},"},
+                        {"RECORDING_READER_IDS": f"{READER},{READER.upper()}"}, {"RECORDING_READER_IDS": ",".join([READER[:-1] + str(i) for i in range(6)])}):
+            code, out, err, files = run({**SETTINGS, **changes})
+            self.assertEqual((code, out, files), (2, "", {}), changes)
+            self.assertIn("RECORDING_", err)
+            self.assertNotIn("not-an-id", err)
 
 
 class KitSettings(unittest.TestCase):
@@ -316,10 +380,10 @@ class Contract(unittest.TestCase):
         self.assertEqual((code, out, files), (2, "", {}), (contract, policy))
         return err
 
-    def test_the_contract_of_the_repository_gives_a_fourth_file_that_fits_its_template(self):
+    def test_the_contract_of_the_repository_gives_a_fifth_file_that_fits_its_template(self):
         code, out, err, files = self.build()
         self.assertEqual((code, err), (0, ""))
-        self.assertEqual(set(files), {"environment.parameters.json", "logger.parameters.json", "kit.parameters.json", "contract.parameters.json"})
+        self.assertEqual(set(files), {"environment.parameters.json", "logger.parameters.json", "kit.parameters.json", "recording.parameters.json", "contract.parameters.json"})
         given = files["contract.parameters.json"]["parameters"]
         declared = bicep_params(CONTRACT_BICEP)
         self.assertEqual(set(given), set(declared))

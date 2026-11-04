@@ -73,7 +73,7 @@ jobs:
           RUBY
       - name: The Bicep templates compile and lint
         run: |
-          for template in environment/main.bicep environment/gateway/identity.bicep environment/gateway/logger.bicep environment/gateway/contract.bicep infra/budgets/*.bicep; do
+          for template in environment/main.bicep environment/gateway/identity.bicep environment/gateway/logger.bicep environment/gateway/contract.bicep environment/recording/main.bicep infra/budgets/*.bicep; do
             az bicep build --file "$template" --stdout > /dev/null
             az bicep lint --file "$template"
           done
@@ -92,6 +92,8 @@ jobs:
           GATEWAY_RESOURCE_ID: /subscriptions/66666666-7777-8888-9999-000000000000/resourceGroups/rg-gateway/providers/Microsoft.ApiManagement/service/example-apim
           GATEWAY_APPINSIGHTS_ID: /subscriptions/66666666-7777-8888-9999-000000000000/resourceGroups/rg-gateway/providers/microsoft.insights/components/example-insights
           GATEWAY_PRINCIPAL_ID: aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee
+          RECORDING_DEPLOYER_ID: 99999999-8888-7777-6666-555555555555
+          RECORDING_READER_IDS: 12345678-1234-1234-1234-123456789012
         run: |
           out="$RUNNER_TEMP/params"
           mkdir -p "$out"
@@ -99,8 +101,10 @@ jobs:
           az bicep build --file environment/main.bicep --outfile "$out/environment.json"
           az bicep build --file environment/gateway/logger.bicep --outfile "$out/logger.json"
           az bicep build --file environment/gateway/contract.bicep --outfile "$out/contract.json"
+          az bicep build --file environment/recording/main.bicep --outfile "$out/recording.json"
           az bicep build --file kit/bicep/infra/apim-gateway-upgrade/main.bicep --outfile "$out/kit.json"
           python tools/environment-params.py check --params "$out/environment.parameters.json" --template "$out/environment.json" --label environment
           python tools/environment-params.py check --params "$out/logger.parameters.json" --template "$out/logger.json" --label logger
           python tools/environment-params.py check --params "$out/kit.parameters.json" --template "$out/kit.json" --label kit
+          python tools/environment-params.py check --params "$out/recording.parameters.json" --template "$out/recording.json" --label recording
           python tools/environment-params.py check --params "$out/contract.parameters.json" --template "$out/contract.json" --label contract

@@ -9,7 +9,8 @@ address, name or mail address is in the repository:
 
     ENV_SUBSCRIPTION_ID, ENV_RESOURCE_GROUP, ENV_LOCATION, ENV_VNET_PREFIX, ENV_PE_SUBNET_PREFIX,
     ENV_DNS_SERVERS (comma separated), ENV_OWNER, ENV_BUDGET_AMOUNT, ENV_ALERT_EMAILS (comma separated),
-    ENV_BUDGET_START, GATEWAY_RESOURCE_ID, GATEWAY_APPINSIGHTS_ID, GATEWAY_PRINCIPAL_ID
+    ENV_BUDGET_START, GATEWAY_RESOURCE_ID, GATEWAY_APPINSIGHTS_ID, GATEWAY_PRINCIPAL_ID,
+    RECORDING_DEPLOYER_ID, RECORDING_READER_IDS (comma separated, may be empty)
 
 ENV_BUDGET_START is the first day of the month in which the budget was first made, which the workflow reads from the
 existing budget (a budget keeps its start date) or, for a new budget, takes from the current month.
@@ -17,19 +18,24 @@ GATEWAY_RESOURCE_ID is the resource id of the owner's existing API Management in
 resource id of the Application Insights component that the instance already logs to; GATEWAY_PRINCIPAL_ID is the object
 id of the gateway's user-assigned identity, which does not exist before the first deploy (a `--preview`, for a
 what-if, then uses a placeholder, and says so).
+RECORDING_DEPLOYER_ID is the object id of the identity that the workflow signs in as (the workflow reads it from its own
+token): it gets a data role on the usage store, so that it can check that the copy job wrote to it. RECORDING_READER_IDS
+are the object ids of the people who may read the usage store (the owner).
 
-It writes three ARM parameter files into --out-dir (four, with --contract):
+It writes four ARM parameter files into --out-dir (five, with --contract):
 
     environment.parameters.json   for environment/main.bicep (the model side)
     logger.parameters.json        for environment/gateway/logger.bicep
     kit.parameters.json           for the Citadel gateway-upgrade module (the kit's bicep/infra/apim-gateway-upgrade/main.bicep)
+    recording.parameters.json     for environment/recording/main.bicep (the usage recording: Event Hubs, Logic App, Cosmos DB)
     contract.parameters.json      for environment/gateway/contract.bicep, from --contract (environment/contract.json) and
                                   --contract-policy (environment/gateway/contract-policy.xml)
 
 Every value is checked before anything is deployed. The name of the model account is worked out here, from the
 subscription and the resource group, so it is the same on every run (a run after a removal finds, and the workflow
-restores, the soft-deleted account of that name instead of leaving a second one behind). It prints key=value lines for
-GitHub to read as step outputs.
+restores, the soft-deleted account of that name instead of leaving a second one behind); so are the names of the usage
+recording's storage account, Event Hubs namespace, Cosmos DB account and Logic App, which are host names too. It prints
+key=value lines for GitHub to read as step outputs.
 
 The contract names only models that are deployed (environment/models.json) and only the two inference APIs that the
 kit's module makes here, asks for a token rate that the smallest of its model deployments can serve, and its policy is
@@ -136,8 +142,23 @@ def items(value: str, name: str, limit: int) -> list[str]:
 
 
 def account_name(subscription: str, group: str) -> str:
-    digest = hashlib.sha256(f"{subscription}/{group}".lower().encode("utf-8")).hexdigest()
-    return f"aif-meternaut-{digest[:8]}"
+    return f"aif-meternaut-{digest(subscription, group)}"
+
+
+def digest(subscription: str, group: str) -> str:
+    """Eight hex characters that depend on the subscription and the group only, so that every name made from them is stable."""
+    return hashlib.sha256(f"{subscription}/{group}".lower().encode("utf-8")).hexdigest()[:8]
+
+
+def recording_names(subscription: str, group: str) -> dict[str, str]:
+    """The names of the usage recording's services that are host names, so unique worldwide, each inside its own length limit."""
+    token = digest(subscription, group)
+    return {
+        "storage_account_name": f"stmeternaut{token}",
+        "event_hub_namespace": f"evhns-meternaut-{token}",
+        "cosmos_account_name": f"cosmos-meternaut-{token}",
+        "logic_app_name": f"logic-meternaut-usage-{token}",
+    }
 
 
 def read_models(path: Path) -> list[dict]:
@@ -297,6 +318,13 @@ def build(env, models: list[dict], preview: bool = False, contract: dict | None 
         principal = PLACEHOLDER
     if not GUID.match(principal):
         raise Problem("GATEWAY_PRINCIPAL_ID is the object id of the gateway's user-assigned identity")
+    deployer = need(env, "RECORDING_DEPLOYER_ID")
+    if not GUID.match(deployer):
+        raise Problem("RECORDING_DEPLOYER_ID is the object id of the identity that the workflow signs in as")
+    raw_readers = (env.get("RECORDING_READER_IDS") or "").strip()
+    readers = [r.strip() for r in raw_readers.split(",")] if raw_readers else []
+    if len(readers) > 5 or len(set(r.lower() for r in readers)) != len(readers) or not all(GUID.match(r) for r in readers):
+        raise Problem("RECORDING_READER_IDS is a comma-separated list of up to 5 object ids, each once, or empty")
 
     vnet = network(need(env, "ENV_VNET_PREFIX"), "ENV_VNET_PREFIX")
     subnet = network(need(env, "ENV_PE_SUBNET_PREFIX"), "ENV_PE_SUBNET_PREFIX")
@@ -328,6 +356,7 @@ def build(env, models: list[dict], preview: bool = False, contract: dict | None 
         raise Problem("ENV_BUDGET_START is the first day of a month, as YYYY-MM-01")
 
     name = account_name(subscription, group)
+    names = recording_names(subscription, group)
     endpoint = f"https://{name}.cognitiveservices.azure.com"
     deployed = [{k: m[k] for k in ("name", "version", "sku", "capacity")} for m in models]
 
@@ -348,6 +377,20 @@ def build(env, models: list[dict], preview: bool = False, contract: dict | None 
         "apimName": gateway.group(3),
         "appInsightsName": insights.group(3),
         "appInsightsResourceGroup": insights.group(2),
+    }
+    recording = {
+        "location": location,
+        "owner": owner,
+        "storageAccountName": names["storage_account_name"],
+        "eventHubNamespaceName": names["event_hub_namespace"],
+        "cosmosAccountName": names["cosmos_account_name"],
+        "logicAppName": names["logic_app_name"],
+        "gatewayPrincipalId": principal.lower(),
+        "gatewayAppInsightsSubscriptionId": insights.group(1).lower(),
+        "gatewayAppInsightsResourceGroup": insights.group(2),
+        "gatewayAppInsightsName": insights.group(3),
+        "dataContributorPrincipalIds": [deployer.lower()],
+        "dataReaderPrincipalIds": [r.lower() for r in readers],
     }
     backend = {
         "backendId": name,
@@ -409,11 +452,13 @@ def build(env, models: list[dict], preview: bool = False, contract: dict | None 
         "gateway_name": gateway.group(3),
         "identity_name": IDENTITY_NAME,
         "principal_known": "true" if principal_known else "false",
+        **names,
     }
     files = {
         "environment.parameters.json": parameters(environment),
         "logger.parameters.json": parameters(logger),
         "kit.parameters.json": parameters(kit),
+        "recording.parameters.json": parameters(recording),
     }
     if contract is not None:
         if policy_template is None:
