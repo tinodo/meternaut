@@ -19,8 +19,8 @@ resource id of the Application Insights component that the instance already logs
 id of the gateway's user-assigned identity, which does not exist before the first deploy (a `--preview`, for a
 what-if, then uses a placeholder, and says so).
 RECORDING_DEPLOYER_ID is the object id of the identity that the workflow signs in as (the workflow reads it from its own
-token): it gets a data role on the usage store, so that it can check that the copy job wrote to it. RECORDING_READER_IDS
-are the object ids of the people who may read the usage store (the owner).
+token): it gets the read role on the usage store, so that it can check what the copy job wrote. RECORDING_READER_IDS
+are the object ids of the people who may read the usage store too (the owner).
 
 It writes four ARM parameter files into --out-dir (five, with --contract):
 
@@ -389,8 +389,7 @@ def build(env, models: list[dict], preview: bool = False, contract: dict | None 
         "gatewayAppInsightsSubscriptionId": insights.group(1).lower(),
         "gatewayAppInsightsResourceGroup": insights.group(2),
         "gatewayAppInsightsName": insights.group(3),
-        "dataContributorPrincipalIds": [deployer.lower()],
-        "dataReaderPrincipalIds": [r.lower() for r in readers],
+        "dataReaderPrincipalIds": list(dict.fromkeys([deployer.lower(), *[r.lower() for r in readers]])),
     }
     backend = {
         "backendId": name,

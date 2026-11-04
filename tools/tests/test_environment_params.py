@@ -151,15 +151,19 @@ class Recording(unittest.TestCase):
         self.assertEqual(recording["gatewayPrincipalId"], "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
         self.assertEqual(recording["gatewayAppInsightsSubscriptionId"], "66666666-7777-8888-9999-000000000000")
         self.assertEqual((recording["gatewayAppInsightsResourceGroup"], recording["gatewayAppInsightsName"]), ("rg-gateway", "example-insights"))
-        self.assertEqual(recording["dataContributorPrincipalIds"], [SETTINGS["RECORDING_DEPLOYER_ID"]])
-        self.assertEqual(recording["dataReaderPrincipalIds"], [READER])
+        self.assertEqual(recording["dataReaderPrincipalIds"], [SETTINGS["RECORDING_DEPLOYER_ID"], READER])
+        self.assertNotIn("dataContributorPrincipalIds", recording)
         self.assertEqual((recording["location"], recording["owner"]), ("swedencentral", "owner@example.com"))
 
     def test_no_reader_is_a_valid_choice(self):
         files, _ = self.files()
-        self.assertEqual(values(files["recording.parameters.json"])["dataReaderPrincipalIds"], [])
+        self.assertEqual(values(files["recording.parameters.json"])["dataReaderPrincipalIds"], [SETTINGS["RECORDING_DEPLOYER_ID"]])
         files, _ = self.files(RECORDING_READER_IDS="  ")
-        self.assertEqual(values(files["recording.parameters.json"])["dataReaderPrincipalIds"], [])
+        self.assertEqual(values(files["recording.parameters.json"])["dataReaderPrincipalIds"], [SETTINGS["RECORDING_DEPLOYER_ID"]])
+
+    def test_a_reader_that_is_the_deployer_is_listed_once(self):
+        files, _ = self.files(RECORDING_READER_IDS=SETTINGS["RECORDING_DEPLOYER_ID"].upper())
+        self.assertEqual(values(files["recording.parameters.json"])["dataReaderPrincipalIds"], [SETTINGS["RECORDING_DEPLOYER_ID"]])
 
     def test_the_names_are_host_names_inside_their_limits_and_the_same_on_every_run(self):
         _, first = self.files()

@@ -13,8 +13,9 @@ workflows  Read only. Waits until the Logic App answers and lists at least --exp
            state. A Logic App whose workflows were not published yet lists none, and this says so.
 run        Starts the copy job once by hand (the trigger of --workflow), waits for the run to end, prints how each of its
            actions ended, and then reads the usage store (Cosmos DB) with the workflow's identity: the documents of the usage
-           container and the export marker of the job. It fails when the run does not succeed, and when the store cannot be
-           read. Only a GitHub Actions run may start the job (AGENTS.md rule 18). The first run of a job that has never run
+           container and the export marker of the job. It fails when the run does not end as Succeeded (any other end, Failed,
+           Cancelled, Aborted, Suspended or Skipped, is a failure), and when the store cannot be read. Only a GitHub Actions run
+           may start the job (AGENTS.md rule 18). The first run of a job that has never run
            copies nothing (it only writes its marker); the next run copies what the gateway recorded since the marker.
 """
 from __future__ import annotations
@@ -43,7 +44,6 @@ DATABASE = "ai-usage-db"
 USAGE_CONTAINER = "llm-usage-container"
 MARKER_CONTAINER = "streaming-export-config"
 USAGE_FIELDS = "c.id, c.timestamp, c.productName, c.deploymentName, c.promptTokens, c.responseTokens, c.totalTokens, c._ts"
-RUN_BAD = {"failed", "cancelled", "canceled", "timedout"}
 
 
 class Problem(Exception):
@@ -172,11 +172,28 @@ def action_lines(azure: Azure, site: str, workflow: str, run_name: str) -> list[
 
 
 def cosmos_documents(azure: Azure, account: str, database: str, container: str, query: str) -> list[dict]:
-    """The documents that a plain query returns. No ORDER BY, TOP or aggregate: the gateway of the service answers only the plain shapes of a cross-partition query without a query plan."""
+    """The documents that a plain query returns. No ORDER BY, TOP or aggregate: the gateway of the service answers only the plain shapes of a cross-partition query without a query plan.
+
+    The token is asked for the account's own address first, which is what the service's own SDKs ask for, and for the service's
+    general address when the first one is refused (401): both are documented, and an account answers to the one its tenant knows.
+    """
     endpoint = f"https://{account}.documents.azure.com"
-    token = azure.token(endpoint)
     url = f"{endpoint}/dbs/{database}/colls/{container}/docs"
     body = json.dumps({"query": query, "parameters": []}).encode("utf-8")
+    audiences = (endpoint, "https://cosmos.azure.com")
+    for number, audience in enumerate(audiences, start=1):
+        outcome = read_pages(azure, url, azure.token(audience), body)
+        if isinstance(outcome, list):
+            return outcome
+        status, message = outcome
+        if status == 401 and number < len(audiences):
+            continue
+        raise Problem(f"reading {container} answered {status}: {message}")
+    raise Problem(f"reading {container} was refused")
+
+
+def read_pages(azure: Azure, url: str, token: str, body: bytes):
+    """The documents of every page, or (status, first line of the service's message) for the first page that is not a 200."""
     documents: list[dict] = []
     continuation = None
     while True:
@@ -195,10 +212,10 @@ def cosmos_documents(azure: Azure, account: str, database: str, container: str, 
         status, answer, response_headers = azure.post(url, headers, body)
         if status != 200:
             try:
-                message = str(json.loads(answer).get("message", ""))[:200]
+                message = str(json.loads(answer).get("message", "")).strip().splitlines()[:1]
             except (ValueError, AttributeError):
-                message = ""
-            raise Problem(f"reading {container} answered {status}: {message.splitlines()[0] if message else 'no message'}")
+                message = []
+            return status, (message[0][:200] if message else "no message")
         documents += [d for d in json.loads(answer).get("Documents", []) if isinstance(d, dict)]
         continuation = {k.lower(): v for k, v in response_headers.items()}.get("x-ms-continuation")
         if not continuation:
@@ -259,7 +276,7 @@ def command_run(args, azure: Azure) -> int:
     run = wait_for_run(azure, site, args.workflow, moment, args.minutes)
     status = (run.get("properties") or {}).get("status", "?")
     lines = [f"Run {run.get('name', '?')} of {args.workflow}: {status}", *action_lines(azure, site, args.workflow, run.get("name", ""))]
-    failed = status.lower() in RUN_BAD
+    failed = status.lower() != "succeeded"
     try:
         lines += usage_lines(cosmos_documents(azure, args.cosmos_account, DATABASE, USAGE_CONTAINER, f"SELECT {USAGE_FIELDS} FROM c"))
         lines += marker_lines(cosmos_documents(azure, args.cosmos_account, DATABASE, MARKER_CONTAINER, "SELECT c.id, c.lastExportDate, c.totalExportedRecords FROM c"))
