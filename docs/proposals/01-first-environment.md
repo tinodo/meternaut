@@ -58,6 +58,19 @@ The gateway-upgrade module needs none of the supporting services. They are what 
 
 The full pipeline is added when a real need for per-call records appears. That is a decision with its own cost, its own list and its own approval.
 
+**Re-checked on 2026-11-04.** The owner asked why that pipeline needs a Logic App on a dedicated plan and a Cosmos DB account, and said that the price sounded far too high. The pipeline is a copy job: the guide that ships with the kit says that model-call numbers come from the token metrics in Application Insights, that a Logic App reads them eight times a day and writes them into Cosmos DB, and that a Power BI report prices them for charge-back. The Event Hub carries only non-model calls, which are off by default. The numbers are already in Application Insights (verified: per minute, split by product, key and model, plus one line per call), so the price above is the price of a second copy for Power BI, not of recording. Cheaper and sufficient ways, in the order of what they give:
+
+| | What it gives | Euros a month |
+|---|---|---|
+| A. What exists | Token counts per minute by product, key and model; one line per call | 0 |
+| B. The gateway's own language-model log into a small log workspace of Azure Monitor | Per-call tokens, model and key, and the portal's Analytics view of language models; the first 5 GB a month are free, then 2.68 a GB | about 0 |
+| C. The kit's Cosmos DB and Power BI ledger, built cheaply (a Consumption logic app or a small function, a free-tier Cosmos DB account, public access where the landing zone allows it) | A priced charge-back report | 0 to 2 (about 26 with private endpoints) |
+| D. The kit as shipped | The same as C | about 205 with public access, 265 with private endpoints |
+
+B is the lean variant's missing half: the gateway already has the per-API setting that produces the log, and what is missing is one diagnostic setting on the gateway that routes it to a workspace (a landing zone usually sets up the audit category only). C and D wait for a stated need for charge-back. Free tiers that make C cheap: Cosmos DB free tier (the first 1,000 request units a second and 25 GB, one account for each subscription, chosen when the account is made; the kit's template does not choose it) and the Azure SQL Database free offer (100,000 vCore seconds and 32 GB a month for each of up to ten databases).
+
+**Private endpoints and network security perimeters.** A private endpoint costs about 6.57 euros a month. A network security perimeter is free (no price meter) and generally available in every public region for Event Hubs, Storage, Key Vault, Azure Monitor, Foundry, AI Search and Service Bus (Cosmos DB and SQL Database are in preview). It limits public access and lets callers in by IP address or subscription; it is not private connectivity, SAS tokens do not work with some of its rule types, Azure Files is not covered, and service endpoints are not supported. The policies that deny public access to platform services usually test for `Disabled` only, so a protected service needs a narrow exemption (a recommended landing-zone rule for Storage already accepts `SecuredByPerimeter`). It is a way to remove some of the Operate profile's private endpoints, and it needs a trial first: an API Management instance as the caller of a protected service has not been tried.
+
 ## The order
 
 | Step | What happens | What is approved first |
@@ -87,7 +100,7 @@ Only after step 4 does the first agent exist.
 
 - **What an instance the kit did not create lacks.** A user-assigned managed identity attached to the instance; an Application Insights logger named `appinsights-logger` (an instance usually has a logger under another name, so a second one is added on the same Application Insights); and an `ai-foundry-compatibility` policy fragment, which the module creates only when its personal-data flag is on, although the inference APIs' policies include it unconditionally, so the flag stays on and the Language and Content Safety addresses must be real (a named value may not be empty).
 - **What the module replaces.** The instance's service-level Application Insights diagnostic: its logger link, and it turns custom metrics on. Everything else is added beside what is there.
-- **What the landing zone does by itself.** A policy joins every new virtual network of the region to the network manager's group (hub peering and default routes); another registers a private endpoint in the central private DNS zones; and public access to new platform services is denied. Nothing in the first environment creates a DNS zone, a peering or a route.
+- **What the landing zone does by itself.** A policy joins every new virtual network of the region to the network manager's group (hub peering and default routes); another registers a private endpoint in the central private DNS zones; and public access to new platform services is denied, unless an exemption waives it (the study of 2026-11-03 read the policies and not the exemptions; in the pilot's own subscription the policy had been waived for the whole subscription, so private endpoints there are a choice, not a requirement, and the first environment's private endpoint is the design's choice). Nothing in the first environment creates a DNS zone, a peering or a route.
 - **What stays unknown until a call is made.** The path from a workload network to the gateway's public address through the hub firewall (the other direction, from the gateway to a model account behind a private endpoint, has been seen to work).
 
 ## What the first deployment found (2026-11-03), in general terms
