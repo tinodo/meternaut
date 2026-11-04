@@ -114,7 +114,7 @@ class Workflows(unittest.TestCase):
 class Run(unittest.TestCase):
     ENV = {"GITHUB_ACTIONS": "true"}
 
-    def fake(self, status="Succeeded", cosmos_status=200, pages=None):
+    def fake(self, status="Succeeded", cosmos_status=200, pages=None, refuse_first_audience=False):
         calls = []
         pages = pages if pages is not None else {
             rc.USAGE_CONTAINER: [[{"id": "llm-1", "productName": "p", "deploymentName": "gpt-6-luna", "promptTokens": 12, "responseTokens": 5, "totalTokens": 17, "_ts": 1000},
@@ -126,7 +126,7 @@ class Run(unittest.TestCase):
         def runner(args):
             calls.append(args)
             if args[0] == "account":
-                return 0, SECRET + "\n", ""
+                return 0, (SECRET if args[3].startswith("https://cosmos-example") else SECRET + "-general") + "\n", ""
             method, url = args[2], args[4]
             if method == "post":
                 return 0, "", ""
@@ -142,6 +142,8 @@ class Run(unittest.TestCase):
         def post(url, headers, body):
             posted.append((url, headers, json.loads(body)))
             container = url.split("/colls/")[1].split("/")[0]
+            if refuse_first_audience and headers["Authorization"].endswith(SECRET):
+                return 401, json.dumps({"message": "The input authorization token can't serve the request\nsecond line"}).encode(), {}
             if cosmos_status != 200:
                 return cosmos_status, json.dumps({"message": "Request blocked by Auth\nactivity id"}).encode(), {}
             queue = pages[container]
@@ -198,6 +200,34 @@ class Run(unittest.TestCase):
         self.assertIn("Run 08585 of llm-usage-ingestion: Failed", out)
         self.assertIn("Run_query: Failed: Forbidden no access", out)
         self.assertNotIn("second line", out)
+
+    def test_only_a_run_that_succeeded_passes(self):
+        for status in ("Failed", "Cancelled", "Aborted", "Suspended", "Skipped", "TimedOut", "Faulted"):
+            fake, _, _ = self.fake(status=status)
+            self.assertEqual(self.run_main(fake)[0], 1, status)
+        fake, _, _ = self.fake(status="Succeeded")
+        self.assertEqual(self.run_main(fake)[0], 0)
+
+    def test_a_refused_token_is_asked_for_again_with_the_services_general_address(self):
+        fake, calls, posted = self.fake(refuse_first_audience=True)
+        code, out, err = self.run_main(fake)
+        self.assertEqual((code, err), (0, ""))
+        resources = [c[3] for c in calls if c[0] == "account"]
+        self.assertEqual(resources[:2], ["https://cosmos-example.documents.azure.com", "https://cosmos.azure.com"])
+        self.assertIn("llm-usage-container: 2 documents", out)
+        self.assertNotIn(SECRET, out + err)
+
+    def test_when_both_addresses_are_refused_the_first_line_of_the_message_is_shown(self):
+        fake, calls, posted = self.fake(cosmos_status=401)
+        code, out, err = self.run_main(fake)
+        self.assertEqual(code, 1)
+        self.assertEqual([c[3] for c in calls if c[0] == "account"][:2], ["https://cosmos-example.documents.azure.com", "https://cosmos.azure.com"])
+        self.assertIn("answered 401: Request blocked by Auth", out)
+
+    def test_other_refusals_are_not_asked_again(self):
+        fake, calls, posted = self.fake(cosmos_status=403)
+        self.run_main(fake)
+        self.assertEqual([c[3] for c in calls if c[0] == "account"], ["https://cosmos-example.documents.azure.com"])
 
     def test_a_store_that_cannot_be_read_fails_the_check_and_says_what_the_service_said(self):
         fake, _, _ = self.fake(cosmos_status=403)

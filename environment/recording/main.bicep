@@ -19,11 +19,24 @@
 //    use their identities;
 //  - the roles are the ones that each caller needs on the one resource it uses: no role on the whole group, no second
 //    identity that nothing uses;
-//  - the Logic App's pre-warmed instance is off: it runs eight times a day.
+//  - the Logic App can run on one instance only (a ceiling on the price), and its pre-warmed instance is off: it runs eight
+//    times a day.
 //
-// Public endpoints on every service: the owner's subscription has a policy waiver for public network access, and the Logic
-// App is published from a GitHub-hosted runner (no private connectivity to it). Private endpoints are a later switch that
-// each cost a few euros a month (docs/proposals/01-first-environment.md).
+// Public endpoints on every service, and two resources that the tenant's governance would otherwise change: see the tag
+// SecurityControl below. The owner's subscription has a policy waiver for public network access (Deny effect), and the Logic
+// App is published from a GitHub-hosted runner (no private connectivity to it). Private endpoints are a later switch that each
+// cost a few euros a month (docs/proposals/01-first-environment.md).
+//
+// The tag SecurityControl = Ignore is on two resources, the storage account and the Cosmos DB account, and on nothing else. The
+// tenant's governance (the initiative GovInitiative, assigned at the tenant root) does not deny them: it changes
+// them while they are made, to Shared Key off and public network access off for a storage account, and to local
+// authentication off and public network access off for a Cosmos DB account. The first deployment showed it: the account came out
+// with Shared Key off, and the Logic App's settings were refused ("Key based authentication is not permitted on this storage
+// account"). The policies' own opt-out is that tag, on the resource or on its group (each policy rule says so), and the
+// kit's design needs the opposite on both: a Logic App Standard mounts its content share (Azure Files) with the account key,
+// and the kit's workflows reach Cosmos DB with its connection string, both over a public endpoint. This is a known, chosen
+// deviation from the security controls, for the one stack whose engine cannot run without it; the way out of it is in
+// docs/proposals/01-first-environment.md.
 //
 // Deployed only by the workflow .github/workflows/deploy-hub.yml, action "recording" (AGENTS.md rule 18). The Logic App's
 // workflows are published by the same action, from the kit's src/usage-ingestion-logicapp, unchanged.
@@ -77,10 +90,7 @@ param gatewayAppInsightsResourceGroup string
 @minLength(1)
 param gatewayAppInsightsName string
 
-@description('Principals that may read and write the usage documents (a Cosmos DB data role): the identity of the workflow, which checks the copy job.')
-param dataContributorPrincipalIds array = []
-
-@description('Principals that may read the usage documents (a Cosmos DB data role): the owner.')
+@description('Principals that may read the usage documents (a Cosmos DB data role): the identity of the workflow, which checks the copy job, and the owner.')
 param dataReaderPrincipalIds array = []
 
 var tags = {
@@ -89,6 +99,11 @@ var tags = {
   environment: 'dev'
   owner: owner
   'meternaut-stage': 'first-environment'
+}
+
+// The opt-out that the tenant's own policies name (see the header): only on the storage account and the Cosmos DB account.
+var optOut = {
+  SecurityControl: 'Ignore'
 }
 
 var usageHubName = 'ai-usage'
@@ -111,9 +126,9 @@ var containers = [
 // reads events and cannot write them. Each on the namespace, not on the group.
 var eventHubsDataSenderRoleId = '2b629674-e913-4c01-ae53-ef4638d8f975'
 var eventHubsDataReceiverRoleId = 'a638d3c7-ab3a-418d-83e6-5f17a39d4fde'
-// The built-in data roles of Cosmos DB: Data Reader and Data Contributor. They are not Azure roles; they live in the account.
+// The built-in Data Reader role of Cosmos DB. It is not an Azure role; it lives in the account. The Logic App needs no data
+// role: it reaches the account with its connection string.
 var cosmosDataReaderRoleId = '00000000-0000-0000-0000-000000000001'
-var cosmosDataContributorRoleId = '00000000-0000-0000-0000-000000000002'
 
 resource workspace 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
   name: 'log-${workload}'
@@ -145,7 +160,7 @@ resource insights 'Microsoft.Insights/components@2020-02-02' = {
 resource storage 'Microsoft.Storage/storageAccounts@2023-05-01' = {
   name: storageAccountName
   location: location
-  tags: tags
+  tags: union(tags, optOut)
   sku: {
     name: 'Standard_LRS'
   }
@@ -237,7 +252,7 @@ resource cosmos 'Microsoft.DocumentDB/databaseAccounts@2024-11-15' = {
   name: cosmosAccountName
   location: location
   kind: 'GlobalDocumentDB'
-  tags: tags
+  tags: union(tags, optOut)
   properties: {
     databaseAccountOfferType: 'Standard'
     capabilities: [
@@ -255,6 +270,8 @@ resource cosmos 'Microsoft.DocumentDB/databaseAccounts@2024-11-15' = {
         isZoneRedundant: false
       }
     ]
+    // The kit's workflows reach the account with its connection string, so local authentication stays on (see the header).
+    disableLocalAuth: false
     disableKeyBasedMetadataWriteAccess: true
     minimalTlsVersion: 'Tls12'
     publicNetworkAccess: 'Enabled'
@@ -323,7 +340,7 @@ resource plan 'Microsoft.Web/serverfarms@2024-04-01' = {
     capacity: 1
   }
   properties: {
-    maximumElasticWorkerCount: 3
+    maximumElasticWorkerCount: 1
     reserved: false
   }
 }
@@ -447,26 +464,6 @@ resource logicAppReceives 'Microsoft.Authorization/roleAssignments@2022-04-01' =
     principalType: 'ServicePrincipal'
   }
 }
-
-resource logicAppWritesUsage 'Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments@2024-11-15' = {
-  parent: cosmos
-  name: guid(cosmos.id, logicApp.id, cosmosDataContributorRoleId)
-  properties: {
-    roleDefinitionId: '${cosmos.id}/sqlRoleDefinitions/${cosmosDataContributorRoleId}'
-    principalId: logicApp.identity.principalId
-    scope: cosmos.id
-  }
-}
-
-resource contributorsOfTheData 'Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments@2024-11-15' = [for principalId in dataContributorPrincipalIds: {
-  parent: cosmos
-  name: guid(cosmos.id, principalId, cosmosDataContributorRoleId)
-  properties: {
-    roleDefinitionId: '${cosmos.id}/sqlRoleDefinitions/${cosmosDataContributorRoleId}'
-    principalId: principalId
-    scope: cosmos.id
-  }
-}]
 
 resource readersOfTheData 'Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments@2024-11-15' = [for principalId in dataReaderPrincipalIds: {
   parent: cosmos

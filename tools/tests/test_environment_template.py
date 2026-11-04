@@ -236,7 +236,6 @@ class Recording(unittest.TestCase):
             "2b629674-e913-4c01-ae53-ef4638d8f975",  # Azure Event Hubs Data Sender
             "a638d3c7-ab3a-418d-83e6-5f17a39d4fde",  # Azure Event Hubs Data Receiver
             "00000000-0000-0000-0000-000000000001",  # Cosmos DB built-in Data Reader
-            "00000000-0000-0000-0000-000000000002",  # Cosmos DB built-in Data Contributor
         })
         found = resources(self.source)
         for name, (kind, body) in found.items():
@@ -244,6 +243,19 @@ class Recording(unittest.TestCase):
                 self.assertIn("principalType: 'ServicePrincipal'", body, name)
                 self.assertRegex(body, r"(?m)^  scope: eventHubs$", name)  # on the namespace, never on the group or the subscription
         self.assertEqual(sorted(n for n, (k, _) in found.items() if k == "Microsoft.Authorization/roleAssignments"), ["gatewaySends", "logicAppReceives"])
+        data_roles = sorted(n for n, (k, _) in found.items() if k == "Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments")
+        self.assertEqual(data_roles, ["readersOfTheData"], "nobody gets a role to write the usage documents: the Logic App uses the connection string")
+
+    def test_the_two_resources_that_the_tenant_would_change_carry_the_opt_out_of_its_own_policies_and_nothing_else_does(self):
+        self.assertEqual(len(re.findall(r"SecurityControl", self.code)), 1)
+        self.assertIn("var optOut = {\n  SecurityControl: 'Ignore'\n}", self.code)
+        found = resources(self.source)
+        tagged = sorted(name for name, (_, body) in found.items() if "optOut" in body)
+        self.assertEqual(tagged, ["cosmos", "storage"])
+        for name in tagged:
+            self.assertIn("tags: union(tags, optOut)", found[name][1], name)
+        self.assertIn("disableLocalAuth: false", found["cosmos"][1])  # said, not left to a default: the kit's workflows use the connection string
+        self.assertIn("allowSharedKeyAccess: true", found["storage"][1])
 
     def test_the_gateway_only_sends_and_the_logic_app_only_receives(self):
         found = resources(self.source)
@@ -262,7 +274,7 @@ class Recording(unittest.TestCase):
         found = resources(self.source)
         self.assertIn("name: 'WS1'", found["plan"][1])
         self.assertIn("tier: 'WorkflowStandard'", found["plan"][1])
-        self.assertIn("maximumElasticWorkerCount: 3", found["plan"][1])
+        self.assertIn("maximumElasticWorkerCount: 1", found["plan"][1])  # one instance at most: the price has a ceiling
         self.assertIn("preWarmedInstanceCount: 0", found["logicApp"][1])
         self.assertIn("minimumElasticInstanceCount: 1", found["logicApp"][1])
         self.assertIn("type: 'SystemAssigned'", found["logicApp"][1])
