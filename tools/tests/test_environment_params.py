@@ -265,6 +265,64 @@ class Preview(unittest.TestCase):
         self.assertEqual(values(files["environment.parameters.json"])["gatewayPrincipalId"], ep.PLACEHOLDER)
 
 
+class EventHubLoggers(unittest.TestCase):
+    """The file for the two Event Hub loggers, and the choice that makes the module create the two fragments that use them."""
+
+    CLIENT = "BBBBBBBB-1111-2222-3333-CCCCCCCCCCCC"
+
+    def test_without_the_identitys_client_id_no_file_is_written(self):
+        code, out, err, files = run(SETTINGS)
+        self.assertEqual((code, err), (0, ""))
+        self.assertNotIn("eventhub-loggers.parameters.json", files)
+
+    def test_with_it_the_file_names_the_namespace_the_two_hubs_and_the_identity(self):
+        code, out, err, files = run({**SETTINGS, "GATEWAY_CLIENT_ID": self.CLIENT})
+        self.assertEqual((code, err), (0, ""))
+        lines = dict(line.split("=", 1) for line in out.splitlines())
+        loggers = values(files["eventhub-loggers.parameters.json"])
+        self.assertEqual(loggers, {
+            "apimName": "example-apim",
+            "eventHubHost": lines["event_hub_namespace"] + ".servicebus.windows.net",
+            "usageHubName": "ai-usage",
+            "piiHubName": "pii-usage",
+            "identityClientId": self.CLIENT.lower(),
+        })
+
+    def test_the_preview_uses_a_placeholder_and_says_nothing_secret(self):
+        code, out, err, files = run({**SETTINGS, "GATEWAY_PRINCIPAL_ID": ""}, "--preview")
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(values(files["eventhub-loggers.parameters.json"])["identityClientId"], ep.PLACEHOLDER)
+
+    def test_the_file_matches_the_parameters_of_the_template_and_the_hubs_are_the_ones_the_recording_makes(self):
+        template = (ROOT / "environment" / "gateway" / "eventhub-loggers.bicep").read_text(encoding="utf-8")
+        declared = bicep_params(template)
+        files = run({**SETTINGS, "GATEWAY_CLIENT_ID": self.CLIENT})[3]
+        given = files["eventhub-loggers.parameters.json"]["parameters"]
+        self.assertTrue(set(given) <= set(declared), set(given) - set(declared))
+        self.assertTrue({name for name, (_, has_default) in declared.items() if not has_default} <= set(given))
+        self.assertIn("var usageHubName = 'ai-usage'", RECORDING)
+        self.assertIn("var piiHubName = 'pii-usage'", RECORDING)
+        self.assertEqual((values(files["eventhub-loggers.parameters.json"])["usageHubName"], values(files["eventhub-loggers.parameters.json"])["piiHubName"]), ("ai-usage", "pii-usage"))
+        self.assertEqual(values(files["eventhub-loggers.parameters.json"])["eventHubHost"], values(files["recording.parameters.json"])["eventHubNamespaceName"] + ".servicebus.windows.net")
+
+    def test_a_client_id_that_is_not_one_is_refused(self):
+        for bad in ("me", "1234", "{" + self.CLIENT + "}"):
+            code, out, err, files = run({**SETTINGS, "GATEWAY_CLIENT_ID": bad})
+            self.assertEqual((code, out, files), (2, "", {}), bad)
+            self.assertIn("GATEWAY_CLIENT_ID", err)
+
+    def test_the_fragments_are_off_unless_the_workflow_found_both_loggers(self):
+        self.assertIs(values(run(SETTINGS)[3]["kit.parameters.json"])["deployUsageRecordingFragments"], False)
+        self.assertIs(values(run({**SETTINGS, "RECORDING_FRAGMENTS": "false"})[3]["kit.parameters.json"])["deployUsageRecordingFragments"], False)
+        self.assertIs(values(run({**SETTINGS, "RECORDING_FRAGMENTS": "TRUE"})[3]["kit.parameters.json"])["deployUsageRecordingFragments"], True)
+
+    def test_anything_but_true_or_false_is_refused(self):
+        for bad in ("yes", "1", "truee"):
+            code, out, err, files = run({**SETTINGS, "RECORDING_FRAGMENTS": bad})
+            self.assertEqual((code, out, files), (2, "", {}), bad)
+            self.assertIn("RECORDING_FRAGMENTS", err)
+
+
 class Refusals(unittest.TestCase):
     def refused(self, **changes):
         code, out, err, files = run({**SETTINGS, **changes})
