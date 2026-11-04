@@ -153,8 +153,9 @@ jobs:
           # assignment and the real loggers; and the two policy fragments that use the Event Hub loggers are asked for only when both
           # loggers are in the instance (the service refuses a fragment whose logger is missing).
           identity=$(az identity list --subscription "$gateway_subscription" --resource-group "$gateway_group" --query "[?name=='$identity_name'] | [0].[principalId, clientId]" --output tsv)
-          principal=$(cut -f1 <<< "$identity")
-          client=$(cut -f2 <<< "$identity")
+          # The two values come back on one line or on two, depending on the CLI: either way, the first is the principal id and the second the client id.
+          principal=$(printf '%s' "$identity" | tr '\t' '\n' | sed -n 1p)
+          client=$(printf '%s' "$identity" | tr '\t' '\n' | sed -n 2p)
           if grep -Eq '^[0-9a-fA-F-]{36}$' <<< "$principal" && grep -Eq '^[0-9a-fA-F-]{36}$' <<< "$client"; then
             echo "The gateway identity exists; its principal id and client id are used."
             loggers=$(az rest --method get --url "https://management.azure.com${GATEWAY_RESOURCE_ID}/loggers?api-version=2024-05-01" --query "value[].name" --output tsv)
