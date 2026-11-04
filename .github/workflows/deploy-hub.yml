@@ -11,7 +11,7 @@ on:
   workflow_dispatch:
     inputs:
       action:
-        description: "what-if: show what the next steps would change and change nothing. model-side: the gateway's identity, then the network, the model account with its private endpoint and the budget. gateway-prepare: attach the identity to the gateway and add the logger. gateway: add the Citadel module's objects to the gateway (without the two fragments that need the usage recording's Event Hub). contract: add the first contract (a product, its policy and its key) and test the gateway with that key. recording: the usage recording of the gateway's calls, which is a Log Analytics workspace, an Event Hubs namespace, a Cosmos DB account, a storage account and a Logic App with its workflows. recording-check: start the Logic App's copy job once and read what it wrote to Cosmos DB."
+        description: "what-if: show what the next steps would change and change nothing. model-side: the gateway's identity, then the network, the model account with its private endpoint and the budget. gateway-prepare: attach the identity to the gateway and add the Application Insights logger, and the two Event Hub loggers when the usage recording's namespace exists. gateway: add the Citadel module's objects to the gateway (with the two fragments that use the Event Hub loggers when both loggers exist, without them otherwise). contract: add the first contract (a product, its policy and its key) and test the gateway with that key. recording: the usage recording of the gateway's calls, which is a Log Analytics workspace, an Event Hubs namespace, a Cosmos DB account, a storage account and a Logic App with its workflows. recording-check: start the Logic App's copy job once and read what it wrote to Cosmos DB."
         type: choice
         required: true
         default: what-if
@@ -87,12 +87,13 @@ jobs:
         run: |
           python3 -m unittest discover -s tools/tests
           python3 tools/workflow-lint.py
-          for template in environment/main.bicep environment/gateway/identity.bicep environment/gateway/logger.bicep environment/gateway/contract.bicep environment/recording/main.bicep; do
+          for template in environment/main.bicep environment/gateway/identity.bicep environment/gateway/logger.bicep environment/gateway/eventhub-loggers.bicep environment/gateway/contract.bicep environment/recording/main.bicep; do
             az bicep build --file "$template" --stdout > /dev/null
             az bicep lint --file "$template"
           done
           az bicep build --file environment/main.bicep --outfile "$RUNNER_TEMP/environment.json"
           az bicep build --file environment/gateway/logger.bicep --outfile "$RUNNER_TEMP/logger.json"
+          az bicep build --file environment/gateway/eventhub-loggers.bicep --outfile "$RUNNER_TEMP/eventhub-loggers.json"
           az bicep build --file environment/gateway/contract.bicep --outfile "$RUNNER_TEMP/contract.json"
           az bicep build --file environment/recording/main.bicep --outfile "$RUNNER_TEMP/recording.json"
           az bicep build --file kit/bicep/infra/apim-gateway-upgrade/main.bicep --outfile "$RUNNER_TEMP/kit.json"
@@ -148,17 +149,26 @@ jobs:
           gateway_subscription=$(sed -n 's/^gateway_subscription=//p' <<< "$outputs")
           gateway_group=$(sed -n 's/^gateway_resource_group=//p' <<< "$outputs")
           identity_name=$(sed -n 's/^identity_name=//p' <<< "$outputs")
-          # Where the identity exists already, its principal id goes into the files, so that a what-if shows the real role assignment.
-          principal=$(az identity list --subscription "$gateway_subscription" --resource-group "$gateway_group" --query "[?name=='$identity_name'].principalId | [0]" --output tsv)
-          if [ -n "$principal" ] && [ "$principal" != "None" ]; then
-            echo "The gateway identity exists; its principal id is used."
-            GATEWAY_PRINCIPAL_ID="$principal" python3 tools/environment-params.py build --models environment/models.json --out-dir "$RUNNER_TEMP" $contract_files > /dev/null
+          # Where the identity exists already, its principal id and client id go into the files, so that a what-if shows the real role
+          # assignment and the real loggers; and the two policy fragments that use the Event Hub loggers are asked for only when both
+          # loggers are in the instance (the service refuses a fragment whose logger is missing).
+          identity=$(az identity list --subscription "$gateway_subscription" --resource-group "$gateway_group" --query "[?name=='$identity_name'] | [0].[principalId, clientId]" --output tsv)
+          principal=$(cut -f1 <<< "$identity")
+          client=$(cut -f2 <<< "$identity")
+          if grep -Eq '^[0-9a-fA-F-]{36}$' <<< "$principal" && grep -Eq '^[0-9a-fA-F-]{36}$' <<< "$client"; then
+            echo "The gateway identity exists; its principal id and client id are used."
+            loggers=$(az rest --method get --url "https://management.azure.com${GATEWAY_RESOURCE_ID}/loggers?api-version=2024-05-01" --query "value[].name" --output tsv)
+            fragments=false
+            if grep -Fxq usage-eventhub-logger <<< "$loggers" && grep -Fxq pii-usage-eventhub-logger <<< "$loggers"; then fragments=true; fi
+            echo "Both Event Hub loggers are in the gateway: $fragments."
+            GATEWAY_PRINCIPAL_ID="$principal" GATEWAY_CLIENT_ID="$client" RECORDING_FRAGMENTS="$fragments" python3 tools/environment-params.py build --models environment/models.json --out-dir "$RUNNER_TEMP" $contract_files > /dev/null
           else
             echo "The gateway identity does not exist yet; the role assignment is shown with a placeholder."
           fi
           # The files are checked against the templates that were compiled above, so a setting that no template takes is found before Azure is asked.
           python3 tools/environment-params.py check --params "$RUNNER_TEMP/environment.parameters.json" --template "$RUNNER_TEMP/environment.json" --label environment
           python3 tools/environment-params.py check --params "$RUNNER_TEMP/logger.parameters.json" --template "$RUNNER_TEMP/logger.json" --label logger
+          python3 tools/environment-params.py check --params "$RUNNER_TEMP/eventhub-loggers.parameters.json" --template "$RUNNER_TEMP/eventhub-loggers.json" --label eventhub-loggers
           python3 tools/environment-params.py check --params "$RUNNER_TEMP/kit.parameters.json" --template "$RUNNER_TEMP/kit.json" --label kit
           python3 tools/environment-params.py check --params "$RUNNER_TEMP/recording.parameters.json" --template "$RUNNER_TEMP/recording.json" --label recording
           python3 tools/environment-params.py check --params "$RUNNER_TEMP/contract.parameters.json" --template "$RUNNER_TEMP/contract.json" --label contract
@@ -180,6 +190,10 @@ jobs:
           echo "::group::The Application Insights logger, in the gateway's resource group"
           python3 tools/az-deploy.py what-if --subscription "$GATEWAY_SUBSCRIPTION" --resource-group "$GATEWAY_GROUP" \
             --template environment/gateway/logger.bicep --parameters "$RUNNER_TEMP/logger.parameters.json"
+          echo "::endgroup::"
+          echo "::group::The two Event Hub loggers, in the gateway's resource group"
+          python3 tools/az-deploy.py what-if --subscription "$GATEWAY_SUBSCRIPTION" --resource-group "$GATEWAY_GROUP" \
+            --template environment/gateway/eventhub-loggers.bicep --parameters "$RUNNER_TEMP/eventhub-loggers.parameters.json"
           echo "::endgroup::"
           echo "::group::The usage recording, in the project's resource group (the gateway identity's role is shown with a placeholder until model-side has run)"
           python3 tools/az-deploy.py what-if --subscription "$ENV_SUBSCRIPTION_ID" --resource-group "$ENV_RESOURCE_GROUP" \
@@ -279,6 +293,23 @@ jobs:
         run: |
           python3 tools/az-deploy.py create --subscription "$GATEWAY_SUBSCRIPTION" --resource-group "$GATEWAY_GROUP" \
             --template environment/gateway/logger.bicep --parameters "$RUNNER_TEMP/logger.parameters.json" --name "logger-$GITHUB_RUN_ID"
+
+      - name: Add the two Event Hub loggers, when the usage recording's Event Hubs namespace exists
+        if: inputs.action == 'gateway-prepare'
+        env:
+          GATEWAY_SUBSCRIPTION: ${{ steps.params.outputs.gateway_subscription }}
+          GATEWAY_GROUP: ${{ steps.params.outputs.gateway_resource_group }}
+          EVENT_HUB_NAMESPACE: ${{ steps.params.outputs.event_hub_namespace }}
+        run: |
+          # The service refuses a logger whose address does not resolve, so they are made only after the namespace exists. Without
+          # them the module leaves out the two policy fragments that need them (the next action, gateway, reads the instance).
+          found=$(az resource list --resource-group "$ENV_RESOURCE_GROUP" --resource-type Microsoft.EventHub/namespaces --query "[?name=='$EVENT_HUB_NAMESPACE'].name | [0]" --output tsv)
+          if [ -z "$found" ] || [ "$found" = "None" ]; then
+            echo "The usage recording's Event Hubs namespace does not exist yet (the action recording makes it): the two Event Hub loggers are not added."
+            exit 0
+          fi
+          python3 tools/az-deploy.py create --subscription "$GATEWAY_SUBSCRIPTION" --resource-group "$GATEWAY_GROUP" \
+            --template environment/gateway/eventhub-loggers.bicep --parameters "$RUNNER_TEMP/eventhub-loggers.parameters.json" --name "eventhub-loggers-$GITHUB_RUN_ID"
 
       - name: Wait until the gateway has finished updating
         if: inputs.action == 'gateway-prepare'
@@ -493,8 +524,8 @@ jobs:
               case "$ACTION" in
                 what-if) echo "Nothing was changed. Read the lists above: what the next steps would create, and the gateway as it is now." ;;
                 model-side) echo "The model account \`$ACCOUNT_NAME\` is behind a private endpoint in resource group \`$ENV_RESOURCE_GROUP\`, the gateway identity has its role on it, and the landing zone has registered the endpoint's name. The gateway has not been touched." ;;
-                gateway-prepare) echo "The identity is attached to the gateway (its own identity is kept) and the logger is there. The Citadel module has not been applied: a what-if now shows its exact diff." ;;
-                gateway) echo "The Citadel module's objects are in the gateway, without its two usage-recording fragments. A call to the two model APIs is refused unless it is made with the key of a contract, so nobody can call them (the instance's all-access key included) until the first contract exists." ;;
+                gateway-prepare) echo "The identity is attached to the gateway (its own identity is kept) and the Application Insights logger is there, and so are the two Event Hub loggers if the usage recording's namespace existed (the log of the step says). The Citadel module has not been applied: a what-if now shows its exact diff." ;;
+                gateway) echo "The Citadel module's objects are in the gateway; its two usage-recording fragments are there only if both Event Hub loggers were (the log says). A call to the two model APIs is refused unless it is made with the key of a contract, so nobody can call them (the instance's all-access key included) until the first contract exists." ;;
                 contract) echo "The contract \`$CONTRACT_NAME\` is in the gateway: a product that grants the two inference APIs, its policy (the models and the token limits) and one subscription. The checks above ran against the gateway with that subscription's key, which is stored nowhere." ;;
                 recording) echo "The usage recording is in resource group \`$ENV_RESOURCE_GROUP\`: Event Hubs, a Cosmos DB account (serverless), a storage account, the Logic App with the kit's five workflows, and a workspace and an Application Insights component of its own. The gateway identity may send to the two event hubs and the Logic App may read them; nothing sends to them yet. The copy job needs one role in the gateway's subscription before it can read the gateway's Application Insights (environment/BOOTSTRAP.md); then \`recording-check\` starts it once and reads what it wrote." ;;
                 recording-check) echo "The copy job ran and the usage store was read with the workflow's identity. The lines above are what is in it. The job writes only what the gateway recorded after its marker, so a first run writes the marker and nothing else." ;;

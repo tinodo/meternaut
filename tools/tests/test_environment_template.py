@@ -18,6 +18,7 @@ ALLOWED = {
     },
     "environment/gateway/identity.bicep": {"Microsoft.ManagedIdentity/userAssignedIdentities"},
     "environment/gateway/logger.bicep": {"Microsoft.ApiManagement/service", "Microsoft.Insights/components", "Microsoft.ApiManagement/service/loggers"},
+    "environment/gateway/eventhub-loggers.bicep": {"Microsoft.ApiManagement/service", "Microsoft.ApiManagement/service/loggers"},
     "environment/gateway/contract.bicep": {
         "Microsoft.ApiManagement/service",
         "Microsoft.ApiManagement/service/products",
@@ -118,11 +119,19 @@ class Templates(unittest.TestCase):
         self.assertEqual(set(resources(source)), {"apim", "appInsights", "logger"})
         self.assertNotIn("azureEventHub", re.sub(r"//.*", "", source))
 
-    def test_the_kit_patch_leaves_out_exactly_the_two_usage_recording_fragments(self):
+    def test_the_kit_patch_makes_the_two_usage_recording_fragments_conditional_and_lets_the_workflow_choose(self):
         patch = text("environment/kit-patches/no-usage-recording-fragments.patch")
-        self.assertEqual(re.findall(r"(?m)^diff --git a/(\S+) b/(\S+)$", patch), [("bicep/infra/modules/apim/policy-fragments.bicep",) * 2])
-        added = [line[1:] for line in patch.splitlines() if line.startswith("+") and not line.startswith("+++")]
-        removed = [line[1:] for line in patch.splitlines() if line.startswith("-") and not line.startswith("---")]
+        self.assertEqual(re.findall(r"(?m)^diff --git a/(\S+) b/(\S+)$", patch), [("bicep/infra/apim-gateway-upgrade/main.bicep",) * 2, ("bicep/infra/modules/apim/policy-fragments.bicep",) * 2])
+        first, second = re.split(r"(?m)^diff --git ", patch)[1:]
+        # the module's own template: one parameter, off unless somebody asks, passed on to the fragments module; nothing removed
+        self.assertEqual([line for line in first.splitlines() if line.startswith("-") and not line.startswith("---")], [])
+        added = [line[1:] for line in first.splitlines() if line.startswith("+") and not line.startswith("+++")]
+        self.assertIn("param deployUsageRecordingFragments bool = false", added)
+        self.assertIn("    deployUsageRecordingFragments: deployUsageRecordingFragments", added)
+        self.assertEqual(len([line for line in added if not line.startswith("//") and line.strip()]), 3, "the parameter with its description, and the argument")
+        # the fragments module: the two resources and their two outputs wait for that parameter
+        added = [line[1:] for line in second.splitlines() if line.startswith("+") and not line.startswith("+++")]
+        removed = [line[1:] for line in second.splitlines() if line.startswith("-") and not line.startswith("---")]
         self.assertIn("param deployUsageRecordingFragments bool = false", added)  # off unless somebody asks
         self.assertEqual(sorted(line.split()[1] for line in removed if line.startswith("resource")), ["aiUsagePolicyFragment", "piiStateSavingPolicyFragment"])
         self.assertEqual(sorted(line.split()[1] for line in removed if line.startswith("output")), ["aiUsagePolicyFragmentName", "piiStateSavingPolicyFragmentName"])
@@ -130,6 +139,26 @@ class Templates(unittest.TestCase):
         for line in added:
             if line.startswith("resource"):
                 self.assertIn("deployUsageRecordingFragments", line)
+
+    def test_the_event_hub_loggers_are_the_two_the_fragments_name_and_use_the_identity_not_a_key(self):
+        source = text("environment/gateway/eventhub-loggers.bicep")
+        code = re.sub(r"//.*", "", source)
+        self.assertEqual(set(resources(source)), {"apim", "usageLogger", "piiLogger"})
+        self.assertIn("name: 'usage-eventhub-logger'", code)
+        self.assertIn("name: 'pii-usage-eventhub-logger'", code)
+        self.assertEqual(code.count("loggerType: 'azureEventHub'"), 2)
+        self.assertEqual(code.count("identityClientId: identityClientId"), 2)
+        for word in ("connectionString", "sharedAccessKey", "SharedAccessKey", "listKeys", "@secure"):
+            self.assertNotIn(word, code, word)
+        self.assertNotIn("Microsoft.EventHub", code)  # it only names the namespace; the recording makes it
+
+    def test_the_fragments_that_the_loggers_serve_are_the_ones_the_patch_makes_conditional(self):
+        source = text("environment/gateway/eventhub-loggers.bicep")
+        patch = text("environment/kit-patches/no-usage-recording-fragments.patch")
+        self.assertIn("ai-usage", source)
+        self.assertIn("pii-state-saving", source)
+        for name in ("aiUsagePolicyFragment", "piiStateSavingPolicyFragment"):
+            self.assertIn(name, patch)
 
     def test_no_policy_of_ours_includes_the_fragments_that_the_kit_patch_leaves_out(self):
         policy = text("environment/gateway/contract-policy.xml")
@@ -476,6 +505,29 @@ class Workflow(unittest.TestCase):
     def test_the_recording_needs_the_gateway_identity_to_exist(self):
         (block,) = [b for b in self.steps if b.startswith("name: Find the gateway identity")]
         self.assertIn("inputs.action == 'recording'", block)
+
+    def test_the_event_hub_loggers_are_added_only_by_gateway_prepare_and_only_when_the_namespace_exists(self):
+        names = self.names()
+        title = "Add the two Event Hub loggers, when the usage recording's Event Hubs namespace exists"
+        (block,) = [b for b in self.steps if b.startswith(f"name: {title}")]
+        self.assertIn("if: inputs.action == 'gateway-prepare'", block)
+        self.assertIn("--resource-type Microsoft.EventHub/namespaces", block)
+        self.assertLess(block.index("exit 0"), block.index("az-deploy.py create"), "without the namespace nothing is written")
+        self.assertIn("--template environment/gateway/eventhub-loggers.bicep", block)
+        self.assertIn('--parameters "$RUNNER_TEMP/eventhub-loggers.parameters.json"', block)
+        self.assertLess(names.index("Add the Application Insights logger that the module expects"), names.index(title))
+        self.assertLess(names.index(title), names.index("Wait until the gateway has finished updating"))
+        self.assertEqual(self.text.count("--template environment/gateway/eventhub-loggers.bicep"), 2, "the preview and the deploy, nothing else")
+
+    def test_the_fragments_are_asked_for_only_when_both_loggers_are_in_the_instance(self):
+        (block,) = [b for b in self.steps if b.startswith("name: Work out the settings\n")]
+        self.assertIn("fragments=false", block)
+        self.assertIn("grep -Fxq usage-eventhub-logger", block)
+        self.assertIn("grep -Fxq pii-usage-eventhub-logger", block)
+        self.assertIn('RECORDING_FRAGMENTS="$fragments"', block)
+        self.assertLess(block.index("fragments=false"), block.index('RECORDING_FRAGMENTS="$fragments"'))
+        self.assertIn("--method get", block)
+        self.assertNotRegex(block, r"--method (put|patch|post|delete)")
 
 
 if __name__ == "__main__":

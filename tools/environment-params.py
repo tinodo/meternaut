@@ -9,27 +9,31 @@ address, name or mail address is in the repository:
 
     ENV_SUBSCRIPTION_ID, ENV_RESOURCE_GROUP, ENV_LOCATION, ENV_VNET_PREFIX, ENV_PE_SUBNET_PREFIX,
     ENV_DNS_SERVERS (comma separated), ENV_OWNER, ENV_BUDGET_AMOUNT, ENV_ALERT_EMAILS (comma separated),
-    ENV_BUDGET_START, GATEWAY_RESOURCE_ID, GATEWAY_APPINSIGHTS_ID, GATEWAY_PRINCIPAL_ID,
-    RECORDING_DEPLOYER_ID, RECORDING_READER_IDS (comma separated, may be empty)
+    ENV_BUDGET_START, GATEWAY_RESOURCE_ID, GATEWAY_APPINSIGHTS_ID, GATEWAY_PRINCIPAL_ID, GATEWAY_CLIENT_ID,
+    RECORDING_DEPLOYER_ID, RECORDING_READER_IDS (comma separated, may be empty), RECORDING_FRAGMENTS (true or false)
 
 ENV_BUDGET_START is the first day of the month in which the budget was first made, which the workflow reads from the
 existing budget (a budget keeps its start date) or, for a new budget, takes from the current month.
 GATEWAY_RESOURCE_ID is the resource id of the owner's existing API Management instance; GATEWAY_APPINSIGHTS_ID is the
 resource id of the Application Insights component that the instance already logs to; GATEWAY_PRINCIPAL_ID is the object
 id of the gateway's user-assigned identity, which does not exist before the first deploy (a `--preview`, for a
-what-if, then uses a placeholder, and says so).
+what-if, then uses a placeholder, and says so). GATEWAY_CLIENT_ID is that identity's client id, which the Event Hub loggers
+name: without it the file for the loggers is not written (and with `--preview` it holds a placeholder).
+RECORDING_FRAGMENTS is `true` only when both Event Hub loggers exist in the instance: the workflow reads that from the
+instance, and the kit's module then also makes the two policy fragments that use them (default: false).
 RECORDING_DEPLOYER_ID is the object id of the identity that the workflow signs in as (the workflow reads it from its own
 token): it gets the read role on the usage store, so that it can check what the copy job wrote. RECORDING_READER_IDS
 are the object ids of the people who may read the usage store too (the owner).
 
-It writes four ARM parameter files into --out-dir (five, with --contract):
+It writes four ARM parameter files into --out-dir (five, with --contract; six when the gateway identity's client id is known):
 
-    environment.parameters.json   for environment/main.bicep (the model side)
-    logger.parameters.json        for environment/gateway/logger.bicep
-    kit.parameters.json           for the Citadel gateway-upgrade module (the kit's bicep/infra/apim-gateway-upgrade/main.bicep)
-    recording.parameters.json     for environment/recording/main.bicep (the usage recording: Event Hubs, Logic App, Cosmos DB)
-    contract.parameters.json      for environment/gateway/contract.bicep, from --contract (environment/contract.json) and
-                                  --contract-policy (environment/gateway/contract-policy.xml)
+    environment.parameters.json       for environment/main.bicep (the model side)
+    logger.parameters.json            for environment/gateway/logger.bicep
+    eventhub-loggers.parameters.json  for environment/gateway/eventhub-loggers.bicep (written when GATEWAY_CLIENT_ID is set, or with --preview)
+    kit.parameters.json               for the Citadel gateway-upgrade module (the kit's bicep/infra/apim-gateway-upgrade/main.bicep)
+    recording.parameters.json         for environment/recording/main.bicep (the usage recording: Event Hubs, Logic App, Cosmos DB)
+    contract.parameters.json          for environment/gateway/contract.bicep, from --contract (environment/contract.json) and
+                                      --contract-policy (environment/gateway/contract-policy.xml)
 
 Every value is checked before anything is deployed. The name of the model account is worked out here, from the
 subscription and the resource group, so it is the same on every run (a run after a removal finds, and the workflow
@@ -50,10 +54,12 @@ The settings of the kit's module are chosen here and explained here, not in the 
   - No prompt and no answer is logged: the LLM log settings say `none` for both, so only token counts and the model's name
     are kept. The service refuses the value `none` for the messages, so environment/kit-patches/llm-log-messages-none.patch
     makes the kit's inference-api.bicep leave the request and response settings out when the parameter says `none`.
-  - The two policy fragments that send usage records to an Event Hub (`ai-usage`, `pii-state-saving`) are not created: the
-    kit's own deployment makes the loggers that they need together with the Event Hub, the module does not, and the service
-    refuses a fragment whose logger is missing. The usage recording is left out, and no API here includes them; the patch
-    environment/kit-patches/no-usage-recording-fragments.patch (applied to the kit's checkout) does it.
+  - The two policy fragments that send usage records to an Event Hub (`ai-usage`, `pii-state-saving`) are created only when
+    both loggers that they need (`usage-eventhub-logger`, `pii-usage-eventhub-logger`) exist in the instance: the service
+    refuses a fragment whose logger is missing, and the module does not make the loggers. The workflow makes the loggers
+    (environment/gateway/eventhub-loggers.bicep) once the usage recording's Event Hubs namespace exists, reads the instance, and
+    sets RECORDING_FRAGMENTS to true when both are there; the patch
+    environment/kit-patches/no-usage-recording-fragments.patch (applied to the kit's checkout) makes the module take that choice.
   - The Unified AI API is not deployed (its update flag is off), but its enable flag is on: the module creates the
     `set-response-headers` policy fragment only with that flag, and the policies of both inference APIs include it, so
     without it the service refuses their policies ("Policy fragment ... could not be found").
@@ -321,6 +327,12 @@ def build(env, models: list[dict], preview: bool = False, contract: dict | None 
     deployer = need(env, "RECORDING_DEPLOYER_ID")
     if not GUID.match(deployer):
         raise Problem("RECORDING_DEPLOYER_ID is the object id of the identity that the workflow signs in as")
+    client = (env.get("GATEWAY_CLIENT_ID") or "").strip()
+    if client and not GUID.match(client):
+        raise Problem("GATEWAY_CLIENT_ID is the client id of the gateway's user-assigned identity")
+    fragments = (env.get("RECORDING_FRAGMENTS") or "false").strip().lower()
+    if fragments not in ("true", "false"):
+        raise Problem("RECORDING_FRAGMENTS is true or false")
     raw_readers = (env.get("RECORDING_READER_IDS") or "").strip()
     readers = [r.strip() for r in raw_readers.split(",")] if raw_readers else []
     if len(readers) > 5 or len(set(r.lower() for r in readers)) != len(readers) or not all(GUID.match(r) for r in readers):
@@ -437,6 +449,7 @@ def build(env, models: list[dict], preview: bool = False, contract: dict | None 
         "enableEmbeddingsBackend": False,
         "updateAppInsightsDiagnostics": True,
         "deployAzureMonitorLogger": False,
+        "deployUsageRecordingFragments": fragments == "true",
         "azureMonitorLogSettings": AZURE_MONITOR_LOG_SETTINGS,
         "appInsightsLogSettings": APP_INSIGHTS_LOG_SETTINGS,
     }
@@ -459,6 +472,14 @@ def build(env, models: list[dict], preview: bool = False, contract: dict | None 
         "kit.parameters.json": parameters(kit),
         "recording.parameters.json": parameters(recording),
     }
+    if client or preview:
+        files["eventhub-loggers.parameters.json"] = parameters({
+            "apimName": gateway.group(3),
+            "eventHubHost": f"{names['event_hub_namespace']}.servicebus.windows.net",
+            "usageHubName": "ai-usage",
+            "piiHubName": "pii-usage",
+            "identityClientId": (client or PLACEHOLDER).lower(),
+        })
     if contract is not None:
         if policy_template is None:
             raise Problem("a contract needs its policy template")
