@@ -83,6 +83,11 @@ jobs:
             git -C kit apply "../$patch"
           done
 
+      - name: Set up Python 3.13, the runtime of the function app
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+
       - name: The tools, the templates and the kit's module pass their checks
         run: |
           python3 -m unittest discover -s tools/tests
