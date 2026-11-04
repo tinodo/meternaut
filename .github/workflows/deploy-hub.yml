@@ -11,7 +11,7 @@ on:
   workflow_dispatch:
     inputs:
       action:
-        description: "what-if: show what the next steps would change and change nothing. model-side: the gateway's identity, then the network, the model account with its private endpoint and the budget. gateway-prepare: attach the identity to the gateway and add the logger. gateway: add the Citadel module's objects to the gateway (without the two fragments that need the usage recording's Event Hub). contract: add the first contract (a product, its policy and its key) and test the gateway with that key."
+        description: "what-if: show what the next steps would change and change nothing. model-side: the gateway's identity, then the network, the model account with its private endpoint and the budget. gateway-prepare: attach the identity to the gateway and add the logger. gateway: add the Citadel module's objects to the gateway (without the two fragments that need the usage recording's Event Hub). contract: add the first contract (a product, its policy and its key) and test the gateway with that key. recording: the usage recording of the gateway's calls, which is a Log Analytics workspace, an Event Hubs namespace, a Cosmos DB account, a storage account and a Logic App with its workflows. recording-check: start the Logic App's copy job once and read what it wrote to Cosmos DB."
         type: choice
         required: true
         default: what-if
@@ -21,6 +21,8 @@ on:
           - gateway-prepare
           - gateway
           - contract
+          - recording
+          - recording-check
       check_limits:
         description: "Only with contract: also prove the token limit, with one request larger than a minute's allowance and then a refusal by the gateway. It uses about a minute of the contract's tokens and blocks the key for up to a minute."
         type: boolean
@@ -56,6 +58,7 @@ jobs:
       ENV_OWNER: ${{ vars.ENV_OWNER }}
       ENV_BUDGET_AMOUNT: ${{ vars.ENV_BUDGET_AMOUNT }}
       ENV_ALERT_EMAILS: ${{ vars.ENV_ALERT_EMAILS }}
+      RECORDING_READER_IDS: ${{ vars.RECORDING_READER_IDS }}
       GATEWAY_RESOURCE_ID: ${{ secrets.GATEWAY_RESOURCE_ID }}
       GATEWAY_APPINSIGHTS_ID: ${{ secrets.GATEWAY_APPINSIGHTS_ID }}
     steps:
@@ -84,13 +87,14 @@ jobs:
         run: |
           python3 -m unittest discover -s tools/tests
           python3 tools/workflow-lint.py
-          for template in environment/main.bicep environment/gateway/identity.bicep environment/gateway/logger.bicep environment/gateway/contract.bicep; do
+          for template in environment/main.bicep environment/gateway/identity.bicep environment/gateway/logger.bicep environment/gateway/contract.bicep environment/recording/main.bicep; do
             az bicep build --file "$template" --stdout > /dev/null
             az bicep lint --file "$template"
           done
           az bicep build --file environment/main.bicep --outfile "$RUNNER_TEMP/environment.json"
           az bicep build --file environment/gateway/logger.bicep --outfile "$RUNNER_TEMP/logger.json"
           az bicep build --file environment/gateway/contract.bicep --outfile "$RUNNER_TEMP/contract.json"
+          az bicep build --file environment/recording/main.bicep --outfile "$RUNNER_TEMP/recording.json"
           az bicep build --file kit/bicep/infra/apim-gateway-upgrade/main.bicep --outfile "$RUNNER_TEMP/kit.json"
 
       - name: Sign in to Azure
@@ -99,6 +103,14 @@ jobs:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Read the object id of the signed-in identity
+        id: me
+        run: |
+          # The workflow's identity may not read the directory, so the id is read from the claims of its own token (nothing else of the
+          # token is read or printed). The usage store is given a data role for this id, so that the check can read what the job wrote.
+          oid=$(python3 tools/recording-check.py whoami)
+          echo "oid=$oid" >> "$GITHUB_OUTPUT"
 
       - name: Read the gateway and its Application Insights
         run: python3 tools/gateway-prep.py facts --apim "$GATEWAY_RESOURCE_ID" --insights "$GATEWAY_APPINSIGHTS_ID" --summary "$GITHUB_STEP_SUMMARY" > /dev/null
@@ -127,6 +139,7 @@ jobs:
         id: params
         env:
           ENV_BUDGET_START: ${{ steps.budget.outputs.start }}
+          RECORDING_DEPLOYER_ID: ${{ steps.me.outputs.oid }}
         run: |
           # The gateway identity does not exist before model-side has run, so this first pass is a preview: it gives the names.
           contract_files="--contract environment/contract.json --contract-policy environment/gateway/contract-policy.xml"
@@ -147,9 +160,10 @@ jobs:
           python3 tools/environment-params.py check --params "$RUNNER_TEMP/environment.parameters.json" --template "$RUNNER_TEMP/environment.json" --label environment
           python3 tools/environment-params.py check --params "$RUNNER_TEMP/logger.parameters.json" --template "$RUNNER_TEMP/logger.json" --label logger
           python3 tools/environment-params.py check --params "$RUNNER_TEMP/kit.parameters.json" --template "$RUNNER_TEMP/kit.json" --label kit
+          python3 tools/environment-params.py check --params "$RUNNER_TEMP/recording.parameters.json" --template "$RUNNER_TEMP/recording.json" --label recording
           python3 tools/environment-params.py check --params "$RUNNER_TEMP/contract.parameters.json" --template "$RUNNER_TEMP/contract.json" --label contract
 
-      - name: What the identity, the model side and the logger would change
+      - name: What the identity, the model side, the logger and the usage recording would change
         if: inputs.action == 'what-if'
         env:
           GATEWAY_SUBSCRIPTION: ${{ steps.params.outputs.gateway_subscription }}
@@ -166,6 +180,10 @@ jobs:
           echo "::group::The Application Insights logger, in the gateway's resource group"
           python3 tools/az-deploy.py what-if --subscription "$GATEWAY_SUBSCRIPTION" --resource-group "$GATEWAY_GROUP" \
             --template environment/gateway/logger.bicep --parameters "$RUNNER_TEMP/logger.parameters.json"
+          echo "::endgroup::"
+          echo "::group::The usage recording, in the project's resource group (the gateway identity's role is shown with a placeholder until model-side has run)"
+          python3 tools/az-deploy.py what-if --subscription "$ENV_SUBSCRIPTION_ID" --resource-group "$ENV_RESOURCE_GROUP" \
+            --template environment/recording/main.bicep --parameters "$RUNNER_TEMP/recording.parameters.json"
           echo "::endgroup::"
 
       - name: Make the gateway identity
@@ -188,6 +206,7 @@ jobs:
         env:
           GATEWAY_PRINCIPAL_ID: ${{ steps.identity.outputs.principal }}
           ENV_BUDGET_START: ${{ steps.budget.outputs.start }}
+          RECORDING_DEPLOYER_ID: ${{ steps.me.outputs.oid }}
         run: |
           python3 tools/environment-params.py build --models environment/models.json --out-dir "$RUNNER_TEMP" > /dev/null
           python3 tools/environment-params.py check --params "$RUNNER_TEMP/environment.parameters.json" --template "$RUNNER_TEMP/environment.json" --label environment
@@ -233,7 +252,7 @@ jobs:
 
       - name: Find the gateway identity
         id: found
-        if: inputs.action == 'gateway-prepare' || inputs.action == 'gateway'
+        if: inputs.action == 'gateway-prepare' || inputs.action == 'gateway' || inputs.action == 'recording'
         env:
           GATEWAY_SUBSCRIPTION: ${{ steps.params.outputs.gateway_subscription }}
           GATEWAY_GROUP: ${{ steps.params.outputs.gateway_resource_group }}
@@ -374,6 +393,73 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
           exit "$status"
 
+      - name: Deploy the usage recording
+        id: recording
+        if: inputs.action == 'recording'
+        run: |
+          # A Log Analytics workspace and an Application Insights component, a storage account, an Event Hubs namespace with its two
+          # hubs, a Cosmos DB account (serverless) with its seven containers, the Logic App on a Workflow Standard plan with its Azure
+          # Monitor Logs connection, and the one role that each caller needs on the one resource it uses (environment/recording/main.bicep).
+          site=$(python3 tools/az-deploy.py create --subscription "$ENV_SUBSCRIPTION_ID" --resource-group "$ENV_RESOURCE_GROUP" \
+            --template environment/recording/main.bicep --parameters "$RUNNER_TEMP/recording.parameters.json" \
+            --name "recording-$GITHUB_RUN_ID" --output logicAppId)
+          if ! printf '%s' "$site" | grep -Eq '^/subscriptions/[0-9a-fA-F-]{36}/resourceGroups/[^/]+/providers/Microsoft\.Web/sites/[A-Za-z0-9-]+$'; then
+            echo "::error::The deployment did not return the resource id of the Logic App."
+            exit 1
+          fi
+          echo "site=$site" >> "$GITHUB_OUTPUT"
+
+      - name: Publish the usage workflows to the Logic App
+        if: inputs.action == 'recording'
+        env:
+          LOGIC_APP: ${{ steps.params.outputs.logic_app_name }}
+        run: |
+          # The five workflows are the kit's own, as they are in src/usage-ingestion-logicapp; only the design-time host that the
+          # folder's own .funcignore names is left out. A site that has just been made may need a minute before it takes a package.
+          package="$RUNNER_TEMP/usage-logicapp.zip"
+          (cd kit/src/usage-ingestion-logicapp && zip -qr "$package" . -x 'workflow-designtime/*' -x '.funcignore')
+          unzip -l "$package" | tail -n 1
+          for attempt in 1 2 3; do
+            if az webapp deploy --resource-group "$ENV_RESOURCE_GROUP" --name "$LOGIC_APP" --src-path "$package" --type zip --only-show-errors; then
+              exit 0
+            fi
+            echo "The publish did not go through (attempt $attempt of 3)."
+            if [ "$attempt" -lt 3 ]; then sleep 60; fi
+          done
+          echo "::error::The workflows could not be published to $LOGIC_APP."
+          exit 1
+
+      - name: The Logic App lists its workflows
+        if: inputs.action == 'recording'
+        env:
+          SITE_ID: ${{ steps.recording.outputs.site }}
+          LOGIC_APP: ${{ steps.params.outputs.logic_app_name }}
+        run: |
+          python3 tools/recording-check.py workflows --site "$SITE_ID" --expect 5 --minutes 10 | tee "$RUNNER_TEMP/workflows.txt"
+          principal=$(az webapp identity show --resource-group "$ENV_RESOURCE_GROUP" --name "$LOGIC_APP" --query principalId --output tsv)
+          {
+            echo "### The Logic App"
+            echo
+            echo '```'
+            cat "$RUNNER_TEMP/workflows.txt"
+            echo '```'
+            echo
+            echo "Identity of the Logic App (object id): \`$principal\`. Its copy job reads the gateway's Application Insights with it, which needs one role in the gateway's subscription (environment/BOOTSTRAP.md)."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: What the project's resource group holds now
+        if: inputs.action == 'recording'
+        run: az resource list --resource-group "$ENV_RESOURCE_GROUP" --query "sort_by([].{name:name, type:type}, &type)" --output table
+
+      - name: Start the copy job once and read what it wrote
+        if: inputs.action == 'recording-check'
+        env:
+          LOGIC_APP: ${{ steps.params.outputs.logic_app_name }}
+          COSMOS_ACCOUNT: ${{ steps.params.outputs.cosmos_account_name }}
+        run: |
+          site="/subscriptions/$ENV_SUBSCRIPTION_ID/resourceGroups/$ENV_RESOURCE_GROUP/providers/Microsoft.Web/sites/$LOGIC_APP"
+          python3 tools/recording-check.py run --site "$site" --cosmos-account "$COSMOS_ACCOUNT" --summary "$GITHUB_STEP_SUMMARY"
+
       - name: What was done
         if: always()
         env:
@@ -392,6 +478,8 @@ jobs:
                 gateway-prepare) echo "The identity may be attached to the gateway and the logger may exist. Running \`gateway-prepare\` again is safe and repeats only what is missing. The gateway's service-level logging setting before the change is in the first list of this page." ;;
                 gateway) echo "Some of the module's objects may be in the gateway already. Running \`gateway\` again is safe and repeats only what is missing. The gateway's service-level logging setting before the change is in the first list of this page." ;;
                 contract) echo "The contract's product, its policy and its subscription may be in the gateway already, and the test of the gateway with its key may have failed after that. Running \`contract\` again is safe: it repeats only what is missing and runs the test again." ;;
+                recording) echo "Part of the usage recording may exist now: the Log Analytics workspace, the storage account, the Event Hubs namespace, the Cosmos DB account, the Logic App and its connection. They cost money while they exist, the Logic App's plan most (about 160 euros a month). Running \`recording\` again is safe and repeats only what is missing; \`what-if\` shows what is there." ;;
+                recording-check) echo "The copy job may have run and written nothing, or not at all. The lines above say how each of its actions ended and what the usage store holds. Running \`recording-check\` again is safe." ;;
               esac
             else
               case "$ACTION" in
@@ -400,6 +488,8 @@ jobs:
                 gateway-prepare) echo "The identity is attached to the gateway (its own identity is kept) and the logger is there. The Citadel module has not been applied: a what-if now shows its exact diff." ;;
                 gateway) echo "The Citadel module's objects are in the gateway, without its two usage-recording fragments. A call to the two model APIs is refused unless it is made with the key of a contract, so nobody can call them (the instance's all-access key included) until the first contract exists." ;;
                 contract) echo "The contract \`$CONTRACT_NAME\` is in the gateway: a product that grants the two inference APIs, its policy (the models and the token limits) and one subscription. The checks above ran against the gateway with that subscription's key, which is stored nowhere." ;;
+                recording) echo "The usage recording is in resource group \`$ENV_RESOURCE_GROUP\`: Event Hubs, a Cosmos DB account (serverless), a storage account, the Logic App with the kit's five workflows, and a workspace and an Application Insights component of its own. The gateway identity may send to the two event hubs and the Logic App may read them; nothing sends to them yet. The copy job needs one role in the gateway's subscription before it can read the gateway's Application Insights (environment/BOOTSTRAP.md); then \`recording-check\` starts it once and reads what it wrote." ;;
+                recording-check) echo "The copy job ran and the usage store was read with the workflow's identity. The lines above are what is in it. The job writes only what the gateway recorded after its marker, so a first run writes the marker and nothing else." ;;
               esac
             fi
           } >> "$GITHUB_STEP_SUMMARY"
