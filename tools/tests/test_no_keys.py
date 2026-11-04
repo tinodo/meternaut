@@ -27,6 +27,8 @@ FORBIDDEN = {
 KNOWN = {
     (".github/workflows/deploy-hub.yml", "listSecrets"): "the subscription key of the contract, read for one test of the gateway and masked; the way out is token validation with Microsoft Entra (an app registration)",
     (".github/workflows/deploy-hub.yml", "primaryKey"): "the same read: the field that holds the contract's key",
+    ("src/case-functions/cases/gateway.py", "listSecrets"): "the first cases' app reads the contract's subscription key at the start of a run, with its own identity, a role that allows only that read, in memory and never logged; the way out is the same: token validation with Microsoft Entra",
+    ("src/case-functions/cases/gateway.py", "primaryKey"): "the same read: the field that holds the contract's key",
     ("environment/gateway/logger.bicep", "instrumentationKey"): "API Management's Application Insights logger takes the instrumentation key of the component; the platform has no identity-based form of it",
 }
 SCANNED = ("environment/**/*.bicep", "infra/**/*.bicep", ".github/workflows/*.yml", "tools/*.py", "tools/*.sh", "src/**/*.py", "src/**/*.json", "src/**/*.txt")
@@ -63,19 +65,21 @@ class NoKeys(unittest.TestCase):
         self.assertEqual(sorted(found - set(KNOWN)), [], "a key, or the way to a key (AGENTS.md rule 23): use an identity, or say why not in KNOWN")
         self.assertEqual(sorted(set(KNOWN) - found), [], "this is no longer in the code: take it out of KNOWN")
 
-    def test_the_known_ones_are_two_and_each_has_its_way_out_written_down(self):
-        self.assertEqual(sorted({relative for relative, _ in KNOWN}), [".github/workflows/deploy-hub.yml", "environment/gateway/logger.bicep"])
+    def test_the_known_ones_are_in_three_files_and_each_has_its_way_out_written_down(self):
+        self.assertEqual(sorted({relative for relative, _ in KNOWN}),
+                         [".github/workflows/deploy-hub.yml", "environment/gateway/logger.bicep", "src/case-functions/cases/gateway.py"])
         for reason in KNOWN.values():
             self.assertGreater(len(reason), 30)
         rules = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
         self.assertIn("23. **No keys, ever**", rules)
         self.assertIn("the API Management subscription key of a contract", rules)
         self.assertIn("instrumentation key that API Management's own Application Insights logger holds", rules)
+        self.assertIn("the first cases' function app reads that key at the start of each run", rules)
 
     def test_the_scan_reads_what_it_is_meant_to_read(self):
         names = {relative for relative, _ in files()}
-        for expected in ("environment/recording/main.bicep", "environment/main.bicep", ".github/workflows/deploy-hub.yml", "tools/recording-check.py",
-                         "tools/build-usage-functions.sh"):
+        for expected in ("environment/recording/main.bicep", "environment/cases/main.bicep", "environment/main.bicep", ".github/workflows/deploy-hub.yml", "tools/recording-check.py",
+                         "tools/cases-check.py", "tools/build-function-app.sh"):
             self.assertIn(expected, names)
         self.assertNotIn("tools/tests/test_no_keys.py", names)
 

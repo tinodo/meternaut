@@ -4,5 +4,5 @@
   "apis": ["universal-llm-api", "azure-openai-api"],
   "allowedModels": ["gpt-6-luna", "gpt-6.1-sol"],
   "tokensPerMinute": 10000,
-  "tokenQuotaPerMonth": 500000
+  "tokenQuotaPerMonth": 2000000
 }

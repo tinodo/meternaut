@@ -52,7 +52,7 @@ class FilesOfTheAppTests(unittest.TestCase):
             self.assertEqual(entries[name]["version"], version, name)
 
     def test_the_build_installs_only_what_the_lock_holds_and_only_when_the_hashes_match(self):
-        script = (APP_ROOT.parents[1] / "tools" / "build-usage-functions.sh").read_text(encoding="utf-8")
+        script = (APP_ROOT.parents[1] / "tools" / "build-function-app.sh").read_text(encoding="utf-8")
         self.assertIn("--require-hashes", script)
         self.assertIn('--requirement "$source_dir/requirements.txt"', script)
         self.assertIn("--only-binary=:all:", script)

@@ -49,6 +49,25 @@ ALLOWED = {
         "Microsoft.Web/sites",
         "Microsoft.Web/sites/basicPublishingCredentialsPolicies",
     },
+    "environment/cases/main.bicep": {
+        "Microsoft.ManagedIdentity/userAssignedIdentities",
+        "Microsoft.Network/virtualNetworks",
+        "Microsoft.Network/virtualNetworks/subnets",
+        "Microsoft.OperationalInsights/workspaces",
+        "Microsoft.OperationalInsights/workspaces/tables",
+        "Microsoft.Insights/components",
+        "Microsoft.Insights/workbooks",
+        "Microsoft.Storage/storageAccounts",
+        "Microsoft.Storage/storageAccounts/blobServices",
+        "Microsoft.Storage/storageAccounts/blobServices/containers",
+        "Microsoft.EventHub/namespaces",
+        "Microsoft.EventHub/namespaces/eventhubs",
+        "Microsoft.EventHub/namespaces/eventhubs/consumergroups",
+        "Microsoft.Authorization/roleAssignments",
+        "Microsoft.Web/serverfarms",
+        "Microsoft.Web/sites",
+        "Microsoft.Web/sites/basicPublishingCredentialsPolicies",
+    },
 }
 
 
@@ -533,13 +552,13 @@ class Workflow(unittest.TestCase):
     def test_every_step_that_publishes_or_starts_a_job_names_the_actions_it_runs_in_and_never_what_if(self):
         found = 0
         for block in self.steps:
-            if "az functionapp deployment source config-zip" in block or "recording-check.py run" in block:
+            if "az functionapp deployment source config-zip" in block or "recording-check.py run" in block or "cases-check.py run" in block:
                 found += 1
                 condition = re.search(r"(?m)^        if: (.+)$", block)
                 self.assertIsNotNone(condition, block[:80])
                 self.assertNotIn("what-if", condition.group(1))
                 self.assertNotIn("always()", condition.group(1))
-        self.assertEqual(found, 2)
+        self.assertEqual(found, 4, "two publishes and two job starts")
 
     def test_the_recording_is_made_ready_deployed_published_and_listed_in_that_order_and_for_its_action_only(self):
         order = ["Remove the key-based Logic App version of the usage recording, when it is still there", "Deploy the usage recording",
@@ -590,7 +609,7 @@ class Workflow(unittest.TestCase):
         block = self.steps[names.index(again)]
         self.assertIn("if: inputs.action == 'recording'", block)
         self.assertIn("uses: azure/login@", block)
-        self.assertEqual(self.text.count("uses: azure/login@"), 2)
+        self.assertEqual(self.text.count("uses: azure/login@"), 3, "the first sign-in, and one more before each publish (the usage recording's and the cases')")
         self.assertLess(names.index("Deploy the usage recording"), names.index(again))
         self.assertLess(names.index(again), names.index("Publish the usage functions to the function app"))
 
@@ -606,11 +625,11 @@ class Workflow(unittest.TestCase):
         self.assertLess(names.index(title), names.index("The tools, the templates and the kit's module pass their checks"))
         self.assertLess(names.index(title), names.index("Build the function app's package"))
         self.assertIn("version: '3.13'", text("environment/recording/main.bicep"), "the runtime that the app is made for")
-        self.assertIn("python3 -c 'import sys; sys.exit(0 if sys.version_info[:2] == (3, 13) else 1)'", text("tools/build-usage-functions.sh"))
+        self.assertIn("python3 -c 'import sys; sys.exit(0 if sys.version_info[:2] == (3, 13) else 1)'", text("tools/build-function-app.sh"))
 
     def test_the_package_is_built_by_the_script_that_the_checks_use_and_published_with_the_identity_and_no_password(self):
         (build,) = [b for b in self.steps if b.startswith("name: Build the function app's package")]
-        self.assertIn('bash tools/build-usage-functions.sh "$RUNNER_TEMP/usage-functions" "$RUNNER_TEMP/usage-functions.zip"', build)
+        self.assertIn('bash tools/build-function-app.sh usage-functions usage "$RUNNER_TEMP/usage-functions" "$RUNNER_TEMP/usage-functions.zip"', build)
         (publish,) = [b for b in self.steps if b.startswith("name: Publish the usage functions to the function app")]
         self.assertIn("az functionapp deployment source config-zip", publish)
         self.assertIn('--src "$RUNNER_TEMP/usage-functions.zip"', publish)
@@ -620,7 +639,10 @@ class Workflow(unittest.TestCase):
         for word in ("az webapp deploy", "publishing-credentials", "--user", "--password", "kit/"):
             self.assertNotIn(word, publish + build, word)
         self.assertIn("for attempt in 1 2 3", publish)
-        self.assertEqual(text(".github/workflows/checks.yml").count("bash tools/build-usage-functions.sh"), 1, "the checks build the same package, so a missing wheel is found before a deploy")
+        checks = text(".github/workflows/checks.yml")
+        self.assertIn('bash tools/build-function-app.sh usage-functions usage "$RUNNER_TEMP/usage-functions" "$RUNNER_TEMP/usage-functions.zip"', checks,
+                      "the checks build the same package, so a missing wheel is found before a deploy")
+        self.assertIn('bash tools/build-function-app.sh case-functions cases "$RUNNER_TEMP/case-functions" "$RUNNER_TEMP/case-functions.zip"', checks)
 
     def test_the_copy_job_is_started_only_by_its_own_action(self):
         (block,) = [b for b in self.steps if "recording-check.py run" in b]
@@ -662,6 +684,189 @@ class Workflow(unittest.TestCase):
         self.assertLess(block.index("fragments=false"), block.index('RECORDING_FRAGMENTS="$fragments"'))
         self.assertIn("--method get", block)
         self.assertNotRegex(block, r"--method (put|patch|post|delete)")
+
+
+class Cases(unittest.TestCase):
+    """The first cases (environment/cases/main.bicep): what it makes, what it only uses, and who may do what with it."""
+
+    def setUp(self):
+        self.source = text("environment/cases/main.bicep")
+        self.code = re.sub(r"//.*", "", self.source)
+        self.found = resources(self.source)
+
+    def test_it_makes_no_network_no_private_endpoint_no_dns_and_no_storage_account_or_namespace_of_its_own(self):
+        for word in ("Microsoft.ApiManagement", "privateDnsZones", "virtualNetworkPeerings", "routeTables", "privateDnsZoneGroups", "privateEndpoints",
+                     "Microsoft.DocumentDB", "Microsoft.Network/networkSecurityGroups"):
+            self.assertNotIn(word, self.code, word)
+        for name in ("vnet", "functionSubnet", "workspace", "insights", "storage", "blobService", "eventHubs", "sharedHostContainers"):
+            self.assertRegex(self.source, rf"(?m)^resource {name} '[^']+' existing = ", name)
+        made = sorted(name for name, (_, body) in self.found.items() if not re.search(rf"(?m)^resource {name} '[^']+' existing", self.source))
+        self.assertEqual(made, ["casesIdentity", "controlConsumerGroup", "controlHub", "deploymentContainer", "functionApp", "functionOwnsHostContainers", "functionOwnsOwnPackage",
+                                "functionPublishesTelemetry", "functionReceivesControl", "functionUsesQueues", "functionUsesTables", "historyWorkbook", "noBasicAuthForDeployment",
+                                "plan", "tracesRetention", "workflowSendsControl"])
+
+    def test_no_key_is_read_or_written_anywhere(self):
+        for word in ("listKeys", "listConnectionStrings", "listSecrets", "listAccountSas", "listServiceSas", "AccountKey", "SharedAccessKey", "primaryKey", "@secure",
+                     "WEBSITE_CONTENTAZUREFILECONNECTIONSTRING", "SecurityControl", "optOut", "allowSharedKeyAccess: true", "disableLocalAuth: false"):
+            self.assertNotIn(word, self.code, word)
+        self.assertEqual(self.code.count("ConnectionString"), 1, "the telemetry's connection string names the component and holds no secret that ingestion accepts")
+        self.assertIn("{ name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: insights.properties.ConnectionString }", self.code)
+        outputs = [line for line in self.code.splitlines() if line.startswith("output ")]
+        self.assertEqual(len(outputs), 6)
+        for line in outputs:
+            for word in ("listKeys", "ConnectionString", "AccountKey", "primaryKey"):
+                self.assertNotIn(word, line, line)
+
+    def test_the_roles_are_the_ones_that_each_caller_needs_and_nothing_wider(self):
+        guids = set(re.findall(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", self.code))
+        self.assertEqual(guids, {
+            "2b629674-e913-4c01-ae53-ef4638d8f975",  # Azure Event Hubs Data Sender
+            "a638d3c7-ab3a-418d-83e6-5f17a39d4fde",  # Azure Event Hubs Data Receiver
+            "b7e6dc6d-f1e8-4753-8033-0f276bb0955b",  # Storage Blob Data Owner
+            "974c5e8b-45b9-4653-ba55-5f855dd0fb88",  # Storage Queue Data Contributor
+            "0a9a7e1f-b9d0-4cc4-a60d-0319b160aaa3",  # Storage Table Data Contributor
+            "3913510d-42f4-4e42-8a64-420c390055eb",  # Monitoring Metrics Publisher
+        })
+        assignments = {name: body for name, (kind, body) in self.found.items() if kind == "Microsoft.Authorization/roleAssignments"}
+        self.assertEqual(sorted(assignments), ["functionOwnsHostContainers", "functionOwnsOwnPackage", "functionPublishesTelemetry", "functionReceivesControl",
+                                               "functionUsesQueues", "functionUsesTables", "workflowSendsControl"])
+        for name, body in assignments.items():
+            self.assertIn("principalType: 'ServicePrincipal'", body, name)
+        scopes = {name: re.search(r"(?m)^  scope: (.+)$", body).group(1) for name, body in assignments.items()}
+        self.assertEqual(scopes, {"workflowSendsControl": "controlHub", "functionReceivesControl": "controlHub", "functionOwnsOwnPackage": "deploymentContainer",
+                                  "functionOwnsHostContainers": "sharedHostContainers[i]", "functionUsesQueues": "storage", "functionUsesTables": "storage",
+                                  "functionPublishesTelemetry": "insights"})
+        self.assertIn("eventHubsDataSenderRoleId", assignments["workflowSendsControl"])
+        self.assertIn("principalId: workflowPrincipalId", assignments["workflowSendsControl"])
+        self.assertIn("eventHubsDataReceiverRoleId", assignments["functionReceivesControl"])
+        self.assertIn("principalId: casesIdentity.properties.principalId", assignments["functionReceivesControl"])
+
+    def test_the_blob_role_reaches_four_containers_and_never_the_usage_recordings_package(self):
+        self.assertIn("var deploymentContainerName = 'app-package-cases'", self.code)
+        self.assertIn("var sharedHostContainerNames = [\n  'azure-webjobs-hosts'\n  'azure-webjobs-secrets'\n  'azure-webjobs-eventhub'\n]", self.code)
+        self.assertNotIn("app-package-usage", self.source)
+        for name, (kind, body) in self.found.items():
+            if kind == "Microsoft.Authorization/roleAssignments" and "storageBlobDataOwnerRoleId" in body:
+                self.assertNotRegex(body, r"(?m)^  scope: storage$", name)
+        recording = text("environment/recording/main.bicep")
+        self.assertIn("'app-package-usage'", recording, "the container that this app must not reach is the recording's")
+
+    def test_the_function_app_runs_on_flex_consumption_with_an_identity_for_everything_and_no_password_for_its_deployment(self):
+        self.assertIn("name: 'FC1'", self.found["plan"][1])
+        self.assertIn("tier: 'FlexConsumption'", self.found["plan"][1])
+        body = self.found["functionApp"][1]
+        self.assertIn("kind: 'functionapp,linux'", body)
+        self.assertIn("type: 'UserAssigned'", body)
+        self.assertNotIn("SystemAssigned", body)
+        self.assertIn("maximumInstanceCount: 4", body)
+        self.assertNotIn("alwaysReady", body)
+        self.assertIn("virtualNetworkSubnetId: functionSubnet.id", body)
+        self.assertRegex(body, r"(?s)runtime: \{\s+name: 'python'\s+version: '3\.13'")
+        self.assertIn("userAssignedIdentityResourceId: casesIdentity.id", body)
+        for setting in ("AzureWebJobsStorage__credential", "AzureWebJobsStorage__clientId", "EventHubConnection__credential", "EventHubConnection__clientId",
+                        "EventHubConnection__fullyQualifiedNamespace", "APPLICATIONINSIGHTS_AUTHENTICATION_STRING", "AZURE_CLIENT_ID"):
+            self.assertIn(f"name: '{setting}'", body, setting)
+        for setting in ("'AzureWebJobsStorage'", "AzureWebJobsDashboard", "FUNCTIONS_WORKER_RUNTIME", "FUNCTIONS_EXTENSION_VERSION", "WEBSITE_CONTENT", "WEBSITE_RUN_FROM_PACKAGE",
+                        "StorageAccountConnectionString", "basicPublishingCredentialsPolicies"):
+            self.assertNotIn(setting, body, setting)
+        self.assertEqual(self.code.count("allow: false"), 1)
+        self.assertIn("httpsOnly: true", self.code)
+        self.assertIn("minTlsVersion: '1.2'", self.code)
+
+    def test_the_function_app_starts_after_its_roles_and_its_hub(self):
+        self.assertEqual(depends_on(self.found["functionApp"][1]), {"functionReceivesControl", "functionOwnsOwnPackage", "functionOwnsHostContainers", "functionUsesQueues",
+                                                                    "functionUsesTables", "functionPublishesTelemetry", "deploymentContainer", "controlConsumerGroup"})
+
+    def test_the_control_hub_is_one_partition_with_one_group_and_the_app_is_told_both(self):
+        self.assertIn("var controlHubName = 'cases-control'", self.code)
+        self.assertIn("partitionCount: 1", self.found["controlHub"][1])
+        self.assertIn("name: 'casesControl'", self.found["controlConsumerGroup"][1])
+        self.assertIn("{ name: 'EVENTHUB_CASES_CONTROL_NAME', value: controlHubName }", self.code)
+
+    def test_the_history_is_kept_for_a_year_in_the_traces_table_and_shown_by_one_workbook(self):
+        self.assertRegex(self.code, r"(?m)^param historyRetentionDays int = 365$")
+        self.assertIn("name: 'AppTraces'", self.found["tracesRetention"][1])
+        self.assertIn("retentionInDays: historyRetentionDays", self.found["tracesRetention"][1])
+        self.assertIn("loadTextContent('history.workbook.json')", self.found["historyWorkbook"][1])
+        self.assertIn("__APPINSIGHTS_ID__", self.found["historyWorkbook"][1])
+
+    def test_the_workbook_file_is_valid_json_and_only_reads_the_traces(self):
+        import json
+        raw = (ROOT / "environment" / "cases" / "history.workbook.json").read_text(encoding="utf-8")
+        document = json.loads(raw)
+        self.assertEqual(document["version"], "Notebook/1.0")
+        self.assertIn("__APPINSIGHTS_ID__", raw)
+        queries = re.findall(r'"query":\s*"((?:[^"\\]|\\.)*)"', raw)
+        self.assertGreaterEqual(len(queries), 5)
+        for query in queries:
+            self.assertIn("meternaut_event", query)
+            self.assertTrue(query.lstrip().startswith(("let ", "traces")), query[:40])
+            for word in (".set", ".ingest", ".drop", ".create", ".alter", "externaldata"):
+                self.assertNotIn(word, query, word)
+
+
+class CasesWorkflow(unittest.TestCase):
+    """The actions of the deploy workflow that make and start the first cases."""
+
+    def setUp(self):
+        self.text = text(".github/workflows/deploy-hub.yml")
+        self.steps = re.split(r"(?m)^      - ", self.text)[1:]
+        self.names = [re.match(r"name: (.+)", b).group(1) for b in self.steps]
+
+    def step(self, title):
+        (block,) = [b for b in self.steps if b.startswith(f"name: {title}")]
+        return block
+
+    def test_the_cases_are_made_ready_deployed_published_and_listed_in_that_order_and_for_their_action_only(self):
+        order = ["The usage recording and the contract are there, which the first cases build on", "Deploy the first cases",
+                 "Sign in to Azure again for the publish of the cases, because the first sign-in's credential lasts five minutes",
+                 "Build the cases app's package", "Publish the cases to the function app", "The cases app lists its two functions"]
+        positions = [self.names.index(name) for name in order]
+        self.assertEqual(positions, sorted(positions))
+        for name in order:
+            self.assertIn("if: inputs.action == 'cases'", self.steps[self.names.index(name)], name)
+        deploy = self.step("Deploy the first cases")
+        self.assertIn("--template environment/cases/main.bicep", deploy)
+        self.assertIn('--parameters "$RUNNER_TEMP/cases.parameters.json"', deploy)
+        self.assertIn("--output functionAppId", deploy)
+        self.assertEqual(self.text.count("--template environment/cases/main.bicep"), 2, "the preview and the deploy, nothing else")
+
+    def test_the_cases_are_published_with_the_identity_and_no_password_from_the_package_that_the_checks_build(self):
+        build, publish = self.step("Build the cases app's package"), self.step("Publish the cases to the function app")
+        self.assertIn('bash tools/build-function-app.sh case-functions cases "$RUNNER_TEMP/case-functions" "$RUNNER_TEMP/case-functions.zip"', build)
+        self.assertIn('--src "$RUNNER_TEMP/case-functions.zip"', publish)
+        self.assertIn("--build-remote false", publish)
+        self.assertIn("FUNCTION_APP: ${{ steps.params.outputs.cases_function_app_name }}", publish)
+        for word in ("az webapp deploy", "publishing-credentials", "--user", "--password", "kit/", "environment/"):
+            self.assertNotIn(word, publish + build, word)
+
+    def test_the_check_before_the_deploy_writes_nothing_and_reads_no_key(self):
+        block = self.step("The usage recording and the contract are there, which the first cases build on")
+        self.assertNotIn("az-deploy.py", block)
+        self.assertNotRegex(block, r"--method (put|patch|post|delete)")
+        self.assertNotIn("listSecrets", block)
+        self.assertIn("exit 1", block)
+        self.assertIn("Run recording first", block)
+        self.assertIn("Run contract first", block)
+        self.assertIn("properties.gatewayUrl", block)
+
+    def test_one_watch_is_started_only_by_its_own_action_and_never_reads_the_contracts_key(self):
+        block = self.step("Start one Watch and read its History")
+        self.assertIn("if: inputs.action == 'cases-run'", block)
+        self.assertIn("tools/cases-check.py run", block)
+        self.assertIn('--summary "$GITHUB_STEP_SUMMARY"', block)
+        self.assertNotIn("listSecrets", block)
+        self.assertEqual(self.text.count("cases-check.py run"), 1)
+
+    def test_the_preview_of_the_cases_waits_for_the_recording_instead_of_failing(self):
+        block = self.step("What the identity, the model side, the logger, the usage recording and the first cases would change")
+        self.assertIn("STORAGE_ACCOUNT: ${{ steps.params.outputs.storage_account_name }}", block)
+        self.assertLess(block.index("The first cases cannot be previewed yet"), block.index("--template environment/cases/main.bicep"))
+
+    def test_the_cases_have_their_own_words_in_the_summary_for_a_failed_and_a_finished_run(self):
+        block = self.step("What was done")
+        self.assertEqual(len(re.findall(r"^\s+cases\) echo ", block, re.M)), 2)
+        self.assertEqual(len(re.findall(r"^\s+cases-run\) echo ", block, re.M)), 2)
 
 
 if __name__ == "__main__":

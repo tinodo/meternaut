@@ -26,7 +26,7 @@ token): it gets the right to send to the control hub of the usage recording, so 
 Nothing reads the usage store with it (the store has no public endpoint). RECORDING_READER_IDS are the object ids of the
 people who may read the usage store (a Cosmos DB data role; they also need a network path to its private endpoint).
 
-It writes four ARM parameter files into --out-dir (five, with --contract; six when the gateway identity's client id is known):
+It writes four ARM parameter files into --out-dir (six, with --contract: the contract's and the first cases'; seven when the gateway identity's client id is known):
 
     environment.parameters.json       for environment/main.bicep (the model side)
     logger.parameters.json            for environment/gateway/logger.bicep
@@ -35,6 +35,9 @@ It writes four ARM parameter files into --out-dir (five, with --contract; six wh
     recording.parameters.json         for environment/recording/main.bicep (the usage recording: Event Hubs, function app, Cosmos DB)
     contract.parameters.json          for environment/gateway/contract.bicep, from --contract (environment/contract.json) and
                                       --contract-policy (environment/gateway/contract-policy.xml)
+    cases.parameters.json             for environment/cases/main.bicep (the first cases: the function app that finds leads and writes the
+                                      History); written together with the contract, because it names the contract's subscription whose
+                                      key the app reads at the start of a run
 
 Every value is checked before anything is deployed. The name of the model account is worked out here, from the
 subscription and the resource group, so it is the same on every run (a run after a removal finds, and the workflow
@@ -180,6 +183,11 @@ def legacy_names(subscription: str, group: str) -> dict[str, str]:
         "legacy_connection_name": "azuremonitorlogs",
         "legacy_storage_account_name": f"stmeternaut{token}",
     }
+
+
+def cases_names(subscription: str, group: str) -> dict[str, str]:
+    """The name of the cases app, a host name too. Everything else of the cases app has a fixed name inside the project's group."""
+    return {"cases_function_app_name": f"func-meternaut-cases-{digest(subscription, group)}"}
 
 
 def function_subnet(vnet: ipaddress.IPv4Network, endpoints: ipaddress.IPv4Network) -> ipaddress.IPv4Network:
@@ -508,7 +516,11 @@ def build(env, models: list[dict], preview: bool = False, contract: dict | None 
         "recording_endpoints": ",".join(f"{endpoint_name}:{zone}" for endpoint_name, zone in recording_endpoints(names)),
         "usage_identity_name": "id-meternaut-usage",
         "appinsights_name": "appi-meternaut",
+        "cases_identity_name": "id-meternaut-cases",
+        "cases_hub_name": "cases-control",
+        "gateway_url": f"https://{gateway.group(3).lower()}.azure-api.net",
         **names,
+        **cases_names(subscription, group),
         **legacy_names(subscription, group),
     }
     files = {
@@ -530,6 +542,19 @@ def build(env, models: list[dict], preview: bool = False, contract: dict | None 
             raise Problem("a contract needs its policy template")
         files["contract.parameters.json"], contract_outputs = contract_files(contract, policy_template, gateway.group(3))
         outputs.update(contract_outputs)
+        files["cases.parameters.json"] = parameters({
+            "location": location,
+            "owner": owner,
+            "storageAccountName": names["storage_account_name"],
+            "eventHubNamespaceName": names["event_hub_namespace"],
+            "functionAppName": outputs["cases_function_app_name"],
+            "workflowPrincipalId": deployer.lower(),
+            "scopeSubscriptions": subscription.lower(),
+            "gatewayUrl": outputs["gateway_url"],
+            "gatewayProductSubscriptionId": f"{need(env, 'GATEWAY_RESOURCE_ID')}/subscriptions/{contract_outputs['contract_subscription']}",
+            "modelDetective": contract["allowedModels"][0],
+            "modelSkeptic": contract["allowedModels"][1] if len(contract["allowedModels"]) > 1 else contract["allowedModels"][0],
+        })
     return files, outputs
 
 
