@@ -379,8 +379,8 @@ def build(env, models: list[dict], preview: bool = False, contract: dict | None 
     subnet = network(need(env, "ENV_PE_SUBNET_PREFIX"), "ENV_PE_SUBNET_PREFIX")
     if not vnet.subnet_of(PRIVATE_SPACE) or not 16 <= vnet.prefixlen <= 28:
         raise Problem("ENV_VNET_PREFIX is inside 10.0.0.0/8 and between /16 and /28")
-    if not subnet.subnet_of(vnet) or subnet.prefixlen > 29:
-        raise Problem("ENV_PE_SUBNET_PREFIX lies inside the virtual network and is at least a /29")
+    if not subnet.subnet_of(vnet) or subnet.prefixlen > 28:
+        raise Problem("ENV_PE_SUBNET_PREFIX lies inside the virtual network and is at least a /28: the usage recording has five private endpoints and the model account one, and Azure keeps five addresses of every subnet")
 
     dns = items(need(env, "ENV_DNS_SERVERS"), "ENV_DNS_SERVERS", 3)
     for server in dns:

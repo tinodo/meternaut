@@ -287,10 +287,12 @@ class Recording(unittest.TestCase):
         })
         found = resources(self.source)
         assignments = {name: body for name, (kind, body) in found.items() if kind == "Microsoft.Authorization/roleAssignments"}
-        self.assertEqual(sorted(assignments), ["functionOwnsBlobs", "functionPublishesTelemetry", "functionReceives", "functionUsesQueues", "functionUsesTables", "gatewaySends", "workflowSends"])
+        self.assertEqual(sorted(assignments), ["functionOwnsBlobs", "functionPublishesTelemetry", "functionReceivesControl", "functionReceivesPii", "functionReceivesUsage",
+                                               "functionUsesQueues", "functionUsesTables", "gatewaySendsPii", "gatewaySendsUsage", "workflowSendsControl"])
         for name, body in assignments.items():
             self.assertIn("principalType: 'ServicePrincipal'", body, name)
-            self.assertRegex(body, r"(?m)^  scope: (eventHubs|storage|insights)$", name)  # on the one resource, never on the group or the subscription
+            # on the one resource, never on the group, the subscription or the whole namespace
+            self.assertRegex(body, r"(?m)^  scope: (usageHub|piiHub|controlHub|storage|insights)$", name)
         data_roles = sorted(n for n, (k, _) in found.items() if k == "Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments")
         self.assertEqual(data_roles, ["functionWritesUsage", "readersOfTheData"])
         self.assertIn("cosmosDataContributorRoleId", found["functionWritesUsage"][1])
@@ -302,14 +304,19 @@ class Recording(unittest.TestCase):
             self.assertNotIn(word, self.code, word)
         self.assertNotIn("tags: union(", self.code)
 
-    def test_the_gateway_and_the_workflow_only_send_and_the_function_app_only_receives(self):
+    def test_the_gateway_and_the_workflow_only_send_and_the_function_app_only_receives_each_on_the_hub_it_uses(self):
         found = resources(self.source)
-        self.assertIn("eventHubsDataSenderRoleId", found["gatewaySends"][1])
-        self.assertIn("principalId: gatewayPrincipalId", found["gatewaySends"][1])
-        self.assertIn("eventHubsDataSenderRoleId", found["workflowSends"][1])
-        self.assertIn("principalId: workflowPrincipalId", found["workflowSends"][1])
-        self.assertIn("eventHubsDataReceiverRoleId", found["functionReceives"][1])
-        self.assertIn("principalId: usageIdentity.properties.principalId", found["functionReceives"][1])
+        for name, hub, principal in (("gatewaySendsUsage", "usageHub", "gatewayPrincipalId"), ("gatewaySendsPii", "piiHub", "gatewayPrincipalId"),
+                                     ("workflowSendsControl", "controlHub", "workflowPrincipalId")):
+            body = found[name][1]
+            self.assertIn("eventHubsDataSenderRoleId", body, name)
+            self.assertIn(f"scope: {hub}", body, name)
+            self.assertIn(f"principalId: {principal}", body, name)
+        for name, hub in (("functionReceivesUsage", "usageHub"), ("functionReceivesPii", "piiHub"), ("functionReceivesControl", "controlHub")):
+            body = found[name][1]
+            self.assertIn("eventHubsDataReceiverRoleId", body, name)
+            self.assertIn(f"scope: {hub}", body, name)
+            self.assertIn("principalId: usageIdentity.properties.principalId", body, name)
 
     def test_the_applications_insights_of_the_gateway_is_a_parameter_because_it_is_in_another_subscription(self):
         for name in ("gatewayAppInsightsSubscriptionId", "gatewayAppInsightsResourceGroup", "gatewayAppInsightsName"):
@@ -362,7 +369,7 @@ class Recording(unittest.TestCase):
         self.assertIn("deploymentContainer", depends_on(found["storageEndpoints"][1]))
         self.assertIn("usageContainers", depends_on(found["cosmosEndpoint"][1]))
         self.assertEqual(depends_on(found["eventHubsEndpoint"][1]), {"usageConsumerGroup", "piiConsumerGroup", "controlConsumerGroup"})
-        for name in ("gatewaySends", "workflowSends", "functionReceives"):
+        for name in ("gatewaySendsUsage", "gatewaySendsPii", "workflowSendsControl", "functionReceivesUsage", "functionReceivesPii", "functionReceivesControl"):
             self.assertIn("eventHubsEndpoint", depends_on(found[name][1]), name)
         for name in ("functionOwnsBlobs", "functionUsesQueues", "functionUsesTables"):
             self.assertIn("storageEndpoints", depends_on(found[name][1]), name)
@@ -395,7 +402,8 @@ class Recording(unittest.TestCase):
 
     def test_the_order_that_the_services_need_is_in_the_template(self):
         found = resources(self.source)
-        self.assertEqual(depends_on(found["functionApp"][1]), {"functionReceives", "functionOwnsBlobs", "functionUsesQueues", "functionUsesTables", "functionPublishesTelemetry", "functionWritesUsage"},
+        self.assertEqual(depends_on(found["functionApp"][1]), {"functionReceivesUsage", "functionReceivesPii", "functionReceivesControl", "functionOwnsBlobs", "functionUsesQueues",
+                                                               "functionUsesTables", "functionPublishesTelemetry", "functionWritesUsage"},
                          "the roles before the first start of the app: it reads its storage and its event hubs with them")
         self.assertIn("deploymentContainer", depends_on(found["storageEndpoints"][1]))
 

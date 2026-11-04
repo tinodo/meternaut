@@ -203,9 +203,17 @@ class Recording(unittest.TestCase):
         files, _ = self.files(ENV_PE_SUBNET_PREFIX="10.53.0.32/27")
         self.assertEqual(values(files["environment.parameters.json"])["funcSubnetPrefix"], "10.53.0.0/27")
         # no room: a /28 network cannot hold a /27
-        code, out, err, files = run({**SETTINGS, "ENV_VNET_PREFIX": "10.53.0.0/28", "ENV_PE_SUBNET_PREFIX": "10.53.0.0/29"})
+        code, out, err, files = run({**SETTINGS, "ENV_VNET_PREFIX": "10.53.0.0/28", "ENV_PE_SUBNET_PREFIX": "10.53.0.0/28"})
         self.assertEqual((code, out, files), (2, "", {}))
         self.assertIn("ENV_VNET_PREFIX", err)
+
+    def test_the_endpoint_subnet_holds_the_six_private_endpoints(self):
+        # six endpoints and the five addresses that Azure keeps: a /29 has eight addresses and cannot hold them
+        code, out, err, files = run({**SETTINGS, "ENV_PE_SUBNET_PREFIX": "10.53.0.0/29"})
+        self.assertEqual((code, out, files), (2, "", {}))
+        self.assertIn("ENV_PE_SUBNET_PREFIX", err)
+        self.assertIn("at least a /28", err)
+        self.assertEqual(run({**SETTINGS, "ENV_PE_SUBNET_PREFIX": "10.53.0.0/28"})[0], 0)
 
     def test_the_private_endpoints_and_their_zones_are_the_ones_the_template_makes(self):
         _, outputs = self.files()

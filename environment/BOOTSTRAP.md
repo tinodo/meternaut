@@ -151,15 +151,18 @@ The owner ordered the usage recording built ("build the whole thing, with the 26
    ```powershell
    $mgmt = '<subscription id of the central workspace>'; $wsGroup = '<its resource group>'; $ws = '<resource id of the central workspace>'
    az role assignment create --assignee-object-id <object id of the function app's identity> --assignee-principal-type ServicePrincipal --role 'Monitoring Reader' --scope $insights
-   $role = @{ Name = 'Meternaut usage reader'; IsCustom = $true; Description = 'Reads one table (AppMetrics) of the central workspace, so that the usage copy jobs of Meternaut can read the gateway token metrics. Nothing else.'
-     Actions = @('Microsoft.OperationalInsights/workspaces/read', 'Microsoft.OperationalInsights/workspaces/query/read', 'Microsoft.OperationalInsights/workspaces/query/AppMetrics/read')
-     NotActions = @(); DataActions = @(); AssignableScopes = @("/subscriptions/$mgmt/resourceGroups/$wsGroup") }
-   $role | ConvertTo-Json -Depth 5 | Set-Content role.json; az role definition create --role-definition '@role.json'
+   # the custom role is made only when it is absent (it was made on 2026-11-04); the definition goes in as text, not as a file
+   if (-not (az role definition list --subscription $mgmt --name 'Meternaut usage reader' --query '[0].name' --output tsv)) {
+     $role = @{ Name = 'Meternaut usage reader'; IsCustom = $true; Description = 'Reads one table (AppMetrics) of the central workspace, so that the usage copy jobs of Meternaut can read the gateway token metrics. Nothing else.'
+       Actions = @('Microsoft.OperationalInsights/workspaces/read', 'Microsoft.OperationalInsights/workspaces/query/read', 'Microsoft.OperationalInsights/workspaces/query/AppMetrics/read')
+       NotActions = @(); DataActions = @(); AssignableScopes = @("/subscriptions/$mgmt/resourceGroups/$wsGroup") }
+     az role definition create --subscription $mgmt --role-definition ($role | ConvertTo-Json -Depth 5 -Compress)
+   }
    az role assignment create --assignee-object-id <object id of the function app's identity> --assignee-principal-type ServicePrincipal --role 'Meternaut usage reader' --scope $ws
    ```
 
-   The custom role exists since 2026-11-04 (made for the first version's Logic App); only the assignment to the new identity is new. The identity is user-assigned, so it survives a new function app and keeps these roles; if it is ever deleted and made again, its object id is new and this step is done again.
-4. **The roles of the first version's Logic App identity are removed.** The Logic App of the first version had a system-assigned identity with the same two roles, made by hand, and one role on the Event Hubs namespace made by the template. The workflow deletes the Logic App; the identity goes with it, and what is left are three role assignments of a principal that no longer exists. They are deleted by hand (`az role assignment delete --ids <id>`; the principal shows as "Identity not found"), and reported.
+   The custom role exists since 2026-11-04 (made for the first version's Logic App); only the assignment to the new identity is new. The identity is user-assigned, so it survives a new function app and keeps these roles; if it is ever deleted and made again, its object id is new and this step is done again. These two assignments are in other teams' subscriptions, where the workflow's identity has no rights and must not get any: that is why they are a hand step and not an action of the workflow.
+4. **What the first version left behind is removed.** Four role assignments belong to the version that this one replaced, and the incremental deployment does not remove them: the three of the old Logic App's identity (the workflow deletes the Logic App, and the identity goes with it, so each shows as "Identity not found": *Monitoring Reader* on the gateway's Application Insights, *Meternaut usage reader* on the workspace, and *Azure Event Hubs Data Receiver* on the Event Hubs namespace), and the namespace-wide *Azure Event Hubs Data Sender* of the gateway's identity, which the template now gives on the two usage hubs only. The workflow's identity also has a Cosmos DB data role *Data Reader* from the first version, which nothing needs now. They are deleted by hand after the first run (`az role assignment delete --ids <id>` and `az cosmosdb sql role assignment delete`), and each deletion is reported.
 
 One optional repository variable: `RECORDING_READER_IDS`, a comma-separated list of the object ids of the people who may read the usage store in Cosmos DB (a data role of Cosmos DB, not an Azure role). The store has no public endpoint, so a reader also needs a network path to its private endpoint (a machine in the virtual network or one that is connected to it); the Azure portal's Data Explorer does not work from outside. Without the variable nobody but the function app can read it.
 

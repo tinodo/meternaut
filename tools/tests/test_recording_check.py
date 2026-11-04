@@ -4,6 +4,7 @@ import io
 import json
 import os
 import re
+import sys
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
@@ -150,6 +151,7 @@ class SendingTheEvent(unittest.TestCase):
         (url, headers, body), = self.sent()
         self.assertEqual(url, f"https://{NAMESPACE}.servicebus.windows.net/usage-control/messages?timeout=60&api-version=2014-01")
         self.assertEqual(headers["Authorization"], f"Bearer {SECRET}")
+        self.assertEqual(headers["Content-Type"], "application/atom+xml;type=entry;charset=utf-8", "the type that the Event Hubs REST send documents; another one is answered with 415")
         self.assertEqual(json.loads(body), {"job": "all", "requestId": "a" * 32})
 
     def test_the_token_is_asked_for_the_event_hubs_audience_only(self):
@@ -191,6 +193,25 @@ class Parsing(unittest.TestCase):
     def test_the_keys_are_the_ones_the_functions_write(self):
         self.assertEqual(rc.RESULT_KEYS, {"job", "requestId", "trigger", "ok", "firstRun", "from", "to", "rows", "written", "containerCount", "marker", "error"})
         self.assertEqual(rc.RESULT_PREFIX, "usage_job_result ")
+
+    def test_a_line_that_the_functions_write_is_read_by_the_checker(self):
+        # the other side of the agreement: the function app's own writer (src/usage-functions/usage/results.py, standard library only)
+        app = str(ROOT / "src" / "usage-functions")
+        sys.path.insert(0, app)
+        try:
+            from usage import results
+        finally:
+            sys.path.remove(app)
+        self.assertEqual(results.RESULT_PREFIX, rc.RESULT_PREFIX)
+        good = results.JobResult(job="llm-usage-ingestion", request_id="r", trigger="control", ok=True, first_run=False, window_from="2026-11-04T10:00:00",
+                                 window_to="2026-11-04T13:00:00", rows=3, written=3, container_count=5, marker="2026-11-04T13:00:00", error=None)
+        failed = results.JobResult(job="mcp-usage-ingestion", request_id="r", trigger="control", ok=False, first_run=False, window_from=None, window_to=None,
+                                   rows=0, written=0, container_count=None, marker=None, error="HttpResponseError: (Forbidden) no role")
+        for written in (good, failed):
+            parsed = rc.parse_result(written.to_line())
+            self.assertIsNotNone(parsed, written.to_line())
+            self.assertEqual(set(parsed), rc.RESULT_KEYS)
+            self.assertEqual((parsed["job"], parsed["ok"], parsed["requestId"], parsed["trigger"]), (written.job, written.ok, "r", "control"))
 
 
 class Run(unittest.TestCase):

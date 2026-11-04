@@ -434,9 +434,11 @@ resource eventHubsEndpoint 'Microsoft.Network/privateEndpoints@2025-05-01' = {
   ]
 }
 
-resource gatewaySends 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  scope: eventHubs
-  name: guid(eventHubs.id, gatewayPrincipalId, eventHubsDataSenderRoleId)
+// Each role on the one event hub that the caller uses, not on the namespace: the gateway sends to the two usage hubs and cannot start a
+// copy job; the workflow sends to the control hub and cannot write usage events; the function app reads each of the three.
+resource gatewaySendsUsage 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  scope: usageHub
+  name: guid(usageHub.id, gatewayPrincipalId, eventHubsDataSenderRoleId)
   properties: {
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', eventHubsDataSenderRoleId)
     principalId: gatewayPrincipalId
@@ -447,9 +449,22 @@ resource gatewaySends 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   ]
 }
 
-resource workflowSends 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  scope: eventHubs
-  name: guid(eventHubs.id, workflowPrincipalId, eventHubsDataSenderRoleId)
+resource gatewaySendsPii 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  scope: piiHub
+  name: guid(piiHub.id, gatewayPrincipalId, eventHubsDataSenderRoleId)
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', eventHubsDataSenderRoleId)
+    principalId: gatewayPrincipalId
+    principalType: 'ServicePrincipal'
+  }
+  dependsOn: [
+    eventHubsEndpoint
+  ]
+}
+
+resource workflowSendsControl 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  scope: controlHub
+  name: guid(controlHub.id, workflowPrincipalId, eventHubsDataSenderRoleId)
   properties: {
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', eventHubsDataSenderRoleId)
     principalId: workflowPrincipalId
@@ -460,9 +475,35 @@ resource workflowSends 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   ]
 }
 
-resource functionReceives 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  scope: eventHubs
-  name: guid(eventHubs.id, usageIdentity.id, eventHubsDataReceiverRoleId)
+resource functionReceivesUsage 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  scope: usageHub
+  name: guid(usageHub.id, usageIdentity.id, eventHubsDataReceiverRoleId)
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', eventHubsDataReceiverRoleId)
+    principalId: usageIdentity.properties.principalId
+    principalType: 'ServicePrincipal'
+  }
+  dependsOn: [
+    eventHubsEndpoint
+  ]
+}
+
+resource functionReceivesPii 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  scope: piiHub
+  name: guid(piiHub.id, usageIdentity.id, eventHubsDataReceiverRoleId)
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', eventHubsDataReceiverRoleId)
+    principalId: usageIdentity.properties.principalId
+    principalType: 'ServicePrincipal'
+  }
+  dependsOn: [
+    eventHubsEndpoint
+  ]
+}
+
+resource functionReceivesControl 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  scope: controlHub
+  name: guid(controlHub.id, usageIdentity.id, eventHubsDataReceiverRoleId)
   properties: {
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', eventHubsDataReceiverRoleId)
     principalId: usageIdentity.properties.principalId
@@ -635,7 +676,9 @@ resource functionApp 'Microsoft.Web/sites@2024-04-01' = {
     }
   }
   dependsOn: [
-    functionReceives
+    functionReceivesUsage
+    functionReceivesPii
+    functionReceivesControl
     functionOwnsBlobs
     functionUsesQueues
     functionUsesTables
