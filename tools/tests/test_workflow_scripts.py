@@ -115,5 +115,56 @@ class WorkOutTheSettings(unittest.TestCase):
         self.assertEqual(labels, ["environment", "logger", "eventhub-loggers", "kit", "recording", "contract"])
 
 
+STAND_IN_PYTHON = """#!/bin/bash
+if [ "$1" = "--version" ]; then echo "Python $FAKE_PYTHON"; exit 0; fi
+if [ "$1" = "-c" ]; then
+  if [ "$FAKE_PYTHON" = "3.13.0" ]; then exit 0; fi
+  exit 1
+fi
+echo "python3 $*" >> "$FAKE_LOG"
+"""
+
+
+@unittest.skipIf(BASH is None, "no bash on this machine")
+class BuildTheFunctionPackage(unittest.TestCase):
+    """tools/build-usage-functions.sh against a stand-in for python3: what it refuses, and the exact install that it asks for."""
+
+    def run_script(self, python_version):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            bin_dir = tmp / "bin"
+            bin_dir.mkdir()
+            python3 = bin_dir / "python3"
+            python3.write_text(STAND_IN_PYTHON, encoding="utf-8", newline="\n")
+            python3.chmod(python3.stat().st_mode | stat.S_IEXEC)
+            log = tmp / "log.txt"
+            log.write_text("", encoding="utf-8")
+            build = tmp / "build"
+            env = {**os.environ, "PATH": f"{bin_dir.as_posix()}{os.pathsep}{os.environ['PATH']}", "FAKE_PYTHON": python_version, "FAKE_LOG": log.as_posix()}
+            done = subprocess.run([BASH, "-e", "-o", "pipefail", (ROOT / "tools" / "build-usage-functions.sh").as_posix(), build.as_posix()],
+                                  capture_output=True, text=True, env=env, cwd=ROOT)
+            copied = sorted(p.name for p in build.iterdir()) if build.exists() else []
+            return done, log.read_text(encoding="utf-8").splitlines(), copied
+
+    def test_another_python_than_3_13_stops_it_before_anything_is_built(self):
+        for version in ("3.12.3", "3.14.0", "3.11.9"):
+            done, calls, copied = self.run_script(version)
+            self.assertEqual(done.returncode, 1, version)
+            self.assertIn("build with Python 3.13", done.stderr)
+            self.assertIn(f"Python {version}", done.stderr)
+            self.assertEqual((calls, copied), ([], []), "no download and no copy before the refusal")
+
+    def test_python_3_13_installs_only_wheels_of_the_lock_for_linux_and_checks_their_hashes(self):
+        done, calls, copied = self.run_script("3.13.0")
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(copied, ["function_app.py", "host.json", "requirements.txt", "usage"], "the app's files; the stand-in pip makes no target directory")
+        (install,) = calls
+        for flag in ("-m pip install", "--require-hashes", "--only-binary=:all:", "--platform manylinux2014_x86_64", "--platform manylinux_2_28_x86_64",
+                     "--implementation cp", "--python-version 3.13", "--no-compile", "/.python_packages/lib/site-packages", "src/usage-functions/requirements.txt"):
+            self.assertIn(flag, install)
+        for word in ("--index-url", "--extra-index-url", "--trusted-host", "--no-deps"):
+            self.assertNotIn(word, install, word)
+
+
 if __name__ == "__main__":
     unittest.main()

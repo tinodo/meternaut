@@ -594,6 +594,20 @@ class Workflow(unittest.TestCase):
         self.assertLess(names.index("Deploy the usage recording"), names.index(again))
         self.assertLess(names.index(again), names.index("Publish the usage functions to the function app"))
 
+    def test_the_deploy_workflow_builds_with_the_python_of_the_functions_runtime_as_the_checks_do(self):
+        # A run found it: the runner's own Python was 3.12, and the app's library needs 3.13. The checks had 3.13 and could not see it.
+        names = self.names()
+        title = "Set up Python 3.13, the runtime of the function app"
+        (block,) = [b for b in self.steps if b.startswith(f"name: {title}")]
+        pinned = re.search(r"uses: (actions/setup-python@[0-9a-f]{40})", block)
+        self.assertIsNotNone(pinned, "a full commit, as the lint wants")
+        self.assertIn(f"uses: {pinned.group(1)}", text(".github/workflows/checks.yml"), "the very action that the checks use")
+        self.assertIn('python-version: "3.13"', block)
+        self.assertLess(names.index(title), names.index("The tools, the templates and the kit's module pass their checks"))
+        self.assertLess(names.index(title), names.index("Build the function app's package"))
+        self.assertIn("version: '3.13'", text("environment/recording/main.bicep"), "the runtime that the app is made for")
+        self.assertIn("python3 -c 'import sys; sys.exit(0 if sys.version_info[:2] == (3, 13) else 1)'", text("tools/build-usage-functions.sh"))
+
     def test_the_package_is_built_by_the_script_that_the_checks_use_and_published_with_the_identity_and_no_password(self):
         (build,) = [b for b in self.steps if b.startswith("name: Build the function app's package")]
         self.assertIn('bash tools/build-usage-functions.sh "$RUNNER_TEMP/usage-functions" "$RUNNER_TEMP/usage-functions.zip"', build)

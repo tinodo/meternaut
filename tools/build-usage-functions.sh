@@ -8,6 +8,13 @@
 # index from inside the app's network. Tests are left out; so are compiled caches.
 set -euo pipefail
 
+# The libraries are wheels for Python 3.13, and the library that the Functions app is written against (azure-functions 2.x) needs
+# it: pip checks that against the interpreter that runs it, so that is the one that builds. Not another one, silently.
+if ! python3 -c 'import sys; sys.exit(0 if sys.version_info[:2] == (3, 13) else 1)'; then
+  echo "error: build with Python 3.13, the runtime of the function app; this is $(python3 --version 2>&1)" >&2
+  exit 1
+fi
+
 source_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../src/usage-functions" && pwd)"
 build="${1:?the build directory is the first argument}"
 zip_file="${2:-}"
