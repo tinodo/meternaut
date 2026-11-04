@@ -25,8 +25,11 @@ def source_files():
 
 class FilesOfTheAppTests(unittest.TestCase):
     def test_the_source_of_the_lock_is_the_four_direct_pins_and_nothing_else(self):
+        # The versions are the business of Dependabot and the lock; this holds the shape: four libraries, each at one exact version.
         lines = (APP_ROOT / "requirements.in").read_text(encoding="utf-8").splitlines()
-        self.assertEqual(lines, ["azure-functions==2.3.0", "azure-identity==1.25.3", "azure-cosmos==4.17.1", "azure-monitor-query==2.0.0"])
+        for line in lines:
+            self.assertRegex(line, r"^[a-z0-9][a-z0-9._-]*==[0-9][0-9A-Za-z.]*$", "an exact pin, not a range")
+        self.assertEqual([line.split("==")[0] for line in lines], ["azure-functions", "azure-identity", "azure-cosmos", "azure-monitor-query"])
 
     def test_the_lock_pins_every_library_at_one_version_with_hashes_and_holds_the_four_pins(self):
         entries, current = {}, None
