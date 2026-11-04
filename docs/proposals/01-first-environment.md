@@ -1,6 +1,6 @@
 # The first environment — a proposal
 
-**Status: approved on 2026-11-03 (the owner: "deploy it"); steps 1 to 3 are deployed and checked, and step 4 is done except the usage records. On 2026-11-04 the owner ordered the usage recording built ("build the whole thing, with the 265 storage ... build it now"): it is step 5 below, in the repository and not yet deployed. The changelog says what is deployed.** This page says what is set up first, in what order, and what is checked at each step. It follows [decision 4 of the design](../design/12-decisions.md) (the Citadel hub is the only door for model calls) and slice 0.2 of the [build plan](../build-plan/01-the-slices.md).
+**Status: approved on 2026-11-03 (the owner: "deploy it"); steps 1 to 5 are deployed and checked. On 2026-11-04 the owner ordered the usage recording built ("build the whole thing, with the 265 storage ... build it now"): it is step 5 below, deployed and checked end to end, with the deviations that the changelog and the section "What the first deploy found" name. The changelog says what is deployed.** This page says what is set up first, in what order, and what is checked at each step. It follows [decision 4 of the design](../design/12-decisions.md) (the Citadel hub is the only door for model calls) and slice 0.2 of the [build plan](../build-plan/01-the-slices.md).
 
 ## Why there is a gateway at all
 
