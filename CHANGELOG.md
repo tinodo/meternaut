@@ -16,7 +16,14 @@ All notable changes, newest first. Versions are git tags: `ideation-vN` for the 
 
 **Fixed** (this change): `Referrer-Policy: same-origin`, which sends the console's own origin on a POST and still sends no referrer to another site. A test pins the policy and fails with the old one (checked), and the same test refuses a form or a page that sets a policy of its own. [Rule 28](AGENTS.md) makes the browser check part of every deploy that changes the console, and the [loop proposal](docs/proposals/04-the-loop.md) lists it under "What proves it". A page that was open before the deploy keeps the old header, so it has to be reloaded before a button is pressed.
 
-**Not checked yet.** The deploy of this fix and the browser check after it; the approve button itself (it needs the owner's press); a form sent after the sign-in has expired (the platform answers with a redirect to Entra, which the page's `form-action 'self'` may block in a Chromium browser).
+**Checked after the deploy** (Hub run 42086362549, published 18:42:46 UTC; the same POST to a plan id that does not exist, from the signed-in browser panel, with no change to the page).
+- 18:43:58, the first try: the page had been loaded at 18:43:33, and the POST was refused with the empty 403 again (no request in the telemetry). The platform's own warm-up request of a new container (`/robots933456.txt`) is in the telemetry at 18:43:47, so that page came from the old container, with the old header, 14 seconds before the new one took over. This is inferred from the two timestamps, not measured.
+- 18:46:37, 18:47:07 and 18:48:19, with pages loaded after the swap (a start page and the plan page twice, 9, 9 and 36 seconds before the POST): all three **reached the app**, which answered 404 "I cannot find this request" (telemetry: `POST /ok/zz00000004`, `…05`, `…06`, 130, 84 and 88 ms). So the delay between loading a page and sending its form does not matter, and the page does not either.
+- Both plans are still waiting and both disks are `Unattached`: no button that decides was pressed.
+
+The lesson for the browser check ([rule 28](AGENTS.md)): a page loaded in the first minute after a publish can still come from the old container; the check loads its page again after the warm-up request shows in the telemetry.
+
+**Not checked yet.** The approve button itself (it needs the owner's press, after he reloads the plan page), the delete and the letter after it, and a form sent after the sign-in has expired (the platform answers with a redirect to Entra, which the page's `form-action 'self'` may block in a Chromium browser).
 
 ## The console is back after 54 minutes; the route table was five minutes late, and the baseline makes its network once too — 2026-11-05
 
