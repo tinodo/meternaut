@@ -757,6 +757,8 @@ jobs:
 
       - name: Knock at the console's front door
         if: inputs.action == 'loop-check' || inputs.action == 'cases'
+        # Each request can wait up to a minute when the platform's front end is slow, and the loop has five tries: the limit keeps the queue of the hub free.
+        timeout-minutes: 20
         env:
           FUNCTION_APP: ${{ steps.params.outputs.cases_function_app_name }}
         run: |
