@@ -37,7 +37,7 @@ People never see the system's internal names. The table is the bridge between th
 | Stored quote | **Price check**; "quote" means only an offer from a partner or a billing owner |
 | Credential | **Standing permission** |
 | Approval, Action | **Your OK**, **Change** |
-| Approval classes R1, R2, R3 | **One tap** (one OK in the card; opening the plan approves nothing), **your OK on a page**, **two people** |
+| Approval classes R1, R2, R3 | **Plan in the card** (its button opens the page; opening approves nothing), **your OK on a page**, **two people** |
 | Ledger | **History** |
 | Three pauses | **Pause messages** (a person's holiday), **Pause changes here** (an owner stops standing permissions), **the kill switch** (the platform team) |
 | Hub, Runner, Detective, Skeptic, Agenda | Never shown; Atlas appears only to reviewers and contributors |
@@ -83,7 +83,7 @@ Examples are invented and labelled in every document, and their numbers stay the
 
 | Example | In one line |
 |---|---|
-| E1 A web-shop QA environment | A Question first about a month-end job, then a one-tap schedule worth about €690 a month |
+| E1 A web-shop QA environment | A Question first about a month-end job, then a schedule worth about €690 a month |
 | E2 An orders database one size down | A change on a page, with a safety check that stops and asks the approver whether to restore if the processor stays high |
 | E3 Two unattached disks | A small saving seen only at list prices, so a Scenario |
 | E4 A one-year compute savings plan | A purchase by two independent approvers, USD 219,000 (about €205,860) over the year, never undone |

@@ -117,19 +117,10 @@
       "type": "ActionSet",
       "actions": [
         {
-          "type": "Action.Execute",
-          "title": "Undo",
-          "verb": "undo",
-          "data": {
-            "requestId": "${requestId}",
-            "planCode": "${planCode}"
-          },
-          "associatedInputs": "none",
-          "fallback": {
-            "type": "Action.OpenUrl",
-            "title": "Open on the page",
-            "url": "${pageUrl}"
-          }
+          "type": "Action.OpenUrl",
+          "id": "page-button",
+          "title": "Open the page to undo",
+          "url": "${pageUrl}"
         },
         {
           "type": "Action.Execute",

@@ -43,8 +43,7 @@ An **ask** is a Question or a Recommendation; a **push** is any message the syst
 | Weekly desk | At most five items and about ten minutes of work; default Tuesday 10:00 local, the person's choice. Repeats nothing but a folded-in reminder |
 | Monday letter | Arrives before 09:00 local |
 | Receipt and answer | Goals: "Received. Nothing has changed yet" within one second where the host allows; an answer to Explain, Challenge or Teach within two minutes in 95 % of cases, else "I will answer in this thread" |
-| Undo window | Set per change recipe; 24 hours for one-tap changes |
-| One-tap cap | Five per approver per day; after five, "your OK on a page", nothing blocked |
+| Undo | Only what Azure offers for that resource type; the recipe says |
 | Fatigue review | At least 20 delivered asks to a group in 28 days, over 40 % deferred or declined |
 | Targets | Median time from the first observable interaction to the decision, under two minutes; share decided within seven days, declines included; mute and stop rate; regret and corrections. Never the approval rate, which rewards rubber stamps |
 
@@ -86,7 +85,7 @@ One reminder goes out at day 7: its own message (C9), or part of that week's des
 
 ## Hours, Pause messages, the emergency lane and the review
 
-**Working days, time zone and quiet hours** are stated by the person (Hello card C1, Settings C14), never taken from calendars, presence or out-of-office replies. A push due in quiet hours waits. An undo window that would close outside working hours gets one reminder, announced on the Done card (C6) and sent whether or not the person looked.
+**Working days, time zone and quiet hours** are stated by the person (Hello card C1, Settings C14), never taken from calendars, presence or out-of-office replies. A push due in quiet hours waits. Where a family's undo has a deadline, the Done card (C6) announces one reminder before it, sent whether or not the person looked.
 
 **Channel profiles:** Teams first (the default), e-mail first, or digest only (everything in the weekly desk).
 
@@ -123,7 +122,7 @@ Learn documents the label and thumbs per message, not for card messages; the cli
 
 - **Pause changes here**, the button on cards C8 and C17, stops standing permissions on those resources at once and can only narrow what the system may do ([06](06-web-pages.md)); suggestions continue. Undo of a change made under a standing permission also pauses that permission until a person has reviewed it. C17 introduces a standing permission before its first run; C8 reports each run.
 - **Fewer like this**, on the card and the pages, lowers how often such asks arrive; standing permissions continue.
-- **I did not approve this,** on the Done card, starts the incident path whatever the record shows, pauses that person's one-tap approvals, alerts the platform team and keeps the record. Undo, not this button, reverses the change.
+- **I did not approve this,** on the Done card, starts the incident path whatever the record shows, pauses that person's approvals, alerts the platform team and keeps the record. Undo, not this button, reverses the change.
 - **Talk to a person** reaches a human at the adopting organisation: the last button in every card's footer, always visible, and in the same place on every page. It is also how someone reports that a message looks wrong or fake, which feeds the incident path ([03](03-organisation-journeys.md)).
 
 ### Resisting forgery
@@ -131,9 +130,9 @@ Learn documents the label and thumbs per message, not for card messages; the cli
 - **A lookalike app or page:** the announcement, sent first, names the app, its publisher and the one address of the approval page; every card carries one link, pinned to it. The system never asks for a password, code or secret.
 - **A forwarded or old card:** the plan code, a reference rather than a secret or proof of authenticity, is echoed on every tap and page submit; a stale code, or a second submit by the same person, is refused.
 - **A card from elsewhere or from an outsider:** cards that change anything are accepted only through the stored one-to-one conversation with this app, and only directory members get cards; partners get e-mail, which never carries a button that acts.
-- **A consent prompt:** the announcement says a sign-in that asks a person to grant an app permissions is fraud, a known attack ([Learn](https://learn.microsoft.com/entra/identity/enterprise-apps/protect-against-consent-phishing)).
+- **A consent prompt:** the announcement names the app's one permission; a sign-in that asks for any other is fraud, a known attack ([Learn](https://learn.microsoft.com/entra/identity/enterprise-apps/protect-against-consent-phishing)).
 
-None of this helps when a signed-in device is stolen; the cap and the undo window limit that damage.
+None of this helps when a signed-in device is stolen; the approver's own Azure rights limit that damage.
 
 ### Dark patterns the experience refuses
 
@@ -147,11 +146,11 @@ None of this helps when a signed-in device is stolen; the cap and the undo windo
 
 Friction rises with risk ([approval classes](../design/06-security-and-governance.md#approval-classes)), and the reason to doubt comes before the reason to agree.
 
-- **Verb-plus-object labels on approvals:** "Approve this exact change", "OK, switch it off", never "Yes".
-- **"What could go wrong" is always visible.** (An invented example.) E2: "Month-end peak is 70 to 90 % processor. If it stays above 85 % for ten minutes, my safety check stops and asks you whether to restore the old size. Restoring is one tap inside the undo window."
+- **Verb-plus-object labels on approvals:** "Approve and sign in to Azure", "Open the page to approve", never "Yes".
+- **"What could go wrong" is always visible.** (An invented example.) E2: "Month-end peak is 70 to 90 % processor. If it stays above 85 % for ten minutes, my safety check stops and asks you whether to restore the old size. Restoring is a new approval on the page."
 - **No bulk approve;** the approval page's Decline takes an optional reason.
 - **Two independent approvers for a purchase,** asked in parallel; neither sees the other's answer until both have decided. One directory object never fills both roles. (Invented.) E4: Tomasz and Lars.
-- **Caps and alarms:** neither reaching the cap nor approving outside stated hours alerts or counts against anyone. Only an approval recorded without the authenticated events of its own route (a card's delivery and tap, the page's sign-in and submit) raises an alarm and pauses that person's one-tap approvals; it catches forged requests and proves nothing about who tapped.
+- **Alarms:** approving outside stated hours neither alerts nor counts against anyone. Only an approval recorded without the authenticated events of its own route (the page's sign-in and submit, the sign-in to Azure) raises an alarm and pauses that person's approvals; it catches forged requests and proves nothing about who pressed.
 - **Sampling afterwards:** the FinOps lead and the platform owner review a confidential monthly sample of executed changes and standing-permission runs to tune the change recipes, never to judge a person.
 
 ## Compared with Microsoft's guidance and the EU AI Act
@@ -183,7 +182,7 @@ Microsoft Research's 18 guidelines (2019) live in the [HAX Toolkit](https://www.
 
 ### Fluent 2 and Microsoft's supervision pattern
 
-[Fluent 2](https://fluent2.microsoft.design/responsible-AI/) names five principles. **Be transparent:** the four-layer label, "why you are getting this". **Set expectations:** the Hello card, ranges with a price basis, a standing permission introduced before its first run (C17). **Prevent overreliance:** the strongest objection by default, no bulk approve, two independent approvers. **Keep users in control:** choose, then give your OK. **Collect feedback:** reason chips, the Result card, Teams' thumbs. Microsoft's supervision pattern for agent requests (Approve, Reject with an optional reason, Suggest an alternative) shapes the approval page: Approve this exact change, Decline, Ask or suggest ([Learn](https://learn.microsoft.com/security/agentic-security/agentic-security-supervise-work)).
+[Fluent 2](https://fluent2.microsoft.design/responsible-AI/) names five principles. **Be transparent:** the four-layer label, "why you are getting this". **Set expectations:** the Hello card, ranges with a price basis, a standing permission introduced before its first run (C17). **Prevent overreliance:** the strongest objection by default, no bulk approve, two independent approvers. **Keep users in control:** choose, then give your OK. **Collect feedback:** reason chips, the Result card, Teams' thumbs. Microsoft's supervision pattern for agent requests (Approve, Reject with an optional reason, Suggest an alternative) shapes the approval page: Approve and sign in to Azure, Decline, Ask or suggest ([Learn](https://learn.microsoft.com/security/agentic-security/agentic-security-supervise-work)).
 
 ### Article 14(4) of the EU AI Act
 

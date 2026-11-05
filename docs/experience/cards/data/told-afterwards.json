@@ -12,7 +12,7 @@
   "range": "Range €35 to €48",
   "priceBasis": "At the rates on your bill",
   "savingWord": "Expected saving",
-  "undoWindow": "You can undo this change until Friday 17:00 CET. Undo also pauses this standing permission until a person has reviewed it. Pause changes here stops my standing permissions for these resources without undoing anything; it does not stop my suggestions.",
+  "undoWindow": "You can undo this change on the page, as far as Azure allows it for a storage tier: you sign in to Azure and the change is made with your own rights. Undo also pauses this standing permission until a person has reviewed it. Pause changes here stops my standing permissions for these resources without undoing anything; it does not stop my suggestions.",
   "_scenario": "E6 run",
   "notificationText": "I moved three dev containers to a cooler storage tier",
   "whyYouGetThis": "a standing permission covers this kind of change in your development subscription."

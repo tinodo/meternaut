@@ -82,11 +82,11 @@ Eight controls are visible: three decisions, four toggles and "Talk to a person"
 
 "Review the plan" authorises nothing. The [bot](../design/05-data-and-integrations.md#6-channels) answers the tap with the plan: the plan card replaces the Recommendation card in the thread, so the exact plan is on screen before anyone is asked for an OK. C4 keeps "Cancel", which drops the plan and changes nothing, and "Open the Recommendation", which puts the Recommendation (evidence, other options) back in the thread and approves nothing. The [approval class](../design/06-security-and-governance.md#approval-classes) decides which plan card appears; C5's header is the class, "Two people" for a purchase and "Your OK on a page" for one person.
 
-| | C4 Your OK (one tap) | C5 Your OK on a page |
+| | C4 Your OK (small change) | C5 Your OK on a page |
 |---|---|---|
-| For | A small, reversible change the person owns | A change that needs a sign-in on a page, or two people |
-| Shows | The plan as one block per resource (bold "resource: setting", then From and To lines), when, what could go wrong, undo, the plan code, the cap | The headline, a class sentence, the figure, a summary, the plan code |
-| The OK is given | In the card: one tap | On the page, by one person or two |
+| For | A small, reversible change the person owns | A change that needs a stronger sign-in, or two people |
+| Shows | The plan as one block per resource (bold "resource: setting", then From and To lines), when, what could go wrong, undo, the plan code | The headline, a class sentence, the figure, a summary, the plan code |
+| The OK is given | On the page, by one person | On the page, by one person or two |
 
 **On a phone.** At 360 px, in the reference renderer, C3 and C4 stay readable and their buttons wrap; each Teams client wraps in its own way, which the [client matrix](12-testing-the-experience.md#the-client-matrix-layer-5) tests.
 
@@ -94,15 +94,15 @@ Eight controls are visible: three decisions, four toggles and "Talk to a person"
 
 ![Your OK card at 360 px: one block per resource.](../img/experience-card-c4-your-ok-phone.png)
 
-(An invented example.) Maya's one-tap plan has the code 7F3K-92QD and three blocks: vm-qa-web-01, vm-qa-web-02 and sql-qa-orders. The order platform's savings-plan purchase is another plan, with its own request and code: its card (C5) says "Plan code K4M8-R6TW. The page shows the same code. Nothing is approved in this message."
+(An invented example.) Maya's plan has the code 7F3K-92QD and three blocks: vm-qa-web-01, vm-qa-web-02 and sql-qa-orders. The order platform's savings-plan purchase is another plan, with its own request and code: its card (C5) says "Plan code K4M8-R6TW. The page shows the same code. Nothing is approved in this message."
 
 **The plan code is a reference**, not a secret and not a token: eight characters from the hash of the plan, shown on the card, the page and the waiting e-mail so a person can check that they match. The [Approval service](../design/05-data-and-integrations.md#7-the-approval-record) refuses a wrong or expired code and a second submit by the same person; the other approver's decision still counts. The plan itself is used once, when it runs.
 
-**The cap is shown.** C4 says "You have approved 2 of 5 one-tap changes today. After 5, further changes today ask for your OK on a page." Nothing is blocked and nobody is told ([attention and trust](08-attention-and-trust.md)).
+**The card cannot approve.** A Teams card cannot carry an Azure token, so the button of C4 and C5 opens the page, where the person signs in to Azure and the change is made at that moment, with their own rights.
 
 **The page may open inside Teams.** For a purchase, C5 says "Opens in your browser. If Teams opens it in its own view and your passkey or security key is not accepted, use the link in the e-mail I sent." ([Web pages](06-web-pages.md) says when that e-mail is sent.)
 
-A plan card cannot make a person read the plan; the cap, Undo and an [allow-list](../design/06-security-and-governance.md#5-action-plane-safety) that refuses anything the plan does not name stand between a tired tap and a bad change.
+A plan card cannot make a person read the plan; the approver's own Azure rights and an [allow-list](../design/06-security-and-governance.md#5-action-plane-safety) that refuses anything the plan does not name stand between a tired approval and a bad change.
 
 ## The seventeen cards
 
@@ -113,11 +113,11 @@ The Card column is the name used here; on the card (the manifest's `displayTitle
 | C1 | [Hello](cards/hello.json) | First contact, after the announcement; it says what I keep and who sees it | One decision: Yes, I look after these or Not mine. Offered once, nothing waits on them: Pause messages · My hours and language (working days as seven checkboxes, a summary day, quiet hours, and a time zone and language from lists bound to data) |
 | C2 | [Question](cards/question.json) | The system needs a fact only a person has | Two short answers · Not sure · Something else · Not mine |
 | C3 | [Recommendation](cards/recommendation.json) | A finding survived challenge and no open fact remains | Review the plan · No, leave it as it is · Not mine · Details |
-| C4 | [Your OK (one tap)](cards/your-ok.json) | After "Review the plan" on a one-tap change; replaces C3 | OK, with a verb and an object · Cancel · Open the Recommendation |
+| C4 | [Your OK (small change)](cards/your-ok.json) | After "Review the plan" on a small change; replaces C3 | Open the page to approve · Cancel · Open the Recommendation |
 | C5 | [Your OK on a page](cards/ok-on-page.json) | After "Review the plan" on a page or two-person change; replaces C3 | Review and give your OK · No, leave it as it is · Not mine |
-| C6 | [Done](cards/done.json) | A change ran | Undo, while the window is open · I did not approve this |
+| C6 | [Done](cards/done.json) | A change ran; the undo link only where Azure allows an undo | Open the page to undo · I did not approve this |
 | C7 | [Result](cards/result.json) | After verification; not sent where costs cannot be read | Yes, it matches · No, it does not |
-| C8 | [Told afterwards](cards/told-afterwards.json) | A standing permission ran | Undo · Pause changes here |
+| C8 | [Told afterwards](cards/told-afterwards.json) | A standing permission ran | Open the page to undo · Pause changes here |
 | C9 | [Reminder](cards/reminder.json) | The one reminder, on day 7; inside the weekly desk instead once the person's push budget is used up | Open the Recommendation · No, leave it as it is · Not mine |
 | C10 | [Read-back](cards/read-back.json) | After a person teaches a Note | Yes, that is right · Not quite · No, forget it · Ask for a wider scope |
 | C11 | [Widen request](cards/widen-request.json) | Others taught a similar Note, and this person owns the wider scope | Widen the note · Keep it narrow · Show the resources |
@@ -142,13 +142,13 @@ The Card column is the name used here; on the card (the manifest's `displayTitle
 
 ![Recommendation card: switch off a QA environment at night, about €690 a month, Expected saving.](../img/experience-card-c3-recommendation.png)
 
-![Your OK card: three plan blocks, the cap, the plan code; OK, Cancel and Open the Recommendation.](../img/experience-card-c4-your-ok.png)
+![Your OK card: three plan blocks, the plan code; Open the page to approve, Cancel and Open the Recommendation.](../img/experience-card-c4-your-ok.png)
 
 ![Your OK on a page card, headed Two people, with plan code K4M8-R6TW.](../img/experience-card-c5-ok-on-page.png)
 
 ### After the change
 
-![Done card: the change ran, and Undo stays open until Friday 19:30 CET.](../img/experience-card-c6-done.png)
+![Done card: the change ran, and a link opens the page to undo.](../img/experience-card-c6-done.png)
 
 ![Result card: a Verified saving of about €670 a month, inside the predicted range.](../img/experience-card-c7-result.png)
 
@@ -207,9 +207,9 @@ Agents draft and workflows send ([data and integrations](../design/05-data-and-i
 
 ### What a button sends
 
-A button sends an opaque request id, a verb and, when it decides something, the plan code; at most an option key, a scope or a reason chip joins them. A decision carries no prose: only Challenge, Teach and the text boxes send words, which are bounded, screened and quoted as untrusted data, and free text never approves. (An invented example.) "OK, switch it off" sends the verb `ok`, the request id `r_9vK2xQ` and the plan code `7F3K-92QD`.
+A button sends an opaque request id, a verb and, when it decides something, the plan code; at most an option key, a scope or a reason chip joins them. A decision carries no prose: only Challenge, Teach and the text boxes send words, which are bounded, screened and quoted as untrusted data, and free text never approves. (An invented example.) "Cancel" sends the verb `cancel`, the request id `r_9vK2xQ` and the plan code `7F3K-92QD`.
 
-[`cards/manifest.json`](cards/manifest.json) lists, for each verb of each card, the input ids it accepts (the service ignores any other id), whether it needs the plan code, and what the tap returns: a `receipt`, an `answer`, a `handoff` or a named `card`; a button that only opens the page is listed under `openUrl`. One `contract` covers every verb: who may tap (the card's addressee; for a decision, the designated approver or a named delegate, by directory object id), what a repeated tap does (nothing: the service answers "already recorded"), when a verb is refused (the request is expired, changed, answered or paused; Undo, "I did not approve this" and "Talk to a person" stay open) and what a tap returns (one immediate response, then the outcome by updating the same message).
+[`cards/manifest.json`](cards/manifest.json) lists, for each verb of each card, the input ids it accepts (the service ignores any other id), whether it needs the plan code, and what the tap returns: a `receipt`, an `answer`, a `handoff` or a named `card`; a button that only opens the page is listed under `openUrl`. One `contract` covers every verb: who may tap (the card's addressee; for a decision, the designated approver or a named delegate, by directory object id), what a repeated tap does (nothing: the service answers "already recorded"), when a verb is refused (the request is expired, changed, answered or paused; "I did not approve this" and "Talk to a person" stay open) and what a tap returns (one immediate response, then the outcome by updating the same message).
 
 A tap reaches the bot as an `adaptiveCard/action` request. A decision goes to the Approval service with the person's own token, obtained through single sign-on, and the bot answers with a replacement card ([Learn](https://learn.microsoft.com/adaptive-cards/authoring-cards/universal-action-model)). Every tap gets a visible reply as fast as the host allows (the goal is one second): the card the manifest names for the verb, or a receipt such as "Received. Nothing has changed yet." The bot finishes asynchronously, because a bot that takes longer than 10 to 15 seconds times out ([Learn](https://learn.microsoft.com/azure/bot-service/bot-builder-howto-long-operations-guidance)); it stores the activity id and updates that message with the outcome.
 
@@ -239,7 +239,7 @@ stateDiagram-v2
     Sent --> Talking : Explain, Challenge or Teach
     Talking --> Sent : the answer arrives in the same thread
     Sent --> PlanShown : Review the plan
-    PlanShown --> Closed : OK or the plan expires
+    PlanShown --> Closed : approved on the page or the plan expires
     PlanShown --> Sent : Cancel or Open the Recommendation
     Sent --> Reminded : day 7, once
     Reminded --> Sent : Open the Recommendation
@@ -257,7 +257,7 @@ The days are starting values; [attention and trust](08-attention-and-trust.md) h
 
 | A card cannot | Instead |
 |---|---|
-| Carry a decision that needs a sign-in, a security key or a second person | It opens the approval page ([web pages](06-web-pages.md)); only a one-tap change is approved in Teams |
+| Carry a decision that needs a sign-in to Azure, a security key or a second person | It opens the approval page ([web pages](06-web-pages.md)); no approval is given in Teams |
 | Show a chart, a long table or several heading levels | The headline is the one heading, columns are short and no input sits in the hidden Details panel; charts live on a page or in a workbook ([access, language and inclusion](11-access-language-inclusion.md)) |
 | Promise that anyone sees it: read receipts reach an agent only in a one-to-one chat, with `ChatMessageReadReceipt.Read.Chat`, and the administrator or the person can switch them off ([Learn](https://learn.microsoft.com/microsoftteams/platform/bots/build-conversational-capability#receive-a-read-receipt)); the design knows only whether the person responded | Timing is never promised; an unanswered Recommendation follows the reminder ladder ([attention and trust](08-attention-and-trust.md)) |
 | Be posted in a private channel (agents cannot post messages or cards there, [Learn](https://learn.microsoft.com/microsoftteams/platform/bots/how-to/conversations/channel-and-group-conversations)) or in a shared one (an opt-in this design does not use) | One to one for people, e-mail for outsiders ([letters](05-letters-and-requests.md), [platform register](13-platform-register.md)) |

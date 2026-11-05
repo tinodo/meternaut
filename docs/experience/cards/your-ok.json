@@ -159,14 +159,7 @@
     },
     {
       "type": "TextBlock",
-      "text": "You have approved ${cap.used} of ${cap.max} one-tap changes today. After ${cap.max}, further changes today ask for your OK on a page.",
-      "wrap": true,
-      "id": "cap",
-      "isSubtle": true
-    },
-    {
-      "type": "TextBlock",
-      "text": "Plan code ${planCode}. Your OK applies to this exact plan only.",
+      "text": "Plan code ${planCode}. The page shows the same code. You approve on the page, where you sign in to Azure.",
       "wrap": true,
       "id": "plan-code",
       "isSubtle": true
@@ -175,19 +168,10 @@
       "type": "ActionSet",
       "actions": [
         {
-          "type": "Action.Execute",
-          "title": "${okLabel}",
-          "verb": "ok",
-          "data": {
-            "requestId": "${requestId}",
-            "planCode": "${planCode}"
-          },
-          "associatedInputs": "none",
-          "fallback": {
-            "type": "Action.OpenUrl",
-            "title": "Open on the page",
-            "url": "${pageUrl}"
-          }
+          "type": "Action.OpenUrl",
+          "id": "page-button",
+          "title": "Open the page to approve",
+          "url": "${pageUrl}"
         },
         {
           "type": "Action.Execute",

@@ -31,7 +31,7 @@
     "consequences": "the saving above; no effect on production; the month-end run keeps working",
     "tested": "I re-ran last month's usage with the environment off outside 07:30 to 19:30 and on the last Tuesday",
     "changeMyMind": "any weekday activity after 19:30 in the next two weeks",
-    "effort": "one tap, no engineering",
+    "effort": "one approval, no engineering",
     "reversibility": "switch it back on in minutes, any time",
     "onYes": "I show you the exact plan and ask for your OK on it",
     "howWeKnow": "I check the bill after the next billing cycle and tell you the result"
