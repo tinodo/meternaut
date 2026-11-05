@@ -17,11 +17,29 @@ from .events import History
 from .gateway import Gateway
 from .http import Client, allowed_calls, default_transport
 from .identity import Identity
-from .memory_store import utc_now
+from .memory_store import parse, utc_now
 from .redact import Redactor
 from .runner import RunnerServices, TickResult, runner_calls
 
 LOG = logging.getLogger("meternaut.loop")
+LETTER_DAYS = 3  # the letters about a change are offered again for this long after it
+
+
+def _remind(extras: wiring.Extras, clock: Callable[[], dt.datetime], redact: Callable[[str], str]) -> None:
+    """Offers the letters about every open plan and about the changes of the last days. A hook sends a letter only when it is due, so a letter that was sent
+    is never sent again and one that was held or failed is tried again later. A letter that fails never undoes a change and never stops the round."""
+    try:
+        for plan in extras.store.plans_open():
+            case = extras.store.case_get(plan.case_id) if plan.state == "open" else None
+            if case is not None:
+                extras.on_plan(plan, case)
+        since = clock() - dt.timedelta(days=LETTER_DAYS)
+        for action in extras.store.actions_recent(10):
+            moment = action.finished_at or action.queued_at
+            if action.state in ("done", "failed", "verified") and moment and parse(moment) >= since:
+                extras.on_action(action, extras.store.plan_get(action.plan_id), extras.store.case_get(action.case_id))
+    except Exception as error:  # noqa: BLE001 (the timer must go on)
+        LOG.error(redact(f"the letters could not be offered: {type(error).__name__}"))
 
 
 def tick(env: Mapping[str, str] | None = None, *, transport=default_transport, sleep: Callable[[float], None] = time.sleep,
@@ -46,13 +64,7 @@ def tick(env: Mapping[str, str] | None = None, *, transport=default_transport, s
         services = RunnerServices(extras.store, runner_client, writer.token, wiring.approval_settings(settings), settings.writer_subscription,
                                   arm=Arm(reader_client, reader.token), clock=clock, sleep=sleep, emit=history.emit)
         result = runner.tick(services)
-        for action in result.finished + result.verified:
-            plan = extras.store.plan_get(action.plan_id)
-            case = extras.store.case_get(action.case_id)
-            try:
-                extras.on_action(action, plan, case)
-            except Exception as error:  # noqa: BLE001 (a letter that fails never undoes a change)
-                LOG.error(redact(f"a letter about {action.state} could not be sent: {type(error).__name__}"))
+        _remind(extras, clock, redact)
         if clock().minute == 0:
             purge = getattr(extras.store, "nonces_purge", None)
             if purge:

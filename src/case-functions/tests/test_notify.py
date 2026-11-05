@@ -56,13 +56,13 @@ class Graph:
 
 
 class Fixture:
-    def __init__(self, store=None):
+    def __init__(self, store=None, transport=None):
         self.clock, self.graph = Clock(), Graph()
         self.store = store or MemoryStore(self.clock)
         self.people = people_mod.load(ENV)
         settings = loop_config.load(ENV)
         self.on_plan, self.on_action, self.on_run = notify.hooks(
-            ENV, settings, self.store, self.people, lambda resource: "tok", lambda text: text, transport=self.graph, sleep=lambda s: None,
+            ENV, settings, self.store, self.people, lambda resource: "tok", lambda text: text, transport=transport or self.graph, sleep=lambda s: None,
             monotonic=lambda: 0.0, clock=self.clock)
 
     def records(self, oid=TINO):
@@ -111,12 +111,51 @@ class AboutAPlan(unittest.TestCase):
         self.assertEqual(self.f.graph.sent, [])
         self.assertEqual({s for _, s, _ in self.f.records()}, {"held"})
 
-    def test_a_held_letter_is_offered_again_by_the_next_call_and_not_before(self):
+    def test_a_held_letter_is_offered_again_after_the_wait_and_not_before(self):
         self.f.store.switch_put(SwitchRecord(name="messages", paused=True, by=TINO, at="2026-11-03T09:00:00Z"))
-        self.f.on_plan(plan(), make_case())
+        made = plan()
+        self.f.on_plan(made, make_case())
         self.f.store.switch_put(SwitchRecord(name="messages", paused=False))
-        self.f.on_plan(plan(), make_case())
-        self.assertEqual(len(self.f.graph.sent), 2, "the first contact and the approval, now that nothing is pulled")
+        self.f.on_plan(made, make_case())
+        self.assertEqual(len(self.f.graph.sent), 0, "the last try was a moment ago")
+        self.f.clock.now += dt.timedelta(minutes=notify.RETRY_MINUTES)
+        self.f.on_plan(made, make_case())
+        self.assertEqual(sorted(k for k in (m.kind for m in self.f.store.mails if m.status == "sent")), ["approval", "first_contact"])
+        self.assertEqual(len(self.f.graph.sent), 2)
+        self.f.clock.now += dt.timedelta(hours=1)
+        self.f.on_plan(made, make_case())
+        self.assertEqual(len(self.f.graph.sent), 2, "what was sent is never sent again")
+
+    def test_a_letter_that_keeps_failing_is_given_up_after_the_tries_and_each_try_leaves_a_record(self):
+        def refuse(method, url, headers, data, timeout):
+            return 403, {}, b'{"error":{"code":"ErrorAccessDenied","message":"no"}}'
+
+        f = Fixture(transport=refuse)
+        made = plan()
+        for _ in range(notify.MAX_TRIES + 5):
+            f.on_plan(made, make_case())
+            f.clock.now += dt.timedelta(minutes=notify.RETRY_MINUTES)
+        tries = [m for m in f.store.mails if m.kind == "approval"]
+        self.assertEqual((len(tries), {m.status for m in tries}), (notify.MAX_TRIES, {"failed"}))
+        self.assertEqual(len([m for m in f.store.mails if m.kind == "first_contact"]), notify.MAX_TRIES)
+
+    def test_a_letter_that_failed_goes_out_when_the_sender_works_and_then_never_again(self):
+        answers = [(403, {}, b'{"error":{"code":"ErrorAccessDenied","message":"no"}}')] * 2
+
+        def flaky(method, url, headers, data, timeout):
+            return answers.pop(0) if answers else (202, {}, b"")
+
+        f = Fixture(transport=flaky)
+        made = plan()
+        f.on_plan(made, make_case())
+        self.assertEqual({m.status for m in f.store.mails}, {"failed"})
+        f.clock.now += dt.timedelta(minutes=notify.RETRY_MINUTES)
+        f.on_plan(made, make_case())
+        self.assertEqual({(m.kind, m.status) for m in f.store.mails if m.status == "sent"}, {("first_contact", "sent"), ("approval", "sent")})
+        before = len(f.store.mails)
+        f.clock.now += dt.timedelta(days=1)
+        f.on_plan(made, make_case())
+        self.assertEqual(len(f.store.mails), before)
 
 
 class AboutAChange(unittest.TestCase):

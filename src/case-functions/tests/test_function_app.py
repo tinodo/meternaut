@@ -104,8 +104,8 @@ class FunctionAppIndexingTests(unittest.TestCase):
 
     def test_the_console_is_an_anonymous_catch_all_for_get_and_post(self):
         binding = self.binding(CONSOLE)
-        self.assertEqual((binding["type"], binding["authLevel"], binding["route"]), ("httpTrigger", "ANONYMOUS", "{*route}"))
-        self.assertEqual(sorted(binding["methods"]), ["GET", "POST"])
+        self.assertEqual((binding["type"], str(binding["authLevel"]).lower(), binding["route"]), ("httpTrigger", "anonymous", "{*route}"))
+        self.assertEqual(sorted(str(method).upper() for method in binding["methods"]), ["GET", "POST"])
 
     def test_the_control_function_reads_one_event_from_its_hub_and_consumer_group_through_the_identity_connection(self):
         binding = self.binding(CONTROL)

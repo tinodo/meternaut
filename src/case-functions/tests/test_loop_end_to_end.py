@@ -170,6 +170,31 @@ class TheWholeLoop(unittest.TestCase):
         self.assertEqual(self.tick().finished, [])
         self.assertEqual(len(self.world.mail.sent), 3, "no letter twice")
 
+    def test_letters_that_could_not_be_sent_are_offered_again_by_the_timer_until_they_arrive_and_never_twice(self):
+        real = self.world.mail
+        self.world.mail = lambda method, url, headers, data, timeout: (403, {}, b'{"error":{"code":"ErrorAccessDenied","message":"no"}}')
+        watch(self.world, self.clock)
+        (plan,) = self.store.plans_open()
+        self.assertEqual(real.sent, [])
+        self.assertEqual({m.status for m in self.store.mails_since(OID, "2000-01-01T00:00:00Z")}, {"failed"})
+        self.clock.advance(minutes=1)
+        self.tick()
+        self.assertEqual(len(self.store.mails_since(OID, "2000-01-01T00:00:00Z")), 2, "the last try was a minute ago: not yet")
+        self.world.mail = real
+        self.clock.advance(minutes=16)
+        self.tick()
+        self.assertEqual(len(real.sent), 2)
+        self.clock.advance(minutes=16)
+        self.tick()
+        self.assertEqual(len(real.sent), 2, "what arrived is not sent again")
+        self.approve(plan)
+        self.clock.advance(seconds=200)
+        self.assertEqual([a.state for a in self.tick().finished], ["done"])
+        self.assertEqual(len(real.sent), 3)
+        self.clock.advance(minutes=20)
+        self.tick()
+        self.assertEqual(len(real.sent), 3)
+
     def test_a_second_watch_does_not_judge_the_same_disk_again_or_write_a_second_plan_or_send_a_second_letter(self):
         watch(self.world, self.clock)
         chats = len(self.world.estate.chat_calls())
