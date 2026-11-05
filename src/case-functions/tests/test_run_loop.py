@@ -1,4 +1,5 @@
 import datetime as dt
+import json
 import unittest
 from dataclasses import replace
 
@@ -84,6 +85,28 @@ class WhatTheLoopKeeps(unittest.TestCase):
         self.assertEqual(case.models, {"detective": "gpt-6-luna", "skeptic": "gpt-6.1-sol"})
         self.assertEqual([s["step"] for s in case.steps], ["evidence", "guards", "detective", "skeptic"])
         self.assertEqual(case.facts["diskState"], "unattached")
+
+    def test_the_models_are_told_that_the_disk_is_planted_and_are_not_shown_its_age(self):
+        estate = estate_with()
+        watch(estate, self.extras, self.clock)
+        seen = [json.loads(prompt)["case"] for prompt in estate.prompts()]
+        self.assertEqual(len(seen), 2, "the Detective and the Skeptic")
+        for case in seen:
+            self.assertIs(case["facts"]["planted"], True)
+            self.assertNotIn("ageDays", case["facts"])
+            self.assertEqual(case["flags"]["tooNew"], False)
+        (kept,) = self.store.cases_recent()
+        self.assertEqual((kept.facts["planted"], "ageDays" in kept.facts), (True, False), "the notebook shows the facts that the models saw")
+
+    def test_a_disk_that_is_not_planted_is_shown_with_its_age_and_without_the_fact(self):
+        estate = estate_with(planted_disk=False)
+        row = disk_row("young-disk", GROUP, timeCreated=stamp(NOW))
+        estate.graph["orphan-managed-disk"] = [row]
+        estate.graph["recent-creations"] = [{"targetId": row["id"].lower()}]
+        watch(estate, self.extras, self.clock)
+        for prompt in estate.prompts():
+            case = json.loads(prompt)["case"]
+            self.assertEqual((case["facts"]["ageDays"], "planted" in case["facts"], case["flags"]["tooNew"]), (0, False, True))
 
     def test_the_same_disk_without_the_tag_is_held_back_and_gets_no_plan(self):
         estate = estate_with(planted_disk=False)

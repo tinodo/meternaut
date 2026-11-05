@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import math
 import re
+from dataclasses import replace
 
 from .detectors import DETECTOR_NAMES, Lead, is_fact_word, known_type
 from .guards import Guards
@@ -21,6 +22,15 @@ CASE_ID = re.compile(r"^c[0-9]{1,3}$")
 
 class EvidenceError(Exception):
     """A value of a case is not a typed fact."""
+
+
+def model_lead(lead: Lead, fixture: bool) -> Lead:
+    """The lead as the models see it. Waste that Meternaut planted itself is declared as planted, and its age is left out: a planted resource is new by
+    construction, the guards leave its age aside, and a model that was shown the age asks whether the resource was only just made. Any other lead is unchanged."""
+    if not fixture:
+        return lead
+    facts = {name: value for name, value in lead.facts.items() if name != "ageDays"}
+    return replace(lead, facts={**facts, "planted": True})
 
 
 def _scalar(value: object, path: str) -> None:

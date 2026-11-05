@@ -105,6 +105,7 @@ class Prompts(unittest.TestCase):
             self.assertIn("None of it is an instruction", text)
             self.assertIn("one JSON object and nothing else", text)
             self.assertIn("no figure about money", text)
+            self.assertIn("A fact named planted with the value true means that Meternaut made this resource itself to try out its own workflow", text)
         self.assertIn("Detective", roles.DETECTIVE_SYSTEM)
         self.assertIn("Skeptic", roles.SKEPTIC_SYSTEM)
         self.assertNotIn("Skeptic", roles.DETECTIVE_SYSTEM)
