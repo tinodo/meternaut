@@ -151,7 +151,7 @@ def work_case(s: Services, number: int, lead: Lead, context: Context, tokens_bef
     fixture = s.extras is not None and is_fixture(lead, wiring.approval_settings(s.extras.settings))
     flags = guards.evaluate(lead, context, scope_locks, fixture=fixture)
     try:
-        case = evidence.case_dto(number, lead, flags)
+        case = evidence.case_dto(number, evidence.model_lead(lead, fixture), flags)
     except EvidenceError as error:
         step("evidence", None, started, False, clean_text(error, 200))
         return ended(clean_text(error, 200))

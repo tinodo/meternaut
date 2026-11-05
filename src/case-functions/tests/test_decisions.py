@@ -175,6 +175,20 @@ class Evidence(unittest.TestCase):
         with self.assertRaises(EvidenceError):
             evidence.case_dto(1, lead(facts={"list": ["none"] * 2000}), SAFE_GUARDS)
 
+    def test_waste_that_meternaut_planted_is_declared_planted_and_shown_without_its_age_and_any_other_lead_is_unchanged(self):
+        facts = {"diskState": "unattached", "sku": "standardssd_lrs", "sizeGb": "up to 32", "ageDays": 0}
+        made = lead(detector="orphan-managed-disk", resource_type="microsoft.compute/disks", facts=facts, age_days=0)
+        seen = evidence.case_dto(1, evidence.model_lead(made, True), SAFE_GUARDS)
+        self.assertEqual(seen["facts"], {"diskState": "unattached", "sku": "standardssd_lrs", "sizeGb": "up to 32", "planted": True})
+        self.assertEqual((made.facts["ageDays"], "planted" in made.facts, made.age_days), (0, False, 0), "the lead itself keeps its age, and the guards still read it")
+        self.assertIs(evidence.model_lead(made, False), made)
+        plain = evidence.case_dto(1, evidence.model_lead(made, False), SAFE_GUARDS)
+        self.assertEqual((plain["facts"]["ageDays"], "planted" in plain["facts"]), (0, False))
+
+    def test_a_lead_without_an_age_can_be_planted_too(self):
+        made = lead(detector="orphan-public-ip", resource_type="microsoft.network/publicipaddresses", facts={"sku": "standard", "allocation": "static"})
+        self.assertEqual(evidence.case_dto(1, evidence.model_lead(made, True), SAFE_GUARDS)["facts"], {"sku": "standard", "allocation": "static", "planted": True})
+
 
 def detective(recommendation="delete", confidence=0.9) -> DetectiveAnswer:
     return DetectiveAnswer(recommendation, confidence, "Nothing uses it.")
