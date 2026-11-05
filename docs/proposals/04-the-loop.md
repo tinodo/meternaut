@@ -1,6 +1,6 @@
 # The loop — a proposal
 
-**Status: approved on 2026-11-05 (the owner: "GO", for the whole solution), built and deployed the same day. A page below is true of the real environment only as far as the changelog says that it was checked there: two Watches made plans for planted disks and the approval letters reached the owner, and the console answers on an always-on Basic plan; the approval on the page, the delete and the verification are the next check.** This page says how a case that the Watch finds becomes a person's answer and, for the one kind of resource that Meternaut may touch, a checked change to Azure: the console, the approval, the runner, the mail, the resources that Meternaut plants itself, and what stays with a person. It follows the [first cases](02-first-cases.md), whose "Not built, and next" this is, and it builds on the [access requirements](03-access-and-onboarding.md). The pages are designed in [the web pages](../experience/06-web-pages.md).
+**Status: approved on 2026-11-05 (the owner: "GO", for the whole solution), built and deployed the same day. A page below is true of the real environment only as far as the changelog says that it was checked there: two Watches made plans for planted disks and the approval letters reached the owner, the console answers on an always-on Basic plan, the owner approved both plans on the page, the runner deleted both disks and the letters about the change arrived; the check two days later is the next one.** This page says how a case that the Watch finds becomes a person's answer and, for the one kind of resource that Meternaut may touch, a checked change to Azure: the console, the approval, the runner, the mail, the resources that Meternaut plants itself, and what stays with a person. It follows the [first cases](02-first-cases.md), whose "Not built, and next" this is, and it builds on the [access requirements](03-access-and-onboarding.md). The pages are designed in [the web pages](../experience/06-web-pages.md).
 
 ## What it is for
 
@@ -94,7 +94,8 @@ About zero a month more, on top of the 13 US dollars a month that the cases app'
 | The front door is shut | `tools/console-check.py door` in the action `loop-check`: no page without sign-in, a forged header opens nothing |
 | A form POST of a browser reaches the app through the platform's sign-in | The browser check of [rule 28](../../AGENTS.md) after every deploy that changes the console: a POST to a plan id that does not exist is answered by the console's own page and shows in the telemetry. No workflow can run it (it needs a signed-in browser), and the first version of the console failed it: every form POST was refused with an empty 403 (changelog, 2026-11-05) |
 | The sign-in app has no secret | `tools/entra-setup.py check` |
-| The change really happened | Resource Manager answers 404 for the planted disk; the Activity Log shows one delete by the runner's identity; the console and a letter say so |
+| A real approval, the delay and the runner's token on the Basic plan | The owner's two OKs on 2026-11-05: the press, then `action.started` 2 minutes 51 seconds later and `action.finished` with `ok: true` in the app's event lines (changelog, 2026-11-05) |
+| The change really happened | Resource Manager answers 404 for the planted disk; the Activity Log shows one delete by the runner's identity; the console and a letter say so. Shown for both planted disks on 2026-11-05 (changelog) |
 
 ## Known limits
 
