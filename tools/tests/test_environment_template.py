@@ -67,7 +67,9 @@ ALLOWED = {
         "Microsoft.Web/serverfarms",
         "Microsoft.Web/sites",
         "Microsoft.Web/sites/basicPublishingCredentialsPolicies",
+        "Microsoft.Web/sites/config",
     },
+    "environment/cases/planted.bicep": {"Microsoft.Compute/disks", "Microsoft.Network/publicIPAddresses"},
 }
 
 
@@ -701,9 +703,9 @@ class Cases(unittest.TestCase):
         for name in ("vnet", "functionSubnet", "workspace", "insights", "storage", "blobService", "eventHubs", "sharedHostContainers"):
             self.assertRegex(self.source, rf"(?m)^resource {name} '[^']+' existing = ", name)
         made = sorted(name for name, (_, body) in self.found.items() if not re.search(rf"(?m)^resource {name} '[^']+' existing", self.source))
-        self.assertEqual(made, ["casesIdentity", "controlConsumerGroup", "controlHub", "deploymentContainer", "functionApp", "functionOwnsHostContainers", "functionOwnsOwnPackage",
-                                "functionPublishesTelemetry", "functionReceivesControl", "functionUsesQueues", "functionUsesTables", "historyWorkbook", "noBasicAuthForDeployment",
-                                "plan", "tracesRetention", "workflowSendsControl"])
+        self.assertEqual(made, ["authIdentity", "casesIdentity", "consoleSignIn", "controlConsumerGroup", "controlHub", "deploymentContainer", "functionApp",
+                                "functionOwnsHostContainers", "functionOwnsOwnPackage", "functionPublishesTelemetry", "functionReceivesControl", "functionUsesQueues",
+                                "functionUsesTables", "historyWorkbook", "noBasicAuthForDeployment", "plan", "runnerIdentity", "tracesRetention", "workflowSendsControl"])
 
     def test_no_key_is_read_or_written_anywhere(self):
         for word in ("listKeys", "listConnectionStrings", "listSecrets", "listAccountSas", "listServiceSas", "AccountKey", "SharedAccessKey", "primaryKey", "@secure",
@@ -712,7 +714,7 @@ class Cases(unittest.TestCase):
         self.assertEqual(self.code.count("ConnectionString"), 1, "the telemetry's connection string names the component and holds no secret that ingestion accepts")
         self.assertIn("{ name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: insights.properties.ConnectionString }", self.code)
         outputs = [line for line in self.code.splitlines() if line.startswith("output ")]
-        self.assertEqual(len(outputs), 6)
+        self.assertEqual(len(outputs), 11)
         for line in outputs:
             for word in ("listKeys", "ConnectionString", "AccountKey", "primaryKey"):
                 self.assertNotIn(word, line, line)
@@ -790,6 +792,47 @@ class Cases(unittest.TestCase):
         self.assertIn("loadTextContent('history.workbook.json')", self.found["historyWorkbook"][1])
         self.assertIn("__APPINSIGHTS_ID__", self.found["historyWorkbook"][1])
 
+    def test_the_console_signs_people_in_with_a_federated_credential_and_holds_no_secret(self):
+        body = self.found["consoleSignIn"][1]
+        self.assertIn("if (!empty(consoleAppClientId))", self.source, "nothing is set up, and the console refuses, until there is an app registration")
+        self.assertIn("requireAuthentication: true", body)
+        self.assertIn("unauthenticatedClientAction: 'RedirectToLoginPage'", body)
+        self.assertIn("clientSecretSettingName: 'OVERRIDE_USE_MI_FIC_ASSERTION_CLIENTID'", body)
+        self.assertIn("identities: consoleUserObjectIds", body)
+        self.assertRegex(body, r"(?s)tokenStore: \{\s+enabled: false")
+        self.assertIn("requireHttps: true", body)
+        self.assertNotRegex(self.code, r"clientSecret\s*:", "the app registration trusts an identity: there is no client secret")
+        self.assertNotIn("excludedPaths: [\n        '/ok", body)
+        self.assertEqual(re.findall(r"'(/[^']*)'", re.search(r"excludedPaths: \[(.*?)\]", body, re.S).group(1)), ["/healthz"])
+        self.assertIn("{ name: 'OVERRIDE_USE_MI_FIC_ASSERTION_CLIENTID', value: authIdentity.properties.clientId }", self.code)
+
+    def test_the_identity_that_changes_azure_and_the_one_of_the_sign_in_hold_no_role_in_this_template(self):
+        for name, (kind, body) in self.found.items():
+            if kind == "Microsoft.Authorization/roleAssignments":
+                self.assertNotIn("runnerIdentity", body, name)
+                self.assertNotIn("authIdentity", body, name)
+        self.assertIn("'${runnerIdentity.id}': {}", self.code)
+        self.assertIn("'${authIdentity.id}': {}", self.code)
+        self.assertIn("{ name: 'WRITER_CLIENT_ID', value: runnerIdentity.properties.clientId }", self.code)
+        self.assertIn("{ name: 'AZURE_CLIENT_ID', value: casesIdentity.properties.clientId }", self.code, "the Watch and the console keep the identity that only reads")
+
+    def test_the_loop_is_told_where_it_keeps_its_records_and_who_may_use_it(self):
+        body = self.found["functionApp"][1]
+        for setting in ("STORE_ACCOUNT_NAME", "WRITER_RESOURCE_GROUP", "WRITER_SUBSCRIPTION_ID", "WRITER_CLIENT_ID", "CONSOLE_HOST", "CONSOLE_PEOPLE", "MAIL_SENDER",
+                        "PLAN_TTL_HOURS", "APPROVAL_DELAY_SECONDS"):
+            self.assertIn(f"name: '{setting}'", body, setting)
+        self.assertIn("{ name: 'STORE_ACCOUNT_NAME', value: storage.name }", self.code)
+        self.assertIn("{ name: 'WRITER_RESOURCE_GROUP', value: resourceGroup().name }", self.code)
+
+    def test_the_settings_of_the_loop_are_the_ones_the_app_reads(self):
+        config = text("src/case-functions/cases/loop_config.py")
+        names = set(re.findall(r'^([A-Z_]+) = "\1"$', config, re.M))
+        left_to_their_defaults = {"PLANTED_TAG", "RECHECK_DAYS"}
+        for name in names - left_to_their_defaults:
+            self.assertTrue(f"name: '{name}'" in self.code, f"the app reads {name} and the template does not set it")
+        self.assertTrue("CONSOLE_PEOPLE" in self.code, "the people are read by people.py")
+
+
     def test_the_workbook_file_is_valid_json_and_only_reads_the_traces(self):
         import json
         raw = (ROOT / "environment" / "cases" / "history.workbook.json").read_text(encoding="utf-8")
@@ -803,6 +846,37 @@ class Cases(unittest.TestCase):
             self.assertTrue(query.lstrip().startswith(("let ", "traces")), query[:40])
             for word in (".set", ".ingest", ".drop", ".create", ".alter", "externaldata"):
                 self.assertNotIn(word, query, word)
+
+
+class Planted(unittest.TestCase):
+    """The waste that Meternaut plants (environment/cases/planted.bicep): a disk and, when asked, an address, both unattached and both tagged."""
+
+    def setUp(self):
+        self.source = text("environment/cases/planted.bicep")
+        self.code = re.sub(r"//.*", "", self.source)
+        self.found = resources(self.source)
+
+    def test_it_makes_an_unattached_disk_and_an_optional_unassigned_address_and_nothing_else(self):
+        self.assertEqual(sorted(self.found), ["address", "disk"])
+        self.assertIn("if (plantPublicIp)", self.source)
+        self.assertNotIn("managedBy", self.code)
+        self.assertNotIn("ipConfiguration", self.code)
+        self.assertNotIn("Microsoft.Authorization", self.code)
+        self.assertIn("createOption: 'Empty'", self.found["disk"][1])
+        self.assertIn("diskSizeGB: 4", self.found["disk"][1])
+        self.assertIn("networkAccessPolicy: 'DenyAll'", self.found["disk"][1])
+
+    def test_both_carry_the_tag_that_the_loop_looks_for_and_a_name_that_says_what_they_are(self):
+        self.assertIn("'meternaut-planted': plantedId", self.code)
+        self.assertIn("name: 'planted-disk-${plantedId}'", self.code)
+        self.assertIn("name: 'planted-ip-${plantedId}'", self.code)
+        self.assertEqual(self.code.count("tags: tags"), 2)
+
+    def test_the_tag_and_the_group_are_the_ones_of_the_app(self):
+        approvals = text("src/case-functions/cases/approvals.py")
+        self.assertIn('planted_tag: str = "meternaut-planted"', approvals)
+        loop = text("src/case-functions/cases/loop_config.py")
+        self.assertIn('planted_tag=values[PLANTED_TAG] or "meternaut-planted"', loop)
 
 
 class CasesWorkflow(unittest.TestCase):

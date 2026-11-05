@@ -11,7 +11,7 @@ on:
   workflow_dispatch:
     inputs:
       action:
-        description: "what-if: show what the next steps would change and change nothing. model-side: the gateway's identity, then the network, the model account with its private endpoint and the budget. gateway-prepare: attach the identity to the gateway and add the Application Insights logger, and the two Event Hub loggers when the usage recording's namespace exists. gateway: add the Citadel module's objects to the gateway (with the two fragments that use the Event Hub loggers when both loggers exist, without them otherwise). contract: add the first contract (a product, its policy and its key) and test the gateway with that key. recording: the usage recording of the gateway's calls, which is a Log Analytics workspace, an Event Hubs namespace, a Cosmos DB account, a storage account, an identity and a function app, with private endpoints and without any key; it first removes the key-based Logic App version of it, when that is still there. recording-check: start the copy jobs once through the control hub and read what they say from the function app's telemetry. cases: the first cases, which is a second function app on the usage recording's network, storage and namespace, with an identity, a control hub, a longer retention of the traces and the History workbook; it only reads, and it needs the usage recording and the contract first. cases-run: start one Watch through the control hub and read its History from the telemetry."
+        description: "what-if: show what the next steps would change and change nothing. model-side: the gateway's identity, then the network, the model account with its private endpoint and the budget. gateway-prepare: attach the identity to the gateway and add the Application Insights logger, and the two Event Hub loggers when the usage recording's namespace exists. gateway: add the Citadel module's objects to the gateway (with the two fragments that use the Event Hub loggers when both loggers exist, without them otherwise). contract: add the first contract (a product, its policy and its key) and test the gateway with that key. recording: the usage recording of the gateway's calls, which is a Log Analytics workspace, an Event Hubs namespace, a Cosmos DB account, a storage account, an identity and a function app, with private endpoints and without any key; it first removes the key-based Logic App version of it, when that is still there. recording-check: start the copy jobs once through the control hub and read what they say from the function app's telemetry. cases: the first cases, which is a second function app on the usage recording's network, storage and namespace, with an identity, a control hub, a longer retention of the traces and the History workbook; it only reads, and it needs the usage recording and the contract first.         cases-run: start one Watch through the control hub and read its History from the telemetry. plant: make waste of Meternaut's own (an unattached disk, and with plant_public_ip an unassigned public IP address) in the project's resource group, tagged for the loop, so that the whole loop can be shown on something that belongs to nobody else. loop-check: knock at the console's front door without a sign-in and pass only when nobody gets a page."
         type: choice
         required: true
         default: what-if
@@ -25,8 +25,15 @@ on:
           - recording-check
           - cases
           - cases-run
+          - plant
+          - loop-check
       check_limits:
         description: "Only with contract: also prove the token limit, with one request larger than a minute's allowance and then a refusal by the gateway. It uses about a minute of the contract's tokens and blocks the key for up to a minute."
+        type: boolean
+        required: false
+        default: false
+      plant_public_ip:
+        description: "Only with plant: also plant an unassigned public IP address (about 3.65 US dollars a month while it stays). The landing zone has to allow a public IP address in the project's group."
         type: boolean
         required: false
         default: false
@@ -63,6 +70,11 @@ jobs:
       RECORDING_READER_IDS: ${{ vars.RECORDING_READER_IDS }}
       GATEWAY_RESOURCE_ID: ${{ secrets.GATEWAY_RESOURCE_ID }}
       GATEWAY_APPINSIGHTS_ID: ${{ secrets.GATEWAY_APPINSIGHTS_ID }}
+      CONSOLE_APP_CLIENT_ID: ${{ vars.CONSOLE_APP_CLIENT_ID }}
+      CONSOLE_PEOPLE: ${{ vars.CONSOLE_PEOPLE }}
+      MAIL_SENDER: ${{ vars.MAIL_SENDER }}
+      PLANTED_ID: r${{ github.run_number }}
+      PLANT_PUBLIC_IP: ${{ inputs.plant_public_ip }}
     steps:
       - name: Check out the repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -96,7 +108,7 @@ jobs:
           python3 -m unittest discover -s src/usage-functions/tests
           python3 -m unittest discover -s src/case-functions/tests
           python3 tools/workflow-lint.py
-          for template in environment/main.bicep environment/gateway/identity.bicep environment/gateway/logger.bicep environment/gateway/eventhub-loggers.bicep environment/gateway/contract.bicep environment/recording/main.bicep environment/cases/main.bicep; do
+          for template in environment/main.bicep environment/gateway/identity.bicep environment/gateway/logger.bicep environment/gateway/eventhub-loggers.bicep environment/gateway/contract.bicep environment/recording/main.bicep environment/cases/main.bicep environment/cases/planted.bicep; do
             az bicep build --file "$template" --stdout > /dev/null
             az bicep lint --file "$template"
           done
@@ -106,6 +118,7 @@ jobs:
           az bicep build --file environment/gateway/contract.bicep --outfile "$RUNNER_TEMP/contract.json"
           az bicep build --file environment/recording/main.bicep --outfile "$RUNNER_TEMP/recording.json"
           az bicep build --file environment/cases/main.bicep --outfile "$RUNNER_TEMP/cases.json"
+          az bicep build --file environment/cases/planted.bicep --outfile "$RUNNER_TEMP/planted.json"
           az bicep build --file kit/bicep/infra/apim-gateway-upgrade/main.bicep --outfile "$RUNNER_TEMP/kit.json"
 
       - name: Sign in to Azure
@@ -184,6 +197,7 @@ jobs:
           python3 tools/environment-params.py check --params "$RUNNER_TEMP/recording.parameters.json" --template "$RUNNER_TEMP/recording.json" --label recording
           python3 tools/environment-params.py check --params "$RUNNER_TEMP/contract.parameters.json" --template "$RUNNER_TEMP/contract.json" --label contract
           python3 tools/environment-params.py check --params "$RUNNER_TEMP/cases.parameters.json" --template "$RUNNER_TEMP/cases.json" --label cases
+          python3 tools/environment-params.py check --params "$RUNNER_TEMP/planted.parameters.json" --template "$RUNNER_TEMP/planted.json" --label planted
 
       - name: What the identity, the model side, the logger, the usage recording and the first cases would change
         if: inputs.action == 'what-if'
@@ -712,6 +726,54 @@ jobs:
           python3 tools/cases-check.py functions --site "$site" --minutes 5
           python3 tools/cases-check.py run --namespace "$EVENT_HUB_NAMESPACE" --insights "$insights" --minutes 30 --summary "$GITHUB_STEP_SUMMARY"
 
+      - name: Plant the waste
+        id: plant
+        if: inputs.action == 'plant'
+        run: |
+          # Waste of Meternaut's own, in the project's resource group (environment/cases/planted.bicep): an unattached disk and, when asked, an
+          # unassigned public IP address, each tagged meternaut-planted. The Watch finds them, two AI roles judge them, a person approves, and the
+          # writer removes exactly these. Nothing that belongs to another project is touched. The what-if is shown first.
+          python3 tools/az-deploy.py what-if --subscription "$ENV_SUBSCRIPTION_ID" --resource-group "$ENV_RESOURCE_GROUP" \
+            --template environment/cases/planted.bicep --parameters "$RUNNER_TEMP/planted.parameters.json"
+          disk=$(python3 tools/az-deploy.py create --subscription "$ENV_SUBSCRIPTION_ID" --resource-group "$ENV_RESOURCE_GROUP" \
+            --template environment/cases/planted.bicep --parameters "$RUNNER_TEMP/planted.parameters.json" \
+            --name "plant-$GITHUB_RUN_ID" --output diskName)
+          if ! printf '%s' "$disk" | grep -Eq '^planted-disk-[a-z0-9]{1,12}$'; then
+            echo "::error::The deployment did not return the name of the planted disk."
+            exit 1
+          fi
+          echo "disk=$disk" >> "$GITHUB_OUTPUT"
+
+      - name: What was planted
+        if: inputs.action == 'plant'
+        run: |
+          {
+            echo "### Planted waste in $ENV_RESOURCE_GROUP"
+            echo
+            echo '```'
+            az resource list --resource-group "$ENV_RESOURCE_GROUP" --query "[?tags.\"meternaut-planted\"].{name:name, type:type, planted:tags.\"meternaut-planted\", location:location}" --output table
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Knock at the console's front door
+        if: inputs.action == 'loop-check' || inputs.action == 'cases'
+        env:
+          FUNCTION_APP: ${{ steps.params.outputs.cases_function_app_name }}
+        run: |
+          # Without a sign-in nobody gets a page: the sign-in sends a visitor to Microsoft Entra, or, while it is not set up, the app refuses every request.
+          # A made-up sign-in header is not served either. The site may need a minute after a publish.
+          expect=refuse
+          if [ -n "$CONSOLE_APP_CLIENT_ID" ]; then expect=signin; fi
+          for attempt in 1 2 3 4 5; do
+            if python3 tools/console-check.py door --host "$FUNCTION_APP.azurewebsites.net" --expect "$expect" --summary "$GITHUB_STEP_SUMMARY"; then
+              exit 0
+            fi
+            echo "The front door did not answer as expected (attempt $attempt of 5)."
+            if [ "$attempt" -lt 5 ]; then sleep 30; fi
+          done
+          echo "::error::The console's front door is not shut as it should be."
+          exit 1
+
       - name: What was done
         if: always()
         env:
@@ -734,6 +796,8 @@ jobs:
                 recording-check) echo "The copy jobs may have run and written nothing, or not at all. The lines above say how each ended, or which warnings and errors the function app logged. Running \`recording-check\` again is safe." ;;
                 cases) echo "Part of the first cases may exist now: the identity, the plan, the function app, the control hub, the longer retention of the traces and the workbook. They cost next to nothing. Running \`cases\` again is safe and repeats only what is missing; \`what-if\` shows what is there." ;;
                 cases-run) echo "The Watch may have run partly or not at all. The lines above say how it ended, or which warnings and errors the cases app logged. It only reads Azure, so nothing was changed. Running \`cases-run\` again is safe." ;;
+                plant) echo "Part of the planted waste may exist now (an unattached disk, maybe an unassigned public IP address) in resource group \`$ENV_RESOURCE_GROUP\`, tagged for the loop. They cost a few cents to a few dollars a month. Running \`plant\` again is safe: it makes a second planting under a new name; the loop removes what a person approves." ;;
+                loop-check) echo "The front door was not shut as it should be: a request without a sign-in got something other than a sign-in or the app's refusal. Nothing was changed. Do not hand the address to anybody until this passes." ;;
               esac
             else
               case "$ACTION" in
@@ -745,7 +809,9 @@ jobs:
                 recording) echo "The usage recording is in resource group \`$ENV_RESOURCE_GROUP\`: Event Hubs, a Cosmos DB account (serverless, no public endpoint, no key), a storage account (no public endpoint, no Shared Key), the function app with its six functions on a Flex Consumption plan, its identity, a workspace and an Application Insights component of its own, and five private endpoints that the landing zone has registered in its central zones. The key-based Logic App version is removed. The gateway identity may send to the two usage event hubs and the function app may read them; nothing sends to them yet. The copy jobs need two roles for the function app's identity outside the project's group before they can read the gateway's Application Insights (environment/BOOTSTRAP.md); then \`recording-check\` starts them once and reads what they said." ;;
                 recording-check) echo "The copy jobs ran and the function app wrote what each did to its telemetry; the lines above are that: the window, the rows read, the documents written and the number of documents in the container afterwards. A job writes only what the gateway recorded after its marker, so a first run writes the marker and nothing else." ;;
                 cases) echo "The first cases are in resource group \`$ENV_RESOURCE_GROUP\`: a function app with two functions (a daily timer and a trigger on the control hub), its identity, the control hub in the usage recording's namespace, a year of retention for the traces and the History workbook. The app reads the pilot subscription with two roles and the contract's key with one role in the gateway's subscription; this workflow gives none of them, they are given once on the owner's written word (environment/BOOTSTRAP.md), and until they exist a run ends with an authorization error. The app changes nothing in Azure." ;;
-                cases-run) echo "One Watch ran and wrote its History to the cases app's telemetry; the lines above are that: the leads, what each case came to, what the models said and the tokens that went through the gateway. Nothing in Azure was changed." ;;
+                cases-run) echo "One Watch ran and wrote its History to the cases app's telemetry and its records to the store; the lines above are that: the leads, what each case came to, what the models said and the tokens that went through the gateway. Nothing in Azure was changed." ;;
+                plant) echo "Waste of Meternaut's own is in resource group \`$ENV_RESOURCE_GROUP\`: an unattached disk (and, when asked, an unassigned public IP address), tagged meternaut-planted. The next Watch finds it, and the loop takes it from there." ;;
+                loop-check) echo "The console's front door is shut: without a sign-in nobody gets a page, and a made-up sign-in header is not believed." ;;
               esac
             fi
           } >> "$GITHUB_STEP_SUMMARY"

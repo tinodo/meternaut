@@ -190,6 +190,59 @@ def cases_names(subscription: str, group: str) -> dict[str, str]:
     return {"cases_function_app_name": f"func-meternaut-cases-{digest(subscription, group)}"}
 
 
+def planted_parameters(env, location: str, owner: str) -> dict:
+    """The waste that the action `plant` makes: a short word for this planting (the tag value and part of the names) and whether a public IP address is planted too."""
+    planted_id = (env.get("PLANTED_ID") or "demo").strip().lower()
+    if not re.fullmatch(r"[a-z0-9]{1,12}", planted_id):
+        raise Problem("PLANTED_ID is one to twelve lower-case letters or digits")
+    public_ip = (env.get("PLANT_PUBLIC_IP") or "false").strip().lower()
+    if public_ip not in ("true", "false"):
+        raise Problem("PLANT_PUBLIC_IP is true or false")
+    return {"location": location, "owner": owner, "plantedId": planted_id, "plantPublicIp": public_ip == "true"}
+
+
+ROLES_OF_PEOPLE = ("owner", "approver", "ops")
+ADDRESS = re.compile(r"^[A-Za-z0-9._%+'-]{1,64}@[A-Za-z0-9.-]{1,200}\.[A-Za-z]{2,24}$")
+
+
+def console_parameters(env) -> dict:
+    """The console, the people and the mail of the cases app, from three optional variables. None of them is a secret: an app registration's client id,
+    the people (directory object id, name, roles and address of each) and the address of the shared mailbox. Without a client id the sign-in is not set up
+    and the console refuses every request."""
+    client = (env.get("CONSOLE_APP_CLIENT_ID") or "").strip()
+    if client and not GUID.match(client):
+        raise Problem("CONSOLE_APP_CLIENT_ID is the client id of the console's app registration")
+    raw = (env.get("CONSOLE_PEOPLE") or "").strip()
+    people: list = []
+    if raw:
+        try:
+            people = json.loads(raw)
+        except ValueError:
+            raise Problem("CONSOLE_PEOPLE is JSON")
+        if not isinstance(people, list) or not 1 <= len(people) <= 20:
+            raise Problem("CONSOLE_PEOPLE is a list of one to twenty people")
+        for person in people:
+            if not isinstance(person, dict) or not GUID.match(str(person.get("oid", ""))) or not str(person.get("name", "")).strip():
+                raise Problem("each person of CONSOLE_PEOPLE has an oid (a directory object id) and a name")
+            if not isinstance(person.get("roles"), list) or not person["roles"] or not all(r in ROLES_OF_PEOPLE for r in person["roles"]):
+                raise Problem(f"each person of CONSOLE_PEOPLE has roles from {', '.join(ROLES_OF_PEOPLE)}")
+            if person.get("mail") and not ADDRESS.match(str(person["mail"])):
+                raise Problem("each address in CONSOLE_PEOPLE is an address")
+        if len({p["oid"].lower() for p in people}) != len(people):
+            raise Problem("an oid is listed twice in CONSOLE_PEOPLE")
+    if client and not people:
+        raise Problem("CONSOLE_APP_CLIENT_ID is set and CONSOLE_PEOPLE is not: the sign-in would let nobody through")
+    sender = (env.get("MAIL_SENDER") or "").strip()
+    if sender and not ADDRESS.match(sender):
+        raise Problem("MAIL_SENDER is the address of the shared mailbox")
+    return {
+        "consoleAppClientId": client.lower(),
+        "consolePeople": json.dumps([{**p, "oid": p["oid"].lower()} for p in people], separators=(",", ":")) if people else "[]",
+        "consoleUserObjectIds": [p["oid"].lower() for p in people],
+        "mailSender": sender,
+    }
+
+
 def function_subnet(vnet: ipaddress.IPv4Network, endpoints: ipaddress.IPv4Network) -> ipaddress.IPv4Network:
     """The subnet of the function app: the first /27 of the virtual network that does not overlap the private endpoint subnet.
 
@@ -528,6 +581,7 @@ def build(env, models: list[dict], preview: bool = False, contract: dict | None 
         "logger.parameters.json": parameters(logger),
         "kit.parameters.json": parameters(kit),
         "recording.parameters.json": parameters(recording),
+        "planted.parameters.json": parameters(planted_parameters(env, location, owner)),
     }
     if client or preview:
         files["eventhub-loggers.parameters.json"] = parameters({
@@ -556,6 +610,7 @@ def build(env, models: list[dict], preview: bool = False, contract: dict | None 
             "gatewayProductSubscriptionId": f"{need(env, 'GATEWAY_RESOURCE_ID')}/subscriptions/{contract_outputs['contract_subscription']}",
             "modelDetective": contract["allowedModels"][0],
             "modelSkeptic": contract["allowedModels"][1],
+            **console_parameters(env),
         })
     return files, outputs
 
