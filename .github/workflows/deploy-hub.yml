@@ -646,11 +646,40 @@ jobs:
           fi
           echo "The usage recording's storage account and namespace are there, the contract's subscription is in the gateway, and the gateway answers on ${actual%/}."
 
+      - name: Remove the Flex Consumption version of the cases app, when it is still there
+        if: inputs.action == 'cases'
+        env:
+          FUNCTION_APP: ${{ steps.params.outputs.cases_function_app_name }}
+        run: |
+          # The first cases ran on a Flex Consumption plan, whose front end held some requests to the console for 15 to 60 seconds (CHANGELOG.md). A Basic plan cannot
+          # take over a Flex app, so the app and its plan are removed here, and the template then makes the new plan and an app of the same name: the host name, the
+          # sign-in's reply address and the links in the letters stay as they are. The app holds no data (the records are in the storage account's tables, the History
+          # is in Application Insights), and only the cases app and the plan that it runs on are touched.
+          site="/subscriptions/$ENV_SUBSCRIPTION_ID/resourceGroups/$ENV_RESOURCE_GROUP/providers/Microsoft.Web/sites/$FUNCTION_APP"
+          if ! plan=$(az rest --method get --url "https://management.azure.com${site}?api-version=2024-04-01" --query properties.serverFarmId --output tsv 2>/dev/null); then
+            echo "The cases app is not there: nothing to remove."
+            exit 0
+          fi
+          tier=$(az rest --method get --url "https://management.azure.com${plan}?api-version=2024-04-01" --query sku.tier --output tsv)
+          if [ "$tier" != "FlexConsumption" ]; then
+            echo "The cases app runs on a $tier plan: nothing to remove."
+            exit 0
+          fi
+          echo "The cases app runs on a Flex Consumption plan: the app is removed, then its plan."
+          az rest --method delete --url "https://management.azure.com${site}?api-version=2024-04-01" --only-show-errors
+          for attempt in 1 2 3 4 5 6 7 8 9 10; do
+            if ! az rest --method get --url "https://management.azure.com${site}?api-version=2024-04-01" --output none 2>/dev/null; then break; fi
+            sleep 15
+          done
+          az rest --method delete --url "https://management.azure.com${plan}?api-version=2024-04-01" --only-show-errors
+          # The host name is let go a little after the app: a new app of the same name may be refused for a minute.
+          sleep 90
+
       - name: Deploy the first cases
         id: cases
         if: inputs.action == 'cases'
         run: |
-          # A second function app on the Flex Consumption plan, with its own identity, plan and package container; one more event hub
+          # A second function app on a Basic plan (Linux, always on), with its own identity, plan and integration subnet; one more event hub
           # (the control hub) in the recording's namespace; the roles that connect them; a year of retention for the traces; and the
           # History workbook (environment/cases/main.bicep). The app only reads Azure. No key anywhere.
           site=$(python3 tools/az-deploy.py create --subscription "$ENV_SUBSCRIPTION_ID" --resource-group "$ENV_RESOURCE_GROUP" \
@@ -681,15 +710,22 @@ jobs:
         env:
           FUNCTION_APP: ${{ steps.params.outputs.cases_function_app_name }}
         run: |
-          # Like the usage functions: the package goes to the app's deployment endpoint with the signed-in identity's token, and a site
-          # that has just been made may need a minute before it takes a package.
-          for attempt in 1 2 3; do
-            if az functionapp deployment source config-zip --resource-group "$ENV_RESOURCE_GROUP" --name "$FUNCTION_APP" \
-              --src "$RUNNER_TEMP/case-functions.zip" --build-remote false --only-show-errors; then
+          # The package goes to the app's deployment site (Kudu's zip deployment) with the signed-in identity's token, which is how Microsoft documents a zip deployment
+          # to a site whose basic authentication is off. The app runs from that package. A site that has just been made may need a few minutes before it takes one.
+          token=$(az account get-access-token --resource https://management.azure.com --query accessToken --output tsv)
+          echo "::add-mask::$token"
+          for attempt in 1 2 3 4 5; do
+            code=$(curl --silent --show-error --output "$RUNNER_TEMP/zipdeploy.txt" --write-out '%{http_code}' --max-time 900 --request POST \
+              --header "Authorization: Bearer $token" --header 'Content-Type: application/zip' --data-binary "@$RUNNER_TEMP/case-functions.zip" \
+              "https://$FUNCTION_APP.scm.azurewebsites.net/api/zipdeploy" || echo "000")
+            if [ "$code" = "200" ] || [ "$code" = "202" ]; then
+              echo "The deployment site took the package (HTTP $code)."
               exit 0
             fi
-            echo "The publish did not go through (attempt $attempt of 3)."
-            if [ "$attempt" -lt 3 ]; then sleep 60; fi
+            echo "The publish was answered with HTTP $code (attempt $attempt of 5)."
+            head -c 300 "$RUNNER_TEMP/zipdeploy.txt" || true
+            echo
+            if [ "$attempt" -lt 5 ]; then sleep 60; fi
           done
           echo "::error::The code could not be published to $FUNCTION_APP."
           exit 1

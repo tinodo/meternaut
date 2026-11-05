@@ -4,24 +4,32 @@
 //   timer (daily) or one control event --> Watch --> Resource Graph, Advisor, Cost Management (read only)
 //   Watch --> Detective and Skeptic (the gateway's chat route) --> guards in code --> one telemetry line per step --> workbook
 //
-// What it holds: a user-assigned identity, a Flex Consumption plan with the function app, a package container in the storage
-// account of the usage recording, one more event hub (the control hub) in the namespace of the usage recording, the roles that
-// connect them, a longer retention for the traces table of the workspace, and the History workbook.
+// What it holds: a user-assigned identity, a Basic (B1, Linux, always on) plan with the function app and the subnet that the plan is
+// integrated with, one more event hub (the control hub) in the namespace of the usage recording, the roles that connect them, a longer
+// retention for the traces table of the workspace, and the History workbook.
 //
-// It makes no storage account, no namespace, no private endpoint and no network: the app shares the integration subnet, the storage
-// account (blob, queue and table private endpoints) and the Event Hubs namespace (private endpoint) of environment/recording/main.bicep,
-// so nothing new is billed except tokens. The recording has to exist first.
+// Why not Flex Consumption, which the first cases ran on: its front end held some requests to the console for 15 to 60 seconds and
+// answered some with "The service is unavailable" (CHANGELOG.md). A Basic plan has no such front end, no cold start, and runs the
+// timers, the control hub's trigger and the console on one instance for about 13 US dollars a month.
 //
-// No key of any kind (AGENTS.md rule 23): the app's host storage, its package, its Event Hubs trigger and its telemetry use its
-// identity. The only key it ever touches is the gateway access product's, which the Watch reads from the gateway at the start of
-// a run with its identity (the call needs a role in the gateway's subscription that the template cannot give) and keeps in memory.
+// It makes no storage account, no namespace and no private endpoint: the app shares the storage account (blob, queue and table private
+// endpoints) and the Event Hubs namespace (private endpoint) of environment/recording/main.bicep, so nothing new is billed except the
+// plan and tokens. The only network it makes is the app's own integration subnet (the usage recording's subnet is delegated to Flex
+// Consumption and cannot serve a Basic plan) and that subnet's network security group. The recording has to exist first.
+//
+// No key of any kind (AGENTS.md rule 23): the app's host storage, its Event Hubs trigger and its telemetry use its identity, and its
+// code is pushed with the deployment workflow's own identity token (no deployment password). The only key it ever touches is the
+// gateway access product's, which the Watch reads from the gateway at the start of a run with its identity (the call needs a role in the
+// gateway's subscription that the template cannot give) and keeps in memory.
 //
 // The identity can read nothing of the pilot estate yet: its Reader and Cost Management Reader roles on the pilot subscription, and the
 // role that reads the access product's key, are given once, outside this template, on the owner's written word (environment/BOOTSTRAP.md,
 // AGENTS.md rule 18), because the deployment workflow's identity has no right there and must not get one.
 //
 // Deployed only by the workflow .github/workflows/deploy-hub.yml, action "cases" (AGENTS.md rule 18). The code of the function app
-// is published by the same action, from src/case-functions.
+// is published by the same action, from src/case-functions. A Basic plan cannot take over a Flex Consumption app: the action removes
+// the Flex app and its plan first, when they are still there, and this template then makes an app of the same name, so that the host
+// name, the sign-in's reply address and the links in the letters stay as they were.
 targetScope = 'resourceGroup'
 
 @description('Region of every resource.')
@@ -48,6 +56,9 @@ param eventHubNamespaceName string
 @minLength(2)
 @maxLength(60)
 param functionAppName string
+
+@description('Address range of the subnet that the app\'s Basic plan is integrated with, inside the virtual network and apart from the other two subnets, for example 10.53.0.64/27. It is delegated to Microsoft.Web/serverFarms and holds nothing else.')
+param webSubnetPrefix string
 
 @description('Object id of the identity that the deployment workflow signs in as. It may send to the control hub, so that the workflow can start one run and read the History. It reads nothing else.')
 @minLength(36)
@@ -113,9 +124,8 @@ var tags = {
 }
 
 var virtualNetworkName = 'vnet-${workload}'
-var functionSubnetName = 'snet-func'
+var webSubnetName = 'snet-web'
 var controlHubName = 'cases-control'
-var deploymentContainerName = 'app-package-cases'
 
 var eventHubsDataSenderRoleId = '2b629674-e913-4c01-ae53-ef4638d8f975'
 var eventHubsDataReceiverRoleId = 'a638d3c7-ab3a-418d-83e6-5f17a39d4fde'
@@ -128,9 +138,38 @@ resource vnet 'Microsoft.Network/virtualNetworks@2025-05-01' existing = {
   name: virtualNetworkName
 }
 
-resource functionSubnet 'Microsoft.Network/virtualNetworks/subnets@2025-05-01' existing = {
+// No rule of its own, like the other function subnet's: the default rules let the app reach the virtual network and the internet (the landing
+// zone's firewall decides there), and nothing is let in.
+resource webNsg 'Microsoft.Network/networkSecurityGroups@2025-05-01' = {
+  name: 'nsg-${workload}-web'
+  location: location
+  tags: tags
+  properties: {
+    securityRules: []
+  }
+}
+
+// The same subnet is in environment/main.bicep, so that a later run of the model-side action does not take it away from the plan. Delegated to
+// Microsoft.Web/serverFarms, which is what a Basic plan's regional virtual network integration needs (the usage recording's subnet is delegated
+// to Microsoft.App/environments, for Flex Consumption, and a subnet has one delegation). It holds nothing else.
+resource webSubnet 'Microsoft.Network/virtualNetworks/subnets@2025-05-01' = {
   parent: vnet
-  name: functionSubnetName
+  name: webSubnetName
+  properties: {
+    addressPrefix: webSubnetPrefix
+    networkSecurityGroup: {
+      id: webNsg.id
+    }
+    delegations: [
+      {
+        name: 'app-service-plan'
+        properties: {
+          serviceName: 'Microsoft.Web/serverFarms'
+        }
+      }
+    ]
+    defaultOutboundAccess: false
+  }
 }
 
 resource workspace 'Microsoft.OperationalInsights/workspaces@2023-09-01' existing = {
@@ -176,17 +215,10 @@ resource authIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-
   tags: tags
 }
 
-resource deploymentContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-05-01' = {
-  parent: blobService
-  name: deploymentContainerName
-  properties: {
-    publicAccess: 'None'
-  }
-}
-
-// The three containers that every Functions host of the account shares: host locks, host secrets and the Event Hubs checkpoints. They
-// exist already (the usage recording's host made them). The usage recording's package container is not among them, so the code of the
-// recording cannot be read or replaced with the identity of this app.
+// The two containers and the checkpoints that every Functions host of the account shares: host locks, host secrets and the Event Hubs
+// checkpoints. They exist already (the usage recording's host made them). The usage recording's package container is not among them, so the
+// code of the recording cannot be read or replaced with the identity of this app. This app's own code is not in the account at all: the
+// deployment workflow pushes it to the app, which keeps it on the plan's own storage.
 var sharedHostContainerNames = [
   'azure-webjobs-hosts'
   'azure-webjobs-secrets'
@@ -224,10 +256,10 @@ resource tracesRetention 'Microsoft.OperationalInsights/workspaces/tables@2023-0
 }
 
 // Each role on the one resource that the caller uses, never on the group: the workflow sends to the control hub and cannot read it;
-// the app reads it and cannot send. Storage Blob Data Owner on four containers only (its own package container and the three that the
-// Functions hosts of the account share), Storage Queue Data Contributor and Storage Table Data Contributor on the account (the host's
-// documented set for an identity-based host storage; the account holds no queue and no table of anybody else's). Monitoring Metrics
-// Publisher: the app's telemetry, with Entra ID instead of the instrumentation key.
+// the app reads it and cannot send. Storage Blob Data Owner on the three containers that the Functions hosts of the account share,
+// Storage Queue Data Contributor and Storage Table Data Contributor on the account (the host's documented set for an identity-based host
+// storage; the account holds no queue and no table of anybody else's). Monitoring Metrics Publisher: the app's telemetry, with Entra ID
+// instead of the instrumentation key.
 resource workflowSendsControl 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   scope: controlHub
   name: guid(controlHub.id, workflowPrincipalId, eventHubsDataSenderRoleId)
@@ -243,16 +275,6 @@ resource functionReceivesControl 'Microsoft.Authorization/roleAssignments@2022-0
   name: guid(controlHub.id, casesIdentity.id, eventHubsDataReceiverRoleId)
   properties: {
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', eventHubsDataReceiverRoleId)
-    principalId: casesIdentity.properties.principalId
-    principalType: 'ServicePrincipal'
-  }
-}
-
-resource functionOwnsOwnPackage 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  scope: deploymentContainer
-  name: guid(deploymentContainer.id, casesIdentity.id, storageBlobDataOwnerRoleId)
-  properties: {
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', storageBlobDataOwnerRoleId)
     principalId: casesIdentity.properties.principalId
     principalType: 'ServicePrincipal'
   }
@@ -298,14 +320,16 @@ resource functionPublishesTelemetry 'Microsoft.Authorization/roleAssignments@202
   }
 }
 
+// A Basic plan, Linux, one instance, always on: the console, the timers and the control hub's trigger run on it side by side. About 13 US dollars a month at the
+// price list of Sweden Central (0.018 US dollars an hour), whatever it does. It takes the integration subnet above; a plan is in the region of its subnet.
 resource plan 'Microsoft.Web/serverfarms@2024-04-01' = {
-  name: 'plan-${workload}-cases'
+  name: 'plan-${workload}-cases-basic'
   location: location
   tags: tags
-  kind: 'functionapp'
+  kind: 'linux'
   sku: {
-    name: 'FC1'
-    tier: 'FlexConsumption'
+    name: 'B1'
+    tier: 'Basic'
   }
   properties: {
     reserved: true
@@ -314,11 +338,8 @@ resource plan 'Microsoft.Web/serverfarms@2024-04-01' = {
 
 var eventHubHost = replace(replace(eventHubs.properties.serviceBusEndpoint, 'https://', ''), ':443/', '')
 
-// Like the usage recording's app: no Azure Files content share, no storage connection string, no basic-authentication deployment.
-// The ceiling of one instance applies to every function group on its own (the limit is per group, not for the app): a run is one function
-// execution that waits for models, a timer must not run twice at once, the control hub has one partition and one person uses the console.
-// With a ceiling of four, the group of the console scaled out to four instances for one request every four seconds, and the platform kept
-// sending requests to instances that were not ready: every fourth request waited 40 to 46 seconds before it was served.
+// No Azure Files content share, no storage connection string, no deployment password (the workflow pushes the code with its own identity's token to the app's
+// deployment endpoint, which keeps it on the plan's own storage and runs the app from that package).
 resource functionApp 'Microsoft.Web/sites@2024-04-01' = {
   name: functionAppName
   location: location
@@ -337,30 +358,19 @@ resource functionApp 'Microsoft.Web/sites@2024-04-01' = {
     httpsOnly: true
     publicNetworkAccess: 'Enabled'
     clientAffinityEnabled: false
-    virtualNetworkSubnetId: functionSubnet.id
-    functionAppConfig: {
-      deployment: {
-        storage: {
-          type: 'blobContainer'
-          value: '${storage.properties.primaryEndpoints.blob}${deploymentContainerName}'
-          authentication: {
-            type: 'UserAssignedIdentity'
-            userAssignedIdentityResourceId: casesIdentity.id
-          }
-        }
-      }
-      scaleAndConcurrency: {
-        maximumInstanceCount: 1
-        instanceMemoryMB: 2048
-      }
-      runtime: {
-        name: 'python'
-        version: '3.13'
-      }
-    }
+    virtualNetworkSubnetId: webSubnet.id
+    vnetRouteAllEnabled: false
     siteConfig: {
+      linuxFxVersion: 'PYTHON|3.13'
+      alwaysOn: true
       minTlsVersion: '1.2'
+      ftpsState: 'Disabled'
       appSettings: [
+        { name: 'FUNCTIONS_EXTENSION_VERSION', value: '~4' }
+        { name: 'FUNCTIONS_WORKER_RUNTIME', value: 'python' }
+        { name: 'WEBSITE_RUN_FROM_PACKAGE', value: '1' }
+        { name: 'SCM_DO_BUILD_DURING_DEPLOYMENT', value: 'false' }
+        { name: 'ENABLE_ORYX_BUILD', value: 'false' }
         { name: 'AzureWebJobsStorage__credential', value: 'managedidentity' }
         { name: 'AzureWebJobsStorage__clientId', value: casesIdentity.properties.clientId }
         { name: 'AzureWebJobsStorage__blobServiceUri', value: storage.properties.primaryEndpoints.blob }
@@ -394,20 +404,27 @@ resource functionApp 'Microsoft.Web/sites@2024-04-01' = {
   }
   dependsOn: [
     functionReceivesControl
-    functionOwnsOwnPackage
     functionOwnsHostContainers
     functionUsesQueues
     functionUsesTables
     functionPublishesTelemetry
-    deploymentContainer
     controlConsumerGroup
   ]
 }
 
-// No password for the deployment endpoint either: the workflow publishes with its own identity's token.
+// No password for the deployment endpoint (basic authentication stays off for the app's deployment site) and none for FTP: the workflow publishes with its own
+// identity's token.
 resource noBasicAuthForDeployment 'Microsoft.Web/sites/basicPublishingCredentialsPolicies@2024-04-01' = {
   parent: functionApp
   name: 'scm'
+  properties: {
+    allow: false
+  }
+}
+
+resource noBasicAuthForFtp 'Microsoft.Web/sites/basicPublishingCredentialsPolicies@2024-04-01' = {
+  parent: functionApp
+  name: 'ftp'
   properties: {
     allow: false
   }

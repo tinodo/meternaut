@@ -71,9 +71,11 @@ class TemplateAndCode(unittest.TestCase):
         template = (REPO_ROOT / "environment" / "cases" / "main.bicep").read_text(encoding="utf-8")
         given = set(re.findall(r"\{ name: '([A-Za-z0-9_]+)', value: ", template))
         read = set(re.findall(r'^([A-Z][A-Z0-9_]+) = "\1"$', (REPO_ROOT / "src" / "case-functions" / "cases" / "config.py").read_text(encoding="utf-8"), re.M))
-        # The settings of the loop are read by loop_config.py, the people by people.py, and the platform reads the one of its sign-in itself.
+        # The settings of the loop are read by loop_config.py, the people by people.py, and the platform reads the ones of its sign-in and of its own hosting itself
+        # (the Functions host's version and language, and how the Basic plan runs and builds the code).
         read |= set(re.findall(r'^([A-Z][A-Z0-9_]+) = "\1"$', (REPO_ROOT / "src" / "case-functions" / "cases" / "loop_config.py").read_text(encoding="utf-8"), re.M))
         read |= {"CONSOLE_PEOPLE", "OVERRIDE_USE_MI_FIC_ASSERTION_CLIENTID"}
+        read |= {"FUNCTIONS_EXTENSION_VERSION", "FUNCTIONS_WORKER_RUNTIME", "WEBSITE_RUN_FROM_PACKAGE", "SCM_DO_BUILD_DURING_DEPLOYMENT", "ENABLE_ORYX_BUILD"}
         self.assertIn('SETTING = "CONSOLE_PEOPLE"', (REPO_ROOT / "src" / "case-functions" / "cases" / "people.py").read_text(encoding="utf-8"))
         self.assertEqual(sorted(set(config.REQUIRED) - given), [], "the template does not set what the code requires")
         known = {name for name in given if name.isupper() and "__" not in name and not name.startswith("APPLICATIONINSIGHTS")}
