@@ -6,9 +6,8 @@
   "challengeExample": "For example: the job on the last Tuesday is real",
   "teachExample": "For example: this is our disaster-recovery environment",
   "headline": "Switch off the web-shop QA environment 19:30 to 07:30 and at weekends, except the last Tuesday",
-  "okLabel": "OK, switch it off",
   "plan": {
-    "when": "Thursday 19:30 CET, then each weekday at 19:30",
+    "when": "at the moment you approve, with your own Azure rights",
     "rows": [
       {
         "resource": "vm-qa-web-01",
@@ -30,11 +29,7 @@
       }
     ],
     "couldGoWrong": "a late test run could find the environment off. If activity appears after 19:30, I ask you before I switch anything on; I do not do it myself.",
-    "undo": "tap Undo on the Done message, or switch it on in the portal. Undo stays open until Friday 19:30 CET."
-  },
-  "cap": {
-    "used": 2,
-    "max": 5
+    "undo": "Azure lets you switch the machines on again and set the old auto-pause back. The Done message links to the page where you sign in to Azure and do it with your own rights."
   },
   "planCode": "7F3K-92QD",
   "value": "About €690 a month",

@@ -9,9 +9,9 @@
     "max_options": 2
   },
   "contract": {
-    "who": "The card's addressee; a decision verb (ok, cancel, not-me) also needs the designated approver or a named delegate, checked by directory object id, never by name; undo needs the holder of the rollback grant (the approver, or each owner of record for a change under a standing permission).",
+    "who": "The card's addressee; a decision verb (cancel, not-me) also needs the designated approver or a named delegate, checked by directory object id, never by name. A card never approves and never changes Azure: its link opens the page, where the approver signs in to Azure and the change is made with that person's own rights.",
     "repeat": "A repeated tap changes nothing: the service answers that it is already recorded.",
-    "refused": "A verb is refused when its request is expired, changed, answered or paused, and the refusal says why; Undo (checked against its own grant and window), \"I did not approve this\" and \"Talk to a person\" stay open.",
+    "refused": "A verb is refused when its request is expired, changed, answered or paused, and the refusal says why; \"I did not approve this\" and \"Talk to a person\" stay open.",
     "response": "One immediate response per tap, as listed under returns; the outcome follows by updating the same message.",
     "words": "Only Challenge, Teach and the text boxes send words: bounded, screened and quoted as untrusted data. Free text never approves."
   },
@@ -190,7 +190,7 @@
     },
     "C4": {
       "file": "your-ok.json",
-      "title": "Your OK (one tap)",
+      "title": "Your OK (small change)",
       "conversation": "full",
       "money": true,
       "requires": [
@@ -200,16 +200,11 @@
         "undo",
         "plan-code",
         "could-go-wrong",
-        "cap",
+        "page-button",
         "why-you-get-this"
       ],
       "displayTitle": "Your OK",
       "verbs": {
-        "ok": {
-          "inputs": [],
-          "plan": true,
-          "returns": "receipt"
-        },
         "cancel": {
           "inputs": [],
           "plan": true,
@@ -247,7 +242,10 @@
           "plan": false,
           "returns": "handoff"
         }
-      }
+      },
+      "openUrl": [
+        "page-button"
+      ]
     },
     "C5": {
       "file": "ok-on-page.json",
@@ -312,15 +310,11 @@
       "requires": [
         "headline",
         "undo-window",
+        "page-button",
         "why-you-get-this"
       ],
       "displayTitle": "Done",
       "verbs": {
-        "undo": {
-          "inputs": [],
-          "plan": true,
-          "returns": "receipt"
-        },
         "not-me": {
           "inputs": [],
           "plan": true,
@@ -352,7 +346,10 @@
           "plan": false,
           "returns": "handoff"
         }
-      }
+      },
+      "openUrl": [
+        "page-button"
+      ]
     },
     "C7": {
       "file": "result.json",
@@ -415,15 +412,11 @@
         "headline",
         "permission",
         "undo-window",
+        "page-button",
         "why-you-get-this"
       ],
       "displayTitle": "Done under a standing permission",
       "verbs": {
-        "undo": {
-          "inputs": [],
-          "plan": true,
-          "returns": "receipt"
-        },
         "pause-here": {
           "inputs": [],
           "plan": false,
@@ -455,7 +448,10 @@
           "plan": false,
           "returns": "handoff"
         }
-      }
+      },
+      "openUrl": [
+        "page-button"
+      ]
     },
     "C9": {
       "file": "reminder.json",

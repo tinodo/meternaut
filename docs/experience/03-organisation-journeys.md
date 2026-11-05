@@ -9,7 +9,7 @@
 | Step | The person sees or does | The system does |
 |---|---|---|
 | 1. Probe | Nadia and Ibrahim read "what I can see here", the capability profile: agreement, cost reach, price basis, commitments visible, who may buy, what more access would buy | Makes read-only calls in plain code; explains each error |
-| 2. Channel, people | Ibrahim sees who can install the app and which approvers have not yet passed the test sign-in, and names owner groups, billing owner and partner contact | Sets Teams or e-mail only per person. Where authentication contexts or phishing-resistant sign-in are missing, it refuses what needs them (anything above one tap, or a two-person purchase) and says why in the profile |
+| 2. Channel, people | Ibrahim sees who can install the app and which approvers have not yet passed the test sign-in, and names owner groups, billing owner and partner contact | Sets Teams or e-mail only per person. Where authentication contexts or phishing-resistant sign-in are missing, it refuses what needs them (anything above a small change, or a two-person purchase) and says why in the profile |
 | 3. Announce, first letter | Nadia and the team leads announce the system. The first Monday letter follows; owners get Hello | Holds first contact until the announcement is recorded; advises only until an action family is opted in |
 
 **If a probe fails, or access changes,** the profile shows what the identity can do today, not what the agreement allows, and names the role to ask for. It re-probes weekly and after any 401 or 403: widened access re-prices open Recommendations, narrowed access marks advice unconfirmed ([people](01-people.md)).
@@ -53,7 +53,7 @@ Until 30 June the current reservation covers part of the usage, so the plan save
 | Step | The person sees or does | The system does |
 |---|---|---|
 | 1. Ask | Tomasz (budget holder) and Lars (finance approver) each get Your OK on a page (C5, [rendering](../img/experience-card-c5-ok-on-page.png)) with plan code K4M8-R6TW. Each signs in with a phishing-resistant method, reads the page, which says "cannot be undone", and chooses alone | Asks both at once; refuses the requester and one person in both roles; hides each answer until both have decided |
-| 2. Buy, watch | "Nothing has changed yet", then Done (C6) | Buys exactly the price check as the last approver, who needs the right to buy; watches the bill for the purchase line and tells the approvers if monthly utilisation falls below 90 % |
+| 2. Buy, watch | "Nothing has changed yet", then Done (C6) | Buys exactly the price check as the last approver, who needs the right to buy (not designed yet for two approvers); watches the bill for the purchase line and tells the approvers if monthly utilisation falls below 90 % |
 
 **A renewal notice.** The system writes to the budget holder and the FinOps lead 60 days before a commitment ends (starting value), with the commitment's actual renewal setting. A reservation renews by default: doing nothing buys a replacement, outside our control, so the system can only ask the reservation's owner (the partner, for a partner-sold one) to turn it off. With renewal off, usage returns to pay-as-you-go rates at expiry. Azure shows a reservation's renewal price only 30 days before expiry ([Learn](https://learn.microsoft.com/azure/cost-management-billing/reservations/reservation-renew)), so the 60-day notice carries a scenario, not a price check; the price check and two new approvals come later.
 
@@ -66,7 +66,7 @@ Until 30 June the current reservation covers part of the usage, so the plan save
 
 **If the outcome is unknown, or nobody bought,** the Verifier looks up the order and the FinOps lead is paged; a purchase is never retried. A missing or different purchase line reopens the Case.
 
-**Rules.** No approval by e-mail reply, text, voice or free text, and no one-tap purchase. A request is never called a purchase, and the deadline is a fact, never a countdown.
+**Rules.** No approval by e-mail reply, text, voice or free text, and no purchase from a card. A request is never called a purchase, and the deadline is a fact, never a countdown.
 
 **Measured by.** Time to the second approval; share decided before the price check expires; purchases that match their plan exactly; utilisation and unused commitment (vacancy) (J13).
 
@@ -108,7 +108,7 @@ stateDiagram-v2
 
 | Step | The person sees or does | The system does |
 |---|---|---|
-| 1. Detect, narrow, tell | (Invented.) E2, the orders database one size down: its safety check (CPU above 85 % for 10 minutes) trips. Maya, who approved it, gets Our mistake: restored, restoring or unknown, what is paused, who updates by when. She restores the old size in one tap, inside the undo window | Stops, because only a one-tap change rolls back by itself; a page-class change goes to its approver, whose rollback grant (usable once, held for a reversible change) makes restoring one tap. Pauses standing permissions on that database and resource group; sends the card before the investigation ends. "Restored" means it checked |
+| 1. Detect, narrow, tell | (Invented.) E2, the orders database one size down: its safety check (CPU above 85 % for 10 minutes) trips. Maya, who approved it, gets Our mistake: restored, restoring or unknown, what is paused, who updates by when. She restores the old size with a new approval on the page | Stops: nothing rolls back by itself; restoring is a new plan that its approver approves with their own rights. Pauses standing permissions on that database and resource group; sends the card before the investigation ends. "Restored" means it checked |
 | 2. Investigate, resume | Ibrahim compares plan and prediction with the result, may pull the kill switch for that Change everywhere, sends the update by the promised time even if it only says what is still unknown, and releases it in stages | A second rollback of the same Change in a day pauses it and pages the platform team. After the fix it records a Lesson and the regret |
 
 (Invented.) **E5: if an assistant uses six times its normal tokens in three hours,** Heads-up (C13) goes to the owner first, privately; the on-call person is paged only where the scope opted in to the [emergency lane](08-attention-and-trust.md).

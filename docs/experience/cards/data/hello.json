@@ -60,7 +60,7 @@
   },
   "intro": "The directory lists you as the owner of 3 of the 14 resources in rg-webshop-qa, and you created the other 11. Your team's lead announced me on Monday, and this chat is with the app \"Meternaut\" published by your own organisation.",
   "whatIDo": "I look at how your resources are used and billed. When I find something worth a minute, I ask you one question or suggest one change, with my evidence and what it would save. I start slowly: one message a week for the first month.",
-  "whatIDoNot": "I change nothing without your OK on the exact plan: for small, reversible changes with one tap in this chat; for everything else on a page at meternaut.contoso.example. I never ask for passwords or codes. A sign-in that asks you to grant permissions to an app is not from me: stop and tell your platform team.",
+  "whatIDoNot": "I change nothing without your OK on the exact plan. You give it on a page at meternaut.contoso.example, where you sign in to Azure; the change is made with your own rights, never with a right of mine. I never ask for passwords or codes. A sign-in that asks you for any permission the announcement did not name is not from me: stop and tell your platform team.",
   "whatIKeep": "I keep your answers, your settings and your notes against your directory ID, not your name. You can see, export or delete them on the settings page. Your platform team sees counts, never a list of who did not answer.",
   "control": "You can pause my messages, ask for fewer, see what I know about your resources, or reach a person at any time.",
   "_scenario": "first contact",

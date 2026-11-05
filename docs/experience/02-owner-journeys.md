@@ -36,18 +36,18 @@
 |---|---|---|
 | 1 | Question (C2): "Does anything run in rg-webshop-qa at night on the last Tuesday?" Activity shows at 02:10–02:50. She taps "Something else", writes "that is the month-end regression" and taps "Yes, that is right" on the read-back (C10) | Asks first: the strongest objection is a fact only she knows. Stores a Lesson (her Note) with an expiry |
 | 2 | Recommendation (C3): switch off 19:30–07:30 and weekends, except the last Tuesday. About EUR 690 a month (range 620–760), "At the rates on your bill", "Expected saving". Keeping things as they are forgoes about EUR 23 a day, at the rates on your bill | Details holds two other options and the rest of the [ten-part Recommendation](../design/03-agents-and-workflows.md#6-what-a-person-receives) |
-| 3 | "Review the plan" turns the message into the one-tap plan (C4): the exact change to vm-qa-web-01, vm-qa-web-02 and sql-qa-orders, Thursday 19:30 CET, "2 of 5 one-tap changes today", plan code 7F3K-92QD. She taps "OK, switch it off" and sees "Received. Nothing has changed yet."; "Cancel" and "Open the Recommendation" approve nothing | Reviewing authorises nothing; the app [replaces the card in place](https://learn.microsoft.com/adaptive-cards/authoring-cards/universal-action-model) |
-| 4 | Thursday 19:30 CET: Done (C6), undo open until Friday 19:30 CET, one reminder Friday at 09:00 | Re-checks live state first, and changes Azure with Maya's own rights |
+| 3 | "Review the plan" turns the message into the plan card (C4): the exact change to vm-qa-web-01, vm-qa-web-02 and sql-qa-orders, plan code 7F3K-92QD. She taps "Open the page to approve" and presses "Approve and sign in to Azure"; "Cancel" and "Open the Recommendation" approve nothing | Reviewing authorises nothing; the app [replaces the card in place](https://learn.microsoft.com/adaptive-cards/authoring-cards/universal-action-model) |
+| 4 | At the moment she approves: Done (C6), with an undo only where Azure offers one | Re-checks live state first, and changes Azure with Maya's own rights |
 
 ![Card C3: the QA Recommendation with its decision buttons.](../img/experience-card-c3-recommendation.png)
 
 | If | Then |
 |---|---|
 | "No, leave it as it is" or "Not mine" | "No, leave it as it is" closes the ask with no reminder; it returns only if the evidence changes materially or a Note expires, saying why. "Not mine" hands it to cover |
-| After the undo window, she wants the schedule off | My decisions offers "Switch the schedule off", a new one-tap plan |
-| (Invented.) A change needing her OK on a page (page-class), E2: the orders database one size down, EUR 380–520 a month at the rates on your bill, Expected; month-end peak 70–90 % CPU | Your OK on a page (C5) opens the approval page. If CPU then stays above 85 % for 10 minutes, the safety check stops and asks Maya whether to restore the old size; restoring is one tap within the undo window. If nobody answers, the change stays as it is: the check asks once more, then uses the on-call route only if the scope set up the [emergency lane](08-attention-and-trust.md), otherwise it waits at the top of the weekly desk |
+| Later she wants the schedule off | My decisions offers "Switch the schedule off", a new plan, approved the same way |
+| (Invented.) A change needing her OK on a page (page-class), E2: the orders database one size down, EUR 380–520 a month at the rates on your bill, Expected; month-end peak 70–90 % CPU | Your OK on a page (C5) opens the approval page. If CPU then stays above 85 % for 10 minutes, the safety check stops and asks Maya whether to restore the old size; restoring is a new approval on the page. If nobody answers, the change stays as it is: the check asks once more, then uses the on-call route only if the scope set up the [emergency lane](08-attention-and-trust.md), otherwise it waits at the top of the weekly desk |
 | (Invented.) No cost access, E3: two disks unattached for 94 days, about EUR 38 a month | The chip reads "At list prices. I cannot see your rates."; the word is Scenario only; no Result follows, and Done says "I cannot measure this here" |
-| She approves every plan in seconds | After 5 one-tap approvals in a day (a starting value), further changes go to the approval page; nothing is reported. The FinOps lead and the platform owner review a confidential monthly sample of executed changes to tune the recipes; it never judges a person |
+| She approves every plan in seconds | Nothing is reported; Azure still checks her own rights on every change. The FinOps lead and the platform owner review a confidential monthly sample of executed changes to tune the recipes; it never judges a person |
 
 **Rules ([08](08-attention-and-trust.md)).** One decision, one person, about two minutes.
 
@@ -119,12 +119,12 @@ stateDiagram-v2
 
 **Trigger and who.** The FinOps lead and the platform owner write a standing permission that covers Maya's resources. **Surfaces.** A standing permission starts (C17); Told afterwards (C8); the pages History and "What I did here" ([web pages](06-web-pages.md)).
 
-(An invented example.) E6, dev storage tiering.
+(An invented example.) E6, dev storage tiering. Not built: a run needs a person present ([decision 24](../design/12-decisions.md#24-a-change-runs-as-the-approver-meternaut-holds-no-right-to-change-azure--accepted)), so this journey has no design yet.
 
 | Step | Person | System |
 |---|---|---|
 | 1 | On 3 February, before the first run, "A standing permission starts" (C17) says: storage tier changes in development subscriptions, up to about EUR 500 a month in Expected saving per change, at the rates on your bill, until 12 March. She can tap "Pause changes here" or "Not mine", or use the conversation buttons | Sends C17 to each owner. A permission never covers a purchase or a resource marked do-not-touch |
-| 2 | Minutes after a run, Told afterwards (C8): "I moved three dev containers to a cooler storage tier." About EUR 41 a month (range 35–48), "At the rates on your bill", "Expected saving". Undo until Friday 17:00 CET | Checks every condition in code before each run and adds the run to her weekly summary |
+| 2 | Minutes after a run, Told afterwards (C8): "I moved three dev containers to a cooler storage tier." About EUR 41 a month (range 35–48), "At the rates on your bill", "Expected saving". Undo, where Azure allows | Checks every condition in code before each run and adds the run to her weekly summary |
 | 3 | She does nothing, taps Undo, or taps "Pause changes here" | Undo reverses the last change only and also pauses this standing permission until a person has reviewed it. "Pause changes here" stops permissions on these resources, not suggestions |
 
 ![Card C8: a change made under a permission, with Undo and Pause changes here.](../img/experience-card-c8-told-afterwards.png)
@@ -136,7 +136,7 @@ stateDiagram-v2
     [*] --> Introduced : two grantors write it, owners are told first
     Introduced --> Running : the first run
     Running --> Told : a change ran, owner told within minutes
-    Told --> Running : the window closes or the owner lets it stand
+    Told --> Running : the owner lets it stand
     Told --> Paused : the owner taps Pause changes here or Undo
     Running --> Paused : a regret or a revised fact pauses it
     Paused --> Running : a person has reviewed it and lifts the pause
@@ -151,9 +151,9 @@ stateDiagram-v2
 | If | Then |
 |---|---|
 | A condition fails: a change freeze, a value above the cap, a disputed fact | The permission does not apply. A Recommendation arrives and she decides |
-| A run goes wrong | The permission pauses and Our mistake (C16) arrives. A one-tap change is rolled back first; a page-class change stops for a person |
+| A run goes wrong | The permission pauses and Our mistake (C16) arrives. No change is rolled back by itself; a person decides |
 
-**Rules ([08](08-attention-and-trust.md)).** Narrowing is automatic, widening is human. An undo window is stated in each message (24 hours for one-tap changes, a starting value).
+**Rules ([08](08-attention-and-trust.md)).** Narrowing is automatic, widening is human. Each message says whether Azure offers an undo.
 
 **Measured by.** Undo and pause rates per permission; regrets, which pause a permission; a confidential monthly sample of runs.
 

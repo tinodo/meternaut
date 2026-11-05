@@ -86,7 +86,7 @@
   <circle cx="788" cy="1072" r="11" fill="#5C2E91"/>
   <text x="788" y="1076.5" font-size="12" font-weight="700" fill="#FFFFFF" text-anchor="middle">9</text>
   <rect x="60" y="1150" width="280" height="38" rx="4" fill="#0F6CBD" stroke="#0F6CBD" stroke-width="1"/>
-  <text x="200.0" y="1173.9" font-size="14" font-weight="600" fill="#FFFFFF" text-anchor="middle">Approve this exact purchase</text>
+  <text x="200.0" y="1173.9" font-size="14" font-weight="600" fill="#FFFFFF" text-anchor="middle">Approve and sign in to Azure</text>
   <rect x="350" y="1150" width="280" height="38" rx="4" fill="#FFFFFF" stroke="#8A8886" stroke-width="1"/>
   <text x="490.0" y="1173.9" font-size="14" font-weight="600" fill="#242424" text-anchor="middle">Decline</text>
   <rect x="60" y="1198" width="280" height="38" rx="4" fill="#FFFFFF" stroke="#8A8886" stroke-width="1"/>
@@ -144,7 +144,7 @@
   <text x="841" y="590.5" font-size="12" font-weight="700" fill="#FFFFFF" text-anchor="middle">7</text>
   <text x="860" y="590" font-size="13" font-weight="700" fill="#242424" text-anchor="start">Cannot be undone</text>
   <text x="860" y="610" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">Said once, in words, before the button. A change that can</text>
-  <text x="860" y="627" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">be undone says how long the window stays open.</text>
+  <text x="860" y="627" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">be undone says how to undo it.</text>
   <circle cx="841" cy="650" r="11" fill="#5C2E91"/>
   <text x="841" y="654.5" font-size="12" font-weight="700" fill="#FFFFFF" text-anchor="middle">8</text>
   <text x="860" y="654" font-size="13" font-weight="700" fill="#242424" text-anchor="start">Who else</text>

@@ -28,13 +28,13 @@ Eight pages share one address: six for owners and team leads, two for the platfo
 
 ## The approval page
 
-The page shows the exact plan, from the stored plan record and never the AI's prose, and takes the decision. It serves two of the design's [approval classes](../design/06-security-and-governance.md#approval-classes), R2 ("your OK on a page") and R3 ("two people"), and is the fallback for R1, a one-tap change in Teams.
+The page shows the exact plan, from the stored plan record and never the AI's prose, and takes the decision. It serves two of the design's [approval classes](../design/06-security-and-governance.md#approval-classes), R2 ("your OK on a page") and R3 ("two people"), and is where an R1 card's button leads.
 
 ![Wireframe of the approval page for a one-year compute savings plan, with eleven numbered parts from the address to the footer.](../img/experience-approval-page.svg)
 
 (An invented example.) Lars, the finance approver, sees a one-year compute savings plan for the management group "Order platform" (three production subscriptions today): USD 25.00 an hour, USD 219,000 in total and about EUR 205,860 at 0.94 euro to the dollar, all at the price checked on Thursday 09:12 CEST, paid monthly (about EUR 17,155 a month as invoiced, [which follows the exchange rate](https://learn.microsoft.com/azure/cost-management-billing/savings-plan/savings-plan-overview)). The saving is about EUR 4,300 a month (range 3,700 to 4,900), amortised, at your agreement's rates, Expected. It cannot be cancelled, refunded or exchanged. Tomasz, the budget holder, is the other approver.
 
-- **Title and class sentence.** The title is a verb, an object and a place; a sentence under it says "needs your OK on this page" or "needs two people, each on their own". The main button names the action, "Approve this exact change" (or "purchase"), never a bare OK.
+- **Title and class sentence.** The title is a verb, an object and a place; a sentence under it says "needs your OK on this page" or "needs two people, each on their own". The main button names the action, "Approve and sign in to Azure", never a bare OK.
 - **Before the buttons:** what changes and who makes it, what it saves, what waiting forgoes each day and from when, what could go wrong, how to undo it, and an Evidence row linking to the notebook page `/why/<id>` (an HTML `details` element may wrap it, with no script). For R2 and R3, "what could go wrong" is always visible: the strongest objection and the guard metric.
 - **"Check before you approve"** restates the decision in three lines.
 - **Decline matches Approve in size and height;** on a narrow screen the actions stack.
@@ -46,7 +46,7 @@ The page shows the exact plan, from the stored plan record and never the AI's pr
 - **R2, "your OK on a page":** an Entra sign-in that meets an authentication context (a label an administrator ties to a Conditional Access policy), then the summary and one confirm.
 - **R3, "two people":** a phishing-resistant sign-in (security key, passkey, Windows Hello for Business or multifactor certificate; [Learn](https://learn.microsoft.com/entra/identity/authentication/concept-authentication-strengths)), the same summary with the total commitment and what cannot be undone restated, and two approvers, each on their own.
 
-**Step-up.** The organisation's Conditional Access decides which sign-in an authentication context needs. The page requests the [context](https://learn.microsoft.com/entra/identity-platform/developer-guide-conditional-access-authentication-context) with a [claims challenge](https://learn.microsoft.com/entra/identity-platform/claims-challenge) and checks the `acrs` claim of the token that returns. Before redirecting, it says which sign-in to expect.
+**Step-up (not built yet).** The organisation's Conditional Access decides which sign-in an authentication context needs. The page requests the [context](https://learn.microsoft.com/entra/identity-platform/developer-guide-conditional-access-authentication-context) with a [claims challenge](https://learn.microsoft.com/entra/identity-platform/claims-challenge) and checks the `acrs` claim of the token that returns. Before redirecting, it says which sign-in to expect.
 
 ### Binding
 
@@ -64,7 +64,7 @@ Both approvers are asked at once, see the same plan and evidence, and answer on 
 - **Decline** takes one tap and closes the request; an optional reason follows.
 - **Ask or suggest** takes a question or another way to do it. It is length-capped and screened, reaches the system as an excerpt (quoted data) and never as an instruction, and approves nothing. The other approver's page never shows it.
 - **Not mine** says the resource is not the person's. Nothing is approved; the request goes back to finding the right owner.
-- **After the OK** the page sends the approver to sign in to Azure. The change runs right after the last approver's sign-in, as that person, and cannot be cancelled. The first of two approvers reads "Recorded. Nothing has changed yet."; the second reads "Submitted. A purchase cannot be cancelled."
+- **After the OK** the page sends the approver to sign in to Azure. The change runs right after the last approver's sign-in, as that person (for two approvers, not designed yet), and cannot be cancelled. The first of two approvers reads "Recorded. Nothing has changed yet."; the second reads "Submitted. A purchase cannot be cancelled."
 
 ### When something goes wrong
 
@@ -80,15 +80,15 @@ Both approvers are asked at once, see the same plan and evidence, and answer on 
 | The session ended | "You were signed out before you answered. Nothing is approved." | Sign in again; the plan and code are unchanged |
 | The page is unavailable | Where a front door publishes the page, a static page: "I cannot open approvals right now. Your request stays open until Friday 14:00 CET. Nothing has changed." Otherwise the browser's own error | Wait |
 
-**What the page does not stop:** an approver who misreads a plan, two who collude, and a stolen session while it may still approve (one-tap and page-class changes, within limits). The visible objection, daily cap, two-person rule and strong sign-in narrow them; [attention and trust](08-attention-and-trust.md) covers sampling.
+**What the page does not stop:** an approver who misreads a plan, two who collude, and a stolen session while it may still approve (within the approver's own Azure rights). The visible objection, two-person rule and strong sign-in narrow them; [attention and trust](08-attention-and-trust.md) covers sampling.
 
 ## What an owner can read and correct
 
 **The notebook** is the full record behind a message: the reasoning, receipts a person can re-run, the tools' numbers with their as-of time, the evidence level in words and the system's own objections to its finding. Text quoted from outside is escaped and set in a labelled quote, never as a link or control.
 
-**My decisions** is the person's History. It lists each decision, "No, leave it as it is" included, with when, what ran, the outcome in one of the three saving words with its price basis, and Undo while the window is open. It also lists each approval made in the person's name, so one they did not make is seen, and the Done card's "I did not approve this" reports it. A team lead sees the same page for their scope as counts, never a list of people, with small groups suppressed ([attention and trust](08-attention-and-trust.md)).
+**My decisions** is the person's History. It lists each decision, "No, leave it as it is" included, with when, what ran, the outcome in one of the three saving words with its price basis, and Undo where Azure offers one. It also lists each approval made in the person's name, so one they did not make is seen, and the Done card's "I did not approve this" reports it. A team lead sees the same page for their scope as counts, never a list of people, with small groups suppressed ([attention and trust](08-attention-and-trust.md)).
 
-**What I did here** lists every run under a standing permission: what changed, where, when, the result. Undo reverses the last change only, once, inside its window, and also pauses that standing permission until a person has reviewed it. "Pause changes here" stops standing permissions there, not suggestions. "Fewer like this", which only lowers how often it asks, is separate. Only a person resumes a paused permission.
+**What I did here** lists every run under a standing permission: what changed, where, when, the result. Undo reverses the last change only, once, as Azure allows, and also pauses that standing permission until a person has reviewed it. "Pause changes here" stops standing permissions there, not suggestions. "Fewer like this", which only lowers how often it asks, is separate. Only a person resumes a paused permission.
 
 **The notes page** shows everything the system has kept about the owner's resources.
 
