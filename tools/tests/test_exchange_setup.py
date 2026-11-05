@@ -1091,6 +1091,20 @@ class TheOneTimeStep(unittest.TestCase):
                 self.assertIn("New-ManagementScope failed: 400 Other", err)
                 self.assertNotIn(ENABLE, self.sent(tenant))
 
+    def test_a_refusal_for_the_right_to_give_a_role_says_to_wait_and_to_run_again_and_is_not_tried_again(self):
+        words = "You must be assigned a delegating role assignment to the management role or its parent in the hierarchy without a scope restriction."
+        tenant = Tenant()
+        tenant.failures["New-ManagementRoleAssignment"] = [reply(400, {"error": {"code": "BadRequest", "message": "Error executing cmdlet",
+                                                                                "details": [{"code": "Context", "message": words, "target": ""}]}})]
+        code, out, err, sleeps = run(["apply", *ARGS, "--apply"], tenant)
+        self.assertEqual((code, sleeps), (1, []))
+        self.assertIn("New-ManagementRoleAssignment failed: 400 BadRequest", err)
+        self.assertIn("delegating role assignment", err)
+        self.assertIn("about an hour", err)
+        self.assertIn("run this tool again: it only creates what is missing", err)
+        self.assertNotIn(ENABLE, self.sent(tenant))
+        self.assertEqual(tenant.assignments, [], "nothing was assigned")
+
     def test_a_dry_run_says_that_the_step_may_be_needed_and_sends_nothing(self):
         tenant = dehydrated_tenant(lag=3)
         code, out, err, sleeps = run(["apply", *ARGS], tenant)
