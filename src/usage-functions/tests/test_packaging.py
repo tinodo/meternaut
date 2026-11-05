@@ -63,7 +63,10 @@ class FilesOfTheAppTests(unittest.TestCase):
             host,
             {
                 "version": "2.0",
-                "logging": {"logLevel": {"default": "Information"}, "applicationInsights": {"samplingSettings": {"isEnabled": False}}},
+                "logging": {
+                    "logLevel": {"default": "Information", "Azure.Core": "Warning", "Azure.Identity": "Warning", "Microsoft.AspNetCore": "Warning"},
+                    "applicationInsights": {"samplingSettings": {"isEnabled": False}},
+                },
                 "extensionBundle": {"id": "Microsoft.Azure.Functions.ExtensionBundle", "version": "[4.*, 5.0.0)"},
             },
         )

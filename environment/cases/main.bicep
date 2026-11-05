@@ -315,8 +315,10 @@ resource plan 'Microsoft.Web/serverfarms@2024-04-01' = {
 var eventHubHost = replace(replace(eventHubs.properties.serviceBusEndpoint, 'https://', ''), ':443/', '')
 
 // Like the usage recording's app: no Azure Files content share, no storage connection string, no basic-authentication deployment.
-// The ceiling of 4 instances is for the price: a run is one function execution that waits for models, and two runs at once are
-// harmless but never needed.
+// The ceiling of one instance applies to every function group on its own (the limit is per group, not for the app): a run is one function
+// execution that waits for models, a timer must not run twice at once, the control hub has one partition and one person uses the console.
+// With a ceiling of four, the group of the console scaled out to four instances for one request every four seconds, and the platform kept
+// sending requests to instances that were not ready: every fourth request waited 40 to 46 seconds before it was served.
 resource functionApp 'Microsoft.Web/sites@2024-04-01' = {
   name: functionAppName
   location: location
@@ -348,7 +350,7 @@ resource functionApp 'Microsoft.Web/sites@2024-04-01' = {
         }
       }
       scaleAndConcurrency: {
-        maximumInstanceCount: 4
+        maximumInstanceCount: 1
         instanceMemoryMB: 2048
       }
       runtime: {

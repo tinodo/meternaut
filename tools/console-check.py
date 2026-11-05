@@ -42,11 +42,14 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 Fetch = Callable[[str, dict], "tuple[int, dict, bytes]"]
 TRIES = 3  # the app runs on a plan that scales to zero: the first answer after a quiet time can take a minute
 TIMEOUT = 60
+# The platform's sign-in sends a visitor whose User-Agent is a browser's to Microsoft Entra and answers any other client with 401. The check asks the way a
+# person's browser does, so that it proves where a person is sent.
+USER_AGENT = "Mozilla/5.0 (compatible; meternaut-console-check)"
 
 
 def fetch(url: str, headers: dict) -> tuple[int, dict, bytes]:
     opener = urllib.request.build_opener(NoRedirect, urllib.request.HTTPSHandler(context=ssl.create_default_context()))
-    request = urllib.request.Request(url, headers={"User-Agent": "meternaut-console-check", **headers}, method="GET")
+    request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, **headers}, method="GET")
     for attempt in range(1, TRIES + 1):
         try:
             with opener.open(request, timeout=TIMEOUT) as response:
