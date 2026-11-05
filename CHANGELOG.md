@@ -14,7 +14,12 @@ All notable changes, newest first. Versions are git tags: `ideation-vN` for the 
 - **The route table is only said, no longer required.** A wait of two minutes stopped a run that was right, because the network manager took five. The app cannot start without the table, so the wait for the app (no credential, up to 25 minutes) is the gate, the app's start limit of 600 seconds lets its first start wait for the table, and a step after it says whether `snet-pe` and `snet-cases` carry the table.
 - **The baseline makes its network once, too.** `environment/main.bicep` makes the virtual network only while it is not there (`networkExists`, read from Azure by the same step that reads the subnet) and names the endpoint subnet by its id. Before this, a run of `model-side` would have made the whole network again and taken the route tables from all three subnets. [Rule 27](AGENTS.md) is closed on that point.
 
-**Not checked yet.** A real run of `model-side` (the next `what-if` shows that the network is left alone; a run was not needed and was not made), the console's speed over hours and days, the owner's approval and everything after it.
+**Checked after the merge** (Hub runs from `main`).
+- The `what-if` (run 42069026565) read the network as there (the log says "The virtual network is there: true. The subnet snet-cases is there: true.") and shows no virtual network and no subnet in the preview of the baseline or of the first cases: both templates leave the network alone. The preview shows what it showed before and is not caused by this change: the tenant's `SecurityControl` tag on several resources, and the two templates that both write `nsg-meternaut-web` with different tags.
+- A Watch started through the control hub on the repaired app (run 42069942452) ended well in 38 seconds: 7 leads, all judged within the last 7 days and so not taken up again, no case, no token, 0 errors. So the Event Hubs trigger, Resource Graph, Cost Management and the store work after the repair.
+- 15 requests to the health address 17 minutes after the repair all answered 200 (0.19 to 0.99 seconds, mean 0.42), and the timer of the runner fired every minute up to the last reading (16:53 UTC). One Event Hubs receiver message ("a receiver with epoch 0 exists") appeared once, at 16:40:57, a minute after the second publish: the old and the new container overlapped for a moment. It did not come back.
+
+**Not checked yet.** A real run of `model-side` (not made), the console's speed over hours and days, the owner's approval and everything after it.
 
 ## The console went down after the second deploy: the subnet lost the landing zone's route table and was replaced — 2026-11-05
 
