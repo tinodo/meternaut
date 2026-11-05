@@ -13,7 +13,7 @@ REQUIRED = {
     "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
     "X-Frame-Options": "DENY",
     "X-Content-Type-Options": "nosniff",
-    "Referrer-Policy": "no-referrer",
+    "Referrer-Policy": "same-origin",
     "Cache-Control": "no-store",
 }
 GET_PATHS = ["/", "/ok/plan0001", "/why/case0001", "/history", "/history?run=run00001", "/me/decisions", "/me/activity", "/me/settings", "/me/notes",
@@ -59,6 +59,25 @@ class Headers(unittest.TestCase):
                 reply = console.get(path)
                 self.assertEqual(reply.status, 200)
                 self.check(reply)
+
+    def test_a_browser_sends_the_origin_of_the_console_on_a_post_and_no_referrer_to_another_site(self):
+        # Under "no-referrer" a browser sends `Origin: null` on every form POST (Fetch standard), and the platform's sign-in answers an authenticated POST that carries it with an
+        # empty 403 before the app is reached: the approve button failed on 2026-11-05 (AGENTS.md rule 28). Neither the Python harness nor the Hub's check sends such a request,
+        # so this test is what holds the policy. A form or a page that sets its own policy has the same effect, so none may.
+        console = seeded()
+        for path in GET_PATHS:
+            with self.subTest(path=path):
+                reply = console.get(path)
+                policy = reply.headers.get("Referrer-Policy")
+                self.assertEqual(policy, "same-origin")
+                self.assertNotIn(policy, (None, "", "no-referrer", "same-origin, no-referrer"))
+                for node in reply.root.walk():
+                    if node.tag == "form":
+                        self.assertNotIn("rel", node.attrs, "a form with rel=noreferrer sends Origin: null too")
+                        self.assertNotIn("referrerpolicy", node.attrs)
+                    if node.tag == "meta":
+                        self.assertNotEqual(node.attrs.get("name", "").lower(), "referrer", "a page may not set a policy of its own")
+        self.assertEqual(console.post("/me/notes", {}).headers.get("Referrer-Policy"), "same-origin", "the answer to a POST carries it too")
 
     def test_the_errors_carry_them_too(self):
         console = seeded()
