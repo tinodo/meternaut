@@ -596,7 +596,7 @@ class Workflow(unittest.TestCase):
             self.assertIn(f"[?name=='${variable}']", block)
         self.assertEqual(re.findall(r'az resource delete --ids "\$(\w+)"', block), ["site", "plan", "connection", "storage"])
         self.assertEqual(self.text.count("az resource delete"), 4)
-        self.assertEqual(len(re.findall(r"(?m)^\s*az \S+(?: \S+)* delete\b", self.text)), 8, "no other delete, of any kind: four of the Logic App version, two of the Flex version of the cases app and two of what that version left in the storage account (the role on its container, then the container)")
+        self.assertEqual(len(re.findall(r"(?m)^.*\baz (?:\S+ )*?(?:--method )?delete\b.*$", self.text)), 10, "no other delete, of any kind: four of the Logic App version, two of the Flex version of the cases app, two of what that version left in the storage account (the role on its container, then the container), one that takes the app's integration with an earlier subnet away, and one that removes that subnet")
         self.assertNotIn("--yes", block)
         for kind in ("Microsoft.Web/sites", "Microsoft.Web/serverfarms", "Microsoft.Web/connections", "Microsoft.Storage/storageAccounts"):
             self.assertIn(f"--resource-type {kind}", block)
@@ -621,7 +621,7 @@ class Workflow(unittest.TestCase):
         block = self.steps[names.index(again)]
         self.assertIn("if: inputs.action == 'recording'", block)
         self.assertIn("uses: azure/login@", block)
-        self.assertEqual(self.text.count("uses: azure/login@"), 3, "the first sign-in, and one more before each publish (the usage recording's and the cases')")
+        self.assertEqual(self.text.count("uses: azure/login@"), 4, "the first sign-in, one more before each publish (the usage recording's and the cases') and one more after the wait for the cases app")
         self.assertLess(names.index("Deploy the usage recording"), names.index(again))
         self.assertLess(names.index(again), names.index("Publish the usage functions to the function app"))
 
@@ -726,13 +726,25 @@ class Cases(unittest.TestCase):
         self.assertIn("serviceName: 'Microsoft.Web/serverFarms'", subnet, "a Basic plan's integration needs it; the function subnet's delegation is Flex Consumption's")
         self.assertIn("defaultOutboundAccess: false", subnet)
         self.assertIn("securityRules: []", nsg)
-        self.assertIn("var webSubnetName = 'snet-web'", self.code)
+        self.assertIn("var webSubnetName = 'snet-cases'", self.code)
         model_side = text("environment/main.bicep")
-        self.assertIn("name: 'snet-web'", model_side)
+        self.assertIn("name: 'snet-cases'", model_side)
+        self.assertNotIn("snet-web", model_side, "the first subnet lost the landing zone's route table and was replaced")
+        self.assertNotIn("snet-web", self.code)
         self.assertIn("addressPrefix: webSubnetPrefix", model_side)
         self.assertIn("serviceName: 'Microsoft.Web/serverFarms'", model_side, "a run of the model-side action must not take the subnet away from the plan")
         self.assertRegex(self.code, r"(?m)^param webSubnetPrefix string$")
         self.assertRegex(model_side, r"(?m)^param webSubnetPrefix string$")
+
+    def test_the_subnet_is_made_only_while_it_is_not_there_because_making_it_again_takes_the_landing_zones_route_table_away(self):
+        # On 2026-11-05 the second deploy of this template made snet-web again; the landing zone's network manager had put a route table on it a minute after the first make,
+        # the second make had none, and the app on the subnet lost its way to the landing zone's DNS and could not start.
+        self.assertRegex(self.code, r"(?m)^param webSubnetExists bool = false$")
+        self.assertTrue(self.found["webSubnet"][1].startswith("if (!webSubnetExists) {"), "the subnet is made only while it is not there")
+        self.assertNotIn("routeTable", self.code, "the route table is the landing zone's, not the template's")
+        self.assertIn("virtualNetworkSubnetId: resourceId('Microsoft.Network/virtualNetworks/subnets', virtualNetworkName, webSubnetName)", self.found["functionApp"][1],
+                      "the app names the subnet by its id, which exists whether or not the template made it")
+        self.assertNotIn("webSubnet.id", self.code)
 
     def test_no_key_is_read_or_written_anywhere(self):
         for word in ("listKeys", "listConnectionStrings", "listSecrets", "listAccountSas", "listServiceSas", "AccountKey", "SharedAccessKey", "primaryKey", "@secure",
@@ -794,13 +806,13 @@ class Cases(unittest.TestCase):
         self.assertIn("type: 'UserAssigned'", body)
         self.assertNotIn("SystemAssigned", body)
         self.assertIn("serverFarmId: plan.id", body)
-        self.assertIn("virtualNetworkSubnetId: webSubnet.id", body)
+        self.assertIn("virtualNetworkSubnetId: resourceId('Microsoft.Network/virtualNetworks/subnets', virtualNetworkName, webSubnetName)", body)
         self.assertIn("vnetRouteAllEnabled: false", body, "only the private ranges go through the subnet, as for the Flex app that this replaced")
         self.assertIn("linuxFxVersion: 'PYTHON|3.13'", body)
         self.assertIn("alwaysOn: true", body, "timers and the control hub's trigger need an instance that is always there")
         self.assertIn("ftpsState: 'Disabled'", body)
         for setting, value in (("FUNCTIONS_EXTENSION_VERSION", "~4"), ("FUNCTIONS_WORKER_RUNTIME", "python"), ("WEBSITE_RUN_FROM_PACKAGE", "1"),
-                               ("SCM_DO_BUILD_DURING_DEPLOYMENT", "false"), ("ENABLE_ORYX_BUILD", "false")):
+                               ("WEBSITES_CONTAINER_START_TIME_LIMIT", "600"), ("SCM_DO_BUILD_DURING_DEPLOYMENT", "false"), ("ENABLE_ORYX_BUILD", "false")):
             self.assertIn(f"{{ name: '{setting}', value: '{value}' }}", body, setting)
         for setting in ("AzureWebJobsStorage__credential", "AzureWebJobsStorage__clientId", "EventHubConnection__credential", "EventHubConnection__clientId",
                         "EventHubConnection__fullyQualifiedNamespace", "APPLICATIONINSIGHTS_AUTHENTICATION_STRING", "AZURE_CLIENT_ID"):
@@ -814,7 +826,7 @@ class Cases(unittest.TestCase):
         self.assertIn("minTlsVersion: '1.2'", self.code)
 
     def test_the_function_app_starts_after_its_roles_and_its_hub(self):
-        self.assertEqual(depends_on(self.found["functionApp"][1]), {"functionReceivesControl", "functionOwnsHostContainers", "functionUsesQueues",
+        self.assertEqual(depends_on(self.found["functionApp"][1]), {"webSubnet", "functionReceivesControl", "functionOwnsHostContainers", "functionUsesQueues",
                                                                     "functionUsesTables", "functionPublishesTelemetry", "controlConsumerGroup"})
 
     def test_the_control_hub_is_one_partition_with_one_group_and_the_app_is_told_both(self):
@@ -932,9 +944,14 @@ class CasesWorkflow(unittest.TestCase):
     def test_the_cases_are_made_ready_deployed_published_and_listed_in_that_order_and_for_their_action_only(self):
         order = ["The usage recording and the contract are there, which the first cases build on",
                  "Remove the Flex Consumption version of the cases app, when it is still there",
-                 "Remove what the Flex Consumption version left in the storage account, when it is still there", "Deploy the first cases",
+                 "Remove what the Flex Consumption version left in the storage account, when it is still there",
+                 "Let the cases app go from an integration subnet that is not the one of the template", "Deploy the first cases",
                  "Sign in to Azure again for the publish of the cases, because the first sign-in's credential lasts five minutes",
-                 "Build the cases app's package", "Publish the cases to the function app", "The cases app lists its four functions"]
+                 "The integration subnet carries the route table of the landing zone's network manager, when the other subnets do",
+                 "Build the cases app's package", "Publish the cases to the function app", "Wait until the cases app answers",
+                 "Sign in to Azure a third time for the check of the cases, because the second sign-in's credential lasts five minutes too",
+                 "The cases app lists its four functions",
+                 "Remove the first integration subnet of the cases app, snet-web, when it is still there and nothing uses it"]
         positions = [self.names.index(name) for name in order]
         self.assertEqual(positions, sorted(positions))
         for name in order:
@@ -989,6 +1006,78 @@ class CasesWorkflow(unittest.TestCase):
             self.assertNotIn(word, script, word)
         self.assertLess(self.names.index("Remove the Flex Consumption version of the cases app, when it is still there"), self.names.index(title))
         self.assertLess(self.names.index(title), self.names.index("Deploy the first cases"))
+
+    def test_the_subnet_is_looked_for_before_the_files_are_made_and_the_answer_goes_into_them(self):
+        title = "Find out whether the integration subnet of the first cases is already there"
+        block = self.step(title)
+        self.assertIn("id: websubnet", block)
+        self.assertNotIn("if:", block.split("run:")[0], "every action asks: the answer goes into the cases file whichever action made it")
+        self.assertIn('virtualNetworks/vnet-meternaut/subnets/snet-cases"', block)
+        self.assertIn('"https://management.azure.com${subnet}?api-version=2025-05-01"', block)
+        self.assertRegex(block, r'(?m)^\s+echo "exists=true" >> "\$GITHUB_OUTPUT"$')
+        self.assertRegex(block, r'(?m)^\s+echo "exists=false" >> "\$GITHUB_OUTPUT"$')
+        self.assertNotRegex(block, r"--method (put|patch|post|delete)")
+        self.assertIn("could not be read", block, "a failure that is not 'not found' stops the run")
+        (params,) = [b for b in self.steps if b.startswith("name: Work out the settings\n")]
+        self.assertIn("ENV_WEB_SUBNET_EXISTS: ${{ steps.websubnet.outputs.exists }}", params)
+        self.assertLess(self.names.index(title), self.names.index("Work out the settings"))
+        template = text("environment/cases/main.bicep")
+        self.assertIn("var webSubnetName = 'snet-cases'", template, "the name that the workflow reads is the template's")
+        self.assertIn("var virtualNetworkName = 'vnet-${workload}'", template)
+
+    def test_the_app_is_taken_from_an_earlier_subnet_only_when_it_is_integrated_with_another_one_and_a_refusal_is_said(self):
+        title = "Let the cases app go from an integration subnet that is not the one of the template"
+        block = self.step(title)
+        self.assertIn("if: inputs.action == 'cases'", block)
+        self.assertIn("FUNCTION_APP: ${{ steps.params.outputs.cases_function_app_name }}", block)
+        self.assertIn("--query properties.virtualNetworkSubnetId", block)
+        self.assertIn('"${current##*/}" = "snet-cases"', block, "an app that is on the template's subnet is left alone")
+        self.assertEqual(len(re.findall(r"--method delete", block)), 1)
+        self.assertIn('${site}/networkConfig/virtualNetwork?api-version=2024-04-01', block, "the app's own integration, nothing else")
+        self.assertIn("::warning::", block, "a refusal is said, and the template's own change follows")
+        self.assertLess(self.names.index(title), self.names.index("Deploy the first cases"))
+
+    def test_the_route_table_of_the_landing_zone_is_waited_for_after_the_deploy_and_before_the_code_is_published(self):
+        again = "Sign in to Azure again for the publish of the cases, because the first sign-in's credential lasts five minutes"
+        title = "The integration subnet carries the route table of the landing zone's network manager, when the other subnets do"
+        block = self.step(title)
+        self.assertIn("subnets/snet-pe?api-version=2025-05-01", block, "the private endpoint subnet shows whether the landing zone puts a table on its subnets")
+        self.assertIn("subnets/snet-cases?api-version=2025-05-01", block)
+        self.assertEqual(block.count("--query properties.routeTable.id"), 2)
+        self.assertIn("for attempt in 1 2 3 4 5 6 7 8; do", block)
+        self.assertIn("sleep 15", block)
+        self.assertIn("exit 1", block)
+        self.assertNotRegex(block, r"--method (put|patch|post|delete)")
+        self.assertLess(self.names.index(again), self.names.index(title), "a fresh credential: the first one is five minutes old by now")
+        self.assertLess(self.names.index(title), self.names.index("Publish the cases to the function app"))
+
+    def test_the_wait_for_the_app_holds_no_credential_and_the_check_after_it_signs_in_again(self):
+        wait = self.step("Wait until the cases app answers")
+        third = self.step("Sign in to Azure a third time for the check of the cases, because the second sign-in's credential lasts five minutes too")
+        self.assertIn('"https://$FUNCTION_APP.azurewebsites.net/healthz"', wait)
+        self.assertIn("timeout-minutes: 25", wait)
+        script = "\n".join(line for line in wait.split("run:")[1].splitlines() if not line.strip().startswith("#"))
+        self.assertNotIn("az ", script, "a wait of minutes cannot hold a credential that lasts five")
+        self.assertIn("exit 1", script)
+        self.assertIn("uses: azure/login@", third)
+        positions = [self.names.index(name) for name in ("Publish the cases to the function app", "Wait until the cases app answers",
+                                                        "Sign in to Azure a third time for the check of the cases, because the second sign-in's credential lasts five minutes too",
+                                                        "The cases app lists its four functions")]
+        self.assertEqual(positions, sorted(positions))
+
+    def test_the_first_subnet_is_removed_by_its_name_when_nothing_holds_it_and_a_hold_is_said_and_is_no_error(self):
+        title = "Remove the first integration subnet of the cases app, snet-web, when it is still there and nothing uses it"
+        block = self.step(title)
+        self.assertIn("if: inputs.action == 'cases'", block)
+        self.assertIn("virtualNetworks/vnet-meternaut/subnets/snet-web\"", block)
+        self.assertEqual(len(re.findall(r"--method delete", block)), 1)
+        self.assertIn("InUseSubnetCannotBeDeleted", block)
+        self.assertIn("::warning::", block, "a hold is said, and the next run tries again")
+        self.assertIn("exit 1", block, "any other refusal stops the run")
+        script = "\n".join(line for line in block.split("run:")[1].splitlines() if not line.strip().startswith("#"))
+        for word in ("snet-cases", "snet-pe", "snet-func", "az network", "--yes", "az resource delete"):
+            self.assertNotIn(word, script, word)
+        self.assertLess(self.names.index("The cases app lists its four functions"), self.names.index(title))
 
     def test_the_check_before_the_deploy_writes_nothing_and_reads_no_key(self):
         block = self.step("The usage recording and the contract are there, which the first cases build on")

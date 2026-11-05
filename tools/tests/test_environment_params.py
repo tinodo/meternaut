@@ -211,14 +211,17 @@ class Recording(unittest.TestCase):
     def test_the_basic_plan_of_the_first_cases_has_a_third_subnet_that_overlaps_neither_of_the_other_two(self):
         files, outputs = self.files()
         env = values(files["environment.parameters.json"])
-        self.assertEqual(env["webSubnetPrefix"], "10.53.0.64/27")
-        self.assertEqual(outputs["web_subnet_prefix"], "10.53.0.64/27")
+        self.assertEqual(env["webSubnetPrefix"], "10.53.0.224/27", "the last /27: the first subnet of the Basic plan took the first free one and was replaced")
+        self.assertEqual(outputs["web_subnet_prefix"], "10.53.0.224/27")
         taken = [ipaddress.ip_network(env[name]) for name in ("peSubnetPrefix", "funcSubnetPrefix")]
         self.assertFalse(any(ipaddress.ip_network(env["webSubnetPrefix"]).overlaps(other) for other in taken))
-        # whichever /27 the other two use, the plan gets a free one
+        # whichever /27 the other two use, the plan gets the last free one
         files, _ = self.files(ENV_PE_SUBNET_PREFIX="10.53.0.64/27")
         env = values(files["environment.parameters.json"])
-        self.assertEqual((env["funcSubnetPrefix"], env["webSubnetPrefix"]), ("10.53.0.0/27", "10.53.0.32/27"))
+        self.assertEqual((env["funcSubnetPrefix"], env["webSubnetPrefix"]), ("10.53.0.0/27", "10.53.0.224/27"))
+        files, _ = self.files(ENV_PE_SUBNET_PREFIX="10.53.0.224/27")
+        env = values(files["environment.parameters.json"])
+        self.assertEqual((env["funcSubnetPrefix"], env["webSubnetPrefix"]), ("10.53.0.0/27", "10.53.0.192/27"))
         # a /26 holds two /27: no room for a third
         code, out, err, files = run({**SETTINGS, "ENV_VNET_PREFIX": "10.53.0.0/26", "ENV_PE_SUBNET_PREFIX": "10.53.0.0/27"})
         self.assertEqual((code, out, files), (2, "", {}))
@@ -653,6 +656,20 @@ class FirstCases(unittest.TestCase):
         self.assertEqual(cases["webSubnetPrefix"], environment["webSubnetPrefix"])
         self.assertEqual(lines["web_subnet_prefix"], cases["webSubnetPrefix"])
         self.assertNotEqual(cases["webSubnetPrefix"], environment["funcSubnetPrefix"], "the usage recording's subnet is delegated to Flex Consumption")
+
+    def test_the_file_says_whether_the_integration_subnet_is_there_already_and_says_no_when_nobody_has_looked(self):
+        # the subnet is made once: a template that makes it again takes away the route table that the landing zone's network manager put on it
+        self.assertIs(values(self.build()[0]["cases.parameters.json"])["webSubnetExists"], False)
+        for given, expected in (("", False), ("false", False), ("FALSE", False), ("true", True), (" True ", True)):
+            self.assertIs(values(self.build(ENV_WEB_SUBNET_EXISTS=given)[0]["cases.parameters.json"])["webSubnetExists"], expected, given)
+        for refused in ("yes", "1", "exists"):
+            with tempfile.TemporaryDirectory() as tmp:
+                contract = Path(tmp) / "contract.json"
+                contract.write_text(CONTRACT_FILE.read_text(encoding="utf-8"), encoding="utf-8")
+                code, out, err, files = run({**SETTINGS, "ENV_WEB_SUBNET_EXISTS": refused}, "--contract", str(contract), "--contract-policy", str(POLICY_FILE))
+            self.assertEqual((code, out, files), (2, "", {}), refused)
+            self.assertIn("ENV_WEB_SUBNET_EXISTS is true or false", err)
+        self.assertIn("param webSubnetExists bool = false", self.CASES)
 
     def test_it_reads_the_pilot_subscription_and_the_gateway_with_the_contracts_key(self):
         files, lines = self.build()

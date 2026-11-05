@@ -257,14 +257,25 @@ def function_subnet(vnet: ipaddress.IPv4Network, endpoints: ipaddress.IPv4Networ
 
 
 def web_subnet(vnet: ipaddress.IPv4Network, endpoints: ipaddress.IPv4Network, functions: ipaddress.IPv4Network) -> ipaddress.IPv4Network:
-    """The subnet of the first cases' Basic plan: the first /27 of the virtual network that overlaps neither the private endpoint subnet nor the function subnet.
+    """The subnet of the first cases' Basic plan: the last /27 of the virtual network that overlaps neither the private endpoint subnet nor the function subnet.
 
     A Basic plan's virtual network integration needs a subnet of its own, delegated to Microsoft.Web/serverFarms: the function subnet is delegated to Flex Consumption
-    (Microsoft.App/environments) and a subnet has one delegation."""
-    for candidate in vnet.subnets(new_prefix=27):
+    (Microsoft.App/environments) and a subnet has one delegation. It is the last free /27, and not the first, because the first version of this subnet (snet-web, the
+    first free /27) lost the route table that the landing zone's network manager had put on it, to a deploy that made the subnet again, and was replaced: the new one
+    (snet-cases) takes a range that the old one never held, so that both can exist until the old one is removed."""
+    for candidate in reversed(list(vnet.subnets(new_prefix=27))):
         if not candidate.overlaps(endpoints) and not candidate.overlaps(functions):
             return candidate
     raise Problem("ENV_VNET_PREFIX has no free /27 beside the private endpoint subnet and the function subnet, for the Basic plan of the first cases")
+
+
+def web_subnet_exists(env: dict) -> bool:
+    """Whether the Basic plan's integration subnet is in Azure already. The workflow reads that before it asks for the files: a template that makes the subnet again takes away
+    the route table that the landing zone's network manager put on it, so the template makes the subnet only while it is not there."""
+    value = (env.get("ENV_WEB_SUBNET_EXISTS") or "").strip().lower()
+    if value not in ("", "true", "false"):
+        raise Problem("ENV_WEB_SUBNET_EXISTS is true or false")
+    return value == "true"
 
 
 def recording_endpoints(names: dict[str, str]) -> list[tuple[str, str]]:
@@ -620,6 +631,7 @@ def build(env, models: list[dict], preview: bool = False, contract: dict | None 
             "eventHubNamespaceName": names["event_hub_namespace"],
             "functionAppName": outputs["cases_function_app_name"],
             "webSubnetPrefix": str(web),
+            "webSubnetExists": web_subnet_exists(env),
             "workflowPrincipalId": deployer.lower(),
             "scopeSubscriptions": subscription.lower(),
             "gatewayUrl": outputs["gateway_url"],

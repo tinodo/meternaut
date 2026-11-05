@@ -159,10 +159,29 @@ jobs:
           fi
           echo "start=$start" >> "$GITHUB_OUTPUT"
 
+      - name: Find out whether the integration subnet of the first cases is already there
+        id: websubnet
+        run: |
+          # A template that makes a subnet makes it again at its next run, and the landing zone's network manager puts a route table on a new subnet about a minute after it is made, which
+          # a repeated make takes away: the subnet then cannot reach the landing zone's DNS, and the app on it cannot start (CHANGELOG.md, 2026-11-05). So the subnet is made once and then
+          # left alone: the template makes it only while it is not there, and this is where the workflow finds out.
+          subnet="/subscriptions/$ENV_SUBSCRIPTION_ID/resourceGroups/$ENV_RESOURCE_GROUP/providers/Microsoft.Network/virtualNetworks/vnet-meternaut/subnets/snet-cases"
+          if found=$(az rest --method get --url "https://management.azure.com${subnet}?api-version=2025-05-01" --query name --output tsv 2>&1); then
+            echo "The subnet snet-cases is there: the template leaves it alone."
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          elif grep -Eqi 'NotFound|404' <<< "$found"; then
+            echo "The subnet snet-cases is not there: the template makes it, and the landing zone's network manager puts its route table on it a minute later."
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::The subnet snet-cases could not be read: $found"
+            exit 1
+          fi
+
       - name: Work out the settings
         id: params
         env:
           ENV_BUDGET_START: ${{ steps.budget.outputs.start }}
+          ENV_WEB_SUBNET_EXISTS: ${{ steps.websubnet.outputs.exists }}
           RECORDING_DEPLOYER_ID: ${{ steps.me.outputs.oid }}
         run: |
           # The gateway identity does not exist before model-side has run, so this first pass is a preview: it gives the names.
@@ -698,6 +717,25 @@ jobs:
           az rest --method delete --url "https://management.azure.com${container}?api-version=2023-05-01" --only-show-errors
           echo "The container app-package-cases is removed."
 
+      - name: Let the cases app go from an integration subnet that is not the one of the template
+        if: inputs.action == 'cases'
+        env:
+          FUNCTION_APP: ${{ steps.params.outputs.cases_function_app_name }}
+        run: |
+          # An app is integrated with one subnet. The first one, snet-web, lost the route table of the landing zone's network manager to a deploy that made it again (CHANGELOG.md), and was
+          # replaced by snet-cases. The integration is taken away first, so that the template then makes a new one, and the platform does not have to change a working one in place. An app
+          # that is integrated with the subnet of the template, or with none, is left alone. If the platform refuses, the template's own change of the subnet follows.
+          site="/subscriptions/$ENV_SUBSCRIPTION_ID/resourceGroups/$ENV_RESOURCE_GROUP/providers/Microsoft.Web/sites/$FUNCTION_APP"
+          current=$(az rest --method get --url "https://management.azure.com${site}?api-version=2024-04-01" --query properties.virtualNetworkSubnetId --output tsv 2>/dev/null || true)
+          if [ -z "$current" ] || [ "$current" = "None" ] || [ "${current##*/}" = "snet-cases" ]; then
+            echo "The cases app is integrated with no other subnet than snet-cases: nothing to take away."
+            exit 0
+          fi
+          echo "The cases app is integrated with ${current##*/}: that integration is taken away, and the template then integrates the app with snet-cases."
+          if ! az rest --method delete --url "https://management.azure.com${site}/networkConfig/virtualNetwork?api-version=2024-04-01" --only-show-errors; then
+            echo "::warning::The integration with ${current##*/} could not be taken away; the template changes it instead."
+          fi
+
       - name: Deploy the first cases
         id: cases
         if: inputs.action == 'cases'
@@ -721,6 +759,30 @@ jobs:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: The integration subnet carries the route table of the landing zone's network manager, when the other subnets do
+        if: inputs.action == 'cases'
+        run: |
+          # The network manager puts its route table on a new subnet about a minute after the subnet is made, and without that table a subnet cannot reach the landing zone's DNS: an app on it
+          # cannot resolve a name and cannot start (the second deploy of the first cases on 2026-11-05 took the table away from snet-web, and the app was down). When the private endpoint
+          # subnet has such a table, snet-cases gets two minutes to get it. If it does not, the run stops here with the reason; the next run finds the subnet there, leaves it alone and checks again.
+          vnet="/subscriptions/$ENV_SUBSCRIPTION_ID/resourceGroups/$ENV_RESOURCE_GROUP/providers/Microsoft.Network/virtualNetworks/vnet-meternaut"
+          reference=$(az rest --method get --url "https://management.azure.com${vnet}/subnets/snet-pe?api-version=2025-05-01" --query properties.routeTable.id --output tsv)
+          if [ -z "$reference" ] || [ "$reference" = "None" ]; then
+            echo "The private endpoint subnet has no route table, so the landing zone puts none on a subnet: nothing to wait for."
+            exit 0
+          fi
+          for attempt in 1 2 3 4 5 6 7 8; do
+            own=$(az rest --method get --url "https://management.azure.com${vnet}/subnets/snet-cases?api-version=2025-05-01" --query properties.routeTable.id --output tsv)
+            if [ -n "$own" ] && [ "$own" != "None" ]; then
+              echo "The subnet snet-cases carries the route table of the landing zone: ${own##*/}."
+              exit 0
+            fi
+            echo "The subnet snet-cases has no route table yet (attempt $attempt of 8)."
+            sleep 15
+          done
+          echo "::error::The landing zone has not put its route table on snet-cases after two minutes. Without it the app cannot resolve a name and cannot start. Run the action again: it leaves the subnet alone and checks again."
+          exit 1
 
       - name: Build the cases app's package
         if: inputs.action == 'cases'
@@ -753,6 +815,34 @@ jobs:
           echo "::error::The code could not be published to $FUNCTION_APP."
           exit 1
 
+      - name: Wait until the cases app answers
+        if: inputs.action == 'cases'
+        timeout-minutes: 25
+        env:
+          FUNCTION_APP: ${{ steps.params.outputs.cases_function_app_name }}
+        run: |
+          # A site that has just been given its code restarts, and a site whose subnet has just got its route table can need several minutes for its first start. The health address is the one
+          # path that needs no sign-in, so this step needs no credential, which lasts five minutes and so cannot be held across a wait like this one.
+          for attempt in $(seq 1 60); do
+            code=$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 20 "https://$FUNCTION_APP.azurewebsites.net/healthz" || true)
+            if [ "$code" = "200" ]; then
+              echo "The cases app answers on /healthz (HTTP 200) at try $attempt."
+              exit 0
+            fi
+            echo "The cases app answered HTTP $code at try $attempt of 60."
+            sleep 10
+          done
+          echo "::error::The cases app does not answer on /healthz. Its platform log (the deployment site's /api/logs/docker) says why: a container that does not answer to the platform's start probe, after the subnet lost its route table, looks like this."
+          exit 1
+
+      - name: Sign in to Azure a third time for the check of the cases, because the second sign-in's credential lasts five minutes too
+        if: inputs.action == 'cases'
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
       - name: The cases app lists its four functions
         if: inputs.action == 'cases'
         env:
@@ -770,6 +860,29 @@ jobs:
             echo
             echo "Identity of the cases app (object id): \`$principal\`. It reads the pilot subscription with two roles (Reader and Cost Management Reader) and the contract's key with one role in the gateway's subscription. This workflow gives none of them (environment/BOOTSTRAP.md). Until they exist, a run ends with an authorization error that \`cases-run\` shows."
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Remove the first integration subnet of the cases app, snet-web, when it is still there and nothing uses it
+        if: inputs.action == 'cases'
+        run: |
+          # snet-web lost the route table of the landing zone's network manager and was replaced by snet-cases (CHANGELOG.md). The platform lets go of the link between an app plan and a subnet
+          # some time after the app has left the subnet, and until then the subnet cannot be deleted: that is said, and the next run of the action tries again. Any other refusal stops the run.
+          subnet="/subscriptions/$ENV_SUBSCRIPTION_ID/resourceGroups/$ENV_RESOURCE_GROUP/providers/Microsoft.Network/virtualNetworks/vnet-meternaut/subnets/snet-web"
+          if ! found=$(az rest --method get --url "https://management.azure.com${subnet}?api-version=2025-05-01" --query name --output tsv 2>&1); then
+            if grep -Eqi 'NotFound|404' <<< "$found"; then
+              echo "The subnet snet-web is not there: nothing to remove."
+              exit 0
+            fi
+            echo "::error::The subnet snet-web could not be read: $found"
+            exit 1
+          fi
+          if refused=$(az rest --method delete --url "https://management.azure.com${subnet}?api-version=2025-05-01" --only-show-errors 2>&1); then
+            echo "The subnet snet-web is removed."
+          elif grep -Eqi 'InUseSubnetCannotBeDeleted|ServiceAssociationLink|is in use' <<< "$refused"; then
+            echo "::warning::The subnet snet-web is still linked to the app plan by the platform, so it cannot be removed yet. The next run of the action cases removes it."
+          else
+            echo "::error::The subnet snet-web could not be removed: $refused"
+            exit 1
+          fi
 
       - name: Start one Watch and read its History
         if: inputs.action == 'cases-run'

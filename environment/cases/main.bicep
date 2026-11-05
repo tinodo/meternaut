@@ -17,6 +17,11 @@
 // plan and tokens. The only network it makes is the app's own integration subnet (the usage recording's subnet is delegated to Flex
 // Consumption and cannot serve a Basic plan) and that subnet's network security group. The recording has to exist first.
 //
+// The subnet is made once and then left alone (webSubnetExists): the landing zone's network manager puts a route table on a new subnet
+// about a minute after it is made, and a template that makes the subnet again takes that table away, and with it the subnet's way to
+// the landing zone's DNS. The app on it then cannot resolve a name, and cannot start. That happened to the first subnet (snet-web) on
+// 2026-11-05, in the second deploy of this template, and the subnet was replaced by this one (snet-cases).
+//
 // No key of any kind (AGENTS.md rule 23): the app's host storage, its Event Hubs trigger and its telemetry use its identity, and its
 // code is pushed with the deployment workflow's own identity token (no deployment password). The only key it ever touches is the
 // gateway access product's, which the Watch reads from the gateway at the start of a run with its identity (the call needs a role in the
@@ -57,8 +62,11 @@ param eventHubNamespaceName string
 @maxLength(60)
 param functionAppName string
 
-@description('Address range of the subnet that the app\'s Basic plan is integrated with, inside the virtual network and apart from the other two subnets, for example 10.53.0.64/27. It is delegated to Microsoft.Web/serverFarms and holds nothing else.')
+@description('Address range of the subnet that the app\'s Basic plan is integrated with, inside the virtual network and apart from the other two subnets, for example 10.53.0.224/27. It is delegated to Microsoft.Web/serverFarms and holds nothing else.')
 param webSubnetPrefix string
+
+@description('True when the app\'s integration subnet is in Azure already. The template then leaves it alone: a template that makes the subnet again takes away the route table that the landing zone\'s network manager put on it, and the app on it loses its way to the landing zone\'s DNS. The deployment workflow reads this from Azure.')
+param webSubnetExists bool = false
 
 @description('Object id of the identity that the deployment workflow signs in as. It may send to the control hub, so that the workflow can start one run and read the History. It reads nothing else.')
 @minLength(36)
@@ -124,7 +132,7 @@ var tags = {
 }
 
 var virtualNetworkName = 'vnet-${workload}'
-var webSubnetName = 'snet-web'
+var webSubnetName = 'snet-cases'
 var controlHubName = 'cases-control'
 
 var eventHubsDataSenderRoleId = '2b629674-e913-4c01-ae53-ef4638d8f975'
@@ -151,8 +159,9 @@ resource webNsg 'Microsoft.Network/networkSecurityGroups@2025-05-01' = {
 
 // The same subnet is in environment/main.bicep, so that a later run of the model-side action does not take it away from the plan. Delegated to
 // Microsoft.Web/serverFarms, which is what a Basic plan's regional virtual network integration needs (the usage recording's subnet is delegated
-// to Microsoft.App/environments, for Flex Consumption, and a subnet has one delegation). It holds nothing else.
-resource webSubnet 'Microsoft.Network/virtualNetworks/subnets@2025-05-01' = {
+// to Microsoft.App/environments, for Flex Consumption, and a subnet has one delegation). It holds nothing else. It is made only while it is not
+// there: see webSubnetExists, and the header.
+resource webSubnet 'Microsoft.Network/virtualNetworks/subnets@2025-05-01' = if (!webSubnetExists) {
   parent: vnet
   name: webSubnetName
   properties: {
@@ -358,7 +367,7 @@ resource functionApp 'Microsoft.Web/sites@2024-04-01' = {
     httpsOnly: true
     publicNetworkAccess: 'Enabled'
     clientAffinityEnabled: false
-    virtualNetworkSubnetId: webSubnet.id
+    virtualNetworkSubnetId: resourceId('Microsoft.Network/virtualNetworks/subnets', virtualNetworkName, webSubnetName)
     vnetRouteAllEnabled: false
     siteConfig: {
       linuxFxVersion: 'PYTHON|3.13'
@@ -369,6 +378,9 @@ resource functionApp 'Microsoft.Web/sites@2024-04-01' = {
         { name: 'FUNCTIONS_EXTENSION_VERSION', value: '~4' }
         { name: 'FUNCTIONS_WORKER_RUNTIME', value: 'python' }
         { name: 'WEBSITE_RUN_FROM_PACKAGE', value: '1' }
+        // The host's start-up asks the DNS of the landing zone for the names of the storage account, the namespace and the gateway, and each lookup of a subnet that cannot reach
+        // that DNS waits 30 seconds. The platform gives a container 230 seconds by default to answer, and then stops the whole site and starts it again; ten minutes let a slow start finish.
+        { name: 'WEBSITES_CONTAINER_START_TIME_LIMIT', value: '600' }
         { name: 'SCM_DO_BUILD_DURING_DEPLOYMENT', value: 'false' }
         { name: 'ENABLE_ORYX_BUILD', value: 'false' }
         { name: 'AzureWebJobsStorage__credential', value: 'managedidentity' }
@@ -403,6 +415,7 @@ resource functionApp 'Microsoft.Web/sites@2024-04-01' = {
     }
   }
   dependsOn: [
+    webSubnet
     functionReceivesControl
     functionOwnsHostContainers
     functionUsesQueues
