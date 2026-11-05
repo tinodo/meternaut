@@ -675,6 +675,29 @@ jobs:
           # The host name is let go a little after the app: a new app of the same name may be refused for a minute.
           sleep 90
 
+      - name: Remove what the Flex Consumption version left in the storage account, when it is still there
+        if: inputs.action == 'cases'
+        env:
+          STORAGE_ACCOUNT: ${{ steps.params.outputs.storage_account_name }}
+        run: |
+          # The Flex Consumption app kept its package in the container app-package-cases, and its identity had a role on that container. The Basic plan runs from a package
+          # on its own storage, so nothing uses either now. The role assigned on the container itself goes first, then the container. Nothing else in the account is touched.
+          container="/subscriptions/$ENV_SUBSCRIPTION_ID/resourceGroups/$ENV_RESOURCE_GROUP/providers/Microsoft.Storage/storageAccounts/$STORAGE_ACCOUNT/blobServices/default/containers/app-package-cases"
+          if ! found=$(az rest --method get --url "https://management.azure.com${container}?api-version=2023-05-01" --query name --output tsv 2>&1); then
+            if grep -Eqi 'ContainerNotFound|ResourceNotFound|NotFound|404' <<< "$found"; then
+              echo "The container app-package-cases is not there: nothing to remove."
+              exit 0
+            fi
+            echo "::error::The container app-package-cases could not be read: $found"
+            exit 1
+          fi
+          for id in $(az role assignment list --scope "$container" --query "[].id" --output tsv); do
+            echo "Removing the role assignment $id, which was assigned on the container itself."
+            az role assignment delete --ids "$id"
+          done
+          az rest --method delete --url "https://management.azure.com${container}?api-version=2023-05-01" --only-show-errors
+          echo "The container app-package-cases is removed."
+
       - name: Deploy the first cases
         id: cases
         if: inputs.action == 'cases'

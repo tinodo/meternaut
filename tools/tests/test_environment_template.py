@@ -486,8 +486,17 @@ class Workflow(unittest.TestCase):
         self.assertTrue(offered <= used, f"an action with no step of its own: {offered - used}")
 
     def test_the_workflow_makes_no_resource_group_no_role_and_no_dns(self):
-        for word in ("az group delete", "az group create", "az role assignment", "az role definition", "privateDnsZones", "az network private-dns"):
+        for word in ("az group delete", "az group create", "az role assignment create", "az role definition", "privateDnsZones", "az network private-dns"):
             self.assertNotIn(word, self.text, word)
+
+    def test_the_one_role_that_the_workflow_removes_is_the_one_on_the_container_that_the_flex_version_left_behind(self):
+        # The incremental deployment never removes a role assignment, and the identity's condition lets it delete the roles that the templates give.
+        users = [re.match(r"name: (.+)", b).group(1) for b in self.steps if "az role assignment" in b]
+        self.assertEqual(users, ["Remove what the Flex Consumption version left in the storage account, when it is still there"])
+        (block,) = [b for b in self.steps if "az role assignment" in b]
+        self.assertEqual(re.findall(r"az role assignment (\w+)", block), ["list", "delete"], "it lists what is assigned on the container and deletes that, and does nothing else with a role")
+        self.assertIn('--scope "$container"', block)
+        self.assertIn('--ids "$id"', block)
 
     def contract_steps(self):
         return [block for block in self.steps if "inputs.action == 'contract'" in block]
@@ -587,7 +596,7 @@ class Workflow(unittest.TestCase):
             self.assertIn(f"[?name=='${variable}']", block)
         self.assertEqual(re.findall(r'az resource delete --ids "\$(\w+)"', block), ["site", "plan", "connection", "storage"])
         self.assertEqual(self.text.count("az resource delete"), 4)
-        self.assertEqual(len(re.findall(r"(?m)^\s*az \S+(?: \S+)* delete\b", self.text)), 6, "no other delete, of any kind: four of the Logic App version and two of the Flex version of the cases app")
+        self.assertEqual(len(re.findall(r"(?m)^\s*az \S+(?: \S+)* delete\b", self.text)), 8, "no other delete, of any kind: four of the Logic App version, two of the Flex version of the cases app and two of what that version left in the storage account (the role on its container, then the container)")
         self.assertNotIn("--yes", block)
         for kind in ("Microsoft.Web/sites", "Microsoft.Web/serverfarms", "Microsoft.Web/connections", "Microsoft.Storage/storageAccounts"):
             self.assertIn(f"--resource-type {kind}", block)
@@ -922,7 +931,8 @@ class CasesWorkflow(unittest.TestCase):
 
     def test_the_cases_are_made_ready_deployed_published_and_listed_in_that_order_and_for_their_action_only(self):
         order = ["The usage recording and the contract are there, which the first cases build on",
-                 "Remove the Flex Consumption version of the cases app, when it is still there", "Deploy the first cases",
+                 "Remove the Flex Consumption version of the cases app, when it is still there",
+                 "Remove what the Flex Consumption version left in the storage account, when it is still there", "Deploy the first cases",
                  "Sign in to Azure again for the publish of the cases, because the first sign-in's credential lasts five minutes",
                  "Build the cases app's package", "Publish the cases to the function app", "The cases app lists its four functions"]
         positions = [self.names.index(name) for name in order]
@@ -961,6 +971,24 @@ class CasesWorkflow(unittest.TestCase):
         for word in ("az resource delete", "--yes", "usage", "LEGACY"):
             self.assertNotIn(word, script, word)
         self.assertLess(self.names.index("Remove the Flex Consumption version of the cases app, when it is still there"), self.names.index("Deploy the first cases"))
+
+    def test_what_the_flex_version_left_in_the_storage_account_is_removed_by_name_and_nothing_else_in_the_account_is_touched(self):
+        title = "Remove what the Flex Consumption version left in the storage account, when it is still there"
+        block = self.step(title)
+        self.assertIn("if: inputs.action == 'cases'", block)
+        self.assertIn("STORAGE_ACCOUNT: ${{ steps.params.outputs.storage_account_name }}", block)
+        self.assertIn("storageAccounts/$STORAGE_ACCOUNT/blobServices/default/containers/app-package-cases", block)
+        self.assertEqual(len(re.findall(r"--method delete", block)), 1, "one container goes, and nothing else")
+        self.assertEqual(len(re.findall(r"az role assignment delete --ids \"\$id\"", block)), 1)
+        self.assertIn('az role assignment list --scope "$container"', block, "only what is assigned on the container itself is listed")
+        self.assertLess(block.index("az role assignment delete"), block.index("--method delete"), "the role goes before the container")
+        self.assertIn("ContainerNotFound", block)
+        self.assertIn('echo "::error::The container app-package-cases could not be read', block, "a failure that is not 'not there' stops the run")
+        script = "\n".join(line for line in block.split("run:")[1].splitlines() if not line.strip().startswith("#"))
+        for word in ("app-package-usage", "azure-webjobs", "az storage", "--account-key", "--yes", "az resource delete", "--all"):
+            self.assertNotIn(word, script, word)
+        self.assertLess(self.names.index("Remove the Flex Consumption version of the cases app, when it is still there"), self.names.index(title))
+        self.assertLess(self.names.index(title), self.names.index("Deploy the first cases"))
 
     def test_the_check_before_the_deploy_writes_nothing_and_reads_no_key(self):
         block = self.step("The usage recording and the contract are there, which the first cases build on")
