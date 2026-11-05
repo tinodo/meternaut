@@ -133,7 +133,9 @@ def load_manifest(path: Path = MANIFEST) -> dict:
             if role["kind"] == "builtin":
                 assert GUID_ONLY.match(role["id"]), name
             else:
-                assert role["definedIn"] in ("gatewayGroup", "workspaceGroup") and role["actions"] and role["description"], name
+                assert role["definedIn"] in ("gatewayGroup", "workspaceGroup", "projectGroup") and role["actions"] and role["description"], name
+                if role.get("writes"):
+                    assert role["definedIn"] == "projectGroup", f"{name}: a role that writes is defined in the project's own group and nowhere else"
     except (OSError, ValueError, KeyError, AssertionError) as e:
         raise Problem(f"{path} is not a valid list of access requirements ({e})") from e
     return manifest
@@ -154,7 +156,8 @@ def markdown(manifest: dict) -> str:
     """The table of the requirements, for the proposal."""
     rows = ["| # | Identity | Role | Where | What it is for |", "|---|---|---|---|---|"]
     for g in manifest["grants"]:
-        custom = " (custom role)" if manifest["roles"][g["role"]]["kind"] == "custom" else ""
+        role = manifest["roles"][g["role"]]
+        custom = (" (custom role, changes Azure)" if role.get("writes") else " (custom role)") if role["kind"] == "custom" else ""
         rows.append(f"| {g['id']} | `{manifest['identities'][g['identity']]['name']}` | {g['role']}{custom} | {manifest['places'][g['place']]} | {g['why']} |")
     return "\n".join(rows)
 
@@ -228,13 +231,22 @@ def scopes_for(place: str, places: Places, az: Az) -> list[str]:
         return [need(places.gateway_insights, "--gateway-insights", "the resource id of the gateway's Application Insights component")]
     if place == "centralWorkspace":
         return [workspace_of(az, places)]
+    if place == "projectGroup":
+        return [project_group_scope(places)]
     raise Problem(f"unknown place {place}")
+
+
+def project_group_scope(places: Places) -> str:
+    return (f"/subscriptions/{need(places.project_subscription, '--project-subscription', 'the subscription of the project')}"
+            f"/resourceGroups/{need(places.project_group, '--project-group', 'the resource group of the project')}")
 
 
 def definition_group(where: str, places: Places, az: Az) -> str:
     """The resource group in which a custom role is defined: its one assignable scope."""
     if where == "gatewayGroup":
         return APIM.match(need(places.gateway, "--gateway", "the resource id of the API Management instance")).group(1)
+    if where == "projectGroup":
+        return project_group_scope(places)
     return WORKSPACE.match(workspace_of(az, places)).group(1)
 
 

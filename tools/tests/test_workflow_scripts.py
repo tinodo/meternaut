@@ -112,7 +112,7 @@ class WorkOutTheSettings(unittest.TestCase):
         done, lines, _ = self.run_step(f"{PRINCIPAL}\t{CLIENT}", "")
         checks = [line for line in lines if line.startswith("check ")]
         labels = [re.search(r"--label (\S+)", line).group(1) for line in checks]
-        self.assertEqual(labels, ["environment", "logger", "eventhub-loggers", "kit", "recording", "contract", "cases"])
+        self.assertEqual(labels, ["environment", "logger", "eventhub-loggers", "kit", "recording", "contract", "cases", "planted"])
 
 
 STAND_IN_PYTHON = """#!/bin/bash

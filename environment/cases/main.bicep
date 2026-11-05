@@ -82,6 +82,28 @@ param maxCasesPerRun int = 3
 @maxValue(730)
 param historyRetentionDays int = 365
 
+@description('Client id of the console\'s app registration in Microsoft Entra. Empty: the sign-in of the console is not set up yet, and the console refuses every request (it never serves a page without it).')
+param consoleAppClientId string = ''
+
+@description('The people who may use the console, as JSON: [{"oid": "<directory object id>", "name": "...", "roles": ["owner", "approver", "ops"], "mail": "<address>"}]. The same list is the sign-in\'s list of allowed principals.')
+param consolePeople string = '[]'
+
+@description('Directory object ids of the people above: the built-in sign-in lets only these through.')
+param consoleUserObjectIds array = []
+
+@description('Address of the shared mailbox that the app sends its letters from. Empty: the app sends no letter.')
+param mailSender string = ''
+
+@description('Hours that a plan waits for a person before it expires.')
+@minValue(1)
+@maxValue(336)
+param planTtlHours int = 72
+
+@description('Seconds between an approval and the start of the change: the window in which the approver can still cancel.')
+@minValue(30)
+@maxValue(3600)
+param approvalDelaySeconds int = 120
+
 var tags = {
   workload: workload
   component: 'cases'
@@ -134,6 +156,22 @@ resource eventHubs 'Microsoft.EventHub/namespaces@2024-01-01' existing = {
 
 resource casesIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
   name: 'id-${workload}-cases'
+  location: location
+  tags: tags
+}
+
+// The one identity that changes Azure: its one custom role (read and delete a disk and a public IP address, read locks) is given by a person, at the
+// project's resource group, with tools/access-requirements.py (environment/access-requirements.json, line W1). Nothing in this template gives it a right.
+resource runnerIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
+  name: 'id-${workload}-runner'
+  location: location
+  tags: tags
+}
+
+// The identity that the built-in sign-in of the console presents to Microsoft Entra instead of a client secret (a federated credential on the app
+// registration trusts it). It holds no role and is used for nothing else.
+resource authIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
+  name: 'id-${workload}-console-auth'
   location: location
   tags: tags
 }
@@ -288,6 +326,8 @@ resource functionApp 'Microsoft.Web/sites@2024-04-01' = {
     type: 'UserAssigned'
     userAssignedIdentities: {
       '${casesIdentity.id}': {}
+      '${runnerIdentity.id}': {}
+      '${authIdentity.id}': {}
     }
   }
   properties: {
@@ -337,6 +377,16 @@ resource functionApp 'Microsoft.Web/sites@2024-04-01' = {
         { name: 'MODEL_DETECTIVE', value: modelDetective }
         { name: 'MODEL_SKEPTIC', value: modelSkeptic }
         { name: 'MAX_CASES_PER_RUN', value: string(maxCasesPerRun) }
+        { name: 'STORE_ACCOUNT_NAME', value: storage.name }
+        { name: 'WRITER_RESOURCE_GROUP', value: resourceGroup().name }
+        { name: 'WRITER_SUBSCRIPTION_ID', value: subscription().subscriptionId }
+        { name: 'WRITER_CLIENT_ID', value: runnerIdentity.properties.clientId }
+        { name: 'CONSOLE_HOST', value: '${functionAppName}.azurewebsites.net' }
+        { name: 'CONSOLE_PEOPLE', value: consolePeople }
+        { name: 'MAIL_SENDER', value: mailSender }
+        { name: 'PLAN_TTL_HOURS', value: string(planTtlHours) }
+        { name: 'APPROVAL_DELAY_SECONDS', value: string(approvalDelaySeconds) }
+        { name: 'OVERRIDE_USE_MI_FIC_ASSERTION_CLIENTID', value: authIdentity.properties.clientId }
       ]
     }
   }
@@ -361,6 +411,64 @@ resource noBasicAuthForDeployment 'Microsoft.Web/sites/basicPublishingCredential
   }
 }
 
+// The built-in sign-in of the console: every request needs a person of the tenant, and only the listed directory object ids get through. The app registration
+// trusts the identity above through a federated credential, so the sign-in holds no secret. Without a client id nothing is set up and the console refuses.
+resource consoleSignIn 'Microsoft.Web/sites/config@2024-04-01' = if (!empty(consoleAppClientId)) {
+  parent: functionApp
+  name: 'authsettingsV2'
+  properties: {
+    platform: {
+      enabled: true
+      runtimeVersion: '~1'
+    }
+    globalValidation: {
+      requireAuthentication: true
+      unauthenticatedClientAction: 'RedirectToLoginPage'
+      redirectToProvider: 'azureactivedirectory'
+      excludedPaths: [
+        '/healthz'
+      ]
+    }
+    identityProviders: {
+      azureActiveDirectory: {
+        enabled: true
+        registration: {
+          openIdIssuer: '${environment().authentication.loginEndpoint}${tenant().tenantId}/v2.0'
+          clientId: consoleAppClientId
+          clientSecretSettingName: 'OVERRIDE_USE_MI_FIC_ASSERTION_CLIENTID'
+        }
+        validation: {
+          allowedAudiences: [
+            'api://${consoleAppClientId}'
+            consoleAppClientId
+          ]
+          defaultAuthorizationPolicy: {
+            allowedPrincipals: {
+              identities: consoleUserObjectIds
+            }
+          }
+        }
+      }
+    }
+    login: {
+      tokenStore: {
+        enabled: false
+      }
+      preserveUrlFragmentsForLogins: false
+      cookieExpiration: {
+        convention: 'FixedTime'
+        timeToExpiration: '08:00:00'
+      }
+    }
+    httpSettings: {
+      requireHttps: true
+      routes: {
+        apiPrefix: '/.auth'
+      }
+    }
+  }
+}
+
 // The History: a workbook over the app's telemetry. Anyone who may read the component may open it in the Azure portal.
 resource historyWorkbook 'Microsoft.Insights/workbooks@2023-06-01' = {
   name: guid(resourceGroup().id, 'meternaut-history')
@@ -381,5 +489,12 @@ output functionAppId string = functionApp.id
 @description('Principal id of the function app\'s identity. It reads the pilot estate with two roles on the pilot subscription, and the gateway access product\'s key with a role in the gateway\'s subscription: both are given once, on the owner\'s written word (environment/BOOTSTRAP.md).')
 output casesIdentityPrincipalId string = casesIdentity.properties.principalId
 output casesIdentityClientId string = casesIdentity.properties.clientId
+@description('Principal id and client id of the one identity that changes Azure. Its custom role is given by a person (environment/access-requirements.json, W1).')
+output runnerIdentityPrincipalId string = runnerIdentity.properties.principalId
+output runnerIdentityClientId string = runnerIdentity.properties.clientId
+@description('Principal id of the identity that the console\'s sign-in presents to Microsoft Entra: the federated credential of the app registration names it.')
+output authIdentityPrincipalId string = authIdentity.properties.principalId
+output authIdentityClientId string = authIdentity.properties.clientId
+output consoleUrl string = 'https://${functionApp.properties.defaultHostName}'
 output controlHubName string = controlHub.name
 output historyWorkbookId string = historyWorkbook.id

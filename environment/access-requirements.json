@@ -3,13 +3,15 @@
   "about": "The access that Meternaut needs outside its own resource group. The deployment workflow's identity holds no right there and must not get one (AGENTS.md rule 18), so a person who may assign roles at each place grants it. Each line of grants is one role of one identity at one place. tools/access-requirements.py reads this file: it checks what is granted and, only with --apply, grants what is missing. docs/proposals/03-access-and-onboarding.md shows the table that the tool prints, and a test keeps the two the same.",
   "identities": {
     "cases": { "name": "id-meternaut-cases", "madeBy": "cases" },
-    "usage": { "name": "id-meternaut-usage", "madeBy": "recording" }
+    "usage": { "name": "id-meternaut-usage", "madeBy": "recording" },
+    "runner": { "name": "id-meternaut-runner", "madeBy": "cases" }
   },
   "places": {
     "estate": "Each subscription that the Watch reads (the app setting SCOPE_SUBSCRIPTIONS), or a management group above them",
     "gatewayProductSubscription": "The one subscription of the gateway's access product that the Watch uses, below the API Management instance",
     "gatewayInsights": "The gateway's Application Insights component",
-    "centralWorkspace": "The central workspace that the component writes to"
+    "centralWorkspace": "The central workspace that the component writes to",
+    "projectGroup": "The project's own resource group, where Meternaut plants waste of its own and where its writer may act and nowhere else"
   },
   "roles": {
     "Reader": {
@@ -41,6 +43,19 @@
         "Microsoft.OperationalInsights/workspaces/read",
         "Microsoft.OperationalInsights/workspaces/query/read",
         "Microsoft.OperationalInsights/workspaces/query/AppMetrics/read"
+      ]
+    },
+    "Meternaut waste remover": {
+      "kind": "custom",
+      "definedIn": "projectGroup",
+      "writes": true,
+      "description": "The one role of Meternaut that changes Azure. It deletes a managed disk or a public IP address in the project's own resource group, after a person approved the exact plan, and reads the same two kinds of resource and the management locks to check them first. Nothing else: no other kind of resource, no other group.",
+      "actions": [
+        "Microsoft.Compute/disks/read",
+        "Microsoft.Compute/disks/delete",
+        "Microsoft.Network/publicIPAddresses/read",
+        "Microsoft.Network/publicIPAddresses/delete",
+        "Microsoft.Authorization/locks/read"
       ]
     }
   },
@@ -82,6 +97,13 @@
       "role": "Meternaut usage reader",
       "place": "centralWorkspace",
       "why": "Reads one table (AppMetrics) of the central workspace. The component is workspace-based and the workspace asks for workspace permissions, so the role on the component alone returns no rows"
+    },
+    {
+      "id": "W1",
+      "identity": "runner",
+      "role": "Meternaut waste remover",
+      "place": "projectGroup",
+      "why": "The one writer: after a person approved the exact plan it deletes a disk or a public IP address in this group, after it has read the resource and the locks again, and it can do nothing else in Azure. Every other right of Meternaut only reads"
     }
   ]
 }

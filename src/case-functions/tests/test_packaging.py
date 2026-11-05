@@ -17,10 +17,15 @@ FORBIDDEN = (
 )
 ONLY_IN_THE_GATEWAY_MODULE = ("listSecrets", "primaryKey")
 GATEWAY_MODULE = "gateway.py"
+# The only modules that write. The store writes records to its own tables (PUT, DELETE of one entity); the runner is the one component that changes Azure
+# (DELETE of a disk or a public IP address, on its own list of calls). Everything else asks questions: a GET, or a POST that asks for a query result, a key or a completion.
+WRITERS = {"store.py": {"PUT", "DELETE"}, "runner.py": {"DELETE"}}
+WRITE_WORDS = ('"PUT"', '"DELETE"', '"PATCH"', "/delete", "/write", "/deallocate", "/resize", "/restart", "regeneratePrimaryKey")
 
 
 def package_files():
-    return sorted((APP_ROOT / "cases").glob("*.py"))
+    """Every module of the package, the web package included."""
+    return sorted(p for p in (APP_ROOT / "cases").rglob("*.py") if "__pycache__" not in p.parts)
 
 
 def source_files():
@@ -66,7 +71,7 @@ class FilesOfTheAppTests(unittest.TestCase):
         self.assertIn('--requirement "$source_dir/requirements.txt"', script)
         self.assertIn("--only-binary=:all:", script)
 
-    def test_host_json_keeps_every_line_of_the_history_and_the_extension_bundle(self):
+    def test_host_json_keeps_every_line_of_the_history_and_the_extension_bundle_and_serves_the_console_at_the_root(self):
         host = json.loads((APP_ROOT / "host.json").read_text(encoding="utf-8"))
         self.assertEqual(
             host,
@@ -74,11 +79,12 @@ class FilesOfTheAppTests(unittest.TestCase):
                 "version": "2.0",
                 "logging": {"logLevel": {"default": "Information"}, "applicationInsights": {"samplingSettings": {"isEnabled": False}}},
                 "extensionBundle": {"id": "Microsoft.Azure.Functions.ExtensionBundle", "version": "[4.*, 5.0.0)"},
+                "extensions": {"http": {"routePrefix": ""}},
             },
-            "sampling is off, so that no line of the History is dropped",
+            "sampling is off, so that no line of the History is dropped; the console's pages are at the root, with no /api in front",
         )
         usage = json.loads((REPO_ROOT / "src" / "usage-functions" / "host.json").read_text(encoding="utf-8"))
-        self.assertEqual(host, usage)
+        self.assertEqual({k: v for k, v in host.items() if k != "extensions"}, usage)
 
     def test_funcignore_leaves_out_the_tests_and_compiled_files_but_not_the_libraries(self):
         lines = (APP_ROOT / ".funcignore").read_text(encoding="utf-8").splitlines()
@@ -134,27 +140,48 @@ class WhatTheAppIs(unittest.TestCase):
                     with self.subTest(file=path.name, module=module):
                         self.assertIn(module.split(".")[0], standard)
 
-    def test_the_package_asks_questions_and_never_writes(self):
+    def test_only_the_store_and_the_runner_write_and_each_writes_only_what_it_is_for(self):
         for path in package_files():
             source = path.read_text(encoding="utf-8")
-            with self.subTest(file=path.name):
-                for method in re.findall(r"""request\(\s*["']([A-Z]+)["']""", source):
-                    self.assertIn(method, {"GET", "POST"})
-                for word in ('"PUT"', '"DELETE"', '"PATCH"', "/delete", "/write", "/deallocate", "/resize", "/restart", "regeneratePrimaryKey"):
+            allowed = {"GET", "POST"} | WRITERS.get(path.name, set())
+            in_web = "web" in path.relative_to(APP_ROOT / "cases").parts[:-1]
+            with self.subTest(file=path.relative_to(APP_ROOT).as_posix()):
+                if in_web:
+                    # The pages make no call at all (they ask the store and the decider), and their own routes (/me/notes/<id>/delete) are not calls.
+                    self.assertNotRegex(source, r"urllib\.request|http\.client|\bsocket\b|\.request\(")
+                    continue
+                for method in re.findall(r"""(?:request|_call)\(\s*["']([A-Z]+)["']""", source):
+                    self.assertIn(method, allowed)
+                for word in WRITE_WORDS:
+                    if word.strip('"') in WRITERS.get(path.name, set()):
+                        continue
                     self.assertNotIn(word, source)
+
+    def test_the_store_never_talks_to_resource_manager_and_the_runner_never_to_the_table_service(self):
+        store = (APP_ROOT / "cases" / "store.py").read_text(encoding="utf-8")
+        runner = (APP_ROOT / "cases" / "runner.py").read_text(encoding="utf-8")
+        self.assertNotIn("management.azure.com", store)
+        self.assertNotIn("table.core.windows.net", runner)
+        self.assertNotIn("storage.azure.com", runner)
+
+    def test_the_runner_deletes_two_kinds_of_resource_and_nothing_else(self):
+        runner = (APP_ROOT / "cases" / "runner.py").read_text(encoding="utf-8")
+        self.assertEqual(sorted(set(re.findall(r'\("DELETE", (\w+)\)', runner))), ["addresses", "disks"])
 
     def test_importing_the_package_loads_no_azure_module_and_makes_no_call(self):
         code = (
             "import sys; sys.path.insert(0, sys.argv[1]); "
             "import cases, cases.config, cases.http, cases.identity, cases.arm, cases.detectors, cases.evidence, cases.guards, cases.roles, cases.decide, "
-            "cases.gateway, cases.events, cases.run, cases.control, cases.redact; "
+            "cases.gateway, cases.events, cases.run, cases.control, cases.redact, cases.models, cases.memory_store, cases.store, cases.approvals, cases.runner, "
+            "cases.people, cases.switches, cases.wiring, cases.loop_config, cases.console, cases.loop, cases.web, cases.mail, cases.letters; "
             "print(sorted(name for name in sys.modules if name == 'azure' or name.startswith('azure.')))"
         )
         done = subprocess.run([sys.executable, "-c", code, str(APP_ROOT)], capture_output=True, text=True, check=True)
         self.assertEqual(done.stdout.strip(), "[]")
 
-    def test_the_two_functions_read_and_start_nothing_but_the_watch(self):
-        self.assertEqual(sorted(re.findall(r'function_name\(name="([a-z-]+)"\)', (APP_ROOT / "function_app.py").read_text(encoding="utf-8"))), ["cases-control", "watch-daily"])
+    def test_the_four_functions_read_and_start_nothing_but_the_watch_and_the_loop(self):
+        self.assertEqual(sorted(re.findall(r'function_name\(name="([a-z-]+)"\)', (APP_ROOT / "function_app.py").read_text(encoding="utf-8"))),
+                         ["cases-control", "console", "runner-tick", "watch-daily"])
 
 
 if __name__ == "__main__":

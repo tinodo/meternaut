@@ -29,12 +29,15 @@ GATEWAY_GROUP = f"/subscriptions/{GATEWAY_SUB}/resourceGroups/rg-gateway"
 INSIGHTS = f"/subscriptions/{GATEWAY_SUB}/resourceGroups/rg-gateway/providers/microsoft.insights/components/example-insights"
 WORKSPACE_GROUP = f"/subscriptions/{WORKSPACE_SUB}/resourceGroups/rg-central"
 WORKSPACE = f"{WORKSPACE_GROUP}/providers/Microsoft.OperationalInsights/workspaces/example-workspace"
+PROJECT_GROUP = f"/subscriptions/{PROJECT}/resourceGroups/rg-project"
 PRODUCT = f"{APIM}/subscriptions/meternaut-agents-sub-01"
 ESTATE = f"/subscriptions/{PROJECT}"
 MANAGEMENT_GROUP = "/providers/Microsoft.Management/managementGroups/landing-zones"
 PLACES = ["--project-subscription", PROJECT, "--project-group", "rg-project", "--gateway", APIM, "--gateway-insights", INSIGHTS]
 KEY_READER_ID = "00000000-0000-0000-0000-0000000000a1"
 USAGE_READER_ID = "00000000-0000-0000-0000-0000000000a2"
+WASTE_REMOVER_ID = "00000000-0000-0000-0000-0000000000a3"
+WRITER = "Meternaut waste remover"
 
 MANIFEST = ar.load_manifest()
 BUILTIN = {name: spec["id"] for name, spec in MANIFEST["roles"].items() if spec["kind"] == "builtin"}
@@ -52,7 +55,7 @@ class FakeAz:
     """Answers the Azure CLI commands of the tool from a small model of a tenant, and remembers every command."""
 
     def __init__(self, granted=True):
-        self.identities = {"id-meternaut-cases": "case-principal", "id-meternaut-usage": "usage-principal"}
+        self.identities = {"id-meternaut-cases": "case-principal", "id-meternaut-usage": "usage-principal", "id-meternaut-runner": "runner-principal"}
         self.roles = {}
         self.assignments = []
         self.calls = []
@@ -62,11 +65,13 @@ class FakeAz:
         if granted:
             self.roles["Meternaut gateway key reader"] = definition("Meternaut gateway key reader", KEY_READER_ID, GATEWAY_GROUP)
             self.roles["Meternaut usage reader"] = definition("Meternaut usage reader", USAGE_READER_ID, WORKSPACE_GROUP)
+            self.roles[WRITER] = definition(WRITER, WASTE_REMOVER_ID, PROJECT_GROUP)
             self.grant("case-principal", BUILTIN["Reader"], ESTATE)
             self.grant("case-principal", BUILTIN["Cost Management Reader"], ESTATE)
             self.grant("case-principal", KEY_READER_ID, PRODUCT)
             self.grant("usage-principal", BUILTIN["Monitoring Reader"], INSIGHTS)
             self.grant("usage-principal", USAGE_READER_ID, WORKSPACE)
+            self.grant("runner-principal", WASTE_REMOVER_ID, PROJECT_GROUP)
 
     def grant(self, principal, role_id, scope):
         self.assignments.append({"principal": principal, "role_id": role_id, "scope": scope})
@@ -138,8 +143,10 @@ def run(argv, fake, env=None, answers=("yes",), asked=None):
 
 
 class TheFile(unittest.TestCase):
+    WRITER_ACTIONS = ["Microsoft.Compute/disks/delete", "Microsoft.Network/publicIPAddresses/delete"]
+
     def test_it_loads_and_every_reference_resolves(self):
-        self.assertEqual([g["id"] for g in MANIFEST["grants"]], ["R1", "R2", "R3", "R4", "R5"])
+        self.assertEqual([g["id"] for g in MANIFEST["grants"]], ["R1", "R2", "R3", "R4", "R5", "W1"])
         for grant in MANIFEST["grants"]:
             self.assertIn(grant["identity"], MANIFEST["identities"])
             self.assertIn(grant["place"], MANIFEST["places"])
@@ -149,14 +156,41 @@ class TheFile(unittest.TestCase):
         self.assertEqual(BUILTIN, {"Reader": "acdd72a7-3385-48ef-bd42-f606fba81ae7", "Cost Management Reader": "72fafb9e-0641-4937-9268-a91bfd8191a3",
                                    "Monitoring Reader": "43d0d8ad-25c7-4714-9337-8ba259a9fe05"})
 
-    def test_a_custom_role_can_only_read_and_the_one_key_read_has_a_name_that_a_test_knows(self):
+    def test_a_custom_role_can_only_read_except_the_one_writer_and_the_one_key_read_has_a_name_that_a_test_knows(self):
         for name, spec in MANIFEST["roles"].items():
             if spec["kind"] != "custom":
                 continue
             for action in spec["actions"]:
                 self.assertNotIn("*", action, name)
-                self.assertTrue(action.endswith("/read") or action == "Microsoft.ApiManagement/service/subscriptions/listSecrets/action", f"{name}: {action}")
-            self.assertFalse(any(re.search(r"write|delete", a, re.I) for a in spec["actions"]), name)
+                if spec.get("writes"):
+                    self.assertTrue(action.endswith("/read") or action in self.WRITER_ACTIONS, f"{name}: {action}")
+                else:
+                    self.assertTrue(action.endswith("/read") or action == "Microsoft.ApiManagement/service/subscriptions/listSecrets/action", f"{name}: {action}")
+            if not spec.get("writes"):
+                self.assertFalse(any(re.search(r"write|delete", a, re.I) for a in spec["actions"]), name)
+
+    def test_one_custom_role_changes_azure_it_only_deletes_two_kinds_of_resource_and_is_held_by_one_identity_in_one_group(self):
+        writers = [name for name, spec in MANIFEST["roles"].items() if spec.get("writes")]
+        self.assertEqual(writers, [WRITER], "another role that changes Azure is a decision for a person, and for this test")
+        spec = MANIFEST["roles"][WRITER]
+        self.assertEqual(sorted(a for a in spec["actions"] if not a.endswith("/read")), sorted(self.WRITER_ACTIONS))
+        self.assertEqual(spec["definedIn"], "projectGroup")
+        held = [(g["id"], g["identity"], g["place"]) for g in MANIFEST["grants"] if g["role"] == WRITER]
+        self.assertEqual(held, [("W1", "runner", "projectGroup")])
+        self.assertEqual(MANIFEST["identities"]["runner"], {"name": "id-meternaut-runner", "madeBy": "cases"})
+        for grant in MANIFEST["grants"]:
+            if grant["identity"] == "runner":
+                self.assertEqual(grant["role"], WRITER, "the writer's identity holds its one role and no other")
+
+    def test_a_role_that_changes_azure_can_only_be_defined_in_the_project_group(self):
+        broken = json.loads((ROOT / "environment" / "access-requirements.json").read_text(encoding="utf-8"))
+        broken["roles"][WRITER]["definedIn"] = "workspaceGroup"
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "broken.json"
+            path.write_text(json.dumps(broken), encoding="utf-8")
+            with self.assertRaises(ar.Problem) as raised:
+                ar.load_manifest(path)
+            self.assertIn("project's own group", str(raised.exception))
 
     def test_the_hand_steps_page_has_every_custom_role_and_every_action_of_it(self):
         text = (ROOT / "environment" / "BOOTSTRAP.md").read_text(encoding="utf-8")
@@ -193,6 +227,12 @@ class TheTable(unittest.TestCase):
         code, out, _, _ = run(["markdown"], FakeAz())
         self.assertEqual((code, out), (0, ar.markdown(MANIFEST)))
 
+    def test_the_role_that_changes_azure_is_marked_in_the_table(self):
+        rows = [r for r in ar.markdown(MANIFEST).splitlines() if r.startswith("| W1 ")]
+        self.assertEqual(len(rows), 1)
+        self.assertIn(f"{WRITER} (custom role, changes Azure)", rows[0])
+        self.assertEqual(sum("changes Azure" in r for r in ar.markdown(MANIFEST).splitlines()), 1)
+
 
 class TheCallsOfTheApp(unittest.TestCase):
     NAMES = {
@@ -221,12 +261,38 @@ class TheCallsOfTheApp(unittest.TestCase):
             self.assertEqual(bool(grant.get("calls")), grant["identity"] == "cases", grant["id"])
 
 
+class TheCallsOfTheRunner(unittest.TestCase):
+    ACTIONS = (
+        (lambda m, p: m == "GET" and "Microsoft.Compute/disks/" in p, "Microsoft.Compute/disks/read"),
+        (lambda m, p: m == "DELETE" and "Microsoft.Compute/disks/" in p, "Microsoft.Compute/disks/delete"),
+        (lambda m, p: m == "GET" and "Microsoft.Network/publicIPAddresses/" in p, "Microsoft.Network/publicIPAddresses/read"),
+        (lambda m, p: m == "DELETE" and "Microsoft.Network/publicIPAddresses/" in p, "Microsoft.Network/publicIPAddresses/delete"),
+        (lambda m, p: m == "GET" and "Microsoft.Authorization/locks" in p, "Microsoft.Authorization/locks/read"),
+    )
+
+    def test_the_calls_that_the_runner_may_make_and_the_actions_of_its_role_are_the_same_list(self):
+        app = str(ROOT / "src" / "case-functions")
+        sys.path.insert(0, app)
+        try:
+            from cases import runner
+        finally:
+            sys.path.remove(app)
+        wanted = []
+        for method, pattern in runner.runner_calls(PROJECT, "rg-project"):
+            text = pattern.pattern.replace("\\", "")
+            found = [action for test, action in self.ACTIONS if test(method, text)]
+            self.assertEqual(len(found), 1, f"{method} {text}: the runner makes a call that the access requirements do not know. Add it to environment/access-requirements.json")
+            wanted.append(found[0])
+        self.assertEqual(len(wanted), len(set(wanted)))
+        self.assertEqual(sorted(wanted), sorted(MANIFEST["roles"][WRITER]["actions"]), "the calls of the runner and the actions of its role differ")
+
+
 class Check(unittest.TestCase):
     def test_everything_granted_is_present_and_nothing_is_written(self):
         fake = FakeAz()
         code, out, _, _ = run(["check", *PLACES], fake)
         self.assertEqual(code, 0)
-        self.assertIn("5 of 5 present.", out)
+        self.assertIn("6 of 6 present.", out)
         self.assertIn("signed in as operator@example.com", out)
         self.assertEqual(fake.writes(), [])
 
@@ -243,7 +309,7 @@ class Check(unittest.TestCase):
         fake.grant("case-principal", BUILTIN["Reader"], MANAGEMENT_GROUP)
         fake.grant("case-principal", BUILTIN["Cost Management Reader"], MANAGEMENT_GROUP)
         code, out, _, _ = run(["check", *PLACES], fake)
-        self.assertEqual((code, "5 of 5 present." in out), (0, True))
+        self.assertEqual((code, "6 of 6 present." in out), (0, True))
 
     def test_a_grant_on_something_below_the_place_does_not_count(self):
         fake = FakeAz()
@@ -343,9 +409,10 @@ class Grant(unittest.TestCase):
         code, out, _, _ = run(["grant", *PLACES], fake)
         self.assertEqual(code, 0)
         self.assertIn("This was a dry run", out)
-        self.assertIn("7 change(s) would be made, and nothing else", out)
+        self.assertIn("9 change(s) would be made, and nothing else", out)
         self.assertEqual(fake.writes(), [])
         self.assertIn("az role assignment create --assignee-object-id case-principal", out)
+        self.assertIn("az role assignment create --assignee-object-id runner-principal", out)
 
     def test_apply_makes_the_missing_custom_roles_first_and_then_every_assignment_and_checks_again(self):
         fake = FakeAz(**self.EMPTY)
@@ -353,17 +420,33 @@ class Grant(unittest.TestCase):
         self.assertEqual(code, 0, out)
         writes = fake.writes()
         kinds = [c[:3] for c in writes]
-        self.assertEqual(kinds.count(["role", "definition", "create"]), 2)
-        self.assertEqual(kinds.count(["role", "assignment", "create"]), 5)
+        self.assertEqual(kinds.count(["role", "definition", "create"]), 3)
+        self.assertEqual(kinds.count(["role", "assignment", "create"]), 6)
         custom_ids = {r["name"] for r in fake.roles.values()}
-        for name in ("Meternaut gateway key reader", "Meternaut usage reader"):
+        for name in ("Meternaut gateway key reader", "Meternaut usage reader", WRITER):
             role_id = fake.roles[name]["name"]
             define = next(i for i, c in enumerate(writes) if c[:3] == ["role", "definition", "create"] and name in str(fake.definition_files))
             assign = next(i for i, c in enumerate(writes) if c[:3] == ["role", "assignment", "create"] and c[c.index("--role") + 1] == role_id)
             self.assertLess(define, assign, "a custom role is made before it is assigned")
-        self.assertEqual(len(custom_ids), 2)
-        self.assertTrue(out.rstrip().endswith("5 of 5 present."))
+        self.assertEqual(len(custom_ids), 3)
+        self.assertTrue(out.rstrip().endswith("6 of 6 present."))
         self.assertIn("Checking again:", out)
+
+    def test_the_writer_role_is_made_in_the_project_group_and_given_to_the_runner_there_only(self):
+        fake = FakeAz(**self.EMPTY)
+        code, out, _, _ = run(["grant", *PLACES, "--apply", "--yes", "--only", "W1"], fake)
+        self.assertEqual(code, 0, out)
+        ((path, content),) = fake.definition_files
+        spec = MANIFEST["roles"][WRITER]
+        self.assertEqual(content, {"Name": WRITER, "IsCustom": True, "Description": spec["description"], "Actions": spec["actions"],
+                                   "NotActions": [], "DataActions": [], "NotDataActions": [], "AssignableScopes": [PROJECT_GROUP]})
+        define = [c for c in fake.writes() if c[:3] == ["role", "definition", "create"]][0]
+        self.assertEqual(define[define.index("--subscription") + 1], PROJECT)
+        assigns = [c for c in fake.writes() if c[:3] == ["role", "assignment", "create"]]
+        self.assertEqual(len(assigns), 1)
+        assign = assigns[0]
+        self.assertEqual((assign[assign.index("--assignee-object-id") + 1], assign[assign.index("--scope") + 1]), ("runner-principal", PROJECT_GROUP))
+        self.assertTrue(out.rstrip().endswith("1 of 1 present."))
 
     def test_the_definition_that_is_made_holds_exactly_what_the_file_says_and_the_file_is_removed_after(self):
         fake = FakeAz(**self.EMPTY)
@@ -425,8 +508,8 @@ class Grant(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("cannot yet", out)
         assigned = [c for c in fake.writes() if c[:3] == ["role", "assignment", "create"]]
-        self.assertEqual(len(assigned), 3)
-        self.assertTrue(all(c[c.index("--assignee-object-id") + 1] == "case-principal" for c in assigned))
+        self.assertEqual(len(assigned), 4)
+        self.assertTrue(all(c[c.index("--assignee-object-id") + 1] in ("case-principal", "runner-principal") for c in assigned))
 
     def test_a_pipeline_may_not_apply_but_a_dry_run_is_allowed(self):
         fake = FakeAz(**self.EMPTY)

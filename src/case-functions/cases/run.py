@@ -15,7 +15,8 @@ from dataclasses import dataclass
 from typing import Callable, Mapping
 
 from . import config as cfg
-from . import decide, detectors, evidence, guards, roles
+from . import decide, detectors, evidence, guards, roles, wiring
+from .approvals import is_fixture
 from .arm import Arm, scopes_of
 from .detectors import DETECTOR_NAMES, Context, Lead
 from .events import History
@@ -23,6 +24,8 @@ from .evidence import EvidenceError
 from .gateway import Gateway, GatewayError
 from .http import Client, HttpError, allowed_calls, default_transport
 from .identity import Identity, IdentityError
+from .memory_store import stamp
+from .models import CaseRecord, RunRecord, StoreError
 from .redact import Redactor
 from .roles import RoleError, clean_text
 
@@ -41,6 +44,7 @@ class Services:
     redact: Redactor
     clock: Callable[[], dt.datetime]
     monotonic: Callable[[], float]
+    extras: "wiring.Extras | None" = None
 
 
 @dataclass
@@ -80,14 +84,44 @@ def work_case(s: Services, number: int, lead: Lead, context: Context, tokens_bef
     h.emit("case.started", caseId=case_id, leadId=lead.lead_id)
     identity = {"caseId": case_id, "leadId": lead.lead_id, "detector": lead.detector, "resourceName": clean_text(lead.name, 120),
                 "resourceType": clean_text(lead.resource_type, 120), "resourceGroup": clean_text(lead.resource_group, 90), "costUsd30d": lead.cost_usd_30d}
+    steps: list[dict] = []
+    models: dict[str, str | None] = {"detective": st.model_detective, "skeptic": None}
+
+    def save(status: str, recommendation: str | None, confidence: float | None, saving: float | None, summary: str, objections: list[str], flags_on: list[str],
+             facts: dict) -> None:
+        """The case goes to the store, when there is one, and a plan is made when the writer could act on it. A store that fails never stops the run."""
+        ex = s.extras
+        if ex is None:
+            return
+        now = stamp(s.clock())
+        try:
+            old = ex.store.case_get(f"k{lead.lead_id}")
+            record = CaseRecord(
+                case_id=f"k{lead.lead_id}", resource_id=lead.resource_id, resource_name=clean_text(lead.name, 120), resource_type=clean_text(lead.resource_type, 120),
+                resource_group=clean_text(lead.resource_group, 90), subscription_id=lead.subscription_id, detector=lead.detector, run_id=h.run_id, status=status,
+                recommendation=recommendation, confidence=confidence, saving_usd_month=saving, cost_usd_30d=lead.cost_usd_30d, summary=clean_text(summary, 600),
+                objections=tuple(clean_text(o, 300) for o in objections), guards=tuple(flags_on), models=dict(models), steps=tuple(steps), facts=facts,
+                first_seen_at=old.first_seen_at if old and old.first_seen_at else now, updated_at=now, runs_seen=(old.runs_seen + 1) if old else 1)
+            ex.store.case_put(record)
+            if status == "proposed":
+                plan = ex.approvals.create(record, lead, ex.approvers())
+                if plan is not None:
+                    h.emit("plan.created", planId=plan.plan_id, caseKey=record.case_id, family=plan.family, approvers=len(plan.approvers))
+                    ex.on_plan(plan, ex.store.case_get(record.case_id) or record)
+        except (StoreError, ValueError) as error:
+            h.emit("run.note", note=clean_text(s.redact(f"the case could not be kept in the store: {error}"), 300))
 
     def ended(note: str) -> tuple[str, int]:
         h.emit("case.result", **identity, status="error", recommendation=None, confidence=None, monthlySavingUsd=None, summary=note, objections=[], guards=[])
+        save("error", None, None, None, note, [], [], {})
         return "error", used
 
     def step(name: str, model: str | None, started: float, ok: bool, note: str | None = None, chat_tokens: tuple[int, int] | None = None) -> None:
+        ms = int((s.monotonic() - started) * 1000)
+        steps.append({"step": name, "model": model, "promptTokens": chat_tokens[0] if chat_tokens else None,
+                      "completionTokens": chat_tokens[1] if chat_tokens else None, "ms": ms, "ok": ok, "note": note})
         h.emit("case.step", caseId=case_id, step=name, model=model, promptTokens=chat_tokens[0] if chat_tokens else None,
-               completionTokens=chat_tokens[1] if chat_tokens else None, ms=int((s.monotonic() - started) * 1000), ok=ok, note=note)
+               completionTokens=chat_tokens[1] if chat_tokens else None, ms=ms, ok=ok, note=note)
 
     def role(name: str, model: str, system: str, user: str, parse: Callable[[str], object]):
         nonlocal used
@@ -114,7 +148,8 @@ def work_case(s: Services, number: int, lead: Lead, context: Context, tokens_bef
             scope_locks += s.arm.locks_at(lead.subscription_id, scope)
     except HttpError:
         scope_locks = None
-    flags = guards.evaluate(lead, context, scope_locks)
+    fixture = s.extras is not None and is_fixture(lead, wiring.approval_settings(s.extras.settings))
+    flags = guards.evaluate(lead, context, scope_locks, fixture=fixture)
     try:
         case = evidence.case_dto(number, lead, flags)
     except EvidenceError as error:
@@ -132,7 +167,25 @@ def work_case(s: Services, number: int, lead: Lead, context: Context, tokens_bef
     outcome = decide.decide(lead, flags, detective, skeptic)
     h.emit("case.result", **identity, status=outcome.status, recommendation=outcome.recommendation, confidence=outcome.confidence,
            monthlySavingUsd=_figure(outcome.monthly_saving_usd), summary=outcome.summary, objections=list(outcome.objections), guards=outcome.guards)
+    models["skeptic"] = st.model_skeptic if skeptic else None
+    save(outcome.status, outcome.recommendation, outcome.confidence, _figure(outcome.monthly_saving_usd), outcome.summary, list(outcome.objections), outcome.guards,
+         case["facts"])
     return outcome.status, used
+
+
+def _recently_judged(s: Services, lead: Lead) -> bool:
+    """A lead whose case was judged within the last days (and did not end in an error) is not taken up again: the slot goes to a lead that was not judged."""
+    ex = s.extras
+    if ex is None:
+        return False
+    try:
+        old = ex.store.case_get(f"k{lead.lead_id}")
+    except StoreError:
+        return False
+    if old is None or old.status == "error" or not old.updated_at:
+        return False
+    age = s.clock() - dt.datetime.strptime(old.updated_at, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=dt.timezone.utc)
+    return age < dt.timedelta(days=ex.settings.recheck_days)
 
 
 def execute(s: Services, trigger: str) -> Summary:
@@ -141,15 +194,34 @@ def execute(s: Services, trigger: str) -> Summary:
     deadline = started + st.deadline_seconds
     s.client.deadline = deadline
     summary = Summary()
+    notes: list[str] = []
+    started_at = stamp(s.clock())
+
+    def keep(finished: bool, reason: str | None = None) -> RunRecord | None:
+        """The run goes to the store, when there is one. A store that fails never stops the run."""
+        if s.extras is None:
+            return None
+        record = RunRecord(
+            run_id=h.run_id, trigger=trigger, started_at=started_at, finished_at=stamp(s.clock()) if finished else None, ok=summary.ok and reason is None,
+            leads=summary.leads, cases=summary.cases, proposed=summary.proposed, needs_human=summary.needs_human, dropped=summary.dropped, errors=summary.errors,
+            tokens=summary.tokens, seconds=summary.seconds, notes=tuple(clean_text(n, 300) for n in notes[:20]), reason=reason)
+        try:
+            s.extras.store.run_put(record)
+        except StoreError as error:
+            LOG.warning(s.redact(f"the run could not be kept in the store: {error}"))
+        return record
+
     h.emit("run.started", trigger=trigger, scopes=[x[:8] for x in st.subscriptions], detectors=list(DETECTOR_NAMES))
+    keep(False)
     try:
         s.gateway.open()
     except GatewayError as error:
-        h.emit("run.failed", reason=clean_text(s.redact(error), 300))
+        reason = clean_text(s.redact(error), 300)
+        h.emit("run.failed", reason=reason)
         summary.ok = False
+        keep(True, reason)
         return summary
 
-    notes: list[str] = []
     found: list[Lead] = []
     contexts: dict[str, Context] = {}
     read = 0
@@ -168,12 +240,16 @@ def execute(s: Services, trigger: str) -> Summary:
         h.emit("run.note", note=clean_text(note, 300))
     if read == 0:
         too_late = s.monotonic() >= deadline
-        h.emit("run.failed", reason=(f"the deadline of {st.deadline_seconds} seconds was reached before any detector could read" if too_late
-                                     else "no detector could read any subscription"))
+        reason = (f"the deadline of {st.deadline_seconds} seconds was reached before any detector could read" if too_late else "no detector could read any subscription")
+        h.emit("run.failed", reason=reason)
         summary.ok = False
+        keep(True, reason)
         return summary
 
     ranked = detectors.rank(found, contexts)
+    if s.extras is not None:
+        approval = wiring.approval_settings(s.extras.settings)
+        ranked = sorted(ranked, key=lambda lead: not is_fixture(lead, approval))  # stable: the waste that Meternaut planted itself goes first, it is the one kind that the writer can act on
     summary.leads = len(ranked)
     for position, lead in enumerate(ranked[:MAX_LEAD_EVENTS], 1):
         h.emit("lead.found", leadId=lead.lead_id, detector=lead.detector, resourceId=lead.resource_id, resourceType=clean_text(lead.resource_type, 120),
@@ -183,7 +259,19 @@ def execute(s: Services, trigger: str) -> Summary:
         h.emit("run.note", note=f"{len(ranked) - MAX_LEAD_EVENTS} more leads are not listed: " + ", ".join(f"{name} {n}" for name, n in sorted(counts.items())))
 
     tokens = 0
-    wanted = ranked[:st.max_cases]
+    wanted: list[Lead] = []
+    skipped = 0
+    for lead in ranked:
+        if len(wanted) >= st.max_cases:
+            break
+        if _recently_judged(s, lead):
+            skipped += 1
+            continue
+        wanted.append(lead)
+    if skipped:
+        note = f"{skipped} lead{'s were' if skipped != 1 else ' was'} judged within the last {s.extras.settings.recheck_days} days and not taken up again"
+        notes.append(note)
+        h.emit("run.note", note=note)
     for number, lead in enumerate(wanted, 1):
         left = len(wanted) - number + 1
         if s.monotonic() >= deadline:
@@ -207,13 +295,21 @@ def execute(s: Services, trigger: str) -> Summary:
     summary.seconds = int(s.monotonic() - started)
     h.emit("run.finished", ok=summary.ok, leads=summary.leads, cases=summary.cases, proposed=summary.proposed, needsHuman=summary.needs_human,
            dropped=summary.dropped, errors=summary.errors, tokens=summary.tokens, seconds=summary.seconds)
+    finished = keep(True)
+    if finished is not None and s.extras is not None:
+        try:
+            s.extras.on_run(finished)
+        except Exception as error:  # noqa: BLE001 (a letter never stops the run)
+            LOG.warning(s.redact(f"the weekly desk could not be sent: {type(error).__name__}"))
     return summary
 
 
 def run_watch(trigger: str, request_id: str | None, env: Mapping[str, str] | None = None, *, clock: Callable[[], dt.datetime] = utc_now,
               monotonic: Callable[[], float] = time.monotonic, sleep: Callable[[float], None] = time.sleep, transport=default_transport, fetch=None,
-              new_id: Callable[[], str] = lambda: uuid.uuid4().hex) -> Summary:
-    """The whole run, with a History line for whatever goes wrong. It never raises: the History says how the run ended."""
+              new_id: Callable[[], str] = lambda: uuid.uuid4().hex, extras: "wiring.Extras | None" = None) -> Summary:
+    """The whole run, with a History line for whatever goes wrong. It never raises: the History says how the run ended.
+
+    `extras` is the loop (the store, the people, the approvals); None builds it from the settings, and a run without the settings of the loop is the Watch alone."""
     env = os.environ if env is None else env
     redact = Redactor()
     history = History(new_id(), request_id, clock, redact)
@@ -221,7 +317,9 @@ def run_watch(trigger: str, request_id: str | None, env: Mapping[str, str] | Non
         settings = cfg.load(env)
         identity = Identity(env, **({"fetch": fetch} if fetch else {}))
         client = Client(allowed_calls(settings.gateway_host, Gateway.key_path(settings)), redact, transport=transport, sleep=sleep, monotonic=monotonic)
-        services = Services(settings, client, Arm(client, identity.token), Gateway(settings, client, identity.token, redact), history, redact, clock, monotonic)
+        if extras is None:
+            extras = wiring.build_extras(env, identity.token, redact, transport=transport, sleep=sleep, monotonic=monotonic, clock=clock)
+        services = Services(settings, client, Arm(client, identity.token), Gateway(settings, client, identity.token, redact), history, redact, clock, monotonic, extras)
         return execute(services, trigger)
     except Exception as error:  # noqa: BLE001 (the History must say how every run ended)
         reason = clean_text(redact(f"{type(error).__name__}: {error}"), 300)

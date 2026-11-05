@@ -76,7 +76,7 @@ def a_good_run(**finished):
 
 
 class Functions(unittest.TestCase):
-    def test_it_waits_until_both_functions_are_listed(self):
+    def test_it_waits_until_all_the_functions_are_listed(self):
         answers = iter([Exception, listed(["watch-daily"]), listed(cc.FUNCTIONS)])
         calls = []
 
@@ -92,7 +92,8 @@ class Functions(unittest.TestCase):
             code = cc.main(["functions", "--site", SITE], azure(runner))
         self.assertEqual(code, 0)
         self.assertEqual(len(calls), 3)
-        self.assertIn("lists 2 functions", out.getvalue())
+        self.assertEqual(len(cc.FUNCTIONS), 4)
+        self.assertIn(f"lists {len(cc.FUNCTIONS)} functions", out.getvalue())
         for name in cc.FUNCTIONS:
             self.assertIn(name, out.getvalue())
 
@@ -110,7 +111,7 @@ class Functions(unittest.TestCase):
                 self.assertEqual(cc.main(["functions", "--site", bad], azure(lambda args: (0, "[]", ""))), 1)
             self.assertIn("--site", err.getvalue())
 
-    def test_the_two_functions_and_the_hub_are_the_ones_the_app_and_the_template_name(self):
+    def test_the_functions_and_the_hub_are_the_ones_the_app_and_the_template_name(self):
         app = ROOT / "src" / "case-functions" / "function_app.py"
         declared = re.findall(r'function_name\(name="([a-z-]+)"\)', app.read_text(encoding="utf-8"))
         self.assertEqual(sorted(declared), sorted(cc.FUNCTIONS))

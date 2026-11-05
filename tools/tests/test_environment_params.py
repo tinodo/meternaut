@@ -64,7 +64,7 @@ class Build(unittest.TestCase):
     def test_good_settings_give_four_files_and_the_outputs(self):
         code, out, err, files = run(SETTINGS)
         self.assertEqual((code, err), (0, ""))
-        self.assertEqual(set(files), {"environment.parameters.json", "logger.parameters.json", "kit.parameters.json", "recording.parameters.json"})
+        self.assertEqual(set(files), {"environment.parameters.json", "logger.parameters.json", "kit.parameters.json", "recording.parameters.json", "planted.parameters.json"})
         env = values(files["environment.parameters.json"])
         self.assertEqual(env["vnetAddressPrefix"], "10.53.0.0/24")
         self.assertEqual(env["peSubnetPrefix"], "10.53.0.0/27")
@@ -492,7 +492,8 @@ class Contract(unittest.TestCase):
     def test_the_contract_of_the_repository_gives_a_fifth_file_that_fits_its_template(self):
         code, out, err, files = self.build()
         self.assertEqual((code, err), (0, ""))
-        self.assertEqual(set(files), {"environment.parameters.json", "logger.parameters.json", "kit.parameters.json", "recording.parameters.json", "contract.parameters.json", "cases.parameters.json"})
+        self.assertEqual(set(files), {"environment.parameters.json", "logger.parameters.json", "kit.parameters.json", "recording.parameters.json", "contract.parameters.json", "cases.parameters.json",
+                                      "planted.parameters.json"})
         given = files["contract.parameters.json"]["parameters"]
         declared = bicep_params(CONTRACT_BICEP)
         self.assertEqual(set(given), set(declared))
@@ -660,6 +661,66 @@ class FirstCases(unittest.TestCase):
 
     def test_without_a_contract_there_is_no_cases_file(self):
         self.assertNotIn("cases.parameters.json", run(SETTINGS)[3])
+
+    PEOPLE = '[{"oid": "AAAAAAAA-1111-4222-8333-444444444444", "name": "Tino", "roles": ["owner", "approver", "ops"], "mail": "tino@example.com"}]'
+    APP = "11111111-2222-3333-4444-555555555555"
+
+    def test_without_the_console_variables_the_sign_in_is_not_set_up_and_nobody_is_listed(self):
+        files, _ = self.build()
+        cases = values(files["cases.parameters.json"])
+        self.assertEqual((cases["consoleAppClientId"], cases["consolePeople"], cases["consoleUserObjectIds"], cases["mailSender"]), ("", "[]", [], ""))
+
+    def test_the_people_and_the_app_registration_become_the_settings_of_the_console_and_of_the_sign_in(self):
+        files, _ = self.build(CONSOLE_APP_CLIENT_ID=self.APP.upper(), CONSOLE_PEOPLE=self.PEOPLE, MAIL_SENDER="meternaut-ai@example.onmicrosoft.com")
+        cases = values(files["cases.parameters.json"])
+        self.assertEqual(cases["consoleAppClientId"], self.APP)
+        self.assertEqual(cases["consoleUserObjectIds"], ["aaaaaaaa-1111-4222-8333-444444444444"])
+        people = json.loads(cases["consolePeople"])
+        self.assertEqual(people[0]["oid"], "aaaaaaaa-1111-4222-8333-444444444444", "the object id is lower-case, because the sign-in sends it that way")
+        self.assertEqual(people[0]["roles"], ["owner", "approver", "ops"])
+        self.assertEqual(cases["mailSender"], "meternaut-ai@example.onmicrosoft.com")
+
+    def test_a_console_that_would_let_nobody_in_or_that_has_bad_people_is_refused(self):
+        bad = {
+            "an app registration without people": {"CONSOLE_APP_CLIENT_ID": self.APP},
+            "an app registration that is not a client id": {"CONSOLE_APP_CLIENT_ID": "nope", "CONSOLE_PEOPLE": self.PEOPLE},
+            "people that are not JSON": {"CONSOLE_PEOPLE": "not json"},
+            "people that are not a list": {"CONSOLE_PEOPLE": "{}"},
+            "a person without an object id": {"CONSOLE_PEOPLE": '[{"name": "A", "roles": ["owner"]}]'},
+            "a person with a role that does not exist": {"CONSOLE_PEOPLE": '[{"oid": "aaaaaaaa-1111-4222-8333-444444444444", "name": "A", "roles": ["admin"]}]'},
+            "a person without roles": {"CONSOLE_PEOPLE": '[{"oid": "aaaaaaaa-1111-4222-8333-444444444444", "name": "A", "roles": []}]'},
+            "a person with a bad address": {"CONSOLE_PEOPLE": '[{"oid": "aaaaaaaa-1111-4222-8333-444444444444", "name": "A", "roles": ["owner"], "mail": "x"}]'},
+            "the same person twice": {"CONSOLE_PEOPLE": '[{"oid": "aaaaaaaa-1111-4222-8333-444444444444", "name": "A", "roles": ["owner"]}, {"oid": "AAAAAAAA-1111-4222-8333-444444444444", "name": "B", "roles": ["owner"]}]'},
+            "a sender that is not an address": {"MAIL_SENDER": "nobody"},
+        }
+        for label, change in bad.items():
+            with self.subTest(label):
+                with tempfile.TemporaryDirectory() as tmp:
+                    contract = Path(tmp) / "contract.json"
+                    contract.write_text(CONTRACT_FILE.read_text(encoding="utf-8"), encoding="utf-8")
+                    code, out, err, _ = run({**SETTINGS, **change}, "--contract", str(contract), "--contract-policy", str(POLICY_FILE))
+                self.assertEqual(code, 2, err)
+                self.assertEqual(out, "")
+
+    def test_the_planting_has_a_name_that_the_run_chooses_and_a_public_address_only_when_asked(self):
+        files, _ = self.build()
+        planted = values(files["planted.parameters.json"])
+        self.assertEqual((planted["plantedId"], planted["plantPublicIp"]), ("demo", False))
+        files, _ = self.build(PLANTED_ID="r42", PLANT_PUBLIC_IP="TRUE")
+        planted = values(files["planted.parameters.json"])
+        self.assertEqual((planted["plantedId"], planted["plantPublicIp"]), ("r42", True))
+        self.assertEqual(planted["location"], values(files["recording.parameters.json"])["location"])
+        for bad in ({"PLANTED_ID": "Has Space"}, {"PLANTED_ID": "x" * 13}, {"PLANT_PUBLIC_IP": "maybe"}):
+            with self.subTest(bad):
+                self.assertEqual(run({**SETTINGS, **bad})[0], 2)
+
+    def test_the_planted_file_fits_its_template(self):
+        files, _ = self.build()
+        template = (ROOT / "environment" / "cases" / "planted.bicep").read_text(encoding="utf-8")
+        declared = bicep_params(template)
+        given = files["planted.parameters.json"]["parameters"]
+        self.assertTrue(set(given) <= set(declared), set(given) - set(declared))
+        self.assertTrue({name for name, (_, has_default) in declared.items() if not has_default} <= set(given))
 
     def test_the_token_allowance_of_the_contract_covers_a_month_of_runs_and_stays_under_the_standing_limit(self):
         contract = json.loads(CONTRACT_FILE.read_text(encoding="utf-8"))
