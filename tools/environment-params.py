@@ -43,7 +43,8 @@ Every value is checked before anything is deployed. The name of the model accoun
 subscription and the resource group, so it is the same on every run (a run after a removal finds, and the workflow
 restores, the soft-deleted account of that name instead of leaving a second one behind); so are the names of the usage
 recording's storage account, Event Hubs namespace, Cosmos DB account and function app, which are host names too. The
-function app's subnet is the first /27 of the virtual network that does not overlap the private endpoint subnet. It prints
+function app's subnet is the first /27 of the virtual network that does not overlap the private endpoint subnet, and the
+subnet of the first cases' Basic plan is the first /27 that overlaps neither of those two. It prints
 key=value lines for GitHub to read as step outputs.
 
 The contract names only models that are deployed (environment/models.json) and only the two inference APIs that the
@@ -253,6 +254,17 @@ def function_subnet(vnet: ipaddress.IPv4Network, endpoints: ipaddress.IPv4Networ
         if not candidate.overlaps(endpoints):
             return candidate
     raise Problem("ENV_VNET_PREFIX has no free /27 beside the private endpoint subnet, for the function app")
+
+
+def web_subnet(vnet: ipaddress.IPv4Network, endpoints: ipaddress.IPv4Network, functions: ipaddress.IPv4Network) -> ipaddress.IPv4Network:
+    """The subnet of the first cases' Basic plan: the first /27 of the virtual network that overlaps neither the private endpoint subnet nor the function subnet.
+
+    A Basic plan's virtual network integration needs a subnet of its own, delegated to Microsoft.Web/serverFarms: the function subnet is delegated to Flex Consumption
+    (Microsoft.App/environments) and a subnet has one delegation."""
+    for candidate in vnet.subnets(new_prefix=27):
+        if not candidate.overlaps(endpoints) and not candidate.overlaps(functions):
+            return candidate
+    raise Problem("ENV_VNET_PREFIX has no free /27 beside the private endpoint subnet and the function subnet, for the Basic plan of the first cases")
 
 
 def recording_endpoints(names: dict[str, str]) -> list[tuple[str, str]]:
@@ -468,6 +480,7 @@ def build(env, models: list[dict], preview: bool = False, contract: dict | None 
     name = account_name(subscription, group)
     names = recording_names(subscription, group)
     func_subnet = function_subnet(vnet, subnet)
+    web = web_subnet(vnet, subnet, func_subnet)
     endpoint = f"https://{name}.cognitiveservices.azure.com"
     deployed = [{k: m[k] for k in ("name", "version", "sku", "capacity")} for m in models]
 
@@ -477,6 +490,7 @@ def build(env, models: list[dict], preview: bool = False, contract: dict | None 
         "vnetAddressPrefix": str(vnet),
         "peSubnetPrefix": str(subnet),
         "funcSubnetPrefix": str(func_subnet),
+        "webSubnetPrefix": str(web),
         "dnsServers": dns,
         "models": deployed,
         "gatewayPrincipalId": principal.lower(),
@@ -566,6 +580,7 @@ def build(env, models: list[dict], preview: bool = False, contract: dict | None 
         "identity_name": IDENTITY_NAME,
         "principal_known": "true" if principal_known else "false",
         "function_subnet_prefix": str(func_subnet),
+        "web_subnet_prefix": str(web),
         "recording_endpoints": ",".join(f"{endpoint_name}:{zone}" for endpoint_name, zone in recording_endpoints(names)),
         "usage_identity_name": "id-meternaut-usage",
         "appinsights_name": "appi-meternaut",
@@ -604,6 +619,7 @@ def build(env, models: list[dict], preview: bool = False, contract: dict | None 
             "storageAccountName": names["storage_account_name"],
             "eventHubNamespaceName": names["event_hub_namespace"],
             "functionAppName": outputs["cases_function_app_name"],
+            "webSubnetPrefix": str(web),
             "workflowPrincipalId": deployer.lower(),
             "scopeSubscriptions": subscription.lower(),
             "gatewayUrl": outputs["gateway_url"],

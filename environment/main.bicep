@@ -32,6 +32,9 @@ param peSubnetPrefix string
 @description('Address range of the subnet that the function app of the usage recording is integrated with, inside the virtual network and apart from the private endpoint subnet, for example 10.53.0.32/27. A Flex Consumption app needs a /27 at least, for itself alone.')
 param funcSubnetPrefix string
 
+@description('Address range of the subnet that the Basic plan of the first cases is integrated with, inside the virtual network and apart from the other two subnets, for example 10.53.0.64/27. It is delegated to Microsoft.Web/serverFarms. environment/cases/main.bicep makes the same subnet; it is listed here too, so that this template, run again, does not take it away.')
+param webSubnetPrefix string
+
 @description('DNS servers of the landing zone. A virtual network on Azure-provided DNS cannot resolve the central private zones.')
 @minLength(1)
 param dnsServers array
@@ -97,6 +100,16 @@ resource funcNsg 'Microsoft.Network/networkSecurityGroups@2025-05-01' = {
   }
 }
 
+// The same as the function subnet's: no rule of its own. The subnet of the first cases' Basic plan.
+resource webNsg 'Microsoft.Network/networkSecurityGroups@2025-05-01' = {
+  name: 'nsg-${workload}-web'
+  location: location
+  tags: tags
+  properties: {
+    securityRules: []
+  }
+}
+
 resource vnet 'Microsoft.Network/virtualNetworks@2025-05-01' = {
   name: 'vnet-${workload}'
   location: location
@@ -136,6 +149,26 @@ resource vnet 'Microsoft.Network/virtualNetworks@2025-05-01' = {
               name: 'flex-consumption'
               properties: {
                 serviceName: 'Microsoft.App/environments'
+              }
+            }
+          ]
+          defaultOutboundAccess: false
+        }
+      }
+      {
+        // The subnet of the first cases' Basic plan: delegated to Microsoft.Web/serverFarms (a subnet has one delegation, and the one above is
+        // Flex Consumption's). environment/cases/main.bicep makes it too. It holds nothing else.
+        name: 'snet-web'
+        properties: {
+          addressPrefix: webSubnetPrefix
+          networkSecurityGroup: {
+            id: webNsg.id
+          }
+          delegations: [
+            {
+              name: 'app-service-plan'
+              properties: {
+                serviceName: 'Microsoft.Web/serverFarms'
               }
             }
           ]

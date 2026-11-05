@@ -51,6 +51,7 @@ ALLOWED = {
     },
     "environment/cases/main.bicep": {
         "Microsoft.ManagedIdentity/userAssignedIdentities",
+        "Microsoft.Network/networkSecurityGroups",
         "Microsoft.Network/virtualNetworks",
         "Microsoft.Network/virtualNetworks/subnets",
         "Microsoft.OperationalInsights/workspaces",
@@ -104,7 +105,7 @@ class Templates(unittest.TestCase):
 
     def test_the_model_side_has_the_resources_and_the_order_that_a_real_deploy_needed(self):
         found = resources(text("environment/main.bicep"))
-        self.assertEqual(set(found), {"nsg", "funcNsg", "vnet", "account", "modelDeployment", "privateEndpoint", "gatewayMayCallTheModels"})
+        self.assertEqual(set(found), {"nsg", "funcNsg", "webNsg", "vnet", "account", "modelDeployment", "privateEndpoint", "gatewayMayCallTheModels"})
         # the private endpoint after every model deployment, the role assignment after the private endpoint
         self.assertIn("modelDeployment", depends_on(found["privateEndpoint"][1]))
         self.assertIn("privateEndpoint", depends_on(found["gatewayMayCallTheModels"][1]))
@@ -554,7 +555,7 @@ class Workflow(unittest.TestCase):
     def test_every_step_that_publishes_or_starts_a_job_names_the_actions_it_runs_in_and_never_what_if(self):
         found = 0
         for block in self.steps:
-            if "az functionapp deployment source config-zip" in block or "recording-check.py run" in block or "cases-check.py run" in block:
+            if "az functionapp deployment source config-zip" in block or "/api/zipdeploy" in block or "recording-check.py run" in block or "cases-check.py run" in block:
                 found += 1
                 condition = re.search(r"(?m)^        if: (.+)$", block)
                 self.assertIsNotNone(condition, block[:80])
@@ -586,7 +587,7 @@ class Workflow(unittest.TestCase):
             self.assertIn(f"[?name=='${variable}']", block)
         self.assertEqual(re.findall(r'az resource delete --ids "\$(\w+)"', block), ["site", "plan", "connection", "storage"])
         self.assertEqual(self.text.count("az resource delete"), 4)
-        self.assertEqual(len(re.findall(r"(?m)^\s*az \S+(?: \S+)* delete\b", self.text)), 4, "no other delete, of any kind")
+        self.assertEqual(len(re.findall(r"(?m)^\s*az \S+(?: \S+)* delete\b", self.text)), 6, "no other delete, of any kind: four of the Logic App version and two of the Flex version of the cases app")
         self.assertNotIn("--yes", block)
         for kind in ("Microsoft.Web/sites", "Microsoft.Web/serverfarms", "Microsoft.Web/connections", "Microsoft.Storage/storageAccounts"):
             self.assertIn(f"--resource-type {kind}", block)
@@ -696,16 +697,33 @@ class Cases(unittest.TestCase):
         self.code = re.sub(r"//.*", "", self.source)
         self.found = resources(self.source)
 
-    def test_it_makes_no_network_no_private_endpoint_no_dns_and_no_storage_account_or_namespace_of_its_own(self):
+    def test_it_makes_only_its_own_integration_subnet_and_that_subnets_group_and_no_private_endpoint_dns_storage_account_or_namespace(self):
         for word in ("Microsoft.ApiManagement", "privateDnsZones", "virtualNetworkPeerings", "routeTables", "privateDnsZoneGroups", "privateEndpoints",
-                     "Microsoft.DocumentDB", "Microsoft.Network/networkSecurityGroups"):
+                     "Microsoft.DocumentDB"):
             self.assertNotIn(word, self.code, word)
-        for name in ("vnet", "functionSubnet", "workspace", "insights", "storage", "blobService", "eventHubs", "sharedHostContainers"):
+        for name in ("vnet", "workspace", "insights", "storage", "blobService", "eventHubs", "sharedHostContainers"):
             self.assertRegex(self.source, rf"(?m)^resource {name} '[^']+' existing = ", name)
         made = sorted(name for name, (_, body) in self.found.items() if not re.search(rf"(?m)^resource {name} '[^']+' existing", self.source))
-        self.assertEqual(made, ["authIdentity", "casesIdentity", "consoleSignIn", "controlConsumerGroup", "controlHub", "deploymentContainer", "functionApp",
-                                "functionOwnsHostContainers", "functionOwnsOwnPackage", "functionPublishesTelemetry", "functionReceivesControl", "functionUsesQueues",
-                                "functionUsesTables", "historyWorkbook", "noBasicAuthForDeployment", "plan", "runnerIdentity", "tracesRetention", "workflowSendsControl"])
+        self.assertEqual(made, ["authIdentity", "casesIdentity", "consoleSignIn", "controlConsumerGroup", "controlHub", "functionApp",
+                                "functionOwnsHostContainers", "functionPublishesTelemetry", "functionReceivesControl", "functionUsesQueues",
+                                "functionUsesTables", "historyWorkbook", "noBasicAuthForDeployment", "noBasicAuthForFtp", "plan", "runnerIdentity", "tracesRetention",
+                                "webNsg", "webSubnet", "workflowSendsControl"])
+
+    def test_the_plans_subnet_is_delegated_to_basic_plans_holds_nothing_else_and_is_the_one_that_the_model_side_lists_too(self):
+        subnet, nsg = self.found["webSubnet"][1], self.found["webNsg"][1]
+        self.assertIn("parent: vnet", subnet)
+        self.assertIn("addressPrefix: webSubnetPrefix", subnet)
+        self.assertIn("id: webNsg.id", subnet)
+        self.assertIn("serviceName: 'Microsoft.Web/serverFarms'", subnet, "a Basic plan's integration needs it; the function subnet's delegation is Flex Consumption's")
+        self.assertIn("defaultOutboundAccess: false", subnet)
+        self.assertIn("securityRules: []", nsg)
+        self.assertIn("var webSubnetName = 'snet-web'", self.code)
+        model_side = text("environment/main.bicep")
+        self.assertIn("name: 'snet-web'", model_side)
+        self.assertIn("addressPrefix: webSubnetPrefix", model_side)
+        self.assertIn("serviceName: 'Microsoft.Web/serverFarms'", model_side, "a run of the model-side action must not take the subnet away from the plan")
+        self.assertRegex(self.code, r"(?m)^param webSubnetPrefix string$")
+        self.assertRegex(model_side, r"(?m)^param webSubnetPrefix string$")
 
     def test_no_key_is_read_or_written_anywhere(self):
         for word in ("listKeys", "listConnectionStrings", "listSecrets", "listAccountSas", "listServiceSas", "AccountKey", "SharedAccessKey", "primaryKey", "@secure",
@@ -730,12 +748,12 @@ class Cases(unittest.TestCase):
             "3913510d-42f4-4e42-8a64-420c390055eb",  # Monitoring Metrics Publisher
         })
         assignments = {name: body for name, (kind, body) in self.found.items() if kind == "Microsoft.Authorization/roleAssignments"}
-        self.assertEqual(sorted(assignments), ["functionOwnsHostContainers", "functionOwnsOwnPackage", "functionPublishesTelemetry", "functionReceivesControl",
+        self.assertEqual(sorted(assignments), ["functionOwnsHostContainers", "functionPublishesTelemetry", "functionReceivesControl",
                                                "functionUsesQueues", "functionUsesTables", "workflowSendsControl"])
         for name, body in assignments.items():
             self.assertIn("principalType: 'ServicePrincipal'", body, name)
         scopes = {name: re.search(r"(?m)^  scope: (.+)$", body).group(1) for name, body in assignments.items()}
-        self.assertEqual(scopes, {"workflowSendsControl": "controlHub", "functionReceivesControl": "controlHub", "functionOwnsOwnPackage": "deploymentContainer",
+        self.assertEqual(scopes, {"workflowSendsControl": "controlHub", "functionReceivesControl": "controlHub",
                                   "functionOwnsHostContainers": "sharedHostContainers[i]", "functionUsesQueues": "storage", "functionUsesTables": "storage",
                                   "functionPublishesTelemetry": "insights"})
         self.assertIn("eventHubsDataSenderRoleId", assignments["workflowSendsControl"])
@@ -743,8 +761,9 @@ class Cases(unittest.TestCase):
         self.assertIn("eventHubsDataReceiverRoleId", assignments["functionReceivesControl"])
         self.assertIn("principalId: casesIdentity.properties.principalId", assignments["functionReceivesControl"])
 
-    def test_the_blob_role_reaches_four_containers_and_never_the_usage_recordings_package(self):
-        self.assertIn("var deploymentContainerName = 'app-package-cases'", self.code)
+    def test_the_blob_role_reaches_the_three_shared_host_containers_and_never_the_usage_recordings_package(self):
+        self.assertNotIn("deploymentContainer", self.code, "the app's code is pushed to the app, not kept in the storage account")
+        self.assertNotIn("app-package-cases", self.code)
         self.assertIn("var sharedHostContainerNames = [\n  'azure-webjobs-hosts'\n  'azure-webjobs-secrets'\n  'azure-webjobs-eventhub'\n]", self.code)
         self.assertNotIn("app-package-usage", self.source)
         for name, (kind, body) in self.found.items():
@@ -753,31 +772,41 @@ class Cases(unittest.TestCase):
         recording = text("environment/recording/main.bicep")
         self.assertIn("'app-package-usage'", recording, "the container that this app must not reach is the recording's")
 
-    def test_the_function_app_runs_on_flex_consumption_with_an_identity_for_everything_and_no_password_for_its_deployment(self):
-        self.assertIn("name: 'FC1'", self.found["plan"][1])
-        self.assertIn("tier: 'FlexConsumption'", self.found["plan"][1])
+    def test_the_function_app_runs_on_a_basic_plan_always_on_with_an_identity_for_everything_and_no_password_for_its_deployment(self):
+        plan = self.found["plan"][1]
+        self.assertIn("name: 'B1'", plan)
+        self.assertIn("tier: 'Basic'", plan)
+        self.assertIn("kind: 'linux'", plan)
+        self.assertIn("reserved: true", plan)
+        self.assertNotIn("FlexConsumption", self.code)
+        self.assertNotIn("functionAppConfig", self.code)
         body = self.found["functionApp"][1]
         self.assertIn("kind: 'functionapp,linux'", body)
         self.assertIn("type: 'UserAssigned'", body)
         self.assertNotIn("SystemAssigned", body)
-        self.assertRegex(body, r"(?m)^\s+maximumInstanceCount: 1$")  # one instance for each function group: the price, and no stale instance for the platform to send a request to
-        self.assertNotIn("alwaysReady", body)
-        self.assertIn("virtualNetworkSubnetId: functionSubnet.id", body)
-        self.assertRegex(body, r"(?s)runtime: \{\s+name: 'python'\s+version: '3\.13'")
-        self.assertIn("userAssignedIdentityResourceId: casesIdentity.id", body)
+        self.assertIn("serverFarmId: plan.id", body)
+        self.assertIn("virtualNetworkSubnetId: webSubnet.id", body)
+        self.assertIn("vnetRouteAllEnabled: false", body, "only the private ranges go through the subnet, as for the Flex app that this replaced")
+        self.assertIn("linuxFxVersion: 'PYTHON|3.13'", body)
+        self.assertIn("alwaysOn: true", body, "timers and the control hub's trigger need an instance that is always there")
+        self.assertIn("ftpsState: 'Disabled'", body)
+        for setting, value in (("FUNCTIONS_EXTENSION_VERSION", "~4"), ("FUNCTIONS_WORKER_RUNTIME", "python"), ("WEBSITE_RUN_FROM_PACKAGE", "1"),
+                               ("SCM_DO_BUILD_DURING_DEPLOYMENT", "false"), ("ENABLE_ORYX_BUILD", "false")):
+            self.assertIn(f"{{ name: '{setting}', value: '{value}' }}", body, setting)
         for setting in ("AzureWebJobsStorage__credential", "AzureWebJobsStorage__clientId", "EventHubConnection__credential", "EventHubConnection__clientId",
                         "EventHubConnection__fullyQualifiedNamespace", "APPLICATIONINSIGHTS_AUTHENTICATION_STRING", "AZURE_CLIENT_ID"):
             self.assertIn(f"name: '{setting}'", body, setting)
-        for setting in ("'AzureWebJobsStorage'", "AzureWebJobsDashboard", "FUNCTIONS_WORKER_RUNTIME", "FUNCTIONS_EXTENSION_VERSION", "WEBSITE_CONTENT", "WEBSITE_RUN_FROM_PACKAGE",
-                        "StorageAccountConnectionString", "basicPublishingCredentialsPolicies"):
+        for setting in ("'AzureWebJobsStorage'", "AzureWebJobsDashboard", "WEBSITE_CONTENT", "StorageAccountConnectionString", "WEBSITE_RUN_FROM_PACKAGE_BLOB_MI_RESOURCE_ID"):
             self.assertNotIn(setting, body, setting)
-        self.assertEqual(self.code.count("allow: false"), 1)
+        self.assertEqual(self.code.count("allow: false"), 2, "no password for the deployment site and none for FTP")
+        self.assertIn("name: 'scm'", self.found["noBasicAuthForDeployment"][1])
+        self.assertIn("name: 'ftp'", self.found["noBasicAuthForFtp"][1])
         self.assertIn("httpsOnly: true", self.code)
         self.assertIn("minTlsVersion: '1.2'", self.code)
 
     def test_the_function_app_starts_after_its_roles_and_its_hub(self):
-        self.assertEqual(depends_on(self.found["functionApp"][1]), {"functionReceivesControl", "functionOwnsOwnPackage", "functionOwnsHostContainers", "functionUsesQueues",
-                                                                    "functionUsesTables", "functionPublishesTelemetry", "deploymentContainer", "controlConsumerGroup"})
+        self.assertEqual(depends_on(self.found["functionApp"][1]), {"functionReceivesControl", "functionOwnsHostContainers", "functionUsesQueues",
+                                                                    "functionUsesTables", "functionPublishesTelemetry", "controlConsumerGroup"})
 
     def test_the_control_hub_is_one_partition_with_one_group_and_the_app_is_told_both(self):
         self.assertIn("var controlHubName = 'cases-control'", self.code)
@@ -892,7 +921,8 @@ class CasesWorkflow(unittest.TestCase):
         return block
 
     def test_the_cases_are_made_ready_deployed_published_and_listed_in_that_order_and_for_their_action_only(self):
-        order = ["The usage recording and the contract are there, which the first cases build on", "Deploy the first cases",
+        order = ["The usage recording and the contract are there, which the first cases build on",
+                 "Remove the Flex Consumption version of the cases app, when it is still there", "Deploy the first cases",
                  "Sign in to Azure again for the publish of the cases, because the first sign-in's credential lasts five minutes",
                  "Build the cases app's package", "Publish the cases to the function app", "The cases app lists its four functions"]
         positions = [self.names.index(name) for name in order]
@@ -908,11 +938,29 @@ class CasesWorkflow(unittest.TestCase):
     def test_the_cases_are_published_with_the_identity_and_no_password_from_the_package_that_the_checks_build(self):
         build, publish = self.step("Build the cases app's package"), self.step("Publish the cases to the function app")
         self.assertIn('bash tools/build-function-app.sh case-functions cases "$RUNNER_TEMP/case-functions" "$RUNNER_TEMP/case-functions.zip"', build)
-        self.assertIn('--src "$RUNNER_TEMP/case-functions.zip"', publish)
-        self.assertIn("--build-remote false", publish)
+        self.assertIn('--data-binary "@$RUNNER_TEMP/case-functions.zip"', publish)
+        self.assertIn('"https://$FUNCTION_APP.scm.azurewebsites.net/api/zipdeploy"', publish)
+        self.assertIn("az account get-access-token --resource https://management.azure.com", publish)
+        self.assertIn('--header "Authorization: Bearer $token"', publish)
+        self.assertIn('echo "::add-mask::$token"', publish, "the token is masked before anything can print it")
+        self.assertLess(publish.index("::add-mask::"), publish.index("curl"))
         self.assertIn("FUNCTION_APP: ${{ steps.params.outputs.cases_function_app_name }}", publish)
-        for word in ("az webapp deploy", "publishing-credentials", "--user", "--password", "kit/", "environment/"):
+        for word in ("az webapp deploy", "publishing-credentials", "--user", "--password", "config-zip", "kit/", "environment/"):
             self.assertNotIn(word, publish + build, word)
+
+    def test_the_flex_version_of_the_cases_app_is_removed_by_its_name_only_while_its_plan_is_flex_consumption_and_before_the_deploy(self):
+        block = self.step("Remove the Flex Consumption version of the cases app, when it is still there")
+        self.assertIn("if: inputs.action == 'cases'", block)
+        self.assertIn("FUNCTION_APP: ${{ steps.params.outputs.cases_function_app_name }}", block)
+        self.assertIn('Microsoft.Web/sites/$FUNCTION_APP"', block)
+        self.assertIn('if [ "$tier" != "FlexConsumption" ]; then', block, "a site that is already on another plan is left alone")
+        self.assertIn("--query sku.tier", block)
+        self.assertEqual(re.findall(r'az rest --method delete --url "https://management\.azure\.com\$\{(\w+)\}\?api-version=2024-04-01"', block), ["site", "plan"])
+        self.assertLess(block.index('--method delete --url "https://management.azure.com${site}'), block.index('--method delete --url "https://management.azure.com${plan}'))
+        script = "\n".join(line for line in block.split("run:")[1].splitlines() if not line.strip().startswith("#"))
+        for word in ("az resource delete", "--yes", "usage", "LEGACY"):
+            self.assertNotIn(word, script, word)
+        self.assertLess(self.names.index("Remove the Flex Consumption version of the cases app, when it is still there"), self.names.index("Deploy the first cases"))
 
     def test_the_check_before_the_deploy_writes_nothing_and_reads_no_key(self):
         block = self.step("The usage recording and the contract are there, which the first cases build on")

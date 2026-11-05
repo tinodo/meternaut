@@ -1,5 +1,6 @@
 import importlib.util
 import io
+import ipaddress
 import json
 import re
 import tempfile
@@ -206,6 +207,22 @@ class Recording(unittest.TestCase):
         code, out, err, files = run({**SETTINGS, "ENV_VNET_PREFIX": "10.53.0.0/28", "ENV_PE_SUBNET_PREFIX": "10.53.0.0/28"})
         self.assertEqual((code, out, files), (2, "", {}))
         self.assertIn("ENV_VNET_PREFIX", err)
+
+    def test_the_basic_plan_of_the_first_cases_has_a_third_subnet_that_overlaps_neither_of_the_other_two(self):
+        files, outputs = self.files()
+        env = values(files["environment.parameters.json"])
+        self.assertEqual(env["webSubnetPrefix"], "10.53.0.64/27")
+        self.assertEqual(outputs["web_subnet_prefix"], "10.53.0.64/27")
+        taken = [ipaddress.ip_network(env[name]) for name in ("peSubnetPrefix", "funcSubnetPrefix")]
+        self.assertFalse(any(ipaddress.ip_network(env["webSubnetPrefix"]).overlaps(other) for other in taken))
+        # whichever /27 the other two use, the plan gets a free one
+        files, _ = self.files(ENV_PE_SUBNET_PREFIX="10.53.0.64/27")
+        env = values(files["environment.parameters.json"])
+        self.assertEqual((env["funcSubnetPrefix"], env["webSubnetPrefix"]), ("10.53.0.0/27", "10.53.0.32/27"))
+        # a /26 holds two /27: no room for a third
+        code, out, err, files = run({**SETTINGS, "ENV_VNET_PREFIX": "10.53.0.0/26", "ENV_PE_SUBNET_PREFIX": "10.53.0.0/27"})
+        self.assertEqual((code, out, files), (2, "", {}))
+        self.assertIn("Basic plan", err)
 
     def test_the_endpoint_subnet_holds_the_six_private_endpoints(self):
         # six endpoints and the five addresses that Azure keeps: a /29 has eight addresses and cannot hold them
@@ -629,6 +646,13 @@ class FirstCases(unittest.TestCase):
         self.assertEqual(lines["cases_function_app_name"], cases["functionAppName"])
         self.assertNotEqual(cases["functionAppName"], recording["functionAppName"])
         self.assertLessEqual(len(cases["functionAppName"]), 60)
+
+    def test_the_plans_subnet_is_the_same_in_the_cases_file_and_in_the_model_side_file(self):
+        files, lines = self.build()
+        cases, environment = values(files["cases.parameters.json"]), values(files["environment.parameters.json"])
+        self.assertEqual(cases["webSubnetPrefix"], environment["webSubnetPrefix"])
+        self.assertEqual(lines["web_subnet_prefix"], cases["webSubnetPrefix"])
+        self.assertNotEqual(cases["webSubnetPrefix"], environment["funcSubnetPrefix"], "the usage recording's subnet is delegated to Flex Consumption")
 
     def test_it_reads_the_pilot_subscription_and_the_gateway_with_the_contracts_key(self):
         files, lines = self.build()
