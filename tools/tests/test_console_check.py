@@ -121,6 +121,34 @@ class TheDoor(unittest.TestCase):
             self.assertIn("no answer", str(raised.exception))
 
 
+    def test_it_asks_the_way_a_browser_does_because_only_a_browser_is_sent_to_the_sign_in(self):
+        from unittest import mock
+
+        seen = []
+
+        class Response:
+            status, headers = 302, {"Location": "https://login.microsoftonline.com/tenant/oauth2/v2.0/authorize"}
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def read(self, n):
+                return b""
+
+        class Opener:
+            def open(self, request, timeout):
+                seen.append(request)
+                return Response()
+
+        with mock.patch("urllib.request.build_opener", return_value=Opener()):
+            cc.fetch(f"https://{HOST}/", {})
+        self.assertTrue(seen[0].get_header("User-agent").startswith("Mozilla/5.0 ("), "a client that is not a browser gets a 401 from the platform, which proves nothing about the sign-in")
+        self.assertIn("meternaut-console-check", seen[0].get_header("User-agent"))
+
+
 class TheCommand(unittest.TestCase):
     def test_exit_codes_output_and_summary(self):
         out = io.StringIO()

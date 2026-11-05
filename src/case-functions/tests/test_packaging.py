@@ -77,11 +77,15 @@ class FilesOfTheAppTests(unittest.TestCase):
             host,
             {
                 "version": "2.0",
-                "logging": {"logLevel": {"default": "Information"}, "applicationInsights": {"samplingSettings": {"isEnabled": False}}},
+                "logging": {
+                    "logLevel": {"default": "Information", "Azure.Core": "Warning", "Azure.Identity": "Warning", "Microsoft.AspNetCore": "Warning"},
+                    "applicationInsights": {"samplingSettings": {"isEnabled": False}},
+                },
                 "extensionBundle": {"id": "Microsoft.Azure.Functions.ExtensionBundle", "version": "[4.*, 5.0.0)"},
                 "extensions": {"http": {"routePrefix": ""}},
             },
-            "sampling is off, so that no line of the History is dropped; the console's pages are at the root, with no /api in front",
+            "sampling is off, so that no line of the History is dropped, and the host's own chatter is off: with the token requests of the Application Insights sign-in "
+            "logged, every instance wrote about one line a second; the console's pages are at the root, with no /api in front",
         )
         usage = json.loads((REPO_ROOT / "src" / "usage-functions" / "host.json").read_text(encoding="utf-8"))
         self.assertEqual({k: v for k, v in host.items() if k != "extensions"}, usage)

@@ -760,7 +760,7 @@ class Cases(unittest.TestCase):
         self.assertIn("kind: 'functionapp,linux'", body)
         self.assertIn("type: 'UserAssigned'", body)
         self.assertNotIn("SystemAssigned", body)
-        self.assertIn("maximumInstanceCount: 4", body)
+        self.assertRegex(body, r"(?m)^\s+maximumInstanceCount: 1$")  # one instance for each function group: the price, and no stale instance for the platform to send a request to
         self.assertNotIn("alwaysReady", body)
         self.assertIn("virtualNetworkSubnetId: functionSubnet.id", body)
         self.assertRegex(body, r"(?s)runtime: \{\s+name: 'python'\s+version: '3\.13'")
