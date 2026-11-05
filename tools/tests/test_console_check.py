@@ -85,6 +85,41 @@ class TheDoor(unittest.TestCase):
             with self.assertRaises(cc.Problem):
                 cc.door(host, expect)
 
+    def test_a_slow_first_answer_is_waited_for_and_no_answer_at_all_is_a_problem_and_not_a_trace(self):
+        from unittest import mock
+
+        answers = [TimeoutError("timed out"), TimeoutError("timed out")]
+
+        class Response:
+            status, headers = 200, {}
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def read(self, n):
+                return b"ok"
+
+        class Opener:
+            calls = 0
+
+            def open(self, request, timeout):
+                Opener.calls += 1
+                assert timeout == cc.TIMEOUT
+                if answers:
+                    raise answers.pop(0)
+                return Response()
+
+        with mock.patch("urllib.request.build_opener", return_value=Opener()):
+            self.assertEqual(cc.fetch(f"https://{HOST}/healthz", {})[0], 200)
+            self.assertEqual(Opener.calls, 3, "two timeouts, then the answer")
+            answers[:] = [TimeoutError("timed out")] * cc.TRIES
+            with self.assertRaises(cc.Problem) as raised:
+                cc.fetch(f"https://{HOST}/", {})
+            self.assertIn("no answer", str(raised.exception))
+
 
 class TheCommand(unittest.TestCase):
     def test_exit_codes_output_and_summary(self):

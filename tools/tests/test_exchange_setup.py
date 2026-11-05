@@ -33,9 +33,18 @@ ARGS = ["--tenant-id", TENANT, "--domain", DOMAIN, "--identity-client-id", CLIEN
 TOKENS = {"https://outlook.office365.com": ".".join(("eyJhbGciOiJSUzI1NiJ9", "eyJhdWQiOiJleGNoYW5nZSIsInRpZCI6IngifQ", "c2lnbmF0dXJlLWV4Y2hhbmdl")),
           "https://graph.microsoft.com": "graph-token-0123456789-abcdefghij"}
 EXCHANGE_URL = f"https://outlook.office365.com/adminapi/beta/{TENANT}/InvokeCommand"
-WRITES = {"New-Mailbox", "New-ServicePrincipal", "New-ManagementScope", "Set-ManagementScope", "New-ManagementRoleAssignment"}
+WRITES = {"New-Mailbox", "New-ServicePrincipal", "New-ManagementScope", "Set-ManagementScope", "New-ManagementRoleAssignment", "Enable-OrganizationCustomization"}
 ALL_CMDLETS = {"Get-Mailbox", "New-Mailbox", "Get-ServicePrincipal", "New-ServicePrincipal", "Get-ManagementScope", "New-ManagementScope", "Set-ManagementScope",
-               "Get-ManagementRoleAssignment", "New-ManagementRoleAssignment", "Test-ServicePrincipalAuthorization"}
+               "Get-ManagementRoleAssignment", "New-ManagementRoleAssignment", "Test-ServicePrincipalAuthorization", "Enable-OrganizationCustomization"}
+ENABLE = "Enable-OrganizationCustomization"
+# What Exchange gives for a cmdlet that it will not run before Enable-OrganizationCustomization: the message is only "Error executing cmdlet", the rest is in the details
+DEHYDRATED_WORDS = ("|Microsoft.Exchange.Configuration.Tasks.InvalidOperationInDehydratedContextException|The command you tried to run isn't currently allowed in your "
+                    "organization. To run this command, you first need to run the command: Enable-OrganizationCustomization.")
+ONE_TIME_STEP = "Exchange asks for a one-time step per organization: Enable-OrganizationCustomization."
+# The roles that Exchange shows, as rows of its default role assignment policy, for any recipient-like object (a service principal pointer included): the real answer
+DEFAULT_POLICY = (("MyBaseOptions", "Self"), ("My Custom Apps", "Self"), ("My Marketplace Apps", "Self"), ("My ReadWriteMailbox Apps", "Self"), ("MyContactInformation", "Self"),
+                  ("MyMailSubscriptions", "Self"), ("MyProfileInformation", "Self"), ("MyRetentionPolicies", "Self"), ("MyTextMessaging", "Self"), ("MyVoiceMail", "Self"),
+                  ("MyDistributionGroupMembership", "MyGAL"), ("MyDistributionGroups", "MyDistributionGroups"))
 
 
 class Fail(Exception):
@@ -46,6 +55,36 @@ class Fail(Exception):
 
 def reply(status, document, headers=None):
     return status, headers or {}, json.dumps(document).encode("utf-8")
+
+
+def policy_row(role, write_scope):
+    """A row of Exchange's default role assignment policy, in the shape of a real answer of Get-ManagementRoleAssignment."""
+    return {"Name": f"{role}-Default Role Assignment Policy", "Role": role, "RoleAssigneeName": "Default Role Assignment Policy", "RoleAssigneeType": "RoleAssignmentPolicy",
+            "RoleAssignmentDelegationType": "Regular", "CustomResourceScope": None, "RecipientWriteScope": write_scope, "AssignmentMethod": "RoleAssignmentPolicy", "IsValid": True}
+
+
+def group_row(role, scope, group="Organization Management", kind="RoleGroup"):
+    """A row that the identity holds through a group that it belongs to."""
+    return {"Name": f"{role}-{group}", "Role": role, "RoleAssigneeName": group, "RoleAssigneeType": kind, "AssignmentMethod": kind, "CustomResourceScope": scope}
+
+
+def dehydrated(where="details", extra=""):
+    """Exchange's refusal of a cmdlet until the organization is customized, with its words in the details (as Exchange gives them), in the message or in the code."""
+    if where == "message":
+        error = {"code": "BadRequest", "message": "Error executing cmdlet " + DEHYDRATED_WORDS + extra}
+    elif where == "code":
+        error = {"code": "Ex6F9304|InvalidOperationInDehydratedContextException", "message": "Error executing cmdlet" + extra}
+    else:
+        error = {"code": "BadRequest", "message": "Error executing cmdlet", "details": [{"code": "Context", "message": DEHYDRATED_WORDS + extra, "target": ""}]}
+    return reply(400, {"error": error})
+
+
+def dehydrated_tenant(*cmdlets, lag=0):
+    """An organization that refuses these cmdlets until Enable-OrganizationCustomization was sent, and then for `lag` more tries."""
+    tenant = Tenant()
+    tenant.needs_customization = set(cmdlets or ("New-ManagementScope",))
+    tenant.customization_lag = lag
+    return tenant
 
 
 class Tenant:
@@ -72,6 +111,11 @@ class Tenant:
         self.requests: list[tuple] = []
         self.cmdlets: list[tuple[str, dict]] = []
         self.violations: list[str] = []
+        self.needs_customization: set[str] = set()
+        self.customization_requested = False
+        self.customization_lag = 0
+        self.enable_error: tuple | None = None
+        self.indirect_assignments = [policy_row(role, write_scope) for role, write_scope in DEFAULT_POLICY]
 
     # -- a tenant that is set up ---------------------------------------------------------------------------------------------------------------------
     def configured(self) -> "Tenant":
@@ -82,8 +126,8 @@ class Tenant:
         self.users[ADDRESS] = False
         return self
 
-    def assignment(self, role, scope, assignee=PRINCIPAL, name=None):
-        return {"Name": name or f"{role}-{len(self.assignments) + 1}", "Role": role, "RoleAssigneeName": assignee, "RoleAssigneeType": "ServicePrincipal",
+    def assignment(self, role, scope, assignee=PRINCIPAL, name=None, kind="ServicePrincipal", method="Direct"):
+        return {"Name": name or f"{role}-{len(self.assignments) + 1}", "Role": role, "RoleAssigneeName": assignee, "RoleAssigneeType": kind, "AssignmentMethod": method,
                 "CustomResourceScope": scope}
 
     def writes(self) -> list[str]:
@@ -119,6 +163,8 @@ class Tenant:
         planned = self.failures.get(cmdlet)
         if planned:
             return planned.pop(0)
+        if self.refuses(cmdlet):
+            return dehydrated(extra=" " + TOKENS["https://outlook.office365.com"] if self.echo_tokens else "")
         handler = getattr(self, "cmd_" + cmdlet.replace("-", "_"), None)
         try:
             if handler is None:
@@ -179,6 +225,9 @@ class Tenant:
     def cmd_Get_ManagementRoleAssignment(self, p):
         assert set(p) <= {"RoleAssignee", "Role"} and "RoleAssignee" in p, "the parameters of Get-ManagementRoleAssignment"
         found = [dict(a) for a in self.assignments if a["RoleAssigneeName"].lower() == p["RoleAssignee"].lower() and p.get("Role", a["Role"]).lower() == a["Role"].lower()]
+        if p["RoleAssignee"].lower() in (k.lower() for k in self.pointers):
+            # what the identity gets through the default policy and through groups is listed for it as soon as it has a pointer
+            found += [dict(r) for r in self.indirect_assignments if p.get("Role", r["Role"]).lower() == r["Role"].lower()]
         return self.found(found, p["RoleAssignee"])
 
     def cmd_New_ManagementRoleAssignment(self, p):
@@ -209,6 +258,26 @@ class Tenant:
                  "ScopeType": "CustomRecipientScope" if a["CustomResourceScope"] else "Organization",
                  "InScope": True if not a["CustomResourceScope"] else self.covers(a["CustomResourceScope"], p["Resource"])}
                 for a in self.assignments if a["RoleAssigneeName"] == p["Identity"]]
+
+    def refuses(self, cmdlet):
+        """Whether the organization still refuses this cmdlet: until Enable-OrganizationCustomization was asked for, and for customization_lag more tries after that."""
+        if cmdlet not in self.needs_customization:
+            return False
+        if not self.customization_requested:
+            return True
+        if self.customization_lag > 0:
+            self.customization_lag -= 1
+            return True
+        return False
+
+    def cmd_Enable_OrganizationCustomization(self, p):
+        assert p == {}, "Enable-OrganizationCustomization takes no parameters"
+        if self.enable_error:
+            raise Fail(*self.enable_error)
+        if self.customization_requested:
+            raise Fail(400, "OrganizationAlreadyCustomized", "This operation is not required. Organization is already enabled for customization.")
+        self.customization_requested = True
+        return []
 
     def graph(self, method, parts, headers):
         if method != "GET" or headers.get("Authorization") != f"Bearer {TOKENS['https://graph.microsoft.com']}":
@@ -404,6 +473,23 @@ class Check(unittest.TestCase):
                     code, out, err, _ = run(["check", *ARGS], tenant)
                     self.assertEqual((code, states(out)["1"], states(out)["3"], states(out)["4"]), (1, "MISSING", "MISSING", "MISSING"), out + err)
 
+    def test_the_real_answer_of_exchange_for_an_object_that_is_not_there_has_its_words_in_the_details(self):
+        real = {"error": {"code": "NotFound", "message": "Error executing cmdlet",
+                          "details": [{"code": "Context", "message": "Ex6F9304|Microsoft.Exchange.Configuration.Tasks.ManagementObjectNotFoundException|The operation couldn't be "
+                                                                     "performed because object 'meternaut-ai' couldn't be found on 'SJ0PR03A12DC002.NAMPR03A012.PROD.OUTLOOK.COM'.",
+                                       "target": ""}],
+                          "innererror": {"message": "Error executing cmdlet", "type": "Microsoft.Exchange.Admin.OData.Core.ODataServiceException"}}}
+        code, message = xs.error_of(json.dumps(real).encode("utf-8"))
+        self.assertEqual(code, "NotFound")
+        self.assertIn("couldn't be found", message)
+        self.assertTrue(message.startswith("Error executing cmdlet"))
+        for cmdlet in ("Get-Mailbox", "Get-ServicePrincipal", "Get-ManagementScope", "Get-ManagementRoleAssignment"):
+            with self.subTest(cmdlet=cmdlet):
+                tenant = Tenant()
+                tenant.failures[cmdlet] = [reply(404, real)]
+                code, out, err, _ = run(["check", *ARGS], tenant)
+                self.assertNotIn("failed", err, err)
+
     def test_the_other_errors_are_real_ones_with_the_code_and_the_first_300_characters(self):
         tenant = Tenant()
         tenant.failures["Get-Mailbox"] = [reply(403, {"error": {"code": "Forbidden", "message": "x" * 500}})]
@@ -583,6 +669,130 @@ class Check(unittest.TestCase):
             self.assertTrue(all(method == "GET" or url == EXCHANGE_URL for method, url, _, _ in tenant.requests))
 
 
+class TheDefaultPolicyRows(unittest.TestCase):
+    """Exchange lists the rows of its default role assignment policy (MyBaseOptions and the like) for a service principal that has a pointer. They are the policy's."""
+
+    def test_the_fake_lists_the_twelve_rows_of_the_policy_in_the_shape_of_the_real_answer_once_the_pointer_exists(self):
+        tenant = Tenant().configured()
+        rows = tenant.cmd_Get_ManagementRoleAssignment({"RoleAssignee": PRINCIPAL})
+        policy = [r for r in rows if r["RoleAssigneeType"] == "RoleAssignmentPolicy"]
+        self.assertEqual((len(policy), len(rows)), (12, 13), "twelve rows of the policy, and the assignment of the identity")
+        self.assertEqual(policy[0], {"Name": "MyBaseOptions-Default Role Assignment Policy", "Role": "MyBaseOptions", "RoleAssigneeName": "Default Role Assignment Policy",
+                                     "RoleAssigneeType": "RoleAssignmentPolicy", "RoleAssignmentDelegationType": "Regular", "CustomResourceScope": None,
+                                     "RecipientWriteScope": "Self", "AssignmentMethod": "RoleAssignmentPolicy", "IsValid": True})
+        self.assertEqual({r["RecipientWriteScope"] for r in policy}, {"Self", "MyGAL", "MyDistributionGroups"})
+        self.assertEqual([r["Role"] for r in tenant.cmd_Get_ManagementRoleAssignment({"RoleAssignee": PRINCIPAL, "Role": ROLE})], [ROLE], "a read of one role has none of them")
+        tenant.pointers.clear()
+        self.assertEqual([r for r in tenant.cmd_Get_ManagementRoleAssignment({"RoleAssignee": PRINCIPAL}) if r["RoleAssigneeType"] == "RoleAssignmentPolicy"], [])
+
+    def test_the_rows_of_the_policy_are_not_the_identitys_and_do_not_fail_the_check(self):
+        tenant = Tenant().configured()
+        code, out, err, _ = run(["check", *ARGS, "--other-mailbox", OTHER], tenant)
+        self.assertEqual((code, err), (0, ""), out)
+        self.assertEqual(states(out), {key: "present" for key in ("1", "2", "3", "4", "4b", "5a", "5b", "6", "7")})
+        self.assertIn("12 row(s) of Exchange's default role assignment policy (the self-service roles of a mailbox user) are not the identity's and are not counted; "
+                      "items 5a and 5b show what the identity can do", out)
+        for words in ("MyBaseOptions", "My Custom Apps", "MyDistributionGroups", "Remove-ManagementRoleAssignment", "MUST NOT HOLD"):
+            self.assertNotIn(words, out)
+        self.assertEqual(tenant.writes(), [])
+
+    def test_a_run_that_finds_the_pointer_and_the_policy_rows_goes_on_to_make_the_scope_and_the_assignment(self):
+        tenant = Tenant().configured()
+        del tenant.scopes[SCOPE]
+        del tenant.assignments[0]
+        tenant.needs_customization, tenant.customization_lag = {"New-ManagementScope"}, 1
+        code, out, err, sleeps = run(["apply", *ARGS, "--other-mailbox", OTHER, "--apply"], tenant)
+        self.assertEqual((code, err), (0, ""), out)
+        self.assertNotIn("Nothing was changed.", out)
+        self.assertEqual(tenant.writes(), ["New-ManagementScope", "Enable-OrganizationCustomization", "New-ManagementScope", "New-ManagementScope", "New-ManagementRoleAssignment"])
+        self.assertEqual(states(out), {key: "present" for key in ("1", "2", "3", "4", "4b", "5a", "5b", "6", "7")})
+        self.assertEqual(tenant.violations, [])
+
+    def test_a_row_is_the_policys_when_its_assignee_type_or_its_method_says_so_and_in_no_other_case(self):
+        base = {"Name": "X-1", "Role": "MyBaseOptions", "CustomResourceScope": None}
+        policy = [{**base, "RoleAssigneeType": "RoleAssignmentPolicy"}, {**base, "AssignmentMethod": "RoleAssignmentPolicy"},
+                  {**base, "RoleAssigneeType": "RoleAssignmentPolicy", "AssignmentMethod": "Direct"}, {**base, "RoleAssigneeType": "User", "AssignmentMethod": "RoleAssignmentPolicy"},
+                  {**base, "AssignmentMethod": ["RoleAssignmentPolicy"]}, {**base, "roleassigneetype": "roleassignmentpolicy"}, policy_row("MyVoiceMail", "Self")]
+        identity = [{**base, "RoleAssigneeType": "ServicePrincipal", "AssignmentMethod": "Direct"}, {**base}, {**base, "RoleAssigneeType": "RoleGroup", "AssignmentMethod": "RoleGroup"},
+                    {**base, "RoleAssigneeType": "ServicePrincipal", "AssignmentMethod": ["Direct", "RoleAssignmentPolicy"]},
+                    {**base, "RoleAssigneeName": "Default Role Assignment Policy", "RoleAssigneeType": "ServicePrincipal", "AssignmentMethod": "Direct"},
+                    {**base, "Name": "MyBaseOptions-Default Role Assignment Policy", "RoleAssigneeType": "User"}, {**base, "AssignmentMethod": []}]
+        self.assertEqual(xs.own_assignments(policy), [])
+        self.assertEqual(xs.own_assignments(identity), identity)
+        self.assertEqual(xs.own_assignments(policy + identity), identity)
+
+    def test_a_row_with_the_marks_of_the_policy_is_ignored_wherever_it_comes_from_and_a_row_without_them_is_not(self):
+        marked = Tenant().configured()
+        marked.indirect_assignments.append({"Name": "Odd-1", "Role": "Application Calendars.Read", "RoleAssigneeName": "Some policy", "RoleAssigneeType": "RoleAssignmentPolicy",
+                                            "AssignmentMethod": "RoleAssignmentPolicy", "CustomResourceScope": None})
+        self.assertEqual(run(["check", *ARGS], marked)[0], 0)
+        unmarked = Tenant().configured()
+        unmarked.indirect_assignments.append({"Name": "Odd-2", "Role": "Application Calendars.Read", "RoleAssigneeName": "Default Role Assignment Policy",
+                                              "CustomResourceScope": None})
+        code, out, err, _ = run(["check", *ARGS], unmarked)
+        self.assertEqual((code, states(out)["4b"]), (1, "FAIL"), "only the marks of Exchange decide, and not a name that looks like the policy's")
+        self.assertIn("assignment Odd-2: role Application Calendars.Read", out)
+
+    def test_a_direct_assignment_without_the_scope_is_still_a_stray_and_the_policy_rows_are_not_listed_with_it(self):
+        for role in ("Application Calendars.Read", "Application Mail.Read", "Application Mail.Send"):
+            with self.subTest(role=role):
+                tenant = Tenant().configured()
+                tenant.assignments.append(tenant.assignment(role, None, name=f"{role}-everybody"))
+                code, out, err, _ = run(["check", *ARGS], tenant)
+                self.assertEqual((code, states(out)["4b"]), (1, "FAIL"), out)
+                self.assertIn("THE IDENTITY HOLDS EXCHANGE ROLE ASSIGNMENTS THAT IT MUST NOT HOLD", out)
+                self.assertIn(f"assignment {role}-everybody: role {role}, no custom resource scope, so it covers every mailbox", out)
+                self.assertIn(f"Remove-ManagementRoleAssignment -Identity '{role}-everybody'", out)
+                self.assertEqual(out.count("Remove-ManagementRoleAssignment"), 1)
+                for words in ("Default Role Assignment Policy", "MyBaseOptions", "row(s) of Exchange's default"):
+                    self.assertNotIn(words, out)
+
+    def test_a_direct_mail_send_without_our_scope_is_still_a_stray_and_apply_changes_nothing(self):
+        for scope in (None, "Another scope", "Meternaut sender mailbox 2"):
+            with self.subTest(scope=scope):
+                tenant = Tenant().configured()
+                tenant.assignments.append(tenant.assignment(ROLE, scope, name="Mail.Send-other"))
+                code, out, err, _ = run(["apply", *ARGS, "--apply"], tenant)
+                self.assertEqual(code, 1, out)
+                self.assertEqual((states(out)["4"], states(out)["4b"]), ("present", "FAIL"))
+                self.assertIn("Remove-ManagementRoleAssignment -Identity 'Mail.Send-other'", out)
+                self.assertIn("Nothing was changed.", out)
+                self.assertEqual(tenant.writes(), [])
+
+    def test_the_hint_to_remove_an_assignment_is_only_for_one_that_the_identity_holds_directly(self):
+        self.assertTrue(xs.is_direct({"RoleAssigneeType": "ServicePrincipal"}))
+        self.assertTrue(xs.is_direct({"AssignmentMethod": "Direct"}))
+        self.assertTrue(xs.is_direct({"AssignmentMethod": ["Direct"]}))
+        for row in ({}, {"RoleAssigneeType": "RoleGroup", "AssignmentMethod": "RoleGroup"}, {"RoleAssigneeType": "User"}):
+            self.assertFalse(xs.is_direct(row), row)
+        self.assertEqual(xs.held_through({"RoleAssigneeType": "RoleGroup", "RoleAssigneeName": "Org Mgmt"}), "RoleGroup 'Org Mgmt'")
+        self.assertEqual(xs.held_through({}), "a way that Exchange does not name")
+        for kind in ("RoleGroup", "SecurityGroup"):
+            with self.subTest(kind=kind):
+                tenant = Tenant().configured()
+                tenant.indirect_assignments.append(group_row("Application Mail.Send", None, "Mail Senders", kind))
+                code, out, err, _ = run(["apply", *ARGS, "--apply"], tenant)
+                self.assertEqual((code, states(out)["4b"], tenant.writes()), (1, "FAIL", []), out)
+                self.assertIn(f"It comes through {kind} 'Mail Senders', not directly. Do not remove the assignment (others hold it too): take the identity out of that, "
+                              "or ask who owns it.", out)
+                self.assertNotIn("Remove-ManagementRoleAssignment", out)
+                self.assertIn("Nothing was changed.", out)
+
+    def test_a_row_of_the_policy_is_never_taken_for_the_assignment_of_the_identity(self):
+        tenant = Tenant().configured()
+        tenant.assignments.clear()
+        tenant.indirect_assignments.append({**policy_row(ROLE, "Self"), "CustomResourceScope": SCOPE})
+        code, out, err, _ = run(["check", *ARGS], tenant)
+        self.assertEqual((code, states(out)["4"], states(out)["4b"]), (1, "MISSING", "present"), out)
+
+    def test_the_note_about_the_policy_rows_is_only_there_when_there_were_some(self):
+        tenant = Tenant().configured()
+        tenant.indirect_assignments = []
+        code, out, err, _ = run(["check", *ARGS], tenant)
+        self.assertEqual((code, states(out)["4b"]), (0, "present"))
+        self.assertNotIn("default role assignment policy", out)
+
+
 class Apply(unittest.TestCase):
     def test_a_dry_run_says_what_it_would_send_and_changes_nothing(self):
         tenant = Tenant()
@@ -710,6 +920,209 @@ class Apply(unittest.TestCase):
         self.assertIn("Nothing to create or change. Items that are not in order need more than this tool does", out)
 
 
+class TheOneTimeStep(unittest.TestCase):
+    """A new organization refuses to make a scope until Enable-OrganizationCustomization has been run, and then takes a while to apply it."""
+
+    def sent(self, tenant):
+        return [c for c, _ in tenant.cmdlets if c in WRITES]
+
+    def test_the_refusal_is_explained_the_step_is_sent_once_and_the_refused_cmdlet_is_tried_again_after_each_pause(self):
+        tenant = dehydrated_tenant(lag=3)
+        code, out, err, sleeps = run(["apply", *ARGS, "--other-mailbox", OTHER, "--apply"], tenant)
+        self.assertEqual((code, err), (0, ""), out)
+        self.assertEqual(self.sent(tenant), ["New-Mailbox", "New-ServicePrincipal", "New-ManagementScope", ENABLE, *["New-ManagementScope"] * 4, "New-ManagementRoleAssignment"])
+        self.assertEqual(sleeps, [20.0] * 4, "one pause before every new try, and no other")
+        self.assertEqual(tenant.violations, [])
+        self.assertIn("New-ManagementScope was refused (400 BadRequest).", out)
+        self.assertIn(f"{ONE_TIME_STEP} It only un-consolidates stored objects so that custom roles and scopes can be made; it changes no mail flow and no policy; "
+                      "Exchange says it is run once and cannot be run again.", out)
+        self.assertIn(f"sent {ENABLE}", out)
+        self.assertIn("New-ManagementScope is tried again, 12 times at most, 20 seconds apart.", out)
+        self.assertEqual(out.count("is still refused"), 3)
+        self.assertIn("sent New-ManagementScope (try 4 of 12)", out)
+        order = [out.index(words) for words in ("was refused", f"sent {ENABLE}", "sent New-ManagementScope (try 4 of 12)", "sent New-ManagementRoleAssignment", "Checking again:")]
+        self.assertEqual(order, sorted(order), "the words come in the order of what happened, and the state is read again after the last cmdlet")
+        self.assertEqual(states(out), {key: "present" for key in ("1", "2", "3", "4", "4b", "5a", "5b", "6", "7")})
+        enable = [json.loads(body)["CmdletInput"] for _, _, headers, body in tenant.requests if headers.get("X-CmdletName") == ENABLE]
+        self.assertEqual(enable, [{"CmdletName": ENABLE, "Parameters": {}}])
+
+    def test_the_refused_cmdlet_is_tried_at_most_12_times_and_a_success_on_the_last_try_counts(self):
+        for lag in (0, 1, 11):
+            with self.subTest(lag=lag):
+                tenant = dehydrated_tenant(lag=lag)
+                code, out, err, sleeps = run(["apply", *ARGS, "--apply"], tenant)
+                self.assertEqual((code, err), (0, ""), out)
+                self.assertEqual(sleeps, [20.0] * (lag + 1))
+                self.assertEqual(self.sent(tenant).count("New-ManagementScope"), lag + 2)
+                self.assertEqual(self.sent(tenant).count(ENABLE), 1)
+        tenant = dehydrated_tenant(lag=12)
+        code, out, err, sleeps = run(["apply", *ARGS, "--apply"], tenant)
+        self.assertEqual((code, sleeps), (1, [20.0] * 12), "the 13th try does not exist")
+
+    def test_a_refusal_that_never_ends_stops_after_the_last_try_with_a_clear_message_and_sends_nothing_after_it(self):
+        tenant = dehydrated_tenant(lag=10 ** 9)
+        code, out, err, sleeps = run(["apply", *ARGS, "--apply"], tenant)
+        self.assertEqual(code, 1)
+        self.assertEqual(sleeps, [20.0] * 12)
+        self.assertEqual(self.sent(tenant), ["New-Mailbox", "New-ServicePrincipal", "New-ManagementScope", ENABLE, *["New-ManagementScope"] * 12])
+        self.assertEqual(err.strip(), "error: New-ManagementScope is still refused after 12 tries over 240 seconds: Exchange has not yet applied Enable-OrganizationCustomization. "
+                                      "It can take longer. Wait, then run this tool again: it only creates what is missing.")
+        self.assertEqual(out.count("is still refused"), 12)
+
+    def test_an_answer_that_the_step_was_run_before_is_fine_and_the_refused_cmdlet_is_still_tried_again(self):
+        for text in ("This operation is not required. Organization is already enabled for customization.", "The command has already been run for this organization.",
+                     "Enable-OrganizationCustomization isn't required here.", "Enable-OrganizationCustomization isn\u2019t required here.", "Not required."):
+            with self.subTest(text=text):
+                tenant = dehydrated_tenant(lag=2)
+                tenant.customization_requested = True  # somebody ran it a moment ago and Exchange is still applying it
+                tenant.enable_error = (400, "OrganizationCustomization", text)
+                code, out, err, sleeps = run(["apply", *ARGS, "--apply"], tenant)
+                self.assertEqual((code, err), (0, ""), out)
+                self.assertEqual(self.sent(tenant), ["New-Mailbox", "New-ServicePrincipal", "New-ManagementScope", ENABLE, "New-ManagementScope", "New-ManagementScope",
+                                                     "New-ManagementRoleAssignment"])
+                self.assertEqual(sleeps, [20.0, 20.0])
+                self.assertIn(f"Exchange says that {ENABLE} was run before (400 OrganizationCustomization: {text}). That is fine", out)
+                self.assertNotIn(f"sent {ENABLE}", out)
+
+    def test_the_plain_answer_of_a_tenant_that_was_customized_before_is_fine(self):
+        tenant = Tenant()
+        tenant.customization_requested = True
+        tenant.failures["New-ManagementScope"] = [dehydrated()]
+        code, out, err, sleeps = run(["apply", *ARGS, "--apply"], tenant)
+        self.assertEqual((code, err, sleeps), (0, "", [20.0]), out)
+        self.assertIn("(400 OrganizationAlreadyCustomized: This operation is not required. Organization is already enabled for customization.)", out)
+
+    def test_any_other_error_of_the_step_stops_the_run_at_once(self):
+        for status, code_, text in ((403, "Forbidden", "You are not allowed to run this cmdlet."), (400, "Other", "The organization cannot be customized now."), (500, "", "")):
+            with self.subTest(status=status):
+                tenant = dehydrated_tenant(lag=1)
+                tenant.enable_error = (status, code_, text)
+                code, out, err, sleeps = run(["apply", *ARGS, "--apply"], tenant)
+                self.assertEqual(code, 1)
+                self.assertIn(f"Enable-OrganizationCustomization failed: {status}", err)
+                self.assertEqual(sleeps, [])
+                self.assertEqual(self.sent(tenant), ["New-Mailbox", "New-ServicePrincipal", "New-ManagementScope", ENABLE])
+                self.assertNotIn("That is fine", out)
+
+    def test_a_different_error_on_a_new_try_stops_the_run_at_once(self):
+        tenant = dehydrated_tenant(lag=0)
+        tenant.failures["New-ManagementScope"] = [dehydrated(), reply(400, {"error": {"code": "Other", "message": "The scope is not valid."}})]
+        code, out, err, sleeps = run(["apply", *ARGS, "--apply"], tenant)
+        self.assertEqual(code, 1)
+        self.assertEqual(err.strip(), "error: New-ManagementScope failed: 400 Other: The scope is not valid.")
+        self.assertEqual(sleeps, [20.0])
+        self.assertEqual(self.sent(tenant), ["New-Mailbox", "New-ServicePrincipal", "New-ManagementScope", ENABLE, "New-ManagementScope"])
+
+    def test_the_step_is_sent_once_per_run_even_when_a_later_cmdlet_is_refused_too(self):
+        tenant = dehydrated_tenant(lag=1)
+        tenant.failures["New-ManagementRoleAssignment"] = [dehydrated()]
+        code, out, err, sleeps = run(["apply", *ARGS, "--apply"], tenant)
+        self.assertEqual((code, err), (0, ""), out)
+        self.assertEqual(self.sent(tenant).count(ENABLE), 1)
+        self.assertEqual(self.sent(tenant).count("New-ManagementRoleAssignment"), 2)
+        self.assertEqual(sleeps, [20.0] * 3)
+        self.assertEqual(out.count("Exchange asks for a one-time step"), 1)
+        self.assertIn("New-ManagementRoleAssignment was refused (400 BadRequest).", out)
+
+    def test_any_cmdlet_that_changes_something_can_be_the_one_that_is_refused(self):
+        for cmdlet in ("New-Mailbox", "New-ServicePrincipal", "New-ManagementScope", "New-ManagementRoleAssignment", "Set-ManagementScope"):
+            with self.subTest(cmdlet=cmdlet):
+                tenant = dehydrated_tenant(cmdlet, lag=1)
+                if cmdlet == "Set-ManagementScope":
+                    tenant.configured().scopes[SCOPE]["RecipientFilter"] = "PrimarySmtpAddress -eq 'wrong@contoso.example'"
+                code, out, err, sleeps = run(["apply", *ARGS, "--apply"], tenant)
+                self.assertEqual((code, err), (0, ""), out)
+                self.assertEqual(self.sent(tenant).count(ENABLE), 1)
+                self.assertEqual(self.sent(tenant).count(cmdlet), 3)
+                self.assertEqual(sleeps, [20.0, 20.0])
+                self.assertIn(f"{cmdlet} was refused", out)
+                self.assertEqual(tenant.violations, [])
+
+    def test_only_a_cmdlet_that_changes_something_can_ask_for_the_step(self):
+        for cmdlet in ("Get-Mailbox", "Get-ServicePrincipal", "Get-ManagementScope", "Get-ManagementRoleAssignment"):
+            with self.subTest(cmdlet=cmdlet):
+                tenant = Tenant().configured()
+                tenant.failures[cmdlet] = [dehydrated()]
+                code, out, err, sleeps = run(["apply", *ARGS, "--apply"], tenant)
+                self.assertEqual((code, tenant.writes(), sleeps), (1, [], []))
+                self.assertIn(f"{cmdlet} failed: 400 BadRequest", err)
+
+    def test_the_words_of_the_refusal_are_found_in_the_details_the_message_and_the_code(self):
+        for where in ("details", "message", "code"):
+            with self.subTest(where=where):
+                tenant = Tenant()
+                tenant.failures["New-ManagementScope"] = [dehydrated(where)]
+                code, out, err, sleeps = run(["apply", *ARGS, "--apply"], tenant)
+                self.assertEqual((code, err, sleeps), (0, "", [20.0]), out)
+                self.assertEqual(self.sent(tenant).count(ENABLE), 1)
+
+    def test_either_of_the_two_words_is_enough_and_the_case_does_not_matter(self):
+        for words in ("you first need to run the command: Enable-OrganizationCustomization.", "Microsoft.Exchange.Configuration.Tasks.InvalidOperationInDehydratedContextException",
+                      "ENABLE-ORGANIZATIONCUSTOMIZATION", "invalidoperationindehydratedcontext"):
+            with self.subTest(words=words):
+                tenant = Tenant()
+                tenant.failures["New-ManagementScope"] = [reply(400, {"error": {"code": "X", "message": words}})]
+                code, out, err, sleeps = run(["apply", *ARGS, "--apply"], tenant)
+                self.assertEqual((code, err, sleeps), (0, "", [20.0]), out)
+
+    def test_the_words_are_looked_for_in_the_whole_message_and_not_only_in_the_part_that_is_shown(self):
+        long = reply(400, {"error": {"code": "BadRequest", "message": "x" * 400 + " You first need to run the command: Enable-OrganizationCustomization."}})
+        tenant = Tenant()
+        tenant.failures["New-ManagementScope"] = [long]
+        code, out, err, sleeps = run(["apply", *ARGS, "--apply"], tenant)
+        self.assertEqual((code, err, sleeps), (0, "", [20.0]), out)
+        shown = Tenant()
+        shown.failures["Get-Mailbox"] = [long]
+        exchange = xs.Exchange(TENANT, DOMAIN, xs.Tokens(FakeAz(), TENANT, xs.Hider()), shown)
+        with self.assertRaises(xs.Refused) as caught:
+            exchange.call("Get-Mailbox", {"Identity": "x"})
+        self.assertEqual((caught.exception.cmdlet, caught.exception.status, caught.exception.code), ("Get-Mailbox", 400, "BadRequest"))
+        self.assertTrue(caught.exception.message.endswith("Enable-OrganizationCustomization."))
+        self.assertLess(len(str(caught.exception)), 400, "the text that is shown has the first 300 characters of the message")
+
+    def test_other_refusals_do_not_ask_for_the_step(self):
+        for message in ("The proxy address is already being used.", "The operation couldn't be performed because object 'x' couldn't be found.", "Insufficient permissions.",
+                        "Enable-Mailbox failed", "customization"):
+            with self.subTest(message=message):
+                tenant = Tenant()
+                tenant.failures["New-ManagementScope"] = [reply(400, {"error": {"code": "Other", "message": message}})]
+                code, out, err, sleeps = run(["apply", *ARGS, "--apply"], tenant)
+                self.assertEqual((code, sleeps), (1, []))
+                self.assertIn("New-ManagementScope failed: 400 Other", err)
+                self.assertNotIn(ENABLE, self.sent(tenant))
+
+    def test_a_dry_run_says_that_the_step_may_be_needed_and_sends_nothing(self):
+        tenant = dehydrated_tenant(lag=3)
+        code, out, err, sleeps = run(["apply", *ARGS], tenant)
+        self.assertEqual((code, err, sleeps), (0, "", []))
+        self.assertEqual(tenant.writes(), [])
+        self.assertNotIn(ENABLE, [c for c, _ in tenant.cmdlets])
+        self.assertIn("Exchange may first ask for Enable-OrganizationCustomization, once per organization.", out)
+        self.assertIn("That is the one other cmdlet that this tool can send, and only when Exchange asks for it.", out)
+        self.assertLess(out.index("New-ManagementRoleAssignment {"), out.index("Exchange may first ask"))
+        self.assertLess(out.index("Exchange may first ask"), out.index("This was a dry run."))
+        self.assertNotIn("was refused", out)
+
+    def test_the_step_is_not_sent_unless_exchange_asks_for_it_and_the_heads_up_comes_before_the_first_cmdlet(self):
+        tenant = Tenant()
+        code, out, err, sleeps = run(["apply", *ARGS, "--apply"], tenant)
+        self.assertEqual((code, err, sleeps), (0, "", []), out)
+        self.assertEqual(self.sent(tenant), ["New-Mailbox", "New-ServicePrincipal", "New-ManagementScope", "New-ManagementRoleAssignment"])
+        self.assertLess(out.index("Exchange may first ask for Enable-OrganizationCustomization"), out.index("sent New-Mailbox"))
+        self.assertNotIn(ONE_TIME_STEP, out)
+
+    def test_check_never_sends_the_step_and_a_run_with_nothing_to_do_does_not_mention_it(self):
+        tenant = dehydrated_tenant(lag=0)
+        code, out, err, sleeps = run(["check", *ARGS], tenant)
+        self.assertEqual((code, tenant.writes(), sleeps), (1, [], []))
+        self.assertNotIn(ENABLE, out)
+        done = Tenant().configured()
+        code, out, err, sleeps = run(["apply", *ARGS, "--apply"], done)
+        self.assertEqual((code, sleeps), (0, []))
+        self.assertIn("Nothing to create or change.", out)
+        self.assertNotIn(ENABLE, out)
+
+
 class WhatIsSent(unittest.TestCase):
     def everything(self):
         """Runs that between them use every cmdlet of the tool."""
@@ -719,6 +1132,8 @@ class WhatIsSent(unittest.TestCase):
         wrong = Tenant().configured()
         wrong.scopes[SCOPE]["RecipientFilter"] = "PrimarySmtpAddress -eq 'wrong@contoso.example'"
         runs.append((run(["apply", *ARGS, "--apply"], wrong), wrong))
+        customizing = dehydrated_tenant(lag=1)
+        runs.append((run(["apply", *ARGS, "--apply"], customizing), customizing))
         return runs
 
     def test_the_tool_sends_exactly_the_cmdlets_of_its_list_and_no_other(self):
@@ -728,13 +1143,15 @@ class WhatIsSent(unittest.TestCase):
             self.assertEqual(tenant.violations, [])
         self.assertEqual(sent, ALL_CMDLETS)
         self.assertEqual(set(xs.CMDLETS), ALL_CMDLETS)
-        self.assertEqual({c for c in sent if c.startswith(("Remove", "Disable", "Enable", "Add"))}, set())
+        self.assertEqual({c for c in sent if c.startswith(("Remove", "Disable", "Add"))}, set())
+        self.assertEqual({c for c in sent if c.startswith("Enable")}, {ENABLE}, "the one step that Exchange can ask for, and no other that enables something")
 
     def test_another_cmdlet_is_refused_before_a_request_is_made(self):
         tenant = Tenant()
         exchange = xs.Exchange(TENANT, DOMAIN, xs.Tokens(FakeAz(), TENANT, xs.Hider()), tenant)
         for cmdlet in ("Remove-Mailbox", "Set-Mailbox", "Remove-ManagementRoleAssignment", "Get-Mailbox ", "get-mailbox", "Get-Mailbox; Remove-Mailbox", "Invoke-Command",
-                       "Add-MailboxPermission", "Get-User", ""):
+                       "Add-MailboxPermission", "Get-User", "", "Enable-OrganizationCustomization ", "enable-organizationcustomization", "Disable-OrganizationCustomization",
+                       "Enable-Mailbox", "Get-OrganizationConfig", "Set-OrganizationConfig"):
             with self.subTest(cmdlet=cmdlet):
                 with self.assertRaises(xs.Problem):
                     exchange.call(cmdlet, {})
@@ -800,6 +1217,17 @@ class NothingSecretIsShown(unittest.TestCase):
         echoing = Tenant()
         echoing.echo_tokens = True
         scenes.append((["check", *ARGS], echoing))
+        customizing = dehydrated_tenant(lag=1)
+        customizing.echo_tokens = True
+        scenes.append((["apply", *ARGS, "--apply"], customizing))
+        before = dehydrated_tenant(lag=1)
+        before.customization_requested, before.echo_tokens = True, True
+        before.enable_error = (400, "X", f"already done, token {TOKENS['https://outlook.office365.com']} seen")
+        scenes.append((["apply", *ARGS, "--apply"], before))
+        refused = dehydrated_tenant(lag=1)
+        refused.echo_tokens = True
+        refused.enable_error = (403, "Forbidden", f"no, {TOKENS['https://outlook.office365.com']}")
+        scenes.append((["apply", *ARGS, "--apply"], refused))
         return scenes
 
     def test_no_token_is_in_anything_that_is_printed_or_in_an_error(self):
@@ -821,6 +1249,18 @@ class NothingSecretIsShown(unittest.TestCase):
         graph.graph_failures["users"] = (403, {})
         code, out, err, _ = run(["check", *ARGS], graph)
         self.assertIn("denied for [token hidden] and [token hidden]", out)
+
+    def test_what_exchange_says_about_the_one_time_step_is_shown_without_the_token(self):
+        tenant = dehydrated_tenant(lag=1)
+        tenant.customization_requested = True
+        tenant.enable_error = (400, "X", f"already done, token {TOKENS['https://outlook.office365.com']} seen")
+        code, out, err, _ = run(["apply", *ARGS, "--apply"], tenant)
+        self.assertEqual(code, 0, out + err)
+        self.assertIn("(400 X: already done, token [token hidden] seen)", out)
+        refused = dehydrated_tenant(lag=1)
+        refused.enable_error = (403, "Forbidden", f"no, {TOKENS['https://outlook.office365.com']}")
+        code, out, err, _ = run(["apply", *ARGS, "--apply"], refused)
+        self.assertEqual((code, err.strip()), (1, "error: Enable-OrganizationCustomization failed: 403 Forbidden: no, [token hidden]"))
 
     def test_the_hider_hides_what_was_handed_out_and_what_looks_like_a_token(self):
         hide = xs.Hider()
@@ -857,7 +1297,8 @@ class TheTool(unittest.TestCase):
 
     def test_it_says_in_its_text_how_it_is_run_and_that_it_never_runs_in_a_pipeline(self):
         doc = xs.__doc__
-        for words in ("python tools/exchange-setup.py check", "python tools/exchange-setup.py apply", "--apply", "never runs in a pipeline", "removes nothing", "Application Mail.Send"):
+        for words in ("python tools/exchange-setup.py check", "python tools/exchange-setup.py apply", "--apply", "never runs in a pipeline", "removes nothing", "Application Mail.Send",
+                      "Enable-OrganizationCustomization", "once per organization", "cannot be run again", "12 times at most, 20 seconds apart", "default role assignment policy"):
             self.assertIn(words, doc)
 
 
