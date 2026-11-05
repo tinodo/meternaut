@@ -92,6 +92,7 @@ About zero a month more, on top of the 13 US dollars a month that the cases app'
 | The runner's calls are the role's actions | A test that maps each call of the runner to an action and compares the list with the manifest of the access requirements |
 | A letter goes to a listed person only, once, with no resource name in its subject | Tests of the mailer and of the letters |
 | The front door is shut | `tools/console-check.py door` in the action `loop-check`: no page without sign-in, a forged header opens nothing |
+| A form POST of a browser reaches the app through the platform's sign-in | The browser check of [rule 28](../../AGENTS.md) after every deploy that changes the console: a POST to a plan id that does not exist is answered by the console's own page and shows in the telemetry. No workflow can run it (it needs a signed-in browser), and the first version of the console failed it: every form POST was refused with an empty 403 (changelog, 2026-11-05) |
 | The sign-in app has no secret | `tools/entra-setup.py check` |
 | The change really happened | Resource Manager answers 404 for the planted disk; the Activity Log shows one delete by the runner's identity; the console and a letter say so |
 
@@ -109,6 +110,7 @@ Written down so that nobody has to find them.
 - **The saving of a new resource is unknown at first.** A resource that was made a moment ago has no cost lines, so the plan shows no saving and says so; the check two days later reads the cost lines.
 - **Only two kinds of resource.** The writer cannot delete anything else, and it cannot resize, stop or buy anything. A resize and a reservation are later families, each behind its own role and its own proof.
 - **The History workbook still depends on the viewer's network.** The console shows the same runs and cases from the store.
+- **A form sent after the sign-in has expired is untested.** The platform then answers the POST with a redirect to Microsoft Entra, and the page's `form-action 'self'` may make a Chromium browser block that redirect. Reloading the page starts a new sign-in, because a GET without a session is sent to Entra.
 
 ## Not built, and next
 
