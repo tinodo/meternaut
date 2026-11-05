@@ -1,0 +1,87 @@
+{
+  "version": 1,
+  "about": "The access that Meternaut needs outside its own resource group. The deployment workflow's identity holds no right there and must not get one (AGENTS.md rule 18), so a person who may assign roles at each place grants it. Each line of grants is one role of one identity at one place. tools/access-requirements.py reads this file: it checks what is granted and, only with --apply, grants what is missing. docs/proposals/03-access-and-onboarding.md shows the table that the tool prints, and a test keeps the two the same.",
+  "identities": {
+    "cases": { "name": "id-meternaut-cases", "madeBy": "cases" },
+    "usage": { "name": "id-meternaut-usage", "madeBy": "recording" }
+  },
+  "places": {
+    "estate": "Each subscription that the Watch reads (the app setting SCOPE_SUBSCRIPTIONS), or a management group above them",
+    "gatewayProductSubscription": "The one subscription of the gateway's access product that the Watch uses, below the API Management instance",
+    "gatewayInsights": "The gateway's Application Insights component",
+    "centralWorkspace": "The central workspace that the component writes to"
+  },
+  "roles": {
+    "Reader": {
+      "kind": "builtin",
+      "id": "acdd72a7-3385-48ef-bd42-f606fba81ae7"
+    },
+    "Cost Management Reader": {
+      "kind": "builtin",
+      "id": "72fafb9e-0641-4937-9268-a91bfd8191a3"
+    },
+    "Monitoring Reader": {
+      "kind": "builtin",
+      "id": "43d0d8ad-25c7-4714-9337-8ba259a9fe05"
+    },
+    "Meternaut gateway key reader": {
+      "kind": "custom",
+      "definedIn": "gatewayGroup",
+      "description": "Reads the key of one gateway subscription, so that the first cases of Meternaut can call the models through the gateway. Nothing else.",
+      "actions": [
+        "Microsoft.ApiManagement/service/subscriptions/read",
+        "Microsoft.ApiManagement/service/subscriptions/listSecrets/action"
+      ]
+    },
+    "Meternaut usage reader": {
+      "kind": "custom",
+      "definedIn": "workspaceGroup",
+      "description": "Reads one table (AppMetrics, the metrics of workspace-based Application Insights) of the central workspace, so that the usage copy job of Meternaut can read the gateway token metrics. Nothing else.",
+      "actions": [
+        "Microsoft.OperationalInsights/workspaces/read",
+        "Microsoft.OperationalInsights/workspaces/query/read",
+        "Microsoft.OperationalInsights/workspaces/query/AppMetrics/read"
+      ]
+    }
+  },
+  "grants": [
+    {
+      "id": "R1",
+      "identity": "cases",
+      "role": "Reader",
+      "place": "estate",
+      "why": "Reads the resources, their tags and management locks, and Azure Advisor's cost recommendations: the detectors and the guards of the Watch. The role reads and changes nothing",
+      "calls": ["resource-graph-query", "advisor-read", "locks-read"]
+    },
+    {
+      "id": "R2",
+      "identity": "cases",
+      "role": "Cost Management Reader",
+      "place": "estate",
+      "why": "Reads the cost lines of every resource for the last 30 days, so that every figure is Cost Management's and never a model's",
+      "calls": ["cost-management-query"]
+    },
+    {
+      "id": "R3",
+      "identity": "cases",
+      "role": "Meternaut gateway key reader",
+      "place": "gatewayProductSubscription",
+      "why": "Reads the one key of the gateway's access product at the start of each run, because the gateway always asks for it. The role allows that read and nothing else of the gateway (the one remaining key: AGENTS.md rule 23)",
+      "calls": ["gateway-key-read"]
+    },
+    {
+      "id": "R4",
+      "identity": "usage",
+      "role": "Monitoring Reader",
+      "place": "gatewayInsights",
+      "why": "Reads the gateway's Application Insights component, where the gateway records the token metrics of every call"
+    },
+    {
+      "id": "R5",
+      "identity": "usage",
+      "role": "Meternaut usage reader",
+      "place": "centralWorkspace",
+      "why": "Reads one table (AppMetrics) of the central workspace. The component is workspace-based and the workspace asks for workspace permissions, so the role on the component alone returns no rows"
+    }
+  ]
+}
