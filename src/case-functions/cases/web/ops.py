@@ -15,11 +15,11 @@ PAUSE_WHY = "Your role ops lets you stop work at three levels."
 def permissions(ctx: Ctx) -> Response:
     parts: list[object] = [
         Safe("<h1>Standing permissions</h1>"),
-        paragraph("A standing permission would let Meternaut make a kind of change without asking each time. None exists. Meternaut makes a change only after a person approves "
-                  "that exact change on its own page.", "lead"),
+        paragraph("Meternaut holds no permission to change Azure. A change is made only after a person approves that exact change on its own page and signs in to Azure: "
+                  "it is made with that person's own permissions, and Azure refuses it if the person may not make it.", "lead"),
         paragraph("This page only shows what exists. It cannot write, change or end a permission."),
-        Safe("<h2>What the runner may change</h2>"),
-        paragraph(fmt("The runner may only {writer}. It changes nothing else.", writer=ctx.services.writer)),
+        Safe("<h2>What Meternaut can change in Azure</h2>"),
+        paragraph(fmt("On its own, nothing. The code makes only this change, and only for a person who approved it: {acts_on}.", acts_on=ctx.services.acts_on)),
     ]
     return page(ctx, "Standing permissions", join(block(p) for p in parts), current="/ops/permissions", why=PERMISSIONS_WHY)
 

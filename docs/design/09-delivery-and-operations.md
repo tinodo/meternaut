@@ -21,7 +21,7 @@ One repository defines the system, so a release is one set of pins. Every path h
 | `.github/` | Workflows, CODEOWNERS, rulesets | Security reviewers |
 | `docs/` | Design, decisions, runbooks | Platform team |
 
-**Templates and message catalogs are code.** A change to one passes, on every commit and merge, the card lint, a renderer check with Microsoft's Adaptive Cards libraries, snapshot tests and, for every template and language, the comprehension check ([08](08-testing-and-evaluation.md#what-runs-for-which-change)). They cost pipeline minutes and, for the comprehension check, tokens on the evaluation lines of [the cost model](10-cost-and-finops.md).
+**Templates and message catalogs are code.** A change to one passes, on every commit and merge, the card lint, a renderer check with Microsoft's Adaptive Cards libraries, snapshot tests and, for every template and language, the comprehension check ([08](08-testing-and-evaluation.md#what-runs-for-which-change)).
 
 **Merge rules for `atlas/`, `detectors/` and the other owned paths** are enforced by the rulesets in `.github/`: a code owner's approval from someone other than the last pusher, stale approvals dismissed on a new commit, no App on any bypass list, and the Atlas review check accepted only from its App. Workflows that run on a fork's pull request use the `pull_request` event with no secret and a read-only token, never `pull_request_target`.
 
@@ -33,7 +33,7 @@ One repository defines the system, so a release is one set of pins. Every path h
 
 **Two profiles, one codebase.** The Bicep parameter `profile` (`evaluate` or `operate`) switches private endpoints, the Foundry network setting, the AI Search tier and public access ([02](02-architecture.md)). A pre-release job deploys a short-lived `operate` environment in the dev subscription, runs the isolation, restore and kill-switch checks, and deletes it. That environment keeps audit storage on an unlocked retention policy: a locked one cannot be removed and blocks deleting the account ([Learn](https://learn.microsoft.com/azure/storage/blobs/immutable-storage-overview)). Production locks it after its restore test.
 
-**Code, not clicks.** Contracts deploy with the hub's modules, what-if first; keys go to Key Vault, never into a parameter file. Action templates are code too: each one's CI test deploys a tiny resource to dev and deletes it.
+**Code, not clicks.** Contracts deploy with the hub's modules, what-if first; keys go to Key Vault, never into a parameter file.
 
 **Zip deployment, no registry.** Hosted agents deploy from a zip (`code_configuration`) with `bundled` dependencies, so the bytes CI tested are the bytes that run; the service stores the zip's SHA-256 and returns the deployed zip for comparison. Function apps on [Flex Consumption](https://learn.microsoft.com/azure/azure-functions/flex-consumption-plan) run from a zip in a blob container.
 
@@ -76,7 +76,7 @@ stateDiagram-v2
 
 A hold freezes production on the last good release until a person decides. Rollback is automatic only right after a deploy; a later regression raises an alert and a person starts it.
 
-CI runs lint, unit and schema checks, the zero-LLM suites ([08](08-testing-and-evaluation.md)), Bicep what-if, a secret scan and the SBOM. After the dev deploy come isolation and negative-path tests, Action-template tests and the evaluation subset. People run three more checks outside CI: people tests, the client matrix and the accessibility audit ([08](08-testing-and-evaluation.md#8-the-path-of-a-change-and-what-blocks-a-release)).
+CI runs lint, unit and schema checks, the zero-LLM suites ([08](08-testing-and-evaluation.md)), Bicep what-if, a secret scan and the SBOM. After the dev deploy come isolation and negative-path tests, Action-template tests and the evaluation subset ([08](08-testing-and-evaluation.md#8-the-path-of-a-change-and-what-blocks-a-release)).
 
 In the Operate profile the Foundry endpoint is private, so `azd deploy` fails from a public workstation or a standard GitHub-hosted runner ([Learn](https://learn.microsoft.com/azure/foundry/agents/how-to/virtual-networks)). Jobs that touch private data planes run inside the spoke network, on a small self-hosted runner or [GitHub larger runners with Azure private networking](https://docs.github.com/en/organizations/managing-organization-settings/about-azure-private-networking-for-github-hosted-runners-in-your-organization).
 
@@ -103,6 +103,8 @@ Deployment Stacks give the solution's own resources drift control: a deny settin
 |---|---|
 | The solution's own stacks | Subscription scope, resource groups in the template, `denyWriteAndDelete`. Two excluded groups (deploy identities, platform break-glass): Learn caps exclusions at five and accepts more silently, so CI counts them. The runner has no role here and is not excluded; changes arrive as pull requests on `infra/` |
 | A resource in the adopting organisation's stack | The planner lists deny assignments at the target ([Learn](https://learn.microsoft.com/azure/role-based-access-control/deny-assignments)). If one covers the resource and excludes the runner's identity, the Action runs. Otherwise the Engineer drafts a pull request on the stack's source for a human to merge |
+
+**Superseded in part on 2026-11-05:** the runner's identity and roles in this document. A change runs as the approver; see [decision 24](12-decisions.md#24-a-change-runs-as-the-approver-meternaut-holds-no-right-to-change-azure--accepted) and [proposal 05](../proposals/05-run-as-the-approver.md).
 
 Deny settings do not stop deleting a resource group when the stack sits at that scope, moving a resource out of its group, or changing implicitly created resources. Stacks cannot manage Graph resources (a bootstrap step owns Entra objects) and have no what-if, so the pipeline runs it on the template ([Learn](https://learn.microsoft.com/azure/azure-resource-manager/bicep/deployment-stacks-known-issues)).
 
@@ -191,7 +193,7 @@ What each part needs, as facts:
 | Entra permissions | Create app registrations and assign app roles (agent identities, federated identity credentials) |
 | Entra ID P1 | Conditional Access with authentication context on the R2 and R3 approval page ([Learn](https://learn.microsoft.com/entra/identity/conditional-access/overview#license-requirements)) |
 | Entra ID Governance or P2 | Access reviews ([Learn](https://learn.microsoft.com/entra/id-governance/access-reviews-overview#license-requirements)); PIM for human admin roles (PIM cannot make service principals eligible) |
-| Microsoft 365 | Teams cards; an Exchange Online shared mailbox. `Mail.Send` as an application permission sends as any user: grant it only through [Exchange RBAC for Applications](https://learn.microsoft.com/exchange/permissions-exo/application-rbac), scoped to the shared mailbox, with no organisation-wide Entra consent (the two add up), and add a mail-flow rule that rejects mail from that mailbox to any address not on the recipient allow-list. Without it: the web page |
+| Microsoft 365 | Teams cards; an Exchange Online shared mailbox. `Mail.Send` as an application permission sends as any user: grant it only through [Exchange RBAC for Applications](https://learn.microsoft.com/exchange/permissions-exo/application-rbac), scoped to the shared mailbox and with no organisation-wide Entra consent ([data and integrations](05-data-and-integrations.md#6-channels) adds the mail-flow rule). Without it: the web page |
 | Cost data | Exports need Owner, Contributor or Cost Management Contributor on the scope, or a billing role at billing scope; a firewalled storage account also needs Owner on it (or a custom role that can assign roles) during creation, and trusted-service access ([Learn](https://learn.microsoft.com/azure/cost-management-billing/costs/tutorial-improved-exports)). With Cost Management Reader alone, the system reads through the Cost Details or Query API ([agreements and access](14-agreements-and-access.md)) |
 | Network (Operate) | In the Foundry account's region: a subnet for the Foundry agents, delegated to `Microsoft.App/environments` (/27 minimum; /24 recommended, because a new agent version takes extra addresses while old and new run together; one Foundry account only), a second delegated subnet for the Function apps (a Container Apps environment and a Flex Consumption app cannot share one), a subnet for the private endpoints, private DNS, and a runner inside the network |
 
@@ -215,4 +217,4 @@ Purchases (R3) are a separate opt-in in phase 4. Offboarding reverses steps 7 to
 
 ## 10. Operating costs and budgets
 
-Each of the solution's own subscriptions gets a budget and a [cost anomaly alert](https://learn.microsoft.com/azure/cost-management-billing/understand/analyze-unexpected-charges#create-an-anomaly-alert), as Bicep, with thresholds as parameters. Budgets only alert and arrive late; the hard stops are in [safeguards and drift](07-safeguards-and-drift.md). Costs and levers are in [the cost document](10-cost-and-finops.md).
+Each of the solution's own subscriptions gets a budget and a [cost anomaly alert](https://learn.microsoft.com/azure/cost-management-billing/understand/analyze-unexpected-charges#create-an-anomaly-alert), as Bicep, with thresholds as parameters. Budgets only alert and arrive late; the hard stops are in [safeguards and drift](07-safeguards-and-drift.md).

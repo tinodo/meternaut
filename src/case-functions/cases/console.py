@@ -2,22 +2,26 @@
 
 The platform's built-in sign-in (Microsoft Entra, with a federated credential and no secret) stands in front of every route but /healthz, and it adds the
 headers that say who the person is. If it is not on, those headers could be made up by anybody, so the app refuses every request (503) and serves nothing
-but /healthz. The pages themselves are in the web package; nothing here makes a page.
+but /healthz. The pages themselves are in the web package; nothing here makes a page. A change is made with the approving person's own token (delegated.py):
+this module wires the two clients that go with it, and the app holds no right of its own to change Azure.
 """
 from __future__ import annotations
 
 import logging
 import os
 import time
+import uuid
 from typing import Callable, Mapping
 
 from . import config as cfg
-from . import loop_config, people as people_mod, web, wiring
+from . import delegated, loop_config, people as people_mod, runner, web, wiring
 from .approvals import Approvals
-from .http import default_transport
+from .events import History
+from .http import Client, default_transport
 from .identity import Identity
 from .memory_store import utc_now
 from .redact import Redactor
+from .runner import RunnerServices
 
 LOG = logging.getLogger("meternaut.console")
 AUTH_FLAG = "WEBSITE_AUTH_ENABLED"
@@ -35,13 +39,30 @@ def build_services(env: Mapping[str, str], *, transport=default_transport, sleep
         raise loop_config.LoopConfigError("the loop is not configured")
     people = people_mod.load(env)
     redact = Redactor()
-    identity = Identity(env, **({"fetch": fetch} if fetch else {}))
+    options = {"fetch": fetch} if fetch else {}
+    identity = Identity(env, **options)
     store = wiring.build_store(settings, identity.token, redact, transport=transport, sleep=sleep, monotonic=monotonic, clock=clock)
-    approvals = Approvals(store, wiring.approval_settings(settings), clock)
+    approval = wiring.approval_settings(settings)
+    approvals = Approvals(store, approval, clock)
     watch = cfg.load(env)
-    writer = (f"delete an unattached managed disk or an unassigned public IP address that carries the tag {settings.planted_tag}, "
-              f"in resource group {settings.writer_group} and nowhere else")
-    return web.Services(store=store, decider=approvals, people=people, now=clock, host=settings.console_host, writer=writer,
+    acts_on = (f"delete an unattached managed disk or an unassigned public IP address that carries the tag {settings.planted_tag}, "
+               f"in resource group {settings.change_group} and nowhere else")
+    history = History(uuid.uuid4().hex, None, clock, redact)
+    signin = delegated.settings_of(settings)
+    change_client = Client(runner.change_calls(settings.change_subscription, settings.change_group), redact, transport=transport, sleep=sleep, monotonic=monotonic)
+
+    def run(token: str) -> RunnerServices:
+        # The person's own token, for the one request that makes the change: nothing keeps it.
+        return RunnerServices(store, change_client, lambda resource: token, approval, settings.change_subscription, clock=clock, sleep=sleep, emit=history.emit)
+
+    if signin is None:
+        def redeem(code: str, verifier: str) -> delegated.Tokens:
+            raise delegated.SigninError("Signing in to Azure is not set up here. Nothing is approved.")
+    else:
+        redeem = delegated.TokenClient(signin, Identity({**env, "AZURE_CLIENT_ID": signin.assertion_client_id}, **options).token,
+                                       Client(delegated.token_calls(signin), redact, transport=transport, sleep=sleep, monotonic=monotonic)).redeem
+    delegate = delegated.Delegation(store, approvals, signin, redeem, run, emit=history.emit)
+    return web.Services(store=store, decider=approvals, delegate=delegate, people=people, now=clock, host=settings.console_host, acts_on=acts_on,
                         models=(watch.model_detective, watch.model_skeptic))
 
 

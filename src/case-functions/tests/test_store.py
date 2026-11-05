@@ -9,7 +9,7 @@ from support import APP_ROOT  # noqa: F401  (puts the app on the path)
 from cases.http import Client
 from cases.memory_store import MemoryStore, stamp
 from cases.models import (ActionRecord, CaseRecord, DecisionRecord, MailRecord, NoteRecord, PlanRecord, RunRecord, SettingsRecord, StoreError, SwitchRecord)
-from cases.store import MAX_DATA, RESOURCE, TableStore, table_calls
+from cases.store import MAX_DATA, MAX_NONCE_DATA, RESOURCE, TableStore, table_calls
 
 ACCOUNT = "stexample"
 OID = "aaaaaaaa-1111-4222-8333-444444444444"
@@ -225,6 +225,22 @@ class StoreContract:
         self.assertEqual(self.store.action_get("p1").verification, {"gone": True})
         self.assertEqual([a.plan_id for a in self.store.actions_recent()], ["p1"])
 
+    def test_the_action_of_a_plan_is_claimed_once_and_released_only_while_it_has_not_started(self):
+        queued = ActionRecord(plan_id="p9", case_id="k1", family="delete-disk", resource_id="/r", state="queued", queued_at="2026-11-05T09:00:00Z")
+        rival = ActionRecord(plan_id="p9", case_id="k1", family="delete-disk", resource_id="/r", state="queued", queued_at="2026-11-05T09:00:01Z", correlation_id="rival")
+        self.assertTrue(self.store.action_claim(queued))
+        self.assertFalse(self.store.action_claim(rival), "the second claim of the same plan loses")
+        self.assertEqual(self.store.action_get("p9"), queued, "and changes nothing")
+        self.store.action_release("p9")
+        self.assertIsNone(self.store.action_get("p9"))
+        self.assertTrue(self.store.action_claim(rival), "a released claim can be made again")
+        self.store.action_put(ActionRecord(plan_id="p9", case_id="k1", family="delete-disk", resource_id="/r", state="running", queued_at="2026-11-05T09:00:01Z",
+                                           started_at="2026-11-05T09:00:05Z"))
+        self.store.action_release("p9")
+        self.assertEqual(self.store.action_get("p9").state, "running", "an action that has started is never released")
+        self.store.action_release("nothing-here")
+        self.assertFalse(self.store.action_claim(queued))
+
     def test_switches_start_released_and_keep_what_was_set(self):
         self.assertEqual([s.paused for s in self.store.switches()], [False, False, False])
         self.store.switch_put(SwitchRecord(name="changes", paused=True, by=OID, at="2026-11-05T09:00:00Z", reason="drill"))
@@ -265,6 +281,30 @@ class StoreContract:
         self.assertFalse(self.store.nonce_use(late, OID, "plan-1"))
         self.assertFalse(self.store.nonce_use("not-a-token", OID, "plan-1"))
         self.assertFalse(self.store.nonce_use("", OID, "plan-1"))
+
+    def test_a_one_time_token_can_hold_data_that_is_given_back_once_to_the_same_person_and_purpose(self):
+        data = json.dumps({"verifier": "v" * 43, "nonce": "n" * 22})
+        token = self.store.nonce_new(OID, "signin:p1", 600, data)
+        self.assertIsNone(self.store.nonce_take(token, OTHER, "signin:p1"), "another person gets nothing, and the token stays for the right one")
+        self.assertIsNone(self.store.nonce_take(token, OID, "signin:p2"))
+        self.assertEqual(self.store.nonce_take(token, OID, "signin:p1"), data)
+        self.assertIsNone(self.store.nonce_take(token, OID, "signin:p1"), "it is given back once")
+
+    def test_a_token_without_data_gives_back_an_empty_text_and_not_nothing(self):
+        token = self.store.nonce_new(OID, "plan-1", 60)
+        self.assertEqual(self.store.nonce_take(token, OID, "plan-1"), "")
+
+    def test_an_expired_token_gives_back_nothing_and_is_gone(self):
+        token = self.store.nonce_new(OID, "p", 60, "a-verifier")
+        self.clock.advance(seconds=61)
+        self.assertIsNone(self.store.nonce_take(token, OID, "p"))
+        self.assertIsNone(self.store.nonce_take(token, OID, "p"))
+        self.assertFalse(self.store.nonce_use(token, OID, "p"))
+
+    def test_a_token_that_is_used_with_nonce_use_takes_its_data_with_it(self):
+        token = self.store.nonce_new(OID, "p", 60, "a-verifier")
+        self.assertTrue(self.store.nonce_use(token, OID, "p"))
+        self.assertIsNone(self.store.nonce_take(token, OID, "p"))
 
     def test_mails_since_counts_the_messages_of_one_person(self):
         for index, when in enumerate(("2026-11-03T09:00:00Z", "2026-11-05T09:00:00Z", "2026-11-05T10:00:00Z")):
@@ -378,6 +418,20 @@ class TableStoreOnItsOwn(unittest.TestCase):
             for (_, key), (row, _) in table.items():
                 self.assertNotIn(token, json.dumps(row))
                 self.assertNotEqual(key, token)
+
+    def test_the_data_of_a_token_is_in_the_row_and_never_in_a_key_or_a_web_address(self):
+        token = self.store.nonce_new(OID, "a", 60, "the-verifier-text")
+        self.assertFalse(any("the-verifier-text" in url or token in url for _, url in self.service.calls), "only the digest of the token is in an address")
+        rows = [row for table in self.service.tables.values() for (_, key), (row, _) in table.items()]
+        self.assertEqual([row.get("payload") for row in rows], ["the-verifier-text"])
+        self.assertEqual(self.store.nonce_take(token, OID, "a"), "the-verifier-text")
+
+    def test_data_that_is_too_large_for_a_token_is_refused_before_any_call(self):
+        before = len(self.service.calls)
+        with self.assertRaises(StoreError):
+            self.store.nonce_new(OID, "a", 60, "x" * (MAX_NONCE_DATA + 1))
+        self.assertEqual(len(self.service.calls), before)
+        self.store.nonce_new(OID, "a", 60, "x" * MAX_NONCE_DATA)
 
     def test_a_name_that_is_not_a_storage_account_is_refused(self):
         for name in ("", "UPPER", "has-dash", "x" * 25, "ab"):

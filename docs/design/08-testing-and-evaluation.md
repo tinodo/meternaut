@@ -125,11 +125,13 @@ These suites run before each autonomy level is enabled and on every release that
 
 **How the attacks are made.** [PyRIT](https://github.com/microsoft/PyRIT) (MIT, Microsoft's open-source red-team framework) is the engine; its attacker and scorer run on the `judge` alias through the `evaluation` contract. Targets are the project's own: the workflow endpoint and each hosted agent in dev, with tools serving planted payloads. A person reads every finding, because the scores come from generative models.
 
-**What the AI Red Teaming Agent covers.** It builds on PyRIT and Foundry's safety evaluators ([concept](https://learn.microsoft.com/azure/foundry/concepts/ai-red-teaming-agent)). Cloud runs support Foundry prompt agents and hosted container agents with Azure tool calls, not workflow agents, non-Foundry agents, non-Azure tools or function tool calls. Its agentic categories run only in the cloud, on synthetic data and mock tools, single-turn and in English. The system's hosted agents call hub-published tools from code, which it does not cover, so it cannot exercise the real tool paths. It is an optional extra for content risks, behind a switch; PyRIT with the project's own targets is the injection test.
+**What the AI Red Teaming Agent covers.** It builds on PyRIT and Foundry's safety evaluators ([concept](https://learn.microsoft.com/azure/foundry/concepts/ai-red-teaming-agent)). Cloud runs support Foundry prompt agents and hosted container agents with Azure tool calls, not workflow agents, non-Foundry agents, non-Azure tools or function tool calls. The system's hosted agents call hub-published tools from code, which it does not cover, so it cannot exercise the real tool paths. It is an optional extra for content risks, behind a switch; PyRIT with the project's own targets is the injection test.
 
 ## 7. The action plane's own tests
 
 The action plane is the only writer, so its tests are the strictest and involve no model. Most run on fakes for ARM, Entra and the stores, in tier 1. A few need real Azure behaviour and run on tiny resources in the dev subscription, created by the Action-template tests and torn down afterwards: software testing, not learning.
+
+**Superseded in part on 2026-11-05:** the tests of the runner, its roles, Credentials and the automatic rollback. A change runs as the approver; see [decision 24](12-decisions.md#24-a-change-runs-as-the-approver-meternaut-holds-no-right-to-change-azure--accepted) and [proposal 05](../proposals/05-run-as-the-approver.md).
 
 | Test and what it does | It passes when |
 |---|---|
@@ -193,7 +195,7 @@ Four levers keep the tokens small. The numbers are in [cost and FinOps](10-cost-
 | **Subsets and sampling** | A prompt change runs that role's suite and the end-to-end cases that use it; the full set runs once per release candidate. Production is scored on a sample | Interactions show up only at release; slow drift between samples |
 | **Reuse** | A frozen baseline is computed once per suite version and reused by every candidate. Composite evaluators (preview) score several criteria in one call | Baselines go stale when the suite changes; composite scores are coarser |
 | **Flex (preview)** | [Flex processing](https://learn.microsoft.com/azure/foundry/openai/how-to/flex-processing) costs half the Standard token price for delay-tolerant runs on synthetic estates, chosen per request or by the `x-ms-service-tier` header, which a gateway can set. Listed Azure OpenAI models and Global Standard only; HTTP 429 when capacity is short; no SLA; no automatic fallback | Standard at full price is a recorded per-run decision; [Batch](https://learn.microsoft.com/azure/foundry/openai/how-to/batch) (24-hour target, half price) is the other option. The judge, replays and production samples run at Standard: another family, and the organisation's data boundary |
-| **Foundry meters** | Risk and safety evaluations, red-team runs and playground evaluations bill on their own meter ([cost](10-cost-and-finops.md)), and playground evaluations are on by default. The project runs safety suites with PyRIT and its own graders and switches playground evaluations off | Foundry's safety evaluators stay an optional extra |
+| **Foundry meters** | Foundry's risk and safety evaluations, red-team runs and playground evaluations bill on their own meter ([cost](10-cost-and-finops.md)); the project uses PyRIT and its own graders and switches the playground ones off | Foundry's safety evaluators stay an optional extra |
 
 ## 10. What testing does not prove
 

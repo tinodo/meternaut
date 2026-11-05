@@ -102,7 +102,7 @@ Eight controls are visible: three decisions, four toggles and "Talk to a person"
 
 **The page may open inside Teams.** For a purchase, C5 says "Opens in your browser. If Teams opens it in its own view and your passkey or security key is not accepted, use the link in the e-mail I sent." ([Web pages](06-web-pages.md) says when that e-mail is sent.)
 
-A plan card cannot make a person read the plan; the cap, Undo and the [runner](../design/06-security-and-governance.md#5-action-plane-safety)'s refusal to run anything the plan does not name stand between a tired tap and a bad change.
+A plan card cannot make a person read the plan; the cap, Undo and an [allow-list](../design/06-security-and-governance.md#5-action-plane-safety) that refuses anything the plan does not name stand between a tired tap and a bad change.
 
 ## The seventeen cards
 

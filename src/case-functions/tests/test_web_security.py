@@ -1,16 +1,18 @@
 import re
 import unittest
 
-from test_web_support import (HOST, MAYA, OPS, OWNER, STRANGER, TINO, XSS, XSS_ESCAPED, Console, FailingStore, make_action, make_case, make_decision, make_plan, make_run, at,
-                              snapshot)
+from test_web_support import (HOST, MAYA, OPS, OWNER, SIGNIN_URL, STRANGER, TINO, XSS, XSS_ESCAPED, Console, FailingStore, make_action, make_case, make_decision, make_plan,
+                              make_run, at, snapshot)
 
-from cases.models import ActionRecord, DecideResult, NoteRecord, SettingsRecord, SwitchRecord
+from cases.models import ActionRecord, Begun, DecideResult, NoteRecord, SettingsRecord, SwitchRecord
 from cases.people import People, Person
 from cases.web import Request, handle, parse_request
 
 FORM = "application/x-www-form-urlencoded"
+LOGIN_ORIGIN = "https://login.microsoftonline.com"
+APPROVE = "Approve and sign in to Azure"
 REQUIRED = {
-    "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
+    "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; form-action 'self' https://login.microsoftonline.com; frame-ancestors 'none'; base-uri 'none'",
     "X-Frame-Options": "DENY",
     "X-Content-Type-Options": "nosniff",
     "Referrer-Policy": "same-origin",
@@ -18,6 +20,12 @@ REQUIRED = {
 }
 GET_PATHS = ["/", "/ok/plan0001", "/why/case0001", "/history", "/history?run=run00001", "/me/decisions", "/me/activity", "/me/settings", "/me/notes",
              "/ops/permissions", "/ops/pause"]
+# Where the sign-in to Azure sends the person back to. It is the one GET that goes on to a change, and only through the delegate and with the one-time state of the sign-in.
+RETURN = "/arm/return?code=" + "c" * 24 + "&state=" + "s" * 24
+RESULT_KINDS = ("declined", "asked", "not_mine", "ran", "ran_unconfirmed", "stopped", "azure_refused", "failed", "signin_failed", "refused_code", "refused_state", "refused_role",
+                "refused_paused", "expired", "duplicate", "error")
+# The kinds whose page shows the message of the result.
+SHOWS_THE_MESSAGE = ("ran", "ran_unconfirmed", "stopped", "azure_refused", "failed", "signin_failed", "refused_state", "error")
 
 
 def seeded() -> Console:
@@ -54,7 +62,7 @@ class Headers(unittest.TestCase):
 
     def test_every_page_carries_the_headers_and_a_content_type_with_a_charset(self):
         console = seeded()
-        for path in GET_PATHS:
+        for path in GET_PATHS + [RETURN]:
             with self.subTest(path=path):
                 reply = console.get(path)
                 self.assertEqual(reply.status, 200)
@@ -65,7 +73,7 @@ class Headers(unittest.TestCase):
         # empty 403 before the app is reached: the approve button failed on 2026-11-05 (AGENTS.md rule 28). Neither the Python harness nor the Hub's check sends such a request,
         # so this test is what holds the policy. A form or a page that sets its own policy has the same effect, so none may.
         console = seeded()
-        for path in GET_PATHS:
+        for path in GET_PATHS + [RETURN]:
             with self.subTest(path=path):
                 reply = console.get(path)
                 policy = reply.headers.get("Referrer-Policy")
@@ -81,6 +89,7 @@ class Headers(unittest.TestCase):
 
     def test_the_errors_carry_them_too(self):
         console = seeded()
+        console.delegate.finished = DecideResult(False, "failed", "a message of the delegate", make_plan())
         replies = {
             "no sign-in": console.get("/", oid=None),
             "not listed": console.get("/", oid=STRANGER),
@@ -94,11 +103,32 @@ class Headers(unittest.TestCase):
             "not your request": console.get("/ok/plan0001", oid=MAYA),
             "no such request": console.get("/ok/nothing"),
             "no such case": console.get("/why/nothing"),
+            "the route to cancel an approval is gone": console.post("/ok/plan0001/withdraw", {"nonce": "x"}),
+            "a method that the return does not take": console.post("/arm/return", {}),
+            "the change failed": console.get(RETURN),
         }
         for name, reply in replies.items():
             with self.subTest(name=name):
                 self.assertGreaterEqual(reply.status, 400)
                 self.check(reply)
+
+    def test_the_redirect_to_the_sign_in_carries_them_too(self):
+        console = seeded()
+        form = console.get("/ok/plan0001").form("/ok/plan0001", has_button=APPROVE)
+        reply = console.submit(form, APPROVE)
+        self.assertEqual((reply.status, reply.headers["Location"], reply.body), (303, SIGNIN_URL, b""))
+        self.check(reply)
+
+    def test_the_page_of_every_kind_of_result_carries_them(self):
+        console = seeded()
+        form = console.get("/ok/plan0001").form("/ok/plan0001", has_button=APPROVE)
+        for kind in RESULT_KINDS:
+            with self.subTest(kind=kind):
+                result = DecideResult(kind in ("declined", "asked", "not_mine", "ran", "ran_unconfirmed"), kind, "a message", make_plan())
+                console.delegate.finished = result
+                console.delegate.begun = Begun(refusal=result)
+                self.check(console.get(RETURN))
+                self.check(console.submit(form, APPROVE))
 
     def test_the_health_probe_and_the_download_carry_them_with_their_own_content_types(self):
         console = seeded()
@@ -131,17 +161,64 @@ class Headers(unittest.TestCase):
         self.assertIn("Something went wrong on my side", reply.content)
 
 
+def directives(policy: str) -> dict[str, list[str]]:
+    return {part.split()[0]: part.split()[1:] for part in policy.split(";") if part.strip()}
+
+
+class TheContentSecurityPolicy(unittest.TestCase):
+    """The approve form is answered with a redirect to the sign-in of Microsoft Entra, and a browser checks the target of that redirect against `form-action`. So that origin is
+    allowed there and nowhere else, and every other directive stays as it was: no script, no outside file, no frame, no base address."""
+
+    def policies(self):
+        console = seeded()
+        form = console.get("/ok/plan0001").form("/ok/plan0001", has_button=APPROVE)
+        yield "page", console.get("/")
+        yield "redirect to the sign-in", console.submit(form, APPROVE)
+        yield "return from the sign-in", console.get(RETURN)
+        yield "error", console.get("/nothing")
+        yield "denial", console.get("/", oid=None)
+        yield "health probe", console.get("/healthz", oid=None)
+
+    def test_every_directive_is_pinned_on_every_kind_of_response(self):
+        for name, reply in self.policies():
+            with self.subTest(response=name):
+                self.assertEqual(directives(reply.headers["Content-Security-Policy"]), {
+                    "default-src": ["'none'"], "style-src": ["'unsafe-inline'"], "form-action": ["'self'", LOGIN_ORIGIN], "frame-ancestors": ["'none'"], "base-uri": ["'none'"]})
+
+    def test_the_sign_in_origin_is_named_for_forms_only_and_a_style_is_the_only_thing_that_may_be_inline(self):
+        policy = directives(REQUIRED["Content-Security-Policy"])
+        self.assertEqual([name for name, sources in policy.items() if LOGIN_ORIGIN in sources], ["form-action"])
+        self.assertEqual([name for name, sources in policy.items() if "'unsafe-inline'" in sources], ["style-src"])
+        self.assertNotIn("script-src", policy)
+        self.assertEqual(policy["default-src"], ["'none'"])
+
+
 class NoActiveContent(unittest.TestCase):
     def test_no_page_has_a_script_a_handler_a_frame_or_an_address_outside_the_console(self):
         console = seeded()
         console.store.note_put(NoteRecord("n1", TINO, "note", "text", f"/subscriptions/{'1' * 8}-1111-1111-1111-{'1' * 12}/resourceGroups/g/providers/p.q/t/n", "x", "you", at(days=-1), at(days=9), 0))
-        for path in GET_PATHS + ["/nothing"]:
+        for path in GET_PATHS + ["/nothing", RETURN]:
             for oid in (TINO, MAYA, OWNER, OPS):
                 with self.subTest(path=path, oid=oid):
                     reply = console.get(path, oid=oid)
                     self.assertEqual(active_content(reply), [])
                     self.assertNotIn("<script", reply.text.lower())
                     self.assertEqual(reply.problems, [])
+
+    def test_the_page_of_every_kind_of_result_has_no_script_no_handler_no_frame_and_no_address_outside_the_console(self):
+        console = seeded()
+        form = console.get("/ok/plan0001").form("/ok/plan0001", has_button=APPROVE)
+        for kind in RESULT_KINDS:
+            result = DecideResult(False, kind, "a message of the result", make_plan())
+            console.delegate.finished = result
+            console.delegate.begun = Begun(refusal=result)
+            for step, reply in (("return", console.get(RETURN)), ("begin", console.submit(form, APPROVE))):
+                with self.subTest(kind=kind, step=step):
+                    self.assertEqual(active_content(reply), [])
+                    self.assertNotIn("<script", reply.text.lower())
+                    self.assertEqual(reply.problems, [])
+                    for href in reply.links():
+                        self.assertRegex(href, r"^(/|#|mailto:)")
 
     def test_the_style_loads_nothing(self):
         reply = seeded().get("/")
@@ -173,9 +250,35 @@ class SignIn(unittest.TestCase):
         nobody = console.get("/", oid=None)
         stranger = console.get("/", oid=STRANGER)
         self.assertEqual((stranger.status, stranger.text), (nobody.status, nobody.text))
-        for path in GET_PATHS:
+        for path in GET_PATHS + [RETURN]:
             with self.subTest(path=path):
                 self.assertEqual(console.get(path, oid=STRANGER).status, 403)
+
+    def test_the_return_from_the_sign_in_is_for_a_listed_person_only_and_is_denied_like_any_page(self):
+        console = seeded()
+        nobody = console.get("/", oid=None)
+        for who in (None, STRANGER):
+            with self.subTest(who=who):
+                reply = console.get(RETURN, oid=who)
+                self.assertEqual((reply.status, reply.text), (nobody.status, nobody.text))
+        self.assertEqual(console.send("HEAD", RETURN, oid=STRANGER).status, 403)
+        self.assertEqual(console.delegate.finishes, [])
+
+    def test_the_person_at_the_return_is_the_one_of_the_headers_and_never_one_named_in_the_query(self):
+        console = seeded()
+        console.get("/arm/return", query={"oid": MAYA, "name": "Maya", "x-ms-client-principal-id": MAYA, "code": "c" * 24, "state": "s" * 24}, oid=TINO)
+        self.assertEqual([call["oid"] for call in console.delegate.finishes], [TINO])
+        self.assertEqual(console.get("/arm/return", query={"oid": TINO}, oid=STRANGER).status, 403)
+        self.assertEqual(len(console.delegate.finishes), 1)
+
+    def test_an_approval_is_started_for_the_signed_in_person_and_never_for_one_named_in_the_form(self):
+        console = seeded()
+        form = console.get("/ok/plan0001").form("/ok/plan0001", has_button=APPROVE)
+        named = {**form.fields, "decision": "approve", "oid": MAYA, "x-ms-client-principal-id": MAYA}
+        self.assertEqual(console.post("/ok/plan0001", named, oid=TINO).status, 303)
+        self.assertEqual([call["oid"] for call in console.delegate.begins], [TINO])
+        self.assertEqual(console.post("/ok/plan0001", {**form.fields, "decision": "approve", "oid": TINO}, oid=STRANGER).status, 403)
+        self.assertEqual(len(console.delegate.begins), 1)
 
     def test_a_name_in_the_headers_is_not_enough(self):
         console = seeded()
@@ -283,7 +386,17 @@ class GetsChangeNothing(unittest.TestCase):
                     console.get(path, oid=oid)
                     self.assertEqual(snapshot(console.store), before)
         self.assertEqual(console.decider.calls, [])
-        self.assertEqual(console.decider.withdrawals, [])
+        self.assertEqual((console.delegate.begins, console.delegate.finishes), ([], []))
+
+    def test_the_return_from_the_sign_in_is_the_one_get_that_reaches_the_delegate_and_the_page_writes_nothing_itself(self):
+        console = seeded()
+        before = snapshot(console.store)
+        for path in GET_PATHS + ["/nothing", "/history?run=nothing", "/ok/plan0001/withdraw"]:
+            console.get(path)
+        self.assertEqual((console.delegate.begins, console.delegate.finishes), ([], []))
+        console.get(RETURN)
+        self.assertEqual(len(console.delegate.finishes), 1)
+        self.assertEqual(snapshot(console.store), before, "a change is made by the delegate, with the one-time state of the sign-in, and never by the page")
 
     def test_a_head_request_is_a_get_without_a_body(self):
         console = seeded()
@@ -378,7 +491,7 @@ class XssEverywhere(unittest.TestCase):
 
     def console(self, state: str = "approved") -> Console:
         people = People((Person(TINO, "Tino " + XSS, ("owner", "approver", "ops"), "tino@example.com"), Person(MAYA, "Maya", ("approver",), "")))
-        console = Console(people=people, writer=XSS, models=(XSS, "m2"))
+        console = Console(people=people, acts_on=XSS, models=(XSS, "m2"))
         store = console.store
         store.run_put(make_run(trigger=XSS, notes=(XSS,), ok=False, reason=XSS))
         store.case_put(make_case(resource_name=XSS, resource_group=XSS, resource_type=XSS, subscription_id=XSS, resource_id=XSS, detector=XSS, summary=XSS,
@@ -388,7 +501,7 @@ class XssEverywhere(unittest.TestCase):
         store.case_put(make_case(case_id='odd"><b>id', resource_name="odd id", plan_id=None, run_id="run00001"))
         store.plan_put(make_plan(title=XSS, what_changes=XSS, could_go_wrong=XSS, undo=XSS, evidence_level=XSS, resource_name=XSS, resource_group=XSS, resource_id=XSS,
                                  code="7F3K92QD", family=XSS, approvers=(TINO, MAYA), state=state))
-        store.action_put(ActionRecord("plan0001", "case0001", XSS, XSS, "queued", at(minutes=-1), start_after=at(minutes=1), result=XSS, error=XSS,
+        store.action_put(ActionRecord("plan0001", "case0001", XSS, XSS, "queued", at(minutes=-1), result=XSS, error=XSS,
                                       verification={"note": XSS, "gone": True, XSS: XSS}, correlation_id=XSS))
         store.decision_put(make_decision(note=XSS, approver_name=XSS, plan_code=XSS))
         store.note_put(NoteRecord("n1", TINO, "note", XSS, XSS, XSS, XSS, at(days=-1), at(days=9), 3))
@@ -449,11 +562,60 @@ class XssEverywhere(unittest.TestCase):
         self.assertEqual(active_content(reply), [])
         self.assertEqual(console.decider.calls[0]["note"], XSS)
 
+    def test_what_the_delegate_says_is_escaped_on_the_page_of_the_return_and_on_the_refusal_of_an_approval(self):
+        console = self.console(state="open")
+        console.store.switch_put(SwitchRecord("changes"))
+        form = console.get("/ok/plan0001").form("/ok/plan0001", has_button=APPROVE)
+        for kind in RESULT_KINDS:
+            result = DecideResult(False, kind, XSS, console.store.plan_get("plan0001"))
+            console.delegate.finished = result
+            console.delegate.begun = Begun(refusal=result)
+            for step, reply in (("return", console.get(RETURN)), ("begin", console.submit(form, APPROVE))):
+                with self.subTest(kind=kind, step=step):
+                    self.assertNotIn(XSS, reply.text)
+                    self.assertNotIn("<script", reply.text.lower())
+                    self.assertNotIn("<img", reply.text.lower())
+                    self.assertEqual(active_content(reply), [])
+                    self.assertEqual(reply.problems, [])
+                    if kind in SHOWS_THE_MESSAGE:
+                        self.assertIn(f"<p>{XSS_ESCAPED}</p>", reply.text)
+
+    def test_the_address_of_the_plan_in_a_result_is_made_safe_in_the_link_back(self):
+        console = self.console()
+        odd = make_plan(plan_id='odd"><b>id')
+        for kind in ("ran", "stopped", "failed"):
+            with self.subTest(kind=kind):
+                console.delegate.finished = DecideResult(False, kind, "a message", odd)
+                reply = console.get(RETURN)
+                self.assertIn("/ok/odd%22%3E%3Cb%3Eid", reply.links())
+                self.assertNotIn('odd"><b>id', reply.text)
+
+    def test_nothing_of_the_query_of_the_return_is_shown_whatever_it_holds(self):
+        console = self.console()
+        mark = "<script>alert('from-the-query')</script>"
+        reply = console.get("/arm/return", query={"code": mark, "state": mark, "error": mark, "error_description": mark, "<b>": mark})
+        self.assertEqual(reply.status, 200)
+        self.assertNotIn("from-the-query", reply.text)
+        self.assertEqual(console.delegate.finishes[0]["query"], {"code": mark, "state": mark, "error": mark, "error_description": mark})
+        self.assertEqual(active_content(reply), [])
+
+    def test_a_hostile_name_in_the_header_goes_to_the_delegate_as_data_and_is_shown_nowhere(self):
+        console = self.console(state="open")
+        console.store.switch_put(SwitchRecord("changes"))
+        form = console.get("/ok/plan0001").form("/ok/plan0001", has_button=APPROVE)
+        headers = {"x-ms-client-principal-id": TINO, "x-ms-client-principal-name": XSS}
+        reply = console.send("POST", "/ok/plan0001", form={**form.fields, "decision": "approve"}, oid=None, headers=headers)
+        self.assertEqual(reply.status, 303)
+        self.assertEqual(console.delegate.begins[0]["hint"], XSS)
+        self.assertEqual((reply.body, reply.headers["Location"]), (b"", SIGNIN_URL))
+        self.assertNotIn(XSS, str(reply.headers))
+
 
 class Routing(unittest.TestCase):
     def test_an_unknown_path_is_a_plain_404(self):
         console = seeded()
-        for path in ("/nothing", "/ok", "/ok/", "/ok/a/b", "/why", "/me", "/ops", "/me/settings/other", "/index.html", "/ok/%2e%2e", "/ok/a%20b", "//", "/history/x"):
+        for path in ("/nothing", "/ok", "/ok/", "/ok/a/b", "/why", "/me", "/ops", "/me/settings/other", "/index.html", "/ok/%2e%2e", "/ok/a%20b", "//", "/history/x",
+                     "/ok/plan0001/withdraw", "/arm", "/arm/return/x", "/arm/Return", "/arm//return"):
             with self.subTest(path=path):
                 reply = console.get(path)
                 self.assertEqual(reply.status, 404)
@@ -462,12 +624,14 @@ class Routing(unittest.TestCase):
     def test_a_known_path_with_the_wrong_method_is_a_405_that_says_what_is_allowed(self):
         console = seeded()
         for method, path, allowed in (("POST", "/", "GET, HEAD"), ("POST", "/history", "GET, HEAD"), ("GET", "/me/settings/export", "POST"), ("GET", "/ok/plan0001/ask", "POST"),
-                                      ("POST", "/why/case0001", "GET, HEAD"), ("GET", "/me/settings/delete", "POST"), ("GET", "/me/notes/n1/delete", "POST")):
+                                      ("POST", "/why/case0001", "GET, HEAD"), ("GET", "/me/settings/delete", "POST"), ("GET", "/me/notes/n1/delete", "POST"),
+                                      ("POST", "/arm/return", "GET"), ("GET", "/ok/plan0001/not-mine", "POST")):
             with self.subTest(method=method, path=path):
                 reply = console.send(method, path, form={"a": "b"} if method == "POST" else None)
                 self.assertEqual(reply.status, 405)
                 self.assertEqual(reply.headers["Allow"], allowed)
         self.assertEqual(console.send("PUT", "/me/settings", form={}).status, 405)
+        self.assertEqual(console.send("PUT", "/arm/return").status, 405)
         self.assertEqual(console.send("DELETE", "/me/notes/n1").status, 405)
         self.assertEqual(console.send("PATCH", "/").status, 405)
         self.assertEqual(console.send("OPTIONS", "/").status, 405)
@@ -476,6 +640,8 @@ class Routing(unittest.TestCase):
         console = seeded()
         self.assertEqual(console.get("/history/").status, 200)
         self.assertEqual(console.get("/ok/plan0001/").status, 200)
+        self.assertEqual(console.get("/arm/return/?state=" + "s" * 24).status, 200)
+        self.assertEqual(console.delegate.finishes[0]["query"], {"state": "s" * 24})
 
     def test_a_path_in_front_of_the_console_is_taken_away_and_put_back_in_every_link(self):
         console = Console(base="/api")
@@ -494,6 +660,22 @@ class Routing(unittest.TestCase):
         self.assertEqual(outside.status, 404)
         self.assertEqual(console.get("/me/settings").form("/me/settings/export").action, "/api/me/settings/export")
 
+    def test_the_return_from_the_sign_in_is_below_the_path_in_front_of_the_console_and_its_links_carry_it(self):
+        console = Console(base="/api")
+        console.seed()
+        console.delegate.finished = DecideResult(True, "ran", "Deleted.", make_plan())
+        reply = console.get("/arm/return", query={"state": "s" * 24})
+        self.assertEqual((reply.status, reply.headings(1)), (200, ["The change was made"]))
+        self.assertIn("/api/me/decisions", reply.links())
+        self.assertIn("/api/ok/plan0001", reply.links())
+        for href in reply.links():
+            if not href.startswith(("mailto:", "#")):
+                self.assertTrue(href.startswith("/api/"), href)
+        self.assertEqual(console.delegate.finishes[0]["query"], {"state": "s" * 24})
+        outside = handle(parse_request("GET", f"https://{HOST}/arm/return", {"x-ms-client-principal-id": TINO}, None), console.services)
+        self.assertEqual(outside.status, 404)
+        self.assertEqual(len(console.delegate.finishes), 1)
+
     def test_the_handler_reads_header_names_without_regard_to_case(self):
         console = seeded()
         request = Request("GET", "/", {}, {"X-MS-Client-Principal-Id": TINO}, {}, b"")
@@ -505,7 +687,7 @@ class Determinism(unittest.TestCase):
 
     def test_a_page_is_the_same_page_for_the_same_time_and_the_same_records(self):
         first, second = seeded(), seeded()
-        for path in GET_PATHS:
+        for path in GET_PATHS + [RETURN]:
             with self.subTest(path=path):
                 one, two = first.get(path).text, second.get(path).text
                 self.assertEqual(self.NONCE.sub(r"\1X\2", one), self.NONCE.sub(r"\1X\2", two))

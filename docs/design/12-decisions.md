@@ -61,6 +61,7 @@
 - **Decision.** Catalogue → plan → approval → runner → verifier → audit. Any mismatch aborts; the runner never refreshes and proceeds. Idempotent runs; a purchase is never retried automatically.
 - **Instead of.** Letting agents run commands; "refresh and proceed".
 - **Cost · security · reversibility.** Runner cost is small · the control that matters most · the catalogue grows by pull request.
+- **Superseded in part** by [decision 24](#24-a-change-runs-as-the-approver-meternaut-holds-no-right-to-change-azure--accepted) on 2026-11-05.
 
 ## 11. Approval is a bound, displayed, single-use authorization · Accepted
 
@@ -68,12 +69,14 @@
 - **Limits and undo.** One-tap approvals are [capped at five per approver per day](06-security-and-governance.md#approval-classes) (a starting value), and one alarm catches an approval with no card tap or page sign-in behind it (a stolen signed-in session escapes it). Only an R1 change rolls back by itself on a failed check; for R2 and R3 the approver restores with a [rollback grant](05-data-and-integrations.md#7-the-approval-record), usable once; a purchase cannot be undone.
 - **Instead of.** Trusting a row plus a card; tags or lessons deciding scope.
 - **Cost · security · reversibility.** Small · closes replay, swap and confused-deputy paths · signing the record is a later hardening.
+- **Superseded in part** by [decision 24](#24-a-change-runs-as-the-approver-meternaut-holds-no-right-to-change-azure--accepted).
 
 ## 12. Runner roles per action family; no standing purchase role · Accepted
 
 - **Decision.** One narrow custom role per action family at scopes the organisation opts in. Purchases: a role assignment with an end time, created and removed by the approval service and bound to a stored quote; alarms disable the identity. Where the identity cannot buy, the same approved quote goes as a request to [whoever can buy](14-agreements-and-access.md#four-purchase-paths). P8 settles propagation and revocation.
 - **Instead of.** One broad role; a standing purchaser.
 - **Cost · security · reversibility.** Role assignments are free · limits blast radius; a compromised runner can still perform its family's actions in opted-in scopes · high.
+- **Superseded in part** by [decision 24](#24-a-change-runs-as-the-approver-meternaut-holds-no-right-to-change-azure--accepted).
 
 ## 13. Agents draft, workflows send; recipients come from the directory · Accepted
 
@@ -137,3 +140,11 @@
 - **Decision.** [A request's page](05-data-and-integrations.md#6-channels) shows the exact plan for a decision and the card's own words otherwise, and opening it records nothing; [the card manifest](05-data-and-integrations.md#7-the-approval-record) lists, for each verb, who may tap, what a repeat does and what a tap returns.
 - **Instead of.** Buttons that carry the plan.
 - **Cost · security · reversibility.** Pages run in the `approvals` app · a forwarded or repeated tap does no harm · moderate: the routes are the contract.
+
+## 24. A change runs as the approver; Meternaut holds no right to change Azure · Accepted
+
+- **Decision.** Decided on 2026-11-05 ([proposal 05](../proposals/05-run-as-the-approver.md)). Approving a plan sends the approver to Microsoft Entra to sign in for the delegated scope `https://management.azure.com/user_impersonation` (authorization code flow with PKCE, no refresh token). The managed identity's federated assertion redeems the code, so there is no secret. The token lives in memory for the one request, and Azure's Activity Log shows the approver as the caller.
+- **Reason.** The product's owner, on a tool identity that holds write rights: "NOT A SINGLE CUSTOMER WILL DO THAT". The runner's role was narrow but standing, and each new kind of change would widen it. [Well-Architected SE:05](https://learn.microsoft.com/azure/well-architected/security/identity-access) asks for access just in time and just enough, and [Microsoft cloud security benchmark PA-2](https://learn.microsoft.com/security/benchmark/azure/mcsb-v2-privileged-access) asks to avoid standing access.
+- **Supersedes.** In part: decisions 10 and 12, and the runner, Credentials and automatic rollback in decision 11.
+- **Consequences.** The approver needs the right in Azure, and Azure's own checks apply. A Teams card cannot carry an Azure token, so it can only open the page where the person signs in. A purchase or a scheduled change needs the approver's sign-in at the moment of the change, so a change at a set time cannot run unattended.
+- **Cost · security · reversibility.** One consent instead of a role at each scope · Meternaut holds no right to change Azure · medium: a change that must run without a person needs a new design.

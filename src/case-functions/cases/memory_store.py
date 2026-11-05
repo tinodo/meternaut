@@ -1,4 +1,4 @@
-"""A store that keeps everything in memory: what the tests of the pages, the approval loop and the runner use, and the contract that the Table store has to meet."""
+"""A store that keeps everything in memory: what the tests of the pages, the approval loop and the change use, and the contract that the Table store has to meet."""
 from __future__ import annotations
 
 import datetime as dt
@@ -32,7 +32,7 @@ class MemoryStore:
         self.switch_records: dict[str, SwitchRecord] = {}
         self.settings: dict[str, SettingsRecord] = {}
         self.notes: dict[tuple[str, str], NoteRecord] = {}
-        self.nonces: dict[str, tuple[str, str, dt.datetime]] = {}
+        self.nonces: dict[str, tuple[str, str, dt.datetime, str]] = {}
         self.mails: list[MailRecord] = []
 
     def runs_recent(self, limit: int = 20) -> list[RunRecord]:
@@ -83,6 +83,17 @@ class MemoryStore:
     def action_put(self, action: ActionRecord) -> None:
         self.actions[action.plan_id] = action
 
+    def action_claim(self, action: ActionRecord) -> bool:
+        if action.plan_id in self.actions:
+            return False
+        self.actions[action.plan_id] = action
+        return True
+
+    def action_release(self, plan_id: str) -> None:
+        action = self.actions.get(plan_id)
+        if action is not None and action.state == "queued" and not action.started_at:
+            del self.actions[plan_id]
+
     def actions_recent(self, limit: int = 50) -> list[ActionRecord]:
         return sorted(self.actions.values(), key=lambda a: (a.queued_at, a.plan_id), reverse=True)[:limit]
 
@@ -122,20 +133,23 @@ class MemoryStore:
         return {n.scope_resource_id.lower() for n in self.notes.values()
                 if n.kind == "do_not_touch" and n.scope_resource_id and (not n.expires_at or n.expires_at > now)}
 
-    def nonce_new(self, oid: str, purpose: str, ttl_seconds: int = 3600) -> str:
+    def nonce_new(self, oid: str, purpose: str, ttl_seconds: int = 3600, data: str = "") -> str:
         token = secrets.token_urlsafe(24)
-        self.nonces[token] = (oid, purpose, self.clock() + dt.timedelta(seconds=ttl_seconds))
+        self.nonces[token] = (oid, purpose, self.clock() + dt.timedelta(seconds=ttl_seconds), data)
         return token
 
-    def nonce_use(self, token: str, oid: str, purpose: str) -> bool:
+    def nonce_take(self, token: str, oid: str, purpose: str) -> str | None:
         entry = self.nonces.get(token)
         if entry is None:
-            return False
-        owner, wanted, expires = entry
+            return None
+        owner, wanted, expires, data = entry
         if owner != oid or wanted != purpose:
-            return False
+            return None
         del self.nonces[token]
-        return expires > self.clock()
+        return data if expires > self.clock() else None
+
+    def nonce_use(self, token: str, oid: str, purpose: str) -> bool:
+        return self.nonce_take(token, oid, purpose) is not None
 
     def mail_put(self, mail: MailRecord) -> None:
         self.mails.append(mail)

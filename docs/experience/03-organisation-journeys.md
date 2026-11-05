@@ -20,7 +20,7 @@
 
 ## J10 A commitment purchase
 
-**Trigger and who.** A Recommendation for a savings plan or a reservation survives the challenge, or a renewal notice calls for one. The AI prepares the purchase; two named people in different roles approve it; then the Runner buys exactly what they approved (variant A), or whoever holds the right to buy does (variants B to D, in [people](01-people.md)). **Surfaces.** Teams cards, the approval page ([wireframe](../img/experience-approval-page.svg)), e-mail.
+**Trigger and who.** A Recommendation for a savings plan or a reservation survives the challenge, or a renewal notice calls for one. The AI prepares the purchase; two named people in different roles approve it; then the last approver buys what they approved (variant A), or whoever holds the right to buy does (variants B to D, in [people](01-people.md)). **Surfaces.** Teams cards, the approval page ([wireframe](../img/experience-approval-page.svg)), e-mail.
 
 Look at the four paths, and how the bill closes the loop.
 
@@ -28,7 +28,7 @@ Look at the four paths, and how the bill closes the loop.
 flowchart TB
     rec["One Recommendation, one price check"]
     two["Two approvers, asked in parallel"]
-    buy["Buy: the Runner buys"]
+    buy["Buy: the last approver buys"]
     bo["Ask the billing owner"]
     pt["Ask the partner"]
     na["Not available: say so"]
@@ -53,7 +53,7 @@ Until 30 June the current reservation covers part of the usage, so the plan save
 | Step | The person sees or does | The system does |
 |---|---|---|
 | 1. Ask | Tomasz (budget holder) and Lars (finance approver) each get Your OK on a page (C5, [rendering](../img/experience-card-c5-ok-on-page.png)) with plan code K4M8-R6TW. Each signs in with a phishing-resistant method, reads the page, which says "cannot be undone", and chooses alone | Asks both at once; refuses the requester and one person in both roles; hides each answer until both have decided |
-| 2. Buy, watch | "Nothing has changed yet", then Done (C6) | Gives a separate identity the purchaser role, buys exactly the price check, removes the role; watches the bill for the purchase line and tells the approvers if monthly utilisation falls below 90 % |
+| 2. Buy, watch | "Nothing has changed yet", then Done (C6) | Buys exactly the price check as the last approver, who needs the right to buy; watches the bill for the purchase line and tells the approvers if monthly utilisation falls below 90 % |
 
 **A renewal notice.** The system writes to the budget holder and the FinOps lead 60 days before a commitment ends (starting value), with the commitment's actual renewal setting. A reservation renews by default: doing nothing buys a replacement, outside our control, so the system can only ask the reservation's owner (the partner, for a partner-sold one) to turn it off. With renewal off, usage returns to pay-as-you-go rates at expiry. Azure shows a reservation's renewal price only 30 days before expiry ([Learn](https://learn.microsoft.com/azure/cost-management-billing/reservations/reservation-renew)), so the 60-day notice carries a scenario, not a price check; the price check and two new approvals come later.
 

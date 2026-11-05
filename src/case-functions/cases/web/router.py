@@ -25,7 +25,7 @@ ROUTES: tuple[tuple[str, str, Handler, tuple[str, ...]], ...] = (
     ("POST", rf"/ok/(?P<plan_id>{ID})", approval.approval_decide, ()),
     ("POST", rf"/ok/(?P<plan_id>{ID})/ask", approval.approval_ask, ()),
     ("POST", rf"/ok/(?P<plan_id>{ID})/not-mine", approval.approval_not_mine, ()),
-    ("POST", rf"/ok/(?P<plan_id>{ID})/withdraw", approval.approval_withdraw, ()),
+    ("GET", "/arm/return", approval.arm_return, ()),
     ("GET", rf"/why/(?P<case_id>{ID})", notebook.notebook, ()),
     ("GET", "/history", history.history, ()),
     ("GET", "/me/decisions", decisions.decisions, ()),
@@ -42,6 +42,8 @@ ROUTES: tuple[tuple[str, str, Handler, tuple[str, ...]], ...] = (
     ("GET", "/ops/pause", ops.pause_page, ("ops",)),
 )
 COMPILED = tuple((method, re.compile(pattern), handler, roles) for method, pattern, handler, roles in ROUTES)
+# The one page that a GET changes something through (the return of the sign-in to Azure): a HEAD request (a prefetch, a link check) must not use it up.
+NO_HEAD = frozenset({approval.arm_return})
 
 
 def _path(raw: str, base: str) -> str | None:
@@ -107,11 +109,12 @@ def _handle(request: Request, services: Services) -> Response:
     if not found:
         return message_page(ctx, 404, "I cannot find this page", "No page has this address. Nothing has changed.", back=("/", "Back to the start page"))
     wanted = "GET" if method == "HEAD" else method
-    route = next(((match, handler, roles) for m, match, handler, roles in found if m == wanted), None)
+    route = next(((match, handler, roles) for m, match, handler, roles in found if m == wanted and not (method == "HEAD" and handler in NO_HEAD)), None)
     if route is None:
         refusal = message_page(ctx, 405, "This page does not take that kind of request", "Nothing has changed.", back=("/", "Back to the start page"))
-        allowed = sorted({m for m, *_ in found} | ({"HEAD"} if any(m == "GET" for m, *_ in found) else set()))
-        return Response(405, {**refusal.headers, "Allow": ", ".join(allowed)}, refusal.body)
+        head_ok = any(m == "GET" and handler not in NO_HEAD for m, _, handler, _ in found)
+        allowed = sorted({m for m, *_ in found} | ({"HEAD"} if head_ok else set()))
+        return Response(405, {**refusal.headers, "Allow": ", ".join(allowed)}, b"" if method == "HEAD" else refusal.body)
     match, handler, roles = route
     if roles and not any(principal.has(role) for role in roles):
         return message_page(ctx, 403, "You do not have the role that this page needs", f"This page is for people with the role {' or '.join(roles)}. Nothing has changed.",

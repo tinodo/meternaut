@@ -1,4 +1,4 @@
-"""What more than one page needs: reading the store without failing a whole page, the switches, who may answer a plan, what the runner did,
+"""What more than one page needs: reading the store without failing a whole page, the switches, who may answer a plan, what happened to a change,
 and the rows of the tables of cases."""
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from typing import Callable, Iterable, TypeVar
 from ..models import SWITCH_NAMES, ActionRecord, CaseRecord, PlanRecord, Principal, RunRecord, SwitchRecord
 from . import words
 from .core import Ctx, Safe, esc, fmt, join, link_part, number, parse_time, usd
-from .layout import button, code, form, hidden, paragraph, summary
+from .layout import code, paragraph, summary
 
 T = TypeVar("T")
 
@@ -54,7 +54,7 @@ def effective_state(ctx: Ctx, plan: PlanRecord) -> str:
     return "expired" if plan.state == "open" and is_expired(ctx, plan) else plan.state
 
 
-# -- what the runner did -------------------------------------------------------------------------------------------------------------------------
+# -- what happened to the change ---------------------------------------------------------------------------------------------------------------------
 
 def _money_in(amount: object, currency: object) -> str:
     if currency in (None, "", "USD"):
@@ -87,11 +87,9 @@ def verification_text(ctx: Ctx, data: object) -> Safe:
 
 
 def action_rows(ctx: Ctx, action: ActionRecord) -> list[tuple[str, object]]:
-    """What the runner did for one plan, and what the check afterwards found, as names and values."""
+    """What happened to the change of one plan, and what the check afterwards found, as names and values."""
     state = words.ACTION_STATE.get(action.state, action.state)
     rows: list[tuple[str, object]] = [("State", state), ("Queued", ctx.when(action.queued_at))]
-    if action.state == "queued" and action.start_after:
-        rows.append(("Starts at", ctx.when(action.start_after)))
     if action.started_at:
         rows.append(("Started", ctx.when(action.started_at)))
     if action.finished_at:
@@ -109,30 +107,6 @@ def action_rows(ctx: Ctx, action: ActionRecord) -> list[tuple[str, object]]:
 
 def action_block(ctx: Ctx, action: ActionRecord) -> Safe:
     return summary(action_rows(ctx, action))
-
-
-def can_cancel(ctx: Ctx, plan: PlanRecord, action: ActionRecord | None, approved_by_me: bool) -> bool:
-    """The person who approved can cancel while the plan is approved and the change is queued and has not reached its start time."""
-    if not approved_by_me or plan.state != "approved" or action is None or action.state != "queued":
-        return False
-    start = parse_time(action.start_after) if action.start_after else None
-    return start is None or ctx.now < start
-
-
-def start_block(ctx: Ctx, plan: PlanRecord, action: ActionRecord | None, approved_by_me: bool) -> Safe:
-    """For an approved plan whose change is queued: when it starts, and a Cancel until then. Empty for anything else."""
-    if plan.state != "approved" or action is None or action.state != "queued":
-        return Safe("")
-    start = parse_time(action.start_after) if action.start_after else None
-    parts: list[object] = [paragraph(fmt("The change starts at {when}.", when=ctx.when(action.start_after)) if start
-                                     else "The runner starts the change when it next looks at its queue.")]
-    if can_cancel(ctx, plan, action, approved_by_me):
-        parts.append(paragraph("Until then you can cancel your OK. Cancelling closes the request, and nothing changes."))
-        parts.append(form(ctx.url(f"/ok/{link_part(plan.plan_id)}/withdraw"), hidden("nonce", ctx.nonce(plan.plan_id)),
-                          fmt('<div class="actions">{b}</div>', b=button("Cancel my OK", kind="danger"))))
-    elif start is not None:
-        parts.append(paragraph("The start time has passed. The runner starts the change at its next check, and it cannot be cancelled now."))
-    return join(parts)
 
 
 # -- tables of runs and cases ----------------------------------------------------------------------------------------------------------------------

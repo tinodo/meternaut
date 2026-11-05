@@ -4,7 +4,7 @@
 
 ## 1. Why this is a design question
 
-The same virtual machine costs different amounts under different agreements, appears in different reports and can be committed to by different people. Who may see the bill, and who may buy a reservation or a savings plan, depends on the agreement and on the role the system was given. A design that assumes one agreement and full billing access works for few organisations. So for every scope the system treats both as facts to discover, not settings to configure. Three rules follow:
+The same virtual machine costs different amounts under different agreements, appears in different reports and can be committed to by different people. Who may see the bill, and who may buy a reservation or a savings plan, depends on the agreement and on the role the system was given. So for every scope the system treats both as facts to discover, not settings to configure. Three rules follow:
 
 - **Probe, don't ask.** The system tries what it needs and records what worked.
 - **Label, don't pretend.** Every number says which prices it rests on.
@@ -31,7 +31,7 @@ Two things are independent: what the identity can read about **cost**, and what 
 | **Subscription, with costs** | Cost Management Reader (or Contributor) on one or more subscriptions, with the agreement's cost visibility setting on | Costs of those subscriptions; reservation and savings plan recommendations at subscription scope | Unit prices on bill lines; a price sheet only if the subscription-scope price sheet API returns one (the probe finds out) |
 | **None** | Resource roles only, or cost visibility off | Inventory, metrics, Advisor | List prices from the public Retail Prices API |
 
-A person with no billing role sees nothing about the agreement beyond the bill lines; central teams often hold billing roles, application teams only roles on their own subscriptions. Partner billing roles (admin agent, billing admin) exist only in the partner's tenant, so a deployment in the customer's tenant never has billing reach over a partner-sold subscription.
+Partner billing roles (admin agent, billing admin) exist only in the partner's tenant, so a deployment in the customer's tenant never has billing reach over a partner-sold subscription.
 
 ## 4. Reading cost and prices
 
@@ -44,7 +44,7 @@ A person with no billing role sees nothing about the agreement beyond the bill l
 | [Usage Details API](https://learn.microsoft.com/azure/cost-management-billing/automate/migrate-consumption-usage-details-api) (legacy) | Pay-as-you-go, MSDN, Visual Studio | Cost Management Reader | Planned for deprecation; no date set |
 | [Query API](https://learn.microsoft.com/rest/api/cost-management/query/usage) | Every supported agreement, including management groups and partner customer scope | Cost Management Reader | Aggregates only, two group-bys; [throttled](https://learn.microsoft.com/azure/cost-management-billing/costs/manage-automation#data-latency-and-rate-limits) by query units (12 per 10 seconds, 60 a minute, 600 an hour; a month of data costs one) |
 
-For each scope the ingestion workflow ([05](05-data-and-integrations.md)) takes the first path that works, in that order, and writes the same cost lake layout: FOCUS columns where the source has them, mapped columns where it does not, and on every row the `source` and the `price basis`. `cost-query` and `price-sim` do not care which path filled it. Cost Management's figures [leave out credits, taxes and support charges](https://learn.microsoft.com/azure/cost-management-billing/costs/understand-cost-mgt-data#costs-included-in-cost-management), so reconciling a month needs its invoice; where none is readable (under a partner agreement it is the partner's) the invoice status is "Invoice not available" ([08](08-testing-and-evaluation.md#4-measures-and-the-report-card)).
+For each scope the ingestion workflow ([05](05-data-and-integrations.md)) takes the first path that works, in that order, and writes the same cost lake layout: FOCUS columns where the source has them, mapped columns where it does not, and on every row the `source` and the `price basis`. Cost Management's figures [leave out credits, taxes and support charges](https://learn.microsoft.com/azure/cost-management-billing/costs/understand-cost-mgt-data#costs-included-in-cost-management), so reconciling a month needs its invoice; where none is readable (under a partner agreement it is the partner's) the invoice status is "Invoice not available" ([08](08-testing-and-evaluation.md#4-measures-and-the-report-card)).
 
 ### The price order
 
@@ -120,7 +120,9 @@ The decision is the same everywhere: two people with different roles approve a q
 | **Ask the partner** | The subscription is sold through a partner | The same request, addressed to the partner contact the organisation names (partners are not in the directory) | The partner, or the customer where the partner allowed it | The partner confirms (the bill may not show it: section 8); otherwise the Case reopens |
 | **Not available** | For example a savings plan under pay-as-you-go, or approvers without a phishing-resistant sign-in ([09](09-delivery-and-operations.md#9-onboarding-an-estate)) | Says so and proposes what exists, or nothing | | |
 
-A request to the billing owner or the partner is plain-text e-mail ([05](05-data-and-integrations.md#6-channels)) with an external flag. It holds the stored quote's product, term and amount, the scope identifiers needed to quote or buy (the management group or the subscriptions the purchase applies to) and the deadline: no saving, evidence, resource names, owners, tags or other spend, no figures in the subject line and no link or button. It goes to one recipient address on the platform team's allow-list, and the send step refuses any other, whoever named it. A reply is read as a question and approves nothing; nothing here stops a recipient forwarding it.
+**Superseded in part on 2026-11-05:** the Buy path's purchase identity and runner. The approver's own sign-in places the order, and the approver must hold the right to buy; with two approvers, who buys is not decided. See [decision 24](12-decisions.md#24-a-change-runs-as-the-approver-meternaut-holds-no-right-to-change-azure--accepted) and [proposal 05](../proposals/05-run-as-the-approver.md).
+
+A request to the billing owner or the partner is plain-text e-mail with an external flag, to one allow-listed address ([05](05-data-and-integrations.md#e-mail-outside-the-directory)). It holds the stored quote's product, term and amount, the scope identifiers needed to quote or buy and the deadline: no saving, evidence, resource names, owners, tags or other spend, and no link or button. A reply is read as a question and approves nothing; nothing here stops a recipient forwarding it.
 
 ### Other levers that depend on the agreement
 

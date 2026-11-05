@@ -1,12 +1,28 @@
 import re
 import unittest
 
-from test_web_support import (MAYA, NOW, STRANGER, TINO, Console, FailingStore, ScriptedDecider, at, make_action, make_case, make_decision, make_plan, make_run)
+from test_web_support import (MAYA, NOW, STRANGER, TINO, Console, FailingStore, ScriptedDecider, ScriptedDelegate, at, make_action, make_case, make_decision, make_plan,
+                              make_run)
 
-from cases.models import DecideResult, NoteRecord, SwitchRecord
-from cases.web import layout
+from cases.models import Begun, DecideResult, NoteRecord, SwitchRecord
+from cases.web import approval, layout
 
-KINDS = ("recorded", "declined", "asked", "not_mine", "withdrawn", "refused_code", "refused_state", "refused_role", "refused_paused", "expired", "duplicate", "error")
+APPROVE = "Approve and sign in to Azure"
+KINDS = ("declined", "asked", "not_mine", "ran", "ran_unconfirmed", "stopped", "azure_refused", "failed", "signin_failed", "refused_code", "refused_state", "refused_role",
+         "refused_paused", "expired", "duplicate", "error")
+SUCCESSES = ("declined", "asked", "not_mine", "ran", "ran_unconfirmed")
+# What each step says in practice, for the kinds whose page shows the message of the result.
+MESSAGES = {
+    "ran": "Deleted. Azure no longer lists the resource.",
+    "ran_unconfirmed": "Azure accepted the delete and still lists the resource. The next check will look again.",
+    "stopped": "Stopped before the change: the disk is not unattached any more. Nothing was changed.",
+    "azure_refused": "Azure refused to delete the resource (403, AuthorizationFailed): your account has no right to do this here. Nothing was changed.",
+    "failed": "The delete was refused or failed (500 InternalError). Check the resource before anything is tried again.",
+    "signin_failed": "The sign-in to Azure was cancelled or refused. Nothing is approved.",
+    "refused_state": "This sign-in is not valid any more: it was used already, it ran out of time, or somebody else started it. Nothing was changed.",
+    "error": "This form is no longer valid. Open the link in the message again. Nothing is approved.",
+}
+RETURN = {"code": "0.AbCdEfGhIjKlMnOpQrSt-code-from-the-sign-in", "state": "state-of-the-sign-in_0123456789"}
 LIGHT_DARK_PAIRS = (
     ("colorNeutralForeground1", "colorNeutralBackground1", 4.5), ("colorNeutralForeground2", "colorNeutralBackground1", 4.5), ("colorNeutralForeground3", "colorNeutralBackground1", 4.5),
     ("colorNeutralForeground1", "colorNeutralBackground2", 4.5), ("colorNeutralForeground2", "colorNeutralBackground2", 4.5), ("colorNeutralForeground1", "colorNeutralBackground3", 4.5),
@@ -51,7 +67,7 @@ def style_blocks() -> tuple[dict[str, str], dict[str, str]]:
 def gallery() -> dict:
     """Pages of every kind: every page of the console, an approval in each state, every kind of answer, forms with problems, and the errors."""
     pages = {}
-    console = Console(decider=ScriptedDecider())
+    console = Console(decider=ScriptedDecider(), delegate=ScriptedDelegate())
     console.seed()
     console.store.action_put(make_action())
     console.store.decision_put(make_decision())
@@ -70,9 +86,14 @@ def gallery() -> dict:
     pages["no token"] = console.post("/me/settings", {})
     pages["no such note"] = console.post("/me/notes/none/delete", {"nonce": "x"})
     for kind in KINDS:
-        console.decider.result = DecideResult(kind in ("recorded", "declined", "asked", "not_mine", "withdrawn"), kind, "a message", make_plan())
-        main = console.get("/ok/plan0001").form("/ok/plan0001", has_button="Approve this exact change")
-        pages[f"answer {kind}"] = console.submit(main, "Approve this exact change")
+        result = DecideResult(kind in SUCCESSES, kind, MESSAGES.get(kind, "a message of the result"), make_plan())
+        console.decider.result = result
+        console.delegate.begun = Begun(refusal=result)
+        console.delegate.finished = result
+        main = console.get("/ok/plan0001").form("/ok/plan0001", has_button=APPROVE)
+        pages[f"answer {kind}"] = console.submit(main, "Decline")
+        pages[f"begin {kind}"] = console.submit(main, APPROVE)
+        pages[f"return {kind}"] = console.get("/arm/return", query=RETURN)
     form = console.get("/ok/plan0001").form("/ok/plan0001/ask")
     pages["ask too long"] = console.submit(form, note="x" * 400)
     form = console.get("/me/settings").form("/me/settings", has_button="Save settings")
@@ -84,12 +105,15 @@ def gallery() -> dict:
     pages["paused plan"] = console.get("/ok/plan0001")
     pages["kill switch paused"] = console.get("/ops/pause")
     console.store.plan_put(make_plan(state="approved"))
-    pages["approved plan with cancel"] = console.get("/ok/plan0001")
+    pages["approved plan"] = console.get("/ok/plan0001")
     console.store.plan_put(make_plan(expires_at=at(minutes=-1)))
     pages["expired plan"] = console.get("/ok/plan0001")
     console.store.plan_put(make_plan(state="consumed"))
     console.store.action_put(make_action(state="done", finished_at=at(), result="Deleted.", verification={"gone": True}))
     pages["consumed plan"] = console.get("/ok/plan0001")
+    console.store.plan_put(make_plan(state="failed"))
+    console.store.action_put(make_action(state="failed", finished_at=at(), result=MESSAGES["azure_refused"], error=MESSAGES["azure_refused"]))
+    pages["failed plan"] = console.get("/ok/plan0001")
     broken = Console(store=FailingStore(fail={"case_get", "plan_get"}, clock=lambda: NOW))
     broken.seed(case=False, plan=False, run=False)
     pages["store down case"] = broken.get("/why/x")
@@ -112,10 +136,17 @@ class EveryPage(unittest.TestCase):
                 yield name, reply
 
     def test_the_gallery_has_every_kind_of_page(self):
-        self.assertGreaterEqual(len(self.pages), 45)
+        self.assertGreaterEqual(len(self.pages), 85)
         statuses = {reply.status for reply in self.pages.values()}
-        for status in (200, 400, 403, 404, 405, 409, 410, 413, 415, 500, 503):
+        for status in (200, 400, 403, 404, 405, 409, 410, 413, 415, 500, 502, 503):
             self.assertIn(status, statuses)
+
+    def test_the_gallery_has_the_page_of_every_kind_of_result_after_each_of_the_three_steps(self):
+        self.assertEqual(set(KINDS), set(approval.STATUS), "the kinds of the tests are the kinds that the pages know")
+        for kind in KINDS:
+            for step in ("answer", "begin", "return"):
+                with self.subTest(step=step, kind=kind):
+                    self.assertIn(f"{step} {kind}", self.pages)
 
     def test_the_language_and_direction_are_set_and_the_page_has_a_title_and_a_viewport(self):
         for name, reply in self.each():
@@ -294,7 +325,9 @@ class TheWords(unittest.TestCase):
                 self.assertNotIn("?", reply.root.find("main").text())
 
     def test_nothing_is_called_saved_where_money_is_in_question_and_money_is_in_us_dollars(self):
-        for name in ("GET /", "GET /ok/plan0001", "GET /why/case0001", "GET /history", "GET /me/decisions", "GET /me/activity", "paused plan", "expired plan", "consumed plan"):
+        names = ["GET /", "GET /ok/plan0001", "GET /why/case0001", "GET /history", "GET /me/decisions", "GET /me/activity", "paused plan", "approved plan", "expired plan",
+                 "consumed plan", "failed plan"] + [name for name in self.pages if name.startswith(("answer ", "begin ", "return "))]
+        for name in names:
             with self.subTest(page=name):
                 content = self.pages[name].content
                 self.assertNotRegex(content, r"\b(?:saved|saves|savings|save)\b", name)
@@ -308,6 +341,14 @@ class TheWords(unittest.TestCase):
                          "happy to help", "great question", "awesome", "simply", "just click", "dive into"):
                 self.assertNotIn(word, text, f"{name}: {word}")
 
+    def test_no_page_names_a_runner_a_start_time_or_a_way_to_cancel_an_approval(self):
+        for name, reply in self.pages.items():
+            with self.subTest(page=name):
+                text = reply.content.lower()
+                for word in ("runner", "cancel my ok", "the change starts at", "start time", "120 seconds"):
+                    self.assertNotIn(word, text)
+                self.assertNotIn("/withdraw", reply.text)
+
     def test_a_person_to_talk_to_is_in_the_same_place_of_every_page_that_has_a_footer(self):
         for name, reply in self.pages.items():
             with self.subTest(page=name):
@@ -320,14 +361,18 @@ class TheWords(unittest.TestCase):
         for name, reply in self.pages.items():
             with self.subTest(page=name):
                 last = reply.root.find("footer").find_all("p")[-1].text()
-                if name in ("GET /", "GET /why/case0001", "GET /why/case0002", "GET /history", "GET /history?run=run00001") or name.startswith(("answer ", "GET /ok", "paused plan", "expired plan",
-                                                                                                                                              "consumed plan", "approved plan")):
+                if name in ("GET /", "GET /why/case0001", "GET /why/case0002", "GET /history", "GET /history?run=run00001") or name.startswith(("answer ", "begin ", "return ", "GET /ok",
+                                                                                                                                              "paused plan", "approved plan",
+                                                                                                                                              "expired plan", "consumed plan",
+                                                                                                                                              "failed plan")):
                     self.assertEqual(last, line)
                 else:
                     self.assertIn(last, (line, "A person approves every change."))
 
     def test_a_page_that_refuses_says_that_nothing_changed(self):
-        for name in ("answer refused_code", "answer refused_state", "answer refused_paused", "answer expired", "answer duplicate", "no token", "413", "415", "405", "GET /nothing", "GET /why/nothing"):
+        refusing = ("refused_code", "refused_state", "refused_paused", "expired", "duplicate", "stopped", "azure_refused", "signin_failed")
+        names = [f"{step} {kind}" for step in ("answer", "begin", "return") for kind in refusing]
+        for name in names + ["no token", "413", "415", "405", "GET /nothing", "GET /why/nothing"]:
             with self.subTest(page=name):
                 content = self.pages[name].content.lower()
                 self.assertTrue(any(phrase in content for phrase in ("nothing has changed", "nothing was changed", "nothing was sent", "nothing is approved")), content[:300])

@@ -1,9 +1,10 @@
 import unittest
 
-from test_web_support import MAYA, NOW, OPS, OWNER, STRANGER, TINO, WRITER, Console, FailingStore, at, snapshot
+from test_web_support import ACTS_ON, MAYA, NOW, OPS, OWNER, STRANGER, TINO, Console, FailingStore, at, snapshot
 
 from cases.models import StoreError, SwitchRecord
 
+APPROVE = "Approve and sign in to Azure"
 BUTTONS = ["Pause everything", "Pause changes", "Pause all messages"]
 
 
@@ -11,13 +12,16 @@ class StandingPermissions(unittest.TestCase):
     def setUp(self):
         self.console = Console()
 
-    def test_it_says_that_none_exist_and_what_the_runner_may_change(self):
+    def test_it_says_that_meternaut_holds_no_permission_and_what_the_code_can_change_for_a_person_who_approved(self):
         reply = self.console.get("/ops/permissions")
         self.assertEqual(reply.status, 200)
         self.assertEqual(reply.headings(1), ["Standing permissions"])
-        self.assertIn("None exists.", reply.content)
-        self.assertIn("Meternaut makes a change only after a person approves that exact change on its own page.", reply.content)
-        self.assertIn(f"The runner may only {WRITER}. It changes nothing else.", reply.content)
+        self.assertEqual(reply.headings(2), ["What Meternaut can change in Azure"])
+        self.assertIn("Meternaut holds no permission to change Azure. A change is made only after a person approves that exact change on its own page and signs in to Azure: "
+                      "it is made with that person's own permissions, and Azure refuses it if the person may not make it.", reply.content)
+        self.assertIn(f"On its own, nothing. The code makes only this change, and only for a person who approved it: {ACTS_ON}.", reply.content)
+        for gone in ("None exists.", "The runner may only", "What the runner may change"):
+            self.assertNotIn(gone, reply.content)
 
     def test_it_is_read_only(self):
         reply = self.console.get("/ops/permissions")
@@ -34,7 +38,7 @@ class StandingPermissions(unittest.TestCase):
         reply = self.console.get("/ops/permissions", oid=MAYA)
         self.assertEqual(reply.headings(1), ["You do not have the role that this page needs"])
         self.assertIn("This page is for people with the role ops or owner.", reply.content)
-        self.assertNotIn(WRITER, reply.content, "nothing of the page is shown to a person who may not open it")
+        self.assertNotIn(ACTS_ON, reply.content, "nothing of the page is shown to a person who may not open it")
         self.assertEqual(self.console.get("/ops/permissions", oid=STRANGER).status, 403)
 
 
@@ -48,7 +52,7 @@ class TheKillSwitchPage(unittest.TestCase):
         self.assertEqual(self.page.headings(1), ["The kill switch"])
         self.assertEqual(self.page.headings(2), ["Everything", "Changes", "All messages"])
         self.assertEqual([b[2] for f in self.page.forms() for b in f.buttons], BUTTONS)
-        for sentence in ("No OK is recorded, the runner makes no change in Azure and no message is sent.", "No OK is recorded and the runner makes no change in Azure.",
+        for sentence in ("No approval is accepted, no change is made in Azure and no message is sent.", "No approval is accepted and no change is made in Azure.",
                          "No message is sent to anybody."):
             self.assertIn(f"What it stops: {sentence}", self.page.content)
         self.assertIn("A change that was already sent to Azure is not recalled.", self.page.content)
@@ -173,14 +177,23 @@ class WhatThePullDoes(unittest.TestCase):
     def test_a_pulled_switch_takes_the_approve_button_away_and_a_resume_brings_it_back(self):
         console = Console(decider="loop")
         console.seed()
-        self.assertIn("Approve this exact change", console.get("/ok/plan0001").content)
+        self.assertIn(APPROVE, console.get("/ok/plan0001").content)
         console.submit(console.get("/ops/pause").form("/ops/pause", has_button="Pause changes"), reason="drill")
         reply = console.get("/ok/plan0001")
-        self.assertNotIn("Approve this exact change", reply.content)
+        self.assertNotIn(APPROVE, reply.content)
         self.assertIn("Changes are paused here. Nothing has changed, and your OK cannot be recorded now.", reply.content)
         self.assertIn("Paused by Tino", console.get("/").content)
         console.submit(console.get("/ops/pause").form("/ops/pause", has_button="Resume changes"))
-        self.assertIn("Approve this exact change", console.get("/ok/plan0001").content)
+        self.assertIn(APPROVE, console.get("/ok/plan0001").content)
+
+    def test_the_switch_of_everything_takes_the_approve_button_away_too_and_the_messages_switch_does_not(self):
+        console = Console(decider="loop")
+        console.seed()
+        console.submit(console.get("/ops/pause").form("/ops/pause", has_button="Pause everything"))
+        self.assertNotIn(APPROVE, console.get("/ok/plan0001").content)
+        console.submit(console.get("/ops/pause").form("/ops/pause", has_button="Resume everything"))
+        console.submit(console.get("/ops/pause").form("/ops/pause", has_button="Pause all messages"))
+        self.assertIn(APPROVE, console.get("/ok/plan0001").content)
 
 
 if __name__ == "__main__":

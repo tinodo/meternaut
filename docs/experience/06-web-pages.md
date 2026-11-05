@@ -55,7 +55,7 @@ Each submit is tied to one plan, one person and one time, as [OWASP advises](htt
 - The plan code is a reference, not a secret, echoed in every submit; a wrong code, an expired plan or a paused system is refused. Each approver records one decision against it: a second submit by the same person is refused, and the other approver's still counts. The plan itself runs once.
 - Only the designated approver or a named delegate may approve (a delegate fills a purchase seat only if they hold that approver role), checked by directory object id in the sign-in token, never by a name. A forwarded link authorises nobody: the approver or delegate who opens it signs in and answers as themselves.
 - The requester is refused, and one directory object never fills both roles of a two-person change.
-- The runner, the only component that changes Azure, re-checks the same facts and fails closed ([approval record](../design/05-data-and-integrations.md#7-the-approval-record)).
+- The change runs as an approver, re-checks the same facts and fails closed ([approval record](../design/05-data-and-integrations.md#7-the-approval-record)).
 
 ### Two approvers, and answers other than yes
 
@@ -64,7 +64,7 @@ Both approvers are asked at once, see the same plan and evidence, and answer on 
 - **Decline** takes one tap and closes the request; an optional reason follows.
 - **Ask or suggest** takes a question or another way to do it. It is length-capped and screened, reaches the system as an excerpt (quoted data) and never as an instruction, and approves nothing. The other approver's page never shows it.
 - **Not mine** says the resource is not the person's. Nothing is approved; the request goes back to finding the right owner.
-- **After the OK** a confirmation page shows the start time. The first approver reads "Recorded. Nothing has changed yet." and can Cancel until then, which withdraws the approval and closes the request. The second approver of a purchase reads "Submitted. A purchase cannot be cancelled.": a purchase starts as soon as the second OK is in.
+- **After the OK** the page sends the approver to sign in to Azure. The change runs right after the last approver's sign-in, as that person, and cannot be cancelled. The first of two approvers reads "Recorded. Nothing has changed yet."; the second reads "Submitted. A purchase cannot be cancelled."
 
 ### When something goes wrong
 
@@ -141,27 +141,26 @@ The bar is [WCAG 2.2](https://www.w3.org/TR/WCAG22/) level AA; [access, language
 
 ## The life of an approval request
 
-Look at the four endings that leave Azure untouched (declined, expired, changed, cancelled): only Executed changes anything.
+Look at the four endings that leave Azure untouched (declined, expired, changed, refused): only Executed changes anything.
 
 ```mermaid
 stateDiagram-v2
     state "Approved by one" as ApprovedByOne
-    state "Approved by both" as ApprovedByBoth
+    state "Signing in to Azure" as SigningIn
     [*] --> Requested : link sent
     Requested --> Viewed : page opened
-    Viewed --> ApprovedByOne : first of two OKs
-    ApprovedByOne --> ApprovedByBoth : second OK
-    Viewed --> Scheduled : one OK is enough
-    ApprovedByBoth --> Scheduled : start time set
-    Scheduled --> Executed : runner checks again and runs
+    Viewed --> SigningIn : an approver presses Approve
+    ApprovedByOne --> SigningIn : the second approver presses Approve
+    SigningIn --> ApprovedByOne : first of two OKs recorded
+    SigningIn --> Executed : last OK recorded and the change runs
     Viewed --> Declined : an approver declines
     ApprovedByOne --> Declined : second approver declines
     Requested --> Expired : no answer in time
     Viewed --> Expired : no answer in time
     ApprovedByOne --> Expired : no second OK in time
     Viewed --> Changed : plan changes
-    Scheduled --> Changed : live state moved or changes paused
-    Scheduled --> Cancelled : cancelled before the start
+    SigningIn --> Changed : live state moved or changes paused
+    SigningIn --> Refused : the sign-in or Azure says no
 ```
 
 ## Where to read next

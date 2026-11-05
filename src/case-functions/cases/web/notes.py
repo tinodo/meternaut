@@ -24,7 +24,7 @@ SOURCE = "you, on the notes page"
 KIND_WORDS = (("note", "A note: something that is known about this resource"),
               ("do_not_touch", "A do-not-touch mark: Meternaut proposes no change for this resource until the mark expires"))
 UNDERSTOOD = {"note": "A note about this one resource. It stops nothing.",
-              "do_not_touch": "A do-not-touch mark on this one resource. No plan is made for it, and the runner makes no change to it, until the mark expires."}
+              "do_not_touch": "A do-not-touch mark on this one resource. No plan is made for it, and no change is made to it, until the mark expires."}
 
 
 def is_one_resource(resource_id: str) -> bool:

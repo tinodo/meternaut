@@ -727,7 +727,7 @@ class Cases(unittest.TestCase):
         made = sorted(name for name, (_, body) in self.found.items() if not re.search(rf"(?m)^resource {name} '[^']+' existing", self.source))
         self.assertEqual(made, ["authIdentity", "casesIdentity", "consoleSignIn", "controlConsumerGroup", "controlHub", "functionApp",
                                 "functionOwnsHostContainers", "functionPublishesTelemetry", "functionReceivesControl", "functionUsesQueues",
-                                "functionUsesTables", "historyWorkbook", "noBasicAuthForDeployment", "noBasicAuthForFtp", "plan", "runnerIdentity", "tracesRetention",
+                                "functionUsesTables", "historyWorkbook", "noBasicAuthForDeployment", "noBasicAuthForFtp", "plan", "tracesRetention",
                                 "webNsg", "webSubnet", "workflowSendsControl"])
 
     def test_the_plans_subnet_is_delegated_to_basic_plans_holds_nothing_else_and_is_the_one_that_the_model_side_lists_too(self):
@@ -765,7 +765,7 @@ class Cases(unittest.TestCase):
         self.assertEqual(self.code.count("ConnectionString"), 1, "the telemetry's connection string names the component and holds no secret that ingestion accepts")
         self.assertIn("{ name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: insights.properties.ConnectionString }", self.code)
         outputs = [line for line in self.code.splitlines() if line.startswith("output ")]
-        self.assertEqual(len(outputs), 11)
+        self.assertEqual(len(outputs), 9)
         for line in outputs:
             for word in ("listKeys", "ConnectionString", "AccountKey", "primaryKey"):
                 self.assertNotIn(word, line, line)
@@ -866,25 +866,42 @@ class Cases(unittest.TestCase):
         self.assertNotRegex(self.code, r"clientSecret\s*:", "the app registration trusts an identity: there is no client secret")
         self.assertNotIn("excludedPaths: [\n        '/ok", body)
         self.assertEqual(re.findall(r"'(/[^']*)'", re.search(r"excludedPaths: \[(.*?)\]", body, re.S).group(1)), ["/healthz"])
-        self.assertIn("{ name: 'OVERRIDE_USE_MI_FIC_ASSERTION_CLIENTID', value: authIdentity.properties.clientId }", self.code)
+        self.assertNotIn("/arm", body, "the return address of the Azure sign-in is behind the platform's sign-in like every route but /healthz")
+        self.assertIn("{ name: 'OVERRIDE_USE_MI_FIC_ASSERTION_CLIENTID', value: signInIsSetUp ? authIdentity.properties.clientId : '' }", self.code, "the setting that the sign-in reads is set whenever the sign-in is")
 
-    def test_the_identity_that_changes_azure_and_the_one_of_the_sign_in_hold_no_role_in_this_template(self):
+    def test_meternaut_holds_no_right_to_change_azure_so_the_app_has_two_identities_and_the_one_of_the_sign_in_holds_no_role(self):
+        # A change runs with the token of the person who approves it: no identity of this template may write in Azure, and none is made for that.
         for name, (kind, body) in self.found.items():
             if kind == "Microsoft.Authorization/roleAssignments":
-                self.assertNotIn("runnerIdentity", body, name)
                 self.assertNotIn("authIdentity", body, name)
-        self.assertIn("'${runnerIdentity.id}': {}", self.code)
-        self.assertIn("'${authIdentity.id}': {}", self.code)
-        self.assertIn("{ name: 'WRITER_CLIENT_ID', value: runnerIdentity.properties.clientId }", self.code)
+        for word in ("runnerIdentity", "-runner", "WRITER_", "writer", "roleDefinitions@", "Microsoft.Compute", "Microsoft.Network/publicIPAddresses"):
+            self.assertNotIn(word, self.code, word)
+        self.assertEqual(re.findall(r"'\$\{(\w+)\.id\}': \{\}", self.found["functionApp"][1]), ["casesIdentity", "authIdentity"],
+                         "the app has two identities: one reads and stores, one only presents the sign-in")
         self.assertIn("{ name: 'AZURE_CLIENT_ID', value: casesIdentity.properties.clientId }", self.code, "the Watch and the console keep the identity that only reads")
+        self.assertIn("{ name: 'OVERRIDE_USE_MI_FIC_ASSERTION_CLIENTID', value: signInIsSetUp ? authIdentity.properties.clientId : '' }", self.code)
+        outputs = re.findall(r"(?m)^output (\w+) ", self.code)
+        self.assertEqual([o for o in outputs if "dentity" in o],
+                         ["casesIdentityPrincipalId", "casesIdentityClientId", "authIdentityPrincipalId", "authIdentityClientId"])
 
-    def test_the_loop_is_told_where_it_keeps_its_records_and_who_may_use_it(self):
+    def test_the_app_is_told_where_it_keeps_its_records_where_it_may_run_a_change_how_a_person_signs_in_to_azure_and_who_may_use_it(self):
         body = self.found["functionApp"][1]
-        for setting in ("STORE_ACCOUNT_NAME", "WRITER_RESOURCE_GROUP", "WRITER_SUBSCRIPTION_ID", "WRITER_CLIENT_ID", "CONSOLE_HOST", "CONSOLE_PEOPLE", "MAIL_SENDER",
-                        "PLAN_TTL_HOURS", "APPROVAL_DELAY_SECONDS"):
+        for setting in ("STORE_ACCOUNT_NAME", "CHANGE_RESOURCE_GROUP", "CHANGE_SUBSCRIPTION_ID", "SIGNIN_TENANT_ID", "SIGNIN_CLIENT_ID", "CONSOLE_HOST", "CONSOLE_PEOPLE",
+                        "MAIL_SENDER", "PLAN_TTL_HOURS", "OVERRIDE_USE_MI_FIC_ASSERTION_CLIENTID"):
             self.assertIn(f"name: '{setting}'", body, setting)
+        for gone in ("WRITER_RESOURCE_GROUP", "WRITER_SUBSCRIPTION_ID", "WRITER_CLIENT_ID", "APPROVAL_DELAY_SECONDS", "approvalDelaySeconds"):
+            self.assertNotIn(gone, self.source, f"{gone}: Meternaut holds no right to change Azure, and an approval has no window to cancel in")
         self.assertIn("{ name: 'STORE_ACCOUNT_NAME', value: storage.name }", self.code)
-        self.assertIn("{ name: 'WRITER_RESOURCE_GROUP', value: resourceGroup().name }", self.code)
+        self.assertIn("{ name: 'CHANGE_RESOURCE_GROUP', value: resourceGroup().name }", self.code)
+        self.assertIn("{ name: 'CHANGE_SUBSCRIPTION_ID', value: subscription().subscriptionId }", self.code)
+        # The app takes the three settings of the sign-in to Azure together or not at all (src/case-functions/cases/loop_config.py), and the Watch fails with a part of them:
+        # until the console's app registration exists none is set.
+        self.assertIn("var signInIsSetUp = !empty(consoleAppClientId)", self.code)
+        self.assertIn("{ name: 'SIGNIN_TENANT_ID', value: signInIsSetUp ? tenant().tenantId : '' }", self.code)
+        self.assertIn("{ name: 'SIGNIN_CLIENT_ID', value: consoleAppClientId }", self.code)
+        self.assertIn("{ name: 'OVERRIDE_USE_MI_FIC_ASSERTION_CLIENTID', value: signInIsSetUp ? authIdentity.properties.clientId : '' }", self.code)
+        self.assertEqual(self.code.count("signInIsSetUp"), 3, "the variable is used by those two settings and by nothing else")
+        self.assertIn("clientId: consoleAppClientId", self.found["consoleSignIn"][1], "the app registration of the platform's sign-in is the one that an approval signs in with")
 
     def test_the_settings_of_the_loop_are_the_ones_the_app_reads(self):
         config = text("src/case-functions/cases/loop_config.py")
@@ -1125,6 +1142,59 @@ class CasesWorkflow(unittest.TestCase):
         block = self.step("What was done")
         self.assertEqual(len(re.findall(r"^\s+cases\) echo ", block, re.M)), 2)
         self.assertEqual(len(re.findall(r"^\s+cases-run\) echo ", block, re.M)), 2)
+
+    def test_the_summary_says_that_meternaut_holds_no_right_to_change_azure_and_that_a_person_s_approval_runs_the_change_with_that_person_s_permissions(self):
+        block = self.step("What was done")
+        (finished,) = re.findall(r"(?m)^\s+cases\) echo \"(The first cases are in resource group.*?)\" ;;$", block)
+        for words in ("its two identities", "Meternaut holds no right to change Azure", "to sign in to Azure Resource Manager",
+                      "with that person's own permissions", "its Activity Log names that person"):
+            self.assertIn(words, finished)
+        for words in ("three identities", "only writer", "Only the runner", "custom role"):
+            self.assertNotIn(words, finished)
+        (planted,) = re.findall(r"(?m)^\s+plant\) echo \"(Waste of Meternaut's own.*?)\" ;;$", block)
+        self.assertIn("Meternaut holds no right to delete it", planted)
+        self.assertIn("because the change runs with that person's own permissions", planted)
+        for word in ("writer", "Only the runner", "three identities"):
+            self.assertNotIn(word, self.text, word)
+
+    def test_the_front_door_is_knocked_at_by_its_own_action_and_after_every_cases_run_with_no_credential_and_no_write(self):
+        block = self.step("Knock at the console's front door")
+        self.assertIn("if: inputs.action == 'loop-check' || inputs.action == 'cases'", block)
+        self.assertIn("FUNCTION_APP: ${{ steps.params.outputs.cases_function_app_name }}", block)
+        self.assertIn('python3 tools/console-check.py door --host "$FUNCTION_APP.azurewebsites.net" --expect "$expect" --summary "$GITHUB_STEP_SUMMARY"', block)
+        self.assertIn("/arm/return", block, "the return address of the Azure sign-in is part of what is asked")
+        script = "\n".join(line for line in block.split("run:")[1].splitlines() if not line.strip().startswith("#"))
+        self.assertNotRegex(script, r"\baz\s")
+        self.assertNotRegex(script, r"--method (put|patch|post|delete)")
+        self.assertEqual(self.text.count("console-check.py door"), 1)
+
+
+class HandSteps(unittest.TestCase):
+    """environment/BOOTSTRAP.md: the page of the hand steps does not list as required what no longer exists, and says what replaced it."""
+
+    def setUp(self):
+        self.page = text("environment/BOOTSTRAP.md")
+        self.template = text("environment/cases/main.bicep")
+        self.change = self.page.split("## Changed on 2026-11-05: Meternaut runs a change as the person who approves it")[1].split("\n## ")[0]
+
+    def test_the_writers_role_is_a_retired_step_and_its_removal_and_the_one_new_entra_step_are_listed(self):
+        self.assertIn("1. **Retired on 2026-11-05: the writer's custom role and its one assignment. Do not make them.**", self.page)
+        for command in ("python tools/access-requirements.py retire --project-subscription $devSub --project-group $hubGroup\n",
+                        "python tools/access-requirements.py retire --project-subscription $devSub --project-group $hubGroup --apply\n"):
+            self.assertIn(command, self.change)
+        for words in ("user_impersonation", "Azure Service Management", "https://<host>/arm/return", "tools/entra-setup.py", "id-meternaut-runner",
+                      "no refresh token", "api://AzureADTokenExchange", "no secret, no certificate"):
+            self.assertIn(words, self.change)
+        for gone in ("check --only W1", "grant --only W1", "the only identity that changes Azure", "which is the only identity"):
+            self.assertNotIn(gone, self.page)
+
+    def test_the_settings_that_the_page_says_are_gone_are_gone_from_the_template_and_the_new_ones_are_in_it(self):
+        for name in ("WRITER_RESOURCE_GROUP", "WRITER_SUBSCRIPTION_ID", "WRITER_CLIENT_ID", "APPROVAL_DELAY_SECONDS"):
+            self.assertIn(f"`{name}`", self.change)
+            self.assertNotIn(name, self.template, name)
+        for name in ("CHANGE_RESOURCE_GROUP", "CHANGE_SUBSCRIPTION_ID", "SIGNIN_TENANT_ID", "SIGNIN_CLIENT_ID"):
+            self.assertIn(f"`{name}`", self.change)
+            self.assertIn(f"name: '{name}'", self.template, name)
 
 
 if __name__ == "__main__":

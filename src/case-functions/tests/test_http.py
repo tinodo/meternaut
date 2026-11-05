@@ -1,6 +1,10 @@
 import json
+import re
+import threading
 import unittest
 import urllib.error
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from urllib.parse import parse_qs
 
 from support import GATEWAY_GROUP, KEY, PRODUCT_SUBSCRIPTION, SUBSCRIPTION
 from cases import http
@@ -291,12 +295,122 @@ class Errors(unittest.TestCase):
         self.assertIn("network error: OSError", str(raised.exception))
 
 
+class NoRedirects(unittest.TestCase):
+    def test_an_answer_that_redirects_is_the_answer_and_is_not_followed_with_the_headers_of_the_call(self):
+        seen = []
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                seen.append((self.path, self.headers.get("Authorization")))
+                if self.path == "/first":
+                    self.send_response(302)
+                    self.send_header("Location", f"http://127.0.0.1:{self.server.server_port}/second")
+                    self.end_headers()
+                else:
+                    self.send_response(200)
+                    self.end_headers()
+                    self.wfile.write(b"{}")
+
+            def log_message(self, *args):
+                pass
+
+        server = HTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            status, headers, _ = http.default_transport("GET", f"http://127.0.0.1:{server.server_port}/first", {"Authorization": "a-credential-of-the-call"}, None, 10)
+        finally:
+            server.shutdown()
+            server.server_close()
+        self.assertEqual(status, 302)
+        self.assertTrue(headers["location"].endswith("/second"))
+        self.assertEqual(seen, [("/first", "a-credential-of-the-call")], "the address that the answer named was never called")
+
+
 class RetryAfter(unittest.TestCase):
     def test_the_header_is_read_in_any_case_after_lower_casing_and_a_bad_value_is_ignored(self):
         self.assertEqual(http.retry_after({"retry-after": "5"}), 5.0)
         self.assertEqual(http.retry_after({"x-ms-ratelimit-microsoft.costmanagement-entity-retry-after": "7.5"}), 7.5)
         self.assertIsNone(http.retry_after({"retry-after": "Wed, 21 Oct 2026 07:28:00 GMT"}))
         self.assertIsNone(http.retry_after({"content-type": "x"}))
+
+
+TOKEN_URL = "https://login.microsoftonline.com/aaaaaaaa-1111-4222-8333-444444444444/oauth2/v2.0/token"
+
+
+def token_client(*answers):
+    script = Script(*answers)
+    allowed = (("POST", re.compile(r"https://login\.microsoftonline\.com/[0-9a-f-]{36}/oauth2/v2\.0/token")),)
+    return http.Client(allowed, Redactor(), transport=script, sleep=lambda s: None, jitter=lambda: 0.5), script
+
+
+class Forms(unittest.TestCase):
+    def test_a_form_is_sent_url_encoded_with_its_own_content_type(self):
+        c, script = token_client(ok({"access_token": "x"}))
+        c.request("POST", TOKEN_URL, form={"grant_type": "authorization_code", "code": "a b&c=d", "redirect_uri": "https://h.example/arm/return"})
+        (_, _, headers, data, _), = script.calls
+        self.assertEqual(headers["Content-Type"], "application/x-www-form-urlencoded")
+        self.assertEqual(parse_qs(data.decode("ascii")), {"grant_type": ["authorization_code"], "code": ["a b&c=d"], "redirect_uri": ["https://h.example/arm/return"]})
+        self.assertNotIn("a b&c=d", data.decode("ascii"), "the text is encoded")
+
+    def test_a_body_is_still_sent_as_json_and_a_call_without_either_has_no_data(self):
+        c, script = token_client(ok())
+        c.request("POST", TOKEN_URL, body={"a": 1})
+        c.request("POST", TOKEN_URL)
+        self.assertEqual((script.calls[0][2]["Content-Type"], script.calls[0][3]), ("application/json", b'{"a":1}'))
+        self.assertEqual((script.calls[1][3], "Content-Type" in script.calls[1][2]), (None, False))
+
+    def test_a_call_with_a_body_and_a_form_is_refused_before_it_is_made(self):
+        c, script = token_client(ok())
+        with self.assertRaises(ValueError):
+            c.request("POST", TOKEN_URL, body={"a": 1}, form={"b": "2"})
+        self.assertEqual(script.calls, [])
+
+    def test_a_call_to_a_token_endpoint_that_is_not_on_the_list_is_refused(self):
+        c, script = token_client(ok())
+        for url in (TOKEN_URL.replace("login.microsoftonline.com", "login.example.net"), TOKEN_URL.replace("/token", "/authorize"), "http://login.microsoftonline.com/x"):
+            with self.assertRaises(http.Refused):
+                c.request("POST", url, form={"a": "b"})
+        with self.assertRaises(http.Refused):
+            c.request("GET", TOKEN_URL)
+        self.assertEqual(script.calls, [])
+
+
+class OAuthErrors(unittest.TestCase):
+    DESCRIPTION = ("AADSTS70008: The provided authorization code or refresh token has expired due to inactivity. Send a new interactive authorization request. "
+                   "Trace ID: 0b1c2d3e-aaaa-bbbb-cccc-000000000000 Correlation ID: 11111111-2222-3333-4444-555555555555 Timestamp: 2026-11-05 09:00:00Z")
+
+    def test_an_oauth_error_is_its_error_and_its_aadsts_code_and_nothing_of_the_description(self):
+        c, _ = token_client((400, {}, json.dumps({"error": "invalid_grant", "error_description": self.DESCRIPTION}).encode()))
+        with self.assertRaises(http.HttpError) as raised:
+            c.request("POST", TOKEN_URL, form={"code": "the-code-of-the-person"})
+        text = str(raised.exception)
+        self.assertEqual(raised.exception.status, 400)
+        self.assertIn("400 invalid_grant AADSTS70008", text)
+        for hidden in ("Trace ID", "Correlation ID", "0b1c2d3e", "expired due to inactivity", "the-code-of-the-person"):
+            self.assertNotIn(hidden, text)
+
+    def test_an_oauth_error_without_a_code_is_only_its_error(self):
+        c, _ = token_client((400, {}, json.dumps({"error": "access_denied", "error_description": "the person said no"}).encode()))
+        with self.assertRaises(http.HttpError) as raised:
+            c.request("POST", TOKEN_URL, form={"a": "b"})
+        self.assertTrue(str(raised.exception).endswith("400 access_denied"), str(raised.exception))
+
+    def test_an_oauth_error_is_not_retried_and_a_throttled_token_call_is(self):
+        c, script = token_client((400, {}, b'{"error": "invalid_grant"}'))
+        with self.assertRaises(http.HttpError):
+            c.request("POST", TOKEN_URL, form={"a": "b"})
+        self.assertEqual(len(script.calls), 1)
+        c, script = token_client((429, {"Retry-After": "1"}, b"{}"), ok({"access_token": "x"}))
+        self.assertEqual(c.request("POST", TOKEN_URL, form={"a": "b"}).status, 200)
+        self.assertEqual(len(script.calls), 2)
+
+    def test_an_error_that_is_a_text_in_a_long_error_is_cut_short(self):
+        c, _ = token_client((400, {}, json.dumps({"error": "x" * 500, "error_description": "AADSTS65001: consent"}).encode()))
+        with self.assertRaises(http.HttpError) as raised:
+            c.request("POST", TOKEN_URL, form={"a": "b"}, retries=0)
+        self.assertLess(len(str(raised.exception)), 200)
+        self.assertIn("AADSTS65001", str(raised.exception))
 
 
 if __name__ == "__main__":

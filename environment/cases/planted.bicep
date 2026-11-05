@@ -1,5 +1,6 @@
 // Waste that Meternaut plants itself: an unattached disk, and when asked an unassigned public IP address, in the project's own resource group, each tagged with
-// the tag that the loop looks for. The Watch finds them like any other waste, two AI roles judge them, a person approves, and the writer removes exactly these.
+// the tag that the loop looks for. The Watch finds them like any other waste, two AI roles judge them, and a person approves: the change then runs with that
+// person's own permissions and removes exactly these. Meternaut holds no right to change Azure, so Azure refuses the change for a person who may not delete them in this group.
 // It exists so that the whole loop can be shown from the finding to the removal without changing anything that belongs to another project.
 //
 // What it costs while it stays: the disk is the smallest Standard SSD size (about 0.30 US dollars a month); a Standard public IP address is about 3.65 a month.

@@ -11,6 +11,8 @@ Capitalised terms (Case, Action, Atlas, Detector, Credential, Contract, Hub) are
 
 An agent can be talked into anything, so assume it will be: no agent holds a write role. Agents read and propose. One component, the action plane, writes, and only what a person approved or a rule a person wrote allows. Proof points P1 to P10 are in [the roadmap](13-roadmap.md); components are in [the architecture](02-architecture.md).
 
+**Superseded in part on 2026-11-05:** the runner, its roles, the purchase identity and Credentials, in this document. A change runs as the approver, and Meternaut holds no right to change Azure; see [decision 24](12-decisions.md#24-a-change-runs-as-the-approver-meternaut-holds-no-right-to-change-azure--accepted) and [proposal 05](../proposals/05-run-as-the-approver.md).
+
 ## 1. Goals, trust zones and data classes
 
 Five goals drive every control.
@@ -94,7 +96,7 @@ A write is a propose tool (`plan`, `pr-draft`, `ledger-propose`), a message, an 
 | A public page, then a claim, then the Atlas, then a Case | Pull request, human merge, knowledge CI; a claim never fills an Action parameter or alone qualifies an Action for autopilot | A poisoned claim can mislead a Recommendation or the choice of Action, never a parameter |
 | Model text, then a card, page or template | Cards and pages render the plan from the stored record; agent prose is escaped, set apart and carries no control | A person who trusts prose over plan |
 
-Host separation is the strongest cut. `study`, `investigate`, `skeptic` and `diplomat` read untrusted text and hold no propose tool; `engineer` holds them and reads no free text. The `engineer` host enforces that itself: it validates every invocation body against one JSON schema (no free-text field; unknown fields rejected) before the model sees it, and CI sends it free text and malformed bodies. The call from a workflow is not Hub traffic, so this check cannot lean on Hub screening. Roles inside one hosted agent share an identity and a contract; code separates them, not the platform.
+Host separation is the strongest cut. `study`, `investigate`, `skeptic` and `diplomat` read untrusted text and hold no propose tool; `engineer` holds them and reads no free text. The `engineer` host enforces that itself: it validates every invocation body against one JSON schema (no free-text field; unknown fields rejected) before the model sees it, and CI sends it free text and malformed bodies. The call from a workflow is not Hub traffic, so this check cannot lean on Hub screening.
 
 ## 4. Identity
 
@@ -223,7 +225,7 @@ Of the two profiles ([architecture](02-architecture.md#7-two-profiles-one-codeba
 
 - The Agents SDK validates every request's token before a handler runs (authentication and service-URL validation switched on, and tested in CI): signature, expiry, exact audience, permitted issuer, service URL. The bot never acts on decoded but unverified claims ([Learn](https://learn.microsoft.com/microsoft-365/agents-sdk/production-ready-agent/production-ready-agent)).
 - It runs under its own identity: it can call the Approval service, use the `inbound` and `outbound` queues and install the Teams app for a person. It has no model access, no store right and no Azure role.
-- The Approval service verifies a tap itself, from the tapper's own token obtained by an on-behalf-of exchange ([data and integrations](05-data-and-integrations.md)). A compromised bot can drop or delay taps, read replies, forge replies in a person's name (a Lesson is scoped, expires and is shown to its owner), post any text to people who have the app installed, and install it for anyone (an alert catches that). It cannot name another approver, but it may fetch the token of someone who has signed in to the bot and approve that person's R1 requests without a tap, within the daily cap (section 5). It may also undo a recent change inside its window and set that person's mutes or a pause, but it cannot name a delegate (section 12). The web page lists each person's approvals, so one they did not make is seen. R2 and R3 need a fresh sign-in on the page.
+- The Approval service verifies a tap itself, from the tapper's own token obtained by an on-behalf-of exchange ([data and integrations](05-data-and-integrations.md)). A compromised bot can drop or delay taps, read replies, forge replies in a person's name (a Lesson is scoped, expires and is shown to its owner), post any text to people who have the app installed, and install it for anyone (an alert catches that). It cannot name another approver, but it may fetch the token of someone who has signed in to the bot and approve that person's R1 requests without a tap, within the daily cap (section 5). The web page lists each person's approvals, so one they did not make is seen. R2 and R3 need a fresh sign-in on the page.
 - An IP filter is not available for a bot we host: Azure Bot Service publishes no inbound ranges and does not support an inbound allow-list ([Learn](https://learn.microsoft.com/azure/bot-service/security-faq)), so the design relies on token validation.
 - An adopting organisation that will not accept a public route turns Teams off: approvals use the web page and messages use email.
 - The approval page is on a private endpoint, so approvers reach it from the organisation's network; from elsewhere a card's button fails and the request expires unapproved. An organisation whose approvers work off-network may publish it through its own front door; its Entra sign-in and Conditional Access do not change.
@@ -234,7 +236,6 @@ Of the two profiles ([architecture](02-architecture.md#7-two-profiles-one-codeba
 - **Bill of materials** in SPDX format from the dependency graph, attached to every release ([GitHub](https://docs.github.com/en/code-security/how-tos/secure-your-supply-chain/establish-provenance-and-integrity/export-dependencies-as-sbom)); **hash-locked dependencies** and one pinned package cohort for the agent runtime, so prerelease packages move together.
 - **Tool pins**: any Azure MCP Server by version (and digest if it ships as an image), started with its Read only option and a Reader-only identity ([Learn](https://learn.microsoft.com/azure/developer/azure-mcp-server/tools/)); tool schema changes count as dependency changes that need re-approval ([Learn](https://learn.microsoft.com/azure/developer/azure-mcp-server/security)).
 - **Build provenance** with GitHub artifact attestations, verified at deploy ([GitHub](https://docs.github.com/en/actions/concepts/security/artifact-attestations)). **Pinned models and Hub**: aliases resolve to pinned model versions with retirement dates alerted; the Hub accelerator is pinned to a commit (it publishes no releases).
-- **CODEOWNERS** on the Atlas, contracts, Action catalogue, credentials, prompts and Detectors.
 
 ## 10. Who is accountable
 

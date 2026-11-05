@@ -11,23 +11,23 @@ CASE_STATUS = {
     "dropped": ("Dropped", "No change is suggested. The first model recommended keeping the resource."),
     "error": ("Error", "The case could not be finished. A check or a model call failed."),
     "awaiting_ok": ("Waiting for an OK", "A plan was made and waits for a person's OK."),
-    "approved": ("Approved", "A person approved the plan. The change has not started."),
+    "approved": ("Approved", "A person approved the plan and signed in to Azure. The change is being made now."),
     "running": ("Running", "The change has started and is not confirmed yet."),
     "done": ("Done", "The change was made."),
     "failed": ("Failed", "The change failed, or it was stopped before it started."),
-    "declined": ("Declined", "A person said no, or cancelled an approval. Nothing changed."),
+    "declined": ("Declined", "A person said no. Nothing changed."),
     "expired": ("Expired", "Nobody answered in time. Nothing changed."),
     "verified": ("Done and verified", "The change was made and a later check confirmed it."),
 }
 
 PLAN_STATE = {
     "open": "Open. It waits for an OK.",
-    "approved": "Approved. It waits for the runner to start.",
-    "consumed": "Used. The runner took this plan, and a plan runs once.",
+    "approved": "Approved. The change is being made now.",
+    "consumed": "Used. The change was made with the approver's own permissions, and a plan runs once.",
     "declined": "Declined. Nothing changed.",
     "expired": "Expired. Nothing changed.",
     "withdrawn": "Withdrawn. Nothing changed.",
-    "failed": "Failed. The runner could not finish the change.",
+    "failed": "Failed. The change could not be finished.",
 }
 
 WITHDRAWN_ACTION = "Withdrawn before it started. Nothing changed."
@@ -83,8 +83,8 @@ DECISION = {
 
 # level -> (what the level is called, what it stops, the word for the button)
 SWITCH = {
-    "all": ("Everything", "No OK is recorded, the runner makes no change in Azure and no message is sent.", "everything"),
-    "changes": ("Changes", "No OK is recorded and the runner makes no change in Azure.", "changes"),
+    "all": ("Everything", "No approval is accepted, no change is made in Azure and no message is sent.", "everything"),
+    "changes": ("Changes", "No approval is accepted and no change is made in Azure.", "changes"),
     "messages": ("All messages", "No message is sent to anybody.", "all messages"),
 }
 

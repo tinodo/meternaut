@@ -16,7 +16,7 @@ from urllib.parse import urlencode
 from support import APP_ROOT  # noqa: F401  (puts the app on the path)
 
 from cases.memory_store import MemoryStore, stamp
-from cases.models import ActionRecord, CaseRecord, DecideResult, DecisionRecord, PlanRecord, RunRecord, SettingsRecord, StoreError
+from cases.models import ActionRecord, Begun, CaseRecord, DecideResult, DecisionRecord, PlanRecord, RunRecord, SettingsRecord, StoreError
 from cases.people import People, Person
 from cases.web import Services, handle, parse_request
 
@@ -24,7 +24,8 @@ NOW = dt.datetime(2026, 11, 5, 9, 0, 0, tzinfo=dt.timezone.utc)
 SUB = "bbbbbbbb-2222-4333-9444-555555555555"
 GROUP = "meternaut-test-rg"
 DISK = f"/subscriptions/{SUB}/resourceGroups/{GROUP}/providers/Microsoft.Compute/disks/planted-disk-1"
-WRITER = "delete an unattached disk or public IP address in resource group meternaut-test-rg"
+ACTS_ON = "delete an unattached disk or public IP address in resource group meternaut-test-rg"
+SIGNIN_URL = "https://login.microsoftonline.com/tenant/oauth2/v2.0/authorize?state=state-from-the-delegate"
 MODELS = ("model-detective-x", "model-skeptic-y")
 HOST = "console.example.test"
 
@@ -75,7 +76,8 @@ def make_case(**changes) -> CaseRecord:
 def make_plan(**changes) -> PlanRecord:
     base = dict(plan_id="plan0001", case_id="case0001", family="delete-disk", resource_id=DISK, resource_name="planted-disk-1", resource_group=GROUP, subscription_id=SUB,
                 code="7F3K92QD", title=f"Delete an unattached managed disk in resource group {GROUP}",
-                what_changes="The runner deletes the disk named planted-disk-1. It changes nothing else.", saving_usd_month=7.17, waiting_costs_usd_day=0.24,
+                what_changes="When you approve and sign in to Azure, Meternaut deletes the disk named planted-disk-1 with your own permissions. It changes nothing else.",
+                saving_usd_month=7.17, waiting_costs_usd_day=0.24,
                 could_go_wrong="If something still uses the disk, that use stops.", undo="A deleted disk cannot be restored and its data is lost.",
                 evidence_level="Observed now: the disk is unattached. Not measured yet: the saving.", approvers=(TINO,), created_at=at(hours=-1), expires_at=at(hours=71),
                 state="open", approval_class="R2", preconditions={"family": "delete-disk", "tag": "meternaut-planted"})
@@ -84,7 +86,7 @@ def make_plan(**changes) -> PlanRecord:
 
 
 def make_action(**changes) -> ActionRecord:
-    base = dict(plan_id="plan0001", case_id="case0001", family="delete-disk", resource_id=DISK, state="queued", queued_at=at(minutes=-1), start_after=at(minutes=1))
+    base = dict(plan_id="plan0001", case_id="case0001", family="delete-disk", resource_id=DISK, state="queued", queued_at=at(minutes=-1))
     base.update(changes)
     return ActionRecord(**base)
 
@@ -104,12 +106,11 @@ def snapshot(store: MemoryStore) -> dict:
 # -- deciders ------------------------------------------------------------------------------------------------------------------------------------
 
 class ScriptedDecider:
-    """Answers what a test says and keeps what it was asked."""
+    """Answers what a test says and keeps what it was asked. It decides declines, questions and "not mine"; an approval goes through the delegate."""
 
     def __init__(self, result: DecideResult | None = None) -> None:
-        self.result = result or DecideResult(True, "recorded", "Recorded.")
+        self.result = result or DecideResult(True, "declined", "Declined.")
         self.calls: list[dict] = []
-        self.withdrawals: list[dict] = []
 
     def decide(self, principal, plan_id, decision, code, nonce, note=""):
         self.calls.append(dict(oid=principal.oid, plan_id=plan_id, decision=decision, code=code, nonce=nonce, note=note))
@@ -117,15 +118,31 @@ class ScriptedDecider:
             raise self.result
         return self.result
 
-    def withdraw(self, principal, plan_id, nonce):
-        self.withdrawals.append(dict(oid=principal.oid, plan_id=plan_id, nonce=nonce))
-        if isinstance(self.result, Exception):
-            raise self.result
-        return self.result
+
+class ScriptedDelegate:
+    """The two steps of an approval, answered as a test says, with what each was asked. `begun` is what `begin` gives; `finished` is what `finish` gives."""
+
+    def __init__(self, begun: Begun | None = None, finished: DecideResult | None = None) -> None:
+        self.begun = begun or Begun(location=SIGNIN_URL)
+        self.finished = finished or DecideResult(True, "ran", "Deleted. Azure no longer lists the resource.")
+        self.begins: list[dict] = []
+        self.finishes: list[dict] = []
+
+    def begin(self, principal, plan_id, code, nonce, note="", hint=""):
+        self.begins.append(dict(oid=principal.oid, plan_id=plan_id, code=code, nonce=nonce, note=note, hint=hint))
+        if isinstance(self.begun, Exception):
+            raise self.begun
+        return self.begun
+
+    def finish(self, principal, query):
+        self.finishes.append(dict(oid=principal.oid, query=dict(query)))
+        if isinstance(self.finished, Exception):
+            raise self.finished
+        return self.finished
 
 
 class LoopDecider:
-    """A small approval loop over the same store: it checks the code and the one-time token like the real one, and records what it accepts."""
+    """A small approval loop over the same store: it checks the code and the one-time token like the real one, and records what it accepts (not an approval)."""
 
     def __init__(self, store: MemoryStore, clock) -> None:
         self.store, self.clock = store, clock
@@ -142,24 +159,10 @@ class LoopDecider:
             return DecideResult(False, "error", "This form is no longer valid.", plan)
         if not self.store.decision_put(DecisionRecord(plan_id, principal.oid, principal.name, decision, stamp(self.clock()), plan.code, note)):
             return DecideResult(False, "duplicate", "answered already", plan)
-        kind = {"approve": "recorded", "decline": "declined", "ask": "asked", "not_mine": "not_mine"}[decision]
-        if decision == "approve":
-            plan = _replace(self.store, plan, state="approved")
-            self.store.action_put(ActionRecord(plan_id, plan.case_id, plan.family, plan.resource_id, "queued", stamp(self.clock()),
-                                               start_after=stamp(self.clock() + dt.timedelta(minutes=2))))
-        elif decision in ("decline", "not_mine"):
+        kind = {"decline": "declined", "ask": "asked", "not_mine": "not_mine"}[decision]
+        if decision in ("decline", "not_mine"):
             plan = _replace(self.store, plan, state="declined" if decision == "decline" else "withdrawn")
         return DecideResult(True, kind, kind, plan)
-
-    def withdraw(self, principal, plan_id, nonce):
-        self.calls += 1
-        plan, action = self.store.plan_get(plan_id), self.store.action_get(plan_id)
-        if plan is None or action is None or action.state != "queued":
-            return DecideResult(False, "refused_state", "nothing to cancel", plan)
-        if not self.store.nonce_use(nonce, principal.oid, plan_id):
-            return DecideResult(False, "error", "This form is no longer valid.", plan)
-        self.store.action_put(ActionRecord(**{**action.__dict__, "state": "withdrawn", "result": "Withdrawn before it started. Nothing changed."}))
-        return DecideResult(True, "withdrawn", "withdrawn", _replace(self.store, plan, state="withdrawn"))
 
 
 def _replace(store: MemoryStore, plan: PlanRecord, **changes) -> PlanRecord:
@@ -389,13 +392,15 @@ class Reply:
 class Console:
     """The console with a store, a clock and people, and a way to send a request as a person."""
 
-    def __init__(self, decider=None, store=None, people=PEOPLE, base: str = "", models=MODELS, writer=WRITER, host=HOST) -> None:
+    def __init__(self, decider=None, store=None, people=PEOPLE, base: str = "", models=MODELS, acts_on=ACTS_ON, host=HOST, delegate=None) -> None:
         self.now = NOW
         self.store = store if store is not None else MemoryStore(clock=lambda: self.now)
         if decider == "loop":
             decider = LoopDecider(self.store, lambda: self.now)
         self.decider = decider if decider is not None else ScriptedDecider()
-        self.services = Services(store=self.store, decider=self.decider, people=people, now=lambda: self.now, host=host, writer=writer, models=models, base=base)
+        self.delegate = delegate if delegate is not None else ScriptedDelegate()
+        self.services = Services(store=self.store, decider=self.decider, delegate=self.delegate, people=people, now=lambda: self.now, host=host, acts_on=acts_on,
+                                 models=models, base=base)
         self.base = base
 
     def send(self, method: str, path: str, *, oid: str | None = TINO, form: dict | None = None, query: dict | None = None, headers: dict | None = None,
@@ -420,6 +425,11 @@ class Console:
         """Replaces the decider, for a test that brings the real approval loop."""
         self.decider = decider
         self.services = dataclasses.replace(self.services, decider=decider)
+
+    def use_delegate(self, delegate) -> None:
+        """Replaces the delegate, for a test that brings the real sign-in to Azure."""
+        self.delegate = delegate
+        self.services = dataclasses.replace(self.services, delegate=delegate)
 
     def post(self, path: str, form: dict | None = None, **kwargs) -> Reply:
         return self.send("POST", path, form=form or {}, **kwargs)

@@ -4,7 +4,7 @@
 
 ## How to read
 
-Every status is as on **2026-11-01** (**2026-11-02** where a row says so), checked on Microsoft Learn or the vendor's announcement; `UNVERIFIED` marks what could not be confirmed. *Preview* means no service-level agreement; *prerelease* means a package that needs `--pre`. Prices are in [the cost document](10-cost-and-finops.md). Proof points P1 to P10 are in [the roadmap](13-roadmap.md); approval classes R1 to R3 (R1 reversible and small, R2 reversible but larger, R3 irreversible or a purchase) in [security](06-security-and-governance.md).
+Every status is as on **2026-11-01** (**2026-11-02** where a row says so), checked on Microsoft Learn or the vendor's announcement; `UNVERIFIED` marks what could not be confirmed. *Preview* means no service-level agreement; *prerelease* means a package that needs `--pre`. Prices are in [the cost document](10-cost-and-finops.md). Proof points P1 to P10 are in [the roadmap](13-roadmap.md); approval classes R1 to R3 in [security](06-security-and-governance.md).
 
 | Decision | Meaning |
 |---|---|
@@ -113,6 +113,8 @@ Every status is as on **2026-11-01** (**2026-11-02** where a row says so), check
 | **Workbooks, Logs Ingestion API and Grafana** | Dashboards for central roles, fed by business events | GA; Grafana dashboards: GA per Grafana (announced November 2025); Learn's overview shows no status label | Adopt | Five Workbooks, kept as Bicep, read a custom table that the Logs Ingestion API fills; they cannot filter per viewer beyond Azure roles, so owners see web pages. Grafana dashboards (no extra cost) are optional. Detail: [experience register](../experience/13-platform-register.md#reports). | [Learn](https://learn.microsoft.com/azure/azure-monitor/visualize/best-practices-visualize) [Learn](https://learn.microsoft.com/azure/azure-monitor/logs/logs-ingestion-api-overview) |
 | **Azure SRE Agent** | Would watch our platform | GA | Not needed in phase 1 | Always-on charge of 4 agent units an hour while it exists, plus active flow; a 30-day evaluation waives it. Workbooks and alerts suffice. | [Learn](https://learn.microsoft.com/azure/sre-agent/pricing-billing) |
 | **Azure Copilot agents (Optimization)** | A baseline to beat | Optimization agent preview | Watch | VMs and VM Scale Sets only, at most ten items a query. Re-check when it covers more resource types. | [Learn](https://learn.microsoft.com/azure/copilot/optimization-agent) |
+
+**Superseded in part on 2026-11-05:** the runner identity in the Deployment Stacks row. A change runs as the approver; see [decision 24](12-decisions.md#24-a-change-runs-as-the-approver-meternaut-holds-no-right-to-change-azure--accepted) and [proposal 05](../proposals/05-run-as-the-approver.md).
 
 ## Non-Microsoft components
 

@@ -1,22 +1,32 @@
 #!/usr/bin/env python3
 """The access that Meternaut needs outside its own resource group, and the installer that reads it (standard library only).
 
-    python tools/access-requirements.py markdown
+    python tools/access-requirements.py markdown [--retired]
     python tools/access-requirements.py check [places] [--only R1,R3]
     python tools/access-requirements.py grant [places] [--only R1,R3] [--apply] [--yes]
+    python tools/access-requirements.py retire [places] [--only W1] [--apply] [--yes]
 
-The deployment workflow's identity may change only the project's own resource group and must not get a right anywhere else (AGENTS.md rule 18).
-The identities that the workflow makes (one for the usage recording, one for the first cases) still need rights in other places: the subscriptions
-that the Watch reads, the gateway, the central workspace. Only a person who may assign roles there can give them. The file
-environment/access-requirements.json says which role of which identity at which place. This tool reads that file and the signed-in person's view
-of Azure.
+Meternaut holds no write right: every grant in the file only reads, and a change to Azure is made with the token of the person who approved it
+(docs/proposals/03-access-and-onboarding.md). The deployment workflow's identity may change only the project's own resource group and must not get a
+right anywhere else (AGENTS.md rule 18). The identities that the workflow makes (one for the usage recording, one for the first cases) still need
+reads in other places: the subscriptions that the Watch reads, the gateway, the central workspace. Only a person who may assign roles there can give
+them. The file environment/access-requirements.json says which role of which identity at which place, and which grants an earlier version made and
+must now be removed. This tool reads that file and the signed-in person's view of Azure.
 
-markdown  Prints the table of the requirements, as docs/proposals/03-access-and-onboarding.md shows it. Reads no Azure.
+markdown  Prints the table of the requirements, as docs/proposals/03-access-and-onboarding.md shows it; with --retired, the table of the retired grants.
+          Reads no Azure.
 check     Read only. For each requirement: present, missing, or why it cannot be present yet (the identity does not exist, the custom role does not
           exist or differs from the file). Exit 0 when every requirement is present. A grant at a higher place (a management group) counts.
 grant     A dry run: prints what is missing and the exact commands that would make it. With --apply it runs them, with the rights of the person
           who is signed in to the Azure CLI, and checks again. It grants only what the file lists, never changes a custom role that already exists
           (it reports the difference) and refuses to run in GitHub Actions: no pipeline may hold these rights.
+retire    Removes what the file lists under "retired". It reads first: for each retired item it looks for (a) the identity, by name, in the project's
+          group (it is reported and never deleted: the deployment workflow or the owner removes an identity), (b) the assignments of the retired custom
+          role at that place and below it, whoever holds them (an identity that was deleted leaves its assignment, which the portal shows as "Identity
+          not found"), and (c) the custom role itself. A dry run prints the exact commands. With --apply it runs them, with the rights of the person
+          who is signed in to the Azure CLI: the assignments of that role at that place first, then the role, and only when no assignment of it
+          remains. A role that can also be assigned outside the place is left alone. It changes nothing else, a second run finds nothing to retire,
+          and it refuses --apply in GitHub Actions like grant. Exit 0 when nothing is left to retire, 1 when something is (also after a dry run).
 
 The places come from options or from the settings that the workflow uses: --project-subscription (ENV_SUBSCRIPTION_ID) and --project-group
 (ENV_RESOURCE_GROUP), where the identities are; --gateway (GATEWAY_RESOURCE_ID), the API Management instance; --gateway-insights
@@ -134,9 +144,18 @@ def load_manifest(path: Path = MANIFEST) -> dict:
                 assert GUID_ONLY.match(role["id"]), name
             else:
                 assert role["definedIn"] in ("gatewayGroup", "workspaceGroup", "projectGroup") and role["actions"] and role["description"], name
-                if role.get("writes"):
-                    assert role["definedIn"] == "projectGroup", f"{name}: a role that writes is defined in the project's own group and nowhere else"
-    except (OSError, ValueError, KeyError, AssertionError) as e:
+                assert not role.get("writes"), f"{name}: Meternaut holds no write right, so no role may be one that changes Azure"
+        assert isinstance(manifest.get("retired", []), list), "retired is a list"
+        used = set(ids)
+        current = {i["name"] for i in manifest["identities"].values()}
+        for item in manifest.get("retired", []):
+            assert item["id"] not in used, f"{item['id']}: the id of a retired item is not the id of a grant, and is used once"
+            used.add(item["id"])
+            assert isinstance(item["identity"], dict) and SIMPLE_NAME.match(str(item["identity"].get("name", ""))), f"{item['id']}: the identity is an object with a name"
+            assert item["identity"]["name"] not in current, f"{item['id']}: a retired identity is not an identity of the file"
+            assert item["role"] and item["role"] not in manifest["roles"], f"{item['id']}: a retired role is not a role of the file"
+            assert item["place"] in manifest["places"] and item["why"], item["id"]
+    except (OSError, ValueError, KeyError, AssertionError, TypeError) as e:
         raise Problem(f"{path} is not a valid list of access requirements ({e})") from e
     return manifest
 
@@ -156,9 +175,16 @@ def markdown(manifest: dict) -> str:
     """The table of the requirements, for the proposal."""
     rows = ["| # | Identity | Role | Where | What it is for |", "|---|---|---|---|---|"]
     for g in manifest["grants"]:
-        role = manifest["roles"][g["role"]]
-        custom = (" (custom role, changes Azure)" if role.get("writes") else " (custom role)") if role["kind"] == "custom" else ""
+        custom = " (custom role)" if manifest["roles"][g["role"]]["kind"] == "custom" else ""
         rows.append(f"| {g['id']} | `{manifest['identities'][g['identity']]['name']}` | {g['role']}{custom} | {manifest['places'][g['place']]} | {g['why']} |")
+    return "\n".join(rows)
+
+
+def markdown_retired(manifest: dict) -> str:
+    """The table of what an earlier version granted and is to be removed, for the proposal."""
+    rows = ["| # | Identity | Role | Where | Why it is retired |", "|---|---|---|---|---|"]
+    for r in manifest.get("retired", []):
+        rows.append(f"| {r['id']} | `{r['identity']['name']}` | {r['role']} (custom role) | {manifest['places'][r['place']]} | {r['why']} |")
     return "\n".join(rows)
 
 
@@ -287,12 +313,17 @@ def definition_problems(definition: dict, spec: dict, expected_scope: str) -> li
     return problems
 
 
+def custom_roles_named(az: Az, subscription: str, name: str) -> list[dict]:
+    """The custom roles of that name that the subscription can see (a role that is assignable in one of its resource groups is among them)."""
+    return az.json("role", "definition", "list", "--subscription", subscription, "--name", name, "--custom-role-only", "true") or []
+
+
 def role_state(az: Az, name: str, spec: dict, places: Places) -> tuple[str | None, str, str]:
     """(role id or None, 'ok' | 'role-missing' | 'role-differs', detail)."""
     if spec["kind"] == "builtin":
         return spec["id"], "ok", ""
     group = definition_group(spec["definedIn"], places, az)
-    found = az.json("role", "definition", "list", "--subscription", subscription_of(group), "--name", name, "--custom-role-only", "true") or []
+    found = custom_roles_named(az, subscription_of(group), name)
     if not found:
         return None, "role-missing", "the custom role does not exist yet; grant makes it first"
     if len(found) > 1:
@@ -301,15 +332,19 @@ def role_state(az: Az, name: str, spec: dict, places: Places) -> tuple[str | Non
     return found[0]["name"], ("role-differs" if problems else "ok"), "; ".join(problems)
 
 
-def assignments(az: Az, principal: str, scope: str) -> list[dict]:
-    """The principal's assignments at, above and below the scope (the list for a scope with this filter returns all three)."""
-    url = f"{ARM}{scope}/providers/Microsoft.Authorization/roleAssignments?api-version={ASSIGNMENTS_API}&$filter=principalId eq '{principal}'"
+def all_pages(az: Az, url: str) -> list[dict]:
+    """Every item of a list that Azure returns in pages."""
     found: list[dict] = []
     while url:
         page = az.json("rest", "--method", "get", "--url", url, "--output", "json") or {}
         found += [v for v in page.get("value") or [] if isinstance(v, dict)]
         url = page.get("nextLink")
     return found
+
+
+def assignments(az: Az, principal: str, scope: str) -> list[dict]:
+    """The principal's assignments at, above and below the scope (the list for a scope with this filter returns all three)."""
+    return all_pages(az, f"{ARM}{scope}/providers/Microsoft.Authorization/roleAssignments?api-version={ASSIGNMENTS_API}&$filter=principalId eq '{principal}'")
 
 
 def covers(assigned_scope: str, target: str) -> bool:
@@ -432,6 +467,182 @@ def signed_in(az: Az) -> str:
     return out.strip()
 
 
+# ---- what an earlier version granted ---------------------------------------------------------------------------------------------------------------
+
+LEFT_STATES = {"there": "still there", "gone": "gone", "left-alone": "left alone"}
+ASSIGNMENT_TAIL = re.compile(rf"/providers/Microsoft\.Authorization/roleAssignments/{GUID}$", re.I)
+NOT_THERE = re.compile(r"could not be found|was not found|does not exist|ResourceNotFound|RoleAssignmentNotFound", re.I)
+STILL_ASSIGNED = re.compile(r"RoleDefinitionHasAssignments|existing role assignments", re.I)
+
+
+class Left:
+    """One retired item at one scope, and what is still there of it."""
+
+    def __init__(self, item: dict, scope: str, state: str, role_id: str | None = None, assigned: list[dict] | None = None, detail: str = "") -> None:
+        self.item, self.scope, self.state, self.role_id, self.assigned, self.detail = item, scope, state, role_id, assigned or [], detail
+
+
+class Removal:
+    """One command that removes something of a retired item: an assignment (target is its id) or the custom role (target is its id)."""
+
+    def __init__(self, kind: str, role: str, scope: str, target: str) -> None:
+        self.kind, self.role, self.scope, self.target = kind, role, scope, target
+
+
+def selected_retired(manifest: dict, only: str | None) -> list[dict]:
+    retired = manifest.get("retired") or []
+    if not only:
+        return retired
+    wanted = [x.strip() for x in only.split(",") if x.strip()]
+    known = {r["id"]: r for r in retired}
+    unknown = [x for x in wanted if x not in known]
+    if unknown:
+        raise Problem(f"--only names {', '.join(unknown)}; the retired items are {', '.join(known) or 'none'}")
+    return [known[x] for x in wanted]
+
+
+def inside(scope: str, place: str) -> bool:
+    """True when scope is the place or something below it."""
+    s, p = scope.rstrip("/").lower(), place.rstrip("/").lower()
+    return s == p or s.startswith(p + "/")
+
+
+def assignments_of_role(az: Az, scope: str, role_id: str) -> list[dict]:
+    """The assignments of one role at the scope and below it, whoever holds them. Azure keeps the assignment of an identity that was deleted, and the
+    portal shows it as 'Identity not found', so this lists by role and never by identity."""
+    found = []
+    for assignment in all_pages(az, f"{ARM}{scope}/providers/Microsoft.Authorization/roleAssignments?api-version={ASSIGNMENTS_API}"):
+        properties = assignment.get("properties") or {}
+        if str(properties.get("roleDefinitionId", "")).rsplit("/", 1)[-1].lower() != role_id.lower() or not inside(str(properties.get("scope", "")), scope):
+            continue
+        given = assignment.get("id")
+        if not (isinstance(given, str) and inside(given, scope) and ASSIGNMENT_TAIL.search(given)):
+            raise Problem(f"Azure listed an assignment of the role {role_id} with an id that this tool does not recognise: {str(given)[:200]}")
+        found.append(assignment)
+    return found
+
+
+def find_retired(az: Az, manifest: dict, places: Places, only: str | None = None) -> tuple[list[Left], dict[str, str | None]]:
+    """What is still there of each retired item: reads only. Also the object id of each retired identity that still exists."""
+    left: list[Left] = []
+    identities: dict[str, str | None] = {}
+    named: dict[tuple[str, str], list[dict]] = {}
+    for item in selected_retired(manifest, only):
+        name = item["identity"]["name"]
+        if name not in identities:
+            identities[name] = principal_of(az, places, name)
+        for scope in scopes_for(item["place"], places, az):
+            key = (subscription_of(scope), item["role"])
+            if key not in named:
+                named[key] = custom_roles_named(az, key[0], item["role"])
+            if not named[key]:
+                left.append(Left(item, scope, "gone"))
+                continue
+            if len(named[key]) > 1:
+                raise Problem(f"two custom roles are called {item['role']}")
+            role = named[key][0]
+            outside = [s for s in role.get("assignableScopes") or [] if not inside(s, scope)]
+            if outside:
+                left.append(Left(item, scope, "left-alone", role["name"],
+                                 detail=f"the custom role can also be assigned at {', '.join(outside)}, outside this place: it is not what was granted here, so nothing of it is touched"))
+                continue
+            left.append(Left(item, scope, "there", role["name"], assignments_of_role(az, scope, role["name"])))
+    return left, identities
+
+
+def describe_left(left: Left, identities: dict[str, str | None]) -> str:
+    item = left.item
+    name = item["identity"]["name"]
+    lines = [f"  {LEFT_STATES[left.state]:<13}{item['id']}  {name}  {item['role']}  at {left.scope}"]
+    if left.detail:
+        lines.append(f"               {left.detail}")
+    if left.state == "there":
+        lines.append(f"               the custom role exists ({left.role_id}); {len(left.assigned)} assignment(s) of it at or below this place" + (":" if left.assigned else ""))
+        for assignment in left.assigned:
+            holder = str((assignment.get("properties") or {}).get("principalId", ""))
+            who = name if holder and holder.lower() == (identities.get(name) or "").lower() else (
+                f"{holder} (an identity that is not {name}, or one that was deleted: the portal shows that as 'Identity not found')")
+            lines.append(f"                 {assignment['id']}  held by {who}")
+    return "\n".join(lines)
+
+
+def identity_notes(identities: dict[str, str | None], places: Places) -> list[str]:
+    notes = []
+    for name, principal in identities.items():
+        if principal:
+            notes.append(f"  note         {name} still exists in {project_group_scope(places)} (object id {principal}). This tool never deletes an identity: "
+                         f"the deployment workflow or the owner removes it.")
+        else:
+            notes.append(f"  note         {name} does not exist in {project_group_scope(places)}.")
+    return notes
+
+
+def retire_plan(found: list[Left]) -> list[Removal]:
+    steps = [Removal("unassign", left.item["role"], left.scope, a["id"]) for left in found if left.state == "there" for a in left.assigned]
+    defined: set[str] = set()
+    for left in found:
+        if left.state == "there" and left.role_id not in defined:
+            defined.add(left.role_id)
+            steps.append(Removal("undefine", left.item["role"], left.scope, left.role_id))
+    return steps
+
+
+def show_removal(step: Removal) -> str:
+    if step.kind == "unassign":
+        return f"az role assignment delete --ids {step.target}   # {step.role} at {step.scope}"
+    return (f"az role definition delete --subscription {subscription_of(step.scope)} --name {step.target}   "
+            f"# the custom role {step.role}, only when no assignment of it remains")
+
+
+def apply_retirement(az: Az, found: list[Left], out, sleep=time.sleep) -> None:
+    for left in found:
+        if left.state != "there":
+            continue
+        for assignment in left.assigned:
+            code, _, err = az.run("role", "assignment", "delete", "--ids", assignment["id"])
+            if code == 0:
+                out(f"  removed the assignment {assignment['id']}")
+            elif NOT_THERE.search(err or ""):
+                out(f"  the assignment {assignment['id']} was gone already")
+            else:
+                raise Problem(f"the assignment {assignment['id']} of {left.item['role']} could not be removed: {first_line(err)}")
+    handled: set[str] = set()
+    for left in found:
+        if left.state != "there" or left.role_id in handled:
+            continue
+        handled.add(left.role_id)
+        remaining = [a for other in found if other.state == "there" and other.role_id == left.role_id for a in assignments_of_role(az, other.scope, left.role_id)]
+        if remaining:
+            out(f"  kept the custom role {left.item['role']}: {len(remaining)} assignment(s) of it remain")
+            continue
+        for attempt in range(1, 9):
+            code, _, err = az.run("role", "definition", "delete", "--subscription", subscription_of(left.scope), "--name", left.role_id)
+            if code == 0:
+                out(f"  removed the custom role {left.item['role']} ({left.role_id})")
+                break
+            if NOT_THERE.search(err or ""):
+                out(f"  the custom role {left.item['role']} was gone already")
+                break
+            if attempt < 8 and STILL_ASSIGNED.search(err or ""):
+                sleep(15)
+                continue
+            raise Problem(f"the custom role {left.item['role']} could not be removed: {first_line(err)}")
+
+
+def show_retired(found: list[Left], identities: dict[str, str | None], places: Places, out) -> None:
+    for left in found:
+        out(describe_left(left, identities))
+    for note in identity_notes(identities, places):
+        out(note)
+
+
+def report_retired(found: list[Left], identities: dict[str, str | None], places: Places, out) -> bool:
+    show_retired(found, identities, places, out)
+    done = sum(1 for left in found if left.state == "gone")
+    out(f"{done} of {len(found)} gone.")
+    return done == len(found)
+
+
 # ---- the commands --------------------------------------------------------------------------------------------------------------------------------
 
 def command_check(args, az: Az, manifest: dict, places: Places, out) -> int:
@@ -469,15 +680,47 @@ def command_grant(args, az: Az, manifest: dict, places: Places, out, sleep, ask,
     return 0 if report(examine(az, manifest, places, args.only), manifest, out) else 1
 
 
+def command_retire(args, az: Az, manifest: dict, places: Places, out, sleep, ask, env) -> int:
+    if args.apply and env.get("GITHUB_ACTIONS") == "true":
+        raise Problem("a person with the right to assign roles runs this, never a pipeline: the workflow's identity must not hold that right (AGENTS.md rule 18)")
+    who = signed_in(az)
+    out(f"Signed in as {who}.")
+    found, identities = find_retired(az, manifest, places, args.only)
+    show_retired(found, identities, places, out)
+    steps = retire_plan(found)
+    blocked = [left for left in found if left.state == "left-alone"]
+    if not steps:
+        out("Nothing to retire." if not blocked else "Nothing can be retired until the lines above that say 'left alone' are settled.")
+        return 1 if blocked else 0
+    out(f"{len(steps)} change(s) would be made, and nothing else:")
+    for step in steps:
+        out(f"  {show_removal(step)}")
+    if not args.apply:
+        out("This was a dry run. Run again with --apply to make them.")
+        return 1
+    if not args.yes:
+        answer = ask(f"Make these {len(steps)} change(s) as {who}? Type yes: ")
+        if answer is None:
+            raise Problem("--apply needs --yes when there is no terminal to ask in")
+        if answer.strip().lower() != "yes":
+            raise Problem("nothing was changed")
+    apply_retirement(az, found, out, sleep)
+    out("Checking again:")
+    found, identities = find_retired(az, manifest, places, args.only)
+    return 0 if report_retired(found, identities, places, out) else 1
+
+
 def main(argv=None, az: Az | None = None, env=None, out=print, sleep=time.sleep, ask=None) -> int:
     env = os.environ if env is None else env
     ask = ask or (lambda prompt: input(prompt) if sys.stdin.isatty() else None)
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     commands = parser.add_subparsers(dest="command", required=True)
-    commands.add_parser("markdown", help="print the table of the requirements")
-    for name, text in (("check", "read only: which requirements are present"), ("grant", "dry run; with --apply, make what is missing")):
+    table = commands.add_parser("markdown", help="print the table of the requirements")
+    table.add_argument("--retired", action="store_true", help="print the table of the retired grants instead")
+    for name, text in (("check", "read only: which requirements are present"), ("grant", "dry run; with --apply, make what is missing"),
+                       ("retire", "dry run; with --apply, remove what an earlier version granted (the list retired)")):
         sub = commands.add_parser(name, help=text)
-        sub.add_argument("--only", help="comma separated requirement ids, for example R1,R3")
+        sub.add_argument("--only", help="comma separated ids, for example R1,R3 (retire: W1)")
         sub.add_argument("--project-subscription")
         sub.add_argument("--project-group")
         sub.add_argument("--estate", action="append", help="a subscription, management group or resource group id; repeat for more")
@@ -485,19 +728,21 @@ def main(argv=None, az: Az | None = None, env=None, out=print, sleep=time.sleep,
         sub.add_argument("--gateway-insights")
         sub.add_argument("--workspace")
         sub.add_argument("--product-subscription")
-        if name == "grant":
+        if name != "check":
             sub.add_argument("--apply", action="store_true", help="make the changes (the default is a dry run)")
             sub.add_argument("--yes", action="store_true", help="do not ask first")
     args = parser.parse_args(argv)
     try:
         manifest = load_manifest()
         if args.command == "markdown":
-            out(markdown(manifest))
+            out(markdown_retired(manifest) if args.retired else markdown(manifest))
             return 0
         az = az or Az()
         places = read_places(args, env)
         if args.command == "check":
             return command_check(args, az, manifest, places, out)
+        if args.command == "retire":
+            return command_retire(args, az, manifest, places, out, sleep, ask, env)
         return command_grant(args, az, manifest, places, out, sleep, ask, env)
     except Problem as e:
         print(f"error: {e}", file=sys.stderr)

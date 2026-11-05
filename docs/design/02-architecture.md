@@ -60,6 +60,8 @@ All of our own code runs on Azure Functions (Flex Consumption, zip deployment), 
 | `runner` | Action runner (identities per action family), verifier, a what-if-only function for `plan` | Change Azure within opted-in scopes; record that an approval was consumed | `tools`, for what-if by plan id only: private endpoint. Otherwise nobody |
 | `bot` | The Teams bot endpoint (C# or TypeScript, as the Agents SDK needs) | Call the approval service with the tapper's own token; put replies on an `inbound` queue; post what `workflows` leaves on an `outbound` queue; install itself for a person | Teams, over the public internet: token-validated ([06](06-security-and-governance.md)) |
 
+**Superseded in part on 2026-11-05:** the `runner` app's identities and write roles. A change runs as the approver; see [decision 24](12-decisions.md#24-a-change-runs-as-the-approver-meternaut-holds-no-right-to-change-azure--accepted) and [proposal 05](../proposals/05-run-as-the-approver.md).
+
 A workflow that waits days for a person runs no orchestration code while it waits, and a hosted-agent session is not where a person's deadline belongs, so waiting lives in workflows ([03](03-agents-and-workflows.md)). [Hosted agents](https://learn.microsoft.com/azure/foundry/agents/concepts/hosted-agents) · [Flex Consumption](https://learn.microsoft.com/azure/azure-functions/flex-consumption-plan)
 
 ## 4. What goes through the hub, and what does not
@@ -128,7 +130,7 @@ The solution onboards to the **Citadel governance hub of the adopting organisati
 | Monitoring | Central Log Analytics and monitor scope | Diagnostic settings, workbooks, alerts |
 | Policy | Azure Policy and Defender for Cloud baselines | Policy that denies model deployments in the spoke |
 
-**If the organisation has no hub**, it deploys the accelerator from upstream at a pinned commit. The accelerator has no releases and its defaults loosen security (public endpoints, prompt and completion capture), so we override them. Its always-on usage pipeline is its main fixed cost, priced separately in [the cost document](10-cost-and-finops.md). For an API Management instance that already exists, the kit's gateway-upgrade module (preview) applies its gateway configuration without creating the service or changing its network; a companion module adds the services around it. A use case onboards through an *access contract*: a key, its models and its limits.
+**If the organisation has no hub**, it deploys the accelerator from upstream at a pinned commit. The accelerator has no releases and its defaults loosen security (public endpoints, prompt and completion capture), so we override them. Its always-on usage pipeline is its main fixed cost, priced separately in [the cost document](10-cost-and-finops.md). For an API Management instance that already exists, the kit's gateway-upgrade module (preview) applies its gateway configuration without creating the service or changing its network; a companion module adds the services around it.
 
 ## 7. Two profiles, one codebase
 
@@ -137,7 +139,7 @@ The solution onboards to the **Citadel governance hub of the adopting organisati
 | Purpose | Build, test and evaluate on **synthetic data** | Read real estates; act after approval |
 | Subscription | Its own | Its own |
 | Foundry | Basic setup; public endpoint with Entra sign-in and an IP allow-list | Bring-your-own virtual network with **platform-managed agent data**; private endpoint ([networking options](https://learn.microsoft.com/azure/foundry/agents/concepts/networking-options)) |
-| Hub | Dev contracts on the same hub. They reach no production backend, and a negative test in CI gates every release; a separate gateway is an option for stricter organisations | Prod contracts |
+| Hub | Dev contracts on the same hub. They reach no production backend, and a negative test in CI gates every release | Prod contracts |
 | Private endpoints | None | Eleven: eight for the dependencies (Foundry account, AI Search, Cosmos DB, audit storage, platform storage: blob, queue, table; Key Vault) and three inbound to the `tools`, `approvals` and `runner` apps. The last two apps are deployed in the phase that first uses them, so the count is nine in phase 1a, ten in phase 2 and eleven from phase 3 |
 | Roles | **No role on any production scope**; tested in CI | Read roles at onboarded scopes; action roles only where the organisation opts in |
 | AI Search | Free tier | Basic |

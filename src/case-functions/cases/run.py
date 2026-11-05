@@ -89,7 +89,7 @@ def work_case(s: Services, number: int, lead: Lead, context: Context, tokens_bef
 
     def save(status: str, recommendation: str | None, confidence: float | None, saving: float | None, summary: str, objections: list[str], flags_on: list[str],
              facts: dict) -> None:
-        """The case goes to the store, when there is one, and a plan is made when the writer could act on it. A store that fails never stops the run."""
+        """The case goes to the store, when there is one, and a plan is made when a person could approve a change for it. A store that fails never stops the run."""
         ex = s.extras
         if ex is None:
             return
@@ -249,7 +249,7 @@ def execute(s: Services, trigger: str) -> Summary:
     ranked = detectors.rank(found, contexts)
     if s.extras is not None:
         approval = wiring.approval_settings(s.extras.settings)
-        ranked = sorted(ranked, key=lambda lead: not is_fixture(lead, approval))  # stable: the waste that Meternaut planted itself goes first, it is the one kind that the writer can act on
+        ranked = sorted(ranked, key=lambda lead: not is_fixture(lead, approval))  # stable: the waste that Meternaut planted itself goes first, it is the one kind that a change may be made on
     summary.leads = len(ranked)
     for position, lead in enumerate(ranked[:MAX_LEAD_EVENTS], 1):
         h.emit("lead.found", leadId=lead.lead_id, detector=lead.detector, resourceId=lead.resource_id, resourceType=clean_text(lead.resource_type, 120),

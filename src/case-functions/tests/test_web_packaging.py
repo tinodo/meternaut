@@ -74,9 +74,18 @@ class ThePackage(unittest.TestCase):
         self.assertEqual(sorted(web.__all__), ["Request", "Response", "Services", "handle", "parse_request"])
         for name in web.__all__:
             self.assertTrue(hasattr(web, name))
-        self.assertEqual([f.name for f in dataclasses.fields(web.Services)], ["store", "decider", "people", "now", "host", "writer", "models", "base"])
+        self.assertEqual([f.name for f in dataclasses.fields(web.Services)], ["store", "decider", "delegate", "people", "now", "host", "acts_on", "models", "base"])
         self.assertEqual([f.name for f in dataclasses.fields(web.Request)], ["method", "path", "query", "headers", "form", "body", "problem"])
         self.assertEqual([f.name for f in dataclasses.fields(web.Response)], ["status", "headers", "body"])
+
+    def test_the_pages_never_handle_a_token_and_the_only_outside_address_that_they_name_is_the_sign_in_in_the_policy(self):
+        for path in modules():
+            text = path.read_text(encoding="utf-8").lower()
+            for word in ("bearer", "access_token", "id_token", "refresh_token", "client_assertion", "management.azure.com"):
+                with self.subTest(file=path.name, word=word):
+                    self.assertNotIn(word, text)
+        found = sorted((path.name, address) for path in modules() for address in re.findall(r"https?://[^\s\"';)]+", path.read_text(encoding="utf-8")))
+        self.assertEqual(found, [("layout.py", "https://login.microsoftonline.com")])
 
     def test_every_module_says_what_it_is_for(self):
         for path in modules():
@@ -99,23 +108,28 @@ class ThePackage(unittest.TestCase):
             raise AssertionError("the console reached for the network or for a process")
         with mock.patch.object(socket, "socket", refuse), mock.patch.object(socket, "create_connection", refuse), mock.patch.object(subprocess, "Popen", refuse):
             for oid in (TINO, MAYA, OPS):
-                for path in ("/", "/ok/plan0001", "/why/case0001", "/history", "/me/decisions", "/me/activity", "/me/settings", "/me/notes", "/ops/permissions", "/ops/pause"):
+                for path in ("/", "/ok/plan0001", "/why/case0001", "/history", "/me/decisions", "/me/activity", "/me/settings", "/me/notes", "/ops/permissions", "/ops/pause",
+                             "/arm/return?code=" + "c" * 24 + "&state=" + "s" * 24):
                     console.get(path, oid=oid)
             form = console.get("/me/settings").form("/me/settings/export")
             self.assertEqual(console.submit(form).status, 200)
+            approve = console.get("/ok/plan0001").form("/ok/plan0001", has_button="Approve and sign in to Azure")
+            self.assertEqual(console.submit(approve, "Approve and sign in to Azure").status, 303, "the page answers with a redirect and does not make the call itself")
 
     def test_the_routes_are_in_one_table_and_are_the_pages_of_the_design(self):
         from cases.web import router
         shown = {(method, re.sub(r"\(\?P<\w+>[^)]*\)", "<id>", pattern)) for method, pattern, _, _ in router.ROUTES}
         self.assertEqual(len(shown), len(router.ROUTES), "no route is listed twice")
         self.assertEqual(shown, {
-            ("GET", "/"), ("GET", "/ok/<id>"), ("POST", "/ok/<id>"), ("POST", "/ok/<id>/ask"), ("POST", "/ok/<id>/not-mine"), ("POST", "/ok/<id>/withdraw"), ("GET", "/why/<id>"),
+            ("GET", "/"), ("GET", "/ok/<id>"), ("POST", "/ok/<id>"), ("POST", "/ok/<id>/ask"), ("POST", "/ok/<id>/not-mine"), ("GET", "/arm/return"), ("GET", "/why/<id>"),
             ("GET", "/history"), ("GET", "/me/decisions"), ("GET", "/me/activity"), ("GET", "/me/settings"), ("POST", "/me/settings"), ("POST", "/me/settings/export"),
             ("POST", "/me/settings/delete"), ("GET", "/me/notes"), ("POST", "/me/notes"), ("POST", "/me/notes/<id>/delete"), ("GET", "/ops/permissions"), ("GET", "/ops/pause"),
             ("POST", "/ops/pause")})
+        self.assertNotIn(("POST", "/ok/<id>/withdraw"), shown, "an approval cannot be cancelled: the change is made right after the sign-in")
         self.assertEqual({method for method, *_ in router.ROUTES}, {"GET", "POST"}, "a page that shows something is a GET and a change is a POST")
         needs = {(method, re.sub(r"\(\?P<\w+>[^)]*\)", "<id>", pattern)): tuple(roles) for method, pattern, _, roles in router.ROUTES if roles}
         self.assertEqual(needs, {("GET", "/ops/permissions"): ("ops", "owner"), ("GET", "/ops/pause"): ("ops",), ("POST", "/ops/pause"): ("ops",)})
+        self.assertNotIn(("GET", "/arm/return"), needs, "any listed person may come back from the sign-in: the delegate checks that the sign-in was started by this person")
 
 
 if __name__ == "__main__":

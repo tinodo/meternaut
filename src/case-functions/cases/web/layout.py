@@ -14,7 +14,10 @@ HTML = "text/html; charset=utf-8"
 TEXT = "text/plain; charset=utf-8"
 JSON = "application/json; charset=utf-8"
 
-CSP = "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'"
+SIGNIN_ORIGIN = "https://login.microsoftonline.com"
+CSP = f"default-src 'none'; style-src 'unsafe-inline'; form-action 'self' {SIGNIN_ORIGIN}; frame-ancestors 'none'; base-uri 'none'"
+# `form-action` names Microsoft Entra's sign-in address on purpose: the approve form is answered with a redirect to the sign-in to Azure, and Chromium checks the target of
+# a redirect after a form post against this directive. Nothing else is allowed (the page has no script and no outside file).
 # "same-origin" and not "no-referrer", on purpose. Under "no-referrer" a browser sends `Origin: null` on every form POST (Fetch standard, "append a request Origin header"), and
 # the platform's sign-in refuses an authenticated POST that carries it with an empty 403, before the app is reached: the approve button failed on 2026-11-05 (AGENTS.md rule 28).
 # "same-origin" sends the console's own origin on a POST and still sends no referrer to any other site, which is what the header is for: an address holds the request id.
