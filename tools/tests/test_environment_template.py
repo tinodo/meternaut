@@ -608,7 +608,7 @@ class Workflow(unittest.TestCase):
             self.assertIn(f"[?name=='${variable}']", block)
         self.assertEqual(re.findall(r'az resource delete --ids "\$(\w+)"', block), ["site", "plan", "connection", "storage"])
         self.assertEqual(self.text.count("az resource delete"), 4)
-        self.assertEqual(len(re.findall(r"(?m)^.*\baz (?:\S+ )*?(?:--method )?delete\b.*$", self.text)), 10, "no other delete, of any kind: four of the Logic App version, two of the Flex version of the cases app, two of what that version left in the storage account (the role on its container, then the container), one that takes the app's integration with an earlier subnet away, and one that removes that subnet")
+        self.assertEqual(len(re.findall(r"(?m)^.*\baz (?:\S+ )*?(?:--method )?delete\b.*$", self.text)), 11, "no other delete, of any kind: four of the Logic App version, two of the Flex version of the cases app, two of what that version left in the storage account (the role on its container, then the container), one that takes the app's integration with an earlier subnet away, one that removes that subnet, and one that removes the retired runner identity of the first loop")
         self.assertNotIn("--yes", block)
         for kind in ("Microsoft.Web/sites", "Microsoft.Web/serverfarms", "Microsoft.Web/connections", "Microsoft.Storage/storageAccounts"):
             self.assertIn(f"--resource-type {kind}", block)
@@ -1114,6 +1114,24 @@ class CasesWorkflow(unittest.TestCase):
         for word in ("snet-cases", "snet-pe", "snet-func", "az network", "--yes", "az resource delete"):
             self.assertNotIn(word, script, word)
         self.assertLess(self.names.index("The cases app lists its four functions"), self.names.index(title))
+
+    def test_the_retired_runner_identity_is_removed_by_its_name_only_when_nothing_holds_it_and_each_hold_stops_the_run(self):
+        title = "Remove the retired runner identity of the first loop, when it is still there and nothing holds it"
+        block = self.step(title)
+        self.assertIn("if: inputs.action == 'cases'", block)
+        self.assertIn("FUNCTION_APP: ${{ steps.params.outputs.cases_function_app_name }}", block)
+        self.assertIn('userAssignedIdentities/id-meternaut-runner"', block)
+        self.assertEqual(len(re.findall(r"--method delete", block)), 1)
+        self.assertIn('az rest --method delete --url "https://management.azure.com${identity}?api-version=2023-01-31"', block, "the identity itself, nothing else")
+        script = "\n".join(line for line in block.split("run:")[1].splitlines() if not line.strip().startswith("#"))
+        self.assertIn("nothing to remove", script, "an identity that is not there is no error")
+        self.assertIn("--query identity.userAssignedIdentities", script, "an app that still carries it stops the run")
+        self.assertIn("providers/Microsoft.Authorization/roleAssignments?api-version=2022-04-01", script, "a role that is still assigned stops the run")
+        self.assertEqual(len(re.findall(r"exit 1", script)), 3, "an unreadable identity, an app that carries it and a role that is left each stop the run")
+        for word in ("az role assignment", "az identity", "az resource delete", "--yes", "az group", "snet-", "listKeys"):
+            self.assertNotIn(word, script, word)
+        self.assertLess(self.names.index(title), self.names.index("Start one Watch and read its History"))
+        self.assertLess(self.names.index("Deploy the first cases"), self.names.index(title), "the template has stopped attaching it by then")
 
     def test_the_check_before_the_deploy_writes_nothing_and_reads_no_key(self):
         block = self.step("The usage recording and the contract are there, which the first cases build on")

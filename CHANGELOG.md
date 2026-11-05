@@ -2,6 +2,30 @@
 
 All notable changes, newest first. Versions are git tags: `ideation-vN` for the ideation (`docs/01` to `docs/10` and the research), `design-vN` for the design (`docs/design/`; `design-v1` was withdrawn), `experience-vN` for the experience design (`docs/experience/`) and `build-plan-vN` for the build plan (`docs/build-plan/`). A heading without a tag records a change that is not a new edition. The previous editions stay available at their tags, and the earliest are archived under [`docs/_archive/`](docs/_archive/), which is never edited.
 
+## The first approval as the approver worked on the real estate: his name is on the delete — 2026-11-05
+
+This settles the open items of the entry below, except the ones listed at the end.
+
+**What was done, in order** (CET; the owner pressed Approve himself, and I pressed nothing that decides).
+- **Deploy.** The Hub action `cases` ran green on the merge of the redesign: the app carries two identities (the runner is detached), the settings `CHANGE_*` and `SIGNIN_*` are there, `WRITER_*` and the delay are gone, and the door check passed.
+- **Microsoft Entra, by hand with the owner's session** (rule 26, reported at once). `tools/entra-setup.py` showed two changes in a dry run. With `--apply` it added the return address `/arm/return` and the permission Azure Service Management `user_impersonation`, and gave the consent for all users. Nothing was removed, and `check` reads 9 of 9.
+- **Browser check (rule 28)** in the signed-in panel. A real form POST to a plan that does not exist gave the console's own "I cannot find this request" (a 404 row in the telemetry), and `GET /arm/return` with an invented state gave its own "This request cannot take an answer" (409). The invented code and state are in no table of the telemetry (a search over all tables for 30 minutes), and the request's address there has no query string.
+- **Plant and Watch.** `planted-disk-r76` was planted, and the Watch found it, judged it (the Detective on gpt-6-luna, the Skeptic on gpt-6.1-sol, no objection) and made the plan at 22:24:05.
+- **The approval.** The owner opened the plan page at 22:26:18 and pressed **Approve and sign in to Azure** at 22:26:23. The POST answered 303 and `signin.started` was logged. `/arm/return` answered at 22:26:28, then `approval.recorded` and `action.started` followed at 22:26:29 and `action.finished` with `ok: true` at 22:26:31.
+- **The Activity Log.** `Microsoft.Compute/disks/delete` on the disk: started and accepted 22:26:31, succeeded 22:26:46, **caller `owner@example.com`**. The client is the console's app registration with `appidacr` 2 (the federated credential, so no secret), the scope is `user_impersonation`, and the authentication methods are `rsa` and `mfa`. No other write or delete happened in the group in that time, and Resource Manager answers that the disk does not exist.
+- **The letters.** "A change to Azure waits for your OK" reached his mailbox at 22:25:28 and "A change to Azure has run" at 22:27:55. The pages "What I did here" and "My decisions" show the change as Done in the new words.
+
+**What this settles.**
+- The scope with `profile` gives the object id in the ID token: the approval is recorded only after the check of that id passed.
+- The tenant-wide consent could be given with the owner's session, and the sign-in asked for nothing more.
+- The platform's session reached the return page after the redirect from Entra.
+- The sign-in took 5 seconds and carried multifactor.
+- No identity of Meternaut touched the disk.
+
+**Also changed.** The action `cases` now removes the retired `id-meternaut-runner` when the cases app does not carry it and no role is assigned to it at or around the project's group (a test pins every hold). Until the next run of `cases`, the identity still exists, with no role and no use. Earlier the same evening the owner asked why there are four managed identities. There are three that are needed: `id-meternaut-cases` (reads, stores, sends the letters), `id-meternaut-usage` (the usage recording) and `id-meternaut-console-auth` (no role; only the app registration trusts it). The third is a choice that could be merged into the first.
+
+**Not checked yet.** Cost lines two days after the change (due from Saturday 7 November 21:26 UTC), Azure refusing a person who may not delete (only with fakes), a refused or cancelled sign-in at the real Entra, an approval after the plan expired, two approvers at the same moment (fakes), a claims challenge that asks for another multifactor check (there is no step-up flow), and a Teams card.
+
 ## Meternaut holds no right to change Azure any more: a change runs as the person who approves it — 2026-11-05
 
 **What the owner said.** After the first two approvals he saw in the Activity Log that `id-meternaut-runner` had deleted the disks, and said that an identity that carries out what a person approves would need an Owner-like right, that no customer will give a tool that, and that the action must run on behalf of the approver. He asked whether this is according to the Well-Architected Framework and the Cloud Adoption Framework. He was right to ask. The runner was not an Owner: it held one custom role (read and delete a managed disk and a public IP address, read locks) in the project's own resource group and nowhere else. But it was a standing right to write, held for ever by a tool, and the Well-Architected Framework (Security, SE:05, conditional access: just in time, just enough) and the Microsoft cloud security benchmark (PA-2, avoid standing access) point the other way. No customer will give a tool that.
