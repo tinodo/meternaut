@@ -894,7 +894,7 @@ class CasesWorkflow(unittest.TestCase):
     def test_the_cases_are_made_ready_deployed_published_and_listed_in_that_order_and_for_their_action_only(self):
         order = ["The usage recording and the contract are there, which the first cases build on", "Deploy the first cases",
                  "Sign in to Azure again for the publish of the cases, because the first sign-in's credential lasts five minutes",
-                 "Build the cases app's package", "Publish the cases to the function app", "The cases app lists its two functions"]
+                 "Build the cases app's package", "Publish the cases to the function app", "The cases app lists its four functions"]
         positions = [self.names.index(name) for name in order]
         self.assertEqual(positions, sorted(positions))
         for name in order:

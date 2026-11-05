@@ -40,16 +40,22 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 
 
 Fetch = Callable[[str, dict], "tuple[int, dict, bytes]"]
+TRIES = 3  # the app runs on a plan that scales to zero: the first answer after a quiet time can take a minute
+TIMEOUT = 60
 
 
 def fetch(url: str, headers: dict) -> tuple[int, dict, bytes]:
     opener = urllib.request.build_opener(NoRedirect, urllib.request.HTTPSHandler(context=ssl.create_default_context()))
     request = urllib.request.Request(url, headers={"User-Agent": "meternaut-console-check", **headers}, method="GET")
-    try:
-        with opener.open(request, timeout=30) as response:
-            return response.status, {k.lower(): v for k, v in response.headers.items()}, response.read(4096)
-    except urllib.error.HTTPError as error:
-        return error.code, {k.lower(): v for k, v in error.headers.items()}, error.read(4096)
+    for attempt in range(1, TRIES + 1):
+        try:
+            with opener.open(request, timeout=TIMEOUT) as response:
+                return response.status, {k.lower(): v for k, v in response.headers.items()}, response.read(4096)
+        except urllib.error.HTTPError as error:
+            return error.code, {k.lower(): v for k, v in error.headers.items()}, error.read(4096)
+        except (TimeoutError, urllib.error.URLError, OSError) as error:
+            if attempt == TRIES:
+                raise Problem(f"no answer from {url.split('?')[0]} after {TRIES} tries of {TIMEOUT} seconds ({type(error).__name__})") from error
 
 
 def verdict(path: str, status: int, headers: dict, expect: str) -> tuple[bool, str]:

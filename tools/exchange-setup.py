@@ -22,11 +22,20 @@ The items, in order:
   2  The service principal pointer in Exchange for the identity (Get-ServicePrincipal, New-ServicePrincipal).
   3  The management scope "Meternaut sender mailbox", whose filter names the one address (Get-, New- and Set-ManagementScope).
   4  The assignment of the role "Application Mail.Send" to the identity, limited to that scope (Get-, New-ManagementRoleAssignment).
-  4b The identity holds no other Exchange role assignment, and none without the scope.
+  4b The identity holds no other Exchange role assignment, and none without the scope. The rows of Exchange's default role assignment policy (the self-service
+     roles of a mailbox user, such as MyBaseOptions), which Exchange also lists for a service principal pointer, are the policy's and not the identity's: they
+     are not counted, and nothing here removes them. Test-ServicePrincipalAuthorization (5a, 5b) says what the identity can really do.
   5a Test-ServicePrincipalAuthorization: the identity may send as the shared mailbox (InScope true).
   5b With --other-mailbox: the identity may not send as that other mailbox (InScope false). A negative proof, so give a mailbox that exists.
   6  The sign-in of the shared mailbox's user is blocked (Microsoft Graph, accountEnabled false). A user that is not there yet is "not yet visible", not a failure.
   7  The identity holds no application permission in Microsoft Entra (Microsoft Graph, appRoleAssignments).
+
+One more cmdlet is sent, only when Exchange asks for it: Enable-OrganizationCustomization, which has no parameters. A new Exchange Online organization can refuse
+to make a custom management scope ("The command you tried to run isn't currently allowed in your organization") until it has been run. It un-consolidates stored
+objects so that custom roles and scopes can be made; it changes no mail flow and no policy; Exchange says it is run once per organization and cannot be run again.
+When a cmdlet that creates or changes something is refused for that reason, `apply --apply` says so, sends it once (an answer that it was run before is fine) and
+tries the refused cmdlet again, 12 times at most, 20 seconds apart, because Exchange can take minutes to apply it. Every other error stops the run at once.
+A dry run sends nothing and says that this may be needed. `check` never sends it.
 
 It talks to Exchange as the Azure CLI's token for https://outlook.office365.com (never printed, never stored): a POST to
 https://outlook.office365.com/adminapi/beta/<tenant id>/InvokeCommand. The Azure CLI is `az`, or the command in the variable AZ
@@ -63,9 +72,10 @@ SCOPE = "Meternaut sender mailbox"
 DEFAULT_ALIAS = "meternaut-ai"
 DEFAULT_DISPLAY = "Meternaut (AI)"
 DEFAULT_IDENTITY = "meternaut-cases"
+ENABLE = "Enable-OrganizationCustomization"
 CMDLETS = frozenset({
     "Get-Mailbox", "New-Mailbox", "Get-ServicePrincipal", "New-ServicePrincipal", "Get-ManagementScope", "New-ManagementScope", "Set-ManagementScope",
-    "Get-ManagementRoleAssignment", "New-ManagementRoleAssignment", "Test-ServicePrincipalAuthorization",
+    "Get-ManagementRoleAssignment", "New-ManagementRoleAssignment", "Test-ServicePrincipalAuthorization", ENABLE,
 })
 
 GUID = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
@@ -75,6 +85,16 @@ LOCAL_PART = re.compile(r"[A-Za-z0-9._-]{1,64}")
 IDENTITY_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._() -]{0,79}")
 # What Exchange says when a Get- finds nothing: this is "absent", every other error is a real one.
 ABSENT = re.compile(r"couldn'?t be found|could not be found|was not found|can'?t be found|cannot be found|couldn'?t find object", re.I)
+# What Exchange says when it will not make a custom role or scope before Enable-OrganizationCustomization has been run ("dehydrated" is its word for such an
+# organization), and what it says to that cmdlet when it was run before ("has already been run", "isn't required").
+CUSTOMIZATION_ASKED = re.compile(r"Enable-OrganizationCustomization|InvalidOperationInDehydratedContext", re.I)
+CUSTOMIZATION_DONE = re.compile(r"already|isn.?t required|not required", re.I)
+RETRY_TRIES = 12
+RETRY_PAUSE = 20.0
+ONE_TIME_STEP = ("Exchange asks for a one-time step per organization: Enable-OrganizationCustomization. It only un-consolidates stored objects so that custom roles "
+                 "and scopes can be made; it changes no mail flow and no policy; Exchange says it is run once and cannot be run again.")
+MAY_ASK = ("Exchange may first ask for Enable-OrganizationCustomization, once per organization. That is the one other cmdlet that this tool can send, "
+           "and only when Exchange asks for it.")
 TOKEN_SHAPES = (re.compile(r"eyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{3,}"), re.compile(r"(?i)bearer\s+[A-Za-z0-9._~+/=-]{8,}"))
 HIDDEN = "[token hidden]"
 NOT_COVERED = "Not covered by this tool: the mail-flow rule that rejects mail from the mailbox to any address that is not on the list of people."
@@ -84,12 +104,21 @@ APPLY_DELAY = ("Exchange applies a new role assignment or a changed scope to liv
 LABELS = {"present": "present", "missing": "MISSING", "differs": "DIFFERS", "fail": "FAIL", "cannot": "cannot yet", "unreadable": "UNREADABLE",
           "not_visible": "not yet visible", "not_run": "not run"}
 IN_ORDER = frozenset({"present", "not_visible", "not_run"})
+POLICY_KIND = "roleassignmentpolicy"  # what Exchange calls the assignee and the method of a row of its default role assignment policy, in lower case
 
 Http = Callable[[str, str, Mapping[str, str], "bytes | None"], "tuple[int, Mapping[str, str], bytes]"]
 
 
 class Problem(Exception):
     """Something the person who runs the tool can fix or must know; printed without a trace."""
+
+
+class Refused(Problem):
+    """A cmdlet that Exchange answered with an error. The whole message is kept: the text shown has its first 300 characters, the caller reads what Exchange asks for."""
+
+    def __init__(self, cmdlet: str, status: int, code: str, message: str) -> None:
+        super().__init__(f"{cmdlet} failed: {failure(status, code, message)}")
+        self.cmdlet, self.status, self.code, self.message = cmdlet, status, code, message
 
 
 # ---- the Azure CLI and its tokens ----------------------------------------------------------------------------------------------------------------
@@ -171,7 +200,9 @@ def error_of(raw: bytes) -> tuple[str, str]:
         return "", " ".join(text.split())
     error = document.get("error") if isinstance(document, dict) else None
     if isinstance(error, dict):
-        return str(error.get("code") or ""), " ".join(str(error.get("message") or "").split())
+        # Exchange's own words are often in the details: the message itself can be only "Error executing cmdlet"
+        parts = [str(error.get("message") or "")] + [str(d.get("message") or "") for d in (error.get("details") or []) if isinstance(d, dict)]
+        return str(error.get("code") or ""), " ".join(" ".join(parts).split())
     return "", " ".join((str(document.get("message")) if isinstance(document, dict) and document.get("message") else text).split())
 
 
@@ -196,7 +227,8 @@ class Exchange:
         self.tenant, self.domain, self.tokens, self.transport, self.sleep, self.new_id = tenant, domain, tokens, transport, sleep, new_id
 
     def call(self, cmdlet: str, parameters: dict, absent_ok: bool = False) -> list[dict]:
-        """The objects that the cmdlet returned. With absent_ok, a Get- that finds nothing returns an empty list, as an empty answer or as an error does."""
+        """The objects that the cmdlet returned. With absent_ok, a Get- that finds nothing returns an empty list, as an empty answer or as an error does.
+        An error from Exchange is a Refused, which is a Problem."""
         if cmdlet not in CMDLETS:
             raise Problem(f"{cmdlet} is not one of the cmdlets that this tool sends")
         url = f"{EXCHANGE}/adminapi/beta/{self.tenant}/InvokeCommand"
@@ -222,7 +254,7 @@ class Exchange:
         code, message = error_of(raw)
         if absent_ok and cmdlet.startswith("Get-") and status not in (401, 403) and ABSENT.search(message):
             return []
-        raise Problem(f"{cmdlet} failed: {failure(status, code, message)}")
+        raise Refused(cmdlet, status, code, message)
 
 
 class Graph:
@@ -357,6 +389,35 @@ def truth(value: object) -> bool | None:
     return True if text == "true" else False if text == "false" else None
 
 
+def names_of(value: object) -> list[str]:
+    """The names in a property that Exchange may show as one value or as a list."""
+    return [name for name in (name_of(v) for v in (value if isinstance(value, (list, tuple)) else [value])) if name]
+
+
+def of_policy(row: Mapping) -> bool:
+    """Whether the row belongs to Exchange's default role assignment policy: the self-service roles of a mailbox user (MyBaseOptions and the like). Exchange shows them
+    for any recipient-like object, a service principal pointer included. They are the policy's and not the identity's, they cannot be removed from here and must not
+    be, and what the identity can really do is told by Test-ServicePrincipalAuthorization (items 5a and 5b). A row counts as the policy's when its assignee type is the
+    policy, or when every method that it names is the policy; a row that names a direct or a group method as well stays the identity's."""
+    methods = [m.lower() for m in names_of(prop(row, "AssignmentMethod"))]
+    return name_of(prop(row, "RoleAssigneeType")).lower() == POLICY_KIND or (bool(methods) and all(m == POLICY_KIND for m in methods))
+
+
+def own_assignments(rows: list[dict]) -> list[dict]:
+    """The rows that are the identity's: a direct assignment, or one that it holds through a group. Every row of the default policy is left out."""
+    return [row for row in rows if not of_policy(row)]
+
+
+def is_direct(row: Mapping) -> bool:
+    """Whether the identity itself is the assignee of the row, and not a group that it belongs to."""
+    return name_of(prop(row, "RoleAssigneeType")).lower() == "serviceprincipal" or "direct" in [m.lower() for m in names_of(prop(row, "AssignmentMethod"))]
+
+
+def held_through(row: Mapping) -> str:
+    kind, who = name_of(prop(row, "RoleAssigneeType")), name_of(prop(row, "RoleAssigneeName"))
+    return " ".join(part for part in (kind, f"'{who}'" if who else "") if part) or "a way that Exchange does not name"
+
+
 def unwrapped(text: str) -> str:
     """A filter in one case and one spacing, without brackets around the whole of it."""
     text = " ".join(str(text).split()).lower()
@@ -399,13 +460,14 @@ def examine(ex: Exchange, graph: Graph, cfg: Config) -> list[Item]:
                               Step("Set-ManagementScope", {"Identity": SCOPE, "RecipientRestrictionFilter": cfg.scope_filter})))
 
     # Nothing can be assigned to a pointer that is not there, so there is nothing to read.
-    named = ex.call("Get-ManagementRoleAssignment", {"RoleAssignee": cfg.principal_id, "Role": ROLE}, absent_ok=True) if pointer else []
-    every = ex.call("Get-ManagementRoleAssignment", {"RoleAssignee": cfg.principal_id}, absent_ok=True) if pointer else []
+    named = own_assignments(ex.call("Get-ManagementRoleAssignment", {"RoleAssignee": cfg.principal_id, "Role": ROLE}, absent_ok=True)) if pointer else []
+    rows = ex.call("Get-ManagementRoleAssignment", {"RoleAssignee": cfg.principal_id}, absent_ok=True) if pointer else []
+    every = own_assignments(rows)
     scoped = any((name_of(prop(a, "Role")) or ROLE).lower() == ROLE.lower() and name_of(prop(a, "CustomResourceScope")).lower() == SCOPE.lower() for a in named)
     items.append(Item("4", f'Role "{ROLE}" for the identity, limited to the scope "{SCOPE}"', "present" if scoped else "missing",
                       step=None if scoped else Step("New-ManagementRoleAssignment", {"App": cfg.principal_id, "Role": ROLE, "CustomResourceScope": SCOPE})))
     strays = [a for a in every if not (name_of(prop(a, "Role")).lower() == ROLE.lower() and name_of(prop(a, "CustomResourceScope")).lower() == SCOPE.lower())]
-    items.append(stray_item(strays))
+    items.append(stray_item(strays, len(rows) - len(every)))
 
     ready = mailbox and pointer and scoped
     items.append(proof_item("5a", f"The identity may send as {cfg.address}", ready, ex, cfg, cfg.address, want=True))
@@ -418,17 +480,21 @@ def examine(ex: Exchange, graph: Graph, cfg: Config) -> list[Item]:
     return items
 
 
-def stray_item(strays: list[dict]) -> Item:
+def stray_item(strays: list[dict], ignored: int = 0) -> Item:
     label = "The identity holds no other Exchange role assignment, and none without the scope"
     if not strays:
-        return Item("4b", label, "present")
+        note = (f"{ignored} row(s) of Exchange's default role assignment policy (the self-service roles of a mailbox user) are not the identity's and are not counted; "
+                "items 5a and 5b show what the identity can do") if ignored else ""
+        return Item("4b", label, "present", note)
     lines = ["THE IDENTITY HOLDS EXCHANGE ROLE ASSIGNMENTS THAT IT MUST NOT HOLD. Rights add up, so it can do more than send as the sender mailbox.",
              "This tool removes nothing. Remove each of these yourself (Exchange Online PowerShell), then run this tool again:"]
     for a in strays:
         assignment = name_of(prop(a, "Name", "Identity"))
         scope = name_of(prop(a, "CustomResourceScope")) or "no custom resource scope, so it covers every mailbox"
         lines.append(f"  - assignment {assignment or '(no name shown)'}: role {name_of(prop(a, 'Role')) or '?'}, {scope}")
-        if assignment:
+        if not is_direct(a):
+            lines.append(f"    It comes through {held_through(a)}, not directly. Do not remove the assignment (others hold it too): take the identity out of that, or ask who owns it.")
+        elif assignment:
             lines.append(f"    Remove-ManagementRoleAssignment -Identity '{assignment.replace(chr(39), chr(39) * 2)}'")
     return Item("4b", label, "fail", "\n".join(lines), blocks=True)
 
@@ -506,6 +572,55 @@ def command_check(ex: Exchange, graph: Graph, cfg: Config, out: Callable[[str], 
     return 0 if report(examine(ex, graph, cfg), out) else 1
 
 
+def asks_for_customization(error: Refused) -> bool:
+    """Whether Exchange refused the cmdlet because the organization first needs Enable-OrganizationCustomization (its words are in the code or the message)."""
+    return bool(CUSTOMIZATION_ASKED.search(f"{error.code} {error.message}"))
+
+
+def make_ready(ex: Exchange, out: Callable[[str], None]) -> None:
+    """Says why, then sends Enable-OrganizationCustomization. An answer that it was run before is fine; any other error stops the run."""
+    out(f"  {ONE_TIME_STEP}")
+    try:
+        ex.call(ENABLE, {})
+    except Refused as e:
+        if not CUSTOMIZATION_DONE.search(f"{e.code} {e.message}"):
+            raise
+        out(f"  Exchange says that {ENABLE} was run before ({failure(e.status, e.code, e.message)}). That is fine: it is not needed again.")
+        return
+    out(f"  sent {ENABLE}")
+
+
+def send_step(ex: Exchange, step: Step, out: Callable[[str], None], ready: bool) -> bool:
+    """Sends one cmdlet that creates or changes something. When Exchange refuses it because the organization first needs Enable-OrganizationCustomization, that
+    cmdlet is sent (once per run) and the refused one is tried again, RETRY_PAUSE seconds apart and RETRY_TRIES times at most, because Exchange can take minutes
+    to apply it. Any other error stops the run at once. Returns whether Enable-OrganizationCustomization has been dealt with in this run."""
+    try:
+        ex.call(step.cmdlet, step.parameters)
+    except Refused as e:
+        if not asks_for_customization(e):
+            raise
+        out(f"  {step.cmdlet} was refused ({failure(e.status, e.code, '')}).")
+    else:
+        out(f"  sent {step.cmdlet}")
+        return ready
+    if not ready:
+        make_ready(ex, out)
+    out(f"  Exchange can take minutes to apply it. {step.cmdlet} is tried again, {RETRY_TRIES} times at most, {RETRY_PAUSE:g} seconds apart.")
+    for attempt in range(1, RETRY_TRIES + 1):
+        ex.sleep(RETRY_PAUSE)
+        try:
+            ex.call(step.cmdlet, step.parameters)
+        except Refused as e:
+            if not asks_for_customization(e):
+                raise
+            out(f"  try {attempt} of {RETRY_TRIES}: {step.cmdlet} is still refused")
+        else:
+            out(f"  sent {step.cmdlet} (try {attempt} of {RETRY_TRIES})")
+            return True
+    raise Problem(f"{step.cmdlet} is still refused after {RETRY_TRIES} tries over {RETRY_TRIES * RETRY_PAUSE:g} seconds: Exchange has not yet applied {ENABLE}. "
+                  "It can take longer. Wait, then run this tool again: it only creates what is missing.")
+
+
 def command_apply(ex: Exchange, graph: Graph, cfg: Config, out: Callable[[str], None], really: bool) -> int:
     out(f"The sender setup for {cfg.address} in tenant {cfg.tenant}:")
     items = examine(ex, graph, cfg)
@@ -521,12 +636,13 @@ def command_apply(ex: Exchange, graph: Graph, cfg: Config, out: Callable[[str], 
     out(f"{len(steps)} cmdlet(s) {'will be' if really else 'would be'} sent to Exchange, and nothing else:")
     for step in steps:
         out(f"  {step.cmdlet} {json.dumps(step.parameters)}")
+    out(MAY_ASK)
     if not really:
         out("This was a dry run. Run again with --apply to send them.")
         return 0
+    ready = False
     for step in steps:
-        ex.call(step.cmdlet, step.parameters)
-        out(f"  sent {step.cmdlet}")
+        ready = send_step(ex, step, out, ready)
     out("Checking again:")
     in_order = report(examine(ex, graph, cfg), out)
     if any(step.cmdlet in ("New-ManagementRoleAssignment", "Set-ManagementScope") for step in steps):
