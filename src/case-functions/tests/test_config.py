@@ -75,7 +75,7 @@ class TemplateAndCode(unittest.TestCase):
         # (the Functions host's version and language, and how the Basic plan runs and builds the code).
         read |= set(re.findall(r'^([A-Z][A-Z0-9_]+) = "\1"$', (REPO_ROOT / "src" / "case-functions" / "cases" / "loop_config.py").read_text(encoding="utf-8"), re.M))
         read |= {"CONSOLE_PEOPLE", "OVERRIDE_USE_MI_FIC_ASSERTION_CLIENTID"}
-        read |= {"FUNCTIONS_EXTENSION_VERSION", "FUNCTIONS_WORKER_RUNTIME", "WEBSITE_RUN_FROM_PACKAGE", "SCM_DO_BUILD_DURING_DEPLOYMENT", "ENABLE_ORYX_BUILD"}
+        read |= {"FUNCTIONS_EXTENSION_VERSION", "FUNCTIONS_WORKER_RUNTIME", "WEBSITE_RUN_FROM_PACKAGE", "WEBSITES_CONTAINER_START_TIME_LIMIT", "SCM_DO_BUILD_DURING_DEPLOYMENT", "ENABLE_ORYX_BUILD"}
         self.assertIn('SETTING = "CONSOLE_PEOPLE"', (REPO_ROOT / "src" / "case-functions" / "cases" / "people.py").read_text(encoding="utf-8"))
         self.assertEqual(sorted(set(config.REQUIRED) - given), [], "the template does not set what the code requires")
         known = {name for name in given if name.isupper() and "__" not in name and not name.startswith("APPLICATIONINSIGHTS")}
