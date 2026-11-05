@@ -1,6 +1,6 @@
 # The first cases — a proposal
 
-**Status: approved on 2026-11-04 (the owner: "GO"), built and deployed the same day, and waiting for the rights that are listed under "Hand steps". The changelog says what has been checked and what has not.** This page says what the first piece of Meternaut's own work is, what it reads, what it writes, who may do what, and what is checked. It follows slice 0.4 and 1a.5 of the [build plan](../build-plan/01-the-slices.md), cut down to the smallest part that shows the whole idea on real data, and it builds on the [first environment](01-first-environment.md): the gateway, the private model account and the usage recording. A review by a second model family read it on 2026-11-04 and its findings changed the design: a model sees no name from the estate, the blob rights are per container, and the limits are written down at the end of this page.
+**Status: approved on 2026-11-04 (the owner: "GO"), built and deployed the same day, and run on the real estate on 2026-11-05, after the owner gave the rights listed under "Hand steps". The changelog says what has been checked and what has not.** This page says what the first piece of Meternaut's own work is, what it reads, what it writes, who may do what, and what is checked. It follows slice 0.4 and 1a.5 of the [build plan](../build-plan/01-the-slices.md), cut down to the smallest part that shows the whole idea on real data, and it builds on the [first environment](01-first-environment.md): the gateway, the private model account and the usage recording. A review by a second model family read it on 2026-11-04 and its findings changed the design: a model sees no name from the estate, the blob rights are per container, and the limits are written down at the end of this page.
 
 ## What it is for
 
@@ -96,7 +96,7 @@ A figure that a person could read as money (`costUsd30d`, `monthlySavingUsd`) is
 
 ## Hand steps
 
-Anything outside a workflow is break-glass: it needs the owner's written word and is reported at once ([rule 18 of AGENTS.md](../../AGENTS.md)). Three are needed, and only the first two are done by hand; each is done once.
+Anything outside a workflow is break-glass: it needs the owner's written word and is reported at once ([rule 18 of AGENTS.md](../../AGENTS.md)). Three are needed, and only the first two are done by hand; each is done once. The first two were made on 2026-11-05. The same grants, with the two of the usage recording, are now data and a tool that checks them and, run by a person, makes them: [access and onboarding](03-access-and-onboarding.md).
 
 1. **Reader and Cost Management Reader** for the new identity on the pilot subscription. The deployment workflow's identity has no right there and must not get one.
 2. **A custom role** with one action, `Microsoft.ApiManagement/service/subscriptions/listSecrets/action` (and read of the subscription), assigned to the new identity on the one gateway subscription of the first access product, and on nothing else. The role is defined once in the gateway's subscription.
