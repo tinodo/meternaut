@@ -2,6 +2,20 @@
 
 All notable changes, newest first. Versions are git tags: `ideation-vN` for the ideation (`docs/01` to `docs/10` and the research), `design-vN` for the design (`docs/design/`; `design-v1` was withdrawn), `experience-vN` for the experience design (`docs/experience/`) and `build-plan-vN` for the build plan (`docs/build-plan/`). A heading without a tag records a change that is not a new edition. The previous editions stay available at their tags, and the earliest are archived under [`docs/_archive/`](docs/_archive/), which is never edited.
 
+## The console is back after 54 minutes; the route table was five minutes late, and the baseline makes its network once too — 2026-11-05
+
+**What was measured** (UTC; Activity Log, the platform's start log and the app's telemetry).
+- Repair run 1 (Hub `cases`, 16:26): the app's integration with `snet-web` was taken away at 16:28:57 and the platform let go of its link to the plan a second later; the Hub made `snet-cases` at 16:29:15 and the app was integrated with it at 16:29:59. The run then stopped, as it was written to, because the landing zone's network manager had not put its route table on the new subnet after two minutes. **It wrote it at 16:33:51, four minutes and 36 seconds after the subnet was made** (the first time, `snet-web` got it after 70 seconds). At 16:35:04 the platform started a container, its start probe succeeded after 25 seconds, the site started at 16:35:40, and the health address answered 200 from 16:36:35 (30 requests before and after, 0.19 to 0.83 seconds each).
+- Repair run 2 (Hub `cases`, 16:36, the same action again): it found `snet-cases` and left it alone; the Activity Log shows a write of the network security group, the plan and the app, and **none of the subnet**; the subnet still carried the route table afterwards; the package was accepted (HTTP 200), the app answered on its first try, it listed its four functions, `snet-web` was removed (the platform had let go of it), and the front door passed. This is the run that took the route table away from `snet-web` the first time; it does not now.
+- The timer of the runner has fired every minute since 16:35 (the first round took 4.6 seconds, the rest under a second), and the console answers 200.
+- **The console was down from about 15:41 to 16:35, 54 minutes.** No plan was touched; both still wait.
+
+**What changed after that** (this change).
+- **The route table is only said, no longer required.** A wait of two minutes stopped a run that was right, because the network manager took five. The app cannot start without the table, so the wait for the app (no credential, up to 25 minutes) is the gate, the app's start limit of 600 seconds lets its first start wait for the table, and a step after it says whether `snet-pe` and `snet-cases` carry the table.
+- **The baseline makes its network once, too.** `environment/main.bicep` makes the virtual network only while it is not there (`networkExists`, read from Azure by the same step that reads the subnet) and names the endpoint subnet by its id. Before this, a run of `model-side` would have made the whole network again and taken the route tables from all three subnets. [Rule 27](AGENTS.md) is closed on that point.
+
+**Not checked yet.** A real run of `model-side` (the next `what-if` shows that the network is left alone; a run was not needed and was not made), the console's speed over hours and days, the owner's approval and everything after it.
+
 ## The console went down after the second deploy: the subnet lost the landing zone's route table and was replaced — 2026-11-05
 
 **What happened** (UTC; each line is read from the Activity Log, the platform's start log or the app's telemetry).
@@ -16,7 +30,7 @@ All notable changes, newest first. Versions are git tags: `ideation-vN` for the 
 
 **What it cost.** The console and the runner's timer were down from about 15:41 until the repair below. No plan was touched (the store was not involved) and nothing was waiting for the runner: neither of the two plans, 428DB995 and 91093E96, had been approved.
 
-**What changed** (this change; the repair run has not happened when this is written).
+**What changed** (this change; the repair run has not happened when this is written). (The wait for the route table below became a statement, and the baseline was fixed too: see the entry above.)
 - The Basic plan's subnet is now `snet-cases`, the last free /27 of the virtual network (10.53.0.224/27), a range that `snet-web` never held. The template makes it only while it is not there: the workflow reads that from Azure and passes it (`webSubnetExists`), and the app names the subnet by its id. The landing zone's network manager puts its route table on it a minute after it is made, and nothing writes the subnet again.
 - The action `cases` takes the app off the integration with `snet-web` first, deploys, waits up to two minutes for the route table on `snet-cases` (when `snet-pe` has one; the run stops with the reason if it does not come), publishes, waits until the app answers on `/healthz` with no credential (up to 25 minutes), signs in again, lists the four functions, and removes `snet-web` when the platform has let go of its link to the plan (it says so, and the next run tries again, when it has not).
 - The app gets `WEBSITES_CONTAINER_START_TIME_LIMIT` = 600 seconds, so that a slow start can finish instead of being stopped at 230.

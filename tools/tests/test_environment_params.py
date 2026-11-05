@@ -208,6 +208,16 @@ class Recording(unittest.TestCase):
         self.assertEqual((code, out, files), (2, "", {}))
         self.assertIn("ENV_VNET_PREFIX", err)
 
+    def test_the_model_side_file_says_whether_the_virtual_network_is_there_already_and_says_no_when_nobody_has_looked(self):
+        self.assertIs(values(self.files()[0]["environment.parameters.json"])["networkExists"], False)
+        for given, expected in (("", False), ("false", False), ("true", True), (" TRUE ", True)):
+            files, _ = self.files(ENV_NETWORK_EXISTS=given)
+            self.assertIs(values(files["environment.parameters.json"])["networkExists"], expected, given)
+        for refused in ("yes", "1"):
+            code, out, err, files = run({**SETTINGS, "ENV_NETWORK_EXISTS": refused})
+            self.assertEqual((code, out, files), (2, "", {}), refused)
+            self.assertIn("ENV_NETWORK_EXISTS is true or false", err)
+
     def test_the_basic_plan_of_the_first_cases_has_a_third_subnet_that_overlaps_neither_of_the_other_two(self):
         files, outputs = self.files()
         env = values(files["environment.parameters.json"])

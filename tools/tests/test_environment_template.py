@@ -110,6 +110,18 @@ class Templates(unittest.TestCase):
         self.assertIn("modelDeployment", depends_on(found["privateEndpoint"][1]))
         self.assertIn("privateEndpoint", depends_on(found["gatewayMayCallTheModels"][1]))
 
+    def test_the_model_side_makes_the_virtual_network_only_while_it_is_not_there_so_that_the_landing_zones_route_tables_stay(self):
+        # A virtual network that is made again, with its subnets listed, loses the route tables that the landing zone's network manager put on them (AGENTS.md rule 27).
+        source = text("environment/main.bicep")
+        code = re.sub(r"//.*", "", source)
+        found = resources(source)
+        self.assertRegex(code, r"(?m)^param networkExists bool = false$")
+        self.assertTrue(found["vnet"][1].startswith("if (!networkExists) {"))
+        self.assertNotIn("routeTable", code, "the route tables are the landing zone's, not the template's")
+        self.assertIn("id: resourceId('Microsoft.Network/virtualNetworks/subnets', 'vnet-${workload}', 'snet-pe')", found["privateEndpoint"][1])
+        self.assertIn("vnet", depends_on(found["privateEndpoint"][1]), "the private endpoint waits for the network when this run makes it")
+        self.assertNotRegex(code, r"\bvnet\.", "nothing reads a property of a network that may not be made")
+
     def test_nothing_else_is_written_to_the_account_beside_the_private_endpoint(self):
         # The endpoint's connection is written to the account with an If-Match. Any other write to the account at the same
         # time makes it fail with IfMatchPreconditionFailed: a role assignment did, in an earlier deploy.
@@ -947,9 +959,9 @@ class CasesWorkflow(unittest.TestCase):
                  "Remove what the Flex Consumption version left in the storage account, when it is still there",
                  "Let the cases app go from an integration subnet that is not the one of the template", "Deploy the first cases",
                  "Sign in to Azure again for the publish of the cases, because the first sign-in's credential lasts five minutes",
-                 "The integration subnet carries the route table of the landing zone's network manager, when the other subnets do",
                  "Build the cases app's package", "Publish the cases to the function app", "Wait until the cases app answers",
                  "Sign in to Azure a third time for the check of the cases, because the second sign-in's credential lasts five minutes too",
+                 "Say whether the integration subnet carries the route table of the landing zone's network manager",
                  "The cases app lists its four functions",
                  "Remove the first integration subnet of the cases app, snet-web, when it is still there and nothing uses it"]
         positions = [self.names.index(name) for name in order]
@@ -1007,23 +1019,27 @@ class CasesWorkflow(unittest.TestCase):
         self.assertLess(self.names.index("Remove the Flex Consumption version of the cases app, when it is still there"), self.names.index(title))
         self.assertLess(self.names.index(title), self.names.index("Deploy the first cases"))
 
-    def test_the_subnet_is_looked_for_before_the_files_are_made_and_the_answer_goes_into_them(self):
-        title = "Find out whether the integration subnet of the first cases is already there"
+    def test_the_network_is_looked_for_before_the_files_are_made_and_the_answers_go_into_them(self):
+        title = "Find out what of the network is there already"
         block = self.step(title)
-        self.assertIn("id: websubnet", block)
-        self.assertNotIn("if:", block.split("run:")[0], "every action asks: the answer goes into the cases file whichever action made it")
-        self.assertIn('virtualNetworks/vnet-meternaut/subnets/snet-cases"', block)
-        self.assertIn('"https://management.azure.com${subnet}?api-version=2025-05-01"', block)
-        self.assertRegex(block, r'(?m)^\s+echo "exists=true" >> "\$GITHUB_OUTPUT"$')
-        self.assertRegex(block, r'(?m)^\s+echo "exists=false" >> "\$GITHUB_OUTPUT"$')
+        self.assertIn("id: network", block)
+        self.assertNotIn("if:", block.split("run:")[0], "every action asks: the answer goes into the files whichever action made them")
+        self.assertIn('virtualNetworks/vnet-meternaut"', block)
+        self.assertIn('"$vnet/subnets/snet-cases"', block)
+        self.assertIn('"https://management.azure.com${1}?api-version=2025-05-01"', block)
+        self.assertIn('echo "network_exists=$network" >> "$GITHUB_OUTPUT"', block)
+        self.assertIn('echo "web_subnet_exists=$subnet" >> "$GITHUB_OUTPUT"', block)
         self.assertNotRegex(block, r"--method (put|patch|post|delete)")
         self.assertIn("could not be read", block, "a failure that is not 'not found' stops the run")
+        self.assertIn("return 1", block)
         (params,) = [b for b in self.steps if b.startswith("name: Work out the settings\n")]
-        self.assertIn("ENV_WEB_SUBNET_EXISTS: ${{ steps.websubnet.outputs.exists }}", params)
+        self.assertIn("ENV_NETWORK_EXISTS: ${{ steps.network.outputs.network_exists }}", params)
+        self.assertIn("ENV_WEB_SUBNET_EXISTS: ${{ steps.network.outputs.web_subnet_exists }}", params)
         self.assertLess(self.names.index(title), self.names.index("Work out the settings"))
         template = text("environment/cases/main.bicep")
         self.assertIn("var webSubnetName = 'snet-cases'", template, "the name that the workflow reads is the template's")
         self.assertIn("var virtualNetworkName = 'vnet-${workload}'", template)
+        self.assertIn("name: 'vnet-${workload}'", text("environment/main.bicep"))
 
     def test_the_app_is_taken_from_an_earlier_subnet_only_when_it_is_integrated_with_another_one_and_a_refusal_is_said(self):
         title = "Let the cases app go from an integration subnet that is not the one of the template"
@@ -1037,19 +1053,22 @@ class CasesWorkflow(unittest.TestCase):
         self.assertIn("::warning::", block, "a refusal is said, and the template's own change follows")
         self.assertLess(self.names.index(title), self.names.index("Deploy the first cases"))
 
-    def test_the_route_table_of_the_landing_zone_is_waited_for_after_the_deploy_and_before_the_code_is_published(self):
-        again = "Sign in to Azure again for the publish of the cases, because the first sign-in's credential lasts five minutes"
-        title = "The integration subnet carries the route table of the landing zone's network manager, when the other subnets do"
+    def test_the_route_table_of_the_landing_zone_is_only_said_and_never_required_because_the_wait_for_the_app_is_the_gate(self):
+        # The network manager took 70 seconds the first time and five minutes the second: a wait of two minutes for it stopped a run that was right. The app cannot start without the table,
+        # so the wait for the app (no credential, 25 minutes) holds the run, and the start limit of the app lets the first start wait for it.
+        title = "Say whether the integration subnet carries the route table of the landing zone's network manager"
         block = self.step(title)
-        self.assertIn("subnets/snet-pe?api-version=2025-05-01", block, "the private endpoint subnet shows whether the landing zone puts a table on its subnets")
-        self.assertIn("subnets/snet-cases?api-version=2025-05-01", block)
-        self.assertEqual(block.count("--query properties.routeTable.id"), 2)
-        self.assertIn("for attempt in 1 2 3 4 5 6 7 8; do", block)
-        self.assertIn("sleep 15", block)
-        self.assertIn("exit 1", block)
+        self.assertIn("if: inputs.action == 'cases'", block)
+        self.assertIn("for name in snet-pe snet-cases; do", block)
+        self.assertIn("--query properties.routeTable.id", block)
+        self.assertIn("::warning::", block)
+        script = "\n".join(line for line in block.split("run:")[1].splitlines() if not line.strip().startswith("#"))
+        self.assertNotIn("exit 1", script, "it says what the landing zone has done and never fails the run")
+        self.assertNotIn("sleep", script)
         self.assertNotRegex(block, r"--method (put|patch|post|delete)")
-        self.assertLess(self.names.index(again), self.names.index(title), "a fresh credential: the first one is five minutes old by now")
-        self.assertLess(self.names.index(title), self.names.index("Publish the cases to the function app"))
+        self.assertLess(self.names.index("Sign in to Azure a third time for the check of the cases, because the second sign-in's credential lasts five minutes too"),
+                        self.names.index(title), "a fresh credential: the second one is old by the time the app has answered")
+        self.assertLess(self.names.index(title), self.names.index("The cases app lists its four functions"))
 
     def test_the_wait_for_the_app_holds_no_credential_and_the_check_after_it_signs_in_again(self):
         wait = self.step("Wait until the cases app answers")

@@ -9,6 +9,10 @@
 //  - peering and route tables: the network manager joins a new virtual network to the hub and routes it;
 //  - an API Management instance: the owner's existing one is used.
 //
+// The virtual network is made once (networkExists), and then left alone: the landing zone's network manager puts a route table on each
+// subnet of it, and a virtual network that is made again, with its subnets listed here, loses those tables, and with them the subnets'
+// way to the landing zone's DNS (AGENTS.md rule 27: it happened to the first cases' subnet on 2026-11-05).
+//
 // Deployed only by the workflow .github/workflows/deploy-hub.yml (AGENTS.md rule 18).
 targetScope = 'resourceGroup'
 
@@ -25,6 +29,9 @@ param accountName string
 
 @description('Address space of the virtual network, for example 10.53.0.0/24.')
 param vnetAddressPrefix string
+
+@description('True when the virtual network is in Azure already. The template then leaves it alone: a virtual network that is made again loses the route tables that the landing zone\'s network manager put on its subnets, and an app on such a subnet cannot resolve a name. The deployment workflow reads this from Azure.')
+param networkExists bool = false
 
 @description('Address range of the private endpoint subnet, inside the virtual network, for example 10.53.0.0/27.')
 param peSubnetPrefix string
@@ -110,7 +117,7 @@ resource webNsg 'Microsoft.Network/networkSecurityGroups@2025-05-01' = {
   }
 }
 
-resource vnet 'Microsoft.Network/virtualNetworks@2025-05-01' = {
+resource vnet 'Microsoft.Network/virtualNetworks@2025-05-01' = if (!networkExists) {
   name: 'vnet-${workload}'
   location: location
   tags: tags
@@ -227,7 +234,7 @@ resource privateEndpoint 'Microsoft.Network/privateEndpoints@2025-05-01' = {
   tags: tags
   properties: {
     subnet: {
-      id: vnet.properties.subnets[0].id
+      id: resourceId('Microsoft.Network/virtualNetworks/subnets', 'vnet-${workload}', 'snet-pe')
     }
     privateLinkServiceConnections: [
       {
@@ -243,6 +250,7 @@ resource privateEndpoint 'Microsoft.Network/privateEndpoints@2025-05-01' = {
   }
   dependsOn: [
     modelDeployment
+    vnet
   ]
 }
 
