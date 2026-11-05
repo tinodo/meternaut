@@ -77,7 +77,7 @@ def _afterwards(ctx: Ctx, plan: PlanRecord | None, action) -> Safe:
         return Safe("")
     title = (link(ctx.url(f"/ok/{link_part(plan.plan_id)}"), plan.title) if may_answer(ctx.principal, plan) else esc(plan.title))  # type: ignore[arg-type]
     rows = summary([("Plan", title), ("State of the plan", words.PLAN_STATE.get(plan.state, plan.state)), ("Plan code", code(plan.code)), ("Answer by", ctx.when(plan.expires_at))])
-    return join([Safe("<h2>What happened afterwards</h2>"), rows, action_block(ctx, action) if action is not None else paragraph("The runner has not been asked to change anything for this plan.")])
+    return join([Safe("<h2>What happened afterwards</h2>"), rows, action_block(ctx, action) if action is not None else paragraph("No change has been made for this plan.")])
 
 
 def notebook(ctx: Ctx, case_id: str) -> Response:

@@ -15,7 +15,8 @@ VERSION = 1
 MAX_LINE = 8000
 KINDS = ("run.started", "run.note", "lead.found", "case.started", "case.step", "case.result", "run.finished", "run.failed")
 # The lines of the loop that follows a case: a plan, the change and its check, and a message. The tools that read a run's History know the kinds above only.
-LOOP_KINDS = ("plan.created", "action.started", "action.finished", "action.verified", "mail.result", "tick.result")
+LOOP_KINDS = ("plan.created", "signin.started", "signin.failed", "approval.recorded", "action.started", "action.finished", "action.verified", "mail.result",
+              "tick.result")
 
 LOGGER = logging.getLogger("meternaut.history")
 

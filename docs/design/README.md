@@ -8,6 +8,8 @@ Meternaut is designed as a team of AI agents that keeps an Azure estate cost-eff
 
 It is built on Microsoft Foundry and Microsoft Agent Framework, and every model and tool call goes through the **Citadel governance hub** (an API Management based gateway that Microsoft publishes as an open-source sample). The product is the loop *watch → investigate → decide with a person → act → verify → learn*. It reads Azure Advisor and Cost Management and goes further; it changes Azure only after an approval bound to one exact plan, or inside a rule a person wrote; and it adapts to the agreement and the access it finds, and says what it cannot see ([agreements and access](14-agreements-and-access.md)).
 
+**Superseded in part on 2026-11-05:** the runner and Credentials in this page. A change runs as the approver, and Meternaut holds no right to change Azure; see [decision 24](12-decisions.md#24-a-change-runs-as-the-approver-meternaut-holds-no-right-to-change-azure--accepted) and [proposal 05](../proposals/05-run-as-the-approver.md).
+
 ```mermaid
 flowchart LR
     people["People: Teams, email, web page"]
@@ -56,7 +58,7 @@ The full list, with alternatives, cost, security and reversibility, is in [decis
 | **Atlas** | The knowledge base of how Azure charges: claims with sources, scope and evidence level, kept in Git |
 | **Estate model** | What the system knows about one organisation's resources, purpose, rhythms and owners |
 | **Case** | One investigation, from a lead to a verified outcome |
-| **Evidence level** | What kind of evidence stands behind a claim: `documented` (a source says so), `price-confirmed` (a published price list agrees), `bill-observed` (a closed bill in one estate agrees), `outcome-confirmed` (a change had the predicted effect) |
+| **Evidence level** | What kind of evidence stands behind a claim: `documented`, `price-confirmed`, `bill-observed` or `outcome-confirmed` ([knowledge and learning](04-knowledge-and-learning.md#scope-and-evidence-levels)) |
 | **Capability profile** | What the system found out about one scope: which agreement it sits under, which cost data and prices it can read, and who can buy a commitment there ([agreements and access](14-agreements-and-access.md)) |
 | **Recommendation** | The decision card an owner receives: what, why, options, consequences, how to check |
 | **Action** | A versioned, tested recipe for a change; the **Action catalogue** lists them |
@@ -78,7 +80,7 @@ The full list, with alternatives, cost, security and reversibility, is in [decis
 
 ## What an organisation needs
 
-An Azure subscription with deploy rights, read access to cost data (subscription-level Cost Management access is enough to start; billing-level roles add price sheets and purchase rights, and [agreements and access](14-agreements-and-access.md) says where each is available), a Citadel hub (the organisation's own, or Microsoft's open-source accelerator), model quota, Microsoft Entra ID, and a Git host. Microsoft 365 adds Teams and email; the web page is the fallback. People: a platform team to run it, a FinOps lead, owners who answer cards, and Atlas and security reviewers. [Goals and scope](01-goals-and-scope.md) lists every need and the optional licences.
+An Azure subscription with deploy rights, read access to cost data (subscription-level Cost Management access is enough to start), a Citadel hub, model quota, Microsoft Entra ID, a Git host, and people to run and use it. Microsoft 365 adds Teams and email; the web page is the fallback. [Goals and scope](01-goals-and-scope.md) lists every need and the optional licences, and [agreements and access](14-agreements-and-access.md) says what each agreement allows.
 
 **What it costs.** As modelled from list prices, a pilot costs a few hundred euros a month, about half of it fixed (search, private endpoints, an always-ready function instance), and an enterprise estate several thousand euros a month. The Citadel hub is shared platform cost and is not in these totals ([cost and FinOps](10-cost-and-finops.md) says what a hub of its own adds).
 
@@ -101,7 +103,7 @@ An Azure subscription with deploy rights, read access to cost data (subscription
 | Which technologies, and their status | [Technology register](11-technology-register.md) |
 | Why each choice was made | [Decisions](12-decisions.md) |
 | In what order it is built | [Roadmap](13-roadmap.md) |
-| How to start building it | The [build plan](../build-plan/README.md), the [roadmap](13-roadmap.md) and [Delivery and operations](09-delivery-and-operations.md) |
+| How to start building it | The [build plan](../build-plan/README.md) |
 
 ## How this relates to the north star
 

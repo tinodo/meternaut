@@ -15,7 +15,7 @@ import urllib.request
 from dataclasses import dataclass
 from http.client import HTTPException
 from typing import Callable, Mapping
-from urllib.parse import urlsplit
+from urllib.parse import urlencode, urlsplit
 
 ARM_HOST = "management.azure.com"
 GUID = r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
@@ -65,10 +65,21 @@ def allowed_calls(gateway_host: str, key_path: str) -> tuple[tuple[str, "re.Patt
     )
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """A call goes to the address that was checked against the list. An answer that sends it somewhere else is not followed: urllib would send every header of the
+    call, the authorization included, to the new address. The answer is the status of the redirect, like any other answer."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: ANN001
+        return None
+
+
+_OPENER = urllib.request.build_opener(_NoRedirect)
+
+
 def default_transport(method: str, url: str, headers: Mapping[str, str], data: bytes | None, timeout: float) -> tuple[int, Mapping[str, str], bytes]:
     request = urllib.request.Request(url, data=data, headers=dict(headers), method=method)
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310 (the address was checked against the list)
+        with _OPENER.open(request, timeout=timeout) as response:  # noqa: S310 (the address was checked against the list)
             return response.status, {k.lower(): v for k, v in response.headers.items()}, response.read()
     except urllib.error.HTTPError as error:
         return error.code, {k.lower(): v for k, v in error.headers.items()}, error.read()
@@ -93,6 +104,10 @@ def error_text(status: int, body: bytes, redact: Callable[[str], str]) -> str:
         error = document.get("error") if isinstance(document, dict) else None
         if isinstance(error, dict):
             text = f"{error.get('code', '')}: {str(error.get('message', ''))[:200]}".strip(": ")
+        elif isinstance(error, str):
+            # An OAuth error of Microsoft Entra: the error and its AADSTS code, and not the description (it holds ids and a trace).
+            codes = re.findall(r"AADSTS\d{3,7}", str(document.get("error_description", "")))
+            text = f"{error[:60]} {codes[0] if codes else ''}".strip()
         elif isinstance(document, dict):
             text = str(document.get("message") or document.get("statusCode") or "")[:200]
     except ValueError:
@@ -119,15 +134,23 @@ class Client:
     def remaining(self) -> float | None:
         return None if self.deadline is None else self.deadline - self.monotonic()
 
-    def request(self, method: str, url: str, *, headers: Mapping[str, str] | None = None, body: object = None, timeout: float = 30,
-                retries: int = 2, retry_after_max: float = 60, retry_statuses: frozenset[int] = RETRY_STATUSES, retry_network: bool = True) -> Response:
-        """One call. A call that may already have been carried out (a model call whose answer did not arrive) is made with retry_network=False."""
+    def request(self, method: str, url: str, *, headers: Mapping[str, str] | None = None, body: object = None, form: Mapping[str, str] | None = None,
+                timeout: float = 30, retries: int = 2, retry_after_max: float = 60, retry_statuses: frozenset[int] = RETRY_STATUSES,
+                retry_network: bool = True) -> Response:
+        """One call. A call that may already have been carried out (a model call whose answer did not arrive) is made with retry_network=False.
+
+        `body` is sent as JSON, `form` as a form (the token endpoint of Microsoft Entra takes a form). A call has one of them or none."""
         self.check(method, url)
         merged = {"Accept": "application/json", **(headers or {})}
         data = None
+        if body is not None and form is not None:
+            raise ValueError("a call has a JSON body or a form, not both")
         if body is not None:
             data = json.dumps(body, separators=(",", ":")).encode("utf-8")
             merged["Content-Type"] = "application/json"
+        elif form is not None:
+            data = urlencode(dict(form)).encode("utf-8")
+            merged["Content-Type"] = "application/x-www-form-urlencoded"
         attempt = 0
         while True:
             left = self.remaining()

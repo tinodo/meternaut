@@ -1,5 +1,5 @@
-"""The timer of the loop, every minute: closes the plans whose time is over, makes the changes whose start time has come, checks the changes that were made,
-and tells the person what happened. It does nothing when the loop is not configured, and nothing when a switch is pulled (runner.py reads them).
+"""The timer of the loop, every minute: closes the plans whose time is over, checks the changes that were made, and tells the person what happened. It does
+nothing when the loop is not configured. It cannot change Azure: its token is the reader's, and its list of calls holds no write (runner.py reads them).
 """
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ from .http import Client, allowed_calls, default_transport
 from .identity import Identity
 from .memory_store import parse, utc_now
 from .redact import Redactor
-from .runner import RunnerServices, TickResult, runner_calls
+from .runner import RunnerServices, TickResult, read_calls
 
 LOG = logging.getLogger("meternaut.loop")
 LETTER_DAYS = 3  # the letters about a change are offered again for this long after it
@@ -54,14 +54,13 @@ def tick(env: Mapping[str, str] | None = None, *, transport=default_transport, s
         watch = cfg.load(env)
         options = {"fetch": fetch} if fetch else {}
         reader = Identity(env, **options)
-        writer = Identity({**env, "AZURE_CLIENT_ID": settings.writer_client_id}, **options)
         extras = wiring.build_extras(env, reader.token, redact, transport=transport, sleep=sleep, monotonic=monotonic, clock=clock)
         if extras is None:
             return None
-        runner_client = Client(runner_calls(settings.writer_subscription, settings.writer_group), redact, transport=transport, sleep=sleep, monotonic=monotonic)
+        check_client = Client(read_calls(settings.change_subscription, settings.change_group), redact, transport=transport, sleep=sleep, monotonic=monotonic)
         reader_client = Client(allowed_calls(watch.gateway_host, Gateway.key_path(watch)), redact, transport=transport, sleep=sleep, monotonic=monotonic)
         history = History(uuid.uuid4().hex, None, clock, redact)
-        services = RunnerServices(extras.store, runner_client, writer.token, wiring.approval_settings(settings), settings.writer_subscription,
+        services = RunnerServices(extras.store, check_client, reader.token, wiring.approval_settings(settings), settings.change_subscription,
                                   arm=Arm(reader_client, reader.token), clock=clock, sleep=sleep, emit=history.emit)
         result = runner.tick(services)
         _remind(extras, clock, redact)

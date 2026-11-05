@@ -22,6 +22,7 @@ from .models import (ActionRecord, CaseRecord, DecisionRecord, MailRecord, NoteR
 RESOURCE = "https://storage.azure.com/"
 VERSION = "2020-12-06"
 MAX_DATA = 30000
+MAX_NONCE_DATA = 4000
 MAX_PAGES = 10
 PAGE = 1000
 
@@ -249,6 +250,17 @@ class TableStore:
     def action_put(self, action: ActionRecord) -> None:
         self._upsert(ACTIONS, "a", action.plan_id, action, state=action.state)
 
+    def action_claim(self, action: ActionRecord) -> bool:
+        return self._insert(ACTIONS, "a", action.plan_id, action, state=action.state)
+
+    def action_release(self, plan_id: str) -> None:
+        row, etag = self._get(ACTIONS, "a", plan_id)
+        if row is None:
+            return
+        action = self._records([row], ActionRecord)[0]
+        if action.state == "queued" and not action.started_at:
+            self._delete(ACTIONS, "a", plan_id, etag)
+
     def actions_recent(self, limit: int = 50) -> list[ActionRecord]:
         actions = self._records(self._query(ACTIONS, "PartitionKey eq 'a'", PAGE), ActionRecord)
         return sorted(actions, key=lambda a: (a.queued_at, a.plan_id), reverse=True)[:limit]
@@ -296,22 +308,27 @@ class TableStore:
     def _digest(token: str) -> str:
         return hashlib.sha256(token.encode("utf-8")).hexdigest()[:48]
 
-    def nonce_new(self, oid: str, purpose: str, ttl_seconds: int = 3600) -> str:
+    def nonce_new(self, oid: str, purpose: str, ttl_seconds: int = 3600, data: str = "") -> str:
+        if len(data) > MAX_NONCE_DATA:
+            raise StoreError("the data of a one-time token is larger than it may be")
         token = secrets.token_urlsafe(24)
         expires = stamp(self.clock() + dt.timedelta(seconds=ttl_seconds))
-        self._upsert(NONCES, "n", self._digest(token), None, oid=self._quoted(oid), purpose=self._quoted(purpose), expires=expires)
+        self._upsert(NONCES, "n", self._digest(token), None, oid=self._quoted(oid), purpose=self._quoted(purpose), expires=expires, payload=data or None)
         return token
 
-    def nonce_use(self, token: str, oid: str, purpose: str) -> bool:
+    def nonce_take(self, token: str, oid: str, purpose: str) -> str | None:
         if not re.fullmatch(r"[A-Za-z0-9_-]{20,64}", token or ""):
-            return False
+            return None
         key = self._digest(token)
         row, etag = self._get(NONCES, "n", key)
         if row is None or row.get("oid") != oid or row.get("purpose") != purpose:
-            return False
+            return None
         if not self._delete(NONCES, "n", key, etag):
-            return False
-        return _text(row.get("expires")) > stamp(self.clock())
+            return None
+        return _text(row.get("payload")) if _text(row.get("expires")) > stamp(self.clock()) else None
+
+    def nonce_use(self, token: str, oid: str, purpose: str) -> bool:
+        return self.nonce_take(token, oid, purpose) is not None
 
     def nonces_purge(self) -> int:
         """Removes the one-time tokens that have expired. Returns how many."""

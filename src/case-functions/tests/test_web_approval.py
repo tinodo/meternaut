@@ -1,12 +1,17 @@
 import re
 import unittest
 
-from test_web_support import (MAYA, NOW, OPS, OWNER, TINO, Console, FailingStore, ScriptedDecider, at, make_action, make_case, make_decision, make_plan, snapshot)
+from test_web_support import (ACTS_ON, MAYA, NOW, OPS, OWNER, SIGNIN_URL, STRANGER, TINO, Console, FailingStore, ScriptedDecider, ScriptedDelegate, at, make_action, make_case,
+                              make_decision, make_plan, snapshot)
 
-from cases.models import DecideResult, SwitchRecord
-from cases.web import layout
+from cases.models import Begun, DecideResult, StoreError, SwitchRecord
+from cases.people import People, Person
+from cases.web import approval, layout
 
-APPROVE = "Approve this exact change"
+APPROVE = "Approve and sign in to Azure"
+CODE = "0.AbCdEfGhIjKlMnOpQrSt-code-from-the-sign-in"
+STATE = "state-of-the-sign-in_0123456789"
+RETURN = {"code": CODE, "state": STATE, "session_state": "a-session-state"}
 DETAIL_NAMES = ["What changes", "Resource", "Who makes the change", "Estimated saving a month", "What waiting costs a day", "What could go wrong", "How to undo it", "Evidence"]
 
 
@@ -41,8 +46,13 @@ class ThePage(unittest.TestCase):
         self.assertEqual(found["What changes"], plan.what_changes)
         self.assertIn("planted-disk-1, in resource group meternaut-test-rg", found["Resource"])
         self.assertIn(plan.resource_id, found["Resource"])
-        self.assertIn("The runner, the part of Meternaut that changes Azure.", found["Who makes the change"])
-        self.assertIn("It may only delete an unattached disk or public IP address in resource group meternaut-test-rg.", found["Who makes the change"])
+        who = found["Who makes the change"]
+        self.assertTrue(who.startswith("You do, with your own permissions."), who)
+        self.assertIn("When you approve, you sign in to Azure and Meternaut makes this one change as you", who)
+        self.assertIn(f"it may only {ACTS_ON}.", who)
+        self.assertIn("Azure refuses the change if your account may not make it.", who)
+        self.assertIn("Meternaut holds no right of its own to change Azure.", who)
+        self.assertNotIn("runner", who.lower())
         self.assertEqual(found["Estimated saving a month"], "About 7.17 US dollars. This is an estimate from cost lines of the last 30 days.")
         self.assertEqual(found["What waiting costs a day"], "About 0.24 US dollars for each day that the resource stays as it is. This is an estimate.")
         self.assertEqual(found["What could go wrong"], plan.could_go_wrong)
@@ -77,14 +87,15 @@ class ThePage(unittest.TestCase):
         self.assertIn("Open the notebook for this case", rows(self.reply)["Evidence"])
         self.assertEqual(self.console.get("/why/case0001").status, 200)
 
-    def test_check_before_you_approve_restates_the_decision_in_three_lines(self):
+    def test_check_before_you_approve_restates_the_decision_in_four_lines(self):
         box = self.reply.main.find("section", class_="check")
         self.assertEqual(box.find("h2").text(), "Check before you approve")
         lines = [li.text() for li in box.find_all("li")]
-        self.assertEqual(len(lines), 3)
+        self.assertEqual(len(lines), 4)
         self.assertEqual(lines[0], 'You approve: Delete an unattached managed disk: the disk named "planted-disk-1" in resource group "meternaut-test-rg".')
         self.assertEqual(lines[1], "Undo: It cannot be undone.")
-        self.assertTrue(lines[2].startswith("Your OK covers this plan only: code 7F3K92QD. Answer by Sun 8 Nov 2026 08:00 UTC"))
+        self.assertEqual(lines[2], "Next you sign in to Azure. The change is made right after, with your own permissions, and it cannot be cancelled.")
+        self.assertTrue(lines[3].startswith("Your OK covers this plan only: code 7F3K92QD. Answer by Sun 8 Nov 2026 08:00 UTC"))
         order = [node.tag for node in self.reply.main.walk() if node.tag in ("section", "form")]
         self.assertEqual(order[0], "section", "the box comes before the buttons")
 
@@ -162,6 +173,27 @@ class ThePage(unittest.TestCase):
         self.assertIn("Sun 8 Nov 2026 08:00 UTC (09:00 CET)", content)
         self.assertIn('datetime="2026-11-08T08:00:00Z"', self.reply.text)
 
+    def test_the_answer_says_that_approving_takes_the_person_to_the_sign_in_to_azure_and_that_the_change_cannot_be_cancelled(self):
+        self.assertIn("Your answer", self.reply.headings(2))
+        self.assertIn("Approving takes you to Microsoft Entra to sign in to Azure. The change is made right after, with your own permissions, and it cannot be cancelled. "
+                      "Declining closes the request and nothing changes.", self.reply.content)
+        self.assertNotIn("Approve or decline.", self.reply.content)
+        self.assertIn(APPROVE, [label for form in self.reply.forms() for _, _, label in form.buttons])
+
+    def test_the_page_has_no_cancel_no_start_time_and_no_form_that_posts_to_withdraw(self):
+        self.assertEqual(self.reply.status, 200)
+        self.assertEqual([f.action for f in self.reply.forms()], ["/ok/plan0001", "/ok/plan0001/ask", "/ok/plan0001/not-mine"])
+        self.assertNotIn("withdraw", self.reply.text.lower())
+        for gone in ("Cancel my OK", "The change starts at", "start time", "120 seconds", "runner"):
+            self.assertNotIn(gone.lower(), self.reply.content.lower(), gone)
+
+    def test_opening_the_page_starts_no_sign_in_and_asks_nobody_to_decide(self):
+        before = snapshot(self.console.store)
+        self.console.get("/ok/plan0001")
+        self.console.get("/ok/plan0001")
+        self.assertEqual((self.console.delegate.begins, self.console.delegate.finishes, self.console.decider.calls), ([], [], []))
+        self.assertEqual(snapshot(self.console.store), before)
+
 
 class WhenThePlanIsNotOpen(unittest.TestCase):
     def setUp(self):
@@ -193,67 +225,85 @@ class WhenThePlanIsNotOpen(unittest.TestCase):
         self.assertIn("Expired", reply.content)
 
     def test_each_other_state_shows_its_state_in_words_and_no_buttons(self):
-        for state, words_ in (("declined", "This request was declined. Nothing has changed."), ("withdrawn", "This request was withdrawn. Nothing has changed."),
-                              ("consumed", "The runner took this plan. A plan runs once."), ("failed", "The runner could not finish the change."),
-                              ("approved", "This plan is approved. It waits for the runner. Nothing has changed yet.")):
+        for state, title, words_ in (("declined", "Declined", "This request was declined. Nothing has changed."),
+                                     ("withdrawn", "Withdrawn", "This request was withdrawn. Nothing has changed."),
+                                     ("consumed", "Used", "The change was made, with the permissions of the person who approved it. A plan runs once. What happened is below."),
+                                     ("failed", "Failed", "The change could not be finished. What happened is below."),
+                                     ("approved", "Approved", "This plan is approved. The change is being made now.")):
             with self.subTest(state=state):
                 reply = self.page(state=state)
                 self.assert_no_buttons(reply)
                 self.assertIn(words_, reply.content)
+                self.assertEqual([p.text() for p in reply.main.find_all("p", class_="notice-title")], [title])
                 self.assertIn(make_plan().title, reply.headings(1))
                 self.assertIn("What changes", reply.content, "the plan stays readable")
 
-    def test_a_plan_that_the_runner_took_shows_what_the_runner_did(self):
+    def test_a_plan_that_was_used_shows_what_happened_to_the_change(self):
         self.console.store.action_put(make_action(state="done", started_at=at(minutes=-3), finished_at=at(minutes=-2), result="Deleted. Azure no longer lists the resource.",
                                                   verification={"gone": True, "checkedAt": at(minutes=-2)}))
         reply = self.page(state="consumed")
         self.assert_no_buttons(reply)
-        found = {}
-        for div in reply.main.find_all("div"):
-            if div.find("dt") is not None:
-                found[div.find("dt").text()] = div.find("dd").text()
+        found = rows(reply)
         self.assertEqual(found["State"], "Done.")
         self.assertEqual(found["Result"], "Deleted. Azure no longer lists the resource.")
         self.assertIn("Azure no longer lists the resource.", found["Checked afterwards"])
-        self.assertIn("What the runner did", reply.headings(2))
+        self.assertIn("What happened to the change", reply.headings(2))
+        self.assertNotIn("What the runner did", reply.headings(2))
 
-    def test_an_approved_plan_shows_the_start_time_and_a_cancel_to_the_person_who_approved_it_until_then(self):
+    def test_a_plan_that_failed_shows_what_happened_to_the_change(self):
+        self.console.store.action_put(make_action(state="failed", started_at=at(minutes=-3), finished_at=at(minutes=-2), result="Azure refused to delete the resource.",
+                                                  error="Azure refused to delete the resource."))
+        reply = self.page(state="failed")
+        self.assert_no_buttons(reply)
+        found = rows(reply)
+        self.assertEqual((found["State"], found["Result"]), ("Failed.", "Azure refused to delete the resource."))
+        self.assertIn("What happened to the change", reply.headings(2))
+
+    def test_a_plan_with_no_action_shows_no_part_for_what_happened(self):
+        for state in ("approved", "consumed", "failed", "declined"):
+            with self.subTest(state=state):
+                self.assertNotIn("What happened to the change", self.page(state=state).headings(2))
+
+    def test_an_approved_plan_says_that_the_change_is_being_made_and_has_no_form_and_no_start_time(self):
         self.console.store.decision_put(make_decision())
         self.console.store.action_put(make_action())
         reply = self.page(state="approved")
         self.assertEqual(reply.status, 200)
-        self.assertIn("Your OK is recorded since Thu 5 Nov 2026 08:59 UTC (09:59 CET). Nothing has changed yet.", reply.content)
-        self.assertIn("The change starts at Thu 5 Nov 2026 09:01 UTC (10:01 CET).", reply.content)
-        self.assertEqual([f.action for f in reply.forms()], ["/ok/plan0001/withdraw"])
-        self.assertEqual(reply.forms()[0].buttons, [("", "", "Cancel my OK")])
-        self.assertTrue(self.console.store.nonce_use(reply.forms()[0].fields["nonce"], TINO, "plan0001"))
-
-    def test_the_cancel_ends_when_the_start_time_has_passed(self):
-        self.console.store.decision_put(make_decision())
-        self.console.store.action_put(make_action())
-        self.console.now = self.console.now.replace(minute=2)
-        reply = self.page(state="approved")
+        self.assertIn("Your OK is recorded since Thu 5 Nov 2026 08:59 UTC (09:59 CET). The change is being made now. Open this page again in a moment.", reply.content)
         self.assertEqual(reply.forms(), [])
-        self.assertIn("The start time has passed. The runner starts the change at its next check, and it cannot be cancelled now.", reply.content)
+        self.assertEqual(reply.root.find_all("button"), [])
+        for gone in ("Cancel my OK", "Nothing has changed yet", "The change starts at", "start time", "the runner"):
+            self.assertNotIn(gone.lower(), reply.content.lower(), gone)
+        found = rows(reply)
+        self.assertEqual(found["State"], "Queued. It has not started.")
+        self.assertNotIn("Starts at", found)
+        self.assertIn("What happened to the change", reply.headings(2))
 
-    def test_no_cancel_for_a_change_that_is_not_queued_or_not_approved_by_this_person(self):
+    def test_an_approved_plan_that_another_person_approved_says_so_without_the_time_of_the_viewer(self):
         self.console.store.decision_put(make_decision(approver_oid=MAYA, approver_name="Maya"))
         self.console.store.action_put(make_action())
         reply = self.page(state="approved", approvers=(TINO, MAYA))
+        self.assertIn("This plan is approved. The change is being made now.", reply.content)
+        self.assertNotIn("Your OK is recorded since", reply.content)
         self.assertEqual(reply.forms(), [])
-        self.assertIn("This plan is approved. It waits for the runner.", reply.content)
-        self.console.store.decision_put(make_decision())
-        self.console.store.action_put(make_action(state="running", started_at=at(minutes=-1)))
-        self.assertEqual(self.console.get("/ok/plan0001").forms(), [])
-        self.console.store.action_put(make_action(state="withdrawn"))
-        self.assertEqual(self.console.get("/ok/plan0001").forms(), [])
 
-    def test_an_approved_change_with_no_start_time_says_when_the_runner_starts_it_and_can_be_cancelled(self):
+    def test_a_queued_action_of_the_earlier_design_that_holds_a_start_time_shows_none(self):
         self.console.store.decision_put(make_decision())
-        self.console.store.action_put(make_action(start_after=None))
+        self.console.store.action_put(make_action(start_after=at(minutes=1)))
         reply = self.page(state="approved")
-        self.assertIn("The runner starts the change when it next looks at its queue.", reply.content)
-        self.assertEqual([f.action for f in reply.forms()], ["/ok/plan0001/withdraw"])
+        self.assertNotIn("Starts at", rows(reply))
+        self.assertNotIn("09:01 UTC", reply.content)
+        self.assertEqual(reply.forms(), [])
+
+    def test_no_state_of_the_plan_has_a_form_that_posts_to_withdraw_or_a_button_to_cancel(self):
+        self.console.store.decision_put(make_decision())
+        self.console.store.action_put(make_action())
+        for state in ("open", "approved", "consumed", "declined", "expired", "withdrawn", "failed"):
+            with self.subTest(state=state):
+                reply = self.page(state=state)
+                self.assertEqual([f.action for f in reply.forms() if "withdraw" in f.action], [])
+                self.assertNotIn("/withdraw", reply.text)
+                self.assertNotIn("Cancel my OK", reply.content)
 
 
 class WhenChangesArePaused(unittest.TestCase):
@@ -311,170 +361,268 @@ class WhoMayAnswer(unittest.TestCase):
         self.assertEqual(self.console.get("/ok/nothing", oid=MAYA).status, 404)
         self.assertEqual(self.console.get("/ok/nothing", oid=OWNER).status, 403)
 
-    def test_the_decider_is_not_called_for_a_person_who_may_not_answer(self):
+    def test_neither_the_decider_nor_the_delegate_is_called_for_a_person_who_may_not_answer(self):
         form = self.console.get("/ok/plan0001").forms()
         before = snapshot(self.console.store)
         for who in (MAYA, OWNER, OPS):
             for action, fields in (("/ok/plan0001", {"decision": "approve", "code": "7F3K92QD", "nonce": form[0].fields["nonce"]}),
+                                   ("/ok/plan0001", {"decision": "decline", "code": "7F3K92QD", "nonce": form[0].fields["nonce"]}),
                                    ("/ok/plan0001/ask", {"note": "hm", "code": "7F3K92QD", "nonce": form[1].fields["nonce"]}),
-                                   ("/ok/plan0001/not-mine", {"code": "7F3K92QD", "nonce": form[2].fields["nonce"]}),
-                                   ("/ok/plan0001/withdraw", {"nonce": form[0].fields["nonce"]})):
-                with self.subTest(who=who, action=action):
+                                   ("/ok/plan0001/not-mine", {"code": "7F3K92QD", "nonce": form[2].fields["nonce"]})):
+                with self.subTest(who=who, action=action, decision=fields.get("decision")):
                     reply = self.console.post(action, fields, oid=who)
                     self.assertEqual(reply.status, 403)
                     self.assertIn("I cannot take your OK on this request.", reply.content)
+                    self.assertNotIn("Location", reply.headers)
         self.assertEqual(self.console.decider.calls, [])
-        self.assertEqual(self.console.decider.withdrawals, [])
+        self.assertEqual((self.console.delegate.begins, self.console.delegate.finishes), ([], []))
         self.assertEqual(snapshot(self.console.store), before)
         self.assertEqual(self.console.post("/ok/nothing", {"decision": "approve"}, oid=OWNER).status, 403)
         self.assertEqual(self.console.post("/ok/nothing", {"decision": "approve"}, oid=TINO).status, 404)
         self.assertEqual(self.console.decider.calls, [])
+        self.assertEqual(self.console.delegate.begins, [])
+
+    def test_the_route_to_cancel_an_approval_is_gone(self):
+        before = snapshot(self.console.store)
+        for who in (TINO, MAYA, OWNER):
+            with self.subTest(who=who):
+                reply = self.console.post("/ok/plan0001/withdraw", {"nonce": "tok"}, oid=who)
+                self.assertEqual(reply.status, 404)
+                self.assertIn("I cannot find this page", reply.content)
+                self.assertEqual(self.console.get("/ok/plan0001/withdraw", oid=who).status, 404)
+        self.assertEqual(self.console.post("/ok/plan0001/withdraw", {}, oid=STRANGER).status, 403)
+        self.assertEqual((self.console.decider.calls, self.console.delegate.begins, self.console.delegate.finishes), ([], [], []))
+        self.assertEqual(snapshot(self.console.store), before)
 
     def test_the_names_in_the_plan_are_compared_without_regard_to_case(self):
         self.console.store.plan_put(make_plan(approvers=(TINO.upper(),)))
         self.assertEqual(self.console.get("/ok/plan0001").status, 200)
 
 
-KINDS = {
-    "recorded": (200, "Recorded. Nothing has changed yet."),
-    "declined": (200, "Declined. Nothing has changed. The request is closed."),
-    "asked": (200, "Recorded. Your question or suggestion approves nothing."),
-    "not_mine": (200, "Recorded. Nothing is approved. The request goes back to finding the right owner."),
-    "withdrawn": (200, "Cancelled. Your OK is withdrawn and the request is closed. Nothing has changed."),
-    "refused_code": (409, "This plan changed. Nothing is approved. A new message will bring the new plan and code."),
-    "refused_state": (409, "This request is not open for an answer now. It may be answered, cancelled, expired or replaced. Nothing has changed."),
-    "refused_role": (403, "I cannot take your OK on this request."),
-    "refused_paused": (409, "Changes are paused here. Nothing has changed, and your OK cannot be recorded now."),
-    "expired": (410, "This request expired on Sun 8 Nov 2026 08:00 UTC (09:00 CET). Nothing has changed."),
-    "duplicate": (409, "You answered this request already. Your first answer stands, and nothing has changed."),
-    "error": (500, "I could not take your answer"),
+KINDS = {  # the status, the title of the page, and a sentence that the page always has
+    "declined": (200, "Declined", "Declined. Nothing has changed. The request is closed."),
+    "asked": (200, "Your question is recorded", "Recorded. Your question or suggestion approves nothing."),
+    "not_mine": (200, "Recorded: not yours", "Recorded. Nothing is approved. The request goes back to finding the right owner."),
+    "ran": (200, "The change was made", "It was made with your own permissions: Azure's Activity Log shows your name as the person who made it. "
+                                        "Meternaut holds no right of its own to change Azure."),
+    "ran_unconfirmed": (200, "The delete was accepted", "Meternaut looks again in a few minutes and records what it finds. It was made with your own permissions."),
+    "stopped": (409, "The change was stopped", "Nothing was changed. The request is closed."),
+    "azure_refused": (403, "Azure refused the change", "Meternaut holds no right of its own: the change is made with your permissions. If you should be able to make it, "
+                                                       "ask whoever manages access to this resource group."),
+    "failed": (502, "The change failed", "Look at the resource in Azure before anything is tried again."),
+    "signin_failed": (400, "The sign-in to Azure was not completed", "The request stays open. Open it again to try again."),
+    "refused_code": (409, "This plan changed", "This plan changed. Nothing is approved. A new message will bring the new plan and code."),
+    "refused_state": (409, "This request cannot take an answer", ""),
+    "refused_role": (403, "I cannot take your OK on this request.", "Nothing is approved. If this request should be yours, use Talk to a person below."),
+    "refused_paused": (409, "Changes are paused", "Changes are paused here. Nothing has changed, and your OK cannot be recorded now."),
+    "expired": (410, "This request expired", "This request expired on Sun 8 Nov 2026 08:00 UTC (09:00 CET). Nothing has changed."),
+    "duplicate": (409, "Already answered", "You answered this request already. Your first answer stands, and nothing has changed."),
+    "error": (500, "I could not take your answer", "Open the request again to see where it stands."),
 }
+# The kinds whose page has a line for the message of the result. The page of every other kind has its own words only.
+SHOWS_THE_MESSAGE = ("ran", "ran_unconfirmed", "stopped", "azure_refused", "failed", "signin_failed", "refused_state", "error")
+SUCCESSES = ("declined", "asked", "not_mine", "ran", "ran_unconfirmed")
 
 
 class EveryKindOfResult(unittest.TestCase):
+    """A result looks the same to a person whichever step gave it: the decider (a decline), a refusal of `begin` (an approval) or `finish` (the return from the sign-in)."""
+
     def setUp(self):
         self.decider = ScriptedDecider()
-        self.console = Console(decider=self.decider)
+        self.delegate = ScriptedDelegate()
+        self.console = Console(decider=self.decider, delegate=self.delegate)
         self.console.seed()
+        self.routes = (self.by_decider, self.by_begin, self.by_return)
 
-    def answer(self, kind: str, message: str = "a message of the decider"):
-        self.decider.result = DecideResult(kind in ("recorded", "declined", "asked", "not_mine", "withdrawn"), kind, message, make_plan())
+    def result(self, kind: str, message: str, plan: bool) -> DecideResult:
+        return DecideResult(kind in SUCCESSES, kind, message, make_plan() if plan else None)
+
+    def by_decider(self, kind: str, message: str = "a message of the result", plan: bool = True):
+        self.decider.result = self.result(kind, message, plan)
         form = self.console.get("/ok/plan0001").form("/ok/plan0001", has_button=APPROVE)
-        return self.console.submit(form, "Decline" if kind == "declined" else APPROVE)
+        return self.console.submit(form, "Decline")
 
-    def test_every_kind_has_a_plain_page_of_its_own(self):
-        self.assertEqual(set(KINDS), {"recorded", "declined", "asked", "not_mine", "withdrawn", "refused_code", "refused_state", "refused_role", "refused_paused", "expired",
-                                      "duplicate", "error"})
-        for kind, (status, sentence) in KINDS.items():
+    def by_begin(self, kind: str, message: str = "a message of the result", plan: bool = True):
+        self.delegate.begun = Begun(refusal=self.result(kind, message, plan))
+        form = self.console.get("/ok/plan0001").form("/ok/plan0001", has_button=APPROVE)
+        return self.console.submit(form, APPROVE)
+
+    def by_return(self, kind: str, message: str = "a message of the result", plan: bool = True):
+        self.delegate.finished = self.result(kind, message, plan)
+        return self.console.get("/arm/return", query=RETURN)
+
+    def backs(self, reply) -> list[tuple[str, str]]:
+        return [(a.attrs["href"], a.text()) for a in reply.main.find_all("a") if a.text().startswith("Back to")]
+
+    def test_there_is_a_page_for_each_kind_of_result_and_for_no_other(self):
+        self.assertEqual(set(KINDS), {"declined", "asked", "not_mine", "ran", "ran_unconfirmed", "stopped", "azure_refused", "failed", "signin_failed", "refused_code",
+                                      "refused_state", "refused_role", "refused_paused", "expired", "duplicate", "error"})
+        self.assertEqual(set(KINDS), set(approval.STATUS))
+
+    def test_every_kind_has_a_plain_page_of_its_own_whichever_step_gives_it(self):
+        for route in self.routes:
+            for kind, (status, title, sentence) in KINDS.items():
+                with self.subTest(route=route.__name__, kind=kind):
+                    reply = route(kind)
+                    self.assertEqual(reply.status, status)
+                    self.assertEqual(reply.headings(1), [title])
+                    self.assertIn(sentence, reply.content)
+                    self.assertIn("Talk to a person.", reply.content, "the same help on every page")
+                    self.assertIn("Written by AI (models:", reply.content)
+                    self.assertEqual(reply.problems, [])
+                    self.assertEqual(reply.root.find_all("button"), [])
+                    self.assertEqual(reply.forms(), [])
+                    self.assertNotIn("Location", reply.headers)
+
+    def test_the_back_link_goes_to_the_request_or_to_the_start_page(self):
+        for route in self.routes:
+            for kind in KINDS:
+                with self.subTest(route=route.__name__, kind=kind):
+                    wanted = ("/", "Back to the start page") if kind in ("not_mine", "refused_role") else ("/ok/plan0001", "Back to the request")
+                    self.assertEqual(self.backs(route(kind)), [wanted])
+
+    def test_a_result_that_holds_no_plan_goes_back_to_the_start_page_after_a_return_and_to_the_request_after_an_answer(self):
+        for kind in KINDS:
             with self.subTest(kind=kind):
-                reply = self.answer(kind)
-                self.assertEqual(reply.status, status)
-                self.assertIn(sentence, reply.content)
-                self.assertEqual(len(reply.headings(1)), 1)
-                self.assertIn("Talk to a person.", reply.content, "the same help on every page")
-                self.assertIn("Written by AI (models:", reply.content)
-                self.assertEqual(reply.problems, [])
-                self.assertEqual(reply.root.find_all("button"), [])
+                self.assertEqual(self.backs(self.by_return(kind, plan=False)), [("/", "Back to the start page")])
+                wanted = ("/", "Back to the start page") if kind in ("not_mine", "refused_role") else ("/ok/plan0001", "Back to the request")
+                self.assertEqual(self.backs(self.by_decider(kind, plan=False)), [wanted], "the address of the page names the plan")
 
-    def test_the_decider_is_called_with_the_person_the_plan_the_answer_the_code_the_token_and_the_note(self):
+    def test_the_time_of_an_expired_result_is_read_from_the_plan_in_the_store_and_left_out_when_no_plan_is_known(self):
+        for route in (self.by_decider, self.by_begin):
+            with self.subTest(route=route.__name__):
+                reply = route("expired", plan=False)
+                self.assertIn("This request expired on Sun 8 Nov 2026 08:00 UTC (09:00 CET). Nothing has changed.", reply.content)
+        reply = self.by_return("expired", plan=False)
+        self.assertEqual(reply.status, 410)
+        self.assertNotIn("Sun 8 Nov 2026", reply.content)
+        self.assertIn("Nothing has changed.", reply.content)
+
+    def test_a_refusal_of_the_role_shows_no_plan_details(self):
+        for route in self.routes:
+            with self.subTest(route=route.__name__):
+                reply = route("refused_role")
+                for secret in (make_plan().title, "planted-disk-1", "7F3K92QD", "7.17"):
+                    self.assertNotIn(secret, reply.content)
+
+    def test_the_message_of_the_result_is_shown_on_the_pages_that_have_a_line_for_it_and_on_no_other(self):
+        for route in self.routes:
+            for kind in KINDS:
+                with self.subTest(route=route.__name__, kind=kind):
+                    self.assertEqual("MESSAGE-OF-THE-RESULT" in route(kind, "MESSAGE-OF-THE-RESULT").content, kind in SHOWS_THE_MESSAGE)
+
+    def test_a_page_that_shows_the_message_has_a_plain_line_of_its_own_when_the_message_is_empty(self):
+        lines = {"ran": "Done.", "ran_unconfirmed": "Azure accepted the delete.", "stopped": "A check failed before the change.", "azure_refused": "Azure refused the change.",
+                 "failed": "The change failed.", "signin_failed": "Nothing is approved.",
+                 "refused_state": "This request is not open for an answer now. It may be answered, expired or replaced. Nothing has changed.",
+                 "error": "The approval service did not answer."}
+        self.assertEqual(set(lines), set(SHOWS_THE_MESSAGE))
+        for route in self.routes:
+            for kind, line in lines.items():
+                with self.subTest(route=route.__name__, kind=kind):
+                    self.assertIn(line, [p.text() for p in route(kind, "").main.find_all("p")])
+
+    def test_the_message_is_cut_to_400_characters_and_cleaned_of_control_characters(self):
+        for route in self.routes:
+            for kind in SHOWS_THE_MESSAGE:
+                with self.subTest(route=route.__name__, kind=kind):
+                    long = route(kind, "This form is no longer valid. " + "x" * 600)
+                    self.assertIn("This form is no longer valid. " + "x" * 370, long.content)
+                    self.assertNotIn("x" * 371, long.content)
+                    self.assertIn("line one line two end", route(kind, "line one\r\nline\ttwo\x00 end").content)
+
+    def test_an_unknown_kind_and_a_kind_that_no_longer_exists_are_an_error_page(self):
+        for kind in ("something-new", "recorded", "withdrawn"):
+            for route in self.routes:
+                with self.subTest(route=route.__name__, kind=kind):
+                    reply = route(kind)
+                    self.assertEqual((reply.status, reply.headings(1)), (500, ["I could not take your answer"]))
+                    self.assertIn("a message of the result", reply.content)
+
+    def test_a_step_that_fails_or_answers_with_something_else_is_an_error_page_without_a_trace(self):
         form = self.console.get("/ok/plan0001").form("/ok/plan0001", has_button=APPROVE)
-        self.console.submit(form, "Decline", note="No, thank you")
-        self.assertEqual(self.decider.calls, [dict(oid=TINO, plan_id="plan0001", decision="decline", code="7F3K92QD", nonce=form.fields["nonce"], note="No, thank you")])
-        self.console.submit(form, APPROVE, note="")
-        self.assertEqual(self.decider.calls[1]["decision"], "approve")
-        self.assertEqual(self.decider.calls[1]["note"], "")
-
-    def test_a_refusal_of_the_role_by_the_decider_shows_no_plan_details(self):
-        reply = self.answer("refused_role")
-        for secret in (make_plan().title, "planted-disk-1", "7F3K92QD", "7.17"):
-            self.assertNotIn(secret, reply.content)
-
-    def test_the_message_of_the_decider_is_not_needed_to_show_a_time_it_does_not_have(self):
-        self.decider.result = DecideResult(False, "expired", "x", None)
-        form = self.console.get("/ok/plan0001").form("/ok/plan0001", has_button=APPROVE)
-        reply = self.console.submit(form, APPROVE)
-        self.assertIn("This request expired on Sun 8 Nov 2026 08:00 UTC (09:00 CET).", reply.content, "the time is read from the plan in the store")
+        for broken in (None, "text", RuntimeError("boom with a secret detail"), StoreError("the store is down", 503)):
+            with self.subTest(broken=repr(broken)):
+                self.decider.result = broken
+                self.delegate.finished = broken
+                for reply in (self.console.submit(form, "Decline"), self.console.get("/arm/return", query=RETURN)):
+                    self.assertEqual((reply.status, reply.headings(1)), (500, ["I could not take your answer"]))
+                    self.assertIn("The approval service did not answer.", reply.content)
+                    for leak in ("boom", "the store is down", "Traceback"):
+                        self.assertNotIn(leak, reply.text)
 
     def test_a_plan_that_is_gone_is_a_request_that_cannot_be_found(self):
         self.console.store.plans.clear()
-        reply = self.console.post("/ok/plan0001", {"decision": "approve", "code": "c", "nonce": "n"})
-        self.assertEqual(reply.status, 404)
-        self.assertEqual(self.decider.calls, [])
+        for decision in ("approve", "decline"):
+            with self.subTest(decision=decision):
+                self.assertEqual(self.console.post("/ok/plan0001", {"decision": decision, "code": "c", "nonce": "n"}).status, 404)
+        self.assertEqual((self.decider.calls, self.delegate.begins), ([], []))
 
-    def test_an_unknown_kind_and_a_decider_that_fails_are_an_error_page(self):
-        for result in (DecideResult(False, "something-new", "m"), None, "text", RuntimeError("boom with a secret detail")):
-            with self.subTest(result=repr(result)):
-                self.decider.result = result
-                form = self.console.get("/ok/plan0001").form("/ok/plan0001", has_button=APPROVE)
-                reply = self.console.submit(form, APPROVE)
-                self.assertEqual(reply.status, 500)
-                self.assertIn("I could not take your answer", reply.content)
-                self.assertNotIn("boom", reply.text)
-                self.assertNotIn("Traceback", reply.text)
-
-    def test_the_message_of_an_error_is_shown_as_text_and_cut_short(self):
-        reply = self.answer("error", "This form is no longer valid. " + "x" * 600)
-        self.assertIn("This form is no longer valid.", reply.content)
-        self.assertLess(len(reply.content), 2500)
-        self.assertIn("Open the request again to see where it stands.", reply.content)
-
-    def test_the_withdrawal_has_its_own_words_for_a_refusal(self):
-        self.decider.result = DecideResult(False, "refused_state", "no", make_plan())
-        self.console.store.decision_put(make_decision())
-        self.console.store.action_put(make_action())
-        self.console.store.plan_put(make_plan(state="approved"))
-        form = self.console.get("/ok/plan0001").form("/withdraw")
-        reply = self.console.submit(form)
-        self.assertEqual(reply.status, 409)
-        self.assertIn("There is no OK of yours to cancel, or the change has started and cannot be cancelled. Nothing has changed.", reply.content)
-        self.assertEqual(self.decider.withdrawals[0]["plan_id"], "plan0001")
+    def test_a_decline_goes_to_the_decider_with_the_person_the_plan_the_answer_the_code_the_token_and_the_note(self):
+        form = self.console.get("/ok/plan0001").form("/ok/plan0001", has_button=APPROVE)
+        self.console.submit(form, "Decline", note="No, thank you")
+        self.assertEqual(self.decider.calls, [dict(oid=TINO, plan_id="plan0001", decision="decline", code="7F3K92QD", nonce=form.fields["nonce"], note="No, thank you")])
+        self.assertEqual(self.delegate.begins, [])
 
 
-class WhatIsCheckedBeforeTheDecider(unittest.TestCase):
+class WhatIsCheckedBeforeAnAnswerGoesOn(unittest.TestCase):
+    """The checks that the page makes itself, before the decider or the delegate is asked anything."""
+
     def setUp(self):
         self.decider = ScriptedDecider()
-        self.console = Console(decider=self.decider)
+        self.delegate = ScriptedDelegate()
+        self.console = Console(decider=self.decider, delegate=self.delegate)
         self.console.seed()
         self.page = self.console.get("/ok/plan0001")
         self.main, self.ask, self.mine = self.page.forms()
 
-    def test_an_answer_that_is_neither_approve_nor_decline_is_refused_and_the_decider_is_not_called(self):
+    def assert_nothing_was_asked(self):
+        self.assertEqual((self.decider.calls, self.delegate.begins, self.delegate.finishes), ([], [], []))
+
+    def test_an_answer_that_is_neither_approve_nor_decline_is_refused_and_nothing_is_asked(self):
         for decision in ("", "ask", "not_mine", "APPROVE", "approve,decline", "delete"):
             with self.subTest(decision=decision):
                 reply = self.console.post("/ok/plan0001", {**self.main.fields, "decision": decision})
                 self.assertEqual(reply.status, 400)
                 self.assertIn("The form did not say Approve or Decline. Nothing was recorded.", reply.content)
-        self.assertEqual(self.decider.calls, [])
+        self.assert_nothing_was_asked()
 
-    def test_a_form_with_no_token_is_refused_and_the_decider_is_not_called(self):
-        for action, fields in (("/ok/plan0001", {"decision": "approve", "code": "7F3K92QD"}), ("/ok/plan0001/ask", {"note": "hm", "code": "7F3K92QD"}),
-                               ("/ok/plan0001/not-mine", {"code": "7F3K92QD"}), ("/ok/plan0001/withdraw", {}), ("/ok/plan0001", {"decision": "approve", "nonce": ""})):
+    def test_a_form_with_no_token_is_refused_and_nothing_is_asked(self):
+        for action, fields in (("/ok/plan0001", {"decision": "approve", "code": "7F3K92QD"}), ("/ok/plan0001", {"decision": "decline", "code": "7F3K92QD"}),
+                               ("/ok/plan0001/ask", {"note": "hm", "code": "7F3K92QD"}), ("/ok/plan0001/not-mine", {"code": "7F3K92QD"}),
+                               ("/ok/plan0001", {"decision": "approve", "nonce": ""})):
             with self.subTest(action=action, fields=fields):
                 reply = self.console.post(action, fields)
                 self.assertEqual(reply.status, 403)
                 self.assertIn("This form cannot be used", reply.headings(1))
                 self.assertIn("Nothing was changed.", reply.content)
-        self.assertEqual((self.decider.calls, self.decider.withdrawals), ([], []))
+                self.assertNotIn("Location", reply.headers)
+        self.assert_nothing_was_asked()
 
     def test_the_code_goes_to_the_decider_as_the_form_sent_it(self):
-        self.console.submit(self.main, APPROVE, code="WRONG")
+        self.console.submit(self.main, "Decline", code="WRONG")
         self.assertEqual(self.decider.calls[0]["code"], "WRONG")
-        self.console.post("/ok/plan0001", {"decision": "approve", "nonce": "tok"})
+        self.console.post("/ok/plan0001", {"decision": "decline", "nonce": "tok"})
         self.assertEqual(self.decider.calls[1]["code"], "")
 
-    def test_a_note_longer_than_300_characters_is_refused_with_the_text_kept_and_the_decider_is_not_called(self):
+    def test_a_note_longer_than_300_characters_is_refused_with_the_text_kept_and_nothing_is_asked(self):
         long = "a" * 301
-        reply = self.console.submit(self.main, APPROVE, note=long)
-        self.assertEqual(reply.status, 400)
-        self.assertEqual(self.decider.calls, [])
-        self.assertIn("There is a problem", reply.headings(2))
-        self.assertIn("The note has 301 characters. The most is 300.", reply.content)
-        self.assertEqual(reply.form("/ok/plan0001", has_button=APPROVE).fields["note"], long, "the person's text is still in the box")
-        link = [a for a in reply.root.find_all("a") if a.attrs["href"] == "#note"]
-        self.assertEqual(len(link), 1, "the list of problems links to the field")
-        self.assertIsNotNone(reply.root.find("textarea", id="note"))
-        self.assertEqual(self.console.submit(self.main, APPROVE, note="a" * 300).status, 200)
+        for button in ("Decline", APPROVE):
+            with self.subTest(button=button):
+                reply = self.console.submit(self.main, button, note=long)
+                self.assertEqual(reply.status, 400)
+                self.assertNotIn("Location", reply.headers)
+                self.assertIn("There is a problem", reply.headings(2))
+                self.assertIn("The note has 301 characters. The most is 300.", reply.content)
+                self.assertEqual(reply.form("/ok/plan0001", has_button=APPROVE).fields["note"], long, "the person's text is still in the box")
+                link = [a for a in reply.root.find_all("a") if a.attrs["href"] == "#note"]
+                self.assertEqual(len(link), 1, "the list of problems links to the field")
+                self.assertIsNotNone(reply.root.find("textarea", id="note"))
+        self.assert_nothing_was_asked()
+        self.assertEqual(self.console.submit(self.main, "Decline", note="a" * 300).status, 200)
         self.assertEqual(self.decider.calls[0]["note"], "a" * 300)
+        self.assertEqual(self.console.submit(self.main, APPROVE, note="a" * 300).status, 303)
+        self.assertEqual(self.delegate.begins[0]["note"], "a" * 300)
 
     def test_a_question_needs_text_of_at_most_300_characters(self):
         for note, message in (("", "Write your question or suggestion."), ("a" * 301, "The text has 301 characters. The most is 300.")):
@@ -482,81 +630,248 @@ class WhatIsCheckedBeforeTheDecider(unittest.TestCase):
                 reply = self.console.submit(self.ask, note=note)
                 self.assertEqual(reply.status, 400)
                 self.assertIn(message, reply.content)
-                self.assertEqual(self.decider.calls, [])
+                self.assert_nothing_was_asked()
         reply = self.console.submit(self.ask, note="Is it the standby disk?")
         self.assertEqual(reply.status, 200)
         self.assertEqual(self.decider.calls, [dict(oid=TINO, plan_id="plan0001", decision="ask", code="7F3K92QD", nonce=self.ask.fields["nonce"], note="Is it the standby disk?")])
+        self.assertEqual(self.delegate.begins, [])
 
-    def test_not_mine_and_the_cancel_go_to_the_decider_with_what_it_needs(self):
+    def test_not_mine_goes_to_the_decider_with_what_it_needs(self):
         self.decider.result = DecideResult(True, "not_mine", "ok", make_plan())
         self.console.submit(self.mine)
         self.assertEqual(self.decider.calls, [dict(oid=TINO, plan_id="plan0001", decision="not_mine", code="7F3K92QD", nonce=self.mine.fields["nonce"], note="")])
-        self.decider.result = DecideResult(True, "withdrawn", "ok", make_plan())
-        reply = self.console.post("/ok/plan0001/withdraw", {"nonce": "tok"})
-        self.assertEqual(self.decider.withdrawals, [dict(oid=TINO, plan_id="plan0001", nonce="tok")])
-        self.assertIn("Cancelled", reply.headings(1))
+        self.assertEqual(self.delegate.begins, [])
 
     def test_the_note_is_cleaned_of_control_characters_before_it_goes_on(self):
-        self.console.post("/ok/plan0001", {**self.main.fields, "decision": "decline", "note": "line one\r\nline\ttwo\x00"})
+        for decision in ("decline", "approve"):
+            self.console.post("/ok/plan0001", {**self.main.fields, "decision": decision, "note": "line one\r\nline\ttwo\x00"})
         self.assertEqual(self.decider.calls[0]["note"], "line one line two")
+        self.assertEqual(self.delegate.begins[0]["note"], "line one line two")
+
+    def test_an_approval_from_another_site_a_form_that_is_not_a_form_and_one_that_is_too_large_are_refused_before_the_delegate(self):
+        before = snapshot(self.console.store)
+        fields = {**self.main.fields, "decision": "approve"}
+        self.assertEqual(self.console.send("POST", "/ok/plan0001", form=fields, headers={"Sec-Fetch-Site": "cross-site"}).status, 403)
+        self.assertEqual(self.console.send("POST", "/ok/plan0001", body="decision=approve", content_type="text/plain").status, 415)
+        self.assertEqual(self.console.post("/ok/plan0001", body=b"decision=approve&note=" + b"a" * 20000).status, 413)
+        self.assert_nothing_was_asked()
+        self.assertEqual(snapshot(self.console.store), before)
 
 
-class TheConfirmation(unittest.TestCase):
+class TheSignInRedirect(unittest.TestCase):
+    """Approving sends the person to the sign-in to Azure. The page records nothing and changes nothing: the approval is made when the person comes back."""
+
     def setUp(self):
-        self.decider = ScriptedDecider(DecideResult(True, "recorded", "Recorded.", make_plan(state="approved")))
-        self.console = Console(decider=self.decider)
+        self.decider = ScriptedDecider()
+        self.delegate = ScriptedDelegate()
+        self.console = Console(decider=self.decider, delegate=self.delegate)
         self.console.seed()
         self.form = self.console.get("/ok/plan0001").form("/ok/plan0001", has_button=APPROVE)
 
-    def approved(self, **action):
-        self.console.store.plan_put(make_plan(state="approved"))
-        self.console.store.decision_put(make_decision())
-        self.console.store.action_put(make_action(**action))
+    def test_the_delegate_begins_the_sign_in_with_the_person_the_plan_the_code_the_token_the_note_and_the_hint(self):
+        self.console.submit(self.form, APPROVE, note="Go on")
+        self.assertEqual(self.delegate.begins, [dict(oid=TINO, plan_id="plan0001", code="7F3K92QD", nonce=self.form.fields["nonce"], note="Go on", hint="someone@example.com")])
+        self.assertEqual(self.delegate.finishes, [])
 
-    def test_it_says_nothing_has_changed_and_when_the_change_starts_and_offers_a_cancel(self):
-        self.approved()
+    def test_an_approval_is_never_decided_by_the_decider(self):
+        self.console.submit(self.form, APPROVE)
+        self.console.submit(self.form, APPROVE, note="again")
+        self.assertEqual(self.decider.calls, [])
+        self.assertEqual(len(self.delegate.begins), 2)
+
+    def test_the_answer_is_a_303_to_the_address_that_the_delegate_gave_with_no_body_and_no_caching(self):
         reply = self.console.submit(self.form, APPROVE)
+        self.assertEqual(reply.status, 303)
+        self.assertEqual(reply.headers["Location"], SIGNIN_URL)
+        self.assertEqual(reply.headers["Cache-Control"], "no-store")
+        self.assertEqual(reply.body, b"")
+        self.assertEqual({name: reply.headers.get(name) for name in layout.SECURITY_HEADERS}, layout.SECURITY_HEADERS, "the redirect has every security header of a page")
+        self.assertIn("form-action 'self' https://login.microsoftonline.com;", reply.headers["Content-Security-Policy"])
+
+    def test_the_address_is_the_one_that_the_delegate_gave_and_is_not_made_by_the_page(self):
+        address = "https://login.microsoftonline.com/tenant/oauth2/v2.0/authorize?state=another&login_hint=a%40b.example"
+        self.delegate.begun = Begun(location=address)
+        reply = self.console.submit(self.form, APPROVE)
+        self.assertEqual((reply.status, reply.headers["Location"]), (303, address))
+
+    def test_the_page_records_nothing_and_changes_nothing(self):
+        before = snapshot(self.console.store)
+        self.console.submit(self.form, APPROVE, note="Go on")
+        self.assertEqual(snapshot(self.console.store), before)
+        self.assertEqual(self.console.store.plan_get("plan0001").state, "open")
+        self.assertEqual(self.console.store.decisions_of_plan("plan0001"), [])
+        self.assertIsNone(self.console.store.action_get("plan0001"))
+
+    def test_the_code_goes_on_as_the_form_sent_it(self):
+        self.console.submit(self.form, APPROVE, code="WRONG")
+        self.console.post("/ok/plan0001", {"decision": "approve", "nonce": "tok"})
+        self.assertEqual([call["code"] for call in self.delegate.begins], ["WRONG", ""])
+        self.assertEqual(self.delegate.begins[1]["nonce"], "tok")
+
+    def test_the_hint_is_the_name_in_the_header_of_the_platform_and_never_a_field_of_the_form(self):
+        self.console.submit(self.form, APPROVE, **{"x-ms-client-principal-name": "evil@example.com", "hint": "evil@example.com", "login_hint": "evil@example.com"})
+        fields = {**self.form.fields, "decision": "approve"}
+        self.console.send("POST", "/ok/plan0001", form=fields, oid=None, headers={"x-ms-client-principal-id": TINO, "x-ms-client-principal-name": "tino@example.com"})
+        self.console.send("POST", "/ok/plan0001", form=fields, oid=None, headers={"x-ms-client-principal-id": TINO})
+        self.assertEqual([call["hint"] for call in self.delegate.begins], ["someone@example.com", "tino@example.com", ""])
+
+    def test_only_an_approval_goes_to_the_delegate(self):
+        self.console.submit(self.form, "Decline")
+        self.console.submit(self.console.get("/ok/plan0001").form("/ok/plan0001/ask"), note="Is it the standby disk?")
+        self.console.submit(self.console.get("/ok/plan0001").form("/ok/plan0001/not-mine"))
+        self.assertEqual([call["decision"] for call in self.decider.calls], ["decline", "ask", "not_mine"])
+        self.assertEqual((self.delegate.begins, self.delegate.finishes), ([], []))
+
+    def test_a_refusal_from_begin_is_the_page_of_its_kind_with_no_redirect_and_changes_nothing(self):
+        before = snapshot(self.console.store)
+        refusals = ("refused_code", "refused_state", "refused_role", "refused_paused", "expired", "duplicate", "error")
+        for kind in refusals:
+            with self.subTest(kind=kind):
+                self.delegate.begun = Begun(refusal=DecideResult(False, kind, "a message of the delegate", make_plan()))
+                reply = self.console.submit(self.form, APPROVE)
+                status, title, _ = KINDS[kind]
+                self.assertEqual((reply.status, reply.headings(1)), (status, [title]))
+                self.assertNotIn("Location", reply.headers)
+        self.assertEqual(len(self.delegate.begins), len(refusals))
+        self.assertEqual(self.decider.calls, [])
+        self.assertEqual(snapshot(self.console.store), before)
+
+    def test_a_begin_with_an_address_that_is_not_the_sign_in_of_microsoft_entra_is_an_error_page_and_no_redirect(self):
+        elsewhere = ("https://login.example.test/tenant/oauth2/v2.0/authorize?state=x", "http://login.microsoftonline.com/tenant/oauth2/v2.0/authorize?state=x",
+                     "https://login.microsoftonline.com.evil.example/tenant/oauth2/v2.0/authorize", "//login.microsoftonline.com/tenant/oauth2/v2.0/authorize",
+                     "https://login.microsoftonline.com@evil.example/x", "https://login.microsoftonline.com/tenant/authorize?state=x\r\nSet-Cookie: a=b",
+                     "https://login.microsoftonline.com/tenant/authorize?redirect=https://evil.example", "javascript:alert(1)", "/ok/plan0001", "https://login.microsoftonline.com/")
+        for address in elsewhere:
+            with self.subTest(address=address):
+                self.delegate.begun = Begun(location=address)
+                reply = self.console.submit(self.form, APPROVE)
+                self.assertEqual((reply.status, reply.headings(1)), (500, ["I could not take your answer"]))
+                self.assertNotIn("Location", reply.headers)
+                self.assertNotIn("evil.example", reply.text)
+
+    def test_a_begin_that_gives_neither_an_address_nor_a_refusal_is_an_error_page(self):
+        for begun in (Begun(), Begun(location=""), Begun(location="", refusal=None)):
+            with self.subTest(begun=repr(begun)):
+                self.delegate.begun = begun
+                reply = self.console.submit(self.form, APPROVE)
+                self.assertEqual((reply.status, reply.headings(1)), (500, ["I could not take your answer"]))
+                self.assertNotIn("Location", reply.headers)
+
+    def test_a_begin_that_raises_is_an_error_page_without_a_trace_and_changes_nothing(self):
+        before = snapshot(self.console.store)
+        for error in (RuntimeError("boom with a secret detail"), StoreError("the store is down", 503), ValueError("bad value")):
+            with self.subTest(error=repr(error)):
+                self.delegate.begun = error
+                reply = self.console.submit(self.form, APPROVE)
+                self.assertEqual((reply.status, reply.headings(1)), (500, ["I could not take your answer"]))
+                self.assertIn("The approval service did not answer.", reply.content)
+                for leak in ("boom", "the store is down", "bad value", "Traceback"):
+                    self.assertNotIn(leak, reply.text)
+                self.assertNotIn("Location", reply.headers)
+        self.assertEqual(snapshot(self.console.store), before)
+
+    def test_a_begin_that_gives_something_that_is_not_a_begun_is_a_plain_error_page(self):
+        for begun in (None, "text"):
+            with self.subTest(begun=repr(begun)):
+                self.delegate.begun = begun
+                reply = self.console.submit(self.form, APPROVE)
+                self.assertEqual(reply.status, 500)
+                self.assertNotIn("Location", reply.headers)
+                self.assertNotIn("Traceback", reply.text)
+
+
+class TheReturnFromTheSignIn(unittest.TestCase):
+    """The page that the sign-in sends the person back to. The delegate records the approval and makes the change; the page shows the result."""
+
+    def setUp(self):
+        self.decider = ScriptedDecider()
+        self.delegate = ScriptedDelegate()
+        self.console = Console(decider=self.decider, delegate=self.delegate)
+        self.console.seed()
+
+    def test_the_delegate_finishes_the_sign_in_with_the_person_and_the_query_as_it_came(self):
+        reply = self.console.get("/arm/return", query=RETURN)
         self.assertEqual(reply.status, 200)
-        self.assertEqual(reply.headings(1), ["Your OK is recorded"])
-        self.assertIn("Recorded. Nothing has changed yet.", reply.content)
-        self.assertIn("The change starts at Thu 5 Nov 2026 09:01 UTC (10:01 CET).", reply.content)
-        self.assertIn("Until then you can cancel your OK. Cancelling closes the request, and nothing changes.", reply.content)
-        cancel = reply.form("/ok/plan0001/withdraw")
-        self.assertEqual(cancel.buttons, [("", "", "Cancel my OK")])
-        self.assertTrue(self.console.store.nonce_use(cancel.fields["nonce"], TINO, "plan0001"))
+        self.assertEqual(self.delegate.finishes, [dict(oid=TINO, query=RETURN)])
+        self.assertEqual((self.delegate.begins, self.decider.calls), ([], []))
 
-    def test_the_cancel_works_through_the_decider(self):
-        self.approved()
-        reply = self.console.submit(self.form, APPROVE)
-        self.decider.result = DecideResult(True, "withdrawn", "ok", make_plan(state="withdrawn"))
-        done = self.console.submit(reply.form("/ok/plan0001/withdraw"))
-        self.assertEqual(done.status, 200)
-        self.assertIn("Cancelled. Your OK is withdrawn and the request is closed. Nothing has changed.", done.content)
-        self.assertEqual(len(self.decider.withdrawals), 1)
+    def test_an_error_of_the_sign_in_goes_on_with_its_text_on_one_line(self):
+        description = "AADSTS65004: The user declined to consent to access the app.\r\nTrace ID: 0b0c\r\nCorrelation ID: 7e1f\r\nTimestamp: 2026-11-05 08:00:00Z"
+        self.console.get("/arm/return", query={"state": STATE, "error": "access_denied", "error_description": description})
+        self.assertEqual(self.delegate.finishes[0]["query"], {"state": STATE, "error": "access_denied", "error_description":
+                         "AADSTS65004: The user declined to consent to access the app. Trace ID: 0b0c Correlation ID: 7e1f Timestamp: 2026-11-05 08:00:00Z"})
 
-    def test_no_cancel_after_the_start_time(self):
-        self.approved()
-        self.console.now = self.console.now.replace(minute=5)
-        reply = self.console.submit(self.form, APPROVE)
-        self.assertIn("Recorded. Nothing has changed yet.", reply.content)
-        self.assertEqual(reply.forms(), [])
-        self.assertIn("The start time has passed.", reply.content)
+    def test_only_plain_names_go_on_and_a_name_that_comes_twice_is_joined(self):
+        self.console.get("/arm/return?state=a&state=b&bad%20name=1&ok-name=2&%3Cb%3E=3")
+        self.assertEqual(self.delegate.finishes[0]["query"], {"state": "a,b", "ok-name": "2"})
 
-    def test_no_start_time_is_shown_that_the_records_do_not_hold(self):
-        reply = self.console.submit(self.form, APPROVE)
-        self.assertIn("Recorded. Nothing has changed yet.", reply.content)
-        self.assertNotIn("The change starts", reply.content)
-        self.assertEqual(reply.forms(), [])
+    def test_a_return_with_no_query_goes_on_as_an_empty_query(self):
+        self.console.get("/arm/return")
+        self.assertEqual(self.delegate.finishes, [dict(oid=TINO, query={})])
 
-    def test_no_cancel_when_the_change_has_started(self):
-        self.approved(state="running", started_at=at(minutes=-1))
-        reply = self.console.submit(self.form, APPROVE)
-        self.assertEqual(reply.forms(), [])
-        self.assertNotIn("The change starts", reply.content)
+    def test_a_person_who_is_not_listed_gets_the_denial_and_the_delegate_is_not_asked(self):
+        denial = self.console.get("/", oid=None)
+        for who in (None, STRANGER):
+            with self.subTest(who=who):
+                reply = self.console.get("/arm/return", query=RETURN, oid=who)
+                self.assertEqual((reply.status, reply.text), (denial.status, denial.text))
+                self.assertEqual(reply.content, "No access This account cannot open this page.")
+        self.assertEqual(self.delegate.finishes, [])
+
+    def test_a_listed_person_needs_no_role_to_come_back_and_the_delegate_decides_what_the_return_is_worth(self):
+        for who in (OWNER, OPS, MAYA):
+            with self.subTest(who=who):
+                reply = self.console.get("/arm/return", query=RETURN, oid=who)
+                self.assertEqual((reply.status, reply.headings(1)), (200, ["The change was made"]))
+        nobody = "44444444-5555-6666-7777-888888888888"
+        roleless = Console(people=People((Person(nobody, "Nobody", (), ""),)), delegate=self.delegate)
+        self.assertEqual(roleless.get("/arm/return", query=RETURN, oid=nobody).status, 200)
+        self.assertEqual([call["oid"] for call in self.delegate.finishes], [OWNER, OPS, MAYA, nobody])
+
+    def test_a_return_that_the_sign_in_sends_from_another_site_is_taken(self):
+        headers = {"Sec-Fetch-Site": "cross-site", "Sec-Fetch-Mode": "navigate", "Sec-Fetch-Dest": "document"}
+        reply = self.console.get("/arm/return", query=RETURN, headers=headers)
+        self.assertEqual(reply.status, 200)
+        self.assertEqual(len(self.delegate.finishes), 1)
+
+    def test_only_get_is_taken_and_a_head_request_does_not_finish_a_sign_in(self):
+        post = self.console.post("/arm/return", dict(RETURN))
+        self.assertEqual((post.status, post.headers["Allow"]), (405, "GET"))
+        for method in ("PUT", "PATCH", "DELETE", "OPTIONS"):
+            with self.subTest(method=method):
+                reply = self.console.send(method, "/arm/return", query=RETURN)
+                self.assertEqual((reply.status, reply.headers["Allow"]), (405, "GET, HEAD, POST"))
+        head = self.console.send("HEAD", "/arm/return", query=RETURN)
+        self.assertEqual((head.status, head.headers["Allow"], head.body), (405, "GET", b""))
+        self.assertEqual(head.headers["Cache-Control"], "no-store")
+        self.assertEqual(self.delegate.finishes, [], "a HEAD request (a prefetch, a link check) cannot use up a sign-in")
+        self.assertEqual(self.console.send("HEAD", "/history").status, 200, "the pages that only show something still answer HEAD")
+
+    def test_the_head_request_of_a_page_that_only_shows_something_has_its_status_and_headers_and_no_body(self):
+        get = self.console.get("/history")
+        head = self.console.send("HEAD", "/history")
+        self.assertEqual((head.status, head.body), (get.status, b""))
+        self.assertEqual(head.headers["Cache-Control"], "no-store")
+        self.assertEqual(head.headers["Content-Security-Policy"], get.headers["Content-Security-Policy"])
+
+    def test_the_page_shows_nothing_of_the_query_and_nothing_of_the_address_of_the_sign_in(self):
+        query = {**RETURN, "error": "access_denied", "error_description": "AADSTS70000: details of the error"}
+        for kind in KINDS:
+            with self.subTest(kind=kind):
+                self.delegate.finished = DecideResult(kind in SUCCESSES, kind, "a message of the result", make_plan())
+                reply = self.console.get("/arm/return", query=query)
+                for value in (CODE, STATE, "a-session-state", "AADSTS70000", "details of the error", "access_denied", SIGNIN_URL, "login.example.test"):
+                    self.assertNotIn(value, reply.text)
+
+    def test_the_page_changes_nothing_by_itself_and_is_never_cached(self):
+        before = snapshot(self.console.store)
+        reply = self.console.get("/arm/return", query=RETURN)
+        self.assertEqual(snapshot(self.console.store), before)
+        self.assertEqual(reply.headers["Cache-Control"], "no-store")
 
 
 class AgainstTheLoop(unittest.TestCase):
-    """The pages and a small approval loop over one store: the tokens and codes of the forms are the ones that the loop checks."""
+    """The pages and a small loop over one store, for the answers that change nothing in Azure: the tokens and codes of the forms are the ones that the loop checks."""
 
     def setUp(self):
         self.console = Console(decider="loop")
@@ -566,26 +881,12 @@ class AgainstTheLoop(unittest.TestCase):
     def forms(self, who=TINO):
         return self.console.get("/ok/plan0001", oid=who).forms()
 
-    def test_an_approval_is_recorded_once_and_can_be_cancelled(self):
+    def test_a_decline_is_recorded_once_and_the_same_form_cannot_be_used_twice(self):
         main, _, _ = self.forms()
-        reply = self.console.submit(main, APPROVE, note="Go on")
-        self.assertEqual(reply.headings(1), ["Your OK is recorded"])
-        self.assertEqual(self.console.store.plan_get("plan0001").state, "approved")
-        self.assertEqual(self.console.store.action_get("plan0001").state, "queued")
-        self.assertEqual([d.decision for d in self.console.store.decisions_of_plan("plan0001")], ["approve"])
-        again = self.console.get("/ok/plan0001")
-        self.assertIn("Your OK is recorded since", again.content)
-        cancelled = self.console.submit(again.form("/withdraw"))
-        self.assertEqual(cancelled.headings(1), ["Cancelled"])
-        self.assertEqual(self.console.store.action_get("plan0001").state, "withdrawn")
-        self.assertIn("Withdrawn", self.console.get("/ok/plan0001").content)
-        self.assertEqual(self.console.get("/ok/plan0001").forms(), [])
-
-    def test_the_same_form_cannot_be_used_twice(self):
-        main, _, _ = self.forms()
-        self.assertEqual(self.console.submit(main, APPROVE).status, 200)
+        self.assertEqual(self.console.submit(main, "Decline", note="Not now").status, 200)
+        self.assertEqual([d.decision for d in self.console.store.decisions_of_plan("plan0001")], ["decline"])
         before = snapshot(self.console.store)
-        second = self.console.submit(main, APPROVE)
+        second = self.console.submit(main, "Decline")
         self.assertEqual(second.status, 500)
         self.assertIn("This form is no longer valid.", second.content)
         self.assertEqual(snapshot(self.console.store), before)
@@ -593,7 +894,7 @@ class AgainstTheLoop(unittest.TestCase):
     def test_a_wrong_code_is_refused_and_changes_nothing(self):
         main, _, _ = self.forms()
         before = snapshot(self.console.store)
-        reply = self.console.submit(main, APPROVE, code="AAAAAAAA")
+        reply = self.console.submit(main, "Decline", code="AAAAAAAA")
         self.assertEqual(reply.status, 409)
         self.assertIn("This plan changed. Nothing is approved. A new message will bring the new plan and code.", reply.content)
         self.assertEqual(snapshot(self.console.store), before)
@@ -602,7 +903,7 @@ class AgainstTheLoop(unittest.TestCase):
         main, _, _ = self.forms()
         before = snapshot(self.console.store)
         for token in ("", "nope", "x" * 32):
-            reply = self.console.submit(main, APPROVE, nonce=token)
+            reply = self.console.submit(main, "Decline", nonce=token)
             self.assertIn(reply.status, (403, 500))
         self.assertEqual(snapshot(self.console.store), before)
 
@@ -611,13 +912,22 @@ class AgainstTheLoop(unittest.TestCase):
         self.console.store.plan_put(make_plan(plan_id="plan0002", approvers=(TINO,)))
         other = self.console.get("/ok/plan0002").forms()[0]
         before = snapshot(self.console.store)
-        reply = self.console.submit(main, APPROVE, oid=MAYA)
+        reply = self.console.submit(main, "Decline", oid=MAYA)
         self.assertEqual(reply.status, 500)
         self.assertEqual(snapshot(self.console.store), before)
-        reply = self.console.post("/ok/plan0001", {**main.fields, "decision": "approve", "nonce": other.fields["nonce"]})
+        reply = self.console.post("/ok/plan0001", {**main.fields, "decision": "decline", "nonce": other.fields["nonce"]})
         self.assertEqual(reply.status, 500)
         self.assertEqual(snapshot(self.console.store), before)
-        self.assertEqual(self.console.submit(main, APPROVE).status, 200, "the right person with the right token still can")
+        self.assertEqual(self.console.submit(main, "Decline").status, 200, "the right person with the right token still can")
+
+    def test_an_approval_never_reaches_the_loop_and_records_nothing(self):
+        main, _, _ = self.forms()
+        before = snapshot(self.console.store)
+        reply = self.console.submit(main, APPROVE, note="Go on")
+        self.assertEqual(reply.status, 303)
+        self.assertEqual(self.console.decider.calls, 0)
+        self.assertEqual(snapshot(self.console.store), before)
+        self.assertEqual(self.console.store.plan_get("plan0001").state, "open")
 
     def test_a_decline_closes_the_request_and_the_page_shows_it(self):
         main, _, _ = self.forms()

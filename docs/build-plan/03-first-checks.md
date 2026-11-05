@@ -4,7 +4,7 @@
 
 ## How a check works
 
-A check is a short test of one question. It runs in the build's own environments unless it names the production deployment or the first estate, and no check writes to the estate. Seven checks answer one of the ten proof points of [the roadmap](../design/13-roadmap.md#2-ten-proof-points), P1 to P10: questions that measurement settles and argument does not. Five test the mail path, the release gates, the kill switch, the first estate's bill and a first sign of learning (C4, C11 to C14); C9 and C10 preview phase 2 and run before the Teams cards and the approval page go live. The platform team runs the checks, and each names anyone else it needs. The design's [glossary](../design/README.md#words-used-in-this-design) defines capitalised words such as Atlas and Case. The experience design also numbers its cards C1 to C17, so "check C4" means a check here and "card C4" a card there.
+A check is a short test of one question. It runs in the build's own environments unless it names the production deployment or the first estate, and no check writes to the estate. Seven checks answer one of the ten proof points of [the roadmap](../design/13-roadmap.md#2-ten-proof-points), P1 to P10: questions that measurement settles and argument does not. Five test the mail path, the release gates, the kill switch, the first estate's bill and a first sign of learning (C4, C11 to C14); C9 and C10 preview phase 2 and run before the Teams cards and the approval page go live. The platform team runs the checks, and each names anyone else it needs. The experience design also numbers its cards C1 to C17, so "check C4" means a check here and "card C4" a card there.
 
 A check that spans slices has a **stage** in each. A slice is done when its stage of each check passes and the evidence is stored ([02](02-before-you-start.md#working-agreements-and-done)); a check passes as a whole when every stage has passed. Slices 1a.1 to 1a.6b are built in two passes ([01](01-the-slices.md#phase-1a-first-value-on-one-estate)); a stage belongs to the first pass unless its check says otherwise. C6, and the repeat of C5 for each scope the second pass adds, belong to the second.
 
@@ -138,7 +138,9 @@ Slices 1a.1, 1a.3, 1a.6b and 1a.7: a reviewed change merged before the first pro
 
 **Why the change is needed.** The Capability gate compares the system with a sealed set of test cases and two baselines that phase 1b builds, so the first production release cannot meet it as written. Only a reviewed change to the gate can overrule it; the gate is never skipped.
 
-**The recommended default.** Until 1b exits, the Capability gate reports on the development set (the planted-waste and decoy cases of slice 0.3) and cannot block; every output reaches only the FinOps lead, who reads each one; and nothing changes Azure. The same change names a reference for the gates that compare a release with the previous one, which the first release lacks. The Autonomy level gate has nothing to decide before phase 4, because no Credential exists.
+**The recommended default.** Until 1b exits, the Capability gate reports on the development set and cannot block; every output reaches only the FinOps lead, who reads each one; and nothing changes Azure. The same change names a reference for the gates that compare a release with the previous one, which the first release lacks. The Autonomy level gate has nothing to decide before phase 4, because no Credential exists.
+
+**Superseded in part on 2026-11-05:** Credentials. A change runs as the approver, so no Credential runs one unattended; see [decision 24](../design/12-decisions.md#24-a-change-runs-as-the-approver-meternaut-holds-no-right-to-change-azure--accepted) and [proposal 05](../proposals/05-run-as-the-approver.md).
 
 ### C12 The kill switch stops the system
 

@@ -213,3 +213,5 @@ A check can need more than the slices that start it: C1 calls the stub tool of 0
 ## What comes after phase 1a
 
 The plan is detailed only as far as phase 1a and is [re-issued at each exit](04-cost-effort-and-risks.md#how-the-plan-is-revised). [The roadmap](../design/13-roadmap.md#1-phases) holds phases 1b to 5. Phase 1b shows that the system learns (the Study workflow, the report card, baselines and sealed test sets); phase 2 reaches owners, with the client matrix (C9) and the sign-in test (C10) run before go-live; phase 3, which starts only after 1b, adds the action plane and runs C7 again once propose tools exist.
+
+**Superseded in part on 2026-11-05:** the `runner` identity and action roles that phase 3 adds. A change runs as the approver; see [decision 24](../design/12-decisions.md#24-a-change-runs-as-the-approver-meternaut-holds-no-right-to-change-azure--accepted) and [proposal 05](../proposals/05-run-as-the-approver.md).

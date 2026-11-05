@@ -15,7 +15,7 @@ from functools import lru_cache
 from typing import Callable, Iterable, Mapping
 from urllib.parse import parse_qsl, quote, urlsplit
 
-from ..models import TIME_FORMAT, Decider, Principal, Store
+from ..models import TIME_FORMAT, Decider, Delegate, Principal, Store
 from ..people import People
 
 MAX_BODY = 16 * 1024
@@ -61,17 +61,18 @@ class Response:
 class Services:
     """What the pages need from the rest of the app.
 
-    `host` is the public host name (for the address that a page names). `writer` says in plain words what the runner may change. `models` are the names
-    of the AI models, for the AI line. `base` is the path in front of the console, when the platform adds one (for example `/api`): links carry it and
-    incoming paths lose it.
+    `host` is the public host name (for the address that a page names). `acts_on` says in plain words the one change that the code makes, with the approver's own
+    token. `delegate` takes an approval through the person's sign-in to Azure. `models` are the names of the AI models, for the AI line. `base` is the path in
+    front of the console, when the platform adds one (for example `/api`): links carry it and incoming paths lose it.
     """
 
     store: Store
     decider: Decider
+    delegate: Delegate
     people: People
     now: Callable[[], dt.datetime]
     host: str
-    writer: str
+    acts_on: str
     models: tuple[str, ...] = ()
     base: str = ""
 

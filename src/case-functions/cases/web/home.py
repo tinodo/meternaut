@@ -1,4 +1,4 @@
-"""The start page: what needs your OK, what Meternaut did lately, the state of the three switches and what the runner may change."""
+"""The start page: what needs your OK, what Meternaut did lately, the state of the three switches and what Meternaut can change in Azure."""
 from __future__ import annotations
 
 from . import words
@@ -7,7 +7,7 @@ from .core import Ctx, Response, Safe, esc, fmt, join, link_part, usd
 from .layout import block, link, notice, page, paragraph, table
 
 ABOUT = ("Meternaut finds Azure resources that may cost money for nothing. Two AI models review each finding, and a person approves every change on a page of this "
-         "console. After an OK, the runner, a separate part of Meternaut, makes the one approved change, checks the result and records it.")
+         "console. After an OK, the person signs in to Azure, and Meternaut makes the one approved change with that person's own permissions, checks the result and records it.")
 
 
 def switch_text(ctx: Ctx, name: str, record) -> Safe:
@@ -51,7 +51,9 @@ def home(ctx: Ctx) -> Response:
     parts: list[object] = [
         Safe("<h1>Meternaut</h1>"), paragraph(ABOUT, "lead"),
         Safe("<h2>Needs your OK now</h2>"), _needs_ok(ctx),
-        Safe("<h2>What the runner may change</h2>"), paragraph(fmt("The runner may only {writer}. It changes nothing else.", writer=ctx.services.writer)),
+        Safe("<h2>What Meternaut can change in Azure</h2>"),
+        paragraph(fmt("On its own, nothing: Meternaut holds no right to change Azure. When you approve a change, you sign in to Azure and Meternaut makes that one change "
+                      "with your own permissions. The code makes only this change: {acts_on}.", acts_on=ctx.services.acts_on)),
         Safe("<h2>The three switches</h2>"), switches_table(ctx),
     ]
     if ctx.principal.has("ops"):  # type: ignore[union-attr]

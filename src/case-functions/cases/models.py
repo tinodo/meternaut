@@ -25,7 +25,7 @@ NOTE_KINDS = ("note", "do_not_touch")
 CHANNELS = ("email", "teams", "desk")
 ROLES = ("owner", "approver", "ops")
 
-# What the runner may do: one family is one kind of change on one kind of resource.
+# What a change may be: one family is one kind of change on one kind of resource.
 FAMILIES = {
     "delete-disk": "microsoft.compute/disks",
     "delete-public-ip": "microsoft.network/publicipaddresses",
@@ -129,7 +129,7 @@ class PlanRecord(Record):
     expires_at: str
     state: str = "open"
     approval_class: str = "R2"
-    preconditions: dict = field(default_factory=dict)  # what the runner re-checks, e.g. {"diskState": "Unattached", "tag": "meternaut-planted"}
+    preconditions: dict = field(default_factory=dict)  # what the re-check right before the change looks at, e.g. {"diskState": "Unattached", "tag": "meternaut-planted"}
 
 
 @dataclass(frozen=True)
@@ -145,7 +145,7 @@ class DecisionRecord(Record):
 
 @dataclass(frozen=True)
 class ActionRecord(Record):
-    """What the runner did for one plan, and what the verifier saw afterwards."""
+    """What happened to the change of one plan, and what the verifier saw afterwards."""
 
     plan_id: str
     case_id: str
@@ -153,7 +153,7 @@ class ActionRecord(Record):
     resource_id: str
     state: str  # one of ACTION_STATES
     queued_at: str
-    start_after: str | None = None  # the writer does not start before this time: the window in which the first approver can still cancel
+    start_after: str | None = None  # kept for records of the earlier design, which waited for this time; a change now starts at the approver's sign-in
     started_at: str | None = None
     finished_at: str | None = None
     result: str = ""
@@ -231,13 +231,23 @@ class Principal:
 @dataclass(frozen=True)
 class DecideResult:
     ok: bool
-    kind: str  # recorded, declined, asked, not_mine, withdrawn, or a refusal: refused_code, refused_state, refused_role, refused_paused, expired, duplicate, error
+    # Answers: declined, asked, not_mine. What a sign-in to Azure led to: ran, ran_unconfirmed, stopped, azure_refused, failed, signin_failed.
+    # Refusals: refused_code, refused_state, refused_role, refused_paused, expired, duplicate, error.
+    kind: str
     message: str
     plan: PlanRecord | None = None
 
 
+@dataclass(frozen=True)
+class Begun:
+    """What starting an approval gives: the address that the person is sent to (to sign in to Azure), or the refusal to show. Never both."""
+
+    location: str = ""
+    refusal: DecideResult | None = None
+
+
 class Store(Protocol):
-    """What the console, the approval loop, the runner and the Watch keep. Every call may raise StoreError; a caller that cannot read a switch treats it as pulled."""
+    """What the console, the approval loop, the change and the Watch keep. Every call may raise StoreError; a caller that cannot read a switch treats it as pulled."""
 
     def runs_recent(self, limit: int = 20) -> list[RunRecord]: ...
     def run_put(self, run: RunRecord) -> None: ...
@@ -257,6 +267,14 @@ class Store(Protocol):
         ...
     def action_get(self, plan_id: str) -> ActionRecord | None: ...
     def action_put(self, action: ActionRecord) -> None: ...
+    def action_claim(self, action: ActionRecord) -> bool:
+        """Stores the first action of a plan and returns True; returns False, and changes nothing, when the plan has an action already.
+
+        Of several approvers who answer at the same moment, only one gets True: that one makes the change."""
+        ...
+    def action_release(self, plan_id: str) -> None:
+        """Removes the action of a plan that was claimed and has not started, so that a new try can claim it. An action that has started or finished stays."""
+        ...
     def actions_recent(self, limit: int = 50) -> list[ActionRecord]: ...
     def switch_get(self, name: str) -> SwitchRecord: ...
     def switch_put(self, switch: SwitchRecord) -> None: ...
@@ -270,8 +288,11 @@ class Store(Protocol):
     def do_not_touch(self) -> set[str]:
         """Lower-case resource ids that carry a do-not-touch mark that has not expired."""
         ...
-    def nonce_new(self, oid: str, purpose: str, ttl_seconds: int = 3600) -> str:
-        """A one-time token for one person and one purpose (the id of a plan, or the name of a form). It is kept on the server."""
+    def nonce_new(self, oid: str, purpose: str, ttl_seconds: int = 3600, data: str = "") -> str:
+        """A one-time token for one person and one purpose (the id of a plan, or the name of a form). It is kept on the server, with `data` (text, never a token)."""
+        ...
+    def nonce_take(self, token: str, oid: str, purpose: str) -> str | None:
+        """The `data` that was kept with the token, once: for the person and the purpose that the token was made for, before it expired. None for anything else, and for a second use."""
         ...
     def nonce_use(self, token: str, oid: str, purpose: str) -> bool:
         """True once, for the person and the purpose that the token was made for; False for anything else, and for a second use."""
@@ -283,10 +304,18 @@ class Store(Protocol):
 
 
 class Decider(Protocol):
-    """The approval loop as the pages see it. It checks the person, the plan code, the one-time token, the plan's state, the switches and the expiry."""
+    """The approval loop as the pages see it, for the answers that change nothing in Azure: decline, ask a question, not mine. It checks the person, the plan
+    code, the one-time token, the plan's state, the switches and the expiry. An approval is not decided here: it is made at the person's sign-in to Azure."""
 
     def decide(self, principal: Principal, plan_id: str, decision: str, code: str, nonce: str, note: str = "") -> DecideResult: ...
-    def withdraw(self, principal: Principal, plan_id: str, nonce: str) -> DecideResult: ...
+
+
+class Delegate(Protocol):
+    """An approval, in its two steps. `begin` checks the form and gives the address of the sign-in to Azure; `finish` takes the person back from that sign-in,
+    records the approval and makes the change with the person's own token. Meternaut holds no right of its own to change Azure."""
+
+    def begin(self, principal: Principal, plan_id: str, code: str, nonce: str, note: str = "", hint: str = "") -> Begun: ...
+    def finish(self, principal: Principal, query: dict[str, str]) -> DecideResult: ...
 
 
 class StoreError(Exception):

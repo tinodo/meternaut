@@ -2,7 +2,7 @@ import datetime as dt
 import unittest
 from unittest import mock
 
-from test_web_support import (DISK, MAYA, NOW, OPS, OWNER, SUB, TINO, WRITER, Console, FailingStore, at, make_action, make_case, make_decision, make_plan, make_run)
+from test_web_support import (ACTS_ON, DISK, MAYA, NOW, OPS, OWNER, SUB, TINO, Console, FailingStore, at, make_action, make_case, make_decision, make_plan, make_run)
 
 from cases.models import SettingsRecord, SwitchRecord
 from cases.web import core
@@ -23,7 +23,9 @@ class TheStartPage(unittest.TestCase):
         self.assertEqual(reply.headings(1), ["Meternaut"])
         self.assertEqual(reply.main.find("p", class_="lead").text(), ABOUT)
         self.assertIn("a person approves every change", ABOUT)
-        self.assertIn("the runner", ABOUT)
+        self.assertIn("the person signs in to Azure", ABOUT)
+        self.assertIn("with that person's own permissions", ABOUT)
+        self.assertNotIn("runner", ABOUT)
 
     def test_what_needs_the_persons_ok_is_listed_with_a_button_link_to_its_page(self):
         reply = seeded().get("/")
@@ -70,7 +72,8 @@ class TheStartPage(unittest.TestCase):
         rows = console.get("/").table("switches").rows
         self.assertEqual(rows[1]["State"], "Paused by Otto on Thu 5 Nov 2026 08:55 UTC (09:55 CET). Reason: drill")
         self.assertEqual(rows[2]["State"], "Paused on a time that is not recorded. No reason is recorded.")
-        self.assertEqual(rows[1]["What it stops"], "No OK is recorded and the runner makes no change in Azure.")
+        self.assertEqual([r["What it stops"] for r in rows], ["No approval is accepted, no change is made in Azure and no message is sent.",
+                                                              "No approval is accepted and no change is made in Azure.", "No message is sent to anybody."])
 
     def test_a_switch_that_cannot_be_read_is_shown_as_pulled(self):
         console = Console(store=FailingStore(fail={"switch_get"}, clock=lambda: NOW))
@@ -79,9 +82,13 @@ class TheStartPage(unittest.TestCase):
         self.assertEqual(reply.status, 200)
         self.assertEqual([r["State"] for r in reply.table("switches").rows], ["Cannot be read: treated as pulled."] * 3)
 
-    def test_what_the_runner_may_change_is_said_in_the_services_words(self):
+    def test_what_meternaut_can_change_in_azure_is_said_in_the_services_words_and_nothing_is_said_of_a_right_of_its_own(self):
         reply = seeded().get("/")
-        self.assertIn(f"The runner may only {WRITER}. It changes nothing else.", reply.content)
+        self.assertIn("What Meternaut can change in Azure", reply.headings(2))
+        self.assertNotIn("What the runner may change", reply.headings(2))
+        self.assertIn("On its own, nothing: Meternaut holds no right to change Azure. When you approve a change, you sign in to Azure and Meternaut makes that one change "
+                      f"with your own permissions. The code makes only this change: {ACTS_ON}.", reply.content)
+        self.assertNotIn("The runner may only", reply.content)
 
     def test_the_latest_runs_and_cases_are_listed_with_a_link_to_the_notebook(self):
         console = seeded()
@@ -113,7 +120,8 @@ class TheStartPage(unittest.TestCase):
                 self.assertEqual(reply.status, 200)
                 self.assertIn(notice, reply.content)
                 self.assertIn("State of each switch", reply.content)
-                self.assertIn("The runner may only", reply.content)
+                self.assertIn("What Meternaut can change in Azure", reply.content)
+                self.assertIn(f"The code makes only this change: {ACTS_ON}.", reply.content)
                 self.assertEqual(reply.problems, [])
 
     def test_a_part_that_is_empty_says_so(self):
@@ -222,7 +230,7 @@ class TheNotebook(unittest.TestCase):
         self.assertIn("No cost lines of the last 30 days were read for this resource.", reply.content)
         self.assertEqual(reply.summary(1), {"Cost lines, last 30 days": "not available", "Estimated saving a month": "no figure"})
 
-    def test_what_happened_afterwards_shows_the_plan_and_what_the_runner_did(self):
+    def test_what_happened_afterwards_shows_the_plan_and_what_happened_to_the_change(self):
         self.console.store.case_put(make_case(plan_id="plan0001"))
         self.console.store.plan_put(make_plan(state="consumed"))
         self.console.store.action_put(make_action(state="done", started_at=at(minutes=-3), finished_at=at(minutes=-2), result="Deleted. Azure no longer lists the resource.",
@@ -230,7 +238,7 @@ class TheNotebook(unittest.TestCase):
         reply = self.console.get("/why/case0001")
         self.assertIn("What happened afterwards", reply.headings(2))
         found = reply.summary(3)
-        self.assertEqual(found["State of the plan"], "Used. The runner took this plan, and a plan runs once.")
+        self.assertEqual(found["State of the plan"], "Used. The change was made with the approver's own permissions, and a plan runs once.")
         self.assertEqual(found["Plan code"], "7F3K92QD")
         after = reply.summary(4)
         self.assertEqual(after["State"], "Done.")
@@ -239,6 +247,22 @@ class TheNotebook(unittest.TestCase):
         self.assertIn("Cost lines after the change: 0.00 US dollars.", after["Checked afterwards"])
         self.assertIn("Cost lines of the 30 days before: 7.17 US dollars.", after["Checked afterwards"])
         self.assertIn("Note: Confirmed.", after["Checked afterwards"])
+
+    def test_the_state_of_the_plan_is_said_in_words_for_each_state(self):
+        self.console.store.case_put(make_case(plan_id="plan0001"))
+        for state, words_ in (("open", "Open. It waits for an OK."), ("approved", "Approved. The change is being made now."),
+                              ("consumed", "Used. The change was made with the approver's own permissions, and a plan runs once."), ("declined", "Declined. Nothing changed."),
+                              ("expired", "Expired. Nothing changed."), ("withdrawn", "Withdrawn. Nothing changed."), ("failed", "Failed. The change could not be finished.")):
+            with self.subTest(state=state):
+                self.console.store.plan_put(make_plan(state=state))
+                self.assertEqual(self.console.get("/why/case0001").summary(3)["State of the plan"], words_)
+
+    def test_the_status_of_a_case_that_was_approved_or_declined_is_said_in_words(self):
+        for status, words_ in (("approved", "Approved. A person approved the plan and signed in to Azure. The change is being made now."),
+                               ("declined", "Declined. A person said no. Nothing changed.")):
+            with self.subTest(status=status):
+                self.console.store.case_put(make_case(status=status))
+                self.assertEqual(self.console.get("/why/case0001").summary(0)["Status"], words_)
 
     def test_the_plan_is_linked_only_for_a_person_who_may_answer_it(self):
         self.console.store.case_put(make_case(plan_id="plan0001"))
@@ -250,7 +274,9 @@ class TheNotebook(unittest.TestCase):
     def test_a_plan_that_has_no_action_yet_says_so(self):
         self.console.store.case_put(make_case(plan_id="plan0001"))
         self.console.store.plan_put(make_plan())
-        self.assertIn("The runner has not been asked to change anything for this plan.", self.console.get("/why/case0001").content)
+        reply = self.console.get("/why/case0001")
+        self.assertIn("No change has been made for this plan.", reply.content)
+        self.assertNotIn("The runner", reply.content)
 
     def test_a_case_that_ended_in_an_error_shows_its_reason_as_a_note_of_meternaut_and_not_as_ai_text(self):
         self.console.store.case_put(make_case(status="error", recommendation=None, confidence=None, summary="the token budget of the run was reached", objections=(), models={}))
@@ -380,6 +406,9 @@ class TheHistory(unittest.TestCase):
         self.assertIn("What the status words mean", reply.headings(2))
         legend = reply.summary(0)
         self.assertEqual(list(legend), ["Proposed", "Needs a person", "Dropped", "Error", "Waiting for an OK", "Approved", "Running", "Done", "Failed", "Declined", "Expired", "Done and verified"])
+        self.assertEqual(legend["Approved"], "A person approved the plan and signed in to Azure. The change is being made now.")
+        self.assertEqual(legend["Declined"], "A person said no. Nothing changed.")
+        self.assertNotIn("runner", " ".join(legend.values()).lower())
 
     def test_it_is_not_a_cost_report(self):
         reply = self.console.get("/history")
@@ -411,7 +440,7 @@ class TheDecisions(unittest.TestCase):
     def rows(self, who=TINO):
         return self.console.get("/me/decisions", oid=who).table("decisions").rows
 
-    def test_a_queued_change_says_when_it_starts_and_that_a_deletion_cannot_be_undone(self):
+    def test_a_queued_change_says_that_it_has_not_started_and_names_no_start_time(self):
         self.console.store.plan_put(make_plan(state="approved"))
         self.console.store.action_put(make_action())
         row = self.rows()[0]
@@ -419,7 +448,15 @@ class TheDecisions(unittest.TestCase):
         self.assertIn(make_plan().title, row["Request"])
         self.assertIn("Plan code 7F3K92QD", row["Request"])
         self.assertEqual(row["Your answer"], "Your OK")
-        self.assertEqual(row["What came of it"], "Queued. It has not started. It starts at Thu 5 Nov 2026 09:01 UTC (10:01 CET). Once it has run, a deletion cannot be undone.")
+        self.assertEqual(row["What came of it"], "Queued. It has not started.")
+
+    def test_a_queued_change_of_the_earlier_design_that_holds_a_start_time_shows_none(self):
+        self.console.store.plan_put(make_plan(state="approved"))
+        self.console.store.action_put(make_action(start_after=at(minutes=1)))
+        text = self.rows()[0]["What came of it"]
+        self.assertEqual(text, "Queued. It has not started.")
+        self.assertNotIn("starts at", text.lower())
+        self.assertNotIn("09:01 UTC", text)
 
     def test_what_ran_and_the_outcome_are_in_plain_words(self):
         self.console.store.plan_put(make_plan(state="consumed"))
@@ -480,6 +517,12 @@ class TheDecisions(unittest.TestCase):
     def test_it_invites_the_person_to_check_that_each_approval_is_theirs(self):
         self.assertIn("Check that each approval is one that you gave.", self.console.get("/me/decisions").content)
 
+    def test_it_says_what_happened_to_the_change_and_not_what_a_runner_did(self):
+        lead = self.console.get("/me/decisions").main.find("p", class_="lead").text()
+        self.assertEqual(lead, "Every answer given in your name: what you decided, when, what happened to the change and what came of it. Check that each approval is one that "
+                               "you gave. If one is not, use Talk to a person below.")
+        self.assertNotIn("runner", lead)
+
     def test_fifty_decisions_are_shown_newest_first(self):
         for n in range(60):
             self.console.store.decision_put(make_decision(plan_id=f"p{n:03d}", at=at(minutes=-n - 5)))
@@ -495,27 +538,35 @@ class WhatIDidHere(unittest.TestCase):
         self.console.store.plan_put(make_plan(state="approved"))
         self.console.store.action_put(make_action())
 
-    def test_it_says_that_no_standing_permission_exists(self):
-        self.assertIn("No standing permission exists yet.", self.console.get("/me/activity").content)
+    def test_it_says_that_meternaut_holds_no_standing_permission_and_that_a_change_is_made_with_the_approvers_own(self):
+        reply = self.console.get("/me/activity")
+        self.assertIn("Meternaut holds no standing permission in Azure. A change is made only after a person approves that exact change on its own page and signs in to Azure, "
+                      "and it is made with that person's own permissions.", reply.content)
+        self.assertNotIn("No standing permission exists yet.", reply.content)
 
-    def test_a_queued_change_of_an_approved_plan_shows_its_start_and_a_cancel_until_then(self):
+    def test_the_lead_says_what_the_page_lists_without_a_runner(self):
+        lead = self.console.get("/me/activity").main.find("p", class_="lead").text()
+        self.assertEqual(lead, "Every change that was made, or was tried, for a plan that names you as an approver or that you answered: what changed, where, when, "
+                               "the result and what the check afterwards found.")
+
+    def test_a_queued_change_of_an_approved_plan_shows_its_state_and_no_start_time_and_no_cancel(self):
         reply = self.console.get("/me/activity")
         self.assertEqual(reply.headings(2), ["Delete an unattached managed disk: planted-disk-1"])
         found = reply.summary(0)
         self.assertEqual(found["What changed"], make_plan().title)
         self.assertEqual(found["Where"], f"Resource group meternaut-test-rg, subscription {SUB}")
         self.assertEqual(found["State"], "Queued. It has not started.")
-        self.assertEqual(found["Starts at"], "Thu 5 Nov 2026 09:01 UTC (10:01 CET)")
-        self.assertIn("The change starts at Thu 5 Nov 2026 09:01 UTC (10:01 CET).", reply.content)
-        cancel = reply.form("/ok/plan0001/withdraw")
-        self.assertEqual(cancel.buttons, [("", "", "Cancel my OK")])
-        self.assertTrue(self.console.store.nonce_use(cancel.fields["nonce"], TINO, "plan0001"))
-
-    def test_the_cancel_ends_at_the_start_time(self):
-        self.console.now = self.console.now.replace(minute=2)
-        reply = self.console.get("/me/activity")
+        self.assertNotIn("Starts at", found)
+        self.assertNotIn("The change starts at", reply.content)
         self.assertEqual(reply.forms(), [])
-        self.assertIn("The start time has passed.", reply.content)
+        self.assertNotIn("Cancel my OK", reply.content)
+
+    def test_a_queued_change_of_the_earlier_design_that_holds_a_start_time_shows_none(self):
+        self.console.store.action_put(make_action(start_after=at(minutes=1)))
+        reply = self.console.get("/me/activity")
+        self.assertNotIn("Starts at", reply.summary(0))
+        self.assertNotIn("09:01 UTC", reply.content)
+        self.assertEqual(reply.forms(), [])
 
     def test_a_change_that_was_made_shows_the_result_and_what_the_check_found(self):
         self.console.store.plan_put(make_plan(state="consumed"))
@@ -536,7 +587,7 @@ class WhatIDidHere(unittest.TestCase):
         self.assertNotIn("maya-disk", self.console.get("/me/activity").content)
         reply = self.console.get("/me/activity", oid=MAYA)
         self.assertEqual(reply.headings(2), ["Delete an unattached managed disk: maya-disk"])
-        self.assertEqual(reply.forms(), [], "she did not approve it, so she cannot cancel it")
+        self.assertEqual(reply.forms(), [], "the page has no form for anybody")
         self.assertIn("Nothing was changed for your plans yet.", self.console.get("/me/activity", oid=OWNER).content)
 
     def test_a_plan_that_a_person_answered_is_listed_even_when_the_plan_names_somebody_else_now(self):

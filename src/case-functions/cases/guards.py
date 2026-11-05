@@ -42,7 +42,7 @@ def evaluate(lead: Lead, context: Context, scope_locks: list[str] | None, fixtur
     """A guard that cannot be read is a guard that is on: "unverified" stops a lead as much as a lock does.
 
     `scope_locks` are the locks that the list of the lead's own scopes returned; None means that they could not be read.
-    `fixture` is a resource that Meternaut planted itself in the group where its writer may act: it is not held back for being new, and no other guard is lifted.
+    `fixture` is a resource that Meternaut planted itself in the group where a change may be made: it is not held back for being new, and no other guard is lifted.
     """
     target = lead.resource_id.lower()
     unverified = context.locks is None or context.recent is None or context.managed_groups is None or scope_locks is None

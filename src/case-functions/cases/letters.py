@@ -45,7 +45,7 @@ KIND_WORDS = {
     "stopped-vm": "a virtual machine that is stopped",
     "advisor-cost": "a cost recommendation of Azure Advisor",
 }
-PLAN_STATE_WORDS = {"open": "open", "approved": "approved and waiting to start", "consumed": "closed because it ran", "declined": "declined",
+PLAN_STATE_WORDS = {"open": "open", "approved": "approved, its change is being made", "consumed": "closed because it ran", "declined": "declined",
                     "expired": "expired", "withdrawn": "withdrawn", "failed": "closed because the change failed"}
 ACTION_STATE_WORDS = {"queued": "queued", "running": "running", "done": "done", "failed": "failed", "unknown": "not known", "verified": "done and checked"}
 DONE_SUBJECTS = {"done": "A change to Azure has run", "verified": "A change to Azure has run", "failed": "A change to Azure did not run",
@@ -296,9 +296,8 @@ def first_contact_letter(person: Person, base_url: str, now: dt.datetime) -> Let
         "I find leads: resources that look unused, for example a disk that is not attached to anything.",
         "Two AI roles judge each lead. The Detective proposes what to do. The Skeptic argues against it. Both are AI models, and neither can change anything.",
         "When a change is proposed, code builds the plan: what changes, the estimated saving and when the request expires. No model writes the plan.",
-        "A person approves every change, on a page, after signing in.",
-        "The writer is the only part of Meternaut that can change Azure. It removes only the resource that an approved plan names, and it reads the "
-        "resource again right before it acts.",
+        "A person approves every change, on a page, after signing in. Then the person signs in to Azure, and I make the one approved change with that person's own "
+        "permissions, after I have read the resource again right before I act. I hold no right of my own to change Azure.",
     )
     doc.heading("What I do not do")
     doc.items(
@@ -335,7 +334,8 @@ def approval_letter(plan: PlanRecord, case: CaseRecord, person: Person, base_url
               ("Resource (name from Azure)", _data(plan.resource_name, 120)),
               ("Resource group (name from Azure)", _data(plan.resource_group, 90)),
               ("What happens (names from Azure)", _data(plan.what_changes, 700)),
-              ("Who makes it", "The writer, the only part of Meternaut that can change Azure. It does only what this plan says, and only after a person approves it."))
+              ("Who makes it", "You do, with your own permissions: after you approve on the page you sign in to Azure, and Meternaut makes this one change as you. "
+                               "Meternaut holds no right of its own to change Azure, and Azure refuses the change if your account may not make it."))
 
     doc.heading("What it is worth")
     saving, waiting = _usd(plan.saving_usd_month), _usd(plan.waiting_costs_usd_day)
@@ -420,7 +420,7 @@ def digest_letter(person: Person, base_url: str, now: dt.datetime, runs: list[Ru
 
 
 def done_letter(plan: PlanRecord, action: ActionRecord, case: CaseRecord, person: Person, base_url: str, now: dt.datetime) -> Letter:
-    """What the writer did for one plan, and what the check afterwards found. Cost lines confirm the saving later."""
+    """What happened to the change of one plan, and what the check afterwards found. Cost lines confirm the saving later."""
     base, now = _base(base_url), _utc(now)
     ran = action.state in ("done", "verified")
     doc = _Doc(DONE_SUBJECTS.get(action.state, "The state of a change to Azure"))

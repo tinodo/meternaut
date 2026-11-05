@@ -181,9 +181,9 @@ The model's memory is a lead, never a source of a number: prices come from tools
 
 **A day-zero story (the service is invented).** Tuesday 09:00: Microsoft announces Azure Prism, a managed retrieval service. The price snapshot shows six new meters. By 10:30 the Scholar has read the announcement, the pricing page and the schema in parallel and decoded the meters: a *Prism Unit* is **capacity**, a *Query Unit* **consumption**, snapshot GB-months **stock**, replicas a **multiplier**, the private-link add-on **coupling**, the preview price a **time cliff**. Two pages disagree on whether scaling down refunds a started hour. No document can settle that, so both quotes stay as receipts and the claim is marked disputed. The Skeptic, another model family, re-reads the sources itself, and a reviewer merges the draft pull request that afternoon.
 
-**Profile v0.1 is provisional**: every line says what it rests on, and it gives no savings advice. Inventory finds two preview deployments owned by one team, and the Diplomat asks one question: "The preview price ends on 1 March. Do you want a heads-up plan?" Nobody wrote a Prism rule.
+**Profile v0.1 is provisional**: every line says what it rests on, and it gives no savings advice. Inventory finds two preview deployments owned by one team, and the Diplomat asks one question: "The preview price ends on 1 March. Do you want a heads-up plan?"
 
-**The bill is the best oracle available.** The team's first Prism meters reach the cost data a day later, provisionally: cost data lags and is rerated for days. Once the period has closed and usage and change history match, the bill shows a started hour billed after a scale-down. That settles the dispute: the refund claim is refuted, and the "no refund" reading becomes `bill-observed` for that estate. The snapshot meter is still billing for an index deleted last week. No claim explained it, so the Librarian proposes one (leftover), scoped to what was seen.
+**The bill is the best oracle available.** The team's first Prism meters reach the cost data a day later, provisionally: cost data lags and is rerated for days. Once the period has closed and usage and change history match, the bill shows a started hour billed after a scale-down. That settles the dispute: the refund claim is refuted, and the "no refund" reading becomes `bill-observed` for that estate.
 
 ```mermaid
 flowchart TB
@@ -221,7 +221,7 @@ Four channels read what already exists; the fifth, a small trial, changes one re
 
 **Bills.** For each workload (the resources the Estate model groups by purpose) `price-sim` builds a **blueprint cost model**: what the bill should be, from the estate's real configuration, the profile's meters, measured usage and prices. Where Azure Monitor does not expose a meter's billing quantity, `price-sim` uses diagnostic logs or trailing billed usage, or abstains for that meter and says so. Each day's bill is compared with the blueprint, meter by meter. The blueprint is stored before the bill lands, so a prediction that a meter will not appear is scored too.
 
-A meter with no claim in the Atlas is a *discovery* and goes to the top of the Agenda. A bill above the model (a **positive residual**) is a lead: a switch that turned on a meter, a retry loop, a longer data path. [Traffic between peered virtual networks is billed per GB, and more across regions](https://learn.microsoft.com/azure/virtual-network/virtual-network-cost-optimization), so a web tier moved to a second region shows up as a data-transfer line that no blueprint had. A negative residual is a lead too (a missing resource, an unplanned discount). A residual inside the profile's stated error bound, against a blueprint stored before the bill landed, earns `bill-observed` for the scale range seen; a larger one narrows or refutes the claim. A meter whose quantity came from trailing billed usage cannot earn it, because the bill would be checking itself.
+A meter with no claim in the Atlas is a *discovery* and goes to the top of the Agenda. A bill above the model (a **positive residual**) is a lead: a switch that turned on a meter, a retry loop, a longer data path. [Traffic between peered virtual networks is billed per GB, and more across regions](https://learn.microsoft.com/azure/virtual-network/virtual-network-cost-optimization), so a web tier moved to a second region shows up as a data-transfer line that no blueprint had. A negative residual is a lead too. A residual inside the profile's stated error bound, against a blueprint stored before the bill landed, earns `bill-observed` for the scale range seen; a larger one narrows or refutes the claim. A meter whose quantity came from trailing billed usage cannot earn it, because the bill would be checking itself.
 
 The join is explicit. A bill line joins a resource by its resource id and a profile by its meter id. FOCUS carries a resource id only on lines that belong to a resource; a purchase, a fee or an indirectly related charge may have none, so it joins a profile by meter id and stays unattributed to a workload. A line that matches no profile, or more than one, is counted as unmatched or ambiguous on the Unexplained Spend list and never guessed: the blueprint abstains for that workload and says so. The share of spend that is explained, ambiguous and unmatched, per estate, is the first number on the report card.
 
@@ -235,9 +235,11 @@ Changes an owner already planned (a resize, a migration, a retirement) teach the
 
 **Settling honestly.** The Auditor reads the meters the prediction named, in quantity at constant prices, so a discount or a rerate is never credited to the change. The load comparison must be valid: cost per unit of work, or a look-alike that shares the service, SKU family and purpose and whose load tracked the changed resource's before the change. If another change, a price change or a load shift overlaps the window, or no valid comparison exists, the outcome is **undetermined**: shown to the owner as such and counted as unscored in the report card. It never counts as a hit and never narrows a range; it may only widen one.
 
-**Small trials.** When documents are silent and no replay can answer (for example, whether a new service's capacity meter stops after a scale-down of a development resource), the system may propose a **small trial**: one reversible change to one existing resource that an owner already runs, with a guard metric and a rollback. A trial is offered only where the change is R1 (reversible, small and non-production, [security](06-security-and-governance.md)) and the guard metric reports faster than the change could do harm; anything that would be R2 or R3 is not a trial.
+**Small trials.** When documents are silent and no replay can answer, the system may propose a **small trial**: one reversible change to one existing resource that an owner already runs, with a guard metric and a rollback. A trial is offered only where the change is R1 (reversible, small and non-production, [security](06-security-and-governance.md)) and the guard metric reports faster than the change could do harm; anything that would be R2 or R3 is not a trial.
 
 It uses the ordinary action plane and never a credential: the owner approves each trial after seeing a cost ceiling, the runner applies it, and the Verifier rolls back automatically if the guard metric fails; while it runs, a trial can still raise the bill. The Recommendation says it is a trial, the prediction is stored first, and the owner can decline without a reason. Nothing is created in order to be tested; the answer arrives with the bill, hours to days later.
+
+**Superseded in part on 2026-11-05:** the runner and the automatic rollback. A trial and any rollback run as the approver; see [decision 24](12-decisions.md#24-a-change-runs-as-the-approver-meternaut-holds-no-right-to-change-azure--accepted) and [proposal 05](../proposals/05-run-as-the-approver.md).
 
 ## 5. Detectors: expensive reasoning once, cheap checks afterwards
 
@@ -312,7 +314,7 @@ Report card: predictions right 81 % of the time (I said 79 %) - explained spend 
 
 ## 8. Honest limits
 
-Learning from bills, replays and small trials has limits. Beyond the point that evidence is not causality (section 2), these remain.
+Beyond the point that evidence is not causality (section 2), these limits remain.
 
 | Limit | Why | What the system does |
 |---|---|---|

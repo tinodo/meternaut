@@ -381,7 +381,7 @@ class TheNotesPage(unittest.TestCase):
         self.assertEqual(self.console.store.do_not_touch(), {self.RESOURCE.lower()})
         note = self.console.store.notes_of(TINO)[0]
         self.assertEqual(note.kind, "do_not_touch")
-        self.assertIn("No plan is made for it, and the runner makes no change to it, until the mark expires.", note.understood_as)
+        self.assertIn("No plan is made for it, and no change is made to it, until the mark expires.", note.understood_as)
         self.assertEqual(reply.table("notes").rows[0]["Kind"], "Do-not-touch mark")
         self.console.now = dt.datetime(2026, 12, 2, 9, 0, tzinfo=dt.timezone.utc)
         self.assertEqual(self.console.store.do_not_touch(), set(), "the mark ends at its expiry")

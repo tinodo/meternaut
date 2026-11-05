@@ -38,7 +38,7 @@ class TheDoor(unittest.TestCase):
     def test_a_door_that_sends_everybody_to_the_sign_in_passes(self):
         passed, rows = cc.door(HOST, "signin", Door())
         self.assertTrue(passed, rows)
-        self.assertEqual(len(rows), 1 + len(cc.PAGES) + 2)
+        self.assertEqual(len(rows), 1 + len(cc.PAGES) + len(cc.FORGED_PAGES))
 
     def test_a_door_that_refuses_everybody_passes_when_a_refusal_is_expected(self):
         passed, _ = cc.door(HOST, "refuse", Door("refuse"))
@@ -59,7 +59,37 @@ class TheDoor(unittest.TestCase):
         passed, rows = cc.door(HOST, "signin", Door(trust_header=True))
         self.assertFalse(passed)
         self.assertTrue(all(r[1] == "made-up sign-in header" for r in rows if not r[2]))
-        self.assertEqual(len([r for r in rows if not r[2]]), 2)
+        self.assertEqual([r[0] for r in rows if not r[2]], list(cc.FORGED_PAGES))
+        self.assertEqual(len(cc.FORGED_PAGES), 3)
+
+    def test_the_return_address_of_the_azure_sign_in_is_asked_for_with_and_without_a_code_and_never_serves_a_page(self):
+        bare, coded = "/arm/return", "/arm/return?code=x&state=y"
+        self.assertIn(bare, cc.PAGES)
+        self.assertIn(coded, cc.PAGES)
+        door = Door()
+        passed, rows = cc.door(HOST, "signin", door)
+        self.assertTrue(passed, rows)
+        asked = [url for url, headers in door.calls if "/arm/return" in url and "x-ms-client-principal-id" not in headers]
+        self.assertEqual(asked, [f"https://{HOST}{bare}", f"https://{HOST}{coded}"])
+        for path in (bare, coded):
+            with self.subTest(path=path):
+                passed, rows = cc.door(HOST, "signin", Door(leak=path))
+                self.assertFalse(passed)
+                self.assertEqual({r[0] for r in rows if not r[2]}, {path})
+                self.assertIn((path, "no sign-in"), [(r[0], r[1]) for r in rows if not r[2]])
+
+    def test_the_return_address_gets_the_verdict_of_every_other_page_in_both_modes_and_a_made_up_header_does_not_open_it(self):
+        for expect in ("signin", "refuse"):
+            with self.subTest(expect=expect):
+                passed, rows = cc.door(HOST, expect, Door(expect))
+                self.assertTrue(passed, rows)
+                arm = [r for r in rows if r[0].startswith("/arm/return")]
+                self.assertEqual([(r[0], r[1]) for r in arm], [("/arm/return", "no sign-in"), ("/arm/return?code=x&state=y", "no sign-in"),
+                                                              ("/arm/return?code=x&state=y", "made-up sign-in header")])
+                self.assertTrue(all(r[2] for r in arm))
+        self.assertFalse(cc.door(HOST, "signin", Door("refuse"))[0], "the refusal is not the sign-in, here as for any other page")
+        passed, rows = cc.door(HOST, "signin", Door(trust_header=True))
+        self.assertIn(("/arm/return?code=x&state=y", "made-up sign-in header"), [(r[0], r[1]) for r in rows if not r[2]])
 
     def test_the_health_probe_has_to_answer_ok(self):
         self.assertFalse(cc.door(HOST, "signin", Door(health=(200, b"hello")))[0])
@@ -156,6 +186,7 @@ class TheCommand(unittest.TestCase):
             summary = Path(tmp) / "summary.md"
             self.assertEqual(cc.main(["door", "--host", HOST, "--summary", str(summary)], Door(), out), 0)
             self.assertIn("PASS  /healthz", out.getvalue())
+            self.assertIn("PASS  /arm/return?code=x&state=y", out.getvalue())
             self.assertIn("Nobody gets a page without a sign-in.", summary.read_text(encoding="utf-8"))
             out = io.StringIO()
             self.assertEqual(cc.main(["door", "--host", HOST, "--summary", str(summary)], Door(leak="/history"), out), 1)

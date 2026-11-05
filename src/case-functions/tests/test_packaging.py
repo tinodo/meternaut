@@ -18,7 +18,8 @@ FORBIDDEN = (
 ONLY_IN_THE_GATEWAY_MODULE = ("listSecrets", "primaryKey")
 GATEWAY_MODULE = "gateway.py"
 # The only modules that write. The store writes records to its own tables (PUT, DELETE of one entity); the runner is the one component that changes Azure
-# (DELETE of a disk or a public IP address, on its own list of calls). Everything else asks questions: a GET, or a POST that asks for a query result, a key or a completion.
+# (DELETE of a disk or a public IP address, on its own list of calls, and only with the token that a person's sign-in to Azure gave it: no identity of the app
+# holds a right to change Azure). Everything else asks questions: a GET, or a POST that asks for a query result, a key, a completion or a token.
 WRITERS = {"store.py": {"PUT", "DELETE"}, "runner.py": {"DELETE"}}
 WRITE_WORDS = ('"PUT"', '"DELETE"', '"PATCH"', "/delete", "/write", "/deallocate", "/resize", "/restart", "regeneratePrimaryKey")
 
@@ -172,12 +173,28 @@ class WhatTheAppIs(unittest.TestCase):
         runner = (APP_ROOT / "cases" / "runner.py").read_text(encoding="utf-8")
         self.assertEqual(sorted(set(re.findall(r'\("DELETE", (\w+)\)', runner))), ["addresses", "disks"])
 
+    def test_only_the_sign_in_of_a_person_starts_a_change_and_the_timer_cannot(self):
+        # The change is made by `runner.execute`, with the token that the person's sign-in gave (delegated.py). The loop that the timer runs holds the list of reads only.
+        importers = [path.name for path in package_files() if re.search(r"from \.runner import[^\n]*\bexecute\b", path.read_text(encoding="utf-8"))]
+        self.assertEqual(importers, ["delegated.py"])
+        self.assertNotIn("change_calls", (APP_ROOT / "cases" / "loop.py").read_text(encoding="utf-8"))
+        self.assertIn("read_calls", (APP_ROOT / "cases" / "loop.py").read_text(encoding="utf-8"))
+        users = [path.name for path in package_files() if "change_calls" in path.read_text(encoding="utf-8")]
+        self.assertEqual(users, ["console.py", "delegated.py", "runner.py"], "the list is built in console.py and defined in runner.py; delegated.py names it in its text")
+
+    def test_no_setting_names_an_identity_that_changes_azure_and_no_one_time_delay_is_left(self):
+        for path in source_files():
+            text = path.read_text(encoding="utf-8")
+            for word in ("WRITER_CLIENT_ID", "WRITER_RESOURCE_GROUP", "WRITER_SUBSCRIPTION_ID", "APPROVAL_DELAY_SECONDS", "id-meternaut-runner"):
+                with self.subTest(file=path.name, word=word):
+                    self.assertNotIn(word, text)
+
     def test_importing_the_package_loads_no_azure_module_and_makes_no_call(self):
         code = (
             "import sys; sys.path.insert(0, sys.argv[1]); "
             "import cases, cases.config, cases.http, cases.identity, cases.arm, cases.detectors, cases.evidence, cases.guards, cases.roles, cases.decide, "
             "cases.gateway, cases.events, cases.run, cases.control, cases.redact, cases.models, cases.memory_store, cases.store, cases.approvals, cases.runner, "
-            "cases.people, cases.switches, cases.wiring, cases.loop_config, cases.console, cases.loop, cases.web, cases.mail, cases.letters; "
+            "cases.people, cases.switches, cases.wiring, cases.loop_config, cases.delegated, cases.console, cases.loop, cases.web, cases.mail, cases.letters; "
             "print(sorted(name for name in sys.modules if name == 'azure' or name.startswith('azure.')))"
         )
         done = subprocess.run([sys.executable, "-c", code, str(APP_ROOT)], capture_output=True, text=True, check=True)

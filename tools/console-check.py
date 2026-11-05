@@ -7,10 +7,11 @@ The console serves a person only after Microsoft Entra has signed them in, and t
 makes the requests that an anonymous visitor (or a script) would make and passes only when none of them gets a page:
 
   - /healthz answers 200 with the word ok, because a probe has no sign-in;
-  - /, /history, /me/decisions, /ok/<id>, /why/<id> and /ops/pause answer a redirect to the sign-in (--expect signin) or the app's own refusal 503
-    (--expect refuse), and never 200;
+  - /, /history, /me/decisions, /ok/<id>, /why/<id>, /ops/pause and /arm/return (the return address of the Azure Resource Manager sign-in that an approval
+    starts), the last one with and without the query ?code=x&state=y that Microsoft Entra adds, answer a redirect to the sign-in (--expect signin) or the
+    app's own refusal 503 (--expect refuse), and never 200;
   - the same request with a made-up sign-in header (x-ms-client-principal-id) is not served either: the platform's sign-in has to overwrite it, or the app
-    has to refuse it.
+    has to refuse it. That is asked of /, of /ok/<id> and of /arm/return with a code and a state, the page that takes a value from the address.
 
 Standard library only. It reads; it sends no credential and changes nothing.
 """
@@ -25,7 +26,9 @@ import urllib.request
 import uuid
 from typing import Callable
 
-PAGES = ("/", "/history", "/me/decisions", "/me/settings", "/me/notes", "/ops/pause", "/ops/permissions", "/ok/0123456789abcdef", "/why/k0123456789abc")
+PAGES = ("/", "/history", "/me/decisions", "/me/settings", "/me/notes", "/ops/pause", "/ops/permissions", "/ok/0123456789abcdef", "/why/k0123456789abc",
+         "/arm/return", "/arm/return?code=x&state=y")
+FORGED_PAGES = ("/", "/ok/0123456789abcdef", "/arm/return?code=x&state=y")
 HOST = re.compile(r"^[a-z0-9]([a-z0-9.-]{0,200}[a-z0-9])?$")
 SIGN_IN = re.compile(r"^(https://login\.microsoftonline\.com/|/\.auth/login/aad)", re.I)
 
@@ -82,7 +85,7 @@ def door(host: str, expect: str, get: Fetch = fetch) -> tuple[bool, list[tuple[s
         ok, text = verdict(path, status, headers, expect)
         rows.append((path, "no sign-in", ok, text))
     forged = {"x-ms-client-principal-id": str(uuid.uuid4()), "x-ms-client-principal-name": "someone@example.com"}
-    for path in ("/", "/ok/0123456789abcdef"):
+    for path in FORGED_PAGES:
         status, headers, _ = get(f"https://{host}{path}", forged)
         ok, text = verdict(path, status, headers, expect)
         rows.append((path, "made-up sign-in header", ok, text))
@@ -101,7 +104,7 @@ def main(argv=None, get: Fetch = fetch, out=sys.stdout) -> int:
     except Problem as error:
         print(f"console-check: {error}", file=sys.stderr)
         return 2
-    lines = [f"{'PASS' if ok else 'FAIL'}  {path:22} {how:24} {text}" for path, how, ok, text in rows]
+    lines = [f"{'PASS' if ok else 'FAIL'}  {path:28} {how:24} {text}" for path, how, ok, text in rows]
     print("\n".join(lines), file=out)
     if args.summary:
         with open(args.summary, "a", encoding="utf-8") as handle:

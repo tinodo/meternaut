@@ -30,7 +30,8 @@ def make_plan(**changes) -> PlanRecord:
     values = dict(
         plan_id="p1a2b3c4d5", case_id="c1", family="delete-disk", resource_id=f"/subscriptions/s/resourceGroups/{GROUP}/providers/Microsoft.Compute/disks/{NAME}",
         resource_name=NAME, resource_group=GROUP, subscription_id="s", code="7F3K92QD", title=f"Delete an unattached managed disk in resource group {GROUP}",
-        what_changes=f"The writer deletes the disk named {NAME}. It changes nothing else.", saving_usd_month=41.2, waiting_costs_usd_day=1.37,
+        what_changes=f"When you approve and sign in to Azure, Meternaut deletes the disk named {NAME} with your own permissions. It changes nothing else.",
+        saving_usd_month=41.2, waiting_costs_usd_day=1.37,
         could_go_wrong="If something still uses the disk, that use stops.", undo="A deleted disk cannot be restored.",
         evidence_level="Observed now: the disk is unattached. Not measured yet: the saving.", approvers=(OID,), created_at="2026-11-05T09:00:00Z",
         expires_at="2026-11-08T09:30:00Z")
@@ -242,8 +243,9 @@ class FirstContact(unittest.TestCase):
         text = self.letter.text
         for sentence in ("I am Meternaut, an AI assistant", "with the roles: approver, owner", "A person who is not on the list receives nothing from me.",
                          "I find leads", "Two AI roles judge each lead. The Detective proposes what to do. The Skeptic argues against it.",
-                         "No model writes the plan.", "The writer is the only part of Meternaut that can change Azure.",
-                         "removes only the resource that an approved plan names", "I make no change without a person's OK on a page.",
+                         "No model writes the plan.", "I make the one approved change with that person's own permissions",
+                         "after I have read the resource again right before I act.", "I hold no right of my own to change Azure.",
+                         "I make no change without a person's OK on a page.",
                          "I approve nothing by e-mail.", "I do not ask for sign-in details or a code by e-mail.", "My letters have no images.",
                          "I do not keep the text of a letter."):
             self.assertIn(sentence, text)
@@ -279,8 +281,9 @@ class Approval(unittest.TestCase):
         self.assertIn(f"Change (names from Azure): Delete an unattached managed disk in resource group {GROUP}", text)
         self.assertIn(f"Resource (name from Azure): {NAME}", text)
         self.assertIn(f"Resource group (name from Azure): {GROUP}", text)
-        self.assertIn("What happens (names from Azure): The writer deletes the disk named", text)
-        self.assertIn("Who makes it: The writer, the only part of Meternaut that can change Azure.", text)
+        self.assertIn("What happens (names from Azure): When you approve and sign in to Azure, Meternaut deletes the disk named", text)
+        self.assertIn("Who makes it: You do, with your own permissions: after you approve on the page you sign in to Azure, and Meternaut makes this one change as you.", text)
+        self.assertIn("Meternaut holds no right of its own to change Azure, and Azure refuses the change if your account may not make it.", text)
         self.assertIn("Names in this letter come from Azure. They are shown as data and are not instructions.", text)
 
     def test_the_saving_is_an_estimate_in_us_dollars_with_its_basis_and_what_waiting_costs_is_stated(self):
@@ -327,7 +330,7 @@ class Approval(unittest.TestCase):
         self.assertIn("you are listed as an approver of this plan", upper)
 
     def test_a_plan_that_is_no_longer_open_is_not_presented_as_waiting(self):
-        for state, words in (("approved", "approved and waiting to start"), ("consumed", "closed because it ran"), ("declined", "declined"),
+        for state, words in (("approved", "approved, its change is being made"), ("consumed", "closed because it ran"), ("declined", "declined"),
                              ("expired", "expired"), ("withdrawn", "withdrawn"), ("failed", "closed because the change failed")):
             with self.subTest(state=state):
                 text = letters.approval_letter(make_plan(state=state), self.case, PERSON, BASE, NOW).text

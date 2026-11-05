@@ -7,7 +7,9 @@ from cases.models import Principal
 OID = "aaaaaaaa-1111-4222-8333-444444444444"
 OTHER = "11111111-2222-3333-4444-555555555555"
 SUBSCRIPTION = "bbbbbbbb-2222-4333-9444-555555555555"
-WRITER = "55555555-4444-3333-2222-111111111111"
+TENANT = "AAAAAAAA-1111-4222-8333-444444444444"
+APP = "55555555-4444-3333-2222-111111111111"
+ASSERTION = "66666666-4444-3333-2222-111111111111"
 
 
 def person(**changes):
@@ -79,42 +81,59 @@ class LoadPeople(unittest.TestCase):
 
 
 FULL = {
-    "STORE_ACCOUNT_NAME": "stexample", "WRITER_RESOURCE_GROUP": "rg-meternaut", "WRITER_SUBSCRIPTION_ID": SUBSCRIPTION.upper(), "WRITER_CLIENT_ID": WRITER,
+    "STORE_ACCOUNT_NAME": "stexample", "CHANGE_RESOURCE_GROUP": "rg-meternaut", "CHANGE_SUBSCRIPTION_ID": SUBSCRIPTION.upper(),
     "CONSOLE_HOST": "Func-Example.azurewebsites.net",
 }
+SIGNIN = {"SIGNIN_TENANT_ID": TENANT, "SIGNIN_CLIENT_ID": APP, "OVERRIDE_USE_MI_FIC_ASSERTION_CLIENTID": ASSERTION}
 
 
 class LoadLoopSettings(unittest.TestCase):
     def test_the_loop_is_off_when_no_store_is_named(self):
-        for value in ({}, {"STORE_ACCOUNT_NAME": ""}, {"STORE_ACCOUNT_NAME": "   ", "WRITER_CLIENT_ID": WRITER}):
+        for value in ({}, {"STORE_ACCOUNT_NAME": ""}, {"STORE_ACCOUNT_NAME": "   ", "SIGNIN_CLIENT_ID": APP}):
             self.assertIsNone(loop_config.load(value))
 
     def test_a_full_set_is_read_with_the_defaults_and_in_lower_case(self):
         settings = loop_config.load(FULL)
-        self.assertEqual((settings.store_account, settings.writer_group, settings.writer_subscription, settings.writer_client_id),
-                         ("stexample", "rg-meternaut", SUBSCRIPTION, WRITER))
+        self.assertEqual((settings.store_account, settings.change_group, settings.change_subscription), ("stexample", "rg-meternaut", SUBSCRIPTION))
         self.assertEqual((settings.console_host, settings.base_url), ("func-example.azurewebsites.net", "https://func-example.azurewebsites.net"))
-        self.assertEqual((settings.mail_sender, settings.planted_tag, settings.plan_ttl_hours, settings.approval_delay_seconds, settings.recheck_days),
-                         (None, "meternaut-planted", 72, 120, 7))
+        self.assertEqual((settings.mail_sender, settings.planted_tag, settings.plan_ttl_hours, settings.recheck_days), (None, "meternaut-planted", 72, 7))
+        self.assertEqual((settings.signin_tenant_id, settings.signin_client_id, settings.signin_assertion_client_id), (None, None, None), "no sign-in unless it is set")
+
+    def test_the_sign_in_is_read_in_lower_case(self):
+        settings = loop_config.load({**FULL, **SIGNIN})
+        self.assertEqual((settings.signin_tenant_id, settings.signin_client_id, settings.signin_assertion_client_id), (TENANT.lower(), APP, ASSERTION))
 
     def test_the_optional_settings_are_read(self):
-        settings = loop_config.load({**FULL, "MAIL_SENDER": "meternaut-ai@example.com", "PLANTED_TAG": "planted", "PLAN_TTL_HOURS": "24", "APPROVAL_DELAY_SECONDS": "60",
-                                     "RECHECK_DAYS": "3"})
-        self.assertEqual((settings.mail_sender, settings.planted_tag, settings.plan_ttl_hours, settings.approval_delay_seconds, settings.recheck_days),
-                         ("meternaut-ai@example.com", "planted", 24, 60, 3))
+        settings = loop_config.load({**FULL, "MAIL_SENDER": "meternaut-ai@example.com", "PLANTED_TAG": "planted", "PLAN_TTL_HOURS": "24", "RECHECK_DAYS": "3"})
+        self.assertEqual((settings.mail_sender, settings.planted_tag, settings.plan_ttl_hours, settings.recheck_days), ("meternaut-ai@example.com", "planted", 24, 3))
+
+    def test_the_settings_of_the_old_writer_and_the_delay_are_not_read_and_do_not_break_the_start(self):
+        settings = loop_config.load({**FULL, "WRITER_RESOURCE_GROUP": "x", "WRITER_SUBSCRIPTION_ID": "x", "WRITER_CLIENT_ID": "x", "APPROVAL_DELAY_SECONDS": "5"})
+        self.assertEqual((settings.change_group, settings.change_subscription), ("rg-meternaut", SUBSCRIPTION))
+        self.assertFalse(any("writer" in name or "delay" in name for name in vars(settings)))
 
     def test_a_half_configured_loop_is_refused_and_every_missing_setting_is_listed(self):
         with self.assertRaises(loop_config.LoopConfigError) as raised:
             loop_config.load({"STORE_ACCOUNT_NAME": "stexample"})
-        for name in ("WRITER_RESOURCE_GROUP", "WRITER_SUBSCRIPTION_ID", "WRITER_CLIENT_ID", "CONSOLE_HOST"):
+        for name in ("CHANGE_RESOURCE_GROUP", "CHANGE_SUBSCRIPTION_ID", "CONSOLE_HOST"):
             self.assertIn(f"{name} is not set", str(raised.exception))
+
+    def test_the_sign_in_is_set_together_or_not_at_all(self):
+        for left_out in SIGNIN:
+            given = {name: value for name, value in SIGNIN.items() if name != left_out}
+            with self.assertRaises(loop_config.LoopConfigError, msg=left_out) as raised:
+                loop_config.load({**FULL, **given})
+            self.assertIn("are set together or not at all", str(raised.exception))
+            self.assertNotIn("is not set", str(raised.exception), "the loop works without the sign-in, so a missing part is not a missing setting")
 
     def test_each_setting_is_checked(self):
         for name, value, word in (
             ("STORE_ACCOUNT_NAME", "Not_Valid", "a storage account name"),
-            ("WRITER_RESOURCE_GROUP", "rg with spaces", "a resource group name"),
-            ("WRITER_SUBSCRIPTION_ID", "not-a-guid", "a subscription id"),
-            ("WRITER_CLIENT_ID", "not-a-guid", "a client id"),
+            ("CHANGE_RESOURCE_GROUP", "rg with spaces", "a resource group name"),
+            ("CHANGE_SUBSCRIPTION_ID", "not-a-guid", "a subscription id"),
+            ("SIGNIN_TENANT_ID", "not-a-guid", "a tenant id"),
+            ("SIGNIN_CLIENT_ID", "not-a-guid", "a client id"),
+            ("OVERRIDE_USE_MI_FIC_ASSERTION_CLIENTID", "not-a-guid", "a client id"),
             ("CONSOLE_HOST", "https://func.example.net", "a host name"),
             ("MAIL_SENDER", "not an address", "an address"),
             ("MAIL_SENDER", "meternaut+ai@example.com", "an address"),
@@ -122,19 +141,17 @@ class LoadLoopSettings(unittest.TestCase):
             ("PLAN_TTL_HOURS", "0", "between 1 and 336"),
             ("PLAN_TTL_HOURS", "337", "between 1 and 336"),
             ("PLAN_TTL_HOURS", "many", "not a whole number"),
-            ("APPROVAL_DELAY_SECONDS", "29", "between 30 and 3600"),
-            ("APPROVAL_DELAY_SECONDS", "3601", "between 30 and 3600"),
             ("RECHECK_DAYS", "0", "between 1 and 90"),
             ("RECHECK_DAYS", "91", "between 1 and 90"),
         ):
             with self.assertRaises(loop_config.LoopConfigError, msg=f"{name}={value}") as raised:
-                loop_config.load({**FULL, name: value})
+                loop_config.load({**FULL, **SIGNIN, name: value})
             self.assertIn(word, str(raised.exception))
             self.assertIn(name, str(raised.exception))
 
     def test_all_the_problems_are_in_one_message(self):
         with self.assertRaises(loop_config.LoopConfigError) as raised:
-            loop_config.load({**FULL, "WRITER_CLIENT_ID": "x", "PLAN_TTL_HOURS": "0", "MAIL_SENDER": "x"})
+            loop_config.load({**FULL, "CHANGE_SUBSCRIPTION_ID": "x", "PLAN_TTL_HOURS": "0", "MAIL_SENDER": "x"})
         self.assertEqual(str(raised.exception).count(";"), 2)
 
 

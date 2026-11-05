@@ -59,7 +59,7 @@ An estate is the set of Azure scopes (such as subscriptions and resource groups)
 - **No change freeze in the first months**, so that a finding can be acted on.
 - **Not the solution's own dev subscription** (synthetic data, no role on production).
 
-The exit of phase 1a includes explained spend, the share of the bill tied to an owner, a purpose and a billing mechanism. Measuring it needs a bill per resource, which only the first three paths below give.
+Measuring explained spend for the exit of phase 1a needs a bill per resource, which only the first three paths below give.
 
 | Path, tried in this order | Works for | A bill per resource? |
 |---|---|---|

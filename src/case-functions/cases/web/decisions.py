@@ -1,11 +1,11 @@
-"""The two pages about what happened to a person's own requests: the decisions they made, and what the runner did for their plans."""
+"""The two pages about what happened to a person's own requests: the decisions they made, and what happened to the changes of their plans."""
 from __future__ import annotations
 
 import re
 
 from ..models import ActionRecord, DecisionRecord, PlanRecord
 from . import words
-from .common import action_rows, read, start_block, verification_text
+from .common import action_rows, read, verification_text
 from .core import Ctx, Response, Safe, fmt, join, link_part
 from .layout import block, code, link, notice, page, paragraph, summary, table
 
@@ -47,16 +47,14 @@ def _outcome(ctx: Ctx, decision: DecisionRecord, plan: PlanRecord | None, action
     elif action is not None:
         state = words.ACTION_STATE.get(action.state, action.state)
         lines.append(state)
-        if action.state == "queued" and action.start_after:
-            lines.append(fmt("It starts at {when}.", when=ctx.when(action.start_after)))
         if action.result and action.result != state:
             lines.append(action.result)
         if action.error and action.error != action.result:
             lines.append(action.error)
         if action.verification:
             lines.append(verification_text(ctx, action.verification))
-        if plan is not None and plan.family.startswith("delete") and action.state in ("queued", "running", "done", "verified", "unknown"):
-            lines.append("Once it has run, a deletion cannot be undone." if action.state == "queued" else "A deletion cannot be undone.")
+        if plan is not None and plan.family.startswith("delete") and action.state in ("running", "done", "verified", "unknown"):
+            lines.append("A deletion cannot be undone.")
     else:
         lines.append(words.PLAN_STATE.get(plan.state, plan.state) if plan is not None else "The request is no longer stored.")
     return join(paragraph(line) for line in lines)
@@ -75,7 +73,7 @@ def decisions(ctx: Ctx) -> Response:
     mine, ok = read(lambda: ctx.store.decisions_by(ctx.principal.oid, DECISIONS_SHOWN), [])  # type: ignore[union-attr]
     parts: list[object] = [
         Safe("<h1>My decisions</h1>"),
-        paragraph("Every answer given in your name: what you decided, when, what the runner did and what came of it. Check that each approval is one that you gave. "
+        paragraph("Every answer given in your name: what you decided, when, what happened to the change and what came of it. Check that each approval is one that you gave. "
                   "If one is not, use Talk to a person below.", "lead"),
     ]
     if not ok:
@@ -105,15 +103,16 @@ def _where(action: ActionRecord, plan: PlanRecord | None) -> str:
 def activity(ctx: Ctx) -> Response:
     me = ctx.principal.oid  # type: ignore[union-attr]
     mine, _ = read(lambda: ctx.store.decisions_by(me, 200), [])
-    mine_ids, approved = {d.plan_id for d in mine}, {d.plan_id for d in mine if d.decision == "approve"}
+    mine_ids = {d.plan_id for d in mine}
     actions, ok = read(lambda: ctx.store.actions_recent(ACTIONS_SHOWN), [])
     plans = _plans(ctx, mine_ids & {a.plan_id for a in actions})
     ours = [a for a in actions if a.plan_id in mine_ids or (a.plan_id in plans and me in {x.lower() for x in plans[a.plan_id].approvers})]
     parts: list[object] = [
         Safe("<h1>What I did here</h1>"),
-        paragraph("Every change that the runner made, or was asked to make, for a plan that names you as an approver or that you answered: what changed, where, when, "
+        paragraph("Every change that was made, or was tried, for a plan that names you as an approver or that you answered: what changed, where, when, "
                   "the result and what the check afterwards found.", "lead"),
-        paragraph("No standing permission exists yet. Meternaut changes something only after a person approves that exact change on its own page."),
+        paragraph("Meternaut holds no standing permission in Azure. A change is made only after a person approves that exact change on its own page and signs in to Azure, "
+                  "and it is made with that person's own permissions."),
     ]
     if not ok:
         parts.append(notice("error", "The changes cannot be read", "I cannot read the changes now. Nothing has changed."))
@@ -124,7 +123,6 @@ def activity(ctx: Ctx) -> Response:
         title = plan.title if plan is not None else words.family_words(action.family)
         name = plan.resource_name if plan is not None else action.resource_id.rsplit("/", 1)[-1]
         rows = [("What changed", title), ("Resource", fmt("{name}<br>{rid}", name=name, rid=code(action.resource_id))), ("Where", _where(action, plan))] + action_rows(ctx, action)
-        extra = start_block(ctx, plan, action, action.plan_id in approved) if plan is not None else Safe("")
-        parts.append(fmt('<section aria-labelledby="change-{n}"><h2 id="change-{n}">{title}: {name}</h2>{rows}{extra}</section>', n=index, title=words.family_words(action.family),
-                         name=name, rows=summary(rows), extra=extra))
+        parts.append(fmt('<section aria-labelledby="change-{n}"><h2 id="change-{n}">{title}: {name}</h2>{rows}</section>', n=index, title=words.family_words(action.family),
+                         name=name, rows=summary(rows)))
     return page(ctx, "What I did here", join(block(p) for p in parts), current="/me/activity", why="This page lists the changes made for plans that name you or that you answered.")

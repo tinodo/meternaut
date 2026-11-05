@@ -6,8 +6,6 @@
 
 [Meternaut](../design/README.md) is designed as a team of AI agents that keeps an Azure estate cost-efficient. It finds waste and tells the people who own the resources, with evidence. This plan covers the first two phases of the [roadmap](../design/13-roadmap.md): phase 0, foundations, and phase 1a, first value on one estate.
 
-It is a plan only: it builds and deploys nothing itself.
-
 It is written for a platform team and a FinOps lead at an organisation that will build the system from the [technical design](../design/README.md) and the [experience design](../experience/README.md), and for a contributor who wants to know where to start. The design's [glossary](../design/README.md#words-used-in-this-design) defines the capitalised words used here, and its [roadmap](../design/13-roadmap.md#2-ten-proof-points) the ten proof points (P1 to P10), each a measurement. The hub is the governance gateway (Citadel, on Azure API Management) that every model and tool call passes through.
 
 **What comes first.** Three early answers come before the long build: whether the pilot's bill can support analysis (week 0), whether new evidence makes the system better on cases it has not seen (early in phase 0), and one workload end to end, a priced finding that the FinOps lead has read and recorded (before phase 1a widens). Each ends in a review that can change the plan ([the three reviews](04-cost-effort-and-risks.md#the-three-reviews)).
@@ -35,8 +33,6 @@ flowchart LR
     engagement --> exit1a
 ```
 
-Evaluation is not a track of its own: every slice adds its own tests (principle 4 below).
-
 The first stretch is 60 to 82 person-weeks (a scenario parameter), without a hub deployment: roughly nine to twelve months for two builders or six to eight for three, if they spend four days in five on the project and share the long slices. [How much work it is](04-cost-effort-and-risks.md#how-much-work-it-is) gives the detail.
 
 ## How the plan works
@@ -54,6 +50,8 @@ Nine principles order the work.
 | 7 | A slice is done when its conditions hold | Its stage of each check passes with the evidence stored, its tests run in the pipeline, its cost line matches the deployment, a runbook covers it, and the person it was shown to accepts it ([Working agreements and done](02-before-you-start.md#working-agreements-and-done)) |
 | 8 | Builders may use AI coding assistants | The same gates apply to every change |
 | 9 | Narrow first, then wide | Phase 1a is built first for one workload, and widened after the workload review |
+
+**Superseded in part on 2026-11-05:** a runner with action roles in phase 3 (principle 2). A change runs as the approver; see [decision 24](../design/12-decisions.md#24-a-change-runs-as-the-approver-meternaut-holds-no-right-to-change-azure--accepted) and [proposal 05](../proposals/05-run-as-the-approver.md).
 
 **Numbers.** Sizes are person-weeks and scenario parameters. The schedule is provisional, and completed slices replace the estimates with measurements. Every pass condition, margin, budget and time window is a starting value, written into the repository's `evaluation/` folder by a pull request before the measurement, never after. The plan gives no euro figure of its own; cloud cost is in [Cost and FinOps](../design/10-cost-and-finops.md).
 

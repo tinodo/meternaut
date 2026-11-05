@@ -16,6 +16,8 @@ A phase starts when the previous phase's exit criteria are met. A hosted agent, 
 | **4 Earn autonomy and purchases** | Credentials for R1 and low R2 in named domains; R3 flow with two approvers and a time-boxed purchase role, or a purchase request to the billing owner or the partner where the agreement requires it; Strategy workflow (commitment coverage, renewals; it needs the capability profile's *commitments visible* flag); shared cases; more Actions; optional FinOps-hub adapter | Report card shows calibrated predictions in each credential's domain; red-team suite passes before each credential; purchase dry run with the reservation *calculate* API; incident drills passed |
 | **5 Open up** | Contribution flow for the Atlas and Action catalogue with the same gates; anonymised outcome statistics; optional voice, avatar and meeting modules; second-region recovery | External pull requests pass the same checks; nothing leaves an estate except a privacy-reviewed scope and aggregate that its owner has agreed to share |
 
+**Superseded in part on 2026-11-05:** the runner's per-family roles (phase 3), Credentials and the purchase role (phase 4) and P8. A change runs as the approver; see [decision 24](12-decisions.md#24-a-change-runs-as-the-approver-meternaut-holds-no-right-to-change-azure--accepted) and [proposal 05](../proposals/05-run-as-the-approver.md).
+
 ### What the experience needs, by phase
 
 | Phase | What the [experience design](../experience/README.md) needs from the system |

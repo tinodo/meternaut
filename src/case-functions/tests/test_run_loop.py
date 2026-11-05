@@ -28,9 +28,8 @@ class Moving:
 
 def loop_for(clock, store=None, *, recheck_days=7, approvers=True, on_plan=None):
     store = store or MemoryStore(clock=clock)
-    settings = loop_config.LoopSettings(store_account="stexample", writer_group=GROUP, writer_subscription=SUBSCRIPTION, writer_client_id=ENV["AZURE_CLIENT_ID"],
-                                        console_host="func.example.net", mail_sender=None, planted_tag="meternaut-planted", plan_ttl_hours=72,
-                                        approval_delay_seconds=120, recheck_days=recheck_days)
+    settings = loop_config.LoopSettings(store_account="stexample", change_group=GROUP, change_subscription=SUBSCRIPTION, console_host="func.example.net",
+                                        mail_sender=None, planted_tag="meternaut-planted", plan_ttl_hours=72, recheck_days=recheck_days)
     roles = ("owner", "approver", "ops") if approvers else ("owner",)
     people = people_mod.People((people_mod.Person(OID, "Tino", roles, "tino@example.com"),))
     extras = wiring.Extras(settings, store, people, Approvals(store, wiring.approval_settings(settings), clock))
@@ -75,7 +74,7 @@ class WhatTheLoopKeeps(unittest.TestCase):
         detectors_taken = sorted(c.detector for c in self.store.cases_recent())
         self.assertEqual(detectors_taken, ["orphan-managed-disk", "orphan-private-endpoint", "orphan-private-endpoint"])
 
-    def test_a_planted_disk_in_the_writers_group_is_not_held_back_for_being_new_and_gets_a_plan(self):
+    def test_a_planted_disk_in_the_change_group_is_not_held_back_for_being_new_and_gets_a_plan(self):
         watch(estate_with(), self.extras, self.clock)
         (case,) = self.store.cases_recent()
         self.assertEqual((case.status, case.detector, case.guards), ("awaiting_ok", "orphan-managed-disk", ()))
@@ -127,7 +126,7 @@ class WhatTheLoopKeeps(unittest.TestCase):
         (case,) = self.store.cases_recent()
         self.assertEqual((case.status, case.guards), ("needs_human", ("too-new",)))
 
-    def test_a_proposed_case_that_the_writer_cannot_act_on_has_no_plan_and_says_so_in_the_store(self):
+    def test_a_proposed_case_that_may_not_be_changed_has_no_plan_and_says_so_in_the_store(self):
         watch(estate_with(planted_disk=False, endpoints=1), self.extras, self.clock)
         (case,) = self.store.cases_recent()
         self.assertEqual((case.status, case.recommendation, case.plan_id), ("proposed", "delete", None))
