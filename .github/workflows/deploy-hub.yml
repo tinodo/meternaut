@@ -159,29 +159,36 @@ jobs:
           fi
           echo "start=$start" >> "$GITHUB_OUTPUT"
 
-      - name: Find out whether the integration subnet of the first cases is already there
-        id: websubnet
+      - name: Find out what of the network is there already
+        id: network
         run: |
-          # A template that makes a subnet makes it again at its next run, and the landing zone's network manager puts a route table on a new subnet about a minute after it is made, which
-          # a repeated make takes away: the subnet then cannot reach the landing zone's DNS, and the app on it cannot start (CHANGELOG.md, 2026-11-05). So the subnet is made once and then
-          # left alone: the template makes it only while it is not there, and this is where the workflow finds out.
-          subnet="/subscriptions/$ENV_SUBSCRIPTION_ID/resourceGroups/$ENV_RESOURCE_GROUP/providers/Microsoft.Network/virtualNetworks/vnet-meternaut/subnets/snet-cases"
-          if found=$(az rest --method get --url "https://management.azure.com${subnet}?api-version=2025-05-01" --query name --output tsv 2>&1); then
-            echo "The subnet snet-cases is there: the template leaves it alone."
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-          elif grep -Eqi 'NotFound|404' <<< "$found"; then
-            echo "The subnet snet-cases is not there: the template makes it, and the landing zone's network manager puts its route table on it a minute later."
-            echo "exists=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "::error::The subnet snet-cases could not be read: $found"
-            exit 1
-          fi
+          # A template that makes a network resource again at its next run takes away what the landing zone's network manager added to it: the manager puts a route table on every subnet some
+          # minutes after the subnet is made, and a subnet that is written again without the table cannot reach the landing zone's DNS, so an app on it cannot start (CHANGELOG.md, 2026-11-05).
+          # So the virtual network and the first cases' subnet are made once and then left alone: the templates make them only while they are not there, and this is where the workflow finds out.
+          vnet="/subscriptions/$ENV_SUBSCRIPTION_ID/resourceGroups/$ENV_RESOURCE_GROUP/providers/Microsoft.Network/virtualNetworks/vnet-meternaut"
+          exists() {
+            local found
+            if found=$(az rest --method get --url "https://management.azure.com${1}?api-version=2025-05-01" --query name --output tsv 2>&1); then
+              echo true
+            elif grep -Eqi 'NotFound|404' <<< "$found"; then
+              echo false
+            else
+              echo "::error::${1##*/} could not be read: $found" >&2
+              return 1
+            fi
+          }
+          network=$(exists "$vnet")
+          if [ "$network" = true ]; then subnet=$(exists "$vnet/subnets/snet-cases"); else subnet=false; fi
+          echo "The virtual network is there: $network. The subnet snet-cases is there: $subnet."
+          echo "network_exists=$network" >> "$GITHUB_OUTPUT"
+          echo "web_subnet_exists=$subnet" >> "$GITHUB_OUTPUT"
 
       - name: Work out the settings
         id: params
         env:
           ENV_BUDGET_START: ${{ steps.budget.outputs.start }}
-          ENV_WEB_SUBNET_EXISTS: ${{ steps.websubnet.outputs.exists }}
+          ENV_NETWORK_EXISTS: ${{ steps.network.outputs.network_exists }}
+          ENV_WEB_SUBNET_EXISTS: ${{ steps.network.outputs.web_subnet_exists }}
           RECORDING_DEPLOYER_ID: ${{ steps.me.outputs.oid }}
         run: |
           # The gateway identity does not exist before model-side has run, so this first pass is a preview: it gives the names.
@@ -760,30 +767,6 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: The integration subnet carries the route table of the landing zone's network manager, when the other subnets do
-        if: inputs.action == 'cases'
-        run: |
-          # The network manager puts its route table on a new subnet about a minute after the subnet is made, and without that table a subnet cannot reach the landing zone's DNS: an app on it
-          # cannot resolve a name and cannot start (the second deploy of the first cases on 2026-11-05 took the table away from snet-web, and the app was down). When the private endpoint
-          # subnet has such a table, snet-cases gets two minutes to get it. If it does not, the run stops here with the reason; the next run finds the subnet there, leaves it alone and checks again.
-          vnet="/subscriptions/$ENV_SUBSCRIPTION_ID/resourceGroups/$ENV_RESOURCE_GROUP/providers/Microsoft.Network/virtualNetworks/vnet-meternaut"
-          reference=$(az rest --method get --url "https://management.azure.com${vnet}/subnets/snet-pe?api-version=2025-05-01" --query properties.routeTable.id --output tsv)
-          if [ -z "$reference" ] || [ "$reference" = "None" ]; then
-            echo "The private endpoint subnet has no route table, so the landing zone puts none on a subnet: nothing to wait for."
-            exit 0
-          fi
-          for attempt in 1 2 3 4 5 6 7 8; do
-            own=$(az rest --method get --url "https://management.azure.com${vnet}/subnets/snet-cases?api-version=2025-05-01" --query properties.routeTable.id --output tsv)
-            if [ -n "$own" ] && [ "$own" != "None" ]; then
-              echo "The subnet snet-cases carries the route table of the landing zone: ${own##*/}."
-              exit 0
-            fi
-            echo "The subnet snet-cases has no route table yet (attempt $attempt of 8)."
-            sleep 15
-          done
-          echo "::error::The landing zone has not put its route table on snet-cases after two minutes. Without it the app cannot resolve a name and cannot start. Run the action again: it leaves the subnet alone and checks again."
-          exit 1
-
       - name: Build the cases app's package
         if: inputs.action == 'cases'
         run: |
@@ -842,6 +825,22 @@ jobs:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Say whether the integration subnet carries the route table of the landing zone's network manager
+        if: inputs.action == 'cases'
+        run: |
+          # The network manager puts its route table on a new subnet some minutes after the subnet is made (70 seconds the first time, five minutes the second), and an app on the subnet cannot
+          # resolve a name, and so cannot start, before that: the wait for the app above is what holds the run, and the start limit of the app (600 seconds) lets the first start wait for the table.
+          # This only says what the landing zone has done, so that a start that took long can be read. It never fails the run.
+          vnet="/subscriptions/$ENV_SUBSCRIPTION_ID/resourceGroups/$ENV_RESOURCE_GROUP/providers/Microsoft.Network/virtualNetworks/vnet-meternaut"
+          for name in snet-pe snet-cases; do
+            table=$(az rest --method get --url "https://management.azure.com${vnet}/subnets/${name}?api-version=2025-05-01" --query properties.routeTable.id --output tsv || true)
+            if [ -n "$table" ] && [ "$table" != "None" ]; then
+              echo "The subnet $name carries the route table ${table##*/}."
+            else
+              echo "::warning::The subnet $name carries no route table."
+            fi
+          done
 
       - name: The cases app lists its four functions
         if: inputs.action == 'cases'

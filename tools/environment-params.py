@@ -269,13 +269,20 @@ def web_subnet(vnet: ipaddress.IPv4Network, endpoints: ipaddress.IPv4Network, fu
     raise Problem("ENV_VNET_PREFIX has no free /27 beside the private endpoint subnet and the function subnet, for the Basic plan of the first cases")
 
 
-def web_subnet_exists(env: dict) -> bool:
-    """Whether the Basic plan's integration subnet is in Azure already. The workflow reads that before it asks for the files: a template that makes the subnet again takes away
-    the route table that the landing zone's network manager put on it, so the template makes the subnet only while it is not there."""
-    value = (env.get("ENV_WEB_SUBNET_EXISTS") or "").strip().lower()
+def exists_flag(env: dict, name: str) -> bool:
+    """Whether the workflow found something in Azure already: true or false, and false when nobody looked.
+
+    A template that makes a network resource again takes away what the landing zone's network manager added to it (the route table of a subnet), so the templates make the
+    virtual network and the Basic plan's subnet only while they are not there, and the workflow reads that from Azure before it asks for the files."""
+    value = (env.get(name) or "").strip().lower()
     if value not in ("", "true", "false"):
-        raise Problem("ENV_WEB_SUBNET_EXISTS is true or false")
+        raise Problem(f"{name} is true or false")
     return value == "true"
+
+
+def web_subnet_exists(env: dict) -> bool:
+    """Whether the Basic plan's integration subnet is in Azure already."""
+    return exists_flag(env, "ENV_WEB_SUBNET_EXISTS")
 
 
 def recording_endpoints(names: dict[str, str]) -> list[tuple[str, str]]:
@@ -499,6 +506,7 @@ def build(env, models: list[dict], preview: bool = False, contract: dict | None 
         "location": location,
         "accountName": name,
         "vnetAddressPrefix": str(vnet),
+        "networkExists": exists_flag(env, "ENV_NETWORK_EXISTS"),
         "peSubnetPrefix": str(subnet),
         "funcSubnetPrefix": str(func_subnet),
         "webSubnetPrefix": str(web),
