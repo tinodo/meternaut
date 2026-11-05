@@ -36,6 +36,8 @@ objects so that custom roles and scopes can be made; it changes no mail flow and
 When a cmdlet that creates or changes something is refused for that reason, `apply --apply` says so, sends it once (an answer that it was run before is fine) and
 tries the refused cmdlet again, 12 times at most, 20 seconds apart, because Exchange can take minutes to apply it. Every other error stops the run at once.
 A dry run sends nothing and says that this may be needed. `check` never sends it.
+The role assignment (item 4) can be refused with "You must be assigned a delegating role assignment ..." for about an hour after that step, until Exchange has
+applied the right to give the role. The tool says so and stops, without trying again for an hour: run it again later, it only creates what is missing.
 
 It talks to Exchange as the Azure CLI's token for https://outlook.office365.com (never printed, never stored): a POST to
 https://outlook.office365.com/adminapi/beta/<tenant id>/InvokeCommand. The Azure CLI is `az`, or the command in the variable AZ
@@ -91,6 +93,11 @@ CUSTOMIZATION_ASKED = re.compile(r"Enable-OrganizationCustomization|InvalidOpera
 CUSTOMIZATION_DONE = re.compile(r"already|isn.?t required|not required", re.I)
 RETRY_TRIES = 12
 RETRY_PAUSE = 20.0
+# What Exchange says when it will not yet let the person give a role: the right to give "Application Mail.Send" comes with the role group that
+# Enable-OrganizationCustomization brings, and Exchange applied it about an hour later in the pilot.
+DELEGATING = re.compile(r"delegating role assignment", re.I)
+DELEGATING_WAIT = ("Exchange has not applied the right to give this role yet. In the pilot it came about an hour after Enable-OrganizationCustomization. "
+                   "Wait, then run this tool again: it only creates what is missing.")
 ONE_TIME_STEP = ("Exchange asks for a one-time step per organization: Enable-OrganizationCustomization. It only un-consolidates stored objects so that custom roles "
                  "and scopes can be made; it changes no mail flow and no policy; Exchange says it is run once and cannot be run again.")
 MAY_ASK = ("Exchange may first ask for Enable-OrganizationCustomization, once per organization. That is the one other cmdlet that this tool can send, "
@@ -598,6 +605,8 @@ def send_step(ex: Exchange, step: Step, out: Callable[[str], None], ready: bool)
         ex.call(step.cmdlet, step.parameters)
     except Refused as e:
         if not asks_for_customization(e):
+            if DELEGATING.search(e.message):
+                raise Problem(f"{e} {DELEGATING_WAIT}") from e
             raise
         out(f"  {step.cmdlet} was refused ({failure(e.status, e.code, '')}).")
     else:
@@ -612,6 +621,8 @@ def send_step(ex: Exchange, step: Step, out: Callable[[str], None], ready: bool)
             ex.call(step.cmdlet, step.parameters)
         except Refused as e:
             if not asks_for_customization(e):
+                if DELEGATING.search(e.message):
+                    raise Problem(f"{e} {DELEGATING_WAIT}") from e
                 raise
             out(f"  try {attempt} of {RETRY_TRIES}: {step.cmdlet} is still refused")
         else:
