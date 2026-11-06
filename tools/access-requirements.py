@@ -28,7 +28,8 @@ grant     A dry run: prints what is missing and the exact commands that would ma
           who is signed in to the Azure CLI, and checks again. It grants only what the file lists, never changes a custom role that already exists
           (it reports the difference) and refuses to run in GitHub Actions: no pipeline may hold these rights.
 retire    Removes what the file lists under "retired". It reads first: for each retired item it looks for (a) the identity, by name, in the project's
-          group (it is reported and never deleted: the deployment workflow or the owner removes an identity), (b) the assignments of the retired custom
+          group (it is reported and never deleted: a person removes the old identities of the two apps after this tool has taken away their grants, and the
+          deployment workflow or the owner removes the retired runner identity), (b) the assignments of the retired custom
           role at that place and below it, whoever holds them (an identity that was deleted leaves its assignment, which the portal shows as "Identity
           not found"), and (c) the custom role itself. A dry run prints the exact commands. With --apply it runs them, with the rights of the person
           who is signed in to the Azure CLI: the assignments of that role at that place first, then the role, and only when no assignment of it
@@ -708,8 +709,10 @@ def identity_notes(identities: dict[str, str | None], places: Places, of_one: fr
     notes = []
     for name, principal in identities.items():
         if principal:
+            remover = ("a person removes it, with `az identity delete`, after this tool has taken away its grants (environment/BOOTSTRAP.md)" if name in of_one
+                       else "the deployment workflow or the owner removes it")
             notes.append(f"  note         {name} still exists in {project_group_scope(places)} (object id {principal}). This tool never deletes an identity: "
-                         f"the deployment workflow or the owner removes it.")
+                         f"{remover}.")
         else:
             notes.append(f"  note         {name} does not exist in {project_group_scope(places)}." + (
                 " Nothing can be traced to it by name any more: Azure keeps the assignments of a deleted identity, and the portal shows them as 'Identity not found'. "

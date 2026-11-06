@@ -1282,7 +1282,7 @@ class RetireTheOldIdentities(unittest.TestCase):
         self.assertIn("Checking again:", out)
         self.assertTrue(out.rstrip().endswith("6 of 6 gone."))
         self.assertIn("id-meternaut-cases still exists in", out)
-        self.assertIn("never deletes an identity", out)
+        self.assertIn("never deletes an identity: a person removes it, with `az identity delete`, after this tool has taken away its grants", out)
         code, out, _, _ = run(["check", *PLACES], fake)
         self.assertEqual((code, "5 of 5 present." in out), (0, True))
 
