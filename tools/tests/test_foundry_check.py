@@ -36,7 +36,7 @@ def good():
         f"/privateEndpoints/{PRIVATE_ENDPOINT}": {"properties": {"provisioningState": "Succeeded", "privateLinkServiceConnections": [
             {"properties": {"privateLinkServiceConnectionState": {"status": "Approved"}}}]}},
         f"/projects/{PROJECT}": {"identity": {"principalId": "q"}, "properties": {"endpoints": {"AI Foundry API": ENDPOINT}}},
-        "/deployments": {"value": [{"name": m["name"], "sku": {"name": m["sku"], "capacity": m["capacity"]},
+        "/deployments": {"value": [{"name": m["name"], "sku": {"name": m["sku"], "capacity": m.get("agentCapacity", m["capacity"])},
                                     "properties": {"model": {"format": "OpenAI", "name": m["name"], "version": m["version"]}, "raiPolicyName": GUARDRAIL}} for m in MODELS]},
         f"/raiPolicies/{GUARDRAIL}": {"properties": {"contentFilters": [
             {"name": "Jailbreak", "source": "Prompt", "enabled": True, "blocking": True},
@@ -201,6 +201,23 @@ class ReadBack(unittest.TestCase):
         self.assertEqual(failures(check(extra)[0]), [], "a deployment that somebody added is not a failure")
         no_models = changed("/deployments", lambda d: d.update(value=[]))
         self.assertEqual(len(failures(check(no_models)[0])), len(MODELS))
+
+    def test_the_capacity_that_is_read_back_is_the_agent_capacity_of_the_model_and_not_the_one_of_the_model_account(self):
+        different = [m for m in MODELS if m.get("agentCapacity", m["capacity"]) != m["capacity"]]
+        self.assertTrue(different, "models.json gives at least one model a capacity for the agents that is not the one of the model side")
+
+        def model_side(d):
+            for deployment, model in zip(d["value"], MODELS):
+                deployment["sku"]["capacity"] = model["capacity"]
+
+        found, _ = check(changed("/deployments", model_side))
+        self.assertEqual(len(failures(found)), len(different))
+        for text in failures(found):
+            self.assertTrue(text.startswith("The deployment ") and text.endswith("capacity"), text)
+        found, lines = check(good())
+        self.assertEqual(failures(found), [])
+        for model in MODELS:
+            self.assertIn(f"{model.get('agentCapacity', model['capacity'])} thousand tokens a minute", " ".join(text for _, text in found))
 
     def test_the_two_shields_of_the_user_input_are_among_the_ones_that_are_read(self):
         self.assertIn(("Jailbreak", "Prompt"), fc.SHIELDS)

@@ -62,7 +62,7 @@ param guardrailName string = 'meternaut-agents'
 @description('Restore the soft-deleted resource of this name instead of creating a new one. The workflow sets it only after the platform reports that such a resource exists.')
 param restoreAccount bool = false
 
-@description('The models deployed in the resource: name, version, deployment type and capacity in thousands of tokens a minute. The workflow reads them from environment/models.json, which the model account and the gateway configuration read too, so the three cannot differ.')
+@description('The models deployed in the resource: name, version, deployment type and capacity in thousands of tokens a minute. The workflow reads them from environment/models.json: the names, versions and deployment types are the ones of the model account and the gateway configuration, the capacity is the agentCapacity of the model, because an agent reads everything said so far again at every step and needs more tokens a minute than the gateway.')
 param models array
 
 @description('Principal id of the user-assigned identity of the cases app (id-meternaut-cases). It gets the Foundry User role on the project: it may create agents and run them there, and nothing else here.')
@@ -139,7 +139,7 @@ resource guardrail 'Microsoft.CognitiveServices/accounts/raiPolicies@2026-09-01'
   }
 }
 
-// One at a time: the resource accepts one deployment write at once. The same names, versions, types and capacities as the model account's.
+// One at a time: the resource accepts one deployment write at once. The same names, versions and types as the model account's, and the capacity that models.json gives the agents.
 @batchSize(1)
 resource modelDeployment 'Microsoft.CognitiveServices/accounts/deployments@2026-09-01' = [for model in models: {
   parent: account

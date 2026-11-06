@@ -28,7 +28,7 @@ from . import agents, decide, guards, roles, wiring
 from .approvals import is_fixture
 from .arm import scopes_of
 from .detectors import Context, Lead
-from .foundry import FoundryError
+from .foundry import SOFT_TIME_SHARE, FoundryError
 from .guards import Guards
 from .http import HttpError
 from .memory_store import parse, stamp
@@ -542,10 +542,11 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
 
     # 1. The Investigator reads the estate with the tools, inside its own budget of calls and time.
     reserve = min(RESERVE_SECONDS, budget / 4)
+    run_seconds = max(1.0, budget - reserve)
     started = s.monotonic()
     try:
         answer = s.foundry.run(investigator_ref, agents.investigator_input(st.investigate_max_calls), toolbox.call, max_calls=st.investigate_max_calls,
-                               max_seconds=max(1.0, budget - reserve))
+                               max_seconds=run_seconds)
     except FoundryError as error:
         partial = getattr(error, "partial", None)  # what the run had come to: the calls that it made and the tokens that it used
         out.tool_calls = len(_made(partial.calls)) if partial is not None else len(toolbox.log)
@@ -558,11 +559,14 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
     refused = len(answer.calls) - len(made)
     out.tool_calls, out.tokens = len(made), answer.input_tokens + answer.output_tokens
     failed_calls = sum(1 for call in made if isinstance(call, dict) and call.get("ok") is False)
+    out_of_time = answer.out_of_time
     investigator_step = step("investigator", st.foundry_model_investigator, started, True, (answer.input_tokens, answer.output_tokens),
                              f"{out.tool_calls} tool call{'' if out.tool_calls == 1 else 's'}" + (f", {failed_calls} failed" if failed_calls else "")
-                             + (f", {refused} refused after the budget" if refused else ""))
+                             + (f", {refused} refused after the {'time' if out_of_time else 'budget'}" if refused else ""))
     if refused:
-        note(f"the investigator asked for {refused} more tool call{'' if refused == 1 else 's'} after its budget of {st.investigate_max_calls} was used up, and was refused")
+        spent = (f"its time for tool calls ({int(SOFT_TIME_SHARE * run_seconds)} seconds) was used up" if out_of_time
+                 else f"its budget of {st.investigate_max_calls} was used up")
+        note(f"the investigator asked for {refused} more tool call{'' if refused == 1 else 's'} after {spent}, and was refused")
     flush_notes()
     try:
         raw_findings, examined = parse_answer(answer.text)

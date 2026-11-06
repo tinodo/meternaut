@@ -331,8 +331,8 @@ def read_models(path: Path) -> list[dict]:
     seen = set()
     checked = []
     for model in models:
-        if not isinstance(model, dict) or set(model) != {"name", "version", "sku", "capacity", "retirementDate"}:
-            raise Problem("each model has exactly: name, version, sku, capacity, retirementDate")
+        if not isinstance(model, dict) or set(model) != {"name", "version", "sku", "capacity", "agentCapacity", "retirementDate"}:
+            raise Problem("each model has exactly: name, version, sku, capacity, agentCapacity, retirementDate")
         if not isinstance(model["name"], str) or not MODEL_NAME.match(model["name"]) or model["name"] in seen:
             raise Problem(f"model name {model['name']!r} is not a valid, unique deployment name")
         if not isinstance(model["version"], str) or not DATE.match(model["version"]):
@@ -341,6 +341,8 @@ def read_models(path: Path) -> list[dict]:
             raise Problem(f"the sku of {model['name']} is one of {', '.join(SKUS)}")
         if not isinstance(model["capacity"], int) or isinstance(model["capacity"], bool) or not 1 <= model["capacity"] <= 1000:
             raise Problem(f"the capacity of {model['name']} is a whole number from 1 to 1000 (thousands of tokens a minute)")
+        if not isinstance(model["agentCapacity"], int) or isinstance(model["agentCapacity"], bool) or not 1 <= model["agentCapacity"] <= 1000:
+            raise Problem(f"the agentCapacity of {model['name']} is a whole number from 1 to 1000 (thousands of tokens a minute)")
         if not isinstance(model["retirementDate"], str) or not DATE.match(model["retirementDate"]):
             raise Problem(f"the retirementDate of {model['name']} is a date such as 2028-03-11")
         seen.add(model["name"])
@@ -532,6 +534,9 @@ def build(env, models: list[dict], preview: bool = False, contract: dict | None 
     web = web_subnet(vnet, subnet, func_subnet)
     endpoint = f"https://{name}.cognitiveservices.azure.com"
     deployed = [{k: m[k] for k in ("name", "version", "sku", "capacity")} for m in models]
+    # The Foundry resource of the agents deploys the same models with a capacity of its own: an agent that calls tools reads everything said so far again at every step,
+    # so one run uses many more tokens a minute than the gateway's detective does.
+    agent_deployed = [{"name": m["name"], "version": m["version"], "sku": m["sku"], "capacity": m["agentCapacity"]} for m in models]
 
     environment = {
         "location": location,
@@ -653,7 +658,7 @@ def build(env, models: list[dict], preview: bool = False, contract: dict | None 
             "accountName": foundry["foundry_account_name"],
             "projectName": foundry["foundry_project_name"],
             "guardrailName": foundry["foundry_guardrail_name"],
-            "models": deployed,
+            "models": agent_deployed,
             "casesPrincipalId": (cases_principal or PLACEHOLDER).lower(),
             "owner": owner,
         }),

@@ -141,6 +141,31 @@ class Retries(unittest.TestCase):
             c.request("GET", LOCKS, retries=0)
         self.assertEqual(len(script.calls), 1)
 
+    def test_the_pause_without_a_hint_is_a_parameter_that_doubles_up_to_its_ceiling(self):
+        c, script, sleeps = client((429, {}, b"{}"))
+        with self.assertRaises(http.HttpError):
+            c.request("POST", COST, retries=5, backoff=8.0, backoff_max=30.0)
+        self.assertEqual((len(script.calls), sleeps), (6, [12.0, 24.0, 30.0, 30.0, 30.0]), "8 seconds with the jitter of 0.5, doubled, and never more than 30")
+        c, _, sleeps = client((503, {}, b"{}"))
+        with self.assertRaises(http.HttpError):
+            c.request("GET", LOCKS, retries=3, backoff=2.0, backoff_max=5.0)
+        self.assertEqual(sleeps, [3.0, 5.0, 5.0])
+
+    def test_the_default_pause_is_the_one_of_before(self):
+        c, _, sleeps = client((503, {}, b"{}"))
+        with self.assertRaises(http.HttpError):
+            c.request("GET", LOCKS, retries=4)
+        self.assertEqual(sleeps, [1.5, 3.0, 6.0, 12.0])
+
+    def test_a_hint_beats_the_pause_and_a_hint_beyond_the_most_that_is_waited_for_is_a_refusal(self):
+        c, _, sleeps = client((429, {"retry-after": "5"}, b"{}"), ok())
+        c.request("POST", COST, backoff=8.0)
+        self.assertEqual(sleeps, [5.0])
+        c, script, sleeps = client((429, {"retry-after": "91"}, b"{}"))
+        with self.assertRaises(http.HttpError) as raised:
+            c.request("POST", COST, retry_after_max=90, backoff=8.0)
+        self.assertEqual((raised.exception.status, len(script.calls), sleeps), (429, 1, []))
+
 
 class LockLists(unittest.TestCase):
     GROUP = f"https://management.azure.com/subscriptions/{SUBSCRIPTION}/resourceGroups/rg-app"

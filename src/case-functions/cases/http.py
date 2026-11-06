@@ -167,10 +167,13 @@ class Client:
 
     def request(self, method: str, url: str, *, headers: Mapping[str, str] | None = None, body: object = None, form: Mapping[str, str] | None = None,
                 timeout: float = 30, retries: int = 2, retry_after_max: float = 60, retry_statuses: frozenset[int] = RETRY_STATUSES,
-                retry_network: bool = True) -> Response:
+                retry_network: bool = True, backoff: float = 1.0, backoff_max: float = 30.0) -> Response:
         """One call. A call that may already have been carried out (a model call whose answer did not arrive) is made with retry_network=False.
 
-        `body` is sent as JSON, `form` as a form (the token endpoint of Microsoft Entra takes a form). A call has one of them or none."""
+        `body` is sent as JSON, `form` as a form (the token endpoint of Microsoft Entra takes a form). A call has one of them or none.
+
+        A call that is retried waits as long as the service says (Retry-After, up to `retry_after_max`). When the service says nothing the pause is `backoff` seconds
+        (with jitter) before the first repeat, twice that before the second, and so on, up to `backoff_max`."""
         self.check(method, url)
         merged = {"Accept": "application/json", **(headers or {})}
         data = None
@@ -197,7 +200,7 @@ class Client:
             retryable = retry_network if status == 0 else status in retry_statuses
             may_retry = retryable and not (wait is not None and wait > retry_after_max)
             if may_retry and attempt < retries:
-                pause = wait if wait is not None else min(30.0, (2 ** attempt) * (1 + self.jitter()))
+                pause = wait if wait is not None else min(backoff_max, backoff * (2 ** attempt) * (1 + self.jitter()))
                 left = self.remaining()
                 if left is None or pause < left:
                     self.sleep(pause)

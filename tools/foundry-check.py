@@ -12,7 +12,8 @@ for each thing that differs:
     which cannot be switched on later), and an identity of its own;
   - its private endpoint: made, and approved;
   - its project: there, with an identity of its own, and an endpoint that is reported and is the one that the cases app is given;
-  - its model deployments: every model of environment/models.json, with its version, its deployment type and its capacity, and the guardrail;
+  - its model deployments: every model of environment/models.json, with its version, its deployment type and its capacity (`agentCapacity` of the model, which is the
+    capacity of this resource and not the one of the model account), and the guardrail;
   - the guardrail: there, with the Prompt Shields that the agents need (Jailbreak and Indirect Attack on the user input, Indirect Attack on tool results), each blocking;
   - the connection of the project to Application Insights: there, and with an identity and no key.
 
@@ -189,11 +190,12 @@ def read_back(az: Runner, subscription: str, group: str, account: str, project: 
                 say(False, f"The deployment {model['name']} is not there")
                 continue
             made = (d.get("properties") or {}).get("model") or {}
+            capacity = model.get("agentCapacity", model["capacity"])  # the resource of the agents has a capacity of its own
             problems = [word for word, ok in (("model", made.get("name") == model["name"]), ("version", made.get("version") == model["version"]),
                                                 ("deployment type", (d.get("sku") or {}).get("name") == model["sku"]),
-                                                ("capacity", (d.get("sku") or {}).get("capacity") == model["capacity"]),
+                                                ("capacity", (d.get("sku") or {}).get("capacity") == capacity),
                                                 ("guardrail", (d.get("properties") or {}).get("raiPolicyName") == guardrail)) if not ok]
-            say(not problems, f"The deployment {model['name']}: " + (f"{model['version']}, {model['sku']}, {model['capacity']} thousand tokens a minute, guardrail {guardrail}"
+            say(not problems, f"The deployment {model['name']}: " + (f"{model['version']}, {model['sku']}, {capacity} thousand tokens a minute, guardrail {guardrail}"
                                                                     if not problems else f"differs from environment/models.json or its template: {', '.join(problems)}"))
 
     document = fetch(f"The guardrail {guardrail}", f"{resource}/raiPolicies/{guardrail}")
