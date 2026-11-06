@@ -11,7 +11,7 @@ on:
   workflow_dispatch:
     inputs:
       action:
-        description: "what-if: show what the next steps would change and change nothing. model-side: the gateway's identity, then the network, the model account with its private endpoint and the budget. gateway-prepare: attach the identity to the gateway and add the Application Insights logger, and the two Event Hub loggers when the usage recording's namespace exists. gateway: add the Citadel module's objects to the gateway (with the two fragments that use the Event Hub loggers when both loggers exist, without them otherwise). contract: add the first contract (a product, its policy and its key) and test the gateway with that key. recording: the usage recording of the gateway's calls, which is a Log Analytics workspace, an Event Hubs namespace, a Cosmos DB account, a storage account and a function app with its own system-assigned identity, with private endpoints and without any key; it first removes the key-based Logic App version of it, when that is still there. recording-check: start the copy jobs once through the control hub and read what they say from the function app's telemetry. cases: the first cases, which is a second function app on the usage recording's network, storage and namespace, with its own system-assigned identity and one user-assigned identity for the console's sign-in, a control hub, a longer retention of the traces and the History workbook; its Watch changes no resource of the estate (with the investigation on it also creates agents and conversations in its own Foundry project), and it needs the usage recording and the contract first.         cases-run: start one Watch through the control hub and read its History from the telemetry. plant: make waste of Meternaut's own (an unattached disk, and with plant_public_ip an unassigned public IP address) in the project's resource group,         tagged for the loop, so that the whole loop can be shown on something that belongs to nobody else. loop-check: knock at the console's front door without a sign-in and pass only when nobody gets a page. foundry: the Foundry resource of the agents (the model account cannot hold projects, so this is a second resource): a project, the same models, a guardrail, one private endpoint and the connection that sends the agents' traces, with no key; it needs recording and cases to have run once, and it is run before the next cases, which is then given the project's address."
+        description: "what-if: show what the next steps would change and change nothing. model-side: the gateway's identity, then the network, the model account with its private endpoint and the budget. gateway-prepare: attach the identity to the gateway and add the Application Insights logger, and the two Event Hub loggers when the usage recording's namespace exists. gateway: add the Citadel module's objects to the gateway (with the two fragments that use the Event Hub loggers when both loggers exist, without them otherwise). contract: add the first contract (a product, its policy and its key) and test the gateway with that key. recording: the usage recording of the gateway's calls, which is a Log Analytics workspace, an Event Hubs namespace, a Cosmos DB account, a storage account and a function app with its own system-assigned identity, with private endpoints and without any key; it first removes the key-based Logic App version of it, when that is still there. recording-check: start the copy jobs once through the control hub and read what they say from the function app's telemetry. cases: the first cases, which is a second function app on the usage recording's network, storage and namespace, with its own system-assigned identity and one user-assigned identity for the console's sign-in, a control hub, a longer retention of the traces and the History workbook; its Watch changes no resource of the estate (with the investigation on it also creates agents and conversations in its own Foundry project), and it needs the usage recording and the contract first.         cases-run: start one Watch through the control hub and read its History from the telemetry. plant: make waste of Meternaut's own (an unattached disk, and with plant_public_ip an unassigned public IP address) in the project's resource group,         tagged for the loop, so that the whole loop can be shown on something that belongs to nobody else. loop-check: knock at the console's front door without a sign-in and pass only when nobody gets a page. foundry: the Foundry resource of the agents (the model account cannot hold projects, so this is a second resource): a project, the same models, a guardrail, one private endpoint and the connection that sends the agents' traces, with no key; it needs recording and cases to have run once, and it is run before the next cases, which is then given the project's address. operator: the Operator, the executor that works inside the virtual network for what the workflow cannot do from outside it once the services are private (docs/proposals/07-private-by-default.md): its identity, the subnet of its container groups and one role (Reader on the project's group); it waits until the landing zone has put its route table on that subnet, and it starts nothing, so nothing is paid until a run uses it. operator-probe: run operator/probe.sh once in a short-lived container group of the Operator and print what it finds (does the identity sign in, do the names of private endpoints resolve to private addresses, which addresses can a group reach, and how does a package get in); the group is deleted at the end whatever happens, and it costs cents. It needs operator first."
         type: choice
         required: true
         default: what-if
@@ -28,6 +28,8 @@ on:
           - cases-run
           - plant
           - loop-check
+          - operator
+          - operator-probe
       check_limits:
         description: "Only with contract: also prove the token limit, with one request larger than a minute's allowance and then a refusal by the gateway. It uses about a minute of the contract's tokens and blocks the key for up to a minute."
         type: boolean
@@ -109,7 +111,7 @@ jobs:
           python3 -m unittest discover -s src/usage-functions/tests
           python3 -m unittest discover -s src/case-functions/tests
           python3 tools/workflow-lint.py
-          for template in environment/main.bicep environment/gateway/identity.bicep environment/gateway/logger.bicep environment/gateway/eventhub-loggers.bicep environment/gateway/contract.bicep environment/recording/main.bicep environment/foundry/main.bicep environment/cases/main.bicep environment/cases/planted.bicep; do
+          for template in environment/main.bicep environment/gateway/identity.bicep environment/gateway/logger.bicep environment/gateway/eventhub-loggers.bicep environment/gateway/contract.bicep environment/recording/main.bicep environment/foundry/main.bicep environment/cases/main.bicep environment/cases/planted.bicep environment/operator/main.bicep; do
             az bicep build --file "$template" --stdout > /dev/null
             az bicep lint --file "$template"
           done
@@ -121,6 +123,7 @@ jobs:
           az bicep build --file environment/foundry/main.bicep --outfile "$RUNNER_TEMP/foundry.json"
           az bicep build --file environment/cases/main.bicep --outfile "$RUNNER_TEMP/cases.json"
           az bicep build --file environment/cases/planted.bicep --outfile "$RUNNER_TEMP/planted.json"
+          az bicep build --file environment/operator/main.bicep --outfile "$RUNNER_TEMP/operator.json"
           az bicep build --file kit/bicep/infra/apim-gateway-upgrade/main.bicep --outfile "$RUNNER_TEMP/kit.json"
 
       - name: Sign in to Azure
@@ -166,7 +169,7 @@ jobs:
         run: |
           # A template that makes a network resource again at its next run takes away what the landing zone's network manager added to it: the manager puts a route table on every subnet some
           # minutes after the subnet is made, and a subnet that is written again without the table cannot reach the landing zone's DNS, so an app on it cannot start (CHANGELOG.md, 2026-11-05).
-          # So the virtual network and the first cases' subnet are made once and then left alone: the templates make them only while they are not there, and this is where the workflow finds out.
+          # So the virtual network, the first cases' subnet and the Operator's subnet are made once and then left alone: the templates make them only while they are not there, and this is where the workflow finds out.
           vnet="/subscriptions/$ENV_SUBSCRIPTION_ID/resourceGroups/$ENV_RESOURCE_GROUP/providers/Microsoft.Network/virtualNetworks/vnet-meternaut"
           exists() {
             local found
@@ -181,9 +184,11 @@ jobs:
           }
           network=$(exists "$vnet")
           if [ "$network" = true ]; then subnet=$(exists "$vnet/subnets/snet-cases"); else subnet=false; fi
-          echo "The virtual network is there: $network. The subnet snet-cases is there: $subnet."
+          if [ "$network" = true ]; then ops=$(exists "$vnet/subnets/snet-ops"); else ops=false; fi
+          echo "The virtual network is there: $network. The subnet snet-cases is there: $subnet. The subnet snet-ops is there: $ops."
           echo "network_exists=$network" >> "$GITHUB_OUTPUT"
           echo "web_subnet_exists=$subnet" >> "$GITHUB_OUTPUT"
+          echo "ops_subnet_exists=$ops" >> "$GITHUB_OUTPUT"
 
       - name: Work out the settings
         id: params
@@ -191,6 +196,7 @@ jobs:
           ENV_BUDGET_START: ${{ steps.budget.outputs.start }}
           ENV_NETWORK_EXISTS: ${{ steps.network.outputs.network_exists }}
           ENV_WEB_SUBNET_EXISTS: ${{ steps.network.outputs.web_subnet_exists }}
+          ENV_OPS_SUBNET_EXISTS: ${{ steps.network.outputs.ops_subnet_exists }}
           RECORDING_DEPLOYER_ID: ${{ steps.me.outputs.oid }}
         run: |
           # The gateway identity does not exist before model-side has run, so this first pass is a preview: it gives the names.
@@ -276,6 +282,7 @@ jobs:
           python3 tools/environment-params.py check --params "$RUNNER_TEMP/foundry.parameters.json" --template "$RUNNER_TEMP/foundry.json" --label foundry
           python3 tools/environment-params.py check --params "$RUNNER_TEMP/contract.parameters.json" --template "$RUNNER_TEMP/contract.json" --label contract
           python3 tools/environment-params.py check --params "$RUNNER_TEMP/cases.parameters.json" --template "$RUNNER_TEMP/cases.json" --label cases
+          python3 tools/environment-params.py check --params "$RUNNER_TEMP/operator.parameters.json" --template "$RUNNER_TEMP/operator.json" --label operator
           python3 tools/environment-params.py check --params "$RUNNER_TEMP/planted.parameters.json" --template "$RUNNER_TEMP/planted.json" --label planted
 
       - name: What the identity, the model side, the logger, the usage recording and the first cases would change
@@ -285,6 +292,7 @@ jobs:
           GATEWAY_GROUP: ${{ steps.params.outputs.gateway_resource_group }}
           STORAGE_ACCOUNT: ${{ steps.params.outputs.storage_account_name }}
           INSIGHTS_NAME: ${{ steps.params.outputs.appinsights_name }}
+          NETWORK_EXISTS: ${{ steps.network.outputs.network_exists }}
         run: |
           echo "::group::The gateway identity, in the gateway's resource group"
           python3 tools/az-deploy.py what-if --subscription "$GATEWAY_SUBSCRIPTION" --resource-group "$GATEWAY_GROUP" \
@@ -322,6 +330,14 @@ jobs:
           else
             python3 tools/az-deploy.py what-if --subscription "$ENV_SUBSCRIPTION_ID" --resource-group "$ENV_RESOURCE_GROUP" \
               --template environment/cases/main.bicep --parameters "$RUNNER_TEMP/cases.parameters.json"
+          fi
+          echo "::endgroup::"
+          echo "::group::The Operator, in the project's resource group (its identity, the subnet of its container groups and one role)"
+          if [ "$NETWORK_EXISTS" = true ]; then
+            python3 tools/az-deploy.py what-if --subscription "$ENV_SUBSCRIPTION_ID" --resource-group "$ENV_RESOURCE_GROUP" \
+              --template environment/operator/main.bicep --parameters "$RUNNER_TEMP/operator.parameters.json"
+          else
+            echo "The Operator cannot be previewed yet: its subnet goes into the virtual network, and the action model-side makes the network."
           fi
           echo "::endgroup::"
 
@@ -1149,6 +1165,127 @@ jobs:
           echo "::error::The console's front door is not shut as it should be."
           exit 1
 
+      - name: Deploy the Operator, its identity and the subnet of its container groups
+        if: inputs.action == 'operator'
+        run: |
+          # The identity id-meternaut-operator, the subnet snet-ops (delegated to container groups, with a network security group of its own, and made only while it is not there:
+          # AGENTS.md rule 27) and one role, Reader on the project's resource group (environment/operator/main.bicep). No key anywhere. Nothing runs between two runs of the Operator.
+          client=$(python3 tools/az-deploy.py create --subscription "$ENV_SUBSCRIPTION_ID" --resource-group "$ENV_RESOURCE_GROUP" \
+            --template environment/operator/main.bicep --parameters "$RUNNER_TEMP/operator.parameters.json" \
+            --name "operator-$GITHUB_RUN_ID" --output identityClientId)
+          if ! printf '%s' "$client" | grep -Eq '^[0-9a-fA-F-]{36}$'; then
+            echo "::error::The deployment did not return the client id of the Operator's identity."
+            exit 1
+          fi
+          echo "The Operator's identity and the subnet of its container groups are in resource group $ENV_RESOURCE_GROUP."
+
+      - name: The resource provider of Container Instances is registered in the subscription
+        if: inputs.action == 'operator-probe'
+        run: |
+          # The workflow's identity cannot register a resource provider (environment/BOOTSTRAP.md): a person does, once. A state that cannot be read is said and does not stop the run: the request
+          # that makes the container group then says what is wrong.
+          state=$(az provider show --namespace Microsoft.ContainerInstance --query registrationState --output tsv 2>/dev/null || true)
+          case "$state" in
+            Registered) echo "Microsoft.ContainerInstance is registered in the subscription." ;;
+            "") echo "::warning::The registration of Microsoft.ContainerInstance could not be read. If the container group cannot be made for that reason, a person registers the provider once (environment/BOOTSTRAP.md)." ;;
+            *)
+              echo "::error::Microsoft.ContainerInstance is $state in the subscription, and the workflow's identity cannot register it. A person does that once (environment/BOOTSTRAP.md, the section on the Operator). Nothing was changed."
+              exit 1 ;;
+          esac
+
+      - name: Wait until the landing zone has put its route table on the Operator's subnet
+        if: inputs.action == 'operator' || inputs.action == 'operator-probe'
+        timeout-minutes: 25
+        run: |
+          # The landing zone's network manager puts a route table on a new subnet some minutes after the subnet is made (70 seconds the first time, five minutes the second: CHANGELOG.md, 2026-11-05),
+          # and a container group on the subnet gets its way out through that table. The endpoint subnet is the yardstick: when it carries no table, the landing zone puts none on this network and
+          # there is nothing to wait for. After the action operator the table is waited for, for up to 20 minutes; before a probe it is read once and said, because the probe is what shows whether
+          # a group gets out. This step needs no credential that it has not used already, so the sign-in of the first step is enough.
+          vnet="/subscriptions/$ENV_SUBSCRIPTION_ID/resourceGroups/$ENV_RESOURCE_GROUP/providers/Microsoft.Network/virtualNetworks/vnet-meternaut"
+          table_of() {
+            az rest --method get --url "https://management.azure.com${vnet}/subnets/${1}?api-version=2025-05-01" --query properties.routeTable.id --output tsv || true
+          }
+          reference=$(table_of snet-pe)
+          if [ -z "$reference" ] || [ "$reference" = "None" ]; then
+            echo "The endpoint subnet carries no route table, so the landing zone puts none on this network: there is nothing to wait for."
+            exit 0
+          fi
+          attempts=40
+          if [ "$ACTION" != "operator" ]; then attempts=1; fi
+          for attempt in $(seq 1 "$attempts"); do
+            table=$(table_of snet-ops)
+            if [ -n "$table" ] && [ "$table" != "None" ]; then
+              echo "The subnet snet-ops carries the route table ${table##*/}."
+              exit 0
+            fi
+            echo "snet-ops carries no route table yet (check $attempt of $attempts)."
+            if [ "$attempt" -lt "$attempts" ]; then sleep 30; fi
+          done
+          if [ "$ACTION" = "operator" ]; then
+            echo "::error::The landing zone's network manager has put a route table on snet-pe and has not put one on snet-ops in 20 minutes. A container group on snet-ops may have no way out. Nothing else was changed: run operator again later."
+            exit 1
+          fi
+          echo "::warning::snet-ops carries no route table. The probe shows whether a container group on it gets out."
+
+      - name: Run the probe in the Operator
+        id: probe
+        if: inputs.action == 'operator-probe'
+        # The tool deletes its container group at the end of every run, and a stuck container is given up after 15 minutes: the limit is a second line behind that.
+        timeout-minutes: 25
+        env:
+          # The linux/amd64 manifest of mcr.microsoft.com/azure-cli 2.92.0, read from the registry on 2026-11-06: docs/proposals/07-private-by-default.md says how to read it again.
+          OPERATOR_IMAGE: mcr.microsoft.com/azure-cli@sha256:67afdcb4f3efce0b33aadba0b8a72402b6f071741400fd75cc5cb8a1d7bf1d98
+          EVENT_HUB_NAMESPACE: ${{ steps.params.outputs.event_hub_namespace }}
+          STORAGE_ACCOUNT: ${{ steps.params.outputs.storage_account_name }}
+          COSMOS_ACCOUNT: ${{ steps.params.outputs.cosmos_account_name }}
+          MODEL_ACCOUNT: ${{ steps.params.outputs.account_name }}
+          FOUNDRY_ACCOUNT: ${{ steps.params.outputs.foundry_account_name }}
+          USAGE_APP: ${{ steps.params.outputs.function_app_name }}
+          CASES_APP: ${{ steps.params.outputs.cases_function_app_name }}
+        run: |
+          # operator/probe.sh runs in a container group on snet-ops, as the Operator's identity, and prints one line for each thing that it finds out: whether the identity signs in, which names resolve
+          # to private addresses, which addresses a container group reaches, and whether a secret volume of the size of a small package arrives. tools/operator-run.py makes the group through Azure
+          # Resource Manager, reads its log while it runs, and deletes it in every case. The log holds no token and no secret, and goes into the run's summary.
+          scope="/subscriptions/$ENV_SUBSCRIPTION_ID/resourceGroups/$ENV_RESOURCE_GROUP"
+          subnet_id="$scope/providers/Microsoft.Network/virtualNetworks/vnet-meternaut/subnets/snet-ops"
+          # The Operator's identity is found by its name in the project's group, and its client id is read from the identity itself: the workflow reads no identity with az identity, and names no
+          # identity resource type outside the one path that removes the retired runner identity (tools/tests/test_environment_template.py guards both).
+          identity_id=$(az resource list --resource-group "$ENV_RESOURCE_GROUP" --name id-meternaut-operator --query "[0].id" --output tsv || true)
+          client=""
+          if grep -Eq '^/subscriptions/' <<< "$identity_id"; then
+            client=$(az rest --method get --url "https://management.azure.com${identity_id}?api-version=2023-01-31" --query properties.clientId --output tsv || true)
+          fi
+          if ! grep -Eq '^[0-9a-fA-F-]{36}$' <<< "$client"; then
+            echo "::error::The identity id-meternaut-operator is not there. Run operator first."
+            exit 1
+          fi
+          # The names that have a private endpoint today must resolve to a private address. The two apps have none yet: their answer is said, and turns private with the step that closes them.
+          private_names="$EVENT_HUB_NAMESPACE.servicebus.windows.net $STORAGE_ACCOUNT.blob.core.windows.net $COSMOS_ACCOUNT.documents.azure.com $MODEL_ACCOUNT.cognitiveservices.azure.com $FOUNDRY_ACCOUNT.services.ai.azure.com"
+          names="$private_names $USAGE_APP.azurewebsites.net $USAGE_APP.scm.azurewebsites.net $CASES_APP.azurewebsites.net $CASES_APP.scm.azurewebsites.net"
+          # The last two are inferred and not read in a source: the host of a release asset, and the storage host that workflow artifacts come from (it resolves in public DNS).
+          urls="https://mcr.microsoft.com/ https://management.azure.com/ https://login.microsoftonline.com/ https://api.github.com/ https://codeload.github.com/ https://github.com/ https://pipelines.actions.githubusercontent.com/ https://objects.githubusercontent.com/ https://pypi.org/ https://files.pythonhosted.org/ https://api.applicationinsights.io/ https://api.loganalytics.io/ https://release-assets.githubusercontent.com/ https://productionresultssa0.blob.core.windows.net/"
+          # A container group does not take the DNS servers of the virtual network, so it is given the landing zone's.
+          dns=()
+          for server in ${ENV_DNS_SERVERS//,/ }; do dns+=(--dns-server "$server"); done
+          # A file of the size of the cases app's package (about 200 KB of source and a wheel) travels in the request as a secret volume, so that the probe can say whether it arrives whole.
+          size=400000
+          head -c "$size" /dev/urandom > "$RUNNER_TEMP/size-test"
+          python3 tools/operator-run.py run --resource-group "$ENV_RESOURCE_GROUP" --name "op-probe-$GITHUB_RUN_ID" \
+            --subnet-id "$subnet_id" --identity-id "$identity_id" --image "$OPERATOR_IMAGE" --script operator/probe.sh \
+            --secret-file "size-test=$RUNNER_TEMP/size-test" \
+            --env "OPERATOR_CLIENT_ID=$client" --env "OPERATOR_GROUP=$ENV_RESOURCE_GROUP" --env "OPERATOR_SUBSCRIPTION=$ENV_SUBSCRIPTION_ID" \
+            --env "PROBE_NAMES=$names" --env "PROBE_PRIVATE_NAMES=$private_names" --env "PROBE_URLS=$urls" --env "PROBE_SIZE_BYTES=$size" \
+            "${dns[@]}" --timeout-seconds 900 --summary "$GITHUB_STEP_SUMMARY"
+
+      - name: Delete any container group of the probe that is left
+        if: always() && inputs.action == 'operator-probe' && steps.probe.outcome != 'skipped'
+        run: |
+          # The tool deletes its group at the end of every run. A step that was cancelled or killed cannot do that, so this is the second line, and it runs whenever the probe step started: every group
+          # that starts with op-probe- and carries the tool's tag is deleted. Runs of this workflow never overlap (the concurrency group), so none of them is a group in use, and a group that an earlier
+          # run left is taken too. Nothing else is touched.
+          python3 tools/operator-run.py cleanup --resource-group "$ENV_RESOURCE_GROUP" --prefix op-probe- --older-than-minutes 0 \
+            || echo "::warning::A container group whose name starts with op-probe- may be left in resource group $ENV_RESOURCE_GROUP. A person deletes it; it costs cents an hour."
+
       - name: What was done
         if: always()
         env:
@@ -1177,6 +1314,8 @@ jobs:
                 cases-run) echo "The Watch may have run partly or not at all. The lines above say how it ended, or which warnings and errors the cases app logged. It changes no resource of the estate; with the investigation on it may also have created agents and conversations in its own Foundry project before it stopped. Running \`cases-run\` again is safe." ;;
                 plant) echo "Part of the planted waste may exist now (an unattached disk, maybe an unassigned public IP address) in resource group \`$ENV_RESOURCE_GROUP\`, tagged for the loop. They cost a few cents to a few dollars a month. Running \`plant\` again is safe: it makes a second planting under a new name. A person who approves a plan for planted waste removes it, with that person's own permissions." ;;
                 loop-check) echo "The front door was not shut as it should be: a request without a sign-in got something other than a sign-in or the app's refusal. Nothing was changed. Do not hand the address to anybody until this passes." ;;
+                operator) echo "Part of the Operator may exist now: its identity \`id-meternaut-operator\`, the network security group, the subnet \`snet-ops\` and the Reader role on resource group \`$ENV_RESOURCE_GROUP\`. If the deploy was refused at the role, the condition of the deploy identity's role-assignment right does not list Reader yet (environment/BOOTSTRAP.md, the section on the Operator) and nothing else was changed. None of it costs anything while no container group runs. Running \`operator\` again is safe and repeats only what is missing." ;;
+                operator-probe) echo "A container group named \`op-probe-$GITHUB_RUN_ID\` may have been made, and the last step of the run deletes it if the tool could not. The lines above say how far the probe came: an image that could not be pulled is the likely reason (the tool prints the group's events then), and a subnet with no way out looks the same. A run costs cents. Running \`operator-probe\` again is safe." ;;
               esac
             else
               case "$ACTION" in
@@ -1192,6 +1331,8 @@ jobs:
                 cases-run) echo "One Watch ran and wrote its History to the cases app's telemetry and its records to the store; the lines above are that: the leads, what each case came to, what the models said and the tokens that were used. Calls that go through the gateway are counted there; with the investigation on, the agents in the Foundry project call the models of that resource directly, not through the gateway. No resource of the estate was changed; with the investigation on, the Watch also created its agents and conversations in its own Foundry project." ;;
                 plant) echo "Waste of Meternaut's own is in resource group \`$ENV_RESOURCE_GROUP\`: an unattached disk (and, when asked, an unassigned public IP address), tagged meternaut-planted. The next Watch finds it, and the loop takes it from there. Meternaut holds no right to delete it: the person who approves a plan for it needs the right to delete it in this group, because the change runs with that person's own permissions." ;;
                 loop-check) echo "The console's front door is shut: without a sign-in nobody gets a page (the return address of the Azure sign-in included), and a made-up sign-in header is not believed." ;;
+                operator) echo "The Operator is in resource group \`$ENV_RESOURCE_GROUP\`: the identity \`id-meternaut-operator\`, the subnet \`snet-ops\` (delegated to container groups, with the landing zone's route table on it when the landing zone puts one on this network) and Reader on the group for that identity, and nothing else. No container group exists, so nothing is paid until a run uses it. The next step is \`operator-probe\`, which shows what a container on the subnet can reach." ;;
+                operator-probe) echo "The probe ran in a container group on \`snet-ops\` as the Operator's identity, and the group is deleted. The page above has one line for each check: \`ok\` and \`FAIL\` are facts about the landing zone and the network, not errors of the run. docs/proposals/07-private-by-default.md says what each answer decides." ;;
               esac
             fi
           } >> "$GITHUB_STEP_SUMMARY"

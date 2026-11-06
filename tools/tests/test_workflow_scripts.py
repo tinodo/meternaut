@@ -114,7 +114,7 @@ class WorkOutTheSettings(unittest.TestCase):
         done, lines, _ = self.run_step(f"{PRINCIPAL}\t{CLIENT}", "")
         checks = [line for line in lines if line.startswith("check ")]
         labels = [re.search(r"--label (\S+)", line).group(1) for line in checks]
-        self.assertEqual(labels, ["environment", "logger", "eventhub-loggers", "kit", "recording", "foundry", "contract", "cases", "planted"])
+        self.assertEqual(labels, ["environment", "logger", "eventhub-loggers", "kit", "recording", "foundry", "contract", "cases", "operator", "planted"])
 
 
 def run_step_script(name, stand_ins, env, files=None, prelude=""):
@@ -772,6 +772,78 @@ class TheFoundryUserHandStep(unittest.TestCase):
         self.assertIn("The assignments could not be read (exit code 1). Nothing was changed.", text)
         self.assertEqual(self.kinds(calls), ["role assignment list"])
         self.assertEqual(left, [assignment()])
+
+
+def operator_hand_step_script():
+    """The commands of the hand step of the Operator in environment/BOOTSTRAP.md (the Reader role), as a person would copy them."""
+    page = (ROOT / "environment" / "BOOTSTRAP.md").read_text(encoding="utf-8").replace("\r\n", "\n")
+    section = page.split("## Changed on 2026-11-06: the Operator")[1].split("\n## ")[0]
+    (script,) = re.findall(r"```powershell\n(.*?)\n```", section, re.S)
+    return script
+
+
+READER = "acdd72a7-3385-48ef-bd42-f606fba81ae7"
+
+
+class TheReaderHandStep(unittest.TestCase):
+    """The commands of the Operator's section of environment/BOOTSTRAP.md that add the Reader role to the condition of the deploy identity's assignment: the same stand-in for az and the same
+    harness as the hand step of the Foundry User role, so that what is tested is what a person would paste."""
+
+    run_step = TheFoundryUserHandStep.run_step
+    said = TheFoundryUserHandStep.said
+    kinds = TheFoundryUserHandStep.kinds
+    first_engine = TheFoundryUserHandStep.first_engine
+
+    @classmethod
+    def setUpClass(cls):
+        cls.engines = powershells()
+        if not cls.engines:
+            raise unittest.SkipTest("no PowerShell on this machine")
+        first, cls.rest = operator_hand_step_script().split("\n", 1)
+        assert first.startswith("function az {"), "the first line of the commands is the az function, which the stand-in replaces"
+
+    def test_a_good_run_changes_the_condition_in_place_with_one_write_adds_reader_to_both_lists_and_reads_it_back(self):
+        done, calls, left = self.run_step(self.first_engine(), [assignment()])
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertEqual(self.kinds(calls), ["role assignment list"] * 2 + ["role assignment update"] + ["role assignment list"] * 2, "read, read, one write, read back, read back")
+        (update,) = [call for call in calls if call[2] == "update"]
+        sent = json.loads(update[6].replace('""', '"'))
+        self.assertEqual(sent["id"], HAND_ASSIGNMENT, "the assignment that is changed is the one that was read")
+        (stored,) = left
+        self.assertEqual(stored["id"], HAND_ASSIGNMENT, "the assignment keeps its id")
+        self.assertEqual(id_lists(stored["condition"]), [sorted(CONDITION_ROLES + [READER])] * 2, "Reader is in the list for a write and in the list for a delete")
+        self.assertEqual(shape_of(stored["condition"]), shape_of(assignment()["condition"]), "nothing else of the condition changed")
+        text = self.said(done)
+        self.assertIn(f"Added: {READER} (Reader)", text)
+        self.assertIn(f"Read back: one assignment, with the same id, and both lists hold the old role ids and {READER} (Reader).", text)
+        self.assertFalse([call for call in calls if call[2] in ("delete", "create")], "the commands never delete or make an assignment")
+
+    def test_every_powershell_on_the_machine_runs_it_the_same_way(self):
+        for name, engine in self.engines[1:]:
+            with self.subTest(engine=name):
+                done, calls, left = self.run_step(engine, [assignment()])
+                self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+                self.assertEqual(id_lists(left[0]["condition"]), [sorted(CONDITION_ROLES + [READER])] * 2)
+
+    def test_an_update_that_fails_says_that_the_assignment_is_unchanged_and_nothing_is_written_without_a_yes(self):
+        before = [assignment()]
+        done, calls, left = self.run_step(self.first_engine(), before, FAKE_UPDATE_FAILS="1")
+        self.assertNotEqual(done.returncode, 0)
+        self.assertIn("The update failed (exit code 1). It is one write and nothing else was done, so the assignment is unchanged.", self.said(done))
+        self.assertEqual((self.kinds(calls)[-1], left), ("role assignment update", before))
+        done, calls, left = self.run_step(self.first_engine(), before, answer="no")
+        self.assertNotEqual(done.returncode, 0)
+        self.assertIn("Stopped. Nothing was changed.", self.said(done))
+        self.assertEqual((self.kinds(calls), left), (["role assignment list"] * 2, before))
+
+    def test_a_condition_that_lists_reader_already_means_nothing_to_do_and_a_read_back_that_differs_fails(self):
+        done, calls, _ = self.run_step(self.first_engine(), [assignment(condition_of(CONDITION_ROLES + [READER]))])
+        self.assertNotEqual(done.returncode, 0)
+        self.assertIn("The condition lists the Reader role already: nothing to do.", self.said(done))
+        self.assertEqual(self.kinds(calls), ["role assignment list"] * 2)
+        done, calls, _ = self.run_step(self.first_engine(), [assignment()], FAKE_STORE_CONDITION=condition_of(CONDITION_ROLES))
+        self.assertNotEqual(done.returncode, 0)
+        self.assertIn("not as meant", self.said(done))
 
 
 @unittest.skipUnless(os.name == "nt", "the az function of the hand step calls the Azure CLI of Windows")

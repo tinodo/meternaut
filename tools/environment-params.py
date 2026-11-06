@@ -11,7 +11,7 @@ address, name or mail address is in the repository:
     ENV_DNS_SERVERS (comma separated), ENV_OWNER, ENV_BUDGET_AMOUNT, ENV_ALERT_EMAILS (comma separated),
     ENV_BUDGET_START, GATEWAY_RESOURCE_ID, GATEWAY_APPINSIGHTS_ID, GATEWAY_PRINCIPAL_ID, GATEWAY_CLIENT_ID,
     RECORDING_DEPLOYER_ID, RECORDING_READER_IDS (comma separated, may be empty), RECORDING_FRAGMENTS (true or false),
-    CASES_SYSTEM_PRINCIPAL_ID (may be empty), ENV_FOUNDRY_PROJECT_EXISTS (true or false)
+    CASES_SYSTEM_PRINCIPAL_ID (may be empty), ENV_FOUNDRY_PROJECT_EXISTS (true or false), ENV_OPS_SUBNET_EXISTS (true or false)
 
 ENV_BUDGET_START is the first day of the month in which the budget was first made, which the workflow reads from the
 existing budget (a budget keeps its start date) or, for a new budget, takes from the current month.
@@ -42,6 +42,7 @@ It writes five ARM parameter files into --out-dir (seven, with --contract: the c
     kit.parameters.json               for the Citadel gateway-upgrade module (the kit's bicep/infra/apim-gateway-upgrade/main.bicep)
     recording.parameters.json         for environment/recording/main.bicep (the usage recording: Event Hubs, function app, Cosmos DB)
     foundry.parameters.json           for environment/foundry/main.bicep (the Foundry resource of the agents: project, models, guardrail, private endpoint)
+    operator.parameters.json          for environment/operator/main.bicep (the Operator: its identity, the subnet of its container groups, one role)
     contract.parameters.json          for environment/gateway/contract.bicep, from --contract (environment/contract.json) and
                                       --contract-policy (environment/gateway/contract-policy.xml)
     cases.parameters.json             for environment/cases/main.bicep (the first cases: the function app that finds leads and writes the
@@ -54,7 +55,9 @@ restores, the soft-deleted account of that name instead of leaving a second one 
 recording's storage account, Event Hubs namespace, Cosmos DB account and function app, which are host names too, and the name of the
 Foundry resource of the agents (aif-meternaut-agents-<digest>, also a host name, which is not the model account's). The
 function app's subnet is the first /27 of the virtual network that does not overlap the private endpoint subnet, and the
-subnet of the first cases' Basic plan is the first /27 that overlaps neither of those two. It prints
+subnet of the first cases' Basic plan is the first /27 that overlaps neither of those two. The Operator's subnet (container groups of Azure Container
+Instances) is the last /27 that overlaps none of the three; Microsoft Learn recommends a /24 for container groups, which a small virtual network cannot
+spare, and it is passed as a flag when it is in Azure already (ENV_OPS_SUBNET_EXISTS). It prints
 key=value lines for GitHub to read as step outputs.
 
 The contract names only models that are deployed (environment/models.json) and only the two inference APIs that the
@@ -297,6 +300,23 @@ def web_subnet(vnet: ipaddress.IPv4Network, endpoints: ipaddress.IPv4Network, fu
     raise Problem("ENV_VNET_PREFIX has no free /27 beside the private endpoint subnet and the function subnet, for the Basic plan of the first cases")
 
 
+OPS_SUBNET_PREFIX_LENGTH = 27
+
+
+def ops_subnet(vnet: ipaddress.IPv4Network, endpoints: ipaddress.IPv4Network, functions: ipaddress.IPv4Network, web: ipaddress.IPv4Network) -> ipaddress.IPv4Network:
+    """The subnet of the Operator's container groups (environment/operator/main.bicep): the last /27 of the virtual network that overlaps none of the other three subnets.
+
+    A container group of Azure Container Instances runs in a delegated subnet that holds nothing else. Microsoft Learn recommends at least a /24 for them, because a smaller
+    subnet is known to run out of addresses (the platform lets go of the address of a deleted group slowly). A /24 does not fit a small virtual network, so this is the largest
+    block that the network can spare. It is the last free block, like the Basic plan's subnet, so that no earlier range moves (docs/proposals/07-private-by-default.md)."""
+    taken = (endpoints, functions, web)
+    if vnet.prefixlen <= OPS_SUBNET_PREFIX_LENGTH:
+        for candidate in reversed(list(vnet.subnets(new_prefix=OPS_SUBNET_PREFIX_LENGTH))):
+            if not any(candidate.overlaps(other) for other in taken):
+                return candidate
+    raise Problem("ENV_VNET_PREFIX has no free /27 beside the other three subnets, for the Operator's container groups")
+
+
 def exists_flag(env: dict, name: str) -> bool:
     """Whether the workflow found something in Azure already: true or false, and false when nobody looked.
 
@@ -311,6 +331,11 @@ def exists_flag(env: dict, name: str) -> bool:
 def web_subnet_exists(env: dict) -> bool:
     """Whether the Basic plan's integration subnet is in Azure already."""
     return exists_flag(env, "ENV_WEB_SUBNET_EXISTS")
+
+
+def ops_subnet_exists(env: dict) -> bool:
+    """Whether the Operator's subnet is in Azure already: the template then leaves it alone, for the reason above (AGENTS.md rule 27)."""
+    return exists_flag(env, "ENV_OPS_SUBNET_EXISTS")
 
 
 def recording_endpoints(names: dict[str, str]) -> list[tuple[str, str]]:
@@ -534,6 +559,7 @@ def build(env, models: list[dict], preview: bool = False, contract: dict | None 
     foundry = foundry_names(subscription, group)
     func_subnet = function_subnet(vnet, subnet)
     web = web_subnet(vnet, subnet, func_subnet)
+    ops = ops_subnet(vnet, subnet, func_subnet, web)
     endpoint = f"https://{name}.cognitiveservices.azure.com"
     deployed = [{k: m[k] for k in ("name", "version", "sku", "capacity")} for m in models]
     # The Foundry resource of the agents deploys the same models with a capacity of its own: an agent that calls tools reads everything said so far again at every step,
@@ -639,6 +665,9 @@ def build(env, models: list[dict], preview: bool = False, contract: dict | None 
         "cases_system_principal_known": "true" if cases_system_principal else "false",
         "function_subnet_prefix": str(func_subnet),
         "web_subnet_prefix": str(web),
+        "ops_subnet_prefix": str(ops),
+        "operator_identity_name": "id-meternaut-operator",
+        "operator_subnet_name": "snet-ops",
         "recording_endpoints": ",".join(f"{endpoint_name}:{zone}" for endpoint_name, zone in recording_endpoints(names)),
         "appinsights_name": "appi-meternaut",
         "cases_hub_name": "cases-control",
@@ -663,6 +692,12 @@ def build(env, models: list[dict], preview: bool = False, contract: dict | None 
             "owner": owner,
         }),
         "planted.parameters.json": parameters(planted_parameters(env, location, owner)),
+        "operator.parameters.json": parameters({
+            "location": location,
+            "owner": owner,
+            "opsSubnetPrefix": str(ops),
+            "opsSubnetExists": ops_subnet_exists(env),
+        }),
     }
     if client or preview:
         files["eventhub-loggers.parameters.json"] = parameters({
