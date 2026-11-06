@@ -50,14 +50,14 @@ The tokens of the investigation are on its own line. The `tokens` of `run.finish
 
 ## The model path: the one exception to the gateway rule
 
-Foundry agents call the models of their own resource directly. That does not pass the API Management gateway, so the access agreement's token limits and its usage records do not apply to them. The owner asked whether that is a Citadel architecture, and it is not. There are three ways to put the gateway in the path, and none of them fits the estate today:
+Foundry agents call the models of their own resource directly. That does not pass the API Management gateway, so the access agreement's token limits and its usage records do not apply to them. The owner asked whether that is a Citadel architecture. The direct call is not; a call through the gateway is. The first text of this section said that no route through the gateway fitted the estate. For the API Management connection that was wrong, and it was corrected on 2026-11-06 ([the changelog](../../CHANGELOG.md) has the sources). The routes:
 
 | Option | What it needs | Verdict |
 |---|---|---|
 | **Agents call their own resource (built)** | Nothing more. No key. The guardrail, the traces, the role on the project and Defender for Cloud's AI protection apply | Used now, as a disclosed exception. The deployments' own quota is the token limit (the Investigator's deployment has 50 thousand tokens a minute, see [the rate of the model](#the-rate-of-the-model)) |
-| **Foundry's API Management connection** | The gateway must be Standard v2 or Premium; Learn calls the connection preview, and the project's identity needs access at the gateway | Not possible: the gateway is the Developer tier |
+| **Foundry's API Management connection, with Microsoft Entra authentication** | A connection of category `ApiManagement` with `authType` `AAD` (the project's managed identity, no key), and on the gateway one new API that validates the project's token and sends the call to the model account. Learn (read 2026-11-06): public networking is supported for API Management, and the traditional tiers support the Responses route. Foundry's guardrails do not support connected models, so the content filter and Prompt Shields would have to sit on the model account's deployments | Documented, and not tried against this gateway. It adds one object to the owner's API Management instance, which [rule 15 (b)](../../AGENTS.md) allows only with his approval. No price; the way back is to delete the API and the connection. The agents would call the gateway's public address (inferred: the instance is in External VNet mode) |
 | **Foundry's generic model-gateway connection** | An API key or an OAuth client secret stored in the connection | Possible, with one key in a place that the platform keeps. [Rule 23](../../AGENTS.md) says no key, and the owner decides |
-| **Move the gateway to Standard v2** | A larger instance, at a price well above the 50 US dollar line | The owner's decision |
+| **Move the gateway to Standard v2** | A larger instance: 1.25 US dollars an hour, about 910 a month, at the retail price in Sweden Central (read 2026-11-06). Foundry's own AI Gateway feature needs a v2 instance in the Foundry resource's subscription, and Standard v2 with a private endpoint or Premium v2 once the Foundry resource is private, as this one is; a network-isolated topology needs one too. The connection above needs none of that | The owner's decision, well above the 50 US dollar line |
 
 ## Identity, network, guardrail, tracing
 
