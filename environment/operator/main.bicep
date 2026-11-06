@@ -4,10 +4,16 @@
 // Resource Manager, and the workflow deletes the group (tools/operator-run.py). Nothing runs between two runs, so nothing is paid between two runs.
 //
 // What this template holds, and nothing else: the identity id-<workload>-operator, the subnet snet-ops that container groups run in, that subnet's network
-// security group, and the one role that the first run (the probe, operator/probe.sh) needs: Reader on the project's resource group, to show that the identity signs in
-// and can read. The roles of the later steps (Website Contributor on the two function apps, Log Analytics Reader on the workspace, Azure Event Hubs Data Sender on the
-// control hub) are added to this template with the step that uses each of them, and to the condition of the deploy identity's role-assignment right by a person
-// (environment/BOOTSTRAP.md). The identity is attached to no app and holds no right outside the project's resource group.
+// security group, and three roles. Reader on the project's resource group: the probe (operator/probe.sh) shows that the identity signs in and can read, and the check tools
+// (tools/recording-check.py and tools/cases-check.py, which operator/run-tool.sh runs in the container) read the telemetry of the two function apps through Azure Resource
+// Manager with it (a query of an Application Insights component is Microsoft.Insights/Components/Query/Read, which Reader's */read covers). Azure Event Hubs Data Sender on the
+// two control hubs, usage-control and cases-control, and on nothing else: the check tools send the one event that starts a copy job or a Watch with it. The roles of the later
+// steps (Website Contributor on the two function apps, and a role for the data-plane query of the telemetry) are added to this template with the step that uses each of them. Data
+// Sender is already in the condition of the deploy identity's role-assignment right, so it needs no hand step; Reader needed one (environment/BOOTSTRAP.md). The identity is
+// attached to no app and holds no right outside the project's resource group.
+//
+// The order: the usage recording and the first cases make the Event Hubs namespace and the two control hubs, and this template only reads them (existing resources). So the actions
+// recording and cases run before operator, on any estate. The action operator says so and stops, changing nothing, when a hub is not there.
 //
 // The subnet is made once and then left alone (opsSubnetExists), exactly like snet-cases in environment/cases/main.bicep (AGENTS.md rule 27): the landing zone's
 // network manager puts a route table on a new subnet some minutes after it is made, a container group on the subnet gets its way out through that table, and a
@@ -42,6 +48,11 @@ param opsSubnetPrefix string
 @description('True when the Operator\'s subnet is in Azure already. The template then leaves it alone: a template that makes the subnet again takes away the route table that the landing zone\'s network manager put on it, and the container groups on it lose their way out. The deployment workflow reads this from Azure.')
 param opsSubnetExists bool = false
 
+@description('Name of the Event Hubs namespace: 6 to 50 letters, digits and hyphens. The usage recording makes it and the first cases add their control hub to it, so this template only reads it: the actions recording and cases run first.')
+@minLength(6)
+@maxLength(50)
+param eventHubNamespaceName string
+
 var tags = {
   workload: workload
   component: 'operator'
@@ -53,11 +64,30 @@ var tags = {
 var virtualNetworkName = 'vnet-${workload}'
 var opsSubnetName = 'snet-ops'
 
-// Reader: the one role that the probe needs, to read the project's resource group with the identity's own token.
+// The two control hubs, with the names that environment/recording/main.bicep and environment/cases/main.bicep give them (a test holds the three together).
+var usageControlHubName = 'usage-control'
+var casesControlHubName = 'cases-control'
+
+// Reader: to read the project's resource group, and what is in it, with the identity's own token. Azure Event Hubs Data Sender: to send to one hub.
 var readerRoleId = 'acdd72a7-3385-48ef-bd42-f606fba81ae7'
+var eventHubsDataSenderRoleId = '2b629674-e913-4c01-ae53-ef4638d8f975'
 
 resource vnet 'Microsoft.Network/virtualNetworks@2025-05-01' existing = {
   name: virtualNetworkName
+}
+
+resource eventHubs 'Microsoft.EventHub/namespaces@2024-01-01' existing = {
+  name: eventHubNamespaceName
+}
+
+resource usageControlHub 'Microsoft.EventHub/namespaces/eventhubs@2024-01-01' existing = {
+  parent: eventHubs
+  name: usageControlHubName
+}
+
+resource casesControlHub 'Microsoft.EventHub/namespaces/eventhubs@2024-01-01' existing = {
+  parent: eventHubs
+  name: casesControlHubName
 }
 
 // No rule of its own, like the other subnets': the default rules let a container group reach the virtual network and the internet (the landing zone's
@@ -108,6 +138,29 @@ resource operatorReadsTheGroup 'Microsoft.Authorization/roleAssignments@2022-04-
   name: guid(resourceGroup().id, operatorIdentity.id, readerRoleId)
   properties: {
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', readerRoleId)
+    principalId: operatorIdentity.properties.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+// Each Data Sender role is on the one event hub that the check tool uses, never on the namespace or the group: the Operator sends the control event of a copy job (usage-control) or of a
+// Watch (cases-control) and cannot send to the two usage hubs, nor read any hub. The role is in the condition of the deploy identity's role-assignment right already. A role takes up to
+// ten minutes to apply, so the checks that use it (recording-check and cases-run) are run after that.
+resource operatorSendsUsageControl 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  scope: usageControlHub
+  name: guid(usageControlHub.id, operatorIdentity.id, eventHubsDataSenderRoleId)
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', eventHubsDataSenderRoleId)
+    principalId: operatorIdentity.properties.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+resource operatorSendsCasesControl 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  scope: casesControlHub
+  name: guid(casesControlHub.id, operatorIdentity.id, eventHubsDataSenderRoleId)
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', eventHubsDataSenderRoleId)
     principalId: operatorIdentity.properties.principalId
     principalType: 'ServicePrincipal'
   }

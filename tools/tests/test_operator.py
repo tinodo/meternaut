@@ -734,10 +734,11 @@ class OperatorTemplate(unittest.TestCase):
     def declared(self):
         return {match.group(1): match.group(2) for match in re.finditer(r"(?m)^resource (\w+) '([^'@]+)@[^']+'", self.code)}
 
-    def test_it_declares_the_identity_the_group_s_network_pieces_and_the_one_role_and_nothing_else(self):
+    def test_it_declares_the_identity_the_group_s_network_pieces_the_three_roles_and_reads_the_namespace_and_its_two_hubs(self):
         types = sorted(self.declared().values())
-        self.assertEqual(types, ["Microsoft.Authorization/roleAssignments", "Microsoft.ManagedIdentity/userAssignedIdentities", "Microsoft.Network/networkSecurityGroups",
-                                 "Microsoft.Network/virtualNetworks", "Microsoft.Network/virtualNetworks/subnets"])
+        self.assertEqual(types, ["Microsoft.Authorization/roleAssignments"] * 3 + ["Microsoft.EventHub/namespaces", "Microsoft.EventHub/namespaces/eventhubs", "Microsoft.EventHub/namespaces/eventhubs",
+                                                                                "Microsoft.ManagedIdentity/userAssignedIdentities", "Microsoft.Network/networkSecurityGroups",
+                                                                                "Microsoft.Network/virtualNetworks", "Microsoft.Network/virtualNetworks/subnets"])
 
     def test_the_virtual_network_is_never_declared_again_and_the_subnet_is_made_only_while_it_is_not_there(self):
         # AGENTS.md rule 27: a template that makes the subnet again takes away the route table that the landing zone's network manager put on it.
@@ -765,15 +766,42 @@ class OperatorTemplate(unittest.TestCase):
     def test_the_identity_is_user_assigned_and_named_for_the_operator(self):
         self.assertRegex(self.code, r"resource operatorIdentity 'Microsoft\.ManagedIdentity/userAssignedIdentities@[^']+' = \{\n  name: 'id-\$\{workload\}-operator'")
 
-    def test_the_one_role_is_reader_on_the_resource_group_for_the_identity_only(self):
+    def test_the_roles_are_reader_on_the_group_and_data_sender_on_each_of_the_two_control_hubs_for_the_identity_only(self):
         self.assertIn("var readerRoleId = 'acdd72a7-3385-48ef-bd42-f606fba81ae7'", self.code)
-        (block,) = re.findall(r"(?ms)^resource \w+ 'Microsoft\.Authorization/roleAssignments@[^']+' = \{\n(.*?)^\}", self.code)
-        self.assertIn("scope: resourceGroup()", block)
-        self.assertIn("name: guid(resourceGroup().id, operatorIdentity.id, readerRoleId)", block)
-        self.assertIn("roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', readerRoleId)", block)
-        self.assertIn("principalId: operatorIdentity.properties.principalId", block)
-        self.assertIn("principalType: 'ServicePrincipal'", block)
-        self.assertEqual(len(re.findall(r"RoleId = '", self.code)), 1)
+        self.assertIn("var eventHubsDataSenderRoleId = '2b629674-e913-4c01-ae53-ef4638d8f975'", self.code)
+        self.assertEqual(len(re.findall(r"RoleId = '", self.code)), 2, "two roles, Reader and Data Sender, and no third")
+        self.assertEqual(len(re.findall(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", self.code)), 2)
+        blocks = dict(re.findall(r"(?ms)^resource (\w+) 'Microsoft\.Authorization/roleAssignments@[^']+' = \{\n(.*?)^\}", self.code))
+        self.assertEqual(sorted(blocks), ["operatorReadsTheGroup", "operatorSendsCasesControl", "operatorSendsUsageControl"])
+        expected = {"operatorReadsTheGroup": ("resourceGroup()", "guid(resourceGroup().id, operatorIdentity.id, readerRoleId)", "readerRoleId"),
+                    "operatorSendsUsageControl": ("usageControlHub", "guid(usageControlHub.id, operatorIdentity.id, eventHubsDataSenderRoleId)", "eventHubsDataSenderRoleId"),
+                    "operatorSendsCasesControl": ("casesControlHub", "guid(casesControlHub.id, operatorIdentity.id, eventHubsDataSenderRoleId)", "eventHubsDataSenderRoleId")}
+        for name, (scope, assignment_name, role) in expected.items():
+            block = blocks[name]
+            self.assertIn(f"  scope: {scope}\n", block, name)
+            self.assertIn(f"  name: {assignment_name}\n", block, name)
+            self.assertIn(f"roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', {role})", block, name)
+            self.assertIn("principalId: operatorIdentity.properties.principalId", block, name)
+            self.assertIn("principalType: 'ServicePrincipal'", block, name)
+        for wider in ("scope: eventHubs", "scope: subscription", "scope: tenant", "scope: managementGroup", "scope: usageHub", "scope: piiHub"):
+            self.assertNotIn(wider, self.code, f"{wider}: the Operator may send to the two control hubs and nowhere else")
+
+    def test_the_namespace_and_the_two_control_hubs_are_only_read_here_because_the_usage_recording_and_the_cases_make_them(self):
+        self.assertEqual(len(re.findall(r"Microsoft\.EventHub", self.code)), 3)
+        self.assertRegex(self.code, r"(?m)^resource eventHubs 'Microsoft\.EventHub/namespaces@[^']+' existing = \{\n  name: eventHubNamespaceName\n\}$")
+        for symbol, name in (("usageControlHub", "usageControlHubName"), ("casesControlHub", "casesControlHubName")):
+            self.assertRegex(self.code, rf"(?m)^resource {symbol} 'Microsoft\.EventHub/namespaces/eventhubs@[^']+' existing = \{{\n  parent: eventHubs\n  name: {name}\n\}}$")
+        for word in ("consumergroups", "authorizationRules", "publicNetworkAccess", "disableLocalAuth", "eventHubs.properties", "ControlHub.properties"):
+            self.assertNotIn(word, self.code, f"{word}: nothing of the namespace or the hubs is written or read here")
+
+    def test_the_names_of_the_hubs_are_the_ones_that_the_usage_recording_and_the_first_cases_give_them(self):
+        # A hub that is renamed in the template that makes it must be renamed here too: the role of the Operator is on the hub by its name, and a template that reads a hub that is not there fails.
+        self.assertIn("var usageControlHubName = 'usage-control'", self.code)
+        self.assertIn("var casesControlHubName = 'cases-control'", self.code)
+        self.assertIn("var controlHubName = 'usage-control'", text("environment/recording/main.bicep"))
+        self.assertIn("var controlHubName = 'cases-control'", text("environment/cases/main.bicep"))
+        self.assertEqual(sorted(re.findall(r"CONTROL_HUB = \"([a-z-]+)\"", text("tools/recording-check.py") + text("tools/cases-check.py"))), ["cases-control", "usage-control"],
+                         "and the tools send to the hubs of the same names")
 
     def test_it_outputs_the_ids_that_the_workflow_and_the_container_need_and_nothing_secret(self):
         outputs = re.findall(r"(?m)^output (\w+) string = (.+)$", self.code)
@@ -782,9 +810,10 @@ class OperatorTemplate(unittest.TestCase):
     def test_every_parameter_says_what_it_is_and_the_text_ones_are_bounded(self):
         for match in re.finditer(r"(?m)^((?:@\w+\([^\n]*\)\n)+)param (\w+) (\w+)", self.code):
             self.assertIn("@description(", match.group(1), match.group(2))
-        for name in ("owner", "opsSubnetPrefix"):
+        for name in ("owner", "opsSubnetPrefix", "eventHubNamespaceName"):
             self.assertRegex(self.code, rf"(?m)^@minLength\(\d+\)\n(?:@maxLength\(\d+\)\n)?param {name} string$")
         self.assertRegex(self.code, r"(?m)^@minLength\(9\)\n@maxLength\(18\)\nparam opsSubnetPrefix string$")
+        self.assertRegex(self.code, r"(?m)^@minLength\(6\)\n@maxLength\(50\)\nparam eventHubNamespaceName string$", "the limits of an Event Hubs namespace's name, as in the usage recording's template")
 
     def test_there_is_no_key_in_it(self):
         for word in ("listKeys", "listSecrets", "AccountKey", "SharedAccessKey", "primaryKey", "instrumentationKey", "allowSharedKeyAccess: true", "disableLocalAuth: false"):
@@ -1038,6 +1067,385 @@ class ProbeScript(unittest.TestCase):
         self.assertEqual((done.returncode, done.stderr), (0, ""))
 
 
+CLIENT_ID = "11111111-2222-3333-4444-555555555555"
+JWT_OF_A_TOKEN = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJvaWQiOiIxMTExMTExMS0yMjIyLTMzMzMtNDQ0NC01NTU1NTU1NTU1NTUifQ.c2lnbmF0dXJlLXNpZ25hdHVyZS1zaWduYXR1cmU"
+BEARER_OF_A_TOKEN = "Bearer Zm9vYmFyYmF6cXV4MDEyMzQ1Njc4OWFiY2RlZg"
+
+# Stand-ins for what operator/run-tool.sh calls. Every call of az, python3 and sleep is written to FAKE_LOG, so that a test sees what was called and in what order.
+STUB_AZ_FOR_TOOLS = """#!/bin/bash
+# stand-in for az: FAKE_AZ_LOGIN is ok, fail or twice (it fails twice and then works); FAKE_AZ_ACCOUNT is ok or fail
+echo "az $*" >> "$FAKE_LOG"
+if [ "$1" = login ]; then
+  case "${FAKE_AZ_LOGIN:-ok}" in
+    ok) exit 0 ;;
+    twice) if [ "$(grep -c '^az login' "$FAKE_LOG")" -ge 3 ]; then exit 0; fi ;;
+  esac
+  echo "ERROR: Failed to connect to MSI 11111111-2222-3333-4444-555555555555 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa $GITHUB_TOKEN" >&2
+  echo "second line that must not show" >&2
+  exit 1
+fi
+if [ "$1" = account ] && [ "$2" = set ]; then
+  if [ "${FAKE_AZ_ACCOUNT:-ok}" = ok ]; then exit 0; fi
+  echo "ERROR: The subscription of '$4' doesn't exist." >&2
+  exit 1
+fi
+echo "unexpected az call" >&2
+exit 9
+"""
+
+STUB_PYTHON_FOR_TOOLS = """#!/bin/bash
+# stand-in for python3: -c asks for the version (FAKE_PYTHON_VERSION, or fails when it is "broken"); anything else is the tool, which logs its arguments, prints FAKE_TOOL_OUTPUT
+# (NOTHING means no line) and FAKE_TOOL_ERROR on standard error, and exits with FAKE_TOOL_EXIT
+if [ "$1" = -c ]; then
+  if [ "${FAKE_PYTHON_VERSION:-3.12.7}" = broken ]; then exit 1; fi
+  echo "${FAKE_PYTHON_VERSION:-3.12.7}"
+  exit 0
+fi
+{ printf 'tool-argv:'; for argument in "$@"; do printf ' [%s]' "$argument"; done; printf '\\n'; } >> "$FAKE_LOG"
+output="${FAKE_TOOL_OUTPUT:-tool output\\n}"
+if [ "$output" != NOTHING ]; then printf '%b' "$output"; fi
+printf '%b' "${FAKE_TOOL_ERROR:-}" >&2
+exit "${FAKE_TOOL_EXIT:-0}"
+"""
+
+STUB_SLEEP = """#!/bin/bash
+echo "sleep $*" >> "$FAKE_LOG"
+"""
+
+
+class Ran:
+    """What one run of operator/run-tool.sh did: the process, its lines, the calls that the stand-ins logged, and the volume that it was given."""
+
+    def __init__(self, done, calls, volume, tmp):
+        self.done, self.lines, self.calls, self.volume, self.tmp = done, done.stdout.splitlines(), calls, volume, tmp
+
+    @property
+    def tool_calls(self):
+        return [call for call in self.calls if call.startswith("tool-argv:")]
+
+
+class ScriptRunner:
+    """Runs operator/run-tool.sh with bash, with the stand-ins first on the path of the script, and says what it did."""
+
+    def run_tool(self, env=None, stubs=None, tool="recording-check", files=None, contents=None):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            bin_dir = tmp / "bin"
+            bin_dir.mkdir()
+            for name, body in {"az": STUB_AZ_FOR_TOOLS, "python3": STUB_PYTHON_FOR_TOOLS, "timeout": STUB_TIMEOUT, "sleep": STUB_SLEEP, **(stubs or {})}.items():
+                (bin_dir / name).write_text(body, encoding="utf-8", newline="\n")
+                (bin_dir / name).chmod(0o755)  # on Linux a file that is not executable is skipped in the search of the path, and the real program would answer
+            volume = tmp / "op"
+            volume.mkdir()
+            for name in ([f"{tool}.py"] if files is None else files):
+                (volume / name).write_bytes((contents or {}).get(name, b"# the tool\n"))
+            log = tmp / "log.txt"
+            log.write_text("", encoding="utf-8")
+            script = tmp / "run-tool.sh"
+            script.write_text(text("operator/run-tool.sh"), encoding="utf-8", newline="\n")
+            environment = {**os.environ, "STUBS": posix(bin_dir), "TOOL_VOLUME": posix(volume), "FAKE_LOG": posix(log), "OPERATOR_CLIENT_ID": CLIENT_ID, "TOOL_NAME": tool,
+                           "TOOL_ARGS": "run --namespace evhns-example --job all --minutes 20", "GITHUB_TOKEN": TOKEN_OF_THE_RUN, **(env or {})}
+            for name in [name for name, value in environment.items() if value is None]:
+                del environment[name]
+            done = subprocess.run([BASH, "-c", 'PATH="$STUBS:$PATH"; export PATH; exec bash "$0"', posix(script)], capture_output=True, text=True, env=environment, cwd=tmp)
+            return Ran(done, log.read_text(encoding="utf-8").splitlines(), posix(volume), tmp)
+
+
+@unittest.skipIf(BASH is None, "no bash on this machine")
+class RunToolScript(ScriptRunner, unittest.TestCase):
+    """operator/run-tool.sh against stand-ins for az, python3, timeout and sleep: what it refuses, what it runs, what it prints, and that the exit code is the tool's."""
+
+    def test_a_good_run_signs_in_runs_the_tool_with_its_arguments_as_separate_words_and_ends_with_the_exit_code(self):
+        ran = self.run_tool()
+        self.assertEqual((ran.done.returncode, ran.done.stderr), (0, ""))
+        self.assertEqual(ran.lines, ["ok: python3 3.12.7", "ok: az login --identity", "ok: running recording-check.py run", "tool output", "run-tool-done: exit code 0"])
+        self.assertEqual(ran.calls, [f"az login --identity --client-id {CLIENT_ID} --allow-no-subscriptions --output none",
+                                     f"tool-argv: [{ran.volume}/recording-check.py] [run] [--namespace] [evhns-example] [--job] [all] [--minutes] [20]",
+                                     "sleep 20"], "the sign-in, the tool, and the hold that lets the log be read whole")
+
+    def test_the_exit_code_of_the_tool_is_the_exit_code_of_the_container_and_the_log_is_still_held_open(self):
+        for code in (1, 2, 7, 124):
+            ran = self.run_tool({"FAKE_TOOL_EXIT": str(code), "FAKE_TOOL_OUTPUT": "the verdict\\n"})
+            self.assertEqual(ran.done.returncode, code, code)
+            self.assertEqual(ran.lines[-2:], ["the verdict", f"run-tool-done: exit code {code}"])
+            self.assertEqual(ran.calls[-1], "sleep 20", "a failed tool's lines are read whole too")
+
+    def test_the_lines_of_the_tool_come_in_the_order_it_wrote_them_standard_error_included(self):
+        ran = self.run_tool({"FAKE_TOOL_OUTPUT": "first\\nsecond\\n", "FAKE_TOOL_ERROR": "error: third\\n", "FAKE_TOOL_EXIT": "1"})
+        self.assertEqual(ran.lines[3:], ["first", "second", "error: third", "run-tool-done: exit code 1"])
+
+    def test_the_hold_is_the_one_that_is_asked_for_after_the_tool_and_none_at_zero(self):
+        ran = self.run_tool({"TOOL_HOLD_SECONDS": "7"})
+        self.assertEqual(len(ran.calls), 3)
+        self.assertEqual(ran.calls[-1], "sleep 7", "the hold comes after the tool")
+        self.assertTrue(ran.calls[1].startswith("tool-argv:"))
+        ran = self.run_tool({"TOOL_HOLD_SECONDS": "0"})
+        self.assertEqual([call for call in ran.calls if call.startswith("sleep")], [])
+        self.assertEqual(ran.done.returncode, 0)
+        ran = self.run_tool({"TOOL_HOLD_SECONDS": "60"})
+        self.assertIn("sleep 60", ran.calls)
+
+    def test_a_string_that_looks_like_a_token_is_hidden_in_what_the_tool_prints_and_the_rest_is_not(self):
+        output = f"The token was {JWT_OF_A_TOKEN} and the header Authorization: {BEARER_OF_A_TOKEN} stays out.\\nRequest 0123456789abcdef0123456789abcdef: /subscriptions/x/resourceGroups/rg-a/providers/Microsoft.Insights/components/appi-b\\n"
+        ran = self.run_tool({"FAKE_TOOL_OUTPUT": output})
+        self.assertEqual(ran.lines[3], "The token was <token hidden> and the header Authorization: Bearer <token hidden> stays out.")
+        self.assertEqual(ran.lines[4], "Request 0123456789abcdef0123456789abcdef: /subscriptions/x/resourceGroups/rg-a/providers/Microsoft.Insights/components/appi-b", "ids and names are not hidden")
+        for secret in (JWT_OF_A_TOKEN, BEARER_OF_A_TOKEN.split()[1], JWT_OF_A_TOKEN.split(".")[1], TOKEN_OF_THE_RUN):
+            self.assertNotIn(secret, ran.done.stdout + ran.done.stderr)
+
+    def test_a_tool_that_prints_nothing_gives_the_own_lines_only_and_a_long_line_passes_whole(self):
+        ran = self.run_tool({"FAKE_TOOL_OUTPUT": "NOTHING"})
+        self.assertEqual(ran.lines, ["ok: python3 3.12.7", "ok: az login --identity", "ok: running recording-check.py run", "run-tool-done: exit code 0"])
+        long_line = "result " + "x" * 3000
+        self.assertEqual(self.run_tool({"FAKE_TOOL_OUTPUT": long_line + "\\n"}).lines[3], long_line)
+
+    def test_a_sign_in_that_fails_is_tried_three_times_ten_seconds_apart_and_then_stops_the_run_without_the_tool(self):
+        ran = self.run_tool({"FAKE_AZ_LOGIN": "fail"})
+        self.assertEqual(ran.done.returncode, 3)
+        self.assertEqual(ran.lines, ["ok: python3 3.12.7", "FAIL: az login --identity: ERROR: Failed to connect to MSI <id> <hidden> <hidden>", "run-tool-done: exit code 3"])
+        logins = [call for call in ran.calls if call.startswith("az login")]
+        self.assertEqual(len(logins), 3)
+        self.assertEqual([call for call in ran.calls if call.startswith("sleep")], ["sleep 10", "sleep 10"], "a pause between the tries and none after the last one")
+        self.assertEqual(ran.tool_calls, [])
+        self.assertNotIn("second line that must not show", ran.done.stdout)
+        self.assertNotIn(TOKEN_OF_THE_RUN, ran.done.stdout + ran.done.stderr)
+
+    def test_a_sign_in_that_works_at_the_third_try_goes_on_to_the_tool(self):
+        ran = self.run_tool({"FAKE_AZ_LOGIN": "twice"})
+        self.assertEqual(ran.done.returncode, 0)
+        self.assertEqual(len([call for call in ran.calls if call.startswith("az login")]), 3)
+        self.assertEqual(len(ran.tool_calls), 1)
+        self.assertIn("ok: az login --identity", ran.lines)
+
+    def test_the_tool_is_never_run_twice_whatever_it_says(self):
+        for code in ("0", "1", "3"):
+            self.assertEqual(len(self.run_tool({"FAKE_TOOL_EXIT": code}).tool_calls), 1, "a tool that sends an event is not tried again: the event may have arrived")
+
+    def test_the_subscription_is_made_the_default_only_when_it_is_given(self):
+        subscription = "22222222-3333-4444-5555-666666666666"
+        ran = self.run_tool({"OPERATOR_SUBSCRIPTION": subscription})
+        self.assertEqual(ran.done.returncode, 0)
+        self.assertIn(f"az account set --subscription {subscription}", ran.calls)
+        self.assertLess(ran.calls.index(f"az account set --subscription {subscription}"), ran.calls.index(ran.tool_calls[0]))
+        self.assertIn("ok: az account set", ran.lines)
+        self.assertEqual([call for call in self.run_tool().calls if call.startswith("az account")], [])
+        ran = self.run_tool({"OPERATOR_SUBSCRIPTION": subscription, "FAKE_AZ_ACCOUNT": "fail"})
+        self.assertEqual(ran.done.returncode, 3)
+        self.assertIn("FAIL: az account set: ERROR: The subscription of '<id>' doesn't exist.", ran.lines)
+        self.assertEqual(ran.tool_calls, [])
+
+    def test_the_tool_that_is_named_is_the_tool_that_runs(self):
+        for name in ("recording-check", "cases-check"):
+            ran = self.run_tool(tool=name, files=["cases-check.py", "recording-check.py"], env={"TOOL_NAME": name})
+            self.assertEqual(ran.tool_calls[0].split(" ")[1], f"[{ran.volume}/{name}.py]")
+            self.assertIn(f"ok: running {name}.py run", ran.lines)
+
+    def refused(self, env=None, **kwargs):
+        ran = self.run_tool(env, **kwargs)
+        self.assertEqual(ran.done.returncode, 2, (env, ran.lines))
+        self.assertEqual(len(ran.lines), 2, ran.lines)
+        self.assertRegex(ran.lines[0], r"^FAIL: ")
+        self.assertEqual(ran.lines[1], "run-tool-done: exit code 2")
+        self.assertEqual(ran.calls, [], "nothing runs after a refusal: no sign-in, no tool, no hold")
+        self.assertFalse((ran.tmp / "canary").exists(), "nothing of the input was run as a command")
+        return ran
+
+    def test_an_identity_that_is_not_a_client_id_is_refused(self):
+        for value in (None, "", "not-a-guid", "11111111-2222-3333-4444-55555555555", "11111111-2222-3333-4444-5555555555555", f"{CLIENT_ID}; touch canary", f"{CLIENT_ID}\n", f"x{CLIENT_ID}",
+                      "$(touch canary)"):
+            self.refused({"OPERATOR_CLIENT_ID": value})
+        self.assertIn("OPERATOR_CLIENT_ID", self.refused({"OPERATOR_CLIENT_ID": "nope"}).lines[0])
+
+    def test_a_subscription_that_is_not_an_id_is_refused_and_an_empty_one_is_none(self):
+        for value in ("sub", "22222222-3333-4444-5555-66666666666", "22222222-3333-4444-5555-666666666666 --x", "$(touch canary)"):
+            self.refused({"OPERATOR_SUBSCRIPTION": value})
+        self.assertEqual(self.run_tool({"OPERATOR_SUBSCRIPTION": ""}).done.returncode, 0)
+
+    def test_a_tool_name_that_is_not_a_plain_name_or_not_in_the_volume_is_refused(self):
+        for value in (None, "", "../recording-check", "recording-check.py", "Recording-check", "recording check", "recording-check;touch canary", "recording_check", "1recording", "-recording",
+                      "a" * 41, "recording-check\n", "$(touch canary)", "recording-check/x", "/etc/passwd"):
+            self.refused({"TOOL_NAME": value}, files=["recording-check.py"])
+        ran = self.refused({"TOOL_NAME": "cases-check"}, files=["recording-check.py"])
+        self.assertIn("cases-check.py is not in the secret volume", ran.lines[0])
+        self.refused({"TOOL_NAME": "recording-check"}, files=[])
+
+    def test_arguments_that_are_empty_too_long_or_hold_anything_but_plain_characters_are_refused_without_being_printed_back(self):
+        for value in (None, "", "   ", "r" * 601, "run " + "a" * 600):
+            self.refused({"TOOL_ARGS": value})
+        for character in ";&|$()`\"'<>*?!\\{}[]~#%,@+\n\t\r":
+            ran = self.refused({"TOOL_ARGS": f"run --namespace a{character}b touch canary"})
+            self.assertNotIn("touch", ran.done.stdout, repr(character))
+        for value in ("run --namespace $(touch canary)", "run; touch canary", "run `touch canary`", "run --x=${HOME}", "run --x=a b\ntouch canary", "run --x=é", "run --x=*", "run --x=?"):
+            ran = self.refused({"TOOL_ARGS": value})
+            self.assertNotIn(value, ran.done.stdout)
+
+    def test_arguments_must_start_with_the_command_of_the_tool(self):
+        for value in ("--run", "Run", "1run", "-x run", "run1", "/run", "run" + "n" * 20 + " x", ".run"):
+            self.refused({"TOOL_ARGS": value})
+        self.assertEqual(self.run_tool({"TOOL_ARGS": "functions --site /a/b --minutes 5"}).done.returncode, 0)
+
+    def test_a_hold_that_is_not_a_number_from_0_to_60_is_refused_and_an_empty_one_is_the_default(self):
+        for value in ("abc", "-1", "61", "100", "1.5", "1 2", "$(touch canary)", "007x"):
+            self.refused({"TOOL_HOLD_SECONDS": value})
+        ran = self.run_tool({"TOOL_HOLD_SECONDS": ""})
+        self.assertIn("sleep 20", ran.calls)
+        self.assertEqual(self.run_tool({"TOOL_HOLD_SECONDS": "05"}).done.returncode, 0)
+
+    def test_the_arguments_that_pass_reach_the_tool_as_the_words_they_are_and_nothing_is_expanded(self):
+        value = "run --namespace evhns-example.servicebus.windows.net --insights /subscriptions/sub-id/resourceGroups/rg_a.b/providers/Microsoft.Insights/components/appi-x --job all --minutes=20 --a:b -- -"
+        ran = self.run_tool({"TOOL_ARGS": value})
+        self.assertEqual(ran.done.returncode, 0)
+        words = " ".join(f"[{word}]" for word in value.split())
+        self.assertEqual(ran.tool_calls, [f"tool-argv: [{ran.volume}/recording-check.py] {words}"])
+        # extra spaces between words, and at the ends, are not words
+        ran = self.run_tool({"TOOL_ARGS": "  run   --job  all "})
+        self.assertEqual(ran.tool_calls, [f"tool-argv: [{ran.volume}/recording-check.py] [run] [--job] [all]"])
+
+    def test_a_python_that_does_not_run_stops_the_run_with_3_and_the_tool_is_not_called(self):
+        ran = self.run_tool({"FAKE_PYTHON_VERSION": "broken"})
+        self.assertEqual(ran.done.returncode, 3)
+        self.assertEqual(ran.lines, ["FAIL: python3 does not run", "run-tool-done: exit code 3"])
+        self.assertEqual(ran.tool_calls, [])
+
+    def test_every_line_of_its_own_is_short_and_starts_with_ok_or_fail(self):
+        for ran in (self.run_tool(), self.run_tool({"FAKE_AZ_LOGIN": "fail"}), self.run_tool({"TOOL_ARGS": "x;"}), self.run_tool({"TOOL_NAME": "a" * 200})):
+            for line in ran.lines:
+                if line.startswith("run-tool-done: ") or line == "tool output":
+                    continue
+                self.assertRegex(line, r"^(ok|FAIL): ", line)
+                self.assertLessEqual(len(line), 130, line)
+
+    def test_it_runs_with_nothing_set_and_still_ends_well(self):
+        ran = self.run_tool({"OPERATOR_CLIENT_ID": None, "TOOL_NAME": None, "TOOL_ARGS": None, "TOOL_VOLUME": None, "TOOL_HOLD_SECONDS": None})
+        self.assertEqual(ran.done.returncode, 2)
+        self.assertEqual(ran.done.stderr, "")
+        self.assertEqual(ran.lines[-1], "run-tool-done: exit code 2")
+
+    def test_the_script_names_only_what_it_may_read_from_the_environment(self):
+        source = text("operator/run-tool.sh")
+        used = set(re.findall(r"\$\{?(OPERATOR_\w+|TOOL_\w+|FAKE_\w+|GITHUB_\w+)", source))
+        self.assertEqual(used, {"OPERATOR_CLIENT_ID", "OPERATOR_SUBSCRIPTION", "TOOL_NAME", "TOOL_ARGS", "TOOL_HOLD_SECONDS", "TOOL_VOLUME"})
+
+    def test_the_script_evaluates_nothing_and_does_not_glob_and_uses_no_program_that_the_image_may_lack(self):
+        source = re.sub(r"(?m)^\s*#.*$", "", text("operator/run-tool.sh"))
+        for word in (r"\beval\b", r"\bsource\b", r"(?m)^\s*\. ", r"\bbash -c\b", r"\bsh -c\b", r"\bxargs\b", r"\bawk\b", r"\bjq\b", r"\bgawk\b", r"\bnslookup\b", r"\bdig\b", r"\bping\b", r"\bcurl\b",
+                     r"\bpython3? -c .*\$", r"`"):
+            self.assertNotRegex(source, word, word)
+        self.assertIn("\nset -f\n", source, "no globbing")
+        self.assertIn("\nset -u\n", source)
+        self.assertEqual(source.count('"${words[@]}"'), 1, "the words are handed over as separate arguments, quoted")
+        self.assertIn("IFS=' ' read -r -a words <<< \"$args\"", source)
+
+    def test_the_script_is_valid_bash(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            script = Path(tmp) / "run-tool.sh"
+            script.write_text(text("operator/run-tool.sh"), encoding="utf-8", newline="\n")
+            done = subprocess.run([BASH, "-n", posix(script)], capture_output=True, text=True)
+        self.assertEqual((done.returncode, done.stderr), (0, ""))
+
+    def test_the_script_has_no_key_and_prints_no_variable_of_its_environment(self):
+        source = re.sub(r"(?m)^\s*#.*$", "", text("operator/run-tool.sh"))
+        for word in ("listKeys", "listSecrets", "AccountKey", "SharedAccessKey", "primaryKey", "--password", "--secret", "get-access-token"):
+            self.assertNotIn(word, source, word)
+        for line in source.splitlines():
+            if re.match(r"\s*(say|printf|echo)\b", line):
+                self.assertNotRegex(line, r"\$\{?(OPERATOR_CLIENT_ID|OPERATOR_SUBSCRIPTION|TOOL_ARGS|args|GITHUB_\w+)\b", f"a value of the input is never printed: {line.strip()}")
+
+
+def real_python():
+    """The python3 of the image, here the Python that runs the tests. On Windows, Git's bash gets the script as a Windows path and no argument of the tool is converted."""
+    return f"""#!/bin/bash
+export MSYS_NO_PATHCONV=1
+if [ "$1" = -c ]; then exec "{posix(sys.executable)}" "$@"; fi
+script=$1
+shift
+if command -v cygpath > /dev/null 2>&1; then script=$(cygpath -w "$script"); fi
+exec "{posix(sys.executable)}" "$script" "$@"
+"""
+
+
+@unittest.skipIf(BASH is None, "no bash on this machine")
+class RunToolWithTheRealTools(ScriptRunner, unittest.TestCase):
+    """operator/run-tool.sh with the real tools of tools/ in the volume and the real Python: the chain of a check, up to the exit code, as far as it goes without Azure. A tool that asked az for a
+    token would call the program of AZ, which is a path that does not exist here: these tests stop before that, and nothing can reach a real Azure CLI."""
+
+    SITE_ERROR = "error: --site is the resource id of the function app (a Microsoft.Web/sites resource)"
+
+    def run_real(self, tool, args, files, **extra):
+        contents = {name: (ROOT / "tools" / name).read_bytes() for name in files}
+        return self.run_tool({"TOOL_NAME": tool, "TOOL_ARGS": args, "AZ": "/nonexistent/az-that-must-not-be-called", **extra}, stubs={"python3": real_python()}, tool=tool, files=files,
+                             contents=contents)
+
+    def test_the_real_tool_runs_from_the_volume_with_the_real_python_and_its_exit_code_and_error_line_come_out(self):
+        ran = self.run_real("recording-check", "functions --site not-an-id", ["recording-check.py"])
+        self.assertEqual(ran.done.returncode, 1, ran.done.stdout)
+        version = "%d.%d.%d" % sys.version_info[:3]
+        self.assertEqual(ran.lines, [f"ok: python3 {version}", "ok: az login --identity", "ok: running recording-check.py functions", self.SITE_ERROR, "run-tool-done: exit code 1"])
+        self.assertEqual(ran.calls, [f"az login --identity --client-id {CLIENT_ID} --allow-no-subscriptions --output none", "sleep 20"], "the sign-in, nothing asked of Azure, and the hold")
+
+    def test_the_cases_check_finds_the_recording_check_in_the_same_folder_and_needs_it(self):
+        ran = self.run_real("cases-check", "functions --site not-an-id", ["cases-check.py", "recording-check.py"])
+        self.assertEqual(ran.done.returncode, 1)
+        self.assertEqual(ran.lines[3:], [self.SITE_ERROR, "run-tool-done: exit code 1"], "the cases check ran, loaded the recording check and refused the site")
+        ran = self.run_real("cases-check", "functions --site not-an-id", ["cases-check.py"])
+        self.assertEqual(ran.done.returncode, 1)
+        self.assertIn("recording-check.py", "\n".join(ran.lines), "without the recording check beside it the cases check stops at its import, and the log says which file is missing")
+        self.assertEqual(ran.lines[-1], "run-tool-done: exit code 1")
+        self.assertNotIn(self.SITE_ERROR, ran.lines)
+
+    def test_a_tool_that_would_start_a_job_refuses_until_the_container_is_told_that_it_is_in_a_github_actions_run(self):
+        insights = f"/subscriptions/{SUBSCRIPTION}/resourceGroups/{GROUP}/providers/Microsoft.Insights/components/appi-example"
+        args = f"run --namespace evhns-example --insights {insights} --job all --minutes 1"
+        for tool, files, arguments in (("recording-check", ["recording-check.py"], args), ("cases-check", ["cases-check.py", "recording-check.py"], args.replace(" --job all", ""))):
+            ran = self.run_real(tool, arguments, files, GITHUB_ACTIONS=None)
+            self.assertEqual(ran.done.returncode, 1, tool)
+            self.assertIn("error: this command starts a job that writes to Azure, and only a GitHub Actions run may do that (AGENTS.md rule 18)", ran.lines, tool)
+            self.assertEqual([call for call in ran.calls if call.startswith("az account")], [], "nothing was asked of Azure: the refusal comes first")
+
+
+class TheToolsInTheContainer(unittest.TestCase):
+    """The tools that the Operator runs are the very files of tools/, and they run in the image's Python 3.12 and from a folder that holds only the files that are sent."""
+
+    TOOLS = ("recording-check.py", "cases-check.py")
+
+    def test_both_parse_as_python_3_12_and_import_the_standard_library_only(self):
+        # CI and the function app use Python 3.13, the image of the Operator has 3.12: a syntax of 3.13 would pass every test here and fail in the container.
+        import ast
+        for name in self.TOOLS:
+            tree = ast.parse(text(f"tools/{name}"), feature_version=(3, 12))
+            imported = {alias.name.split(".")[0] for node in ast.walk(tree) if isinstance(node, ast.Import) for alias in node.names}
+            imported |= {node.module.split(".")[0] for node in ast.walk(tree) if isinstance(node, ast.ImportFrom) and node.module}
+            self.assertLessEqual(imported, set(sys.stdlib_module_names), f"{name}: {sorted(imported - set(sys.stdlib_module_names))}")
+
+    def test_the_tools_run_from_a_folder_that_holds_only_them_like_the_secret_volume_and_the_cases_check_needs_the_recording_check_beside_it(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            volume = Path(tmp)
+            for name in self.TOOLS:
+                (volume / name).write_bytes((ROOT / "tools" / name).read_bytes())
+            for name in self.TOOLS:
+                done = subprocess.run([sys.executable, "-B", str(volume / name), "run", "--help"], capture_output=True, text=True, cwd=volume)
+                self.assertEqual((done.returncode, done.stderr), (0, ""), name)
+                self.assertIn("--namespace", done.stdout, name)
+            self.assertEqual(sorted(path.name for path in volume.iterdir()), sorted(self.TOOLS), "nothing was written to the folder: no bytecode, no cache")
+            (volume / "recording-check.py").unlink()
+            done = subprocess.run([sys.executable, "-B", str(volume / "cases-check.py"), "run", "--help"], capture_output=True, text=True, cwd=volume)
+            self.assertNotEqual(done.returncode, 0, "cases-check.py loads recording-check.py from its own folder, so both are sent")
+            self.assertIn("recording-check.py", done.stderr)
+
+    def test_the_tools_refuse_to_send_outside_a_github_actions_run_which_the_container_is_told_it_is_in(self):
+        # The Operator's group is made only by a run of the Hub workflow (operator-run.py refuses anywhere else), so the workflow tells the container so with GITHUB_ACTIONS=true.
+        with tempfile.TemporaryDirectory() as tmp:
+            for name in self.TOOLS:
+                (Path(tmp) / name).write_bytes((ROOT / "tools" / name).read_bytes())
+            insights = f"/subscriptions/{SUBSCRIPTION}/resourceGroups/{GROUP}/providers/Microsoft.Insights/components/appi-example"
+            for name in self.TOOLS:
+                environment = {key: value for key, value in os.environ.items() if key != "GITHUB_ACTIONS"}
+                done = subprocess.run([sys.executable, "-B", str(Path(tmp) / name), "run", "--namespace", "evhns-example", "--insights", insights], capture_output=True, text=True, env=environment,
+                                      cwd=tmp)
+                self.assertEqual(done.returncode, 1, name)
+                self.assertIn("only a GitHub Actions run may do that", done.stderr, name)
+
+
 class Record(unittest.TestCase):
     """docs/proposals/07-private-by-default.md: the points that the design rests on are written down."""
 
@@ -1058,6 +1466,88 @@ class Record(unittest.TestCase):
         self.assertNotRegex(public, r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", "no id")
         self.assertIn("437914ee-c176-4fff-8986-7e05eb971365", self.page, "the policy that has to be assigned in the landing zone is named by its id")
         self.assertNotRegex(self.page, r"aif-meternaut-[0-9a-f]{8}|func-meternaut-(usage|cases)-[0-9a-f]{8}|evhns-meternaut-[0-9a-f]{8}", "no real resource name")
+
+    def test_it_says_what_the_probe_proved_and_no_longer_says_that_nothing_has_run(self):
+        self.assertIn("## What the probe proved on 2026-11-06", self.page)
+        section = self.page.split("## What the probe proved on 2026-11-06")[1].split("\n## ")[0]
+        for words in ("ran twice on the real estate and every check passed both times", "`az login --identity` and `az group show`", "resolve to private addresses", "`api.applicationinsights.io` and `api.loganalytics.io`",
+                      "A file of 400,000 bytes arrived intact", "about one to two minutes", "neither of the two fallbacks", "What is still open: publishing code to the private deployment sites",
+                      "the telemetry read once Application Insights is private", "the check of the console's front door"):
+            self.assertIn(words, section, words)
+        status = self.page.split("\n")[2]
+        self.assertTrue(status.startswith("**Status: decided on 2026-11-06"), status[:80])
+        self.assertNotIn("None of it has run on the real estate", self.page)
+        self.assertNotIn("proposed on 2026-11-06", status)
+
+    def test_it_says_how_the_checks_run_in_the_operator_what_reader_covers_and_that_the_data_plane_query_is_the_next_step_and_not_built(self):
+        heading = "## The checks of the usage recording and the first cases run in the Operator"
+        self.assertIn(heading, self.page)
+        section = self.page.split(heading)[1].split("\n## ")[0]
+        for words in ("[`operator/run-tool.sh`](../../operator/run-tool.sh)", "arguments made of letters, digits and `. / : _ = -` only", "nothing is evaluated or expanded", "three tries", "It never runs the tool twice",
+                      "`GITHUB_ACTIONS=true`", "the two tools, about 33 KB", "`tools/cases-check.py` loads `tools/recording-check.py` from its own folder, so both files are sent for `cases-run`",
+                      "The tools have no new option and no new behaviour", "parses both tools as 3.12",
+                      "`Microsoft.Insights/Components/Query/Read`", "the built-in Reader role includes `*/read` for the control plane", "The Operator holds Reader on the project's resource group already, so the read needs no new role",
+                      "That the endpoint is authorised by that operation is (inferred)",
+                      "\"can't use Azure Monitor private links\"", "the query of the tools stops working", "`https://api.applicationinsights.io/v1/apps/<appId>/query`", "a Microsoft Entra token for that resource",
+                      "That is the next step, and it is not built here.", "is still made from the runner through Azure Resource Manager",
+                      "1,500 seconds for `recording-check`", "2,400 seconds for `cases-run`", "`op-check-<run id>`", "A stopped container keeps only the last 16 KB of its log", "the script stays 20 seconds"):
+            self.assertIn(words, section, words)
+
+    def test_it_lists_the_two_roles_of_the_checks_the_order_of_the_work_and_what_is_not_checked_yet(self):
+        roles = self.page.split("| Role | Where | What the Operator does with it | Added with |")[1].split("\n\n")[0]
+        self.assertIn("| Azure Event Hubs Data Sender | The two control hubs, `usage-control` and `cases-control`, one role on each hub |", roles)
+        self.assertIn("| Reader | The project's resource group |", roles)
+        self.assertIn("Azure Event Hubs Data Sender was in it already", self.page, "the role needs no hand step")
+        self.assertIn("inside rule 29", self.page)
+        order = self.page.split("## The order of the work")[1].split("\n## ")[0]
+        for words in ("**The Operator and the probe** (done).", "**The checks run in the Operator** (this change, built, not yet run).", "The order on an estate is `recording`, `cases`, `operator`",
+                      "about ten minutes are waited for them to apply", "**Event Hubs private.** After step 3 has run", "which is a change of its own"):
+            self.assertIn(words, order, words)
+        not_checked = self.page.split("## Not checked")[1].split("\n## ")[0]
+        for words in ("it did not make a connection to a private endpoint", "the token of the Operator's identity for `https://eventhubs.azure.net`", "Whether Python 3.12 of the image runs the two tools",
+                      "has 3.13 only", "Whether the hold of 20 seconds"):
+            self.assertIn(words, not_checked, words)
+        for source in ("permissions/monitor#microsoftinsights", "azure-ad-authentication#query-application-insights-by-using-microsoft-entra-authentication", "built-in-roles/general#reader"):
+            self.assertIn(source, self.page.split("## Sources")[1], source)
+
+
+class BootstrapOperatorSection(unittest.TestCase):
+    """environment/BOOTSTRAP.md: the order of the actions, the two new roles, and what a person does after this change."""
+
+    def setUp(self):
+        self.page = text("environment/BOOTSTRAP.md")
+        self.section = self.page.split("## Changed on 2026-11-06: the Operator")[1].split("\n## ")[0]
+
+    def test_it_says_which_actions_use_the_operator_now_and_names_the_generic_script(self):
+        for words in ("Two existing actions now use it: `recording-check` and `cases-run`", "[`operator/run-tool.sh`](../operator/run-tool.sh)", "[`tools/recording-check.py`](../tools/recording-check.py)",
+                      "[`tools/cases-check.py`](../tools/cases-check.py)", "so that the control event is sent, and the telemetry is read, from inside the network"):
+            self.assertIn(words, self.section, words)
+
+    def test_it_names_the_three_roles_and_says_that_the_two_new_ones_need_no_hand_step(self):
+        for words in ("**Three roles**, all for that identity.", "*Reader* on the project's resource group", "`Microsoft.Insights/Components/Query/Read`", "*Reader* includes `*/read`",
+                      "*Azure Event Hubs Data Sender* on the control hub `usage-control` (made by the action `recording`) and on `cases-control` (made by the action `cases`), one role on each hub and none on the namespace",
+                      "is in the condition of the deploy identity's role-assignment right already", "so the two new roles need no hand step"):
+            self.assertIn(words, self.section, words)
+        self.assertNotIn("**One role:**", self.section)
+        self.assertNotIn("each needs the same hand step as below", self.section, "Data Sender needs none")
+
+    def test_it_says_the_order_run_operator_again_wait_about_ten_minutes_and_then_run_the_two_checks(self):
+        for words in ("The order of the actions on an estate is `recording`, `cases`, `operator`", "the action `operator` stops before it changes anything when a hub is not there",
+                      "1. Run `operator` again.", "the two *Azure Event Hubs Data Sender* roles are made", "2. Wait about ten minutes: a new role takes up to that long to apply",
+                      "3. Run `recording-check` and `cases-run`.", "that stops working when Application Insights gets private-only query access", "(that switch is not changed by this step)",
+                      "it stops with the reason, and says to run `operator` first, when the identity or the subnet is missing"):
+            self.assertIn(words, self.section, words)
+        self.assertLess(self.section.index("1. Run `operator` again."), self.section.index("2. Wait about ten minutes"))
+        self.assertLess(self.section.index("2. Wait about ten minutes"), self.section.index("3. Run `recording-check` and `cases-run`."))
+        after = self.page.split("\n## After it")[1].split("\n## ")[0]
+        self.assertIn("The order of those four is `recording`, `cases`, `operator`, and then, about ten minutes after `operator`", after)
+        self.assertIn("both from inside the network by the Operator, so it comes after `operator`", after)
+        self.assertIn("both by the Operator, so it comes after `operator` too", after)
+
+    def test_it_says_what_a_check_costs_and_that_the_probe_passed_without_a_fallback(self):
+        for words in ("at most 25 minutes for `recording-check` (about 2.3 US cents) and 40 for `cases-run` (about 3.6)", "20 seconds at the end", "it did not", "No new right is given to the deploy identity.",
+                      "it passed on 2026-11-06, twice"):
+            self.assertIn(words, self.section, words)
 
 
 if __name__ == "__main__":

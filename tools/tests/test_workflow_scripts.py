@@ -1,3 +1,6 @@
+import contextlib
+import importlib.util
+import io
 import json
 import os
 import re
@@ -9,6 +12,7 @@ import tempfile
 import textwrap
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW = (ROOT / ".github" / "workflows" / "deploy-hub.yml").read_text(encoding="utf-8").replace("\r\n", "\n")
@@ -508,6 +512,279 @@ class WaitForTheFoundryPrivateEndpoint(unittest.TestCase):
             self.assertRegex(call, r"^az network private-endpoint (list|dns-zone-group list) ")
             for word in ("create", "delete", "update", "private-dns", "role", "--yes"):
                 self.assertNotIn(word, call, call)
+
+
+OPERATOR_FIND_AZ = """#!/bin/bash
+# stand-in for az: FAKE_IDENTITY_ID is what the list of the identity prints, FAKE_CLIENT what the read of the identity prints (FAIL: it fails), FAKE_SUBNET is ok, absent or throttled
+echo "az $*" >> "$FAKE_LOG"
+case "$*" in
+  *"resource list"*) if [ "$FAKE_IDENTITY_ID" = "FAIL" ]; then echo "ERROR: fake az: the list is refused" >&2; exit 1; fi; printf '%s' "$FAKE_IDENTITY_ID" ;;
+  *"/userAssignedIdentities/"*)
+    if [ "$FAKE_CLIENT" = "FAIL" ]; then echo "ERROR: fake az: the identity is not readable" >&2; exit 1; fi
+    printf '%s' "$FAKE_CLIENT" ;;
+  *"/subnets/snet-ops"*)
+    case "$FAKE_SUBNET" in
+      ok) echo snet-ops ;;
+      absent) echo "ERROR: (ResourceNotFound) The Resource 'Microsoft.Network/virtualNetworks/vnet-meternaut/subnets/snet-ops' under resource group 'rg-of-the-project' was not found." >&2; exit 1 ;;
+      throttled) echo "ERROR: (TooManyRequests) Too many requests for d0404e2a-5b6c-4d7e-8f90-a1b2c3d4e5f6, try again later." >&2; exit 1 ;;
+    esac ;;
+  *) echo "unexpected az call: $*" >&2; exit 9 ;;
+esac
+"""
+
+OPERATOR_HUBS_AZ = """#!/bin/bash
+# stand-in for az: FAKE_HUBS is the list of the hubs of the namespace, one name a line; NOTFOUND: the namespace is not there; THROTTLED: the read fails for another reason
+echo "az $*" >> "$FAKE_LOG"
+case "$*" in
+  *"/eventhubs?"*)
+    case "$FAKE_HUBS" in
+      NOTFOUND) echo "ERROR: (ResourceNotFound) The Resource 'Microsoft.EventHub/namespaces/evhns-meternaut-abc123' under resource group 'rg-of-the-project' was not found." >&2; exit 1 ;;
+      THROTTLED) echo "ERROR: (TooManyRequests) Too many requests, try again later." >&2; exit 1 ;;
+      *) printf '%b' "$FAKE_HUBS" ;;
+    esac ;;
+  *) echo "unexpected az call: $*" >&2; exit 9 ;;
+esac
+"""
+
+OPERATOR_IDENTITY = "/subscriptions/sub-of-the-project/resourceGroups/rg-of-the-project/providers/Microsoft.ManagedIdentity/userAssignedIdentities/id-meternaut-operator"
+OPERATOR_SUBNET = "/subscriptions/sub-of-the-project/resourceGroups/rg-of-the-project/providers/Microsoft.Network/virtualNetworks/vnet-meternaut/subnets/snet-ops"
+OPERATOR_CLIENT = "6e5f3a1c-2b7d-4c8e-9f10-3a4b5c6d7e8f"
+
+
+@unittest.skipIf(BASH is None, "no bash on this machine")
+class FindTheOperator(unittest.TestCase):
+    """The step that finds the Operator for recording-check and cases-run: what it finds, what it says when the Operator is not there, and that it only reads."""
+
+    TITLE = "Find the Operator, which runs the check from inside the network"
+
+    def run_step(self, identity_id=OPERATOR_IDENTITY, client=OPERATOR_CLIENT, subnet="ok", action="recording-check"):
+        return run_step_script(self.TITLE, {"az": OPERATOR_FIND_AZ},
+                               {"FAKE_IDENTITY_ID": identity_id, "FAKE_CLIENT": client, "FAKE_SUBNET": subnet, "ACTION": action, "ENV_SUBSCRIPTION_ID": "sub-of-the-project",
+                                "ENV_RESOURCE_GROUP": "rg-of-the-project"})
+
+    def test_the_operator_that_is_there_is_found_and_its_ids_are_the_outputs_of_the_step(self):
+        for action in ("recording-check", "cases-run"):
+            done, lines, out = self.run_step(action=action)
+            self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+            self.assertEqual(lines, ["az resource list --resource-group rg-of-the-project --name id-meternaut-operator --query [0].id --output tsv",
+                                     f"az rest --method get --url https://management.azure.com{OPERATOR_IDENTITY}?api-version=2023-01-31 --query properties.clientId --output tsv",
+                                     f"az rest --method get --url https://management.azure.com{OPERATOR_SUBNET}?api-version=2025-05-01 --query name --output tsv"])
+            self.assertEqual(out.splitlines(), [f"identity_id={OPERATOR_IDENTITY}", f"client_id={OPERATOR_CLIENT}", f"subnet_id={OPERATOR_SUBNET}"])
+            self.assertIn("The Operator's identity and its subnet are there.", done.stdout)
+
+    def test_an_identity_that_is_not_there_stops_the_step_says_to_run_operator_first_and_gives_no_output(self):
+        for answer in ("", "None", "FAIL", "id-meternaut-operator", "/not/a/subscription"):
+            done, lines, out = self.run_step(identity_id=answer, action="cases-run")
+            self.assertEqual(done.returncode, 1, answer)
+            self.assertIn("The identity id-meternaut-operator is not there. The action cases-run runs its check in the Operator, so run operator first (the order is recording, cases, operator). Nothing was changed.",
+                          done.stdout, answer)
+            self.assertEqual((len(lines), out), (1, ""), "the identity is not read and the subnet is not asked for when the list finds nothing")
+
+    def test_an_identity_whose_client_id_cannot_be_read_is_not_there_either(self):
+        for answer in ("", "None", "FAIL", "not-a-guid", f"{OPERATOR_CLIENT} x"):
+            done, lines, out = self.run_step(client=answer)
+            self.assertEqual(done.returncode, 1, answer)
+            self.assertIn("The identity id-meternaut-operator is not there.", done.stdout)
+            self.assertIn("run operator first", done.stdout)
+            self.assertEqual((len(lines), out), (2, ""))
+
+    def test_a_subnet_that_is_not_there_says_to_run_operator_first_and_any_other_answer_stops_the_step_with_what_it_said(self):
+        done, lines, out = self.run_step(subnet="absent")
+        self.assertEqual((done.returncode, out), (1, ""))
+        self.assertIn("The subnet snet-ops is not there. The action recording-check runs its check in the Operator, so run operator first (the order is recording, cases, operator). Nothing was changed.", done.stdout)
+        self.assertEqual(len(lines), 3)
+        done, lines, out = self.run_step(subnet="throttled")
+        self.assertEqual((done.returncode, out), (1, ""))
+        self.assertIn("The subnet snet-ops could not be read: ERROR: (TooManyRequests) Too many requests for d0404e2a-5b6c-4d7e-8f90-a1b2c3d4e5f6, try again later.", done.stdout,
+                      "an answer that holds the digits 404 inside an id is not taken for NotFound")
+        self.assertNotIn("run operator first", done.stdout)
+
+    def test_the_step_only_reads(self):
+        for subnet in ("ok", "absent", "throttled"):
+            _, lines, _ = self.run_step(subnet=subnet)
+            for call in lines:
+                self.assertRegex(call, r"^az (resource list|rest --method get) ")
+                for word in (" create ", " delete ", " update ", " role ", " put ", " post ", " patch ", " container ", " login ", "--yes"):
+                    self.assertNotIn(word, call + " ", call)
+
+
+@unittest.skipIf(BASH is None, "no bash on this machine")
+class TheControlHubsAreThereBeforeTheOperatorIsDeployed(unittest.TestCase):
+    """The step of the action operator that reads the two control hubs, which the Operator is given a role on, before anything is deployed."""
+
+    TITLE = "The control hubs that the Operator is given a role on are there"
+    URL = ("az rest --method get --url https://management.azure.com/subscriptions/sub-of-the-project/resourceGroups/rg-of-the-project/providers/Microsoft.EventHub/namespaces/evhns-meternaut-abc123"
+           "/eventhubs?api-version=2024-01-01 --query value[].name --output tsv")
+
+    def run_step(self, hubs):
+        return run_step_script(self.TITLE, {"az": OPERATOR_HUBS_AZ},
+                               {"FAKE_HUBS": hubs, "ENV_SUBSCRIPTION_ID": "sub-of-the-project", "ENV_RESOURCE_GROUP": "rg-of-the-project", "EVENT_HUB_NAMESPACE": "evhns-meternaut-abc123"})
+
+    def test_both_hubs_there_ends_the_step_well_with_one_read(self):
+        done, lines, _ = self.run_step("ai-usage\\npii-usage\\nusage-control\\ncases-control\\n")
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertEqual(lines, [self.URL])
+        self.assertIn("Both control hubs are there.", done.stdout)
+
+    def test_a_hub_that_is_missing_stops_the_step_and_says_which_action_makes_it_and_that_nothing_was_changed(self):
+        done, _, _ = self.run_step("ai-usage\\npii-usage\\ncases-control\\n")
+        self.assertEqual(done.returncode, 1)
+        self.assertIn("The control hub usage-control is not there. Run recording first", done.stdout)
+        self.assertNotIn("cases-control is not there", done.stdout)
+        done, _, _ = self.run_step("ai-usage\\npii-usage\\nusage-control\\n")
+        self.assertEqual(done.returncode, 1)
+        self.assertIn("The control hub cases-control is not there. Run cases first (after recording)", done.stdout)
+        self.assertNotIn("usage-control is not there", done.stdout)
+        for hubs in ("NOTFOUND", "", "ai-usage\\n"):
+            done, _, _ = self.run_step(hubs)
+            self.assertEqual(done.returncode, 1, hubs)
+            self.assertIn("Run recording first", done.stdout)
+            self.assertIn("Run cases first (after recording)", done.stdout)
+            self.assertIn("so the actions recording and cases run before operator. Nothing was changed.", done.stdout)
+
+    def test_a_name_that_only_looks_like_a_hub_is_not_the_hub(self):
+        for hubs in ("usage-control-2\\ncases-control\\n", "my-usage-control\\ncases-control\\n", "Usage-Control\\ncases-control\\n", "usage-control \\ncases-control\\n"):
+            done, _, _ = self.run_step(hubs)
+            self.assertEqual(done.returncode, 1, hubs)
+            self.assertIn("The control hub usage-control is not there.", done.stdout)
+
+    def test_a_read_that_fails_for_another_reason_than_not_found_stops_the_step_with_what_it_said(self):
+        done, _, _ = self.run_step("THROTTLED")
+        self.assertEqual(done.returncode, 1)
+        self.assertIn("The event hubs of the namespace could not be read: ERROR: (TooManyRequests) Too many requests, try again later.", done.stdout)
+        self.assertNotIn("Run recording first", done.stdout, "an unreadable list is not a missing hub")
+
+    def test_the_step_only_reads(self):
+        done, lines, _ = self.run_step("usage-control\\ncases-control\\n")
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        for call in lines:
+            self.assertRegex(call, r"^az rest --method get ")
+            for word in (" create ", " delete ", " update ", " role ", " put ", " post ", " patch ", "--yes"):
+                self.assertNotIn(word, call + " ", call)
+
+
+OPERATOR_RUN_PYTHON3 = """#!/bin/bash
+# stand-in for python3: one line for the program and one line, indented, for each argument; FAKE_EXIT is the exit code
+{ echo "python3"; for argument in "$@"; do echo "  $argument"; done; } >> "$FAKE_LOG"
+exit "${FAKE_EXIT-0}"
+"""
+
+
+def called(lines):
+    """The calls that a stand-in python3 logged: a list of argument lists (the first argument is the tool)."""
+    calls = []
+    for line in lines:
+        if line == "python3":
+            calls.append([])
+        else:
+            calls[-1].append(line[2:])
+    return calls
+
+
+def load_operator_tool():
+    spec = importlib.util.spec_from_file_location("operator_run_of_the_workflow_tests", ROOT / "tools" / "operator-run.py")
+    tool = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(tool)
+    return tool
+
+
+@unittest.skipIf(BASH is None, "no bash on this machine")
+class TheChecksBuildTheCallOfTheOperatorTool(unittest.TestCase):
+    """The steps of recording-check and cases-run, run with bash against a stand-in for python3: the call of tools/operator-run.py that each builds, and that the tool itself accepts it."""
+
+    SUBSCRIPTION = "11111111-2222-3333-4444-555555555555"
+    GROUP = "rg-of-the-project"
+    SUBNET = f"/subscriptions/{SUBSCRIPTION}/resourceGroups/{GROUP}/providers/Microsoft.Network/virtualNetworks/vnet-meternaut/subnets/snet-ops"
+    IDENTITY = f"/subscriptions/{SUBSCRIPTION}/resourceGroups/{GROUP}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/id-meternaut-operator"
+    IMAGE = "mcr.microsoft.com/azure-cli@sha256:" + "ab" * 32
+    INSIGHTS = f"/subscriptions/{SUBSCRIPTION}/resourceGroups/{GROUP}/providers/Microsoft.Insights/components/appi-meternaut"
+    RECORDING = "Start the copy jobs once and read what they say"
+    CASES = "Start one Watch and read its History"
+
+    def run_check(self, title, dns="10.20.0.4,10.20.0.5", exit_code=0):
+        env = {"ENV_SUBSCRIPTION_ID": self.SUBSCRIPTION, "ENV_RESOURCE_GROUP": self.GROUP, "ENV_DNS_SERVERS": dns, "GITHUB_RUN_ID": "1234567890", "OPERATOR_IMAGE": self.IMAGE,
+               "EVENT_HUB_NAMESPACE": "evhns-meternaut-0a1b2c3d", "INSIGHTS_NAME": "appi-meternaut", "OPERATOR_IDENTITY_ID": self.IDENTITY, "OPERATOR_CLIENT_ID": CLIENT,
+               "OPERATOR_SUBNET_ID": self.SUBNET, "FAKE_EXIT": str(exit_code)}
+        done, lines, _ = run_step_script(title, {"python3": OPERATOR_RUN_PYTHON3}, env)
+        return done, called(lines)
+
+    def expected(self, tool, files, args, seconds, dns=("10.20.0.4", "10.20.0.5")):
+        return (["tools/operator-run.py", "run", "--resource-group", self.GROUP, "--name", "op-check-1234567890", "--subnet-id", self.SUBNET, "--identity-id", self.IDENTITY,
+                 "--image", self.IMAGE, "--script", "operator/run-tool.sh"]
+                + [word for name in files for word in ("--secret-file", f"{name}=tools/{name}")]
+                + ["--env", "GITHUB_ACTIONS=true", "--env", f"OPERATOR_CLIENT_ID={CLIENT}", "--env", f"OPERATOR_SUBSCRIPTION={self.SUBSCRIPTION}", "--env", f"TOOL_NAME={tool}", "--env", f"TOOL_ARGS={args}"]
+                + [word for server in dns for word in ("--dns-server", server)]
+                + ["--timeout-seconds", str(seconds), "--summary"])
+
+    def accepted_by_the_tool(self, argv):
+        tool = load_operator_tool()
+        args = tool.build_parser().parse_args(argv[1:])
+        plain, secure, servers = tool.check_options(args)
+        with contextlib.chdir(ROOT):
+            files = tool.read_files(args)
+        return args, dict(plain), secure, servers, files
+
+    def test_the_copy_jobs_are_started_by_the_tool_in_the_operator_with_the_arguments_that_the_runner_used_before(self):
+        done, calls = self.run_check(self.RECORDING)
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        (argv,) = calls
+        self.assertEqual(argv[:-1], self.expected("recording-check", ["recording-check.py"], f"run --namespace evhns-meternaut-0a1b2c3d --insights {self.INSIGHTS} --job all --minutes 20", 1500))
+        self.assertTrue(argv[-1].endswith("summary.md"), "the log of the container goes into the summary of the run")
+        args, plain, secure, servers, files = self.accepted_by_the_tool(argv)
+        self.assertEqual((secure, servers), ([], ["10.20.0.4", "10.20.0.5"]), "no secure value: nothing in the call is a secret")
+        self.assertEqual(plain["TOOL_ARGS"], f"run --namespace evhns-meternaut-0a1b2c3d --insights {self.INSIGHTS} --job all --minutes 20")
+        self.assertEqual(sorted(files), ["recording-check.py", "run-tool.sh"])
+        self.assertEqual((args.timeout_seconds, args.name, args.cpu, args.memory), (1500, "op-check-1234567890", 1.0, 1.5))
+
+    def test_the_watch_is_started_by_the_tool_in_the_operator_and_both_check_files_are_in_the_volume(self):
+        done, calls = self.run_check(self.CASES)
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        (argv,) = calls
+        self.assertEqual(argv[:-1], self.expected("cases-check", ["cases-check.py", "recording-check.py"], f"run --namespace evhns-meternaut-0a1b2c3d --insights {self.INSIGHTS} --minutes 30", 2400))
+        args, plain, secure, servers, files = self.accepted_by_the_tool(argv)
+        self.assertEqual((secure, servers), ([], ["10.20.0.4", "10.20.0.5"]))
+        self.assertEqual(sorted(files), ["cases-check.py", "recording-check.py", "run-tool.sh"], "cases-check.py loads recording-check.py from its own folder")
+        self.assertEqual(files["run-tool.sh"], (ROOT / "operator" / "run-tool.sh").read_bytes().replace(b"\r\n", b"\n"))
+        self.assertEqual(args.timeout_seconds, 2400)
+
+    def test_the_landing_zone_s_dns_servers_are_given_one_flag_each_and_none_when_there_are_none(self):
+        for dns, servers in (("10.20.0.4", ["10.20.0.4"]), ("10.20.0.4,10.20.0.5,10.20.0.6", ["10.20.0.4", "10.20.0.5", "10.20.0.6"]), ("", [])):
+            for title in (self.RECORDING, self.CASES):
+                done, calls = self.run_check(title, dns=dns)
+                self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+                argv = calls[0]
+                self.assertEqual([argv[i + 1] for i, word in enumerate(argv) if word == "--dns-server"], servers, (title, dns))
+
+    def test_a_tool_that_fails_fails_the_step_and_the_step_calls_the_tool_once(self):
+        for title in (self.RECORDING, self.CASES):
+            done, calls = self.run_check(title, exit_code=1)
+            self.assertEqual(done.returncode, 1, title)
+            self.assertEqual(len(calls), 1, "the group is made once: a second event would start a second job")
+            done, calls = self.run_check(title, exit_code=124)
+            self.assertEqual(done.returncode, 124, "the exit code of the tool is the exit code of the step, a timeout included")
+
+    def test_the_lists_of_the_functions_are_still_read_from_the_runner_before_the_group_is_made(self):
+        for title, tool, app in (("Before the copy jobs are started, the function app lists its six functions", "recording-check", "func-meternaut-usage-0a1b2c3d"),
+                                 ("Before the Watch is started, the cases app lists its four functions", "cases-check", "func-meternaut-cases-0a1b2c3d")):
+            done, lines, _ = run_step_script(title, {"python3": OPERATOR_RUN_PYTHON3}, {"ENV_SUBSCRIPTION_ID": self.SUBSCRIPTION, "ENV_RESOURCE_GROUP": self.GROUP, "SITE_NAME": app})
+            self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+            self.assertEqual(called(lines), [[f"tools/{tool}.py", "functions", "--site", f"/subscriptions/{self.SUBSCRIPTION}/resourceGroups/{self.GROUP}/providers/Microsoft.Web/sites/{app}", "--minutes", "5"]])
+
+    def test_the_cleanup_asks_the_tool_for_the_groups_of_the_checks_and_a_failure_is_only_a_warning(self):
+        title = "Delete any container group of the checks that is left"
+        env = {"ENV_RESOURCE_GROUP": self.GROUP}
+        done, lines, _ = run_step_script(title, {"python3": OPERATOR_RUN_PYTHON3}, env)
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertEqual(called(lines), [["tools/operator-run.py", "cleanup", "--resource-group", self.GROUP, "--prefix", "op-check-", "--older-than-minutes", "0"]])
+        done, lines, _ = run_step_script(title, {"python3": OPERATOR_RUN_PYTHON3}, {**env, "FAKE_EXIT": "1"})
+        self.assertEqual(done.returncode, 0, "a group that could not be deleted does not fail a run that was good")
+        self.assertIn("::warning::A container group whose name starts with op-check- may be left in resource group rg-of-the-project.", done.stdout)
+        tool = load_operator_tool()
+        args = tool.build_parser().parse_args(called(lines)[0][1:])
+        self.assertEqual((args.prefix, args.older_than_minutes, args.resource_group), ("op-check-", 0.0, self.GROUP))
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            with mock.patch.dict(os.environ, {"GITHUB_ACTIONS": "true"}):
+                self.assertEqual(tool.cleanup_command(args, lambda arguments: (0, "[]", "")), 0, "the prefix is one that the tool accepts")
 
 
 POWERSHELLS = []

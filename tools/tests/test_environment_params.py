@@ -963,8 +963,17 @@ class Operator(unittest.TestCase):
         for name, wrapped in given.items():
             self.assertIsInstance(wrapped["value"], types[declared[name][0]], name)
         operator = values(files["operator.parameters.json"])
-        self.assertEqual(set(operator), {"location", "owner", "opsSubnetPrefix", "opsSubnetExists"}, "a range, a flag and two tags: nothing else, and nothing secret")
+        self.assertEqual(set(operator), {"location", "owner", "opsSubnetPrefix", "opsSubnetExists", "eventHubNamespaceName"},
+                         "a range, a flag, the name of a namespace and two tags: nothing else, and nothing secret")
         self.assertEqual((operator["location"], operator["owner"]), ("swedencentral", "owner@example.com"))
+
+    def test_the_namespace_is_the_one_that_the_usage_recording_and_the_first_cases_use(self):
+        files, outputs = self.files()
+        operator = values(files["operator.parameters.json"])["eventHubNamespaceName"]
+        self.assertEqual(operator, values(files["recording.parameters.json"])["eventHubNamespaceName"], "the Operator reads the namespace that the usage recording makes")
+        self.assertEqual(operator, outputs["event_hub_namespace"])
+        self.assertRegex(operator, r"^evhns-meternaut-[0-9a-f]{8}$")
+        self.assertIn("param eventHubNamespaceName string", self.OPERATOR)
 
     def test_the_subnet_is_the_last_free_27_and_overlaps_none_of_the_other_three(self):
         files, outputs = self.files()
