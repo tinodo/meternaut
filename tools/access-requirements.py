@@ -8,15 +8,22 @@
 
 Meternaut holds no write right: every grant in the file only reads, and a change to Azure is made with the token of the person who approved it
 (docs/proposals/03-access-and-onboarding.md). The deployment workflow's identity may change only the project's own resource group and must not get a
-right anywhere else (AGENTS.md rule 18). The identities that the workflow makes (one for the usage recording, one for the first cases) still need
-reads in other places: the subscriptions that the Watch reads, the gateway, the central workspace. Only a person who may assign roles there can give
-them. The file environment/access-requirements.json says which role of which identity at which place, and which grants an earlier version made and
+right anywhere else (AGENTS.md rule 18). The two function apps that the workflow makes (the usage recording and the first cases) run as identities that
+still need reads in other places: the subscriptions that the Watch reads, the gateway, the central workspace. Only a person who may assign roles there can
+give them. The file environment/access-requirements.json says which role of which identity at which place, and which grants an earlier version made and
 must now be removed. This tool reads that file and the signed-in person's view of Azure.
+
+An identity of the file is what a function app runs as, and its grants are held by its holders: the system-assigned identity of the app, which the tool
+finds by reading the app in the project's resource group (--cases-site and --usage-site give the names of the two apps), and, while an app is moved from
+a user-assigned identity to its system-assigned one, the user-assigned identity too, which the tool finds by its name in the project's group. Every holder
+is checked and receives every grant of its identity, so that the app is never without access. An app that does not exist yet, or has no
+system-assigned identity yet, is reported like an identity that does not exist yet: "cannot yet".
 
 markdown  Prints the table of the requirements, as docs/proposals/03-access-and-onboarding.md shows it; with --retired, the table of the retired grants.
           Reads no Azure.
-check     Read only. For each requirement: present, missing, or why it cannot be present yet (the identity does not exist, the custom role does not
-          exist or differs from the file). Exit 0 when every requirement is present. A grant at a higher place (a management group) counts.
+check     Read only. For each requirement and each holder: present, missing, or why it cannot be present yet (the identity or the app does not exist, the
+          app has no system-assigned identity, the custom role does not exist or differs from the file). Exit 0 when every requirement is present. A
+          grant at a higher place (a management group) counts.
 grant     A dry run: prints what is missing and the exact commands that would make it. With --apply it runs them, with the rights of the person
           who is signed in to the Azure CLI, and checks again. It grants only what the file lists, never changes a custom role that already exists
           (it reports the difference) and refuses to run in GitHub Actions: no pipeline may hold these rights.
@@ -29,9 +36,11 @@ retire    Removes what the file lists under "retired". It reads first: for each 
           and it refuses --apply in GitHub Actions like grant. Exit 0 when nothing is left to retire, 1 when something is (also after a dry run).
 
 The places come from options or from the settings that the workflow uses: --project-subscription (ENV_SUBSCRIPTION_ID) and --project-group
-(ENV_RESOURCE_GROUP), where the identities are; --gateway (GATEWAY_RESOURCE_ID), the API Management instance; --gateway-insights
-(GATEWAY_APPINSIGHTS_ID); --estate (ACCESS_ESTATE_SCOPES, comma separated; default: the project subscription), what the Watch reads;
---workspace (ACCESS_WORKSPACE_ID; default: the workspace of the gateway's component); --product-subscription (default: from environment/contract.json).
+(ENV_RESOURCE_GROUP), where the identities and the two apps are; --cases-site (ACCESS_CASES_SITE) and --usage-site (ACCESS_USAGE_SITE), the names of the
+cases app and of the usage app in that group (func-meternaut-cases-* and func-meternaut-usage-*; each is needed only by the requirements of the app that it
+names); --gateway (GATEWAY_RESOURCE_ID), the API Management instance; --gateway-insights (GATEWAY_APPINSIGHTS_ID); --estate (ACCESS_ESTATE_SCOPES, comma
+separated; default: the project subscription), what the Watch reads; --workspace (ACCESS_WORKSPACE_ID; default: the workspace of the gateway's component);
+--product-subscription (default: from environment/contract.json).
 The Azure CLI is `az`, or the command in the variable AZ (for example "C:\\path\\python.exe" -IBm azure.cli).
 """
 from __future__ import annotations
@@ -69,6 +78,11 @@ MANAGEMENT_PREFIX = "/providers/microsoft.management/managementgroups/"
 ARM = "https://management.azure.com"
 ASSIGNMENTS_API = "2022-04-01"
 INSIGHTS_API = "2020-02-02"
+SITE_API = "2024-04-01"
+SITE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]{0,58}[A-Za-z0-9]$")
+# The option that names a function app, and the setting that names it when the option is not given.
+SITE_OPTIONS = {"--cases-site": "ACCESS_CASES_SITE", "--usage-site": "ACCESS_USAGE_SITE"}
+NOT_FOUND = re.compile(r"ResourceNotFound|could not be found|was not found|not found", re.I)
 STATES = {"present": "present", "missing": "MISSING", "role-missing": "MISSING", "no-identity": "cannot yet", "role-differs": "role differs"}
 UNFIXABLE = ("no-identity", "role-differs")
 
@@ -133,6 +147,23 @@ def load_manifest(path: Path = MANIFEST) -> dict:
         assert manifest["version"] == 1
         for key in ("identities", "places", "roles", "grants"):
             assert manifest[key]
+        user_assigned: list[str] = []
+        site_options: list[str] = []
+        for key, identity in manifest["identities"].items():
+            assert identity["madeBy"] and identity["app"] and identity["appName"], f"{key}: an identity names its app and the Hub action that makes it"
+            holders = identity["holders"]
+            assert isinstance(holders, list) and holders, f"{key}: an identity has holders"
+            assert [h["kind"] for h in holders].count("system") <= 1, f"{key}: an app has one system-assigned identity"
+            for holder in holders:
+                assert holder["kind"] in ("system", "user"), f"{key}: a holder is 'system' or 'user'"
+                if holder["kind"] == "system":
+                    assert holder["siteOption"] in SITE_OPTIONS, f"{key}: siteOption is one of {', '.join(SITE_OPTIONS)}"
+                    site_options.append(holder["siteOption"])
+                else:
+                    assert SIMPLE_NAME.match(str(holder.get("name", ""))), f"{key}: a user-assigned holder has a name"
+                    user_assigned.append(holder["name"])
+        assert len(site_options) == len(set(site_options)), "an option names one app"
+        assert len(user_assigned) == len(set(user_assigned)), "a user-assigned identity is a holder once"
         ids = [g["id"] for g in manifest["grants"]]
         assert len(ids) == len(set(ids)), "an id is used twice"
         for grant in manifest["grants"]:
@@ -147,7 +178,7 @@ def load_manifest(path: Path = MANIFEST) -> dict:
                 assert not role.get("writes"), f"{name}: Meternaut holds no write right, so no role may be one that changes Azure"
         assert isinstance(manifest.get("retired", []), list), "retired is a list"
         used = set(ids)
-        current = {i["name"] for i in manifest["identities"].values()}
+        current = set(user_assigned)
         for item in manifest.get("retired", []):
             assert item["id"] not in used, f"{item['id']}: the id of a retired item is not the id of a grant, and is used once"
             used.add(item["id"])
@@ -171,12 +202,21 @@ def selected(manifest: dict, only: str | None) -> list[dict]:
     return [known[x] for x in wanted]
 
 
+def holder_text(identity: dict, holder: dict) -> str:
+    """How a holder is named in the table of the proposal."""
+    if holder["kind"] == "system":
+        return f"the system-assigned identity of {identity['app']} (`{identity['appName']}`)"
+    return f"the user-assigned identity `{holder['name']}`"
+
+
 def markdown(manifest: dict) -> str:
     """The table of the requirements, for the proposal."""
     rows = ["| # | Identity | Role | Where | What it is for |", "|---|---|---|---|---|"]
     for g in manifest["grants"]:
         custom = " (custom role)" if manifest["roles"][g["role"]]["kind"] == "custom" else ""
-        rows.append(f"| {g['id']} | `{manifest['identities'][g['identity']]['name']}` | {g['role']}{custom} | {manifest['places'][g['place']]} | {g['why']} |")
+        identity = manifest["identities"][g["identity"]]
+        holders = " and ".join(holder_text(identity, h) for h in identity["holders"])
+        rows.append(f"| {g['id']} | {holders[0].upper() + holders[1:]} | {g['role']}{custom} | {manifest['places'][g['place']]} | {g['why']} |")
     return "\n".join(rows)
 
 
@@ -192,9 +232,10 @@ def markdown_retired(manifest: dict) -> str:
 
 class Places:
     def __init__(self, project_subscription=None, project_group=None, estate=None, gateway=None, gateway_insights=None, workspace=None,
-                 product_subscription=None) -> None:
+                 product_subscription=None, sites=None) -> None:
         self.project_subscription, self.project_group, self.estate = project_subscription, project_group, list(estate or [])
         self.gateway, self.gateway_insights, self.workspace, self.product_subscription = gateway, gateway_insights, workspace, product_subscription
+        self.sites = dict(sites or {})
 
 
 def checked(value, pattern, option: str, what: str):
@@ -215,6 +256,8 @@ def read_places(args, env) -> Places:
                                  "the resource id of the gateway's Application Insights component"),
         workspace=checked(pick("workspace", "ACCESS_WORKSPACE_ID"), WORKSPACE, "--workspace", "the resource id of the central Log Analytics workspace"),
         product_subscription=checked(args.product_subscription, SIMPLE_NAME, "--product-subscription", "the name of one subscription of the gateway"),
+        sites={option: checked(pick(option[2:].replace("-", "_"), setting), SITE_NAME, option, "the name of a function app: letters, digits and hyphens")
+               for option, setting in SITE_OPTIONS.items()},
     )
     for scope in places.estate:
         if not any(p.match(scope) for p in (SUBSCRIPTION, MANAGEMENT_GROUP, RESOURCE_GROUP)):
@@ -283,10 +326,10 @@ def subscription_of(scope: str) -> str:
 # ---- what is granted -----------------------------------------------------------------------------------------------------------------------------
 
 class Item:
-    """One requirement at one scope, and where it stands."""
+    """One requirement of one holder at one scope, and where it stands."""
 
-    def __init__(self, grant: dict, scope: str, state: str, principal: str | None = None, role_id: str | None = None, detail: str = "") -> None:
-        self.grant, self.scope, self.state, self.principal, self.role_id, self.detail = grant, scope, state, principal, role_id, detail
+    def __init__(self, grant: dict, scope: str, state: str, principal: str | None = None, role_id: str | None = None, detail: str = "", holder: str = "") -> None:
+        self.grant, self.scope, self.state, self.principal, self.role_id, self.detail, self.holder = grant, scope, state, principal, role_id, detail, holder
 
 
 def principal_of(az: Az, places: Places, name: str) -> str | None:
@@ -295,9 +338,38 @@ def principal_of(az: Az, places: Places, name: str) -> str | None:
                             "--query", "principalId", "--output", "tsv")
     if code == 0 and out.strip():
         return out.strip()
-    if code != 0 and not re.search(r"ResourceNotFound|could not be found|was not found|not found", err or "", re.I):
+    if code != 0 and not NOT_FOUND.search(err or ""):
         raise Problem(f"the identity {name} could not be read: {first_line(err)}")
     return None
+
+
+def system_principal_of(az: Az, group: str, site: str) -> tuple[str | None, str]:
+    """(the object id of the app's system-assigned identity, or None and what is missing). The app is read, never changed."""
+    code, out, err = az.run("rest", "--method", "get", "--url", f"{ARM}{group}/providers/Microsoft.Web/sites/{site}?api-version={SITE_API}", "--output", "json")
+    if code != 0:
+        if NOT_FOUND.search(err or ""):
+            return None, "does not exist yet"
+        raise Problem(f"the app {site} could not be read: {first_line(err)}")
+    try:
+        identity = (json.loads(out) or {}).get("identity") or {}
+    except ValueError as e:
+        raise Problem(f"the app {site} could not be read: the answer is not JSON") from e
+    principal = identity.get("principalId")
+    if "systemassigned" in str(identity.get("type", "")).lower() and isinstance(principal, str) and principal.strip():
+        return principal.strip(), ""
+    return None, "has no system-assigned identity yet"
+
+
+def holder_principal(az: Az, places: Places, identity: dict, holder: dict) -> tuple[str | None, str, str]:
+    """(object id or None, how the holder is named in a report, what is missing when there is no object id)."""
+    if holder["kind"] == "user":
+        name = holder["name"]
+        return principal_of(az, places, name), name, f"{name} does not exist yet: the Hub action {identity['madeBy']} makes it"
+    group = project_group_scope(places)
+    option = holder["siteOption"]
+    site = need(places.sites.get(option), option, f"the name of {identity['app']} ({identity['appName']}), whose system-assigned identity holds these grants")
+    principal, why = system_principal_of(az, group, site)
+    return principal, f"{site} (system-assigned)", f"{site} {why}: the Hub action {identity['madeBy']} makes it"
 
 
 def definition_problems(definition: dict, spec: dict, expected_scope: str) -> list[str]:
@@ -355,38 +427,39 @@ def covers(assigned_scope: str, target: str) -> bool:
 
 def examine(az: Az, manifest: dict, places: Places, only: str | None = None) -> list[Item]:
     items: list[Item] = []
-    principals: dict[str, str | None] = {}
+    principals: dict[tuple[str, int], tuple[str | None, str, str]] = {}
     roles: dict[str, tuple] = {}
     listed: dict[tuple[str, str], list[dict]] = {}
     for grant in selected(manifest, only):
         identity = manifest["identities"][grant["identity"]]
-        if identity["name"] not in principals:
-            principals[identity["name"]] = principal_of(az, places, identity["name"])
-        principal = principals[identity["name"]]
-        for scope in scopes_for(grant["place"], places, az):
-            if principal is None:
-                items.append(Item(grant, scope, "no-identity", detail=f"{identity['name']} does not exist yet: the Hub action {identity['madeBy']} makes it"))
-                continue
-            name = grant["role"]
-            if name not in roles:
-                roles[name] = role_state(az, name, manifest["roles"][name], places)
-            role_id, hint, detail = roles[name]
-            if hint == "role-missing":
-                items.append(Item(grant, scope, "role-missing", principal, None, detail))
-                continue
-            if hint == "role-differs":
-                items.append(Item(grant, scope, "role-differs", principal, role_id, detail))
-                continue
-            if (principal, scope) not in listed:
-                listed[(principal, scope)] = assignments(az, principal, scope)
-            held = any(str(a.get("properties", {}).get("roleDefinitionId", "")).rsplit("/", 1)[-1].lower() == role_id.lower()
-                       and covers(str(a["properties"].get("scope", "")), scope) for a in listed[(principal, scope)])
-            items.append(Item(grant, scope, "present" if held else "missing", principal, role_id))
+        for index, holder in enumerate(identity["holders"]):
+            if (grant["identity"], index) not in principals:
+                principals[(grant["identity"], index)] = holder_principal(az, places, identity, holder)
+            principal, label, missing = principals[(grant["identity"], index)]
+            for scope in scopes_for(grant["place"], places, az):
+                if principal is None:
+                    items.append(Item(grant, scope, "no-identity", detail=missing, holder=label))
+                    continue
+                name = grant["role"]
+                if name not in roles:
+                    roles[name] = role_state(az, name, manifest["roles"][name], places)
+                role_id, hint, detail = roles[name]
+                if hint == "role-missing":
+                    items.append(Item(grant, scope, "role-missing", principal, None, detail, label))
+                    continue
+                if hint == "role-differs":
+                    items.append(Item(grant, scope, "role-differs", principal, role_id, detail, label))
+                    continue
+                if (principal, scope) not in listed:
+                    listed[(principal, scope)] = assignments(az, principal, scope)
+                held = any(str(a.get("properties", {}).get("roleDefinitionId", "")).rsplit("/", 1)[-1].lower() == role_id.lower()
+                           and covers(str(a["properties"].get("scope", "")), scope) for a in listed[(principal, scope)])
+                items.append(Item(grant, scope, "present" if held else "missing", principal, role_id, holder=label))
     return items
 
 
 def describe(item: Item, manifest: dict) -> str:
-    line = f"  {STATES[item.state]:<13}{item.grant['id']}  {manifest['identities'][item.grant['identity']]['name']}  {item.grant['role']}  at {item.scope}"
+    line = f"  {STATES[item.state]:<13}{item.grant['id']}  {item.holder}  {item.grant['role']}  at {item.scope}"
     return line + (f"\n               {item.detail}" if item.detail else "")
 
 
@@ -723,6 +796,8 @@ def main(argv=None, az: Az | None = None, env=None, out=print, sleep=time.sleep,
         sub.add_argument("--only", help="comma separated ids, for example R1,R3 (retire: W1)")
         sub.add_argument("--project-subscription")
         sub.add_argument("--project-group")
+        sub.add_argument("--cases-site", help="the name of the cases app in the project's group, func-meternaut-cases-... (setting ACCESS_CASES_SITE)")
+        sub.add_argument("--usage-site", help="the name of the usage app in the project's group, func-meternaut-usage-... (setting ACCESS_USAGE_SITE)")
         sub.add_argument("--estate", action="append", help="a subscription, management group or resource group id; repeat for more")
         sub.add_argument("--gateway")
         sub.add_argument("--gateway-insights")
