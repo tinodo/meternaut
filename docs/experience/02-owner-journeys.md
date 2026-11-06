@@ -30,7 +30,7 @@
 
 **Trigger and who.** A Case survives its challenge, and Maya, the owner of record, can decide it. **Surfaces.** Cards C2 to C6 and C10; the approval page; the weekly desk (C12).
 
-(An invented example.) E1, the web-shop QA environment.
+(An invented example.) E1, the web-shop QA environment. By default an approval makes one change, at that moment. A daily schedule that switches machines on and off needs the customer's own automation or the optional standing-permission mode (not built).
 
 | Step | Person | System |
 |---|---|---|
@@ -117,19 +117,17 @@ stateDiagram-v2
 
 ## J5 Told afterwards
 
-**Trigger and who.** The FinOps lead and the platform owner write a standing permission that covers Maya's resources. **Surfaces.** A standing permission starts (C17); Told afterwards (C8); the pages History and "What I did here" ([web pages](06-web-pages.md)).
+**Trigger and who.** Optional mode, not built ([definition](README.md#the-words-people-see)): a customer's FinOps lead and platform owner grant a standing permission that covers Maya's resources. Meternaut holds no such right by default ([decision 24](../design/12-decisions.md#24-a-change-runs-as-the-approver-meternaut-holds-no-right-to-change-azure--accepted)). **Surfaces.** A standing permission starts (C17); Told afterwards (C8).
 
-(An invented example.) E6, dev storage tiering. Not built: a run needs a person present ([decision 24](../design/12-decisions.md#24-a-change-runs-as-the-approver-meternaut-holds-no-right-to-change-azure--accepted)), so this journey has no design yet.
+(An invented example.) E6, dev storage tiering.
 
 | Step | Person | System |
 |---|---|---|
-| 1 | On 3 February, before the first run, "A standing permission starts" (C17) says: storage tier changes in development subscriptions, up to about EUR 500 a month in Expected saving per change, at the rates on your bill, until 12 March. She can tap "Pause changes here" or "Not mine", or use the conversation buttons | Sends C17 to each owner. A permission never covers a purchase or a resource marked do-not-touch |
-| 2 | Minutes after a run, Told afterwards (C8): "I moved three dev containers to a cooler storage tier." About EUR 41 a month (range 35–48), "At the rates on your bill", "Expected saving". Undo, where Azure allows | Checks every condition in code before each run and adds the run to her weekly summary |
+| 1 | On 3 February, before the first run, "A standing permission starts" (C17) says: storage tier changes in development subscriptions, up to about EUR 500 a month in Expected saving per change, at the rates on your bill, until 12 March. She can tap "Pause changes here" or "Not mine" | Sends C17 to each owner. A permission never covers a purchase or a resource marked do-not-touch |
+| 2 | Minutes after a run, Told afterwards (C8): "Three dev containers were moved to a cooler storage tier." About EUR 41 a month (range 35–48), "At the rates on your bill", "Expected saving". Undo, where Azure allows | Checks every condition in code before each run and adds the run to her weekly summary |
 | 3 | She does nothing, taps Undo, or taps "Pause changes here" | Undo reverses the last change only and also pauses this standing permission until a person has reviewed it. "Pause changes here" stops permissions on these resources, not suggestions |
 
 ![Card C8: a change made under a permission, with Undo and Pause changes here.](../img/experience-card-c8-told-afterwards.png)
-
-Look at what pauses a permission: Undo, a [regret](../design/README.md#words-used-in-this-design) or a revised fact it relies on.
 
 ```mermaid
 stateDiagram-v2
@@ -188,7 +186,7 @@ stateDiagram-v2
 
 | If | Then |
 |---|---|
-| Too many, or not hers | "Not mine" re-routes it; someone else becomes owner only after confirming. "Fewer like this" lowers asks of that kind, not automatic changes; "Pause changes here" stops those |
+| Too many, or not hers | "Not mine" re-routes it; someone else becomes owner only after confirming. "Fewer like this" lowers asks of that kind, not standing-permission runs; "Pause changes here" stops those |
 | A team lead opens the scope's page | Open decisions and ownership gaps, never a list of people who have not answered. Counts for fewer than five people roll up |
 
 **Rules ([08](08-attention-and-trust.md)).** Notes are visible and editable, each with a scope and an expiry. No league tables of people.

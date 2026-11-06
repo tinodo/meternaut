@@ -405,7 +405,7 @@
     },
     "C8": {
       "file": "told-afterwards.json",
-      "title": "Told afterwards",
+      "title": "Told afterwards (optional mode, not built)",
       "conversation": "full",
       "money": true,
       "requires": [
@@ -803,7 +803,7 @@
     },
     "C17": {
       "file": "permission-starts.json",
-      "title": "A standing permission starts",
+      "title": "A standing permission starts (optional mode, not built)",
       "conversation": "full",
       "requires": [
         "headline",

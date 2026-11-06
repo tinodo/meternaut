@@ -242,7 +242,10 @@ class FirstContact(unittest.TestCase):
     def test_it_says_who_writes_why_this_person_what_happens_today_and_what_does_not(self):
         text = self.letter.text
         for sentence in ("I am Meternaut, an AI assistant", "with the roles: approver, owner", "A person who is not on the list receives nothing from me.",
-                         "I find leads", "Two AI roles judge each lead. The Detective proposes what to do. The Skeptic argues against it.",
+                         "I look for waste in two ways. Fixed checks list leads, for example a disk that is not attached to anything.",
+                         "An Investigator, an AI agent with read-only tools, also looks through the estate by itself for resources that cost money and are not used or needed.",
+                         "AI roles judge what I find. The Detective proposes what to do with a lead, the Investigator reports its findings, and the Skeptic argues against both.",
+                         "All three are AI models, and none of them can change anything.",
                          "No model writes the plan.", "I make the one approved change with that person's own permissions",
                          "after I have read the resource again right before I act.", "I hold no right of my own to change Azure.",
                          "I make no change without a person's OK on a page.",
@@ -430,6 +433,36 @@ class Digest(unittest.TestCase):
     def test_a_kind_without_words_falls_back_to_the_type_of_the_resource(self):
         case = make_case(status="proposed", detector="new-detector", resource_type="microsoft.example/things")
         self.assertIn("What it is: a resource of type microsoft.example/things", letters.digest_letter(PERSON, BASE, NOW, [], [case], []).text)
+
+    def test_a_case_of_the_investigation_says_what_the_investigation_found_in_the_words_of_its_basis(self):
+        words = {"no-usage": "a resource that the investigation found with no recorded usage", "low-usage": "a resource that the investigation found with little recorded usage",
+                 "oversized": "a resource that the investigation found larger than its use needs", "duplicate": "a resource that the investigation found duplicated",
+                 "unused-feature": "a paid feature that the investigation found unused", "commitment-misfit": "a commitment that the investigation found does not fit the use",
+                 "other": "a resource that the Watch's own investigation found"}
+        for basis, expected in words.items():
+            with self.subTest(basis=basis):
+                case = make_case(status="proposed", detector="investigation", recommendation="change", facts={"basis": basis, "proposal": "change", "metrics": {}, "finding": 1},
+                                 models={"investigator": "model-i", "skeptic": "model-s"})
+                text = letters.digest_letter(PERSON, BASE, NOW, [], [case], []).text
+                self.assertIn(f"What it is: {expected}", text)
+        for facts in ({}, {"basis": "something new"}, None):
+            case = make_case(status="needs_human", detector="investigation", facts=facts)
+            self.assertIn("What it is: a resource that the Watch's own investigation found", letters.digest_letter(PERSON, BASE, NOW, [], [case], []).text)
+
+    def test_the_digest_says_that_a_proposal_is_a_removal_or_a_change_and_names_the_investigator_among_the_roles(self):
+        text = letters.digest_letter(PERSON, BASE, NOW, [], [make_case(status="proposed", detector="investigation")], []).text
+        self.assertIn("The AI roles proposed a change to these resources: removing them or changing them. A proposal is not a plan", text)
+        self.assertIn("The Investigator looks through the estate with read-only tools and reports what looks wasted", text)
+        self.assertIn("The Detective judges", text)
+        self.assertIn("The Skeptic argues against that judgement or that finding", text)
+
+    def test_the_models_of_a_case_of_the_investigation_are_named_in_the_letters_about_it(self):
+        case = make_case(detector="investigation", models={"investigator": "model-i", "skeptic": "model-s"})
+        letter = letters.approval_letter(make_plan(), case, PERSON, BASE, NOW)
+        self.assertIn("For this case the Investigator ran on model-i and the Skeptic ran on model-s.", letter.text)
+        legacy = letters.approval_letter(make_plan(), make_case(), PERSON, BASE, NOW)
+        self.assertIn("For this case the Detective ran on model-d and the Skeptic ran on model-s.", legacy.text)
+        self.assertNotIn("the Investigator ran", legacy.text)
 
     def test_a_long_list_is_cut_and_the_rest_is_left_to_the_history_page(self):
         plans = [make_plan(plan_id=f"p{n:02d}", code=f"C{n:02d}", expires_at=f"2026-11-{6 + n // 10:02d}T0{n % 10}:00:00Z") for n in range(MAX_LISTED + 3)]

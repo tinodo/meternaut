@@ -75,6 +75,20 @@ def a_good_run(**finished):
     ]
 
 
+def an_investigation(**finished):
+    """The lines that the investigation writes (cases/investigate.py), without the cases that it opens."""
+    return [
+        event("investigation.started", investigator="meternaut-investigator:3", skeptic="meternaut-skeptic:2", modelInvestigator="gpt-6.1-sol", modelSkeptic="gpt-6-luna",
+              maxCalls=24, maxSeconds=420),
+        event("investigation.finding", finding=1, basis="idle", proposal="delete", confidence=0.85, claimed=3, handles=2, unknown=0, unproven=1, repeated=0, judgedLately=0,
+              guarded=0, capped=0, coveredCostUsd30d=12.4, verdict="agree", kept=True, reason=None, summary="Two of them carried no traffic in 30 days."),
+        event("investigation.finding", finding=2, basis="oversized", proposal="change", confidence=0.4, claimed=1, handles=0, unknown=1, unproven=0, repeated=0,
+              judgedLately=0, guarded=0, capped=0, coveredCostUsd30d=None, verdict=None, kept=False, reason="no handle was proven", summary="Looks too big."),
+        event("investigation.finished", **{"ok": True, "toolCalls": 14, "tokens": 52100, "seconds": 190, "examined": ["cost by service", "private endpoints"],
+                                           "findingsKept": 1, "findingsDropped": 1, "cases": 2, "guarded": 0, **finished}),
+    ]
+
+
 class Functions(unittest.TestCase):
     def test_it_waits_until_all_the_functions_are_listed(self):
         answers = iter([Exception, listed(["watch-daily"]), listed(cc.FUNCTIONS)])
@@ -180,6 +194,29 @@ class Parsing(unittest.TestCase):
         parsed = cc.parse_event(lines[0])
         self.assertEqual((parsed["type"], parsed["requestId"], parsed["tokens"]), ("run.finished", "a" * 32, 10))
 
+    def test_the_lines_and_the_reasons_of_the_investigation_are_the_ones_the_app_writes_and_the_record_lists(self):
+        import sys
+        app = str(ROOT / "src" / "case-functions")
+        sys.path.insert(0, app)
+        try:
+            from cases import events as writer
+        finally:
+            sys.path.remove(app)
+        self.assertEqual(writer.INVESTIGATION_KINDS, ("investigation.started", "investigation.finding", "investigation.finished"))
+        record = (ROOT / "docs" / "proposals" / "06-foundry-agents.md").read_text(encoding="utf-8")
+        source = (ROOT / "src" / "case-functions" / "cases" / "investigate.py").read_text(encoding="utf-8")
+        run = (ROOT / "src" / "case-functions" / "cases" / "run.py").read_text(encoding="utf-8")
+        for kind in writer.INVESTIGATION_KINDS:
+            self.assertIn(f"`{kind}`", record, kind)
+        for name in ("investigator", "skeptic", "modelInvestigator", "modelSkeptic", "maxCalls", "maxSeconds", "toolCalls", "findingsKept", "findingsDropped", "examined",
+                     "finding", "basis", "proposal", "confidence", "claimed", "handles", "unknown", "unproven", "unmeasured", "shown", "repeated", "judgedLately", "guarded",
+                     "capped", "coveredCostUsd30d", "verdict", "kept", "reason", "summary", "cases", "note"):
+            self.assertIn(f"{name}=", source, name)
+            self.assertIn(f"`{name}`", record, name)
+        for reason in cc.BENIGN_NOT_RUN:
+            self.assertIn(f'True, "{reason}"', source)
+        self.assertIn('say(f"' + cc.NOT_RUN + '{investigation.note}")', run)
+
 
 class Run(unittest.TestCase):
     def args(self, *extra):
@@ -219,6 +256,95 @@ class Run(unittest.TestCase):
                      "step detective gpt-6-luna: ok, 900+210 tokens, 3100 ms"):
             self.assertIn(text, out)
         self.assertNotIn(SECRET, out)
+
+    def test_the_investigation_is_told_in_plain_words(self):
+        events = a_good_run()
+        events[-1:-1] = an_investigation()
+        code, out, err, _ = self.go([telemetry(events)])
+        self.assertEqual((code, err), (0, ""))
+        for text in ("Investigation (two agents in Foundry, with read-only tools):",
+                     "The Investigator ran on gpt-6.1-sol and the Skeptic on gpt-6-luna; the budget was 24 tool calls and 420 seconds.",
+                     "It ended well after 190 seconds: 14 tool calls and 52100 tokens through Foundry; findings kept 1, dropped 1; cases opened 2, "
+                     "resources held back by a guard 0.",
+                     "What it says it examined: cost by service; private endpoints",
+                     "Finding 1: idle, proposal delete, confidence 0.85; 3 resources claimed, 2 left after the checks of code",
+                     "their cost of the last 30 days 12.40 USD (Cost Management cost lines, not an invoice); the Skeptic: agree; kept",
+                     "Two of them carried no traffic in 30 days.",
+                     "Finding 2: oversized, proposal change, confidence 0.4;",
+                     "their cost of the last 30 days unknown (Cost Management cost lines, not an invoice); the Skeptic: no verdict; dropped: no handle was proven"):
+            self.assertIn(text, out)
+        self.assertLess(out.index("Leads by detector"), out.index("Investigation (two agents"))
+        self.assertLess(out.index("Investigation (two agents"), out.index("Cases:"))
+
+    def test_a_run_without_an_investigation_says_nothing_of_one(self):
+        _, out, _, _ = self.go([telemetry(a_good_run())])
+        self.assertNotIn("Investigation", out)
+
+    def test_findings_are_listed_in_their_own_order_and_an_end_that_did_not_arrive_is_said(self):
+        events = a_good_run()
+        started, first, second, _ = an_investigation()
+        events[-1:-1] = [started, second, first]
+        code, out, _, _ = self.go([telemetry(events)])
+        self.assertEqual(code, 0, "an end that has not arrived is said, and the run's own end decides")
+        self.assertIn("The end of the investigation did not arrive.", out)
+        self.assertLess(out.index("Finding 1:"), out.index("Finding 2:"))
+
+    def test_an_investigation_that_ended_badly_fails_the_check_and_says_why(self):
+        events = a_good_run()
+        events[-1:-1] = an_investigation(ok=False, note="the investigator gave no answer (Foundry response failed: HTTP 403)")
+        code, out, _, _ = self.go([telemetry(events)])
+        self.assertEqual(code, 1)
+        self.assertIn("It ended badly", out)
+        self.assertIn("Why: the investigator gave no answer (Foundry response failed: HTTP 403)", out)
+
+    def test_an_investigation_that_did_not_run_fails_the_check_unless_it_was_switched_off_or_had_no_project(self):
+        for reason, expected in (("the agents could not be made ready (Foundry create agent failed: HTTP 403)", 1), ("it is switched off", 0),
+                                 ("no Foundry endpoint is set", 0)):
+            events = a_good_run()
+            events.insert(-1, event("run.note", note=cc.NOT_RUN + reason))
+            code, out, _, _ = self.go([telemetry(events)])
+            self.assertEqual(code, expected, reason)
+            self.assertIn("Note: " + cc.NOT_RUN + reason, out)
+
+    def test_text_of_an_agent_cannot_start_a_runner_command_or_break_out_of_the_code_block(self):
+        events = a_good_run()
+        events[-1:-1] = an_investigation(note="x", examined=["a\n::add-mask::secret\n```\n## injected"])
+        events[-1:-1] = [event("investigation.finding", finding=3, basis="idle", summary="line one\n::error::fake\r\n##[group]x `tick`", kept=True)]
+        code, out, _, _ = self.go([telemetry(events)])
+        self.assertEqual(code, 0)
+        for printed in out.splitlines():
+            self.assertFalse(printed.lstrip().startswith("::"), printed)
+            self.assertNotIn("##[", printed)
+            self.assertNotIn("```", printed)
+        self.assertIn("Finding 3: idle", out)
+
+    def test_the_investigation_state_of_the_end_decides_without_its_lines(self):
+        for state, expected, text in (("ran", 0, "The investigation ran."), ("failed", 1, "The investigation was meant to run and did not, or it ended badly."),
+                                      ("off", 0, "The investigation did not run: it is switched off or the app has no Foundry project.")):
+            code, out, _, _ = self.go([telemetry(a_good_run(investigation=state, investigationLines=0))])
+            self.assertEqual(code, expected, state)
+            self.assertIn(text, out)
+
+    def test_it_waits_for_the_investigation_lines_that_the_end_counts(self):
+        everything = a_good_run(investigation="ran", investigationLines=4)
+        everything[-1:-1] = an_investigation()
+        early = [e for e in everything if e["type"] != "investigation.finished"]
+        code, out, _, asked = self.go([telemetry(early), telemetry(everything)])
+        self.assertEqual((code, len(asked)), (0, 2))
+        self.assertIn("It ended well after 190 seconds", out)
+
+    def test_after_the_deadline_the_investigation_lines_that_did_not_arrive_are_said(self):
+        everything = a_good_run(investigation="ran", investigationLines=4)
+        everything[-1:-1] = an_investigation()
+        early = [e for e in everything if e["type"] != "investigation.finished"]
+        code, out, _, _ = self.go([telemetry(early)], "--minutes", "1")
+        self.assertEqual(code, 0)
+        self.assertIn("the telemetry has not delivered: investigation lines: 3 of 4", out)
+
+    def test_the_text_of_the_end_of_the_run_is_the_one_the_app_writes(self):
+        run = (ROOT / "src" / "case-functions" / "cases" / "run.py").read_text(encoding="utf-8")
+        self.assertIn("investigation=investigation.state", run)
+        self.assertIn('investigationLines=h.lines("investigation.")', run)
 
     def test_the_query_is_made_for_this_request_only_and_through_the_resource_manager(self):
         _, _, _, asked = self.go([telemetry(a_good_run())])

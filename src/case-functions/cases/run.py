@@ -1,7 +1,9 @@
-"""One run of the Watch: find leads, take the dearest ones through the two model roles, apply the guards, write the History.
+"""One run of the Watch: find leads, let the investigation look for waste by itself, take the leads that are left through the two model roles, apply the guards,
+write the History.
 
 Nothing here changes Azure. The limits of docs/proposals/02-first-cases.md are applied here: the cases per run, the tokens per run and per
-call, the deadline, the retries (in http.py) and the refusals of the gateway.
+call, the deadline, the retries (in http.py) and the refusals of the gateway. The investigation (investigate.py) has a budget of its own, and the time that it
+takes is not taken from the deadline of the cases that follow it.
 """
 from __future__ import annotations
 
@@ -15,12 +17,13 @@ from dataclasses import dataclass
 from typing import Callable, Mapping
 
 from . import config as cfg
-from . import decide, detectors, evidence, guards, roles, wiring
+from . import decide, detectors, evidence, guards, investigate, roles, wiring
 from .approvals import is_fixture
 from .arm import Arm, scopes_of
 from .detectors import DETECTOR_NAMES, Context, Lead
 from .events import History
 from .evidence import EvidenceError
+from .foundry import Foundry
 from .gateway import Gateway, GatewayError
 from .http import Client, HttpError, allowed_calls, default_transport
 from .identity import Identity, IdentityError
@@ -45,6 +48,7 @@ class Services:
     clock: Callable[[], dt.datetime]
     monotonic: Callable[[], float]
     extras: "wiring.Extras | None" = None
+    foundry: "Foundry | None" = None
 
 
 @dataclass
@@ -247,9 +251,14 @@ def execute(s: Services, trigger: str) -> Summary:
         return summary
 
     ranked = detectors.rank(found, contexts)
-    if s.extras is not None:
-        approval = wiring.approval_settings(s.extras.settings)
-        ranked = sorted(ranked, key=lambda lead: not is_fixture(lead, approval))  # stable: the waste that Meternaut planted itself goes first, it is the one kind that a change may be made on
+    approval = wiring.approval_settings(s.extras.settings) if s.extras is not None else None
+
+    def planted(lead: Lead) -> bool:
+        """Waste that Meternaut planted itself in the one group where a change may be made: the loop is proved on it, so it still goes through the two roles."""
+        return approval is not None and is_fixture(lead, approval)
+
+    if approval is not None:
+        ranked = sorted(ranked, key=lambda lead: not planted(lead))  # stable: the waste that Meternaut planted itself goes first, it is the one kind that a change may be made on
     summary.leads = len(ranked)
     for position, lead in enumerate(ranked[:MAX_LEAD_EVENTS], 1):
         h.emit("lead.found", leadId=lead.lead_id, detector=lead.detector, resourceId=lead.resource_id, resourceType=clean_text(lead.resource_type, 120),
@@ -258,10 +267,34 @@ def execute(s: Services, trigger: str) -> Summary:
         counts = Counter(lead.detector for lead in ranked[MAX_LEAD_EVENTS:])
         h.emit("run.note", note=f"{len(ranked) - MAX_LEAD_EVENTS} more leads are not listed: " + ", ".join(f"{name} {n}" for name, n in sorted(counts.items())))
 
+    def say(text: str) -> None:
+        notes.append(text)
+        h.emit("run.note", note=clean_text(text, 300))
+
+    # The investigation goes first, with a budget and a time of its own: what it takes is not taken from the deadline of the cases after it.
+    before = s.monotonic()
+    investigation = investigate.investigate(s, contexts, notes)
+    deadline += s.monotonic() - before
+    s.client.deadline = deadline
+    summary.cases += investigation.cases
+    summary.proposed += investigation.proposed
+    summary.needs_human += investigation.needs_human
+    summary.dropped += investigation.dropped
+    summary.errors += investigation.errors
+    candidates = ranked
+    if investigation.ran:
+        # The investigation found the waste by itself, so the leads of the fixed detectors that are real resources are left to it. They stay in the History as leads.
+        candidates = [lead for lead in ranked if planted(lead)]
+        left_to_it = len(ranked) - len(candidates)
+        if left_to_it:
+            say(f"{left_to_it} lead{'s were' if left_to_it != 1 else ' was'} left to the investigation and not judged by the Detective and the Skeptic")
+    else:
+        say(f"the investigation did not run: {investigation.note}")
+
     tokens = 0
     wanted: list[Lead] = []
     skipped = 0
-    for lead in ranked:
+    for lead in candidates:
         if len(wanted) >= st.max_cases:
             break
         if _recently_judged(s, lead):
@@ -294,7 +327,8 @@ def execute(s: Services, trigger: str) -> Summary:
     summary.tokens = tokens
     summary.seconds = int(s.monotonic() - started)
     h.emit("run.finished", ok=summary.ok, leads=summary.leads, cases=summary.cases, proposed=summary.proposed, needsHuman=summary.needs_human,
-           dropped=summary.dropped, errors=summary.errors, tokens=summary.tokens, seconds=summary.seconds)
+           dropped=summary.dropped, errors=summary.errors, tokens=summary.tokens, seconds=summary.seconds, investigation=investigation.state,
+           investigationLines=h.lines("investigation."))
     finished = keep(True)
     if finished is not None and s.extras is not None:
         try:
@@ -306,20 +340,25 @@ def execute(s: Services, trigger: str) -> Summary:
 
 def run_watch(trigger: str, request_id: str | None, env: Mapping[str, str] | None = None, *, clock: Callable[[], dt.datetime] = utc_now,
               monotonic: Callable[[], float] = time.monotonic, sleep: Callable[[float], None] = time.sleep, transport=default_transport, fetch=None,
-              new_id: Callable[[], str] = lambda: uuid.uuid4().hex, extras: "wiring.Extras | None" = None) -> Summary:
+              new_id: Callable[[], str] = lambda: uuid.uuid4().hex, extras: "wiring.Extras | None" = None, foundry: "Foundry | None" = None) -> Summary:
     """The whole run, with a History line for whatever goes wrong. It never raises: the History says how the run ended.
 
-    `extras` is the loop (the store, the people, the approvals); None builds it from the settings, and a run without the settings of the loop is the Watch alone."""
+    `extras` is the loop (the store, the people, the approvals); None builds it from the settings, and a run without the settings of the loop is the Watch alone.
+    `foundry` is the client of the Foundry project of the investigation; None builds it from the settings, and without an endpoint there is none."""
     env = os.environ if env is None else env
     redact = Redactor()
     history = History(new_id(), request_id, clock, redact)
     try:
         settings = cfg.load(env)
-        identity = Identity(env, **({"fetch": fetch} if fetch else {}))
-        client = Client(allowed_calls(settings.gateway_host, Gateway.key_path(settings)), redact, transport=transport, sleep=sleep, monotonic=monotonic)
+        identity = Identity(env, sleep=sleep, **({"fetch": fetch} if fetch else {}))
+        client = Client(allowed_calls(settings.gateway_host, Gateway.key_path(settings), foundry_endpoint=settings.foundry_endpoint), redact, transport=transport,
+                        sleep=sleep, monotonic=monotonic)
         if extras is None:
             extras = wiring.build_extras(env, identity.token, redact, transport=transport, sleep=sleep, monotonic=monotonic, clock=clock)
-        services = Services(settings, client, Arm(client, identity.token), Gateway(settings, client, identity.token, redact), history, redact, clock, monotonic, extras)
+        if foundry is None and settings.foundry_endpoint:
+            foundry = Foundry(settings.foundry_endpoint, client, identity.token, redact)
+        services = Services(settings, client, Arm(client, identity.token), Gateway(settings, client, identity.token, redact), history, redact, clock, monotonic, extras,
+                            foundry)
         return execute(services, trigger)
     except Exception as error:  # noqa: BLE001 (the History must say how every run ended)
         reason = clean_text(redact(f"{type(error).__name__}: {error}"), 300)

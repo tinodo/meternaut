@@ -36,15 +36,25 @@ class ApprovalSettings:
     change_group: str  # the one resource group in which a plan is made and a change may be made
     planted_tag: str = "meternaut-planted"
     ttl_hours: int = 72
+    # The one subscription that holds that group: a group of the same name in another subscription is not it. None means that the subscription is not looked at. The app
+    # always sets it (wiring.approval_settings); only a caller from before the setting leaves it out.
+    change_subscription: str | None = None
 
 
 def _planted(lead: Lead, settings: ApprovalSettings) -> bool:
     return any(key.lower() == settings.planted_tag.lower() and str(value).strip() for key, value in lead.tags.items())
 
 
+def _in_change_subscription(lead: Lead, settings: ApprovalSettings) -> bool:
+    """Whether the lead is in the one subscription in which a change may be made. A lead without a subscription id is in none."""
+    wanted = settings.change_subscription
+    return wanted is None or (bool(lead.subscription_id) and lead.subscription_id.lower() == wanted.lower())
+
+
 def is_fixture(lead: Lead, settings: ApprovalSettings) -> bool:
-    """A resource that Meternaut planted itself, in the one group where a change may be made: the one kind of resource that is not held back for being new."""
-    return lead.resource_group.lower() == settings.change_group.lower() and _planted(lead, settings)
+    """A resource that Meternaut planted itself, in the one group (of the one subscription) where a change may be made: the one kind of resource that is not held back
+    for being new."""
+    return _in_change_subscription(lead, settings) and lead.resource_group.lower() == settings.change_group.lower() and _planted(lead, settings)
 
 
 def why_not(case: CaseRecord, lead: Lead, settings: ApprovalSettings, store: Store) -> str | None:
@@ -53,6 +63,8 @@ def why_not(case: CaseRecord, lead: Lead, settings: ApprovalSettings, store: Sto
         return "the case is not proposed for deletion"
     if lead.detector not in FAMILY_OF:
         return "Meternaut has no change for this kind of resource"
+    if not _in_change_subscription(lead, settings):
+        return ("the resource is outside the one subscription in which a change may be made" if lead.subscription_id else "the resource has no subscription id")
     if lead.resource_group.lower() != settings.change_group.lower():
         return "the resource is outside the one resource group in which a change may be made"
     if not _planted(lead, settings):

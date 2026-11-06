@@ -243,5 +243,105 @@ class Decisions(unittest.TestCase):
         self.assertEqual(decide.decide(lead(), SAFE_GUARDS, detective(), skeptic("agree", [], "Fine.")).objections, ())
 
 
+class AChangeIsDecidedLikeADelete(unittest.TestCase):
+    """The recommendation `change` keeps the resource and alters it (a smaller size, another tier). It is proposed under the same conditions as a delete."""
+
+    def test_both_agree_without_a_guard_and_a_confidence_of_seven_tenths_propose_it(self):
+        outcome = decide.decide(lead(), SAFE_GUARDS, detective("change", 0.7), skeptic())
+        self.assertEqual((outcome.status, outcome.recommendation, outcome.guards), ("proposed", "change", []))
+        self.assertEqual(decide.PROPOSALS, ("delete", "change"))
+
+    def test_the_same_conditions_stop_it(self):
+        self.assertEqual(decide.decide(lead(), SAFE_GUARDS, detective("change", 0.69), skeptic()).status, "needs_human")
+        for verdict in ("disagree", "unsure"):
+            self.assertEqual(decide.decide(lead(), SAFE_GUARDS, detective("change"), skeptic(verdict)).status, "needs_human", verdict)
+        self.assertEqual(decide.decide(lead(), SAFE_GUARDS, detective("change"), None).status, "needs_human")
+        for flag in ("locked", "keepTag", "tooNew", "managedGroup", "unverified"):
+            flags = {"locked": False, "keepTag": False, "tooNew": False, "managedGroup": False, "unverified": False, flag: True}
+            self.assertEqual(decide.decide(lead(), Guards(flags), detective("change", 1.0), skeptic()).status, "needs_human", flag)
+
+    def test_a_change_has_no_figure_of_its_own_even_when_the_resource_has_a_cost(self):
+        outcome = decide.decide(lead(cost_usd_30d=50.0), SAFE_GUARDS, detective("change"), skeptic())
+        self.assertEqual((outcome.status, outcome.monthly_saving_usd), ("proposed", None))
+        self.assertEqual(decide.decide(lead(cost_usd_30d=50.0), SAFE_GUARDS, detective("delete"), skeptic()).monthly_saving_usd, 50.0)
+
+    def test_a_change_that_advisor_has_a_figure_for_saves_advisors_own_figure(self):
+        for detector in (ADVISOR, "investigation"):
+            with self.subTest(detector=detector):
+                outcome = decide.decide(lead(detector=detector, advisor_saving_usd=12.5, cost_usd_30d=50.0), SAFE_GUARDS, detective("change"), skeptic())
+                self.assertEqual(outcome.monthly_saving_usd, 12.5)
+                held = decide.decide(lead(detector=detector, advisor_saving_usd=12.5), GUARDED, detective("change"), skeptic())
+                self.assertEqual((held.status, held.monthly_saving_usd), ("needs_human", 12.5))
+
+    def test_a_delete_of_a_lead_of_the_investigation_saves_the_cost_lines_and_not_advisors_figure(self):
+        outcome = decide.decide(lead(detector="investigation", advisor_saving_usd=12.5, cost_usd_30d=50.0), SAFE_GUARDS, detective("delete"), skeptic())
+        self.assertEqual(outcome.monthly_saving_usd, 50.0)
+
+    def test_keep_and_investigate_have_no_figure_whatever_the_lead_says(self):
+        for recommendation in ("keep", "investigate"):
+            outcome = decide.decide(lead(advisor_saving_usd=12.5, cost_usd_30d=50.0), SAFE_GUARDS, detective(recommendation), skeptic())
+            self.assertIsNone(outcome.monthly_saving_usd, recommendation)
+
+
+class ACaseWithoutAMeasurementThatBacksItIsNeverProposed(unittest.TestCase):
+    """`backed` is false when no measurement that code confirmed backs the claim: whatever the two agents answer, the case is for a person, and it says so."""
+
+    SAYS = "no measurement backs this finding; a person has to judge it"
+
+    def test_the_sentence_is_plain(self):
+        self.assertEqual(decide.NO_MEASUREMENT, self.SAYS)
+
+    def test_a_case_is_backed_unless_it_is_said_that_it_is_not_and_the_old_calls_decide_as_they_did(self):
+        outcome = decide.decide(lead(), SAFE_GUARDS, detective(), skeptic())
+        self.assertEqual((outcome.status, outcome.objections), ("proposed", ()))
+        self.assertEqual(decide.decide(lead(), SAFE_GUARDS, detective(), skeptic(), backed=True, notes=()), outcome)
+
+    def test_a_delete_and_a_change_that_both_agents_agree_on_are_not_proposed_without_it_whatever_the_confidence(self):
+        for recommendation in ("delete", "change"):
+            for confidence in (0.7, 0.9, 1.0):
+                with self.subTest(recommendation=recommendation, confidence=confidence):
+                    outcome = decide.decide(lead(), SAFE_GUARDS, detective(recommendation, confidence), skeptic("agree"), backed=False)
+                    self.assertEqual((outcome.status, outcome.recommendation, outcome.confidence, outcome.objections), ("needs_human", recommendation, confidence, (self.SAYS,)))
+
+    def test_the_summary_of_the_agent_is_left_as_it_is_and_the_cost_lines_of_a_delete_are_still_shown(self):
+        outcome = decide.decide(lead(cost_usd_30d=50.0), SAFE_GUARDS, detective("delete"), skeptic(), backed=False)
+        self.assertEqual((outcome.summary, outcome.monthly_saving_usd), ("Nothing uses it.", 50.0))
+        self.assertIsNone(decide.decide(lead(cost_usd_30d=50.0), SAFE_GUARDS, detective("change"), skeptic(), backed=False).monthly_saving_usd)
+
+    def test_the_sentence_comes_before_the_objections_of_the_skeptic_and_after_the_notes_of_code(self):
+        outcome = decide.decide(lead(), SAFE_GUARDS, detective(), skeptic("disagree", ["a", "b"]), backed=False, notes=("code says this",))
+        self.assertEqual(outcome.objections, ("code says this", self.SAYS, "a", "b"))
+        summary_only = decide.decide(lead(), SAFE_GUARDS, detective(), skeptic("unsure", [], "Maybe in use."), backed=False)
+        self.assertEqual(summary_only.objections, (self.SAYS, "Maybe in use."))
+
+    def test_it_says_so_also_when_a_guard_or_the_missing_skeptic_or_another_reason_stops_the_case(self):
+        for label, guard, answer in (("a guard", GUARDED, skeptic()), ("no skeptic", SAFE_GUARDS, None), ("a low confidence", SAFE_GUARDS, skeptic())):
+            with self.subTest(label):
+                outcome = decide.decide(lead(), guard, detective("delete", 0.1 if label == "a low confidence" else 1.0), answer, backed=False)
+                self.assertEqual((outcome.status, outcome.objections), ("needs_human", (self.SAYS,)))
+
+    def test_an_investigate_is_for_a_person_anyway_and_says_it_too(self):
+        outcome = decide.decide(lead(), SAFE_GUARDS, detective("investigate", 0.99), skeptic(), backed=False)
+        self.assertEqual((outcome.status, outcome.objections), ("needs_human", (self.SAYS,)))
+
+    def test_a_keep_is_dropped_and_has_no_sentence_and_no_note(self):
+        outcome = decide.decide(lead(), SAFE_GUARDS, detective("keep"), skeptic("disagree", ["a"]), backed=False, notes=("code says this",))
+        self.assertEqual((outcome.status, outcome.objections, outcome.monthly_saving_usd), ("dropped", ("a",), None))
+
+    def test_notes_of_code_come_first_among_the_objections_of_a_case_that_is_backed_too_and_never_make_it_proposed(self):
+        outcome = decide.decide(lead(), SAFE_GUARDS, detective("delete", 0.1), skeptic("disagree", ["a"]), notes=("n1", "n2"))
+        self.assertEqual((outcome.status, outcome.objections), ("needs_human", ("n1", "n2", "a")))
+        agreed = decide.decide(lead(), SAFE_GUARDS, detective(), skeptic("agree"), notes=("n1",))
+        self.assertEqual((agreed.status, agreed.objections), ("proposed", ("n1",)), "a note does not stop a case that nothing else stops")
+
+    def test_a_backed_case_decides_as_it_always_did_for_every_verdict_and_recommendation(self):
+        for recommendation in ("delete", "change", "keep", "investigate"):
+            for verdict in ("agree", "disagree", "unsure", None):
+                with self.subTest(recommendation=recommendation, verdict=verdict):
+                    answer = skeptic(verdict) if verdict else None
+                    self.assertEqual(decide.decide(lead(), SAFE_GUARDS, detective(recommendation), answer),
+                                     decide.decide(lead(), SAFE_GUARDS, detective(recommendation), answer, backed=True))
+
+
 if __name__ == "__main__":
     unittest.main()

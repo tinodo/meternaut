@@ -66,6 +66,126 @@ class Load(unittest.TestCase):
         self.assertEqual((settings.max_tokens_per_run, settings.max_completion_tokens, settings.deadline_seconds), (20000, 1500, 600))
 
 
+class Investigation(unittest.TestCase):
+    """The optional settings of the investigation by agents in Microsoft Foundry."""
+
+    ENDPOINT = "https://acct-example.services.ai.azure.com/api/projects/proj-example"
+
+    def investigation(self, settings):
+        return (settings.foundry_endpoint, settings.investigate, settings.foundry_model_investigator, settings.foundry_model_skeptic, settings.investigate_max_calls,
+                settings.investigate_max_seconds)
+
+    def test_without_the_endpoint_the_app_does_not_investigate_and_the_defaults_are_the_ones_that_were_fixed(self):
+        self.assertEqual(self.investigation(config.load(ENV)), (None, False, "gpt-6.1-sol", "gpt-6-luna", 40, 420))
+        self.assertEqual(self.investigation(config.load({**ENV, "FOUNDRY_PROJECT_ENDPOINT": "", "INVESTIGATE": ""})), (None, False, "gpt-6.1-sol", "gpt-6-luna", 40, 420))
+        self.assertEqual((config.OPTIONAL["FOUNDRY_MODEL_INVESTIGATOR"], config.OPTIONAL["FOUNDRY_MODEL_SKEPTIC"], config.OPTIONAL["INVESTIGATE_MAX_CALLS"],
+                          config.OPTIONAL["INVESTIGATE_MAX_SECONDS"]), ("gpt-6.1-sol", "gpt-6-luna", "40", "420"))
+        for name in ("FOUNDRY_PROJECT_ENDPOINT", "FOUNDRY_MODEL_INVESTIGATOR", "FOUNDRY_MODEL_SKEPTIC", "INVESTIGATE", "INVESTIGATE_MAX_CALLS", "INVESTIGATE_MAX_SECONDS"):
+            self.assertNotIn(name, config.REQUIRED)
+
+    def test_the_endpoint_turns_the_investigation_on_unless_it_is_switched_off(self):
+        self.assertEqual(self.investigation(config.load({**ENV, "FOUNDRY_PROJECT_ENDPOINT": self.ENDPOINT})), (self.ENDPOINT, True, "gpt-6.1-sol", "gpt-6-luna", 40, 420))
+        for value in ("off", "OFF", "0", "false", "False", "no", " off "):
+            self.assertFalse(config.load({**ENV, "FOUNDRY_PROJECT_ENDPOINT": self.ENDPOINT, "INVESTIGATE": value}).investigate, value)
+        for value in ("on", "ON", "1", "true", "True", "yes", " on "):
+            self.assertTrue(config.load({**ENV, "FOUNDRY_PROJECT_ENDPOINT": self.ENDPOINT, "INVESTIGATE": value}).investigate, value)
+        self.assertFalse(config.load({**ENV, "INVESTIGATE": "off"}).investigate)
+
+    def test_a_switch_that_is_neither_on_nor_off_is_named(self):
+        for value in ("maybe", "2", "enabled", "tru"):
+            with self.assertRaises(config.ConfigError, msg=value) as raised:
+                config.load({**ENV, "FOUNDRY_PROJECT_ENDPOINT": self.ENDPOINT, "INVESTIGATE": value})
+            self.assertEqual(str(raised.exception), "INVESTIGATE is on or off")
+
+    def test_the_investigation_cannot_be_on_without_an_endpoint(self):
+        with self.assertRaises(config.ConfigError) as raised:
+            config.load({**ENV, "INVESTIGATE": "on"})
+        self.assertEqual(str(raised.exception), "INVESTIGATE is on and FOUNDRY_PROJECT_ENDPOINT is not set")
+
+    def test_the_endpoint_has_to_be_the_endpoint_of_a_project_and_a_slash_at_the_end_is_taken_off(self):
+        self.assertEqual(config.load({**ENV, "FOUNDRY_PROJECT_ENDPOINT": self.ENDPOINT + "/"}).foundry_endpoint, self.ENDPOINT)
+        self.assertEqual(config.load({**ENV, "FOUNDRY_PROJECT_ENDPOINT": "https://a1.services.ai.azure.com/api/projects/_project"}).foundry_endpoint,
+                         "https://a1.services.ai.azure.com/api/projects/_project")
+        self.assertEqual(config.load({**ENV, "FOUNDRY_PROJECT_ENDPOINT": "https://a1.services.ai.azure.com/api/projects/proj.v2/"}).foundry_endpoint,
+                         "https://a1.services.ai.azure.com/api/projects/proj.v2", "a project name may hold dots, as the name of a resource does")
+        for value in ("http://acct-example.services.ai.azure.com/api/projects/p", "https://acct-example.services.ai.azure.com", "https://acct-example.services.ai.azure.com/api/projects/",
+                      "https://acct-example.services.ai.azure.com/api/projects/.", "https://acct-example.services.ai.azure.com/api/projects/..",
+                      "https://acct-example.services.ai.azure.com/api/projects/.p", "https://acct-example.services.ai.azure.com/api/projects/p/..",
+                      "https://acct-example.services.ai.azure.com/api/projects/p/agents", "https://acct-example.services.ai.azure.com/api/projects/p//", "https://evil.example/api/projects/p",
+                      "https://acct-example.services.ai.azure.com.evil.example/api/projects/p", "https://user@acct-example.services.ai.azure.com/api/projects/p",
+                      "https://ACCT.services.ai.azure.com/api/projects/p", "https://acct-example.openai.azure.com/api/projects/p", "https://acct-example.services.ai.azure.com/api/projects/p?x=1",
+                      "https://acct-example-services-ai-azure-com/api/projects/p",
+                      "acct-example.services.ai.azure.com/api/projects/p", " " + self.ENDPOINT):
+            with self.assertRaises(config.ConfigError, msg=value) as raised:
+                config.load({**ENV, "FOUNDRY_PROJECT_ENDPOINT": value})
+            self.assertEqual(str(raised.exception), "FOUNDRY_PROJECT_ENDPOINT is https://<account>.services.ai.azure.com/api/projects/<project>")
+
+    def test_the_two_models_are_deployment_names_and_have_to_be_two_models(self):
+        settings = config.load({**ENV, "FOUNDRY_MODEL_INVESTIGATOR": "Deploy_1.a-b", "FOUNDRY_MODEL_SKEPTIC": "gpt-6-sol"})
+        self.assertEqual((settings.foundry_model_investigator, settings.foundry_model_skeptic), ("Deploy_1.a-b", "gpt-6-sol"))
+        for name in ("FOUNDRY_MODEL_INVESTIGATOR", "FOUNDRY_MODEL_SKEPTIC"):
+            for value in ("bad name", "-x", "a/b", "x" * 65, "a\n", "é"):
+                with self.assertRaises(config.ConfigError, msg=f"{name}={value}") as raised:
+                    config.load({**ENV, name: value})
+                self.assertEqual(str(raised.exception), f"{name} is a model name")
+            self.assertEqual(config.load({**ENV, name: "x" * 64}).__dict__[name.lower()], "x" * 64)
+        for investigator, skeptic in (("gpt-6-luna", "gpt-6-luna"), ("gpt-6-luna", "GPT-6-Luna"), ("gpt-6.1-sol", None)):
+            env = {**ENV, "FOUNDRY_MODEL_INVESTIGATOR": investigator}
+            if skeptic:
+                env["FOUNDRY_MODEL_SKEPTIC"] = skeptic
+            else:
+                env["FOUNDRY_MODEL_SKEPTIC"] = "gpt-6.1-sol"
+            with self.assertRaises(config.ConfigError, msg=f"{investigator} {skeptic}") as raised:
+                config.load(env)
+            self.assertEqual(str(raised.exception), "FOUNDRY_MODEL_INVESTIGATOR and FOUNDRY_MODEL_SKEPTIC are the same model, and the Skeptic has to be another model than the Investigator")
+
+    def test_a_model_that_is_the_default_of_the_other_is_the_same_model(self):
+        with self.assertRaises(config.ConfigError) as raised:
+            config.load({**ENV, "FOUNDRY_MODEL_SKEPTIC": "gpt-6.1-sol"})
+        self.assertIn("FOUNDRY_MODEL_SKEPTIC", str(raised.exception))
+        with self.assertRaises(config.ConfigError):
+            config.load({**ENV, "FOUNDRY_MODEL_INVESTIGATOR": "gpt-6-luna"})
+
+    def test_the_limits_of_the_investigation_are_ceilings_that_a_setting_can_lower_and_never_raise(self):
+        settings = config.load({**ENV, "INVESTIGATE_MAX_CALLS": "40", "INVESTIGATE_MAX_SECONDS": "600"})
+        self.assertEqual((settings.investigate_max_calls, settings.investigate_max_seconds), (40, 600))
+        settings = config.load({**ENV, "INVESTIGATE_MAX_CALLS": "1", "INVESTIGATE_MAX_SECONDS": "30"})
+        self.assertEqual((settings.investigate_max_calls, settings.investigate_max_seconds), (1, 30))
+        for name, value, low, high in (("INVESTIGATE_MAX_CALLS", "0", 1, 40), ("INVESTIGATE_MAX_CALLS", "41", 1, 40), ("INVESTIGATE_MAX_CALLS", "-3", 1, 40),
+                                       ("INVESTIGATE_MAX_SECONDS", "29", 30, 600), ("INVESTIGATE_MAX_SECONDS", "601", 30, 600), ("INVESTIGATE_MAX_SECONDS", "100000", 30, 600)):
+            with self.assertRaises(config.ConfigError, msg=f"{name}={value}") as raised:
+                config.load({**ENV, name: value})
+            self.assertEqual(str(raised.exception), f"{name} is not between {low} and {high}")
+        for name in ("INVESTIGATE_MAX_CALLS", "INVESTIGATE_MAX_SECONDS"):
+            with self.assertRaises(config.ConfigError) as raised:
+                config.load({**ENV, name: "many"})
+            self.assertEqual(str(raised.exception), f"{name} is not a whole number")
+        self.assertEqual((config.LIMIT_INVESTIGATE_CALLS, config.LIMIT_INVESTIGATE_SECONDS), (40, 600))
+
+    def test_the_default_budget_of_tool_calls_is_the_ceiling_and_a_setting_can_still_lower_it(self):
+        self.assertEqual((config.DEFAULT_INVESTIGATE_CALLS, config.LIMIT_INVESTIGATE_CALLS), (40, 40))
+        for env in (ENV, {**ENV, "INVESTIGATE_MAX_CALLS": ""}, {**ENV, "FOUNDRY_PROJECT_ENDPOINT": self.ENDPOINT}):
+            self.assertEqual(config.load(env).investigate_max_calls, 40)
+        self.assertEqual(config.load({**ENV, "INVESTIGATE_MAX_CALLS": "24"}).investigate_max_calls, 24)
+        self.assertEqual(config.load({**ENV, "INVESTIGATE_MAX_CALLS": "24"}).investigate_max_seconds, 420, "the seconds are not touched")
+
+    def test_every_problem_is_named_at_once_with_the_older_ones_and_their_texts_do_not_change(self):
+        env = {**ENV, "GATEWAY_URL": "http://example.com", "FOUNDRY_PROJECT_ENDPOINT": "https://evil.example/api/projects/p", "FOUNDRY_MODEL_SKEPTIC": "gpt-6.1-sol",
+               "INVESTIGATE": "maybe", "INVESTIGATE_MAX_CALLS": "99", "INVESTIGATE_MAX_SECONDS": "x", "MAX_CASES_PER_RUN": "many"}
+        with self.assertRaises(config.ConfigError) as raised:
+            config.load(env)
+        self.assertEqual(str(raised.exception).split("; "), [
+            "GATEWAY_URL is https://<name>.azure-api.net", "MAX_CASES_PER_RUN is not a whole number",
+            "FOUNDRY_PROJECT_ENDPOINT is https://<account>.services.ai.azure.com/api/projects/<project>",
+            "FOUNDRY_MODEL_INVESTIGATOR and FOUNDRY_MODEL_SKEPTIC are the same model, and the Skeptic has to be another model than the Investigator",
+            "INVESTIGATE is on or off", "INVESTIGATE_MAX_CALLS is not between 1 and 40", "INVESTIGATE_MAX_SECONDS is not a whole number"])
+
+    def test_settings_that_are_made_by_hand_without_the_new_fields_have_their_defaults(self):
+        settings = config.Settings(client_id="c", subscriptions=("s",), gateway_url="u", gateway_host="h", product_subscription_id="p", model_detective="a", model_skeptic="b",
+                                   max_cases=1, max_tokens_per_run=1000, max_completion_tokens=100, deadline_seconds=60)
+        self.assertEqual(self.investigation(settings), (None, False, "gpt-6.1-sol", "gpt-6-luna", 40, 420))
+
+
 class TemplateAndCode(unittest.TestCase):
     def test_the_template_sets_every_required_setting_and_no_setting_that_the_code_never_reads(self):
         template = (REPO_ROOT / "environment" / "cases" / "main.bicep").read_text(encoding="utf-8")

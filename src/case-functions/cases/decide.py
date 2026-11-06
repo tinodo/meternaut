@@ -9,6 +9,10 @@ from .roles import DetectiveAnswer, SkepticAnswer
 
 PROPOSE_CONFIDENCE = 0.7
 STATUSES = ("proposed", "needs_human", "dropped", "error")
+# A case is proposed under the same conditions for a recommendation to delete the resource and for one to change it (a smaller size, another tier).
+PROPOSALS = ("delete", "change")
+# What a case says when no measurement that code confirmed backs it: it is never proposed, whatever the agents answered.
+NO_MEASUREMENT = "no measurement backs this finding; a person has to judge it"
 
 
 @dataclass(frozen=True)
@@ -29,19 +33,30 @@ def saving_of(lead: Lead) -> float | None:
     return lead.cost_usd_30d
 
 
-def decide(lead: Lead, guards: Guards, detective: DetectiveAnswer, skeptic: SkepticAnswer | None) -> Decision:
+def decide(lead: Lead, guards: Guards, detective: DetectiveAnswer, skeptic: SkepticAnswer | None, *, backed: bool = True, notes: tuple[str, ...] = ()) -> Decision:
+    """`backed` is false when no measurement that code confirmed backs the claim: the case then needs a person, and says so. `notes` are sentences that code wrote
+    and a person has to read; they come first among the objections of a case that is not dropped."""
     if detective.recommendation == "keep":
         status = "dropped"
     elif guards.names:
         status = "needs_human"
     elif skeptic is None or skeptic.verdict != "agree":
         status = "needs_human"
-    elif detective.recommendation == "delete" and detective.confidence >= PROPOSE_CONFIDENCE:
+    elif not backed:
+        status = "needs_human"
+    elif detective.recommendation in PROPOSALS and detective.confidence >= PROPOSE_CONFIDENCE:
         status = "proposed"
     else:
         status = "needs_human"
-    saving = saving_of(lead) if detective.recommendation == "delete" and status != "dropped" else None
+    saving = None
+    if status != "dropped":
+        if detective.recommendation == "delete":
+            saving = saving_of(lead)
+        elif detective.recommendation == "change":
+            saving = lead.advisor_saving_usd  # a change has no figure of its own: only Advisor's, when a finding cites one
     objections = skeptic.objections if skeptic else ()
     if skeptic and not objections and skeptic.verdict != "agree" and skeptic.summary:
         objections = (skeptic.summary,)
+    if status != "dropped":
+        objections = tuple(notes) + ((NO_MEASUREMENT,) if not backed else ()) + tuple(objections)
     return Decision(status, detective.recommendation, detective.confidence, detective.summary, objections, guards.names, saving)

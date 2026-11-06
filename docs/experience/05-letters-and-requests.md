@@ -32,7 +32,7 @@ Nothing is ever approved by e-mail. The platform features named here are general
 | **Purchase request** | A billing owner or a partner contact | After the two approvers approve it | One screen, plain text | All that is needed to act without a call |
 | **Notice e-mails** | People an ownership transfer, the kill switch, an incident, an item parked or a new standing permission affects | When it happens; before a permission's first run | A few lines | What happened or starts, what is paused or covered, who writes next, a link to the page; no decision |
 
-The notice for a standing permission carries the words of the Teams message "A standing permission starts" (C17, [04](04-messages-and-cards.md)) and one link, Pause changes here, to the page. The day-14 notice for a parked item says: "I have parked it and asked your cover to confirm who owns it. I have not said that you did not answer."
+In the optional mode (not built), the notice for a standing permission carries the words of the Teams message "A standing permission starts" (C17, [04](04-messages-and-cards.md)) and one link, Pause changes here, to the page. The day-14 notice for a parked item says: "I have parked it and asked your cover to confirm who owns it. I have not said that you did not answer."
 
 ## The Monday letter
 
@@ -45,7 +45,7 @@ In this letter the system reports on itself, saying what it got wrong as plainly
 | What I learned | At most three bullets, each saying how well it is known: From Microsoft's documentation, Price confirmed, or Seen on your bills |
 | What moved in the bill | The movement, marked estimate until invoiced; the share of spend the system can explain (allocated or shared by a rule); the unallocated rest, its largest lines on the report card |
 | Decisions waiting | Counts per team with ages, never names; groups under five people are rolled up. A parked item goes to the owner's cover or the custodian queue (the team named for unowned estate) |
-| What I did | Changes run under a standing permission, and whether anyone undid them |
+| What I did | Changes made as an approver, and whether anyone undid them |
 | Wins, verified | Only Verified savings are called wins, credited to teams, never to people. Expected and Scenario figures live elsewhere |
 | What I got wrong | Misses first: a saving that came in lower, and how often the system was right against what it said |
 | What I need from you | At most three asks, including what more access would buy |
@@ -103,7 +103,7 @@ This message approves nothing and changes nothing. A reply is read as a question
 
 Before the system writes to anyone, the platform team or a team lead announces it in the organisation's own channels. The announcement names the app, "Meternaut", its publisher and the one address of the approval page. It says the system never asks for passwords, codes or secrets, and that a sign-in asking you to grant permissions to an app is fraud: stop and tell the platform team.
 
-The first-contact e-mail follows when the person is not yet reachable in Teams, or prefers e-mail. It says that an AI is writing; why this person (the directory evidence); that nothing changes without their OK; that it starts slowly (one message a week for the first 30 days, a starting value); what it keeps and who sees it; and how to use Pause messages or reach a person. Its one link opens a page where the person confirms it is them or says it is not, and sets working days, time zone and desk day once. An opt-out is recorded and honoured.
+The first-contact e-mail follows when the person is not yet reachable in Teams, or prefers e-mail. It says that an AI is writing, and how the AI roles look for and judge waste (fixed checks, an Investigator agent with read-only tools, a Detective and a Skeptic, none of which can change anything); why this person (the directory evidence); that nothing changes without their OK; that it starts slowly (one message a week for the first 30 days, a starting value); what it keeps and who sees it; and how to use Pause messages or reach a person. Its one link opens a page where the person confirms it is them or says it is not, and sets working days, time zone and desk day once. An opt-out is recorded and honoured.
 
 An announcement cannot stop a convincing fake; it gives people the page address to compare later links with, and an approval still needs a sign-in there.
 

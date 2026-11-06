@@ -9,6 +9,11 @@ permission for mail. Its only right is the Exchange Online role `Application Mai
 one mailbox (https://learn.microsoft.com/exchange/permissions-exo/application-rbac). Grants in Exchange and in Entra add up, so an Entra consent for a mail
 permission would let the identity send as any mailbox, whatever the scope says: `check` looks for one.
 
+The identity is the managed identity that the cases app sends with: the system-assigned identity of the function app, or a user-assigned one. The tool needs
+two ids of its service principal, and the two options take either kind: --identity-principal-id is the object (principal) id, and --identity-client-id is the
+client id, which is the `appId` of the service principal. For a system-assigned identity the object id is on the app (identity.principalId), and the client
+id is not: it is read from Microsoft Entra, with the signed-in person's own session (for example `az ad sp show --id <object id> --query appId`).
+
 A person who may administer Exchange Online runs this tool with their own sign-in to the Azure CLI. It never runs in a pipeline (AGENTS.md rules 18 and 24).
 It sends Exchange nothing but the cmdlets listed in CMDLETS below, and it removes nothing.
 

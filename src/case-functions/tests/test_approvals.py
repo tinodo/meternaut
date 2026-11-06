@@ -5,7 +5,8 @@ from dataclasses import replace
 
 from support import APP_ROOT  # noqa: F401
 
-from cases.approvals import Approvals, ApprovalSettings, FAMILY_OF, WORDS, build_plan, why_not
+from cases import loop_config, wiring
+from cases.approvals import Approvals, ApprovalSettings, FAMILY_OF, WORDS, build_plan, is_fixture, why_not
 from cases.detectors import Lead
 from cases.memory_store import MemoryStore, stamp
 from cases.models import CaseRecord, DecisionRecord, NoteRecord, Principal, StoreError, SwitchRecord
@@ -13,9 +14,11 @@ from cases.models import CaseRecord, DecisionRecord, NoteRecord, Principal, Stor
 OID = "aaaaaaaa-1111-4222-8333-444444444444"
 OTHER = "11111111-2222-3333-4444-555555555555"
 SUB = "bbbbbbbb-2222-4333-9444-555555555555"
+OTHER_SUB = "cccccccc-3333-4444-8555-666666666666"
 GROUP = "meternaut-sc-rg"
 NOW = dt.datetime(2026, 11, 5, 9, 0, 0, tzinfo=dt.timezone.utc)
 SETTINGS = ApprovalSettings(change_group=GROUP, ttl_hours=72)
+IN_SUB = ApprovalSettings(change_group=GROUP, ttl_hours=72, change_subscription=SUB)
 APPROVER = Principal(OID, "Tino", ("owner", "approver", "ops"))
 
 
@@ -94,6 +97,90 @@ class WhyNot(unittest.TestCase):
     def test_a_store_that_cannot_be_read_means_no_plan(self):
         item = lead()
         self.assertIn("could not be read", why_not(case_for(item), item, SETTINGS, FailingStore(("do_not_touch",))))
+
+
+def elsewhere(subscription_id=OTHER_SUB):
+    """The planted disk of the change group's name, in another subscription of the scope (or in none: the id is missing)."""
+    item = lead()
+    return replace(item, subscription_id=subscription_id, resource_id=item.resource_id.replace(SUB, subscription_id or ""))
+
+
+class TheChangeSubscription(unittest.TestCase):
+    """A group of the right name in another subscription of the scope is not the group in which a change may be made: no plan, no letter."""
+
+    def setUp(self):
+        self.store = MemoryStore()
+
+    def test_the_right_group_in_the_right_subscription_is_planted_and_can_have_a_plan(self):
+        item = lead()
+        self.assertTrue(is_fixture(item, IN_SUB))
+        self.assertIsNone(why_not(case_for(item), item, IN_SUB, self.store))
+        approvals = Approvals(self.store, IN_SUB, Clock())
+        case = case_for(item)
+        self.store.case_put(case)
+        self.assertIsNotNone(approvals.create(case, item, (OID,)))
+        self.assertEqual(self.store.case_get(case.case_id).status, "awaiting_ok")
+
+    def test_the_right_group_in_another_subscription_is_not_planted_and_gets_no_plan(self):
+        item = elsewhere()
+        self.assertEqual((item.resource_group, dict(item.tags)), (GROUP, {"meternaut-planted": "demo"}), "everything but the subscription is right")
+        self.assertFalse(is_fixture(item, IN_SUB))
+        self.assertEqual(why_not(case_for(item), item, IN_SUB, self.store), "the resource is outside the one subscription in which a change may be made")
+        approvals = Approvals(self.store, IN_SUB, Clock())
+        case = case_for(item)
+        self.store.case_put(case)
+        self.assertIsNone(approvals.create(case, item, (OID,)))
+        self.assertEqual((self.store.plans_open(), self.store.case_get(case.case_id).status, self.store.case_get(case.case_id).plan_id), ([], "proposed", None))
+
+    def test_a_lead_without_a_subscription_id_is_not_planted_and_gets_no_plan(self):
+        for missing in ("", None):
+            with self.subTest(subscription_id=missing):
+                item = elsewhere(missing)
+                self.assertFalse(is_fixture(item, IN_SUB))
+                self.assertEqual(why_not(case_for(item), item, IN_SUB, self.store), "the resource has no subscription id")
+                case = case_for(item)
+                self.store.case_put(case)
+                self.assertIsNone(Approvals(self.store, IN_SUB, Clock()).create(case, item, (OID,)))
+                self.assertEqual(self.store.plans_open(), [])
+
+    def test_the_subscription_compares_without_case_on_either_side(self):
+        self.assertTrue(is_fixture(replace(lead(), subscription_id=SUB.upper()), IN_SUB))
+        self.assertIsNone(why_not(case_for(replace(lead(), subscription_id=SUB.upper())), replace(lead(), subscription_id=SUB.upper()), IN_SUB, self.store))
+        upper = ApprovalSettings(change_group=GROUP, change_subscription=SUB.upper())
+        self.assertTrue(is_fixture(lead(), upper))
+        self.assertIsNone(why_not(case_for(lead()), lead(), upper, self.store))
+
+    def test_the_right_subscription_does_not_replace_the_group_and_the_tag(self):
+        for item, expected in ((lead(group="other-rg"), "outside the one resource group"), (lead(tags={}), "tag"), (lead(tags={"meternaut-planted": "  "}), "tag")):
+            with self.subTest(expected=expected, group=item.resource_group):
+                self.assertFalse(is_fixture(item, IN_SUB))
+                self.assertIn(expected, why_not(case_for(item), item, IN_SUB, self.store))
+        other_kind = lead("orphan-private-endpoint")
+        self.assertIn("no change for this kind", why_not(case_for(other_kind), other_kind, IN_SUB, self.store))
+
+    def test_a_subscription_that_is_empty_in_the_settings_matches_nothing(self):
+        # Only None means "not looked at". An empty text is a setting that went wrong, and then nothing is planted.
+        empty = ApprovalSettings(change_group=GROUP, change_subscription="")
+        for item in (lead(), elsewhere(None)):
+            self.assertFalse(is_fixture(item, empty))
+            self.assertIsNotNone(why_not(case_for(item), item, empty, self.store))
+
+    def test_without_a_subscription_in_the_settings_the_subscription_is_not_looked_at(self):
+        # A caller from before the setting. The app does not leave it out: see the next test.
+        self.assertIsNone(SETTINGS.change_subscription)
+        item = elsewhere()
+        self.assertTrue(is_fixture(item, SETTINGS))
+        self.assertIsNone(why_not(case_for(item), item, SETTINGS, self.store))
+
+    def test_the_wiring_gives_every_place_that_decides_the_subscription_of_the_loop(self):
+        env = {"STORE_ACCOUNT_NAME": "stexample", "CHANGE_RESOURCE_GROUP": GROUP, "CHANGE_SUBSCRIPTION_ID": SUB.upper(), "CONSOLE_HOST": "func.example.net"}
+        loop = loop_config.load(env)
+        self.assertEqual(loop.change_subscription, SUB, "the loop's settings hold it in lower case")
+        approval = wiring.approval_settings(loop)
+        self.assertEqual((approval.change_group, approval.change_subscription), (GROUP, SUB))
+        self.assertTrue(is_fixture(lead(), approval))
+        self.assertFalse(is_fixture(elsewhere(), approval))
+        self.assertIsNone(Approvals(self.store, approval, Clock()).create(case_for(elsewhere()), elsewhere(), (OID,)))
 
 
 class BuildPlan(unittest.TestCase):

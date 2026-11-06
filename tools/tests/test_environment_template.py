@@ -71,6 +71,16 @@ ALLOWED = {
         "Microsoft.Web/sites/config",
     },
     "environment/cases/planted.bicep": {"Microsoft.Compute/disks", "Microsoft.Network/publicIPAddresses"},
+    "environment/foundry/main.bicep": {
+        "Microsoft.CognitiveServices/accounts",
+        "Microsoft.CognitiveServices/accounts/raiPolicies",
+        "Microsoft.CognitiveServices/accounts/deployments",
+        "Microsoft.CognitiveServices/accounts/projects",
+        "Microsoft.CognitiveServices/accounts/projects/connections",
+        "Microsoft.Network/privateEndpoints",
+        "Microsoft.Insights/components",
+        "Microsoft.Authorization/roleAssignments",
+    },
 }
 
 
@@ -322,16 +332,45 @@ class Recording(unittest.TestCase):
         found = resources(self.source)
         assignments = {name: body for name, (kind, body) in found.items() if kind == "Microsoft.Authorization/roleAssignments"}
         self.assertEqual(sorted(assignments), ["functionOwnsBlobs", "functionPublishesTelemetry", "functionReceivesControl", "functionReceivesPii", "functionReceivesUsage",
-                                               "functionUsesQueues", "functionUsesTables", "gatewaySendsPii", "gatewaySendsUsage", "workflowSendsControl"])
+                                               "functionUsesQueues", "functionUsesTables", "gatewaySendsPii", "gatewaySendsUsage", "systemOwnsBlobs", "systemPublishesTelemetry",
+                                               "systemReceivesControl", "systemReceivesPii", "systemReceivesUsage", "systemUsesQueues", "systemUsesTables", "workflowSendsControl"])
         for name, body in assignments.items():
             self.assertIn("principalType: 'ServicePrincipal'", body, name)
             # on the one resource, never on the group, the subscription or the whole namespace
             self.assertRegex(body, r"(?m)^  scope: (usageHub|piiHub|controlHub|storage|insights)$", name)
         data_roles = sorted(n for n, (k, _) in found.items() if k == "Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments")
-        self.assertEqual(data_roles, ["functionWritesUsage", "readersOfTheData"])
+        self.assertEqual(data_roles, ["functionWritesUsage", "readersOfTheData", "systemWritesUsage"])
         self.assertIn("cosmosDataContributorRoleId", found["functionWritesUsage"][1])
         self.assertIn("principalId: usageIdentity.properties.principalId", found["functionWritesUsage"][1])
+        self.assertIn("cosmosDataContributorRoleId", found["systemWritesUsage"][1])
+        self.assertIn("principalId: functionApp.identity.principalId", found["systemWritesUsage"][1])
         self.assertIn("cosmosDataReaderRoleId", found["readersOfTheData"][1])
+
+    def test_the_system_assigned_identity_holds_every_role_that_the_user_assigned_one_holds_on_the_same_resource_and_nothing_more(self):
+        # Step one of the move to a system-assigned identity: the new identity is given what the old one has, so that the second step can move the settings without a gap.
+        found = resources(self.source)
+        twins = {"functionReceivesUsage": "systemReceivesUsage", "functionReceivesPii": "systemReceivesPii", "functionReceivesControl": "systemReceivesControl",
+                 "functionOwnsBlobs": "systemOwnsBlobs", "functionUsesQueues": "systemUsesQueues", "functionUsesTables": "systemUsesTables",
+                 "functionPublishesTelemetry": "systemPublishesTelemetry", "functionWritesUsage": "systemWritesUsage"}
+        held_by_the_old = {name for name, (kind, body) in found.items() if "usageIdentity.properties.principalId" in body}
+        self.assertEqual(held_by_the_old, set(twins), "every role of the user-assigned identity has a twin, and the twins are the only ones")
+        held_by_the_new = {name for name, (kind, body) in found.items() if "functionApp.identity.principalId" in body}
+        self.assertEqual(held_by_the_new, set(twins.values()))
+        names = set()
+        for old, new in twins.items():
+            old_body, new_body = found[old][1], found[new][1]
+            self.assertEqual(found[old][0], found[new][0], new)
+            for line in re.findall(r"(?m)^  (?:scope|parent): .+$|^    (?:roleDefinitionId|scope): .+$|^    principalType: .+$", old_body):
+                self.assertIn(line, new_body, f"{new} differs from {old}: {line}")
+            self.assertEqual(depends_on(old_body) - {"functionWritesUsage"}, depends_on(new_body) - {"functionWritesUsage"}, new)
+            # a name that is known when the deployment starts: the principal id of a system-assigned identity is not, so the app's id is the seed
+            seed = re.search(r"(?m)^  name: guid\((.+)\)$", new_body).group(1)
+            self.assertIn("functionApp.id", seed, new)
+            self.assertNotIn("principalId", seed, "Bicep refuses a value that exists only at run time in the name of a role assignment (BCP120)")
+            self.assertNotEqual(re.search(r"(?m)^  name: guid\((.+)\)$", old_body).group(1), seed, "a name of its own, so that the old assignment is left as it is")
+            names.add(seed)
+        self.assertEqual(len(names), len(twins), "each name is of its own")
+        self.assertEqual(set(twins.values()) & depends_on(found["functionApp"][1]), set(), "the app does not wait for roles that wait for the app")
 
     def test_nothing_relies_on_an_opt_out_of_the_tenants_policies(self):
         for word in ("SecurityControl", "optOut", "Ignore"):
@@ -364,8 +403,8 @@ class Recording(unittest.TestCase):
         self.assertIn("reserved: true", found["plan"][1])
         body = found["functionApp"][1]
         self.assertIn("kind: 'functionapp,linux'", body)
-        self.assertIn("type: 'UserAssigned'", body)
-        self.assertNotIn("SystemAssigned", body)
+        self.assertIn("type: 'SystemAssigned, UserAssigned'", body, "step one of the move to a system-assigned identity: the new identity next to the old one")
+        self.assertEqual(re.findall(r"'\$\{(\w+)\.id\}': \{\}", body), ["usageIdentity"])
         self.assertIn("maximumInstanceCount: 10", body)  # the price has a ceiling
         self.assertNotIn("alwaysReady", body)  # nothing runs while nothing is to do
         self.assertIn("virtualNetworkSubnetId: functionSubnet.id", body)
@@ -403,12 +442,16 @@ class Recording(unittest.TestCase):
         self.assertIn("deploymentContainer", depends_on(found["storageEndpoints"][1]))
         self.assertIn("usageContainers", depends_on(found["cosmosEndpoint"][1]))
         self.assertEqual(depends_on(found["eventHubsEndpoint"][1]), {"usageConsumerGroup", "piiConsumerGroup", "controlConsumerGroup"})
-        for name in ("gatewaySendsUsage", "gatewaySendsPii", "workflowSendsControl", "functionReceivesUsage", "functionReceivesPii", "functionReceivesControl"):
+        for name in ("gatewaySendsUsage", "gatewaySendsPii", "workflowSendsControl", "functionReceivesUsage", "functionReceivesPii", "functionReceivesControl",
+                     "systemReceivesUsage", "systemReceivesPii", "systemReceivesControl"):
             self.assertIn("eventHubsEndpoint", depends_on(found[name][1]), name)
-        for name in ("functionOwnsBlobs", "functionUsesQueues", "functionUsesTables"):
+        for name in ("functionOwnsBlobs", "functionUsesQueues", "functionUsesTables", "systemOwnsBlobs", "systemUsesQueues", "systemUsesTables"):
             self.assertIn("storageEndpoints", depends_on(found[name][1]), name)
         self.assertIn("cosmosEndpoint", depends_on(found["functionWritesUsage"][1]))
+        self.assertIn("cosmosEndpoint", depends_on(found["systemWritesUsage"][1]))
+        self.assertIn("functionWritesUsage", depends_on(found["systemWritesUsage"][1]), "the account's roles are written one at a time")
         self.assertIn("functionWritesUsage", depends_on(found["readersOfTheData"][1]))
+        self.assertIn("systemWritesUsage", depends_on(found["readersOfTheData"][1]))
         self.assertRegex(self.source, r"@batchSize\(1\)\nresource storageEndpoints ")  # one endpoint after the other on the same account
 
     def test_event_hubs_has_no_auto_inflate_so_its_price_has_a_ceiling(self):
@@ -421,7 +464,10 @@ class Recording(unittest.TestCase):
 
     def test_no_output_carries_a_key_or_a_connection_string(self):
         outputs = [line for line in self.code.splitlines() if line.startswith("output ")]
-        self.assertEqual(len(outputs), 9)
+        self.assertEqual(len(outputs), 10)
+        self.assertEqual(re.findall(r"(?m)^output (\w+) ", self.code), ["functionAppName", "functionAppId", "usageIdentityPrincipalId", "usageIdentityClientId", "usageSystemPrincipalId",
+                                                                    "eventHubNamespaceName", "eventHubHost", "cosmosAccountName", "cosmosEndpoint", "appInsightsId"])
+        self.assertIn("output usageSystemPrincipalId string = functionApp.identity.principalId", self.code)
         for line in outputs:
             for word in ("listKeys", "listConnectionStrings", "ConnectionString", "AccountKey", "primaryKey"):
                 self.assertNotIn(word, line, line)
@@ -633,7 +679,7 @@ class Workflow(unittest.TestCase):
         block = self.steps[names.index(again)]
         self.assertIn("if: inputs.action == 'recording'", block)
         self.assertIn("uses: azure/login@", block)
-        self.assertEqual(self.text.count("uses: azure/login@"), 4, "the first sign-in, one more before each publish (the usage recording's and the cases') and one more after the wait for the cases app")
+        self.assertEqual(self.text.count("uses: azure/login@"), 5, "the first sign-in, one more before each publish (the usage recording's and the cases'), one more after the wait for the cases app and one more before the read-back of the Foundry resource, which follows a wait of up to 40 minutes")
         self.assertLess(names.index("Deploy the usage recording"), names.index(again))
         self.assertLess(names.index(again), names.index("Publish the usage functions to the function app"))
 
@@ -727,8 +773,9 @@ class Cases(unittest.TestCase):
         made = sorted(name for name, (_, body) in self.found.items() if not re.search(rf"(?m)^resource {name} '[^']+' existing", self.source))
         self.assertEqual(made, ["authIdentity", "casesIdentity", "consoleSignIn", "controlConsumerGroup", "controlHub", "functionApp",
                                 "functionOwnsHostContainers", "functionPublishesTelemetry", "functionReceivesControl", "functionUsesQueues",
-                                "functionUsesTables", "historyWorkbook", "noBasicAuthForDeployment", "noBasicAuthForFtp", "plan", "tracesRetention",
-                                "webNsg", "webSubnet", "workflowSendsControl"])
+                                "functionUsesTables", "historyWorkbook", "noBasicAuthForDeployment", "noBasicAuthForFtp", "plan",
+                                "systemOwnsHostContainers", "systemPublishesTelemetry", "systemReceivesControl", "systemUsesQueues", "systemUsesTables",
+                                "tracesRetention", "webNsg", "webSubnet", "workflowSendsControl"])
 
     def test_the_plans_subnet_is_delegated_to_basic_plans_holds_nothing_else_and_is_the_one_that_the_model_side_lists_too(self):
         subnet, nsg = self.found["webSubnet"][1], self.found["webNsg"][1]
@@ -765,7 +812,7 @@ class Cases(unittest.TestCase):
         self.assertEqual(self.code.count("ConnectionString"), 1, "the telemetry's connection string names the component and holds no secret that ingestion accepts")
         self.assertIn("{ name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: insights.properties.ConnectionString }", self.code)
         outputs = [line for line in self.code.splitlines() if line.startswith("output ")]
-        self.assertEqual(len(outputs), 9)
+        self.assertEqual(len(outputs), 10)
         for line in outputs:
             for word in ("listKeys", "ConnectionString", "AccountKey", "primaryKey"):
                 self.assertNotIn(word, line, line)
@@ -782,17 +829,45 @@ class Cases(unittest.TestCase):
         })
         assignments = {name: body for name, (kind, body) in self.found.items() if kind == "Microsoft.Authorization/roleAssignments"}
         self.assertEqual(sorted(assignments), ["functionOwnsHostContainers", "functionPublishesTelemetry", "functionReceivesControl",
-                                               "functionUsesQueues", "functionUsesTables", "workflowSendsControl"])
+                                               "functionUsesQueues", "functionUsesTables", "systemOwnsHostContainers", "systemPublishesTelemetry",
+                                               "systemReceivesControl", "systemUsesQueues", "systemUsesTables", "workflowSendsControl"])
         for name, body in assignments.items():
             self.assertIn("principalType: 'ServicePrincipal'", body, name)
         scopes = {name: re.search(r"(?m)^  scope: (.+)$", body).group(1) for name, body in assignments.items()}
         self.assertEqual(scopes, {"workflowSendsControl": "controlHub", "functionReceivesControl": "controlHub",
                                   "functionOwnsHostContainers": "sharedHostContainers[i]", "functionUsesQueues": "storage", "functionUsesTables": "storage",
-                                  "functionPublishesTelemetry": "insights"})
+                                  "functionPublishesTelemetry": "insights", "systemReceivesControl": "controlHub", "systemOwnsHostContainers": "sharedHostContainers[i]",
+                                  "systemUsesQueues": "storage", "systemUsesTables": "storage", "systemPublishesTelemetry": "insights"})
         self.assertIn("eventHubsDataSenderRoleId", assignments["workflowSendsControl"])
         self.assertIn("principalId: workflowPrincipalId", assignments["workflowSendsControl"])
         self.assertIn("eventHubsDataReceiverRoleId", assignments["functionReceivesControl"])
         self.assertIn("principalId: casesIdentity.properties.principalId", assignments["functionReceivesControl"])
+        self.assertIn("eventHubsDataReceiverRoleId", assignments["systemReceivesControl"])
+        self.assertIn("principalId: functionApp.identity.principalId", assignments["systemReceivesControl"])
+
+    def test_the_system_assigned_identity_holds_every_role_that_the_user_assigned_one_holds_on_the_same_resource_and_nothing_more(self):
+        # Step one of the move to a system-assigned identity: the new identity is given what the old one has, so that the second step can move the settings without a gap.
+        twins = {"functionReceivesControl": "systemReceivesControl", "functionOwnsHostContainers": "systemOwnsHostContainers", "functionUsesQueues": "systemUsesQueues",
+                 "functionUsesTables": "systemUsesTables", "functionPublishesTelemetry": "systemPublishesTelemetry"}
+        held_by_the_old = {name for name, (kind, body) in self.found.items() if "casesIdentity.properties.principalId" in body}
+        self.assertEqual(held_by_the_old, set(twins), "every role of the user-assigned identity has a twin, and the twins are the only ones")
+        held_by_the_new = {name for name, (kind, body) in self.found.items() if "functionApp.identity.principalId" in body}
+        self.assertEqual(held_by_the_new, set(twins.values()))
+        names = set()
+        for old, new in twins.items():
+            old_body, new_body = self.found[old][1], self.found[new][1]
+            self.assertEqual(self.found[old][0], self.found[new][0], new)
+            for line in re.findall(r"(?m)^  scope: .+$|^    roleDefinitionId: .+$|^    principalType: .+$", old_body):
+                self.assertIn(line, new_body, f"{new} differs from {old}: {line}")
+            self.assertEqual(depends_on(old_body), depends_on(new_body), new)
+            # a name that is known when the deployment starts: the principal id of a system-assigned identity is not, so the app's id is the seed
+            seed = re.search(r"(?m)^  name: guid\((.+)\)$", new_body).group(1)
+            self.assertIn("functionApp.id", seed, new)
+            self.assertNotIn("principalId", seed, "Bicep refuses a value that exists only at run time in the name of a role assignment (BCP120)")
+            self.assertNotEqual(re.search(r"(?m)^  name: guid\((.+)\)$", old_body).group(1), seed, "a name of its own, so that the old assignment is left as it is")
+            names.add(seed)
+        self.assertEqual(len(names), len(twins), "each name is of its own")
+        self.assertEqual(set(twins.values()) & depends_on(self.found["functionApp"][1]), set(), "the app does not wait for roles that wait for the app")
 
     def test_the_blob_role_reaches_the_three_shared_host_containers_and_never_the_usage_recordings_package(self):
         self.assertNotIn("deploymentContainer", self.code, "the app's code is pushed to the app, not kept in the storage account")
@@ -815,8 +890,7 @@ class Cases(unittest.TestCase):
         self.assertNotIn("functionAppConfig", self.code)
         body = self.found["functionApp"][1]
         self.assertIn("kind: 'functionapp,linux'", body)
-        self.assertIn("type: 'UserAssigned'", body)
-        self.assertNotIn("SystemAssigned", body)
+        self.assertIn("type: 'SystemAssigned, UserAssigned'", body, "step one of the move to a system-assigned identity: the new identity next to the old one")
         self.assertIn("serverFarmId: plan.id", body)
         self.assertIn("virtualNetworkSubnetId: resourceId('Microsoft.Network/virtualNetworks/subnets', virtualNetworkName, webSubnetName)", body)
         self.assertIn("vnetRouteAllEnabled: false", body, "only the private ranges go through the subnet, as for the Flex app that this replaced")
@@ -839,7 +913,8 @@ class Cases(unittest.TestCase):
 
     def test_the_function_app_starts_after_its_roles_and_its_hub(self):
         self.assertEqual(depends_on(self.found["functionApp"][1]), {"webSubnet", "functionReceivesControl", "functionOwnsHostContainers", "functionUsesQueues",
-                                                                    "functionUsesTables", "functionPublishesTelemetry", "controlConsumerGroup"})
+                                                                    "functionUsesTables", "functionPublishesTelemetry", "controlConsumerGroup"},
+                         "the roles of the identity that the settings name, before the first start of the app")
 
     def test_the_control_hub_is_one_partition_with_one_group_and_the_app_is_told_both(self):
         self.assertIn("var controlHubName = 'cases-control'", self.code)
@@ -877,12 +952,15 @@ class Cases(unittest.TestCase):
         for word in ("runnerIdentity", "-runner", "WRITER_", "writer", "roleDefinitions@", "Microsoft.Compute", "Microsoft.Network/publicIPAddresses"):
             self.assertNotIn(word, self.code, word)
         self.assertEqual(re.findall(r"'\$\{(\w+)\.id\}': \{\}", self.found["functionApp"][1]), ["casesIdentity", "authIdentity"],
-                         "the app has two identities: one reads and stores, one only presents the sign-in")
-        self.assertIn("{ name: 'AZURE_CLIENT_ID', value: casesIdentity.properties.clientId }", self.code, "the Watch and the console keep the identity that only reads")
+                         "the app has two user-assigned identities: one reads and stores, one only presents the sign-in; the system-assigned one that takes over from the first has no entry here")
+        self.assertIn("type: 'SystemAssigned, UserAssigned'", self.found["functionApp"][1])
+        self.assertIn("{ name: 'AZURE_CLIENT_ID', value: casesIdentity.properties.clientId }", self.code, "the Watch and the console keep the identity that only reads until the second step")
         self.assertIn("{ name: 'OVERRIDE_USE_MI_FIC_ASSERTION_CLIENTID', value: signInIsSetUp ? authIdentity.properties.clientId : '' }", self.code)
         outputs = re.findall(r"(?m)^output (\w+) ", self.code)
         self.assertEqual([o for o in outputs if "dentity" in o],
                          ["casesIdentityPrincipalId", "casesIdentityClientId", "authIdentityPrincipalId", "authIdentityClientId"])
+        self.assertIn("output casesSystemPrincipalId string = functionApp.identity.principalId", self.code)
+        self.assertIn("casesSystemPrincipalId", outputs)
 
     def test_the_app_is_told_where_it_keeps_its_records_where_it_may_run_a_change_how_a_person_signs_in_to_azure_and_who_may_use_it(self):
         body = self.found["functionApp"][1]
@@ -911,6 +989,34 @@ class Cases(unittest.TestCase):
             self.assertTrue(f"name: '{name}'" in self.code, f"the app reads {name} and the template does not set it")
         self.assertTrue("CONSOLE_PEOPLE" in self.code, "the people are read by people.py")
 
+    def test_the_agents_of_the_foundry_resource_are_reached_with_six_settings_and_the_investigation_is_off_without_an_address(self):
+        body = self.found["functionApp"][1]
+        for line in ("{ name: 'FOUNDRY_PROJECT_ENDPOINT', value: foundryProjectEndpoint }", "{ name: 'FOUNDRY_MODEL_INVESTIGATOR', value: foundryModelInvestigator }",
+                     "{ name: 'FOUNDRY_MODEL_SKEPTIC', value: foundryModelSkeptic }", "{ name: 'INVESTIGATE', value: empty(foundryProjectEndpoint) ? 'off' : 'on' }",
+                     "{ name: 'INVESTIGATE_MAX_CALLS', value: string(investigateMaxCalls) }", "{ name: 'INVESTIGATE_MAX_SECONDS', value: string(investigateMaxSeconds) }"):
+            self.assertIn(line, body)
+        for line in ("param foundryProjectEndpoint string = ''", "param foundryModelInvestigator string = 'gpt-6.1-sol'", "param foundryModelSkeptic string = 'gpt-6-luna'",
+                     "param investigateMaxCalls int = 40", "param investigateMaxSeconds int = 420"):
+            self.assertRegex(self.code, rf"(?m)^{re.escape(line)}$")
+        self.assertEqual(len(re.findall(r"name: '(?:FOUNDRY_\w+|INVESTIGATE\w*)'", body)), 6)
+        self.assertEqual(self.code.count("foundryProjectEndpoint"), 3, "the parameter, the setting and the switch, and nothing else reads it")
+        for word in ("listKeys", "apiKey", "ApiKey", "key:", "credentials"):
+            self.assertNotIn(word, self.code[self.code.index("param foundryProjectEndpoint"):self.code.index("var tags")], word)
+        self.assertEqual(self.code.count("Microsoft.CognitiveServices"), 0, "the role on the project is given by the template of the Foundry resource, which has to make the project first")
+
+    def test_the_template_cannot_ask_for_more_of_the_investigation_than_the_code_accepts_and_starts_from_the_budget_that_the_code_starts_from(self):
+        self.assertRegex(self.code, r"@minValue\(1\)\n@maxValue\(40\)\nparam investigateMaxCalls int = 40\n")
+        self.assertRegex(self.code, r"@minValue\(30\)\n@maxValue\(600\)\nparam investigateMaxSeconds int = 420\n")
+        constants = {(kind, what): value for kind, what, value in re.findall(r"(?m)^(LIMIT|DEFAULT)_INVESTIGATE_(CALLS|SECONDS) = (\d+)$",
+                                                                              (ROOT / "src" / "case-functions" / "cases" / "config.py").read_text(encoding="utf-8"))}
+        if not constants:
+            self.skipTest("the code does not read the investigation settings yet; src/case-functions/tests/test_config.py holds the names of the template and of config.py together")
+        self.assertEqual({what: value for (kind, what), value in constants.items() if kind == "LIMIT"}, {"CALLS": "40", "SECONDS": "600"},
+                         "the largest value that the template takes is the largest that the code takes")
+        template = dict(re.findall(r"(?m)^param (investigateMaxCalls|investigateMaxSeconds) int = (\d+)$", self.code))
+        for name, what in (("investigateMaxCalls", "CALLS"), ("investigateMaxSeconds", "SECONDS")):
+            if ("DEFAULT", what) in constants:
+                self.assertEqual(template[name], constants[("DEFAULT", what)], f"{name}: the template and the code start from the same budget")
 
     def test_the_workbook_file_is_valid_json_and_only_reads_the_traces(self):
         import json
@@ -1164,8 +1270,9 @@ class CasesWorkflow(unittest.TestCase):
     def test_the_summary_says_that_meternaut_holds_no_right_to_change_azure_and_that_a_person_s_approval_runs_the_change_with_that_person_s_permissions(self):
         block = self.step("What was done")
         (finished,) = re.findall(r"(?m)^\s+cases\) echo \"(The first cases are in resource group.*?)\" ;;$", block)
-        for words in ("its two identities", "Meternaut holds no right to change Azure", "to sign in to Azure Resource Manager",
-                      "with that person's own permissions", "its Activity Log names that person"):
+        for words in ("its identities (a system-assigned one, which takes over in the next step of the move", "\\`id-meternaut-cases\\`, which its settings still use",
+                      "\\`id-meternaut-console-auth\\`, which only presents the console's sign-in to Microsoft Entra and holds no role", "Meternaut holds no right to change Azure",
+                      "to sign in to Azure Resource Manager", "with that person's own permissions", "its Activity Log names that person"):
             self.assertIn(words, finished)
         for words in ("three identities", "only writer", "Only the runner", "custom role"):
             self.assertNotIn(words, finished)
@@ -1185,6 +1292,444 @@ class CasesWorkflow(unittest.TestCase):
         self.assertNotRegex(script, r"\baz\s")
         self.assertNotRegex(script, r"--method (put|patch|post|delete)")
         self.assertEqual(self.text.count("console-check.py door"), 1)
+
+    def test_the_summaries_of_cases_and_recording_print_the_system_assigned_principal_read_from_the_app_and_say_none_yet_when_there_is_none(self):
+        for title, site_variable, summary in (("The cases app lists its four functions", "SITE_ID", "System-assigned identity of the cases app (object id)"),
+                                              ("The function app lists its six functions", "SITE_ID", "System-assigned identity of the function app (object id)")):
+            block = self.step(title)
+            script = "\n".join(line for line in block.split("run:")[1].splitlines() if not line.strip().startswith("#"))
+            self.assertIn(f'system_principal=$(az rest --method get --url "https://management.azure.com${{{site_variable}}}?api-version=2024-04-01" --query identity.principalId --output tsv 2>/dev/null || true)', script, title)
+            self.assertIn("if ! grep -Eq '^[0-9a-fA-F-]{36}$' <<< \"$system_principal\"; then system_principal=\"none yet\"; fi", script, title)
+            self.assertIn(summary, script, title)
+            self.assertIn("this workflow gives none", script, title)
+            self.assertNotRegex(script, r"--method (put|patch|post|delete)", title)
+        self.assertIn("The application (client) id that the mailbox tool asks for cannot be read from the app, and the deployment identity may not read the directory", self.step("The cases app lists its four functions"))
+
+    def test_the_deployment_identity_never_reads_the_directory_because_it_has_no_right_to(self):
+        # The application (client) id of a system-assigned identity is the application id of its service principal, which only the directory has: a person with the owner's session reads it.
+        for word in ("az ad ", "az ad\n", "graph.microsoft.com", "/servicePrincipals", "az rest --method get --url \"https://graph"):
+            self.assertNotIn(word, self.text, word)
+
+
+class Foundry(unittest.TestCase):
+    """The Foundry resource of the agents (environment/foundry/main.bicep): what it makes, how it is shut, who may do what with it, and in what order."""
+
+    def setUp(self):
+        self.source = text("environment/foundry/main.bicep")
+        self.code = re.sub(r"(?m)^\s*//.*$", "", self.source)
+        self.found = resources(self.source)
+
+    def properties_of(self, source, name):
+        match = re.search(rf"(?ms)^resource {name} '[^']+' = \{{\n.*?^  properties: \{{\n(.*?)^  \}}\n", source)
+        self.assertIsNotNone(match, name)
+        return match.group(1)
+
+    def test_it_declares_the_resources_of_the_design_and_makes_no_dns_no_network_and_no_gateway_object(self):
+        self.assertEqual(set(self.found), {"insights", "account", "guardrail", "modelDeployment", "project", "projectPublishesTraces", "tracesConnection", "privateEndpoint",
+                                           "casesMayUseTheAgents", "casesSystemMayUseTheAgents"})
+        self.assertRegex(self.source, r"(?m)^resource insights 'Microsoft.Insights/components@2020-02-02' existing = ")
+        for word in ("privateDnsZones", "privateDnsZoneGroups", "virtualNetworkLinks", "virtualNetworkPeerings", "routeTables", "Microsoft.ApiManagement",
+                     "Microsoft.Network/virtualNetworks'", "networkSecurityGroups", "SecurityControl", "optOut"):
+            self.assertNotIn(word, self.code, word)
+
+    def test_the_resource_is_private_has_no_local_authentication_can_hold_projects_and_has_an_identity_of_its_own(self):
+        body = self.found["account"][1]
+        for line in ("kind: 'AIServices'", "name: 'S0'", "type: 'SystemAssigned'", "allowProjectManagement: true", "customSubDomainName: accountName",
+                     "publicNetworkAccess: 'Disabled'", "disableLocalAuth: true", "restore: restoreAccount", "defaultAction: 'Deny'", "ipRules: []", "virtualNetworkRules: []"):
+            self.assertIn(line, body)
+        self.assertEqual(self.code.count("publicNetworkAccess"), 1)
+        self.assertEqual(self.code.count("disableLocalAuth"), 1)
+        for word in ("publicNetworkAccess: 'Enabled'", "disableLocalAuth: false", "allowProjectManagement: false", "'None'", "UserAssigned"):
+            self.assertNotIn(word, self.code, word)
+        self.assertRegex(self.code, r"(?m)^param restoreAccount bool = false$")
+        self.assertRegex(self.code, r"(?s)@minLength\(2\)\n@maxLength\(64\)\nparam accountName string\n")
+
+    def test_the_project_has_an_identity_of_its_own_and_its_name_is_a_parameter_with_the_default_of_the_endpoint(self):
+        body = self.found["project"][1]
+        self.assertIn("parent: account", body)
+        self.assertIn("type: 'SystemAssigned'", body)
+        self.assertIn("name: projectName", body)
+        self.assertIn("location: location", body)
+        self.assertRegex(self.code, r"(?m)^param projectName string = 'meternaut'$")
+        self.assertNotIn("UserAssigned", body)
+
+    def test_the_private_endpoint_is_the_one_of_the_model_account_into_the_same_subnet_and_has_no_dns_zone_group(self):
+        mine = self.properties_of(self.source, "privateEndpoint")
+        theirs = self.properties_of(text("environment/main.bicep"), "privateEndpoint")
+        self.assertEqual(mine, theirs, "the same subnet, the same connection, the same group id: the pattern of the model account")
+        self.assertIn("name: 'pe-${accountName}'", self.found["privateEndpoint"][1])
+        self.assertIn("groupIds: [\n            'account'\n          ]", mine)
+        self.assertIn("'snet-pe'", mine)
+        self.assertEqual(self.code.count("Microsoft.Network/privateEndpoints"), 1, "the one private endpoint")
+        self.assertNotIn("privateDnsZoneGroups", self.code)
+
+    def test_the_order_that_a_real_deploy_needed_is_in_the_template(self):
+        found = self.found
+        # the project after the last deployment, the connection after the role that its identity needs, the private endpoint after every other write to the resource, the roles after it
+        self.assertIn("modelDeployment", depends_on(found["project"][1]))
+        self.assertIn("projectPublishesTraces", depends_on(found["tracesConnection"][1]))
+        self.assertTrue({"modelDeployment", "project", "tracesConnection"} <= depends_on(found["privateEndpoint"][1]))
+        self.assertIn("privateEndpoint", depends_on(found["casesMayUseTheAgents"][1]))
+        self.assertIn("privateEndpoint", depends_on(found["casesSystemMayUseTheAgents"][1]))
+        self.assertRegex(self.source, r"@batchSize\(1\)\nresource modelDeployment ", "the resource accepts one deployment write at once")
+        self.assertIn("raiPolicyName: guardrail.name", found["modelDeployment"][1], "the guardrail is made before the deployments that use it")
+        # nothing else is written to the resource (or below it) at the same time as its private endpoint: each write is before it or after it, by dependsOn or by a reference
+        def before(name, seen=None):
+            seen = set() if seen is None else seen
+            body = re.sub(r"(?m)^\s*//.*$", "", found[name][1])
+            for other in found:
+                if other != name and other not in seen and (other in depends_on(body) or re.search(rf"\b{other}\b", body)):
+                    seen.add(other)
+                    before(other, seen)
+            return seen
+
+        written = {name for name, (_, body) in found.items() if re.search(r"^  (parent|scope): (account|project)$", body, re.M)} - {"privateEndpoint"}
+        beside = sorted(written - before("privateEndpoint") - {name for name in found if "privateEndpoint" in before(name)})
+        self.assertEqual(beside, [], f"{beside} would be written to the resource while the private endpoint is")
+
+    def test_the_models_are_deployed_as_the_model_account_deploys_them_with_the_guardrail_in_place_of_the_default(self):
+        mine, theirs = self.found["modelDeployment"][1], resources(text("environment/main.bicep"))["modelDeployment"][1]
+        self.assertEqual(mine.replace("raiPolicyName: guardrail.name", "raiPolicyName: 'Microsoft.DefaultV2'"), theirs, "the same name, version, type and capacity from the same list")
+        for line in ("name: model.name", "name: model.sku", "capacity: model.capacity", "version: model.version", "versionUpgradeOption: 'NoAutoUpgrade'", "format: 'OpenAI'"):
+            self.assertIn(line, mine)
+        self.assertRegex(self.code, r"(?m)^param models array$")
+        self.assertNotIn("Microsoft.DefaultV2", self.found["modelDeployment"][1])
+
+    def test_the_guardrail_is_the_default_one_with_the_prompt_shields_that_an_agent_that_reads_tool_results_needs_all_blocking(self):
+        body = self.found["guardrail"][1]
+        self.assertIn("basePolicyName: 'Microsoft.DefaultV2'", body)
+        self.assertIn("mode: 'Blocking'", body)
+        filters = re.findall(r"\{ name: '([A-Za-z ]+)', source: '(\w+)', enabled: (\w+), blocking: (\w+) \}", body)
+        self.assertEqual(filters, [("Jailbreak", "Prompt", "true", "true"), ("Indirect Attack", "Prompt", "true", "true"), ("Indirect Attack", "PostToolCall", "true", "true")])
+        self.assertEqual(body.count("{ name:"), 3, "no other control, and none that annotates only")
+        for word in ("blocking: false", "enabled: false", "severityThreshold", "customBlocklists", "safetyProviders", "egressPolicy"):
+            self.assertNotIn(word, body, word)
+        self.assertRegex(self.code, r"(?m)^param guardrailName string = 'meternaut-agents'$")
+
+    def test_the_roles_are_two_each_on_one_resource_for_one_service_principal_and_none_on_the_group_the_account_or_the_subscription(self):
+        guids = set(re.findall(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", self.code))
+        self.assertEqual(guids, {"53ca6127-db72-4b80-b1b0-d745d6d5456d", "3913510d-42f4-4e42-8a64-420c390055eb"})  # Foundry User, Monitoring Metrics Publisher
+        assignments = {name: body for name, (kind, body) in self.found.items() if kind == "Microsoft.Authorization/roleAssignments"}
+        self.assertEqual(sorted(assignments), ["casesMayUseTheAgents", "casesSystemMayUseTheAgents", "projectPublishesTraces"])
+        for name, body in assignments.items():
+            self.assertIn("principalType: 'ServicePrincipal'", body, name)
+        self.assertEqual({name: re.search(r"(?m)^  scope: (.+)$", body).group(1) for name, body in assignments.items()},
+                         {"casesMayUseTheAgents": "project", "casesSystemMayUseTheAgents": "project", "projectPublishesTraces": "insights"})
+        self.assertIn("foundryUserRoleId", assignments["casesMayUseTheAgents"])
+        self.assertIn("principalId: casesPrincipalId", assignments["casesMayUseTheAgents"])
+        # the same role for the system-assigned identity that takes over, once the app has one: the name is of its own and holds the principal id (a parameter, so it is known at the start)
+        self.assertTrue(self.found["casesSystemMayUseTheAgents"][1].startswith("if (!empty(casesSystemPrincipalId)) {"), "no role is given to an identity that the app does not have yet")
+        self.assertIn("foundryUserRoleId", assignments["casesSystemMayUseTheAgents"])
+        self.assertIn("name: guid(project.id, casesSystemPrincipalId, foundryUserRoleId)", assignments["casesSystemMayUseTheAgents"])
+        self.assertIn("name: guid(project.id, casesPrincipalId, foundryUserRoleId)", assignments["casesMayUseTheAgents"])
+        self.assertIn("principalId: casesSystemPrincipalId", assignments["casesSystemMayUseTheAgents"])
+        self.assertIn("monitoringMetricsPublisherRoleId", assignments["projectPublishesTraces"])
+        self.assertIn("principalId: project.identity.principalId", assignments["projectPublishesTraces"])
+        for word in ("scope: account", "scope: resourceGroup", "scope: subscription", "subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '"):
+            self.assertNotIn(word, self.code, word)
+        self.assertRegex(self.code, r"@minLength\(36\)\n@maxLength\(36\)\nparam casesPrincipalId string\n")
+        self.assertRegex(self.code, r"@maxLength\(36\)\nparam casesSystemPrincipalId string = ''\n", "optional: empty until the app has a system-assigned identity")
+
+    def test_the_foundry_user_role_is_the_one_that_creates_and_runs_agents_and_the_condition_of_the_deploy_identity_names_it(self):
+        self.assertIn("var foundryUserRoleId = '53ca6127-db72-4b80-b1b0-d745d6d5456d'", self.source)
+        page = text("environment/BOOTSTRAP.md").split("## Changed on 2026-11-06")[1]
+        self.assertIn("53ca6127-db72-4b80-b1b0-d745d6d5456d", page, "the hand step adds this id to the condition, and the template gives no other role than the ones in the condition")
+        self.assertIn("3913510d-42f4-4e42-8a64-420c390055eb", text("environment/BOOTSTRAP.md").split("## Added on 2026-11-04 for the usage recording")[1],
+                      "Monitoring Metrics Publisher is in the condition already")
+
+    def test_the_connection_sends_the_traces_with_the_identity_of_the_project_and_holds_no_key(self):
+        body = self.found["tracesConnection"][1]
+        for line in ("parent: project", "category: 'AppInsights'", "target: insights.id", "authType: 'ProjectManagedIdentity'", "isSharedToAll: false"):
+            self.assertIn(line, body)
+        self.assertIn("#disable-next-line BCP036\n    authType:", body, "the Bicep types do not list the value that Microsoft's own templates write")
+        for word in ("credentials", "ApiKey", "apiKey", "key:", "AccountKey"):
+            self.assertNotIn(word, body, word)
+        self.assertIn("name: 'appi-${workload}'", body)
+        self.assertIn("DisableLocalAuth: true", resources(text("environment/recording/main.bicep"))["insights"][1], "the component takes telemetry only with Microsoft Entra ID")
+
+    def test_no_key_or_secret_is_read_written_or_returned_and_the_one_connection_string_is_the_components_own_name(self):
+        for word in ("listKeys", "listConnectionStrings", "listSecrets", "listAccountSas", "AccountKey", "SharedAccessKey", "primaryKey", "secondaryKey", "@secure", "credentials",
+                     "apiKey", "ApiKey", "instrumentationKey", "InstrumentationKey", "password", "WEBSITE_CONTENT"):
+            self.assertNotIn(word, self.code, word)
+        lines = [line.strip() for line in self.code.splitlines() if "ConnectionString" in line]
+        self.assertEqual(lines, ["ApplicationInsightsConnectionString: insights.properties.ConnectionString"],
+                         "the metadata of the connection, as in Microsoft's own templates: it names the component and holds no secret that ingestion accepts")
+
+    def test_no_output_names_a_key_and_the_outputs_are_the_ones_the_workflow_reads(self):
+        outputs = re.findall(r"(?m)^output (\w+) \w+ = (.+)$", self.code)
+        self.assertEqual([name for name, _ in outputs], ["projectEndpoint", "accountName", "projectName", "guardrailName", "privateEndpointName"])
+        for name, value in outputs:
+            for word in ("listKeys", "listSecrets", "ConnectionString", "AccountKey", "primaryKey", "key", "secret", "password", "credentials", "token"):
+                self.assertNotIn(word, (name + " " + value).lower().replace("projectendpoint", ""), (name, word))
+        self.assertIn("'https://${account.name}.services.ai.azure.com/api/projects/${project.name}'", self.code)
+
+    def test_every_type_of_the_foundry_resource_is_at_one_stable_api_version_and_the_endpoint_is_at_the_one_of_the_others(self):
+        versions = set(re.findall(r"'Microsoft\.CognitiveServices/[A-Za-z/]+@([^']+)'", self.source))
+        self.assertEqual(versions, {"2026-09-01"})
+        self.assertEqual(re.findall(r"@[0-9-]+-preview'", self.source), [], "a preview version needs a switch with a fallback (AGENTS.md rule 11 (i)) and the Foundry resource has none")
+        self.assertIn("Microsoft.Network/privateEndpoints@2025-05-01", self.source)
+        self.assertIn("Microsoft.Authorization/roleAssignments@2022-04-01", self.source)
+
+    def test_the_template_names_the_resources_that_the_other_templates_made(self):
+        recording = text("environment/recording/main.bicep")
+        self.assertIn("name: 'appi-${workload}'", recording)
+        self.assertIn("name: 'appi-${workload}'", self.found["insights"][1])
+        self.assertIn("'vnet-${workload}', 'snet-pe'", self.found["privateEndpoint"][1])
+        self.assertIn("name: 'snet-pe'", text("environment/main.bicep"))
+        self.assertRegex(self.code, r"(?m)^param workload string = 'meternaut'$")
+
+    def test_the_template_compiles(self):
+        import json
+        import shutil
+        import subprocess
+
+        python = Path(r"C:\Program Files\Microsoft SDKs\Azure\CLI2\python.exe")
+        az = [str(python), "-IBm", "azure.cli"] if python.exists() else ([shutil.which("az")] if shutil.which("az") else None)
+        bicep = Path.home() / ".azure" / "bin" / ("bicep.exe" if python.exists() else "bicep")
+        if az is None or not bicep.exists():
+            self.skipTest("no Azure CLI with Bicep on this machine: the workflow and the checks compile every template")
+        done = subprocess.run([*az, "bicep", "build", "--file", str(ROOT / "environment" / "foundry" / "main.bicep"), "--stdout"], capture_output=True, text=True)
+        self.assertEqual(done.returncode, 0, done.stderr[-600:])
+        compiled = json.loads(done.stdout)
+        self.assertEqual({r["type"] for r in compiled["resources"]},
+                         {"Microsoft.CognitiveServices/accounts", "Microsoft.CognitiveServices/accounts/raiPolicies", "Microsoft.CognitiveServices/accounts/deployments",
+                          "Microsoft.CognitiveServices/accounts/projects", "Microsoft.CognitiveServices/accounts/projects/connections", "Microsoft.Network/privateEndpoints",
+                          "Microsoft.Authorization/roleAssignments"})
+        self.assertEqual(set(compiled["outputs"]), {"projectEndpoint", "accountName", "projectName", "guardrailName", "privateEndpointName"})
+
+
+class FoundryWorkflow(unittest.TestCase):
+    """The action foundry of the deploy workflow: what runs for it, in what order, and what it reads back."""
+
+    ORDER = ["The usage recording and the cases identity are there, which the Foundry resource builds on", "Deploy the Foundry resource of the agents",
+             "Wait until the landing zone has registered the Foundry resource's private endpoint in the central zones",
+             "Sign in to Azure again for the read-back of the Foundry resource, because the first sign-in's credential lasts five minutes", "Read the Foundry resource back"]
+
+    def setUp(self):
+        self.text = text(".github/workflows/deploy-hub.yml")
+        self.steps = re.split(r"(?m)^      - ", self.text)[1:]
+        self.names = [re.match(r"name: (.+)", b).group(1) for b in self.steps]
+
+    def step(self, title):
+        (block,) = [b for b in self.steps if b.startswith(f"name: {title}")]
+        return block
+
+    def script(self, title):
+        return "\n".join(line for line in self.step(title).split("run:")[1].splitlines() if not line.strip().startswith("#"))
+
+    def test_the_action_is_offered_between_the_recording_check_and_the_cases_and_is_described_in_plain_words(self):
+        options = re.search(r"options:\n((?:          - .+\n)+)", self.text).group(1)
+        offered = re.findall(r"- (\S+)", options)
+        self.assertEqual(offered[offered.index("recording-check") + 1:offered.index("recording-check") + 3], ["foundry", "cases"])
+        description = re.search(r'(?m)^        description: "(what-if: .+)"$', self.text).group(1)
+        self.assertIn(" foundry: the Foundry resource of the agents", description)
+        for word in ("no key", "private endpoint", "model account cannot hold projects"):
+            self.assertIn(word, description.split(" foundry: ")[1])
+
+    def test_the_steps_run_for_the_action_alone_in_the_order_of_the_owner_before_the_cases_and_after_the_settings_are_known(self):
+        positions = [self.names.index(name) for name in self.ORDER]
+        self.assertEqual(positions, sorted(positions))
+        for name in self.ORDER:
+            self.assertIn("if: inputs.action == 'foundry'", self.step(name), name)
+        self.assertLess(self.names.index("Work out the settings"), positions[0])
+        self.assertLess(positions[-1], self.names.index("The usage recording and the contract are there, which the first cases build on"))
+        self.assertEqual(len(re.findall(r"inputs\.action == 'foundry'", self.text)), len(self.ORDER), "these five steps, and no other step that runs for this action")
+
+    def test_the_deploy_makes_the_resource_from_the_template_and_the_file_restores_a_removed_one_and_checks_the_address_it_gives_the_cases_app(self):
+        block = self.step("Deploy the Foundry resource of the agents")
+        for word in ("--template environment/foundry/main.bicep", '--parameters "$RUNNER_TEMP/foundry.parameters.json"', '--name "foundry-$GITHUB_RUN_ID"', "--output projectEndpoint",
+                     "--restore-param restoreAccount", "EXPECTED_ENDPOINT: ${{ steps.params.outputs.foundry_project_endpoint }}"):
+            self.assertIn(word, block)
+        self.assertIn('if [ "${endpoint%/}" != "${EXPECTED_ENDPOINT%/}" ]; then', block)
+        self.assertIn("exit 1", block)
+        self.assertEqual(self.text.count("--template environment/foundry/main.bicep"), 2, "the preview and the deploy, nothing else")
+        self.assertEqual(self.text.count("python3 tools/az-deploy.py create"), len(re.findall(r"python3 tools/az-deploy.py create", self.text)))
+        for word in ("az role", "delete", "listKeys", "listSecrets", "--auth-mode key"):
+            self.assertNotIn(word, block, word)
+
+    def test_nothing_is_deployed_without_the_component_the_cases_identity_and_a_file_that_carries_the_identity(self):
+        title = self.ORDER[0]
+        block = self.step(title)
+        self.assertIn("INSIGHTS_NAME: ${{ steps.params.outputs.appinsights_name }}", block)
+        self.assertIn("CASES_IDENTITY: ${{ steps.params.outputs.cases_identity_name }}", block)
+        self.assertIn("Run recording first", block)
+        self.assertIn("Run cases first", block)
+        self.assertIn('grep -Fqi "\\"$principal\\"" "$RUNNER_TEMP/foundry.parameters.json"', block)
+        script = self.script(title)
+        self.assertEqual(len(re.findall(r"exit 1", script)), 3)
+        self.assertNotIn("az-deploy.py", script)
+        self.assertNotRegex(script, r"--method (put|patch|post|delete)")
+        self.assertLess(self.names.index(title), self.names.index("Deploy the Foundry resource of the agents"))
+
+    def test_the_wait_asks_for_the_zone_of_the_project_endpoints_host_name_fails_without_it_and_creates_no_zone(self):
+        title = self.ORDER[2]
+        block = self.step(title)
+        self.assertIn("PRIVATE_ENDPOINT: ${{ steps.params.outputs.foundry_private_endpoint }}", block)
+        self.assertIn("az network private-endpoint dns-zone-group list", block)
+        self.assertIn("grep -qi 'privatelink.services.ai.azure.com' <<< \"$zones\"", block)
+        self.assertIn("attempts=40", block)
+        script = self.script(title)
+        self.assertEqual(script.rstrip().splitlines()[-1].strip(), "exit 1", "it ends in a failure when no check passed")
+        self.assertIn("do not create a private DNS zone", block)
+        for word in ("az network private-dns", "az network private-endpoint dns-zone-group create", "--method put", "az role", "privateDnsZones"):
+            self.assertNotIn(word, block, word)
+        self.assertLess(self.names.index("Deploy the Foundry resource of the agents"), self.names.index(title))
+
+    def test_the_read_back_signs_in_again_and_runs_the_tool_with_the_names_the_settings_gave_and_the_models_of_the_repository(self):
+        title = self.ORDER[4]
+        block = self.step(title)
+        self.assertIn("uses: azure/login@", self.step(self.ORDER[3]))
+        for word in ("python3 tools/foundry-check.py read-back", '--subscription "$ENV_SUBSCRIPTION_ID"', '--resource-group "$ENV_RESOURCE_GROUP"', '--account "$FOUNDRY_ACCOUNT"',
+                     '--project "$FOUNDRY_PROJECT"', '--guardrail "$FOUNDRY_GUARDRAIL"', '--private-endpoint "$PRIVATE_ENDPOINT"', '--endpoint "$PROJECT_ENDPOINT"',
+                     "--models environment/models.json", '--summary "$GITHUB_STEP_SUMMARY"'):
+            self.assertIn(word, block)
+        for env_name, output in (("FOUNDRY_ACCOUNT", "foundry_account_name"), ("FOUNDRY_PROJECT", "foundry_project_name"), ("FOUNDRY_GUARDRAIL", "foundry_guardrail_name"),
+                                 ("PRIVATE_ENDPOINT", "foundry_private_endpoint"), ("PROJECT_ENDPOINT", "foundry_project_endpoint")):
+            self.assertIn(f"{env_name}: ${{{{ steps.params.outputs.{output} }}}}", block)
+        self.assertEqual(self.text.count("foundry-check.py read-back"), 1)
+        self.assertIn("        timeout-minutes: 20\n", block, "a step that waits for Azure has a limit of its own, besides the two minutes of each read")
+        self.assertNotIn("|| true", block, "a difference stops the run")
+        self.assertNotIn("continue-on-error", block)
+        self.assertEqual(self.names.index(title) - self.names.index(self.ORDER[3]), 1)
+
+    def test_the_foundry_file_is_made_checked_against_its_compiled_template_and_the_template_is_compiled_where_the_others_are(self):
+        self.assertIn("environment/foundry/main.bicep environment/cases/main.bicep", self.text)
+        self.assertIn('az bicep build --file environment/foundry/main.bicep --outfile "$RUNNER_TEMP/foundry.json"', self.text)
+        params = [b for b in self.steps if b.startswith("name: Work out the settings\n")][0]
+        self.assertIn('python3 tools/environment-params.py check --params "$RUNNER_TEMP/foundry.parameters.json" --template "$RUNNER_TEMP/foundry.json" --label foundry', params)
+        checks = text(".github/workflows/checks.yml")
+        self.assertIn("environment/recording/main.bicep environment/foundry/main.bicep environment/cases/main.bicep", checks)
+        self.assertIn('az bicep build --file environment/foundry/main.bicep --outfile "$out/foundry.json"', checks)
+        self.assertIn('--params "$out/foundry.parameters.json" --template "$out/foundry.json" --label foundry', checks)
+
+    def test_the_preview_shows_the_foundry_resource_when_the_component_it_connects_to_is_there_and_says_why_not_otherwise(self):
+        block = self.step("What the identity, the model side, the logger, the usage recording and the first cases would change")
+        self.assertIn("INSIGHTS_NAME: ${{ steps.params.outputs.appinsights_name }}", block)
+        self.assertLess(block.index("The Foundry resource cannot be previewed yet"), block.index("--template environment/foundry/main.bicep"))
+        self.assertIn("--restore-param restoreAccount", block[block.index("--template environment/foundry/main.bicep"):])
+        self.assertLess(block.index("--template environment/recording/main.bicep"), block.index("--template environment/foundry/main.bicep"))
+        self.assertLess(block.index("--template environment/foundry/main.bicep"), block.index("--template environment/cases/main.bicep"))
+        self.assertNotIn("az-deploy.py create", block)
+
+    def test_the_cases_app_is_given_the_project_address_from_what_is_in_azure_and_the_cases_action_has_no_step_of_its_own_for_it(self):
+        params = [b for b in self.steps if b.startswith("name: Work out the settings\n")][0]
+        self.assertIn('project_url="/subscriptions/$ENV_SUBSCRIPTION_ID/resourceGroups/$ENV_RESOURCE_GROUP/providers/Microsoft.CognitiveServices/accounts/$foundry_account/projects/$foundry_project"', params)
+        self.assertEqual(re.findall(r'exists "\$project_url" ([0-9-]+(?: warning)?)', params), ["2025-06-01", "2025-06-01 warning"], "existence needs the version that the model account uses, not the newest")
+        self.assertNotIn("2026-09-01", params)
+        self.assertIn('CASES_PRINCIPAL_ID="$cases_principal" CASES_SYSTEM_PRINCIPAL_ID="$cases_system_principal" ENV_FOUNDRY_PROJECT_EXISTS="$foundry_exists" python3 tools/environment-params.py build', params)
+        self.assertIn("could not be read", params, "a failure that is not 'not found' stops the run: the app is never given an address by a wrong guess")
+        self.assertNotRegex(params, r"--method (put|patch|post|delete)")
+        self.assertEqual(len(re.findall(r"if: .*'foundry'.*'cases'|if: .*'cases'.*'foundry'", self.text)), 0)
+        self.assertIn('--parameters "$RUNNER_TEMP/cases.parameters.json"', self.step("Deploy the first cases"))
+
+    def test_the_project_is_looked_for_only_by_the_actions_that_use_the_answer_and_a_failed_read_stops_cases_and_is_a_warning_for_what_if(self):
+        params = [b for b in self.steps if b.startswith("name: Work out the settings\n")][0]
+        self.assertIn("exists() {\n            local found level=\"${3:-error}\"", params, "the level of the annotation is the caller's")
+        self.assertIn('echo "::${level}::${1##*/} could not be read: $found" >&2', params)
+        self.assertEqual(len(re.findall(r"(?m)^\s+(what-if\|foundry)\)$", params)), 1, "the identity is looked for by what-if and foundry only")
+        self.assertEqual(len(re.findall(r"(?m)^\s+cases\)$", params)), 1)
+        self.assertEqual(len(re.findall(r"(?m)^\s+what-if\)$", params)), 1)
+        self.assertEqual(len(re.findall(r'(?m)^\s+\*\) echo "The action \$ACTION does not use the Foundry project, so it is not looked for\." ;;$', params)), 1)
+        self.assertEqual(params.count("cases_principal=$(az identity list"), 1)
+        self.assertEqual(params.count("cases_system_principal=$(az rest --method get"), 1, "the system-assigned identity is read from the app, once, and not by an action that has nothing to do with the Foundry resource")
+        self.assertIn('--url "https://management.azure.com${cases_site}?api-version=2024-04-01" --query identity.principalId --output tsv', params)
+        self.assertLess(params.index("what-if|foundry)"), params.index("cases_system_principal=$(az rest"), "inside the branch that only what-if and foundry take")
+        self.assertLess(params.index("cases_system_principal=$(az rest"), re.search(r"(?m)^\s+cases\)$", params).start())
+        self.assertLess(params.index("cases_principal=\"\"\n            cases_system_principal=\"\"\n            foundry_exists=false"), params.index("case \"$ACTION\" in"), "false is the answer for every action that does not look")
+        self.assertIn("Nothing was changed: run cases again.", params)
+        self.assertIn('echo "::warning::The preview of the cases app assumes that the Foundry project is not in Azure', params)
+        self.assertNotIn("ACTION: ${{", params.split("run: |")[0], "the job's ACTION is used")
+        self.assertIn("ACTION: ${{ inputs.action }}", self.text.split("    steps:")[0])
+
+    def test_the_texts_of_the_watch_say_that_it_changes_no_resource_of_the_estate_and_what_the_investigation_adds(self):
+        block = self.step("Start one Watch and read its History")
+        comment = " ".join(line.strip()[2:] for line in block.splitlines() if line.strip().startswith("# "))
+        for words in ("The Watch changes no resource of the estate: it reads Azure and calls the models through the gateway.", "With the investigation on (the cases app has the address of the Foundry project",
+                      "it also creates its agents and conversations in its own Foundry project, and those agents call the models of that resource directly, not through the gateway "
+                      "(the exception to AGENTS.md rule 15 (c))."):
+            self.assertIn(words, comment)
+        for old in ("only reads Azure", "it only reads", "went through the gateway", "Nothing in Azure was changed"):
+            self.assertNotIn(old, self.text, old)
+        description = re.search(r'(?m)^        description: "(what-if: .+)"$', self.text).group(1)
+        self.assertIn("its Watch changes no resource of the estate (with the investigation on it also creates agents and conversations in its own Foundry project)", description)
+
+    def test_the_summary_for_a_failed_and_a_finished_run_says_what_the_resources_hold_gives_the_endpoint_and_names_no_key(self):
+        block = self.step("What was done")
+        for env_name, output in (("FOUNDRY_ACCOUNT", "foundry_account_name"), ("FOUNDRY_PROJECT", "foundry_project_name"), ("FOUNDRY_ENDPOINT", "foundry_project_endpoint")):
+            self.assertIn(f"{env_name}: ${{{{ steps.params.outputs.{output} }}}}", block)
+        self.assertEqual(len(re.findall(r"^\s+foundry\) echo ", block, re.M)), 2)
+        (failed, finished) = re.findall(r"(?m)^\s+foundry\) echo \"(.*?)\" ;;$", block)
+        for words in ("\\`$FOUNDRY_ACCOUNT\\`", "\\`$FOUNDRY_PROJECT\\`", "\\`$FOUNDRY_ENDPOINT\\`", "public network access and local authentication are off", "project management is on",
+                      "guardrail that blocks jailbreaks and indirect attacks", "private endpoint is approved", "traces to Application Insights with its identity",
+                      "Foundry User role on the project and nothing else there", "was read back from Azure", "No key was made, read or printed"):
+            self.assertIn(words, finished, words)
+        self.assertIn("run \\`cases\\` only after a run of \\`foundry\\` that passed", failed)
+        for text_ in (failed, finished):
+            for word in ("listKeys", "listSecrets", "primaryKey", "AccountKey", "SharedAccessKey", "connection string", "password"):
+                self.assertNotIn(word, text_, word)
+
+
+class FoundryHandStep(unittest.TestCase):
+    """The hand step of environment/BOOTSTRAP.md that adds the Foundry User role to the condition of the deploy identity: what its text says, and what its commands may do."""
+
+    def setUp(self):
+        self.section = text("environment/BOOTSTRAP.md").split("## Changed on 2026-11-06: the Foundry resource of the agents")[1].split("\n## ")[0]
+        (self.script,) = re.findall(r"```powershell\n(.*?)\n```", self.section, re.S)
+        self.lines = self.script.splitlines()
+
+    def test_the_condition_is_changed_in_place_with_one_update_and_no_assignment_is_deleted_or_made(self):
+        self.assertEqual(len(re.findall(r"^az role assignment update ", self.script, re.M)), 1, "one write")
+        for word in ("role assignment delete", "role assignment create", "--ids", "restore", "Restore"):
+            self.assertNotIn(word, self.script, word)
+        self.assertEqual(sorted(set(re.findall(r"az role assignment (\w+)", self.script))), ["list", "update"])
+        self.assertIn("$old.condition = $condition\n$json = $old | ConvertTo-Json -Depth 20 -Compress\n", self.script, "the assignment that was read is the one that is written, with the new condition")
+        self.assertIn("az role assignment update --subscription $devSub --role-assignment ($json -replace '\"', '\"\"') --output none\n", self.script)
+
+    def test_every_command_names_the_subscription_of_the_pilot(self):
+        calls = re.findall(r"az role assignment (?:list|update)[^\n]*", self.script)
+        self.assertEqual(len(calls), 3, "the text that tells the person how to read it, the list function and the update")
+        for call in calls:
+            self.assertIn("--subscription $devSub", call, call)
+        self.assertNotIn("az account set", self.script, "the CLI's default subscription is never taken as the pilot's scope")
+
+    def test_the_exit_code_of_every_command_is_tested_and_a_failed_update_says_that_the_assignment_is_unchanged(self):
+        self.assertGreaterEqual(self.script.count("if ($LASTEXITCODE -ne 0) { throw"), 5, "the two reads, the update, and the two reads back")
+        update = self.script.index("az role assignment update ")
+        after = self.script[update:].split("\n", 2)[1]
+        self.assertTrue(after.startswith('if ($LASTEXITCODE -ne 0) { throw "The update failed (exit code $LASTEXITCODE). It is one write and nothing else was done, so the assignment is unchanged.'), after)
+        self.assertIn("Read it: $read", after, "it says how to read the assignment")
+
+    def test_it_reads_before_it_writes_shows_the_difference_and_asks_and_reads_back_after(self):
+        order = [self.script.index(word) for word in ("Get-Assignments 'length(@)'", "$old = $text | ConvertFrom-Json", "$shape = {", "Write-Host \"Role ids now:", "Read-Host 'Change the condition as shown? Type yes'",
+                                                      "az role assignment update ", "$new = $text | ConvertFrom-Json", "Write-Host \"Read back:")]
+        self.assertEqual(order, sorted(order))
+        self.assertIn("-ne 'yes') { throw 'Stopped. Nothing was changed.' }", self.script)
+        self.assertEqual(self.script.count("Read-Host"), 1)
+        # the read back: one assignment, the same one, both lists equal to the ids that were meant
+        for words in ("$new.id -ne $old.id", "$after.Count -ne 2", "$after[0] -ne $meant", "$after[1] -ne $meant", "\"$count\".Trim() -ne '1'"):
+            self.assertIn(words, self.script)
+        self.assertEqual(self.script.count("\"$count\".Trim() -ne '1'"), 2, "exactly one assignment before the write and after it")
+
+    def test_the_json_reaches_the_cli_unchanged_in_windows_powershell_and_in_powershell_7(self):
+        self.assertEqual(self.lines[0], "function az { $PSNativeCommandArgumentPassing = 'Legacy'; & 'C:\\Program Files\\Microsoft SDKs\\Azure\\CLI2\\python.exe' -IBm azure.cli @args }",
+                         "PowerShell 7.3 and later escape the quotes of an argument themselves, so the function asks for the older way, which Windows PowerShell 5.1 and PowerShell 7.1 have")
+        self.assertNotIn("'\\\"'", self.script, "no backslash before a quote: Windows PowerShell 5.1 does not take it")
+        self.assertTrue(self.script.isascii(), "commands that are copied into a console hold plain characters only")
+
+    def test_the_section_says_what_the_read_back_checks_including_the_endpoint_the_pages_and_the_time_limit(self):
+        for words in ("the project reports an endpoint and it is the address that the cases app is given", "(a list is read to its last page)",
+                      "Jailbreak and Indirect Attack on the user input, Indirect Attack on tool results", "No read waits longer than two minutes",
+                      "fails the run with a message that names the request, and nothing after it is read"):
+            self.assertIn(words, self.section, words)
+
+    def test_the_text_says_one_write_in_place_what_is_read_and_checked_and_that_any_answer_but_yes_changes_nothing(self):
+        for words in ("changed **in place, with one write**", "`az role assignment update`", "the assignment keeps its id", "exactly one assignment", "They test the exit code of the update",
+                      "the assignment is unchanged", "read the assignment back", "with the same id", "any other answer is a dry run that changes nothing",
+                      "PowerShell 7 and in Windows PowerShell 5.1", "Paste them as one block, or save them as a `.ps1` file"):
+            self.assertIn(words, self.section, words)
+        for old in ("delete, then create", "replaced as a whole", "two writes"):
+            self.assertNotIn(old, self.section, old)
+        self.assertIn("53ca6127-db72-4b80-b1b0-d745d6d5456d", self.script)
 
 
 class HandSteps(unittest.TestCase):

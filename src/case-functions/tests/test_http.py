@@ -141,6 +141,31 @@ class Retries(unittest.TestCase):
             c.request("GET", LOCKS, retries=0)
         self.assertEqual(len(script.calls), 1)
 
+    def test_the_pause_without_a_hint_is_a_parameter_that_doubles_up_to_its_ceiling(self):
+        c, script, sleeps = client((429, {}, b"{}"))
+        with self.assertRaises(http.HttpError):
+            c.request("POST", COST, retries=5, backoff=8.0, backoff_max=30.0)
+        self.assertEqual((len(script.calls), sleeps), (6, [12.0, 24.0, 30.0, 30.0, 30.0]), "8 seconds with the jitter of 0.5, doubled, and never more than 30")
+        c, _, sleeps = client((503, {}, b"{}"))
+        with self.assertRaises(http.HttpError):
+            c.request("GET", LOCKS, retries=3, backoff=2.0, backoff_max=5.0)
+        self.assertEqual(sleeps, [3.0, 5.0, 5.0])
+
+    def test_the_default_pause_is_the_one_of_before(self):
+        c, _, sleeps = client((503, {}, b"{}"))
+        with self.assertRaises(http.HttpError):
+            c.request("GET", LOCKS, retries=4)
+        self.assertEqual(sleeps, [1.5, 3.0, 6.0, 12.0])
+
+    def test_a_hint_beats_the_pause_and_a_hint_beyond_the_most_that_is_waited_for_is_a_refusal(self):
+        c, _, sleeps = client((429, {"retry-after": "5"}, b"{}"), ok())
+        c.request("POST", COST, backoff=8.0)
+        self.assertEqual(sleeps, [5.0])
+        c, script, sleeps = client((429, {"retry-after": "91"}, b"{}"))
+        with self.assertRaises(http.HttpError) as raised:
+            c.request("POST", COST, retry_after_max=90, backoff=8.0)
+        self.assertEqual((raised.exception.status, len(script.calls), sleeps), (429, 1, []))
+
 
 class LockLists(unittest.TestCase):
     GROUP = f"https://management.azure.com/subscriptions/{SUBSCRIPTION}/resourceGroups/rg-app"
@@ -277,10 +302,51 @@ class Errors(unittest.TestCase):
             c.request("GET", LOCKS, retries=0)
         self.assertLess(len(str(raised.exception)), 250)
 
+    # The depth at which the C JSON parser gives up differs by platform (the C recursion limit of Python 3.13 is about 3,000 on Windows and 10,000 on Linux), so the
+    # tests go far beyond both.
+    DEEP = 50000
+
+    def test_a_body_nested_too_deeply_to_be_parsed_gives_a_fixed_text_and_not_an_exception(self):
+        deep = self.DEEP
+        bodies = {
+            "arrays": b"[" * deep + b"]" * deep, "arrays that are not closed": b"[" * deep, "objects": b'{"error":' * deep + b"1" + b"}" * deep,
+            "arrays in the message": b'{"error":{"code":"X","message":' + b"[" * deep + b"]" * deep + b"}}",
+            "a secret before the depth": b'{"secret":"SECRET-IN-THE-BODY","deep":' + b"[" * deep + b"]" * deep + b"}",
+        }
+        for what, body in bodies.items():
+            for status in (400, 403, 500, 503):
+                with self.subTest(what=what, status=status):
+                    c, _, _ = client((status, {}, body))
+                    with self.assertRaises(http.HttpError) as raised:
+                        c.request("GET", LOCKS)
+                    self.assertEqual(raised.exception.status, status)
+                    self.assertEqual(str(raised.exception), f"GET management.azure.com: {status} the body is nested too deeply to be read")
+
+    def test_the_error_text_of_a_body_that_cannot_be_read_is_made_without_an_exception(self):
+        redact = Redactor()
+        self.assertEqual(http.error_text(400, b"[" * self.DEEP, redact), "400 the body is nested too deeply to be read")
+        # A number of 5000 digits is a ValueError, not a RecursionError: the first words of the body, as for any body that is not JSON.
+        text = http.error_text(502, b"9" * 5000, redact)
+        self.assertTrue(text.startswith("502 9") and len(text) <= 130, text)
+        for body in (b"", b"{", b"\xff\xfe\x00", b"null", b"[]", b'"text"', b"5", b'{"error":5}', b'{"error":{"code":{"a":1},"message":[1]}}', b'{"error":"x","error_description":[1]}'):
+            with self.subTest(body=body):
+                self.assertTrue(http.error_text(500, body, redact).startswith("500"))
+
+    def test_a_body_nested_deeply_but_still_readable_keeps_its_code_and_message(self):
+        body = b'{"error":{"code":"Busy","message":"try later"},"details":' + b"[" * 500 + b"]" * 500 + b"}"
+        self.assertEqual(http.error_text(429, body, Redactor()), "429 Busy: try later")
+
     def test_a_good_answer_that_is_not_json_is_an_error_when_read_as_json(self):
         c, _, _ = client((200, {}, b"not json"))
         with self.assertRaises(http.HttpError):
             c.request("GET", LOCKS).json()
+
+    def test_a_good_answer_nested_too_deeply_is_an_error_when_read_as_json_and_not_a_recursion_error(self):
+        for body in (b"[" * self.DEEP + b"]" * self.DEEP, b'{"a":' * self.DEEP + b"1" + b"}" * self.DEEP):
+            c, _, _ = client((200, {}, body))
+            with self.assertRaises(http.HttpError) as raised:
+                c.request("GET", LOCKS).json()
+            self.assertEqual((raised.exception.status, str(raised.exception)), (200, "the answer is nested too deeply to be read"))
 
     def test_an_empty_body_is_none(self):
         c, _, _ = client((200, {}, b""))

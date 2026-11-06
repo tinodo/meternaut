@@ -11,7 +11,7 @@ on:
   workflow_dispatch:
     inputs:
       action:
-        description: "what-if: show what the next steps would change and change nothing. model-side: the gateway's identity, then the network, the model account with its private endpoint and the budget. gateway-prepare: attach the identity to the gateway and add the Application Insights logger, and the two Event Hub loggers when the usage recording's namespace exists. gateway: add the Citadel module's objects to the gateway (with the two fragments that use the Event Hub loggers when both loggers exist, without them otherwise). contract: add the first contract (a product, its policy and its key) and test the gateway with that key. recording: the usage recording of the gateway's calls, which is a Log Analytics workspace, an Event Hubs namespace, a Cosmos DB account, a storage account, an identity and a function app, with private endpoints and without any key; it first removes the key-based Logic App version of it, when that is still there. recording-check: start the copy jobs once through the control hub and read what they say from the function app's telemetry. cases: the first cases, which is a second function app on the usage recording's network, storage and namespace, with two identities, a control hub, a longer retention of the traces and the History workbook; it only reads, and it needs the usage recording and the contract first.         cases-run: start one Watch through the control hub and read its History from the telemetry. plant: make waste of Meternaut's own (an unattached disk, and with plant_public_ip an unassigned public IP address) in the project's resource group, tagged for the loop, so that the whole loop can be shown on something that belongs to nobody else. loop-check: knock at the console's front door without a sign-in and pass only when nobody gets a page."
+        description: "what-if: show what the next steps would change and change nothing. model-side: the gateway's identity, then the network, the model account with its private endpoint and the budget. gateway-prepare: attach the identity to the gateway and add the Application Insights logger, and the two Event Hub loggers when the usage recording's namespace exists. gateway: add the Citadel module's objects to the gateway (with the two fragments that use the Event Hub loggers when both loggers exist, without them otherwise). contract: add the first contract (a product, its policy and its key) and test the gateway with that key. recording: the usage recording of the gateway's calls, which is a Log Analytics workspace, an Event Hubs namespace, a Cosmos DB account, a storage account, a user-assigned identity and a function app that also has a system-assigned identity, with private endpoints and without any key; it first removes the key-based Logic App version of it, when that is still there. recording-check: start the copy jobs once through the control hub and read what they say from the function app's telemetry. cases: the first cases, which is a second function app on the usage recording's network, storage and namespace, with its own system-assigned identity and two user-assigned ones, a control hub, a longer retention of the traces and the History workbook; its Watch changes no resource of the estate (with the investigation on it also creates agents and conversations in its own Foundry project), and it needs the usage recording and the contract first.         cases-run: start one Watch through the control hub and read its History from the telemetry. plant: make waste of Meternaut's own (an unattached disk, and with plant_public_ip an unassigned public IP address) in the project's resource group,         tagged for the loop, so that the whole loop can be shown on something that belongs to nobody else. loop-check: knock at the console's front door without a sign-in and pass only when nobody gets a page. foundry: the Foundry resource of the agents (the model account cannot hold projects, so this is a second resource): a project, the same models, a guardrail, one private endpoint and the connection that sends the agents' traces, with no key; it needs recording and cases to have run once, and it is run before the next cases, which is then given the project's address."
         type: choice
         required: true
         default: what-if
@@ -23,6 +23,7 @@ on:
           - contract
           - recording
           - recording-check
+          - foundry
           - cases
           - cases-run
           - plant
@@ -108,7 +109,7 @@ jobs:
           python3 -m unittest discover -s src/usage-functions/tests
           python3 -m unittest discover -s src/case-functions/tests
           python3 tools/workflow-lint.py
-          for template in environment/main.bicep environment/gateway/identity.bicep environment/gateway/logger.bicep environment/gateway/eventhub-loggers.bicep environment/gateway/contract.bicep environment/recording/main.bicep environment/cases/main.bicep environment/cases/planted.bicep; do
+          for template in environment/main.bicep environment/gateway/identity.bicep environment/gateway/logger.bicep environment/gateway/eventhub-loggers.bicep environment/gateway/contract.bicep environment/recording/main.bicep environment/foundry/main.bicep environment/cases/main.bicep environment/cases/planted.bicep; do
             az bicep build --file "$template" --stdout > /dev/null
             az bicep lint --file "$template"
           done
@@ -117,6 +118,7 @@ jobs:
           az bicep build --file environment/gateway/eventhub-loggers.bicep --outfile "$RUNNER_TEMP/eventhub-loggers.json"
           az bicep build --file environment/gateway/contract.bicep --outfile "$RUNNER_TEMP/contract.json"
           az bicep build --file environment/recording/main.bicep --outfile "$RUNNER_TEMP/recording.json"
+          az bicep build --file environment/foundry/main.bicep --outfile "$RUNNER_TEMP/foundry.json"
           az bicep build --file environment/cases/main.bicep --outfile "$RUNNER_TEMP/cases.json"
           az bicep build --file environment/cases/planted.bicep --outfile "$RUNNER_TEMP/planted.json"
           az bicep build --file kit/bicep/infra/apim-gateway-upgrade/main.bicep --outfile "$RUNNER_TEMP/kit.json"
@@ -193,6 +195,17 @@ jobs:
         run: |
           # The gateway identity does not exist before model-side has run, so this first pass is a preview: it gives the names.
           contract_files="--contract environment/contract.json --contract-policy environment/gateway/contract-policy.xml"
+          exists() {
+            local found level="${3:-error}"
+            if found=$(az rest --method get --url "https://management.azure.com${1}?api-version=${2}" --query name --output tsv 2>&1); then
+              echo true
+            elif grep -Eqi 'NotFound|\b404\b' <<< "$found"; then
+              echo false
+            else
+              echo "::${level}::${1##*/} could not be read: $found" >&2
+              return 1
+            fi
+          }
           outputs=$(python3 tools/environment-params.py build --models environment/models.json --out-dir "$RUNNER_TEMP" --preview $contract_files)
           echo "$outputs" >> "$GITHUB_OUTPUT"
           gateway_subscription=$(sed -n 's/^gateway_subscription=//p' <<< "$outputs")
@@ -211,7 +224,52 @@ jobs:
             fragments=false
             if grep -Fxq usage-eventhub-logger <<< "$loggers" && grep -Fxq pii-usage-eventhub-logger <<< "$loggers"; then fragments=true; fi
             echo "Both Event Hub loggers are in the gateway: $fragments."
-            GATEWAY_PRINCIPAL_ID="$principal" GATEWAY_CLIENT_ID="$client" RECORDING_FRAGMENTS="$fragments" python3 tools/environment-params.py build --models environment/models.json --out-dir "$RUNNER_TEMP" $contract_files > /dev/null
+            # The Foundry file names the cases app's identities (their object ids: the Foundry User role goes to them), and the cases app is given the project's address only while the project is
+            # in Azure: an address with no project behind it would switch the investigation on and make every run fail. Only the actions that use an answer look for it, so that a read
+            # that Azure throttles or refuses cannot stop an action that has nothing to do with the Foundry resource: what-if shows both, foundry needs the identities, cases needs the project.
+            # The user-assigned identity must be there (the action cases makes it). The system-assigned identity that takes over from it is read from the app itself, and is "none yet" until
+            # the action cases has run with the template of the first step of the move: then the file holds an empty string, and the template gives no role to it.
+            cases_identity=$(sed -n 's/^cases_identity_name=//p' <<< "$outputs")
+            cases_app=$(sed -n 's/^cases_function_app_name=//p' <<< "$outputs")
+            foundry_account=$(sed -n 's/^foundry_account_name=//p' <<< "$outputs")
+            foundry_project=$(sed -n 's/^foundry_project_name=//p' <<< "$outputs")
+            project_url="/subscriptions/$ENV_SUBSCRIPTION_ID/resourceGroups/$ENV_RESOURCE_GROUP/providers/Microsoft.CognitiveServices/accounts/$foundry_account/projects/$foundry_project"
+            cases_site="/subscriptions/$ENV_SUBSCRIPTION_ID/resourceGroups/$ENV_RESOURCE_GROUP/providers/Microsoft.Web/sites/$cases_app"
+            cases_principal=""
+            cases_system_principal=""
+            foundry_exists=false
+            case "$ACTION" in
+              what-if|foundry)
+                cases_principal=$(az identity list --resource-group "$ENV_RESOURCE_GROUP" --query "[?name=='$cases_identity'].principalId | [0]" --output tsv)
+                if ! grep -Eq '^[0-9a-fA-F-]{36}$' <<< "$cases_principal"; then cases_principal=""; fi
+                if [ -n "$cases_principal" ]; then echo "The cases app's identity exists; its principal id goes into the Foundry file."; else echo "The cases app's identity does not exist yet (the action cases makes it); the Foundry file holds a placeholder."; fi
+                if cases_system_principal=$(az rest --method get --url "https://management.azure.com${cases_site}?api-version=2024-04-01" --query identity.principalId --output tsv 2>&1); then
+                  :
+                elif grep -Eqi 'NotFound|\b404\b' <<< "$cases_system_principal"; then
+                  cases_system_principal=""
+                else
+                  echo "::error::The cases app could not be read: $cases_system_principal" >&2
+                  exit 1
+                fi
+                if ! grep -Eq '^[0-9a-fA-F-]{36}$' <<< "$cases_system_principal"; then cases_system_principal=""; fi
+                if [ -n "$cases_system_principal" ]; then echo "The cases app's system-assigned identity exists; its principal id goes into the Foundry file."; else echo "The cases app has no system-assigned identity yet (the action cases gives it one); the Foundry file gives no role to it."; fi ;;
+            esac
+            case "$ACTION" in
+              cases)
+                if ! foundry_exists=$(exists "$project_url" 2025-06-01); then
+                  echo "::error::The action cases gives the cases app the address of the Foundry project only when the project is in Azure, so it has to know, and the read of the project failed (the message above). Nothing was changed: run cases again."
+                  exit 1
+                fi
+                echo "The Foundry project is in Azure: $foundry_exists." ;;
+              what-if)
+                if ! foundry_exists=$(exists "$project_url" 2025-06-01 warning); then
+                  echo "::warning::The preview of the cases app assumes that the Foundry project is not in Azure, because the read of the project failed (the message above)."
+                  foundry_exists=false
+                fi
+                echo "The Foundry project is in Azure: $foundry_exists." ;;
+              *) echo "The action $ACTION does not use the Foundry project, so it is not looked for." ;;
+            esac
+            GATEWAY_PRINCIPAL_ID="$principal" GATEWAY_CLIENT_ID="$client" RECORDING_FRAGMENTS="$fragments" CASES_PRINCIPAL_ID="$cases_principal" CASES_SYSTEM_PRINCIPAL_ID="$cases_system_principal" ENV_FOUNDRY_PROJECT_EXISTS="$foundry_exists" python3 tools/environment-params.py build --models environment/models.json --out-dir "$RUNNER_TEMP" $contract_files > /dev/null
           else
             echo "The gateway identity does not exist yet; the role assignment is shown with a placeholder."
           fi
@@ -221,6 +279,7 @@ jobs:
           python3 tools/environment-params.py check --params "$RUNNER_TEMP/eventhub-loggers.parameters.json" --template "$RUNNER_TEMP/eventhub-loggers.json" --label eventhub-loggers
           python3 tools/environment-params.py check --params "$RUNNER_TEMP/kit.parameters.json" --template "$RUNNER_TEMP/kit.json" --label kit
           python3 tools/environment-params.py check --params "$RUNNER_TEMP/recording.parameters.json" --template "$RUNNER_TEMP/recording.json" --label recording
+          python3 tools/environment-params.py check --params "$RUNNER_TEMP/foundry.parameters.json" --template "$RUNNER_TEMP/foundry.json" --label foundry
           python3 tools/environment-params.py check --params "$RUNNER_TEMP/contract.parameters.json" --template "$RUNNER_TEMP/contract.json" --label contract
           python3 tools/environment-params.py check --params "$RUNNER_TEMP/cases.parameters.json" --template "$RUNNER_TEMP/cases.json" --label cases
           python3 tools/environment-params.py check --params "$RUNNER_TEMP/planted.parameters.json" --template "$RUNNER_TEMP/planted.json" --label planted
@@ -231,6 +290,7 @@ jobs:
           GATEWAY_SUBSCRIPTION: ${{ steps.params.outputs.gateway_subscription }}
           GATEWAY_GROUP: ${{ steps.params.outputs.gateway_resource_group }}
           STORAGE_ACCOUNT: ${{ steps.params.outputs.storage_account_name }}
+          INSIGHTS_NAME: ${{ steps.params.outputs.appinsights_name }}
         run: |
           echo "::group::The gateway identity, in the gateway's resource group"
           python3 tools/az-deploy.py what-if --subscription "$GATEWAY_SUBSCRIPTION" --resource-group "$GATEWAY_GROUP" \
@@ -251,6 +311,15 @@ jobs:
           echo "::group::The usage recording, in the project's resource group (the gateway identity's role is shown with a placeholder until model-side has run)"
           python3 tools/az-deploy.py what-if --subscription "$ENV_SUBSCRIPTION_ID" --resource-group "$ENV_RESOURCE_GROUP" \
             --template environment/recording/main.bicep --parameters "$RUNNER_TEMP/recording.parameters.json"
+          echo "::endgroup::"
+          echo "::group::The Foundry resource of the agents, in the project's resource group (the cases identity's role is shown with a placeholder until the action cases has made the identity)"
+          insights_found=$(az resource list --resource-group "$ENV_RESOURCE_GROUP" --resource-type Microsoft.Insights/components --query "[?name=='$INSIGHTS_NAME'].name | [0]" --output tsv)
+          if [ -z "$insights_found" ] || [ "$insights_found" = "None" ]; then
+            echo "The Foundry resource cannot be previewed yet: it connects its project to the Application Insights component of the usage recording, and the action recording makes it."
+          else
+            python3 tools/az-deploy.py what-if --subscription "$ENV_SUBSCRIPTION_ID" --resource-group "$ENV_RESOURCE_GROUP" \
+              --template environment/foundry/main.bicep --parameters "$RUNNER_TEMP/foundry.parameters.json" --restore-param restoreAccount
+          fi
           echo "::endgroup::"
           echo "::group::The first cases, in the project's resource group (they use the usage recording's storage account, namespace and subnet)"
           storage_found=$(az resource list --resource-group "$ENV_RESOURCE_GROUP" --resource-type Microsoft.Storage/storageAccounts --query "[?name=='$STORAGE_ACCOUNT'].name | [0]" --output tsv)
@@ -531,7 +600,7 @@ jobs:
         if: inputs.action == 'recording'
         run: |
           # A Log Analytics workspace and an Application Insights component, a storage account, an Event Hubs namespace with its three
-          # hubs, a Cosmos DB account (serverless) with its seven containers, an identity, a Flex Consumption plan with the function app
+          # hubs, a Cosmos DB account (serverless) with its seven containers, an identity (the function app also has a system-assigned one), a Flex Consumption plan with the function app
           # in its own subnet, the private endpoints, and the one role that each caller needs on the one resource it uses
           # (environment/recording/main.bicep). No key anywhere.
           site=$(python3 tools/az-deploy.py create --subscription "$ENV_SUBSCRIPTION_ID" --resource-group "$ENV_RESOURCE_GROUP" \
@@ -611,6 +680,9 @@ jobs:
         run: |
           python3 tools/recording-check.py functions --site "$SITE_ID" --minutes 15 | tee "$RUNNER_TEMP/functions.txt"
           principal=$(az identity show --resource-group "$ENV_RESOURCE_GROUP" --name "$USAGE_IDENTITY" --query principalId --output tsv)
+          # The system-assigned identity that takes over from the user-assigned one (the first of two steps: environment/BOOTSTRAP.md) is read from the app; "none yet" when the app has none.
+          system_principal=$(az rest --method get --url "https://management.azure.com${SITE_ID}?api-version=2024-04-01" --query identity.principalId --output tsv 2>/dev/null || true)
+          if ! grep -Eq '^[0-9a-fA-F-]{36}$' <<< "$system_principal"; then system_principal="none yet"; fi
           {
             echo "### The function app"
             echo
@@ -619,6 +691,8 @@ jobs:
             echo '```'
             echo
             echo "Identity of the function app (object id): \`$principal\`. Its copy jobs read the gateway's Application Insights with it, which needs two roles outside the project's group: Monitoring Reader on that component, and a role that reads one table of the workspace behind it (environment/BOOTSTRAP.md). Until they exist, a copy job ends with an authorization error that \`recording-check\` shows."
+            echo
+            echo "System-assigned identity of the function app (object id): \`$system_principal\`. It takes over from the identity above. This template gave it the same roles inside the project's group, and it needs the same two roles outside the group before the app's settings move to it. A person gives them with the owner's session (environment/BOOTSTRAP.md); this workflow gives none."
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: What the project's resource group holds now
@@ -638,6 +712,103 @@ jobs:
           insights="/subscriptions/$ENV_SUBSCRIPTION_ID/resourceGroups/$ENV_RESOURCE_GROUP/providers/Microsoft.Insights/components/$INSIGHTS_NAME"
           python3 tools/recording-check.py functions --site "$site" --minutes 5
           python3 tools/recording-check.py run --namespace "$EVENT_HUB_NAMESPACE" --insights "$insights" --job all --minutes 20 --summary "$GITHUB_STEP_SUMMARY"
+
+      - name: The usage recording and the cases identity are there, which the Foundry resource builds on
+        if: inputs.action == 'foundry'
+        env:
+          INSIGHTS_NAME: ${{ steps.params.outputs.appinsights_name }}
+          CASES_IDENTITY: ${{ steps.params.outputs.cases_identity_name }}
+        run: |
+          # The project is connected to the Application Insights component of the usage recording, and its identity gets a role on that component. The cases app's identity (the action cases
+          # makes it) gets the Foundry User role on the project, so its object id has to be in the parameter file: no role is ever given to a placeholder.
+          found=$(az resource list --resource-group "$ENV_RESOURCE_GROUP" --resource-type Microsoft.Insights/components --query "[?name=='$INSIGHTS_NAME'].name | [0]" --output tsv)
+          if [ -z "$found" ] || [ "$found" = "None" ]; then
+            echo "::error::The Application Insights component $INSIGHTS_NAME is not in $ENV_RESOURCE_GROUP. Run recording first: the Foundry resource sends the agents' traces to it."
+            exit 1
+          fi
+          principal=$(az identity list --resource-group "$ENV_RESOURCE_GROUP" --query "[?name=='$CASES_IDENTITY'].principalId | [0]" --output tsv)
+          if ! grep -Eq '^[0-9a-fA-F-]{36}$' <<< "$principal"; then
+            echo "::error::The identity $CASES_IDENTITY is not in $ENV_RESOURCE_GROUP. Run cases first: it makes the identity that gets its role on the project."
+            exit 1
+          fi
+          if ! grep -Fqi "\"$principal\"" "$RUNNER_TEMP/foundry.parameters.json"; then
+            echo "::error::The parameter file of the Foundry resource does not carry the object id of $CASES_IDENTITY: the file is final only once the gateway identity exists (run model-side first). Nothing was deployed."
+            exit 1
+          fi
+          echo "The Application Insights component $INSIGHTS_NAME and the identity $CASES_IDENTITY are there, and the parameter file carries the identity's object id."
+
+      - name: Deploy the Foundry resource of the agents
+        id: foundry
+        if: inputs.action == 'foundry'
+        env:
+          EXPECTED_ENDPOINT: ${{ steps.params.outputs.foundry_project_endpoint }}
+        run: |
+          # A second Foundry resource, because the model account was made with allowProjectManagement false and can never hold a project: its project, the models of environment/models.json,
+          # a guardrail with Prompt Shields, one private endpoint, the connection that sends the agents' traces with the project's identity, and two roles (environment/foundry/main.bicep).
+          # Local authentication and public network access are off, and no key exists. A resource of this name that was removed earlier is restored.
+          endpoint=$(python3 tools/az-deploy.py create --subscription "$ENV_SUBSCRIPTION_ID" --resource-group "$ENV_RESOURCE_GROUP" \
+            --template environment/foundry/main.bicep --parameters "$RUNNER_TEMP/foundry.parameters.json" \
+            --name "foundry-$GITHUB_RUN_ID" --output projectEndpoint --restore-param restoreAccount)
+          if [ "${endpoint%/}" != "${EXPECTED_ENDPOINT%/}" ]; then
+            echo "::error::The deployed project answers on ${endpoint%/}, not on $EXPECTED_ENDPOINT, which is the address that the cases app would be given. The cases app was not changed."
+            exit 1
+          fi
+          echo "The project endpoint is $EXPECTED_ENDPOINT."
+
+      - name: Wait until the landing zone has registered the Foundry resource's private endpoint in the central zones
+        if: inputs.action == 'foundry'
+        env:
+          PRIVATE_ENDPOINT: ${{ steps.params.outputs.foundry_private_endpoint }}
+        run: |
+          # The cases app calls <resource>.services.ai.azure.com, and that name resolves to the private address only after the policy has added the endpoint to the central zone
+          # privatelink.services.ai.azure.com (about ten minutes). The two other zones of a Foundry resource are said and not required: the app does not use those names.
+          found=$(az network private-endpoint list --resource-group "$ENV_RESOURCE_GROUP" --query "[?name=='$PRIVATE_ENDPOINT'].name | [0]" --output tsv)
+          if [ -z "$found" ] || [ "$found" = "None" ]; then
+            echo "::error::The private endpoint $PRIVATE_ENDPOINT is not there."
+            exit 1
+          fi
+          attempts=40
+          for attempt in $(seq 1 "$attempts"); do
+            zones=$(az network private-endpoint dns-zone-group list --resource-group "$ENV_RESOURCE_GROUP" \
+              --endpoint-name "$PRIVATE_ENDPOINT" --query "[].privateDnsZoneConfigs[].privateDnsZoneId" --output tsv || true)
+            if grep -qi 'privatelink.services.ai.azure.com' <<< "$zones"; then
+              echo "The landing zone's policy has registered $PRIVATE_ENDPOINT in the central private DNS zone privatelink.services.ai.azure.com."
+              for zone in privatelink.cognitiveservices.azure.com privatelink.openai.azure.com; do
+                if grep -qi "$zone" <<< "$zones"; then echo "It is registered in $zone too."; else echo "It is not registered in $zone: the cases app does not use that name."; fi
+              done
+              exit 0
+            fi
+            echo "Not registered yet (check $attempt of $attempts)."
+            if [ "$attempt" -lt "$attempts" ]; then sleep 60; fi
+          done
+          echo "::error::The landing zone's policy has not registered $PRIVATE_ENDPOINT in the central private DNS zone privatelink.services.ai.azure.com, so the cases app could not reach the project. Do not run cases yet. Wait, or ask the owners of the landing zone for that zone: do not create a private DNS zone."
+          exit 1
+
+      - name: Sign in to Azure again for the read-back of the Foundry resource, because the first sign-in's credential lasts five minutes
+        if: inputs.action == 'foundry'
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Read the Foundry resource back
+        if: inputs.action == 'foundry'
+        # Each read of Azure waits two minutes at the most (the tool's --timeout); this limit holds the whole step even when many pages are slow.
+        timeout-minutes: 20
+        env:
+          FOUNDRY_ACCOUNT: ${{ steps.params.outputs.foundry_account_name }}
+          FOUNDRY_PROJECT: ${{ steps.params.outputs.foundry_project_name }}
+          FOUNDRY_GUARDRAIL: ${{ steps.params.outputs.foundry_guardrail_name }}
+          PRIVATE_ENDPOINT: ${{ steps.params.outputs.foundry_private_endpoint }}
+          PROJECT_ENDPOINT: ${{ steps.params.outputs.foundry_project_endpoint }}
+        run: |
+          # A deployment that says Succeeded does not say that the resource came out as the template wrote it: the tenant's Modify policies rewrite a resource while it is made, and do not refuse it
+          # (AGENTS.md rule 19). The run fails unless public network access is Disabled, local authentication is off, project management is on, the project, its identity, the private endpoint,
+          # every model of environment/models.json, the guardrail and the connection for traces are there as the template says. Only GET requests; no key is listed.
+          python3 tools/foundry-check.py read-back --subscription "$ENV_SUBSCRIPTION_ID" --resource-group "$ENV_RESOURCE_GROUP" --account "$FOUNDRY_ACCOUNT" \
+            --project "$FOUNDRY_PROJECT" --guardrail "$FOUNDRY_GUARDRAIL" --private-endpoint "$PRIVATE_ENDPOINT" --endpoint "$PROJECT_ENDPOINT" \
+            --models environment/models.json --summary "$GITHUB_STEP_SUMMARY"
 
       - name: The usage recording and the contract are there, which the first cases build on
         if: inputs.action == 'cases'
@@ -747,8 +918,8 @@ jobs:
         id: cases
         if: inputs.action == 'cases'
         run: |
-          # A second function app on a Basic plan (Linux, always on), with its own identities (one reads and stores, one only presents the console's
-          # sign-in), plan and integration subnet; one more event hub (the control hub) in the recording's namespace; the roles that connect them; a year
+          # A second function app on a Basic plan (Linux, always on), with its own identities (a system-assigned one and a user-assigned one that read and store, and one
+          # user-assigned one that only presents the console's sign-in), plan and integration subnet; one more event hub (the control hub) in the recording's namespace; the roles that connect them; a year
           # of retention for the traces; and the History workbook (environment/cases/main.bicep). Meternaut holds no right to change Azure: a change runs
           # with the permissions of the person who approves it. No key anywhere.
           site=$(python3 tools/az-deploy.py create --subscription "$ENV_SUBSCRIPTION_ID" --resource-group "$ENV_RESOURCE_GROUP" \
@@ -851,6 +1022,9 @@ jobs:
         run: |
           python3 tools/cases-check.py functions --site "$SITE_ID" --minutes 15 | tee "$RUNNER_TEMP/case-functions.txt"
           principal=$(az identity show --resource-group "$ENV_RESOURCE_GROUP" --name "$CASES_IDENTITY" --query principalId --output tsv)
+          # The system-assigned identity that takes over from the user-assigned one (the first of two steps: environment/BOOTSTRAP.md) is read from the app; "none yet" when the app has none.
+          system_principal=$(az rest --method get --url "https://management.azure.com${SITE_ID}?api-version=2024-04-01" --query identity.principalId --output tsv 2>/dev/null || true)
+          if ! grep -Eq '^[0-9a-fA-F-]{36}$' <<< "$system_principal"; then system_principal="none yet"; fi
           {
             echo "### The cases app"
             echo
@@ -859,6 +1033,8 @@ jobs:
             echo '```'
             echo
             echo "Identity of the cases app (object id): \`$principal\`. It reads the pilot subscription with two roles (Reader and Cost Management Reader) and the contract's key with one role in the gateway's subscription. This workflow gives none of them (environment/BOOTSTRAP.md). Until they exist, a run ends with an authorization error that \`cases-run\` shows."
+            echo
+            echo "System-assigned identity of the cases app (object id): \`$system_principal\`. It takes over from the identity above. This template gave it the same roles inside the project's group, and the action foundry gives it its role on the Foundry project. It needs the same three roles outside the group and the right to send letters as the shared mailbox before the app's settings move to it. A person gives them with the owner's session (environment/BOOTSTRAP.md); this workflow gives none. The application (client) id that the mailbox tool asks for cannot be read from the app, and the deployment identity may not read the directory: the owner's session reads it from the service principal."
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Remove the first integration subnet of the cases app, snet-web, when it is still there and nothing uses it
@@ -923,7 +1099,9 @@ jobs:
           INSIGHTS_NAME: ${{ steps.params.outputs.appinsights_name }}
         run: |
           # One event to the control hub starts one Watch now. The app writes the History of the run to its telemetry, which is read here.
-          # The Watch only reads Azure and calls the models through the gateway.
+          # The Watch changes no resource of the estate: it reads Azure and calls the models through the gateway. With the investigation on (the cases app has the address of the Foundry
+          # project, which the action cases passes on once the action foundry has made the project) it also creates its agents and conversations in its own Foundry project, and
+          # those agents call the models of that resource directly, not through the gateway (the exception to AGENTS.md rule 15 (c)).
           site="/subscriptions/$ENV_SUBSCRIPTION_ID/resourceGroups/$ENV_RESOURCE_GROUP/providers/Microsoft.Web/sites/$SITE_NAME"
           insights="/subscriptions/$ENV_SUBSCRIPTION_ID/resourceGroups/$ENV_RESOURCE_GROUP/providers/Microsoft.Insights/components/$INSIGHTS_NAME"
           python3 tools/cases-check.py functions --site "$site" --minutes 5
@@ -987,6 +1165,9 @@ jobs:
           JOB_STATUS: ${{ job.status }}
           ACCOUNT_NAME: ${{ steps.params.outputs.account_name }}
           CONTRACT_NAME: ${{ steps.params.outputs.contract_name }}
+          FOUNDRY_ACCOUNT: ${{ steps.params.outputs.foundry_account_name }}
+          FOUNDRY_PROJECT: ${{ steps.params.outputs.foundry_project_name }}
+          FOUNDRY_ENDPOINT: ${{ steps.params.outputs.foundry_project_endpoint }}
         run: |
           {
             echo "### Hub: $ACTION, $JOB_STATUS"
@@ -1001,8 +1182,9 @@ jobs:
                 contract) echo "The contract's product, its policy and its subscription may be in the gateway already, and the test of the gateway with its key may have failed after that. Running \`contract\` again is safe: it repeats only what is missing and runs the test again." ;;
                 recording) echo "Part of the usage recording may exist now: the Log Analytics workspace, the storage account, the Event Hubs namespace, the Cosmos DB account, the identity, the private endpoints and the function app. They cost money while they exist, the private endpoints most (about 5 euros a month each). The key-based Logic App version may be removed already. Running \`recording\` again is safe and repeats only what is missing; \`what-if\` shows what is there." ;;
                 recording-check) echo "The copy jobs may have run and written nothing, or not at all. The lines above say how each ended, or which warnings and errors the function app logged. Running \`recording-check\` again is safe." ;;
-                cases) echo "Part of the first cases may exist now: the two identities, the plan, the function app, the control hub, the longer retention of the traces and the workbook. They cost next to nothing. Running \`cases\` again is safe and repeats only what is missing; \`what-if\` shows what is there." ;;
-                cases-run) echo "The Watch may have run partly or not at all. The lines above say how it ended, or which warnings and errors the cases app logged. It only reads Azure, so nothing was changed. Running \`cases-run\` again is safe." ;;
+                foundry) echo "Part of the Foundry resource of the agents may exist now: the resource, its guardrail, its model deployments, the project, the connection for traces, the private endpoint and the two roles. The resource costs next to nothing while no agent runs in it (the private endpoint a few euros a month). Running \`foundry\` again is safe and repeats only what is missing; \`what-if\` shows what is there. The cases app was not changed: run \`cases\` only after a run of \`foundry\` that passed." ;;
+                cases) echo "Part of the first cases may exist now: the identities, the plan, the function app, the control hub, the longer retention of the traces and the workbook. They cost next to nothing. Running \`cases\` again is safe and repeats only what is missing; \`what-if\` shows what is there." ;;
+                cases-run) echo "The Watch may have run partly or not at all. The lines above say how it ended, or which warnings and errors the cases app logged. It changes no resource of the estate; with the investigation on it may also have created agents and conversations in its own Foundry project before it stopped. Running \`cases-run\` again is safe." ;;
                 plant) echo "Part of the planted waste may exist now (an unattached disk, maybe an unassigned public IP address) in resource group \`$ENV_RESOURCE_GROUP\`, tagged for the loop. They cost a few cents to a few dollars a month. Running \`plant\` again is safe: it makes a second planting under a new name. A person who approves a plan for planted waste removes it, with that person's own permissions." ;;
                 loop-check) echo "The front door was not shut as it should be: a request without a sign-in got something other than a sign-in or the app's refusal. Nothing was changed. Do not hand the address to anybody until this passes." ;;
               esac
@@ -1013,10 +1195,11 @@ jobs:
                 gateway-prepare) echo "The identity is attached to the gateway (its own identity is kept) and the Application Insights logger is there, and so are the two Event Hub loggers if the usage recording's namespace existed (the log of the step says). The Citadel module has not been applied: a what-if now shows its exact diff." ;;
                 gateway) echo "The Citadel module's objects are in the gateway; its two usage-recording fragments are there only if both Event Hub loggers were (the log says). A call to the two model APIs is refused unless it is made with the key of a contract, so nobody can call them (the instance's all-access key included) until the first contract exists." ;;
                 contract) echo "The contract \`$CONTRACT_NAME\` is in the gateway: a product that grants the two inference APIs, its policy (the models and the token limits) and one subscription. The checks above ran against the gateway with that subscription's key, which is stored nowhere." ;;
-                recording) echo "The usage recording is in resource group \`$ENV_RESOURCE_GROUP\`: Event Hubs, a Cosmos DB account (serverless, no public endpoint, no key), a storage account (no public endpoint, no Shared Key), the function app with its six functions on a Flex Consumption plan, its identity, a workspace and an Application Insights component of its own, and five private endpoints that the landing zone has registered in its central zones. The key-based Logic App version is removed. The gateway identity may send to the two usage event hubs and the function app may read them; nothing sends to them yet. The copy jobs need two roles for the function app's identity outside the project's group before they can read the gateway's Application Insights (environment/BOOTSTRAP.md); then \`recording-check\` starts them once and reads what they said." ;;
+                recording) echo "The usage recording is in resource group \`$ENV_RESOURCE_GROUP\`: Event Hubs, a Cosmos DB account (serverless, no public endpoint, no key), a storage account (no public endpoint, no Shared Key), the function app with its six functions on a Flex Consumption plan, its identities (the user-assigned one that its settings use, and a system-assigned one that takes over in the next step of the move: environment/BOOTSTRAP.md), a workspace and an Application Insights component of its own, and five private endpoints that the landing zone has registered in its central zones. The key-based Logic App version is removed. The gateway identity may send to the two usage event hubs and the function app may read them; nothing sends to them yet. The copy jobs need two roles for the function app's identity outside the project's group before they can read the gateway's Application Insights, and the system-assigned identity needs the same two before the settings move to it (environment/BOOTSTRAP.md); then \`recording-check\` starts them once and reads what they said." ;;
                 recording-check) echo "The copy jobs ran and the function app wrote what each did to its telemetry; the lines above are that: the window, the rows read, the documents written and the number of documents in the container afterwards. A job writes only what the gateway recorded after its marker, so a first run writes the marker and nothing else." ;;
-                cases) echo "The first cases are in resource group \`$ENV_RESOURCE_GROUP\`: a function app with four functions (a daily timer, a trigger on the control hub, a timer every minute for the loop and the console's web route), its two identities (one reads and stores the records, one only presents the console's sign-in to Microsoft Entra and holds no role), the control hub in the usage recording's namespace, a year of retention for the traces and the History workbook. The Watch reads the pilot subscription with two roles and the contract's key with one role in the gateway's subscription; this workflow gives none of them, they are given once on the owner's written word (environment/BOOTSTRAP.md), and until they exist a run ends with an authorization error. Meternaut holds no right to change Azure. When a person approves a plan, the console sends that person to Microsoft Entra to sign in to Azure Resource Manager and runs the one change with that person's own permissions: Azure checks what that person may do, and its Activity Log names that person. The retired identity of the first loop, `id-meternaut-runner`, is removed when it is still there and nothing holds it." ;;
-                cases-run) echo "One Watch ran and wrote its History to the cases app's telemetry and its records to the store; the lines above are that: the leads, what each case came to, what the models said and the tokens that went through the gateway. Nothing in Azure was changed." ;;
+                foundry) echo "The Foundry resource of the agents, \`$FOUNDRY_ACCOUNT\`, is in resource group \`$ENV_RESOURCE_GROUP\` and was read back from Azure: public network access and local authentication are off, project management is on, the project \`$FOUNDRY_PROJECT\` has an identity of its own, the two models of environment/models.json are deployed with a guardrail that blocks jailbreaks and indirect attacks, the private endpoint is approved and the landing zone has registered its name, and the project sends its traces to Application Insights with its identity. The identities of the cases app (the user-assigned one and, once the app has one, its system-assigned one) hold the Foundry User role on the project and nothing else there. The project endpoint is \`$FOUNDRY_ENDPOINT\`. No key was made, read or printed. The cases app was not changed: the next run of \`cases\` gives it that address." ;;
+                cases) echo "The first cases are in resource group \`$ENV_RESOURCE_GROUP\`: a function app with four functions (a daily timer, a trigger on the control hub, a timer every minute for the loop and the console's web route), its identities (a system-assigned one, which takes over in the next step of the move, and \`id-meternaut-cases\`, which its settings still use: both read and store the records; and \`id-meternaut-console-auth\`, which only presents the console's sign-in to Microsoft Entra and holds no role), the control hub in the usage recording's namespace, a year of retention for the traces and the History workbook. The Watch reads the pilot subscription with two roles and the contract's key with one role in the gateway's subscription; this workflow gives none of them, they are given once on the owner's written word (environment/BOOTSTRAP.md), and until they exist a run ends with an authorization error. Meternaut holds no right to change Azure. When a person approves a plan, the console sends that person to Microsoft Entra to sign in to Azure Resource Manager and runs the one change with that person's own permissions: Azure checks what that person may do, and its Activity Log names that person. The retired identity of the first loop, \`id-meternaut-runner\`, is removed when it is still there and nothing holds it. The address of the Foundry project is given to the app only when the project is in Azure at that moment (the action \`foundry\` makes it); without it the investigation is off." ;;
+                cases-run) echo "One Watch ran and wrote its History to the cases app's telemetry and its records to the store; the lines above are that: the leads, what each case came to, what the models said and the tokens that were used. Calls that go through the gateway are counted there; with the investigation on, the agents in the Foundry project call the models of that resource directly, not through the gateway. No resource of the estate was changed; with the investigation on, the Watch also created its agents and conversations in its own Foundry project." ;;
                 plant) echo "Waste of Meternaut's own is in resource group \`$ENV_RESOURCE_GROUP\`: an unattached disk (and, when asked, an unassigned public IP address), tagged meternaut-planted. The next Watch finds it, and the loop takes it from there. Meternaut holds no right to delete it: the person who approves a plan for it needs the right to delete it in this group, because the change runs with that person's own permissions." ;;
                 loop-check) echo "The console's front door is shut: without a sign-in nobody gets a page (the return address of the Azure sign-in included), and a made-up sign-in header is not believed." ;;
               esac

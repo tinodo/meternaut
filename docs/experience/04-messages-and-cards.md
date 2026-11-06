@@ -86,7 +86,6 @@ Eight controls are visible: three decisions, four toggles and "Talk to a person"
 |---|---|---|
 | For | A small, reversible change the person owns | A change that needs a stronger sign-in, or two people |
 | Shows | The plan as one block per resource (bold "resource: setting", then From and To lines), when, what could go wrong, undo, the plan code | The headline, a class sentence, the figure, a summary, the plan code |
-| The OK is given | On the page, by one person | On the page, by one person or two |
 
 **On a phone.** At 360 px, in the reference renderer, C3 and C4 stay readable and their buttons wrap; each Teams client wraps in its own way, which the [client matrix](12-testing-the-experience.md#the-client-matrix-layer-5) tests.
 
@@ -117,7 +116,7 @@ The Card column is the name used here; on the card (the manifest's `displayTitle
 | C5 | [Your OK on a page](cards/ok-on-page.json) | After "Review the plan" on a page or two-person change; replaces C3 | Review and give your OK · No, leave it as it is · Not mine |
 | C6 | [Done](cards/done.json) | A change ran; the undo link only where Azure allows an undo | Open the page to undo · I did not approve this |
 | C7 | [Result](cards/result.json) | After verification; not sent where costs cannot be read | Yes, it matches · No, it does not |
-| C8 | [Told afterwards](cards/told-afterwards.json) | A standing permission ran | Open the page to undo · Pause changes here |
+| C8 | [Told afterwards](cards/told-afterwards.json) | Optional mode, not built: a standing permission ran | Open the page to undo · Pause changes here |
 | C9 | [Reminder](cards/reminder.json) | The one reminder, on day 7; inside the weekly desk instead once the person's push budget is used up | Open the Recommendation · No, leave it as it is · Not mine |
 | C10 | [Read-back](cards/read-back.json) | After a person teaches a Note | Yes, that is right · Not quite · No, forget it · Ask for a wider scope |
 | C11 | [Widen request](cards/widen-request.json) | Others taught a similar Note, and this person owns the wider scope | Widen the note · Keep it narrow · Show the resources |
@@ -126,7 +125,7 @@ The Card column is the name used here; on the card (the manifest's `displayTitle
 | C14 | [Settings](cards/settings.json) | On request, or from Hello | Save · More settings |
 | C15 | [I could not](cards/could-not.json) | The system cannot do something | Try again |
 | C16 | [Our mistake](cards/our-mistake.json) | Advice was wrong, or a change did not do what it said; it gives the state (restored, restoring or unknown), what is paused and who will update by when | What was affected |
-| C17 | [A standing permission starts](cards/permission-starts.json) | Before the first run of a standing permission: who wrote it, its place, cap and expiry, that it never covers a purchase, what each run does, how to pause it | Pause changes here · Not mine |
+| C17 | [A standing permission starts](cards/permission-starts.json) | Optional mode, not built: before the first run of a standing permission: who granted it, its place, cap and expiry, that it never covers a purchase, what each run does, how to pause it | Pause changes here · Not mine |
 
 (Invented.) The pictures are reference renderings of invented sample data, in the light theme, made with the official Adaptive Cards library. Teams draws cards with its own settings, so the look differs slightly: desktop and web have light, dark and high-contrast themes, iOS and Android only light and dark ([Learn](https://learn.microsoft.com/microsoftteams/platform/concepts/design/design-teams-app-color)), where the device's own accessibility settings apply. The templates in `cards/` are the source, and [`cards/manifest.json`](cards/manifest.json) lists all seventeen.
 
@@ -154,7 +153,7 @@ The Card column is the name used here; on the card (the manifest's `displayTitle
 
 ### Standing permissions
 
-![A standing permission starts card: author, cap and expiry.](../img/experience-card-c17-permission-starts.png)
+![A standing permission starts card (optional mode, not built): grantor, cap and expiry.](../img/experience-card-c17-permission-starts.png)
 
 ![Told afterwards card: dev containers moved to a cooler tier under a standing permission.](../img/experience-card-c8-told-afterwards.png)
 

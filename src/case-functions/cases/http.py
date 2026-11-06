@@ -3,6 +3,7 @@
 A call is made only to a fixed list of addresses with a fixed method, every one of them a read (two of the POSTs ask for a query result,
 for the key of the gateway access product and for a completion): a call to anything else is refused before it leaves the app, so a
 mistake in the code cannot become a write to Azure. Timeouts are set, and a failure that may pass is retried a bounded number of times.
+The one exception is the Foundry project of the app: the app makes and reads its own agents there and makes and deletes its own conversations (foundry_calls).
 """
 from __future__ import annotations
 
@@ -23,6 +24,10 @@ GUID = r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]
 SCOPE = rf"/subscriptions/{GUID}(?:/resourceGroups/[A-Za-z0-9._()-]{{1,90}}(?:/providers/[A-Za-z0-9.]{{1,80}}(?:/[A-Za-z0-9._()~-]{{1,100}}){{2,16}})?)?"
 RETRY_STATUSES = frozenset({429, 500, 502, 503, 504})
 MAX_CHALLENGE = 1500
+# The endpoint of one Microsoft Foundry project (the default project is called _project), the name of an agent in it and the id of a conversation of it.
+FOUNDRY_ENDPOINT = re.compile(r"https://[a-z0-9][a-z0-9-]{0,62}[a-z0-9]\.services\.ai\.azure\.com/api/projects/[A-Za-z0-9_][A-Za-z0-9_.-]{0,63}")
+FOUNDRY_AGENT_NAME = r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
+FOUNDRY_CONVERSATION_ID = r"conv_[A-Za-z0-9_-]{1,100}"
 
 Transport = Callable[[str, str, Mapping[str, str], "bytes | None", float], "tuple[int, Mapping[str, str], bytes]"]
 
@@ -55,19 +60,42 @@ class Response:
             return json.loads(self.body.decode("utf-8")) if self.body else None
         except ValueError as error:
             raise HttpError(self.status, "the answer is not JSON") from error
+        except RecursionError as error:
+            raise HttpError(self.status, "the answer is nested too deeply to be read") from error
 
 
-def allowed_calls(gateway_host: str, key_path: str) -> tuple[tuple[str, "re.Pattern[str]"], ...]:
-    """(method, address without its query) of every call that the app may make. `key_path` is the path of the one call that asks for the key."""
-    arm = re.escape(f"https://{ARM_HOST}")
+def foundry_calls(endpoint: str) -> tuple[tuple[str, "re.Pattern[str]"], ...]:
+    """The calls to one Foundry project. They make and read Meternaut's own agents there and make, use and delete its own conversations, and nothing else: no
+    other host, no other project, no other method, and no DELETE of an agent. The patterns are exact (no case folding) and nothing may follow the names."""
+    if not FOUNDRY_ENDPOINT.fullmatch(endpoint):
+        raise ValueError("the endpoint of the Foundry project is not https://<account>.services.ai.azure.com/api/projects/<project>")
+    base = re.escape(endpoint)
     return (
+        ("GET", re.compile(base + rf"/agents/{FOUNDRY_AGENT_NAME}")),
+        ("POST", re.compile(base + "/agents")),
+        ("POST", re.compile(base + rf"/agents/{FOUNDRY_AGENT_NAME}/versions")),
+        ("POST", re.compile(base + "/openai/v1/conversations")),
+        ("POST", re.compile(base + "/openai/v1/responses")),
+        ("DELETE", re.compile(base + rf"/openai/v1/conversations/{FOUNDRY_CONVERSATION_ID}")),
+    )
+
+
+def allowed_calls(gateway_host: str, key_path: str, foundry_endpoint: str | None = None) -> tuple[tuple[str, "re.Pattern[str]"], ...]:
+    """(method, address without its query) of every call that the app may make. `key_path` is the path of the one call that asks for the key.
+    `foundry_endpoint` adds the calls of foundry_calls for that one project; without it the app makes none."""
+    arm = re.escape(f"https://{ARM_HOST}")
+    calls = (
         ("POST", re.compile(arm + r"/providers/Microsoft\.ResourceGraph/resources", re.I)),
         ("POST", re.compile(arm + rf"/subscriptions/{GUID}/providers/Microsoft\.CostManagement/query", re.I)),
         ("GET", re.compile(arm + rf"/subscriptions/{GUID}/providers/Microsoft\.Advisor/recommendations", re.I)),
         ("GET", re.compile(arm + rf"{SCOPE}/providers/Microsoft\.Authorization/locks", re.I)),
+        ("GET", re.compile(arm + rf"{SCOPE}/providers/Microsoft\.Insights/metricDefinitions", re.I)),
+        ("GET", re.compile(arm + rf"{SCOPE}/providers/Microsoft\.Insights/metrics", re.I)),
+        ("GET", re.compile(arm + rf"/subscriptions/{GUID}/providers/Microsoft\.Security/pricings", re.I)),
         ("POST", re.compile(re.escape(f"https://{ARM_HOST}{key_path}"), re.I)),
         ("POST", re.compile(re.escape(f"https://{gateway_host}/models/chat/completions"), re.I)),
     )
+    return calls if foundry_endpoint is None else calls + foundry_calls(foundry_endpoint)
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -111,7 +139,8 @@ def challenge_of(status: int, headers: Mapping[str, str]) -> str:
 
 
 def error_text(status: int, body: bytes, redact: Callable[[str], str]) -> str:
-    """The code and the first words of the message of an error body; nothing else of the answer."""
+    """The code and the first words of the message of an error body; nothing else of the answer. A body that is not JSON gives its first 120 characters, and a JSON
+    body that is nested too deeply to be parsed gives a fixed text."""
     text = ""
     try:
         document = json.loads(body.decode("utf-8", "replace"))
@@ -124,6 +153,8 @@ def error_text(status: int, body: bytes, redact: Callable[[str], str]) -> str:
             text = f"{error[:60]} {codes[0] if codes else ''}".strip()
         elif isinstance(document, dict):
             text = str(document.get("message") or document.get("statusCode") or "")[:200]
+    except RecursionError:
+        text = "the body is nested too deeply to be read"
     except ValueError:
         text = body.decode("utf-8", "replace")[:120]
     return redact(f"{status} {' '.join(text.split())}".strip())
@@ -150,10 +181,13 @@ class Client:
 
     def request(self, method: str, url: str, *, headers: Mapping[str, str] | None = None, body: object = None, form: Mapping[str, str] | None = None,
                 timeout: float = 30, retries: int = 2, retry_after_max: float = 60, retry_statuses: frozenset[int] = RETRY_STATUSES,
-                retry_network: bool = True) -> Response:
+                retry_network: bool = True, backoff: float = 1.0, backoff_max: float = 30.0) -> Response:
         """One call. A call that may already have been carried out (a model call whose answer did not arrive) is made with retry_network=False.
 
-        `body` is sent as JSON, `form` as a form (the token endpoint of Microsoft Entra takes a form). A call has one of them or none."""
+        `body` is sent as JSON, `form` as a form (the token endpoint of Microsoft Entra takes a form). A call has one of them or none.
+
+        A call that is retried waits as long as the service says (Retry-After, up to `retry_after_max`). When the service says nothing the pause is `backoff` seconds
+        (with jitter) before the first repeat, twice that before the second, and so on, up to `backoff_max`."""
         self.check(method, url)
         merged = {"Accept": "application/json", **(headers or {})}
         data = None
@@ -180,7 +214,7 @@ class Client:
             retryable = retry_network if status == 0 else status in retry_statuses
             may_retry = retryable and not (wait is not None and wait > retry_after_max)
             if may_retry and attempt < retries:
-                pause = wait if wait is not None else min(30.0, (2 ** attempt) * (1 + self.jitter()))
+                pause = wait if wait is not None else min(backoff_max, backoff * (2 ** attempt) * (1 + self.jitter()))
                 left = self.remaining()
                 if left is None or pause < left:
                     self.sleep(pause)

@@ -52,7 +52,7 @@ def tick(env: Mapping[str, str] | None = None, *, transport=default_transport, s
         if settings is None:
             return None
         watch = cfg.load(env)
-        options = {"fetch": fetch} if fetch else {}
+        options = {"sleep": sleep, **({"fetch": fetch} if fetch else {})}
         reader = Identity(env, **options)
         extras = wiring.build_extras(env, reader.token, redact, transport=transport, sleep=sleep, monotonic=monotonic, clock=clock)
         if extras is None:

@@ -5,7 +5,7 @@ Nothing here reads a clock, a store or the network: the caller passes the record
 
 What every letter does (docs/experience/04-messages-and-cards.md and 05-letters-and-requests.md):
 - The subject starts with [Meternaut], says the point in plain words and holds no resource name and no amount of money.
-- The body says that an AI wrote it, which AI roles took part (the Detective and the Skeptic are AI models; the plan, the figures, the dates and
+- The body says that an AI wrote it, which AI roles took part (the Detective, the Investigator and the Skeptic are AI models; the plan, the figures, the dates and
   the counts are computed by code) and that a person approves every change. It carries no button that decides: a change is approved on a page.
 - A link is the address of the console plus a fixed path, and an opaque id where a plan needs one. No link holds a name, a resource id or a figure.
 - Every value that came from a record or from Azure is cut down to one line and escaped. Names from Azure are shown as data and labelled.
@@ -44,6 +44,16 @@ KIND_WORDS = {
     "empty-app-service-plan": "an App Service plan without apps",
     "stopped-vm": "a virtual machine that is stopped",
     "advisor-cost": "a cost recommendation of Azure Advisor",
+    "investigation": "a resource that the Watch's own investigation found",
+}
+# What the investigation found a resource to be, by the basis of its finding (cases/agents.py BASES).
+BASIS_WORDS = {
+    "no-usage": "a resource that the investigation found with no recorded usage",
+    "low-usage": "a resource that the investigation found with little recorded usage",
+    "oversized": "a resource that the investigation found larger than its use needs",
+    "duplicate": "a resource that the investigation found duplicated",
+    "unused-feature": "a paid feature that the investigation found unused",
+    "commitment-misfit": "a commitment that the investigation found does not fit the use",
 }
 PLAN_STATE_WORDS = {"open": "open", "approved": "approved, its change is being made", "consumed": "closed because it ran", "declined": "declined",
                     "expired": "expired", "withdrawn": "withdrawn", "failed": "closed because the change failed"}
@@ -123,15 +133,19 @@ def _cannot_be_undone(plan: PlanRecord) -> bool:
 
 
 def _kind(case: CaseRecord) -> str:
+    if case.detector == "investigation" and isinstance(case.facts, dict) and case.facts.get("basis") in BASIS_WORDS:
+        return BASIS_WORDS[case.facts["basis"]]
     return KIND_WORDS.get(case.detector) or f"a resource of type {_data(case.resource_type, 80) or 'unknown'}"
 
 
 def _models(case: CaseRecord) -> str | None:
     models = case.models if isinstance(case.models, dict) else {}
     detective, skeptic = _data(models.get("detective"), 60), _data(models.get("skeptic"), 60)
-    if not detective and not skeptic:
+    investigator = _data(models.get("investigator"), 60)
+    if not detective and not skeptic and not investigator:
         return None
-    parts = [f"the Detective ran on {detective}" if detective else "", f"the Skeptic ran on {skeptic}" if skeptic else ""]
+    parts = [f"the Detective ran on {detective}" if detective else "", f"the Investigator ran on {investigator}" if investigator else "",
+             f"the Skeptic ran on {skeptic}" if skeptic else ""]
     return "For this case " + " and ".join(p for p in parts if p) + "."
 
 
@@ -191,8 +205,9 @@ class _Doc:
     def how_made(self, models: str | None = None) -> None:
         self.heading("How this letter was made")
         self.paragraph(AI_LINE)
-        self.paragraph("Two AI model roles take part in the work behind it. The Detective judges whether a resource looks unused. The Skeptic argues against "
-                       "that judgement. Neither role can change anything. The plan, the figures, the dates and the counts in this letter were computed by "
+        self.paragraph("AI model roles take part in the work behind it. The Detective judges whether a resource looks unused. The Investigator looks through the "
+                       "estate with read-only tools and reports what looks wasted. The Skeptic argues against that judgement or that finding. No role can change "
+                       "anything. The plan, the figures, the dates and the counts in this letter were computed by "
                        "code, not by a model. A person approves every change, on a page, after signing in.")
         if models:
             self.paragraph(models)
@@ -293,8 +308,10 @@ def first_contact_letter(person: Person, base_url: str, now: dt.datetime) -> Let
     doc.heading("What I do today")
     doc.items(
         "I read the resources and the cost lines of the Azure subscriptions that I was given. The part of me that looks can only read.",
-        "I find leads: resources that look unused, for example a disk that is not attached to anything.",
-        "Two AI roles judge each lead. The Detective proposes what to do. The Skeptic argues against it. Both are AI models, and neither can change anything.",
+        "I look for waste in two ways. Fixed checks list leads, for example a disk that is not attached to anything. An Investigator, an AI agent with read-only tools, "
+        "also looks through the estate by itself for resources that cost money and are not used or needed.",
+        "AI roles judge what I find. The Detective proposes what to do with a lead, the Investigator reports its findings, and the Skeptic argues against both. "
+        "All three are AI models, and none of them can change anything.",
         "When a change is proposed, code builds the plan: what changes, the estimated saving and when the request expires. No model writes the plan.",
         "A person approves every change, on a page, after signing in. Then the person signs in to Azure, and I make the one approved change with that person's own "
         "permissions, after I have read the resource again right before I act. I hold no right of my own to change Azure.",
@@ -408,8 +425,8 @@ def digest_letter(person: Person, base_url: str, now: dt.datetime, runs: list[Ru
         doc.paragraph(f"{count - MAX_LISTED} more plans wait. They are on the history page.")
 
     doc.heading("What I propose")
-    _case_list(doc, proposed, "The AI roles proposed removing these resources. A proposal is not a plan: nothing can change until a plan exists and a person "
-                              "approves it.", "No resource is proposed.")
+    _case_list(doc, proposed, "The AI roles proposed a change to these resources: removing them or changing them. A proposal is not a plan: nothing can change until a plan "
+                              "exists and a person approves it.", "No resource is proposed.")
     doc.heading("What needs a person")
     _case_list(doc, needs, "The AI roles could not settle these, or a check held them back. A person has to look at them.", "No case needs a person.")
     doc.link("Open the history page", f"{base}/history")

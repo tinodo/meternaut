@@ -8,6 +8,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 import logging
+from collections import Counter
 from typing import Callable
 
 EVENT_PREFIX = "meternaut_event "
@@ -17,6 +18,8 @@ KINDS = ("run.started", "run.note", "lead.found", "case.started", "case.step", "
 # The lines of the loop that follows a case: a plan, the change and its check, and a message. The tools that read a run's History know the kinds above only.
 LOOP_KINDS = ("plan.created", "signin.started", "signin.stepup", "signin.failed", "approval.recorded", "action.started", "action.finished", "action.verified", "mail.result",
               "tick.result")
+# The lines of the investigation (cases\investigate.py): its start, one line for each finding and its end. The cases that it opens end in `case.result`, as every case does.
+INVESTIGATION_KINDS = ("investigation.started", "investigation.finding", "investigation.finished")
 
 LOGGER = logging.getLogger("meternaut.history")
 
@@ -53,10 +56,16 @@ class History:
     def __init__(self, run_id: str, request_id: str | None, clock: Callable[[], dt.datetime], redact: Callable[[str], str],
                  logger: logging.Logger = LOGGER) -> None:
         self.run_id, self.request_id, self.clock, self.redact, self.logger = run_id, request_id, clock, redact, logger
+        self.counts: Counter[str] = Counter()  # the lines written so far, by kind
 
     def emit(self, kind: str, **fields: object) -> dict:
-        if kind not in KINDS + LOOP_KINDS:
+        if kind not in KINDS + LOOP_KINDS + INVESTIGATION_KINDS:
             raise ValueError(f"{kind} is not a kind of History line")
         event = {"v": VERSION, "ts": self.clock().strftime("%Y-%m-%dT%H:%M:%SZ"), "runId": self.run_id, "requestId": self.request_id, "type": kind, **fields}
         self.logger.info(self.redact(_fit(event)))
+        self.counts[kind] += 1
         return event
+
+    def lines(self, prefix: str = "") -> int:
+        """How many lines this History has written, of the kinds that start with `prefix`: `lines("investigation.")` counts the lines of the investigation."""
+        return sum(count for kind, count in self.counts.items() if kind.startswith(prefix))

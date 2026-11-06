@@ -1,9 +1,25 @@
 {
   "version": 1,
-  "about": "The access that Meternaut needs outside its own resource group. Meternaut holds no write right: every grant below only reads, and a change to Azure is made with the token of the person who approved it, so that Azure checks that person's own rights (docs/proposals/03-access-and-onboarding.md). The deployment workflow's identity holds no right there and must not get one (AGENTS.md rule 18), so a person who may assign roles at each place grants it. Each line of grants is one role of one identity at one place. The list retired records what an earlier version granted and must now be removed. tools/access-requirements.py reads this file: it checks what is granted, grants what is missing only with --apply, and with retire removes what is retired, again only with --apply. docs/proposals/03-access-and-onboarding.md shows the two tables that the tool prints, and a test keeps them the same.",
+  "about": "The access that Meternaut needs outside its own resource group. Meternaut holds no write right: every grant below only reads, and a change to Azure is made with the token of the person who approved it, so that Azure checks that person's own rights (docs/proposals/03-access-and-onboarding.md). The deployment workflow's identity holds no right there and must not get one (AGENTS.md rule 18), so a person who may assign roles at each place grants it. Each line of grants is one role of one identity at one place. An identity is what a function app runs as, and the principals that hold its grants are listed as its holders: the app's own system-assigned identity (found on the app, with the option that siteOption names) and, while an app is being moved from a user-assigned identity to its system-assigned one, the user-assigned identity too, so that the app is never without access. The list retired records what an earlier version granted and must now be removed. tools/access-requirements.py reads this file: it checks what is granted, grants what is missing only with --apply, and with retire removes what is retired, again only with --apply. docs/proposals/03-access-and-onboarding.md shows the two tables that the tool prints, and a test keeps them the same.",
   "identities": {
-    "cases": { "name": "id-meternaut-cases", "madeBy": "cases" },
-    "usage": { "name": "id-meternaut-usage", "madeBy": "recording" }
+    "cases": {
+      "app": "the cases app",
+      "appName": "func-meternaut-cases-*",
+      "madeBy": "cases",
+      "holders": [
+        { "kind": "system", "siteOption": "--cases-site" },
+        { "kind": "user", "name": "id-meternaut-cases" }
+      ]
+    },
+    "usage": {
+      "app": "the usage app",
+      "appName": "func-meternaut-usage-*",
+      "madeBy": "recording",
+      "holders": [
+        { "kind": "system", "siteOption": "--usage-site" },
+        { "kind": "user", "name": "id-meternaut-usage" }
+      ]
+    }
   },
   "places": {
     "estate": "Each subscription that the Watch reads (the app setting SCOPE_SUBSCRIPTIONS), or a management group above them",
@@ -51,8 +67,8 @@
       "identity": "cases",
       "role": "Reader",
       "place": "estate",
-      "why": "Reads the resources, their tags and management locks, and Azure Advisor's cost recommendations: the detectors and the guards of the Watch. It also reads a managed disk or a public IP address of the project's own resource group when the timer checks that a deleted resource is gone. The role reads and changes nothing",
-      "calls": ["resource-graph-query", "advisor-read", "locks-read", "disk-read", "public-ip-read"]
+      "why": "Reads the resources, their tags and management locks, Azure Advisor's cost recommendations, the platform metrics that Azure Monitor keeps for a resource and the pricing settings of the Microsoft Defender for Cloud plans: the detectors, the guards and the read-only tools of the investigator. It also reads a managed disk or a public IP address of the project's own resource group when the timer checks that a deleted resource is gone. The role reads and changes nothing",
+      "calls": ["resource-graph-query", "advisor-read", "locks-read", "metric-definitions-read", "metrics-read", "security-pricings-read", "disk-read", "public-ip-read"]
     },
     {
       "id": "R2",
