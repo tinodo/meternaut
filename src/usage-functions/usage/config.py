@@ -1,6 +1,9 @@
 """App settings. In Azure they are the app settings of the function app; the code reads them as environment variables.
 
 The Event Hub names and the Event Hub connection are not read here: the platform resolves them from the trigger bindings.
+
+AZURE_CLIENT_ID is the one setting that may be missing or empty: it names a user-assigned managed identity, and without it the app runs as its own
+system-assigned identity.
 """
 import os
 from collections.abc import Mapping, Sequence
@@ -29,3 +32,9 @@ def get_settings(names: Sequence[str], env: Mapping[str, str] | None = None) -> 
     if missing:
         raise ConfigError("Missing required app setting(s): " + ", ".join(missing))
     return values
+
+
+def client_id(env: Mapping[str, str] | None = None) -> str:
+    """The client id of the user-assigned identity that the app runs as. Empty when the setting is missing or blank: the system-assigned identity."""
+    source = os.environ if env is None else env
+    return (source.get(AZURE_CLIENT_ID) or "").strip()

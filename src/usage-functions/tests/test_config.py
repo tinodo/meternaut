@@ -55,5 +55,32 @@ class GetSettingsTests(unittest.TestCase):
         self.assertEqual(names, set(ENV))
 
 
+class ClientIdTests(unittest.TestCase):
+    """AZURE_CLIENT_ID names a user-assigned identity. Without it the app runs as its own system-assigned identity."""
+
+    def test_the_client_id_when_it_is_set(self):
+        self.assertEqual(config.client_id(ENV), ENV["AZURE_CLIENT_ID"])
+        self.assertEqual(config.client_id({"AZURE_CLIENT_ID": " 22222222-2222-2222-2222-222222222222 \n"}), "22222222-2222-2222-2222-222222222222")
+
+    def test_empty_when_it_is_missing_empty_or_blank_and_never_an_error(self):
+        for env in ({}, {"AZURE_CLIENT_ID": ""}, {"AZURE_CLIENT_ID": "   "}, {"AZURE_CLIENT_ID": None}, {key: value for key, value in ENV.items() if key != "AZURE_CLIENT_ID"}):
+            with self.subTest(env=env):
+                self.assertEqual(config.client_id(env), "")
+
+    def test_the_environment_is_read_when_no_mapping_is_given(self):
+        with mock.patch.dict("os.environ", {"AZURE_CLIENT_ID": "from-environment"}, clear=True):
+            self.assertEqual(config.client_id(), "from-environment")
+        with mock.patch.dict("os.environ", {}, clear=True):
+            self.assertEqual(config.client_id(), "")
+
+    def test_the_other_settings_are_still_required_without_it(self):
+        env = {key: value for key, value in ENV.items() if key != "AZURE_CLIENT_ID"}
+        others = [name for name in ENV if name != "AZURE_CLIENT_ID"]
+        self.assertEqual(config.get_settings(others, env), {name: env[name].strip() for name in others})
+        with self.assertRaises(config.ConfigError) as caught:
+            config.get_settings(others, {key: value for key, value in env.items() if key != "COSMOS_ENDPOINT"})
+        self.assertEqual(str(caught.exception), "Missing required app setting(s): COSMOS_ENDPOINT")
+
+
 if __name__ == "__main__":
     unittest.main()

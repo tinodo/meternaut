@@ -66,6 +66,40 @@ class Load(unittest.TestCase):
         self.assertEqual((settings.max_tokens_per_run, settings.max_completion_tokens, settings.deadline_seconds), (20000, 1500, 600))
 
 
+class ClientId(unittest.TestCase):
+    """AZURE_CLIENT_ID names a user-assigned identity. Without it the app runs as its own system-assigned identity."""
+
+    CLIENT = ENV["AZURE_CLIENT_ID"]
+    WITHOUT = {key: value for key, value in ENV.items() if key != "AZURE_CLIENT_ID"}
+
+    def test_the_client_id_is_not_a_required_setting_and_the_other_seven_are(self):
+        self.assertNotIn("AZURE_CLIENT_ID", config.REQUIRED)
+        self.assertEqual(config.REQUIRED, ("SCOPE_SUBSCRIPTIONS", "GATEWAY_URL", "GATEWAY_PRODUCT_SUBSCRIPTION_ID", "MODEL_DETECTIVE", "MODEL_SKEPTIC", "MAX_CASES_PER_RUN",
+                                           "EVENTHUB_CASES_CONTROL_NAME"))
+        self.assertEqual(config.AZURE_CLIENT_ID, "AZURE_CLIENT_ID", "the name stays: the app reads it when it is set")
+
+    def test_without_a_client_id_the_app_runs_as_its_system_assigned_identity(self):
+        for env in (self.WITHOUT, {**self.WITHOUT, "AZURE_CLIENT_ID": ""}, {**self.WITHOUT, "AZURE_CLIENT_ID": "   "}):
+            self.assertEqual(config.load(env).client_id, "", env.get("AZURE_CLIENT_ID"))
+        self.assertEqual(config.load(self.WITHOUT).subscriptions, (SUBSCRIPTION,), "everything else is read as before")
+
+    def test_a_client_id_that_is_set_is_kept_and_has_to_be_one(self):
+        self.assertEqual(config.load(ENV).client_id, self.CLIENT)
+        self.assertEqual(config.load({**ENV, "AZURE_CLIENT_ID": f" {self.CLIENT.upper()} "}).client_id, self.CLIENT.upper())
+        for value in ("x", "not-a-client-id", self.CLIENT[:-1], self.CLIENT + "0", "{" + self.CLIENT + "}"):
+            with self.assertRaises(config.ConfigError, msg=value) as raised:
+                config.load({**ENV, "AZURE_CLIENT_ID": value})
+            self.assertEqual(str(raised.exception), "AZURE_CLIENT_ID is a client id")
+
+    def test_the_wrong_client_id_is_named_with_the_other_problems_and_a_missing_one_is_not(self):
+        with self.assertRaises(config.ConfigError) as raised:
+            config.load({**self.WITHOUT, "GATEWAY_URL": "http://example.com", "AZURE_CLIENT_ID": "x"})
+        self.assertEqual(str(raised.exception).split("; "), ["AZURE_CLIENT_ID is a client id", "GATEWAY_URL is https://<name>.azure-api.net"])
+        with self.assertRaises(config.ConfigError) as raised:
+            config.load({key: value for key, value in self.WITHOUT.items() if key != "GATEWAY_URL"})
+        self.assertEqual(str(raised.exception), "GATEWAY_URL is not set")
+
+
 class Investigation(unittest.TestCase):
     """The optional settings of the investigation by agents in Microsoft Foundry."""
 

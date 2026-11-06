@@ -37,6 +37,15 @@ class ClientsTests(unittest.TestCase):
         self.identity.ManagedIdentityCredential.assert_called_once_with(client_id=CLIENT_ID)
         self.assertIs(credential, self.identity.ManagedIdentityCredential.return_value)
 
+    def test_without_a_client_id_the_credential_is_the_managed_identity_of_the_app_itself_and_nothing_else(self):
+        for empty in ("", None):
+            with self.subTest(client_id=empty):
+                self.clear_caches()
+                self.identity.ManagedIdentityCredential.reset_mock()
+                credential = clients.credential(empty)
+                self.identity.ManagedIdentityCredential.assert_called_once_with()
+                self.assertIs(credential, self.identity.ManagedIdentityCredential.return_value)
+
     def test_a_client_is_built_once_and_reused(self):
         self.assertIs(clients.credential(CLIENT_ID), clients.credential(CLIENT_ID))
         self.assertIs(clients.cosmos_client(CLIENT_ID, ENDPOINT), clients.cosmos_client(CLIENT_ID, ENDPOINT))
@@ -44,6 +53,13 @@ class ClientsTests(unittest.TestCase):
         self.assertEqual(self.identity.ManagedIdentityCredential.call_count, 1)
         self.assertEqual(self.cosmos.CosmosClient.call_count, 1)
         self.assertEqual(self.query.LogsQueryClient.call_count, 1)
+
+    def test_the_clients_of_an_app_without_a_client_id_are_built_once_and_share_one_credential(self):
+        self.assertIs(clients.cosmos_client("", ENDPOINT), clients.cosmos_client("", ENDPOINT))
+        self.assertIs(clients.logs_client(""), clients.logs_client(""))
+        self.identity.ManagedIdentityCredential.assert_called_once_with()
+        self.cosmos.CosmosClient.assert_called_once_with(ENDPOINT, credential=self.identity.ManagedIdentityCredential.return_value)
+        self.query.LogsQueryClient.assert_called_once_with(self.identity.ManagedIdentityCredential.return_value)
 
     def test_the_cosmos_client_gets_the_endpoint_and_the_credential_only(self):
         clients.cosmos_client(CLIENT_ID, ENDPOINT)
@@ -69,6 +85,13 @@ class ClientsTests(unittest.TestCase):
         clients.credential(CLIENT_ID)
         clients.credential("22222222-2222-2222-2222-222222222222")
         self.assertEqual(self.identity.ManagedIdentityCredential.call_count, 2)
+
+    def test_the_system_assigned_identity_and_a_user_assigned_one_do_not_share_a_credential(self):
+        clients.credential("")
+        clients.credential(CLIENT_ID)
+        clients.credential("")
+        clients.credential(CLIENT_ID)
+        self.assertEqual(self.identity.ManagedIdentityCredential.call_args_list, [mock.call(), mock.call(client_id=CLIENT_ID)])
 
     def test_the_sdks_log_warnings_and_errors_only(self):
         for name in ("azure", "azure.cosmos", "azure.core.pipeline.policies.http_logging_policy", "azure.monitor.query"):

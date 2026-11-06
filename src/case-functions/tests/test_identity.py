@@ -54,10 +54,26 @@ class Tokens(Rig):
         identity, fetch = self.identity(good())
         self.assertEqual(identity.token("https://management.azure.com"), TOKEN)
         ((url, headers, timeout),) = fetch.calls
-        self.assertTrue(url.startswith("http://127.0.0.1:8081/msi/token?resource=https%3A%2F%2Fmanagement.azure.com&api-version=2019-08-01&client_id="))
+        self.assertEqual(url, f"http://127.0.0.1:8081/msi/token?resource=https%3A%2F%2Fmanagement.azure.com&api-version=2019-08-01&client_id={ENV['AZURE_CLIENT_ID']}")
         self.assertEqual(headers["X-IDENTITY-HEADER"], "header-value")
         self.assertEqual(timeout, 15)
         self.assertEqual(self.sleeps, [])
+
+    def test_without_a_client_id_the_request_names_none_and_the_platform_answers_for_the_system_assigned_identity(self):
+        without = {key: value for key, value in ENV.items() if key != "AZURE_CLIENT_ID"}
+        for env in (without, {**without, "AZURE_CLIENT_ID": ""}, {**without, "AZURE_CLIENT_ID": "   "}):
+            identity, fetch = self.identity(good(), env=env)
+            self.assertEqual(identity.token("https://management.azure.com"), TOKEN)
+            ((url, headers, _),) = fetch.calls
+            self.assertEqual(url, "http://127.0.0.1:8081/msi/token?resource=https%3A%2F%2Fmanagement.azure.com&api-version=2019-08-01", env.get("AZURE_CLIENT_ID"))
+            for name in ("client_id", "object_id", "principal_id", "mi_res_id"):
+                self.assertNotIn(name, url)
+            self.assertEqual(headers["X-IDENTITY-HEADER"], "header-value")
+
+    def test_a_client_id_with_spaces_around_it_is_used_without_them(self):
+        identity, fetch = self.identity(good(), env={**ENV, "AZURE_CLIENT_ID": f"  {ENV['AZURE_CLIENT_ID']}\n"})
+        identity.token("r")
+        self.assertTrue(fetch.calls[0][0].endswith(f"&client_id={ENV['AZURE_CLIENT_ID']}"))
 
     def test_a_token_is_kept_until_five_minutes_before_it_ends(self):
         identity, fetch = self.identity(good(expires=int(NOW.timestamp()) + 301), good("second-token-value"))
@@ -284,6 +300,16 @@ class TheCallers(unittest.TestCase):
             console.build_services(dict(LOOP_ENV), transport=self.no_call, sleep=sleep, fetch=self.down)
         self.assertEqual([call.kwargs["sleep"] for call in built.call_args_list], [sleep, sleep])
         self.assertEqual([call.kwargs["fetch"] for call in built.call_args_list], [self.down, self.down])
+
+    def test_the_console_of_an_app_without_a_client_id_names_none_for_its_store_and_the_sign_in_s_own_for_the_assertion(self):
+        env = {key: value for key, value in LOOP_ENV.items() if key != "AZURE_CLIENT_ID"}
+        with mock.patch.object(console, "Identity", wraps=Identity) as built:
+            console.build_services(dict(env), transport=self.no_call, sleep=lambda seconds: None, fetch=self.down)
+        store, assertion = [call.args[0] for call in built.call_args_list]
+        self.assertNotIn("AZURE_CLIENT_ID", store)
+        self.assertEqual(assertion["AZURE_CLIENT_ID"], env["OVERRIDE_USE_MI_FIC_ASSERTION_CLIENTID"])
+        self.assertEqual(Identity(store).client_id, "")
+        self.assertEqual(Identity(assertion).client_id, env["OVERRIDE_USE_MI_FIC_ASSERTION_CLIENTID"])
 
 
 if __name__ == "__main__":

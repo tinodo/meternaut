@@ -183,7 +183,9 @@ class CodePathTests(unittest.TestCase):
             control.handle_events([json_event({"job": "llm-usage-ingestion", "requestId": "abc123"}, 1)])
         (payload,) = result_payloads(logs.records)
         self.assertFalse(payload["ok"])
-        self.assertTrue(payload["error"].startswith("ConfigError: Missing required app setting(s): AZURE_CLIENT_ID, COSMOS_ENDPOINT"))
+        self.assertTrue(payload["error"].startswith(
+            "ConfigError: Missing required app setting(s): COSMOS_ENDPOINT, COSMOS_DATABASE, COSMOS_CONTAINER_CONFIG, COSMOS_CONTAINER_LLM_USAGE, GATEWAY_APPINSIGHTS_ID"))
+        self.assertNotIn("AZURE_CLIENT_ID", payload["error"], "the client id is not required: without it the app runs as its system-assigned identity")
         self.assertEqual((payload["trigger"], payload["requestId"]), ("control", "abc123"))
 
 
