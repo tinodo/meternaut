@@ -26,10 +26,17 @@
 // answered some with "The service is unavailable" (CHANGELOG.md). A Basic plan has no such front end, no cold start, and runs the
 // timers, the control hub's trigger and the console on one instance for about 13 US dollars a month.
 //
-// It makes no storage account, no namespace and no private endpoint: the app shares the storage account (blob, queue and table private
+// It makes no storage account and no namespace: the app shares the storage account (blob, queue and table private
 // endpoints) and the Event Hubs namespace (private endpoint) of environment/recording/main.bicep, so nothing new is billed except the
-// plan and tokens. The only network it makes is the app's own integration subnet (the usage recording's subnet is delegated to Flex
-// Consumption and cannot serve a Basic plan) and that subnet's network security group. The recording has to exist first.
+// plan, tokens and the app's own private endpoint (below). The only network it makes is the app's own integration subnet (the usage recording's subnet is delegated to Flex
+// Consumption and cannot serve a Basic plan), that subnet's network security group, and that one endpoint, which goes into the endpoint subnet that the model side made.
+// The recording has to exist first.
+//
+// The app has a private endpoint of its own, for the console's name and for the deployment site (the group `sites`, in the endpoint subnet; no private DNS zone group: the landing zone's
+// policy adds it, rule 19). The Operator uses it to publish the code and to knock at the console's front door from inside the network, in the changes after this one
+// (docs/proposals/07-private-by-default.md); the console keeps its public access until then, which the parameter casesAppPublicNetworkAccess says, so that closing it is one value. The value
+// is written to the app every time and is never left empty: Learn says that for a site whose value is not set, a private endpoint switches public access off by itself, and
+// the people who approve a change reach the console from outside the network.
 //
 // The subnet is made once and then left alone (webSubnetExists): the landing zone's network manager puts a route table on a new subnet
 // about a minute after it is made, and a template that makes the subnet again takes that table away, and with it the subnet's way to
@@ -123,6 +130,13 @@ param consolePeople string = '[]'
 @description('Directory object ids of the people above: the built-in sign-in lets only these through.')
 param consoleUserObjectIds array = []
 
+@description('Whether the console and the function app take requests from the public internet: Enabled or Disabled. Enabled until the people who approve have a network path to the private endpoint, and until the Operator publishes the code through it, because the deployment workflow publishes it from the GitHub-hosted runner, which is outside the network. It is always written to the app and never left empty: for an app whose value is not set, a private endpoint switches public access off by itself.')
+@allowed([
+  'Enabled'
+  'Disabled'
+])
+param casesAppPublicNetworkAccess string = 'Enabled'
+
 @description('Address of the shared mailbox that the app sends its letters from. Empty: the app sends no letter.')
 param mailSender string = ''
 
@@ -160,6 +174,7 @@ var tags = {
 
 var virtualNetworkName = 'vnet-${workload}'
 var webSubnetName = 'snet-cases'
+var privateEndpointSubnetName = 'snet-pe'
 var controlHubName = 'cases-control'
 
 // The app takes the three settings of the sign-in to Azure (SIGNIN_TENANT_ID, SIGNIN_CLIENT_ID and OVERRIDE_USE_MI_FIC_ASSERTION_CLIENTID) together or not at all, and
@@ -175,6 +190,11 @@ var monitoringMetricsPublisherRoleId = '3913510d-42f4-4e42-8a64-420c390055eb'
 
 resource vnet 'Microsoft.Network/virtualNetworks@2025-05-01' existing = {
   name: virtualNetworkName
+}
+
+resource privateEndpointSubnet 'Microsoft.Network/virtualNetworks/subnets@2025-05-01' existing = {
+  parent: vnet
+  name: privateEndpointSubnetName
 }
 
 // No rule of its own, like the other function subnet's: the default rules let the app reach the virtual network and the internet (the landing
@@ -378,7 +398,7 @@ resource functionApp 'Microsoft.Web/sites@2024-04-01' = {
   properties: {
     serverFarmId: plan.id
     httpsOnly: true
-    publicNetworkAccess: 'Enabled'
+    publicNetworkAccess: casesAppPublicNetworkAccess
     clientAffinityEnabled: false
     virtualNetworkSubnetId: resourceId('Microsoft.Network/virtualNetworks/subnets', virtualNetworkName, webSubnetName)
     vnetRouteAllEnabled: false
@@ -520,6 +540,36 @@ resource consoleSignIn 'Microsoft.Web/sites/config@2024-04-01' = if (!empty(cons
       }
     }
   }
+}
+
+// The private endpoint of the app itself, in the endpoint subnet that the model side made and in the same form as the other endpoints of the project (no DNS zone group: the landing
+// zone's policy adds it, see the header). One endpoint serves the console's name and the deployment site, `<app>.scm.azurewebsites.net`. It comes after every other write to the app, as an
+// endpoint does on every service of the usage recording: the connection is written to the app with an If-Match, and a change of the app at the same time would fail it.
+resource functionAppEndpoint 'Microsoft.Network/privateEndpoints@2025-05-01' = {
+  name: 'pe-${functionAppName}'
+  location: location
+  tags: tags
+  properties: {
+    subnet: {
+      id: privateEndpointSubnet.id
+    }
+    privateLinkServiceConnections: [
+      {
+        name: 'sites'
+        properties: {
+          privateLinkServiceId: functionApp.id
+          groupIds: [
+            'sites'
+          ]
+        }
+      }
+    ]
+  }
+  dependsOn: [
+    noBasicAuthForDeployment
+    noBasicAuthForFtp
+    consoleSignIn
+  ]
 }
 
 // The History: a workbook over the app's telemetry. Anyone who may read the component may open it in the Azure portal.

@@ -8,6 +8,7 @@ import unittest
 import xml.etree.ElementTree as ET
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
 TOOL = ROOT / "tools" / "environment-params.py"
@@ -236,12 +237,14 @@ class Recording(unittest.TestCase):
         self.assertEqual((code, out, files), (2, "", {}))
         self.assertIn("Basic plan", err)
 
-    def test_the_endpoint_subnet_holds_the_six_private_endpoints(self):
-        # six endpoints and the five addresses that Azure keeps: a /29 has eight addresses and cannot hold them
+    def test_the_endpoint_subnet_holds_the_nine_private_endpoints(self):
+        # nine endpoints (the usage recording's five, the model account's, the Foundry resource's and one for each of the two function apps) and the five addresses that Azure keeps: a /29 has
+        # eight addresses and cannot hold them, and a /28 has sixteen
         code, out, err, files = run({**SETTINGS, "ENV_PE_SUBNET_PREFIX": "10.53.0.0/29"})
         self.assertEqual((code, out, files), (2, "", {}))
         self.assertIn("ENV_PE_SUBNET_PREFIX", err)
         self.assertIn("at least a /28", err)
+        self.assertIn("each of the two function apps one", err)
         self.assertEqual(run({**SETTINGS, "ENV_PE_SUBNET_PREFIX": "10.53.0.0/28"})[0], 0)
 
     def test_the_private_endpoints_and_their_zones_are_the_ones_the_template_makes(self):
@@ -1045,7 +1048,66 @@ class Operator(unittest.TestCase):
         self.assertIn("var opsSubnetName = 'snet-ops'", self.OPERATOR)
 
 
-class CheckAgainst(unittest.TestCase):
+class PublicNetworkAccessOfTheApps(unittest.TestCase):
+    """What each function app takes from the public internet is one value each (docs/proposals/07-private-by-default.md, phase 1): written to its parameter file every time, so that the property is never
+    left unset, which would let the first private endpoint switch public access off by itself."""
+
+    RECORDING_TEMPLATE = (ROOT / "environment" / "recording" / "main.bicep").read_text(encoding="utf-8")
+    CASES_TEMPLATE = (ROOT / "environment" / "cases" / "main.bicep").read_text(encoding="utf-8")
+
+    def build(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            contract = Path(tmp) / "contract.json"
+            contract.write_text(CONTRACT_FILE.read_text(encoding="utf-8"), encoding="utf-8")
+            return run(SETTINGS, "--contract", str(contract), "--contract-policy", str(POLICY_FILE))
+
+    def test_both_apps_are_public_in_the_first_phase_and_the_values_reach_their_parameter_files(self):
+        code, out, err, files = self.build()
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual((ep.USAGE_APP_PUBLIC_NETWORK_ACCESS, ep.CASES_APP_PUBLIC_NETWORK_ACCESS), ("Enabled", "Enabled"),
+                         "phase 1: the workflow still publishes the code from the runner, so neither app is closed; phase 3 changes these two values and this test")
+        self.assertEqual(values(files["recording.parameters.json"])["usageAppPublicNetworkAccess"], "Enabled")
+        self.assertEqual(values(files["cases.parameters.json"])["casesAppPublicNetworkAccess"], "Enabled")
+        for name, document in files.items():
+            if name not in ("recording.parameters.json", "cases.parameters.json"):
+                self.assertFalse({"usageAppPublicNetworkAccess", "casesAppPublicNetworkAccess"} & set(document["parameters"]), f"{name}: the value reaches the file of its own app only")
+
+    def test_closing_an_app_is_one_value_and_it_reaches_only_that_app(self):
+        with mock.patch.object(ep, "USAGE_APP_PUBLIC_NETWORK_ACCESS", "Disabled"):
+            code, _, err, files = self.build()
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(values(files["recording.parameters.json"])["usageAppPublicNetworkAccess"], "Disabled")
+        self.assertEqual(values(files["cases.parameters.json"])["casesAppPublicNetworkAccess"], "Enabled")
+        with mock.patch.object(ep, "CASES_APP_PUBLIC_NETWORK_ACCESS", "Disabled"):
+            code, _, err, files = self.build()
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(values(files["recording.parameters.json"])["usageAppPublicNetworkAccess"], "Enabled")
+        self.assertEqual(values(files["cases.parameters.json"])["casesAppPublicNetworkAccess"], "Disabled")
+
+    def test_a_value_that_is_not_enabled_or_disabled_is_refused_by_name_because_the_property_must_always_be_written(self):
+        for constant in ("USAGE_APP_PUBLIC_NETWORK_ACCESS", "CASES_APP_PUBLIC_NETWORK_ACCESS"):
+            for bad in ("", "enabled", "Allow", "SecuredByPerimeter"):
+                with mock.patch.object(ep, constant, bad):
+                    code, out, err, files = self.build()
+                self.assertEqual((code, out, files), (2, "", {}), (constant, bad))
+                self.assertIn(f"{constant} (in tools/environment-params.py) is Enabled or Disabled", err)
+
+    def test_each_template_takes_the_value_with_the_same_two_choices_and_the_default_that_the_files_carry(self):
+        for source, name in ((self.RECORDING_TEMPLATE, "usageAppPublicNetworkAccess"), (self.CASES_TEMPLATE, "casesAppPublicNetworkAccess")):
+            self.assertRegex(source, rf"(?m)^@allowed\(\[\n  'Enabled'\n  'Disabled'\n\]\)\nparam {name} string = 'Enabled'$", name)
+            self.assertEqual(bicep_params(source)[name], ("string", True), "it has a default: a file that leaves it out still gives the property a value")
+            self.assertIn(f"    publicNetworkAccess: {name}\n", source, "the app takes the parameter, and nothing else gives the property a value")
+        self.assertEqual(ep.PUBLIC_NETWORK_ACCESS, ("Enabled", "Disabled"))
+
+    def test_the_apps_own_endpoints_are_not_among_the_ones_that_the_recording_waits_for_and_the_name_is_the_one_the_templates_give_them(self):
+        code, out, err, files = self.build()
+        self.assertEqual((code, err), (0, ""))
+        waited = out.split("recording_endpoints=")[1].split("\n")[0]
+        usage, cases = values(files["recording.parameters.json"])["functionAppName"], values(files["cases.parameters.json"])["functionAppName"]
+        for name, source in ((usage, self.RECORDING_TEMPLATE), (cases, self.CASES_TEMPLATE)):
+            self.assertNotIn(name, waited, "the apps are public while the workflow publishes to them, so nothing waits for their names: the probe of the Operator reports them")
+            self.assertIn("name: 'pe-${functionAppName}'", source)
+        self.assertEqual(len(waited.split(",")), 5, "the services' five endpoints and no other")
     TEMPLATE = {"parameters": {"a": {"type": "string"}, "b": {"type": "int", "defaultValue": 1}, "c": {"type": "array", "defaultValue": []}, "d": {"type": "bool", "defaultValue": True}}}
 
     def doc(self, **given):

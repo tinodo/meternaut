@@ -36,6 +36,11 @@
 // and the private endpoints' DNS zone groups (a policy registers each endpoint in the central zones about ten minutes after
 // it exists), peering and route tables.
 //
+// The function app has a private endpoint of its own too, for the app's name and for its deployment site, which share it (the group `sites`). The Operator uses it to publish the code from
+// inside the network, in the change after this one (docs/proposals/07-private-by-default.md); the app keeps its public access until then, which the parameter
+// usageAppPublicNetworkAccess says, so that closing the app is one value. It is written to the app every time and is never left empty: Learn says that for a site whose value is not set,
+// a private endpoint switches public access off by itself, and the workflow publishes the code from outside the network until the Operator does it.
+//
 // Made after the kit's bicep/infra/apim-gateway-upgrade/supporting-services.bicep and its services/*.bicep, at the commit that
 // the workflow checks out, with these differences, each on purpose:
 //  - the kit runs the copy jobs as a Logic App Standard. That needs the account key of its storage (an Azure Files share
@@ -102,6 +107,13 @@ param gatewayAppInsightsName string
 
 @description('Principals that may read the usage documents (a Cosmos DB data role). Cosmos DB has no public endpoint, so a reader also needs a network path to the private endpoint.')
 param dataReaderPrincipalIds array = []
+
+@description('Whether the function app takes requests from the public internet: Enabled or Disabled. Enabled until the Operator publishes its code through the private endpoint below, because the deployment workflow publishes it from the GitHub-hosted runner, which is outside the network. It is always written to the app and never left empty: for an app whose value is not set, a private endpoint switches public access off by itself.')
+@allowed([
+  'Enabled'
+  'Disabled'
+])
+param usageAppPublicNetworkAccess string = 'Enabled'
 
 var tags = {
   workload: workload
@@ -613,7 +625,7 @@ resource functionApp 'Microsoft.Web/sites@2024-04-01' = {
   properties: {
     serverFarmId: plan.id
     httpsOnly: true
-    publicNetworkAccess: 'Enabled'
+    publicNetworkAccess: usageAppPublicNetworkAccess
     clientAffinityEnabled: false
     virtualNetworkSubnetId: functionSubnet.id
     functionAppConfig: {
@@ -675,6 +687,34 @@ resource noBasicAuthForDeployment 'Microsoft.Web/sites/basicPublishingCredential
   properties: {
     allow: false
   }
+}
+
+// The private endpoint of the function app itself, in the same subnet and in the same form as the others (no DNS zone group: the landing zone's policy adds it, see the header). One endpoint
+// serves the app's name and its deployment site, `<app>.scm.azurewebsites.net`, which Flex Consumption uses for a package deployment. It comes after the other write to the app, as an endpoint
+// does on every service above: the connection is written to the app with an If-Match, and a change of the app at the same time would fail it.
+resource functionAppEndpoint 'Microsoft.Network/privateEndpoints@2025-05-01' = {
+  name: 'pe-${functionAppName}'
+  location: location
+  tags: tags
+  properties: {
+    subnet: {
+      id: privateEndpointSubnet.id
+    }
+    privateLinkServiceConnections: [
+      {
+        name: 'sites'
+        properties: {
+          privateLinkServiceId: functionApp.id
+          groupIds: [
+            'sites'
+          ]
+        }
+      }
+    ]
+  }
+  dependsOn: [
+    noBasicAuthForDeployment
+  ]
 }
 
 output functionAppName string = functionApp.name
