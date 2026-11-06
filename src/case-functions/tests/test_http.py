@@ -295,6 +295,108 @@ class Errors(unittest.TestCase):
         self.assertIn("network error: OSError", str(raised.exception))
 
 
+class TheChallengeOfAnAnswer(unittest.TestCase):
+    """The `www-authenticate` header of a 401 or a 403 is kept on the error for the one reader that needs it, and is in no text of the error."""
+
+    SCHEME = "Bearer"
+    HEADER = (f'{SCHEME} realm="", authorization_uri="https://login.example.test/common/oauth2/authorize", error="insufficient_claims", '
+              'claims="eyJhY2Nlc3NfdG9rZW4iOnsiYWNycyI6eyJlc3NlbnRpYWwiOnRydWUsInZhbHVlIjoiY3AxIn19fQ=="')
+    BODY = json.dumps({"error": {"code": "InvalidAuthenticationToken", "message": "the token lacks a claim"}}).encode()
+
+    def failed(self, status, headers, retries=0):
+        c, script, _ = client((status, headers, self.BODY))
+        with self.assertRaises(http.HttpError) as raised:
+            c.request("GET", LOCKS, retries=retries)
+        return raised.exception, script
+
+    def test_a_401_and_a_403_keep_the_header_as_it_came(self):
+        for status in (401, 403):
+            with self.subTest(status=status):
+                error, _ = self.failed(status, {"www-authenticate": self.HEADER})
+                self.assertEqual((error.status, error.challenge), (status, self.HEADER))
+
+    def test_the_name_of_the_header_is_read_in_any_case(self):
+        for name in ("www-authenticate", "WWW-Authenticate", "Www-Authenticate", "WWW-AUTHENTICATE"):
+            with self.subTest(name=name):
+                self.assertEqual(self.failed(401, {"content-type": "x", name: self.HEADER})[0].challenge, self.HEADER)
+
+    def test_no_other_answer_keeps_it_and_an_answer_without_the_header_has_none(self):
+        for status in (400, 404, 405, 409, 412, 422, 500, 502, 503, 504, 0):
+            with self.subTest(status=status):
+                error, _ = self.failed(status, {"www-authenticate": self.HEADER})
+                self.assertEqual(error.challenge, "")
+        for headers in ({}, {"content-type": "application/json"}, {"authenticate": self.HEADER}, {"x-www-authenticate": self.HEADER}):
+            with self.subTest(headers=headers):
+                self.assertEqual(self.failed(401, headers)[0].challenge, "")
+
+    def test_a_throttled_call_that_is_tried_again_and_then_refused_keeps_the_header_of_the_last_answer_only(self):
+        c, script, _ = client((429, {"retry-after": "1", "www-authenticate": "of a 429"}, b"{}"), (403, {"www-authenticate": self.HEADER}, self.BODY))
+        with self.assertRaises(http.HttpError) as raised:
+            c.request("GET", LOCKS)
+        self.assertEqual((raised.exception.status, raised.exception.challenge, len(script.calls)), (403, self.HEADER, 2))
+
+    def test_the_header_is_cut_at_1500_characters(self):
+        long = self.HEADER + ', error_description="' + "x" * 5000 + '"'
+        error, _ = self.failed(401, {"www-authenticate": long})
+        self.assertEqual((len(error.challenge), error.challenge), (http.MAX_CHALLENGE, long[:1500]))
+        self.assertEqual(http.MAX_CHALLENGE, 1500)
+        exact = self.HEADER + " " * (1500 - len(self.HEADER))
+        self.assertEqual(self.failed(401, {"www-authenticate": exact})[0].challenge, exact)
+
+    def test_the_header_is_in_no_text_of_the_error(self):
+        marker = "claims-marker-0123456789"
+        header = f'{self.SCHEME} error="insufficient_claims", claims="{marker}"'
+        error, _ = self.failed(401, {"www-authenticate": header})
+        self.assertEqual(error.challenge, header)
+        for text in (str(error), repr(error), repr(error.args), f"{error!s}{error!r}", " ".join(map(str, error.args))):
+            for part in (marker, "insufficient_claims", self.SCHEME, "www-authenticate"):
+                self.assertNotIn(part, text)
+        self.assertEqual(str(error), "GET management.azure.com: 401 InvalidAuthenticationToken: the token lacks a claim", "the text is what it was before")
+
+    def test_the_header_does_not_change_the_text_or_the_other_attributes_of_the_error(self):
+        with_header, _ = self.failed(401, {"www-authenticate": self.HEADER})
+        without, _ = self.failed(401, {})
+        self.assertEqual((str(with_header), with_header.status, with_header.retry_after), (str(without), without.status, without.retry_after))
+
+    def test_a_call_to_the_token_endpoint_that_is_refused_keeps_the_header_too_and_never_in_its_text(self):
+        c, _ = token_client((401, {"www-authenticate": self.HEADER}, json.dumps({"error": "invalid_client", "error_description": "AADSTS7000215: bad"}).encode()))
+        with self.assertRaises(http.HttpError) as raised:
+            c.request("POST", TOKEN_URL, form={"a": "b"})
+        self.assertEqual(raised.exception.challenge, self.HEADER)
+        self.assertNotIn("claims", str(raised.exception))
+
+    def test_an_error_that_the_app_makes_itself_has_none(self):
+        self.assertEqual(http.HttpError(401, "text").challenge, "")
+        self.assertEqual(http.HttpError(401, "text", 5.0).challenge, "")
+        self.assertEqual(http.HttpError(401, "text", None, "kept").challenge, "kept")
+        with self.assertRaises(http.HttpError) as raised:
+            http.Response(401, {"www-authenticate": self.HEADER}, b"not json").json()
+        self.assertEqual(raised.exception.challenge, "")
+
+    def test_the_header_of_a_real_answer_reaches_the_function_that_reads_it(self):
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(401)
+                self.send_header("WWW-Authenticate", TheChallengeOfAnAnswer.HEADER)
+                self.end_headers()
+                self.wfile.write(b"{}")
+
+            def log_message(self, *args):
+                pass
+
+        server = HTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            status, headers, _ = http.default_transport("GET", f"http://127.0.0.1:{server.server_port}/x", {}, None, 10)
+        finally:
+            server.shutdown()
+            server.server_close()
+        self.assertEqual(status, 401)
+        self.assertEqual(http.challenge_of(status, headers), self.HEADER)
+        self.assertEqual(http.challenge_of(200, headers), "")
+
+
 class NoRedirects(unittest.TestCase):
     def test_an_answer_that_redirects_is_the_answer_and_is_not_followed_with_the_headers_of_the_call(self):
         seen = []

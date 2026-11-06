@@ -444,5 +444,149 @@ class Loop(unittest.TestCase):
         self.assertNotIn("the model said so", json.dumps(data))
 
 
+class TheCheckAfterTheExtraSignIn(unittest.TestCase):
+    """Azure asked the approver for an extra sign-in check: the plan is approved and the action waits. The checks before the change is tried again are not those of an approval."""
+
+    def setUp(self):
+        self.clock = Clock()
+        self.store = MemoryStore(clock=self.clock)
+        self.approvals = Approvals(self.store, SETTINGS, self.clock)
+        self.item = lead()
+        self.case = case_for(self.item)
+        self.store.case_put(self.case)
+        self.plan = self.approvals.create(self.case, self.item, (OID,))
+        checked, _ = self.approvals.check_approve(APPROVER, self.plan.plan_id, self.plan.code)
+        _, queued = self.approvals.record_approval(APPROVER, checked, "go ahead")
+        self.waiting = replace(queued, step_up=True)  # what the runner makes of the action when Azure asks for the check
+        self.store.action_put(self.waiting)
+
+    def check(self, who=APPROVER, code=None, resource=None, approvals=None):
+        return (approvals or self.approvals).check_stepup(who, self.plan.plan_id, self.plan.code if code is None else code,
+                                                          self.plan.resource_id if resource is None else resource)
+
+    def everything(self):
+        action = self.store.action_get(self.plan.plan_id)
+        return json.dumps([self.store.plan_get(self.plan.plan_id).to_json(), action.to_json() if action else None, self.store.case_get(self.case.case_id).to_json(),
+                           [d.to_json() for d in self.store.decisions_of_plan(self.plan.plan_id)], sorted(self.store.nonces)])
+
+    def refused(self, kind, **kwargs):
+        before = self.everything()
+        plan, action, refusal = self.check(**kwargs)
+        self.assertEqual((plan, action), (None, None))
+        self.assertEqual((refusal.ok, refusal.kind), (False, kind), refusal.message)
+        self.assertEqual(self.everything(), before, "a refusal changes nothing")
+        return refusal
+
+    def test_the_plan_and_the_waiting_action_pass_and_nothing_is_recorded_or_used_up(self):
+        before = self.everything()
+        plan, action, refusal = self.check()
+        self.assertIsNone(refusal)
+        self.assertEqual((plan.plan_id, plan.state), (self.plan.plan_id, "approved"))
+        self.assertEqual(action, self.waiting)
+        self.assertEqual(self.everything(), before)
+        self.assertEqual(len(self.store.decisions_of_plan(self.plan.plan_id)), 1)
+
+    def test_the_code_is_compared_as_the_form_compares_it_and_the_name_of_the_person_without_regard_to_case(self):
+        self.assertIsNone(self.check(code=f"  {self.plan.code.lower()} ")[2])
+        self.assertIsNone(self.check(who=Principal(OID.upper(), "Tino", ("approver",)))[2])
+
+    def test_a_person_who_is_not_an_approver_of_this_plan_is_refused(self):
+        self.refused("refused_role", who=Principal(OTHER, "Other", ("approver",)))
+        self.refused("refused_role", who=Principal(OID, "Tino", ("owner", "ops")))
+        self.refused("refused_role", who=Principal(OID, "Tino", ()))
+
+    def test_a_plan_that_is_not_there_or_is_not_approved_is_refused_and_says_what_it_is(self):
+        refusal = self.approvals.check_stepup(APPROVER, "nothing", self.plan.code, self.plan.resource_id)[2]
+        self.assertEqual((refusal.kind, refusal.plan), ("refused_state", None))
+        self.assertIn("does not exist", refusal.message)
+        for state, words in (("open", "open"), ("consumed", "closed: it ran"), ("failed", "closed: the change failed"), ("declined", "declined"), ("withdrawn", "withdrawn"),
+                             ("expired", "expired")):
+            with self.subTest(state=state):
+                self.store.plan_put(replace(self.store.plan_get(self.plan.plan_id), state=state))
+                refusal = self.refused("refused_state")
+                self.assertIn(f"This request is {words}.", refusal.message)
+                self.assertIn("Nothing more can be recorded", refusal.message)
+
+    def test_a_pulled_switch_stops_it_and_so_does_one_that_cannot_be_read(self):
+        for name in ("all", "changes"):
+            with self.subTest(switch=name):
+                self.store.switch_put(SwitchRecord(name=name, paused=True, by=OID, at=stamp(NOW)))
+                self.assertIn("paused", self.refused("refused_paused").message)
+                self.store.switch_put(SwitchRecord(name=name))
+        self.store.switch_put(SwitchRecord(name="messages", paused=True), )
+        self.assertIsNone(self.check()[2], "the switch of the messages does not stop a change")
+
+        class Unreadable(MemoryStore):
+            def switch_get(self, name):
+                raise StoreError("down")
+
+        broken = Unreadable(clock=self.clock)
+        broken.plans, broken.actions, broken.decisions = self.store.plans, self.store.actions, self.store.decisions
+        refusal = self.check(approvals=Approvals(broken, SETTINGS, self.clock))[2]
+        self.assertEqual(refusal.kind, "refused_paused")
+
+    def test_another_code_or_another_resource_than_the_one_that_was_approved_is_a_changed_plan(self):
+        for label, kwargs in (("a wrong code", {"code": "00000000"}), ("no code", {"code": ""}),
+                              ("another resource", {"resource": self.plan.resource_id.replace("planted-disk-1", "planted-disk-2")}),
+                              ("the same resource in another case", {"resource": self.plan.resource_id.upper()})):
+            with self.subTest(label):
+                refusal = self.refused("refused_code", **kwargs)
+                self.assertIn("This plan changed", refusal.message)
+                self.assertIn("Nothing was changed", refusal.message)
+
+    def test_the_approval_of_this_person_for_this_exact_plan_must_be_recorded(self):
+        decision = self.store.decisions_of_plan(self.plan.plan_id)[0]
+        for label, replacement in (("none", None), ("one of another person", replace(decision, approver_oid=OTHER)), ("one for another code", replace(decision, plan_code="00000000")),
+                                   ("a decline", replace(decision, decision="decline")), ("a question", replace(decision, decision="ask"))):
+            with self.subTest(label):
+                self.store.decisions.clear()
+                if replacement is not None:
+                    self.store.decisions[(self.plan.plan_id, replacement.approver_oid)] = replacement
+                self.assertIn("not recorded", self.refused("refused_state").message)
+
+    def test_the_action_must_be_queued_for_this_plan_and_must_have_asked_for_the_check(self):
+        for label, replacement in (("none", None), ("running", replace(self.waiting, state="running", started_at=stamp(NOW))), ("done", replace(self.waiting, state="done")),
+                                   ("failed", replace(self.waiting, state="failed")), ("unknown", replace(self.waiting, state="unknown")),
+                                   ("one that never asked for a step-up", replace(self.waiting, step_up=False)), ("one of another plan", replace(self.waiting, plan_id="another"))):
+            with self.subTest(label):
+                self.store.actions.clear()
+                if replacement is not None:
+                    self.store.actions[self.plan.plan_id] = replacement
+                self.assertIn("does not wait for an extra sign-in check", self.refused("refused_state").message)
+
+    def test_a_store_that_fails_is_an_error_that_changes_nothing(self):
+        for name in ("plan_get", "decisions_of_plan", "action_get"):
+            with self.subTest(name=name):
+                store = FailingStore((name,))
+                store.plans, store.actions, store.decisions = self.store.plans, self.store.actions, self.store.decisions
+                plan, action, refusal = self.check(approvals=Approvals(store, SETTINGS, self.clock))
+                self.assertEqual((plan, action, refusal.ok, refusal.kind), (None, None, False, "error"))
+                self.assertIn("Nothing was changed", refusal.message)
+
+    def test_closing_the_waiting_change_fails_the_action_the_plan_and_the_case_with_the_words_that_were_given(self):
+        text = "The extra sign-in check that Azure asked for was not completed. Nothing was changed."
+        closed = self.approvals.close_waiting(self.plan, self.waiting, text)
+        self.assertEqual((closed.state, closed.result, closed.error, closed.finished_at, closed.step_up), ("failed", text, text, "2026-11-05T09:00:00Z", True))
+        self.assertEqual(self.store.action_get(self.plan.plan_id), closed)
+        self.assertEqual(self.store.plan_get(self.plan.plan_id).state, "failed")
+        self.assertEqual(self.store.case_get(self.case.case_id).status, "failed")
+        self.assertEqual(len(self.store.decisions_of_plan(self.plan.plan_id)), 1, "the approval stays recorded: it was given")
+        self.assertEqual(closed.queued_at, self.waiting.queued_at)
+        self.assertIsNone(self.check()[0], "a closed plan cannot be tried again")
+
+    def test_a_failure_in_the_middle_of_the_close_leaves_the_plan_closed_and_the_action_to_the_timer(self):
+        class OnlyThePlan(MemoryStore):
+            def action_put(self, action):
+                raise StoreError("down", 503)
+
+        broken = OnlyThePlan(clock=self.clock)
+        broken.plans, broken.actions, broken.decisions, broken.cases = self.store.plans, self.store.actions, self.store.decisions, self.store.cases
+        with self.assertRaises(StoreError):
+            Approvals(broken, SETTINGS, self.clock).close_waiting(self.plan, self.waiting, "text")
+        self.assertEqual(self.store.plan_get(self.plan.plan_id).state, "failed")
+        self.assertEqual(self.store.action_get(self.plan.plan_id), self.waiting, "the action is still queued, and the timer closes a queued action that is old enough")
+        self.assertIsNone(self.check()[0])
+
+
 if __name__ == "__main__":
     unittest.main()

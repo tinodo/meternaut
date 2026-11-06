@@ -31,6 +31,8 @@ PLAN_STATE = {
 }
 
 WITHDRAWN_ACTION = "Withdrawn before it started. Nothing changed."
+# What the page of an approved plan says while its change waits in the queue: Azure asked the approver for an extra sign-in check, and the check is not completed yet.
+WAITING_FOR_THE_CHECK = "Azure asked for an extra sign-in check before it would make the change. The change waits until the check is completed. Nothing was changed yet."
 ACTION_STATE = {
     "queued": "Queued. It has not started.",
     "running": "Running.",

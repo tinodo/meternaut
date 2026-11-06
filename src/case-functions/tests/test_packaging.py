@@ -193,12 +193,24 @@ class WhatTheAppIs(unittest.TestCase):
         code = (
             "import sys; sys.path.insert(0, sys.argv[1]); "
             "import cases, cases.config, cases.http, cases.identity, cases.arm, cases.detectors, cases.evidence, cases.guards, cases.roles, cases.decide, "
-            "cases.gateway, cases.events, cases.run, cases.control, cases.redact, cases.models, cases.memory_store, cases.store, cases.approvals, cases.runner, "
+            "cases.gateway, cases.events, cases.run, cases.control, cases.redact, cases.models, cases.memory_store, cases.store, cases.approvals, cases.claims, cases.runner, "
             "cases.people, cases.switches, cases.wiring, cases.loop_config, cases.delegated, cases.console, cases.loop, cases.web, cases.mail, cases.letters; "
             "print(sorted(name for name in sys.modules if name == 'azure' or name.startswith('azure.')))"
         )
         done = subprocess.run([sys.executable, "-c", code, str(APP_ROOT)], capture_output=True, text=True, check=True)
         self.assertEqual(done.stdout.strip(), "[]")
+
+    def test_the_header_of_a_refused_call_is_read_by_the_runner_alone_and_is_on_no_line_of_a_log_or_of_the_history(self):
+        # A claims challenge (the `www-authenticate` header of a 401) is kept on the error of the call, never in its text. The runner is the one reader, and the parser of the
+        # header is in a module of its own: a second reader, or a line that logs the header or the claims in it, is a decision to make with the rules in hand.
+        sources = {path: path.read_text(encoding="utf-8") for path in package_files()}
+        self.assertEqual([p.name for p, text in sources.items() if re.search(r"\.challenge\b", text)], ["http.py", "runner.py"])
+        self.assertEqual([p.name for p, text in sources.items() if "claims_challenge" in text], ["claims.py", "runner.py"])
+        for path, text in sources.items():
+            for number, line in enumerate(text.splitlines(), 1):
+                if re.search(r"\b(?:emit|LOG|LOGGER|logging)\b[.(]", line):
+                    with self.subTest(file=path.name, line=number):
+                        self.assertNotRegex(line, r"(?i)\bclaims\b|\bchallenge\b|www-authenticate")
 
     def test_the_four_functions_read_and_start_nothing_but_the_watch_and_the_loop(self):
         self.assertEqual(sorted(re.findall(r'function_name\(name="([a-z-]+)"\)', (APP_ROOT / "function_app.py").read_text(encoding="utf-8"))),

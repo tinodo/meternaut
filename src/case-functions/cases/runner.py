@@ -3,8 +3,9 @@
 `execute` makes the change of an approved plan with the token that it is given (the approver's own token from the sign-in to Azure, see delegated.py), after
 it has read the resource again, and checks it afterwards. The calls that it may make are on a list of their own (`change_calls`): a read and a delete of a disk
 and of a public IP address in one resource group, and a read of locks. Azure checks the person's own rights on top of that. Before it deletes it re-checks the
-facts that the plan states, and a check that fails stops the change and says why. Every step is recorded. `tick` is the timer of the loop: it closes plans,
-checks what was done, and cannot change Azure (its list of calls is `read_calls`).
+facts that the plan states, and a check that fails stops the change and says why. When Azure answers the delete with a claims challenge (the person signed in without the
+extra check that a change needs), nothing was deleted: the action waits in the queue for that check, and `execute` is called again after it (delegated.py). Every step is
+recorded. `tick` is the timer of the loop: it closes plans, checks what was done, and cannot change Azure (its list of calls is `read_calls`).
 """
 from __future__ import annotations
 
@@ -17,6 +18,7 @@ from typing import Callable
 from . import switches
 from .approvals import Approvals, ApprovalSettings
 from .arm import Arm
+from .claims import claims_challenge
 from .http import Client, HttpError, Refused
 from .memory_store import parse, stamp, utc_now
 from .models import ActionRecord, PlanRecord, Store, StoreError
@@ -36,6 +38,13 @@ STUCK_MINUTES = 15
 QUEUED_MINUTES = 10
 VERIFY_AFTER_DAYS = 2
 GIVE_UP_AFTER_DAYS = 7
+# What the record of an action says while its change waits for the approver's extra sign-in check, when that check was asked for twice, and when it was never completed.
+STEP_UP_WAIT = ("Azure asked for an extra sign-in check before it would delete the resource. Nothing was changed yet. "
+                "The change waits until the approver has completed the check.")
+ASKED_AGAIN = ("Azure asked for the extra sign-in check a second time, so the change was not made. Nothing was changed. "
+               "Meternaut does not ask a second time. The request is closed.")
+STEP_UP_ABANDONED = ("The extra sign-in check that Azure asked for was not completed in time, so the change was not made. Nothing was changed. "
+                     "A new plan is made when the Watch finds the resource again.")
 
 
 def _patterns(subscription: str, group: str) -> tuple["re.Pattern[str]", "re.Pattern[str]", "re.Pattern[str]"]:
@@ -80,10 +89,14 @@ class RunnerServices:
 
 @dataclass(frozen=True)
 class Executed:
-    """What `execute` did: the action as it was recorded, and what kind of end it came to: ran, ran_unconfirmed, stopped, azure_refused or failed."""
+    """What `execute` did: the action as it was recorded, and what kind of end it came to: ran, ran_unconfirmed, stopped, azure_refused or failed.
+
+    The kind step_up is not an end: Azure asked for an extra sign-in check (a claims challenge) in answer to the delete, so nothing was deleted, the action waits in the queue and
+    the plan stays approved. `claims` is the claims request that Microsoft Entra has to be given, as compact JSON text. It is not a record, and it is on no page and in no log."""
 
     action: ActionRecord
     kind: str
+    claims: str = field(default="", repr=False)
 
 
 @dataclass
@@ -203,7 +216,7 @@ def execute(s: RunnerServices, action: ActionRecord) -> Executed:
     decisions = [d for d in s.store.decisions_of_plan(plan.plan_id) if d.decision == "approve" and d.plan_code == plan.code and d.approver_oid in plan.approvers]
     if plan.state != "approved" or not decisions:
         return _failed(s, action, plan, "no approval by a named approver is recorded for this exact plan")
-    started = replace(action, state="running", started_at=stamp(s.clock()))
+    started = replace(action, state="running", started_at=stamp(s.clock()), result="")
     s.store.action_put(started)
     s.emit("action.started", planId=plan.plan_id, family=plan.family, correlationId=action.correlation_id)
     try:
@@ -225,6 +238,9 @@ def execute(s: RunnerServices, action: ActionRecord) -> Executed:
                          retries=0, retry_network=False)
     except HttpError as error:
         if error.status in (401, 403):
+            claims = claims_challenge(error.challenge) if error.status == 401 else None
+            if claims:
+                return _step_up(s, started, plan, claims)
             return _failed(s, started, plan, _refusal(error, "delete the resource"), kind="azure_refused")
         if error.status != 404:
             return _failed(s, started, plan, f"The delete was refused or failed ({str(error)[:160]}). Check the resource before anything is tried again.",
@@ -241,6 +257,16 @@ def execute(s: RunnerServices, action: ActionRecord) -> Executed:
     unconfirmed = _finish(s, started, plan, state="unknown", result="Azure accepted the delete and still lists the resource. The next check will look again.",
                           plan_state="consumed", case_status="running")
     return Executed(unconfirmed, "ran_unconfirmed")
+
+
+def _step_up(s: RunnerServices, started: ActionRecord, plan: PlanRecord, claims: str) -> Executed:
+    """Azure answered the delete with a claims challenge: the approver has to pass an extra sign-in check first. Nothing was deleted, so the plan stays approved and the action
+    goes back to the queue, for the retry that follows the check (delegated.py). A challenge in answer to that retry is final: Meternaut asks for the check once."""
+    if started.step_up:
+        return _failed(s, started, plan, ASKED_AGAIN, kind="azure_refused")
+    waiting = replace(started, state="queued", started_at=None, result=STEP_UP_WAIT, step_up=True)
+    s.store.action_put(waiting)
+    return Executed(waiting, "step_up", claims)
 
 
 def _failed(s: RunnerServices, action: ActionRecord, plan: PlanRecord | None, text: str, unknown: bool = False, kind: str = "failed") -> Executed:
@@ -311,8 +337,9 @@ def tick(s: RunnerServices) -> TickResult:
     for action in s.store.actions_recent(50):
         if action.state == "queued" and parse(action.queued_at) < now - dt.timedelta(minutes=QUEUED_MINUTES):
             plan = s.store.plan_get(action.plan_id)
-            text = ("The change did not start: the request that was to make it ended first, for example at a restart. Nothing was changed. "
-                    "A new plan is made when the Watch finds the resource again.")
+            text = STEP_UP_ABANDONED if action.step_up else (
+                "The change did not start: the request that was to make it ended first, for example at a restart. Nothing was changed. "
+                "A new plan is made when the Watch finds the resource again.")
             result.finished.append(_failed(s, action, plan, text).action)
             continue
         if action.state == "running" and action.started_at and now - parse(action.started_at) > dt.timedelta(minutes=STUCK_MINUTES):

@@ -1,17 +1,58 @@
 import datetime as dt
 import logging
 import unittest
+from dataclasses import replace
+from types import SimpleNamespace
 from unittest import mock
 
 from support import ENV, Ticker
 
 from cases import loop
+from cases.memory_store import MemoryStore
 from cases.store import TableStore
 
 from test_loop_end_to_end import LOOP_ENV, fetch
 from test_store import FakeTables
+from test_web_support import NOW, at, make_action, make_case, make_plan
 
 HOUR = dt.datetime(2026, 11, 5, 11, 0, 0, tzinfo=dt.timezone.utc)
+
+
+class TheLettersOfAnApprovalThatWaitsForTheExtraCheck(unittest.TestCase):
+    """A plan that was approved, whose change waits in the queue for the approver's extra sign-in check, is not a plan that waits for an OK and not a change that ended: the timer
+    offers no letter for it. When the change ends as failed, it offers the one letter about a change that did not run, as for any other change."""
+
+    def setUp(self):
+        self.store = MemoryStore(clock=lambda: NOW)
+        self.plan = make_plan(state="approved")
+        self.action = make_action(state="queued", step_up=True, result="waits for the check")
+        self.store.plan_put(self.plan)
+        self.store.case_put(make_case(status="approved", plan_id="plan0001"))
+        self.store.action_put(self.action)
+        self.offered = []
+        self.extras = SimpleNamespace(store=self.store, on_plan=lambda plan, case: self.offered.append(("plan", plan.state)),
+                                      on_action=lambda action, plan, case: self.offered.append(("action", action.state, plan.state)))
+
+    def remind(self, **later):
+        loop._remind(self.extras, lambda: NOW + dt.timedelta(**later), lambda text: text)
+
+    def test_no_letter_is_offered_while_the_change_waits(self):
+        for minutes in (0, 5, 9):
+            self.remind(minutes=minutes)
+        self.assertEqual(self.offered, [])
+
+    def test_a_change_that_ends_as_failed_is_offered_once_per_round_and_the_hook_sends_it_once(self):
+        self.store.action_put(replace(self.action, state="failed", finished_at=at(), result="not completed", error="not completed"))
+        self.store.plan_put(replace(self.plan, state="failed"))
+        self.remind()
+        self.assertEqual(self.offered, [("action", "failed", "failed")], "a plan that is closed is not offered as one that waits for an OK")
+        self.remind(minutes=1)
+        self.assertEqual([entry[0] for entry in self.offered], ["action", "action"], "each round offers it; the hook sends a letter that is due only")
+
+    def test_a_plan_that_waits_for_an_ok_is_still_offered_and_one_that_is_approved_is_not(self):
+        self.store.plan_put(replace(self.plan, state="open"))
+        self.remind()
+        self.assertEqual(self.offered, [("plan", "open")])
 
 
 class TheTimer(unittest.TestCase):

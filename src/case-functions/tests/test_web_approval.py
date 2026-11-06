@@ -4,7 +4,7 @@ import unittest
 from test_web_support import (ACTS_ON, MAYA, NOW, OPS, OWNER, SIGNIN_URL, STRANGER, TINO, Console, FailingStore, ScriptedDecider, ScriptedDelegate, at, make_action, make_case,
                               make_decision, make_plan, snapshot)
 
-from cases.models import Begun, DecideResult, StoreError, SwitchRecord
+from cases.models import MAX_SIGNIN_PATH, Begun, DecideResult, StoreError, SwitchRecord
 from cases.people import People, Person
 from cases.web import approval, layout
 
@@ -287,6 +287,35 @@ class WhenThePlanIsNotOpen(unittest.TestCase):
         self.assertNotIn("Your OK is recorded since", reply.content)
         self.assertEqual(reply.forms(), [])
 
+    def test_an_approved_plan_whose_change_waits_for_the_extra_sign_in_check_says_so_and_that_nothing_was_changed_yet(self):
+        wait = "Azure asked for an extra sign-in check before it would delete the resource. Nothing was changed yet. The change waits until the approver has completed the check."
+        self.console.store.decision_put(make_decision())
+        self.console.store.action_put(make_action(step_up=True, result=wait))
+        reply = self.page(state="approved")
+        self.assertEqual(reply.status, 200)
+        self.assertIn("Your OK is recorded since Thu 5 Nov 2026 08:59 UTC (09:59 CET). Azure asked for an extra sign-in check before it would make the change. "
+                      "The change waits until the check is completed. Nothing was changed yet. Open this page again in a moment.", reply.content)
+        self.assertNotIn("The change is being made now", reply.content)
+        found = rows(reply)
+        self.assertEqual((found["State"], found["Result"]), ("Queued. It has not started.", wait))
+        self.assertEqual((reply.forms(), reply.root.find_all("button")), ([], []))
+        self.assertEqual([p.text() for p in reply.main.find_all("p", class_="notice-title")], ["Approved"])
+
+    def test_the_same_wait_is_told_to_another_approver_who_did_not_approve(self):
+        self.console.store.decision_put(make_decision(approver_oid=MAYA, approver_name="Maya"))
+        self.console.store.action_put(make_action(step_up=True, result="waits"))
+        reply = self.page(state="approved", approvers=(TINO, MAYA))
+        self.assertIn("This plan is approved. Azure asked for an extra sign-in check before it would make the change. The change waits until the check is completed. "
+                      "Nothing was changed yet.", reply.content)
+        self.assertNotIn("Your OK is recorded since", reply.content)
+
+    def test_an_action_that_asked_for_the_check_and_is_running_again_is_being_made_now(self):
+        self.console.store.decision_put(make_decision())
+        self.console.store.action_put(make_action(step_up=True, state="running", started_at=at(seconds=-5)))
+        reply = self.page(state="approved")
+        self.assertIn("The change is being made now.", reply.content)
+        self.assertNotIn("extra sign-in check", reply.content)
+
     def test_a_queued_action_of_the_earlier_design_that_holds_a_start_time_shows_none(self):
         self.console.store.decision_put(make_decision())
         self.console.store.action_put(make_action(start_after=at(minutes=1)))
@@ -411,6 +440,7 @@ KINDS = {  # the status, the title of the page, and a sentence that the page alw
                                                        "ask whoever manages access to this resource group."),
     "failed": (502, "The change failed", "Look at the resource in Azure before anything is tried again."),
     "signin_failed": (400, "The sign-in to Azure was not completed", "The request stays open. Open it again to try again."),
+    "step_up_failed": (400, "The extra sign-in check was not completed", "Nothing was changed. The request is closed."),
     "refused_code": (409, "This plan changed", "This plan changed. Nothing is approved. A new message will bring the new plan and code."),
     "refused_state": (409, "This request cannot take an answer", ""),
     "refused_role": (403, "I cannot take your OK on this request.", "Nothing is approved. If this request should be yours, use Talk to a person below."),
@@ -420,7 +450,7 @@ KINDS = {  # the status, the title of the page, and a sentence that the page alw
     "error": (500, "I could not take your answer", "Open the request again to see where it stands."),
 }
 # The kinds whose page has a line for the message of the result. The page of every other kind has its own words only.
-SHOWS_THE_MESSAGE = ("ran", "ran_unconfirmed", "stopped", "azure_refused", "failed", "signin_failed", "refused_state", "error")
+SHOWS_THE_MESSAGE = ("ran", "ran_unconfirmed", "stopped", "azure_refused", "failed", "signin_failed", "step_up_failed", "refused_state", "error")
 SUCCESSES = ("declined", "asked", "not_mine", "ran", "ran_unconfirmed")
 
 
@@ -455,8 +485,8 @@ class EveryKindOfResult(unittest.TestCase):
         return [(a.attrs["href"], a.text()) for a in reply.main.find_all("a") if a.text().startswith("Back to")]
 
     def test_there_is_a_page_for_each_kind_of_result_and_for_no_other(self):
-        self.assertEqual(set(KINDS), {"declined", "asked", "not_mine", "ran", "ran_unconfirmed", "stopped", "azure_refused", "failed", "signin_failed", "refused_code",
-                                      "refused_state", "refused_role", "refused_paused", "expired", "duplicate", "error"})
+        self.assertEqual(set(KINDS), {"declined", "asked", "not_mine", "ran", "ran_unconfirmed", "stopped", "azure_refused", "failed", "signin_failed", "step_up_failed",
+                                      "refused_code", "refused_state", "refused_role", "refused_paused", "expired", "duplicate", "error"})
         self.assertEqual(set(KINDS), set(approval.STATUS))
 
     def test_every_kind_has_a_plain_page_of_its_own_whichever_step_gives_it(self):
@@ -514,6 +544,7 @@ class EveryKindOfResult(unittest.TestCase):
     def test_a_page_that_shows_the_message_has_a_plain_line_of_its_own_when_the_message_is_empty(self):
         lines = {"ran": "Done.", "ran_unconfirmed": "Azure accepted the delete.", "stopped": "A check failed before the change.", "azure_refused": "Azure refused the change.",
                  "failed": "The change failed.", "signin_failed": "Nothing is approved.",
+                 "step_up_failed": "The extra sign-in check that Azure asked for was not completed. The change was not made.",
                  "refused_state": "This request is not open for an answer now. It may be answered, expired or replaced. Nothing has changed.",
                  "error": "The approval service did not answer."}
         self.assertEqual(set(lines), set(SHOWS_THE_MESSAGE))
@@ -868,6 +899,107 @@ class TheReturnFromTheSignIn(unittest.TestCase):
         reply = self.console.get("/arm/return", query=RETURN)
         self.assertEqual(snapshot(self.console.store), before)
         self.assertEqual(reply.headers["Cache-Control"], "no-store")
+
+
+STEP_UP_ADDRESS = ("https://login.microsoftonline.com/tenant/oauth2/v2.0/authorize?state=second-state&claims="
+                   "%7B%22access_token%22%3A%7B%22acrs%22%3A%7B%22essential%22%3Atrue%2C%22value%22%3A%22c-unique-4711%22%7D%7D%7D")
+
+
+class TheReturnThatAsksForAnExtraCheck(unittest.TestCase):
+    """Azure asked the approver for an extra sign-in check: the result of the return holds the address of the sign-in, and the page is a redirect to it."""
+
+    def setUp(self):
+        self.delegate = ScriptedDelegate()
+        self.console = Console(delegate=self.delegate)
+        self.console.seed()
+
+    def step_up(self, location=STEP_UP_ADDRESS, kind="step_up", plan=True):
+        self.delegate.finished = DecideResult(False, kind, "Azure asks for an extra sign-in check.", make_plan() if plan else None, location)
+        return self.console.get("/arm/return", query=RETURN)
+
+    def test_the_answer_is_a_303_to_the_address_that_the_delegate_gave_with_no_body_and_no_caching(self):
+        reply = self.step_up()
+        self.assertEqual((reply.status, reply.headers["Location"], reply.body), (303, STEP_UP_ADDRESS, b""))
+        self.assertEqual(reply.headers["Cache-Control"], "no-store")
+        self.assertEqual(len(self.delegate.finishes), 1)
+        self.assertEqual(self.delegate.begins, [])
+
+    def test_the_redirect_has_every_security_header_and_the_policy_is_what_it_was(self):
+        reply = self.step_up()
+        self.assertEqual({name: reply.headers.get(name) for name in layout.SECURITY_HEADERS}, layout.SECURITY_HEADERS)
+        self.assertEqual(reply.headers["Content-Security-Policy"],
+                         "default-src 'none'; style-src 'unsafe-inline'; form-action 'self' https://login.microsoftonline.com; frame-ancestors 'none'; base-uri 'none'")
+        self.assertEqual(layout.CSP, reply.headers["Content-Security-Policy"])
+
+    def test_it_is_the_same_redirect_whether_the_result_holds_a_plan_or_not(self):
+        self.assertEqual(self.step_up(plan=False).headers["Location"], STEP_UP_ADDRESS)
+        self.assertEqual(self.step_up(plan=True).headers["Location"], STEP_UP_ADDRESS)
+
+    def test_the_address_has_to_be_the_sign_in_of_microsoft_entra_by_the_check_of_the_first_sign_in_and_anything_else_is_the_error_page(self):
+        elsewhere = ("https://login.example.test/tenant/oauth2/v2.0/authorize?state=x", "http://login.microsoftonline.com/tenant/oauth2/v2.0/authorize?state=x",
+                     "https://login.microsoftonline.com.evil.example/tenant/oauth2/v2.0/authorize", "//login.microsoftonline.com/tenant/oauth2/v2.0/authorize",
+                     "https://login.microsoftonline.com@evil.example/x", "https://login.microsoftonline.com/tenant/authorize?state=x\r\nSet-Cookie: a=b",
+                     "https://login.microsoftonline.com/tenant/authorize?redirect=https://evil.example", "javascript:alert(1)", "/ok/plan0001", "https://login.microsoftonline.com/",
+                     "https://login.microsoftonline.com/tenant/authorize?claims={\"a\":1}", "https://login.microsoftonline.com/tenant/authorize?claims=%7B%22a%22:1%7D x")
+        for address in elsewhere:
+            with self.subTest(address=address):
+                reply = self.step_up(address)
+                self.assertEqual((reply.status, reply.headings(1)), (500, ["I could not take your answer"]))
+                self.assertNotIn("Location", reply.headers)
+                self.assertNotIn("evil.example", reply.text)
+                self.assertNotIn("Azure asks for an extra sign-in check", reply.text, "the message of a result that is not whole is not shown")
+
+    def test_the_limit_of_the_address_is_the_one_of_the_first_sign_in_and_is_kept_in_one_place(self):
+        origin = "https://login.microsoftonline.com/"
+        self.assertEqual(self.step_up(origin + "a" * MAX_SIGNIN_PATH).status, 303)
+        self.assertEqual(self.step_up(origin + "a" * (MAX_SIGNIN_PATH + 1)).status, 500)
+        form = self.console.get("/ok/plan0001").form("/ok/plan0001", has_button=APPROVE)
+        self.delegate.begun = Begun(location=origin + "a" * (MAX_SIGNIN_PATH + 1))
+        self.assertEqual(self.console.submit(form, APPROVE).status, 500)
+        self.delegate.begun = Begun(location=origin + "a" * MAX_SIGNIN_PATH)
+        self.assertEqual(self.console.submit(form, APPROVE).status, 303)
+        self.assertEqual(MAX_SIGNIN_PATH, 2000)
+
+    def test_a_result_that_is_not_whole_is_an_error_page_and_not_a_redirect(self):
+        for label, kwargs in (("a step-up without an address", {"location": ""}), ("an address on a result that is not a step-up", {"kind": "ran"}),
+                              ("an address on a refusal", {"kind": "refused_state"}), ("an address that is not text", {"location": 5}),
+                              ("an address that is a list", {"location": [STEP_UP_ADDRESS]})):
+            with self.subTest(label):
+                reply = self.step_up(**kwargs)
+                self.assertEqual((reply.status, reply.headings(1)), (500, ["I could not take your answer"]))
+                self.assertNotIn("Location", reply.headers)
+
+    def test_a_result_of_another_kind_without_an_address_is_the_page_of_its_kind(self):
+        self.delegate.finished = DecideResult(True, "ran", "Deleted.", make_plan())
+        reply = self.console.get("/arm/return", query=RETURN)
+        self.assertEqual((reply.status, reply.headings(1)), (200, ["The change was made"]))
+        self.assertNotIn("Location", reply.headers)
+
+    def test_nothing_of_the_address_or_the_claims_is_on_any_page(self):
+        for kind in ("step_up", "ran", "stopped", "azure_refused", "step_up_failed", "refused_state", "error"):
+            with self.subTest(kind=kind):
+                reply = self.step_up(kind=kind) if kind == "step_up" else self.step_up(location="", kind=kind)
+                for value in ("c-unique-4711", "claims", "second-state", "login.microsoftonline.com/tenant"):
+                    self.assertNotIn(value, reply.text)
+
+    def test_a_head_request_cannot_start_the_second_sign_in_either(self):
+        self.delegate.finished = DecideResult(False, "step_up", "Azure asks for an extra sign-in check.", make_plan(), STEP_UP_ADDRESS)
+        head = self.console.send("HEAD", "/arm/return", query=RETURN)
+        self.assertEqual((head.status, head.headers["Allow"], head.body), (405, "GET", b""))
+        self.assertNotIn("Location", head.headers)
+        self.assertEqual(self.delegate.finishes, [])
+
+    def test_the_redirect_records_nothing_and_changes_nothing_by_itself(self):
+        before = snapshot(self.console.store)
+        self.step_up()
+        self.assertEqual(snapshot(self.console.store), before)
+
+    def test_a_person_who_is_not_listed_is_not_sent_anywhere(self):
+        self.delegate.finished = DecideResult(False, "step_up", "x", make_plan(), STEP_UP_ADDRESS)
+        reply = self.console.get("/arm/return", query=RETURN, oid=STRANGER)
+        self.assertEqual(reply.status, 403)
+        self.assertNotIn("Location", reply.headers)
+        self.assertEqual(self.delegate.finishes, [])
 
 
 class AgainstTheLoop(unittest.TestCase):

@@ -41,6 +41,14 @@ class Lines(unittest.TestCase):
             History("r" * 32, None, fixed_clock, Redactor()).emit("run.note", note="x")
         self.assertIsNone(capture.events()[0]["requestId"])
 
+    def test_the_line_of_the_second_sign_in_is_a_kind_of_the_loop_and_holds_the_plan_and_nothing_else(self):
+        self.assertIn("signin.stepup", events.LOOP_KINDS)
+        self.assertNotIn("signin.stepup", KINDS, "the tools that read a run know the kinds of a run only")
+        with LogCapture() as capture:
+            history().emit("signin.stepup", planId="p1")
+        (line,) = capture.events()
+        self.assertEqual({key: value for key, value in line.items() if key not in ("v", "ts", "runId", "requestId")}, {"type": "signin.stepup", "planId": "p1"})
+
     def test_non_ascii_is_escaped_so_that_the_line_is_plain_ascii(self):
         with LogCapture() as capture:
             history().emit("run.note", note="Zoë and 日本")
