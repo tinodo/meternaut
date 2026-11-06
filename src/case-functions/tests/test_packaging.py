@@ -19,8 +19,10 @@ ONLY_IN_THE_GATEWAY_MODULE = ("listSecrets", "primaryKey")
 GATEWAY_MODULE = "gateway.py"
 # The only modules that write. The store writes records to its own tables (PUT, DELETE of one entity); the runner is the one component that changes Azure
 # (DELETE of a disk or a public IP address, on its own list of calls, and only with the token that a person's sign-in to Azure gave it: no identity of the app
-# holds a right to change Azure). Everything else asks questions: a GET, or a POST that asks for a query result, a key, a completion or a token.
-WRITERS = {"store.py": {"PUT", "DELETE"}, "runner.py": {"DELETE"}}
+# holds a right to change Azure); the Foundry client deletes the conversations that it made itself, in Meternaut's own Foundry project and nowhere else (the test
+# of its calls below holds the list, and the one DELETE of http.py's list of calls is that conversation). Everything else asks questions: a GET, or a POST that asks for
+# a query result, a key, a completion or a token.
+WRITERS = {"store.py": {"PUT", "DELETE"}, "runner.py": {"DELETE"}, "foundry.py": {"DELETE"}, "http.py": {"DELETE"}}
 WRITE_WORDS = ('"PUT"', '"DELETE"', '"PATCH"', "/delete", "/write", "/deallocate", "/resize", "/restart", "regeneratePrimaryKey")
 
 
@@ -145,7 +147,7 @@ class WhatTheAppIs(unittest.TestCase):
                     with self.subTest(file=path.name, module=module):
                         self.assertIn(module.split(".")[0], standard)
 
-    def test_only_the_store_and_the_runner_write_and_each_writes_only_what_it_is_for(self):
+    def test_only_the_store_the_runner_and_the_foundry_client_write_and_each_writes_only_what_it_is_for(self):
         for path in package_files():
             source = path.read_text(encoding="utf-8")
             allowed = {"GET", "POST"} | WRITERS.get(path.name, set())
@@ -173,6 +175,30 @@ class WhatTheAppIs(unittest.TestCase):
         runner = (APP_ROOT / "cases" / "runner.py").read_text(encoding="utf-8")
         self.assertEqual(sorted(set(re.findall(r'\("DELETE", (\w+)\)', runner))), ["addresses", "disks"])
 
+    def test_the_foundry_client_makes_and_deletes_only_what_is_its_own_in_its_own_project(self):
+        # foundry.py is the one module that POSTs to a Foundry project and, after the store and the runner, the one that deletes. Every call goes through Foundry._call, whose
+        # address is the endpoint of the one project plus one of these paths: it reads an agent, makes an agent or a version of it, makes a conversation, asks for a response,
+        # and deletes the conversations that it made. The agent is never deleted. http.foundry_calls lets exactly these through, and test_foundry.py holds that list.
+        source = (APP_ROOT / "cases" / "foundry.py").read_text(encoding="utf-8")
+        paths: dict[str, set[str]] = {}
+        for method, path in re.findall(r"""\b_call\(\s*"([A-Z]+)",\s*(f?"[^"]+")""", source):
+            paths.setdefault(method, set()).add(path)
+        self.assertEqual(paths, {
+            "GET": {'f"/agents/{spec.name}?{API}"'},
+            "POST": {'f"/agents?{API}"', 'f"/agents/{spec.name}/versions?{API}"', '"/openai/v1/conversations"', '"/openai/v1/responses"'},
+            "DELETE": {'f"/openai/v1/conversations/{conversation}"'},
+        })
+        self.assertEqual(len(re.findall(r"\.request\(", source)), 1, "every call goes through _call")
+        self.assertIn('f"{self.endpoint}{path}"', source)
+        self.assertEqual(set(re.findall(r"https?://[A-Za-z0-9<>.-]*[A-Za-z0-9>]", source)), {"https://ai.azure.com", "https://<account>.services.ai.azure.com"},
+                         "the only addresses in the module: the resource of the token, and the shape of the endpoint in a message")
+        # The list of calls (http.py) lets through the same calls and no other for a Foundry project, each on the one project's endpoint, and its one DELETE is a conversation.
+        listed = (APP_ROOT / "cases" / "http.py").read_text(encoding="utf-8")
+        self.assertEqual(re.findall(r'\("(GET|POST|DELETE)", re\.compile\(base \+ (?:rf)?("[^"]+")\)\)', listed), [
+            ("GET", '"/agents/{FOUNDRY_AGENT_NAME}"'), ("POST", '"/agents"'), ("POST", '"/agents/{FOUNDRY_AGENT_NAME}/versions"'),
+            ("POST", '"/openai/v1/conversations"'), ("POST", '"/openai/v1/responses"'), ("DELETE", '"/openai/v1/conversations/{FOUNDRY_CONVERSATION_ID}"')])
+        self.assertEqual(listed.count('"DELETE"'), 1)
+
     def test_only_the_sign_in_of_a_person_starts_a_change_and_the_timer_cannot(self):
         # The change is made by `runner.execute`, with the token that the person's sign-in gave (delegated.py). The loop that the timer runs holds the list of reads only.
         importers = [path.name for path in package_files() if re.search(r"from \.runner import[^\n]*\bexecute\b", path.read_text(encoding="utf-8"))]
@@ -193,8 +219,9 @@ class WhatTheAppIs(unittest.TestCase):
         code = (
             "import sys; sys.path.insert(0, sys.argv[1]); "
             "import cases, cases.config, cases.http, cases.identity, cases.arm, cases.detectors, cases.evidence, cases.guards, cases.roles, cases.decide, "
-            "cases.gateway, cases.events, cases.run, cases.control, cases.redact, cases.models, cases.memory_store, cases.store, cases.approvals, cases.runner, "
-            "cases.people, cases.switches, cases.wiring, cases.loop_config, cases.delegated, cases.console, cases.loop, cases.web, cases.mail, cases.letters; "
+            "cases.gateway, cases.foundry, cases.events, cases.run, cases.control, cases.redact, cases.models, cases.memory_store, cases.store, cases.approvals, cases.runner, "
+            "cases.people, cases.switches, cases.wiring, cases.loop_config, cases.delegated, cases.console, cases.loop, cases.web, cases.mail, cases.letters, "
+            "cases.agents, cases.investigate; "
             "print(sorted(name for name in sys.modules if name == 'azure' or name.startswith('azure.')))"
         )
         done = subprocess.run([sys.executable, "-c", code, str(APP_ROOT)], capture_output=True, text=True, check=True)

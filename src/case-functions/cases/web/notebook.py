@@ -14,6 +14,7 @@ from .core import Ctx, Response, Safe, esc, fmt, join, link_part, number, usd
 from .layout import block, code, link, message_page, page, paragraph, quoted, summary, table
 
 STEP_HEADERS = ["Step", "Model", "Tokens in", "Tokens out", "Milliseconds", "Result", "Note"]
+INVESTIGATION = "investigation"  # the detector of the cases that the Watch's own investigation opens (cases/investigate.py)
 
 
 def _fact(value: object) -> Safe:
@@ -49,8 +50,10 @@ def _models_section(case: CaseRecord) -> Safe:
     """Both models' words, marked as AI text. A case that ended in an error has no model text: its summary is the reason that it ended."""
     if case.status == "error":
         return join([Safe("<h2>Why the case ended</h2>"), quoted("Recorded by Meternaut", case.summary or "No reason is recorded.")])
+    if case.detector == INVESTIGATION:
+        return _investigation_section(case)
     first, second = _model(case, "detective"), _model(case, "skeptic")
-    verdict = summary([("Recommendation", (case.recommendation or "none").capitalize() if case.recommendation else "none"), ("Confidence (0 to 1)", confidence(case.confidence))])
+    verdict = summary([("Recommendation", words.recommendation_word(case.recommendation)), ("Confidence (0 to 1)", confidence(case.confidence))])
     first_block = join([
         Safe("<h3>First model: judges whether the resource is waste</h3>"), paragraph(f"Model: {first or 'not recorded'}."), verdict,
         quoted(f"Written by AI (model: {first or 'not recorded'}): summary", case.summary or "No text is recorded."),
@@ -62,6 +65,29 @@ def _models_section(case: CaseRecord) -> Safe:
                       if case.objections else paragraph("The second model raised no objection."))
         second_block = join([Safe("<h3>Second model: looks for reasons to keep the resource</h3>"), paragraph(f"Model: {second}."), objections])
     return join([Safe("<h2>What the models wrote</h2>"), paragraph("Written by AI. Treat it as text, not as fact."), first_block, second_block])
+
+
+def _investigation_section(case: CaseRecord) -> Safe:
+    """What the two agents of the investigation wrote about one resource, marked as AI text. Their steps are the two runs of the agents."""
+    first, second = _model(case, "investigator"), _model(case, "skeptic")
+    asked = {step.get("step"): step for step in case.steps if isinstance(step, dict)}.get("skeptic")
+    verdict = summary([("Proposal", words.recommendation_word(case.recommendation)), ("Confidence (0 to 1)", confidence(case.confidence))])
+    first_block = join([
+        Safe("<h3>Investigator: looked through the estate with read-only tools and reported what looks wasted</h3>"), paragraph(f"Model: {first or 'not recorded'}."), verdict,
+        paragraph(words.recommendation_meaning(case.recommendation)) if words.recommendation_meaning(case.recommendation) else Safe(""),
+        quoted(f"Written by AI (model: {first or 'not recorded'}): summary", case.summary or "No text is recorded."),
+    ])
+    if not second:
+        second_block = join([Safe("<h3>Skeptic: looks for reasons to keep the resources</h3>"), paragraph("The Skeptic was not asked.")])
+    elif isinstance(asked, dict) and asked.get("ok") is False:
+        second_block = join([Safe("<h3>Skeptic: looks for reasons to keep the resources</h3>"), paragraph(f"Model: {second}."),
+                             paragraph("The Skeptic gave no verdict on this finding, so a person has to look at it.")])
+    else:
+        objections = (join(quoted(f"Written by AI (model: {second}): objection {number_}", text) for number_, text in enumerate(case.objections, 1))
+                      if case.objections else paragraph("The Skeptic raised no objection."))
+        second_block = join([Safe("<h3>Skeptic: looks for reasons to keep the resources</h3>"), paragraph(f"Model: {second}."), objections])
+    return join([Safe("<h2>What the agents wrote</h2>"), paragraph("Written by AI. Treat it as text, not as fact. The Investigator wrote one finding for a group of resources, and "
+                                                                 "this case is one resource of it. Code checked it against what the tools returned."), first_block, second_block])
 
 
 def _evidence(case: CaseRecord, plan: PlanRecord | None) -> Safe:
@@ -91,13 +117,14 @@ def notebook(ctx: Ctx, case_id: str) -> Response:
         action, _ = read(lambda: ctx.store.action_get(case.plan_id), None)
     status_word, meaning = words.CASE_STATUS.get(case.status, (case.status, ""))
     seen = "1 run" if case.runs_seen == 1 else f"{case.runs_seen} runs"
+    investigated = case.detector == INVESTIGATION
     found = summary([
         ("Resource name", case.resource_name),
         ("Resource group", case.resource_group),
         ("Kind", kind_text(case.resource_type)),
         ("Resource id", code(case.resource_id)),
         ("Subscription", code(case.subscription_id)),
-        ("Found by", detector_cell(case.detector)),
+        ("How it was found" if investigated else "Found by", detector_cell(case.detector)),
         ("Status", f"{status_word}. {meaning}".strip()),
         ("Run", link(ctx.url(f"/history?run={link_part(case.run_id)}"), case.run_id)),
         ("First seen", ctx.when(case.first_seen_at)),
@@ -108,16 +135,22 @@ def notebook(ctx: Ctx, case_id: str) -> Response:
         ("Cost lines, last 30 days", usd(case.cost_usd_30d) if case.cost_usd_30d is not None else "not available"),
         ("Estimated saving a month", f"{figure(case.saving_usd_month)}. An estimate from cost lines of the last 30 days." if case.saving_usd_month is not None else "no figure"),
     ])
-    facts = (table("facts", "The typed facts that the models saw", ["Fact", "Value"], [[code(name), _fact(value)] for name, value in sorted(case.facts.items())], row_header=False)
+    facts = (table("facts", "The typed facts that the investigation's tools showed" if investigated else "The typed facts that the models saw", ["Fact", "Value"],
+                   [[code(name), _fact(value)] for name, value in sorted(case.facts.items())], row_header=False)
              if isinstance(case.facts, dict) and case.facts else paragraph("No typed fact is recorded for this case."))
     guards = (join([paragraph("These guards fired. A guard stops a case from becoming a proposal, and no model can lift it."),
                     summary([(guard, words.GUARD.get(guard, "")) for guard in case.guards])]) if case.guards else paragraph("No guard fired."))
+    saw = ((Safe("<h2>What the investigation showed</h2>"),
+            paragraph("Typed facts only: why the investigation proposed this, the measurements that it cites with the numbers that the tools returned, and the cost "
+                      "lines. A name, a tag or a description from the estate never reaches an agent."))
+           if investigated else
+           (Safe("<h2>What the models saw</h2>"), paragraph("Typed facts only. A name, a tag or a description from the estate never reaches a model.")))
     parts: list[object] = [
         fmt("<h1>Notebook: {name}</h1>", name=case.resource_name),
-        paragraph("The full record behind one case: what was found, what the models saw and wrote, and every step. Text that came from the estate or from a model is "
-                  "shown as quoted text. It is never a link or a control.", "lead"),
+        paragraph("The full record behind one case: what was found, what the models or the investigation saw and wrote, and every step. Text that came from the estate or "
+                  "from a model is shown as quoted text. It is never a link or a control.", "lead"),
         Safe("<h2>What was found</h2>"), found, Safe("<h2>Cost lines and estimated saving</h2>"), figures,
-        Safe("<h2>What the models saw</h2>"), paragraph("Typed facts only. A name, a tag or a description from the estate never reaches a model."), facts,
+        *saw, facts,
         Safe("<h2>Guards that fired</h2>"), guards,
         _models_section(case),
         Safe("<h2>Steps</h2>"), _steps(case),

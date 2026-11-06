@@ -39,6 +39,10 @@
 // role that reads the access product's key, are given once, outside this template, on the owner's written word (environment/BOOTSTRAP.md,
 // AGENTS.md rule 18), because the deployment workflow's identity has no right there and must not get one.
 //
+// The agents: when the Foundry resource of the agents exists (environment/foundry/main.bicep, the action foundry), the workflow passes the address of its
+// project, and the app then lets agents of that project investigate the estate (the settings FOUNDRY_* and INVESTIGATE*). The app signs in to the project with
+// its own identity, and the template of the Foundry resource gives that identity its role on the project. Without the address the investigation is off.
+//
 // Deployed only by the workflow .github/workflows/deploy-hub.yml, action "cases" (AGENTS.md rule 18). The code of the function app
 // is published by the same action, from src/case-functions. A Basic plan cannot take over a Flex Consumption app: the action removes
 // the Flex app and its plan first, when they are still there, and this template then makes an app of the same name, so that the host
@@ -125,6 +129,25 @@ param mailSender string = ''
 @minValue(1)
 @maxValue(336)
 param planTtlHours int = 72
+
+@description('Endpoint of the Microsoft Foundry project whose agents investigate the estate, https://<resource>.services.ai.azure.com/api/projects/<project>. Empty: the investigation is off. The deployment workflow passes it only when the project is in Azure (the action foundry makes it, and gives the app its role there).')
+param foundryProjectEndpoint string = ''
+
+@description('Model deployment of the Investigator agent, in the Foundry resource of the agents (environment/foundry/main.bicep deploys the models of environment/models.json).')
+param foundryModelInvestigator string = 'gpt-6.1-sol'
+
+@description('Model deployment of the Skeptic agent, in the same resource. It has to be another model than the Investigator, so that the Skeptic is more independent.')
+param foundryModelSkeptic string = 'gpt-6-luna'
+
+@description('Most tool calls and model answers that one investigation may take in all. The code accepts no more than 40 (LIMIT_INVESTIGATE_CALLS in src/case-functions/cases/config.py).')
+@minValue(1)
+@maxValue(40)
+param investigateMaxCalls int = 24
+
+@description('Most seconds that one investigation may take. The code accepts no more than 600 (LIMIT_INVESTIGATE_SECONDS in src/case-functions/cases/config.py).')
+@minValue(30)
+@maxValue(600)
+param investigateMaxSeconds int = 420
 
 var tags = {
   workload: workload
@@ -414,6 +437,14 @@ resource functionApp 'Microsoft.Web/sites@2024-04-01' = {
         { name: 'CONSOLE_PEOPLE', value: consolePeople }
         { name: 'MAIL_SENDER', value: mailSender }
         { name: 'PLAN_TTL_HOURS', value: string(planTtlHours) }
+        // The agents of the Foundry resource (environment/foundry/main.bicep). The app calls the project endpoint with its identity (id-meternaut-cases) and holds no key: the
+        // role that lets it create and run agents is given by the template of the Foundry resource, on the project. No endpoint: the investigation is off.
+        { name: 'FOUNDRY_PROJECT_ENDPOINT', value: foundryProjectEndpoint }
+        { name: 'FOUNDRY_MODEL_INVESTIGATOR', value: foundryModelInvestigator }
+        { name: 'FOUNDRY_MODEL_SKEPTIC', value: foundryModelSkeptic }
+        { name: 'INVESTIGATE', value: empty(foundryProjectEndpoint) ? 'off' : 'on' }
+        { name: 'INVESTIGATE_MAX_CALLS', value: string(investigateMaxCalls) }
+        { name: 'INVESTIGATE_MAX_SECONDS', value: string(investigateMaxSeconds) }
         // The client id of the identity whose token is the client assertion: the platform's sign-in reads it, and so does the console when it redeems the code of the
         // Azure Resource Manager sign-in (the app registration's federated credential trusts that identity).
         { name: 'OVERRIDE_USE_MI_FIC_ASSERTION_CLIENTID', value: signInIsSetUp ? authIdentity.properties.clientId : '' }

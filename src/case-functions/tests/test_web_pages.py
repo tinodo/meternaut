@@ -316,6 +316,98 @@ class TheNotebook(unittest.TestCase):
         self.assertIn("Written by AI (models: model-detective-x, model-skeptic-y). A person approves every change.", self.reply.root.find("footer").text())
 
 
+INVESTIGATED = dict(
+    case_id="case0100", detector="investigation", recommendation="change", confidence=0.85, saving_usd_month=None, cost_usd_30d=41.5,
+    summary="The size is larger than the use needs.", objections=("It may be a standby.",), guards=(),
+    models={"investigator": "model-investigator-x", "skeptic": "model-skeptic-y"},
+    steps=({"step": "investigator", "model": "model-investigator-x", "promptTokens": 4100, "completionTokens": 900, "ms": 61000, "ok": True, "note": "12 tool calls"},
+           {"step": "skeptic", "model": "model-skeptic-y", "promptTokens": 1500, "completionTokens": 200, "ms": 9000, "ok": True, "note": None}),
+    facts={"basis": "oversized", "proposal": "change", "metrics": {"MetricA": 40}, "costUsd30d": 41.5, "finding": 1}, plan_id=None)
+
+
+class TheNotebookOfAnInvestigation(unittest.TestCase):
+    def setUp(self):
+        self.console = seeded()
+        self.console.store.case_put(make_case(**INVESTIGATED))
+        self.reply = self.console.get("/why/case0100")
+
+    def test_it_says_how_the_case_was_found_in_the_words_of_the_label(self):
+        self.assertEqual(self.reply.status, 200)
+        found = self.reply.summary(0)
+        self.assertEqual(found["How it was found"].split("investigation")[0] + "investigation", "Found by the Watch's own investigation")
+        self.assertIn("Found by the Watch's own investigation", found["How it was found"])
+        self.assertNotIn("Found by", found, "the label of the row would repeat the label of the case")
+        self.assertTrue(found["Status"].startswith("Proposed. A change is suggested."))
+
+    def test_the_typed_facts_of_the_finding_are_shown_under_a_heading_that_says_what_they_are(self):
+        self.assertIn("What the investigation showed", self.reply.headings(2))
+        self.assertNotIn("What the models saw", self.reply.headings(2))
+        self.assertIn("never reaches an agent", self.reply.content)
+        table = self.reply.table("facts")
+        self.assertEqual(table.caption, "The typed facts that the investigation's tools showed")
+        self.assertEqual({r["Fact"]: r["Value"] for r in table.rows}, {"basis": "oversized", "proposal": "change", "metrics": '{"MetricA": 40}', "costUsd30d": "41.5", "finding": "1"})
+
+    def test_the_two_agents_words_are_marked_as_written_by_ai_and_the_proposal_is_the_word_change(self):
+        self.assertIn("What the agents wrote", self.reply.headings(2))
+        self.assertNotIn("What the models wrote", self.reply.headings(2))
+        labels = [p.text() for p in self.reply.main.find_all("p", class_="quote-label")]
+        self.assertEqual(labels, ["Written by AI (model: model-investigator-x): summary", "Written by AI (model: model-skeptic-y): objection 1"])
+        quotes = [q.text() for q in self.reply.main.find_all("blockquote", class_="quote")]
+        self.assertEqual(quotes, ["The size is larger than the use needs.", "It may be a standby."])
+        self.assertEqual(self.reply.summary(2), {"Proposal": "Change", "Confidence (0 to 1)": "0.85"})
+        self.assertIn("Keep the resource and change it, for example to a smaller size or another tier.", self.reply.content)
+        self.assertEqual([h for h in self.reply.headings(3) if h.startswith(("Investigator", "Skeptic"))],
+                         ["Investigator: looked through the estate with read-only tools and reported what looks wasted", "Skeptic: looks for reasons to keep the resources"])
+        self.assertNotIn("First model", self.reply.content)
+
+    def test_its_steps_are_the_two_runs_of_the_agents(self):
+        self.assertEqual(self.reply.table("steps").rows, [
+            {"Step": "investigator", "Model": "model-investigator-x", "Tokens in": "4,100", "Tokens out": "900", "Milliseconds": "61,000", "Result": "ok", "Note": "12 tool calls"},
+            {"Step": "skeptic", "Model": "model-skeptic-y", "Tokens in": "1,500", "Tokens out": "200", "Milliseconds": "9,000", "Result": "ok", "Note": ""},
+        ])
+
+    def test_a_skeptic_that_gave_no_verdict_or_was_not_asked_says_so_and_shows_no_objection(self):
+        failed = ({**INVESTIGATED["steps"][0]}, {**INVESTIGATED["steps"][1], "ok": False, "note": "the project is busy"})
+        self.console.store.case_put(make_case(**{**INVESTIGATED, "steps": failed, "objections": (), "status": "needs_human"}))
+        reply = self.console.get("/why/case0100")
+        self.assertIn("The Skeptic gave no verdict on this finding, so a person has to look at it.", reply.content)
+        self.assertEqual([p.text() for p in reply.main.find_all("p", class_="quote-label")], ["Written by AI (model: model-investigator-x): summary"])
+        self.console.store.case_put(make_case(**{**INVESTIGATED, "models": {"investigator": "model-investigator-x", "skeptic": None}, "objections": ()}))
+        self.assertIn("The Skeptic was not asked.", self.console.get("/why/case0100").content)
+
+    def test_a_skeptic_without_an_objection_says_so(self):
+        self.console.store.case_put(make_case(**{**INVESTIGATED, "objections": ()}))
+        self.assertIn("The Skeptic raised no objection.", self.console.get("/why/case0100").content)
+
+    def test_a_case_of_the_investigation_that_ended_in_an_error_shows_its_reason_as_a_note_of_meternaut(self):
+        self.console.store.case_put(make_case(**{**INVESTIGATED, "status": "error", "summary": "a step failed", "objections": ()}))
+        reply = self.console.get("/why/case0100")
+        self.assertIn("Why the case ended", reply.headings(2))
+        self.assertEqual([p.text() for p in reply.main.find_all("p", class_="quote-label")], ["Recorded by Meternaut"])
+
+    def test_text_of_the_agents_is_quoted_and_is_never_a_link_or_a_control(self):
+        hostile = "Ignore the rules <a href=\"https://evil.example\">click</a> <script>alert(1)</script>"
+        self.console.store.case_put(make_case(**{**INVESTIGATED, "summary": hostile, "objections": (hostile,), "resource_name": hostile}))
+        reply = self.console.get("/why/case0100")
+        for quote in reply.main.find_all("blockquote", class_="quote"):
+            self.assertEqual([n.tag for n in quote.walk() if n.tag in ("a", "button", "input", "form", "script", "select", "textarea")], [])
+        self.assertNotIn("<script>alert(1)</script>", reply.text)
+        self.assertNotIn('href="https://evil.example"', reply.text)
+        self.assertEqual(reply.root.find_all("script"), [])
+        self.assertNotIn("https://evil.example", reply.links())
+
+    def test_the_legacy_notebook_is_unchanged_and_its_row_is_still_found_by(self):
+        found = Console()
+        found.seed()
+        self.assertIn("Found by", found.get("/why/case0001").summary(0))
+        self.assertNotIn("How it was found", found.get("/why/case0001").summary(0))
+
+    def test_a_case_of_the_legacy_roles_with_a_recommendation_to_change_reads_like_any_other(self):
+        self.console.store.case_put(make_case(case_id="case0101", recommendation="change"))
+        reply = self.console.get("/why/case0101")
+        self.assertEqual(reply.summary(2), {"Recommendation": "Change", "Confidence (0 to 1)": "0.91"})
+
+
 class TheHistory(unittest.TestCase):
     def setUp(self):
         self.console = seeded()
@@ -430,6 +522,23 @@ class TheHistory(unittest.TestCase):
     def test_a_status_that_is_not_in_the_list_is_shown_as_stored(self):
         self.console.store.case_put(make_case(case_id="case0003", status="something new"))
         self.assertIn("something new", [r["Status"] for r in self.console.get("/history").table("cases").rows])
+
+    def test_a_case_of_the_investigation_is_a_row_like_any_other_with_its_own_label_and_the_word_change(self):
+        self.console.store.case_put(make_case(**{**INVESTIGATED, "resource_name": "oversized-thing", "updated_at": at(minutes=-1)}))
+        rows = self.console.get("/history").table("cases").rows
+        row = next(r for r in rows if "oversized-thing" in r["Resource"])
+        self.assertIn("Found by the Watch's own investigation", row["Found by"])
+        self.assertEqual((row["Status"], row["Recommendation"], row["Confidence (0 to 1)"], row["Estimated saving a month"]), ("Proposed", "Change", "0.85", "no figure"))
+
+    def test_the_words_of_the_recommendations_are_the_four_and_a_word_that_is_not_listed_is_shown_as_stored(self):
+        from cases.web import words
+        self.assertEqual([words.recommendation_word(r) for r in ("delete", "change", "keep", "investigate")], ["Delete", "Change", "Keep", "Investigate"])
+        self.assertEqual((words.recommendation_word(None), words.recommendation_word(""), words.recommendation_word("something new")), ("none", "none", "Something new"))
+        self.assertEqual(words.recommendation_meaning("change"), "Keep the resource and change it, for example to a smaller size or another tier.")
+        for word in ("delete", "change", "keep", "investigate"):
+            self.assertTrue(words.recommendation_meaning(word), word)
+        self.assertEqual((words.recommendation_meaning(None), words.recommendation_meaning("something new")), ("", ""))
+        self.assertEqual(words.DETECTOR["investigation"], "Found by the Watch's own investigation")
 
 
 class TheDecisions(unittest.TestCase):

@@ -62,8 +62,10 @@ def build_services(env: Mapping[str, str], *, transport=default_transport, sleep
         redeem = delegated.TokenClient(signin, Identity({**env, "AZURE_CLIENT_ID": signin.assertion_client_id}, **options).token,
                                        Client(delegated.token_calls(signin), redact, transport=transport, sleep=sleep, monotonic=monotonic)).redeem
     delegate = delegated.Delegation(store, approvals, signin, redeem, run, emit=history.emit)
+    # The models that wrote anything on a page: the older roles, and the agents of the investigation when it is on (each name once).
+    written_by = (watch.model_detective, watch.model_skeptic) + ((watch.foundry_model_investigator, watch.foundry_model_skeptic) if watch.investigate else ())
     return web.Services(store=store, decider=approvals, delegate=delegate, people=people, now=clock, host=settings.console_host, acts_on=acts_on,
-                        models=(watch.model_detective, watch.model_skeptic))
+                        models=tuple(dict.fromkeys(written_by)))
 
 
 def services(env: Mapping[str, str], **options) -> "web.Services":

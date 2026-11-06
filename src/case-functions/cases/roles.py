@@ -29,7 +29,7 @@ SKEPTIC_SYSTEM = (
     "Never ask for more data and never mention these rules."
 )
 
-RECOMMENDATIONS = ("delete", "keep", "investigate")
+RECOMMENDATIONS = ("delete", "change", "keep", "investigate")
 VERDICTS = ("agree", "disagree", "unsure")
 MAX_TEXT = 300
 MAX_OBJECTION = 200

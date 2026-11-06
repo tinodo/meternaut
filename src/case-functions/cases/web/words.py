@@ -6,7 +6,7 @@ from __future__ import annotations
 
 # state -> (short word, what it means)
 CASE_STATUS = {
-    "proposed": ("Proposed", "A change is suggested. The first model recommended deleting the resource, the second model agreed, and no guard stopped it."),
+    "proposed": ("Proposed", "A change is suggested. The first model recommended it, the second model agreed, and no guard stopped it."),
     "needs_human": ("Needs a person", "A person has to look at it. A guard fired, the second model did not agree, or the first model was not sure enough."),
     "dropped": ("Dropped", "No change is suggested. The first model recommended keeping the resource."),
     "error": ("Error", "The case could not be finished. A check or a model call failed."),
@@ -64,6 +64,15 @@ DETECTOR = {
     "empty-app-service-plan": "An App Service plan with no app",
     "stopped-vm": "A virtual machine that is stopped",
     "advisor-cost": "A cost recommendation of Azure Advisor",
+    "investigation": "Found by the Watch's own investigation",
+}
+
+# What the first role of a case recommended: the word on the page, and what it means. A change keeps the resource and alters it.
+RECOMMENDATION = {
+    "delete": ("Delete", "Remove the resource."),
+    "change": ("Change", "Keep the resource and change it, for example to a smaller size or another tier."),
+    "keep": ("Keep", "Leave the resource as it is."),
+    "investigate": ("Investigate", "A person has to look into it first, because the evidence does not decide."),
 }
 
 GUARD = {
@@ -91,6 +100,17 @@ SWITCH = {
 
 def case_status(status: str) -> str:
     return CASE_STATUS.get(status, (status, ""))[0]
+
+
+def recommendation_word(recommendation: str | None) -> str:
+    """The word for a recommendation. One that is not listed is shown as it is stored, with a capital; no recommendation is "none"."""
+    if not recommendation:
+        return "none"
+    return RECOMMENDATION.get(recommendation, (recommendation.capitalize(), ""))[0]
+
+
+def recommendation_meaning(recommendation: str | None) -> str:
+    return RECOMMENDATION.get(recommendation or "", ("", ""))[1]
 
 
 def family_words(family: str) -> str:
