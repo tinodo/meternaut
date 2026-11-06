@@ -3,7 +3,7 @@
 
     python tools/cases-check.py functions --site <resource id of the cases app> [--minutes 15]
     python tools/cases-check.py run --namespace <Event Hubs namespace> --insights <resource id of the cases app's Application Insights>
-                                    [--minutes 30] [--summary <file>]
+                                    [--minutes 30] [--summary <file>] [--query-via arm|data-plane]
 
 It uses the helpers of tools/recording-check.py: the same Azure CLI, which the workflow has signed in, and tokens that are used and never printed.
 
@@ -15,6 +15,10 @@ run        Sends one event to the control hub of the cases (cases-control) with 
            case came to, and fails when the run failed, when a case ended in an error, when the investigation was meant to run and did not, or when no end arrived. Only a GitHub Actions run
            may send the event (AGENTS.md rule 18). Nothing in the estate is changed by the run: it only reads. (The investigation makes its own agents and
            conversations in its own Foundry project: docs/proposals/06-foundry-agents.md.)
+
+--query-via (run) How the History is read from the telemetry: arm (the default, through Azure Resource Manager, which needs a component that accepts queries
+           from public networks) or data-plane (through https://api.applicationinsights.io with a Microsoft Entra token, for a component that is private; run it
+           from inside the network). The same option and the same rules as in tools/recording-check.py, which has the details.
 """
 from __future__ import annotations
 
@@ -261,6 +265,7 @@ def command_functions(args, azure: Azure) -> int:
 def command_run(args, azure: Azure) -> int:
     rc.only_in_actions()
     insights = rc.check_insights(args.insights)
+    rc.choose_query_path(azure, args.query_via, insights)
     request_id = uuid.uuid4().hex
     rc.send_control_event(azure, args.namespace, "watch", request_id, hub=CONTROL_HUB)
     print(f"Sent the control event for one Watch (request {request_id}); waiting for the History of the run in the telemetry.", flush=True)
@@ -289,6 +294,7 @@ def main(argv=None, azure: Azure | None = None) -> int:
     run.add_argument("--insights", required=True)
     run.add_argument("--minutes", type=float, default=30)
     run.add_argument("--summary")
+    rc.add_query_via(run)
     args = parser.parse_args(argv)
     azure = azure or Azure()
     try:
