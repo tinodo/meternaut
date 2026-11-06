@@ -9,9 +9,9 @@
 // setting cannot be changed after the account exists (Create a project for Microsoft Foundry), so that account can never hold a project or an
 // agent. It stays as it is and keeps serving the gateway.
 //
-// The agents call the deployments below directly, not through the gateway. That is a temporary exception to AGENTS.md rule 15 (c): the
-// gateway's API Management instance is on the Developer tier, and the API Management connection that Foundry documents for agents needs the
-// Standard v2 or the Premium tier and is in preview.
+// The agents call the deployments below directly, not through the gateway. That is a temporary exception to AGENTS.md rule 15 (c), whose
+// record lists the routes that end it. A route through the gateway needs one new API on the owner's API Management instance, which the owner
+// has to approve (rule 15 (b)); the first reason given here, the gateway's tier, was wrong (CHANGELOG.md).
 //
 // No key, and nothing public (AGENTS.md rule 23):
 //  - the resource has local authentication off (disableLocalAuth) and public network access off; it is reached through one private endpoint;
