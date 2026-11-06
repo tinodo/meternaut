@@ -21,6 +21,8 @@ SITE = "/subscriptions/11111111-2222-3333-4444-555555555555/resourceGroups/rg-ex
 INSIGHTS = "/subscriptions/11111111-2222-3333-4444-555555555555/resourceGroups/rg-example/providers/Microsoft.Insights/components/appi-example"
 NAMESPACE = "evhns-example"
 SECRET = "SECRET-TOKEN-VALUE"
+DATA_TOKEN = "DATA-PLANE-TOKEN-VALUE"
+APP_ID = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
 ENV = {"GITHUB_ACTIONS": "true"}
 ID = "c" * 32
 
@@ -466,6 +468,135 @@ class Run(unittest.TestCase):
         self.assertNotIn("\x1b", out)
 
 
+def component(**properties):
+    """What Resource Manager says of a component. It holds more than the checker may keep: the instrumentation key and the connection string must reach no line."""
+    return {"id": INSIGHTS, "name": "appi-example", "type": "Microsoft.Insights/components",
+            "properties": {"AppId": APP_ID, "InstrumentationKey": "KEY-THAT-MUST-NOT-BE-PRINTED", "ConnectionString": "InstrumentationKey=KEY-THAT-MUST-NOT-BE-PRINTED", **properties}}
+
+
+DEFAULT_COMPONENT = object()
+
+
+class ReadingThroughTheDataPlane(unittest.TestCase):
+    """--query-via: the History is read from the data plane of Application Insights, which keeps working when the component is private (docs/proposals/07-private-by-default.md)."""
+
+    def go(self, answers, *extra, via="data-plane", arm=None, component_answer=DEFAULT_COMPONENT):
+        """Runs the check. `answers` are what the data plane says to each query, in order, the last one repeated: a document, a (status, body) pair or an exception to raise.
+        `arm` is what Resource Manager says to a query through its proxy. `calls` says what was asked, and in which order."""
+        calls = {"order": [], "tokens": [], "components": [], "arm": [], "queries": [], "events": []}
+        queue = list(answers)
+
+        def runner(args):
+            if args[:2] == ["account", "get-access-token"]:
+                resource = args[args.index("--resource") + 1]
+                calls["tokens"].append(resource)
+                return 0, (DATA_TOKEN if resource == rc.DATA_PLANE else SECRET) + "\n", ""
+            url = args[args.index("--url") + 1]
+            if "/query?" in url:
+                calls["arm"].append(args)
+                return 0, json.dumps(arm if arm is not None else telemetry([])), ""
+            calls["order"].append("component")
+            calls["components"].append(args)
+            document = component() if component_answer is DEFAULT_COMPONENT else component_answer
+            return 0, json.dumps(document), ""
+
+        def post(url, headers, body):
+            if "servicebus.windows.net" in url:
+                calls["order"].append("event")
+                calls["events"].append((url, headers, body))
+                return 201, b""
+            calls["order"].append("query")
+            calls["queries"].append((url, headers, body))
+            answer = queue.pop(0) if len(queue) > 1 else queue[0]
+            if isinstance(answer, BaseException):
+                raise answer
+            status, document = answer if isinstance(answer, tuple) else (200, answer)
+            return status, document if isinstance(document, bytes) else json.dumps(document).encode("utf-8")
+
+        argv = ["run", "--namespace", NAMESPACE, "--insights", INSIGHTS, *([] if via is None else ["--query-via", via]), *extra]
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch.dict(os.environ, ENV, clear=False), mock.patch.object(cc.uuid, "uuid4", return_value=mock.Mock(hex=ID)), \
+                redirect_stdout(out), redirect_stderr(err):
+            code = cc.main(argv, azure(runner, post))
+        return code, out.getvalue(), err.getvalue(), calls
+
+    def test_the_history_is_the_same_through_the_data_plane_as_through_resource_manager(self):
+        events = a_good_run()
+        events[-1:-1] = an_investigation()
+        code_arm, through_arm, err_arm, _ = self.go([], via=None, arm=telemetry(events))
+        code, through_data_plane, err, calls = self.go([telemetry(events)])
+        self.assertEqual((code_arm, err_arm, code, err), (0, "", 0, ""))
+        first, *rest = through_data_plane.splitlines()
+        self.assertIn("The telemetry is read through the data plane of Application Insights", first)
+        self.assertEqual(rest, through_arm.splitlines())
+        self.assertEqual(calls["arm"], [], "no query goes through Resource Manager")
+        for hidden in (SECRET, DATA_TOKEN, "KEY-THAT-MUST-NOT-BE-PRINTED"):
+            self.assertNotIn(hidden, through_data_plane + err)
+
+    def test_the_query_goes_to_the_app_endpoint_of_the_component_for_this_request_only(self):
+        _, _, _, calls = self.go([telemetry(a_good_run())])
+        ((url, headers, body),) = calls["queries"]
+        self.assertEqual(url, f"https://api.applicationinsights.io/v1/apps/{APP_ID}/query")
+        self.assertEqual(headers["Authorization"], f"Bearer {DATA_TOKEN}")
+        self.assertEqual(headers["Content-Type"], "application/json")
+        document = json.loads(body)
+        self.assertEqual(set(document), {"query"})
+        self.assertIn(ID, document["query"])
+        self.assertIn("meternaut_event", document["query"])
+        self.assertRegex(document["query"], r"^traces \| where timestamp > ago\(3h\)")
+        self.assertEqual(calls["tokens"], ["https://eventhubs.azure.net", "https://api.applicationinsights.io"])
+
+    def test_the_application_id_is_read_once_through_resource_manager_before_the_event_is_sent(self):
+        everything = a_good_run()
+        early = [e for e in everything if e["type"] != "case.result"]
+        code, _, _, calls = self.go([telemetry(early), telemetry(everything)])
+        self.assertEqual(code, 0)
+        self.assertEqual(len(calls["queries"]), 2, "the loop asked twice")
+        (read,) = calls["components"]
+        self.assertEqual(read[read.index("--url") + 1], f"https://management.azure.com{INSIGHTS}?api-version=2020-02-02")
+        self.assertEqual(calls["order"][:3], ["component", "event", "query"])
+
+    def test_it_waits_through_a_403_and_names_the_likely_cause_if_it_stays(self):
+        refused = (403, {"error": {"code": "InsufficientAccessError", "message": f"no access {DATA_TOKEN}"}})
+        code, out, err, _ = self.go([refused, telemetry(a_good_run())])
+        self.assertEqual((code, err), (0, ""))
+        self.assertIn("could not be read yet (the data-plane query answered 403", out)
+        self.assertNotIn(DATA_TOKEN, out)
+        code, out, _, calls = self.go([refused], "--minutes", "1")
+        self.assertEqual(code, 1)
+        self.assertIn("no end of the run arrived in the telemetry within 1 minutes (0 lines of the run arrived)", out)
+        self.assertIn("The last warnings and errors of the cases app:", out)
+        self.assertIn("traces: could not be read (the data-plane query answered 403 (the identity probably has no Reader or Monitoring Reader role", out)
+        self.assertNotIn(DATA_TOKEN, out)
+        self.assertEqual((len(calls["components"]), calls["arm"]), (1, []))
+
+    def test_the_default_is_the_resource_manager_and_the_data_plane_is_not_touched(self):
+        for via in (None, "arm"):
+            code, out, err, calls = self.go([], via=via, arm=telemetry(a_good_run()))
+            self.assertEqual((code, err), (0, ""), via)
+            self.assertNotIn("data plane", out)
+            self.assertEqual((calls["queries"], calls["components"]), ([], []), via)
+            self.assertEqual(calls["tokens"], ["https://eventhubs.azure.net"], "no token for the data plane")
+            (asked,) = calls["arm"]
+            self.assertEqual(asked[asked.index("--url") + 1], f"https://management.azure.com{INSIGHTS}/query?api-version=2018-04-20")
+
+    def test_a_component_without_an_application_id_stops_the_run_before_the_event_is_sent(self):
+        for answer in ({}, {"properties": {"AppId": "not-a-guid"}}, None):
+            code, _, err, calls = self.go([telemetry(a_good_run())], component_answer=answer)
+            self.assertEqual(code, 1, answer)
+            self.assertIn("gives the component no Application ID", err)
+            self.assertEqual((calls["events"], calls["queries"]), ([], []), answer)
+
+    def test_the_option_belongs_to_run_and_takes_one_of_two_values(self):
+        for argv in (["run", "--namespace", NAMESPACE, "--insights", INSIGHTS, "--query-via", "other"], ["functions", "--site", SITE, "--query-via", "arm"]):
+            sent = []
+            with mock.patch.dict(os.environ, ENV), redirect_stderr(io.StringIO()), redirect_stdout(io.StringIO()):
+                with self.assertRaises(SystemExit) as stop:
+                    cc.main(argv, azure(lambda args: (0, "{}", ""), lambda *a: sent.append(a) or (201, b"")))
+            self.assertEqual(stop.exception.code, 2, argv)
+            self.assertEqual(sent, [], argv)
+
+
 class Clean(unittest.TestCase):
     def test_what_clean_does(self):
         self.assertEqual(cc.clean(None), "")
@@ -482,6 +613,8 @@ class TheCheckerAsksForNoKeyAndCallsNothingElse(unittest.TestCase):
         for word in ("listKeys", "listSecrets", "primaryKey", "SharedAccessSignature", "AccountKey", "api-key", "az login"):
             self.assertNotIn(word, code, word)
         self.assertNotRegex(code, r"https://[a-z0-9.-]+\.(azure-api|documents\.azure|blob\.core\.windows)\.", "it reads only the telemetry and sends one event")
+        self.assertNotRegex(code, r"\.token\(", "it asks for no token of its own: the helpers of tools/recording-check.py do, for the three resources that its own test pins")
+        self.assertNotIn("api.applicationinsights.io", code, "the host of the data plane is in the helpers, and in one place")
 
 
 if __name__ == "__main__":
