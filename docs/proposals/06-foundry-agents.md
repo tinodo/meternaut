@@ -61,7 +61,7 @@ Foundry agents call the models of their own resource directly. That does not pas
 
 ## Identity, network, guardrail, tracing
 
-- **Roles.** The cases app's identity holds *Foundry User* on the project and nothing else on the new resource: it may create the agents and run them. It reads the estate with Reader and Cost Management Reader as before. The project's identity holds *Monitoring Metrics Publisher* on Application Insights, to send the agents' traces with Microsoft Entra ID.
+- **Roles.** The cases app's identities hold *Foundry User* on the project and nothing else on the new resource: the app may create the agents and run them. The identities are the user-assigned `id-meternaut-cases` and, once the app has one, its system-assigned identity, which takes over from it (see below). The app reads the estate with Reader and Cost Management Reader as before. The project's identity holds *Monitoring Metrics Publisher* on Application Insights, to send the agents' traces with Microsoft Entra ID.
 - **Network.** The resource has no public access and one private endpoint. The template makes no private DNS zone, link or zone group; the landing zone's policy registered the endpoint in its three central zones ten minutes after it was made, and the app reached the project through it on the first run.
 - **Guardrail.** Prompt Shields block attacks in user input and instructions hidden in tool results, on top of Microsoft's default content filter. Learn lists tool-result scanning as a preview feature, so the typed tool answers stay the first defence.
 - **Tracing.** The project has an Application Insights connection with the project's managed identity and no key.
@@ -74,6 +74,12 @@ An agent that calls tools reads everything said so far again at every step, so t
 - **Patience.** A step of a run that the service answers with 429 or 503 is asked again up to six times, after 8 seconds (with jitter), then 16, then 30 at most, or as long as a Retry-After of up to 90 seconds says. The pauses stay inside the time of the run, a 429 comes before the model produced anything so the same input is sent again, and a note of the History says how often it happened.
 - **Fewer steps.** The instructions tell the Investigator to ask for calls that do not depend on each other in one step, which lowers the number of steps and so the tokens that every step reads again.
 - **An answer before the limit.** After 70% of its time the Investigator's tool calls are refused as if its budget were used up, so a run that is slow because of its model still ends with the answer that it has.
+
+## The identity of the cases app
+
+The owner prefers system-assigned identities, so the cases app moves from its user-assigned identity `id-meternaut-cases` to an identity of its own, in two steps ([the bootstrap page](../../environment/BOOTSTRAP.md) has the details). The first step adds the new identity next to the old one and changes no setting, so the app keeps running on the old identity. The template of the app gives the new identity every role that the old one has inside the project's resource group. The template of the Foundry resource gives it *Foundry User* on the project as soon as the app has it: the workflow reads the object id from the app and passes it as `casesSystemPrincipalId`, and the template gives no role while that is empty.
+
+Between the steps a person with the owner's session gives the new identity what only a person can give: the reads that the old identity has outside the resource group (with `tools/access-requirements.py`) and the right to send letters from the shared mailbox (with `tools/exchange-setup.py`). Then the person waits for Azure and Exchange to apply them. The second step moves the settings to the new identity and removes the old one. One user-assigned identity stays, `id-meternaut-console-auth`: Microsoft documents the secretless sign-in of an App Service app only with that kind, the app registration of the console trusts it, and it holds no role.
 
 ## Not built, and not shown yet
 

@@ -7,10 +7,16 @@
 // What it holds: a Log Analytics workspace and an Application Insights component for the function app itself, a storage
 // account (its host storage and its code package), an Event Hubs namespace with the hubs, a Cosmos DB account (serverless) with
 // the database and containers that the copy jobs write to, a user-assigned identity, a Flex Consumption plan with the function
-// app, and the private endpoints and roles that connect them.
+// app (which has a system-assigned identity too), and the private endpoints and roles that connect them.
+//
+// The owner prefers system-assigned identities, so the function app moves from its user-assigned identity (id-meternaut-usage) to its own system-assigned
+// identity in two steps (environment/BOOTSTRAP.md). This is the first: the app has the system-assigned identity next to the user-assigned one, that
+// identity holds every role that id-meternaut-usage holds in this template (the data role of Cosmos DB included), and the settings and the deployment
+// storage still name id-meternaut-usage, so nothing that the app does changes. The second step moves the settings to the system-assigned identity and removes
+// id-meternaut-usage, after the roles outside this group have been given to the new identity.
 //
 // No key of any kind, and no opt-out of a policy (AGENTS.md rule 23):
-//  - every caller uses an identity (Microsoft Entra ID): the function app its user-assigned identity, the gateway its own
+//  - every caller uses an identity (Microsoft Entra ID): the function app its managed identity, the gateway its own
 //    identity, the deployment workflow its federated identity;
 //  - the storage account has Shared Key access off, the Cosmos DB account has local authentication off, the Event Hubs
 //    namespace has local authentication off, the Application Insights component and the workspace take no
@@ -586,6 +592,7 @@ resource readersOfTheData 'Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignme
   }
   dependsOn: [
     functionWritesUsage
+    systemWritesUsage
   ]
 }]
 
@@ -615,7 +622,7 @@ resource functionApp 'Microsoft.Web/sites@2024-04-01' = {
   kind: 'functionapp,linux'
   tags: tags
   identity: {
-    type: 'UserAssigned'
+    type: 'SystemAssigned, UserAssigned'
     userAssignedIdentities: {
       '${usageIdentity.id}': {}
     }
@@ -687,6 +694,114 @@ resource functionApp 'Microsoft.Web/sites@2024-04-01' = {
   ]
 }
 
+// Step one of the move to a system-assigned identity: every role above, and the data role of Cosmos DB, for the app's own identity as well. The settings and the
+// deployment storage still name id-meternaut-usage, so these roles are used only after the second step. A role assignment's name has to be known when the deployment
+// starts, and the principal id of a system-assigned identity exists only once the app does: so the names are seeded with the app's id (the identity lives and dies
+// with the app) and the principal id is in the properties, which is read later. They depend on the app, and the app does not depend on them: the app starts before
+// its own identity has these roles, which is why its settings keep the identity that already has them.
+resource systemReceivesUsage 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  scope: usageHub
+  name: guid(usageHub.id, functionApp.id, eventHubsDataReceiverRoleId)
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', eventHubsDataReceiverRoleId)
+    principalId: functionApp.identity.principalId
+    principalType: 'ServicePrincipal'
+  }
+  dependsOn: [
+    eventHubsEndpoint
+  ]
+}
+
+resource systemReceivesPii 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  scope: piiHub
+  name: guid(piiHub.id, functionApp.id, eventHubsDataReceiverRoleId)
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', eventHubsDataReceiverRoleId)
+    principalId: functionApp.identity.principalId
+    principalType: 'ServicePrincipal'
+  }
+  dependsOn: [
+    eventHubsEndpoint
+  ]
+}
+
+resource systemReceivesControl 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  scope: controlHub
+  name: guid(controlHub.id, functionApp.id, eventHubsDataReceiverRoleId)
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', eventHubsDataReceiverRoleId)
+    principalId: functionApp.identity.principalId
+    principalType: 'ServicePrincipal'
+  }
+  dependsOn: [
+    eventHubsEndpoint
+  ]
+}
+
+resource systemOwnsBlobs 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  scope: storage
+  name: guid(storage.id, functionApp.id, storageBlobDataOwnerRoleId)
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', storageBlobDataOwnerRoleId)
+    principalId: functionApp.identity.principalId
+    principalType: 'ServicePrincipal'
+  }
+  dependsOn: [
+    storageEndpoints
+  ]
+}
+
+resource systemUsesQueues 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  scope: storage
+  name: guid(storage.id, functionApp.id, storageQueueDataContributorRoleId)
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', storageQueueDataContributorRoleId)
+    principalId: functionApp.identity.principalId
+    principalType: 'ServicePrincipal'
+  }
+  dependsOn: [
+    storageEndpoints
+  ]
+}
+
+resource systemUsesTables 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  scope: storage
+  name: guid(storage.id, functionApp.id, storageTableDataContributorRoleId)
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', storageTableDataContributorRoleId)
+    principalId: functionApp.identity.principalId
+    principalType: 'ServicePrincipal'
+  }
+  dependsOn: [
+    storageEndpoints
+  ]
+}
+
+resource systemPublishesTelemetry 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  scope: insights
+  name: guid(insights.id, functionApp.id, monitoringMetricsPublisherRoleId)
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', monitoringMetricsPublisherRoleId)
+    principalId: functionApp.identity.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+// After the other write to the account's roles, one at a time, like the readers below.
+resource systemWritesUsage 'Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments@2024-11-15' = {
+  parent: cosmos
+  name: guid(cosmos.id, functionApp.id, cosmosDataContributorRoleId)
+  properties: {
+    roleDefinitionId: '${cosmos.id}/sqlRoleDefinitions/${cosmosDataContributorRoleId}'
+    principalId: functionApp.identity.principalId
+    scope: cosmos.id
+  }
+  dependsOn: [
+    cosmosEndpoint
+    functionWritesUsage
+  ]
+}
+
 // No password for the deployment endpoint either: the workflow publishes with its own identity's token.
 resource noBasicAuthForDeployment 'Microsoft.Web/sites/basicPublishingCredentialsPolicies@2024-04-01' = {
   parent: functionApp
@@ -701,6 +816,8 @@ output functionAppId string = functionApp.id
 @description('Principal id of the function app\'s identity. The copy jobs read the gateway\'s Application Insights with it, which needs two roles in the gateway\'s subscription and in the subscription of its workspace (environment/BOOTSTRAP.md).')
 output usageIdentityPrincipalId string = usageIdentity.properties.principalId
 output usageIdentityClientId string = usageIdentity.properties.clientId
+@description('Principal id of the function app\'s system-assigned identity, which takes over from id-meternaut-usage: the same roles inside this group (this template) and the same two roles outside it, in the gateway\'s subscription and in the subscription of its workspace (a person gives them once, with tools/access-requirements.py: environment/BOOTSTRAP.md).')
+output usageSystemPrincipalId string = functionApp.identity.principalId
 output eventHubNamespaceName string = eventHubs.name
 output eventHubHost string = eventHubHost
 output cosmosAccountName string = cosmos.name

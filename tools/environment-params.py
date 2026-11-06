@@ -11,7 +11,7 @@ address, name or mail address is in the repository:
     ENV_DNS_SERVERS (comma separated), ENV_OWNER, ENV_BUDGET_AMOUNT, ENV_ALERT_EMAILS (comma separated),
     ENV_BUDGET_START, GATEWAY_RESOURCE_ID, GATEWAY_APPINSIGHTS_ID, GATEWAY_PRINCIPAL_ID, GATEWAY_CLIENT_ID,
     RECORDING_DEPLOYER_ID, RECORDING_READER_IDS (comma separated, may be empty), RECORDING_FRAGMENTS (true or false),
-    CASES_PRINCIPAL_ID (may be empty), ENV_FOUNDRY_PROJECT_EXISTS (true or false)
+    CASES_PRINCIPAL_ID (may be empty), CASES_SYSTEM_PRINCIPAL_ID (may be empty), ENV_FOUNDRY_PROJECT_EXISTS (true or false)
 
 ENV_BUDGET_START is the first day of the month in which the budget was first made, which the workflow reads from the
 existing budget (a budget keeps its start date) or, for a new budget, takes from the current month.
@@ -29,7 +29,11 @@ people who may read the usage store (a Cosmos DB data role; they also need a net
 CASES_PRINCIPAL_ID is the object id of the cases app's user-assigned identity (id-meternaut-cases), which the workflow reads
 from Azure: the Foundry resource of the agents gives it the Foundry User role on its project. It does not exist before the
 action `cases` has run once; without it the Foundry file holds a placeholder, says cases_principal_known=false, and the
-workflow refuses to deploy the Foundry resource. ENV_FOUNDRY_PROJECT_EXISTS is true when the workflow found the Foundry
+workflow refuses to deploy the Foundry resource. CASES_SYSTEM_PRINCIPAL_ID is the object id of the cases app's system-assigned
+identity, which takes over from the user-assigned one (the first of two steps: environment/BOOTSTRAP.md). The workflow reads it from the app, which has
+no such identity before the action `cases` has run with the template of that step. It is optional: without it the Foundry
+file holds an empty string, the template gives no role to a system-assigned identity, and cases_system_principal_known is false.
+Like the other object ids it is checked as a GUID and never printed when it is not one. ENV_FOUNDRY_PROJECT_EXISTS is true when the workflow found the Foundry
 project in Azure: only then does the cases file carry the project's endpoint (an empty endpoint switches the investigation off).
 
 It writes five ARM parameter files into --out-dir (seven, with --contract: the contract's and the first cases'; eight when the gateway identity's client id is known):
@@ -492,6 +496,9 @@ def build(env, models: list[dict], preview: bool = False, contract: dict | None 
     cases_principal = (env.get("CASES_PRINCIPAL_ID") or "").strip()
     if cases_principal and not GUID.match(cases_principal):
         raise Problem("CASES_PRINCIPAL_ID is the object id of the cases app's user-assigned identity")
+    cases_system_principal = (env.get("CASES_SYSTEM_PRINCIPAL_ID") or "").strip()
+    if cases_system_principal and not GUID.match(cases_system_principal):
+        raise Problem("CASES_SYSTEM_PRINCIPAL_ID is the object id of the cases app's system-assigned identity")
     foundry_exists = exists_flag(env, "ENV_FOUNDRY_PROJECT_EXISTS")
     raw_readers = (env.get("RECORDING_READER_IDS") or "").strip()
     readers = [r.strip() for r in raw_readers.split(",")] if raw_readers else []
@@ -635,6 +642,7 @@ def build(env, models: list[dict], preview: bool = False, contract: dict | None 
         "identity_name": IDENTITY_NAME,
         "principal_known": "true" if principal_known else "false",
         "cases_principal_known": "true" if cases_principal else "false",
+        "cases_system_principal_known": "true" if cases_system_principal else "false",
         "function_subnet_prefix": str(func_subnet),
         "web_subnet_prefix": str(web),
         "recording_endpoints": ",".join(f"{endpoint_name}:{zone}" for endpoint_name, zone in recording_endpoints(names)),
@@ -660,6 +668,7 @@ def build(env, models: list[dict], preview: bool = False, contract: dict | None 
             "guardrailName": foundry["foundry_guardrail_name"],
             "models": agent_deployed,
             "casesPrincipalId": (cases_principal or PLACEHOLDER).lower(),
+            "casesSystemPrincipalId": cases_system_principal.lower(),
             "owner": owner,
         }),
         "planted.parameters.json": parameters(planted_parameters(env, location, owner)),
