@@ -888,6 +888,7 @@ class ProbeScript(unittest.TestCase):
             bin_dir.mkdir()
             for name, body in {"az": STUB_AZ, "getent": STUB_GETENT, "curl": STUB_CURL, "timeout": STUB_TIMEOUT, "python3": STUB_PYTHON, **(stubs or {})}.items():
                 (bin_dir / name).write_text(body, encoding="utf-8", newline="\n")
+                (bin_dir / name).chmod(0o755)  # on Linux a file that is not executable is skipped in the search of the path, and the real program would answer
             volume = tmp / "op"
             volume.mkdir()
             if size is not None:
