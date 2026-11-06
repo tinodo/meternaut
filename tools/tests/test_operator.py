@@ -2283,10 +2283,184 @@ class PublishingPhaseOneRecord(unittest.TestCase):
         self.assertIn("Open the console once from the machine that is used for it", order)
         self.assertIn("Phase 2, the publish steps through the Operator while the apps are still public, is the next change", order)
         self.assertNotIn("**`operator-probe`**", order, "the probe has run: a person is not asked to run it for this change")
-        top = changelog.split("\n## ")[1]
-        self.assertTrue(top.startswith("The private endpoints of the two function apps are waited for before their code is published"), "the entry of this change is on top of the entries")
+        entries = changelog.split("\n## ")
+        self.assertTrue(entries[1].startswith("The code of both function apps is published from inside the network, in the Operator"), "the entry of phase 2 is on top of the entries")
+        self.assertTrue(entries[2].startswith("The private endpoints of the two function apps are waited for before their code is published"), "and the entry of the wait for the endpoints is the one below it")
         self.assertLess(changelog.index(heading), changelog.index("## The Event Hubs namespace is private-only on the real estate (deployed and proven)"))
         self.assertLess(changelog.index("## The Event Hubs namespace is private-only on the real estate (deployed and proven)"), changelog.index("## Publishing code to the private apps, phase 1"))
+
+
+class PublishingPhaseTwoRecord(unittest.TestCase):
+    """docs/proposals/07-private-by-default.md, environment/BOOTSTRAP.md and the changelog: phase 2 of publishing code to the private apps is written down, with what it relies on, what it does, what is
+    not verified, and the order a person runs."""
+
+    HEADING = "## Publishing code to the private apps: phase 2"
+    CHANGELOG_HEADING = "## The code of both function apps is published from inside the network, in the Operator (built, not yet run) — 2026-11-06"
+
+    def setUp(self):
+        self.page = text("docs/proposals/07-private-by-default.md")
+        self.assertIn(self.HEADING, self.page)
+        self.section = self.page.split(self.HEADING)[1].split("\n## ")[0]
+
+    def test_it_says_what_the_two_actions_do_that_the_runner_publishes_nothing_and_that_the_apps_stay_public(self):
+        for words in ("The Hub actions `recording` and `cases` publish the code of their app from inside the network: in a short-lived container group of the Operator, through the app's private endpoint, "
+                      "as the deploy identity, with the OpenID Connect token of the run", "The runner publishes nothing any more. There is one path, so that it is the one that is proven.",
+                      "The Operator's own identity still holds no right that writes", "no key, publish profile or personal access token exists",
+                      "The apps stay public in this phase (`usageAppPublicNetworkAccess` and `casesAppPublicNetworkAccess` stay `Enabled`)", "the point is to prove the private path before anything is closed. No resource of a template changed: only the comments of the two templates and the description of one parameter, which said that the runner publishes, now say how the code is published."):
+            self.assertIn(words, self.section, words)
+
+    def test_it_lists_what_the_probe_of_phase_1_proved_and_that_the_two_other_facts_are_the_waits_and_the_five_minutes(self):
+        paragraph = self.section.split("**What the probe of phase 1 proved, which this relies on**")[1].split("\n\n")[0]
+        for words in ("The image's `python3` is 3.12.15 and has no pip, and `python3 -m ensurepip` makes pip 25.0.1 in a work folder", "The deploy identity signs in with the run's token inside the container and reads the project's group",
+                      "`curl`, `getent` and `az` are in the image, and no `zip` or `unzip` is guaranteed, so Python's `zipfile` makes and opens the zip files",
+                      "The main name and the deployment name of both apps resolve to private addresses, and a `GET /` of both deployment sites answers 401 without a sign-in",
+                      "build in the image's Python 3.12 from the lock file with the pip command of the build script, without `--ignore-requires-python`",
+                      "a Flex Consumption deployment ends with a call to the app's own host name through the landing zone's DNS (the reason for the waits)",
+                      "the deploy identity's token lasts five minutes, so the container signs in first"):
+            self.assertIn(words, paragraph, words)
+
+    def test_it_says_what_the_runner_and_the_container_do_in_each_action_and_what_stays_on_the_runner(self):
+        table = self.section.split("**The steps of the two actions**")[1].split("\n\n")[1]
+        for words in ("| `recording` (usage app, Flex Consumption) |", "Packs the app's **sources**: `function_app.py`, `host.json`, the hash lock `requirements.txt` and the `usage` package, about 35 KB zipped, with no libraries, tests or caches",
+                      "makes the container group `op-publish-<run id>` with the sources, the build script and the container script in its secret volume",
+                      "runs `az functionapp deployment source config-zip --build-remote false`, three attempts a minute apart",
+                      "| `cases` (cases app, Basic plan) |", "Builds the **finished package** with its libraries (about 2 MB) and checks that it, with the container script, is within the 3,000,000 bytes that the tool takes",
+                      "posts the package to the deployment site's `api/zipdeploy` with `curl` (the bearer on standard input), five attempts a minute apart, HTTP 200 or 202 accepted"):
+            self.assertIn(words, table, words)
+        for words in ("Everything after the publish stays on the runner: the list of the functions, the health check of the cases app and the summaries.", "and the health check and the list move inside in phase 3",
+                      "so `recording` signs in once more before the list of its functions"):
+            self.assertIn(words, self.section, words)
+
+    def test_it_says_that_the_build_is_one_script_in_three_modes_with_one_pip_command_and_a_test_that_pins_it(self):
+        paragraph = self.section.split("**One build, in two places.**")[1].split("\n\n")[0]
+        for words in ("stays the one place that knows how a package is built", "`--only-binary=:all:`, `--require-hashes`, the three manylinux platform flags, `--implementation cp --python-version 3.13`",
+                      "By default it is the runner's build, with the guard that the running interpreter is Python 3.13, as before.",
+                      "`FUNCTION_APP_SOURCES_ONLY=1` copies the app's files and zips them and does nothing else", "`FUNCTION_APP_BUILD_IN_OPERATOR=1`, set only by the container script, replaces the guard by two checks "
+                      "(pip runs, and the lock carries hashes), makes the zip with Python, and fails the build when pip left a compiled module for another Python than 3.13",
+                      "The two switches cannot be set together, and any value but `1` is refused.", "pins that the pip words are identical and that the two zips hold the same files"):
+            self.assertIn(words, paragraph, words)
+
+    def test_it_says_what_the_container_script_checks_in_which_order_and_what_its_exit_codes_mean(self):
+        paragraph = self.section.split("**The container script.**")[1].split("\n\n")[0]
+        for words in ("takes everything from its environment, checks it before anything runs (nothing is evaluated and no value is printed back)", "ends with `publish-done: exit code N`",
+                      "The container stays 20 seconds after the work",                       "the deploy identity signs in, which is the first `az` call (three tries)", "for the usage app a token for the App Service resource is fetched at once, while the sign-in's assertion, "
+                      "which lives five minutes, is fresh, because Flex Consumption's `config-zip` asks Microsoft Entra for one (read in the Azure CLI's development source, not in 2.92.0, and not run; a failure is said and does not stop the run)",
+                      "**both names of the app must resolve to a private address** (three tries each)",
+                      "a public path would prove nothing", "A string that looks like a token is hidden in anything a command said", "the work folder, with the state of the Azure CLI, is deleted at the end",
+                      "The exit code is 0 when the code was published, 1 when the publish failed after its attempts, 2 when the input was refused and nothing was run, and 3 when the container could not do it"):
+            self.assertIn(words, paragraph, words)
+        self.assertLess(paragraph.index("the size of the file in the volume is compared"), paragraph.index("the deploy identity signs in"))
+        self.assertLess(paragraph.index("the deploy identity signs in"), paragraph.index("a token for the App Service resource is fetched at once"))
+        self.assertLess(paragraph.index("a token for the App Service resource is fetched at once"), paragraph.index("both names of the app must resolve"))
+
+    def test_it_says_how_long_the_groups_are_given_and_why_and_what_the_first_run_on_an_estate_needs(self):
+        time = self.section.split("**The time.**")[1].split("\n\n")[0]
+        for words in ("The usage group is given 2,400 seconds and its step 45 minutes; the cases group 1,200 seconds and its step 25.", "A good run takes minutes", "The limits are for a run that is stuck.",
+                      "a step of its own deletes any `op-publish-` group that a cancelled step left", "the step's limit is five minutes behind the group's",
+                      "If every command used its whole limit, the attempts would take longer than the group is given; that is intended", "cut by the job's own limit of 150 minutes, and running the action again is safe"):
+            self.assertIn(words, time, words)
+        first = self.section.split("**The first run on an estate.**")[1].split("\n\n")[0]
+        for words in ("Both actions need the Operator, which `operator` makes, and `operator` needs the control hubs that `recording` and `cases` make.",
+                      "`recording` and `cases` deploy and then stop at the publish with a plain message that says to run `operator` first (the step changes nothing)",
+                      "the order is `recording`, `cases`, `operator`, and then `recording` and `cases` again, the second round publishing. The Hub summaries say so."):
+            self.assertIn(words, first, words)
+
+    def test_it_says_what_is_not_verified_and_that_nothing_has_run_in_azure(self):
+        part = self.section.split("**What is not verified.**")[1].split("**What a person runs, in order.**")[0]
+        for words in ("Nothing of this phase has run in Azure.", "The first run, end to end: that the container reaches each deployment site through the private endpoint with the token of the deploy identity",
+                      "The probe of phase 1 sent only a `GET` without a sign-in.", "Flex Consumption's `config-zip` from the container against the runner's.",
+                      "The image's Azure CLI is 2.92.0 as the session that ran the Hub reported it, the runner's can differ, and nothing here compared the two. The container's first lines print its CLI version",
+                      "That `config-zip` asks for a token for the App Service resource, which is why the container fetches one early, was read in the CLI's development source by a reviewer and not in 2.92.0.",
+                      "The size of the request. The cases package of about 2 MB travels in the container group's request as a secret volume, about 2.7 MB after base64.",
+                      "The largest request that is known to work is the probe's file of 400,000 bytes, and Learn names no limit for a secret volume or for the request",
+                      "If Azure refuses it, the way out is the one that the step's error names: build the cases app in the container from its sources, as the usage app is (the switch for it exists).",
+                      "How long it takes, and whether a deployment through the private endpoint is slower than one from the runner.",
+                      "the zips of two builds differ in file times, so the test compares the members and the pip words, not the bytes"):
+            self.assertIn(words, part, words)
+
+    def test_it_says_the_order_a_person_runs_for_the_real_estate_and_for_a_new_one_and_the_cost(self):
+        order = self.section.split("**What a person runs, in order.**")[1].split("\n\n**Cost.**")[0]
+        for words in ("On the real estate, where the Operator exists and the apps are public:", "1. `recording`, and then `cases`. Each publishes from inside the network.",
+                      "2. Read the list of the functions in each summary and the health answer of the cases app (both are still made from the runner), and open the console once.",
+                      "On a new estate: `recording`, `cases`, `operator`, and then `recording` and `cases` again. Phase 3 follows when both have passed."):
+            self.assertIn(words, order, words)
+        self.assertLess(order.index("1. `recording`"), order.index("2. Read the list"))
+        self.assertIn("**Cost.** One container group per publish, for a few minutes, at the rate of [what it costs](#what-it-costs): at its limit about 3.6 US cents for the usage group and 1.8 for the cases group, "
+                      "and a normal run is a tenth of that. Nothing standing is added.", self.section)
+        self.assertLess(self.section.index("**What is not verified.**"), self.section.index("**What a person runs, in order.**"))
+        self.assertNotRegex(self.section, r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}", "no id of the tenant, the subscription or an object")
+        self.assertNotIn("func-meternaut-", self.section, "no name of a real app")
+
+    def test_the_status_the_table_of_the_phases_the_order_of_the_work_and_the_not_checked_say_the_same(self):
+        status = self.page.split("\n")[2]
+        self.assertIn("The two actions that deploy the apps, `recording` and `cases`, now publish the code from inside the network, in the Operator, as the deploy identity "
+                      "([phase 2](#publishing-code-to-the-private-apps-phase-2): built, not run yet; the apps stay public).", status)
+        phase_1 = self.page.split("## Publishing code to the private apps: phase 1")[1].split("\n## ")[0]
+        self.assertIn("so that the path through the private endpoint is proved with nothing to lose | built on 2026-11-06, not run yet ([phase 2](#publishing-code-to-the-private-apps-phase-2)) |", phase_1)
+        self.assertNotIn("proved with nothing to lose | later |", self.page)
+        order = self.page.split("## The order of the work")[1].split("\n## ")[0]
+        self.assertIn("the publish steps through the Operator, still with the apps public (built on 2026-11-06, not run yet: [phase 2](#publishing-code-to-the-private-apps-phase-2)); and then `Disabled` for each app", order)
+        not_checked = self.page.split("## Not checked")[1].split("\n## ")[0]
+        self.assertIn("Phase 2 of publishing code ([above](#publishing-code-to-the-private-apps-phase-2)): built and tested against stand-ins; it has not run in Azure. Open: the first run through the private endpoints, "
+                      "Flex Consumption's `config-zip` from the image's Azure CLI against the runner's, the size of a request that carries a secret volume of about 2 MB, how long the publish takes", not_checked)
+        self.assertIn("(the package route: phase 2 of it is built and has not run, see [the section](#publishing-code-to-the-private-apps-phase-2))", self.page)
+        self.assertIn("Read again on 2026-11-06 for phase 2 of publishing code:", self.page.split("## Sources")[1])
+        self.assertLess(self.page.index(self.HEADING), self.page.index("## Reading telemetry when the component is private"))
+        self.assertLess(self.page.index("## Publishing code to the private apps: phase 1"), self.page.index(self.HEADING))
+
+    def test_the_bootstrap_page_says_that_no_hand_step_is_needed_and_the_order_on_a_new_estate(self):
+        page = text("environment/BOOTSTRAP.md")
+        heading = "## Changed on 2026-11-06: publishing code from inside the network, phase 2"
+        self.assertIn(heading, page)
+        paragraph = page.split(heading)[1].split("\n## ")[0]
+        for words in ("**No hand step is needed.**", "[The decision record](../docs/proposals/07-private-by-default.md#publishing-code-to-the-private-apps-phase-2)",
+                      "the actions `recording` and `cases` now publish the code of their function app from inside the network, in a short-lived container group of the Operator, through the app's private endpoint",
+                      "The runner publishes nothing any more, and the apps stay public in this phase.", "audience `api://AzureADTokenExchange`", "the workflow's `id-token: write` permission is all it needs",
+                      "Nothing is added to the deploy identity or to the Operator's identity, and no credential changes", "the probe of phase 1 showed that the federated credential `github-main`",
+                      "a person decides, on the owner's word", "nothing is guessed here", "**The order changes on an estate that has no Operator.**",
+                      "the order is `recording`, `cases`, `operator`, and then `recording` and `cases` again: the second round publishes.",
+                      "On the estate that has the Operator, run `recording` and then `cases`, read the list of the functions and the health answer in their summaries, and open the console once.", "**Going back**"):
+            self.assertIn(words, paragraph, words)
+        after = page.split("\n## After it")[1].split("\n## ")[0]
+        self.assertIn("Since phase 2, `recording` and `cases` publish their code in the Operator, as the deploy identity, so they come after `operator` on an estate that has none: they deploy and stop at the publish, "
+                      "and the order is `recording`, `cases`, `operator`, and then `recording` and `cases` again", after)
+        self.assertLess(after.index("Since phase 1 of publishing code"), after.index("Since phase 2, `recording` and `cases` publish"))
+        self.assertLess(after.index("Since phase 2, `recording` and `cases` publish"), after.index("One yes to the whole list"))
+        self.assertLess(page.index("## Changed on 2026-11-06: publishing code from inside the network, phase 1"), page.index(heading))
+        self.assertLess(page.index(heading), page.index("\n## After it"))
+        self.assertNotRegex(paragraph, r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}", "no id of the tenant, the subscription or an object")
+
+    def test_the_changelog_says_what_the_owner_said_what_changed_what_was_checked_what_was_not_and_what_a_person_runs_in_order(self):
+        changelog = text("CHANGELOG.md")
+        self.assertIn(self.CHANGELOG_HEADING, changelog)
+        entry = changelog.split(self.CHANGELOG_HEADING)[1].split("\n## ")[0]
+        for words in ("**What the owner said.**", "no resource of the project has a public endpoint (private endpoints only), and no key exists anywhere", "the apps stay public",
+                      "the publish steps of the runner are replaced, so that one path exists and it is the one that is proven",
+                      "**What changed.**", "[`operator/publish.sh`](operator/publish.sh), new", "It signs in first, as the deploy identity, with the run's token (the first `az` call, three tries).",
+                      "For the usage app it then fetches a token for the App Service resource at once, while the sign-in's assertion, which lives five minutes, is fresh",
+                      "It then requires both names of the app to resolve to private addresses", "makes pip with `ensurepip` in a work folder (the image has none)",
+                      "`az functionapp deployment source config-zip --build-remote false`, three attempts a minute apart", "five attempts, 200 or 202 accepted",
+                      "One build script, three modes", "`FUNCTION_APP_SOURCES_ONLY=1` zips the app's files without libraries", "`FUNCTION_APP_BUILD_IN_OPERATOR=1`, set only by the container script",
+                      "\"Pack the usage app's sources for the Operator\" replaces the build", "\"Publish the usage functions to the function app from inside the network, in the Operator\" replaces the publish",
+                      "the build step now also checks that the package and the container script are within the 3,000,000 bytes that the tool takes",
+                      "masked at once, kept in a shell variable, given to the tool only as `--secure-env AZURE_FEDERATED_TOKEN`, never in `--env`, a file or the summary; without a token the step fails with the reason and publishes nothing",
+                      "The usage group is given 2,400 seconds (step limit 45 minutes) and the cases group 1,200 (25)", "A step after each deletes any `op-publish-` group that is left, and always runs.",
+                      "`recording` signs in once more before the list of its functions", "The order is `recording`, `cases`, `operator`, and then `recording` and `cases` again; the second round publishes.",
+                      "**What was checked.**", "No resource of a template changed; the Bicep build and lint of the two templates, whose comments and one description were brought up to date, are clean", "14 files, about 35 KB",
+                      "**Not checked, and why it matters.**", "Nothing ran in Azure, so the first run decides.", "whether Flex Consumption's `config-zip` behaves from the image's Azure CLI (2.92.0 as the session that ran the Hub reported it) as it does from the runner's",
+                      "about 2.7 MB after base64", "the largest one that is known to work is the probe's 400,000 bytes and Learn names no limit", "build the cases app in the container from its sources, as the usage app is, which is one switch",
+                      "The script was run with Git's bash 5, not the image's", "**What a person has to do, in order.**", "No hand step."):
+            self.assertIn(words, entry, words)
+        self.assertNotIn("@@", entry, "no placeholder is left")
+        self.assertNotRegex(entry, r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}", "no id of the tenant, the subscription or an object")
+        order = entry.split("**What a person has to do, in order.**")[1]
+        self.assertLess(order.index("**`recording`**"), order.index("**`cases`**"))
+        self.assertIn("open the console once", order)
+        self.assertIn("on a new estate the order is `recording`, `cases`, `operator`, and then `recording` and `cases` again", order)
+        self.assertIn("Phase 3, which makes the apps private and moves the health check and the list of the functions inside, follows when both have passed.", order)
+        self.assertLess(entry.index("**What changed.**"), entry.index("**What was checked.**"))
+        self.assertLess(entry.index("**What was checked.**"), entry.index("**Not checked, and why it matters.**"))
+        self.assertLess(entry.index("**Not checked, and why it matters.**"), entry.index("**What a person has to do, in order.**"))
 
 
 class BootstrapOperatorSection(unittest.TestCase):
