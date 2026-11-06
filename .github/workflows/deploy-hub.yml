@@ -11,7 +11,7 @@ on:
   workflow_dispatch:
     inputs:
       action:
-        description: "what-if: show what the next steps would change and change nothing. model-side: the gateway's identity, then the network, the model account with its private endpoint and the budget. gateway-prepare: attach the identity to the gateway and add the Application Insights logger, and the two Event Hub loggers when the usage recording's namespace exists. gateway: add the Citadel module's objects to the gateway (with the two fragments that use the Event Hub loggers when both loggers exist, without them otherwise). contract: add the first contract (a product, its policy and its key) and test the gateway with that key. recording: the usage recording of the gateway's calls, which is a Log Analytics workspace, an Event Hubs namespace, a Cosmos DB account, a storage account and a function app with its own system-assigned identity, with private endpoints and without any key; it first removes the key-based Logic App version of it, when that is still there. recording-check: start the copy jobs once through the control hub and read what they say from the function app's telemetry. cases: the first cases, which is a second function app on the usage recording's network, storage and namespace, with its own system-assigned identity and one user-assigned identity for the console's sign-in, a control hub, a longer retention of the traces and the History workbook; its Watch changes no resource of the estate (with the investigation on it also creates agents and conversations in its own Foundry project), and it needs the usage recording and the contract first.         cases-run: start one Watch through the control hub and read its History from the telemetry. plant: make waste of Meternaut's own (an unattached disk, and with plant_public_ip an unassigned public IP address) in the project's resource group,         tagged for the loop, so that the whole loop can be shown on something that belongs to nobody else. loop-check: knock at the console's front door without a sign-in and pass only when nobody gets a page. foundry: the Foundry resource of the agents (the model account cannot hold projects, so this is a second resource): a project, the same models, a guardrail, one private endpoint and the connection that sends the agents' traces, with no key; it needs recording and cases to have run once, and it is run before the next cases, which is then given the project's address. operator: the Operator, the executor that works inside the virtual network for what the workflow cannot do from outside it once the services are private (docs/proposals/07-private-by-default.md): its identity, the subnet of its container groups and one role (Reader on the project's group); it waits until the landing zone has put its route table on that subnet, and it starts nothing, so nothing is paid until a run uses it. operator-probe: run operator/probe.sh once in a short-lived container group of the Operator and print what it finds (does the identity sign in, do the names of private endpoints resolve to private addresses, which addresses can a group reach, and how does a package get in); the group is deleted at the end whatever happens, and it costs cents. It needs operator first."
+        description: "what-if: show what the next steps would change and change nothing. model-side: the gateway's identity, then the network, the model account with its private endpoint and the budget. gateway-prepare: attach the identity to the gateway and add the Application Insights logger, and the two Event Hub loggers when the usage recording's namespace exists. gateway: add the Citadel module's objects to the gateway (with the two fragments that use the Event Hub loggers when both loggers exist, without them otherwise). contract: add the first contract (a product, its policy and its key) and test the gateway with that key. recording: the usage recording of the gateway's calls, which is a Log Analytics workspace, an Event Hubs namespace, a Cosmos DB account, a storage account and a function app with its own system-assigned identity, with private endpoints and without any key; it first removes the key-based Logic App version of it, when that is still there. recording-check: start the copy jobs once through the control hub and read what they say from the function app's telemetry, both by the Operator from inside the network (the check tool runs in a short-lived container group of the Operator): it needs operator first. cases: the first cases, which is a second function app on the usage recording's network, storage and namespace, with its own system-assigned identity and one user-assigned identity for the console's sign-in, a control hub, a longer retention of the traces and the History workbook; its Watch changes no resource of the estate (with the investigation on it also creates agents and conversations in its own Foundry project), and it needs the usage recording and the contract first.         cases-run: start one Watch through the control hub and read its History from the telemetry, both by the Operator from inside the network: it needs operator first. plant: make waste of Meternaut's own (an unattached disk, and with plant_public_ip an unassigned public IP address) in the project's resource group,         tagged for the loop, so that the whole loop can be shown on something that belongs to nobody else. loop-check: knock at the console's front door without a sign-in and pass only when nobody gets a page. foundry: the Foundry resource of the agents (the model account cannot hold projects, so this is a second resource): a project, the same models, a guardrail, one private endpoint and the connection that sends the agents' traces, with no key; it needs recording and cases to have run once, and it is run before the next cases, which is then given the project's address. operator: the Operator, the executor that works inside the virtual network for what the workflow cannot do from outside it once the services are private (docs/proposals/07-private-by-default.md): its identity, the subnet of its container groups and three roles (Reader on the project's group, and Azure Event Hubs Data Sender on the two control hubs, which the actions recording and cases make, so it runs after them); it waits until the landing zone has put its route table on that subnet, and it starts nothing, so nothing is paid until a run uses it. operator-probe: run operator/probe.sh once in a short-lived container group of the Operator and print what it finds (does the identity sign in, do the names of private endpoints resolve to private addresses, which addresses can a group reach, and how does a package get in); the group is deleted at the end whatever happens, and it costs cents. It needs operator first."
         type: choice
         required: true
         default: what-if
@@ -78,6 +78,9 @@ jobs:
       MAIL_SENDER: ${{ vars.MAIL_SENDER }}
       PLANTED_ID: r${{ github.run_number }}
       PLANT_PUBLIC_IP: ${{ inputs.plant_public_ip }}
+      # The linux/amd64 manifest of mcr.microsoft.com/azure-cli 2.92.0, read from the registry on 2026-11-06: docs/proposals/07-private-by-default.md says how to read it again. Every step that runs
+      # something in the Operator (the probe, and the checks of the usage recording and of the first cases) uses this one pin, which only a person changes, on purpose.
+      OPERATOR_IMAGE: mcr.microsoft.com/azure-cli@sha256:67afdcb4f3efce0b33aadba0b8a72402b6f071741400fd75cc5cb8a1d7bf1d98
     steps:
       - name: Check out the repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -293,6 +296,7 @@ jobs:
           STORAGE_ACCOUNT: ${{ steps.params.outputs.storage_account_name }}
           INSIGHTS_NAME: ${{ steps.params.outputs.appinsights_name }}
           NETWORK_EXISTS: ${{ steps.network.outputs.network_exists }}
+          EVENT_HUB_NAMESPACE: ${{ steps.params.outputs.event_hub_namespace }}
         run: |
           echo "::group::The gateway identity, in the gateway's resource group"
           python3 tools/az-deploy.py what-if --subscription "$GATEWAY_SUBSCRIPTION" --resource-group "$GATEWAY_GROUP" \
@@ -332,12 +336,16 @@ jobs:
               --template environment/cases/main.bicep --parameters "$RUNNER_TEMP/cases.parameters.json"
           fi
           echo "::endgroup::"
-          echo "::group::The Operator, in the project's resource group (its identity, the subnet of its container groups and one role)"
-          if [ "$NETWORK_EXISTS" = true ]; then
+          echo "::group::The Operator, in the project's resource group (its identity, the subnet of its container groups and its three roles)"
+          # Its two roles of Azure Event Hubs Data Sender go on the control hubs, which the actions recording and cases make: a template that reads a hub that is not there cannot be previewed.
+          hubs=$(az rest --method get --url "https://management.azure.com/subscriptions/$ENV_SUBSCRIPTION_ID/resourceGroups/$ENV_RESOURCE_GROUP/providers/Microsoft.EventHub/namespaces/$EVENT_HUB_NAMESPACE/eventhubs?api-version=2024-01-01" --query "value[].name" --output tsv 2> /dev/null || true)
+          if [ "$NETWORK_EXISTS" != true ]; then
+            echo "The Operator cannot be previewed yet: its subnet goes into the virtual network, and the action model-side makes the network."
+          elif ! grep -Fxq usage-control <<< "$hubs" || ! grep -Fxq cases-control <<< "$hubs"; then
+            echo "The Operator cannot be previewed yet: its roles go on the control hubs usage-control and cases-control, which the actions recording and cases make, and they are not both there (or could not be read)."
+          else
             python3 tools/az-deploy.py what-if --subscription "$ENV_SUBSCRIPTION_ID" --resource-group "$ENV_RESOURCE_GROUP" \
               --template environment/operator/main.bicep --parameters "$RUNNER_TEMP/operator.parameters.json"
-          else
-            echo "The Operator cannot be previewed yet: its subnet goes into the virtual network, and the action model-side makes the network."
           fi
           echo "::endgroup::"
 
@@ -705,19 +713,75 @@ jobs:
         if: inputs.action == 'recording'
         run: az resource list --resource-group "$ENV_RESOURCE_GROUP" --query "sort_by([].{name:name, type:type}, &type)" --output table
 
-      - name: Start the copy jobs once and read what they say
+      - name: Find the Operator, which runs the check from inside the network
+        id: operator
+        if: inputs.action == 'recording-check' || inputs.action == 'cases-run'
+        run: |
+          # The control event that starts a copy job or a Watch is sent, and the telemetry that says how it went is read, by the check tool running inside the network, in a container group of the Operator
+          # (docs/proposals/07-private-by-default.md): the Event Hubs namespace is to have no public endpoint, and a request from this runner could not reach it. So the Operator has to be there first.
+          # It is found by its name, as the probe finds it, and nothing is changed here.
+          subnet_id="/subscriptions/$ENV_SUBSCRIPTION_ID/resourceGroups/$ENV_RESOURCE_GROUP/providers/Microsoft.Network/virtualNetworks/vnet-meternaut/subnets/snet-ops"
+          identity_id=$(az resource list --resource-group "$ENV_RESOURCE_GROUP" --name id-meternaut-operator --query "[0].id" --output tsv || true)
+          client=""
+          if grep -Eq '^/subscriptions/' <<< "$identity_id"; then
+            client=$(az rest --method get --url "https://management.azure.com${identity_id}?api-version=2023-01-31" --query properties.clientId --output tsv || true)
+          fi
+          if ! grep -Eq '^[0-9a-fA-F-]{36}$' <<< "$client"; then
+            echo "::error::The identity id-meternaut-operator is not there. The action $ACTION runs its check in the Operator, so run operator first (the order is recording, cases, operator). Nothing was changed."
+            exit 1
+          fi
+          if found=$(az rest --method get --url "https://management.azure.com${subnet_id}?api-version=2025-05-01" --query name --output tsv 2>&1); then
+            :
+          elif grep -Eqi 'NotFound|\b404\b' <<< "$found"; then
+            echo "::error::The subnet snet-ops is not there. The action $ACTION runs its check in the Operator, so run operator first (the order is recording, cases, operator). Nothing was changed."
+            exit 1
+          else
+            echo "::error::The subnet snet-ops could not be read: $found"
+            exit 1
+          fi
+          echo "The Operator's identity and its subnet are there."
+          {
+            echo "identity_id=$identity_id"
+            echo "client_id=$client"
+            echo "subnet_id=$subnet_id"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Before the copy jobs are started, the function app lists its six functions
         if: inputs.action == 'recording-check'
         env:
           SITE_NAME: ${{ steps.params.outputs.function_app_name }}
+        run: |
+          # The list of the functions is a read through Azure Resource Manager, so it is made from here. It comes first: a container group of the Operator is made only for an app that is ready.
+          site="/subscriptions/$ENV_SUBSCRIPTION_ID/resourceGroups/$ENV_RESOURCE_GROUP/providers/Microsoft.Web/sites/$SITE_NAME"
+          python3 tools/recording-check.py functions --site "$site" --minutes 5
+
+      - name: Start the copy jobs once and read what they say
+        id: copy_jobs
+        if: inputs.action == 'recording-check'
+        # The check waits up to 20 minutes for the telemetry, and the container group is given 25 (1500 seconds); the tool deletes the group at the end of every run, and the limit of the step is a second line behind that.
+        timeout-minutes: 35
+        env:
           EVENT_HUB_NAMESPACE: ${{ steps.params.outputs.event_hub_namespace }}
           INSIGHTS_NAME: ${{ steps.params.outputs.appinsights_name }}
+          OPERATOR_IDENTITY_ID: ${{ steps.operator.outputs.identity_id }}
+          OPERATOR_CLIENT_ID: ${{ steps.operator.outputs.client_id }}
+          OPERATOR_SUBNET_ID: ${{ steps.operator.outputs.subnet_id }}
         run: |
-          # One event to the control hub starts the three copy jobs now. They write what they did to the function app's telemetry, which is
-          # read here (the usage store has no public endpoint, so the jobs count their own documents after they wrote them).
-          site="/subscriptions/$ENV_SUBSCRIPTION_ID/resourceGroups/$ENV_RESOURCE_GROUP/providers/Microsoft.Web/sites/$SITE_NAME"
+          # One event to the control hub starts the three copy jobs now. They write what they did to the function app's telemetry, which is read by the same tool (the usage store has no public endpoint, so the jobs
+          # count their own documents after they wrote them). tools/recording-check.py runs inside the network, in a container group of the Operator, as it ran on this runner before, with the same arguments: the
+          # container gets the tool in its secret volume, signs in with the Operator's own identity (no key: it holds Azure Event Hubs Data Sender on the control hub and Reader on the group), and operator/run-tool.sh
+          # runs the tool and gives its exit code. The container is told that it is in a GitHub Actions run, which it is: only a run of this workflow makes a group of the Operator (tools/operator-run.py refuses
+          # anywhere else), and the tool refuses to start a job anywhere else (AGENTS.md rule 18).
           insights="/subscriptions/$ENV_SUBSCRIPTION_ID/resourceGroups/$ENV_RESOURCE_GROUP/providers/Microsoft.Insights/components/$INSIGHTS_NAME"
-          python3 tools/recording-check.py functions --site "$site" --minutes 5
-          python3 tools/recording-check.py run --namespace "$EVENT_HUB_NAMESPACE" --insights "$insights" --job all --minutes 20 --summary "$GITHUB_STEP_SUMMARY"
+          # A container group does not take the DNS servers of the virtual network, so it is given the landing zone's.
+          dns=()
+          for server in ${ENV_DNS_SERVERS//,/ }; do dns+=(--dns-server "$server"); done
+          python3 tools/operator-run.py run --resource-group "$ENV_RESOURCE_GROUP" --name "op-check-$GITHUB_RUN_ID" \
+            --subnet-id "$OPERATOR_SUBNET_ID" --identity-id "$OPERATOR_IDENTITY_ID" --image "$OPERATOR_IMAGE" --script operator/run-tool.sh \
+            --secret-file "recording-check.py=tools/recording-check.py" \
+            --env "GITHUB_ACTIONS=true" --env "OPERATOR_CLIENT_ID=$OPERATOR_CLIENT_ID" --env "OPERATOR_SUBSCRIPTION=$ENV_SUBSCRIPTION_ID" \
+            --env "TOOL_NAME=recording-check" --env "TOOL_ARGS=run --namespace $EVENT_HUB_NAMESPACE --insights $insights --job all --minutes 20" \
+            "${dns[@]}" --timeout-seconds 1500 --summary "$GITHUB_STEP_SUMMARY"
 
       - name: The usage recording and the cases app's identity are there, which the Foundry resource builds on
         if: inputs.action == 'foundry'
@@ -1097,21 +1161,53 @@ jobs:
           az rest --method delete --url "https://management.azure.com${identity}?api-version=2023-01-31" --only-show-errors
           echo "The identity id-meternaut-runner is removed."
 
-      - name: Start one Watch and read its History
+      - name: Before the Watch is started, the cases app lists its four functions
         if: inputs.action == 'cases-run'
         env:
           SITE_NAME: ${{ steps.params.outputs.cases_function_app_name }}
+        run: |
+          # The list of the functions is a read through Azure Resource Manager, so it is made from here. It comes first: a container group of the Operator is made only for an app that is ready.
+          site="/subscriptions/$ENV_SUBSCRIPTION_ID/resourceGroups/$ENV_RESOURCE_GROUP/providers/Microsoft.Web/sites/$SITE_NAME"
+          python3 tools/cases-check.py functions --site "$site" --minutes 5
+
+      - name: Start one Watch and read its History
+        id: watch
+        if: inputs.action == 'cases-run'
+        # The check waits up to 30 minutes for the end of the Watch, and the container group is given 40 (2400 seconds); the tool deletes the group at the end of every run, and the limit of the step is a second line behind that.
+        timeout-minutes: 50
+        env:
           EVENT_HUB_NAMESPACE: ${{ steps.params.outputs.event_hub_namespace }}
           INSIGHTS_NAME: ${{ steps.params.outputs.appinsights_name }}
+          OPERATOR_IDENTITY_ID: ${{ steps.operator.outputs.identity_id }}
+          OPERATOR_CLIENT_ID: ${{ steps.operator.outputs.client_id }}
+          OPERATOR_SUBNET_ID: ${{ steps.operator.outputs.subnet_id }}
         run: |
-          # One event to the control hub starts one Watch now. The app writes the History of the run to its telemetry, which is read here.
+          # One event to the control hub starts one Watch now. The app writes the History of the run to its telemetry, which is read by the same tool.
           # The Watch changes no resource of the estate: it reads Azure and calls the models through the gateway. With the investigation on (the cases app has the address of the Foundry
           # project, which the action cases passes on once the action foundry has made the project) it also creates its agents and conversations in its own Foundry project, and
           # those agents call the models of that resource directly, not through the gateway (the exception to AGENTS.md rule 15 (c)).
-          site="/subscriptions/$ENV_SUBSCRIPTION_ID/resourceGroups/$ENV_RESOURCE_GROUP/providers/Microsoft.Web/sites/$SITE_NAME"
+          # tools/cases-check.py runs inside the network, in a container group of the Operator, as it ran on this runner before, with the same arguments. It loads tools/recording-check.py from its own folder, so
+          # both files go into the container's secret volume. The container signs in with the Operator's own identity (no key: it holds Azure Event Hubs Data Sender on the control hub and Reader on the group),
+          # operator/run-tool.sh runs the tool and gives its exit code, and the container is told that it is in a GitHub Actions run, which it is (tools/operator-run.py refuses anywhere else; AGENTS.md rule 18).
           insights="/subscriptions/$ENV_SUBSCRIPTION_ID/resourceGroups/$ENV_RESOURCE_GROUP/providers/Microsoft.Insights/components/$INSIGHTS_NAME"
-          python3 tools/cases-check.py functions --site "$site" --minutes 5
-          python3 tools/cases-check.py run --namespace "$EVENT_HUB_NAMESPACE" --insights "$insights" --minutes 30 --summary "$GITHUB_STEP_SUMMARY"
+          # A container group does not take the DNS servers of the virtual network, so it is given the landing zone's.
+          dns=()
+          for server in ${ENV_DNS_SERVERS//,/ }; do dns+=(--dns-server "$server"); done
+          python3 tools/operator-run.py run --resource-group "$ENV_RESOURCE_GROUP" --name "op-check-$GITHUB_RUN_ID" \
+            --subnet-id "$OPERATOR_SUBNET_ID" --identity-id "$OPERATOR_IDENTITY_ID" --image "$OPERATOR_IMAGE" --script operator/run-tool.sh \
+            --secret-file "cases-check.py=tools/cases-check.py" --secret-file "recording-check.py=tools/recording-check.py" \
+            --env "GITHUB_ACTIONS=true" --env "OPERATOR_CLIENT_ID=$OPERATOR_CLIENT_ID" --env "OPERATOR_SUBSCRIPTION=$ENV_SUBSCRIPTION_ID" \
+            --env "TOOL_NAME=cases-check" --env "TOOL_ARGS=run --namespace $EVENT_HUB_NAMESPACE --insights $insights --minutes 30" \
+            "${dns[@]}" --timeout-seconds 2400 --summary "$GITHUB_STEP_SUMMARY"
+
+      - name: Delete any container group of the checks that is left
+        if: always() && (steps.copy_jobs.outcome != 'skipped' || steps.watch.outcome != 'skipped')
+        run: |
+          # The tool deletes its group at the end of every run. A step that was cancelled or killed cannot do that, so this is the second line, and it runs whenever one of the two check steps started: every group
+          # that starts with op-check- and carries the tool's tag is deleted. Runs of this workflow never overlap (the concurrency group), so none of them is a group in use, and a group that an earlier
+          # run left is taken too. Nothing else is touched.
+          python3 tools/operator-run.py cleanup --resource-group "$ENV_RESOURCE_GROUP" --prefix op-check- --older-than-minutes 0 \
+            || echo "::warning::A container group whose name starts with op-check- may be left in resource group $ENV_RESOURCE_GROUP. A person deletes it; it costs cents an hour."
 
       - name: Plant the waste
         id: plant
@@ -1165,11 +1261,43 @@ jobs:
           echo "::error::The console's front door is not shut as it should be."
           exit 1
 
+      - name: The control hubs that the Operator is given a role on are there
+        if: inputs.action == 'operator'
+        env:
+          EVENT_HUB_NAMESPACE: ${{ steps.params.outputs.event_hub_namespace }}
+        run: |
+          # The Operator sends the control event that starts a copy job or a Watch, so it is given Azure Event Hubs Data Sender on the two control hubs, usage-control (made by the action recording)
+          # and cases-control (made by the action cases). The template only reads them, so they have to be there: the order is recording, cases, operator. This step only reads, and stops before anything is changed.
+          url="https://management.azure.com/subscriptions/$ENV_SUBSCRIPTION_ID/resourceGroups/$ENV_RESOURCE_GROUP/providers/Microsoft.EventHub/namespaces/$EVENT_HUB_NAMESPACE/eventhubs?api-version=2024-01-01"
+          if hubs=$(az rest --method get --url "$url" --query "value[].name" --output tsv 2>&1); then
+            :
+          elif grep -Eqi 'NotFound|\b404\b' <<< "$hubs"; then
+            hubs=""
+          else
+            echo "::error::The event hubs of the namespace could not be read: $hubs"
+            exit 1
+          fi
+          missing=""
+          if ! grep -Fxq usage-control <<< "$hubs"; then
+            echo "::error::The control hub usage-control is not there. Run recording first: it makes the namespace and the hub."
+            missing="$missing usage-control"
+          fi
+          if ! grep -Fxq cases-control <<< "$hubs"; then
+            echo "::error::The control hub cases-control is not there. Run cases first (after recording): it makes the hub."
+            missing="$missing cases-control"
+          fi
+          if [ -n "$missing" ]; then
+            echo "::error::The Operator is given a role on each control hub, so the actions recording and cases run before operator. Nothing was changed."
+            exit 1
+          fi
+          echo "Both control hubs are there."
+
       - name: Deploy the Operator, its identity and the subnet of its container groups
         if: inputs.action == 'operator'
         run: |
           # The identity id-meternaut-operator, the subnet snet-ops (delegated to container groups, with a network security group of its own, and made only while it is not there:
-          # AGENTS.md rule 27) and one role, Reader on the project's resource group (environment/operator/main.bicep). No key anywhere. Nothing runs between two runs of the Operator.
+          # AGENTS.md rule 27) and three roles (environment/operator/main.bicep): Reader on the project's resource group, and Azure Event Hubs Data Sender on the control hubs usage-control and
+          # cases-control, one role on each hub. No key anywhere. Nothing runs between two runs of the Operator.
           client=$(python3 tools/az-deploy.py create --subscription "$ENV_SUBSCRIPTION_ID" --resource-group "$ENV_RESOURCE_GROUP" \
             --template environment/operator/main.bicep --parameters "$RUNNER_TEMP/operator.parameters.json" \
             --name "operator-$GITHUB_RUN_ID" --output identityClientId)
@@ -1233,8 +1361,6 @@ jobs:
         # The tool deletes its container group at the end of every run, and a stuck container is given up after 15 minutes: the limit is a second line behind that.
         timeout-minutes: 25
         env:
-          # The linux/amd64 manifest of mcr.microsoft.com/azure-cli 2.92.0, read from the registry on 2026-11-06: docs/proposals/07-private-by-default.md says how to read it again.
-          OPERATOR_IMAGE: mcr.microsoft.com/azure-cli@sha256:67afdcb4f3efce0b33aadba0b8a72402b6f071741400fd75cc5cb8a1d7bf1d98
           EVENT_HUB_NAMESPACE: ${{ steps.params.outputs.event_hub_namespace }}
           STORAGE_ACCOUNT: ${{ steps.params.outputs.storage_account_name }}
           COSMOS_ACCOUNT: ${{ steps.params.outputs.cosmos_account_name }}
@@ -1308,13 +1434,13 @@ jobs:
                 gateway) echo "Some of the module's objects may be in the gateway already. Running \`gateway\` again is safe and repeats only what is missing. The gateway's service-level logging setting before the change is in the first list of this page." ;;
                 contract) echo "The contract's product, its policy and its subscription may be in the gateway already, and the test of the gateway with its key may have failed after that. Running \`contract\` again is safe: it repeats only what is missing and runs the test again." ;;
                 recording) echo "Part of the usage recording may exist now: the Log Analytics workspace, the storage account, the Event Hubs namespace, the Cosmos DB account, the private endpoints and the function app with its identity. They cost money while they exist, the private endpoints most (about 5 euros a month each). The key-based Logic App version may be removed already. Running \`recording\` again is safe and repeats only what is missing; \`what-if\` shows what is there." ;;
-                recording-check) echo "The copy jobs may have run and written nothing, or not at all. The lines above say how each ended, or which warnings and errors the function app logged. Running \`recording-check\` again is safe." ;;
+                recording-check) echo "The control event may have been sent, and the copy jobs may have run and written nothing, or not at all. The Operator sent it and read the telemetry from inside the network, in a container group named \`op-check-$GITHUB_RUN_ID\` that the last step of the run deletes if the tool could not. The lines above say how each job ended, or which warnings and errors the function app logged. A message that the Operator is not there means that \`operator\` has to be run first. A 401 or 403 when the event is sent means that the Operator's role on the control hub is missing (\`operator\` assigns it) or has not applied yet (a role takes up to ten minutes). Running \`recording-check\` again is safe." ;;
                 foundry) echo "Part of the Foundry resource of the agents may exist now: the resource, its guardrail, its model deployments, the project, the connection for traces, the private endpoint and the two roles. The resource costs next to nothing while no agent runs in it (the private endpoint a few euros a month). Running \`foundry\` again is safe and repeats only what is missing; \`what-if\` shows what is there. The cases app was not changed: run \`cases\` only after a run of \`foundry\` that passed." ;;
                 cases) echo "Part of the first cases may exist now: the identities, the plan, the function app, the control hub, the longer retention of the traces and the workbook. They cost next to nothing. Running \`cases\` again is safe and repeats only what is missing; \`what-if\` shows what is there." ;;
-                cases-run) echo "The Watch may have run partly or not at all. The lines above say how it ended, or which warnings and errors the cases app logged. It changes no resource of the estate; with the investigation on it may also have created agents and conversations in its own Foundry project before it stopped. Running \`cases-run\` again is safe." ;;
+                cases-run) echo "The control event may have been sent, and the Watch may have run partly or not at all. The Operator sent it and read the telemetry from inside the network, in a container group named \`op-check-$GITHUB_RUN_ID\` that the last step of the run deletes if the tool could not. The lines above say how it ended, or which warnings and errors the cases app logged. A message that the Operator is not there means that \`operator\` has to be run first. A 401 or 403 when the event is sent means that the Operator's role on the control hub is missing (\`operator\` assigns it) or has not applied yet (a role takes up to ten minutes). It changes no resource of the estate; with the investigation on it may also have created agents and conversations in its own Foundry project before it stopped. Running \`cases-run\` again is safe." ;;
                 plant) echo "Part of the planted waste may exist now (an unattached disk, maybe an unassigned public IP address) in resource group \`$ENV_RESOURCE_GROUP\`, tagged for the loop. They cost a few cents to a few dollars a month. Running \`plant\` again is safe: it makes a second planting under a new name. A person who approves a plan for planted waste removes it, with that person's own permissions." ;;
                 loop-check) echo "The front door was not shut as it should be: a request without a sign-in got something other than a sign-in or the app's refusal. Nothing was changed. Do not hand the address to anybody until this passes." ;;
-                operator) echo "Part of the Operator may exist now: its identity \`id-meternaut-operator\`, the network security group, the subnet \`snet-ops\` and the Reader role on resource group \`$ENV_RESOURCE_GROUP\`. If the deploy was refused at the role, the condition of the deploy identity's role-assignment right does not list Reader yet (environment/BOOTSTRAP.md, the section on the Operator) and nothing else was changed. None of it costs anything while no container group runs. Running \`operator\` again is safe and repeats only what is missing." ;;
+                operator) echo "Part of the Operator may exist now: its identity \`id-meternaut-operator\`, the network security group, the subnet \`snet-ops\`, the Reader role on resource group \`$ENV_RESOURCE_GROUP\` and the Azure Event Hubs Data Sender roles on the two control hubs. If the lines above say that a control hub is not there, nothing was changed: run \`recording\` and \`cases\` first. If the deploy was refused at the Reader role, the condition of the deploy identity's role-assignment right does not list Reader yet (environment/BOOTSTRAP.md, the section on the Operator) and nothing else was changed; Data Sender is listed already. None of it costs anything while no container group runs. Running \`operator\` again is safe and repeats only what is missing." ;;
                 operator-probe) echo "A container group named \`op-probe-$GITHUB_RUN_ID\` may have been made, and the last step of the run deletes it if the tool could not. The lines above say how far the probe came: an image that could not be pulled is the likely reason (the tool prints the group's events then), and a subnet with no way out looks the same. A run costs cents. Running \`operator-probe\` again is safe." ;;
               esac
             else
@@ -1325,13 +1451,13 @@ jobs:
                 gateway) echo "The Citadel module's objects are in the gateway; its two usage-recording fragments are there only if both Event Hub loggers were (the log says). A call to the two model APIs is refused unless it is made with the key of a contract, so nobody can call them (the instance's all-access key included) until the first contract exists." ;;
                 contract) echo "The contract \`$CONTRACT_NAME\` is in the gateway: a product that grants the two inference APIs, its policy (the models and the token limits) and one subscription. The checks above ran against the gateway with that subscription's key, which is stored nowhere." ;;
                 recording) echo "The usage recording is in resource group \`$ENV_RESOURCE_GROUP\`: Event Hubs, a Cosmos DB account (serverless, no public endpoint, no key), a storage account (no public endpoint, no Shared Key), the function app with its six functions on a Flex Consumption plan, its own system-assigned identity, a workspace and an Application Insights component of its own, and five private endpoints that the landing zone has registered in its central zones. The key-based Logic App version is removed. The app no longer carries the user-assigned identity that it used before, \`id-meternaut-usage\`. This workflow does not remove that identity: a person does, in the order of environment/BOOTSTRAP.md (its grants outside the project's group first, with tools/access-requirements.py retire, and the identity after that). The gateway identity may send to the two usage event hubs and the function app may read them; nothing sends to them yet. The copy jobs need two roles for the function app's identity outside the project's group before they can read the gateway's Application Insights (environment/BOOTSTRAP.md). Then \`recording-check\` starts the jobs once and reads what they said." ;;
-                recording-check) echo "The copy jobs ran and the function app wrote what each did to its telemetry; the lines above are that: the window, the rows read, the documents written and the number of documents in the container afterwards. A job writes only what the gateway recorded after its marker, so a first run writes the marker and nothing else." ;;
+                recording-check) echo "The Operator, from inside the network, sent the control event and read the telemetry, with its own identity and no key; this runner sent nothing to Event Hubs and read no telemetry. The copy jobs ran and the function app wrote what each did to its telemetry; the lines above are that: the window, the rows read, the documents written and the number of documents in the container afterwards. A job writes only what the gateway recorded after its marker, so a first run writes the marker and nothing else." ;;
                 foundry) echo "The Foundry resource of the agents, \`$FOUNDRY_ACCOUNT\`, is in resource group \`$ENV_RESOURCE_GROUP\` and was read back from Azure: public network access and local authentication are off, project management is on, the project \`$FOUNDRY_PROJECT\` has an identity of its own, the two models of environment/models.json are deployed with a guardrail that blocks jailbreaks and indirect attacks, the private endpoint is approved and the landing zone has registered its name, and the project sends its traces to Application Insights with its identity. The system-assigned identity of the cases app holds the Foundry User role on the project and nothing else there. The project endpoint is \`$FOUNDRY_ENDPOINT\`. No key was made, read or printed. The cases app was not changed: the next run of \`cases\` gives it that address." ;;
                 cases) echo "The first cases are in resource group \`$ENV_RESOURCE_GROUP\`: a function app with four functions (a daily timer, a trigger on the control hub, a timer every minute for the loop and the console's web route), its identities (its own system-assigned one, which reads and stores the records and sends the letters, and \`id-meternaut-console-auth\`, which only presents the console's sign-in to Microsoft Entra and holds no role), the control hub in the usage recording's namespace, a year of retention for the traces and the History workbook. The Watch reads the pilot subscription with two roles and the contract's key with one role in the gateway's subscription; this workflow gives none of them, a person gives them on the owner's written word (environment/BOOTSTRAP.md), and until they exist a run ends with an authorization error. Meternaut holds no right to change Azure. When a person approves a plan, the console sends that person to Microsoft Entra to sign in to Azure Resource Manager and runs the one change with that person's own permissions: Azure checks what that person may do, and its Activity Log names that person. The retired identity of the first loop, \`id-meternaut-runner\`, is removed when it is still there and nothing holds it. The app no longer carries the user-assigned identity that it used before, \`id-meternaut-cases\`. This workflow does not remove that identity: a person does, in the order of environment/BOOTSTRAP.md (its grants outside the project's group first, with tools/access-requirements.py retire, and the identity after that). The address of the Foundry project is given to the app only when the project is in Azure at that moment (the action \`foundry\` makes it); without it the investigation is off." ;;
-                cases-run) echo "One Watch ran and wrote its History to the cases app's telemetry and its records to the store; the lines above are that: the leads, what each case came to, what the models said and the tokens that were used. Calls that go through the gateway are counted there; with the investigation on, the agents in the Foundry project call the models of that resource directly, not through the gateway. No resource of the estate was changed; with the investigation on, the Watch also created its agents and conversations in its own Foundry project." ;;
+                cases-run) echo "The Operator, from inside the network, sent the control event and read the telemetry, with its own identity and no key; this runner sent nothing to Event Hubs and read no telemetry. One Watch ran and wrote its History to the cases app's telemetry and its records to the store; the lines above are that: the leads, what each case came to, what the models said and the tokens that were used. Calls that go through the gateway are counted there; with the investigation on, the agents in the Foundry project call the models of that resource directly, not through the gateway. No resource of the estate was changed; with the investigation on, the Watch also created its agents and conversations in its own Foundry project." ;;
                 plant) echo "Waste of Meternaut's own is in resource group \`$ENV_RESOURCE_GROUP\`: an unattached disk (and, when asked, an unassigned public IP address), tagged meternaut-planted. The next Watch finds it, and the loop takes it from there. Meternaut holds no right to delete it: the person who approves a plan for it needs the right to delete it in this group, because the change runs with that person's own permissions." ;;
                 loop-check) echo "The console's front door is shut: without a sign-in nobody gets a page (the return address of the Azure sign-in included), and a made-up sign-in header is not believed." ;;
-                operator) echo "The Operator is in resource group \`$ENV_RESOURCE_GROUP\`: the identity \`id-meternaut-operator\`, the subnet \`snet-ops\` (delegated to container groups, with the landing zone's route table on it when the landing zone puts one on this network) and Reader on the group for that identity, and nothing else. No container group exists, so nothing is paid until a run uses it. The next step is \`operator-probe\`, which shows what a container on the subnet can reach." ;;
+                operator) echo "The Operator is in resource group \`$ENV_RESOURCE_GROUP\`: the identity \`id-meternaut-operator\`, the subnet \`snet-ops\` (delegated to container groups, with the landing zone's route table on it when the landing zone puts one on this network) and three roles for that identity: Reader on the group, and Azure Event Hubs Data Sender on the control hubs \`usage-control\` and \`cases-control\`, one role on each hub, and nothing else. A new role takes up to ten minutes to apply, so wait before \`recording-check\` and \`cases-run\`, which send the control event with it. No container group exists, so nothing is paid until a run uses it. The next steps are \`operator-probe\`, which shows what a container on the subnet can reach, and \`recording-check\` and \`cases-run\`, which run their check tools in the Operator." ;;
                 operator-probe) echo "The probe ran in a container group on \`snet-ops\` as the Operator's identity, and the group is deleted. The page above has one line for each check: \`ok\` and \`FAIL\` are facts about the landing zone and the network, not errors of the run. docs/proposals/07-private-by-default.md says what each answer decides." ;;
               esac
             fi

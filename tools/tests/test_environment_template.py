@@ -85,6 +85,8 @@ ALLOWED = {
         "Microsoft.Network/networkSecurityGroups",
         "Microsoft.Network/virtualNetworks",
         "Microsoft.Network/virtualNetworks/subnets",
+        "Microsoft.EventHub/namespaces",
+        "Microsoft.EventHub/namespaces/eventhubs",
         "Microsoft.Authorization/roleAssignments",
     },
 }
@@ -618,13 +620,13 @@ class Workflow(unittest.TestCase):
     def test_every_step_that_publishes_or_starts_a_job_names_the_actions_it_runs_in_and_never_what_if(self):
         found = 0
         for block in self.steps:
-            if "az functionapp deployment source config-zip" in block or "/api/zipdeploy" in block or "recording-check.py run" in block or "cases-check.py run" in block:
+            if "az functionapp deployment source config-zip" in block or "/api/zipdeploy" in block or "--script operator/run-tool.sh" in block:
                 found += 1
                 condition = re.search(r"(?m)^        if: (.+)$", block)
                 self.assertIsNotNone(condition, block[:80])
                 self.assertNotIn("what-if", condition.group(1))
                 self.assertNotIn("always()", condition.group(1))
-        self.assertEqual(found, 4, "two publishes and two job starts")
+        self.assertEqual(found, 4, "two publishes and two job starts (the Operator runs the check tool that sends the control event)")
 
     def test_the_recording_is_made_ready_deployed_published_and_listed_in_that_order_and_for_its_action_only(self):
         order = ["Remove the key-based Logic App version of the usage recording, when it is still there", "Deploy the usage recording",
@@ -711,9 +713,10 @@ class Workflow(unittest.TestCase):
         self.assertIn('bash tools/build-function-app.sh case-functions cases "$RUNNER_TEMP/case-functions" "$RUNNER_TEMP/case-functions.zip"', checks)
 
     def test_the_copy_job_is_started_only_by_its_own_action(self):
-        (block,) = [b for b in self.steps if "recording-check.py run" in b]
+        (block,) = [b for b in self.steps if '--env "TOOL_NAME=recording-check"' in b]
         self.assertIn("if: inputs.action == 'recording-check'", block)
         self.assertNotIn("listSecrets", block)
+        self.assertNotRegex(self.text, r"(?m)^\s*python3 tools/recording-check\.py run\b", "the runner starts no job and sends no event: the Operator runs the tool")
 
     def test_the_identity_of_the_workflow_is_read_after_the_sign_in_and_before_the_settings(self):
         names = self.names()
@@ -1239,10 +1242,12 @@ class CasesWorkflow(unittest.TestCase):
     def test_one_watch_is_started_only_by_its_own_action_and_never_reads_the_contracts_key(self):
         block = self.step("Start one Watch and read its History")
         self.assertIn("if: inputs.action == 'cases-run'", block)
-        self.assertIn("tools/cases-check.py run", block)
+        self.assertIn('--env "TOOL_NAME=cases-check"', block)
+        self.assertIn("TOOL_ARGS=run --namespace $EVENT_HUB_NAMESPACE --insights $insights --minutes 30", block)
         self.assertIn('--summary "$GITHUB_STEP_SUMMARY"', block)
         self.assertNotIn("listSecrets", block)
-        self.assertEqual(self.text.count("cases-check.py run"), 1)
+        self.assertEqual(self.text.count('--env "TOOL_NAME=cases-check"'), 1)
+        self.assertNotRegex(self.text, r"(?m)^\s*python3 tools/cases-check\.py run\b", "the runner starts no Watch and sends no event: the Operator runs the tool")
 
     def test_the_preview_of_the_cases_waits_for_the_recording_instead_of_failing(self):
         block = self.step("What the identity, the model side, the logger, the usage recording and the first cases would change")
@@ -1778,12 +1783,13 @@ class HandSteps(unittest.TestCase):
 class OperatorWorkflow(unittest.TestCase):
     """The actions operator and operator-probe of the deploy workflow: what runs for each, in what order, and what the probe is given."""
 
+    HUBS = "The control hubs that the Operator is given a role on are there"
     DEPLOY = "Deploy the Operator, its identity and the subnet of its container groups"
     PROVIDER = "The resource provider of Container Instances is registered in the subscription"
     WAIT = "Wait until the landing zone has put its route table on the Operator's subnet"
     PROBE = "Run the probe in the Operator"
     CLEANUP = "Delete any container group of the probe that is left"
-    ORDER = [DEPLOY, PROVIDER, WAIT, PROBE, CLEANUP]
+    ORDER = [HUBS, DEPLOY, PROVIDER, WAIT, PROBE, CLEANUP]
 
     def setUp(self):
         self.text = text(".github/workflows/deploy-hub.yml")
@@ -1804,6 +1810,8 @@ class OperatorWorkflow(unittest.TestCase):
         self.assertIn("operator-probe", offered)
         description = re.search(r'(?m)^        description: "(what-if: .+)"$', self.text).group(1)
         self.assertIn(" operator: the Operator, the executor that works inside the virtual network", description)
+        self.assertIn("three roles (Reader on the project's group, and Azure Event Hubs Data Sender on the two control hubs, which the actions recording and cases make, so it runs after them)", description)
+        self.assertNotIn("one role (Reader", description)
         self.assertIn(" operator-probe: run operator/probe.sh once in a short-lived container group", description)
         self.assertIn("deleted at the end whatever happens", description)
         self.assertIn("It needs operator first.", description)
@@ -1813,6 +1821,7 @@ class OperatorWorkflow(unittest.TestCase):
         self.assertEqual(positions, sorted(positions))
         self.assertLess(self.names.index("Work out the settings"), positions[0])
         self.assertLess(positions[-1], self.names.index("What was done"))
+        self.assertIn("if: inputs.action == 'operator'\n", self.step(self.HUBS))
         self.assertIn("if: inputs.action == 'operator'\n", self.step(self.DEPLOY))
         self.assertIn("if: inputs.action == 'operator-probe'\n", self.step(self.PROVIDER))
         self.assertIn("if: inputs.action == 'operator' || inputs.action == 'operator-probe'\n", self.step(self.WAIT))
@@ -1830,9 +1839,17 @@ class OperatorWorkflow(unittest.TestCase):
         for word in ("az role", "delete", "listKeys", "listSecrets", "--auth-mode key"):
             self.assertNotIn(word, block, word)
 
-    def test_the_preview_waits_for_the_network_and_the_settings_know_whether_the_subnet_is_there(self):
-        self.assertIn('if [ "$NETWORK_EXISTS" = true ]; then\n            python3 tools/az-deploy.py what-if --subscription "$ENV_SUBSCRIPTION_ID" --resource-group "$ENV_RESOURCE_GROUP" \\\n'
-                      "              --template environment/operator/main.bicep", self.text)
+    def test_the_preview_waits_for_the_network_and_the_control_hubs_and_the_settings_know_whether_the_subnet_is_there(self):
+        preview = self.step("What the identity, the model side, the logger, the usage recording and the first cases would change")
+        self.assertIn("EVENT_HUB_NAMESPACE: ${{ steps.params.outputs.event_hub_namespace }}", preview)
+        self.assertIn('hubs=$(az rest --method get --url "https://management.azure.com/subscriptions/$ENV_SUBSCRIPTION_ID/resourceGroups/$ENV_RESOURCE_GROUP/providers/Microsoft.EventHub/namespaces/'
+                      '$EVENT_HUB_NAMESPACE/eventhubs?api-version=2024-01-01" --query "value[].name" --output tsv 2> /dev/null || true)', preview, "one read of the hubs that the namespace has, which no failure stops")
+        self.assertIn('if [ "$NETWORK_EXISTS" != true ]; then\n', preview)
+        self.assertIn('elif ! grep -Fxq usage-control <<< "$hubs" || ! grep -Fxq cases-control <<< "$hubs"; then\n', preview)
+        self.assertIn('          else\n            python3 tools/az-deploy.py what-if --subscription "$ENV_SUBSCRIPTION_ID" --resource-group "$ENV_RESOURCE_GROUP" \\\n'
+                      "              --template environment/operator/main.bicep", preview, "the preview of the template only when the network and both hubs are there")
+        self.assertLess(preview.index("The Operator cannot be previewed yet: its roles go on the control hubs"), preview.index("--template environment/operator/main.bicep"))
+        self.assertIn('echo "::group::The Operator, in the project\'s resource group (its identity, the subnet of its container groups and its three roles)"', preview)
         self.assertIn('if [ "$network" = true ]; then ops=$(exists "$vnet/subnets/snet-ops"); else ops=false; fi', self.text)
         self.assertIn('echo "ops_subnet_exists=$ops" >> "$GITHUB_OUTPUT"', self.text)
         self.assertIn("ENV_OPS_SUBNET_EXISTS: ${{ steps.network.outputs.ops_subnet_exists }}", self.step("Work out the settings"))
@@ -1856,7 +1873,8 @@ class OperatorWorkflow(unittest.TestCase):
     def test_the_probe_is_given_a_pinned_image_the_script_the_names_the_size_and_a_summary_and_no_secret(self):
         block = self.step(self.PROBE)
         script = self.script(self.PROBE)
-        self.assertRegex(block, r"OPERATOR_IMAGE: mcr\.microsoft\.com/azure-cli@sha256:[0-9a-f]{64}\n")
+        self.assertRegex(self.text.split("    steps:")[0], r"(?m)^      OPERATOR_IMAGE: mcr\.microsoft\.com/azure-cli@sha256:[0-9a-f]{64}$", "one pin, in the environment of the job, for every step that runs something in the Operator")
+        self.assertNotIn("OPERATOR_IMAGE:", block, "the probe uses the pin of the job")
         self.assertIn('--image "$OPERATOR_IMAGE"', script)
         self.assertNotIn("--allow-tag", script, "the workflow pins by digest")
         self.assertIn("python3 tools/operator-run.py run", script)
@@ -1881,6 +1899,8 @@ class OperatorWorkflow(unittest.TestCase):
     def test_the_digest_is_the_one_that_the_decision_record_names_and_nothing_in_the_workflow_makes_or_deletes_a_container_group_itself(self):
         digest = re.search(r"OPERATOR_IMAGE: (mcr\.microsoft\.com/azure-cli@sha256:[0-9a-f]{64})", self.text).group(1)
         self.assertIn(digest, text("docs/proposals/07-private-by-default.md"))
+        self.assertEqual(len(re.findall(r"OPERATOR_IMAGE: ", self.text)), 1, "the pin is made once")
+        self.assertEqual(len(re.findall(r'--image "\$OPERATOR_IMAGE"', self.text)), 3, "and used by the probe and by the two checks")
         self.assertNotIn("az container", self.text, "the tool makes, reads and deletes the group")
 
     def test_the_cleanup_deletes_only_groups_of_the_probe_through_the_tool_and_a_failure_is_a_warning(self):
@@ -1889,6 +1909,19 @@ class OperatorWorkflow(unittest.TestCase):
         self.assertIn("::warning::", script)
         self.assertNotIn("delete", script.replace("deletes", ""), "the tool deletes, not a command of the step")
         self.assertIn("--name \"op-probe-$GITHUB_RUN_ID\"", self.script(self.PROBE), "the prefix of the cleanup is the start of the name that the probe gives its group")
+
+    def test_the_control_hubs_are_read_before_the_deploy_and_a_missing_one_says_which_action_makes_it_and_stops_before_anything_is_changed(self):
+        block, script = self.step(self.HUBS), self.script(self.HUBS)
+        self.assertIn("EVENT_HUB_NAMESPACE: ${{ steps.params.outputs.event_hub_namespace }}", block)
+        for word in ('url="https://management.azure.com/subscriptions/$ENV_SUBSCRIPTION_ID/resourceGroups/$ENV_RESOURCE_GROUP/providers/Microsoft.EventHub/namespaces/$EVENT_HUB_NAMESPACE/eventhubs?api-version=2024-01-01"',
+                     '--query "value[].name" --output tsv', "grep -Fxq usage-control", "grep -Fxq cases-control", "Run recording first", "Run cases first (after recording)",
+                     "the actions recording and cases run before operator", "Nothing was changed."):
+            self.assertIn(word, script, word)
+        self.assertEqual(len(re.findall(r"exit 1", script)), 2, "a hub that is missing, and a read that fails for another reason than NotFound")
+        self.assertIn("NotFound|\\b404\\b", script, "a namespace that is not there is no hub, and any other answer stops the run")
+        self.assertNotRegex(script, r"--method (put|patch|post|delete)")
+        for word in ("az-deploy", "az role", "az container", "listKeys", "listSecrets"):
+            self.assertNotIn(word, script, word)
 
     def test_the_template_is_compiled_linted_and_its_file_is_checked_in_both_workflows(self):
         for source in (self.text, text(".github/workflows/checks.yml")):
@@ -1901,6 +1934,181 @@ class OperatorWorkflow(unittest.TestCase):
         block = self.step("What was done")
         for action in ("operator", "operator-probe"):
             self.assertEqual(len(re.findall(rf"(?m)^                {action}\) echo ", block)), 2, action)
+
+
+class OperatorChecksWorkflow(unittest.TestCase):
+    """The actions recording-check and cases-run: the control event is sent, and the telemetry is read, by the check tool inside the Operator. The runner does neither."""
+
+    FIND = "Find the Operator, which runs the check from inside the network"
+    RECORDING_LIST = "Before the copy jobs are started, the function app lists its six functions"
+    RECORDING = "Start the copy jobs once and read what they say"
+    CASES_LIST = "Before the Watch is started, the cases app lists its four functions"
+    CASES = "Start one Watch and read its History"
+    CLEANUP = "Delete any container group of the checks that is left"
+    SAMPLE_INSIGHTS = "/subscriptions/11111111-2222-3333-4444-555555555555/resourceGroups/rg-meternaut-dev/providers/Microsoft.Insights/components/appi-meternaut"
+
+    def setUp(self):
+        self.text = text(".github/workflows/deploy-hub.yml")
+        self.steps = re.split(r"(?m)^      - ", self.text)[1:]
+        self.names = [re.match(r"name: (.+)", b).group(1) for b in self.steps]
+
+    def step(self, title):
+        (block,) = [b for b in self.steps if b.startswith(f"name: {title}\n")]
+        return block
+
+    def script(self, title):
+        body = self.step(title).split("        run: |\n", 1)[1]
+        return "\n".join(line for line in body.splitlines() if not line.strip().startswith("#"))
+
+    def test_each_action_finds_the_operator_lists_the_functions_from_the_runner_then_runs_its_check_in_the_operator_and_the_cleanup_always_runs(self):
+        for action, listing, check in (("recording-check", self.RECORDING_LIST, self.RECORDING), ("cases-run", self.CASES_LIST, self.CASES)):
+            positions = [self.names.index(name) for name in (self.FIND, listing, check, self.CLEANUP)]
+            self.assertEqual(positions, sorted(positions), action)
+            self.assertLess(self.names.index("Work out the settings"), positions[0], "after the settings, whose outputs the steps use")
+            self.assertLess(positions[-1], self.names.index("What was done"))
+            self.assertIn(f"if: inputs.action == '{action}'\n", self.step(listing))
+            self.assertIn(f"if: inputs.action == '{action}'\n", self.step(check))
+        self.assertIn("if: inputs.action == 'recording-check' || inputs.action == 'cases-run'\n", self.step(self.FIND))
+        self.assertIn("id: operator\n", self.step(self.FIND))
+        self.assertIn("id: copy_jobs\n", self.step(self.RECORDING))
+        self.assertIn("id: watch\n", self.step(self.CASES))
+        self.assertIn("if: always() && (steps.copy_jobs.outcome != 'skipped' || steps.watch.outcome != 'skipped')\n", self.step(self.CLEANUP),
+                      "the second line behind the tool's own delete runs when the run was cancelled too, and only when one of the two check steps started")
+        self.assertLess(max(self.names.index(self.RECORDING), self.names.index(self.CASES)), self.names.index(self.CLEANUP), "after both checks, so that it runs for either")
+
+    def test_the_runner_sends_no_event_and_reads_no_telemetry_it_only_lists_the_functions_and_the_tools_run_in_the_operator(self):
+        code = "\n".join(line for block in self.steps if "run:" in block for line in block.split("run:", 1)[1].splitlines() if not line.strip().startswith("#"))
+        self.assertNotRegex(code, r"tools/(recording|cases)-check\.py run\b", "no `run` of a check tool on the runner")
+        self.assertEqual(sorted(re.findall(r"python3 tools/recording-check\.py (\w+)", code)), ["functions", "functions", "whoami"], "the object id of the identity, and the list of the functions twice")
+        self.assertEqual(sorted(re.findall(r"python3 tools/cases-check\.py (\w+)", code)), ["functions", "functions"])
+        for word in ("eventhubs.azure.net", "servicebus.windows.net/", "/messages?"):
+            self.assertNotIn(word, code, f"{word}: the runner takes no token for Event Hubs and posts nothing to it")
+        self.assertEqual(self.text.count("uses: azure/login@"), 5, "no sign-in was added: the runner makes the container group with the credential of the first one")
+
+    def test_each_check_runs_the_generic_script_with_its_tool_and_the_arguments_that_the_runner_used_before_and_the_times_are_ordered(self):
+        expected = {self.RECORDING: {"tool": "recording-check", "files": ["recording-check.py"], "args": "run --namespace $EVENT_HUB_NAMESPACE --insights $insights --job all --minutes 20", "seconds": 1500, "minutes": 35},
+                    self.CASES: {"tool": "cases-check", "files": ["cases-check.py", "recording-check.py"], "args": "run --namespace $EVENT_HUB_NAMESPACE --insights $insights --minutes 30", "seconds": 2400,
+                                 "minutes": 50}}
+        for title, want in expected.items():
+            block, script = self.step(title), self.script(title)
+            self.assertIn('python3 tools/operator-run.py run --resource-group "$ENV_RESOURCE_GROUP" --name "op-check-$GITHUB_RUN_ID"', script, title)
+            for word in ('--subnet-id "$OPERATOR_SUBNET_ID"', '--identity-id "$OPERATOR_IDENTITY_ID"', '--image "$OPERATOR_IMAGE"', "--script operator/run-tool.sh", '"${dns[@]}"',
+                         '--summary "$GITHUB_STEP_SUMMARY"', '--env "GITHUB_ACTIONS=true"', '--env "OPERATOR_CLIENT_ID=$OPERATOR_CLIENT_ID"', '--env "OPERATOR_SUBSCRIPTION=$ENV_SUBSCRIPTION_ID"',
+                         "for server in ${ENV_DNS_SERVERS//,/ }; do dns+=(--dns-server \"$server\"); done", f"--timeout-seconds {want['seconds']}"):
+                self.assertIn(word, script, f"{title}: {word}")
+            self.assertEqual(re.findall(r'--secret-file "([^"=]+)=tools/([^"]+)"', script), [(name, name) for name in want["files"]], title)
+            self.assertEqual(len(re.findall(r"--secret-file", script)), len(want["files"]), title)
+            self.assertIn(f'--env "TOOL_NAME={want["tool"]}"', script)
+            self.assertIn(f'--env "TOOL_ARGS={want["args"]}"', script)
+            self.assertIn(f"        timeout-minutes: {want['minutes']}\n", block)
+            waits = int(re.search(r"--minutes (\d+)", want["args"]).group(1))
+            self.assertLess(waits * 60, want["seconds"], f"{title}: the group is given longer than the tool waits for the telemetry")
+            self.assertLess(want["seconds"], want["minutes"] * 60, f"{title}: and the step is given longer than the group, which the tool deletes at its own limit")
+            for word in ("--secure-env", "--allow-tag", "get-access-token", "listSecrets", "az account", "--auth-mode", "secrets."):
+                self.assertNotIn(word, block, f"{title}: {word}")
+
+    def test_the_arguments_of_the_runner_before_the_change_are_still_the_ones_that_the_tools_take(self):
+        # recording-check.py run --namespace --insights --job all --minutes 20, and cases-check.py run --namespace --insights --minutes 30, as the runner ran them
+        recording, cases = text("tools/recording-check.py"), text("tools/cases-check.py")
+        for option in ("--namespace", "--insights", "--job", "--minutes", "--summary"):
+            self.assertIn(f'run.add_argument("{option}"', recording)
+        for option in ("--namespace", "--insights", "--minutes", "--summary"):
+            self.assertIn(f'run.add_argument("{option}"', cases)
+        self.assertNotIn("--no-send", recording + cases, "the tools keep their behaviour: they send their event themselves")
+        self.assertNotIn("--request-id", recording + cases)
+
+    def test_the_environment_of_each_check_step_holds_the_names_and_the_outputs_that_it_uses_and_nothing_secret(self):
+        for title in (self.RECORDING, self.CASES):
+            block = self.step(title)
+            env = dict(re.findall(r"(?m)^          (\w+): (.+)$", block.split("        env:\n")[1].split("        run: |")[0]))
+            self.assertEqual(env, {"EVENT_HUB_NAMESPACE": "${{ steps.params.outputs.event_hub_namespace }}", "INSIGHTS_NAME": "${{ steps.params.outputs.appinsights_name }}",
+                                   "OPERATOR_IDENTITY_ID": "${{ steps.operator.outputs.identity_id }}", "OPERATOR_CLIENT_ID": "${{ steps.operator.outputs.client_id }}",
+                                   "OPERATOR_SUBNET_ID": "${{ steps.operator.outputs.subnet_id }}"}, title)
+
+    def test_the_files_that_are_sent_exist_hold_what_the_tool_loads_from_its_own_folder_and_the_arguments_fit_the_script_s_strict_pattern(self):
+        pattern = re.search(r"argument_characters='([^']+)'", text("operator/run-tool.sh")).group(1)
+        name_pattern = re.search(r"tool_name='([^']+)'", text("operator/run-tool.sh")).group(1)
+        for title in (self.RECORDING, self.CASES):
+            script = self.script(title)
+            sent = re.findall(r'--secret-file "([^"=]+)=tools/([^"]+)"', script)
+            for name, path in sent:
+                self.assertTrue((ROOT / "tools" / path).is_file(), path)
+            names = {name for name, _ in sent}
+            tool = re.search(r"TOOL_NAME=([a-z-]+)", script).group(1)
+            self.assertRegex(tool, name_pattern)
+            self.assertIn(f"{tool}.py", names)
+            for loaded in re.findall(r'with_name\("([^"]+)"\)', text(f"tools/{tool}.py")):
+                self.assertIn(loaded, names, f"{tool}.py loads {loaded} from its own folder, so it goes into the secret volume too")
+            args = re.search(r'TOOL_ARGS=([^"]+)"', script).group(1).replace("$EVENT_HUB_NAMESPACE", "evhns-meternaut-0a1b2c3d").replace("$insights", self.SAMPLE_INSIGHTS)
+            self.assertNotIn("$", args)
+            self.assertRegex(args, pattern)
+            self.assertLessEqual(len(args), 600)
+            self.assertRegex(args.split()[0], r"^[a-z][a-z-]{0,19}$")
+            size = sum((ROOT / "tools" / path).stat().st_size for _, path in sent) + (ROOT / "operator" / "run-tool.sh").stat().st_size
+            self.assertLess(size, 300_000, "far below the 400,000 bytes that the probe found a secret volume takes whole")
+
+    def test_the_container_is_told_it_is_in_a_github_actions_run_only_because_only_a_run_of_this_workflow_makes_it(self):
+        self.assertIn("raise Problem(\"this command makes and deletes resources in Azure, and only a GitHub Actions run may do that (AGENTS.md rule 18)\", 2)", text("tools/operator-run.py"))
+        for title in (self.RECORDING, self.CASES):
+            block = self.step(title)
+            self.assertEqual(block.count('--env "GITHUB_ACTIONS=true"'), 1)
+            comment = " ".join(line.strip()[2:] for line in block.splitlines() if line.strip().startswith("# "))
+            self.assertIn("The container is told that it is in a GitHub Actions run, which it is" if title == self.RECORDING else "the container is told that it is in a GitHub Actions run, which it is", comment)
+            self.assertIn("AGENTS.md rule 18", comment)
+
+    def test_the_find_step_names_the_operator_the_way_the_probe_does_says_to_run_operator_first_and_changes_nothing(self):
+        script = self.script(self.FIND)
+        probe = self.script("Run the probe in the Operator")
+        for line in ('identity_id=$(az resource list --resource-group "$ENV_RESOURCE_GROUP" --name id-meternaut-operator --query "[0].id" --output tsv || true)',
+                     'client=$(az rest --method get --url "https://management.azure.com${identity_id}?api-version=2023-01-31" --query properties.clientId --output tsv || true)'):
+            self.assertIn(line, script)
+            self.assertIn(line, probe, "the same lookup as the probe's")
+        self.assertIn('subnet_id="/subscriptions/$ENV_SUBSCRIPTION_ID/resourceGroups/$ENV_RESOURCE_GROUP/providers/Microsoft.Network/virtualNetworks/vnet-meternaut/subnets/snet-ops"', script)
+        self.assertIn('subnet_id="$scope/providers/Microsoft.Network/virtualNetworks/vnet-meternaut/subnets/snet-ops"', probe)
+        self.assertEqual(len(re.findall(r"exit 1", script)), 3, "an identity that is not there, a subnet that is not there, a subnet that cannot be read")
+        for words in ("The identity id-meternaut-operator is not there.", "The subnet snet-ops is not there.", "so run operator first (the order is recording, cases, operator). Nothing was changed.",
+                      "The subnet snet-ops could not be read: $found", "NotFound|\\b404\\b"):
+            self.assertIn(words, script, words)
+        self.assertEqual(script.count("run operator first"), 2)
+        for word in ('echo "identity_id=$identity_id"', 'echo "client_id=$client"', 'echo "subnet_id=$subnet_id"'):
+            self.assertIn(word, script)
+        self.assertIn('>> "$GITHUB_OUTPUT"', script)
+        self.assertNotRegex(script, r"--method (put|patch|post|delete)")
+        for word in ("az container", "az role", "az identity", "Microsoft.ManagedIdentity", "az login", "az-deploy", "az account", "listKeys", "listSecrets"):
+            self.assertNotIn(word, script, word)
+
+    def test_the_cleanup_deletes_only_groups_of_the_checks_through_the_tool_and_a_failure_is_a_warning_and_it_cannot_take_a_group_of_the_probe(self):
+        script = self.script(self.CLEANUP)
+        self.assertIn('python3 tools/operator-run.py cleanup --resource-group "$ENV_RESOURCE_GROUP" --prefix op-check- --older-than-minutes 0', script)
+        self.assertIn("::warning::", script)
+        self.assertNotIn("delete", script.replace("deletes", ""), "the tool deletes, not a command of the step")
+        for title in (self.RECORDING, self.CASES):
+            self.assertIn('--name "op-check-$GITHUB_RUN_ID"', self.script(title), "the prefix of the cleanup is the start of the name that each check gives its group")
+        self.assertIn('--name "op-probe-$GITHUB_RUN_ID"', self.script("Run the probe in the Operator"))
+        self.assertFalse("op-probe-".startswith("op-check-") or "op-check-".startswith("op-probe-"), "neither cleanup can take the groups of the other")
+
+    def test_the_actions_say_in_the_description_that_they_run_in_the_operator_and_need_operator_first(self):
+        description = re.search(r'(?m)^        description: "(what-if: .+)"$', self.text).group(1)
+        self.assertIn("recording-check: start the copy jobs once through the control hub and read what they say from the function app's telemetry, both by the Operator from inside the network "
+                      "(the check tool runs in a short-lived container group of the Operator): it needs operator first. cases:", description)
+        self.assertIn("cases-run: start one Watch through the control hub and read its History from the telemetry, both by the Operator from inside the network: it needs operator first. plant:", description)
+
+    def test_the_summaries_say_where_the_work_was_done_what_to_do_when_the_operator_or_its_role_is_missing_and_what_the_operator_now_holds(self):
+        block = self.step("What was done")
+        for action in ("recording-check", "cases-run"):
+            failed, finished = re.findall(rf"(?m)^\s+{action}\) echo \"(.*?)\" ;;$", block)
+            for words in ("The Operator sent it and read the telemetry from inside the network, in a container group named \\`op-check-$GITHUB_RUN_ID\\` that the last step of the run deletes if the tool could not.",
+                          "A message that the Operator is not there means that \\`operator\\` has to be run first.", "A 401 or 403 when the event is sent means that the Operator's role on the control hub is missing "
+                          "(\\`operator\\` assigns it) or has not applied yet (a role takes up to ten minutes).", f"Running \\`{action}\\` again is safe."):
+                self.assertIn(words, failed, f"{action}: {words}")
+            self.assertIn("The Operator, from inside the network, sent the control event and read the telemetry, with its own identity and no key; this runner sent nothing to Event Hubs and read no telemetry.", finished)
+        failed, finished = re.findall(r"(?m)^\s+operator\) echo \"(.*?)\" ;;$", block)
+        for words in ("the Azure Event Hubs Data Sender roles on the two control hubs", "If the lines above say that a control hub is not there, nothing was changed: run \\`recording\\` and \\`cases\\` first.",
+                      "Data Sender is listed already."):
+            self.assertIn(words, failed, words)
+        for words in ("three roles for that identity: Reader on the group, and Azure Event Hubs Data Sender on the control hubs \\`usage-control\\` and \\`cases-control\\`, one role on each hub, and nothing else.",
+                      "A new role takes up to ten minutes to apply, so wait before \\`recording-check\\` and \\`cases-run\\`", "which run their check tools in the Operator."):
+            self.assertIn(words, finished, words)
 
 
 class OperatorHandStep(unittest.TestCase):

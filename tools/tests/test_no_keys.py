@@ -31,7 +31,7 @@ KNOWN = {
     ("src/case-functions/cases/gateway.py", "primaryKey"): "the same read: the field that holds the contract's key",
     ("environment/gateway/logger.bicep", "instrumentationKey"): "API Management's Application Insights logger takes the instrumentation key of the component; the platform has no identity-based form of it",
 }
-SCANNED = ("environment/**/*.bicep", "infra/**/*.bicep", ".github/workflows/*.yml", "tools/*.py", "tools/*.sh", "src/**/*.py", "src/**/*.json", "src/**/*.txt")
+SCANNED = ("environment/**/*.bicep", "infra/**/*.bicep", ".github/workflows/*.yml", "tools/*.py", "tools/*.sh", "operator/*.sh", "src/**/*.py", "src/**/*.json", "src/**/*.txt")
 
 
 def files():
@@ -79,7 +79,7 @@ class NoKeys(unittest.TestCase):
     def test_the_scan_reads_what_it_is_meant_to_read(self):
         names = {relative for relative, _ in files()}
         for expected in ("environment/recording/main.bicep", "environment/cases/main.bicep", "environment/main.bicep", ".github/workflows/deploy-hub.yml", "tools/recording-check.py",
-                         "tools/cases-check.py", "tools/build-function-app.sh"):
+                         "tools/cases-check.py", "tools/build-function-app.sh", "operator/probe.sh", "operator/run-tool.sh", "environment/operator/main.bicep"):
             self.assertIn(expected, names)
         self.assertNotIn("tools/tests/test_no_keys.py", names)
 

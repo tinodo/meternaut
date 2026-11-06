@@ -42,7 +42,8 @@ It writes five ARM parameter files into --out-dir (seven, with --contract: the c
     kit.parameters.json               for the Citadel gateway-upgrade module (the kit's bicep/infra/apim-gateway-upgrade/main.bicep)
     recording.parameters.json         for environment/recording/main.bicep (the usage recording: Event Hubs, function app, Cosmos DB)
     foundry.parameters.json           for environment/foundry/main.bicep (the Foundry resource of the agents: project, models, guardrail, private endpoint)
-    operator.parameters.json          for environment/operator/main.bicep (the Operator: its identity, the subnet of its container groups, one role)
+    operator.parameters.json          for environment/operator/main.bicep (the Operator: its identity, the subnet of its container groups, its three roles; it names the Event Hubs namespace
+                                      whose two control hubs it reads, which the usage recording and the first cases make)
     contract.parameters.json          for environment/gateway/contract.bicep, from --contract (environment/contract.json) and
                                       --contract-policy (environment/gateway/contract-policy.xml)
     cases.parameters.json             for environment/cases/main.bicep (the first cases: the function app that finds leads and writes the
@@ -697,6 +698,7 @@ def build(env, models: list[dict], preview: bool = False, contract: dict | None 
             "owner": owner,
             "opsSubnetPrefix": str(ops),
             "opsSubnetExists": ops_subnet_exists(env),
+            "eventHubNamespaceName": names["event_hub_namespace"],
         }),
     }
     if client or preview:
