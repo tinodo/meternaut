@@ -366,7 +366,7 @@ class ExtractObject(unittest.TestCase):
             self.assertEqual(str(raised.exception), why, repr(text))
 
     def test_an_answer_that_is_nested_too_deeply_for_the_parser_is_a_role_error_and_not_a_crash(self):
-        for text in ('{"a":' * 5000 + "1" + "}" * 5000, '{"findings": ' + "[" * 100_000 + "]" * 100_000 + "}", '{"a":[' * 15_000):
+        for text in ('{"a":' * 20_000 + "1" + "}" * 20_000, '{"findings": ' + "[" * 100_000 + "]" * 100_000 + "}", '{"a":[' * 15_000):
             for key in (None, "findings"):
                 with self.assertRaises(RoleError) as raised:
                     roles.extract_object(text, key)
