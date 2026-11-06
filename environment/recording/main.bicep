@@ -6,15 +6,16 @@
 //
 // What it holds: a Log Analytics workspace and an Application Insights component for the function app itself, a storage
 // account (its host storage and its code package), an Event Hubs namespace with the hubs, a Cosmos DB account (serverless) with
-// the database and containers that the copy jobs write to, a user-assigned identity, a Flex Consumption plan with the function
-// app (which has a system-assigned identity too), and the private endpoints and roles that connect them.
+// the database and containers that the copy jobs write to, a Flex Consumption plan with the function app and its
+// system-assigned identity, and the private endpoints and roles that connect them.
 //
-// The owner prefers system-assigned identities, so the function app moves from its user-assigned identity (id-meternaut-usage) to its own system-assigned
-// identity in two steps (environment/BOOTSTRAP.md). This is the first: the app has the system-assigned identity next to the user-assigned one, that
-// identity holds every role that id-meternaut-usage holds in this template (the data role of Cosmos DB included), and the settings and the deployment
-// storage still name id-meternaut-usage, so nothing that the app does changes. The second step moves the settings to the system-assigned identity and takes
-// id-meternaut-usage off the app, after the roles outside this group have been given to the new identity; a person removes the identity itself later, after
-// tools/access-requirements.py retire has taken away its grants.
+// The owner prefers system-assigned identities, so the function app took over from its user-assigned identity (id-meternaut-usage) in two steps
+// (environment/BOOTSTRAP.md): first its own identity was given the roles of the old one next to it (the data role of Cosmos DB included), and a person gave it
+// the two roles outside this group; then the settings and the deployment storage moved to it and the old identity was taken off the app. This template no longer makes
+// the old identity and no deployment removes it: a person removes it, and what it still holds, after tools/access-requirements.py retire has taken away its grants
+// outside this group. The object id of a system-assigned identity exists only once the app does, so its roles are made after the app, and an app on a
+// new estate starts before it has them. The workflow publishes the code only after it has waited for the names of the private endpoints to be registered, and
+// Azure applies a role within about ten minutes.
 //
 // No key of any kind, and no opt-out of a policy (AGENTS.md rule 23):
 //  - every caller uses an identity (Microsoft Entra ID): the function app its managed identity, the gateway its own
@@ -166,12 +167,6 @@ resource privateEndpointSubnet 'Microsoft.Network/virtualNetworks/subnets@2025-0
 resource functionSubnet 'Microsoft.Network/virtualNetworks/subnets@2025-05-01' existing = {
   parent: vnet
   name: functionSubnetName
-}
-
-resource usageIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
-  name: 'id-${workload}-usage'
-  location: location
-  tags: tags
 }
 
 resource workspace 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
@@ -482,12 +477,16 @@ resource workflowSendsControl 'Microsoft.Authorization/roleAssignments@2022-04-0
   ]
 }
 
+// The function app's roles are for its own system-assigned identity. A role assignment's name has to be known when the deployment starts, and the principal id of a
+// system-assigned identity exists only once the app does: so the names are seeded with the app's id (the identity lives and dies with the app, and an app that is deleted
+// and made again needs its old assignments removed first), and the principal id is in the properties, which is read later. The roles wait for the app and the app does
+// not wait for them; on an estate that has the roles already, the names are the same and nothing changes.
 resource functionReceivesUsage 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   scope: usageHub
-  name: guid(usageHub.id, usageIdentity.id, eventHubsDataReceiverRoleId)
+  name: guid(usageHub.id, functionApp.id, eventHubsDataReceiverRoleId)
   properties: {
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', eventHubsDataReceiverRoleId)
-    principalId: usageIdentity.properties.principalId
+    principalId: functionApp.identity.principalId
     principalType: 'ServicePrincipal'
   }
   dependsOn: [
@@ -497,10 +496,10 @@ resource functionReceivesUsage 'Microsoft.Authorization/roleAssignments@2022-04-
 
 resource functionReceivesPii 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   scope: piiHub
-  name: guid(piiHub.id, usageIdentity.id, eventHubsDataReceiverRoleId)
+  name: guid(piiHub.id, functionApp.id, eventHubsDataReceiverRoleId)
   properties: {
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', eventHubsDataReceiverRoleId)
-    principalId: usageIdentity.properties.principalId
+    principalId: functionApp.identity.principalId
     principalType: 'ServicePrincipal'
   }
   dependsOn: [
@@ -510,10 +509,10 @@ resource functionReceivesPii 'Microsoft.Authorization/roleAssignments@2022-04-01
 
 resource functionReceivesControl 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   scope: controlHub
-  name: guid(controlHub.id, usageIdentity.id, eventHubsDataReceiverRoleId)
+  name: guid(controlHub.id, functionApp.id, eventHubsDataReceiverRoleId)
   properties: {
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', eventHubsDataReceiverRoleId)
-    principalId: usageIdentity.properties.principalId
+    principalId: functionApp.identity.principalId
     principalType: 'ServicePrincipal'
   }
   dependsOn: [
@@ -523,10 +522,10 @@ resource functionReceivesControl 'Microsoft.Authorization/roleAssignments@2022-0
 
 resource functionOwnsBlobs 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   scope: storage
-  name: guid(storage.id, usageIdentity.id, storageBlobDataOwnerRoleId)
+  name: guid(storage.id, functionApp.id, storageBlobDataOwnerRoleId)
   properties: {
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', storageBlobDataOwnerRoleId)
-    principalId: usageIdentity.properties.principalId
+    principalId: functionApp.identity.principalId
     principalType: 'ServicePrincipal'
   }
   dependsOn: [
@@ -536,10 +535,10 @@ resource functionOwnsBlobs 'Microsoft.Authorization/roleAssignments@2022-04-01' 
 
 resource functionUsesQueues 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   scope: storage
-  name: guid(storage.id, usageIdentity.id, storageQueueDataContributorRoleId)
+  name: guid(storage.id, functionApp.id, storageQueueDataContributorRoleId)
   properties: {
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', storageQueueDataContributorRoleId)
-    principalId: usageIdentity.properties.principalId
+    principalId: functionApp.identity.principalId
     principalType: 'ServicePrincipal'
   }
   dependsOn: [
@@ -549,10 +548,10 @@ resource functionUsesQueues 'Microsoft.Authorization/roleAssignments@2022-04-01'
 
 resource functionUsesTables 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   scope: storage
-  name: guid(storage.id, usageIdentity.id, storageTableDataContributorRoleId)
+  name: guid(storage.id, functionApp.id, storageTableDataContributorRoleId)
   properties: {
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', storageTableDataContributorRoleId)
-    principalId: usageIdentity.properties.principalId
+    principalId: functionApp.identity.principalId
     principalType: 'ServicePrincipal'
   }
   dependsOn: [
@@ -562,20 +561,20 @@ resource functionUsesTables 'Microsoft.Authorization/roleAssignments@2022-04-01'
 
 resource functionPublishesTelemetry 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   scope: insights
-  name: guid(insights.id, usageIdentity.id, monitoringMetricsPublisherRoleId)
+  name: guid(insights.id, functionApp.id, monitoringMetricsPublisherRoleId)
   properties: {
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', monitoringMetricsPublisherRoleId)
-    principalId: usageIdentity.properties.principalId
+    principalId: functionApp.identity.principalId
     principalType: 'ServicePrincipal'
   }
 }
 
 resource functionWritesUsage 'Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments@2024-11-15' = {
   parent: cosmos
-  name: guid(cosmos.id, usageIdentity.id, cosmosDataContributorRoleId)
+  name: guid(cosmos.id, functionApp.id, cosmosDataContributorRoleId)
   properties: {
     roleDefinitionId: '${cosmos.id}/sqlRoleDefinitions/${cosmosDataContributorRoleId}'
-    principalId: usageIdentity.properties.principalId
+    principalId: functionApp.identity.principalId
     scope: cosmos.id
   }
   dependsOn: [
@@ -593,7 +592,6 @@ resource readersOfTheData 'Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignme
   }
   dependsOn: [
     functionWritesUsage
-    systemWritesUsage
   ]
 }]
 
@@ -614,8 +612,8 @@ resource plan 'Microsoft.Web/serverfarms@2024-04-01' = {
 var eventHubHost = replace(replace(eventHubs.properties.serviceBusEndpoint, 'https://', ''), ':443/', '')
 
 // A Flex Consumption app has no Azure Files content share and no storage connection string: its host storage and its code package
-// are reached with the identity (the AzureWebJobsStorage__ settings and deployment.storage.authentication below), and
-// it takes no basic-authentication deployment at all. The Event Hub triggers use the identity too (EventHubConnection__).
+// are reached with its system-assigned identity (the AzureWebJobsStorage__ settings and deployment.storage.authentication below; a connection
+// without a client id uses that identity), and it takes no basic-authentication deployment at all. The Event Hub triggers use the identity too (EventHubConnection__).
 // The ceiling of 10 instances is for the price: three Event Hub triggers and three timers each scale as a group of their own.
 resource functionApp 'Microsoft.Web/sites@2024-04-01' = {
   name: functionAppName
@@ -623,10 +621,7 @@ resource functionApp 'Microsoft.Web/sites@2024-04-01' = {
   kind: 'functionapp,linux'
   tags: tags
   identity: {
-    type: 'SystemAssigned, UserAssigned'
-    userAssignedIdentities: {
-      '${usageIdentity.id}': {}
-    }
+    type: 'SystemAssigned'
   }
   properties: {
     serverFarmId: plan.id
@@ -640,8 +635,7 @@ resource functionApp 'Microsoft.Web/sites@2024-04-01' = {
           type: 'blobContainer'
           value: '${storage.properties.primaryEndpoints.blob}${deploymentContainerName}'
           authentication: {
-            type: 'UserAssignedIdentity'
-            userAssignedIdentityResourceId: usageIdentity.id
+            type: 'SystemAssignedIdentity'
           }
         }
       }
@@ -658,16 +652,13 @@ resource functionApp 'Microsoft.Web/sites@2024-04-01' = {
       minTlsVersion: '1.2'
       appSettings: [
         { name: 'AzureWebJobsStorage__credential', value: 'managedidentity' }
-        { name: 'AzureWebJobsStorage__clientId', value: usageIdentity.properties.clientId }
         { name: 'AzureWebJobsStorage__blobServiceUri', value: storage.properties.primaryEndpoints.blob }
         { name: 'AzureWebJobsStorage__queueServiceUri', value: storage.properties.primaryEndpoints.queue }
         { name: 'AzureWebJobsStorage__tableServiceUri', value: storage.properties.primaryEndpoints.table }
         { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: insights.properties.ConnectionString }
-        { name: 'APPLICATIONINSIGHTS_AUTHENTICATION_STRING', value: 'ClientId=${usageIdentity.properties.clientId};Authorization=AAD' }
-        { name: 'AZURE_CLIENT_ID', value: usageIdentity.properties.clientId }
+        { name: 'APPLICATIONINSIGHTS_AUTHENTICATION_STRING', value: 'Authorization=AAD' }
         { name: 'EventHubConnection__fullyQualifiedNamespace', value: eventHubHost }
         { name: 'EventHubConnection__credential', value: 'managedidentity' }
-        { name: 'EventHubConnection__clientId', value: usageIdentity.properties.clientId }
         { name: 'EVENTHUB_USAGE_NAME', value: usageHubName }
         { name: 'EVENTHUB_PII_NAME', value: piiHubName }
         { name: 'EVENTHUB_CONTROL_NAME', value: controlHubName }
@@ -684,122 +675,9 @@ resource functionApp 'Microsoft.Web/sites@2024-04-01' = {
     }
   }
   dependsOn: [
-    functionReceivesUsage
-    functionReceivesPii
-    functionReceivesControl
-    functionOwnsBlobs
-    functionUsesQueues
-    functionUsesTables
-    functionPublishesTelemetry
-    functionWritesUsage
-  ]
-}
-
-// Step one of the move to a system-assigned identity: every role above, and the data role of Cosmos DB, for the app's own identity as well. The settings and the
-// deployment storage still name id-meternaut-usage, so these roles are used only after the second step. A role assignment's name has to be known when the deployment
-// starts, and the principal id of a system-assigned identity exists only once the app does: so the names are seeded with the app's id (the identity lives and dies
-// with the app) and the principal id is in the properties, which is read later. They depend on the app, and the app does not depend on them: the app starts before
-// its own identity has these roles, which is why its settings keep the identity that already has them.
-resource systemReceivesUsage 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  scope: usageHub
-  name: guid(usageHub.id, functionApp.id, eventHubsDataReceiverRoleId)
-  properties: {
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', eventHubsDataReceiverRoleId)
-    principalId: functionApp.identity.principalId
-    principalType: 'ServicePrincipal'
-  }
-  dependsOn: [
-    eventHubsEndpoint
-  ]
-}
-
-resource systemReceivesPii 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  scope: piiHub
-  name: guid(piiHub.id, functionApp.id, eventHubsDataReceiverRoleId)
-  properties: {
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', eventHubsDataReceiverRoleId)
-    principalId: functionApp.identity.principalId
-    principalType: 'ServicePrincipal'
-  }
-  dependsOn: [
-    eventHubsEndpoint
-  ]
-}
-
-resource systemReceivesControl 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  scope: controlHub
-  name: guid(controlHub.id, functionApp.id, eventHubsDataReceiverRoleId)
-  properties: {
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', eventHubsDataReceiverRoleId)
-    principalId: functionApp.identity.principalId
-    principalType: 'ServicePrincipal'
-  }
-  dependsOn: [
-    eventHubsEndpoint
-  ]
-}
-
-resource systemOwnsBlobs 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  scope: storage
-  name: guid(storage.id, functionApp.id, storageBlobDataOwnerRoleId)
-  properties: {
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', storageBlobDataOwnerRoleId)
-    principalId: functionApp.identity.principalId
-    principalType: 'ServicePrincipal'
-  }
-  dependsOn: [
     storageEndpoints
-  ]
-}
-
-resource systemUsesQueues 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  scope: storage
-  name: guid(storage.id, functionApp.id, storageQueueDataContributorRoleId)
-  properties: {
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', storageQueueDataContributorRoleId)
-    principalId: functionApp.identity.principalId
-    principalType: 'ServicePrincipal'
-  }
-  dependsOn: [
-    storageEndpoints
-  ]
-}
-
-resource systemUsesTables 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  scope: storage
-  name: guid(storage.id, functionApp.id, storageTableDataContributorRoleId)
-  properties: {
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', storageTableDataContributorRoleId)
-    principalId: functionApp.identity.principalId
-    principalType: 'ServicePrincipal'
-  }
-  dependsOn: [
-    storageEndpoints
-  ]
-}
-
-resource systemPublishesTelemetry 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  scope: insights
-  name: guid(insights.id, functionApp.id, monitoringMetricsPublisherRoleId)
-  properties: {
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', monitoringMetricsPublisherRoleId)
-    principalId: functionApp.identity.principalId
-    principalType: 'ServicePrincipal'
-  }
-}
-
-// After the other write to the account's roles, one at a time, like the readers below.
-resource systemWritesUsage 'Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments@2024-11-15' = {
-  parent: cosmos
-  name: guid(cosmos.id, functionApp.id, cosmosDataContributorRoleId)
-  properties: {
-    roleDefinitionId: '${cosmos.id}/sqlRoleDefinitions/${cosmosDataContributorRoleId}'
-    principalId: functionApp.identity.principalId
-    scope: cosmos.id
-  }
-  dependsOn: [
     cosmosEndpoint
-    functionWritesUsage
+    eventHubsEndpoint
   ]
 }
 
@@ -814,10 +692,7 @@ resource noBasicAuthForDeployment 'Microsoft.Web/sites/basicPublishingCredential
 
 output functionAppName string = functionApp.name
 output functionAppId string = functionApp.id
-@description('Principal id of the function app\'s identity. The copy jobs read the gateway\'s Application Insights with it, which needs two roles in the gateway\'s subscription and in the subscription of its workspace (environment/BOOTSTRAP.md).')
-output usageIdentityPrincipalId string = usageIdentity.properties.principalId
-output usageIdentityClientId string = usageIdentity.properties.clientId
-@description('Principal id of the function app\'s system-assigned identity, which takes over from id-meternaut-usage: the same roles inside this group (this template) and the same two roles outside it, in the gateway\'s subscription and in the subscription of its workspace (a person gives them once, with tools/access-requirements.py: environment/BOOTSTRAP.md).')
+@description('Principal id of the function app\'s system-assigned identity. The copy jobs read the gateway\'s Application Insights with it, which needs two roles in the gateway\'s subscription and in the subscription of its workspace: a person gives them (environment/BOOTSTRAP.md).')
 output usageSystemPrincipalId string = functionApp.identity.principalId
 output eventHubNamespaceName string = eventHubs.name
 output eventHubHost string = eventHubHost

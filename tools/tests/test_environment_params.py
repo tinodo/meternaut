@@ -255,8 +255,9 @@ class Recording(unittest.TestCase):
                                  [f"pe-{hubs}", "privatelink.servicebus.windows.net"]])
         for line in ("name: 'pe-${storageAccountName}-${service}'", "name: 'pe-${cosmosAccountName}'", "name: 'pe-${eventHubNamespaceName}'"):
             self.assertIn(line, RECORDING)
-        self.assertEqual((outputs["usage_identity_name"], outputs["appinsights_name"]), ("id-meternaut-usage", "appi-meternaut"))
-        self.assertIn("name: 'id-${workload}-usage'", RECORDING)
+        self.assertEqual(outputs["appinsights_name"], "appi-meternaut")
+        self.assertNotIn("usage_identity_name", outputs, "the usage app's own system-assigned identity has no name, and the workflow does not look for the user-assigned one that it replaced")
+        self.assertNotIn("id-${workload}-usage", RECORDING, "the template no longer makes the identity that the app's own system-assigned one replaced")
         self.assertIn("name: 'appi-${workload}'", RECORDING)
 
     def test_the_deployer_and_the_readers_must_be_object_ids(self):
@@ -706,11 +707,12 @@ class FirstCases(unittest.TestCase):
         self.assertIn("at least two models", err)
         self.assertEqual(out, "")
 
-    def test_the_hub_and_the_identity_are_the_ones_the_template_makes(self):
+    def test_the_hub_and_the_one_identity_are_the_ones_the_template_makes(self):
         _, lines = self.build()
         self.assertIn("var controlHubName = '" + lines["cases_hub_name"] + "'", self.CASES)
-        self.assertIn("name: 'id-${workload}-cases'", self.CASES)
-        self.assertEqual(lines["cases_identity_name"], "id-meternaut-cases")
+        self.assertIn("name: 'id-${workload}-console-auth'", self.CASES, "the one user-assigned identity of the template: the console's sign-in")
+        self.assertNotIn("id-${workload}-cases", self.CASES, "the user-assigned identity that the app's system-assigned one replaced is not made any more")
+        self.assertNotIn("cases_identity_name", lines)
 
     def test_without_a_contract_there_is_no_cases_file(self):
         self.assertNotIn("cases.parameters.json", run(SETTINGS)[3])
@@ -792,7 +794,7 @@ class Foundry(unittest.TestCase):
 
     FOUNDRY = (ROOT / "environment" / "foundry" / "main.bicep").read_text(encoding="utf-8")
     CASES = (ROOT / "environment" / "cases" / "main.bicep").read_text(encoding="utf-8")
-    CASES_PRINCIPAL = "ABCDEFAB-1234-5678-9ABC-DEF012345678"
+    RETIRED_PRINCIPAL = "ABCDEFAB-1234-5678-9ABC-DEF012345678"
 
     def files(self, **changes):
         code, out, err, files = run({**SETTINGS, **changes})
@@ -807,7 +809,7 @@ class Foundry(unittest.TestCase):
         return code, out, err, files
 
     def test_the_file_fits_the_template_and_every_setting_has_a_value_of_the_right_type(self):
-        files, _ = self.files(CASES_PRINCIPAL_ID=self.CASES_PRINCIPAL)
+        files, _ = self.files(CASES_SYSTEM_PRINCIPAL_ID=self.SYSTEM_PRINCIPAL)
         declared = bicep_params(self.FOUNDRY)
         given = files["foundry.parameters.json"]["parameters"]
         self.assertTrue(set(given) <= set(declared), set(given) - set(declared))
@@ -874,41 +876,20 @@ class Foundry(unittest.TestCase):
         self.assertEqual([m["capacity"] for m in values(files["foundry.parameters.json"])["models"]], [70, 10])
         self.assertEqual([m["capacity"] for m in values(files["environment.parameters.json"])["models"]], [20, 30])
 
-    def test_the_cases_identity_reaches_the_file_and_without_it_a_placeholder_says_so_and_nothing_else_is_asked_of_it(self):
-        files, outputs = self.files(CASES_PRINCIPAL_ID=self.CASES_PRINCIPAL)
-        self.assertEqual(values(files["foundry.parameters.json"])["casesPrincipalId"], self.CASES_PRINCIPAL.lower())
-        self.assertEqual(outputs["cases_principal_known"], "true")
-        for empty in ("", "   "):
-            files, outputs = self.files(CASES_PRINCIPAL_ID=empty)
-            self.assertEqual(values(files["foundry.parameters.json"])["casesPrincipalId"], ep.PLACEHOLDER)
-            self.assertEqual(outputs["cases_principal_known"], "false", "the workflow refuses to deploy the Foundry resource then")
-        files, outputs = self.files()
-        self.assertEqual((values(files["foundry.parameters.json"])["casesPrincipalId"], outputs["cases_principal_known"]), (ep.PLACEHOLDER, "false"))
-        self.assertEqual(run({**SETTINGS, "GATEWAY_PRINCIPAL_ID": ""}, "--preview")[0], 0, "a preview needs no cases identity")
-
-    def test_a_cases_identity_that_is_not_an_object_id_is_refused_without_echoing_it(self):
-        for bad in ("me", "1234", "{" + self.CASES_PRINCIPAL + "}", self.CASES_PRINCIPAL + "0", "not-a-guid-but-with-secret"):
-            code, out, err, files = run({**SETTINGS, "CASES_PRINCIPAL_ID": bad})
-            self.assertEqual((code, out, files), (2, "", {}), bad)
-            self.assertIn("CASES_PRINCIPAL_ID", err)
-            self.assertNotIn("secret", err)
-
     SYSTEM_PRINCIPAL = "12345678-DDDD-EEEE-FFFF-123456789012"
 
-    def test_the_system_assigned_identity_of_the_cases_app_reaches_the_file_when_it_is_known_and_is_an_empty_string_when_it_is_not(self):
+    def test_the_system_assigned_identity_of_the_cases_app_reaches_the_file_and_without_it_a_placeholder_says_so_and_nothing_else_is_asked_of_it(self):
         files, outputs = self.files(CASES_SYSTEM_PRINCIPAL_ID=self.SYSTEM_PRINCIPAL)
-        foundry = values(files["foundry.parameters.json"])
-        self.assertEqual((foundry["casesSystemPrincipalId"], outputs["cases_system_principal_known"]), (self.SYSTEM_PRINCIPAL.lower(), "true"))
-        self.assertEqual(foundry["casesPrincipalId"], ep.PLACEHOLDER, "the user-assigned identity is asked for on its own")
+        self.assertEqual(values(files["foundry.parameters.json"])["casesSystemPrincipalId"], self.SYSTEM_PRINCIPAL.lower())
+        self.assertEqual(outputs["cases_system_principal_known"], "true")
         for empty in ("", "   "):
             files, outputs = self.files(CASES_SYSTEM_PRINCIPAL_ID=empty)
-            self.assertEqual((values(files["foundry.parameters.json"])["casesSystemPrincipalId"], outputs["cases_system_principal_known"]), ("", "false"), repr(empty))
+            self.assertEqual(values(files["foundry.parameters.json"])["casesSystemPrincipalId"], ep.PLACEHOLDER)
+            self.assertEqual(outputs["cases_system_principal_known"], "false", "the workflow refuses to deploy the Foundry resource then")
         files, outputs = self.files()
-        self.assertEqual((values(files["foundry.parameters.json"])["casesSystemPrincipalId"], outputs["cases_system_principal_known"]), ("", "false"), "nobody looked: no role is given")
-        both, _ = self.files(CASES_PRINCIPAL_ID=self.CASES_PRINCIPAL, CASES_SYSTEM_PRINCIPAL_ID=self.SYSTEM_PRINCIPAL)
-        self.assertEqual({k: values(both["foundry.parameters.json"])[k] for k in ("casesPrincipalId", "casesSystemPrincipalId")},
-                         {"casesPrincipalId": self.CASES_PRINCIPAL.lower(), "casesSystemPrincipalId": self.SYSTEM_PRINCIPAL.lower()})
-        self.assertEqual(run({**SETTINGS, "GATEWAY_PRINCIPAL_ID": ""}, "--preview")[0], 0, "a preview needs no system-assigned identity")
+        self.assertEqual((values(files["foundry.parameters.json"])["casesSystemPrincipalId"], outputs["cases_system_principal_known"]), (ep.PLACEHOLDER, "false"),
+                         "nobody looked: the file holds a placeholder, and no role is ever given to it because the workflow refuses to deploy")
+        self.assertEqual(run({**SETTINGS, "GATEWAY_PRINCIPAL_ID": ""}, "--preview")[0], 0, "a preview needs no cases identity")
 
     def test_a_system_assigned_identity_that_is_not_an_object_id_is_refused_without_echoing_it(self):
         for bad in ("me", "1234", "{" + self.SYSTEM_PRINCIPAL + "}", self.SYSTEM_PRINCIPAL + "0", "not-a-guid-but-with-secret"):
@@ -919,9 +900,17 @@ class Foundry(unittest.TestCase):
             if len(bad) > 8:
                 self.assertNotIn(bad, err)
 
-    def test_the_template_takes_the_system_assigned_identity_as_an_optional_parameter_of_guid_length_at_most(self):
-        self.assertRegex(self.FOUNDRY, r"(?m)^@maxLength\(36\)\nparam casesSystemPrincipalId string = ''$")
-        self.assertRegex(self.FOUNDRY, r"(?m)^@minLength\(36\)\n@maxLength\(36\)\nparam casesPrincipalId string$", "the user-assigned one stays required in this step")
+    def test_the_user_assigned_identity_of_the_cases_app_is_not_read_any_more_and_reaches_no_file(self):
+        files, outputs = self.files(CASES_SYSTEM_PRINCIPAL_ID=self.SYSTEM_PRINCIPAL, CASES_PRINCIPAL_ID=self.RETIRED_PRINCIPAL)
+        self.assertNotIn("casesPrincipalId", values(files["foundry.parameters.json"]))
+        self.assertNotIn("cases_principal_known", outputs)
+        self.assertNotIn(self.RETIRED_PRINCIPAL.lower(), json.dumps(files).lower())
+        code, out, err, files = run({**SETTINGS, "CASES_PRINCIPAL_ID": "not-a-guid"})
+        self.assertEqual((code, err), (0, ""), "a setting that nothing reads is not checked either")
+
+    def test_the_template_takes_the_system_assigned_identity_as_its_one_required_identity_parameter_of_guid_length(self):
+        self.assertRegex(self.FOUNDRY, r"(?m)^@minLength\(36\)\n@maxLength\(36\)\nparam casesSystemPrincipalId string$")
+        self.assertNotIn("casesPrincipalId", self.FOUNDRY, "the user-assigned identity is gone from the template")
 
     def test_the_cases_app_is_given_the_project_endpoint_only_when_the_workflow_found_the_project(self):
         for given in ("", "false", " FALSE "):
@@ -948,7 +937,7 @@ class Foundry(unittest.TestCase):
         self.assertTrue(set(models.values()) <= deployed, "the agents use deployments that the Foundry resource has")
 
     def test_nothing_secret_is_in_the_file(self):
-        text = json.dumps(self.files(CASES_PRINCIPAL_ID=self.CASES_PRINCIPAL)[0]["foundry.parameters.json"]).lower()
+        text = json.dumps(self.files(CASES_SYSTEM_PRINCIPAL_ID=self.SYSTEM_PRINCIPAL)[0]["foundry.parameters.json"]).lower()
         for word in ("key", "secret", "password", "connectionstring", "token"):
             self.assertNotIn(word, text, word)
 
