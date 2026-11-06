@@ -1,4 +1,5 @@
 import base64
+import http.client
 import importlib.util
 import io
 import json
@@ -6,6 +7,8 @@ import os
 import re
 import sys
 import unittest
+import urllib.error
+import urllib.request
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -21,6 +24,8 @@ INSIGHTS = "/subscriptions/11111111-2222-3333-4444-555555555555/resourceGroups/r
 NAMESPACE = "evhns-example"
 OID = "99999999-8888-7777-6666-555555555555"
 SECRET = "SECRET-TOKEN-VALUE"
+DATA_TOKEN = "DATA-PLANE-TOKEN-VALUE"
+APP_ID = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
 ENV = {"GITHUB_ACTIONS": "true"}
 
 
@@ -333,13 +338,290 @@ class Run(unittest.TestCase):
                 self.assertIn(line, text)
 
 
+def component(**properties):
+    """What Resource Manager says of a component. It holds more than the checker may keep: the instrumentation key and the connection string must reach no line."""
+    return {"id": INSIGHTS, "name": "appi-example", "type": "Microsoft.Insights/components",
+            "properties": {"AppId": APP_ID, "InstrumentationKey": "KEY-THAT-MUST-NOT-BE-PRINTED", "ConnectionString": "InstrumentationKey=KEY-THAT-MUST-NOT-BE-PRINTED", **properties}}
+
+
+DEFAULT_COMPONENT = object()
+
+
+class ReadingThroughTheDataPlane(unittest.TestCase):
+    """--query-via: the telemetry is read from the data plane of Application Insights, which keeps working when the component is private (docs/proposals/07-private-by-default.md)."""
+
+    ID = "c" * 32
+
+    def good(self):
+        return telemetry([result(job, self.ID) for job in rc.TIMED_JOBS])
+
+    def go(self, answers, *extra, via="data-plane", arm=None, component_answer=DEFAULT_COMPONENT, data_token_fails=False):
+        """Runs the check. `answers` are what the data plane says to each query, in order, the last one repeated: a document, a (status, body) pair or an exception to raise.
+        `arm` is what Resource Manager says to a query through its proxy. `calls` says what was asked, and in which order."""
+        calls = {"order": [], "tokens": [], "components": [], "arm": [], "queries": [], "events": []}
+        queue = list(answers)
+
+        def runner(args):
+            if args[:2] == ["account", "get-access-token"]:
+                resource = args[args.index("--resource") + 1]
+                calls["tokens"].append(resource)
+                if resource == rc.DATA_PLANE and data_token_fails:
+                    return 1, "", "ERROR: AADSTS500011 no such resource\nthe second line"
+                return 0, (DATA_TOKEN if resource == rc.DATA_PLANE else SECRET) + "\n", ""
+            url = args[args.index("--url") + 1]
+            if "/query?" in url:
+                calls["arm"].append(args)
+                return 0, json.dumps(arm if arm is not None else telemetry([])), ""
+            calls["order"].append("component")
+            calls["components"].append(args)
+            document = component() if component_answer is DEFAULT_COMPONENT else component_answer
+            if document is Exception:
+                return 1, "", "ERROR: (AuthorizationFailed) no right\nthe second line"
+            return 0, json.dumps(document), ""
+
+        def post(url, headers, body):
+            if "servicebus.windows.net" in url:
+                calls["order"].append("event")
+                calls["events"].append((url, headers, body))
+                return 201, b""
+            calls["order"].append("query")
+            calls["queries"].append((url, headers, body))
+            answer = queue.pop(0) if len(queue) > 1 else queue[0]
+            if isinstance(answer, BaseException):
+                raise answer
+            status, document = answer if isinstance(answer, tuple) else (200, answer)
+            return status, document if isinstance(document, bytes) else json.dumps(document).encode("utf-8")
+
+        argv = ["run", "--namespace", NAMESPACE, "--insights", INSIGHTS, *([] if via is None else ["--query-via", via]), *extra]
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch.dict(os.environ, ENV, clear=False), mock.patch.object(rc.uuid, "uuid4", return_value=mock.Mock(hex=self.ID)), \
+                redirect_stdout(out), redirect_stderr(err):
+            code = rc.main(argv, azure(runner, post))
+        return code, out.getvalue(), err.getvalue(), calls
+
+    def test_a_good_run_passes_through_the_data_plane_and_says_which_way_it_read(self):
+        code, out, err, calls = self.go([self.good()])
+        self.assertEqual((code, err), (0, ""))
+        self.assertIn("The telemetry is read through the data plane of Application Insights", out)
+        for job in rc.TIMED_JOBS:
+            self.assertIn(f"{job}: ok", out)
+        self.assertEqual(calls["arm"], [], "no query goes through Resource Manager")
+        for hidden in (SECRET, DATA_TOKEN, "KEY-THAT-MUST-NOT-BE-PRINTED"):
+            self.assertNotIn(hidden, out + err)
+
+    def test_the_query_goes_to_the_app_endpoint_of_the_component_with_a_token_for_that_resource(self):
+        _, _, _, calls = self.go([self.good()])
+        ((url, headers, body),) = calls["queries"]
+        self.assertEqual(url, f"https://api.applicationinsights.io/v1/apps/{APP_ID}/query")
+        self.assertEqual(headers["Authorization"], f"Bearer {DATA_TOKEN}")
+        self.assertEqual(headers["Content-Type"], "application/json")
+        document = json.loads(body)
+        self.assertEqual(set(document), {"query"})
+        self.assertIn(self.ID, document["query"])
+        self.assertIn("usage_job_result", document["query"])
+        self.assertRegex(document["query"], r"^traces \| where timestamp > ago\(2h\)")
+        self.assertEqual(calls["tokens"], ["https://eventhubs.azure.net", "https://api.applicationinsights.io"], "the audience of the data plane, asked for when a query is made")
+
+    def test_the_application_id_is_read_once_through_resource_manager_before_the_event_is_sent(self):
+        empty = {"tables": [{"rows": []}]}
+        code, _, _, calls = self.go([empty, empty, self.good()])
+        self.assertEqual(code, 0)
+        self.assertEqual(len(calls["queries"]), 3, "the loop asked three times")
+        (read,) = calls["components"]
+        self.assertEqual(read[:6], ["rest", "--method", "get", "--url", f"https://management.azure.com{INSIGHTS}?api-version=2020-02-02", "--only-show-errors"])
+        self.assertEqual(calls["order"][:3], ["component", "event", "query"])
+
+    def test_the_diagnostics_of_a_run_that_gives_up_are_read_the_same_way_with_the_same_application_id(self):
+        empty = {"tables": [{"rows": []}]}
+        problems = {"tables": [{"rows": [["2026-11-04T13:00:00Z", "The Python worker failed to index functions\nand a second line"]]}]}
+        code, out, _, calls = self.go([empty, empty, empty, problems], "--minutes", "1")
+        self.assertEqual(code, 1)
+        self.assertIn("0 of 3 results arrived", out)
+        self.assertIn("The Python worker failed to index functions", out)
+        self.assertNotIn("second line", out)
+        self.assertGreater(len(calls["queries"]), 3)
+        self.assertEqual((len(calls["components"]), calls["arm"]), (1, []))
+
+    def test_the_default_is_the_resource_manager_and_the_data_plane_is_not_touched(self):
+        for via in (None, "arm"):
+            code, out, err, calls = self.go([self.good()], via=via, arm=self.good())
+            self.assertEqual((code, err), (0, ""), via)
+            self.assertNotIn("data plane", out)
+            self.assertEqual((calls["queries"], calls["components"]), ([], []), via)
+            self.assertEqual(calls["tokens"], ["https://eventhubs.azure.net"], "no token for the data plane")
+            (asked,) = calls["arm"]
+            self.assertEqual(asked[asked.index("--url") + 1], f"https://management.azure.com{INSIGHTS}/query?api-version=2018-04-20")
+
+    def test_a_component_without_an_application_id_stops_the_run_before_the_event_is_sent(self):
+        for answer in ({}, {"properties": {}}, {"properties": {"AppId": ""}}, {"properties": {"AppId": 5}}, {"properties": {"AppId": "not-a-guid"}},
+                       {"properties": {"AppId": APP_ID + "/../x"}}, {"properties": {"AppId": APP_ID + "\n"}}, {"properties": {"AppId": APP_ID + "?x=1"}},
+                       {"properties": "x"}, ["x"], None):
+            code, _, err, calls = self.go([self.good()], component_answer=answer)
+            self.assertEqual(code, 1, answer)
+            self.assertIn("gives the component no Application ID", err)
+            self.assertIn("--insights", err)
+            self.assertEqual((calls["events"], calls["queries"]), ([], []), answer)
+
+    def test_a_component_that_cannot_be_read_stops_the_run_before_the_event_is_sent(self):
+        code, _, err, calls = self.go([self.good()], component_answer=Exception)
+        self.assertEqual(code, 1)
+        self.assertIn("get appi-example failed: ERROR: (AuthorizationFailed) no right", err)
+        self.assertNotIn("second line", err)
+        self.assertEqual((calls["events"], calls["queries"]), ([], []))
+
+    def test_a_malformed_answer_is_a_problem_that_the_loop_waits_through(self):
+        for body, why in ((b"<html>please sign in</html>", "is not JSON"), (b"", "is not JSON"), (b"\xff\xfe", "is not JSON"), (b"[]", "is not a query result"),
+                          (b"{}", "is not a query result"), (b'{"tables": "x"}', "is not a query result"), (b'{"tables": [5]}', "is not a query result"),
+                          (b'{"tables": [{"rows": "x"}]}', "is not a query result"), (b'{"tables": [{"rows": [5]}]}', "is not a query result"),
+                          (b'{"tables": [{"rows": null}]}', "is not a query result")):
+            code, out, err, calls = self.go([(200, body), self.good()])
+            self.assertEqual((code, err), (0, ""), body)
+            self.assertIn(f"The telemetry could not be read yet (the data-plane answer {why}", out, body)
+            self.assertEqual(len(calls["queries"]), 2, body)
+
+    def test_an_answer_without_rows_is_no_rows_and_not_a_malformed_one(self):
+        for empty in ({"tables": []}, {"tables": [{"name": "PrimaryResult", "columns": [], "rows": []}]}, {"tables": [{"columns": []}]}):
+            code, out, _, _ = self.go([empty, self.good()])
+            self.assertEqual(code, 0, empty)
+            self.assertNotIn("could not be read yet", out)
+
+    def test_a_403_names_the_likely_cause_is_waited_through_and_never_shows_the_token(self):
+        refused = (403, {"error": {"code": "InsufficientAccessError", "message": f"The provided credentials have insufficient access. {DATA_TOKEN}\nsecond line"}})
+        code, out, err, _ = self.go([refused, self.good()])
+        self.assertEqual((code, err), (0, ""))
+        self.assertIn("answered 403", out)
+        self.assertIn("no Reader or Monitoring Reader role on the component or above it", out)
+        self.assertIn("a new role takes minutes to apply", out)
+        self.assertIn("[token hidden]", out)
+        for shown in (DATA_TOKEN, SECRET, "second line"):
+            self.assertNotIn(shown, out)
+
+    def test_a_403_that_does_not_go_away_ends_the_run_and_the_diagnostics_say_why(self):
+        refused = (403, b'{"error": {"code": "InsufficientAccessError", "message": "no access to this resource"}}')
+        code, out, _, _ = self.go([refused], "--minutes", "1")
+        self.assertEqual(code, 1)
+        self.assertIn("0 of 3 results arrived", out)
+        self.assertIn("traces: could not be read (the data-plane query answered 403 (the identity probably has no Reader or Monitoring Reader role", out)
+        self.assertIn("no access to this resource", out)
+
+    def test_every_other_failure_is_a_problem_too_that_the_loop_waits_through(self):
+        failures = (((401, {"error": {"message": "bad token"}}), "answered 401 (the token was not accepted by the Application Insights API): bad token"),
+                    ((404, b"not found"), "answered 404: not found"), ((429, b""), "answered 429"), ((500, b"boom"), "answered 500: boom"),
+                    ((503, b"<html>unavailable</html>"), "answered 503: <html>unavailable</html>"),
+                    (urllib.error.URLError("getaddrinfo failed"), "could not be sent: URLError: <urlopen error getaddrinfo failed>"),
+                    (ConnectionResetError("reset by peer"), "could not be sent: ConnectionResetError: reset by peer"),
+                    (http.client.RemoteDisconnected("closed"), "could not be sent: RemoteDisconnected: closed"),
+                    (TimeoutError("timed out"), "could not be sent: TimeoutError: timed out"))
+        for answer, expected in failures:
+            code, out, err, _ = self.go([answer, self.good()])
+            self.assertEqual((code, err), (0, ""), answer)
+            self.assertIn(f"The telemetry could not be read yet (the data-plane query {expected}", out, answer)
+
+    def test_no_token_for_the_data_plane_is_waited_through_and_then_reported_without_the_second_line(self):
+        code, out, _, calls = self.go([self.good()], "--minutes", "1", data_token_fails=True)
+        self.assertEqual(code, 1)
+        self.assertIn("no token for https://api.applicationinsights.io: ERROR: AADSTS500011 no such resource", out)
+        self.assertNotIn("second line", out)
+        self.assertEqual(calls["queries"], [], "nothing is sent without a token")
+
+    def test_the_rows_have_the_shape_that_resource_manager_gives(self):
+        document = telemetry([result("llm-usage-ingestion", self.ID)])
+
+        def runner(args):
+            if args[:2] == ["account", "get-access-token"]:
+                return 0, DATA_TOKEN + "\n", ""
+            return 0, json.dumps(document if "/query?" in args[args.index("--url") + 1] else component()), ""
+
+        through_arm = azure(runner)
+        through_data_plane = azure(runner, lambda url, headers, body: (200, json.dumps(document).encode("utf-8")))
+        through_data_plane.query_via = "data-plane"
+        self.assertEqual(rc.query_telemetry(through_data_plane, INSIGHTS, "traces | take 1"), rc.query_telemetry(through_arm, INSIGHTS, "traces | take 1"))
+        self.assertEqual(rc.query_telemetry(through_data_plane, INSIGHTS, "traces | take 1"), document["tables"][0]["rows"])
+
+    def test_the_option_belongs_to_run_and_takes_one_of_two_values(self):
+        for argv in (["run", "--namespace", NAMESPACE, "--insights", INSIGHTS, "--query-via", "other"], ["functions", "--site", SITE, "--query-via", "arm"],
+                     ["whoami", "--query-via", "data-plane"]):
+            sent = []
+            with mock.patch.dict(os.environ, ENV), redirect_stderr(io.StringIO()), redirect_stdout(io.StringIO()):
+                with self.assertRaises(SystemExit) as stop:
+                    rc.main(argv, azure(lambda args: (0, "{}", ""), lambda *a: sent.append(a) or (201, b"")))
+            self.assertEqual(stop.exception.code, 2, argv)
+            self.assertEqual(sent, [], argv)
+        self.assertEqual(rc.QUERY_VIA, ("arm", "data-plane"))
+        with self.assertRaises(rc.Problem):
+            rc.choose_query_path(azure(lambda args: (0, "{}", "")), "other", INSIGHTS)
+
+    def test_the_host_the_api_version_and_the_audience_are_the_documented_ones(self):
+        self.assertEqual(rc.DATA_PLANE, "https://api.applicationinsights.io")
+        self.assertEqual(rc.COMPONENT_API, "2020-02-02")
+        self.assertEqual(rc.QUERY_API, "2018-04-20", "the Resource Manager's own query API did not change")
+
+
+class WhatAServiceSays(unittest.TestCase):
+    def test_what_said_does(self):
+        self.assertEqual(rc.said(b"", "t"), "")
+        self.assertEqual(rc.said(None, "t"), "")
+        self.assertEqual(rc.said(b'{"error": {"message": "no\\nsecond"}}', "t"), "no")
+        self.assertEqual(rc.said(b'{"error": "text"}', ""), '{"error": "text"}')
+        self.assertEqual(rc.said("a token-1 b", "token-1"), "a [token hidden] b")
+        self.assertEqual(rc.said("a token-1 b", ""), "a token-1 b", "an empty token hides nothing")
+        self.assertEqual(rc.said("x\x1b[31m y", ""), "x [31m y")
+        self.assertEqual(rc.said(b"\xff", ""), "\ufffd")
+        long = rc.said("x" * 500, "")
+        self.assertEqual((len(long), long.endswith("...")), (160, True))
+
+
+class NoRedirects(unittest.TestCase):
+    def test_a_redirect_is_not_followed_so_the_token_is_not_sent_on(self):
+        request = urllib.request.Request("https://api.applicationinsights.io/v1/apps/x/query", data=b"{}", headers={"Authorization": f"Bearer {DATA_TOKEN}"}, method="POST")
+        for code in (301, 302, 303, 307, 308):
+            self.assertIsNone(rc.NoRedirect().redirect_request(request, io.BytesIO(b""), code, "moved", {}, "https://elsewhere.example/"), code)
+        handlers = rc.OPENER.handlers
+        self.assertTrue(any(isinstance(h, rc.NoRedirect) for h in handlers))
+        self.assertFalse(any(type(h) is urllib.request.HTTPRedirectHandler for h in handlers), "the default redirect handler is replaced")
+
+    def test_post_http_gives_a_redirect_and_an_error_back_as_an_answer(self):
+        class Response:
+            status = 200
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *stop):
+                return False
+
+            def read(self):
+                return b"fine"
+
+        class Opener:
+            def __init__(self, raises=None):
+                self.raises = raises
+
+            def open(self, request, timeout):
+                self.timeout = timeout
+                if self.raises:
+                    raise self.raises
+                return Response()
+
+        moved = urllib.error.HTTPError("https://x.example/", 307, "Temporary Redirect", {}, io.BytesIO(b"moved"))
+        refused = urllib.error.HTTPError("https://x.example/", 403, "Forbidden", {}, io.BytesIO(b"no"))
+        for opener, expected in ((Opener(), (200, b"fine")), (Opener(moved), (307, b"moved")), (Opener(refused), (403, b"no"))):
+            with mock.patch.object(rc, "OPENER", opener):
+                self.assertEqual(rc.post_http("https://x.example/", {}, b"{}"), expected)
+            self.assertEqual(opener.timeout, 60)
+
+
 class NothingReadsTheStore(unittest.TestCase):
     def test_the_checker_makes_no_call_to_cosmos_db_and_asks_for_no_key(self):
         source = (ROOT / "tools" / "recording-check.py").read_text(encoding="utf-8")
         code = re.sub(r'""".*?"""', "", source, flags=re.S)
         for word in ("documents.azure.com", "cosmos.azure.com", "listKeys", "listConnectionStrings", "primaryKey", "SharedAccessSignature", "AccountKey"):
             self.assertNotIn(word, code, word)
-        self.assertEqual(sorted(set(re.findall(r'token\(\s*["\']([^"\']+)["\']', code)) | set(re.findall(r"token\(\s*'([^']+)'\)", code))), ["https://eventhubs.azure.net", "https://management.azure.com"])
+        for word in ("x-api-key", "api_key", "apikey", "demo_key"):
+            self.assertNotIn(word, code.lower(), "the API key of Application Insights queries is retired, and no key is used (AGENTS.md rule 23)")
+        literal = set(re.findall(r'token\(\s*["\']([^"\']+)["\']', code))
+        named = {getattr(rc, name) for name in re.findall(r"token\(\s*([A-Z_]+)\s*\)", code)}
+        self.assertEqual(sorted(literal | named), ["https://api.applicationinsights.io", "https://eventhubs.azure.net", "https://management.azure.com"])
 
 
 if __name__ == "__main__":
