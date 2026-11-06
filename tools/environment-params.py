@@ -49,7 +49,11 @@ It writes five ARM parameter files into --out-dir (seven, with --contract: the c
                                       History); written together with the contract, because it names the contract's subscription whose
                                       key the app reads at the start of a run
 
-Every value is checked before anything is deployed. The name of the model account is worked out here, from the
+                                      What each function app takes from the public internet is not a setting of the workflow: USAGE_APP_PUBLIC_NETWORK_ACCESS and CASES_APP_PUBLIC_NETWORK_ACCESS, near the top of this file, are
+                                      Enabled today and go into recording.parameters.json and cases.parameters.json (usageAppPublicNetworkAccess, casesAppPublicNetworkAccess). Closing an app is one value and a commit, and
+                                      the property is always written: an app whose value is not set has its public access switched off by the first private endpoint (docs/proposals/07-private-by-default.md).
+
+                                      Every value is checked before anything is deployed. The name of the model account is worked out here, from the
 subscription and the resource group, so it is the same on every run (a run after a removal finds, and the workflow
 restores, the soft-deleted account of that name instead of leaving a second one behind); so are the names of the usage
 recording's storage account, Event Hubs namespace, Cosmos DB account and function app, which are host names too, and the name of the
@@ -115,6 +119,12 @@ APPINSIGHTS_ID = re.compile(rf"^/subscriptions/([0-9a-fA-F-]{{36}})/resourceGrou
 PRIVATE_SPACE = ipaddress.ip_network("10.0.0.0/8")
 SKUS = ("DataZoneStandard", "GlobalStandard")
 PLACEHOLDER = "00000000-0000-0000-0000-000000000000"
+# What each function app takes from the public internet: Enabled for both, because the workflow still publishes the code from the GitHub-hosted runner, which is outside the network
+# (docs/proposals/07-private-by-default.md, phase 1). The change that publishes through the Operator sets each to Disabled: one value. They go into every parameter file, so that the
+# property is never left unset: for an app whose value is not set, the first private endpoint switches public access off by itself (Learn, App Service access restrictions).
+PUBLIC_NETWORK_ACCESS = ("Enabled", "Disabled")
+USAGE_APP_PUBLIC_NETWORK_ACCESS = "Enabled"
+CASES_APP_PUBLIC_NETWORK_ACCESS = "Enabled"
 IDENTITY_NAME = "id-meternaut-gateway"
 FOUNDRY_PROJECT_NAME = "meternaut"
 FOUNDRY_GUARDRAIL_NAME = "meternaut-agents"
@@ -339,7 +349,8 @@ def ops_subnet_exists(env: dict) -> bool:
 
 
 def recording_endpoints(names: dict[str, str]) -> list[tuple[str, str]]:
-    """The private endpoints of the usage recording and the central private DNS zone that the landing zone registers each in."""
+    """The private endpoints of the usage recording's services and the central private DNS zone that the landing zone registers each in. The function app's own endpoint is not in the list: the
+    app is public while the workflow publishes to it, so nothing waits for its names, and the probe of the Operator reports them (docs/proposals/07-private-by-default.md, phase 1)."""
     storage = names["storage_account_name"]
     return [
         *[(f"pe-{storage}-{service}", f"privatelink.{service}.core.windows.net") for service in ("blob", "queue", "table")],
@@ -527,7 +538,10 @@ def build(env, models: list[dict], preview: bool = False, contract: dict | None 
     if not vnet.subnet_of(PRIVATE_SPACE) or not 16 <= vnet.prefixlen <= 28:
         raise Problem("ENV_VNET_PREFIX is inside 10.0.0.0/8 and between /16 and /28")
     if not subnet.subnet_of(vnet) or subnet.prefixlen > 28:
-        raise Problem("ENV_PE_SUBNET_PREFIX lies inside the virtual network and is at least a /28: the usage recording has five private endpoints and the model account one, and Azure keeps five addresses of every subnet")
+        raise Problem("ENV_PE_SUBNET_PREFIX lies inside the virtual network and is at least a /28: the usage recording has five private endpoints, the model account one, the Foundry resource one and each of the two function apps one, and Azure keeps five addresses of every subnet")
+    for setting, value in (("USAGE_APP_PUBLIC_NETWORK_ACCESS", USAGE_APP_PUBLIC_NETWORK_ACCESS), ("CASES_APP_PUBLIC_NETWORK_ACCESS", CASES_APP_PUBLIC_NETWORK_ACCESS)):
+        if value not in PUBLIC_NETWORK_ACCESS:
+            raise Problem(f"{setting} (in tools/environment-params.py) is Enabled or Disabled, so that the template always writes the property")
 
     dns = items(need(env, "ENV_DNS_SERVERS"), "ENV_DNS_SERVERS", 3)
     for server in dns:
@@ -596,6 +610,7 @@ def build(env, models: list[dict], preview: bool = False, contract: dict | None 
         "gatewayAppInsightsResourceGroup": insights.group(2),
         "gatewayAppInsightsName": insights.group(3),
         "dataReaderPrincipalIds": list(dict.fromkeys(r.lower() for r in readers)),
+        "usageAppPublicNetworkAccess": USAGE_APP_PUBLIC_NETWORK_ACCESS,
     }
     backend = {
         "backendId": name,
@@ -725,6 +740,7 @@ def build(env, models: list[dict], preview: bool = False, contract: dict | None 
             "modelDetective": contract["allowedModels"][0],
             "modelSkeptic": contract["allowedModels"][1],
             "foundryProjectEndpoint": foundry["foundry_project_endpoint"] if foundry_exists else "",
+            "casesAppPublicNetworkAccess": CASES_APP_PUBLIC_NETWORK_ACCESS,
             **console_parameters(env),
         })
     return files, outputs

@@ -1,4 +1,5 @@
 import contextlib
+import hashlib
 import importlib.util
 import io
 import json
@@ -1085,6 +1086,219 @@ class ReadTheEventHubsNamespaceBack(unittest.TestCase):
         self.assertEqual(done.returncode, 1)
         self.assertEqual(len(lines), 1)
         self.assertIn("::error::The Event Hubs namespace could not be read: ERROR: (TooManyRequests) Too many requests, try again later.", done.stdout)
+
+
+PROBE_STEP_AZ = """#!/bin/bash
+# stand-in for az in the probe step: the list that finds the Operator's identity, and the read of its client id
+echo "az $*" >> "$FAKE_LOG"
+case "$*" in
+  *"resource list"*) printf '%s' "$FAKE_IDENTITY_ID" ;;
+  *"/userAssignedIdentities/"*) printf '%s' "$FAKE_CLIENT" ;;
+  *) echo "unexpected az call: $*" >&2; exit 9 ;;
+esac
+"""
+
+PROBE_STEP_CURL = """#!/bin/bash
+# stand-in for curl, which the probe step runs once: what it was given on the command line and on standard input (the bearer of the request for the token), and the answer that
+# FAKE_CURL says: ok (one line), pretty (the lines of a printed document), fail (the exit code 22 of --fail), empty (a document without the token), or the answer itself
+echo "curl $*" >> "$FAKE_LOG"
+echo "curl-stdin $(cat)" >> "$FAKE_LOG"
+case "$FAKE_CURL" in
+  ok) printf '{"count":1234,"value":"%s"}' "$FAKE_TOKEN" ;;
+  pretty) printf '{\\n  "count": 3,\\n  "value": "%s"\\n}\\n' "$FAKE_TOKEN" ;;
+  fail) exit 22 ;;
+  empty) printf '{"count":0}' ;;
+  *) printf '%s' "$FAKE_CURL" ;;
+esac
+"""
+
+PROBE_STEP_PYTHON3 = """#!/bin/bash
+# stand-in for python3, which the probe step runs once as the tool: the arguments, one line each; the size and the hash of each file that --secret-file names, which the step has made by now;
+# and what the environment of the call holds. Nothing is printed on standard output.
+{
+  echo "python3"
+  for argument in "$@"; do echo "  $argument"; done
+  echo "token-in-env=${AZURE_FEDERATED_TOKEN-unset}"
+  previous=""
+  for argument in "$@"; do
+    if [ "$previous" = "--secret-file" ]; then
+      name=${argument%%=*}
+      path=${argument#*=}
+      echo "file $name $(wc -c < "$path" | tr -d ' ') $(sha256sum < "$path" | cut -d' ' -f1)"
+    fi
+    previous=$argument
+  done
+} >> "$FAKE_LOG"
+exit "${FAKE_EXIT-0}"
+"""
+
+
+PROBE_STEP_PRELUDE = """# Git's bash on Windows finds its own curl before the folder of the stand-ins, which the PATH of the process names first: put the folder first inside the shell
+if command -v cygpath > /dev/null 2>&1; then PATH="$(cygpath -u "$FAKE_DIR")/bin:$PATH"; fi
+"""
+
+
+def split_calls(lines):
+    """The log of the stand-ins as the calls of python3 (the arguments of each) and every other line, in order."""
+    calls, other = [], []
+    for line in lines:
+        if line == "python3":
+            calls.append([])
+        elif line.startswith("  ") and calls:
+            calls[-1].append(line[2:])
+        else:
+            other.append(line)
+    return calls, other
+
+
+@unittest.skipIf(BASH is None, "no bash on this machine")
+class TheProbeStepAsksForTheTokenOfTheDeployIdentity(unittest.TestCase):
+    """The step that runs the probe in the Operator, run with bash against stand-ins for az, curl and python3: the token of the deploy identity, which GitHub issues to the run, is asked for
+    with the bearer on standard input, masked, and given to the one call of the tool through its environment and nowhere else; and the probe still runs when there is none."""
+
+    SUBSCRIPTION = "11111111-2222-3333-4444-555555555555"
+    GROUP = "rg-of-the-project"
+    IDENTITY = f"/subscriptions/{SUBSCRIPTION}/resourceGroups/{GROUP}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/id-meternaut-operator"
+    IMAGE = "mcr.microsoft.com/azure-cli@sha256:" + "ab" * 32
+    DEPLOY_CLIENT = "aaaaaaaa-0000-4000-8000-000000000001"
+    DEPLOY_TENANT = "bbbbbbbb-0000-4000-8000-000000000002"
+    TOKEN = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJyZXBvOmV4YW1wbGUvZXhhbXBsZSJ9.c2lnbmF0dXJlLW9mLXRoZS10ZXN0LXRva2Vu"
+    BEARER = "bearer-of-the-request-0123456789"
+    URL = "https://token.example.net/_apis/oidc/idtoken?api-version=2.0"
+    NO_REQUEST = "the job has no token request for OpenID Connect (the id-token permission)"
+
+    def run_probe_step(self, curl="ok", request=True, exit_code=0, **changes):
+        env = {"ENV_SUBSCRIPTION_ID": self.SUBSCRIPTION, "ENV_RESOURCE_GROUP": self.GROUP, "ENV_DNS_SERVERS": "10.20.0.4,10.20.0.5", "GITHUB_RUN_ID": "1234567890", "OPERATOR_IMAGE": self.IMAGE,
+               "EVENT_HUB_NAMESPACE": "evhns-meternaut-0a1b2c3d", "STORAGE_ACCOUNT": "stmeternaut0a1b2c3d", "COSMOS_ACCOUNT": "cosmos-meternaut-0a1b2c3d", "MODEL_ACCOUNT": "aoai-meternaut-0a1b2c3d",
+               "FOUNDRY_ACCOUNT": "aif-meternaut-agents-0a1b2c3d", "USAGE_APP": "func-meternaut-usage-0a1b2c3d", "CASES_APP": "func-meternaut-cases-0a1b2c3d",
+               "DEPLOY_CLIENT_ID": self.DEPLOY_CLIENT, "DEPLOY_TENANT_ID": self.DEPLOY_TENANT, "FAKE_IDENTITY_ID": self.IDENTITY, "FAKE_CLIENT": OPERATOR_CLIENT, "FAKE_CURL": curl,
+               "FAKE_TOKEN": self.TOKEN, "FAKE_EXIT": str(exit_code), "ACTIONS_ID_TOKEN_REQUEST_URL": self.URL if request else "",
+               "ACTIONS_ID_TOKEN_REQUEST_TOKEN": self.BEARER if request else "", **changes}
+        done, lines, _ = run_step_script("Run the probe in the Operator", {"az": PROBE_STEP_AZ, "curl": PROBE_STEP_CURL, "python3": PROBE_STEP_PYTHON3}, env, prelude=PROBE_STEP_PRELUDE)
+        calls, other = split_calls(lines)
+        return done, calls, other
+
+    def environment_of(self, argv):
+        return dict(argv[i + 1].split("=", 1) for i, word in enumerate(argv) if word == "--env")
+
+    def test_the_token_is_asked_for_with_the_audience_and_the_bearer_on_standard_input_and_only_the_one_call_of_the_tool_gets_it(self):
+        done, calls, other = self.run_probe_step()
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        (argv,) = calls
+        self.assertIn(f"curl --silent --fail --max-time 30 --config - {self.URL}&audience=api://AzureADTokenExchange", other, "the audience that the federated credential trusts")
+        self.assertIn(f'curl-stdin header = "Authorization: Bearer {self.BEARER}"', other, "the bearer of the request comes on standard input")
+        self.assertEqual(sum(line.startswith("curl ") for line in other), 1, "one request")
+        self.assertIn(f"token-in-env={self.TOKEN}", other, "the call of the tool has the token in its environment")
+        self.assertEqual(argv.count("--secure-env"), 1)
+        self.assertEqual(argv[argv.index("--secure-env") + 1], "AZURE_FEDERATED_TOKEN", "named and not given: the tool takes the value from the environment")
+        for where, words in (("an argument of the tool", argv), ("a line of a stand-in", [line for line in other if not line.startswith("token-in-env=")])):
+            for word in words:
+                self.assertNotIn(self.TOKEN, word, where)
+        for word in [word for call in calls for word in call] + [line for line in other if line.startswith("curl ") or line.startswith("az ")]:
+            self.assertNotIn(self.BEARER, word, "the bearer of the request is on no command line")
+        self.assertNotIn("PROBE_TOKEN_NOTE", self.environment_of(argv), "there is a token, so there is nothing to explain")
+        for value in self.environment_of(argv).values():
+            self.assertNotIn(self.TOKEN, value, "no --env value is the token")
+        self.assertIn(f"::add-mask::{self.TOKEN}", done.stdout.splitlines(), "masked at once, before the tool is called")
+        self.assertNotIn(self.TOKEN, done.stdout.replace(f"::add-mask::{self.TOKEN}", ""), "and printed nowhere else")
+        self.assertNotIn(self.TOKEN, done.stderr)
+        self.assertNotIn(self.BEARER, done.stdout + done.stderr)
+        self.assertEqual([line for line in other if line.startswith("az ")], [
+            "az resource list --resource-group rg-of-the-project --name id-meternaut-operator --query [0].id --output tsv",
+            f"az rest --method get --url https://management.azure.com{self.IDENTITY}?api-version=2023-01-31 --query properties.clientId --output tsv"], "the runner reads two things and signs in as nobody")
+
+    def test_the_names_of_the_apps_their_sites_the_lock_and_the_ids_of_the_deploy_identity_are_given_to_the_probe(self):
+        done, calls, other = self.run_probe_step()
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        (argv,) = calls
+        usage, cases = "func-meternaut-usage-0a1b2c3d", "func-meternaut-cases-0a1b2c3d"
+        scm = f"{usage}.scm.azurewebsites.net {cases}.scm.azurewebsites.net"
+        env = self.environment_of(argv)
+        self.assertEqual(env["PROBE_SCM_HOSTS"], scm)
+        self.assertEqual(env["PROBE_NAMES"].split()[-2:], [f"{usage}.azurewebsites.net", f"{cases}.azurewebsites.net"])
+        self.assertEqual(env["PROBE_PRIVATE_NAMES"], f"{env['PROBE_NAMES']} {scm}", "the apps and their sites must resolve to private addresses: the apps have a private endpoint each")
+        self.assertIn(f"https://{cases}.azurewebsites.net/healthz", env["PROBE_URLS"].split())
+        self.assertIn(f"https://{usage}.azurewebsites.net/", env["PROBE_URLS"].split())
+        self.assertEqual((env["PROBE_DEPLOY_CLIENT_ID"], env["PROBE_DEPLOY_TENANT_ID"]), (self.DEPLOY_CLIENT, self.DEPLOY_TENANT))
+        self.assertEqual((env["OPERATOR_CLIENT_ID"], env["OPERATOR_GROUP"], env["OPERATOR_SUBSCRIPTION"]), (OPERATOR_CLIENT, self.GROUP, self.SUBSCRIPTION))
+        lock = ROOT / "src" / "usage-functions" / "requirements.txt"
+        content = lock.read_bytes()
+        self.assertEqual(env["PROBE_LOCK_BYTES"], str(len(content)), "the size that the probe compares the file in its volume with")
+        files = {line.split()[1]: line.split()[2:] for line in other if line.startswith("file ")}
+        self.assertEqual(files["usage-requirements.txt"], [str(len(content)), hashlib.sha256(content).hexdigest()], "the lock is sent whole, byte for byte")
+        self.assertEqual(files["size-test"][0], env["PROBE_SIZE_BYTES"], "400,000 bytes, as the first probe sent")
+        self.assertIn("usage-requirements.txt=src/usage-functions/requirements.txt", argv)
+        self.assertEqual(argv[argv.index("--timeout-seconds") + 1], "1200")
+        self.assertEqual(argv[argv.index("--name") + 1], "op-probe-1234567890")
+
+    def test_a_job_without_the_token_request_calls_the_tool_without_a_secure_value_and_says_why_and_the_step_still_succeeds(self):
+        for changes in ({"request": False}, {"ACTIONS_ID_TOKEN_REQUEST_TOKEN": ""}, {"ACTIONS_ID_TOKEN_REQUEST_URL": ""}):
+            done, calls, other = self.run_probe_step(**changes)
+            self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+            (argv,) = calls
+            self.assertNotIn("--secure-env", argv, changes)
+            self.assertEqual(self.environment_of(argv)["PROBE_TOKEN_NOTE"], self.NO_REQUEST)
+            self.assertFalse([line for line in other if line.startswith("curl ")], "no request is made when the job has none")
+            self.assertIn("token-in-env=", other, "the environment of the call holds an empty value, which the probe takes for no token")
+            self.assertIn(f"::warning::The probe goes on without a token for the deploy identity: {self.NO_REQUEST}.", done.stdout)
+            self.assertNotIn("::add-mask::", done.stdout)
+
+    def test_a_request_that_fails_or_an_answer_without_the_token_is_said_in_a_few_words_and_never_stops_the_step(self):
+        for curl, note in (("fail", "the request for the token failed (curl exit code 22)"), ("empty", "the answer to the request for the token held none"),
+                           ('{"message":"nope"}', "the answer to the request for the token held none"), ("", "the answer to the request for the token held none")):
+            done, calls, other = self.run_probe_step(curl=curl)
+            self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+            (argv,) = calls
+            self.assertNotIn("--secure-env", argv, curl)
+            self.assertEqual(self.environment_of(argv)["PROBE_TOKEN_NOTE"], note, curl)
+            self.assertIn(f"::warning::The probe goes on without a token for the deploy identity: {note}.", done.stdout)
+            self.assertNotIn("::add-mask::", done.stdout)
+            self.assertNotIn(self.BEARER, done.stdout + done.stderr)
+
+    def test_an_answer_that_is_a_printed_document_gives_the_token_too(self):
+        done, calls, other = self.run_probe_step(curl="pretty")
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertIn(f"token-in-env={self.TOKEN}", other)
+        self.assertIn(f"::add-mask::{self.TOKEN}", done.stdout.splitlines())
+
+    def test_a_tool_that_fails_fails_the_step_and_the_step_calls_the_tool_once(self):
+        for exit_code in (1, 124):
+            done, calls, _ = self.run_probe_step(exit_code=exit_code)
+            self.assertEqual(done.returncode, exit_code, "the exit code of the tool is the exit code of the step")
+            self.assertEqual(len(calls), 1, "the group is made once")
+
+    def test_the_call_is_accepted_by_the_tool_the_group_holds_the_token_once_as_a_secure_value_and_the_files_stay_below_its_limit(self):
+        done, calls, other = self.run_probe_step()
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        (argv,) = calls
+        tool = load_operator_tool()
+        args = tool.build_parser().parse_args(argv[1:])
+        with mock.patch.dict(os.environ, {"AZURE_FEDERATED_TOKEN": self.TOKEN}):
+            plain, secure, servers = tool.check_options(args)
+        self.assertEqual(secure, [("AZURE_FEDERATED_TOKEN", self.TOKEN)])
+        self.assertEqual(servers, ["10.20.0.4", "10.20.0.5"])
+        self.assertEqual(sorted(name for name, _ in plain), sorted(["OPERATOR_CLIENT_ID", "OPERATOR_GROUP", "OPERATOR_SUBSCRIPTION", "PROBE_NAMES", "PROBE_PRIVATE_NAMES", "PROBE_URLS", "PROBE_SIZE_BYTES",
+                                                                   "PROBE_SCM_HOSTS", "PROBE_LOCK_BYTES", "PROBE_DEPLOY_CLIENT_ID", "PROBE_DEPLOY_TENANT_ID"]))
+        probe = (ROOT / "operator" / "probe.sh").read_text(encoding="utf-8")
+        read = set(re.findall(r"\b(?:PROBE|OPERATOR)_[A-Z_]+\b|\bAZURE_FEDERATED_TOKEN\b", probe))
+        given = {name for name, _ in plain} | {"AZURE_FEDERATED_TOKEN"}
+        self.assertEqual(read - given, {"PROBE_VOLUME", "PROBE_RESOLV_CONF", "PROBE_TMP", "PROBE_TOKEN_NOTE"}, "the probe reads what the step gives it, and the hooks of its tests, and why there is no token")
+        self.assertEqual(given - read, set(), "and the step gives it nothing that it does not read")
+        with tempfile.TemporaryDirectory() as tmp:
+            size_file = Path(tmp) / "size-test"
+            size_file.write_bytes(bytes(400_000))
+            args.secret_file = [f"size-test={size_file}" if pair.startswith("size-test=") else pair for pair in args.secret_file]
+            with contextlib.chdir(ROOT):
+                files = tool.read_files(args)
+        self.assertEqual(sorted(files), ["probe.sh", "size-test", "usage-requirements.txt"])
+        self.assertEqual(files["usage-requirements.txt"], (ROOT / "src" / "usage-functions" / "requirements.txt").read_bytes())
+        self.assertEqual(len(files["usage-requirements.txt"]), int(dict(plain)["PROBE_LOCK_BYTES"]))
+        self.assertLess(sum(len(content) for content in files.values()), tool.MAX_FILE_BYTES)
+        document = tool.group_document(args, files, plain, secure, servers, "2026-11-06T07:00:00Z")
+        variables = document["properties"]["containers"][0]["properties"]["environmentVariables"]
+        self.assertEqual([variable for variable in variables if self.TOKEN in json.dumps(variable)], [{"name": "AZURE_FEDERATED_TOKEN", "secureValue": self.TOKEN}])
+        self.assertEqual(json.dumps(document).count(self.TOKEN), 1, "once in the request, as a secure value, which Azure does not show again")
+        self.assertNotIn(self.TOKEN, tool.Printer([self.TOKEN]).redact(f"a line that says {self.TOKEN} in the middle"))
 
 
 POWERSHELLS = []
