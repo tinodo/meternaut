@@ -515,6 +515,162 @@ class WaitForTheFoundryPrivateEndpoint(unittest.TestCase):
                 self.assertNotIn(word, call, call)
 
 
+APP_WAIT_AZ = """az() {
+  # a function in the shell of the step and not a program on the PATH, because a wait makes hundreds of calls and a program is a process each. It asks for the zone group of the endpoint that the call
+  # names (--endpoint-name). FAKE_REGISTERED is "endpoint=zone endpoint=zone@3 ...": the endpoints that the policy has registered, each in its zone, and from the check that @ names on (without it: from
+  # the first). FAKE_COUNT is the number of endpoints that one check asks about, so that the number of the check can be told from the number of the call; the first FAKE_FAILING calls fail.
+  local n check endpoint previous argument pair rest zone from
+  echo "az $*" >> "$FAKE_LOG"
+  case "$*" in
+    *"dns-zone-group list"*)
+      read -r n < "$FAKE_DIR/count" 2> /dev/null || n=0
+      n=$((n + 1))
+      echo "$n" > "$FAKE_DIR/count"
+      if [ "$n" -le "${FAKE_FAILING:-0}" ]; then echo "ERROR: try again" >&2; return 1; fi
+      check=$(( (n - 1) / FAKE_COUNT + 1 ))
+      endpoint=""; previous=""
+      for argument in "$@"; do if [ "$previous" = "--endpoint-name" ]; then endpoint=$argument; fi; previous=$argument; done
+      for pair in $FAKE_REGISTERED; do
+        rest=${pair#*=}; zone=${rest%%@*}; from=1
+        if [[ "$rest" == *@* ]]; then from=${rest#*@}; fi
+        if [ "${pair%%=*}" = "$endpoint" ] && [ "$check" -ge "$from" ]; then printf '/subscriptions/dddd/resourceGroups/rg-dns/providers/Microsoft.Network/privateDnsZones/%s\\n' "$zone"; fi
+      done ;;
+    *) echo "unexpected az call: $*" >&2; return 9 ;;
+  esac
+}
+"""
+
+
+@unittest.skipIf(BASH is None, "no bash on this machine")
+class WaitForTheEndpointsOfTheTwoApps(unittest.TestCase):
+    """The waits of the actions recording and cases for the landing zone's policy to register the private endpoint of each function app in its central zone before the code is published. The first
+    `recording` after the usage app's endpoint was made failed at the publish, because the app's own name did not resolve until the zone had its record (2026-11-06): so the app's endpoint is in the list of
+    the recording's wait, and the cases action waits for its own. Each runs against a stand-in for az that registers the endpoints from the check that the test names on."""
+
+    RECORDING = "Wait until the landing zone has registered the usage recording's private endpoints in the central zones"
+    CASES = "Wait until the landing zone has registered the cases app's private endpoint in the central zone"
+    SUBSCRIPTION = "11111111-2222-3333-4444-555555555555"
+    GROUP = "rg-of-the-project"
+    ZONE_OF_THE_APPS = "privatelink.azurewebsites.net"
+
+    @classmethod
+    def setUpClass(cls):
+        spec = importlib.util.spec_from_file_location("environment_params_of_the_wait_tests", ROOT / "tools" / "environment-params.py")
+        cls.params = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(cls.params)
+        names = cls.params.recording_names(cls.SUBSCRIPTION, cls.GROUP)
+        cls.recording = cls.params.recording_endpoints(names)
+        cls.cases = cls.params.cases_endpoints(cls.params.cases_names(cls.SUBSCRIPTION, cls.GROUP))
+        cls.usage_endpoint = f"pe-{names['function_app_name']}"
+        cls.cases_endpoint = cls.cases[0][0]
+
+    def run_wait(self, title, variable, pairs, registered, failing=0, two_checks=False):
+        """`two_checks`: the loop runs twice and not forty times, which a test that is not about the budget uses to keep the run short (the budget is held by the forty-check tests and by the structure test)."""
+        env = {variable: ",".join(f"{endpoint}:{zone}" for endpoint, zone in pairs), "ENV_RESOURCE_GROUP": self.GROUP, "FAKE_REGISTERED": " ".join(registered), "FAKE_COUNT": str(len(pairs)),
+               "FAKE_FAILING": str(failing)}
+        return run_step_script(title, {}, env, prelude=FAKE_SLEEP + APP_WAIT_AZ + ('seq() { printf "1\\n2\\n"; }\n' if two_checks else ""))
+
+    def registered(self, pairs, **later):
+        """Every endpoint of the list, registered in its zone from the first check, except the ones named in `later`, which come from that check on."""
+        return [f"{endpoint}={zone}" + (f"@{later[endpoint]}" if endpoint in later else "") for endpoint, zone in pairs]
+
+    def checks(self, lines):
+        return [line for line in lines if "dns-zone-group list" in line]
+
+    def named(self, lines):
+        return [re.search(r"--endpoint-name (\S+)", line).group(1) for line in self.checks(lines)]
+
+    def sleeps(self, lines):
+        return [line for line in lines if line.startswith("sleep")]
+
+    def test_the_list_of_the_recording_holds_the_app_s_endpoint_with_the_zone_of_app_service_and_the_cases_list_holds_the_cases_app_s(self):
+        self.assertEqual(len(self.recording), 6, "the five endpoints of the services and the usage app's own")
+        self.assertIn((self.usage_endpoint, self.ZONE_OF_THE_APPS), self.recording)
+        self.assertEqual(self.cases, [(self.cases_endpoint, self.ZONE_OF_THE_APPS)])
+        self.assertNotEqual(self.usage_endpoint, self.cases_endpoint)
+
+    def test_the_recording_wait_ends_at_once_when_all_six_endpoints_are_registered_and_asks_about_each_one_including_the_app_s(self):
+        done, lines, _ = self.run_wait(self.RECORDING, "RECORDING_ENDPOINTS", self.recording, self.registered(self.recording))
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertIn("The landing zone's policy has registered every private endpoint of the usage recording, the function app's own included, in its central zone.", done.stdout)
+        self.assertEqual(self.named(lines), [endpoint for endpoint, _ in self.recording])
+        self.assertIn(self.usage_endpoint, self.named(lines))
+        self.assertEqual(self.sleeps(lines), [])
+
+    def test_an_app_endpoint_that_is_registered_later_than_the_others_keeps_the_recording_waiting_and_is_the_one_that_the_message_names(self):
+        done, lines, _ = self.run_wait(self.RECORDING, "RECORDING_ENDPOINTS", self.recording, self.registered(self.recording, **{self.usage_endpoint: 3}))
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertIn(f"Not registered yet: {self.usage_endpoint} (check 1 of 40).", done.stdout)
+        self.assertIn(f"Not registered yet: {self.usage_endpoint} (check 2 of 40).", done.stdout)
+        self.assertNotIn("(check 3 of 40)", done.stdout, "registered at the third check")
+        self.assertEqual((len(self.checks(lines)), self.sleeps(lines)), (18, ["sleep 60"] * 2), "three checks of six endpoints, and a minute between them")
+
+    def test_an_app_endpoint_that_never_gets_its_zone_group_or_gets_another_zone_fails_the_recording_and_the_code_is_not_published(self):
+        others = [pair for pair in self.recording if pair[0] != self.usage_endpoint]
+        for label, registered in (("no zone group", self.registered(others)),
+                                  ("a zone group of another zone", self.registered(others) + [f"{self.usage_endpoint}=privatelink.blob.core.windows.net"]),
+                                  ("a zone whose name only ends like the zone of the apps", self.registered(others) + [f"{self.usage_endpoint}=other-{self.ZONE_OF_THE_APPS}"])):
+            done, lines, _ = self.run_wait(self.RECORDING, "RECORDING_ENDPOINTS", self.recording, registered, two_checks=True)
+            self.assertEqual(done.returncode, 1, label)
+            self.assertEqual((len(self.checks(lines)), len(self.sleeps(lines))), (12, 2), f"{label}: two checks of six endpoints")
+            self.assertIn(f"Not registered yet: {self.usage_endpoint} (check 2 of 40).", done.stdout, label)
+            self.assertIn(f"::error::The landing zone's policy has not registered these private endpoints in their central zones: {self.usage_endpoint}. The function app was not given its code.", done.stdout, label)
+            self.assertIn("do not create a private DNS zone", done.stdout)
+
+    def test_the_recording_gives_up_after_forty_checks_a_minute_apart_and_no_sleep_follows_the_last(self):
+        pairs = [self.recording[-2], self.recording[-1]]
+        self.assertEqual(pairs[-1][0], self.usage_endpoint, "the app's own endpoint is the last of the list")
+        done, lines, _ = self.run_wait(self.RECORDING, "RECORDING_ENDPOINTS", pairs, self.registered(pairs[:1]))
+        self.assertEqual(done.returncode, 1)
+        self.assertEqual((len(self.checks(lines)), len(self.sleeps(lines))), (80, 39), "forty checks of two endpoints, and no sleep after the last check")
+        self.assertEqual(set(self.sleeps(lines)), {"sleep 60"})
+        self.assertIn(f"Not registered yet: {self.usage_endpoint} (check 40 of 40).", done.stdout)
+
+    def test_the_cases_wait_ends_at_once_asks_about_the_one_endpoint_of_the_cases_app_and_says_so(self):
+        done, lines, _ = self.run_wait(self.CASES, "CASES_ENDPOINTS", self.cases, self.registered(self.cases))
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertIn("The landing zone's policy has registered the private endpoint of the cases app in its central zone.", done.stdout)
+        self.assertEqual((self.named(lines), self.sleeps(lines)), ([self.cases_endpoint], []))
+        self.assertEqual(self.checks(lines), [f"az network private-endpoint dns-zone-group list --resource-group {self.GROUP} --endpoint-name {self.cases_endpoint} "
+                                              "--query [].privateDnsZoneConfigs[].privateDnsZoneId --output tsv"])
+
+    def test_the_cases_wait_waits_a_minute_at_a_time_until_the_zone_group_comes_and_tries_a_check_that_fails_again(self):
+        done, lines, _ = self.run_wait(self.CASES, "CASES_ENDPOINTS", self.cases, self.registered(self.cases, **{self.cases_endpoint: 4}))
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertEqual((len(self.checks(lines)), self.sleeps(lines)), (4, ["sleep 60"] * 3))
+        self.assertIn(f"Not registered yet: {self.cases_endpoint} (check 1 of 40).", done.stdout)
+        done, lines, _ = self.run_wait(self.CASES, "CASES_ENDPOINTS", self.cases, self.registered(self.cases), failing=1)
+        self.assertEqual(done.returncode, 0, "a check that fails is a check that finds nothing, and the next one is made")
+        self.assertEqual((len(self.checks(lines)), self.sleeps(lines)), (2, ["sleep 60"]))
+
+    def test_the_cases_wait_fails_after_forty_checks_when_the_zone_group_never_comes_and_says_that_the_app_was_not_given_its_code(self):
+        done, lines, _ = self.run_wait(self.CASES, "CASES_ENDPOINTS", self.cases, [])
+        self.assertEqual(done.returncode, 1)
+        self.assertEqual((len(self.checks(lines)), len(self.sleeps(lines))), (40, 39), "forty checks a minute apart, and no sleep after the last")
+        self.assertEqual(set(self.sleeps(lines)), {"sleep 60"})
+        self.assertIn(f"Not registered yet: {self.cases_endpoint} (check 40 of 40).", done.stdout)
+        self.assertIn(f"::error::The landing zone's policy has not registered the private endpoint of the cases app in its central zone: {self.cases_endpoint}. The cases app was not given its code.", done.stdout)
+        self.assertIn("do not create a private DNS zone", done.stdout)
+
+    def test_a_zone_group_of_another_zone_or_of_a_zone_that_only_ends_like_the_zone_of_the_apps_does_not_count_for_the_cases_app(self):
+        for label, registered in (("a zone group of another zone", [f"{self.cases_endpoint}=privatelink.blob.core.windows.net"]),
+                                  ("a zone whose name only ends like the zone of the apps", [f"{self.cases_endpoint}=other-{self.ZONE_OF_THE_APPS}"])):
+            done, lines, _ = self.run_wait(self.CASES, "CASES_ENDPOINTS", self.cases, registered, two_checks=True)
+            self.assertEqual(done.returncode, 1, label)
+            self.assertEqual(len(self.checks(lines)), 2, label)
+            self.assertIn("The cases app was not given its code.", done.stdout, label)
+
+    def test_the_waits_only_read_the_zone_groups_and_make_no_zone(self):
+        for title, variable, pairs in ((self.RECORDING, "RECORDING_ENDPOINTS", self.recording), (self.CASES, "CASES_ENDPOINTS", self.cases)):
+            done, lines, _ = self.run_wait(title, variable, pairs, self.registered(pairs))
+            self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+            self.assertEqual(len(lines), len(pairs))
+            for call in lines:
+                self.assertRegex(call, r"^az network private-endpoint dns-zone-group list ")
+                for word in ("create", "delete", "update", "private-dns", "role", "--yes", "--method"):
+                    self.assertNotIn(word, call, call)
+
+
 OPERATOR_FIND_AZ = """#!/bin/bash
 # stand-in for az: FAKE_IDENTITY_ID is what the list of the identity prints, FAKE_CLIENT what the read of the identity prints (FAIL: it fails), FAKE_SUBNET is ok, absent or throttled
 echo "az $*" >> "$FAKE_LOG"
