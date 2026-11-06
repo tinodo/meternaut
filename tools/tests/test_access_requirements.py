@@ -33,7 +33,13 @@ PROJECT_GROUP = f"/subscriptions/{PROJECT}/resourceGroups/rg-project"
 PRODUCT = f"{APIM}/subscriptions/meternaut-agents-sub-01"
 ESTATE = f"/subscriptions/{PROJECT}"
 MANAGEMENT_GROUP = "/providers/Microsoft.Management/managementGroups/landing-zones"
-PLACES = ["--project-subscription", PROJECT, "--project-group", "rg-project", "--gateway", APIM, "--gateway-insights", INSIGHTS]
+CASES_SITE = "func-meternaut-cases-abc123"
+USAGE_SITE = "func-meternaut-usage-abc123"
+SITES = ["--cases-site", CASES_SITE, "--usage-site", USAGE_SITE]
+PLACES = ["--project-subscription", PROJECT, "--project-group", "rg-project", "--gateway", APIM, "--gateway-insights", INSIGHTS, *SITES]
+# The holders of the requirements while the apps are moved: the user-assigned identity that an app had, and the system-assigned identity that it gets.
+OLD_CASES, OLD_USAGE = "case-principal", "usage-principal"
+NEW_CASES, NEW_USAGE = "case-system-principal", "usage-system-principal"
 KEY_READER_ID = "00000000-0000-0000-0000-0000000000a1"
 USAGE_READER_ID = "00000000-0000-0000-0000-0000000000a2"
 # What the first version of the console left behind: the file no longer has this role, so the test makes it the way that version did.
@@ -67,7 +73,10 @@ class FakeAz:
     """Answers the Azure CLI commands of the tool from a small model of a tenant, and remembers every command."""
 
     def __init__(self, granted=True):
-        self.identities = {"id-meternaut-cases": "case-principal", "id-meternaut-usage": "usage-principal"}
+        self.identities = {"id-meternaut-cases": OLD_CASES, "id-meternaut-usage": OLD_USAGE}
+        # The apps of the project's group, and the object id of the system-assigned identity of each (None: the app has none).
+        self.sites = {CASES_SITE: NEW_CASES, USAGE_SITE: NEW_USAGE}
+        self.site_error = None
         self.roles = {}
         self.assignments = []
         self.calls = []
@@ -83,11 +92,13 @@ class FakeAz:
         if granted:
             self.roles["Meternaut gateway key reader"] = definition("Meternaut gateway key reader", KEY_READER_ID, GATEWAY_GROUP)
             self.roles["Meternaut usage reader"] = definition("Meternaut usage reader", USAGE_READER_ID, WORKSPACE_GROUP)
-            self.grant("case-principal", BUILTIN["Reader"], ESTATE)
-            self.grant("case-principal", BUILTIN["Cost Management Reader"], ESTATE)
-            self.grant("case-principal", KEY_READER_ID, PRODUCT)
-            self.grant("usage-principal", BUILTIN["Monitoring Reader"], INSIGHTS)
-            self.grant("usage-principal", USAGE_READER_ID, WORKSPACE)
+            for principal in (OLD_CASES, NEW_CASES):
+                self.grant(principal, BUILTIN["Reader"], ESTATE)
+                self.grant(principal, BUILTIN["Cost Management Reader"], ESTATE)
+                self.grant(principal, KEY_READER_ID, PRODUCT)
+            for principal in (OLD_USAGE, NEW_USAGE):
+                self.grant(principal, BUILTIN["Monitoring Reader"], INSIGHTS)
+                self.grant(principal, USAGE_READER_ID, WORKSPACE)
 
     def grant(self, principal, role_id, scope):
         self.counter += 1
@@ -172,6 +183,19 @@ class FakeAz:
             return 0, "", ""
         if a[0] == "rest":
             url = option("--url")
+            site = re.fullmatch(rf"{re.escape(ar.ARM + PROJECT_GROUP)}/providers/Microsoft\.Web/sites/([A-Za-z0-9-]+)\?api-version={re.escape(ar.SITE_API)}", url)
+            if site:
+                if self.site_error:
+                    return 1, "", self.site_error
+                name = site.group(1)
+                if name not in self.sites:
+                    return 3, "", (f"ERROR: Not Found({{\"error\":{{\"code\":\"ResourceNotFound\",\"message\":\"The Resource 'Microsoft.Web/sites/{name}' under "
+                                   f"resource group 'rg-project' was not found.\"}}}})")
+                principal = self.sites[name]
+                other = {f"{PROJECT_GROUP}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/id-meternaut-console-auth": {"principalId": "auth-principal", "clientId": "c"}}
+                identity = ({"type": "SystemAssigned, UserAssigned", "principalId": principal, "tenantId": "tenant", "userAssignedIdentities": other} if principal
+                            else {"type": "UserAssigned", "userAssignedIdentities": other})
+                return 0, json.dumps({"name": name, "type": "Microsoft.Web/sites", "identity": identity}), ""
             if "/roleAssignments?" in url:
                 scope = url[len(ar.ARM):url.index("/providers/Microsoft.Authorization/roleAssignments")]
                 filtered = re.search(r"principalId eq '([^']+)'", url)
@@ -245,8 +269,48 @@ class TheFile(unittest.TestCase):
         text = (ROOT / "environment" / "access-requirements.json").read_text(encoding="utf-8")
         self.assertNotIn('"writes"', text)
         self.assertEqual(sorted(MANIFEST["identities"]), ["cases", "usage"])
-        self.assertEqual(sorted(i["name"] for i in MANIFEST["identities"].values()), ["id-meternaut-cases", "id-meternaut-usage"])
+        users = sorted(h["name"] for i in MANIFEST["identities"].values() for h in i["holders"] if h["kind"] == "user")
+        self.assertEqual(users, ["id-meternaut-cases", "id-meternaut-usage"])
         self.assertNotIn("runner", [g["identity"] for g in MANIFEST["grants"]])
+
+    def test_an_identity_is_what_an_app_runs_as_and_its_holders_are_the_system_assigned_identity_and_while_the_app_moves_the_user_assigned_one(self):
+        for key, option in (("cases", "--cases-site"), ("usage", "--usage-site")):
+            identity = MANIFEST["identities"][key]
+            self.assertEqual([h["kind"] for h in identity["holders"]], ["system", "user"], key)
+            self.assertEqual(identity["holders"][0], {"kind": "system", "siteOption": option})
+            self.assertTrue(identity["app"] and identity["madeBy"], key)
+            self.assertIn("*", identity["appName"], "the name of an app is a pattern here, never a real name")
+        self.assertEqual({k: i["madeBy"] for k, i in MANIFEST["identities"].items()}, {"cases": "cases", "usage": "recording"})
+
+    def test_the_options_that_name_the_apps_are_options_of_every_command_and_have_a_setting_each(self):
+        self.assertEqual(ar.SITE_OPTIONS, {"--cases-site": "ACCESS_CASES_SITE", "--usage-site": "ACCESS_USAGE_SITE"})
+        for command in ("check", "grant", "retire"):
+            code, out, err, _ = run([command, "--project-subscription", PROJECT, "--project-group", "rg-project", "--usage-site", "bad site name"], FakeAz())
+            self.assertEqual(code, 1, command)
+            self.assertIn("--usage-site is the name of a function app", err)
+
+    def test_the_file_holds_no_identifier_of_a_real_estate(self):
+        text = (ROOT / "environment" / "access-requirements.json").read_text(encoding="utf-8")
+        built_in = {spec["id"] for spec in MANIFEST["roles"].values() if spec["kind"] == "builtin"}
+        for found in re.findall(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", text, re.I):
+            self.assertIn(found, built_in, "a GUID of the file is the id of a built-in role and nothing else")
+
+    def test_the_loader_refuses_holders_that_do_not_make_sense(self):
+        for change, word in (
+            (lambda d: d["identities"]["cases"].update(holders=[]), "has holders"),
+            (lambda d: d["identities"]["cases"].update(holders=[{"kind": "system", "siteOption": "--cases-site"}, {"kind": "system", "siteOption": "--usage-site"}]), "one system-assigned"),
+            (lambda d: d["identities"]["cases"].update(holders=[{"kind": "managed"}]), "'system' or 'user'"),
+            (lambda d: d["identities"]["cases"].update(holders=[{"kind": "system", "siteOption": "--other-site"}]), "siteOption"),
+            (lambda d: d["identities"]["cases"].update(holders=[{"kind": "system"}]), "siteOption"),
+            (lambda d: d["identities"]["cases"].update(holders=[{"kind": "user"}]), "has a name"),
+            (lambda d: d["identities"]["cases"].update(holders=[{"kind": "user", "name": "not a name"}]), "has a name"),
+            (lambda d: d["identities"]["usage"]["holders"].__setitem__(1, {"kind": "user", "name": "id-meternaut-cases"}), "holder once"),
+            (lambda d: d["identities"]["usage"]["holders"].__setitem__(0, {"kind": "system", "siteOption": "--cases-site"}), "names one app"),
+            (lambda d: d["identities"]["cases"].pop("madeBy"), "madeBy"),
+            (lambda d: d["identities"]["cases"].pop("holders"), "holders"),
+            (lambda d: d["identities"]["cases"].update(app=""), "names its app"),
+        ):
+            self.assertIn(word, self.broken(change))
 
     def test_a_role_that_is_marked_as_changing_azure_is_refused(self):
         said = self.broken(lambda d: d["roles"]["Meternaut usage reader"].update(writes=True))
@@ -257,7 +321,7 @@ class TheFile(unittest.TestCase):
                                                 "why": MANIFEST["retired"][0]["why"]}])
         self.assertTrue(MANIFEST["retired"][0]["why"])
         self.assertNotIn(RETIRED_ROLE, MANIFEST["roles"])
-        self.assertNotIn(RETIRED_IDENTITY, [i["name"] for i in MANIFEST["identities"].values()])
+        self.assertNotIn(RETIRED_IDENTITY, [h.get("name") for i in MANIFEST["identities"].values() for h in i["holders"]])
         self.assertIn(MANIFEST["retired"][0]["place"], MANIFEST["places"])
 
     def test_a_retired_item_must_be_complete_and_must_not_be_a_current_grant(self):
@@ -305,6 +369,13 @@ class TheTable(unittest.TestCase):
         self.assertEqual(len(rows), 2 + len(MANIFEST["grants"]))
         self.assertTrue(rows[0].startswith("| # | Identity | Role | Where | What it is for |"))
         self.assertIn("Meternaut gateway key reader (custom role)", rows[4])
+
+    def test_a_row_names_every_holder_of_its_identity(self):
+        rows = ar.markdown(MANIFEST).splitlines()[2:]
+        cases = "The system-assigned identity of the cases app (`func-meternaut-cases-*`) and the user-assigned identity `id-meternaut-cases`"
+        usage = "The system-assigned identity of the usage app (`func-meternaut-usage-*`) and the user-assigned identity `id-meternaut-usage`"
+        for row, (number, holders) in zip(rows, (("R1", cases), ("R2", cases), ("R3", cases), ("R4", usage), ("R5", usage))):
+            self.assertTrue(row.startswith(f"| {number} | {holders} | "), row[:120])
 
     def test_the_proposal_shows_exactly_this_table(self):
         text = self.PROPOSAL.read_text(encoding="utf-8")
@@ -465,14 +536,14 @@ class Check(unittest.TestCase):
         fake = FakeAz()
         code, out, _, _ = run(["check", *PLACES], fake)
         self.assertEqual(code, 0)
-        self.assertIn("5 of 5 present.", out)
+        self.assertIn("10 of 10 present.", out, "five requirements, and each of them is held by the app's system-assigned identity and by its user-assigned one")
         self.assertIn("signed in as operator@example.com", out)
         self.assertEqual(fake.writes(), [])
 
     def test_check_does_not_look_for_what_is_retired(self):
         fake = FakeAz().leave_the_writer()
         code, out, _, _ = run(["check", *PLACES], fake)
-        self.assertEqual((code, "5 of 5 present." in out), (0, True))
+        self.assertEqual((code, "10 of 10 present." in out), (0, True))
         self.assertNotIn("W1", out)
         self.assertNotIn(RETIRED_ROLE, out)
         self.assertFalse([c for c in fake.calls if RETIRED_IDENTITY in c or RETIRED_ROLE in c])
@@ -480,30 +551,124 @@ class Check(unittest.TestCase):
     def test_a_second_subscription_that_has_no_grant_is_missing(self):
         code, out, _, _ = run(["check", *PLACES, "--estate", ESTATE, "--estate", f"/subscriptions/{SECOND}", "--only", "R1,R2"], FakeAz())
         self.assertEqual(code, 1)
-        self.assertEqual(len(re.findall(r"MISSING", out)), 2)
+        self.assertEqual(len(re.findall(r"MISSING", out)), 4, "two roles for each of the two holders")
         self.assertIn(f"Reader  at /subscriptions/{SECOND}", out)
-        self.assertIn("2 of 4 present.", out)
+        self.assertIn("4 of 8 present.", out)
 
     def test_a_grant_at_a_management_group_counts_for_the_subscriptions_below_it(self):
         fake = FakeAz()
         fake.assignments = [a for a in fake.assignments if a["scope"] != ESTATE]
-        fake.grant("case-principal", BUILTIN["Reader"], MANAGEMENT_GROUP)
-        fake.grant("case-principal", BUILTIN["Cost Management Reader"], MANAGEMENT_GROUP)
+        for principal in (OLD_CASES, NEW_CASES):
+            fake.grant(principal, BUILTIN["Reader"], MANAGEMENT_GROUP)
+            fake.grant(principal, BUILTIN["Cost Management Reader"], MANAGEMENT_GROUP)
         code, out, _, _ = run(["check", *PLACES], fake)
-        self.assertEqual((code, "5 of 5 present." in out), (0, True))
+        self.assertEqual((code, "10 of 10 present." in out), (0, True))
 
     def test_a_grant_on_something_below_the_place_does_not_count(self):
         fake = FakeAz()
         fake.assignments = [a for a in fake.assignments if not (a["scope"] == ESTATE and a["role_id"] == BUILTIN["Reader"])]
-        fake.grant("case-principal", BUILTIN["Reader"], f"{ESTATE}/resourceGroups/rg-one")
+        fake.grant(OLD_CASES, BUILTIN["Reader"], f"{ESTATE}/resourceGroups/rg-one")
+        fake.grant(NEW_CASES, BUILTIN["Reader"], f"{ESTATE}/resourceGroups/rg-one")
         code, out, _, _ = run(["check", *PLACES, "--only", "R1"], fake)
-        self.assertEqual((code, "MISSING" in out), (1, True))
+        self.assertEqual((code, out.count("MISSING")), (1, 2))
 
     def test_a_grant_to_another_identity_does_not_count(self):
         fake = FakeAz()
         fake.assignments = [dict(a, principal="somebody-else") if a["scope"] == ESTATE else a for a in fake.assignments]
         code, out, _, _ = run(["check", *PLACES, "--only", "R1,R2"], fake)
-        self.assertEqual((code, out.count("MISSING")), (1, 2))
+        self.assertEqual((code, out.count("MISSING")), (1, 4))
+
+    def test_every_holder_is_checked_for_every_requirement_and_each_line_names_its_holder(self):
+        fake = FakeAz()
+        fake.assignments = [a for a in fake.assignments if not (a["principal"] == NEW_CASES and a["role_id"] == BUILTIN["Reader"])]
+        code, out, _, _ = run(["check", *PLACES, "--only", "R1"], fake)
+        self.assertEqual(code, 1)
+        self.assertRegex(out, rf"MISSING +R1  {CASES_SITE} \(system-assigned\)  Reader  at {re.escape(ESTATE)}")
+        self.assertRegex(out, rf"present +R1  id-meternaut-cases  Reader  at {re.escape(ESTATE)}")
+        self.assertIn("1 of 2 present.", out)
+
+    def test_the_system_assigned_identity_is_found_by_reading_the_app_in_the_project_group_and_nothing_is_written(self):
+        fake = FakeAz()
+        run(["check", *PLACES, "--only", "R1,R4"], fake)
+        reads = [c for c in fake.calls if c[0] == "rest" and "Microsoft.Web/sites" in c[c.index("--url") + 1]]
+        self.assertEqual([c[c.index("--url") + 1] for c in reads],
+                         [f"{ar.ARM}{PROJECT_GROUP}/providers/Microsoft.Web/sites/{CASES_SITE}?api-version=2024-04-01",
+                          f"{ar.ARM}{PROJECT_GROUP}/providers/Microsoft.Web/sites/{USAGE_SITE}?api-version=2024-04-01"], "each app once, however many requirements it has")
+        self.assertEqual({c[c.index("--method") + 1] for c in reads}, {"get"})
+        listed = " ".join(c[c.index("--url") + 1] for c in fake.calls if c[0] == "rest" and "roleAssignments" in c[c.index("--url") + 1])
+        for principal in (OLD_CASES, NEW_CASES, OLD_USAGE, NEW_USAGE):
+            self.assertIn(f"principalId eq '{principal}'", listed)
+        self.assertEqual(fake.writes(), [])
+
+    def test_an_app_without_a_system_assigned_identity_is_cannot_yet_and_says_which_action_makes_it(self):
+        fake = FakeAz()
+        fake.sites[CASES_SITE] = None
+        code, out, _, _ = run(["check", *PLACES, "--only", "R1"], fake)
+        self.assertEqual(code, 1)
+        self.assertRegex(out, rf"cannot yet +R1  {CASES_SITE} \(system-assigned\)  Reader  at {re.escape(ESTATE)}")
+        self.assertIn(f"{CASES_SITE} has no system-assigned identity yet: the Hub action cases makes it", out)
+        self.assertRegex(out, r"present +R1  id-meternaut-cases")
+        self.assertIn("1 of 2 present.", out)
+
+    def test_an_app_that_does_not_exist_yet_is_cannot_yet_too(self):
+        fake = FakeAz()
+        del fake.sites[USAGE_SITE]
+        code, out, _, _ = run(["check", *PLACES, "--only", "R4"], fake)
+        self.assertEqual(code, 1)
+        self.assertIn(f"{USAGE_SITE} does not exist yet: the Hub action recording makes it", out)
+        self.assertIn("1 of 2 present.", out)
+
+    def test_an_app_whose_identity_block_holds_no_object_id_is_without_an_identity(self):
+        group = PROJECT_GROUP
+        for answer in ('{"name": "x"}', '{"identity": null}', '{"identity": {"type": "None"}}', '{"identity": {"type": "UserAssigned", "principalId": "p"}}',
+                       '{"identity": {"type": "SystemAssigned", "principalId": ""}}', '{"identity": {"type": "SystemAssigned"}}', "null"):
+            principal, why = ar.system_principal_of(ar.Az(lambda args, answer=answer: (0, answer, "")), group, CASES_SITE)
+            self.assertEqual((principal, why), (None, "has no system-assigned identity yet"), answer)
+        principal, why = ar.system_principal_of(ar.Az(lambda args: (0, '{"identity": {"type": "systemassigned, userassigned", "principalId": " p1 "}}', "")), group, CASES_SITE)
+        self.assertEqual((principal, why), ("p1", ""))
+
+    def test_an_app_that_cannot_be_read_stops_the_check_with_the_reason(self):
+        fake = FakeAz()
+        fake.site_error = "ERROR: (AuthorizationFailed) The client does not have authorization to perform action 'Microsoft.Web/sites/read'"
+        code, out, err, _ = run(["check", *PLACES, "--only", "R1"], fake)
+        self.assertEqual(code, 1)
+        self.assertIn(f"the app {CASES_SITE} could not be read", err)
+        self.assertIn("AuthorizationFailed", err)
+        fake = FakeAz()
+
+        def not_json(args):
+            if args[0] == "rest" and "Microsoft.Web/sites" in args[args.index("--url") + 1]:
+                return 0, "this is not json", ""
+            return fake(args)
+
+        code, _, err, _ = run(["check", *PLACES, "--only", "R1"], not_json)
+        self.assertEqual(code, 1)
+        self.assertIn("the answer is not JSON", err)
+
+    def test_the_name_of_an_app_is_needed_only_by_the_requirements_of_that_app(self):
+        fake = FakeAz()
+        code, out, _, _ = run(["check", "--project-subscription", PROJECT, "--project-group", "rg-project", "--gateway-insights", INSIGHTS, "--usage-site", USAGE_SITE,
+                               "--only", "R4,R5"], fake)
+        self.assertEqual((code, "4 of 4 present." in out), (0, True))
+        self.assertFalse([c for c in fake.calls if CASES_SITE in " ".join(c)], "the cases app is not read for the requirements of the usage app")
+        code, _, err, _ = run(["check", "--project-subscription", PROJECT, "--project-group", "rg-project", "--usage-site", USAGE_SITE, "--only", "R1"], FakeAz())
+        self.assertEqual(code, 1)
+        self.assertIn("--cases-site is not set: it is the name of the cases app (func-meternaut-cases-*), whose system-assigned identity holds these grants", err)
+        code, _, err, _ = run(["check", "--project-subscription", PROJECT, "--project-group", "rg-project", "--cases-site", CASES_SITE, "--gateway-insights", INSIGHTS,
+                               "--only", "R4"], FakeAz())
+        self.assertEqual(code, 1)
+        self.assertIn("--usage-site is not set: it is the name of the usage app (func-meternaut-usage-*), whose system-assigned identity holds these grants", err)
+
+    def test_the_names_of_the_apps_come_from_the_settings_of_the_workflow_too_and_an_option_wins(self):
+        env = {"ACCESS_CASES_SITE": CASES_SITE, "ACCESS_USAGE_SITE": USAGE_SITE}
+        code, out, _, _ = run(["check", "--project-subscription", PROJECT, "--project-group", "rg-project", "--gateway", APIM, "--gateway-insights", INSIGHTS], FakeAz(), env=env)
+        self.assertEqual((code, "10 of 10 present." in out), (0, True))
+        fake = FakeAz()
+        fake.sites["func-meternaut-cases-other"] = None
+        code, out, _, _ = run(["check", *PLACES, "--cases-site", "func-meternaut-cases-other", "--only", "R1"], fake, env=env)
+        self.assertEqual(code, 1)
+        self.assertIn("func-meternaut-cases-other has no system-assigned identity yet", out)
+        self.assertNotIn(f"{CASES_SITE} (system-assigned)", out)
 
     def test_a_custom_role_that_can_do_more_than_the_file_says_is_reported(self):
         fake = FakeAz()
@@ -533,7 +698,8 @@ class Check(unittest.TestCase):
         code, out, _, _ = run(["check", *PLACES, "--only", "R1"], fake)
         self.assertEqual(code, 1)
         self.assertIn("cannot yet", out)
-        self.assertIn("the Hub action cases makes it", out)
+        self.assertIn("id-meternaut-cases does not exist yet: the Hub action cases makes it", out)
+        self.assertIn("1 of 2 present.", out)
 
     def test_an_identity_that_cannot_be_read_stops_the_check_with_the_reason(self):
         fake = FakeAz()
@@ -557,17 +723,18 @@ class Check(unittest.TestCase):
 
     def test_the_settings_of_the_workflow_are_read_from_the_environment(self):
         env = {"ENV_SUBSCRIPTION_ID": PROJECT, "ENV_RESOURCE_GROUP": "rg-project", "GATEWAY_RESOURCE_ID": APIM, "GATEWAY_APPINSIGHTS_ID": INSIGHTS,
-               "ACCESS_ESTATE_SCOPES": f"{ESTATE}, /subscriptions/{SECOND}"}
+               "ACCESS_ESTATE_SCOPES": f"{ESTATE}, /subscriptions/{SECOND}", "ACCESS_CASES_SITE": CASES_SITE}
         code, out, _, _ = run(["check", "--only", "R1"], FakeAz(), env=env)
-        self.assertEqual((code, "1 of 2 present." in out), (1, True))
+        self.assertEqual((code, "2 of 4 present." in out), (1, True))
 
     def test_without_an_estate_the_project_subscription_is_the_estate(self):
         code, out, _, _ = run(["check", *PLACES, "--only", "R1"], FakeAz())
         self.assertIn(f"at {ESTATE}", out)
 
     def test_a_missing_or_wrong_place_is_named(self):
-        for argv, word in ((["check", "--project-subscription", PROJECT, "--project-group", "rg-project", "--only", "R3"], "--gateway"),
+        for argv, word in ((["check", "--project-subscription", PROJECT, "--project-group", "rg-project", *SITES, "--only", "R3"], "--gateway"),
                            (["check", "--only", "R1"], "--project-subscription"),
+                           (["check", "--project-subscription", PROJECT, "--only", "R1"], "--project-group"),
                            (["check", *PLACES, "--estate", "not-a-scope"], "--estate"),
                            (["check", *PLACES, "--gateway", "/subscriptions/x"], "--gateway"),
                            (["check", *PLACES, "--only", "R9"], "R9")):
@@ -590,10 +757,10 @@ class Grant(unittest.TestCase):
         code, out, _, _ = run(["grant", *PLACES], fake)
         self.assertEqual(code, 0)
         self.assertIn("This was a dry run", out)
-        self.assertIn("7 change(s) would be made, and nothing else", out)
+        self.assertIn("12 change(s) would be made, and nothing else", out, "two custom roles, and five requirements for each of the two holders")
         self.assertEqual(fake.writes(), [])
-        self.assertIn("az role assignment create --assignee-object-id case-principal", out)
-        self.assertIn("az role assignment create --assignee-object-id usage-principal", out)
+        for principal in (OLD_CASES, NEW_CASES, OLD_USAGE, NEW_USAGE):
+            self.assertIn(f"az role assignment create --assignee-object-id {principal} --assignee-principal-type ServicePrincipal", out)
         self.assertNotIn(RETIRED_IDENTITY, out)
         self.assertNotIn("delete", out)
 
@@ -604,8 +771,8 @@ class Grant(unittest.TestCase):
         writes = fake.writes()
         kinds = [c[:3] for c in writes]
         self.assertEqual(kinds.count(["role", "definition", "create"]), 2)
-        self.assertEqual(kinds.count(["role", "assignment", "create"]), 5)
-        self.assertEqual(len(kinds), 7, "nothing but makes: grant never removes")
+        self.assertEqual(kinds.count(["role", "assignment", "create"]), 10)
+        self.assertEqual(len(kinds), 12, "nothing but makes: grant never removes")
         custom_ids = {r["name"] for r in fake.roles.values()}
         for name in ("Meternaut gateway key reader", "Meternaut usage reader"):
             role_id = fake.roles[name]["name"]
@@ -613,8 +780,32 @@ class Grant(unittest.TestCase):
             assign = next(i for i, c in enumerate(writes) if c[:3] == ["role", "assignment", "create"] and c[c.index("--role") + 1] == role_id)
             self.assertLess(define, assign, "a custom role is made before it is assigned")
         self.assertEqual(len(custom_ids), 2)
-        self.assertTrue(out.rstrip().endswith("5 of 5 present."))
+        self.assertTrue(out.rstrip().endswith("10 of 10 present."))
         self.assertIn("Checking again:", out)
+
+    def test_the_system_assigned_identity_of_an_app_gets_the_roles_of_its_user_assigned_one_at_the_same_places_and_none_besides(self):
+        fake = FakeAz(**self.EMPTY)
+        code, out, _, _ = run(["grant", *PLACES, "--apply", "--yes"], fake)
+        self.assertEqual(code, 0, out)
+
+        def held(principal):
+            return sorted((a["role_id"], a["scope"]) for a in fake.assignments if a["principal"] == principal)
+
+        self.assertEqual(held(NEW_CASES), held(OLD_CASES))
+        self.assertEqual(held(NEW_USAGE), held(OLD_USAGE))
+        self.assertEqual(len(held(NEW_CASES)), 3)
+        self.assertEqual(len(held(NEW_USAGE)), 2)
+        self.assertEqual({a["principal"] for a in fake.assignments}, {OLD_CASES, NEW_CASES, OLD_USAGE, NEW_USAGE})
+
+    def test_an_app_that_has_no_system_assigned_identity_yet_blocks_only_its_own_new_holder(self):
+        fake = FakeAz(**self.EMPTY)
+        fake.sites[CASES_SITE] = None
+        code, out, _, _ = run(["grant", *PLACES, "--apply", "--yes"], fake)
+        self.assertEqual(code, 1)
+        self.assertIn(f"{CASES_SITE} has no system-assigned identity yet: the Hub action cases makes it", out)
+        self.assertIn("cannot yet", out)
+        assigned = [c[c.index("--assignee-object-id") + 1] for c in fake.writes() if c[:3] == ["role", "assignment", "create"]]
+        self.assertEqual(sorted(assigned), sorted([OLD_CASES] * 3 + [OLD_USAGE, NEW_USAGE] * 2), "the app keeps what its user-assigned identity gets, and the other app is complete")
 
     def test_nothing_is_made_in_the_project_group_and_no_role_that_changes_anything_is_defined(self):
         fake = FakeAz(**self.EMPTY)
@@ -626,6 +817,14 @@ class Grant(unittest.TestCase):
         for _, content in fake.definition_files:
             self.assertNotIn(PROJECT_GROUP, content["AssignableScopes"])
             self.assertTrue(all(a.endswith("/read") or a == KEY_ACTION for a in content["Actions"]), content["Name"])
+
+    def test_the_apps_are_read_and_never_changed(self):
+        fake = FakeAz(**self.EMPTY)
+        run(["grant", *PLACES, "--apply", "--yes"], fake)
+        sent = [c for c in fake.calls if "Microsoft.Web" in " ".join(c)]
+        self.assertTrue(sent)
+        self.assertEqual({tuple(c[:4]) for c in sent}, {("rest", "--method", "get", "--url")})
+        self.assertFalse([c for c in fake.calls if c[:2] in (["functionapp", "identity"], ["webapp", "identity"]) or "--body" in c])
 
     def test_the_definition_that_is_made_holds_exactly_what_the_file_says_and_the_file_is_removed_after(self):
         fake = FakeAz(**self.EMPTY)
@@ -659,16 +858,18 @@ class Grant(unittest.TestCase):
         fake.assignments = [a for a in fake.assignments if not (a["scope"] == ESTATE and a["role_id"] == BUILTIN["Reader"])]
         code, out, _, _ = run(["grant", *PLACES, "--apply", "--yes"], fake)
         self.assertEqual(code, 0)
-        self.assertEqual([c[:3] for c in fake.writes()], [["role", "assignment", "create"]])
-        write = fake.writes()[0]
-        self.assertEqual((write[write.index("--role") + 1], write[write.index("--scope") + 1]), (BUILTIN["Reader"], ESTATE))
+        self.assertEqual([c[:3] for c in fake.writes()], [["role", "assignment", "create"]] * 2, "the same role for each of the two holders of the cases identity")
+        for write in fake.writes():
+            self.assertEqual((write[write.index("--role") + 1], write[write.index("--scope") + 1]), (BUILTIN["Reader"], ESTATE))
+        self.assertEqual(sorted(w[w.index("--assignee-object-id") + 1] for w in fake.writes()), sorted([OLD_CASES, NEW_CASES]))
 
-    def test_a_second_estate_gets_its_two_roles(self):
+    def test_a_second_estate_gets_its_two_roles_for_each_holder(self):
         fake = FakeAz()
         code, out, _, _ = run(["grant", *PLACES, "--estate", ESTATE, "--estate", f"/subscriptions/{SECOND}", "--only", "R1,R2", "--apply", "--yes"], fake)
         self.assertEqual(code, 0)
-        scopes = [(c[c.index("--role") + 1], c[c.index("--scope") + 1]) for c in fake.writes()]
-        self.assertEqual(sorted(scopes), sorted([(BUILTIN["Reader"], f"/subscriptions/{SECOND}"), (BUILTIN["Cost Management Reader"], f"/subscriptions/{SECOND}")]))
+        made = [(c[c.index("--assignee-object-id") + 1], c[c.index("--role") + 1], c[c.index("--scope") + 1]) for c in fake.writes()]
+        self.assertEqual(sorted(made), sorted((principal, role, f"/subscriptions/{SECOND}") for principal in (OLD_CASES, NEW_CASES)
+                                              for role in (BUILTIN["Reader"], BUILTIN["Cost Management Reader"])))
 
     def test_a_custom_role_that_differs_is_never_changed(self):
         fake = FakeAz()
@@ -687,8 +888,8 @@ class Grant(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("cannot yet", out)
         assigned = [c for c in fake.writes() if c[:3] == ["role", "assignment", "create"]]
-        self.assertEqual(len(assigned), 3)
-        self.assertTrue(all(c[c.index("--assignee-object-id") + 1] == "case-principal" for c in assigned))
+        self.assertEqual(len(assigned), 8, "everything but the two roles of the user-assigned identity of the usage app")
+        self.assertEqual({c[c.index("--assignee-object-id") + 1] for c in assigned}, {OLD_CASES, NEW_CASES, NEW_USAGE})
 
     def test_a_pipeline_may_not_apply_but_a_dry_run_is_allowed(self):
         fake = FakeAz(**self.EMPTY)

@@ -144,6 +144,7 @@ def run_step_script(name, stand_ins, env, files=None, prelude=""):
 
 
 CASES_PRINCIPAL = "7d3c1f52-3b0a-4f6e-9a55-0c1f5f2b9d11"
+SYSTEM_PRINCIPAL = "3b9e2f81-6c4d-4a7e-8f10-2d5a9c7b1e44"
 
 FOUNDRY_SETTINGS_AZ = """#!/bin/bash
 echo "az $*" >> "$FAKE_LOG"
@@ -153,6 +154,10 @@ case "$*" in
     if [ "$FAKE_CASES" = "FAIL" ]; then echo "ERROR: (AuthorizationFailed) the client does not have authorization" >&2; exit 1; fi
     printf '%s' "$FAKE_CASES" ;;
   *"/loggers?"*) printf '%s' "$FAKE_LOGGERS" ;;
+  *"/providers/Microsoft.Web/sites/"*)
+    if [ "$FAKE_SYSTEM" = "FAIL" ]; then echo "$FAKE_SYSTEM_ERROR" >&2; exit 1; fi
+    if [ "$FAKE_SYSTEM" = "ABSENT" ]; then echo "ERROR: (ResourceNotFound) The Resource 'Microsoft.Web/sites/func-meternaut-cases-abc123' under resource group 'rg-of-the-project' was not found." >&2; exit 1; fi
+    printf '%s' "$FAKE_SYSTEM" ;;
   *"/projects/"*)
     if [ "$FAKE_PROJECT" = "found" ]; then echo meternaut; else echo "$FAKE_PROJECT" >&2; exit 1; fi ;;
   *) echo "unexpected az call: $*" >&2; exit 9 ;;
@@ -161,8 +166,8 @@ esac
 
 FOUNDRY_SETTINGS_PYTHON3 = """#!/bin/bash
 if [ "$2" = "build" ]; then
-  echo "build preview=$([[ " $* " == *" --preview "* ]] && echo yes || echo no) cases_principal=[${CASES_PRINCIPAL_ID-unset}] foundry_project=${ENV_FOUNDRY_PROJECT_EXISTS-unset}" >> "$FAKE_LOG"
-  printf 'gateway_subscription=sub1\\ngateway_resource_group=rg1\\nidentity_name=id-meternaut-gateway\\ncases_identity_name=id-meternaut-cases\\nfoundry_account_name=aif-meternaut-agents-abc123\\nfoundry_project_name=meternaut\\n'
+  echo "build preview=$([[ " $* " == *" --preview "* ]] && echo yes || echo no) cases_principal=[${CASES_PRINCIPAL_ID-unset}] foundry_project=${ENV_FOUNDRY_PROJECT_EXISTS-unset} cases_system=[${CASES_SYSTEM_PRINCIPAL_ID-unset}]" >> "$FAKE_LOG"
+  printf 'gateway_subscription=sub1\\ngateway_resource_group=rg1\\nidentity_name=id-meternaut-gateway\\ncases_identity_name=id-meternaut-cases\\ncases_function_app_name=func-meternaut-cases-abc123\\nfoundry_account_name=aif-meternaut-agents-abc123\\nfoundry_project_name=meternaut\\n'
 else
   echo "check $*" >> "$FAKE_LOG"
 fi
@@ -171,62 +176,71 @@ fi
 
 @unittest.skipIf(BASH is None, "no bash on this machine")
 class WorkOutTheFoundrySettings(unittest.TestCase):
-    """The lookups that the step 'Work out the settings' makes for the Foundry resource: the identity that gets a role on the project, and whether the project is there. Only the actions
-    that use an answer look for it."""
+    """The lookups that the step 'Work out the settings' makes for the Foundry resource: the identities of the cases app that get a role on the project (the user-assigned one, and the
+    system-assigned one that takes over from it), and whether the project is there. Only the actions that use an answer look for it."""
 
     PROJECT_CALL = ("az rest --method get --url https://management.azure.com/subscriptions/sub-of-the-project/resourceGroups/rg-of-the-project/providers/Microsoft.CognitiveServices"
                     "/accounts/aif-meternaut-agents-abc123/projects/meternaut?api-version=2025-06-01 --query name --output tsv")
     IDENTITY_CALL = "az identity list --resource-group rg-of-the-project --query [?name=='id-meternaut-cases'].principalId | [0] --output tsv"
-    PREVIEW = "build preview=yes cases_principal=[unset] foundry_project=unset"
+    SITE_CALL = ("az rest --method get --url https://management.azure.com/subscriptions/sub-of-the-project/resourceGroups/rg-of-the-project/providers/Microsoft.Web"
+                 "/sites/func-meternaut-cases-abc123?api-version=2024-04-01 --query identity.principalId --output tsv")
+    PREVIEW = "build preview=yes cases_principal=[unset] foundry_project=unset cases_system=[unset]"
     HOSTILE = "ERROR: (AuthorizationFailed) The client '40404040-4040-4040-4040-404040404040' with object id 'a404b404-0000-0000-0000-000000000404' does not have authorization"
 
-    def run_step(self, action="what-if", project="found", cases=CASES_PRINCIPAL, identity=f"{PRINCIPAL}\t{CLIENT}"):
+    def run_step(self, action="what-if", project="found", cases=CASES_PRINCIPAL, identity=f"{PRINCIPAL}\t{CLIENT}", system=SYSTEM_PRINCIPAL):
         return run_step_script("Work out the settings", {"az": FOUNDRY_SETTINGS_AZ, "python3": FOUNDRY_SETTINGS_PYTHON3},
                                {"ACTION": action, "FAKE_IDENTITY": identity, "FAKE_CASES": cases, "FAKE_PROJECT": project, "FAKE_LOGGERS": "appinsights-logger\n",
+                                "FAKE_SYSTEM": system, "FAKE_SYSTEM_ERROR": self.HOSTILE,
                                 "ENV_SUBSCRIPTION_ID": "sub-of-the-project", "ENV_RESOURCE_GROUP": "rg-of-the-project",
                                 "GATEWAY_RESOURCE_ID": "/subscriptions/66666666-7777-8888-9999-000000000000/resourceGroups/rg1/providers/Microsoft.ApiManagement/service/apim1"})
 
     def builds(self, lines):
         return [line for line in lines if line.startswith("build ")]
 
-    def test_what_if_looks_for_the_identity_and_for_the_project_with_the_version_that_the_model_account_uses(self):
+    def final(self, principal="", project="false", system=""):
+        return f"build preview=no cases_principal=[{principal}] foundry_project={project} cases_system=[{system}]"
+
+    def test_what_if_looks_for_the_identities_and_for_the_project_with_the_version_that_the_model_account_uses(self):
         done, lines, _ = self.run_step("what-if")
         self.assertEqual(done.returncode, 0, done.stderr)
-        self.assertEqual(self.builds(lines), [self.PREVIEW, f"build preview=no cases_principal=[{CASES_PRINCIPAL}] foundry_project=true"])
+        self.assertEqual(self.builds(lines), [self.PREVIEW, self.final(CASES_PRINCIPAL, "true", SYSTEM_PRINCIPAL)])
         self.assertIn(self.PROJECT_CALL, lines, "existence does not need the newest version")
         self.assertIn(self.IDENTITY_CALL, lines)
+        self.assertIn(self.SITE_CALL, lines, "the system-assigned identity is read from the app, and the version is the one that the other reads of the app use")
         self.assertIn("The cases app's identity exists; its principal id goes into the Foundry file.", done.stdout)
+        self.assertIn("The cases app's system-assigned identity exists; its principal id goes into the Foundry file.", done.stdout)
         self.assertIn("The Foundry project is in Azure: true.", done.stdout)
 
-    def test_foundry_needs_the_identity_and_never_looks_for_the_project(self):
+    def test_foundry_needs_the_identities_and_never_looks_for_the_project(self):
         done, lines, _ = self.run_step("foundry", project="ERROR: (AuthorizationFailed) a read that would stop the run if it were made")
         self.assertEqual(done.returncode, 0, done.stderr)
-        self.assertEqual(self.builds(lines), [self.PREVIEW, f"build preview=no cases_principal=[{CASES_PRINCIPAL}] foundry_project=false"])
+        self.assertEqual(self.builds(lines), [self.PREVIEW, self.final(CASES_PRINCIPAL, "false", SYSTEM_PRINCIPAL)])
         self.assertIn(self.IDENTITY_CALL, lines)
+        self.assertIn(self.SITE_CALL, lines)
         self.assertEqual([line for line in lines if "/projects/" in line], [])
         self.assertIn("The action foundry does not use the Foundry project, so it is not looked for.", done.stdout)
 
-    def test_cases_needs_the_project_and_never_looks_for_the_identity(self):
-        done, lines, _ = self.run_step("cases", cases="FAIL")
+    def test_cases_needs_the_project_and_never_looks_for_the_identities(self):
+        done, lines, _ = self.run_step("cases", cases="FAIL", system="FAIL")
         self.assertEqual(done.returncode, 0, done.stderr)
-        self.assertEqual(self.builds(lines), [self.PREVIEW, "build preview=no cases_principal=[] foundry_project=true"])
+        self.assertEqual(self.builds(lines), [self.PREVIEW, self.final("", "true", "")])
         self.assertIn(self.PROJECT_CALL, lines)
-        self.assertEqual([line for line in lines if line == self.IDENTITY_CALL], [], "the cases app is not given a role on the project by this action")
+        self.assertEqual([line for line in lines if line == self.IDENTITY_CALL or "Microsoft.Web/sites" in line], [], "the cases app is not given a role on the project by this action")
         self.assertIn("The Foundry project is in Azure: true.", done.stdout)
 
-    def test_every_other_action_looks_for_neither_so_a_refused_read_cannot_stop_it(self):
+    def test_every_other_action_looks_for_none_of_them_so_a_refused_read_cannot_stop_it(self):
         for action in ("loop-check", "recording"):
             with self.subTest(action=action):
-                done, lines, _ = self.run_step(action, project=self.HOSTILE, cases="FAIL")
+                done, lines, _ = self.run_step(action, project=self.HOSTILE, cases="FAIL", system="FAIL")
                 self.assertEqual(done.returncode, 0, done.stderr)
-                self.assertEqual(self.builds(lines), [self.PREVIEW, "build preview=no cases_principal=[] foundry_project=false"])
-                self.assertEqual([line for line in lines if "/projects/" in line or line == self.IDENTITY_CALL], [])
+                self.assertEqual(self.builds(lines), [self.PREVIEW, self.final()])
+                self.assertEqual([line for line in lines if "/projects/" in line or line == self.IDENTITY_CALL or "Microsoft.Web/sites" in line], [])
                 self.assertIn(f"The action {action} does not use the Foundry project, so it is not looked for.", done.stdout)
 
     def test_an_object_id_in_capitals_is_passed_on_as_it_is(self):
-        done, lines, _ = self.run_step("foundry", cases=CASES_PRINCIPAL.upper())
+        done, lines, _ = self.run_step("foundry", cases=CASES_PRINCIPAL.upper(), system=SYSTEM_PRINCIPAL.upper())
         self.assertEqual(done.returncode, 0, done.stderr)
-        self.assertEqual(self.builds(lines)[1], f"build preview=no cases_principal=[{CASES_PRINCIPAL.upper()}] foundry_project=false")
+        self.assertEqual(self.builds(lines)[1], self.final(CASES_PRINCIPAL.upper(), "false", SYSTEM_PRINCIPAL.upper()))
 
     def test_a_project_that_is_not_there_gives_false_however_the_service_says_so_and_the_final_build_still_follows(self):
         for action, answer in (("cases", "ERROR: (ResourceNotFound) The Resource 'Microsoft.CognitiveServices/accounts/x/projects/meternaut' was not found."),
@@ -234,7 +248,7 @@ class WorkOutTheFoundrySettings(unittest.TestCase):
             with self.subTest(action=action, answer=answer):
                 done, lines, _ = self.run_step(action, project=answer)
                 self.assertEqual(done.returncode, 0, done.stderr)
-                self.assertEqual(self.builds(lines)[1].rsplit(" ", 1)[1], "foundry_project=false")
+                self.assertEqual(self.builds(lines)[1].split(" ")[3], "foundry_project=false")
                 self.assertIn("The Foundry project is in Azure: false.", done.stdout)
                 self.assertNotIn("::warning::", done.stdout + done.stderr, "not being there is an answer, not a failure")
 
@@ -257,7 +271,7 @@ class WorkOutTheFoundrySettings(unittest.TestCase):
         self.assertIn("::warning::meternaut could not be read: " + self.HOSTILE, said)
         self.assertNotIn("::error::", said, "a preview is not stopped by a read")
         self.assertIn("::warning::The preview of the cases app assumes that the Foundry project is not in Azure, because the read of the project failed", said)
-        self.assertEqual(self.builds(lines)[1], f"build preview=no cases_principal=[{CASES_PRINCIPAL}] foundry_project=false")
+        self.assertEqual(self.builds(lines)[1], self.final(CASES_PRINCIPAL, "false", SYSTEM_PRINCIPAL))
         self.assertIn("The Foundry project is in Azure: false.", done.stdout)
         self.assertEqual([line for line in lines if line.startswith("check ")][-1].split("--label ")[1], "planted", "the files were checked as always")
 
@@ -266,7 +280,7 @@ class WorkOutTheFoundrySettings(unittest.TestCase):
             with self.subTest(answer=answer):
                 done, lines, _ = self.run_step("foundry", cases=answer)
                 self.assertEqual(done.returncode, 0, done.stderr)
-                self.assertEqual(self.builds(lines)[1], "build preview=no cases_principal=[] foundry_project=false")
+                self.assertEqual(self.builds(lines)[1], self.final("", "false", SYSTEM_PRINCIPAL))
                 self.assertIn("The cases app's identity does not exist yet (the action cases makes it); the Foundry file holds a placeholder.", done.stdout)
 
     def test_a_lookup_of_the_cases_identity_that_fails_stops_the_run_instead_of_counting_as_not_there(self):
@@ -277,7 +291,28 @@ class WorkOutTheFoundrySettings(unittest.TestCase):
                 self.assertIn("AuthorizationFailed", done.stderr)
                 self.assertEqual(self.builds(lines), [self.PREVIEW], "no file was made with a placeholder for an identity that may be there")
 
-    def test_without_the_gateway_identity_neither_lookup_is_made_and_only_the_preview_is_built(self):
+    def test_an_app_without_a_system_assigned_identity_gives_an_empty_value_and_the_run_goes_on(self):
+        # "none yet": the app is not there (not found), or it is there and has no such identity (the CLI prints None for a null, and an empty string for nothing)
+        for action in ("foundry", "what-if"):
+            for answer in ("ABSENT", "None", "", "not-a-guid"):
+                with self.subTest(action=action, answer=answer):
+                    done, lines, _ = self.run_step(action, system=answer)
+                    self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+                    self.assertEqual(self.builds(lines)[1], self.final(CASES_PRINCIPAL, "true" if action == "what-if" else "false", ""))
+                    self.assertIn("The cases app has no system-assigned identity yet (the action cases gives it one); the Foundry file gives no role to it.", done.stdout)
+                    self.assertNotIn("::error::", done.stdout + done.stderr)
+
+    def test_a_lookup_of_the_system_assigned_identity_that_fails_stops_the_run_even_when_the_error_holds_the_digits_404_inside_an_object_id(self):
+        for action in ("foundry", "what-if"):
+            with self.subTest(action=action):
+                done, lines, _ = self.run_step(action, system="FAIL")
+                self.assertNotEqual(done.returncode, 0)
+                said = done.stderr + done.stdout
+                self.assertIn("::error::The cases app could not be read: " + self.HOSTILE, said)
+                self.assertEqual(self.builds(lines), [self.PREVIEW], "no file was made with an empty value for an identity that may be there")
+                self.assertEqual([line for line in lines if line.startswith("check ")], [])
+
+    def test_without_the_gateway_identity_no_lookup_is_made_and_only_the_preview_is_built(self):
         for action, identity in (("what-if", ""), ("cases", "None")):
             with self.subTest(action=action):
                 done, lines, _ = self.run_step(action, identity=identity)

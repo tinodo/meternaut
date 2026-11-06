@@ -3,7 +3,7 @@
 // What it holds: a Foundry resource (kind AIServices) that can hold projects, one project (meternaut) with the agents in it, the same two
 // model deployments as the model account, one guardrail (a content safety policy with Prompt Shields) that the deployments use and the agents
 // inherit from them, a connection of the project to the Application Insights component of the first environment for the agents' traces, one
-// private endpoint, and the two roles that connect them.
+// private endpoint, and the roles that connect them.
 //
 // Why a new resource: the model account (environment/main.bicep) was made with allowProjectManagement false, and Microsoft Learn says that
 // setting cannot be changed after the account exists (Create a project for Microsoft Foundry), so that account can never hold a project or an
@@ -16,7 +16,8 @@
 // No key, and nothing public (AGENTS.md rule 23):
 //  - the resource has local authentication off (disableLocalAuth) and public network access off; it is reached through one private endpoint;
 //  - the cases app signs in with its managed identity (a Microsoft Entra token for https://ai.azure.com) and holds the Foundry User role on the
-//    project, which lets it create agents and run them there, and nothing else here;
+//    project, which lets it create agents and run them there, and nothing else here. It has two such identities while it moves from the user-assigned
+//    one to its own system-assigned one (environment/BOOTSTRAP.md): both get the role, the second as soon as the app has it;
 //  - the project's own managed identity sends the agents' traces to the Application Insights component with Microsoft Entra ID: it holds
 //    Monitoring Metrics Publisher on the component, whose local authentication is off (environment/recording/main.bicep).
 //
@@ -69,6 +70,10 @@ param models array
 @minLength(36)
 @maxLength(36)
 param casesPrincipalId string
+
+@description('Principal id of the system-assigned identity of the cases app, which takes over from id-meternaut-cases. When it is given, it gets the Foundry User role on the project as well. Empty: the app has no such identity yet (the action cases gives it one), and no role is given to it. The workflow passes only an object id that it has read from the app.')
+@maxLength(36)
+param casesSystemPrincipalId string = ''
 
 @description('Owner of the resources, as a tag.')
 @minLength(1)
@@ -245,6 +250,20 @@ resource casesMayUseTheAgents 'Microsoft.Authorization/roleAssignments@2022-04-0
   properties: {
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', foundryUserRoleId)
     principalId: casesPrincipalId
+    principalType: 'ServicePrincipal'
+  }
+  dependsOn: [
+    privateEndpoint
+  ]
+}
+
+// The same role for the cases app's system-assigned identity, once it has one (the move from id-meternaut-cases to it is in environment/BOOTSTRAP.md).
+resource casesSystemMayUseTheAgents 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!empty(casesSystemPrincipalId)) {
+  scope: project
+  name: guid(project.id, casesSystemPrincipalId, foundryUserRoleId)
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', foundryUserRoleId)
+    principalId: casesSystemPrincipalId
     principalType: 'ServicePrincipal'
   }
   dependsOn: [

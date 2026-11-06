@@ -893,6 +893,36 @@ class Foundry(unittest.TestCase):
             self.assertIn("CASES_PRINCIPAL_ID", err)
             self.assertNotIn("secret", err)
 
+    SYSTEM_PRINCIPAL = "12345678-DDDD-EEEE-FFFF-123456789012"
+
+    def test_the_system_assigned_identity_of_the_cases_app_reaches_the_file_when_it_is_known_and_is_an_empty_string_when_it_is_not(self):
+        files, outputs = self.files(CASES_SYSTEM_PRINCIPAL_ID=self.SYSTEM_PRINCIPAL)
+        foundry = values(files["foundry.parameters.json"])
+        self.assertEqual((foundry["casesSystemPrincipalId"], outputs["cases_system_principal_known"]), (self.SYSTEM_PRINCIPAL.lower(), "true"))
+        self.assertEqual(foundry["casesPrincipalId"], ep.PLACEHOLDER, "the user-assigned identity is asked for on its own")
+        for empty in ("", "   "):
+            files, outputs = self.files(CASES_SYSTEM_PRINCIPAL_ID=empty)
+            self.assertEqual((values(files["foundry.parameters.json"])["casesSystemPrincipalId"], outputs["cases_system_principal_known"]), ("", "false"), repr(empty))
+        files, outputs = self.files()
+        self.assertEqual((values(files["foundry.parameters.json"])["casesSystemPrincipalId"], outputs["cases_system_principal_known"]), ("", "false"), "nobody looked: no role is given")
+        both, _ = self.files(CASES_PRINCIPAL_ID=self.CASES_PRINCIPAL, CASES_SYSTEM_PRINCIPAL_ID=self.SYSTEM_PRINCIPAL)
+        self.assertEqual({k: values(both["foundry.parameters.json"])[k] for k in ("casesPrincipalId", "casesSystemPrincipalId")},
+                         {"casesPrincipalId": self.CASES_PRINCIPAL.lower(), "casesSystemPrincipalId": self.SYSTEM_PRINCIPAL.lower()})
+        self.assertEqual(run({**SETTINGS, "GATEWAY_PRINCIPAL_ID": ""}, "--preview")[0], 0, "a preview needs no system-assigned identity")
+
+    def test_a_system_assigned_identity_that_is_not_an_object_id_is_refused_without_echoing_it(self):
+        for bad in ("me", "1234", "{" + self.SYSTEM_PRINCIPAL + "}", self.SYSTEM_PRINCIPAL + "0", "not-a-guid-but-with-secret"):
+            code, out, err, files = run({**SETTINGS, "CASES_SYSTEM_PRINCIPAL_ID": bad})
+            self.assertEqual((code, out, files), (2, "", {}), bad)
+            self.assertIn("CASES_SYSTEM_PRINCIPAL_ID", err)
+            self.assertNotIn("secret", err)
+            if len(bad) > 8:
+                self.assertNotIn(bad, err)
+
+    def test_the_template_takes_the_system_assigned_identity_as_an_optional_parameter_of_guid_length_at_most(self):
+        self.assertRegex(self.FOUNDRY, r"(?m)^@maxLength\(36\)\nparam casesSystemPrincipalId string = ''$")
+        self.assertRegex(self.FOUNDRY, r"(?m)^@minLength\(36\)\n@maxLength\(36\)\nparam casesPrincipalId string$", "the user-assigned one stays required in this step")
+
     def test_the_cases_app_is_given_the_project_endpoint_only_when_the_workflow_found_the_project(self):
         for given in ("", "false", " FALSE "):
             code, out, err, files = self.cases_file(ENV_FOUNDRY_PROJECT_EXISTS=given)
