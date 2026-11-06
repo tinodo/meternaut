@@ -787,6 +787,306 @@ class TheChecksBuildTheCallOfTheOperatorTool(unittest.TestCase):
                 self.assertEqual(tool.cleanup_command(args, lambda arguments: (0, "[]", "")), 0, "the prefix is one that the tool accepts")
 
 
+RETIRE_SUBSCRIPTION = "11111111-2222-3333-4444-555555555555"
+RETIRE_GROUP = "rg-of-the-project"
+RETIRE_NAMESPACE = "evhns-meternaut-0a1b2c3d"
+DEPLOY_IDENTITY = "5a1d4c9e-7b2f-4e6a-8c3d-9f0e1a2b3c4d"
+GATEWAY_IDENTITY = "6b2e5daf-8c30-4f7b-9d4e-a01f2b3c4d5e"
+USAGE_APP_IDENTITY = "7c3f6eb0-9d41-4a8c-8e5f-b12a3c4d5e6f"
+CASES_APP_IDENTITY = "8d4a7fc1-ae52-4b9d-9f60-c23b4d5e6f70"
+OPERATOR_PRINCIPAL = "9e5b80d2-bf63-4cae-a071-d34c5e6f7081"
+DATA_SENDER = "2b629674-e913-4c01-ae53-ef4638d8f975"
+DATA_RECEIVER = "a638d3c7-ab3a-418d-83e6-5f17a39d4fde"
+
+RETIRE_AZ = """#!/bin/bash
+# stand-in for az. The role assignments of the estate are the lines of assignments.tsv: id, scope, principal, role definition, separated by tabs.
+# FAKE_HUB is how the read of the control hub ends: ok, absent or throttled. FAKE_LIST is what a list of role assignments does: cli (the assignments at exactly the scope given, of exactly the principal given,
+# as the Azure CLI filters them), everything (all of them, as a list that ignored its filters would) or fail. FAKE_DELETE is what a delete does: deleted, refused, or ignored (it says nothing and deletes nothing).
+echo "az $*" >> "$FAKE_LOG"
+state="$FAKE_DIR/assignments.tsv"
+value_of() { local want="$1"; shift; while [ "$#" -gt 1 ]; do if [ "$1" = "$want" ]; then echo "$2"; return; fi; shift; done; }
+case "$*" in
+  "rest --method get --url https://management.azure.com/subscriptions/"*"/eventhubs/"*"?api-version=2024-01-01 --query name --output tsv")
+    case "$FAKE_HUB" in
+      ok) echo "$FAKE_HUB_NAME" ;;
+      absent) echo "ERROR: (ResourceNotFound) The Resource 'Microsoft.EventHub/namespaces/evhns-meternaut-0a1b2c3d/eventhubs/$FAKE_HUB_NAME' under resource group 'rg-of-the-project' was not found." >&2; exit 1 ;;
+      throttled) echo "ERROR: (TooManyRequests) Too many requests for d0404e2a-5b6c-4d7e-8f90-a1b2c3d4e5f6, try again later." >&2; exit 1 ;;
+    esac ;;
+  "role assignment list "*)
+    if [ "$FAKE_LIST" = "fail" ]; then echo "ERROR: (AuthorizationFailed) The client does not have authorization to perform action 'Microsoft.Authorization/roleAssignments/read' over scope '$(value_of --scope "$@")'." >&2; exit 1; fi
+    scope=$(value_of --scope "$@"); assignee=$(value_of --assignee-object-id "$@")
+    while IFS=$'\\t' read -r id s p r; do
+      [ -n "$id" ] || continue
+      if [ "$FAKE_LIST" = "everything" ] || { [ "${s,,}" = "${scope,,}" ] && [ "$p" = "$assignee" ]; }; then printf '%s\\t%s\\t%s\\t%s\\n' "$id" "$s" "$p" "$r"; fi
+    done < "$state" ;;
+  "role assignment delete "*)
+    id=$(value_of --ids "$@")
+    case "$FAKE_DELETE" in
+      refused) echo "ERROR: (AuthorizationFailed) The client does not have authorization to perform action 'Microsoft.Authorization/roleAssignments/delete' over scope '$id' or the scope is invalid." >&2; exit 1 ;;
+      ignored) ;;
+      *) rows=(); while IFS= read -r line; do case "$line" in "$id"$'\\t'*) ;; *) rows+=("$line") ;; esac; done < "$state"; printf '%s\\n' "${rows[@]}" > "$state" ;;
+    esac ;;
+  *) echo "unexpected az call: $*" >&2; exit 9 ;;
+esac
+"""
+
+
+def namespace_scope(hub=None):
+    namespace = f"/subscriptions/{RETIRE_SUBSCRIPTION}/resourceGroups/{RETIRE_GROUP}/providers/Microsoft.EventHub/namespaces/{RETIRE_NAMESPACE}"
+    return f"{namespace}/eventhubs/{hub}" if hub else namespace
+
+
+def assignment_row(scope, principal, role, name):
+    return (f"{scope}/providers/Microsoft.Authorization/roleAssignments/{name}", scope, principal, f"/subscriptions/{RETIRE_SUBSCRIPTION}/providers/Microsoft.Authorization/roleDefinitions/{role}")
+
+
+OLD_ASSIGNMENTS = {"usage-control": assignment_row(namespace_scope("usage-control"), DEPLOY_IDENTITY, DATA_SENDER, "d1d1d1d1-0000-4000-8000-000000000001"),
+                   "cases-control": assignment_row(namespace_scope("cases-control"), DEPLOY_IDENTITY, DATA_SENDER, "d2d2d2d2-0000-4000-8000-000000000002")}
+
+
+def estate():
+    """What an estate holds on its event hubs after the usage recording and the first cases, the Operator and the gateway: the old assignments of the deploy identity among the ones that must stay."""
+    return [assignment_row(namespace_scope("ai-usage"), GATEWAY_IDENTITY, DATA_SENDER, "a1a1a1a1-0000-4000-8000-000000000011"),
+            assignment_row(namespace_scope("pii-usage"), GATEWAY_IDENTITY, DATA_SENDER, "a2a2a2a2-0000-4000-8000-000000000012"),
+            assignment_row(namespace_scope("usage-control"), USAGE_APP_IDENTITY, DATA_RECEIVER, "b1b1b1b1-0000-4000-8000-000000000021"),
+            assignment_row(namespace_scope("cases-control"), CASES_APP_IDENTITY, DATA_RECEIVER, "b2b2b2b2-0000-4000-8000-000000000022"),
+            assignment_row(namespace_scope("usage-control"), OPERATOR_PRINCIPAL, DATA_SENDER, "c1c1c1c1-0000-4000-8000-000000000031"),
+            assignment_row(namespace_scope("cases-control"), OPERATOR_PRINCIPAL, DATA_SENDER, "c2c2c2c2-0000-4000-8000-000000000032"),
+            OLD_ASSIGNMENTS["usage-control"], OLD_ASSIGNMENTS["cases-control"],
+            assignment_row(namespace_scope("usage-control"), DEPLOY_IDENTITY, DATA_RECEIVER, "e1e1e1e1-0000-4000-8000-000000000041"),
+            assignment_row(namespace_scope(), DEPLOY_IDENTITY, DATA_SENDER, "e2e2e2e2-0000-4000-8000-000000000042")]
+
+
+@unittest.skipIf(BASH is None, "no bash on this machine")
+class RetireTheDeployIdentitysRightToSend(unittest.TestCase):
+    """The step of the actions recording and cases that deletes the one assignment that the deploy identity held on a control hub, run with bash against a stand-in for az that keeps the estate's assignments."""
+
+    STEPS = (("Retire the deploy identity's right to send to the control hub usage-control, when it is still there", "usage-control"),
+             ("Retire the deploy identity's right to send to the control hub cases-control, when it is still there", "cases-control"))
+    SKIP = "sleep() { :; }\n"
+
+    def run_step(self, title, hub, rows=None, deployer=DEPLOY_IDENTITY, **knobs):
+        env = {"ENV_SUBSCRIPTION_ID": RETIRE_SUBSCRIPTION, "ENV_RESOURCE_GROUP": RETIRE_GROUP, "EVENT_HUB_NAMESPACE": RETIRE_NAMESPACE, "CONTROL_HUB": hub, "DEPLOYER_ID": deployer,
+               "FAKE_HUB": "ok", "FAKE_HUB_NAME": hub, "FAKE_LIST": "cli", "FAKE_DELETE": "deleted", **knobs}
+        files = {"assignments.tsv": "".join("\t".join(row) + "\n" for row in (estate() if rows is None else rows))}
+        return run_step_script(title, {"az": RETIRE_AZ}, env, files=files, prelude=self.SKIP)
+
+    def hub_read(self, hub):
+        return f"az rest --method get --url https://management.azure.com{namespace_scope(hub)}?api-version=2024-01-01 --query name --output tsv"
+
+    def list_call(self, hub, deployer=DEPLOY_IDENTITY):
+        return (f"az role assignment list --assignee-object-id {deployer.lower()} --scope {namespace_scope(hub)} --fill-principal-name false --fill-role-definition-name false "
+                "--query [].[id, scope, principalId, roleDefinitionId] --output tsv --only-show-errors")
+
+    def delete_call(self, assignment_id):
+        return f"az role assignment delete --ids {assignment_id} --only-show-errors"
+
+    def test_each_step_has_the_same_script_and_only_the_hub_differs(self):
+        scripts = [step_script(title) for title, _ in self.STEPS]
+        self.assertEqual(scripts[0], scripts[1], "the hub's name reaches the script through CONTROL_HUB, so that the two steps cannot drift apart")
+
+    def test_the_old_assignment_is_read_deleted_by_its_id_and_read_back_and_nothing_else_is_deleted(self):
+        for title, hub in self.STEPS:
+            for listing in ("cli", "everything"):
+                with self.subTest(hub=hub, listing=listing):
+                    done, lines, _ = self.run_step(title, hub, FAKE_LIST=listing)
+                    self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+                    old_id = OLD_ASSIGNMENTS[hub][0]
+                    self.assertEqual(lines, [self.hub_read(hub), self.list_call(hub), self.delete_call(old_id), self.list_call(hub)],
+                                     "read the hub, read the assignments, delete the one by its id and nothing else, read the assignments again")
+                    self.assertIn(f"The deploy identity holds Azure Event Hubs Data Sender on the control hub {hub}, as the assignment {old_id}.", done.stdout)
+                    self.assertIn("this one assignment is deleted, by its id, and nothing else.", done.stdout)
+                    self.assertIn("Read back: the assignment is gone, and no other assignment was deleted or changed.", done.stdout)
+
+    def test_the_delete_names_the_assignment_alone_so_that_it_can_never_delete_what_a_filter_would_match(self):
+        # `az role assignment delete --scope S --assignee X` deletes every assignment that matches: the call names the id and no filter.
+        for title, hub in self.STEPS:
+            _, lines, _ = self.run_step(title, hub)
+            (delete,) = [line for line in lines if " delete " in line]
+            self.assertEqual(delete, self.delete_call(OLD_ASSIGNMENTS[hub][0]))
+            for filter_ in ("--assignee", "--scope", "--role", "--resource-group", "--include-inherited", "--all", "--yes"):
+                self.assertNotIn(filter_, delete)
+
+    def test_the_step_makes_three_kinds_of_call_and_asks_for_no_name_from_the_graph(self):
+        for title, hub in self.STEPS:
+            _, lines, _ = self.run_step(title, hub)
+            for line in lines:
+                self.assertRegex(line, r"^az (rest --method get --url https://management\.azure\.com/|role assignment (list|delete) )")
+            lists = [line for line in lines if "role assignment list" in line]
+            for line in lists:
+                self.assertIn("--fill-principal-name false", line, "no call to the Graph: the sign-in's credential is old by the time the deploy is done")
+                self.assertIn("--fill-role-definition-name false", line)
+                self.assertIn("--assignee-object-id", line, "not --assignee, which asks the Graph")
+
+    def test_the_lists_filter_does_not_matter_only_the_scope_the_principal_and_the_role_of_a_line_do(self):
+        # whatever a list returns, the step deletes only the line that is the deploy identity's Data Sender assignment at the scope of this hub
+        for title, hub in self.STEPS:
+            other = "cases-control" if hub == "usage-control" else "usage-control"
+            rows = [assignment_row(namespace_scope(other), DEPLOY_IDENTITY, DATA_SENDER, "f1f1f1f1-0000-4000-8000-000000000051"),
+                    assignment_row(namespace_scope(), DEPLOY_IDENTITY, DATA_SENDER, "f2f2f2f2-0000-4000-8000-000000000052"),
+                    assignment_row(namespace_scope(hub), OPERATOR_PRINCIPAL, DATA_SENDER, "f3f3f3f3-0000-4000-8000-000000000053"),
+                    assignment_row(namespace_scope(hub), GATEWAY_IDENTITY, DATA_SENDER, "f4f4f4f4-0000-4000-8000-000000000054"),
+                    assignment_row(namespace_scope(hub), DEPLOY_IDENTITY, DATA_RECEIVER, "f5f5f5f5-0000-4000-8000-000000000055"),
+                    assignment_row(namespace_scope(hub) + "/consumergroups/x", DEPLOY_IDENTITY, DATA_SENDER, "f6f6f6f6-0000-4000-8000-000000000056"),
+                    assignment_row(namespace_scope(hub) + "x", DEPLOY_IDENTITY, DATA_SENDER, "f7f7f7f7-0000-4000-8000-000000000057"),
+                    assignment_row(f"/subscriptions/{RETIRE_SUBSCRIPTION}/resourceGroups/{RETIRE_GROUP}", DEPLOY_IDENTITY, DATA_SENDER, "f8f8f8f8-0000-4000-8000-000000000058"),
+                    assignment_row(namespace_scope(hub), DEPLOY_IDENTITY, DATA_SENDER + "0", "f9f9f9f9-0000-4000-8000-000000000059"),
+                    assignment_row(namespace_scope(hub), DEPLOY_IDENTITY, "00" + DATA_SENDER[2:], "faf1f1f1-0000-4000-8000-00000000005a"),
+                    OLD_ASSIGNMENTS[hub]]
+            done, lines, _ = self.run_step(title, hub, rows=rows, FAKE_LIST="everything")
+            self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+            self.assertEqual([line for line in lines if " delete " in line], [self.delete_call(OLD_ASSIGNMENTS[hub][0])])
+
+    def test_the_case_of_an_id_does_not_matter_and_the_deploy_identity_is_given_to_the_list_in_lower_case(self):
+        for title, hub in self.STEPS:
+            old_id, scope, principal, definition = OLD_ASSIGNMENTS[hub]
+            kept = [row for row in estate() if row[0] != old_id]
+            for listing, written in (("everything", (old_id, scope.upper(), principal.upper(), definition.upper())),
+                                     # the CLI matches the scope without regard to case, and the principal as it is given: Azure writes it in lower case
+                                     ("cli", (old_id, scope.upper(), principal, definition.upper()))):
+                with self.subTest(hub=hub, listing=listing):
+                    done, lines, _ = self.run_step(title, hub, rows=kept + [written], deployer=DEPLOY_IDENTITY.upper(), FAKE_LIST=listing)
+                    self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+                    self.assertEqual(lines[1], self.list_call(hub), "the object id of the token is passed in lower case, as Azure writes it")
+                    self.assertEqual([line for line in lines if " delete " in line], [self.delete_call(old_id)])
+
+    def test_an_assignment_that_is_not_there_is_nothing_to_retire_and_no_delete_is_made(self):
+        for title, hub in self.STEPS:
+            for rows in ([row for row in estate() if row[0] != OLD_ASSIGNMENTS[hub][0]], []):
+                with self.subTest(hub=hub, rows=len(rows)):
+                    done, lines, _ = self.run_step(title, hub, rows=rows)
+                    self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+                    self.assertEqual(lines, [self.hub_read(hub), self.list_call(hub)])
+                    self.assertIn(f"The deploy identity holds no assignment of Azure Event Hubs Data Sender on the control hub {hub}: nothing to retire.", done.stdout)
+
+    def test_the_second_run_finds_nothing_because_the_first_one_deleted_the_assignment(self):
+        # the same estate, run twice: the state is the run's own, so the second run is given what the first one left
+        for title, hub in self.STEPS:
+            left = [row for row in estate() if row[0] != OLD_ASSIGNMENTS[hub][0]]
+            done, lines, _ = self.run_step(title, hub, rows=left)
+            self.assertEqual((done.returncode, len(lines)), (0, 2))
+
+    def test_a_hub_that_is_not_there_is_left_alone_on_a_new_estate_and_any_other_answer_stops_the_step(self):
+        for title, hub in self.STEPS:
+            done, lines, _ = self.run_step(title, hub, FAKE_HUB="absent")
+            self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+            self.assertEqual(lines, [self.hub_read(hub)])
+            self.assertIn(f"The control hub {hub} is not there, so nothing is assigned on it: nothing to retire.", done.stdout)
+            done, lines, _ = self.run_step(title, hub, FAKE_HUB="throttled")
+            self.assertEqual(done.returncode, 1)
+            self.assertEqual(lines, [self.hub_read(hub)], "no assignment is read or deleted when the hub could not be read")
+            self.assertIn(f"::error::The control hub {hub} could not be read: ERROR: (TooManyRequests) Too many requests for d0404e2a-5b6c-4d7e-8f90-a1b2c3d4e5f6, try again later.", done.stdout,
+                          "an answer that holds the digits 404 inside an id is not taken for NotFound")
+            self.assertNotIn("nothing to retire", done.stdout)
+
+    def test_a_list_that_fails_stops_the_step_before_anything_is_deleted_and_says_what_azure_said(self):
+        for title, hub in self.STEPS:
+            done, lines, _ = self.run_step(title, hub, FAKE_LIST="fail")
+            self.assertEqual(done.returncode, 1)
+            self.assertEqual(lines, [self.hub_read(hub), self.list_call(hub)])
+            self.assertIn(f"::error::The role assignments of the deploy identity on the control hub {hub} could not be read: ERROR: (AuthorizationFailed)", done.stdout + done.stderr)
+
+    def test_a_delete_that_azure_refuses_stops_the_step_changes_nothing_and_says_what_a_person_does(self):
+        for title, hub in self.STEPS:
+            old_id = OLD_ASSIGNMENTS[hub][0]
+            done, lines, _ = self.run_step(title, hub, FAKE_DELETE="refused")
+            self.assertEqual(done.returncode, 1)
+            self.assertEqual(lines, [self.hub_read(hub), self.list_call(hub), self.delete_call(old_id)], "one delete, no second try, no read back")
+            self.assertIn(f"::error::Azure did not delete the assignment {old_id}: ERROR: (AuthorizationFailed)", done.stdout)
+            self.assertIn("Nothing else was changed.", done.stdout)
+            self.assertIn("a person deletes that one assignment with their own sign-in, on the owner's written word, and runs the action again (environment/BOOTSTRAP.md).", done.stdout)
+
+    def test_an_assignment_that_is_still_listed_after_the_delete_fails_the_step_after_six_reads(self):
+        for title, hub in self.STEPS:
+            old_id = OLD_ASSIGNMENTS[hub][0]
+            done, lines, _ = self.run_step(title, hub, FAKE_DELETE="ignored")
+            self.assertEqual(done.returncode, 1)
+            self.assertEqual(lines, [self.hub_read(hub), self.list_call(hub), self.delete_call(old_id)] + [self.list_call(hub)] * 6, "the delete is made once; the read back is tried six times")
+            for attempt in range(1, 7):
+                self.assertIn(f"Read back (check {attempt} of 6): the assignment is still listed.", done.stdout)
+            self.assertIn(f"::error::The assignment {old_id} is still listed after the delete.", done.stdout)
+
+    def test_more_than_one_matching_assignment_is_not_what_was_expected_and_nothing_is_deleted(self):
+        for title, hub in self.STEPS:
+            twin = assignment_row(namespace_scope(hub), DEPLOY_IDENTITY, DATA_SENDER, "abababab-0000-4000-8000-0000000000ab")
+            done, lines, _ = self.run_step(title, hub, rows=estate() + [twin], FAKE_LIST="everything")
+            self.assertEqual(done.returncode, 1)
+            self.assertEqual(lines, [self.hub_read(hub), self.list_call(hub)])
+            self.assertIn(f"::error::The deploy identity holds 2 assignments of Azure Event Hubs Data Sender on the control hub {hub}, and one was expected. Nothing was deleted", done.stdout)
+
+    def test_the_object_id_of_the_deploy_identity_has_to_be_one_before_anything_is_asked_of_azure(self):
+        for title, hub in self.STEPS:
+            for deployer in ("", "none", "me", DEPLOY_IDENTITY + "0", DEPLOY_IDENTITY[:-1], "*"):
+                with self.subTest(hub=hub, deployer=deployer):
+                    done, lines, _ = self.run_step(title, hub, deployer=deployer)
+                    self.assertEqual((done.returncode, lines), (1, []), "no call at all")
+                    self.assertIn(f"::error::The object id of the deploy identity was not read from its token, so its assignment on the control hub {hub} cannot be looked for. Nothing was changed.", done.stdout)
+
+
+READ_BACK_AZ = """#!/bin/bash
+# stand-in for az: FAKE_STATE is what the read of the namespace prints (FAIL: it fails)
+echo "az $*" >> "$FAKE_LOG"
+case "$*" in
+  "rest --method get --url https://management.azure.com/subscriptions/"*"/providers/Microsoft.EventHub/namespaces/"*"?api-version=2024-01-01 --query "*" --output tsv --only-show-errors")
+    if [ "$FAKE_STATE" = "FAIL" ]; then echo "ERROR: (TooManyRequests) Too many requests, try again later." >&2; exit 1; fi
+    printf '%s\\n' "$FAKE_STATE" ;;
+  *) echo "unexpected az call: $*" >&2; exit 9 ;;
+esac
+"""
+
+
+@unittest.skipIf(BASH is None, "no bash on this machine")
+class ReadTheEventHubsNamespaceBack(unittest.TestCase):
+    """The step of the action recording that reads the namespace back from Azure after the deploy and fails the run unless it is private, has no key and has an approved private endpoint."""
+
+    TITLE = "Read the Event Hubs namespace back from Azure, which has no public network access and no key"
+
+    def run_step(self, state):
+        return run_step_script(self.TITLE, {"az": READ_BACK_AZ}, {"ENV_SUBSCRIPTION_ID": RETIRE_SUBSCRIPTION, "ENV_RESOURCE_GROUP": RETIRE_GROUP, "EVENT_HUB_NAMESPACE": RETIRE_NAMESPACE, "FAKE_STATE": state})
+
+    def test_a_namespace_that_is_private_has_no_key_and_has_approved_endpoints_passes_with_one_read(self):
+        for state in ("Disabled true Approved", "Disabled True Approved", "Disabled true Approved,Approved"):
+            with self.subTest(state=state):
+                done, lines, _ = self.run_step(state)
+                self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+                self.assertEqual(len(lines), 1)
+                self.assertTrue(lines[0].startswith(f"az rest --method get --url https://management.azure.com/subscriptions/{RETIRE_SUBSCRIPTION}/resourceGroups/{RETIRE_GROUP}"
+                                                    f"/providers/Microsoft.EventHub/namespaces/{RETIRE_NAMESPACE}?api-version=2024-01-01 --query "), lines[0])
+                self.assertIn(f"The Event Hubs namespace {RETIRE_NAMESPACE}, read back from Azure: public network access is Disabled, local authentication is off, and its private endpoint connection is Approved.", done.stdout)
+
+    def test_the_query_asks_for_the_three_properties_and_the_step_only_reads(self):
+        _, lines, _ = self.run_step("Disabled true Approved")
+        for word in ("properties.publicNetworkAccess", "properties.disableLocalAuth", "properties.privateEndpointConnections", "privateLinkServiceConnectionState.status"):
+            self.assertIn(word, lines[0])
+        for word in (" put ", " post ", " patch ", " delete ", "role ", "--yes"):
+            self.assertNotIn(word, lines[0] + " ")
+
+    def test_each_way_that_the_namespace_is_not_as_the_template_wrote_it_fails_the_run_and_says_which(self):
+        for state, words in (("Enabled true Approved", ["Public network access is 'Enabled', not 'Disabled'."]),
+                             ("SecuredByPerimeter true Approved", ["Public network access is 'SecuredByPerimeter', not 'Disabled'."]),
+                             ("null true Approved", ["Public network access is 'null', not 'Disabled'."]),
+                             ("Disabled false Approved", ["Local authentication is not off (disableLocalAuth is 'false')."]),
+                             ("Disabled null Approved", ["Local authentication is not off (disableLocalAuth is 'null')."]),
+                             ("Disabled true", ["The namespace has no private endpoint connection."]),
+                             ("Disabled true Pending", ["A private endpoint connection of the namespace is not Approved (Pending)."]),
+                             ("Disabled true Approved,Rejected", ["A private endpoint connection of the namespace is not Approved (Approved,Rejected)."]),
+                             ("Enabled false", ["Public network access is 'Enabled', not 'Disabled'.", "Local authentication is not off", "The namespace has no private endpoint connection."])):
+            with self.subTest(state=state):
+                done, lines, _ = self.run_step(state)
+                self.assertEqual(done.returncode, 1, state)
+                self.assertIn(f"::error::The Event Hubs namespace {RETIRE_NAMESPACE} is not as the template wrote it:", done.stdout)
+                for word in words:
+                    self.assertIn(word, done.stdout)
+                self.assertIn("Nothing was changed by this step.", done.stdout)
+                self.assertNotIn("read back from Azure:", done.stdout)
+
+    def test_a_read_that_fails_fails_the_run_with_what_azure_said(self):
+        done, lines, _ = self.run_step("FAIL")
+        self.assertEqual(done.returncode, 1)
+        self.assertEqual(len(lines), 1)
+        self.assertIn("::error::The Event Hubs namespace could not be read: ERROR: (TooManyRequests) Too many requests, try again later.", done.stdout)
+
+
 POWERSHELLS = []
 
 

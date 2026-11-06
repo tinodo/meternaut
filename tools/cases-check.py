@@ -9,7 +9,9 @@ It uses the helpers of tools/recording-check.py: the same Azure CLI, which the w
 
 functions  Read only. Waits until the cases app lists its two functions (the app has to be started and has to have read its package) and
            prints their names.
-run        Sends one event to the control hub of the cases (cases-control) with the identity of the workflow. The app runs one Watch now,
+run        Sends one event to the control hub of the cases (cases-control) with the identity that the CLI is signed in as: in the Hub workflow that is the
+           Operator's identity, which holds Azure Event Hubs Data Sender on that hub, and the tool runs inside the network, because the namespace takes no
+           public traffic. The app runs one Watch now,
            through the same code as its daily timer, and writes the History of that run to its telemetry, one line per step (docs/proposals/02-first-cases.md
            has the lines). This waits for the end of the run and for the lines that the end counts, prints what the run found and what each
            case came to, and fails when the run failed, when a case ended in an error, when the investigation was meant to run and did not, or when no end arrived. Only a GitHub Actions run

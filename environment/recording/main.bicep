@@ -23,10 +23,12 @@
 //  - the storage account has Shared Key access off, the Cosmos DB account has local authentication off, the Event Hubs
 //    namespace has local authentication off, the Application Insights component and the workspace take no
 //    instrumentation key or shared key for ingestion without Entra ID;
-//  - storage and Cosmos DB have public network access off and are reached through private endpoints; the function app
-//    reaches them from a subnet of its own (virtual network integration). Event Hubs keeps public access on, because
-//    the gateway sends to it and the deployment workflow sends one control event to it; the function app reaches it
-//    through a private endpoint, so that public access can be switched off later with one setting;
+//  - storage, Cosmos DB and Event Hubs have public network access off and are reached through private endpoints; the function app
+//    reaches them from a subnet of its own (virtual network integration). The Event Hubs namespace has no network rule set and no trusted-service
+//    exception, because nothing needs one: the function app and the Operator (environment/operator/main.bicep, which sends the control events of the
+//    two checks) use its private endpoint, and the gateway's two loggers can use only that endpoint too, over the peering, because API Management retired
+//    trusted-service connectivity to Event Hubs on 15 March 2026. Whether the landing zone's route lets the gateway's network reach the endpoint is not known
+//    until a policy of the gateway sends to the two usage hubs (docs/proposals/07-private-by-default.md says how that will show);
 //  - nothing relies on the tag SecurityControl = Ignore: the tenant's policies change a storage account or a Cosmos DB account
 //    to exactly this state, so there is nothing for them to change.
 //
@@ -97,11 +99,6 @@ param gatewayAppInsightsResourceGroup string
 @description('Name of that component.')
 @minLength(1)
 param gatewayAppInsightsName string
-
-@description('Object id of the identity that the deployment workflow signs in as. It may send to the control hub, so that the workflow can start a copy job once and read the result from the telemetry. It reads nothing.')
-@minLength(36)
-@maxLength(36)
-param workflowPrincipalId string
 
 @description('Principals that may read the usage documents (a Cosmos DB data role). Cosmos DB has no public endpoint, so a reader also needs a network path to the private endpoint.')
 param dataReaderPrincipalIds array = []
@@ -250,7 +247,7 @@ resource eventHubs 'Microsoft.EventHub/namespaces@2024-01-01' = {
     disableLocalAuth: true
     isAutoInflateEnabled: false
     minimumTlsVersion: '1.2'
-    publicNetworkAccess: 'Enabled'
+    publicNetworkAccess: 'Disabled'
   }
 }
 
@@ -282,7 +279,7 @@ resource piiConsumerGroup 'Microsoft.EventHub/namespaces/eventhubs/consumergroup
   name: 'piiUsageIngestion'
 }
 
-// The hub for the control events of the deployment workflow: one event starts one copy job now.
+// The hub for the control events of the check action: one event, sent by the Operator, starts one copy job now.
 resource controlHub 'Microsoft.EventHub/namespaces/eventhubs@2024-01-01' = {
   parent: eventHubs
   name: controlHubName
@@ -437,7 +434,10 @@ resource eventHubsEndpoint 'Microsoft.Network/privateEndpoints@2025-05-01' = {
 }
 
 // Each role on the one event hub that the caller uses, not on the namespace: the gateway sends to the two usage hubs and cannot start a
-// copy job; the workflow sends to the control hub and cannot write usage events; the function app reads each of the three.
+// copy job; the function app reads each of the three. The deployment workflow's identity holds no role on any hub: the control event is sent by the
+// Operator, which holds Azure Event Hubs Data Sender on the control hub (environment/operator/main.bicep), and the namespace takes no traffic from the
+// workflow's runner. The role that the workflow's identity held here is retired by the action recording, which deletes that one assignment after the
+// deploy when it is still there, because a template never removes an assignment that it stops declaring.
 resource gatewaySendsUsage 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   scope: usageHub
   name: guid(usageHub.id, gatewayPrincipalId, eventHubsDataSenderRoleId)
@@ -457,19 +457,6 @@ resource gatewaySendsPii 'Microsoft.Authorization/roleAssignments@2022-04-01' = 
   properties: {
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', eventHubsDataSenderRoleId)
     principalId: gatewayPrincipalId
-    principalType: 'ServicePrincipal'
-  }
-  dependsOn: [
-    eventHubsEndpoint
-  ]
-}
-
-resource workflowSendsControl 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  scope: controlHub
-  name: guid(controlHub.id, workflowPrincipalId, eventHubsDataSenderRoleId)
-  properties: {
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', eventHubsDataSenderRoleId)
-    principalId: workflowPrincipalId
     principalType: 'ServicePrincipal'
   }
   dependsOn: [
