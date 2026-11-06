@@ -928,7 +928,7 @@ class Cases(unittest.TestCase):
                      "{ name: 'INVESTIGATE_MAX_CALLS', value: string(investigateMaxCalls) }", "{ name: 'INVESTIGATE_MAX_SECONDS', value: string(investigateMaxSeconds) }"):
             self.assertIn(line, body)
         for line in ("param foundryProjectEndpoint string = ''", "param foundryModelInvestigator string = 'gpt-6.1-sol'", "param foundryModelSkeptic string = 'gpt-6-luna'",
-                     "param investigateMaxCalls int = 24", "param investigateMaxSeconds int = 420"):
+                     "param investigateMaxCalls int = 40", "param investigateMaxSeconds int = 420"):
             self.assertRegex(self.code, rf"(?m)^{re.escape(line)}$")
         self.assertEqual(len(re.findall(r"name: '(?:FOUNDRY_\w+|INVESTIGATE\w*)'", body)), 6)
         self.assertEqual(self.code.count("foundryProjectEndpoint"), 3, "the parameter, the setting and the switch, and nothing else reads it")
@@ -936,13 +936,19 @@ class Cases(unittest.TestCase):
             self.assertNotIn(word, self.code[self.code.index("param foundryProjectEndpoint"):self.code.index("var tags")], word)
         self.assertEqual(self.code.count("Microsoft.CognitiveServices"), 0, "the role on the project is given by the template of the Foundry resource, which has to make the project first")
 
-    def test_the_template_cannot_ask_for_more_of_the_investigation_than_the_code_accepts(self):
-        self.assertRegex(self.code, r"@minValue\(1\)\n@maxValue\(40\)\nparam investigateMaxCalls int = 24\n")
+    def test_the_template_cannot_ask_for_more_of_the_investigation_than_the_code_accepts_and_starts_from_the_budget_that_the_code_starts_from(self):
+        self.assertRegex(self.code, r"@minValue\(1\)\n@maxValue\(40\)\nparam investigateMaxCalls int = 40\n")
         self.assertRegex(self.code, r"@minValue\(30\)\n@maxValue\(600\)\nparam investigateMaxSeconds int = 420\n")
-        limits = dict(re.findall(r"(?m)^LIMIT_INVESTIGATE_(CALLS|SECONDS) = (\d+)$", (ROOT / "src" / "case-functions" / "cases" / "config.py").read_text(encoding="utf-8")))
-        if not limits:
+        constants = {(kind, what): value for kind, what, value in re.findall(r"(?m)^(LIMIT|DEFAULT)_INVESTIGATE_(CALLS|SECONDS) = (\d+)$",
+                                                                              (ROOT / "src" / "case-functions" / "cases" / "config.py").read_text(encoding="utf-8"))}
+        if not constants:
             self.skipTest("the code does not read the investigation settings yet; src/case-functions/tests/test_config.py holds the names of the template and of config.py together")
-        self.assertEqual(limits, {"CALLS": "40", "SECONDS": "600"}, "the largest value that the template takes is the largest that the code takes")
+        self.assertEqual({what: value for (kind, what), value in constants.items() if kind == "LIMIT"}, {"CALLS": "40", "SECONDS": "600"},
+                         "the largest value that the template takes is the largest that the code takes")
+        template = dict(re.findall(r"(?m)^param (investigateMaxCalls|investigateMaxSeconds) int = (\d+)$", self.code))
+        for name, what in (("investigateMaxCalls", "CALLS"), ("investigateMaxSeconds", "SECONDS")):
+            if ("DEFAULT", what) in constants:
+                self.assertEqual(template[name], constants[("DEFAULT", what)], f"{name}: the template and the code start from the same budget")
 
     def test_the_workbook_file_is_valid_json_and_only_reads_the_traces(self):
         import json
@@ -1487,6 +1493,7 @@ class FoundryWorkflow(unittest.TestCase):
                                  ("PRIVATE_ENDPOINT", "foundry_private_endpoint"), ("PROJECT_ENDPOINT", "foundry_project_endpoint")):
             self.assertIn(f"{env_name}: ${{{{ steps.params.outputs.{output} }}}}", block)
         self.assertEqual(self.text.count("foundry-check.py read-back"), 1)
+        self.assertIn("        timeout-minutes: 20\n", block, "a step that waits for Azure has a limit of its own, besides the two minutes of each read")
         self.assertNotIn("|| true", block, "a difference stops the run")
         self.assertNotIn("continue-on-error", block)
         self.assertEqual(self.names.index(title) - self.names.index(self.ORDER[3]), 1)
@@ -1512,12 +1519,41 @@ class FoundryWorkflow(unittest.TestCase):
 
     def test_the_cases_app_is_given_the_project_address_from_what_is_in_azure_and_the_cases_action_has_no_step_of_its_own_for_it(self):
         params = [b for b in self.steps if b.startswith("name: Work out the settings\n")][0]
-        self.assertIn('exists "/subscriptions/$ENV_SUBSCRIPTION_ID/resourceGroups/$ENV_RESOURCE_GROUP/providers/Microsoft.CognitiveServices/accounts/$foundry_account/projects/$foundry_project" 2026-09-01', params)
+        self.assertIn('project_url="/subscriptions/$ENV_SUBSCRIPTION_ID/resourceGroups/$ENV_RESOURCE_GROUP/providers/Microsoft.CognitiveServices/accounts/$foundry_account/projects/$foundry_project"', params)
+        self.assertEqual(re.findall(r'exists "\$project_url" ([0-9-]+(?: warning)?)', params), ["2025-06-01", "2025-06-01 warning"], "existence needs the version that the model account uses, not the newest")
+        self.assertNotIn("2026-09-01", params)
         self.assertIn('CASES_PRINCIPAL_ID="$cases_principal" ENV_FOUNDRY_PROJECT_EXISTS="$foundry_exists" python3 tools/environment-params.py build', params)
         self.assertIn("could not be read", params, "a failure that is not 'not found' stops the run: the app is never given an address by a wrong guess")
         self.assertNotRegex(params, r"--method (put|patch|post|delete)")
         self.assertEqual(len(re.findall(r"if: .*'foundry'.*'cases'|if: .*'cases'.*'foundry'", self.text)), 0)
         self.assertIn('--parameters "$RUNNER_TEMP/cases.parameters.json"', self.step("Deploy the first cases"))
+
+    def test_the_project_is_looked_for_only_by_the_actions_that_use_the_answer_and_a_failed_read_stops_cases_and_is_a_warning_for_what_if(self):
+        params = [b for b in self.steps if b.startswith("name: Work out the settings\n")][0]
+        self.assertIn("exists() {\n            local found level=\"${3:-error}\"", params, "the level of the annotation is the caller's")
+        self.assertIn('echo "::${level}::${1##*/} could not be read: $found" >&2', params)
+        self.assertEqual(len(re.findall(r"(?m)^\s+(what-if\|foundry)\)$", params)), 1, "the identity is looked for by what-if and foundry only")
+        self.assertEqual(len(re.findall(r"(?m)^\s+cases\)$", params)), 1)
+        self.assertEqual(len(re.findall(r"(?m)^\s+what-if\)$", params)), 1)
+        self.assertEqual(len(re.findall(r'(?m)^\s+\*\) echo "The action \$ACTION does not use the Foundry project, so it is not looked for\." ;;$', params)), 1)
+        self.assertEqual(params.count("cases_principal=$(az identity list"), 1)
+        self.assertLess(params.index("cases_principal=\"\"\n            foundry_exists=false"), params.index("case \"$ACTION\" in"), "false is the answer for every action that does not look")
+        self.assertIn("Nothing was changed: run cases again.", params)
+        self.assertIn('echo "::warning::The preview of the cases app assumes that the Foundry project is not in Azure', params)
+        self.assertNotIn("ACTION: ${{", params.split("run: |")[0], "the job's ACTION is used")
+        self.assertIn("ACTION: ${{ inputs.action }}", self.text.split("    steps:")[0])
+
+    def test_the_texts_of_the_watch_say_that_it_changes_no_resource_of_the_estate_and_what_the_investigation_adds(self):
+        block = self.step("Start one Watch and read its History")
+        comment = " ".join(line.strip()[2:] for line in block.splitlines() if line.strip().startswith("# "))
+        for words in ("The Watch changes no resource of the estate: it reads Azure and calls the models through the gateway.", "With the investigation on (the cases app has the address of the Foundry project",
+                      "it also creates its agents and conversations in its own Foundry project, and those agents call the models of that resource directly, not through the gateway "
+                      "(the exception to AGENTS.md rule 15 (c))."):
+            self.assertIn(words, comment)
+        for old in ("only reads Azure", "it only reads", "went through the gateway", "Nothing in Azure was changed"):
+            self.assertNotIn(old, self.text, old)
+        description = re.search(r'(?m)^        description: "(what-if: .+)"$', self.text).group(1)
+        self.assertIn("its Watch changes no resource of the estate (with the investigation on it also creates agents and conversations in its own Foundry project)", description)
 
     def test_the_summary_for_a_failed_and_a_finished_run_says_what_the_resources_hold_gives_the_endpoint_and_names_no_key(self):
         block = self.step("What was done")
@@ -1533,6 +1569,69 @@ class FoundryWorkflow(unittest.TestCase):
         for text_ in (failed, finished):
             for word in ("listKeys", "listSecrets", "primaryKey", "AccountKey", "SharedAccessKey", "connection string", "password"):
                 self.assertNotIn(word, text_, word)
+
+
+class FoundryHandStep(unittest.TestCase):
+    """The hand step of environment/BOOTSTRAP.md that adds the Foundry User role to the condition of the deploy identity: what its text says, and what its commands may do."""
+
+    def setUp(self):
+        self.section = text("environment/BOOTSTRAP.md").split("## Changed on 2026-11-06: the Foundry resource of the agents")[1].split("\n## ")[0]
+        (self.script,) = re.findall(r"```powershell\n(.*?)\n```", self.section, re.S)
+        self.lines = self.script.splitlines()
+
+    def test_the_condition_is_changed_in_place_with_one_update_and_no_assignment_is_deleted_or_made(self):
+        self.assertEqual(len(re.findall(r"^az role assignment update ", self.script, re.M)), 1, "one write")
+        for word in ("role assignment delete", "role assignment create", "--ids", "restore", "Restore"):
+            self.assertNotIn(word, self.script, word)
+        self.assertEqual(sorted(set(re.findall(r"az role assignment (\w+)", self.script))), ["list", "update"])
+        self.assertIn("$old.condition = $condition\n$json = $old | ConvertTo-Json -Depth 20 -Compress\n", self.script, "the assignment that was read is the one that is written, with the new condition")
+        self.assertIn("az role assignment update --subscription $devSub --role-assignment ($json -replace '\"', '\"\"') --output none\n", self.script)
+
+    def test_every_command_names_the_subscription_of_the_pilot(self):
+        calls = re.findall(r"az role assignment (?:list|update)[^\n]*", self.script)
+        self.assertEqual(len(calls), 3, "the text that tells the person how to read it, the list function and the update")
+        for call in calls:
+            self.assertIn("--subscription $devSub", call, call)
+        self.assertNotIn("az account set", self.script, "the CLI's default subscription is never taken as the pilot's scope")
+
+    def test_the_exit_code_of_every_command_is_tested_and_a_failed_update_says_that_the_assignment_is_unchanged(self):
+        self.assertGreaterEqual(self.script.count("if ($LASTEXITCODE -ne 0) { throw"), 5, "the two reads, the update, and the two reads back")
+        update = self.script.index("az role assignment update ")
+        after = self.script[update:].split("\n", 2)[1]
+        self.assertTrue(after.startswith('if ($LASTEXITCODE -ne 0) { throw "The update failed (exit code $LASTEXITCODE). It is one write and nothing else was done, so the assignment is unchanged.'), after)
+        self.assertIn("Read it: $read", after, "it says how to read the assignment")
+
+    def test_it_reads_before_it_writes_shows_the_difference_and_asks_and_reads_back_after(self):
+        order = [self.script.index(word) for word in ("Get-Assignments 'length(@)'", "$old = $text | ConvertFrom-Json", "$shape = {", "Write-Host \"Role ids now:", "Read-Host 'Change the condition as shown? Type yes'",
+                                                      "az role assignment update ", "$new = $text | ConvertFrom-Json", "Write-Host \"Read back:")]
+        self.assertEqual(order, sorted(order))
+        self.assertIn("-ne 'yes') { throw 'Stopped. Nothing was changed.' }", self.script)
+        self.assertEqual(self.script.count("Read-Host"), 1)
+        # the read back: one assignment, the same one, both lists equal to the ids that were meant
+        for words in ("$new.id -ne $old.id", "$after.Count -ne 2", "$after[0] -ne $meant", "$after[1] -ne $meant", "\"$count\".Trim() -ne '1'"):
+            self.assertIn(words, self.script)
+        self.assertEqual(self.script.count("\"$count\".Trim() -ne '1'"), 2, "exactly one assignment before the write and after it")
+
+    def test_the_json_reaches_the_cli_unchanged_in_windows_powershell_and_in_powershell_7(self):
+        self.assertEqual(self.lines[0], "function az { $PSNativeCommandArgumentPassing = 'Legacy'; & 'C:\\Program Files\\Microsoft SDKs\\Azure\\CLI2\\python.exe' -IBm azure.cli @args }",
+                         "PowerShell 7.3 and later escape the quotes of an argument themselves, so the function asks for the older way, which Windows PowerShell 5.1 and PowerShell 7.1 have")
+        self.assertNotIn("'\\\"'", self.script, "no backslash before a quote: Windows PowerShell 5.1 does not take it")
+        self.assertTrue(self.script.isascii(), "commands that are copied into a console hold plain characters only")
+
+    def test_the_section_says_what_the_read_back_checks_including_the_endpoint_the_pages_and_the_time_limit(self):
+        for words in ("the project reports an endpoint and it is the address that the cases app is given", "(a list is read to its last page)",
+                      "Jailbreak and Indirect Attack on the user input, Indirect Attack on tool results", "No read waits longer than two minutes",
+                      "fails the run with a message that names the request, and nothing after it is read"):
+            self.assertIn(words, self.section, words)
+
+    def test_the_text_says_one_write_in_place_what_is_read_and_checked_and_that_any_answer_but_yes_changes_nothing(self):
+        for words in ("changed **in place, with one write**", "`az role assignment update`", "the assignment keeps its id", "exactly one assignment", "They test the exit code of the update",
+                      "the assignment is unchanged", "read the assignment back", "with the same id", "any other answer is a dry run that changes nothing",
+                      "PowerShell 7 and in Windows PowerShell 5.1", "Paste them as one block, or save them as a `.ps1` file"):
+            self.assertIn(words, self.section, words)
+        for old in ("delete, then create", "replaced as a whole", "two writes"):
+            self.assertNotIn(old, self.section, old)
+        self.assertIn("53ca6127-db72-4b80-b1b0-d745d6d5456d", self.script)
 
 
 class HandSteps(unittest.TestCase):

@@ -142,7 +142,7 @@ param foundryModelSkeptic string = 'gpt-6-luna'
 @description('Most tool calls and model answers that one investigation may take in all. The code accepts no more than 40 (LIMIT_INVESTIGATE_CALLS in src/case-functions/cases/config.py).')
 @minValue(1)
 @maxValue(40)
-param investigateMaxCalls int = 24
+param investigateMaxCalls int = 40
 
 @description('Most seconds that one investigation may take. The code accepts no more than 600 (LIMIT_INVESTIGATE_SECONDS in src/case-functions/cases/config.py).')
 @minValue(30)

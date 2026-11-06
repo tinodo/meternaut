@@ -32,7 +32,8 @@ class Extras:
 
 
 def approval_settings(settings: LoopSettings) -> ApprovalSettings:
-    return ApprovalSettings(change_group=settings.change_group, planted_tag=settings.planted_tag, ttl_hours=settings.plan_ttl_hours)
+    return ApprovalSettings(change_group=settings.change_group, planted_tag=settings.planted_tag, ttl_hours=settings.plan_ttl_hours,
+                            change_subscription=settings.change_subscription)
 
 
 def build_store(settings: LoopSettings, token: Callable[[str], str], redact: Callable[[str], str], *, transport, sleep, monotonic,

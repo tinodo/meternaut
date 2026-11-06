@@ -3,11 +3,14 @@
 The Investigator reads the estate through the read-only tools of toolbox.py (handles instead of names, typed numbers instead of text) and ends with one JSON
 object of findings. Nothing in it is believed before code has checked it:
 
-- a handle that no tool showed is dropped, and so is a measurement whose total is not the number that the tools returned;
-- a finding that claims no usage keeps only the resources whose cited measurements are all nil in what the tools returned;
+- a handle that no tool showed is dropped, and so is a measurement whose total is not a number that the tools returned;
+- a finding that claims no usage keeps only the resources whose cited measurements are nil in every total that the tools recorded for them;
 - the cost of the resources is added up by code from the cost lines, and the agent never supplies a figure;
 - the guards of guards.py hold every resource, and a resource with a guard on leaves the finding;
 - a second agent, the Skeptic, then tries to break the findings that are left, and decide.py gives each resource its status.
+
+A resource whose finding cites no measurement that matched the tools is never proposed, whatever the agents say: a person has to judge it. The same holds for a
+resource that the Skeptic was not shown, for a finding that it gave no verdict (or two verdicts) for, and for a finding whose confidence is not a number from 0 to 1.
 
 Each resource of a finding that is left becomes one case, so that the History, the notebook and the letters show it like any other case. Nothing here changes
 Azure, and the plan of a change is never made here: approvals.create decides that, and it makes none for a case that this module opens.
@@ -40,18 +43,30 @@ DETECTOR = "investigation"
 MAX_CASES = 60  # the cases that one run opens
 MAX_ENTRIES = 720  # the entries of metric_evidence that are read: a handful for each of the handles that a finding may hold
 MAX_FACT_METRICS = 12  # the measurements that a case keeps
-SKEPTIC_ROWS = 8  # the resources of one finding that the Skeptic sees, dearest first
-SKEPTIC_METRICS = 6  # the measurements of one resource that the Skeptic sees
+MAX_TOTALS = 20  # the totals of one measurement that are read: the toolbox records at most as many
+SKEPTIC_METRICS = 6  # the measurements of one resource that the Skeptic sees, at most
 SKEPTIC_PROPERTIES = 8  # the properties of one resource that the Skeptic sees
 SKEPTIC_CHARS = 30000  # the size of the Skeptic's input
 RESERVE_SECONDS = 120.0  # what the Investigator leaves of its time for the checks and the Skeptic, at most
 LOG = logging.getLogger("meternaut.investigate")
 
-# What code lets through of what the tools showed, once more: a metric name, a resource type as Azure names one, a word, and the key path of a property.
-METRIC_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 ._:/%()-]{0,98}$")
-RESOURCE_TYPE = re.compile(r"^[a-z0-9.]{1,60}(?:/[a-z0-9._-]{1,50}){1,4}$")
-WORD = re.compile(r"^[A-Za-z0-9_.-]{1,32}$")
-PROPERTY_PATH = re.compile(r"^[A-Za-z][A-Za-z0-9.]{0,100}$")
+# What code lets through of what the tools showed, once more: a metric name, a resource type as Azure names one, a word, and the key path of a property. Each is
+# used with fullmatch, so that nothing can follow the last character (not even a line break).
+METRIC_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9 ._:/%()-]{0,98}")
+RESOURCE_TYPE = re.compile(r"[a-z0-9.]{1,60}(?:/[a-z0-9._-]{1,50}){1,4}")
+WORD = re.compile(r"[A-Za-z0-9_.-]{1,32}")
+PROPERTY_PATH = re.compile(r"[A-Za-z][A-Za-z0-9.]{0,100}")
+
+# The rows that the Skeptic is given, from the richest to the poorest: how many measurements of a resource, which fields of a measurement, and whether the SKU and the
+# properties of the resource are shown. The richest level whose input fits SKEPTIC_CHARS is the one that is used.
+FULL = ("total", "max", "average", "days", "daysWithData", "unit")
+SHORT = ("total", "days", "daysWithData")
+LEAST = ("total",)
+DETAIL = ((SKEPTIC_METRICS, FULL, True, True), (SKEPTIC_METRICS, FULL, True, False), (4, SHORT, True, False), (3, SHORT, False, False), (2, LEAST, False, False),
+          (1, LEAST, False, False))
+
+NO_VERDICT = "no verdict for this finding"
+NOT_SHOWN = "this resource was not shown to the Skeptic"
 
 
 @dataclass
@@ -61,6 +76,7 @@ class Item:
     handle: str
     lead: Lead
     metrics: dict[str, float]  # the entries of the finding that matched the tools: metric name -> the total that the tools returned
+    shown: bool = False  # the Skeptic was given a row for the resource
 
 
 @dataclass
@@ -72,6 +88,7 @@ class Finding:
     proposal: str = ""
     confidence: float = 0.0
     summary: str = ""
+    note: str | None = None  # what code says about the finding, for a person: its confidence was not a number from 0 to 1
     claimed: int = 0  # the distinct handles that the answer listed
     handles: list[str] = field(default_factory=list)  # the handles that the tools showed, in the finding's order
     cited: dict[str, dict[str, float]] = field(default_factory=dict)
@@ -89,9 +106,11 @@ class Finding:
 
 @dataclass
 class Investigation:
-    """What the investigation came to. `ran` is true when the Investigator gave an answer that could be read, even one with no finding."""
+    """What the investigation came to. `ran` is true when the Investigator gave an answer that could be read, even one with no finding. `off` is true when it was
+    not meant to run (it is switched off, or the app has no Foundry project); a run that was meant to and did not has `ran` and `off` false."""
 
     ran: bool = False
+    off: bool = False
     note: str = ""  # why it did not run
     cases: int = 0
     proposed: int = 0
@@ -104,6 +123,12 @@ class Investigation:
     kept: int = 0
     dropped_findings: int = 0
     guarded: int = 0
+    unmeasured: int = 0
+
+    @property
+    def state(self) -> str:
+        """`ran`, `off` or `failed`: what the end of the run says of the investigation."""
+        return "ran" if self.ran else "off" if self.off else "failed"
 
 
 # -- what the answers hold ---------------------------------------------------------------------------------------------------------------------------
@@ -166,7 +191,10 @@ def parse_finding(number: int, raw: object) -> tuple[Finding, list[str], object]
         finding.reason = "it lists no handles"
         return finding, [], None
     finding.basis, finding.proposal = basis, proposal
-    finding.confidence = round(min(1.0, max(0.0, float(confidence))), 2)
+    if 0 <= confidence <= 1:
+        finding.confidence = round(float(confidence), 2)
+    else:  # a model that writes 85 for a percentage must not pass the gate of 0.7: the finding stays, with a confidence that cannot propose, and a person is told
+        finding.note = f"the Investigator gave a confidence of {confidence:g}, which is not a number from 0 to 1, so it counts as 0 and a person has to judge this finding"
     finding.summary = clean_text(raw.get("summary"), agents.MAX_SUMMARY)
     handles = list(dict.fromkeys(h for h in listed if isinstance(h, str)))
     finding.claimed = len(handles)
@@ -176,23 +204,28 @@ def parse_finding(number: int, raw: object) -> tuple[Finding, list[str], object]
 def parse_verdicts(text: object, count: int) -> dict[int, SkepticAnswer]:
     """The Skeptic's verdicts by the index of the finding. Raises RoleError when the answer is not one JSON object with a list of verdicts.
 
-    A verdict that is not valid, or that repeats an index, is left out, and the finding that it was for stays without a verdict."""
+    A verdict that is not valid is left out, and the finding that it was for stays without a verdict. So does a finding whose index the answer holds twice, whatever
+    the two entries say: an answer that contradicts itself, or repeats itself, decides nothing, and the finding goes to a person."""
     data = _object(text)
     verdicts = data.get("verdicts")
     if not isinstance(verdicts, list):
         raise RoleError("the answer holds no list of verdicts")
-    found: dict[int, SkepticAnswer] = {}
+    found: dict[int, SkepticAnswer | None] = {}
     for entry in verdicts:
         if not isinstance(entry, dict):
             continue
-        index, verdict = entry.get("index"), _word(entry.get("verdict"), roles.VERDICTS)
-        if isinstance(index, bool) or not isinstance(index, int) or not 0 <= index < count or index in found or verdict is None:
+        index = entry.get("index")
+        if isinstance(index, bool) or not isinstance(index, int) or not 0 <= index < count:
+            continue
+        verdict = _word(entry.get("verdict"), roles.VERDICTS)
+        if index in found or verdict is None:
+            found[index] = None
             continue
         objections = entry.get("objections", [])
         kept = tuple(clean_text(o, roles.MAX_OBJECTION) for o in (objections if isinstance(objections, list) else [])[: roles.MAX_OBJECTIONS]
                      if isinstance(o, str) and o.strip())
         found[index] = SkepticAnswer(verdict, kept, clean_text(entry.get("summary"), agents.MAX_VERDICT_SUMMARY))
-    return found
+    return {index: answer for index, answer in found.items() if answer is not None}
 
 
 # -- what the tools showed ---------------------------------------------------------------------------------------------------------------------------
@@ -207,18 +240,28 @@ def _count(value: object) -> int | None:
 
 
 def _word_of(value: object) -> str | None:
-    return value if isinstance(value, str) and WORD.match(value) else None
+    return value if isinstance(value, str) and WORD.fullmatch(value) else None
+
+
+def _totals(aggregate: dict) -> list[float | int | None]:
+    """Every total that the tools recorded for one measurement, in order, None for one that is not a number. When the evidence holds no list of totals, it is the one
+    total that it holds. No total is left out: a claim of no usage is checked against every one."""
+    totals = aggregate.get("totals")
+    if isinstance(totals, (list, tuple)) and totals:
+        return [_number(total) for total in totals]
+    return [_number(aggregate.get("total"))]
 
 
 def _aggregates(evidence: Mapping[str, dict], handle: str) -> dict[str, dict]:
     """The measurements that the tools showed for one handle: metric name -> its total, maximum and average (a number, or None when the measurement was absent),
-    the days that it covers and the days that had data, and its unit."""
+    the days that it covers and the days that had data, its unit, and every total that was recorded for it."""
     metrics = _block(evidence, handle).get("metrics")
     shown: dict[str, dict] = {}
     for name, aggregate in (metrics.items() if isinstance(metrics, dict) else []):
         if isinstance(name, str) and isinstance(aggregate, dict):
             shown[name] = {"total": _number(aggregate.get("total")), "max": _number(aggregate.get("max")), "average": _number(aggregate.get("average")),
-                           "days": _count(aggregate.get("days")), "daysWithData": _count(aggregate.get("days_with_data")), "unit": _word_of(aggregate.get("unit"))}
+                           "days": _count(aggregate.get("days")), "daysWithData": _count(aggregate.get("days_with_data")), "unit": _word_of(aggregate.get("unit")),
+                           "totals": _totals(aggregate)}
     return shown
 
 
@@ -232,7 +275,7 @@ def _properties(evidence: Mapping[str, dict], handle: str) -> dict[str, bool | i
     properties = _block(evidence, handle).get("properties")
     shown: dict[str, bool | int | float | str] = {}
     for path, value in sorted((p, v) for p, v in (properties.items() if isinstance(properties, dict) else []) if isinstance(p, str)):
-        if isinstance(path, str) and PROPERTY_PATH.match(path) and (isinstance(value, bool) or _number(value) is not None or _word_of(value)):
+        if isinstance(path, str) and PROPERTY_PATH.fullmatch(path) and (isinstance(value, bool) or _number(value) is not None or _word_of(value)):
             shown[path] = value
     return dict(list(shown.items())[:SKEPTIC_PROPERTIES])
 
@@ -256,7 +299,11 @@ def _cost(resource: Resource, context: Context | None) -> float | None:
 
 
 def _verify(finding: Finding, handles: list[str], entries: object, toolbox: Toolbox, taken: set[str]) -> None:
-    """Keeps of a finding what the tools showed. `taken` holds the handles of the findings before it: a resource belongs to one finding only."""
+    """Keeps of a finding what the tools showed. `taken` holds the handles of the findings before it: a resource belongs to one finding only.
+
+    An entry of metric_evidence counts when its total is one of the totals that the tools recorded for that handle and metric; the number that is kept is the tools'.
+    A claim of no usage is proved by such an entry only when every total that was recorded for the metric is nil: a short measurement that shows nil does not cancel
+    a longer one that showed something. A resource with a cited measurement that shows something, or with none that proves it, leaves a finding of no usage."""
     known: list[str] = []
     for handle in handles:
         if handle not in toolbox.handles:
@@ -266,16 +313,29 @@ def _verify(finding: Finding, handles: list[str], entries: object, toolbox: Tool
         else:
             known.append(handle)
     cited: dict[str, dict[str, float]] = {handle: {} for handle in known}
+    contradicted: set[str] = set()
+    recorded = {handle: _aggregates(toolbox.evidence, handle) for handle in known}
     for entry in (entries if isinstance(entries, list) else [])[:MAX_ENTRIES]:
         if not isinstance(entry, dict) or not isinstance(entry.get("handle"), str) or entry["handle"] not in cited or not isinstance(entry.get("metric"), str):
             continue
-        said, shown = _number(entry.get("total")), _metrics(toolbox.evidence, entry["handle"]).get(entry["metric"])
-        if said is None or shown is None or not math.isclose(said, shown, rel_tol=1e-6, abs_tol=0.0):
-            continue  # an entry that is not the number of the tools is thrown away, and an absent measurement proves nothing
-        if len(cited[entry["handle"]]) < MAX_FACT_METRICS:
-            cited[entry["handle"]][entry["metric"]] = shown
+        handle, said = entry["handle"], _number(entry.get("total"))
+        shown = recorded[handle].get(entry["metric"])
+        if said is None or shown is None:
+            continue
+        total = next((t for t in shown["totals"] if t is not None and math.isclose(said, t, rel_tol=1e-6, abs_tol=0.0)), None)
+        if total is None:
+            continue  # an entry that is not a number of the tools is thrown away, and an absent measurement proves nothing
+        if finding.basis == "no-usage":
+            numbers = [t for t in shown["totals"] if t is not None]
+            if any(t != 0 for t in numbers):
+                contradicted.add(handle)
+                continue
+            if len(numbers) != len(shown["totals"]):
+                continue  # a measurement that was absent at some time proves nothing
+        if len(cited[handle]) < MAX_FACT_METRICS:
+            cited[handle][entry["metric"]] = total
     if finding.basis == "no-usage":
-        kept = [handle for handle in known if cited[handle] and all(total == 0 for total in cited[handle].values())]
+        kept = [handle for handle in known if cited[handle] and handle not in contradicted]
         finding.unproven = len(known) - len(kept)
         known = kept
     finding.handles = known
@@ -338,35 +398,68 @@ def _judged_lately(s: "Services", lead: Lead, facts: dict) -> bool:
 
 # -- what the Skeptic is given -----------------------------------------------------------------------------------------------------------------------
 
-def _row(item: Item, toolbox: Toolbox) -> dict:
-    """The evidence row of one resource: its handle, its type as Azure names it, what the tools showed about it (measurements with the days that they cover, a SKU,
-    typed properties) and its cost. No name, no tag, no text of the estate."""
+def _nonzero(aggregate: dict) -> bool:
+    """A measurement with a total that is not nil among the totals that the tools recorded for it: what can contradict a claim of no usage."""
+    return any(total != 0 for total in aggregate["totals"] if total is not None)
+
+
+def _measurement(name: str, aggregate: dict, cited: bool, fields: tuple[str, ...]) -> dict:
+    """One measurement of a row: its name, whether the agent cited it, the fields of `fields` that the tools had (the total always, a null when it was absent), and
+    the totals that were recorded for it when there are several (at most MAX_TOTALS are shown)."""
+    row: dict = {"metric": name, "cited": cited}
+    for key in fields:
+        if aggregate[key] is not None or key == "total":
+            row[key] = aggregate[key]
+    if len(aggregate["totals"]) > 1:
+        row["totals"] = aggregate["totals"][:MAX_TOTALS]
+    return row
+
+
+def _row(item: Item, toolbox: Toolbox, count: int, fields: tuple[str, ...], sku: bool, properties: bool) -> dict:
+    """The evidence row of one resource: its handle, its type as Azure names it, its cost, and at most `count` of the measurements that the tools showed for it,
+    those with a total that is not nil first (what may contradict the claim), then the cited ones, then the others by name. A SKU and typed properties are added
+    when `sku` and `properties` say so. No name, no tag, no text of the estate."""
     shown = _aggregates(toolbox.evidence, item.handle)
-    names = sorted((n for n in shown if METRIC_NAME.match(n)), key=lambda n: (n not in item.metrics, n))[:SKEPTIC_METRICS]
+    names = sorted((n for n in shown if METRIC_NAME.fullmatch(n)), key=lambda n: (not _nonzero(shown[n]), n not in item.metrics, n))[:count]
     block = _block(toolbox.evidence, item.handle)
     kind = block["type"] if isinstance(block.get("type"), str) else toolbox.handles[item.handle].resource_type
-    row: dict = {"handle": item.handle, "type": kind if len(kind) <= 120 and RESOURCE_TYPE.match(kind) else "other", "costUsd30d": item.lead.cost_usd_30d,
-                 "metrics": [{"metric": n, "cited": n in item.metrics, **{k: v for k, v in shown[n].items() if v is not None or k == "total"}} for n in names]}
-    if _word_of(block.get("sku")):
+    row: dict = {"handle": item.handle, "type": kind if len(kind) <= 120 and RESOURCE_TYPE.fullmatch(kind) else "other", "costUsd30d": item.lead.cost_usd_30d,
+                 "metrics": [_measurement(n, shown[n], n in item.metrics, fields) for n in names]}
+    if sku and _word_of(block.get("sku")):
         row["sku"] = block["sku"]
-    properties = _properties(toolbox.evidence, item.handle)
-    if properties:
-        row["properties"] = properties
+    typed = _properties(toolbox.evidence, item.handle) if properties else {}
+    if typed:
+        row["properties"] = typed
     if item.lead.advisor_saving_usd is not None:
         row["advisorSavingUsdMonth"] = item.lead.advisor_saving_usd
     return row
 
 
-def _skeptic_input(findings: list[Finding], toolbox: Toolbox) -> str:
-    rows = [[_row(item, toolbox) for item in finding.items] for finding in findings]
-    shown = SKEPTIC_ROWS
-    while True:
-        text = agents.skeptic_input([
-            {"index": index, "basis": f.basis, "proposal": f.proposal, "confidence": f.confidence, "summary": f.summary, "resources": len(f.items),
-             "costUsd30d": f.covered_usd, "evidence": rows[index][:shown], "evidenceShown": len(rows[index][:shown])} for index, f in enumerate(findings)])
-        if len(text) <= SKEPTIC_CHARS or shown <= 1:
-            return text
-        shown = max(1, shown // 2)
+def _skeptic_input(findings: list[Finding], toolbox: Toolbox) -> tuple[str, set[str]]:
+    """The input of the Skeptic and the handles of the resources that it shows. It shows every resource that will be a case, with the richest rows that fit
+    SKEPTIC_CHARS. When even the poorest rows do not fit, the cheapest resources are left out, and the case of a resource that was not shown needs a person."""
+    items = [item for finding in findings for item in finding.items]
+    left_out: set[str] = set()
+
+    def build(level: tuple) -> str:
+        count, fields, sku, properties = level
+        listed = []
+        for index, f in enumerate(findings):
+            rows = [_row(item, toolbox, count, fields, sku, properties) for item in f.items if item.handle not in left_out]
+            listed.append({"index": index, "basis": f.basis, "proposal": f.proposal, "confidence": f.confidence, "summary": f.summary, "resources": len(f.items),
+                           "costUsd30d": f.covered_usd, "evidence": rows, "evidenceShown": len(rows)})
+        return agents.skeptic_input(listed)
+
+    for level in DETAIL:
+        text = build(level)
+        if len(text) <= SKEPTIC_CHARS:
+            return text, {item.handle for item in items}
+    for item in sorted(items, key=lambda i: (i.lead.cost_usd_30d or 0.0, i.handle)):
+        left_out.add(item.handle)
+        text = build(DETAIL[-1])
+        if len(text) <= SKEPTIC_CHARS:
+            break
+    return text, {item.handle for item in items} - left_out
 
 
 # -- the cases ---------------------------------------------------------------------------------------------------------------------------------------
@@ -403,10 +496,10 @@ def investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str]
 def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str], toolbox: Toolbox | None, out: Investigation) -> Investigation:
     h, st = s.history, s.settings
     if not st.investigate:
-        out.note = "it is switched off"
+        out.off, out.note = True, "it is switched off"
         return out
     if not st.foundry_endpoint or s.foundry is None:
-        out.note = "no Foundry endpoint is set"
+        out.off, out.note = True, "no Foundry endpoint is set"
         return out
 
     def note(text: str) -> None:
@@ -522,8 +615,9 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
             finding.reason = "no resource of it is left: " + ", ".join(parts)
     survivors = [f for f in findings if f.reason is None]
 
-    # 3. The Skeptic tries to break the findings that are left, in one run.
+    # 3. The Skeptic tries to break the findings that are left, in one run. It is shown every resource that will be a case, as far as its input allows.
     skeptic_step: dict | None = None
+    unjudged = hidden = 0  # the findings that got no verdict, and the resources that the Skeptic was not shown
     if survivors:
         started = s.monotonic()
         left = deadline - started
@@ -532,37 +626,47 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
         else:
             tokens: tuple[int, int] | None = None
             try:
-                judged = s.foundry.run(skeptic_ref, _skeptic_input(survivors, toolbox), None, max_calls=0, max_seconds=left)
+                skeptic_text, shown_handles = _skeptic_input(survivors, toolbox)
+                for finding in survivors:
+                    for item in finding.items:
+                        item.shown = item.handle in shown_handles
+                hidden = sum(1 for finding in survivors for item in finding.items if not item.shown)
+                judged = s.foundry.run(skeptic_ref, skeptic_text, None, max_calls=0, max_seconds=left)
                 tokens = (judged.input_tokens, judged.output_tokens)
                 out.tokens += judged.input_tokens + judged.output_tokens
                 verdicts = parse_verdicts(judged.text, len(survivors))
                 for index, verdict in verdicts.items():
                     survivors[index].verdict = verdict
-                missing = len(survivors) - len(verdicts)
-                skeptic_step = step("skeptic", st.foundry_model_skeptic, started, True, tokens,
-                                    f"no verdict for {missing} of {len(survivors)} findings" if missing else None)
+                unjudged = len(survivors) - len(verdicts)
+                skeptic_step = step("skeptic", st.foundry_model_skeptic, started, True, tokens, None)
             except (FoundryError, RoleError) as error:
                 partial = getattr(error, "partial", None)
                 if tokens is None and partial is not None:
                     tokens = (partial.input_tokens, partial.output_tokens)
                     out.tokens += partial.input_tokens + partial.output_tokens
                 skeptic_step = step("skeptic", st.foundry_model_skeptic, started, False, tokens, clean_text(s.redact(error), 200))
+                hidden = 0  # the run did not judge anything, and its note says why
             flush_notes()
-        if not skeptic_step["ok"] or skeptic_step["note"]:
-            note(f"the Skeptic could not judge every finding ({skeptic_step['note']}); a finding without a verdict needs a person")
+        if not skeptic_step["ok"] or unjudged:
+            reason = skeptic_step["note"] if not skeptic_step["ok"] else f"no verdict for {unjudged} of {len(survivors)} findings"
+            note(f"the Skeptic could not judge every finding ({reason}); a finding without a verdict needs a person")
+        if hidden:
+            note(f"{hidden} resource{'' if hidden == 1 else 's'} of the findings {'was' if hidden == 1 else 'were'} not shown to the Skeptic, whose input is limited to "
+                 f"{SKEPTIC_CHARS} characters, so a person has to judge {'it' if hidden == 1 else 'them'}")
 
     # 4. One line for each finding, then one case for each resource that is left.
     for finding in findings:
         h.emit("investigation.finding", finding=finding.number, basis=finding.basis or None, proposal=finding.proposal or None, confidence=finding.confidence,
                claimed=finding.claimed, handles=len(finding.items), unknown=finding.unknown, unproven=finding.unproven, repeated=finding.repeated,
-               judgedLately=finding.recent, guarded=finding.guarded, capped=finding.capped, coveredCostUsd30d=finding.covered_usd,
-               verdict=finding.verdict.verdict if finding.verdict else None, kept=finding.reason is None, reason=finding.reason, summary=finding.summary)
+               judgedLately=finding.recent, guarded=finding.guarded, capped=finding.capped, unmeasured=sum(1 for item in finding.items if not item.metrics),
+               shown=sum(1 for item in finding.items if item.shown), coveredCostUsd30d=finding.covered_usd,
+               verdict=finding.verdict.verdict if finding.verdict else None, kept=finding.reason is None, reason=finding.reason, note=finding.note, summary=finding.summary)
     models = {"investigator": st.foundry_model_investigator, "skeptic": st.foundry_model_skeptic}
-    steps = tuple(x for x in (investigator_step, skeptic_step) if x is not None)
     number = 0
     for finding in survivors:
         for item in finding.items:
             number += 1
+            steps = tuple(x for x in (investigator_step, _skeptic_step_of(skeptic_step, finding, item)) if x is not None)
             _open_case(s, out, finding, item, models, steps, f"{h.run_id[:8]}-i{number}")
     out.kept = len(survivors)
     out.dropped_findings = len(raw_findings) - len(survivors)
@@ -571,18 +675,39 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
     capped = sum(f.capped for f in findings)
     if capped:
         note(f"{capped} resource{'' if capped == 1 else 's'} of the findings {'is' if capped == 1 else 'are'} not listed as cases: a run opens at most {MAX_CASES}")
+    for finding in survivors:
+        if finding.note:
+            note(f"finding {finding.number}: {finding.note}")
+    if out.unmeasured:
+        note(f"{out.unmeasured} resource{'' if out.unmeasured == 1 else 's'} of the findings {'has' if out.unmeasured == 1 else 'have'} no measurement that backs the "
+             f"finding, so a person has to judge {'it' if out.unmeasured == 1 else 'them'}")
     finished(True, examined=examined, findingsKept=out.kept, findingsDropped=out.dropped_findings, cases=out.cases, guarded=out.guarded)
     note(f"the investigation made {out.tool_calls} tool call{'' if out.tool_calls == 1 else 's'}, kept {out.kept} of {len(raw_findings)} finding"
          f"{'' if len(raw_findings) == 1 else 's'} and opened {out.cases} case{'' if out.cases == 1 else 's'}")
     return out
 
 
+def _skeptic_step_of(shared: dict | None, finding: Finding, item: Item) -> dict | None:
+    """The step of the Skeptic as the case of one resource records it. The run of the Skeptic is the same for every case, but it did not judge this resource when it
+    was not shown it, or when its finding has no verdict: the step is then not ok, so that the page says so and the recheck takes the resource up again at once."""
+    if shared is None or not shared["ok"]:
+        return shared
+    if not item.shown:
+        return {**shared, "ok": False, "note": NOT_SHOWN}
+    if finding.verdict is None:
+        return {**shared, "ok": False, "note": NO_VERDICT}
+    return dict(shared)
+
+
 def _open_case(s: "Services", out: Investigation, finding: Finding, item: Item, models: dict, steps: tuple[dict, ...], case_id: str) -> None:
-    """The case of one resource: decide.py gives it its status, the History gets its result, and the store keeps it when there is a store."""
+    """The case of one resource: decide.py gives it its status, the History gets its result, and the store keeps it when there is a store. The verdict of the Skeptic
+    counts only for a resource that it was shown, and the case is never proposed without a measurement that code confirmed."""
     h = s.history
     lead = item.lead
     detective = DetectiveAnswer(finding.proposal, finding.confidence, finding.summary)
-    outcome = decide.decide(lead, Guards({}), detective, finding.verdict)
+    outcome = decide.decide(lead, Guards({}), detective, finding.verdict if item.shown else None, backed=bool(item.metrics), notes=(finding.note,) if finding.note else ())
+    if not item.metrics:
+        out.unmeasured += 1
     h.emit("case.result", caseId=case_id, leadId=lead.lead_id, detector=DETECTOR, resourceName=clean_text(lead.name, 120), resourceType=clean_text(lead.resource_type, 120),
            resourceGroup=clean_text(lead.resource_group, 90), costUsd30d=lead.cost_usd_30d, status=outcome.status, recommendation=outcome.recommendation,
            confidence=outcome.confidence, monthlySavingUsd=_figure(outcome.monthly_saving_usd), summary=outcome.summary, objections=list(outcome.objections),

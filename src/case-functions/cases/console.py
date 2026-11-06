@@ -39,7 +39,7 @@ def build_services(env: Mapping[str, str], *, transport=default_transport, sleep
         raise loop_config.LoopConfigError("the loop is not configured")
     people = people_mod.load(env)
     redact = Redactor()
-    options = {"fetch": fetch} if fetch else {}
+    options = {"sleep": sleep, **({"fetch": fetch} if fetch else {})}
     identity = Identity(env, **options)
     store = wiring.build_store(settings, identity.token, redact, transport=transport, sleep=sleep, monotonic=monotonic, clock=clock)
     approval = wiring.approval_settings(settings)

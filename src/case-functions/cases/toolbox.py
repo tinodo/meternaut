@@ -2,15 +2,29 @@
 
 A tool answer is a JSON string of at most MAX_RESULT_CHARS characters. A resource is named by a handle (r1, r2, ...) that means something only in this run: the id,
 the name, the tags and every other text that somebody wrote about a resource stay in the Resource below and never go into an answer. What does go into an answer is a
-number, a flag, a GUID, or a word that matched a fixed pattern (a region, a SKU, a service name, a metric name, a resource type, a property whose key ends in a generic
-suffix). A string that fails its pattern is left out, and a service name that fails is shown as "other". The tools list, measure and describe: no tool, description or
-schema names a resource type, a metric or a rule for what to find, and a test scans this file and the specs for that.
+number, a flag, a GUID, or a short word in the form that the platform itself uses. The checks bound the alphabet, the length and the number of parts of a word, and
+that does not say what a word means, so a text goes into an answer only where the platform, and not the owner of the estate, chooses it:
+  - a text of a property (STRING_LEAVES, KNOWN_PATHS) only under a key that is one of a fixed list of names of enumerations, never by the end of a key, and the keys of a
+    property are plain names of at most MAX_SEGMENT characters, at most MAX_DEPTH levels down, that are not a container of somebody's text (DENIED_KEYS, DENIED_WORDS);
+  - a SKU, a kind and a region of at most 24 characters, a service name of at most 40 characters and five words, a metric name that Azure Monitor offers for the type
+    (and nothing else is ever measured), and the words of Advisor, of the paid plans and of Azure Monitor that have no separator (sku_word, service_word, metric_word,
+    token_word). The names of several words are written as the platform writes them, each word with a capital letter (a short word such as "for" apart), which a sentence
+    in lower case is not. A text that is there and fails its check is shown as "other", never as the text; a metric name or a plan that fails is left out.
+The tools list, measure and describe: no tool, description or schema names a resource type, a metric or a rule for what to find, and a test scans this file and the specs
+for that.
 
 The nine tools (Toolbox.specs) are estate_overview, list_resources, metric_names, metric_summary, measure, cost_lines, advisor_items, paid_features and describe. A call
 that fails answers {"error": "<word>"} with one of the words in ERRORS. An answer of a tool that can fail for one subscription or one resource says so inside the answer.
 list_resources and measure answer a table, to fit many resources in one answer: "cols" names the columns, each array in "rows" holds the values in that order, a value that
 a row lacks is null and a null at the end of a row is left out, "same" holds the fields that have one value in every row, and "has_more" with "next_offset" says whether
 and where the next page starts.
+measure and metric_summary also answer a "summary": {"resources", "with_data", "no_data", "zero", "positive", "days"}, the resources whose numbers an answer showed, counted
+by whether the metric had data in the window. no_data is a resource with no value on any day, positive one with a total above 0, and zero any other resource that has data
+(a total of 0, in practice); with_data is zero plus positive and resources is with_data plus no_data. For metric_summary it counts the resources of the call. For measure
+it counts the resources of the type that this run has shown for that metric and window, in this answer and in the pages and calls before it, each resource once with its
+latest measurement, so that the last page of a type covers all of it. A resource that failed (it is in "failed"), was not read in time or was cut from the answer (it is
+in "unread") is in none of the counts until a read shows it; a read that fails changes no count. The summary is a count and nothing more: it names no resource, and the
+evidence does not hold it.
 
 What the investigation may rely on after a run (it reads these and changes none):
   Toolbox.handles[h]    the Resource of handle h. A handle is in it only after an answer showed that resource, it is r<number> from r1 on, and it is never given to
@@ -18,15 +32,17 @@ What the investigation may rely on after a run (it reads these and changes none)
                         (0.0 when it has no line), set when a tool shows the resource; it is None when the cost lines could not be read or are not in US dollars.
   Toolbox.evidence[h]   what the answers showed about h, as the same typed values that the agent read (same rounding). A key is there only when an answer showed it:
       "type"                              a word; every answer that shows a handle names the type
-      "location", "sku", "kind"           a word; "managed" is a bool. list_resources leaves out a value that the resource lacks, describe gives None for it
+      "location", "sku", "kind"           a word, or "other"; "managed" is a bool. list_resources leaves out a value that the resource lacks, describe gives None for it
       "cost30d", "costByService"          a number (a table gives whole dollars as an integer) and {service word: number}, when the cost lines are known and an answer
                                           showed them; only describe shows the split by service, a table shows the dearest service only
       "costLines"                         [{"service", "usd"}], the lines that cost_lines showed
       "properties"                        {key path: bool | number | word}: every property that an answer showed. The value is a list of up to three of those when the items
                                           of a list under that key differ in it
       "metrics"                           {metric name, exactly as metric_summary or measure showed it: {"total", "max", "average": a number, or None when the
-                                          measurement was absent; "days_with_data": int; "days": int; "unit": a word or None}}. "total" is the number that the answer carried.
-                                          A resource that measure or metric_summary could not read, or left out to fit the cap, has no entry.
+                                          measurement was absent; "days_with_data": int; "days": int; "unit": a word or None; "totals": [a number or None]}}. "total" and
+                                          the others are those of the last measurement, and "total" is the number that the answer carried. "totals" holds the total of every
+                                          measurement of that metric of that resource that an answer carried, the oldest first, at most MAX_TOTALS of them (the last ones).
+                                          A resource that measure or metric_summary could not read, or left out to fit the cap, has no entry and adds no total.
       "advisor"                           [{"savingUsdMonth": number or None (a number only when Advisor gives the currency USD), "annualSavings", "currency", "impact",
                                           "typeId", "term", "lookback", "reservedType", "sku"}], one for each Advisor item that an answer showed for h
   Toolbox.log           one dict for each call: {"name", "arguments", "ok", "chars"}. Toolbox.call never raises.
@@ -39,9 +55,10 @@ import math
 import re
 import threading
 import time
+from collections import Counter
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass, field
-from typing import Callable, TypeVar
+from typing import Callable, Iterable, TypeVar
 
 from .arm import SCOPE_ID, Arm, CostLine, MetricPoint
 from .foundry import FunctionTool
@@ -66,35 +83,72 @@ ADVISOR_PAGE = 20
 RESOLVE_CHUNK = 25  # resource ids in one read of Resource Graph
 PARALLEL_READS = 8
 READ_BUDGET_SECONDS = 60.0  # of one measurement
-MAX_DEPTH = 4  # key levels of a property
+MAX_DEPTH = 3  # key levels of a property; only the exact paths of KNOWN_PATHS may have one more
+MAX_SEGMENT = 32  # characters of one key of a property
 MAX_NODES = 4000  # values looked at in the properties of one resource
 LIST_ITEMS = 20  # items of a list that are looked at
+MAX_TOTALS = 20  # the totals of one metric of one resource that the evidence keeps
 
-ERRORS = ("bad-arguments", "unknown-tool", "unknown-handle", "unavailable", "limit", "too-large", "failed")
+ERRORS = ("bad-arguments", "unknown-tool", "unknown-handle", "unknown-metric", "unavailable", "limit", "too-large", "failed")
 READ_ERRORS = (HttpError, Refused, IdentityError)
+OTHER = "other"  # what an answer shows for a text that is there and fails its check: never the text itself
 
-# The word checks. A pattern is written once, as the schema of the tools gives it to the agent, and compiled here; every check is a full match.
-WORD_PATTERN = r"^[A-Za-z0-9_.-]{1,32}$"
+# The word checks. The patterns of the four arguments are written once, as the schema of the tools gives them to the agent, and compiled here; every check is a full match.
+# The other checks keep a text that somebody could have written to the forms that the platform itself uses: a bound on the alphabet, the length and the number of parts.
 TYPE_PATTERN = r"^[a-z0-9.]+(/[a-z0-9._-]+){1,4}$"
-SERVICE_PATTERN = r"^[A-Za-z0-9 ().&+-]{1,60}$"
-METRIC_PATTERN = r"^[A-Za-z0-9_./ -]{1,64}$"
+SERVICE_PATTERN = r"^[A-Za-z0-9 .&()-]{1,40}$"
+METRIC_PATTERN = r"^[A-Za-z0-9_./ ]{1,64}$"
 HANDLE_PATTERN = r"^r[0-9]{1,4}$"
-WORD, TYPE, SERVICE, METRIC, HANDLE = (re.compile(pattern) for pattern in (WORD_PATTERN, TYPE_PATTERN, SERVICE_PATTERN, METRIC_PATTERN, HANDLE_PATTERN))
-VALUE = re.compile(r"[A-Za-z0-9_.-]{1,32}(?:/[A-Za-z0-9_.-]{1,32})?")  # a word, or two words with a slash between them
-REGION = re.compile(r"[a-z0-9]{1,32}")
+TYPE, SERVICE, METRIC, HANDLE = (re.compile(pattern) for pattern in (TYPE_PATTERN, SERVICE_PATTERN, METRIC_PATTERN, HANDLE_PATTERN))
+SERVICE_FORM = re.compile(r"[A-Za-z0-9.&()-]+(?: [A-Za-z0-9.&()-]+){0,4}")  # one to five words, one space between them
+SKU_FORM = re.compile(r"[A-Za-z0-9_.-]+(?:,[A-Za-z0-9_.-]+){0,2}")  # a SKU or a kind: one to three parts, separated by commas
+TOKEN = re.compile(r"[A-Za-z0-9]+")  # a word of the platform that has no separator: an impact, a unit, a plan, a tier
+VERSIONED = re.compile(r"[a-z][0-9]{1,3}")  # a word such as v2, which a name may have in lower case
+VALUE = re.compile(r"[A-Za-z0-9_.-]{1,24}(?:/[A-Za-z0-9_.-]{1,24})?")  # the value of a property: a word, or two words with a slash between them
+REGION = re.compile(r"[a-z0-9]{1,24}")
+CURRENCY = re.compile(r"[A-Za-z]{3}")
+NUMBER = re.compile(r"-?[0-9]{1,15}(?:\.[0-9]{1,9})?")  # a number that a property gives as text
 GUID = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
 
-# A property is shown only when the last part of its key ends in one of these, or is a number of something. The list is generic: it names no resource type.
+# A flag or a number of a property is shown only when the last part of its key ends in one of these, or is a number of something. The list is generic: it names no resource type.
 SUFFIXES = ("State", "Status", "Code", "Tier", "Capacity", "Count", "Replicas", "Size", "GB", "Cores", "Mode", "Enabled", "Version", "Access", "Zone", "Zones",
             "Redundant", "Days", "Method", "Throughput")
 COUNT_LIKE = frozenset(SUFFIXES.index(suffix) for suffix in ("Capacity", "Count", "Replicas", "Size", "GB", "Cores", "Throughput"))  # what `count` orders by
 _ALTERNATIVES = "|".join(SUFFIXES)
 LEAF = re.compile(rf"(?:[a-z][A-Za-z0-9]*)?(?:{_ALTERNATIVES})|(?:{_ALTERNATIVES.lower()})|(?:[a-z][A-Za-z0-9]*)?[Nn]umberOf[A-Z][A-Za-z0-9]*")
-KEY = re.compile(r"[A-Za-z][A-Za-z0-9]{0,39}")
-# Names that hold somebody's text, or an address: never shown and never followed.
+KEY = re.compile(rf"[A-Za-z][A-Za-z0-9]{{0,{MAX_SEGMENT - 1}}}")
+# A text of a property is shown only when its key is exactly one of these names, which hold the values of an enumeration of the platform and never a text that somebody wrote
+# (compared without regard to case, never by the end of a key). The list names no resource type and says nothing about what to look for.
+STRING_LEAVES = frozenset(name.lower() for name in (
+    "state", "status", "provisioningState", "powerState", "runningStatus", "availabilityState", "replicaState", "diskState", "jobState", "peeringState", "usageState",
+    "largeFileSharesState", "statusOfPrimary", "statusOfSecondary", "healthStatus",
+    "sku", "skuName", "skuTier", "skuFamily", "kind", "tier", "accessTier", "family", "size", "vmSize", "workerSize", "currentWorkerSize", "billingSku", "auxiliarySku",
+    "offerType", "edition", "storageAccountType", "requestedServiceObjectiveName", "currentServiceObjectiveName", "osType", "licenseType", "priority",
+    "mode", "computeMode", "capacityMode", "auxiliaryMode", "hostingMode", "environmentMode", "activeRevisionsMode", "patchingMode", "redundancyMode", "ipMode",
+    "isolationMode", "zoneRedundancy", "replicationType", "redundancy", "storageRedundancy", "defaultConsistencyLevel",
+    "version", "minimumTlsVersion", "minTlsVersion", "minimalTlsVersion", "gatewayVersion", "privateIPAddressVersion", "ipVersionType", "ipAddressType",
+    "publicNetworkAccess", "publicNetworkAccessForIngestion", "publicNetworkAccessForQuery", "networkAccessPolicy", "defaultAction", "access", "direction",
+    "privateIPAllocationMethod", "publicIPAllocationMethod", "ingestionAccessMode", "queryAccessMode"))
+# The exact paths of properties that are shown whatever their key, and that may be a level deeper than MAX_DEPTH or have a part that is longer than MAX_SEGMENT.
+KNOWN_PATHS = frozenset(tuple(path.split(".")) for path in (
+    "privateLinkServiceConnections.properties.privateLinkServiceConnectionState.status",
+    "manualPrivateLinkServiceConnections.properties.privateLinkServiceConnectionState.status",
+    "privateEndpointConnections.properties.privateLinkServiceConnectionState.status",
+    "extended.instanceView.powerState.code", "powerState.code", "agentPoolProfiles.powerState.code",
+    "functionAppConfig.scaleAndConcurrency.alwaysReady.instanceCount"))
+_KNOWN_PREFIXES = frozenset(path[:length] for path in KNOWN_PATHS for length in range(1, len(path) + 1))
+# Names that hold somebody's text, an address or a secret, or that hold a dictionary whose keys somebody chose: never shown and never followed, wherever they are in a
+# path. A key is denied when the whole of it is one of these names, or when one of the words of its camel case is one of the DENIED_WORDS (nodeLabels, appSettings).
+# (A text is shown only under the keys of STRING_LEAVES, so a key that holds one of a secret is hidden whether it is named here or not.)
 DENIED_KEYS = frozenset({"name", "id", "displayname", "description", "tags", "uri", "url", "endpoint", "endpoints", "host", "hostname", "ip", "address", "metadata",
-                         "parameters", "labels", "annotations", "template", "definition", "variables", "outputs"})
-# The fields of a table of resources that do not come from the properties, in the order of its columns. A property is never given one of these names.
+                         "parameters", "labels", "annotations", "template", "definition", "variables", "outputs",
+                         "nodelabels", "nodetaints", "resourcetags", "settings", "protectedsettings", "publicsettings", "appsettings", "environmentvariables", "env",
+                         "userdata", "customdata", "extensions", "secrets", "config", "credentials", "adminusername",
+                         "username", "login", "owner", "contact", "email", "phone", "comment", "comments", "notes", "message", "messages", "title", "summary", "text",
+                         "content", "body", "script", "command", "commands", "args", "arguments", "cloudinit", "query", "expression", "keys"})
+DENIED_WORDS = frozenset({"label", "labels", "tag", "tags", "annotation", "annotations", "variable", "variables", "env", "secret", "secrets",
+                          "credential", "credentials", "metadata", "extension", "extensions", "parameter", "parameters", "taint", "taints"})
+# The fields of a table of resources that do not come from the properties, in the order of its columns. A property of the same name is not put in a table.
 FIXED_FIELDS = ("usd30d", "service", "sub", "sku", "kind", "region", "managed")
 
 # Every read of Resource Graph starts with a comment that names it, as in detectors.py. Resource Graph refuses an alias that is the name of a column of the table
@@ -113,18 +167,78 @@ def _match(pattern: "re.Pattern[str]", value: object) -> str | None:
 
 
 def type_word(value: object) -> str | None:
-    """A resource type as Azure names it, in lower case, or None when it has not the shape of one."""
+    """A resource type as Azure names it, in lower case, or None when it has not the shape of one. The types of a custom provider have a part that the customer chose, so
+    they have no word."""
     if not isinstance(value, str) or len(value) > 120 or not TYPE.fullmatch(value):
         return None
-    return value if all(len(part) <= 50 for part in value.split("/")) else None
-
-
-def kind_word(value: object) -> str | None:
-    """A kind: one to four words, separated by commas."""
-    if not isinstance(value, str) or len(value) > 48:
+    parts = value.split("/")
+    if any(len(part) > 50 for part in parts) or (parts[0] == "microsoft.customproviders" and len(parts) > 2):
         return None
-    parts = value.split(",")
-    return value if len(parts) <= 4 and all(WORD.fullmatch(part) for part in parts) else None
+    return value
+
+
+def sku_word(value: object) -> str | None:
+    """A SKU or a kind as the platform names it: at most 24 characters, of the letters, digits and _ . -, in at most three parts that are separated by commas."""
+    return value if isinstance(value, str) and len(value) <= 24 and SKU_FORM.fullmatch(value) else None
+
+
+def region_word(value: object) -> str | None:
+    return value if isinstance(value, str) and REGION.fullmatch(value) else None
+
+
+def token_word(value: object, limit: int = 32) -> str | None:
+    """A word of the platform that has no separator (an impact, a unit, a plan, a tier) of at most `limit` letters and digits."""
+    return value if isinstance(value, str) and len(value) <= limit and TOKEN.fullmatch(value) else None
+
+
+def _titled(words: list[str]) -> bool:
+    """Whether the words of a name that has several are written as the platform writes them: each starts with a capital letter, a digit, ( or &, apart from a short word
+    such as "for" or "of" and a version such as "v2". A sentence in lower case is not written so."""
+    return len(words) == 1 or all(word[0].isupper() or word[0].isdigit() or word[0] in "(&" or (word.isalpha() and len(word) <= 3) or VERSIONED.fullmatch(word) is not None
+                                  for word in words)
+
+
+def _service_form(value: object) -> str | None:
+    return value if isinstance(value, str) and len(value) <= 40 and SERVICE_FORM.fullmatch(value) else None
+
+
+def service_word(value: object) -> str | None:
+    """A service name as Azure Cost Management gives it: at most 40 characters of the letters, digits and . & ( ) -, in at most five words with one space between them,
+    written as the platform writes its names (see _titled)."""
+    text = _service_form(value)
+    return text if text is not None and _titled(text.split(" ")) else None
+
+
+def metric_word(value: object) -> str | None:
+    """A metric name as Azure Monitor gives it: at most 64 characters of the letters, digits and _ . / and spaces, in at most eight words, written as the platform writes its
+    names (see _titled): the names of the platform are written so, and a sentence is not."""
+    if not isinstance(value, str) or not METRIC.fullmatch(value):
+        return None
+    words = value.split(" ")
+    if len(words) > 8 or not all(words):
+        return None
+    return value if _titled(words) else None
+
+
+def property_value(value: object) -> str | None:
+    """The value of a property that is shown as text: a word of at most 24 characters, or two such words with a slash between them (32 characters in all)."""
+    return value if isinstance(value, str) and len(value) <= 32 and VALUE.fullmatch(value) else None
+
+
+def _shown(check: "Callable[[object], str | None]", value: object) -> str | None:
+    """A text as an answer gives it: the text when it passes its check, the word `other` when it is there and does not, None when there is none."""
+    if not isinstance(value, str) or not value.strip():
+        return None
+    return check(value) or OTHER
+
+
+def _words(key: str) -> list[str]:
+    """The words of a key written in camel case, in lower case."""
+    return [word.lower() for word in re.findall(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|[0-9]+", key)]
+
+
+def _denied(key: str) -> bool:
+    return key.lower() in DENIED_KEYS or any(word in DENIED_WORDS for word in _words(key))
 
 
 def type_of_id(resource_id: str) -> str | None:
@@ -196,17 +310,31 @@ def _layout(rows: list[tuple[str, dict]]) -> tuple[dict, list[str], list[list], 
     return same, ["handle", *columns], table, {*varying, *unchanged}
 
 
-def _scalar(value: object) -> bool | int | float | str | None:
-    """A property value that may be shown: a flag, a number or a word; anything else is None."""
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, int):
-        return value if abs(value) <= 10**15 else None
-    if isinstance(value, float):
-        return _measure(value)
-    if isinstance(value, str) and VALUE.fullmatch(value):
-        return value.lower() == "true" if value.lower() in ("true", "false") else value
-    return None
+def _leaf(path: tuple[str, ...], node: object) -> "bool | int | float | str | None":
+    """The value of a leaf of the properties that an answer may show. A flag or a number is shown under a key that ends in one of the SUFFIXES, and so are the text "true"
+    or "false" and a number that is given as text, as what they say. Any other text is shown only under a key that is one of the STRING_LEAVES, and then as a short word,
+    or as `other` when it is not one. The exact paths of KNOWN_PATHS are shown whatever their key."""
+    exact = path in KNOWN_PATHS
+    generic = exact or bool(LEAF.fullmatch(path[-1]))
+    if isinstance(node, bool):
+        return node if generic else None
+    if isinstance(node, int):
+        return node if generic and abs(node) <= 10**15 else None
+    if isinstance(node, float):
+        return _measure(node) if generic else None
+    if not isinstance(node, str):
+        return None
+    if generic and node.lower() in ("true", "false"):
+        return node.lower() == "true"
+    if generic and NUMBER.fullmatch(node):
+        return int(node) if "." not in node else _measure(float(node))
+    return _shown(property_value, node) if exact or path[-1].lower() in STRING_LEAVES else None
+
+
+def _may_follow(path: tuple[str, ...]) -> bool:
+    """Whether a key path may be followed: an exact path of KNOWN_PATHS or a part of one, or else a path of at most MAX_DEPTH keys of which the last is a plain name of
+    at most MAX_SEGMENT characters that does not hold somebody's text. (The keys before it were followed, so they passed.)"""
+    return path in _KNOWN_PREFIXES or (len(path) <= MAX_DEPTH and KEY.fullmatch(path[-1]) is not None and not _denied(path[-1]))
 
 
 def _rank(leaf: str) -> int:
@@ -222,8 +350,9 @@ def _order(path: str) -> tuple[int, int, int, str]:
 
 
 def typed_properties(properties: object, sku: object = None) -> list[tuple[str, "bool | int | float | str | list"]]:
-    """The properties of a resource that an answer may show, the most informative first: a flag, a number or a word under a key that ends in one of the SUFFIXES,
-    and the length of a list as <key>Count. A key comes from the shape of the resource and is checked like a word; a key that holds somebody's text is not followed.
+    """The properties of a resource that an answer may show, the most informative first: a flag or a number under a key that ends in one of the SUFFIXES, a short word
+    under a key that is one of the STRING_LEAVES, and the length of a list as <key>Count. The keys come from the shape of the resource, so a key is followed only when it is
+    a plain name of at most MAX_SEGMENT characters, at most MAX_DEPTH levels down, and does not hold somebody's text or a dictionary whose keys somebody chose.
 
     The items of a list are followed under the key of the list, so the value of a path is that of every item: one value when they agree, else up to three."""
     found: dict[str, list] = {}
@@ -239,18 +368,19 @@ def typed_properties(properties: object, sku: object = None) -> list[tuple[str, 
         if budget[0] < 0:
             return
         if isinstance(node, dict):
-            if len(path) < MAX_DEPTH:
-                for key, value in node.items():
-                    if isinstance(key, str) and KEY.fullmatch(key) and key.lower() not in DENIED_KEYS:
-                        walk(value, (*path, key))
+            for key, value in node.items():
+                if isinstance(key, str) and _may_follow((*path, key)):
+                    walk(value, (*path, key))
         elif isinstance(node, list):
             if path:
-                add((*path[:-1], f"{path[-1]}Count"), len(node))
+                counted = (*path[:-1], f"{path[-1]}Count")
+                if _may_follow(counted):
+                    add(counted, len(node))
                 for item in node[:LIST_ITEMS]:
                     if isinstance(item, dict):
                         walk(item, path)
-        elif path and LEAF.fullmatch(path[-1]):
-            value = _scalar(node)
+        elif path:
+            value = _leaf(path, node)
             if value is not None:
                 add(path, value)
 
@@ -317,7 +447,7 @@ class _Costs:
     def of(cls, lines: list[CostLine]) -> "_Costs":
         costs = cls()
         for line in lines:
-            service = _match(SERVICE, line.service) or "other"
+            service = service_word(line.service) or OTHER
             costs.total += line.amount
             costs.by_service[service] = costs.by_service.get(service, 0.0) + line.amount
             per_service = costs.by_resource.setdefault(line.resource_id, {})  # a line that is tied to no resource has the empty id
@@ -381,8 +511,7 @@ class Param:
             if not isinstance(value, list) or not 1 <= len(value) <= MAX_MEASURED or not all(isinstance(item, str) and HANDLE.fullmatch(item) for item in value):
                 raise BadArguments(self.name)
             return list(dict.fromkeys(value))
-        text = {"type": type_word, "service": lambda item: _match(SERVICE, item), "metric": lambda item: _match(METRIC, item),
-                "handle": lambda item: _match(HANDLE, item)}[self.kind](value)
+        text = {"type": type_word, "service": _service_form, "metric": lambda item: _match(METRIC, item), "handle": lambda item: _match(HANDLE, item)}[self.kind](value)
         if text is None:
             raise BadArguments(self.name)
         return text
@@ -415,6 +544,7 @@ class Tool:
 
 
 _TYPE = "The resource type, in lower case, as estate_overview shows it."
+_METRIC = "A metric name, as metric_names shows it. A name that metric_names does not show for the type answers unknown-metric."
 _OFFSET = Param("offset", "integer", "How many entries to skip: the next_offset of the last answer. Null for 0.", low=0, high=100000)
 TOOLS = {tool.name: tool for tool in (
     Tool("estate_overview",
@@ -425,8 +555,8 @@ TOOLS = {tool.name: tool for tool in (
          "handle (r1, r2, ...) that stands for the resource in this run only. A value that a row lacks is null, and a null at the end of a row is left out. same holds "
          "the fields that have the same value in every row. The fields are usd30d (the cost of the last 30 days, in dollars), service (the dearest service), sub "
          "(the subscription, when there are several), sku, kind, region, managed (true when another resource manages it) and a few properties, named by their key "
-         "path, that are numbers, flags or words; the length of a list is given as <key>Count. The answer carries no names, tags or other text of the resources. Take "
-         "the type from estate_overview. When has_more is true, read the next page with next_offset.",
+         "path, that are numbers, flags or words; the length of a list is given as <key>Count. A text that is not a short word of the platform is shown as other. The "
+         "answer carries no names, tags or other text of the resources. Take the type from estate_overview. When has_more is true, read the next page with next_offset.",
          (Param("type", "type", _TYPE, required=True),
           Param("order_by", "choice", "cost: the dearest first. count: the largest count, size or capacity property first. Null for cost.", choices=("cost", "count")),
           Param("limit", "integer", "How many resources to return, 1 to 40. Null for 40.", low=1, high=MAX_LISTED), _OFFSET)),
@@ -437,25 +567,28 @@ TOOLS = {tool.name: tool for tool in (
     Tool("metric_summary",
          "Measures one Azure Monitor metric for up to 60 resources, named by handle, in daily buckets over the last days (at most 30). For each resource: the total (the "
          "sum of the daily totals), the maximum (of the daily maximums), the average (the mean of the daily averages) and the number of days that have data. A value "
-         "is null when the metric has none. A slow measurement stops after 60 seconds: the answer says partial and lists the handles that were not read.",
+         "is null when the metric has none. summary counts the resources that were read in this call by whether the metric had data in the window: resources, with_data "
+         "(zero has a total of 0, positive a total above 0), no_data and days. A slow measurement stops after 60 seconds: the answer says partial and lists the handles "
+         "that were not read.",
          (Param("handles", "handles", "Handles of resources that earlier answers showed, 1 to 60 of them.", required=True),
-          Param("metric", "metric", "A metric name, as metric_names shows it.", required=True),
+          Param("metric", "metric", _METRIC, required=True),
           Param("days", "integer", "How many closed days to look back, 1 to 30. Null for 30.", low=1, high=MAX_DAYS))),
     Tool("measure",
          "Measures one Azure Monitor metric across the resources of one resource type, the dearest first, in daily buckets over the last days (at most 30), as a table. "
-         "cols names the columns and each array in rows holds the values in that order: handle (the same handle as in list_resources), usd30d (the cost of the last 30 "
-         "days in dollars, left out when no cost is known), total (the sum of the daily totals), max (the greatest of the daily maximums), avg (the mean of the daily "
-         "averages) and days_with_data (the number of days that have data). A value is null when the metric has none. failed lists the handles whose read failed. A slow "
-         "measurement stops after 60 seconds: the answer says partial and lists the handles that were not read in unread. When has_more is true, read the next page with "
-         "next_offset.",
-         (Param("type", "type", _TYPE, required=True), Param("metric", "metric", "A metric name, as metric_names shows it.", required=True),
+         "cols names the columns and each array in rows holds the values in that order: handle (as in list_resources), usd30d (the cost of the last 30 days in dollars; "
+         "left out when unknown), total (the sum of the daily totals), max (the greatest daily maximum), avg (the mean of the daily averages) and days_with_data (the "
+         "days that have data). A value is null when the metric has none. summary counts the resources of the type shown so far, in this answer "
+         "and earlier ones, by whether the metric had data in the window: resources, with_data (zero has a total of 0, positive a total above 0), no_data and days. "
+         "failed lists the handles whose read failed. A measurement stops after 60 seconds: partial is then true and unread lists the handles that were not read. "
+         "When has_more is true, read the next page with next_offset.",
+         (Param("type", "type", _TYPE, required=True), Param("metric", "metric", _METRIC, required=True),
           Param("days", "integer", "How many closed days to look back, 1 to 30. Null for 30.", low=1, high=MAX_DAYS),
           Param("limit", "integer", "How many resources to measure, 1 to 80. Null for 40.", low=1, high=MAX_MEASURE_ROWS), _OFFSET)),
     Tool("cost_lines",
          "Lists the cost lines of the last 30 days, dearest first: for each one the handle of the resource (null when no such resource exists any more), the cost in US "
          "dollars, the service and the resource type. Filter by service name, as estate_overview shows it, and by resource type; with neither filter it lists the "
          "dearest lines of all.",
-         (Param("service", "service", "A service name, as estate_overview shows it. Null for any service."),
+         (Param("service", "service", "A service name, as estate_overview shows it (at most 5 words). Null for any service."),
           Param("type", "type", "A resource type, in lower case, as estate_overview shows it. Null for any type."),
           Param("limit", "integer", "How many lines to return, 1 to 40. Null for 20.", low=1, high=MAX_LISTED))),
     Tool("advisor_items",
@@ -498,6 +631,22 @@ def _summarise(points: list[MetricPoint]) -> dict:
             "days_with_data": sum(1 for point in points if point.total is not None or point.maximum is not None or point.average is not None)}
 
 
+def _bucket(summary: dict) -> str:
+    """How a measurement is counted in a summary: `no_data` when no day had a value, `positive` when the total is above 0, and `zero` for any other measurement that has
+    data. This only counts: it names no resource and says nothing about what a count means."""
+    if summary["days_with_data"] == 0:
+        return "no_data"
+    return "positive" if summary["total"] is not None and summary["total"] > 0 else "zero"
+
+
+def _tally(buckets: Iterable[str], days: int) -> dict:
+    """The resources whose measurement was read, counted by whether the metric had data in the window: `with_data` is `zero` plus `positive`, and `resources` is
+    `with_data` plus `no_data`. A resource that failed, was not read or was cut from the answer is in none of them."""
+    counts = Counter(buckets)
+    with_data = counts["zero"] + counts["positive"]
+    return {"resources": with_data + counts["no_data"], "with_data": with_data, "no_data": counts["no_data"], "zero": counts["zero"], "positive": counts["positive"], "days": days}
+
+
 def _advice_of(record: dict) -> _Advice | None:
     properties = record.get("properties")
     if not isinstance(properties, dict):
@@ -510,18 +659,18 @@ def _advice_of(record: dict) -> _Advice | None:
     except (TypeError, ValueError):
         amount = math.nan
     annual = _money(amount) if math.isfinite(amount) and amount >= 0 else None
-    currency = (_match(WORD, extended.get("savingsCurrency")) or "").upper() or None
+    currency = (_match(CURRENCY, extended.get("savingsCurrency")) or "").upper() or None
     lookback = extended.get("lookbackPeriod")
     facts = {
-        "impact": (_match(WORD, properties.get("impact")) or "").lower() or None,
+        "impact": (token_word(properties.get("impact"), 12) or "").lower() or None,
         "type_id": (_match(GUID, properties.get("recommendationTypeId")) or "").lower() or None,
         "resource_type": type_word(str(properties.get("impactedField") or "").lower()),
         "annual_savings": annual,
         "currency": currency,
-        "term": _match(WORD, extended.get("term")),
-        "lookback": _match(WORD, lookback if isinstance(lookback, str) else str(lookback) if isinstance(lookback, int) and not isinstance(lookback, bool) else None),
-        "reserved_type": _match(WORD, extended.get("reservedResourceType")),
-        "sku": _match(WORD, extended.get("displaySKU")),
+        "term": token_word(extended.get("term"), 12),
+        "lookback": token_word(lookback if isinstance(lookback, str) else str(lookback) if isinstance(lookback, int) and not isinstance(lookback, bool) else None, 12),
+        "reserved_type": token_word(extended.get("reservedResourceType"), 24),
+        "sku": _shown(sku_word, extended.get("displaySKU")),
     }
     return _Advice(facts, str(metadata.get("resourceId") or ""), annual, currency)
 
@@ -560,6 +709,7 @@ class Toolbox:
         self._costs: dict[str, _Costs | None] = {}
         self._advice: dict[str, list[_Advice]] = {}
         self._metric_names: dict[str, list[dict]] = {}
+        self._reads: dict[tuple[str, str, int], dict[str, str]] = {}  # (type, metric, days) -> handle -> how its measurement counts: every resource whose numbers were shown
         self._missing: set[str] = set()  # ids that Resource Graph did not return
 
     @property
@@ -572,7 +722,12 @@ class Toolbox:
         with self._lock:
             self._calls += 1
             answer = self._answer(name, arguments)
-            text = _dump(answer)
+            try:
+                text = _dump(answer)
+            except (TypeError, ValueError):  # a value that JSON cannot hold, such as a number that is not finite
+                self.notes.append(f"{_logged_name(name)}: the answer could not be written")
+                answer = {"error": "failed"}
+                text = _dump(answer)
             if len(text) > MAX_RESULT_CHARS:
                 answer = {"error": "too-large"}
                 text = _dump(answer)
@@ -666,7 +821,7 @@ class Toolbox:
         properties = typed_properties(row.get("properties"), sku)
         numbers = [number for path, value in properties if _rank(path.rsplit(".", 1)[-1]) in COUNT_LIKE for number in (value if isinstance(value, list) else [value])
                    if isinstance(number, (int, float)) and not isinstance(number, bool)]
-        entry = _Entry(resource, sub, _match(WORD, sku.get("name")), kind_word(row.get("kindName")), _match(REGION, resource.location.lower()), properties,
+        entry = _Entry(resource, sub, _shown(sku_word, sku.get("name")), _shown(sku_word, row.get("kindName")), _shown(region_word, resource.location.lower()), properties,
                        float(max(numbers, default=0)))
         self._entries[key] = entry
         return entry
@@ -697,7 +852,7 @@ class Toolbox:
             if value is not None:
                 cells[name] = value
         cells["managed"] = bool(entry.resource.managed_by)
-        cells.update(entry.properties)
+        cells.update((name, value) for name, value in entry.properties if name not in FIXED_FIELDS)
         return cells
 
     def _show(self, entry: _Entry, shown: dict) -> str | None:
@@ -892,12 +1047,27 @@ class Toolbox:
             resource_id = self._one_of_type(kind)
             for definition in self.arm.metric_definitions(resource_id) if resource_id else []:
                 name = definition.get("name")
-                word = _match(METRIC, name.get("value") if isinstance(name, dict) else None)
+                word = metric_word(name.get("value") if isinstance(name, dict) else None)
                 # A metric that is only offered for a chosen dimension cannot be measured without one, and metric_summary names none.
                 if word is not None and definition.get("isDimensionRequired") is not True:
-                    found.setdefault(word, {"name": word, "unit": _match(WORD, definition.get("unit")), "aggregation": _match(WORD, definition.get("primaryAggregationType"))})
+                    found.setdefault(word, {"name": word, "unit": token_word(definition.get("unit"), 16), "aggregation": token_word(definition.get("primaryAggregationType"), 16)})
             self._metric_names[kind] = sorted(found.values(), key=lambda item: item["name"].lower())
         return self._metric_names[kind]
+
+    def _offered(self, kinds: "set[str | None]", metric: str) -> "dict[str | None, bool | None]":
+        """For each resource type, whether Azure Monitor offers the metric for it (the metric_names of the type): True or False, or None when it could not be read.
+        A metric that the tools did not list is never measured, so no text of an argument or of an answer reaches Azure Monitor or the agent through it."""
+        verdict: "dict[str | None, bool | None]" = {}
+        for kind in kinds:
+            if kind is None:
+                verdict[kind] = False
+                continue
+            try:
+                verdict[kind] = any(item["name"] == metric for item in self._names_of(kind))
+            except READ_ERRORS as error:
+                self.notes.append(f"the metrics that Azure Monitor offers for a type could not be read ({str(error)[:200]})")
+                verdict[kind] = None
+        return verdict
 
     def _tool_metric_names(self, args: dict) -> dict:
         kind, offset = args["type"], args["offset"] or 0
@@ -946,29 +1116,50 @@ class Toolbox:
         return read, [handle for handle, _ in targets if handle not in read]
 
     def _record_metric(self, handle: str, metric: str, summary: dict, days: int, unit: str | None) -> None:
-        """Keeps the numbers that an answer carried for one resource, as the investigation checks the claims of the agent against them."""
-        self.evidence.setdefault(handle, {}).setdefault("metrics", {})[metric] = {
-            "total": summary["total"], "max": summary["max"], "average": summary["average"], "days_with_data": summary["days_with_data"], "days": days, "unit": unit}
+        """Keeps the numbers that an answer carried for one resource, as the investigation checks the claims of the agent against them: those of the last measurement,
+        and in `totals` the total of every measurement that an answer carried (the last MAX_TOTALS of them, the oldest first)."""
+        metrics = self.evidence.setdefault(handle, {}).setdefault("metrics", {})
+        seen = metrics.get(metric, {}).get("totals", [])
+        metrics[metric] = {"total": summary["total"], "max": summary["max"], "average": summary["average"], "days_with_data": summary["days_with_data"], "days": days,
+                           "unit": unit, "totals": [*seen, summary["total"]][-MAX_TOTALS:]}
+
+    def _count_read(self, kind: str | None, handle: str, metric: str, days: int, summary: dict) -> None:
+        """Remembers how the measurement that an answer showed for a resource counts (see _bucket), so that the summary of another page of the same type covers it too.
+        A resource is counted once for a type, a metric and a window: a later measurement of it replaces the earlier."""
+        if kind is not None:
+            self._reads.setdefault((kind, metric, days), {})[handle] = _bucket(summary)
 
     def _tool_metric_summary(self, args: dict) -> dict:
         handles, metric, days = args["handles"], args["metric"], args["days"] or MAX_DAYS
         start, end = self._window(days)
-        read, unread = self._read_metrics([(handle, self.handles[handle].resource_id) for handle in handles if handle in self.handles], metric, start, end)
+        known = [handle for handle in handles if handle in self.handles]
+        kinds = {handle: type_word(self.handles[handle].resource_type) for handle in known}
+        offered = self._offered(set(kinds.values()), metric)
+        if known and not any(offered.values()) and None not in offered.values():
+            return {"error": "unknown-metric"}
+        read, unread = self._read_metrics([(handle, self.handles[handle].resource_id) for handle in known if offered[kinds[handle]]], metric, start, end)
         skipped, rows, units = set(unread), [], {}
         for handle in handles:
             outcome = read.get(handle)
             if handle not in self.handles:
                 rows.append({"handle": handle, "error": "unknown-handle"})
+            elif offered[kinds[handle]] is False:
+                rows.append({"handle": handle, "error": "unknown-metric"})
+            elif offered[kinds[handle]] is None:
+                rows.append({"handle": handle, "error": "unavailable"})
             elif isinstance(outcome, str):
                 rows.append({"handle": handle, "error": outcome})
             elif outcome is not None:
-                units[handle] = _match(WORD, outcome[0])
+                units[handle] = token_word(outcome[0], 16)
                 rows.append({"handle": handle, **_summarise(outcome[1])})
-        answer: dict = {"metric": metric, "days": days, "unit": None, "partial": False, "results": rows}
+        answer: dict = {"days": days, "unit": None, "partial": False, "summary": {}, "results": rows}
+        if any(offered.values()):
+            answer = {"metric": metric, **answer}  # the name is echoed only when Azure Monitor offers it for a type of a handle
 
         def refresh() -> None:
             answer["unit"] = next((units[row["handle"]] for row in rows if units.get(row["handle"])), None)
             answer["partial"] = bool(skipped)
+            answer["summary"] = _tally((_bucket(row) for row in rows if "error" not in row), days)  # the resources whose numbers are in the answer
             if skipped:
                 answer["unread"] = [handle for handle in handles if handle in skipped]
 
@@ -979,12 +1170,16 @@ class Toolbox:
         for row in rows:
             if "error" not in row:
                 self._record_metric(row["handle"], metric, row, days, units.get(row["handle"]))
+                self._count_read(kinds[row["handle"]], row["handle"], metric, days, row)
         return answer
 
     def _tool_measure(self, args: dict) -> dict:
         kind, metric, days, limit, offset = args["type"], args["metric"], args["days"] or MAX_DAYS, args["limit"] or DEFAULT_LISTED, args["offset"] or 0
         entries, failed = self._listed(kind, "cost")
         page = entries[offset:offset + limit]
+        vetted = bool(page)  # the name of the metric is echoed only when Azure Monitor offers it for the type, and that is read only when there is a resource to measure
+        if vetted and not any(item["name"] == metric for item in self._names_of(kind)):
+            return {"error": "unknown-metric"}
         page = page[:self._within_handles(page)]
         handles = [self._show(entry, {}) for entry in page]  # every resource of the page is named in the answer: as a row, as failed or as unread
         start, end = self._window(days)
@@ -998,11 +1193,12 @@ class Toolbox:
             if isinstance(outcome, str):
                 broken.append(handle)
             elif outcome is not None:
-                summaries[handle] = (_summarise(outcome[1]), _match(WORD, outcome[0]))
+                summaries[handle] = (_summarise(outcome[1]), token_word(outcome[0], 16))
         skipped = set(unread)
         columns = ["handle", *(["usd30d"] if priced else []), "total", "max", "avg", "days_with_data"]
         caveats = self._caveats(failed)
         more = offset + len(page) < len(entries)
+        counted = dict(self._reads.get((kind, metric, days), {}))  # what the pages and the calls before this one showed
 
         def row_of(handle: str) -> list:
             summary = summaries[handle][0]
@@ -1012,9 +1208,11 @@ class Toolbox:
         def answer() -> dict:
             kept = [handle for handle in handles if handle in summaries and handle not in skipped]
             unit = next((summaries[handle][1] for handle in kept if summaries[handle][1]), None)
-            return {"type": kind, "metric": metric, "days": days, **({"unit": unit} if unit else {}), "partial": bool(skipped), "total": len(entries), "offset": offset,
-                    "has_more": more, **({"next_offset": offset + len(page)} if more else {}), **caveats, **({"failed": broken} if broken else {}),
-                    **({"unread": [handle for handle in handles if handle in skipped]} if skipped else {}), "cols": columns, "rows": [row_of(handle) for handle in kept]}
+            seen = {**counted, **{handle: _bucket(summaries[handle][0]) for handle in kept}}
+            return {"type": kind, **({"metric": metric} if vetted else {}), "days": days, **({"unit": unit} if unit else {}), "partial": bool(skipped), "total": len(entries),
+                    "offset": offset, "has_more": more, **({"next_offset": offset + len(page)} if more else {}), **caveats, **({"failed": broken} if broken else {}),
+                    **({"unread": [handle for handle in handles if handle in skipped]} if skipped else {}), "summary": _tally(seen.values(), days), "cols": columns,
+                    "rows": [row_of(handle) for handle in kept]}
 
         built = answer()
         while len(_dump(built)) > MAX_RESULT_CHARS and any(handle in summaries and handle not in skipped for handle in handles):
@@ -1025,6 +1223,7 @@ class Toolbox:
                 if costs[handle] is not None:
                     self._show(entry, {"cost30d": _cents(costs[handle])})
                 self._record_metric(handle, metric, summaries[handle][0], days, summaries[handle][1])
+                self._count_read(kind, handle, metric, days, summaries[handle][0])
         return built
 
     def _tool_cost_lines(self, args: dict) -> dict:
@@ -1115,10 +1314,10 @@ class Toolbox:
                 plans = []
                 for item in found[sub]:
                     properties = item.get("properties") if isinstance(item.get("properties"), dict) else {}
-                    plan = _match(WORD, item.get("name"))
+                    plan = token_word(item.get("name"), 32)
                     if plan is not None:
-                        plans.append({"plan": plan, "tier": _match(WORD, properties.get("pricingTier")), "sub_plan": _match(WORD, properties.get("subPlan")),
-                                      "coverage": _match(WORD, properties.get("resourcesCoverageStatus"))})
+                        plans.append({"plan": plan, "tier": token_word(properties.get("pricingTier"), 16), "sub_plan": token_word(properties.get("subPlan"), 24),
+                                      "coverage": token_word(properties.get("resourcesCoverageStatus"), 24)})
                 block["plans"] = sorted(plans, key=lambda plan: plan["plan"].lower())
             blocks.append(block)
         answer = {"subscriptions": blocks}

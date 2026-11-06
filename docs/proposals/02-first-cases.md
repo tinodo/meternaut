@@ -80,7 +80,7 @@ Each line of the telemetry is `meternaut_event ` and one compact JSON object. Th
 | `case.started` | A lead is taken up | `caseId`, `leadId` |
 | `case.step` | One step of a case ends | `caseId`, `step` (evidence, detective, guards, skeptic), `model`, `promptTokens`, `completionTokens`, `ms`, `ok`, `note` |
 | `case.result` | A case ends | `caseId`, `leadId`, `detector`, `resourceName`, `resourceType`, `resourceGroup`, `costUsd30d`, `status` (proposed, needs_human, dropped, error), `recommendation`, `confidence`, `monthlySavingUsd`, `summary`, `objections`, `guards` |
-| `run.finished` | The run ends | `ok`, `leads`, `cases`, `proposed`, `needsHuman`, `dropped`, `errors`, `tokens`, `seconds` |
+| `run.finished` | The run ends | `ok`, `leads`, `cases`, `proposed`, `needsHuman`, `dropped`, `errors`, `tokens`, `seconds`, `investigation` (`ran`, `failed` or `off`), `investigationLines` (how many `investigation.*` lines the run wrote, so that a reader knows when all have arrived) |
 | `run.failed` | The run cannot continue | `reason` |
 
 A figure that a person could read as money (`costUsd30d`, `monthlySavingUsd`) is computed by code from the cost lines. A model never supplies one: its output is checked against a fixed schema, and a number that it adds is dropped.

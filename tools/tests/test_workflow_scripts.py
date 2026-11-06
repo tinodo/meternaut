@@ -1,8 +1,10 @@
+import json
 import os
 import re
 import shutil
 import stat
 import subprocess
+import sys
 import tempfile
 import textwrap
 import unittest
@@ -169,73 +171,123 @@ fi
 
 @unittest.skipIf(BASH is None, "no bash on this machine")
 class WorkOutTheFoundrySettings(unittest.TestCase):
-    """The lookups that the step 'Work out the settings' makes for the Foundry resource: the identity that gets a role on the project, and whether the project is there."""
+    """The lookups that the step 'Work out the settings' makes for the Foundry resource: the identity that gets a role on the project, and whether the project is there. Only the actions
+    that use an answer look for it."""
 
-    def run_step(self, project="found", cases=CASES_PRINCIPAL, identity=f"{PRINCIPAL}\t{CLIENT}"):
+    PROJECT_CALL = ("az rest --method get --url https://management.azure.com/subscriptions/sub-of-the-project/resourceGroups/rg-of-the-project/providers/Microsoft.CognitiveServices"
+                    "/accounts/aif-meternaut-agents-abc123/projects/meternaut?api-version=2025-06-01 --query name --output tsv")
+    IDENTITY_CALL = "az identity list --resource-group rg-of-the-project --query [?name=='id-meternaut-cases'].principalId | [0] --output tsv"
+    PREVIEW = "build preview=yes cases_principal=[unset] foundry_project=unset"
+    HOSTILE = "ERROR: (AuthorizationFailed) The client '40404040-4040-4040-4040-404040404040' with object id 'a404b404-0000-0000-0000-000000000404' does not have authorization"
+
+    def run_step(self, action="what-if", project="found", cases=CASES_PRINCIPAL, identity=f"{PRINCIPAL}\t{CLIENT}"):
         return run_step_script("Work out the settings", {"az": FOUNDRY_SETTINGS_AZ, "python3": FOUNDRY_SETTINGS_PYTHON3},
-                               {"FAKE_IDENTITY": identity, "FAKE_CASES": cases, "FAKE_PROJECT": project, "FAKE_LOGGERS": "appinsights-logger\n",
+                               {"ACTION": action, "FAKE_IDENTITY": identity, "FAKE_CASES": cases, "FAKE_PROJECT": project, "FAKE_LOGGERS": "appinsights-logger\n",
                                 "ENV_SUBSCRIPTION_ID": "sub-of-the-project", "ENV_RESOURCE_GROUP": "rg-of-the-project",
                                 "GATEWAY_RESOURCE_ID": "/subscriptions/66666666-7777-8888-9999-000000000000/resourceGroups/rg1/providers/Microsoft.ApiManagement/service/apim1"})
 
     def builds(self, lines):
         return [line for line in lines if line.startswith("build ")]
 
-    def test_the_identity_and_the_project_are_there_so_the_file_gets_the_identity_and_the_cases_app_gets_the_address(self):
-        done, lines, _ = self.run_step()
+    def test_what_if_looks_for_the_identity_and_for_the_project_with_the_version_that_the_model_account_uses(self):
+        done, lines, _ = self.run_step("what-if")
         self.assertEqual(done.returncode, 0, done.stderr)
-        self.assertEqual(self.builds(lines), ["build preview=yes cases_principal=[unset] foundry_project=unset",
-                                              f"build preview=no cases_principal=[{CASES_PRINCIPAL}] foundry_project=true"])
-        self.assertIn("az rest --method get --url https://management.azure.com/subscriptions/sub-of-the-project/resourceGroups/rg-of-the-project/providers/Microsoft.CognitiveServices"
-                      "/accounts/aif-meternaut-agents-abc123/projects/meternaut?api-version=2026-09-01 --query name --output tsv", lines)
-        self.assertIn("az identity list --resource-group rg-of-the-project --query [?name=='id-meternaut-cases'].principalId | [0] --output tsv", lines)
+        self.assertEqual(self.builds(lines), [self.PREVIEW, f"build preview=no cases_principal=[{CASES_PRINCIPAL}] foundry_project=true"])
+        self.assertIn(self.PROJECT_CALL, lines, "existence does not need the newest version")
+        self.assertIn(self.IDENTITY_CALL, lines)
         self.assertIn("The cases app's identity exists; its principal id goes into the Foundry file.", done.stdout)
         self.assertIn("The Foundry project is in Azure: true.", done.stdout)
 
-    def test_an_object_id_in_capitals_is_passed_on_as_it_is(self):
-        done, lines, _ = self.run_step(cases=CASES_PRINCIPAL.upper())
+    def test_foundry_needs_the_identity_and_never_looks_for_the_project(self):
+        done, lines, _ = self.run_step("foundry", project="ERROR: (AuthorizationFailed) a read that would stop the run if it were made")
         self.assertEqual(done.returncode, 0, done.stderr)
-        self.assertEqual(self.builds(lines)[1], f"build preview=no cases_principal=[{CASES_PRINCIPAL.upper()}] foundry_project=true")
+        self.assertEqual(self.builds(lines), [self.PREVIEW, f"build preview=no cases_principal=[{CASES_PRINCIPAL}] foundry_project=false"])
+        self.assertIn(self.IDENTITY_CALL, lines)
+        self.assertEqual([line for line in lines if "/projects/" in line], [])
+        self.assertIn("The action foundry does not use the Foundry project, so it is not looked for.", done.stdout)
+
+    def test_cases_needs_the_project_and_never_looks_for_the_identity(self):
+        done, lines, _ = self.run_step("cases", cases="FAIL")
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(self.builds(lines), [self.PREVIEW, "build preview=no cases_principal=[] foundry_project=true"])
+        self.assertIn(self.PROJECT_CALL, lines)
+        self.assertEqual([line for line in lines if line == self.IDENTITY_CALL], [], "the cases app is not given a role on the project by this action")
+        self.assertIn("The Foundry project is in Azure: true.", done.stdout)
+
+    def test_every_other_action_looks_for_neither_so_a_refused_read_cannot_stop_it(self):
+        for action in ("loop-check", "recording"):
+            with self.subTest(action=action):
+                done, lines, _ = self.run_step(action, project=self.HOSTILE, cases="FAIL")
+                self.assertEqual(done.returncode, 0, done.stderr)
+                self.assertEqual(self.builds(lines), [self.PREVIEW, "build preview=no cases_principal=[] foundry_project=false"])
+                self.assertEqual([line for line in lines if "/projects/" in line or line == self.IDENTITY_CALL], [])
+                self.assertIn(f"The action {action} does not use the Foundry project, so it is not looked for.", done.stdout)
+
+    def test_an_object_id_in_capitals_is_passed_on_as_it_is(self):
+        done, lines, _ = self.run_step("foundry", cases=CASES_PRINCIPAL.upper())
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(self.builds(lines)[1], f"build preview=no cases_principal=[{CASES_PRINCIPAL.upper()}] foundry_project=false")
 
     def test_a_project_that_is_not_there_gives_false_however_the_service_says_so_and_the_final_build_still_follows(self):
-        for answer in ("ERROR: (ResourceNotFound) The Resource 'Microsoft.CognitiveServices/accounts/x/projects/meternaut' was not found.",
-                       'ERROR: Not Found({"error":{"code":"NotFound"}})', "ERROR: the request failed with status 404"):
-            done, lines, _ = self.run_step(project=answer)
-            self.assertEqual(done.returncode, 0, (answer, done.stderr))
-            self.assertEqual(self.builds(lines)[1], f"build preview=no cases_principal=[{CASES_PRINCIPAL}] foundry_project=false", answer)
-            self.assertIn("The Foundry project is in Azure: false.", done.stdout)
+        for action, answer in (("cases", "ERROR: (ResourceNotFound) The Resource 'Microsoft.CognitiveServices/accounts/x/projects/meternaut' was not found."),
+                               ("cases", "ERROR: the request failed with status 404"), ("what-if", 'ERROR: Not Found({"error":{"code":"NotFound"}})')):
+            with self.subTest(action=action, answer=answer):
+                done, lines, _ = self.run_step(action, project=answer)
+                self.assertEqual(done.returncode, 0, done.stderr)
+                self.assertEqual(self.builds(lines)[1].rsplit(" ", 1)[1], "foundry_project=false")
+                self.assertIn("The Foundry project is in Azure: false.", done.stdout)
+                self.assertNotIn("::warning::", done.stdout + done.stderr, "not being there is an answer, not a failure")
 
-    def test_an_answer_that_is_not_not_found_stops_the_run_before_the_final_build_even_when_it_holds_the_digits_404_inside_an_object_id(self):
-        for answer in ("ERROR: (AuthorizationFailed) The client '40404040-4040-4040-4040-404040404040' with object id 'a404b404-0000-0000-0000-000000000404' does not have authorization",
-                       "ERROR: (InternalServerError) try again later", "ERROR: the request timed out"):
-            done, lines, _ = self.run_step(project=answer)
-            self.assertNotEqual(done.returncode, 0, answer)
-            self.assertIn("meternaut could not be read", done.stderr + done.stdout, answer)
-            self.assertEqual(self.builds(lines), ["build preview=yes cases_principal=[unset] foundry_project=unset"], "a wrong guess would switch the investigation off or on")
-            self.assertEqual([line for line in lines if line.startswith("check ")], [], "the run stopped before the files were checked")
+    def test_for_cases_an_answer_that_is_not_not_found_stops_the_run_with_a_clear_message_even_when_it_holds_the_digits_404_inside_an_object_id(self):
+        for answer in (self.HOSTILE, "ERROR: (InternalServerError) try again later", "ERROR: (NoRegisteredProviderFound) the namespace is not registered"):
+            with self.subTest(answer=answer[:30]):
+                done, lines, _ = self.run_step("cases", project=answer)
+                self.assertNotEqual(done.returncode, 0)
+                said = done.stderr + done.stdout
+                self.assertIn("::error::meternaut could not be read: " + answer, said)
+                self.assertIn("::error::The action cases gives the cases app the address of the Foundry project only when the project is in Azure, so it has to know, and the read of the project failed", said)
+                self.assertIn("Nothing was changed: run cases again.", said)
+                self.assertEqual(self.builds(lines), [self.PREVIEW], "a wrong guess would switch the investigation on or off")
+                self.assertEqual([line for line in lines if line.startswith("check ")], [], "the run stopped before the files were checked")
+
+    def test_for_what_if_an_answer_that_is_not_not_found_is_a_warning_and_counts_as_not_there(self):
+        done, lines, _ = self.run_step("what-if", project=self.HOSTILE)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        said = done.stderr + done.stdout
+        self.assertIn("::warning::meternaut could not be read: " + self.HOSTILE, said)
+        self.assertNotIn("::error::", said, "a preview is not stopped by a read")
+        self.assertIn("::warning::The preview of the cases app assumes that the Foundry project is not in Azure, because the read of the project failed", said)
+        self.assertEqual(self.builds(lines)[1], f"build preview=no cases_principal=[{CASES_PRINCIPAL}] foundry_project=false")
+        self.assertIn("The Foundry project is in Azure: false.", done.stdout)
+        self.assertEqual([line for line in lines if line.startswith("check ")][-1].split("--label ")[1], "planted", "the files were checked as always")
 
     def test_a_cases_identity_that_is_not_there_gives_an_empty_object_id_and_the_run_goes_on(self):
-        for answer in ("", "None", "not-a-guid"):
-            done, lines, _ = self.run_step(cases=answer)
-            self.assertEqual(done.returncode, 0, (answer, done.stderr))
-            self.assertEqual(self.builds(lines)[1], "build preview=no cases_principal=[] foundry_project=true", answer)
-            self.assertIn("The cases app's identity does not exist yet (the action cases makes it); the Foundry file holds a placeholder.", done.stdout)
+        for answer in ("None", "not-a-guid"):
+            with self.subTest(answer=answer):
+                done, lines, _ = self.run_step("foundry", cases=answer)
+                self.assertEqual(done.returncode, 0, done.stderr)
+                self.assertEqual(self.builds(lines)[1], "build preview=no cases_principal=[] foundry_project=false")
+                self.assertIn("The cases app's identity does not exist yet (the action cases makes it); the Foundry file holds a placeholder.", done.stdout)
 
     def test_a_lookup_of_the_cases_identity_that_fails_stops_the_run_instead_of_counting_as_not_there(self):
-        done, lines, _ = self.run_step(cases="FAIL")
-        self.assertNotEqual(done.returncode, 0)
-        self.assertIn("AuthorizationFailed", done.stderr)
-        self.assertEqual(self.builds(lines), ["build preview=yes cases_principal=[unset] foundry_project=unset"], "no file was made with a placeholder for an identity that may be there")
+        for action in ("foundry", "what-if"):
+            with self.subTest(action=action):
+                done, lines, _ = self.run_step(action, cases="FAIL")
+                self.assertNotEqual(done.returncode, 0)
+                self.assertIn("AuthorizationFailed", done.stderr)
+                self.assertEqual(self.builds(lines), [self.PREVIEW], "no file was made with a placeholder for an identity that may be there")
 
     def test_without_the_gateway_identity_neither_lookup_is_made_and_only_the_preview_is_built(self):
-        for identity in ("", "None"):
-            done, lines, _ = self.run_step(identity=identity)
-            self.assertEqual(done.returncode, 0, done.stderr)
-            self.assertEqual(self.builds(lines), ["build preview=yes cases_principal=[unset] foundry_project=unset"], identity)
-            self.assertEqual([line for line in lines if line.startswith("az ")],
-                             ["az identity list --subscription sub1 --resource-group rg1 --query [?name=='id-meternaut-gateway'] | [0].[principalId, clientId] --output tsv"], identity)
+        for action, identity in (("what-if", ""), ("cases", "None")):
+            with self.subTest(action=action):
+                done, lines, _ = self.run_step(action, identity=identity)
+                self.assertEqual(done.returncode, 0, done.stderr)
+                self.assertEqual(self.builds(lines), [self.PREVIEW])
+                self.assertEqual([line for line in lines if line.startswith("az ")],
+                                 ["az identity list --subscription sub1 --resource-group rg1 --query [?name=='id-meternaut-gateway'] | [0].[principalId, clientId] --output tsv"])
 
     def test_the_lookups_only_read(self):
-        done, lines, _ = self.run_step()
+        done, lines, _ = self.run_step("what-if")
         self.assertEqual(done.returncode, 0, done.stderr)
         for call in (line for line in lines if line.startswith("az ")):
             for word in (" put ", " post ", " patch ", " delete ", " create ", " role ", "listKeys", "listSecrets", "--yes"):
@@ -428,6 +480,351 @@ class WaitForTheFoundryPrivateEndpoint(unittest.TestCase):
             self.assertRegex(call, r"^az network private-endpoint (list|dns-zone-group list) ")
             for word in ("create", "delete", "update", "private-dns", "role", "--yes"):
                 self.assertNotIn(word, call, call)
+
+
+POWERSHELLS = []
+
+
+def powershells():
+    """The PowerShells that the hand steps are written for and that are on this machine: every PowerShell 7 that is found, and Windows PowerShell 5.1 on Windows."""
+    if POWERSHELLS:
+        return POWERSHELLS
+    candidates = [shutil.which("pwsh"), shutil.which("powershell")]
+    if os.name == "nt":
+        candidates += [r"C:\Program Files\PowerShell\7\pwsh.exe", r"C:\Program Files (x86)\PowerShell\7\pwsh.exe"]
+    found = {}
+    for candidate in candidates:
+        if not candidate or not Path(candidate).exists():
+            continue
+        try:
+            probe = subprocess.run([candidate, "-NoProfile", "-NonInteractive", "-Command", "$PSVersionTable.PSVersion.ToString()"], capture_output=True, text=True, timeout=120)
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+        version = probe.stdout.strip()
+        if probe.returncode == 0 and re.fullmatch(r"\d+(\.\d+)+", version):
+            found.setdefault(version, candidate)
+    POWERSHELLS.extend((f"PowerShell {version}", path) for version, path in sorted(found.items(), key=lambda item: [int(part) for part in item[0].split(".")]))
+    return POWERSHELLS
+
+
+def run_powershell(engine, script, env, directory):
+    """Run a script file with the engine as a person who saved the commands would (-File), with no profile and no prompt."""
+    path = Path(directory) / "run.ps1"
+    path.write_text(script, encoding="utf-8", newline="\n")
+    arguments = [engine, "-NoProfile", "-NonInteractive"] + (["-ExecutionPolicy", "Bypass"] if os.name == "nt" else [])
+    return subprocess.run([*arguments, "-File", str(path)], capture_output=True, text=True, env={**os.environ, **env}, cwd=str(directory), timeout=180)
+
+
+def hand_step_script():
+    """The commands of the hand step of environment/BOOTSTRAP.md, as a person would copy them."""
+    page = (ROOT / "environment" / "BOOTSTRAP.md").read_text(encoding="utf-8").replace("\r\n", "\n")
+    section = page.split("## Changed on 2026-11-06: the Foundry resource of the agents")[1].split("\n## ")[0]
+    (script,) = re.findall(r"```powershell\n(.*?)\n```", section, re.S)
+    return script
+
+
+HAND_SUBSCRIPTION = "11111111-2222-3333-4444-555555555555"
+HAND_GROUP = "rg-hub-example"
+HAND_SCOPE = f"/subscriptions/{HAND_SUBSCRIPTION}/resourceGroups/{HAND_GROUP}"
+HAND_ASSIGNMENT = f"{HAND_SCOPE}/providers/Microsoft.Authorization/roleAssignments/9c1f2a64-3a8e-4f64-8d0e-5d1f0b8a7c33"
+FOUNDRY_USER = "53ca6127-db72-4b80-b1b0-d745d6d5456d"
+CONDITION_ROLES = ["5e0bd9bd-7b93-4f28-af87-19fc36ad61bd", "2b629674-e913-4c01-ae53-ef4638d8f975", "a638d3c7-ab3a-418d-83e6-5f17a39d4fde", "b7e6dc6d-f1e8-4753-8033-0f276bb0955b",
+                   "974c5e8b-45b9-4653-ba55-5f855dd0fb88", "0a9a7e1f-b9d0-4cc4-a60d-0319b160aaa3", "3913510d-42f4-4e42-8a64-420c390055eb"]
+
+
+def condition_of(write_ids, delete_ids=None):
+    """The condition that the templates write: the roles that may be given, and the roles that may be removed."""
+    delete_ids = write_ids if delete_ids is None else delete_ids
+    return ("((!(ActionMatches{'Microsoft.Authorization/roleAssignments/write'})) OR (@Request[Microsoft.Authorization/roleAssignments:RoleDefinitionId] ForAnyOfAnyValues:GuidEquals {"
+            + ", ".join(write_ids) + "} AND @Request[Microsoft.Authorization/roleAssignments:PrincipalType] ForAnyOfAnyValues:StringEqualsIgnoreCase {'ServicePrincipal'})) AND "
+            "((!(ActionMatches{'Microsoft.Authorization/roleAssignments/delete'})) OR (@Resource[Microsoft.Authorization/roleAssignments:RoleDefinitionId] ForAnyOfAnyValues:GuidEquals {"
+            + ", ".join(delete_ids) + "} AND @Resource[Microsoft.Authorization/roleAssignments:PrincipalType] ForAnyOfAnyValues:StringEqualsIgnoreCase {'ServicePrincipal'}))")
+
+
+def assignment(condition=..., **changes):
+    """What `az role assignment list` prints for the Role Based Access Control Administrator assignment of the deploy identity."""
+    document = {"condition": condition_of(CONDITION_ROLES) if condition is ... else condition, "conditionVersion": "2.0", "createdBy": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+                "createdOn": "2026-11-04T13:12:11.123456+00:00", "delegatedManagedIdentityResourceId": None, "description": None, "id": HAND_ASSIGNMENT,
+                "name": HAND_ASSIGNMENT.rsplit("/", 1)[1], "principalId": PRINCIPAL, "principalName": "id-meternaut-deploy", "principalType": "ServicePrincipal",
+                "resourceGroup": HAND_GROUP, "roleDefinitionId": f"/subscriptions/{HAND_SUBSCRIPTION}/providers/Microsoft.Authorization/roleDefinitions/f58310d9-a9f6-439a-9e8d-f62e7b41a168",
+                "roleDefinitionName": "Role Based Access Control Administrator", "scope": HAND_SCOPE, "type": "Microsoft.Authorization/roleAssignments",
+                "updatedBy": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", "updatedOn": "2026-11-04T13:12:11.123456+00:00"}
+    document.update(changes)
+    return document
+
+
+def id_lists(condition):
+    return [sorted(re.split(r",\s*", ids.strip())) for ids in re.findall(r"GuidEquals\s*\{([^}]*)\}", condition)]
+
+
+def shape_of(condition):
+    return re.sub(r"\s+", " ", re.sub(r"GuidEquals\s*\{[^}]*\}", "GuidEquals {ids}", condition))
+
+
+# A stand-in for az that keeps the assignments in a file and answers like the CLI. It refuses what the CLI would refuse: a command that does not name the subscription, a list that is
+# not the one of the deploy identity at the project group, and a JSON argument whose quotes are not doubled (they would not arrive). An update changes only what the service lets
+# an update change: the condition, its version and the description.
+FAKE_AZ_POWERSHELL = r"""$ErrorView = 'NormalView'
+$devSub = $env:FAKE_SUBSCRIPTION
+$hubGroup = $env:FAKE_GROUP
+$principal = $env:FAKE_PRINCIPAL
+function Read-Host { param($Prompt) Write-Host ('PROMPT: ' + $Prompt); $env:FAKE_ANSWER }
+function Get-Arg { param($List, $Name) $i = [array]::IndexOf(@($List), $Name); if ($i -ge 0) { @($List)[$i + 1] } }
+function Save-State { param($State) $State | ConvertTo-Json -Depth 20 | Set-Content -Path $env:FAKE_STATE -Encoding UTF8 }
+function Set-Failure { param($Text, $Code) [Console]::Error.WriteLine($Text); $global:LASTEXITCODE = $Code }
+function az {
+  Add-Content -Path $env:FAKE_LOG -Value (ConvertTo-Json -InputObject @($args | ForEach-Object { [string]$_ }) -Compress)
+  $state = Get-Content -Raw -Path $env:FAKE_STATE | ConvertFrom-Json
+  $kind = "$($args[0]) $($args[1]) $($args[2])"
+  if ((Get-Arg $args '--subscription') -ne $env:FAKE_SUBSCRIPTION) { Set-Failure 'ERROR: fake az: the command does not name the subscription of the pilot' 3; return }
+  if ($kind -eq 'role assignment list') {
+    if ((Get-Arg $args '--assignee-object-id') -ne $env:FAKE_PRINCIPAL -or (Get-Arg $args '--scope') -ne ('/subscriptions/' + $env:FAKE_SUBSCRIPTION + '/resourceGroups/' + $env:FAKE_GROUP) -or (Get-Arg $args '--role') -ne 'Role Based Access Control Administrator') { Set-Failure 'ERROR: fake az: the list is not the one of the deploy identity at the project group' 3; return }
+    if ($env:FAKE_LIST_FAILS -eq '1') { Set-Failure 'ERROR: (TooManyRequests) fake az: try again later' 1; return }
+    $items = @($state.assignments)
+    $query = Get-Arg $args '--query'
+    if ($query -eq 'length(@)') { "$($items.Count)"; $global:LASTEXITCODE = 0; return }
+    if ($query -eq '[0]') { if ($items.Count -gt 0) { $items[0] | ConvertTo-Json -Depth 20 } else { 'null' }; $global:LASTEXITCODE = 0; return }
+    Set-Failure ('ERROR: fake az: unexpected query ' + $query) 9; return
+  }
+  if ($kind -eq 'role assignment update') {
+    $raw = Get-Arg $args '--role-assignment'
+    if ($null -eq $raw -or ($raw -replace '""', '') -match '"') { Set-Failure 'ERROR: fake az: a quote of the JSON is not doubled, so the CLI would not get the JSON as it is' 2; return }
+    try { $given = ($raw -replace '""', '"') | ConvertFrom-Json } catch { Set-Failure 'ERROR: fake az: the role assignment is not valid JSON' 2; return }
+    if ($env:FAKE_UPDATE_FAILS -eq '1') { Set-Failure 'ERROR: (AuthorizationFailed) fake az: the update is refused' 1; return }
+    $match = @($state.assignments | Where-Object { $_.id -eq $given.id })
+    if ($match.Count -ne 1) { Set-Failure 'ERROR: (RoleAssignmentNotFound) fake az: no assignment has that id' 1; return }
+    $stored = $match[0]
+    $stored.condition = if ($env:FAKE_STORE_CONDITION) { $env:FAKE_STORE_CONDITION } else { $given.condition }
+    $stored.conditionVersion = $given.conditionVersion
+    $stored.description = $given.description
+    if ($env:FAKE_STORE_ID) { $stored.id = $env:FAKE_STORE_ID }
+    if ($env:FAKE_UPDATE_ADDS -eq '1') { $copy = ($stored | ConvertTo-Json -Depth 20) | ConvertFrom-Json; $copy.id = $copy.id + '-second'; $state.assignments = @($state.assignments) + $copy }
+    Save-State $state
+    $global:LASTEXITCODE = 0
+    return
+  }
+  Set-Failure ('ERROR: fake az: unexpected call ' + $kind) 9
+}
+"""
+
+
+class TheFoundryUserHandStep(unittest.TestCase):
+    """The commands of environment/BOOTSTRAP.md that add the Foundry User role to the condition of the deploy identity's assignment, run in every PowerShell on the machine against a stand-in for az."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.engines = powershells()
+        if not cls.engines:
+            raise unittest.SkipTest("no PowerShell on this machine")
+        first, cls.rest = hand_step_script().split("\n", 1)
+        assert first.startswith("function az {"), "the first line of the commands is the az function, which the stand-in replaces"
+
+    def run_step(self, engine, assignments, answer="yes", **flags):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            (tmp / "state.json").write_text(json.dumps({"assignments": assignments}), encoding="utf-8")
+            (tmp / "calls.log").write_text("", encoding="utf-8")
+            env = {"FAKE_STATE": str(tmp / "state.json"), "FAKE_LOG": str(tmp / "calls.log"), "FAKE_ANSWER": answer, "FAKE_SUBSCRIPTION": HAND_SUBSCRIPTION, "FAKE_GROUP": HAND_GROUP,
+                   "FAKE_PRINCIPAL": PRINCIPAL, **flags}
+            done = run_powershell(engine, FAKE_AZ_POWERSHELL + "\n" + self.rest, env, tmp)
+            calls = [json.loads(line) for line in (tmp / "calls.log").read_text(encoding="utf-8-sig").splitlines() if line.strip()]
+            left = json.loads((tmp / "state.json").read_text(encoding="utf-8-sig"))["assignments"]
+        return done, calls, left
+
+    def said(self, done):
+        return re.sub(r"\s+", " ", done.stdout + " " + done.stderr)
+
+    def kinds(self, calls):
+        return [" ".join(call[:3]) for call in calls]
+
+    def first_engine(self):
+        return self.engines[0][1]
+
+    def test_a_good_run_changes_the_condition_in_place_with_one_write_and_reads_it_back(self):
+        for name, engine in self.engines:
+            with self.subTest(engine=name):
+                done, calls, left = self.run_step(engine, [assignment()])
+                self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+                self.assertEqual(self.kinds(calls), ["role assignment list"] * 2 + ["role assignment update"] + ["role assignment list"] * 2, "read, read, one write, read back, read back")
+                for call in calls:
+                    self.assertEqual(call[call.index("--subscription") + 1], HAND_SUBSCRIPTION, call)
+                (update,) = [call for call in calls if call[2] == "update"]
+                self.assertEqual(update[:6], ["role", "assignment", "update", "--subscription", HAND_SUBSCRIPTION, "--role-assignment"])
+                self.assertEqual(update[7:], ["--output", "none"])
+                sent = json.loads(update[6].replace('""', '"'))
+                self.assertEqual(sent["id"], HAND_ASSIGNMENT, "the assignment that is changed is the one that was read")
+                self.assertEqual(id_lists(sent["condition"]), [sorted(CONDITION_ROLES + [FOUNDRY_USER])] * 2)
+                (stored,) = left
+                self.assertEqual(stored["id"], HAND_ASSIGNMENT, "the assignment keeps its id")
+                self.assertEqual(id_lists(stored["condition"]), [sorted(CONDITION_ROLES + [FOUNDRY_USER])] * 2, "the Foundry User role is in the list for a write and in the list for a delete")
+                self.assertEqual(shape_of(stored["condition"]), shape_of(assignment()["condition"]), "nothing else of the condition changed")
+                for key in ("principalId", "scope", "roleDefinitionName", "roleDefinitionId", "principalType", "conditionVersion"):
+                    self.assertEqual(stored[key], assignment()[key], key)
+                text = self.said(done)
+                self.assertIn("PROMPT: Change the condition as shown? Type yes", text)
+                self.assertIn(f"Added: {FOUNDRY_USER} (Azure AI User, named Foundry User since the rename)", text)
+                self.assertIn(f"Read back: one assignment, with the same id, and both lists hold the old role ids and {FOUNDRY_USER} (Foundry User).", text)
+                self.assertFalse([call for call in calls if call[2] in ("delete", "create")], "the commands never delete or make an assignment")
+
+    def test_an_update_that_fails_stops_the_script_and_says_that_the_assignment_is_unchanged(self):
+        for name, engine in self.engines:
+            with self.subTest(engine=name):
+                before = [assignment()]
+                done, calls, left = self.run_step(engine, before, FAKE_UPDATE_FAILS="1")
+                self.assertNotEqual(done.returncode, 0)
+                text = self.said(done)
+                self.assertIn("The update failed (exit code 1). It is one write and nothing else was done, so the assignment is unchanged.", text)
+                self.assertIn("az role assignment list --subscription " + HAND_SUBSCRIPTION, text, "it says how to read the assignment")
+                self.assertNotIn("Read back", text)
+                self.assertEqual(self.kinds(calls), ["role assignment list"] * 2 + ["role assignment update"], "the update is the last call: nothing is made, removed or read after it")
+                self.assertEqual(left, before, "the assignment is as it was")
+
+    def test_a_read_back_that_does_not_show_what_was_written_fails_the_script(self):
+        # the service takes the update and the assignment comes out other than meant: a policy that rewrites the condition, a condition that holds the role in one list only,
+        # a second assignment, another id
+        broken = (("the condition came back without the new role", {"FAKE_STORE_CONDITION": condition_of(CONDITION_ROLES)}, "not as meant"),
+                  ("only the list for a write holds the new role", {"FAKE_STORE_CONDITION": condition_of(CONDITION_ROLES + [FOUNDRY_USER], CONDITION_ROLES)}, "not as meant"),
+                  ("a second assignment appeared", {"FAKE_UPDATE_ADDS": "1"}, "assignments, not one"),
+                  ("the assignment has another id", {"FAKE_STORE_ID": HAND_ASSIGNMENT + "-other"}, "not as meant"))
+        for index, (label, flags, words) in enumerate(broken):
+            for name, engine in (self.engines if index == 0 else self.engines[:1]):
+                with self.subTest(engine=name, label=label):
+                    done, calls, _ = self.run_step(engine, [assignment()], **flags)
+                    self.assertNotEqual(done.returncode, 0)
+                    text = self.said(done)
+                    self.assertIn("Read back:", text)
+                    self.assertIn(words, text)
+                    self.assertNotIn("Read back: one assignment, with the same id", text)
+                    self.assertEqual(self.kinds(calls).count("role assignment update"), 1)
+
+    def test_nothing_is_written_unless_the_person_types_yes(self):
+        for answer in ("no", "yes please"):
+            with self.subTest(answer=answer):
+                done, calls, left = self.run_step(self.first_engine(), [assignment()], answer=answer)
+                self.assertNotEqual(done.returncode, 0)
+                self.assertIn("Stopped. Nothing was changed.", self.said(done))
+                self.assertEqual(self.kinds(calls), ["role assignment list"] * 2)
+                self.assertEqual(left, [assignment()])
+
+    def test_nothing_is_written_when_there_is_not_exactly_one_assignment(self):
+        for label, assignments, count in (("none", [], "0"), ("two", [assignment(), assignment(id=HAND_ASSIGNMENT + "-2")], "2")):
+            with self.subTest(label=label):
+                done, calls, left = self.run_step(self.first_engine(), assignments)
+                self.assertNotEqual(done.returncode, 0)
+                text = self.said(done)
+                self.assertIn("must have exactly one Role Based Access Control Administrator assignment on the project group, and the list says '" + count + "'. Nothing was changed.", text)
+                self.assertEqual(self.kinds(calls), ["role assignment list"])
+                self.assertEqual(left, assignments)
+
+    def test_nothing_is_written_when_the_condition_is_not_the_one_of_the_templates(self):
+        other_clause = condition_of(CONDITION_ROLES).replace("AND ((!(", "AND (@Resource[a:b] StringEquals 'c') AND ((!(")
+        one_list = "((!(ActionMatches{'x'})) OR (@Request[a:b] ForAnyOfAnyValues:GuidEquals {" + CONDITION_ROLES[0] + "}))"
+        for label, condition, words in (("the two lists differ", condition_of(CONDITION_ROLES, CONDITION_ROLES[:-1]), "two lists of the same role ids"),
+                                        ("one list only", one_list, "two lists of the same role ids"),
+                                        ("no condition", None, "two lists of the same role ids"),
+                                        ("a clause that the templates do not write", other_clause, "differs from the templates in more than the role ids")):
+            with self.subTest(label=label):
+                before = [assignment(condition)]
+                done, calls, left = self.run_step(self.first_engine(), before)
+                self.assertNotEqual(done.returncode, 0)
+                self.assertIn(words, self.said(done))
+                self.assertEqual(self.kinds(calls), ["role assignment list"] * 2)
+                self.assertEqual(left, before)
+
+    def test_a_condition_that_lists_the_role_already_means_nothing_to_do(self):
+        done, calls, _ = self.run_step(self.first_engine(), [assignment(condition_of(CONDITION_ROLES + [FOUNDRY_USER]))])
+        self.assertNotEqual(done.returncode, 0)
+        self.assertIn("The condition lists the Foundry User role already: nothing to do.", self.said(done))
+        self.assertEqual(self.kinds(calls), ["role assignment list"] * 2)
+
+    def test_a_list_that_fails_stops_the_script_before_anything_is_written(self):
+        done, calls, left = self.run_step(self.first_engine(), [assignment()], FAKE_LIST_FAILS="1")
+        self.assertNotEqual(done.returncode, 0)
+        text = self.said(done)
+        self.assertIn("The assignments could not be read (exit code 1). Nothing was changed.", text)
+        self.assertEqual(self.kinds(calls), ["role assignment list"])
+        self.assertEqual(left, [assignment()])
+
+
+@unittest.skipUnless(os.name == "nt", "the az function of the hand step calls the Azure CLI of Windows")
+class TheJsonOfTheUpdateReachesTheCli(unittest.TestCase):
+    """The az function and the update command of the hand step, with a program in place of the CLI that prints the arguments that it got. The JSON must arrive as it was sent, in every PowerShell
+    on the machine: Windows PowerShell 5.1 takes a backslash before a quote differently from PowerShell 7, and PowerShell 7.3 and later escape the quotes themselves."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.engines = powershells()
+        if not cls.engines:
+            raise unittest.SkipTest("no PowerShell on this machine")
+        cls.script = hand_step_script()
+
+    def test_the_json_reaches_the_program_unchanged(self):
+        first = self.script.split("\n", 1)[0]
+        cli = "'C:\\Program Files\\Microsoft SDKs\\Azure\\CLI2\\python.exe' -IBm azure.cli"
+        self.assertIn(cli, first)
+        (update,) = [line for line in self.script.splitlines() if line.startswith("az role assignment update")]
+        new = assignment(condition_of(CONDITION_ROLES + [FOUNDRY_USER]))
+        for name, engine in self.engines:
+            with self.subTest(engine=name), tempfile.TemporaryDirectory() as tmp:
+                tmp = Path(tmp)
+                (tmp / "argv.py").write_text("import json\nimport sys\n\nprint(json.dumps(sys.argv[1:]))\n", encoding="utf-8")
+                (tmp / "assignment.json").write_text(json.dumps(new), encoding="utf-8")
+                program = "\n".join([f"$devSub = '{HAND_SUBSCRIPTION}'", first.replace(cli, f"'{sys.executable}' '{tmp / 'argv.py'}'"),
+                                     f"$old = Get-Content -Raw -Path '{tmp / 'assignment.json'}' | ConvertFrom-Json", "$json = $old | ConvertTo-Json -Depth 20 -Compress",
+                                     f"[IO.File]::WriteAllText('{tmp / 'sent.json'}', $json)", update, ""])
+                done = run_powershell(engine, program, {}, tmp)
+                self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+                got = json.loads(done.stdout.strip().splitlines()[-1])
+                self.assertEqual(got[:6], ["role", "assignment", "update", "--subscription", HAND_SUBSCRIPTION, "--role-assignment"])
+                self.assertEqual(got[7:], ["--output", "none"])
+                self.assertEqual(got[6], (tmp / "sent.json").read_text(encoding="utf-8"), "the CLI gets the JSON that the script made, character for character")
+                self.assertEqual(json.loads(got[6])["id"], HAND_ASSIGNMENT)
+
+
+@unittest.skipIf(BASH is None, "no bash on this machine")
+class WhatWasDone(unittest.TestCase):
+    """The step that writes the summary of a run, run once for every action of the workflow and for a run that finished and one that did not."""
+
+    def run_all(self, status):
+        actions = re.findall(r"- (\S+)", re.search(r"options:\n((?:          - .+\n)+)", WORKFLOW).group(1))
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            summary = tmp / "summary.md"
+            summary.write_text("", encoding="utf-8")
+            script = tmp / "all.sh"
+            script.write_text("summary_of() {\n" + step_script("What was done") + "\n}\nfor ACTION in " + " ".join(actions) + "; do\n  export ACTION\n  summary_of\ndone\n", encoding="utf-8", newline="\n")
+            env = {**os.environ, "JOB_STATUS": status, "ACCOUNT_NAME": "aif-meternaut-abc", "CONTRACT_NAME": "meternaut-pilot", "FOUNDRY_ACCOUNT": "aif-meternaut-agents-abc", "FOUNDRY_PROJECT": "meternaut",
+                   "FOUNDRY_ENDPOINT": "https://aif-meternaut-agents-abc.services.ai.azure.com/api/projects/meternaut", "ENV_RESOURCE_GROUP": "rg-of-the-project",
+                   "GITHUB_STEP_SUMMARY": summary.as_posix()}
+            done = subprocess.run([BASH, "-e", "-o", "pipefail", script.as_posix()], capture_output=True, text=True, env=env, cwd=ROOT)
+            text = summary.read_text(encoding="utf-8")
+        return done, actions, dict(re.findall(r"(?ms)^### Hub: ([a-z-]+), \w+\n(.*?)(?=^### Hub: |\Z)", text))
+
+    def test_every_action_has_words_for_a_run_that_finished_and_for_one_that_did_not_and_the_shell_says_nothing_of_its_own(self):
+        for status in ("success", "failure"):
+            with self.subTest(status=status):
+                done, actions, sections = self.run_all(status)
+                self.assertEqual(done.returncode, 0, done.stderr)
+                self.assertEqual(done.stderr, "", "a backtick that is not escaped inside the quotes runs a command in bash, which says 'command not found' and leaves the name out")
+                self.assertEqual(sorted(sections), sorted(actions))
+                for action, body in sections.items():
+                    self.assertGreater(len(body.strip()), 60, (status, action))
+
+    def test_the_name_of_the_retired_identity_is_printed_in_the_summary_of_the_cases(self):
+        done, _, sections = self.run_all("success")
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertIn("The retired identity of the first loop, `id-meternaut-runner`, is removed when it is still there and nothing holds it.", sections["cases"])
+
+    def test_the_watch_changes_no_resource_of_the_estate_and_with_the_investigation_on_it_uses_its_own_foundry_project_and_calls_the_models_of_that_resource_directly(self):
+        _, _, finished = self.run_all("success")
+        _, _, failed = self.run_all("failure")
+        self.assertIn("No resource of the estate was changed; with the investigation on, the Watch also created its agents and conversations in its own Foundry project.", finished["cases-run"])
+        self.assertIn("Calls that go through the gateway are counted there; with the investigation on, the agents in the Foundry project call the models of that resource directly, not through the gateway.",
+                      finished["cases-run"])
+        self.assertIn("It changes no resource of the estate; with the investigation on it may also have created agents and conversations in its own Foundry project before it stopped.", failed["cases-run"])
+        for body in (finished["cases-run"], failed["cases-run"]):
+            for old in ("It only reads Azure, so nothing was changed", "tokens that went through the gateway", "Nothing in Azure was changed"):
+                self.assertNotIn(old, body, old)
 
 
 STAND_IN_PYTHON = """#!/bin/bash

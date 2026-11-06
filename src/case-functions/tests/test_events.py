@@ -58,6 +58,59 @@ class Lines(unittest.TestCase):
         self.assertEqual(capture.events()[0]["note"], "Zoë and 日本")
 
 
+class Counting(unittest.TestCase):
+    """The History counts its own lines by kind, so that the end of a run can say how many lines of the investigation were written without anyone counting by hand."""
+
+    KINDS = ("run.started", "run.note", "run.note", "investigation.started", "investigation.finding", "investigation.finding", "investigation.finished", "case.result")
+
+    def test_a_history_counts_the_lines_that_it_wrote_by_kind(self):
+        recorded = history()
+        with LogCapture() as capture:
+            for kind in self.KINDS:
+                recorded.emit(kind, note="x")
+        self.assertEqual(dict(recorded.counts), {"run.started": 1, "run.note": 2, "investigation.started": 1, "investigation.finding": 2, "investigation.finished": 1,
+                                                 "case.result": 1})
+        self.assertEqual(recorded.lines(), len(capture.messages()), "one count for each line that went to the log")
+
+    def test_the_lines_of_a_prefix_are_the_lines_of_the_kinds_that_start_with_it(self):
+        recorded = history()
+        with LogCapture():
+            for kind in self.KINDS:
+                recorded.emit(kind, note="x")
+        self.assertEqual((recorded.lines("investigation."), recorded.lines("run."), recorded.lines("case."), recorded.lines("investigation.finding"), recorded.lines()),
+                         (4, 3, 1, 2, 8))
+        self.assertEqual((recorded.lines("nothing."), recorded.lines("investigation"), recorded.lines("finding")), (0, 4, 0))
+
+    def test_a_history_that_wrote_nothing_has_counted_nothing_and_each_history_counts_only_its_own_lines(self):
+        first, second = history(), history()
+        self.assertEqual((first.lines(), first.lines("investigation."), dict(first.counts)), (0, 0, {}))
+        with LogCapture():
+            first.emit("investigation.started")
+            first.emit("investigation.finished")
+        self.assertEqual((first.lines("investigation."), second.lines("investigation.")), (2, 0))
+
+    def test_a_kind_that_is_refused_is_not_counted(self):
+        recorded = history()
+        with self.assertRaises(ValueError):
+            recorded.emit("investigation.exploded")
+        self.assertEqual(recorded.lines(), 0)
+
+    def test_a_line_that_was_cut_to_fit_is_one_line_and_is_counted_once(self):
+        recorded = history()
+        with LogCapture() as capture:
+            recorded.emit("investigation.finding", summary="s" * 9000, note="n" * 9000, reason="r" * 9000, finding=1)
+        self.assertEqual((recorded.lines("investigation."), len(capture.messages())), (1, 1))
+
+    def test_the_lines_of_the_investigation_are_the_three_kinds_of_investigation_kinds(self):
+        recorded = history()
+        with LogCapture():
+            for kind in events.INVESTIGATION_KINDS + KINDS[:2]:
+                recorded.emit(kind, note="x")
+        self.assertEqual({kind: recorded.counts[kind] for kind in events.INVESTIGATION_KINDS}, {kind: 1 for kind in events.INVESTIGATION_KINDS})
+        self.assertTrue(all(kind.startswith("investigation.") for kind in events.INVESTIGATION_KINDS))
+        self.assertEqual(recorded.lines("investigation."), len(events.INVESTIGATION_KINDS))
+
+
 class Secrets(unittest.TestCase):
     def test_a_secret_in_a_field_is_redacted_before_it_is_logged(self):
         redact = Redactor()
