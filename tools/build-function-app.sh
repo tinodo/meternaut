@@ -8,9 +8,10 @@
 # same on every machine. The app's own platform does not build anything: that build would have to reach a public package
 # index from inside the app's network. Tests are left out; so are compiled caches.
 #
-# The usage app is built a second way, because its package (about 24 MB) is too big for the request that makes the Operator's container group, and its code is
-# published from inside the network (docs/proposals/07-private-by-default.md, phase 2): the workflow sends the sources, and operator/publish.sh builds the libraries
-# in the container. It is still this one script, with three switches, each set only by the caller that needs it, so that there is one build command and one layout:
+# Both apps are built a second way too, because their packages are too big for the request that makes the Operator's container group (the usage app's is 7.0 MB zipped and the cases app's 614,068 bytes,
+# and a request takes at most 480,000 bytes of files: tools/operator-run.py has the evidence), and their code is published from inside the network (docs/proposals/07-private-by-default.md,
+# phase 2): the workflow sends the sources, and operator/publish.sh builds the libraries in the container. It is still this one script, with three switches, each set only by the caller that needs it,
+# so that there is one build command and one layout:
 #   FUNCTION_APP_SOURCES_ONLY=1       the app's own files and no libraries, zipped: the sources that the workflow sends to the Operator (nothing is installed, so no interpreter is checked)
 #   FUNCTION_APP_SOURCE_DIR=<folder>  where the app's files are, in place of src/<app> next to this script: the folder in which the Operator unpacked those sources
 #   FUNCTION_APP_BUILD_IN_OPERATOR=1  the build runs in the Operator's container (operator/publish.sh). Its Python is 3.12, and pip is the one that ensurepip made. The libraries are still the wheels

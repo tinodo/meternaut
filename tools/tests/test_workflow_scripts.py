@@ -1474,8 +1474,8 @@ esac
 """
 
 PUBLISH_STEP_BASH = """#!/bin/bash
-# stand-in for bash in the step that builds the cases package: it logs the call and makes the package, FAKE_PACKAGE_BYTES long, where the step says (the fifth argument)
-echo "bash $*" >> "$FAKE_LOG"
+# stand-in for bash in the steps that pack the sources: it logs the call (with the switch that the step set) and makes the zip, FAKE_PACKAGE_BYTES long, where the step says (the fifth argument)
+echo "bash $* [sources-only=${FUNCTION_APP_SOURCES_ONLY-unset}]" >> "$FAKE_LOG"
 head -c "${FAKE_PACKAGE_BYTES-1000}" /dev/zero > "$5"
 """
 
@@ -1501,7 +1501,7 @@ class ThePublishStepsFindTheOperatorAskForTheTokenAndStartTheContainerGroup(unit
         "usage": {"title": "Publish the usage functions to the function app from inside the network, in the Operator", "app": "func-meternaut-usage-0a1b2c3d", "action": "recording",
                   "file": "usage-source.zip", "seconds": "2400"},
         "cases": {"title": "Publish the cases to the function app from inside the network, in the Operator", "app": "func-meternaut-cases-0a1b2c3d", "action": "cases",
-                  "file": "case-functions.zip", "seconds": "1200"},
+                  "file": "cases-source.zip", "seconds": "1200"},
     }
 
     def run_publish(self, kind, curl="ok", request=True, identity=None, subnet="ok", exit_code=0, dns="10.20.0.4,10.20.0.5", size=1234):
@@ -1519,7 +1519,7 @@ class ThePublishStepsFindTheOperatorAskForTheTokenAndStartTheContainerGroup(unit
 
     def expected(self, kind, temp, size, dns=("10.20.0.4", "10.20.0.5")):
         want = self.PUBLISHES[kind]
-        files = ([f"usage-source.zip={temp.as_posix()}/usage-source.zip", "build-function-app.sh=tools/build-function-app.sh"] if kind == "usage" else [f"package.zip={temp.as_posix()}/case-functions.zip"])
+        files = [f"{want['file']}={temp.as_posix()}/{want['file']}", "build-function-app.sh=tools/build-function-app.sh"]
         return (["tools/operator-run.py", "run", "--resource-group", self.GROUP, "--name", "op-publish-1234567890", "--subnet-id", self.SUBNET, "--identity-id", self.IDENTITY, "--image", self.IMAGE,
                  "--script", "operator/publish.sh"]
                 + [word for pair in files for word in ("--secret-file", pair)]
@@ -1538,19 +1538,17 @@ class ThePublishStepsFindTheOperatorAskForTheTokenAndStartTheContainerGroup(unit
             (argv,) = calls
             self.assertEqual(argv, self.expected(kind, temp, 4321), kind)
             files = {line.split()[1]: line.split()[2] for line in other if line.startswith("file ")}
-            if kind == "usage":
-                self.assertEqual(files, {"usage-source.zip": "4321", "build-function-app.sh": str((ROOT / "tools" / "build-function-app.sh").stat().st_size)}, "the sources and the build script go whole")
-            else:
-                self.assertEqual(files, {"package.zip": "4321"}, "the finished package goes whole, under the name that the container script looks for")
+            self.assertEqual(files, {self.PUBLISHES[kind]["file"]: "4321", "build-function-app.sh": str((ROOT / "tools" / "build-function-app.sh").stat().st_size)},
+                             f"{kind}: the sources and the build script go whole, and no package: both apps are built in the container")
             self.assertEqual([line for line in other if line.startswith("az ")], [
                 "az resource list --resource-group rg-of-the-project --name id-meternaut-operator --query [0].id --output tsv",
                 f"az rest --method get --url https://management.azure.com{self.SUBNET}?api-version=2025-05-01 --query name --output tsv"],
                 "the runner reads two things and signs in as nobody: the container signs in as the deploy identity")
             self.assertEqual(sum(line.startswith("curl ") for line in other), 1, "one request, for the token")
 
-    def test_the_call_is_accepted_by_the_tool_and_the_group_holds_the_token_once_as_a_secure_value_and_the_files_stay_below_its_limit(self):
+    def test_the_call_is_accepted_by_the_tool_and_the_group_holds_the_token_once_as_a_secure_value_and_the_files_stay_within_its_cap(self):
         tool = load_operator_tool()
-        for kind, size in (("usage", 40_000), ("cases", 2_100_000)):
+        for kind, size in (("usage", 40_000), ("cases", 210_000)):
             done, calls, other, temp = self.run_publish(kind, size=size)
             self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
             (argv,) = calls
@@ -1563,9 +1561,9 @@ class ThePublishStepsFindTheOperatorAskForTheTokenAndStartTheContainerGroup(unit
                                                                        "PUBLISH_FILE_BYTES"]))
             with contextlib.chdir(ROOT):
                 files = tool.read_files(args)
-            self.assertEqual(sorted(files), ["build-function-app.sh", "publish.sh", "usage-source.zip"] if kind == "usage" else ["package.zip", "publish.sh"])
+            zip_name = self.PUBLISHES[kind]["file"]
+            self.assertEqual(sorted(files), sorted(["build-function-app.sh", "publish.sh", zip_name]))
             self.assertEqual(files["publish.sh"], (ROOT / "operator" / "publish.sh").read_bytes().replace(b"\r\n", b"\n"), "the container runs the script of the repository")
-            zip_name = "usage-source.zip" if kind == "usage" else "package.zip"
             self.assertEqual(len(files[zip_name]), size)
             self.assertEqual(dict(plain)["PUBLISH_FILE_BYTES"], str(size), "the size that the container compares the file in its volume with")
             self.assertLess(sum(len(content) for content in files.values()), tool.MAX_FILE_BYTES)
@@ -1574,6 +1572,26 @@ class ThePublishStepsFindTheOperatorAskForTheTokenAndStartTheContainerGroup(unit
             self.assertEqual([variable for variable in variables if self.TOKEN in json.dumps(variable)], [{"name": "AZURE_FEDERATED_TOKEN", "secureValue": self.TOKEN}])
             self.assertEqual(json.dumps(document).count(self.TOKEN), 1, "once in the request, as a secure value, which Azure does not show again")
             self.assertNotIn(self.TOKEN, tool.Printer([self.TOKEN]).redact(f"a line that says {self.TOKEN} in the middle"))
+
+    def test_the_tool_refuses_the_call_of_a_publish_whose_sources_are_over_the_cap_with_the_evidence_and_takes_one_that_is_exactly_at_it(self):
+        tool = load_operator_tool()
+        # The tool reads the script with Unix line endings, whatever the checkout has, and the secret files as they are
+        fixed = len((ROOT / "operator" / "publish.sh").read_bytes().replace(b"\r\n", b"\n")) + (ROOT / "tools" / "build-function-app.sh").stat().st_size
+        for kind in self.PUBLISHES:
+            room = tool.MAX_FILE_BYTES - fixed
+            done, calls, other, temp = self.run_publish(kind, size=room)
+            (argv,) = calls
+            args = tool.build_parser().parse_args(argv[1:])
+            with contextlib.chdir(ROOT):
+                self.assertEqual(sum(len(content) for content in tool.read_files(args).values()), tool.MAX_FILE_BYTES, f"{kind}: exactly at the cap is taken")
+            done, calls, other, temp = self.run_publish(kind, size=room + 1)
+            (argv,) = calls
+            args = tool.build_parser().parse_args(argv[1:])
+            with contextlib.chdir(ROOT), self.assertRaises(tool.Problem) as refused:
+                tool.read_files(args)
+            self.assertIn("more than 480000 bytes", str(refused.exception))
+            self.assertIn("466104", str(refused.exception), "the evidence: the largest request that was taken")
+            self.assertIn("632656", str(refused.exception), "and the one that was refused")
 
     def test_the_token_is_asked_for_with_the_audience_and_the_bearer_on_standard_input_masked_and_given_to_the_one_call_of_the_tool_only_through_its_environment(self):
         for kind in self.PUBLISHES:
@@ -1683,39 +1701,55 @@ class ThePublishStepsFindTheOperatorAskForTheTokenAndStartTheContainerGroup(unit
 
 
 @unittest.skipIf(BASH is None, "no bash on this machine")
-class TheCasesPackageIsCheckedAgainstTheLimitOfTheToolBeforeTheOperatorIsLookedFor(unittest.TestCase):
-    """The step that builds the cases app's package, which now travels in the secret volume of the container group: its size, with that of the container script, is checked against the limit of
-    tools/operator-run.py on the runner, with a message that names the way out, and the limit is the tool's."""
+class TheSourcesAreCheckedAgainstTheCapOfTheToolBeforeTheOperatorIsLookedFor(unittest.TestCase):
+    """The two steps that pack an app's sources for the Operator (docs/proposals/07-private-by-default.md, phase 2), run with bash against a stand-in for bash that makes the zip: everything that the request
+    carries, the sources, the build script and the container script, is counted on the runner against the cap of tools/operator-run.py, with a message that names the cap and its evidence."""
 
-    TITLE = "Build the cases app's package"
+    STEPS = {"usage": {"title": "Pack the usage app's sources for the Operator", "arguments": "usage-functions usage", "stem": "usage-source", "label": "the usage app's sources"},
+             "cases": {"title": "Pack the cases app's sources for the Operator", "arguments": "case-functions cases", "stem": "cases-source", "label": "the cases app's sources"}}
 
-    def run_build(self, package_bytes):
+    def run_pack(self, kind, zip_bytes):
+        want = self.STEPS[kind]
         with tempfile.TemporaryDirectory() as temp:
-            env = {"RUNNER_TEMP": Path(temp).as_posix(), "FAKE_PACKAGE_BYTES": str(package_bytes)}
-            done, lines, _ = run_step_script(self.TITLE, {"bash": PUBLISH_STEP_BASH}, env, prelude=PROBE_STEP_PRELUDE)
+            env = {"RUNNER_TEMP": Path(temp).as_posix(), "FAKE_PACKAGE_BYTES": str(zip_bytes)}
+            done, lines, _ = run_step_script(want["title"], {"bash": PUBLISH_STEP_BASH}, env, prelude=PROBE_STEP_PRELUDE)
             return done, lines, Path(temp).as_posix()
 
-    def script_bytes(self):
-        return (ROOT / "operator" / "publish.sh").stat().st_size
+    def fixed(self):
+        """The bytes that go with the sources: the build script and the container script."""
+        return (ROOT / "tools" / "build-function-app.sh").stat().st_size, (ROOT / "operator" / "publish.sh").stat().st_size
 
-    def test_the_package_is_built_by_the_script_of_the_repository_and_a_package_that_fits_is_said_to_fit(self):
-        done, lines, temp = self.run_build(2_000_000)
-        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
-        self.assertEqual(lines, [f"bash tools/build-function-app.sh case-functions cases {temp}/case-functions {temp}/case-functions.zip"])
-        self.assertIn(f"The package is 2000000 bytes, and with the script {2_000_000 + self.script_bytes()} of the 3000000 bytes that a container group's request may hold.", done.stdout)
+    def test_each_step_zips_the_sources_with_the_script_of_the_repository_in_its_sources_only_mode_and_says_that_the_files_fit(self):
+        build_bytes, script_bytes = self.fixed()
+        for kind, want in self.STEPS.items():
+            done, lines, temp = self.run_pack(kind, 200_000)
+            self.assertEqual(done.returncode, 0, (kind, done.stdout + done.stderr))
+            self.assertEqual(lines, [f"bash tools/build-function-app.sh {want['arguments']} {temp}/{want['stem']} {temp}/{want['stem']}.zip [sources-only=1]"],
+                             f"{kind}: the one script that builds, in the mode that copies and zips and installs nothing")
+            self.assertIn(f"The files that go to the Operator are {200_000 + build_bytes + script_bytes} bytes, of the 480000 that a container group's request may hold.", done.stdout)
 
-    def test_the_limit_is_the_one_of_the_tool_the_boundary_is_the_same_and_a_package_over_it_stops_the_step_with_the_way_out(self):
+    def test_the_cap_is_the_one_of_the_tool_the_boundary_is_the_same_and_files_over_it_stop_the_step_with_the_evidence(self):
         tool = load_operator_tool()
-        self.assertEqual(tool.MAX_FILE_BYTES, 3_000_000, "the limit that the step checks is the limit of the tool")
-        limit = tool.MAX_FILE_BYTES - self.script_bytes()
-        done, _, _ = self.run_build(limit)
-        self.assertEqual(done.returncode, 0, "exactly at the limit: the tool refuses only what is more")
-        done, _, _ = self.run_build(limit + 1)
-        self.assertEqual(done.returncode, 1)
-        self.assertIn(f"::error::The cases app's package is {limit + 1} bytes, and with the script of the container ({self.script_bytes()} bytes) it is more than the 3000000 bytes of files that a container "
-                      "group's request may hold. The package has to get smaller, or the cases app has to be built in the container from its sources, as the usage app is "
-                      "(docs/proposals/07-private-by-default.md, phase 2).", done.stdout)
-        self.assertNotIn("The package is", done.stdout)
+        self.assertEqual(tool.MAX_FILE_BYTES, 480_000, "the cap that the steps check is the cap of the tool")
+        self.assertEqual((tool.FILES_TAKEN_BYTES, tool.FILES_REFUSED_BYTES), (466_104, 632_656), "the evidence that the message gives is the tool's")
+        build_bytes, script_bytes = self.fixed()
+        room = tool.MAX_FILE_BYTES - build_bytes - script_bytes
+        for kind, want in self.STEPS.items():
+            done, _, _ = self.run_pack(kind, room)
+            self.assertEqual(done.returncode, 0, f"{kind}: exactly at the cap: the tool refuses only what is more")
+            done, _, _ = self.run_pack(kind, room + 1)
+            self.assertEqual(done.returncode, 1, kind)
+            self.assertIn(f"::error::The files that go to the Operator are {tool.MAX_FILE_BYTES + 1} bytes ({want['label']} {room + 1}, the build script {build_bytes}, the container script {script_bytes}), more than "
+                          f"the {tool.MAX_FILE_BYTES} bytes of files that a container group's request may hold: a request with {tool.FILES_TAKEN_BYTES} bytes of files was taken, and one with "
+                          f"{tool.FILES_REFUSED_BYTES} was refused with an internal server error (2026-11-06). The sources have to get smaller.", done.stdout, kind)
+            self.assertNotIn("The files that go to the Operator are", done.stdout.replace("::error::The files that go to the Operator are", ""), "no 'fits' line after a refusal")
+
+    def test_the_incident_that_the_cap_is_made_from_would_have_been_stopped_here_the_finished_cases_package_with_the_script_was_refused_by_azure(self):
+        tool = load_operator_tool()
+        self.assertEqual(tool.FILES_REFUSED_BYTES, 614_068 + 18_588, "the finished package of the cases app and the container script, on 2026-11-06")
+        done, _, _ = self.run_pack("cases", 614_068)
+        self.assertEqual(done.returncode, 1, "a package of that size, which the step no longer makes, is stopped on the runner before the Operator is looked for")
+        self.assertIn("The sources have to get smaller.", done.stdout)
 
 
 POWERSHELLS = []
