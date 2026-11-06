@@ -17,7 +17,7 @@ from cases import agents, config as cfg, decide, investigate, loop_config, peopl
 from cases.approvals import Approvals
 from cases.detectors import Context
 from cases.events import History
-from cases.foundry import AgentRun, AgentSpec, FoundryError, FunctionTool
+from cases.foundry import SOFT_TIME_SHARE, AgentRun, AgentSpec, FoundryError, FunctionTool
 from cases.http import HttpError
 from cases.memory_store import MemoryStore, stamp
 from cases.redact import Redactor
@@ -105,6 +105,7 @@ class FakeFoundry:
         self.after_run: Callable[[str], None] | None = None
         self.failed_calls = 0
         self.refused_calls = 0
+        self.out_of_time = False
         self.specs: list[AgentSpec] = []
         self.runs: list[dict] = []
 
@@ -129,7 +130,7 @@ class FakeFoundry:
                 call["ok"] = False
             calls += [{"name": "tool_one", "arguments": {}, "ok": False, "chars": 26, "refused": True}] * self.refused_calls
             text = self.investigator() if callable(self.investigator) else self.investigator
-            return AgentRun(text=text, calls=calls, input_tokens=self.tokens[0], output_tokens=self.tokens[1], responses=len(calls) + 1)
+            return AgentRun(text=text, calls=calls, input_tokens=self.tokens[0], output_tokens=self.tokens[1], responses=len(calls) + 1, out_of_time=self.out_of_time)
         if self.skeptic_error:
             raise self.skeptic_error
         seen = json.loads(user_input)
@@ -2181,6 +2182,16 @@ class WhenTheBudgetIsUsedUp(unittest.TestCase):
         self.assertEqual(h.store.cases_recent()[0].steps[0]["note"], "2 tool calls, 3 refused after the budget")
         self.assertIn(f"the investigator asked for 3 more tool calls after its budget of {budget} was used up, and was refused", h.notes)
         self.assertEqual(h.of("investigation.finished")[0]["toolCalls"], 2)
+
+    def test_a_call_that_the_time_refused_is_said_to_be_that_and_the_seconds_are_those_of_the_soft_time(self):
+        foundry = FakeFoundry(tool_calls=[("tool_one", {}), ("tool_two", {})])
+        foundry.refused_calls, foundry.out_of_time = 3, True
+        h = Harness(foundry, with_store=True)
+        result = h.go()
+        seconds = int(SOFT_TIME_SHARE * foundry.runs[0]["max_seconds"])
+        self.assertEqual((result.ran, result.tool_calls), (True, 2))
+        self.assertEqual(h.store.cases_recent()[0].steps[0]["note"], "2 tool calls, 3 refused after the time")
+        self.assertIn(f"the investigator asked for 3 more tool calls after its time for tool calls ({seconds} seconds) was used up, and was refused", h.notes)
 
     def test_a_refused_call_is_not_a_failed_call_and_one_is_said_in_the_singular(self):
         foundry = FakeFoundry(tool_calls=[("tool_one", {})])

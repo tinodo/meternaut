@@ -11,6 +11,7 @@ import socket
 import traceback
 import unittest
 import urllib.error
+from unittest import mock
 from urllib.parse import parse_qs, urlsplit
 
 from support import LogCapture, PRODUCT_SUBSCRIPTION
@@ -243,7 +244,7 @@ class Interface(unittest.TestCase):
                           ("max_calls", "KEYWORD_ONLY", 20), ("max_seconds", "KEYWORD_ONLY", None)])
         self.assertEqual([f.name for f in dataclasses.fields(FunctionTool)], ["name", "description", "parameters"])
         self.assertEqual([f.name for f in dataclasses.fields(AgentSpec)], ["name", "description", "model", "instructions", "tools"])
-        self.assertEqual([f.name for f in dataclasses.fields(AgentRun)], ["text", "calls", "input_tokens", "output_tokens", "responses"])
+        self.assertEqual([f.name for f in dataclasses.fields(AgentRun)], ["text", "calls", "input_tokens", "output_tokens", "responses", "out_of_time"])
         for frozen, cls in ((True, FunctionTool), (True, AgentSpec), (False, AgentRun)):
             self.assertEqual(cls.__dataclass_params__.frozen, frozen, cls.__name__)
 
@@ -808,6 +809,64 @@ class SoftBudget(unittest.TestCase):
         self.assertEqual(len(handler.calls), 1)
         self.assertEqual((rig.service.routes()[-1], rig.service.conversations), ("DELETE conversation", {}))
 
+    def test_a_call_after_70_percent_of_the_time_is_refused_like_one_beyond_the_budget_and_the_agent_may_still_give_its_text(self):
+        self.assertEqual(fo.SOFT_TIME_SHARE, 0.7)
+        rig = Rig()
+        rig.service.advance = 10  # the conversation is made at 10 seconds, the first response comes at 20, the sixth at 70 (the soft time of 100 seconds) and the text at 80
+        handler = Handler()
+        result = rig.run(*[self.asks(f"c{i}") for i in range(1, 7)], reply([message("final")]), handler=handler, max_calls=40, max_seconds=100)
+        self.assertEqual((result.text, result.out_of_time, len(handler.calls)), ("final", True, 5))
+        self.assertEqual([c.get("refused") for c in result.calls], [None] * 5 + [True])
+        self.assertEqual(self.posted(rig)[-1], [output_of("c6", self.REFUSED)])
+        self.assertEqual((rig.service.routes()[-1], rig.service.conversations, rig.foundry.notes), ("DELETE conversation", {}, []))
+
+    def test_a_run_that_is_not_late_and_within_its_budget_is_never_out_of_time_and_a_budget_that_ends_first_is_not_the_time(self):
+        rig = Rig()
+        rig.service.advance = 10
+        result = rig.run(self.asks("c1"), self.asks("c2"), reply([message("final")]), handler=Handler(), max_calls=40, max_seconds=1000)
+        self.assertEqual((result.out_of_time, [c.get("refused") for c in result.calls]), (False, [None, None]))
+        rig = Rig()
+        rig.service.advance = 10
+        result = rig.run(self.asks("c1"), self.asks("c2"), reply([message("final")]), handler=Handler(), max_calls=1, max_seconds=1000)
+        self.assertEqual((result.out_of_time, [c.get("refused") for c in result.calls]), (False, [None, True]), "the budget refused it")
+        rig = Rig()
+        rig.service.advance = 10
+        result = rig.run(*[self.asks(f"c{i}") for i in range(1, 4)], reply([message("final")]), handler=Handler(), max_calls=1, max_seconds=100)
+        self.assertEqual((result.out_of_time, [c.get("refused") for c in result.calls]), (False, [None, True, True]), "a call that the budget refused is not one that the time refused")
+
+    def test_a_run_without_seconds_has_no_soft_time(self):
+        rig = Rig()
+        rig.service.advance = 10_000
+        result = rig.run(self.asks("c1"), self.asks("c2"), reply([message("final")]), handler=Handler(), max_calls=40)
+        self.assertEqual((result.out_of_time, [c.get("refused") for c in result.calls]), (False, [None, None]))
+
+    def test_the_soft_time_counts_the_seconds_that_a_tool_took(self):
+        rig = Rig()
+        rig.service.advance = 1
+
+        def slow(name, arguments):
+            rig.clock.now += 80
+            return "{}"
+
+        result = rig.run(self.asks("c1"), self.asks("c2"), reply([message("final")]), handler=slow, max_calls=40, max_seconds=100)
+        self.assertEqual(([c.get("refused") for c in result.calls], result.out_of_time, result.text), ([None, True], True, "final"))
+
+    def test_an_agent_that_still_asks_after_the_soft_time_and_three_more_rounds_fails_with_words_about_the_time_and_keeps_what_was_gathered(self):
+        rig = Rig()
+        rig.service.advance = 1
+
+        def slow(name, arguments):
+            rig.clock.now += 80
+            return "{}"
+
+        with self.assertRaises(FoundryError) as raised:
+            rig.run(*[self.asks(f"c{i}") for i in range(1, 8)], reply([message("never read")]), handler=slow, max_calls=40, max_seconds=100)
+        self.assertEqual(str(raised.exception), "Foundry run stopped: the time for tool calls (70 seconds) was used up and the agent still asked for a tool call after "
+                                                "3 more rounds, and gave no text")
+        partial = raised.exception.partial
+        self.assertEqual(([bool(c.get("refused")) for c in partial.calls], partial.out_of_time), ([False] + [True] * 4, True))
+        self.assertEqual((rig.service.routes()[-1], rig.service.conversations), ("DELETE conversation", {}))
+
 
 class Shapes(unittest.TestCase):
     """What the client refuses to read: each of these is a FoundryError that says what was asked and what is wrong, and the conversation is deleted."""
@@ -942,8 +1001,9 @@ class Deadline(unittest.TestCase):
         rig = Rig()
         rig.service.advance = 10
         handler = Handler()
-        with self.assertRaises(FoundryError) as raised:
-            rig.run(reply([call("t", {}, "c1")]), reply([call("t", {}, "c2")]), reply([call("t", {}, "c3")]), reply([message("late")]), handler=handler, max_seconds=25)
+        with mock.patch.object(fo, "SOFT_TIME_SHARE", 10.0):  # out of reach: the soft time has its own tests, and here the limit is the hard one
+            with self.assertRaises(FoundryError) as raised:
+                rig.run(reply([call("t", {}, "c1")]), reply([call("t", {}, "c2")]), reply([call("t", {}, "c3")]), reply([message("late")]), handler=handler, max_seconds=25)
         self.assertEqual(str(raised.exception), "Foundry run stopped: the time allowed (25 seconds) was used up after 2 tool calls")
         self.assertEqual(len(handler.calls), 2)
         partial = raised.exception.partial
@@ -1386,7 +1446,67 @@ class Repeats(unittest.TestCase):
                 else:
                     self.assertEqual(rig.run(reply([message("x")])).text, "x")
                 self.assertEqual(rig.service.routes().count(route), 2)
-                self.assertEqual(rig.sleeps, [2.0] if status == 429 else [1.5], "a Retry-After header is obeyed for a 429, and a 503 waits as long as a server error does")
+                # A 503 has no Retry-After here. It waits as long as a server error does, and a step of a run waits fo.RATE_BACKOFF seconds (with the jitter of 0.5) for its first repeat.
+                waits_for_503 = 1.5 * fo.RATE_BACKOFF if route == "POST responses" else 1.5
+                self.assertEqual(rig.sleeps, [2.0] if status == 429 else [waits_for_503], "a Retry-After header is obeyed for a 429")
+
+    def test_a_step_of_a_run_waits_for_the_tokens_of_its_model_and_says_so(self):
+        rig = Rig()
+        slow = (429, {}, {"error": {"code": "rate_limit_exceeded", "message": "Model deployment rate limit exceeded."}})
+        rig.service.failures["POST responses"] = [slow] * fo.RATE_RETRIES + [PASS]
+        self.assertEqual(rig.run(reply([message("x")])).text, "x")
+        self.assertEqual(rig.service.routes().count("POST responses"), fo.RATE_RETRIES + 1)
+        self.assertEqual(rig.sleeps, [12.0, 24.0, 30.0, 30.0, 30.0, 30.0], "8 seconds, then 16 and 30 at most, each with the jitter of 0.5")
+        self.assertEqual(rig.foundry.notes, [f"Foundry response: the service said not now (HTTP 429 or 503) {fo.RATE_RETRIES} times, and the call was made again after a pause"])
+        bodies = [json.dumps(c["body"], sort_keys=True) for c in rig.service.calls if c["route"] == "POST responses"]
+        self.assertEqual((len(bodies), len(set(bodies))), (fo.RATE_RETRIES + 1, 1), "the same input is sent again")
+
+    def test_a_step_that_is_still_refused_after_the_repeats_is_an_error_with_its_status_and_no_function_output_is_lost_or_doubled(self):
+        rig = Rig()
+        rig.service.replies = [reply([call("t", {}, "c1")])]
+        slow = (429, {}, {"error": {"code": "rate_limit_exceeded", "message": "Slow down"}})
+        rig.service.failures["POST responses"] = [PASS] + [slow]
+        with self.assertRaises(FoundryError) as raised:
+            rig.foundry.run(AGENT, "Go.", Handler('{"a":1}'))
+        self.assertEqual(str(raised.exception), "Foundry function output failed: HTTP 429; rate_limit_exceeded: Slow down")
+        self.assertEqual(len(rig.sleeps), fo.RATE_RETRIES)
+        self.assertEqual(rig.service.routes().count("POST responses"), 1 + fo.RATE_RETRIES + 1)
+        asked = [c["body"]["input"] for c in rig.service.calls if c["route"] == "POST responses"][1:]
+        self.assertEqual([[item["call_id"] for item in each] for each in asked], [["c1"]] * (fo.RATE_RETRIES + 1), "the output of the call is sent again, once in each request")
+        self.assertEqual(raised.exception.partial.calls, [{"name": "t", "arguments": {}, "ok": True, "chars": 7}])
+
+    def test_a_retry_after_is_obeyed_up_to_the_wait_that_the_client_allows_and_a_longer_one_is_an_error(self):
+        self.assertEqual(fo.RATE_WAIT_MAX, 90.0)
+        for wait, repeated in (("90", True), ("91", False)):
+            with self.subTest(wait=wait):
+                rig = Rig()
+                rig.service.failures["POST responses"] = [(429, {"retry-after": wait}, {"error": {"code": "rate_limit_exceeded", "message": "Slow down"}}), PASS]
+                if repeated:
+                    self.assertEqual(rig.run(reply([message("x")])).text, "x")
+                    self.assertEqual(rig.sleeps, [90.0])
+                else:
+                    with self.assertRaises(FoundryError) as raised:
+                        rig.run(reply([message("x")]))
+                    self.assertEqual((raised.exception.status, rig.sleeps), (429, []))
+
+    def test_the_pauses_of_a_step_stay_inside_the_time_of_the_run(self):
+        rig = Rig()
+        rig.client.sleep = lambda seconds: (rig.sleeps.append(seconds), setattr(rig.clock, "now", rig.clock.now + seconds))
+        rig.service.failures["POST responses"] = (429, {}, {"error": {"code": "rate_limit_exceeded", "message": "Slow down"}})
+        with self.assertRaises(FoundryError) as raised:
+            rig.run(max_seconds=40)
+        self.assertEqual(rig.sleeps, [12.0, 24.0], "the third pause of 30 seconds would end after the 40 seconds, so it is not taken")
+        self.assertEqual(raised.exception.status, 429)
+        self.assertEqual(rig.service.routes()[-1], "DELETE conversation")
+
+    def test_the_other_calls_keep_their_two_repeats_and_say_nothing_of_them(self):
+        for route in ("POST agents", "POST conversations"):
+            with self.subTest(route=route):
+                rig = Rig()
+                rig.service.failures[route] = (503, {}, {})
+                with self.assertRaises(FoundryError):
+                    rig.foundry.ensure_agent(spec()) if route == "POST agents" else rig.run()
+                self.assertEqual((rig.service.routes().count(route), rig.sleeps, rig.foundry.notes), (3, [1.5, 3.0], []))
 
     def test_the_run_asks_the_same_thing_again_and_a_long_wait_is_an_error_with_its_status(self):
         rig = Rig()
@@ -1538,7 +1658,7 @@ class TheKeyOfTheAgent(unittest.TestCase):
                     rig.service.failures["POST responses"] = failure
                     with self.assertRaises(FoundryError):
                         rig.run()
-                    self.assertEqual(self.keys(rig), ["agent_reference"] * 3, "the client waits and asks again with the same key, which is not the other key")
+                    self.assertEqual(self.keys(rig), ["agent_reference"] * (fo.RATE_RETRIES + 1), "the client waits and asks again with the same key, which is not the other key")
         for failure in (urllib.error.URLError("down"), TimeoutError("slow")):
             with self.subTest(failure=failure):
                 rig = Rig()

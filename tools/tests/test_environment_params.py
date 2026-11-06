@@ -477,7 +477,7 @@ class Models(unittest.TestCase):
         return err
 
     def good(self, **changes):
-        return {"name": "gpt-6-luna", "version": "2026-09-22", "sku": "DataZoneStandard", "capacity": 20, "retirementDate": "2028-03-11", **changes}
+        return {"name": "gpt-6-luna", "version": "2026-09-22", "sku": "DataZoneStandard", "capacity": 20, "agentCapacity": 20, "retirementDate": "2028-03-11", **changes}
 
     def test_the_models_of_the_repository_are_valid(self):
         self.assertEqual(run(SETTINGS)[0], 0)
@@ -485,6 +485,8 @@ class Models(unittest.TestCase):
     def test_bad_models_are_refused(self):
         for bad in ([], "x", [1], [{"name": "x"}], [self.good(name="Has Space")], [self.good(name="gpt;x")], [self.good(version="latest")],
                     [self.good(sku="Standard")], [self.good(capacity=0)], [self.good(capacity=True)], [self.good(capacity="20")],
+                    [self.good(agentCapacity=0)], [self.good(agentCapacity=1001)], [self.good(agentCapacity=True)], [self.good(agentCapacity="20")], [self.good(agentCapacity=2.5)],
+                    [{k: v for k, v in self.good().items() if k != "agentCapacity"}],
                     [self.good(retirementDate="soon")], [self.good(), self.good()], [self.good(extra=1)], [self.good(name=f"m{i}") for i in range(9)]):
             self.refused(bad)
 
@@ -560,9 +562,9 @@ class Contract(unittest.TestCase):
     def test_the_token_rate_may_not_be_more_than_the_smallest_deployment_can_serve(self):
         self.assertEqual(self.build(self.contract(tokensPerMinute=20000))[0], 0)
         self.assertIn("20000", self.refused(self.contract(tokensPerMinute=20001)))
-        models = [{"name": "big", "version": "2026-09-22", "sku": "DataZoneStandard", "capacity": 20, "retirementDate": "2028-03-11"},
-                  {"name": "also-big", "version": "2026-09-22", "sku": "DataZoneStandard", "capacity": 20, "retirementDate": "2028-03-11"},
-                  {"name": "small", "version": "2026-09-22", "sku": "DataZoneStandard", "capacity": 5, "retirementDate": "2028-03-11"}]
+        models = [{"name": "big", "version": "2026-09-22", "sku": "DataZoneStandard", "capacity": 20, "agentCapacity": 20, "retirementDate": "2028-03-11"},
+                  {"name": "also-big", "version": "2026-09-22", "sku": "DataZoneStandard", "capacity": 20, "agentCapacity": 20, "retirementDate": "2028-03-11"},
+                  {"name": "small", "version": "2026-09-22", "sku": "DataZoneStandard", "capacity": 5, "agentCapacity": 5, "retirementDate": "2028-03-11"}]
         path = self.write("models.json", json.dumps(models))
         self.assertIn("5000", self.refused(self.contract(allowedModels=["big", "small"], tokensPerMinute=10000), models=path))
         self.assertEqual(self.build(self.contract(allowedModels=["big", "also-big"], tokensPerMinute=10000), models=path)[0], 0)
@@ -848,14 +850,29 @@ class Foundry(unittest.TestCase):
         self.assertTrue(outputs["foundry_project_endpoint"].startswith(f"https://{outputs['foundry_account_name']}.services.ai.azure.com/api/projects/"))
         self.assertEqual(outputs["foundry_project_endpoint"].rsplit("/", 1)[1], outputs["foundry_project_name"])
 
-    def test_the_models_are_the_ones_of_models_json_and_of_the_model_side_and_nothing_else(self):
+    def test_the_models_are_the_ones_of_models_json_with_the_capacity_that_the_agents_have_and_nothing_else(self):
         files, _ = self.files()
         deployed = values(files["foundry.parameters.json"])["models"]
-        wanted = [{k: m[k] for k in ("name", "version", "sku", "capacity")} for m in json.loads(MODELS.read_text(encoding="utf-8"))]
+        listed = json.loads(MODELS.read_text(encoding="utf-8"))
+        wanted = [{"name": m["name"], "version": m["version"], "sku": m["sku"], "capacity": m["agentCapacity"]} for m in listed]
         self.assertEqual(deployed, wanted)
-        self.assertEqual(deployed, values(files["environment.parameters.json"])["models"])
+        self.assertEqual([m["name"] for m in values(files["environment.parameters.json"])["models"]], [m["name"] for m in deployed], "the same models as the model side")
+        self.assertEqual(values(files["environment.parameters.json"])["models"], [{k: m[k] for k in ("name", "version", "sku", "capacity")} for m in listed],
+                         "the model side keeps its own capacity")
         for model in deployed:
-            self.assertEqual(set(model), {"name", "version", "sku", "capacity"}, "no retirement date reaches the template")
+            self.assertEqual(set(model), {"name", "version", "sku", "capacity"}, "no retirement date and no agentCapacity reaches the template")
+
+    def test_the_capacity_of_the_agents_may_differ_from_the_one_of_the_model_side_and_each_side_gets_its_own(self):
+        models = [{"name": "alpha", "version": "2026-09-22", "sku": "DataZoneStandard", "capacity": 20, "agentCapacity": 70, "retirementDate": "2028-03-11"},
+                  {"name": "beta", "version": "2026-09-22", "sku": "DataZoneStandard", "capacity": 30, "agentCapacity": 10, "retirementDate": "2028-03-11"}]
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        path = Path(tmp.name) / "models.json"
+        path.write_text(json.dumps(models), encoding="utf-8")
+        code, _, _, files = run(SETTINGS, models=path)
+        self.assertEqual(code, 0)
+        self.assertEqual([m["capacity"] for m in values(files["foundry.parameters.json"])["models"]], [70, 10])
+        self.assertEqual([m["capacity"] for m in values(files["environment.parameters.json"])["models"]], [20, 30])
 
     def test_the_cases_identity_reaches_the_file_and_without_it_a_placeholder_says_so_and_nothing_else_is_asked_of_it(self):
         files, outputs = self.files(CASES_PRINCIPAL_ID=self.CASES_PRINCIPAL)

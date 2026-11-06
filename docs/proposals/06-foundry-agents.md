@@ -34,7 +34,7 @@ An agent's answer is data, as a model's answer always was ([rule 26](../../AGENT
 - A handle that no tool gave is dropped. A finding with no verified handle is dropped.
 - Money is computed by code from the cost lines. An agent never writes a figure, and a figure about money in its text is removed on a best-effort basis (a number with a currency word or sign, or a number with a period word in a sentence that talks about saving, cost or price); counts such as the number of resources with data are left alone.
 - No resource name, tag, identifier or other text that somebody wrote about a resource ever enters a tool answer: a resource is a handle (`r1`, `r2`) with a meaning in this run only. A string in a tool answer has to pass a word check. A test feeds hostile names and tags to every tool, and a check against the real estate found none of 643 real names and tag values in any answer.
-- Limits: a soft budget of 40 tool calls (the default, and the ceiling; the first real run used all of 24 and left much of the estate unlooked): a call beyond it is not run and the agent is told `budget-used-up`, and it has three more rounds to write its answer before the run fails and its findings are lost; a hard limit of 420 seconds (ceiling 600) for the whole investigation, of which the Investigator gets what is left after a reserve of up to 120 seconds for the Skeptic, 8 findings, 60 resources in a finding, 60 cases in a run. The History says how many calls were refused.
+- Limits: a soft budget of 40 tool calls (the default, and the ceiling; the first real run used all of 24 and left much of the estate unlooked): a call beyond it is not run and the agent is told `budget-used-up`, and it has three more rounds to write its answer before the run fails and its findings are lost; the same is done to every call after 70% of the Investigator's time has passed, so that a run that is slowed down still ends with its answer; a hard limit of 420 seconds (ceiling 600) for the whole investigation, of which the Investigator gets what is left after a reserve of up to 120 seconds for the Skeptic, 8 findings, 60 resources in a finding, 60 cases in a run. The History says how many calls were refused, and whether the budget or the time was the cause.
 
 ## The History lines
 
@@ -54,7 +54,7 @@ Foundry agents call the models of their own resource directly. That does not pas
 
 | Option | What it needs | Verdict |
 |---|---|---|
-| **Agents call their own resource (built)** | Nothing more. No key. The guardrail, the traces, the role on the project and Defender for Cloud's AI protection apply | Used now, as a disclosed exception. The deployments' own quota is the token limit |
+| **Agents call their own resource (built)** | Nothing more. No key. The guardrail, the traces, the role on the project and Defender for Cloud's AI protection apply | Used now, as a disclosed exception. The deployments' own quota is the token limit (the Investigator's deployment has 50 thousand tokens a minute, see [the rate of the model](#the-rate-of-the-model)) |
 | **Foundry's API Management connection** | The gateway must be Standard v2 or Premium; Learn calls the connection preview, and the project's identity needs access at the gateway | Not possible: the gateway is the Developer tier |
 | **Foundry's generic model-gateway connection** | An API key or an OAuth client secret stored in the connection | Possible, with one key in a place that the platform keeps. [Rule 23](../../AGENTS.md) says no key, and the owner decides |
 | **Move the gateway to Standard v2** | A larger instance, at a price well above the 50 US dollar line | The owner's decision |
@@ -65,6 +65,15 @@ Foundry agents call the models of their own resource directly. That does not pas
 - **Network.** The resource has no public access and one private endpoint. The template makes no private DNS zone, link or zone group; the landing zone's policy registered the endpoint in its three central zones ten minutes after it was made, and the app reached the project through it on the first run.
 - **Guardrail.** Prompt Shields block attacks in user input and instructions hidden in tool results, on top of Microsoft's default content filter. Learn lists tool-result scanning as a preview feature, so the typed tool answers stay the first defence.
 - **Tracing.** The project has an Application Insights connection with the project's managed identity and no key.
+
+## The rate of the model
+
+An agent that calls tools reads everything said so far again at every step, so the tokens of a run grow with the square of its steps and not with their number. The second real run (2026-11-06) stopped in its 12th step with HTTP 429 (`rate_limit_exceeded`) from a deployment of 20 thousand tokens a minute: eleven steps had read 65 thousand tokens in 52 seconds, with the input of a step growing from 2.9 to 7.9 thousand tokens, and 40 steps would take it to about 21 thousand each. The client had waited 1 to 4 seconds twice, which does not give the tokens of a minute back, and the run lost its findings. Four things changed, and none of them makes the agent less free:
+
+- **The capacity.** The Investigator's deployment has 50 thousand tokens a minute (`agentCapacity` in [`models.json`](../../environment/models.json); the Skeptic reads one prompt and keeps 20). A capacity is a rate limit and not a charge: the models bill by token, so nothing is paid for it while no agent runs.
+- **Patience.** A step of a run that the service answers with 429 or 503 is asked again up to six times, after 8 seconds (with jitter), then 16, then 30 at most, or as long as a Retry-After of up to 90 seconds says. The pauses stay inside the time of the run, a 429 comes before the model produced anything so the same input is sent again, and a note of the History says how often it happened.
+- **Fewer steps.** The instructions tell the Investigator to ask for calls that do not depend on each other in one step, which lowers the number of steps and so the tokens that every step reads again.
+- **An answer before the limit.** After 70% of its time the Investigator's tool calls are refused as if its budget were used up, so a run that is slow because of its model still ends with the answer that it has.
 
 ## Not built, and not shown yet
 

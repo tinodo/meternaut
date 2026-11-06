@@ -41,6 +41,17 @@ BUDGET_USED_UP = '{"error":"budget-used-up"}'
 GRACE_ROUNDS = 3  # after the first answer that says so, the agent has this many more rounds to give its text
 # A call that may already have been carried out (a creation, a run) is repeated only when the service says "not now".
 NOT_NOW = {"retry_statuses": frozenset({429, 503}), "retry_network": False}
+# A model that has used the tokens of its deployment for the minute says "not now" (HTTP 429) to the next step of a run, and the first real runs showed that it says
+# it without a Retry-After and that 1 to 4 seconds is not enough to get the tokens back. A step of a run is therefore repeated up to RATE_RETRIES times, after 8 seconds
+# (with jitter), then 16, then 30 at most, and a Retry-After of more than RATE_WAIT_MAX seconds is an error. The pauses stay inside the time of the run. The 429 comes
+# before the model has produced anything, so the conversation is unchanged and the same input is sent again.
+RATE_RETRIES = 6
+RATE_BACKOFF = 8.0
+RATE_BACKOFF_MAX = 30.0
+RATE_WAIT_MAX = 90.0
+# The part of the time of a run after which the tool calls of the agent are refused like a call beyond the budget: it then gives the answer that it has, and a run that
+# is slowed by the rate of its model still ends with that answer before its hard limit.
+SOFT_TIME_SHARE = 0.7
 PRIVATE_NETWORKS = tuple(ipaddress.ip_network(network) for network in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"))  # RFC 1918
 AGENT_NAME = re.compile(FOUNDRY_AGENT_NAME)
 CONVERSATION_ID = re.compile(FOUNDRY_CONVERSATION_ID)
@@ -91,11 +102,13 @@ class AgentRun:
 
     text: str
     # One dict per tool call that the agent asked for: name, arguments, ok, chars. `cut` is True when the answer was cut. `refused` is True when the budget of tool
-    # calls was used up: the handler was not called and the agent was told {"error":"budget-used-up"}.
+    # calls or the soft time was used up: the handler was not called and the agent was told {"error":"budget-used-up"}.
     calls: list[dict] = field(default_factory=list)
     input_tokens: int = 0
     output_tokens: int = 0
     responses: int = 0
+    # True when a call was refused because the soft time of the run was used up (and not the budget of calls).
+    out_of_time: bool = False
 
 
 # (tool name, arguments) -> the result as a JSON string that holds typed values only. It never raises.
@@ -215,8 +228,10 @@ class Foundry:
         string, makes the answer {"error":"tool-failed"}. An answer longer than cases.toolbox.MAX_RESULT_CHARS is cut and says so.
 
         `max_calls` is a soft budget. That many calls are run (one that failed counts). Every call after them is not given to the handler: it is answered
-        {"error":"budget-used-up"} and recorded with refused: True, and the agent has GRACE_ROUNDS (3) more rounds to give its text. A FoundryError is raised when it
-        still asks for a tool call after those, when `max_seconds` pass (that limit is hard, also while a tool works), or when the service gives no usable answer.
+        {"error":"budget-used-up"} and recorded with refused: True, and the agent has GRACE_ROUNDS (3) more rounds to give its text. The same is done with every call
+        that the agent asks for after SOFT_TIME_SHARE (70%) of `max_seconds` has passed (the result then has out_of_time True), so that a run that was slowed down, by the
+        rate of its model for instance, still gives its answer before the hard limit. A FoundryError is raised when it
+        still asks for a tool call after those rounds, when `max_seconds` pass (that limit is hard, also while a tool works), or when the service gives no usable answer.
         What the run had gathered is in the `partial` of every FoundryError of a run. The conversation is deleted in every case, after the time is used up too.
 
         The key of the agent reference is `agent_reference` (the REST reference). If the first response that the service answers in the life of this client is an
@@ -231,7 +246,9 @@ class Foundry:
             raise FoundryError("Foundry: max_seconds is not a number above 0")
         result = AgentRun(text="")
         now = self.client.monotonic
-        deadline = None if max_seconds is None else now() + max_seconds
+        began = now()
+        deadline = None if max_seconds is None else began + max_seconds
+        soft = None if max_seconds is None else began + SOFT_TIME_SHARE * max_seconds
         saved = self.client.deadline
         if deadline is not None:
             self.client.deadline = deadline if saved is None else min(saved, deadline)
@@ -257,17 +274,21 @@ class Foundry:
                     raise self._error("Foundry run stopped: the agent asked for a tool call and no handler was given")
                 before, pending = refused, []
                 for each in calls:
-                    if made < max_calls:
+                    late = soft is not None and now() >= soft
+                    if made < max_calls and not late:
                         pending.append(self._answer(each, handler, result))
                         made += 1
                     else:
                         pending.append(self._refuse(each, result))
                         refused += 1
+                        if late and made < max_calls:
+                            result.out_of_time = True
                 if refused > before:
                     told += 1
                     if told > GRACE_ROUNDS:
-                        raise self._error(f"Foundry run stopped: the budget of {max_calls} tool calls was used up and the agent still asked for a tool call after "
-                                          f"{GRACE_ROUNDS} more rounds, and gave no text")
+                        spent = (f"the time for tool calls ({SOFT_TIME_SHARE * max_seconds:g} seconds) was used up" if result.out_of_time
+                                 else f"the budget of {max_calls} tool calls was used up")
+                        raise self._error(f"Foundry run stopped: {spent} and the agent still asked for a tool call after {GRACE_ROUNDS} more rounds, and gave no text")
                 purpose = "function output"
         except FoundryError as error:
             error.partial = result
@@ -306,19 +327,21 @@ class Foundry:
 
     def _post_response(self, key: str, reference: dict, conversation: str, pending: list[dict], purpose: str) -> dict:
         body = {key: reference, "conversation": conversation, "input": pending}
-        return self._call("POST", "/openai/v1/responses", body, purpose=purpose, timeout=RESPONSE_TIMEOUT, once=True)
+        return self._call("POST", "/openai/v1/responses", body, purpose=purpose, timeout=RESPONSE_TIMEOUT, once=True, patient=True)
 
     # -- the calls ------------------------------------------------------------------------------------------------------------------------------
     def _call(self, method: str, path: str, body: object = None, *, purpose: str, timeout: float = 30, retries: int = 2, once: bool = False, gone_ok: bool = False,
-              parse: bool = True) -> dict | None:
+              parse: bool = True, patient: bool = False) -> dict | None:
         """One call to the project. Returns the answer as a JSON object ({} when `parse` is off), or None for a 404 when `gone_ok`. `once` is for a call that may have
-        been carried out when its answer did not arrive (a creation, a run): it is repeated only when the service says "not now"."""
+        been carried out when its answer did not arrive (a creation, a run): it is repeated only when the service says "not now". `patient` (a step of a run) waits
+        for the model to have tokens again: see RATE_RETRIES."""
         try:
             token = self.token(RESOURCE)
         except IdentityError as error:
             raise self._error(f"Foundry {purpose} failed: no token could be had for the service ({self.redact(error)})") from None
         self.redact.add(token)
         seen: list[tuple[int, bytes]] = []
+        not_now = [0]
         transport = self.client.transport
 
         # The client keeps only a cut text of an error body. The answers of this call are kept here, so that the error object of the last one can be read from the body.
@@ -326,11 +349,16 @@ class Foundry:
             seen.clear()
             answer = transport(*call)
             seen.append((answer[0], answer[2]))
+            if answer[0] in NOT_NOW["retry_statuses"]:
+                not_now[0] += 1
             return answer
+
+        waits = ({"retries": RATE_RETRIES, "backoff": RATE_BACKOFF, "backoff_max": RATE_BACKOFF_MAX, "retry_after_max": RATE_WAIT_MAX} if patient
+                 else {"retries": retries})
 
         self.client.transport = keep
         try:
-            response = self.client.request(method, f"{self.endpoint}{path}", headers={"Authorization": f"Bearer {token}"}, body=body, timeout=timeout, retries=retries,
+            response = self.client.request(method, f"{self.endpoint}{path}", headers={"Authorization": f"Bearer {token}"}, body=body, timeout=timeout, **waits,
                                            **(NOT_NOW if once else {}))
         except HttpError as error:
             if gone_ok and error.status == 404:
@@ -340,6 +368,8 @@ class Foundry:
             raise self._error(f"Foundry {purpose} failed: {error}") from None
         finally:
             self.client.transport = transport
+        if not_now[0] and patient:
+            self._note(f"Foundry {purpose}: the service said not now (HTTP 429 or 503) {not_now[0]} time{'' if not_now[0] == 1 else 's'}, and the call was made again after a pause")
         if not parse:
             return {}
         try:
