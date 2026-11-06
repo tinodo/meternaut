@@ -12,8 +12,9 @@
 // The owner prefers system-assigned identities, so the function app moves from its user-assigned identity (id-meternaut-usage) to its own system-assigned
 // identity in two steps (environment/BOOTSTRAP.md). This is the first: the app has the system-assigned identity next to the user-assigned one, that
 // identity holds every role that id-meternaut-usage holds in this template (the data role of Cosmos DB included), and the settings and the deployment
-// storage still name id-meternaut-usage, so nothing that the app does changes. The second step moves the settings to the system-assigned identity and removes
-// id-meternaut-usage, after the roles outside this group have been given to the new identity.
+// storage still name id-meternaut-usage, so nothing that the app does changes. The second step moves the settings to the system-assigned identity and takes
+// id-meternaut-usage off the app, after the roles outside this group have been given to the new identity; a person removes the identity itself later, after
+// tools/access-requirements.py retire has taken away its grants.
 //
 // No key of any kind, and no opt-out of a policy (AGENTS.md rule 23):
 //  - every caller uses an identity (Microsoft Entra ID): the function app its managed identity, the gateway its own

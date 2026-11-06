@@ -11,8 +11,9 @@
 // Identities, and no right to change Azure. The owner prefers system-assigned identities, so the app moves from `id-meternaut-cases` to its own system-assigned
 // identity in two steps (environment/BOOTSTRAP.md). This is the first: the app has the system-assigned identity next to the two user-assigned ones, that identity
 // holds every role that `id-meternaut-cases` holds in this template, and the settings still name `id-meternaut-cases`, so nothing that the app does changes. The
-// second step moves the settings to the system-assigned identity and removes `id-meternaut-cases`, after the roles outside this group have been given to the new
-// identity. `id-meternaut-cases` reads the pilot estate, its cost lines and the gateway's access key, stores the records, and holds the roles below that are for
+// second step moves the settings to the system-assigned identity and takes `id-meternaut-cases` off the app, after the roles outside this group have been given to
+// the new identity; a person removes the identity itself later, after `tools/access-requirements.py retire` has taken away its grants. `id-meternaut-cases` reads the
+// pilot estate, its cost lines and the gateway's access key, stores the records, and holds the roles below that are for
 // the app. `id-meternaut-console-auth` stays a user-assigned identity (Microsoft documents the secretless sign-in of an App Service app only with that kind:
 // https://learn.microsoft.com/azure/app-service/configure-authentication-provider-aad#use-a-managed-identity-instead-of-a-secret) and holds no role: the
 // console's app registration trusts it through a federated credential, so that the platform's sign-in, and the console when it redeems the code of an Azure

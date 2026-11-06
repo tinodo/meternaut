@@ -1742,8 +1742,8 @@ class HandSteps(unittest.TestCase):
 
     def test_the_writers_role_is_a_retired_step_and_its_removal_and_the_one_new_entra_step_are_listed(self):
         self.assertIn("1. **Retired on 2026-11-05: the writer's custom role and its one assignment. Do not make them.**", self.page)
-        for command in ("python tools/access-requirements.py retire --project-subscription $devSub --project-group $hubGroup\n",
-                        "python tools/access-requirements.py retire --project-subscription $devSub --project-group $hubGroup --apply\n"):
+        for command in ("python tools/access-requirements.py retire --project-subscription $devSub --project-group $hubGroup --only W1\n",
+                        "python tools/access-requirements.py retire --project-subscription $devSub --project-group $hubGroup --only W1 --apply\n"):
             self.assertIn(command, self.change)
         for words in ("user_impersonation", "Azure Service Management", "https://<host>/arm/return", "tools/entra-setup.py", "id-meternaut-runner",
                       "no refresh token", "api://AzureADTokenExchange", "no secret, no certificate"):
