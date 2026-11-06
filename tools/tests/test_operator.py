@@ -1500,8 +1500,9 @@ class Record(unittest.TestCase):
         self.assertIn("Azure Event Hubs Data Sender was in it already", self.page, "the role needs no hand step")
         self.assertIn("inside rule 29", self.page)
         order = self.page.split("## The order of the work")[1].split("\n## ")[0]
-        for words in ("**The Operator and the probe** (done).", "**The checks run in the Operator** (this change, built, not yet run).", "The order on an estate is `recording`, `cases`, `operator`",
-                      "about ten minutes are waited for them to apply", "**Event Hubs private.** After step 3 has run", "which is a change of its own"):
+        for words in ("**The Operator and the probe** (done).", "**The checks run in the Operator** (built in the change before this one; not yet run when this page was written", "The order on an estate is `recording`, `cases`, `operator`",
+                      "about ten minutes are waited for them to apply", "Step 4 is not run before both have passed.", "**Event Hubs private** (this change: built, not yet deployed).",
+                      "it is a change of its own if it asks for one"):
             self.assertIn(words, order, words)
         not_checked = self.page.split("## Not checked")[1].split("\n## ")[0]
         for words in ("it did not make a connection to a private endpoint", "the token of the Operator's identity for `https://eventhubs.azure.net`", "Whether Python 3.12 of the image runs the two tools",
@@ -1509,6 +1510,127 @@ class Record(unittest.TestCase):
             self.assertIn(words, not_checked, words)
         for source in ("permissions/monitor#microsoftinsights", "azure-ad-authentication#query-application-insights-by-using-microsoft-entra-authentication", "built-in-roles/general#reader"):
             self.assertIn(source, self.page.split("## Sources")[1], source)
+
+
+class EventHubsPrivateOnlyRecord(unittest.TestCase):
+    """The decision record and the bootstrap page on the change that makes the Event Hubs namespace private-only and retires the deploy identity's right to send to the control hubs."""
+
+    HEADING = "## Event Hubs private-only (built, not yet deployed)"
+
+    def setUp(self):
+        self.page = text("docs/proposals/07-private-by-default.md")
+        self.section = self.page.split(self.HEADING)[1].split("\n## ")[0]
+        self.bootstrap = text("environment/BOOTSTRAP.md")
+        self.bootstrap_section = self.bootstrap.split("## Changed on 2026-11-06: the Event Hubs namespace is private")[1].split("\n## ")[0]
+
+    def test_the_status_the_table_and_the_order_say_that_it_is_built_and_not_deployed_and_that_nothing_is_private_yet(self):
+        status = self.page.split("\n")[2]
+        self.assertIn("The Event Hubs namespace is private-only in the templates and the workflow, and the deploy identity's right to send to the two control hubs is retired by the actions that deploy them "
+                      "([built, not yet deployed](#event-hubs-private-only-built-not-yet-deployed)). Nothing is private yet.", status)
+        row = [line for line in self.page.split("\n") if line.startswith("| Event Hubs namespace |")][0]
+        self.assertIn("**Enabled** on the real estate until the action `recording` is run with the template of this change, which sets it to **Disabled**", row)
+        order = self.page.split("## The order of the work")[1].split("\n## ")[0]
+        self.assertIn("4. **Event Hubs private** (this change: built, not yet deployed).", order)
+        self.assertIn("Step 4 is not run before both have passed.", order)
+        self.assertNotIn("(inferred from what the setting means)", self.page, "Learn says what the setting does, and the row cites it")
+        self.assertIn("Disable public access to your Event Hubs namespace to allow access only via private endpoints", self.page)
+
+    def test_it_says_what_changes_in_the_template_the_roles_the_workflow_and_the_read_back(self):
+        for words in ("sets the namespace's public network access to Disabled and keeps local authentication off and TLS 1.2", "It adds no network rule set and no trusted-service exception: nothing needs one.",
+                      "no longer give the deploy identity Azure Event Hubs Data Sender on the control hub, and the parameter that fed that role is gone from both templates and from the parameter builder",
+                      "The roles of the gateway (on the two usage hubs), of the two apps (receive, on their hubs) and of the Operator (send, on the two control hubs) are as they were, and a test pins each.",
+                      "A template never deletes an assignment that it stops declaring, so each of the two actions has one idempotent step, after its deploy, that retires the assignment that exists.",
+                      "deletes the one that is Data Sender by its id, reads back that it is gone, and says what it did", "It does nothing on a new estate (no hub yet, or no assignment), and it touches no other assignment.",
+                      "lists Data Sender for a delete as well as for a write, so no hand step is needed; if Azure refuses, the step stops with Azure's message and says that a person deletes that one assignment",
+                      "The action `recording` reads the namespace back from Azure after its deploy and fails unless public network access is Disabled, local authentication is off and its private endpoint connection is Approved"):
+            self.assertIn(words, self.section, words)
+
+    def test_it_says_who_calls_the_namespace_afterwards_and_the_runner_is_not_one(self):
+        table = self.section.split("**Who calls the namespace afterwards.**")[1].split("**The order**")[0]
+        for words in ("| The usage app (three Event Hub triggers and the control hub's trigger) | Virtual network integration, private endpoint |", "| The cases app (the control hub's trigger) | The same | The same, and it runs on a Basic plan that is always on, so it has no wake from zero |",
+                      "| The Operator's container groups | Inside the network, the private endpoint | The probe resolved the namespace's name to a private address and made no connection to it. The first check is the first send |",
+                      "| The deployment workflow's runner | None | It sends nothing and reads nothing from the namespace; a test pins that no step of `recording-check` or `cases-run` does |",
+                      "| The gateway (two loggers) | The private endpoint, over the peering | **Not known yet**:"):
+            self.assertIn(words, table, words)
+
+    def test_the_order_is_the_operator_the_checks_while_public_then_recording_then_cases_then_the_checks_again_and_the_way_back_is_a_revert(self):
+        order = self.section.split("**The order**")[1].split("**The way back**")[0]
+        positions = [order.index(words) for words in ("1. `operator`, if the Operator does not hold Data Sender on both control hubs yet, and about ten minutes of waiting.",
+                                                      "2. `recording-check` and `cases-run`, through the Operator, **while the namespace is still public**.",
+                                                      "3. `recording`: it deploys the template that makes the namespace private, reads the namespace back, and retires the deploy identity's right on `usage-control`. Then `cases`: it retires the right on `cases-control`.",
+                                                      "4. `recording-check` and `cases-run` again, as the proof.", "5. The first call through the gateway that sends to the usage hubs, as the second proof")]
+        self.assertEqual(positions, sorted(positions))
+        self.assertIn("**The way back** is to revert this change and run `recording` and `cases`: the earlier templates set public access Enabled again and give the deploy identity its role again.", self.section)
+
+    def test_the_gateway_question_is_not_known_yet_cites_learn_and_says_how_the_first_call_will_show_it(self):
+        part = self.section.split("### Whether the gateway reaches the private namespace")[1].split("\n### ")[0]
+        for words in ("**Not known yet.**", "\"Effective 15 March 2026, Azure API Management is retiring trusted service connectivity by the API Management gateway to supported Azure services\"",
+                      "\"needs alternative ways to communicate and have network line-of-sight\"", "api-management/breaking-changes/trusted-service-connectivity-retirement-march-2026", "dated 2026-01-15, updated 2026-06-25, read on 2026-11-06",
+                      "the gateway can reach it only through the private endpoint, over the peering and the hub", "was not read in the landing zone and has not been tried",
+                      "no API policy includes the `ai-usage` fragment, and nothing has sent to the `ai-usage` and `pii-usage` hubs (a measurement of 2026-11-06 found no message in 14 hours)",
+                      "**How the first gateway call will show it.**", "The namespace's metric `IncomingMessages` (Total, one-minute grain), split by the dimension `EntityName`, has a count for `ai-usage`",
+                      "`EventHubSuccessfulEvents` rises when it works, and `EventHubTimedoutEvents`, `EventHubTotalFailedEvents`, `EventHubRejectedEvents` (wrong configuration or unauthorized) or `EventHubDroppedEvents` rise when it does not",
+                      "**If there is no path**, a public endpoint is not an option under the rule", "the answer is read from the first call and not guessed"):
+            self.assertIn(words, part, words)
+        self.assertIn("**The gateway's path to the namespace**, only if the first call through the gateway shows that there is none", self.page.split("## Decisions for the owner")[1].split("\n## ")[0])
+
+    def test_the_flex_question_quotes_learn_says_what_could_not_be_verified_and_names_the_proof(self):
+        part = self.section.split("### Whether the usage app wakes from zero on a private namespace")[1]
+        for words in ("\"The Flex Consumption plan natively supports virtual network triggers. Your function app can be triggered from event sources protected by a virtual network without requiring extra configuration for runtime scale monitoring\"",
+                      "azure-functions/functions-networking-options", "dated 2026-09-15, updated 2026-10-16, read on 2026-11-06", "\"can connect to other Azure services secured inside a virtual network\"",
+                      "azure-functions/flex-consumption-plan", "\"Private Event Hubs triggered function app\"", "**What could not be verified.**",
+                      "wakes from zero on an event hub whose public network access is Disabled, through an identity-based connection (`EventHubConnection__fullyQualifiedNamespace`), which is this app. Nothing has run.",
+                      "**The first `recording-check` after the flip is the proof**", "the check waits 20 minutes for the result", "If no result arrives while `IncomingMessages` of `usage-control` rises, the app did not wake.",
+                      "an instance that is always ready for the control function (a standing price, to be taken from the Retail Prices API), or a plan that does not scale to zero"):
+            self.assertIn(words, part, words)
+
+    def test_the_not_checked_list_and_the_sources_say_what_was_read_and_what_was_not(self):
+        not_checked = self.page.split("## Not checked")[1].split("\n## ")[0]
+        for words in ("Whether the namespace comes out of the deploy as the template wrote it.", "Whether the deploy identity may delete its own old assignment.", "the principal type ServicePrincipal",
+                      "ran with Git's bash 5.3 against a stand-in for `az` that keeps a list of assignments", "the source of the Azure CLI 2.92.0 (the scope is matched exactly unless inherited assignments are asked for, `--ids` deletes exactly the ids named), not tried",
+                      "Whether the usage app wakes from zero on an event that arrives only through the private endpoint, and whether the gateway's two loggers reach the namespace",
+                      "Whether the Operator's send reaches the namespace through the private endpoint"):
+            self.assertIn(words, not_checked, words)
+        sources = self.page.split("## Sources")[1]
+        for words in ("[Restrict Event Hubs namespace to private endpoints](https://learn.microsoft.com/azure/event-hubs/private-link-service)", "microsoft-eventhub-namespaces-metrics", "microsoft-apimanagement-service-metrics",
+                      "[az role assignment](https://learn.microsoft.com/cli/azure/role/assignment)", "the generated Bicep types of `Microsoft.EventHub/namespaces` at 2024-01-01",
+                      "the source of the Azure CLI 2.92.0 for `az role assignment list` and `delete`"):
+            self.assertIn(words, sources, words)
+
+    def test_the_bootstrap_page_says_no_hand_step_what_a_refusal_means_the_order_the_way_back_and_how_to_delete_by_id(self):
+        section = self.bootstrap_section
+        for words in ("**No hand step is needed.** It is built and not yet deployed.", "sets `publicNetworkAccess: 'Disabled'` on the namespace (local authentication stays off and TLS 1.2 stays). It adds no network rule set and no trusted-service exception",
+                      "no longer give the deploy identity *Azure Event Hubs Data Sender* on the control hub (`workflowSendsControl`), and the parameter `workflowPrincipalId` that fed it is gone from both templates and from the parameter builder",
+                      "so one step in each of the two actions retires the assignment that exists", "deletes only the one that is *Azure Event Hubs Data Sender*, by its id, reads back that it is gone, and prints what it did",
+                      "it never touches another assignment: the gateway's, the function apps' and the Operator's roles on the hubs stay", "reads the namespace back from Azure after the deploy and fails unless public network access is Disabled",
+                      "**Why no hand step.**", "if Azure refuses the delete, the step stops with Azure's message and says what to do, and nothing else has changed", "A person then deletes that one assignment with their own sign-in, on the owner's written word",
+                      "delete it by its id and never by a filter", "az role assignment delete --ids <id of the assignment>", "**The order**, on an estate where the namespace is still public:", "**while the namespace is still public**",
+                      "**Going back.** Revert this change and run `recording` and `cases`"):
+            self.assertIn(words, section, words)
+        self.assertEqual(section.count("```powershell"), 1)
+        self.assertEqual(sorted(set(re.findall(r"az role assignment (\w+)", section.split("```powershell")[1]))), ["delete", "list"])
+        for anchor in ("#changed-on-2026-11-06-the-event-hubs-namespace-is-private",):
+            self.assertIn(anchor, self.bootstrap)
+        self.assertLess(self.bootstrap.index("## Changed on 2026-11-06: the Operator"), self.bootstrap.index("## Changed on 2026-11-06: the Event Hubs namespace is private"))
+        self.assertLess(self.bootstrap.index("## Changed on 2026-11-06: the Event Hubs namespace is private"), self.bootstrap.index("\n## After it"))
+        self.assertIn("holds none since [the namespace was made private](#changed-on-2026-11-06-the-event-hubs-namespace-is-private)", self.bootstrap.split("\n## ")[1])
+        self.assertIn("The order of those four is `recording`, `cases`, `operator`, and then, about ten minutes after `operator` (a new role takes that long to apply), `recording-check` and `cases-run`. Once both checks have passed through the Operator while the namespace is still public, `recording` makes the Event Hubs namespace private",
+                      self.bootstrap.split("\n## After it")[1])
+
+    def test_the_pages_that_said_that_the_workflow_sends_or_that_the_namespace_is_public_say_the_new_state(self):
+        cases = text("docs/proposals/02-first-cases.md")
+        self.assertIn("the deployment workflow starts it, through the Operator, which sends the event from inside the network and reads the result from the telemetry", cases)
+        self.assertIn("The Operator may send to that hub (the deployment workflow's identity held that right until the action `cases` retired it); the function reads it", cases)
+        self.assertIn("the namespace takes no public traffic once the action `recording` has deployed its template, so the runner cannot send to it at all", cases)
+        self.assertNotIn("The workflow may send to that hub", cases)
+        readme = text("README.md")
+        self.assertIn("the Event Hubs namespace is private-only in the code, not yet deployed; nothing is private yet", readme)
+        self.assertIn("the template sets public network access to Disabled, the deploy identity no longer holds a role on the control hubs and the two deploy actions retire the one that it held", readme)
+        self.assertIn("The Operator and its probe are built, and so is the switch that makes the Event Hubs namespace private-only (not yet deployed); nothing is private yet", readme)
+        bootstrap_first = self.bootstrap.split("\n## ")[1]
+        self.assertNotIn("the gateway's identity and the workflow's identity may send to event hubs", bootstrap_first)
+        self.assertNotIn("the workflow's identity gets", self.bootstrap)
+        self.assertNotIn("gives the gateway's identity and the workflow's identity *Azure Event Hubs Data Sender*", self.bootstrap)
 
 
 class BootstrapOperatorSection(unittest.TestCase):

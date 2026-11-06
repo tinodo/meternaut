@@ -10,7 +10,7 @@ address, name or mail address is in the repository:
     ENV_SUBSCRIPTION_ID, ENV_RESOURCE_GROUP, ENV_LOCATION, ENV_VNET_PREFIX, ENV_PE_SUBNET_PREFIX,
     ENV_DNS_SERVERS (comma separated), ENV_OWNER, ENV_BUDGET_AMOUNT, ENV_ALERT_EMAILS (comma separated),
     ENV_BUDGET_START, GATEWAY_RESOURCE_ID, GATEWAY_APPINSIGHTS_ID, GATEWAY_PRINCIPAL_ID, GATEWAY_CLIENT_ID,
-    RECORDING_DEPLOYER_ID, RECORDING_READER_IDS (comma separated, may be empty), RECORDING_FRAGMENTS (true or false),
+    RECORDING_READER_IDS (comma separated, may be empty), RECORDING_FRAGMENTS (true or false),
     CASES_SYSTEM_PRINCIPAL_ID (may be empty), ENV_FOUNDRY_PROJECT_EXISTS (true or false), ENV_OPS_SUBNET_EXISTS (true or false)
 
 ENV_BUDGET_START is the first day of the month in which the budget was first made, which the workflow reads from the
@@ -22,10 +22,9 @@ what-if, then uses a placeholder, and says so). GATEWAY_CLIENT_ID is that identi
 name: without it the file for the loggers is not written (and with `--preview` it holds a placeholder).
 RECORDING_FRAGMENTS is `true` only when both Event Hub loggers exist in the instance: the workflow reads that from the
 instance, and the kit's module then also makes the two policy fragments that use them (default: false).
-RECORDING_DEPLOYER_ID is the object id of the identity that the workflow signs in as (the workflow reads it from its own
-token): it gets the right to send to the control hub of the usage recording, so that the check can start a copy job once.
-Nothing reads the usage store with it (the store has no public endpoint). RECORDING_READER_IDS are the object ids of the
-people who may read the usage store (a Cosmos DB data role; they also need a network path to its private endpoint).
+RECORDING_READER_IDS are the object ids of the people who may read the usage store (a Cosmos DB data role; they also need a network path to its private
+endpoint). The identity that the workflow signs in as has no setting here: no template gives it a role on an event hub (the Operator sends the control
+events), and the workflow reads its own object id from its token only to find and retire the assignment that it held on the two control hubs.
 CASES_SYSTEM_PRINCIPAL_ID is the object id of the cases app's system-assigned identity, which the workflow reads from the app: the Foundry resource of
 the agents gives it the Foundry User role on its project. The app has no such identity before the action `cases` has run once; without it the Foundry
 file holds a placeholder, says cases_system_principal_known=false, and the workflow refuses to deploy the Foundry resource. Like the other object ids it
@@ -508,9 +507,6 @@ def build(env, models: list[dict], preview: bool = False, contract: dict | None 
         principal = PLACEHOLDER
     if not GUID.match(principal):
         raise Problem("GATEWAY_PRINCIPAL_ID is the object id of the gateway's user-assigned identity")
-    deployer = need(env, "RECORDING_DEPLOYER_ID")
-    if not GUID.match(deployer):
-        raise Problem("RECORDING_DEPLOYER_ID is the object id of the identity that the workflow signs in as")
     client = (env.get("GATEWAY_CLIENT_ID") or "").strip()
     if client and not GUID.match(client):
         raise Problem("GATEWAY_CLIENT_ID is the client id of the gateway's user-assigned identity")
@@ -599,7 +595,6 @@ def build(env, models: list[dict], preview: bool = False, contract: dict | None 
         "gatewayAppInsightsSubscriptionId": insights.group(1).lower(),
         "gatewayAppInsightsResourceGroup": insights.group(2),
         "gatewayAppInsightsName": insights.group(3),
-        "workflowPrincipalId": deployer.lower(),
         "dataReaderPrincipalIds": list(dict.fromkeys(r.lower() for r in readers)),
     }
     backend = {
@@ -724,7 +719,6 @@ def build(env, models: list[dict], preview: bool = False, contract: dict | None 
             "functionAppName": outputs["cases_function_app_name"],
             "webSubnetPrefix": str(web),
             "webSubnetExists": web_subnet_exists(env),
-            "workflowPrincipalId": deployer.lower(),
             "scopeSubscriptions": subscription.lower(),
             "gatewayUrl": outputs["gateway_url"],
             "gatewayProductSubscriptionId": f"{need(env, 'GATEWAY_RESOURCE_ID')}/subscriptions/{contract_outputs['contract_subscription']}",

@@ -9,12 +9,15 @@
 It calls the Azure CLI, which the workflow has signed in. The tokens that the CLI hands out are used and never printed.
 
 whoami     Read only. Prints the object id of the identity that the CLI is signed in as, read from the claims of its own token
-           (the workflow's identity may not read the directory). That identity may send to the control hub of the usage
-           recording: the template gives it the Event Hubs Data Sender role there.
+           (the workflow's identity may not read the directory). The Hub workflow uses it to find the deploy identity's own role
+           assignment on a control hub, which the actions that deploy the hubs retire: no template gives that identity a role there
+           any more, because the Operator sends the control events.
 functions  Read only. Waits until the function app lists its six functions (the app has to be started and has to have read its
            package) and prints their names. An app whose code was not published yet lists none, and this says so.
-run        Sends one event to the control hub (usage-control) with the identity of the workflow: it names a copy job and a
-           request id. The function app runs that job now, through the same code as its timer, and writes one line to its
+run        Sends one event to the control hub (usage-control) with the identity that the CLI is signed in as: in the Hub workflow that is
+           the Operator's identity, which holds Azure Event Hubs Data Sender on that hub, and the tool runs inside the network, because the
+           namespace takes no public traffic. The event names a copy job and a request id. The function app runs that job now, through the
+           same code as its timer, and writes one line to its
            telemetry with the result. This waits for that line (the telemetry arrives a few minutes late), prints it, and
            fails when the job did not end well or the line did not arrive. Only a GitHub Actions run may send the event
            (AGENTS.md rule 18). The usage store (Cosmos DB) has no public endpoint, so it is not read from here: the job

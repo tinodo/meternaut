@@ -35,7 +35,6 @@ SETTINGS = {
     "GATEWAY_RESOURCE_ID": "/subscriptions/66666666-7777-8888-9999-000000000000/resourceGroups/rg-gateway/providers/Microsoft.ApiManagement/service/example-apim",
     "GATEWAY_APPINSIGHTS_ID": "/subscriptions/66666666-7777-8888-9999-000000000000/resourceGroups/rg-gateway/providers/microsoft.insights/components/example-insights",
     "GATEWAY_PRINCIPAL_ID": "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE",
-    "RECORDING_DEPLOYER_ID": "99999999-8888-7777-6666-555555555555",
 }
 READER = "12345678-1234-1234-1234-123456789012"
 RECORDING = (ROOT / "environment" / "recording" / "main.bicep").read_text(encoding="utf-8")
@@ -146,13 +145,13 @@ class Recording(unittest.TestCase):
         for name, wrapped in given.items():
             self.assertIsInstance(wrapped["value"], types[declared[name][0]], name)
 
-    def test_the_gateway_the_workflow_and_the_readers_reach_the_template(self):
+    def test_the_gateway_and_the_readers_reach_the_template_and_the_workflow_does_not(self):
         files, outputs = self.files(RECORDING_READER_IDS=f"{READER.upper()}")
         recording = values(files["recording.parameters.json"])
         self.assertEqual(recording["gatewayPrincipalId"], "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
         self.assertEqual(recording["gatewayAppInsightsSubscriptionId"], "66666666-7777-8888-9999-000000000000")
         self.assertEqual((recording["gatewayAppInsightsResourceGroup"], recording["gatewayAppInsightsName"]), ("rg-gateway", "example-insights"))
-        self.assertEqual(recording["workflowPrincipalId"], SETTINGS["RECORDING_DEPLOYER_ID"])
+        self.assertNotIn("workflowPrincipalId", recording, "no template gives the workflow's identity a role on an event hub: the Operator sends the control events")
         self.assertEqual(recording["dataReaderPrincipalIds"], [READER])
         self.assertEqual(recording["functionAppName"], outputs["function_app_name"])
         for old in ("logicAppName", "dataContributorPrincipalIds"):
@@ -260,13 +259,33 @@ class Recording(unittest.TestCase):
         self.assertNotIn("id-${workload}-usage", RECORDING, "the template no longer makes the identity that the app's own system-assigned one replaced")
         self.assertIn("name: 'appi-${workload}'", RECORDING)
 
-    def test_the_deployer_and_the_readers_must_be_object_ids(self):
-        for changes in ({"RECORDING_DEPLOYER_ID": "me"}, {"RECORDING_READER_IDS": "not-an-id"}, {"RECORDING_READER_IDS": f"{READER},"},
+    def test_the_readers_must_be_object_ids(self):
+        for changes in ({"RECORDING_READER_IDS": "not-an-id"}, {"RECORDING_READER_IDS": f"{READER},"},
                         {"RECORDING_READER_IDS": f"{READER},{READER.upper()}"}, {"RECORDING_READER_IDS": ",".join([READER[:-1] + str(i) for i in range(6)])}):
             code, out, err, files = run({**SETTINGS, **changes})
             self.assertEqual((code, out, files), (2, "", {}), changes)
             self.assertIn("RECORDING_", err)
             self.assertNotIn("not-an-id", err)
+
+    def test_the_identity_of_the_workflow_is_no_setting_of_the_builder_and_no_file_carries_it(self):
+        # It used to get the right to send to the control hub of each of the two apps (the parameter workflowPrincipalId of both templates); the Operator sends the control events now, and the workflow
+        # reads its own object id only to find and delete the assignment that it held (the steps that retire it).
+        self.assertNotIn("RECORDING_DEPLOYER_ID", SETTINGS)
+        code, out, err, files = run(SETTINGS)
+        self.assertEqual((code, err), (0, ""))
+        self.assertNotIn("RECORDING_DEPLOYER_ID", TOOL.read_text(encoding="utf-8"))
+        for name, document in files.items():
+            self.assertNotIn("workflowPrincipalId", document["parameters"], name)
+        code, out, err, files = run({**SETTINGS, "RECORDING_DEPLOYER_ID": "me"})
+        self.assertEqual((code, err), (0, ""), "a leftover setting is not read, so a wrong value cannot stop a run")
+        with tempfile.TemporaryDirectory() as tmp:
+            contract = Path(tmp) / "contract.json"
+            contract.write_text(CONTRACT_FILE.read_text(encoding="utf-8"), encoding="utf-8")
+            code, out, err, files = run(SETTINGS, "--contract", str(contract), "--contract-policy", str(POLICY_FILE))
+        self.assertEqual((code, err), (0, ""))
+        self.assertIn("cases.parameters.json", files)
+        for name, document in files.items():
+            self.assertNotIn("workflowPrincipalId", document["parameters"], name)
 
 
 class KitSettings(unittest.TestCase):
@@ -651,12 +670,13 @@ class FirstCases(unittest.TestCase):
         for name, wrapped in given.items():
             self.assertIsInstance(wrapped["value"], types[declared[name][0]], name)
 
-    def test_it_names_the_storage_the_namespace_and_the_workflow_that_the_recording_has(self):
+    def test_it_names_the_storage_and_the_namespace_that_the_recording_has_and_no_workflow_principal(self):
         files, lines = self.build()
         cases, recording = values(files["cases.parameters.json"]), values(files["recording.parameters.json"])
         self.assertEqual(cases["storageAccountName"], recording["storageAccountName"])
         self.assertEqual(cases["eventHubNamespaceName"], recording["eventHubNamespaceName"])
-        self.assertEqual(cases["workflowPrincipalId"], recording["workflowPrincipalId"])
+        self.assertNotIn("workflowPrincipalId", cases)
+        self.assertNotIn("workflowPrincipalId", recording)
         self.assertEqual(cases["location"], recording["location"])
         self.assertRegex(cases["functionAppName"], r"^func-meternaut-cases-[0-9a-f]{8}$")
         self.assertEqual(lines["cases_function_app_name"], cases["functionAppName"])

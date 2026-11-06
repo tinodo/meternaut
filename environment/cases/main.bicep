@@ -86,11 +86,6 @@ param webSubnetPrefix string
 @description('True when the app\'s integration subnet is in Azure already. The template then leaves it alone: a template that makes the subnet again takes away the route table that the landing zone\'s network manager put on it, and the app on it loses its way to the landing zone\'s DNS. The deployment workflow reads this from Azure.')
 param webSubnetExists bool = false
 
-@description('Object id of the identity that the deployment workflow signs in as. It may send to the control hub, so that the workflow can start one run and read the History. It reads nothing else.')
-@minLength(36)
-@maxLength(36)
-param workflowPrincipalId string
-
 @description('The subscriptions that the Watch reads, comma separated.')
 @minLength(36)
 param scopeSubscriptions string
@@ -172,7 +167,6 @@ var controlHubName = 'cases-control'
 // so none of the three is set; the first run of the action "cases" that has a client id sets all three.
 var signInIsSetUp = !empty(consoleAppClientId)
 
-var eventHubsDataSenderRoleId = '2b629674-e913-4c01-ae53-ef4638d8f975'
 var eventHubsDataReceiverRoleId = 'a638d3c7-ab3a-418d-83e6-5f17a39d4fde'
 var storageBlobDataOwnerRoleId = 'b7e6dc6d-f1e8-4753-8033-0f276bb0955b'
 var storageQueueDataContributorRoleId = '974c5e8b-45b9-4653-ba55-5f855dd0fb88'
@@ -263,7 +257,7 @@ resource sharedHostContainers 'Microsoft.Storage/storageAccounts/blobServices/co
   name: name
 }]
 
-// The hub for the control events of the deployment workflow: one event starts one run now.
+// The hub for the control events of the check action: one event, sent by the Operator (environment/operator/main.bicep, which holds Azure Event Hubs Data Sender on this hub), starts one run now.
 resource controlHub 'Microsoft.EventHub/namespaces/eventhubs@2024-01-01' = {
   parent: eventHubs
   name: controlHubName
@@ -288,21 +282,13 @@ resource tracesRetention 'Microsoft.OperationalInsights/workspaces/tables@2023-0
   }
 }
 
-// Each role on the one resource that the caller uses, never on the group: the workflow sends to the control hub and cannot read it;
-// the app reads it and cannot send. Storage Blob Data Owner on the three containers that the Functions hosts of the account share,
-// Storage Queue Data Contributor and Storage Table Data Contributor on the account (the host's documented set for an identity-based host
-// storage; the account holds no queue and no table of anybody else's). Monitoring Metrics Publisher: the app's telemetry, with Entra ID
-// instead of the instrumentation key.
-resource workflowSendsControl 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  scope: controlHub
-  name: guid(controlHub.id, workflowPrincipalId, eventHubsDataSenderRoleId)
-  properties: {
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', eventHubsDataSenderRoleId)
-    principalId: workflowPrincipalId
-    principalType: 'ServicePrincipal'
-  }
-}
-
+// Each role on the one resource that the caller uses, never on the group: the app reads the control hub and cannot send to it. Storage Blob Data Owner on the three
+// containers that the Functions hosts of the account share, Storage Queue Data Contributor and Storage Table Data Contributor on the account (the host's documented set
+// for an identity-based host storage; the account holds no queue and no table of anybody else's). Monitoring Metrics Publisher: the app's telemetry, with Entra ID
+// instead of the instrumentation key. The deployment workflow's identity holds no role on the control hub: the Operator sends the control event (it holds Azure Event Hubs
+// Data Sender on this hub, in environment/operator/main.bicep), and the namespace takes no traffic from the workflow's runner. The role that the workflow's identity held here
+// is retired by the action cases, which deletes that one assignment after the deploy when it is still there, because a template never removes an assignment that it stops declaring.
+//
 // The app's roles are for its own system-assigned identity. A role assignment's name has to be known when the deployment starts, and the principal id of a
 // system-assigned identity exists only once the app does: so the names are seeded with the app's id (the identity lives and dies with the app, and an app that is
 // deleted and made again needs its old assignments removed first), and the principal id is in the properties, which is read later. The roles wait for the app and the

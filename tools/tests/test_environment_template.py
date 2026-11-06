@@ -284,16 +284,17 @@ class Recording(unittest.TestCase):
         for word in ("Microsoft.ApiManagement", "privateDnsZones", "virtualNetworkPeerings", "routeTables", "privateDnsZoneGroups"):
             self.assertNotIn(word, self.code, word)
 
-    def test_nothing_is_public_but_event_hubs_and_the_function_apps_own_endpoint_and_none_has_a_key(self):
-        # Storage and Cosmos DB have no public endpoint; Event Hubs keeps one on purpose (the gateway sends to it, the workflow sends one control
-        # event to it; the function app uses a private endpoint, so that it can be switched off later); the function app has the platform's
-        # endpoint, which it needs for its deployment and which serves no function (no HTTP trigger).
-        self.assertEqual(self.code.count("publicNetworkAccess: 'Disabled'"), 2)  # storage, cosmos
-        self.assertEqual(self.code.count("publicNetworkAccess: 'Enabled'"), 2)  # event hubs, the function app
+    def test_nothing_is_public_but_the_function_apps_own_endpoint_and_none_has_a_key(self):
+        # Storage, Cosmos DB and Event Hubs have no public endpoint (docs/proposals/07-private-by-default.md): the function app and the Operator reach the namespace through its private endpoint, and the
+        # gateway's two loggers can only do the same. The function app has the platform's endpoint, which it needs for its deployment and which serves no function (no HTTP trigger).
+        self.assertEqual(self.code.count("publicNetworkAccess: 'Disabled'"), 3)  # storage, cosmos, event hubs
+        self.assertEqual(self.code.count("publicNetworkAccess: 'Enabled'"), 1)  # the function app
         found = resources(self.source)
         self.assertIn("publicNetworkAccess: 'Disabled'", found["storage"][1])
         self.assertIn("publicNetworkAccess: 'Disabled'", found["cosmos"][1])
-        self.assertIn("publicNetworkAccess: 'Enabled'", found["eventHubs"][1])
+        self.assertIn("publicNetworkAccess: 'Disabled'", found["eventHubs"][1])
+        self.assertNotIn("publicNetworkAccess: 'Enabled'", found["eventHubs"][1])
+        self.assertIn("publicNetworkAccess: 'Enabled'", found["functionApp"][1])
         self.assertIn("allowSharedKeyAccess: false", found["storage"][1])
         self.assertIn("defaultToOAuthAuthentication: true", found["storage"][1])
         self.assertIn("disableLocalAuth: true", found["cosmos"][1])
@@ -340,7 +341,7 @@ class Recording(unittest.TestCase):
         found = resources(self.source)
         assignments = {name: body for name, (kind, body) in found.items() if kind == "Microsoft.Authorization/roleAssignments"}
         self.assertEqual(sorted(assignments), ["functionOwnsBlobs", "functionPublishesTelemetry", "functionReceivesControl", "functionReceivesPii", "functionReceivesUsage",
-                                               "functionUsesQueues", "functionUsesTables", "gatewaySendsPii", "gatewaySendsUsage", "workflowSendsControl"])
+                                               "functionUsesQueues", "functionUsesTables", "gatewaySendsPii", "gatewaySendsUsage"])
         for name, body in assignments.items():
             self.assertIn("principalType: 'ServicePrincipal'", body, name)
             # on the one resource, never on the group, the subscription or the whole namespace
@@ -373,10 +374,9 @@ class Recording(unittest.TestCase):
             self.assertNotIn(word, self.code, word)
         self.assertNotIn("tags: union(", self.code)
 
-    def test_the_gateway_and_the_workflow_only_send_and_the_function_app_only_receives_each_on_the_hub_it_uses(self):
+    def test_the_gateway_only_sends_and_the_function_app_only_receives_each_on_the_hub_it_uses(self):
         found = resources(self.source)
-        for name, hub, principal in (("gatewaySendsUsage", "usageHub", "gatewayPrincipalId"), ("gatewaySendsPii", "piiHub", "gatewayPrincipalId"),
-                                     ("workflowSendsControl", "controlHub", "workflowPrincipalId")):
+        for name, hub, principal in (("gatewaySendsUsage", "usageHub", "gatewayPrincipalId"), ("gatewaySendsPii", "piiHub", "gatewayPrincipalId")):
             body = found[name][1]
             self.assertIn("eventHubsDataSenderRoleId", body, name)
             self.assertIn(f"scope: {hub}", body, name)
@@ -443,7 +443,7 @@ class Recording(unittest.TestCase):
         self.assertIn("deploymentContainer", depends_on(found["storageEndpoints"][1]))
         self.assertIn("usageContainers", depends_on(found["cosmosEndpoint"][1]))
         self.assertEqual(depends_on(found["eventHubsEndpoint"][1]), {"usageConsumerGroup", "piiConsumerGroup", "controlConsumerGroup"})
-        for name in ("gatewaySendsUsage", "gatewaySendsPii", "workflowSendsControl", "functionReceivesUsage", "functionReceivesPii", "functionReceivesControl"):
+        for name in ("gatewaySendsUsage", "gatewaySendsPii", "functionReceivesUsage", "functionReceivesPii", "functionReceivesControl"):
             self.assertIn("eventHubsEndpoint", depends_on(found[name][1]), name)
         for name in ("functionOwnsBlobs", "functionUsesQueues", "functionUsesTables"):
             self.assertIn("storageEndpoints", depends_on(found[name][1]), name)
@@ -455,6 +455,35 @@ class Recording(unittest.TestCase):
         found = resources(self.source)
         self.assertIn("isAutoInflateEnabled: false", found["eventHubs"][1])
         self.assertIn("capacity: 1", found["eventHubs"][1])
+
+    def test_the_event_hubs_namespace_has_no_public_endpoint_no_key_a_current_tls_and_no_rule_set_or_exception(self):
+        found = resources(self.source)
+        body = found["eventHubs"][1]
+        self.assertIn("publicNetworkAccess: 'Disabled'", body)
+        self.assertIn("disableLocalAuth: true", body, "the namespace still takes no key")
+        self.assertIn("minimumTlsVersion: '1.2'", body)
+        for word in ("publicNetworkAccess: 'Enabled'", "SecuredByPerimeter", "disableLocalAuth: false"):
+            self.assertNotIn(word, body, word)
+        for word in ("SecuredByPerimeter", "disableLocalAuth: false"):
+            self.assertNotIn(word, self.code, word)
+        # nothing needs a network rule set or a trusted-service exception: the apps, the Operator and the gateway use the private endpoint
+        for word in ("networkRuleSets", "trustedServiceAccessEnabled", "ipRules", "virtualNetworkRules", "networkSecurityPerimeter"):
+            self.assertNotIn(word, self.code, word)
+        # the storage account has its own networkAcls with a defaultAction, so only the namespace's body is checked for it
+        self.assertNotIn("defaultAction", body, "defaultAction")
+        self.assertNotIn("Microsoft.EventHub/namespaces/networkRuleSets", self.source)
+        endpoint = found["eventHubsEndpoint"][1]
+        self.assertIn("privateLinkServiceId: eventHubs.id", endpoint, "the namespace's one private endpoint is the way in")
+        self.assertIn("groupIds: [\n            'namespace'\n          ]", endpoint)
+
+    def test_the_header_and_the_comments_no_longer_say_that_the_runner_or_anything_public_reaches_the_namespace(self):
+        for old in ("Event Hubs keeps public access on", "keeps public access on", "the deployment workflow sends one control event to it", "so that public access can be switched off later",
+                    "the workflow sends to the control hub", "control events of the deployment workflow"):
+            self.assertNotIn(old, self.source, old)
+        for now in ("storage, Cosmos DB and Event Hubs have public network access off", "no network rule set and no trusted-service\n//    exception", "the Operator (environment/operator/main.bicep, which sends the control events of the",
+                    "retired\n//    trusted-service connectivity to Event Hubs on 15 March 2026", "Whether the landing zone's route lets the gateway's network reach the endpoint is not known",
+                    "The deployment workflow's identity holds no role on any hub", "retired by the action recording, which deletes that one assignment after the\n// deploy when it is still there"):
+            self.assertIn(now, self.source, now)
 
     def test_the_workspace_has_a_daily_cap(self):
         self.assertIn("dailyQuotaGb", self.code)
@@ -545,14 +574,22 @@ class Workflow(unittest.TestCase):
         for word in ("az group delete", "az group create", "az role assignment create", "az role definition", "privateDnsZones", "az network private-dns"):
             self.assertNotIn(word, self.text, word)
 
-    def test_the_one_role_that_the_workflow_removes_is_the_one_on_the_container_that_the_flex_version_left_behind(self):
+    def test_the_roles_that_the_workflow_removes_are_the_one_on_the_container_that_the_flex_version_left_behind_and_the_old_right_to_send_to_each_control_hub(self):
         # The incremental deployment never removes a role assignment, and the identity's condition lets it delete the roles that the templates give.
         users = [re.match(r"name: (.+)", b).group(1) for b in self.steps if "az role assignment" in b]
-        self.assertEqual(users, ["Remove what the Flex Consumption version left in the storage account, when it is still there"])
-        (block,) = [b for b in self.steps if "az role assignment" in b]
-        self.assertEqual(re.findall(r"az role assignment (\w+)", block), ["list", "delete"], "it lists what is assigned on the container and deletes that, and does nothing else with a role")
-        self.assertIn('--scope "$container"', block)
-        self.assertIn('--ids "$id"', block)
+        self.assertEqual(users, ["Retire the deploy identity's right to send to the control hub usage-control, when it is still there",
+                                 "Remove what the Flex Consumption version left in the storage account, when it is still there",
+                                 "Retire the deploy identity's right to send to the control hub cases-control, when it is still there"])
+        container = [b for b in self.steps if b.startswith("name: Remove what the Flex Consumption version left")][0]
+        self.assertEqual(re.findall(r"az role assignment (\w+)", container), ["list", "delete"], "it lists what is assigned on the container and deletes that, and does nothing else with a role")
+        self.assertIn('--scope "$container"', container)
+        self.assertIn('--ids "$id"', container)
+        for block in self.steps:
+            if block.startswith("name: Retire the deploy identity's right to send"):
+                # a list (read first, and again to read back), and one delete by id: no role is made, updated or deleted by a filter
+                self.assertEqual(re.findall(r"az role assignment (\w+)", block), ["list", "delete"], block[:90])
+                self.assertIn('az role assignment delete --ids "$ids" --only-show-errors', block)
+                self.assertNotIn('az role assignment delete --scope', block)
 
     def contract_steps(self):
         return [block for block in self.steps if "inputs.action == 'contract'" in block]
@@ -652,7 +689,7 @@ class Workflow(unittest.TestCase):
             self.assertIn(f"[?name=='${variable}']", block)
         self.assertEqual(re.findall(r'az resource delete --ids "\$(\w+)"', block), ["site", "plan", "connection", "storage"])
         self.assertEqual(self.text.count("az resource delete"), 4)
-        self.assertEqual(len(re.findall(r"(?m)^.*\baz (?:\S+ )*?(?:--method )?delete\b.*$", self.text)), 11, "no other delete, of any kind: four of the Logic App version, two of the Flex version of the cases app, two of what that version left in the storage account (the role on its container, then the container), one that takes the app's integration with an earlier subnet away, one that removes that subnet, and one that removes the retired runner identity of the first loop")
+        self.assertEqual(len(re.findall(r"(?m)^.*\baz (?:\S+ )*?(?:--method )?delete\b.*$", self.text)), 13, "no other delete, of any kind: four of the Logic App version, two of the Flex version of the cases app, two of what that version left in the storage account (the role on its container, then the container), one that takes the app's integration with an earlier subnet away, one that removes that subnet, one that removes the retired runner identity of the first loop, and the two that retire the deploy identity's old right to send to a control hub (one assignment each, by its id)")
         self.assertNotIn("--yes", block)
         for kind in ("Microsoft.Web/sites", "Microsoft.Web/serverfarms", "Microsoft.Web/connections", "Microsoft.Storage/storageAccounts"):
             self.assertIn(f"--resource-type {kind}", block)
@@ -718,14 +755,19 @@ class Workflow(unittest.TestCase):
         self.assertNotIn("listSecrets", block)
         self.assertNotRegex(self.text, r"(?m)^\s*python3 tools/recording-check\.py run\b", "the runner starts no job and sends no event: the Operator runs the tool")
 
-    def test_the_identity_of_the_workflow_is_read_after_the_sign_in_and_before_the_settings(self):
+    def test_the_identity_of_the_workflow_is_read_after_the_sign_in_and_before_the_steps_that_retire_its_old_right_and_no_setting_takes_it_any_more(self):
         names = self.names()
         self.assertLess(names.index("Sign in to Azure"), names.index("Read the object id of the signed-in identity"))
         self.assertLess(names.index("Read the object id of the signed-in identity"), names.index("Work out the settings"))
-        (block,) = [b for b in self.steps if b.startswith("name: Work out the settings\n")]
-        self.assertIn("RECORDING_DEPLOYER_ID: ${{ steps.me.outputs.oid }}", block)
-        (block,) = [b for b in self.steps if b.startswith("name: Work out the settings with the identity's principal")]
-        self.assertIn("RECORDING_DEPLOYER_ID: ${{ steps.me.outputs.oid }}", block)
+        for title in ("Retire the deploy identity's right to send to the control hub usage-control, when it is still there",
+                      "Retire the deploy identity's right to send to the control hub cases-control, when it is still there"):
+            self.assertLess(names.index("Read the object id of the signed-in identity"), names.index(title))
+            self.assertIn("DEPLOYER_ID: ${{ steps.me.outputs.oid }}", self.steps[names.index(title)], "the object id is used only to find the identity's own assignment on the hub")
+        self.assertEqual(self.text.count("steps.me.outputs.oid"), 2, "the only users of the identity's object id are the two steps that retire its old right")
+        # no template gives the identity a role any more, so the parameter builder takes no setting for it
+        for path in (".github/workflows/deploy-hub.yml", ".github/workflows/checks.yml", "tools/environment-params.py"):
+            self.assertNotIn("RECORDING_DEPLOYER_ID", text(path), path)
+        self.assertNotIn("workflowPrincipalId", text("tools/environment-params.py"))
 
     def test_the_recording_needs_the_gateway_identity_to_exist(self):
         (block,) = [b for b in self.steps if b.startswith("name: Find the gateway identity")]
@@ -773,7 +815,7 @@ class Cases(unittest.TestCase):
         self.assertEqual(made, ["authIdentity", "consoleSignIn", "controlConsumerGroup", "controlHub", "functionApp",
                                 "functionOwnsHostContainers", "functionPublishesTelemetry", "functionReceivesControl", "functionUsesQueues",
                                 "functionUsesTables", "historyWorkbook", "noBasicAuthForDeployment", "noBasicAuthForFtp", "plan",
-                                "tracesRetention", "webNsg", "webSubnet", "workflowSendsControl"])
+                                "tracesRetention", "webNsg", "webSubnet"])
 
     def test_the_plans_subnet_is_delegated_to_basic_plans_holds_nothing_else_and_is_the_one_that_the_model_side_lists_too(self):
         subnet, nsg = self.found["webSubnet"][1], self.found["webNsg"][1]
@@ -818,24 +860,21 @@ class Cases(unittest.TestCase):
     def test_the_roles_are_the_ones_that_each_caller_needs_and_nothing_wider(self):
         guids = set(re.findall(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", self.code))
         self.assertEqual(guids, {
-            "2b629674-e913-4c01-ae53-ef4638d8f975",  # Azure Event Hubs Data Sender
             "a638d3c7-ab3a-418d-83e6-5f17a39d4fde",  # Azure Event Hubs Data Receiver
             "b7e6dc6d-f1e8-4753-8033-0f276bb0955b",  # Storage Blob Data Owner
             "974c5e8b-45b9-4653-ba55-5f855dd0fb88",  # Storage Queue Data Contributor
             "0a9a7e1f-b9d0-4cc4-a60d-0319b160aaa3",  # Storage Table Data Contributor
             "3913510d-42f4-4e42-8a64-420c390055eb",  # Monitoring Metrics Publisher
-        })
+        }, "no Azure Event Hubs Data Sender here: the Operator sends the control event, in its own template")
         assignments = {name: body for name, (kind, body) in self.found.items() if kind == "Microsoft.Authorization/roleAssignments"}
         self.assertEqual(sorted(assignments), ["functionOwnsHostContainers", "functionPublishesTelemetry", "functionReceivesControl",
-                                               "functionUsesQueues", "functionUsesTables", "workflowSendsControl"])
+                                               "functionUsesQueues", "functionUsesTables"])
         for name, body in assignments.items():
             self.assertIn("principalType: 'ServicePrincipal'", body, name)
         scopes = {name: re.search(r"(?m)^  scope: (.+)$", body).group(1) for name, body in assignments.items()}
-        self.assertEqual(scopes, {"workflowSendsControl": "controlHub", "functionReceivesControl": "controlHub",
+        self.assertEqual(scopes, {"functionReceivesControl": "controlHub",
                                   "functionOwnsHostContainers": "sharedHostContainers[i]", "functionUsesQueues": "storage", "functionUsesTables": "storage",
                                   "functionPublishesTelemetry": "insights"})
-        self.assertIn("eventHubsDataSenderRoleId", assignments["workflowSendsControl"])
-        self.assertIn("principalId: workflowPrincipalId", assignments["workflowSendsControl"])
         self.assertIn("eventHubsDataReceiverRoleId", assignments["functionReceivesControl"])
 
     def test_every_role_of_the_function_app_is_for_its_own_system_assigned_identity_and_has_the_name_that_the_first_step_gave_it(self):
@@ -1778,6 +1817,234 @@ class HandSteps(unittest.TestCase):
         for name in ("CHANGE_RESOURCE_GROUP", "CHANGE_SUBSCRIPTION_ID", "SIGNIN_TENANT_ID", "SIGNIN_CLIENT_ID"):
             self.assertIn(f"`{name}`", self.change)
             self.assertIn(f"name: '{name}'", self.template, name)
+
+
+class NoStandingRightToSend(unittest.TestCase):
+    """The deploy identity holds no role on an event hub (private by default, docs/proposals/07-private-by-default.md): the Operator sends the control events, and what the gateway,
+    the function apps and the Operator hold on the hubs is still declared."""
+
+    TEMPLATES = ("environment/recording/main.bicep", "environment/cases/main.bicep")
+
+    def test_neither_template_names_the_workflow_s_principal_takes_a_parameter_for_it_or_declares_a_role_for_it_on_a_control_hub(self):
+        for path in self.TEMPLATES:
+            source = text(path)
+            code = re.sub(r"//.*", "", source)
+            self.assertNotIn("workflowPrincipalId", code, path)
+            self.assertNotIn("workflowSendsControl", code, path)
+            self.assertEqual([name for name in re.findall(r"(?m)^param (\w+) ", code) if "workflow" in name.lower() or "deployer" in name.lower()], [], path)
+            found = resources(source)
+            self.assertEqual(sorted(name for name, (kind, _) in found.items() if "workflow" in name.lower() or "deployer" in name.lower()), [], path)
+            on_the_control_hub = sorted(name for name, (kind, body) in found.items() if kind == "Microsoft.Authorization/roleAssignments" and re.search(r"(?m)^  scope: controlHub$", body))
+            self.assertEqual(on_the_control_hub, ["functionReceivesControl"], f"{path}: the app reads the control hub, and nobody but the Operator sends to it")
+            for name, (kind, body) in found.items():
+                if kind == "Microsoft.Authorization/roleAssignments":
+                    principal = re.search(r"(?m)^    principalId: (.+)$", body).group(1)
+                    self.assertIn(principal, ("gatewayPrincipalId", "functionApp.identity.principalId"), f"{path} {name}: the principal of a role is the gateway's or the app's own")
+                    if "eventHubsDataSenderRoleId" in body:
+                        self.assertEqual((path, principal), ("environment/recording/main.bicep", "gatewayPrincipalId"), f"{name}: only the gateway sends here")
+
+    def test_the_cases_template_has_no_sender_role_at_all_because_the_operator_holds_it_on_the_hub(self):
+        code = re.sub(r"//.*", "", text("environment/cases/main.bicep"))
+        self.assertNotIn("eventHubsDataSenderRoleId", code)
+        self.assertNotIn("2b629674-e913-4c01-ae53-ef4638d8f975", code)
+
+    def test_the_roles_of_the_gateway_the_function_apps_and_the_operator_on_the_hubs_are_still_declared(self):
+        recording = resources(text("environment/recording/main.bicep"))
+        for name, hub, role, principal in (("gatewaySendsUsage", "usageHub", "eventHubsDataSenderRoleId", "gatewayPrincipalId"), ("gatewaySendsPii", "piiHub", "eventHubsDataSenderRoleId", "gatewayPrincipalId"),
+                                           ("functionReceivesUsage", "usageHub", "eventHubsDataReceiverRoleId", "functionApp.identity.principalId"),
+                                           ("functionReceivesPii", "piiHub", "eventHubsDataReceiverRoleId", "functionApp.identity.principalId"),
+                                           ("functionReceivesControl", "controlHub", "eventHubsDataReceiverRoleId", "functionApp.identity.principalId")):
+            self.assertEqual(recording[name][0], "Microsoft.Authorization/roleAssignments", name)
+            body = recording[name][1]
+            self.assertIn(f"  scope: {hub}\n", body, name)
+            self.assertIn(f"subscriptionResourceId('Microsoft.Authorization/roleDefinitions', {role})", body, name)
+            self.assertIn(f"    principalId: {principal}\n", body, name)
+        cases = resources(text("environment/cases/main.bicep"))["functionReceivesControl"][1]
+        self.assertIn("  scope: controlHub\n", cases)
+        self.assertIn("eventHubsDataReceiverRoleId", cases)
+        self.assertIn("    principalId: functionApp.identity.principalId\n", cases)
+        operator = resources(text("environment/operator/main.bicep"))
+        for name, hub in (("operatorSendsUsageControl", "usageControlHub"), ("operatorSendsCasesControl", "casesControlHub")):
+            self.assertIn(f"  scope: {hub}\n", operator[name][1], name)
+            self.assertIn("eventHubsDataSenderRoleId", operator[name][1], name)
+            self.assertIn("    principalId: operatorIdentity.properties.principalId\n", operator[name][1], name)
+        self.assertIn("var eventHubsDataSenderRoleId = '2b629674-e913-4c01-ae53-ef4638d8f975'", text("environment/operator/main.bicep"))
+        self.assertIn("var eventHubsDataSenderRoleId = '2b629674-e913-4c01-ae53-ef4638d8f975'", text("environment/recording/main.bicep"))
+
+    def test_the_parameter_files_that_the_builder_writes_carry_no_principal_for_the_workflow(self):
+        builder = text("tools/environment-params.py")
+        self.assertNotIn("workflowPrincipalId", builder)
+        self.assertNotIn("deployer", builder.lower().replace("deployment", ""))
+
+
+class RetireWorkflow(unittest.TestCase):
+    """The steps of the actions recording and cases that retire the deploy identity's old right to send to a control hub, and the step that reads the namespace back. A template never removes an
+    assignment that it stops declaring, so the right that the templates used to give stays until a step deletes that one assignment."""
+
+    DEPLOY = {"recording": "Deploy the usage recording", "cases": "Deploy the first cases"}
+    RETIRE = {"recording": "Retire the deploy identity's right to send to the control hub usage-control, when it is still there",
+              "cases": "Retire the deploy identity's right to send to the control hub cases-control, when it is still there"}
+    HUB = {"recording": "usage-control", "cases": "cases-control"}
+    TEMPLATE = {"recording": "environment/recording/main.bicep", "cases": "environment/cases/main.bicep"}
+    READ_BACK = "Read the Event Hubs namespace back from Azure, which has no public network access and no key"
+
+    def setUp(self):
+        self.text = text(".github/workflows/deploy-hub.yml")
+        self.steps = re.split(r"(?m)^      - ", self.text)[1:]
+        self.names = [re.match(r"name: (.+)", b).group(1) for b in self.steps]
+
+    def step(self, title):
+        (block,) = [b for b in self.steps if b.startswith(f"name: {title}\n")]
+        return block
+
+    def script(self, title):
+        body = self.step(title).split("        run: |\n", 1)[1]
+        return "\n".join(line for line in body.splitlines() if not line.strip().startswith("#"))
+
+    def test_each_action_retires_the_right_after_its_deploy_for_its_own_action_alone_and_before_anything_is_published(self):
+        for action, deploy in self.DEPLOY.items():
+            retire = self.RETIRE[action]
+            self.assertIn(f"        if: inputs.action == '{action}'\n", self.step(retire), action)
+            self.assertLess(self.names.index(deploy), self.names.index(retire), f"{action}: after the template has been deployed, which no longer declares the role")
+            between = self.names[self.names.index(deploy) + 1:self.names.index(retire)]
+            self.assertEqual(between, [self.READ_BACK] if action == "recording" else [], f"{action}: nothing else of the action comes between the deploy and the retirement, but the read back of the namespace")
+            publish = {"recording": "Publish the usage functions to the function app", "cases": "Publish the cases to the function app"}[action]
+            self.assertLess(self.names.index(retire), self.names.index(publish), action)
+            self.assertLess(self.names.index(retire), self.names.index("What was done"))
+            self.assertNotIn("what-if", self.step(retire).split("run:")[0], "a what-if changes nothing")
+            self.assertNotIn("always()", self.step(retire).split("run:")[0])
+
+    def test_the_environment_of_each_step_names_the_hub_the_namespace_and_the_identity_and_the_hub_is_the_one_that_the_template_makes(self):
+        for action, retire in self.RETIRE.items():
+            block = self.step(retire)
+            env = dict(re.findall(r"(?m)^          (\w+): (.+)$", block.split("        env:\n")[1].split("        run: |")[0]))
+            self.assertEqual(env, {"DEPLOYER_ID": "${{ steps.me.outputs.oid }}", "EVENT_HUB_NAMESPACE": "${{ steps.params.outputs.event_hub_namespace }}", "CONTROL_HUB": self.HUB[action]}, action)
+            self.assertIn(f"var controlHubName = '{self.HUB[action]}'", text(self.TEMPLATE[action]), "the hub that the step looks at is the hub that the template makes")
+        self.assertEqual(self.step(self.RETIRE["recording"]).split("        run: |")[1], self.step(self.RETIRE["cases"]).split("        run: |")[1], "one script for both hubs")
+
+    def test_the_script_reads_first_deletes_one_assignment_by_its_id_and_reads_back_and_touches_nothing_else(self):
+        for action, retire in self.RETIRE.items():
+            script = self.script(retire)
+            self.assertIn("sender=2b629674-e913-4c01-ae53-ef4638d8f975", script, "Azure Event Hubs Data Sender, the role that the templates gave")
+            self.assertIn('hub="/subscriptions/$ENV_SUBSCRIPTION_ID/resourceGroups/$ENV_RESOURCE_GROUP/providers/Microsoft.EventHub/namespaces/$EVENT_HUB_NAMESPACE/eventhubs/$CONTROL_HUB"', script,
+                          "the scope of the hub itself, never the namespace or the group")
+            self.assertEqual(re.findall(r"az role assignment (\w+)", script), ["list", "delete"])
+            self.assertEqual(len(re.findall(r"az role assignment list", script)), 1)
+            self.assertIn('az role assignment list --assignee-object-id "$deployer" --scope "$hub" --fill-principal-name false --fill-role-definition-name false', script)
+            self.assertIn('az role assignment delete --ids "$ids" --only-show-errors', script)
+            for word in ("--include-inherited", "--all", "--yes", "role assignment create", "role assignment update", "--role ", "--resource-group", "listKeys", "listSecrets"):
+                self.assertNotIn(word, script, word)
+            self.assertIn('[ "${scope,,}" = "${hub,,}" ] && [ "${principal,,}" = "$deployer" ] && [[ "${definition,,}" == */"$sender" ]]', script, "scope, principal and role are matched by the step itself")
+            self.assertIn('[ "$count" -ne 1 ]', script)
+            for number in ("count\" -eq 0", "attempt in 1 2 3 4 5 6"):
+                self.assertIn(number, script)
+            self.assertLess(script.index("az role assignment list"), script.index("az role assignment delete"), "read before delete")
+            self.assertLess(script.index("az role assignment delete"), script.index("left=$(held)"), "read back after the delete")
+            self.assertEqual(script.count("exit 0"), 3, "nothing to do for a hub that is not there, nothing to do for an assignment that is not there, and the read back that shows it is gone")
+
+    def test_the_comment_says_what_the_step_does_why_it_is_needed_and_that_no_hand_step_is_needed(self):
+        block = "\n".join(line.strip()[2:] for line in self.step(self.RETIRE["recording"]).splitlines() if line.strip().startswith("# "))
+        for words in ("a deployment never removes an assignment that a template stops declaring", "the Operator sends the control event",
+                      "the roles of the gateway, of the function apps and of the Operator on the hubs stay", "Nothing is done when the hub or the assignment is not there",
+                      "The condition of the deploy identity's role-assignment right lists Data Sender for a service principal already, for a delete as for a write, so no hand step is needed",
+                      "if Azure refuses, the step stops and says so"):
+            self.assertIn(words, " ".join(block.split()), words)
+
+    def test_a_refusal_says_that_a_person_deletes_that_one_assignment_and_the_bootstrap_page_has_the_command(self):
+        script = self.script(self.RETIRE["recording"])
+        self.assertIn("a person deletes that one assignment with their own sign-in, on the owner's written word, and runs the action again (environment/BOOTSTRAP.md).", script)
+        page = text("environment/BOOTSTRAP.md")
+        section = page.split("## Changed on 2026-11-06: the Event Hubs namespace is private")[1].split("\n## ")[0]
+        self.assertIn("az role assignment delete --ids <id of the assignment>", section)
+
+    def test_the_namespace_is_read_back_after_its_deploy_in_the_recording_only_and_the_step_only_reads(self):
+        block, script = self.step(self.READ_BACK), self.script(self.READ_BACK)
+        self.assertIn("        if: inputs.action == 'recording'\n", block)
+        self.assertEqual(self.text.count(self.READ_BACK), 1, "the cases action does not change the namespace")
+        self.assertEqual(self.names.index(self.READ_BACK), self.names.index("Deploy the usage recording") + 1)
+        self.assertIn("EVENT_HUB_NAMESPACE: ${{ steps.params.outputs.event_hub_namespace }}", block)
+        self.assertIn('az rest --method get --url "https://management.azure.com${namespace}?api-version=2024-01-01"', script)
+        for word in ("properties.publicNetworkAccess", "properties.disableLocalAuth", "privateEndpointConnections", "privateLinkServiceConnectionState.status", '"Disabled"', "Approved"):
+            self.assertIn(word, script)
+        self.assertNotRegex(script, r"--method (put|patch|post|delete)")
+        self.assertNotIn("az role", script)
+        self.assertIn("exit 1", script)
+
+    def test_no_step_that_runs_for_a_check_action_sends_to_event_hubs_or_reads_the_namespace_from_the_runner(self):
+        # the Operator does both, with its own identity: the runner can no longer reach the namespace once the action recording has deployed its template
+        for action in ("recording-check", "cases-run"):
+            for block in self.steps:
+                if not self.runs_for(block, action):
+                    continue
+                name = re.match(r"name: (.+)", block).group(1)
+                if name == "What was done" or "run:" not in block:
+                    continue
+                code = "\n".join(line for line in block.split("run:", 1)[1].splitlines() if not line.strip().startswith("#"))
+                for word in ("Microsoft.EventHub", "eventhubs.azure.net", "servicebus.windows.net", "/messages", "az eventhubs", "az event"):
+                    self.assertNotIn(word, code, f"{action}: the step '{name}' names {word}")
+                self.assertNotRegex(code, r"tools/(recording|cases)-check\.py run\b", f"{action}: {name}")
+
+    @staticmethod
+    def runs_for(block, action):
+        """Whether the step runs for this action: it has no condition, or its condition is true for the action (the conditions of this workflow name an action, always() and the outcome of a step)."""
+        match = re.search(r"(?m)^        if: (.+)$", block.split("run:", 1)[0] if "run:" in block else block)
+        if not match:
+            return True
+        expression = match.group(1)
+        expression = re.sub(r"inputs\.action == '([a-z-]+)'", lambda m: "True" if m.group(1) == action else "False", expression)
+        expression = re.sub(r"steps\.\w+\.outcome != 'skipped'", "True", expression).replace("always()", "True").replace("&&", " and ").replace("||", " or ")
+        assert re.fullmatch(r"[\sA-Za-z()]*", expression) and set(re.findall(r"[A-Za-z]+", expression)) <= {"True", "False", "and", "or"}, expression
+        return bool(eval(expression, {"__builtins__": {}}))
+
+    def test_the_evaluator_of_the_conditions_reads_the_conditions_that_the_workflow_has(self):
+        conditions = sorted(set(re.findall(r"(?m)^        if: (.+)$", self.text)))
+        self.assertGreaterEqual(len(conditions), 20)
+        for condition in conditions:
+            block = f"name: x\n        if: {condition}\n        run: |\n          true\n"
+            self.assertIsInstance(self.runs_for(block, "recording"), bool, condition)
+        self.assertTrue(self.runs_for("name: x\n        run: |\n          true\n", "recording"))
+        self.assertTrue(self.runs_for("name: x\n        if: inputs.action == 'recording-check' || inputs.action == 'cases-run'\n        run: |\n          true\n", "cases-run"))
+        self.assertFalse(self.runs_for("name: x\n        if: inputs.action == 'recording'\n        run: |\n          true\n", "recording-check"))
+
+    def test_the_what_if_says_what_changes_for_the_namespace_and_the_two_control_hubs_and_that_the_list_does_not_show_the_retirement(self):
+        block = self.step("What the identity, the model side, the logger, the usage recording and the first cases would change")
+        for words in ("What this changes in the Event Hubs namespace: its public network access goes from Enabled to Disabled, so that its private endpoint is the only way in, and the template no longer gives the deploy "
+                      "identity the role to send to the control hub usage-control (the Operator sends the control event).",
+                      "The list below leaves that old assignment as it is, because an incremental deployment never removes what a template stops declaring: the action recording deletes that one assignment after its deploy, when it is still there.",
+                      "What this changes for the control hub cases-control: the template no longer gives the deploy identity the role to send to it (the Operator sends the control event).",
+                      "the action cases deletes that one assignment after its deploy, when it is still there."):
+            self.assertIn(words, block, words)
+        self.assertLess(block.index("What this changes in the Event Hubs namespace"), block.index("--template environment/recording/main.bicep"))
+        self.assertLess(block.index("What this changes for the control hub cases-control"), block.index("--template environment/cases/main.bicep"))
+
+    def test_the_description_of_the_action_says_what_recording_and_cases_do_now_in_plain_words(self):
+        description = re.search(r'(?m)^        description: "(what-if: .+)"$', self.text).group(1)
+        for words in ("the Event Hubs namespace takes no public traffic (its public network access is Disabled and its private endpoint is the only way in, so from then on only the Operator can send to it from outside the apps)",
+                      "after its deploy the action reads that back from Azure and retires the deploy identity's old right to send to the control hub usage-control, when that is still there",
+                      "on an estate where the namespace is still public, run it only after recording-check and cases-run have passed through the Operator",
+                      "after its deploy it retires the deploy identity's old right to send to the control hub cases-control, when that is still there, and it needs the usage recording and the contract first."):
+            self.assertIn(words, description, words)
+        self.assertLess(description.index("recording: "), description.index("the Event Hubs namespace takes no public traffic"))
+        self.assertLess(description.index("the Event Hubs namespace takes no public traffic"), description.index(" recording-check: "))
+        self.assertLess(description.index(" cases: "), description.index("retires the deploy identity's old right to send to the control hub cases-control"))
+
+    def test_the_summaries_say_what_changed_for_the_namespace_and_the_two_hubs_and_what_a_person_does_when_the_retirement_stops(self):
+        block = self.step("What was done")
+        failed, finished = re.findall(r"(?m)^\s+recording\) echo \"(.*?)\" ;;$", block)
+        for words in ("Once the template has been deployed the Event Hubs namespace takes no public traffic, so this runner can no longer send to it: the Operator does.",
+                      "If the lines above stop at the step that reads the namespace back, Azure did not show the namespace as private and without a key.",
+                      "If they stop at the step that retires the deploy identity's right to send to \\`usage-control\\`, the deploy is done and that one old assignment may still be there",
+                      "(a person deletes it, environment/BOOTSTRAP.md)"):
+            self.assertIn(words, failed, words)
+        for words in ("an Event Hubs namespace (public network access Disabled, no key, one private endpoint that is Approved: read back from Azure)",
+                      "The deploy identity holds no role on the control hub \\`usage-control\\` any more: the log of the step that retires it says whether the old assignment was deleted now or was not there.",
+                      "This runner can no longer send to the namespace, and the Operator sends the control event.",
+                      "Whether the gateway's two loggers reach the namespace through its private endpoint is not known until a policy of the gateway sends to the two usage hubs: docs/proposals/07-private-by-default.md says how that will show."):
+            self.assertIn(words, finished, words)
+        failed, finished = re.findall(r"(?m)^\s+cases\) echo \"(.*?)\" ;;$", block)
+        self.assertIn("If the lines above stop at the step that retires the deploy identity's right to send to \\`cases-control\\`, the deploy is done and that one old assignment may still be there", failed)
+        self.assertIn("The deploy identity holds no role on the control hub \\`cases-control\\` any more (the log of the step that retires it says whether the old assignment was deleted now or was not there): the Operator sends the control event.",
+                      finished)
 
 
 class OperatorWorkflow(unittest.TestCase):
