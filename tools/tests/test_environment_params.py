@@ -1061,28 +1061,25 @@ class PublicNetworkAccessOfTheApps(unittest.TestCase):
             contract.write_text(CONTRACT_FILE.read_text(encoding="utf-8"), encoding="utf-8")
             return run(SETTINGS, "--contract", str(contract), "--contract-policy", str(POLICY_FILE))
 
-    def test_both_apps_are_public_in_the_first_phase_and_the_values_reach_their_parameter_files(self):
+    def test_the_usage_app_is_closed_and_the_cases_app_is_open_until_the_people_have_a_path_and_the_values_reach_their_parameter_files(self):
         code, out, err, files = self.build()
         self.assertEqual((code, err), (0, ""))
-        self.assertEqual((ep.USAGE_APP_PUBLIC_NETWORK_ACCESS, ep.CASES_APP_PUBLIC_NETWORK_ACCESS), ("Enabled", "Enabled"),
-                         "phase 1: the workflow still publishes the code from the runner, so neither app is closed; phase 3 changes these two values and this test")
-        self.assertEqual(values(files["recording.parameters.json"])["usageAppPublicNetworkAccess"], "Enabled")
+        self.assertEqual((ep.USAGE_APP_PUBLIC_NETWORK_ACCESS, ep.CASES_APP_PUBLIC_NETWORK_ACCESS), ("Disabled", "Enabled"),
+                         "the usage app has no page for people and its code is published through its private endpoint, so it is closed; the cases app serves the console and stays open until the people who "
+                         "approve have a network path to it (the owner's decision): that is the one value and the one test to change then")
+        self.assertEqual(values(files["recording.parameters.json"])["usageAppPublicNetworkAccess"], "Disabled")
         self.assertEqual(values(files["cases.parameters.json"])["casesAppPublicNetworkAccess"], "Enabled")
         for name, document in files.items():
             if name not in ("recording.parameters.json", "cases.parameters.json"):
                 self.assertFalse({"usageAppPublicNetworkAccess", "casesAppPublicNetworkAccess"} & set(document["parameters"]), f"{name}: the value reaches the file of its own app only")
 
     def test_closing_an_app_is_one_value_and_it_reaches_only_that_app(self):
-        with mock.patch.object(ep, "USAGE_APP_PUBLIC_NETWORK_ACCESS", "Disabled"):
-            code, _, err, files = self.build()
-        self.assertEqual((code, err), (0, ""))
-        self.assertEqual(values(files["recording.parameters.json"])["usageAppPublicNetworkAccess"], "Disabled")
-        self.assertEqual(values(files["cases.parameters.json"])["casesAppPublicNetworkAccess"], "Enabled")
-        with mock.patch.object(ep, "CASES_APP_PUBLIC_NETWORK_ACCESS", "Disabled"):
-            code, _, err, files = self.build()
-        self.assertEqual((code, err), (0, ""))
-        self.assertEqual(values(files["recording.parameters.json"])["usageAppPublicNetworkAccess"], "Enabled")
-        self.assertEqual(values(files["cases.parameters.json"])["casesAppPublicNetworkAccess"], "Disabled")
+        for usage, cases in (("Disabled", "Enabled"), ("Enabled", "Disabled"), ("Disabled", "Disabled"), ("Enabled", "Enabled")):
+            with mock.patch.object(ep, "USAGE_APP_PUBLIC_NETWORK_ACCESS", usage), mock.patch.object(ep, "CASES_APP_PUBLIC_NETWORK_ACCESS", cases):
+                code, _, err, files = self.build()
+            self.assertEqual((code, err), (0, ""), (usage, cases))
+            self.assertEqual(values(files["recording.parameters.json"])["usageAppPublicNetworkAccess"], usage, (usage, cases))
+            self.assertEqual(values(files["cases.parameters.json"])["casesAppPublicNetworkAccess"], cases, (usage, cases))
 
     def test_a_value_that_is_not_enabled_or_disabled_is_refused_by_name_because_the_property_must_always_be_written(self):
         for constant in ("USAGE_APP_PUBLIC_NETWORK_ACCESS", "CASES_APP_PUBLIC_NETWORK_ACCESS"):

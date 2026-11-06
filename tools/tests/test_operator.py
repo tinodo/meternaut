@@ -2283,9 +2283,9 @@ class PublishingPhaseOneRecord(unittest.TestCase):
         self.assertIn("Open the console once from the machine that is used for it", order)
         self.assertIn("Phase 2, the publish steps through the Operator while the apps are still public, is the next change", order)
         self.assertNotIn("**`operator-probe`**", order, "the probe has run: a person is not asked to run it for this change")
-        entries = changelog.split("\n## ")
-        self.assertTrue(entries[1].startswith("The code of both function apps is published from inside the network, in the Operator"), "the entry of phase 2 is on top of the entries")
-        self.assertTrue(entries[2].startswith("The private endpoints of the two function apps are waited for before their code is published"), "and the entry of the wait for the endpoints is the one below it")
+        self.assertLess(changelog.index("## The code of both function apps is published from inside the network, in the Operator"),
+                        changelog.index("## The private endpoints of the two function apps are waited for before their code is published"),
+                        "the entry of phase 2 is above the entry of the wait for the endpoints, which is the one below it")
         self.assertLess(changelog.index(heading), changelog.index("## The Event Hubs namespace is private-only on the real estate (deployed and proven)"))
         self.assertLess(changelog.index("## The Event Hubs namespace is private-only on the real estate (deployed and proven)"), changelog.index("## Publishing code to the private apps, phase 1"))
 

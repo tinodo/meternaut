@@ -49,8 +49,9 @@ It writes five ARM parameter files into --out-dir (seven, with --contract: the c
                                       History); written together with the contract, because it names the contract's subscription whose
                                       key the app reads at the start of a run
 
-                                      What each function app takes from the public internet is not a setting of the workflow: USAGE_APP_PUBLIC_NETWORK_ACCESS and CASES_APP_PUBLIC_NETWORK_ACCESS, near the top of this file, are
-                                      Enabled today and go into recording.parameters.json and cases.parameters.json (usageAppPublicNetworkAccess, casesAppPublicNetworkAccess). Closing an app is one value and a commit, and
+                                      What each function app takes from the public internet is not a setting of the workflow: USAGE_APP_PUBLIC_NETWORK_ACCESS (Disabled) and CASES_APP_PUBLIC_NETWORK_ACCESS (Enabled until the
+                                      people who approve have a path to the console), near the top of this file, go into recording.parameters.json and cases.parameters.json (usageAppPublicNetworkAccess,
+                                      casesAppPublicNetworkAccess). Closing an app is one value and a commit, and
                                       the property is always written: an app whose value is not set has its public access switched off by the first private endpoint (docs/proposals/07-private-by-default.md).
 
                                       Every value is checked before anything is deployed. The name of the model account is worked out here, from the
@@ -119,11 +120,12 @@ APPINSIGHTS_ID = re.compile(rf"^/subscriptions/([0-9a-fA-F-]{{36}})/resourceGrou
 PRIVATE_SPACE = ipaddress.ip_network("10.0.0.0/8")
 SKUS = ("DataZoneStandard", "GlobalStandard")
 PLACEHOLDER = "00000000-0000-0000-0000-000000000000"
-# What each function app takes from the public internet: Enabled for both, because the workflow still publishes the code from the GitHub-hosted runner, which is outside the network
-# (docs/proposals/07-private-by-default.md, phase 1). The change that publishes through the Operator sets each to Disabled: one value. They go into every parameter file, so that the
-# property is never left unset: for an app whose value is not set, the first private endpoint switches public access off by itself (Learn, App Service access restrictions).
+# What each function app takes from the public internet. The usage app is closed (Disabled): it has no page for people, and its code is published from inside the network, in the Operator, through its
+# private endpoint (docs/proposals/07-private-by-default.md, phases 2 and 3). The cases app stays Enabled until the people who approve have a network path to the console, which is the owner's decision
+# (the same record, "The console for people"): one value, and a commit, closes it. They go into every parameter file, so that the property is never left unset: for an app whose value is not set,
+# the first private endpoint switches public access off by itself (Learn, App Service access restrictions).
 PUBLIC_NETWORK_ACCESS = ("Enabled", "Disabled")
-USAGE_APP_PUBLIC_NETWORK_ACCESS = "Enabled"
+USAGE_APP_PUBLIC_NETWORK_ACCESS = "Disabled"
 CASES_APP_PUBLIC_NETWORK_ACCESS = "Enabled"
 # The central private DNS zone in which the landing zone's policy registers the names of an App Service app (the app's own and its deployment site's) for the endpoint of the sub-resource `sites`.
 # A Flex Consumption deployment ends with a call from the deployment site to the app's own host name, and while the zone has no record of a new endpoint that name does not resolve: the first
