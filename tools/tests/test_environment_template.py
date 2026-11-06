@@ -703,6 +703,9 @@ class Workflow(unittest.TestCase):
         self.assertIn("RECORDING_ENDPOINTS: ${{ steps.params.outputs.recording_endpoints }}", block)
         self.assertIn("az network private-endpoint dns-zone-group list", block)
         self.assertIn("exit 1", block)
+        self.assertIn("The app's own endpoint is in the list too, and the publish below needs it", block.replace("\n          # ", " "),
+                      "the list holds the app's own endpoint too: the deployment of a package ends with a call to the app's own name")
+        self.assertIn("the function app's own included", block)
         self.assertNotIn("--method", block)
         self.assertNotRegex(block, r"az \S+ (create|delete|update|set)\b")
 
@@ -1120,17 +1123,18 @@ class FunctionAppEndpoints(unittest.TestCase):
             for name in children:
                 self.assertNotIn("functionAppEndpoint", depends_on(found[name][1]), name)
             others = {name for name, (_, body) in found.items() if "functionAppEndpoint" in depends_on(body)}
-            self.assertEqual(others, set(), f"{path}: nothing waits for the endpoint: it changes nothing that another resource reads, and no role is given on the app")
+            self.assertEqual(others, set(), f"{path}: no other resource depends on the endpoint: it changes nothing that another resource reads, and no role is given on the app")
 
-    def test_the_summaries_of_recording_and_cases_say_that_the_app_has_an_endpoint_of_its_own_that_is_not_waited_for_and_that_the_probe_shows_its_names(self):
+    def test_the_summaries_of_recording_and_cases_say_that_the_code_is_not_published_before_the_names_of_the_apps_endpoint_are_registered_and_what_a_stop_at_the_wait_means(self):
         workflow = text(".github/workflows/deploy-hub.yml")
-        self.assertIn("The app has a private endpoint of its own too, for the app and its deployment site (the sub-resource \\`sites\\`): it is not waited for, the app stays public in this phase, and "
-                      "\\`operator-probe\\` shows whether the landing zone has registered its names.", workflow)
-        self.assertIn("and a private endpoint of its own for the console and its deployment site (the sub-resource \\`sites\\`: it is not waited for, the app stays public in this phase, and "
-                      "\\`operator-probe\\` shows whether the landing zone has registered its names)", workflow)
-        wait = re.search(r"(?ms)^      - name: Wait until the landing zone has registered the usage recording's private endpoints in the central zones\n(.*?)(?=^      - )", workflow).group(1)
-        self.assertIn("RECORDING_ENDPOINTS: ${{ steps.params.outputs.recording_endpoints }}", wait, "the wait takes the services' endpoints from the builder, which does not list the app's own")
-        self.assertNotIn("sites", wait)
+        self.assertIn("and six private endpoints that the landing zone has registered in its central zones: the five of the services, and the function app's own for the app and its deployment site "
+                      "(the sub-resource \\`sites\\`), which the code is not published before, because a deployment ends with a call to the app's own name. The app stays public in this phase.", workflow)
+        self.assertIn("and a private endpoint of its own for the console and its deployment site (the sub-resource \\`sites\\`), which the landing zone has registered in its central zone: the code is not "
+                      "published before that, so that the two apps behave alike and a later probe finds the names. The app stays public in this phase.", workflow)
+        self.assertIn("If they stop at the wait for the landing zone's policy, the endpoints are made and the app was not given its code: the lines say which endpoint is not registered yet.", workflow)
+        self.assertIn("If they stop at the wait for the landing zone's policy, the app and its endpoint are made and the app was not given its code: the lines say that the endpoint is not registered yet.", workflow)
+        for stale in ("not waited for", "nothing waits for its names", "operator-probe\\` shows whether the landing zone has registered its names"):
+            self.assertNotIn(stale, workflow, "the apps' endpoints are waited for: a deployment of the usage app failed without the wait")
 
     def test_each_app_writes_its_public_access_from_a_parameter_so_that_the_value_is_never_left_to_the_platform(self):
         # Learn (Azure App Service access restrictions): a site whose publicNetworkAccess is not set has public access switched off by the first private endpoint that it gets. Writing the value
@@ -1139,6 +1143,74 @@ class FunctionAppEndpoints(unittest.TestCase):
             self.assertRegex(self.codes[path], rf"(?m)^@allowed\(\[\n  'Enabled'\n  'Disabled'\n\]\)\nparam {name} string = 'Enabled'$", path)
             self.assertIn(f"    publicNetworkAccess: {name}\n", self.found[path]["functionApp"][1], path)
             self.assertEqual(len(re.findall(rf"\b{name}\b", self.codes[path])), 2, f"{path}: declared once and used once")
+
+
+class AnAppsPrivateEndpointIsNeverAddedWithoutTheWait(unittest.TestCase):
+    """What the first `recording` after phase 1 found on 2026-11-06, in plain words. A Flex Consumption deployment ends with a call from the deployment site to the app's own host name. Right after the
+    private endpoint of the app is made, that name is a CNAME of <app>.privatelink.azurewebsites.net, and the landing zone's central zone has no record of it for about ten minutes, until its policy
+    registers the endpoint: the name does not resolve, and the last step of the deployment fails with "Deployment was successful but Reset all workers endpoint responded with Name or service not
+    known". The publish step failed three times, although the package had been taken. So no template may make the private endpoint of an app unless the action that deploys it waits, before it
+    publishes, until the landing zone has registered that endpoint in its central zone. A new app with an endpoint of its own has to be added to this test with its wait."""
+
+    APPS = {
+        "environment/recording/main.bicep": {
+            "action": "recording", "variable": "RECORDING_ENDPOINTS", "output": "recording_endpoints", "deploy": "Deploy the usage recording",
+            "wait": "Wait until the landing zone has registered the usage recording's private endpoints in the central zones",
+            "login": "Sign in to Azure again for the publish, because the first sign-in's credential lasts five minutes",
+            "build": "Build the function app's package", "publish": "Publish the usage functions to the function app", "given": "The function app was not given its code."},
+        "environment/cases/main.bicep": {
+            "action": "cases", "variable": "CASES_ENDPOINTS", "output": "cases_endpoints", "deploy": "Deploy the first cases",
+            "wait": "Wait until the landing zone has registered the cases app's private endpoint in the central zone",
+            "login": "Sign in to Azure again for the publish of the cases, because the first sign-in's credential lasts five minutes",
+            "build": "Build the cases app's package", "publish": "Publish the cases to the function app", "given": "The cases app was not given its code."},
+    }
+
+    def setUp(self):
+        self.text = text(".github/workflows/deploy-hub.yml")
+        self.steps = re.split(r"(?m)^      - ", self.text)[1:]
+        self.names = [re.match(r"name: (.+)", b).group(1) for b in self.steps]
+
+    def step(self, title):
+        (block,) = [b for b in self.steps if b.startswith(f"name: {title}\n")]
+        return block
+
+    def script(self, title):
+        body = self.step(title).split("        run: |\n", 1)[1]
+        return "\n".join(line for line in body.splitlines() if not line.strip().startswith("#"))
+
+    def test_the_templates_that_make_the_endpoint_of_an_app_are_the_ones_whose_action_waits_for_it(self):
+        makers = []
+        for path in sorted((ROOT / "environment").rglob("*.bicep")):
+            code = re.sub(r"//.*", "", path.read_text(encoding="utf-8").replace("\r\n", "\n"))
+            if re.search(r"groupIds: \[\n\s+'sites'\n\s+\]", code):
+                makers.append(path.relative_to(ROOT).as_posix())
+        self.assertEqual(makers, sorted(self.APPS), "a template that makes the private endpoint of an app is listed in this test with the step of its action that waits for the landing zone's policy to "
+                                                    "register the endpoint: add the wait before adding the endpoint, or the first publish fails to resolve the app's own name")
+
+    def test_each_of_those_actions_waits_for_the_zone_group_of_every_endpoint_in_its_list_after_its_deploy_and_before_it_publishes(self):
+        for path, app in self.APPS.items():
+            wait = self.step(app["wait"])
+            self.assertIn(f"        if: inputs.action == '{app['action']}'\n", wait, path)
+            self.assertIn(f"{app['variable']}: ${{{{ steps.params.outputs.{app['output']} }}}}", wait, "the list is the builder's, which names the zone of each endpoint")
+            for word in ("az network private-endpoint dns-zone-group list", '--endpoint-name "$endpoint"', 'grep -qi "/$zone\\$" <<< "$zones"', "attempts=40", "sleep 60", "exit 1", app["given"],
+                         "do not create a private DNS zone"):
+                self.assertIn(word, wait, f"{path}: {word}")
+            self.assertEqual(re.findall(r"\baz ([a-z-]+ [a-z-]+ [a-z-]+ [a-z-]+)", self.script(app["wait"])), ["network private-endpoint dns-zone-group list"], "it reads the zone group of the endpoint and nothing else")
+            for word in ("--method", "--yes", "dns-zone-group create", "dns-zone-group delete", "az network private-dns", "az role", "az resource"):
+                self.assertNotIn(word, self.script(app["wait"]), f"{path}: {word}")
+            order = [self.names.index(app[key]) for key in ("deploy", "wait", "login", "build", "publish")]
+            self.assertEqual(order, sorted(order), f"{path}: the deploy, the wait, a fresh sign-in (the first credential is old by the end of a wait), the build and the publish, in that order")
+            for key in ("wait", "login", "build", "publish"):
+                self.assertIn(f"        if: inputs.action == '{app['action']}'\n", self.step(app[key]), f"{path}: {key}")
+
+    def test_the_comment_of_the_wait_says_what_happened_so_that_nobody_takes_the_wait_away(self):
+        usage = self.step(self.APPS["environment/recording/main.bicep"]["wait"])
+        for words in ("a Flex Consumption deployment ends with a call from the deployment site", "to the app's own host name", "<app>.privatelink.azurewebsites.net",
+                      "Reset all workers endpoint", "responded with Name or service not known", "So no private endpoint of an app is added without this wait."):
+            self.assertIn(words, usage.replace("\n          # ", " "), words)
+        cases = self.step(self.APPS["environment/cases/main.bicep"]["wait"])
+        for words in ("The same wait as the usage recording's", "a deployment site calls its app by that name", "a later probe from the Operator finds the names"):
+            self.assertIn(words, cases.replace("\n          # ", " "), words)
 
 
 class Planted(unittest.TestCase):
@@ -1189,6 +1261,7 @@ class CasesWorkflow(unittest.TestCase):
                  "Remove the Flex Consumption version of the cases app, when it is still there",
                  "Remove what the Flex Consumption version left in the storage account, when it is still there",
                  "Let the cases app go from an integration subnet that is not the one of the template", "Deploy the first cases",
+                 "Wait until the landing zone has registered the cases app's private endpoint in the central zone",
                  "Sign in to Azure again for the publish of the cases, because the first sign-in's credential lasts five minutes",
                  "Build the cases app's package", "Publish the cases to the function app", "Wait until the cases app answers",
                  "Sign in to Azure a third time for the check of the cases, because the second sign-in's credential lasts five minutes too",

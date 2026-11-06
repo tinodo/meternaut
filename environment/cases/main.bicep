@@ -36,7 +36,8 @@
 // policy adds it, rule 19). The Operator uses it to publish the code and to knock at the console's front door from inside the network, in the changes after this one
 // (docs/proposals/07-private-by-default.md); the console keeps its public access until then, which the parameter casesAppPublicNetworkAccess says, so that closing it is one value. The value
 // is written to the app every time and is never left empty: Learn says that for a site whose value is not set, a private endpoint switches public access off by itself, and
-// the people who approve a change reach the console from outside the network.
+// the people who approve a change reach the console from outside the network. The workflow waits until the landing zone has registered the endpoint's names before it publishes, so that the
+// two apps behave alike: the usage app's deployment ends with a call to the app's own host name, which does not resolve before.
 //
 // The subnet is made once and then left alone (webSubnetExists): the landing zone's network manager puts a route table on a new subnet
 // about a minute after it is made, and a template that makes the subnet again takes that table away, and with it the subnet's way to

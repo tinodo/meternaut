@@ -125,6 +125,10 @@ PLACEHOLDER = "00000000-0000-0000-0000-000000000000"
 PUBLIC_NETWORK_ACCESS = ("Enabled", "Disabled")
 USAGE_APP_PUBLIC_NETWORK_ACCESS = "Enabled"
 CASES_APP_PUBLIC_NETWORK_ACCESS = "Enabled"
+# The central private DNS zone in which the landing zone's policy registers the names of an App Service app (the app's own and its deployment site's) for the endpoint of the sub-resource `sites`.
+# A Flex Consumption deployment ends with a call from the deployment site to the app's own host name, and while the zone has no record of a new endpoint that name does not resolve: the first
+# `recording` after the usage app's endpoint was made failed at the publish for that reason (docs/proposals/07-private-by-default.md, phase 1). So the endpoint of an app is always waited for.
+APP_ENDPOINT_ZONE = "privatelink.azurewebsites.net"
 IDENTITY_NAME = "id-meternaut-gateway"
 FOUNDRY_PROJECT_NAME = "meternaut"
 FOUNDRY_GUARDRAIL_NAME = "meternaut-agents"
@@ -349,14 +353,22 @@ def ops_subnet_exists(env: dict) -> bool:
 
 
 def recording_endpoints(names: dict[str, str]) -> list[tuple[str, str]]:
-    """The private endpoints of the usage recording's services and the central private DNS zone that the landing zone registers each in. The function app's own endpoint is not in the list: the
-    app is public while the workflow publishes to it, so nothing waits for its names, and the probe of the Operator reports them (docs/proposals/07-private-by-default.md, phase 1)."""
+    """The private endpoints of the usage recording and the central private DNS zone that the landing zone registers each in: the three of the storage account, the Cosmos DB account's, the
+    Event Hubs namespace's and the function app's own. The workflow waits for every one of them before it publishes the code. The app's own is in the list because the deployment of a package ends
+    with a call from the deployment site to the app's own host name, which does not resolve until the zone has the record (docs/proposals/07-private-by-default.md, phase 1)."""
     storage = names["storage_account_name"]
     return [
         *[(f"pe-{storage}-{service}", f"privatelink.{service}.core.windows.net") for service in ("blob", "queue", "table")],
         (f"pe-{names['cosmos_account_name']}", "privatelink.documents.azure.com"),
         (f"pe-{names['event_hub_namespace']}", "privatelink.servicebus.windows.net"),
+        (f"pe-{names['function_app_name']}", APP_ENDPOINT_ZONE),
     ]
+
+
+def cases_endpoints(names: dict[str, str]) -> list[tuple[str, str]]:
+    """The private endpoint of the cases app (the console's name and its deployment site) and the central private DNS zone that the landing zone registers it in. The action `cases` waits for it
+    before it publishes the code, as `recording` waits for the usage app's: the two apps behave alike, and a later probe from the Operator finds the names."""
+    return [(f"pe-{names['cases_function_app_name']}", APP_ENDPOINT_ZONE)]
 
 
 def read_models(path: Path) -> list[dict]:
@@ -680,6 +692,7 @@ def build(env, models: list[dict], preview: bool = False, contract: dict | None 
         "operator_identity_name": "id-meternaut-operator",
         "operator_subnet_name": "snet-ops",
         "recording_endpoints": ",".join(f"{endpoint_name}:{zone}" for endpoint_name, zone in recording_endpoints(names)),
+        "cases_endpoints": ",".join(f"{endpoint_name}:{zone}" for endpoint_name, zone in cases_endpoints(cases_names(subscription, group))),
         "appinsights_name": "appi-meternaut",
         "cases_hub_name": "cases-control",
         "gateway_url": f"https://{gateway.group(3).lower()}.azure-api.net",

@@ -250,12 +250,12 @@ class Recording(unittest.TestCase):
     def test_the_private_endpoints_and_their_zones_are_the_ones_the_template_makes(self):
         _, outputs = self.files()
         pairs = [pair.split(":") for pair in outputs["recording_endpoints"].split(",")]
-        self.assertEqual(len(pairs), 5)
-        storage, cosmos, hubs = outputs["storage_account_name"], outputs["cosmos_account_name"], outputs["event_hub_namespace"]
+        self.assertEqual(len(pairs), 6)
+        storage, cosmos, hubs, app = outputs["storage_account_name"], outputs["cosmos_account_name"], outputs["event_hub_namespace"], outputs["function_app_name"]
         self.assertEqual(pairs, [[f"pe-{storage}-blob", "privatelink.blob.core.windows.net"], [f"pe-{storage}-queue", "privatelink.queue.core.windows.net"],
                                  [f"pe-{storage}-table", "privatelink.table.core.windows.net"], [f"pe-{cosmos}", "privatelink.documents.azure.com"],
-                                 [f"pe-{hubs}", "privatelink.servicebus.windows.net"]])
-        for line in ("name: 'pe-${storageAccountName}-${service}'", "name: 'pe-${cosmosAccountName}'", "name: 'pe-${eventHubNamespaceName}'"):
+                                 [f"pe-{hubs}", "privatelink.servicebus.windows.net"], [f"pe-{app}", "privatelink.azurewebsites.net"]])
+        for line in ("name: 'pe-${storageAccountName}-${service}'", "name: 'pe-${cosmosAccountName}'", "name: 'pe-${eventHubNamespaceName}'", "name: 'pe-${functionAppName}'"):
             self.assertIn(line, RECORDING)
         self.assertEqual(outputs["appinsights_name"], "appi-meternaut")
         self.assertNotIn("usage_identity_name", outputs, "the usage app's own system-assigned identity has no name, and the workflow does not look for the user-assigned one that it replaced")
@@ -1099,15 +1099,24 @@ class PublicNetworkAccessOfTheApps(unittest.TestCase):
             self.assertIn(f"    publicNetworkAccess: {name}\n", source, "the app takes the parameter, and nothing else gives the property a value")
         self.assertEqual(ep.PUBLIC_NETWORK_ACCESS, ("Enabled", "Disabled"))
 
-    def test_the_apps_own_endpoints_are_not_among_the_ones_that_the_recording_waits_for_and_the_name_is_the_one_the_templates_give_them(self):
+    def test_the_endpoint_of_each_app_is_in_the_list_that_its_action_waits_for_with_the_zone_of_app_service_and_the_name_that_its_template_gives_it(self):
+        # The first `recording` after the usage app's endpoint was made failed at the publish: a Flex Consumption deployment ends with a call from the deployment site to the app's own host name,
+        # and while the central zone had no record of the new endpoint that name did not resolve ("Reset all workers endpoint responded with Name or service not known"). A list without the
+        # app's endpoint lets the workflow publish too early, so it is pinned here for both apps.
         code, out, err, files = self.build()
         self.assertEqual((code, err), (0, ""))
-        waited = out.split("recording_endpoints=")[1].split("\n")[0]
+        lines = dict(line.split("=", 1) for line in out.splitlines())
         usage, cases = values(files["recording.parameters.json"])["functionAppName"], values(files["cases.parameters.json"])["functionAppName"]
+        waited = lines["recording_endpoints"].split(",")
+        self.assertEqual(len(waited), 6, "the five endpoints of the services and the usage app's own")
+        self.assertIn(f"pe-{usage}:privatelink.azurewebsites.net", waited)
+        self.assertEqual(lines["cases_endpoints"], f"pe-{cases}:privatelink.azurewebsites.net", "the cases app has one endpoint, and its action waits for it")
+        self.assertEqual(ep.APP_ENDPOINT_ZONE, "privatelink.azurewebsites.net", "the central zone of App Service: the names of the app and of its deployment site")
+        self.assertNotIn(cases, lines["recording_endpoints"], "each action waits for the endpoints that it makes")
+        self.assertNotIn(usage, lines["cases_endpoints"])
         for name, source in ((usage, self.RECORDING_TEMPLATE), (cases, self.CASES_TEMPLATE)):
-            self.assertNotIn(name, waited, "the apps are public while the workflow publishes to them, so nothing waits for their names: the probe of the Operator reports them")
-            self.assertIn("name: 'pe-${functionAppName}'", source)
-        self.assertEqual(len(waited.split(",")), 5, "the services' five endpoints and no other")
+            self.assertIn("name: 'pe-${functionAppName}'", source, "the name that the workflow looks for is the name that the template gives the endpoint")
+            self.assertIn("'sites'", source)
     TEMPLATE = {"parameters": {"a": {"type": "string"}, "b": {"type": "int", "defaultValue": 1}, "c": {"type": "array", "defaultValue": []}, "d": {"type": "bool", "defaultValue": True}}}
 
     def doc(self, **given):
