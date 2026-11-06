@@ -277,11 +277,16 @@ class Errors(unittest.TestCase):
             c.request("GET", LOCKS, retries=0)
         self.assertLess(len(str(raised.exception)), 250)
 
+    # The depth at which the C JSON parser gives up differs by platform (the C recursion limit of Python 3.13 is about 3,000 on Windows and 10,000 on Linux), so the
+    # tests go far beyond both.
+    DEEP = 50000
+
     def test_a_body_nested_too_deeply_to_be_parsed_gives_a_fixed_text_and_not_an_exception(self):
+        deep = self.DEEP
         bodies = {
-            "arrays": b"[" * 5000 + b"]" * 5000, "arrays that are not closed": b"[" * 5000, "objects": b'{"error":' * 5000 + b"1" + b"}" * 5000,
-            "arrays in the message": b'{"error":{"code":"X","message":' + b"[" * 5000 + b"]" * 5000 + b"}}",
-            "a secret before the depth": b'{"secret":"SECRET-IN-THE-BODY","deep":' + b"[" * 5000 + b"]" * 5000 + b"}",
+            "arrays": b"[" * deep + b"]" * deep, "arrays that are not closed": b"[" * deep, "objects": b'{"error":' * deep + b"1" + b"}" * deep,
+            "arrays in the message": b'{"error":{"code":"X","message":' + b"[" * deep + b"]" * deep + b"}}",
+            "a secret before the depth": b'{"secret":"SECRET-IN-THE-BODY","deep":' + b"[" * deep + b"]" * deep + b"}",
         }
         for what, body in bodies.items():
             for status in (400, 403, 500, 503):
@@ -294,7 +299,7 @@ class Errors(unittest.TestCase):
 
     def test_the_error_text_of_a_body_that_cannot_be_read_is_made_without_an_exception(self):
         redact = Redactor()
-        self.assertEqual(http.error_text(400, b"[" * 5000, redact), "400 the body is nested too deeply to be read")
+        self.assertEqual(http.error_text(400, b"[" * self.DEEP, redact), "400 the body is nested too deeply to be read")
         # A number of 5000 digits is a ValueError, not a RecursionError: the first words of the body, as for any body that is not JSON.
         text = http.error_text(502, b"9" * 5000, redact)
         self.assertTrue(text.startswith("502 9") and len(text) <= 130, text)
@@ -312,7 +317,7 @@ class Errors(unittest.TestCase):
             c.request("GET", LOCKS).json()
 
     def test_a_good_answer_nested_too_deeply_is_an_error_when_read_as_json_and_not_a_recursion_error(self):
-        for body in (b"[" * 5000 + b"]" * 5000, b'{"a":' * 5000 + b"1" + b"}" * 5000):
+        for body in (b"[" * self.DEEP + b"]" * self.DEEP, b'{"a":' * self.DEEP + b"1" + b"}" * self.DEEP):
             c, _, _ = client((200, {}, body))
             with self.assertRaises(http.HttpError) as raised:
                 c.request("GET", LOCKS).json()
