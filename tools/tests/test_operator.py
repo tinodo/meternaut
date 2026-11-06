@@ -6,6 +6,7 @@ import io
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -601,6 +602,49 @@ class NothingSecretIsPrinted(unittest.TestCase):
         self.assertEqual(op.Printer([]).redact("nothing to hide"), "nothing to hide")
 
 
+class TheTokenOfTheDeployIdentity(unittest.TestCase):
+    """The token that the probe signs in as the deploy identity with, in the size and the shape of the real one (a JWT of about a kilobyte), goes through the real tool: it is one secure value of
+    the request and it is in nothing that the tool prints, in no file that is left behind and on no command line, even when the container says it."""
+
+    TOKEN = ".".join(["eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9", "eyJzdWIiOiJyZXBvOm" + "dpdGh1Yi1leGFtcGxlLzEyMzQ1" * 30, "c2ln" + "bmF0dXJlLTEyMzQ1" * 20])
+
+    def run_probe_in_the_tool(self, az):
+        files = {"size-test": b"x" * 1000, "usage-requirements.txt": USAGE_LOCK}
+        with tempfile.TemporaryDirectory() as tmp:
+            summary = Path(tmp) / "summary.md"
+            code, out, err, work = run_tool("--secure-env", "AZURE_FEDERATED_TOKEN", "--env", f"PROBE_DEPLOY_CLIENT_ID={DEPLOY_CLIENT}", "--env", f"PROBE_DEPLOY_TENANT_ID={DEPLOY_TENANT}",
+                                            "--env", f"PROBE_LOCK_BYTES={len(USAGE_LOCK)}", "--summary", str(summary), az=az, env={"AZURE_FEDERATED_TOKEN": self.TOKEN},
+                                            script_text=text("operator/probe.sh"), files=files)
+            written = summary.read_text(encoding="utf-8") if summary.exists() else ""
+            leftovers = [path for path in Path(work).rglob("*") if path.is_file() and self.TOKEN.encode() in path.read_bytes()]
+        return code, out, err, written, leftovers
+
+    def test_it_is_one_secure_value_of_the_request_the_volume_holds_the_script_and_the_two_files_and_nothing_that_is_printed_or_left_behind_holds_it(self):
+        az = FakeAz(shows=[shown(), shown(container="Terminated", exit_code=0)], logs=[(0, f"the container says {self.TOKEN}\nsecond line\n", ""), (0, f"the container says {self.TOKEN}\nsecond line\n", "")],
+                    deletes=[(1, "", f"ERROR: {self.TOKEN}"), (0, "", "")])
+        code, out, err, written, leftovers = self.run_probe_in_the_tool(az)
+        self.assertEqual(code, 0, err)
+        variables = az.document["properties"]["containers"][0]["properties"]["environmentVariables"]
+        self.assertEqual([variable for variable in variables if self.TOKEN in json.dumps(variable)], [{"name": "AZURE_FEDERATED_TOKEN", "secureValue": self.TOKEN}])
+        self.assertEqual(json.dumps(az.document).count(self.TOKEN), 1, "once in the request, and as a secure value, which Azure does not show again")
+        self.assertEqual(sorted(az.document["properties"]["volumes"][0]["secret"]), ["probe.sh", "size-test", "usage-requirements.txt"])
+        self.assertEqual(base64.b64decode(az.document["properties"]["volumes"][0]["secret"]["usage-requirements.txt"]), USAGE_LOCK, "the lock file is sent whole")
+        for stream in (out, err, written):
+            for form in (self.TOKEN, base64.b64encode(self.TOKEN.encode()).decode(), json.dumps(self.TOKEN)[1:-1]):
+                self.assertNotIn(form, stream)
+        self.assertIn("| the container says ***", out)
+        self.assertIn("1 secure value(s) that are not shown", out)
+        self.assertFalse(any(self.TOKEN in part for call in az.calls for part in call), "on no command line of az")
+        self.assertEqual(leftovers, [], "and in no file that is left behind")
+
+    def test_a_token_that_is_not_in_the_environment_is_refused_before_anything_is_made(self):
+        az = FakeAz()
+        code, out, err, _ = run_tool("--secure-env", "AZURE_FEDERATED_TOKEN", az=az, env={"AZURE_FEDERATED_TOKEN": ""})
+        self.assertEqual(code, 2)
+        self.assertIn("--secure-env AZURE_FEDERATED_TOKEN names an environment variable of this process, and it is not set", err)
+        self.assertEqual(az.calls, [], "no group is made without the token that the probe was told to get: the step leaves the argument out instead")
+
+
 class TheLogStream(unittest.TestCase):
     def test_a_log_that_grows_gives_only_its_new_lines(self):
         stream = op.LogStream()
@@ -845,14 +889,32 @@ def posix(path):
 
 
 STUB_AZ = """#!/bin/bash
-# stand-in for az: FAKE_AZ_LOGIN and FAKE_AZ_GROUP are ok or fail
+# stand-in for az: FAKE_AZ_LOGIN, FAKE_AZ_DEPLOY_LOGIN, FAKE_AZ_GROUP and FAKE_AZ_DEPLOY_GROUP are ok or fail; FAKE_TOKEN_IN_ERROR is a string that a failed sign-in of the deploy identity repeats.
+# Every call is logged with the folder of the CLI's state (AZURE_CONFIG_DIR: the deploy identity has one of its own), and a call that finds the federated token in its environment says so:
+# the probe takes it out of the environment before anything runs
+if [ -n "${FAKE_LOG:-}" ]; then
+  echo "az $* [config=${AZURE_CONFIG_DIR:-none}]" >> "$FAKE_LOG"
+  if [ -n "${AZURE_FEDERATED_TOKEN:-}" ]; then echo "az SAW THE TOKEN IN ITS ENVIRONMENT" >> "$FAKE_LOG"; fi
+fi
 if [ "$1" = login ]; then
+  case " $* " in
+    *" --service-principal "*)
+      if [ "${FAKE_AZ_DEPLOY_LOGIN:-ok}" = ok ]; then exit 0; fi
+      echo "ERROR: AADSTS70021: the assertion ${FAKE_TOKEN_IN_ERROR:-} was refused, no matching federated identity record" >&2
+      echo "second line that must not show" >&2
+      exit 1 ;;
+  esac
   if [ "${FAKE_AZ_LOGIN:-ok}" = ok ]; then exit 0; fi
   echo "ERROR: Failed to connect to MSI 11111111-2222-3333-4444-555555555555 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa $GITHUB_TOKEN" >&2
   echo "second line that must not show" >&2
   exit 1
 fi
 if [ "$1" = group ]; then
+  if [ -n "${AZURE_CONFIG_DIR:-}" ]; then
+    if [ "${FAKE_AZ_DEPLOY_GROUP:-ok}" = ok ]; then echo Succeeded; exit 0; fi
+    echo "ERROR: (AuthorizationFailed) The deploy identity does not have authorization ${FAKE_TOKEN_IN_ERROR:-}" >&2
+    exit 1
+  fi
   if [ "${FAKE_AZ_GROUP:-ok}" = ok ]; then echo Succeeded; exit 0; fi
   echo "ERROR: (AuthorizationFailed) The client does not have authorization" >&2
   exit 1
@@ -875,11 +937,19 @@ exit 2
 """
 
 STUB_CURL = """#!/bin/bash
-# stand-in for curl: FAKE_CURL is "host=code:exit:finalhost host=..."; a host that is not in it is unreachable (exit 28)
+# stand-in for curl: FAKE_CURL is "host=code:exit:finalhost host=..."; a host that is not in it is unreachable (exit 28). What --write-out asks for is what comes out: the status code alone
+# for '%{http_code}', the code and the final address for the probe's own format. The address of the request is the last argument.
 url=""
-for argument in "$@"; do url=$argument; done
+format=""
+previous=""
+for argument in "$@"; do
+  if [ "$previous" = --write-out ]; then format=$argument; fi
+  previous=$argument
+  url=$argument
+done
 host=${url#https://}
 host=${host%%/*}
+if [ -n "${FAKE_LOG:-}" ]; then echo "curl $*" >> "$FAKE_LOG"; fi
 for entry in ${FAKE_CURL:-}; do
   if [ "${entry%%=*}" = "$host" ]; then
     rest=${entry#*=}
@@ -888,11 +958,11 @@ for entry in ${FAKE_CURL:-}; do
     status=${rest%%:*}
     final=""
     if [ "$rest" != "$status" ]; then final=${rest#*:}; fi
-    printf '%s https://%s/x' "$code" "${final:-$host}"
+    if [ "$format" = '%{http_code}' ]; then printf '%s' "$code"; else printf '%s https://%s/x' "$code" "${final:-$host}"; fi
     exit "$status"
   fi
 done
-printf '000 %s' "$url"
+if [ "$format" = '%{http_code}' ]; then printf '000'; else printf '000 %s' "$url"; fi
 exit 28
 """
 
@@ -902,15 +972,90 @@ exec "$@"
 """
 
 STUB_PYTHON = """#!/bin/bash
-echo 3.12.7
+# stand-in for python3. -c with sys.version_info says the version; -c with os.walk is the real Python (REAL_PYTHON), which counts the files of a folder; -c with sysconfig says where ensurepip put pip.
+# -m pip is FAKE_PIP: ok, missing (no pip, unless PYTHONPATH names the one that ensurepip made), strict-fails (the first attempt says Requires-Python and the one with --ignore-requires-python works),
+# hash, network, timeout (the exit code of timeout) or other (an error that nobody planned for). -m ensurepip is FAKE_ENSUREPIP: ok or disabled. Every -m call is logged with its arguments and PYTHONPATH,
+# and a call that finds the federated token in its environment says so.
+if [ -n "${FAKE_LOG:-}" ]; then
+  if [ "$1" = -m ]; then echo "python3 $* [PYTHONPATH=${PYTHONPATH:-none}]" >> "$FAKE_LOG"; fi
+  if [ -n "${AZURE_FEDERATED_TOKEN:-}" ]; then echo "python3 SAW THE TOKEN IN ITS ENVIRONMENT" >> "$FAKE_LOG"; fi
+fi
+case "$1" in
+  -c)
+    case "$2" in
+      *os.walk*)
+        dir=$3
+        if command -v cygpath > /dev/null 2>&1; then dir=$(cygpath -w "$3"); fi
+        exec "$REAL_PYTHON" -c "$2" "$dir" ;;
+      *sysconfig*) echo "$3/usr/lib/python3.12/site-packages"; exit 0 ;;
+      *) echo 3.12.7; exit 0 ;;
+    esac ;;
+  -m)
+    case "$2" in
+      ensurepip)
+        if [ "${FAKE_ENSUREPIP:-ok}" != ok ]; then echo "ERROR: ensurepip is disabled in this Python: install the python3-pip package" >&2; exit 1; fi
+        root=""
+        previous=""
+        for argument in "$@"; do
+          if [ "$previous" = --root ]; then root=$argument; fi
+          previous=$argument
+        done
+        mkdir -p "$root/usr/lib/python3.12/site-packages/pip"
+        echo "# pip" > "$root/usr/lib/python3.12/site-packages/pip/__init__.py"
+        exit 0 ;;
+      pip)
+        if [ "$3" = --version ]; then
+          if [ "${FAKE_PIP:-ok}" = missing ] && [ -z "${PYTHONPATH:-}" ]; then echo "/usr/bin/python3: No module named pip" >&2; exit 1; fi
+          echo "pip 24.0 from /usr/lib/python3.12/site-packages/pip (python 3.12)"
+          exit 0
+        fi
+        target=""
+        ignore=no
+        previous=""
+        for argument in "$@"; do
+          if [ "$previous" = --target ]; then target=$argument; fi
+          if [ "$argument" = --ignore-requires-python ]; then ignore=yes; fi
+          previous=$argument
+        done
+        case "${FAKE_PIP:-ok}:$ignore" in
+          strict-fails:no)
+            echo "ERROR: Ignored the following versions that require a different python version: 2.3.0 Requires-Python >=3.13" >&2
+            echo "ERROR: No matching distribution found for azure-functions==2.3.0" >&2
+            exit 1 ;;
+          hash:*) echo "ERROR: THESE PACKAGES DO NOT MATCH THE HASHES FROM THE REQUIREMENTS FILE. If you have updated the package versions, please update the hashes." >&2; exit 1 ;;
+          network:*)
+            echo "WARNING: Retrying (Retry(total=0)) after connection broken by 'NewConnectionError: Failed to establish a new connection: [Errno -3] Temporary failure in name resolution'" >&2
+            echo "ERROR: Could not find a version that satisfies the requirement azure-core==1.41.0" >&2
+            exit 1 ;;
+          timeout:*) exit 124 ;;
+          other:*) echo "ERROR: something that nobody planned for went wrong while a wheel was unpacked" >&2; exit 1 ;;
+        esac
+        mkdir -p "$target/azure/core" "$target/cryptography"
+        head -c 1048576 /dev/zero > "$target/cryptography/big.so"
+        head -c 524288 /dev/zero > "$target/azure/core/medium.bin"
+        echo "# core" > "$target/azure/core/__init__.py"
+        exit 0 ;;
+    esac ;;
+esac
+echo "unexpected python3 call: $*" >&2
+exit 9
 """
+
+FEDERATED_TOKEN = "fake-oidc-token-Q9x7LmN2pR5tV8wY"
+SHORT_FEDERATED_TOKEN = "fake-oidc-7Qz"
+DEPLOY_CLIENT = "aaaaaaaa-1111-2222-3333-444444444444"
+DEPLOY_TENANT = "bbbbbbbb-5555-6666-7777-888888888888"
+SCM_USAGE = "func-meternaut-usage-0a1b2c3d.scm.azurewebsites.net"
+SCM_CASES = "func-meternaut-cases-0a1b2c3d.scm.azurewebsites.net"
+USAGE_LOCK = b"azure-core==1.41.0 \\\n    --hash=sha256:" + b"ab" * 32 + b"\n"
 
 
 @unittest.skipIf(BASH is None, "no bash on this machine")
 class ProbeScript(unittest.TestCase):
     """operator/probe.sh against stand-ins for az, curl, getent, timeout and python3: what it says for each check, that it says little, and that it never fails."""
 
-    def run_probe(self, env=None, stubs=None, resolv="nameserver 10.53.0.4\nnameserver 168.63.129.16\n", size=None):
+    def run_probe(self, env=None, stubs=None, resolv="nameserver 10.53.0.4\nnameserver 168.63.129.16\n", size=None, lock=None):
+        """Runs the script. What the stand-ins logged is in self.calls, and what the probe left in its work folder in self.leftover."""
         with tempfile.TemporaryDirectory() as tmp:
             tmp = Path(tmp)
             bin_dir = tmp / "bin"
@@ -922,28 +1067,52 @@ class ProbeScript(unittest.TestCase):
             volume.mkdir()
             if size is not None:
                 (volume / "size-test").write_bytes(b"x" * size)
+            if lock is not None:
+                (volume / "usage-requirements.txt").write_bytes(lock)
+            work_root = tmp / "work"
+            work_root.mkdir()
+            log = tmp / "log.txt"
+            log.write_text("", encoding="utf-8")
             resolv_conf = tmp / "resolv.conf"
             resolv_conf.write_text(resolv, encoding="utf-8", newline="\n")
             script = tmp / "probe.sh"
             script.write_text(text("operator/probe.sh"), encoding="utf-8", newline="\n")
-            environment = {**os.environ, "STUBS": posix(bin_dir), "PROBE_VOLUME": posix(volume), "PROBE_RESOLV_CONF": posix(resolv_conf), "OPERATOR_CLIENT_ID": "11111111-2222-3333-4444-555555555555",
-                           "OPERATOR_GROUP": "rg-example", "GITHUB_TOKEN": TOKEN_OF_THE_RUN, **(env or {})}
+            environment = {**os.environ, "STUBS": posix(bin_dir), "PROBE_VOLUME": posix(volume), "PROBE_RESOLV_CONF": posix(resolv_conf), "PROBE_TMP": posix(work_root), "FAKE_LOG": posix(log),
+                           "REAL_PYTHON": posix(sys.executable), "OPERATOR_CLIENT_ID": "11111111-2222-3333-4444-555555555555", "OPERATOR_GROUP": "rg-example", "GITHUB_TOKEN": TOKEN_OF_THE_RUN,
+                           **(env or {})}
+            for name in [name for name, value in environment.items() if value is None]:
+                del environment[name]
             done = subprocess.run([BASH, "-c", 'PATH="$STUBS:$PATH"; export PATH; exec bash "$0"', posix(script)], capture_output=True, text=True, env=environment)
+            self.calls = log.read_text(encoding="utf-8").splitlines()
+            self.leftover = sorted(path.name for path in work_root.iterdir())
         return done, done.stdout.splitlines()
 
     def good_env(self):
-        return {"PROBE_NAMES": "evhns-example.servicebus.windows.net github.com", "PROBE_PRIVATE_NAMES": "evhns-example.servicebus.windows.net",
-                "FAKE_DNS": "evhns-example.servicebus.windows.net=10.53.0.20 github.com=140.82.121.4",
+        """Everything that the probe is given on the real estate, with stand-ins that answer well. The deploy identity has a token, the two deployment sites are private, and the lock file has arrived whole."""
+        return {"PROBE_NAMES": "evhns-example.servicebus.windows.net github.com", "PROBE_PRIVATE_NAMES": f"evhns-example.servicebus.windows.net {SCM_USAGE} {SCM_CASES}",
+                "FAKE_DNS": f"evhns-example.servicebus.windows.net=10.53.0.20 github.com=140.82.121.4 {SCM_USAGE}=10.53.0.21 {SCM_CASES}=10.53.0.21",
                 "PROBE_URLS": "https://mcr.microsoft.com/v2/ https://api.github.com/ https://github.com/x/y https://slow.example.net/",
-                "FAKE_CURL": "mcr.microsoft.com=200:0 api.github.com=200:0 github.com=302:0:release-assets.githubusercontent.com slow.example.net=302:47",
-                "PROBE_SIZE_BYTES": "4000"}
+                "FAKE_CURL": f"mcr.microsoft.com=200:0 api.github.com=200:0 github.com=302:0:release-assets.githubusercontent.com slow.example.net=302:47 {SCM_USAGE}=401:0 {SCM_CASES}=401:0",
+                "PROBE_SIZE_BYTES": "4000", "AZURE_FEDERATED_TOKEN": FEDERATED_TOKEN, "PROBE_DEPLOY_CLIENT_ID": DEPLOY_CLIENT, "PROBE_DEPLOY_TENANT_ID": DEPLOY_TENANT,
+                "PROBE_SCM_HOSTS": f"{SCM_USAGE} {SCM_CASES}", "PROBE_LOCK_BYTES": str(len(USAGE_LOCK))}
+
+    def good_run(self, **changes):
+        return self.run_probe({**self.good_env(), **changes}, size=4000, lock=USAGE_LOCK)
+
+    @staticmethod
+    def without_seconds(lines):
+        """The seconds that a build took are the clock's, not the test's."""
+        return [re.sub(r", \d+ s, hashes ok$", ", N s, hashes ok", line) for line in lines]
 
     def test_a_good_environment_gives_one_ok_line_for_each_check_and_ends_with_probe_done(self):
-        done, lines = self.run_probe(self.good_env(), size=4000)
+        done, lines = self.good_run()
         self.assertEqual((done.returncode, done.stderr), (0, ""))
-        self.assertEqual(lines, [
+        self.assertEqual(self.without_seconds(lines), [
             "ok: az, curl, getent and python3 are in the image",
             "ok: python3 3.12.7",
+            "ok: python3 -m pip 24.0",
+            "ok: az login as the deploy identity with the OpenID Connect token",
+            "ok: az group show of the project group as the deploy identity",
             "ok: az login --identity",
             "ok: az group show of the project group: the Reader role works",
             "ok: resolver 1 is private",
@@ -955,8 +1124,13 @@ class ProbeScript(unittest.TestCase):
             "ok: https github.com 302 -> release-assets.githubusercontent.com",
             "ok: https slow.example.net answers, with more than 2 redirects",
             "ok: secret volume file is 4000 bytes, as sent",
+            "ok: scm func-meternaut-usage-0a1b2c3d: private address, GET / gives 401",
+            "ok: scm func-meternaut-cases-0a1b2c3d: private address, GET / gives 401",
+            f"ok: usage lock file is {len(USAGE_LOCK)} bytes, as sent",
+            "ok: usage build needs no --ignore-requires-python: 3 files, 1.5 MB, N s, hashes ok",
             "probe-done",
         ])
+        self.assertEqual(self.leftover, [], "the work folder, with the CLI's state of the deploy identity and what was built, is gone")
 
     def test_each_failed_check_is_one_FAIL_line_with_a_few_words_and_the_exit_code_is_still_0(self):
         env = {**self.good_env(), "FAKE_AZ_LOGIN": "fail", "PROBE_PRIVATE_NAMES": "evhns-example.servicebus.windows.net github.com missing.example.net",
@@ -989,7 +1163,7 @@ class ProbeScript(unittest.TestCase):
         _, lines = self.run_probe({}, size=1234)
         self.assertIn("ok: secret volume file is 1234 bytes", lines)
         _, lines = self.run_probe({}, size=None)
-        self.assertFalse([line for line in lines if "secret volume" in line or "size-test" in line])
+        self.assertFalse([line for line in lines if "secret volume file" in line or "size-test" in line])
 
     def test_a_resolver_that_is_public_or_missing_is_said(self):
         _, lines = self.run_probe({}, resolv="nameserver 8.8.8.8\nnameserver 2001:4860:4860::8888\n")
@@ -1027,8 +1201,9 @@ class ProbeScript(unittest.TestCase):
 
     def test_no_secret_of_the_environment_and_no_token_of_a_command_ever_reaches_the_output(self):
         for scenario in (self.good_env(), {**self.good_env(), "FAKE_AZ_LOGIN": "fail"}):
-            done, lines = self.run_probe(scenario, size=4000)
+            done, lines = self.run_probe(scenario, size=4000, lock=USAGE_LOCK)
             self.assertNotIn(TOKEN_OF_THE_RUN, done.stdout + done.stderr)
+            self.assertNotIn(FEDERATED_TOKEN, done.stdout + done.stderr)
             for line in lines:
                 if line.startswith("FAIL: az "):
                     self.assertNotRegex(line, r"[A-Za-z0-9_.~+/=-]{20,}", "what a command said holds no string that could be a token")
@@ -1038,7 +1213,12 @@ class ProbeScript(unittest.TestCase):
         done, lines = self.run_probe({"OPERATOR_CLIENT_ID": "", "OPERATOR_GROUP": ""})
         self.assertEqual((done.returncode, done.stderr), (0, ""))
         self.assertIn("FAIL: az login: OPERATOR_CLIENT_ID is not set", lines)
+        self.assertIn("FAIL: deploy identity sign-in: no token (the workflow sent none)", lines)
+        self.assertIn("FAIL: no usage-requirements.txt in the secret volume", lines)
+        self.assertFalse([line for line in lines if line.startswith(("ok: scm", "FAIL: scm"))], "no deployment site asked for, no line")
+        self.assertEqual([call for call in self.calls if "scm.azurewebsites.net" in call], [])
         self.assertEqual(lines[-1], "probe-done")
+        self.assertEqual(self.leftover, [])
 
     def test_a_subscription_is_passed_to_the_group_read_when_it_is_given_and_only_then(self):
         subscription = "22222222-3333-4444-5555-666666666666"
@@ -1047,17 +1227,224 @@ class ProbeScript(unittest.TestCase):
         self.assertIn("ok: az group show of the project group: the Reader role works", lines)
         _, lines = self.run_probe({}, stubs={"az": strict})
         self.assertIn("FAIL: az group show: ERROR: no subscription", lines, "without the setting the read is the plain one")
+        _, lines = self.run_probe({**self.good_env(), "OPERATOR_SUBSCRIPTION": subscription}, stubs={"az": strict})
+        self.assertEqual(len([call for call in self.calls if call.startswith("az group show")]), 2, "the Operator's read and the deploy identity's")
+        for call in self.calls:
+            if call.startswith("az group show"):
+                self.assertIn(f"--subscription {subscription}", call, "both reads name the subscription when it is given")
+        self.assertIn("ok: az group show of the project group as the deploy identity", lines)
+
+    # --- the deploy identity -------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+    def test_the_deploy_identity_signs_in_with_the_token_in_a_folder_of_its_own_before_the_operator_and_reads_the_group_there(self):
+        done, lines = self.good_run()
+        (login,) = [call for call in self.calls if call.startswith("az login --service-principal")]
+        self.assertRegex(login, rf"^az login --service-principal --username {DEPLOY_CLIENT} --tenant {DEPLOY_TENANT} --federated-token {FEDERATED_TOKEN} --allow-no-subscriptions --output none "
+                                r"\[config=/.+/azure-deploy\]$")
+        folder = re.search(r"\[config=(.+)\]$", login).group(1)
+        self.assertEqual([call for call in self.calls if f"[config={folder}]" in call],
+                         [login, f"az group show --name rg-example --query properties.provisioningState --output tsv [config={folder}]"], "everything of the deploy identity is in its own folder")
+        operator = [call for call in self.calls if call.startswith("az ") and "[config=none]" in call]
+        self.assertEqual(operator, ["az login --identity --client-id 11111111-2222-3333-4444-555555555555 --allow-no-subscriptions --output none [config=none]",
+                                    "az group show --name rg-example --query properties.provisioningState --output tsv [config=none]"], "the Operator's sign-in keeps the default folder")
+        self.assertLess(self.calls.index(login), self.calls.index(operator[0]), "the token is valid for five minutes, so it is used before anything that can wait")
+        self.assertTrue(folder.startswith(folder.rsplit("/probe-", 1)[0] + "/probe-"), "the folder is inside the work folder of the probe, which is removed at the end")
+        self.assertEqual(self.leftover, [])
+
+    def test_the_token_is_on_the_command_line_of_the_one_sign_in_and_in_the_environment_of_no_program(self):
+        self.good_run(PROBE_SCM_HOSTS=f"{SCM_USAGE}")
+        self.assertEqual([call for call in self.calls if FEDERATED_TOKEN in call], [next(call for call in self.calls if "--service-principal" in call)])
+        self.assertIn(f"--federated-token {FEDERATED_TOKEN} ", self.calls[[FEDERATED_TOKEN in call for call in self.calls].index(True)])
+        self.assertEqual([call for call in self.calls if "SAW THE TOKEN" in call], [],
+                         "the probe takes the token out of its environment before any program runs, so that az, python3 and pip do not inherit it")
+
+    def test_the_token_never_reaches_the_output_even_when_az_repeats_it_and_even_when_it_is_too_short_to_look_like_one(self):
+        for token, failing in ((FEDERATED_TOKEN, "FAKE_AZ_DEPLOY_LOGIN"), (SHORT_FEDERATED_TOKEN, "FAKE_AZ_DEPLOY_LOGIN"), (FEDERATED_TOKEN, "FAKE_AZ_DEPLOY_GROUP")):
+            done, lines = self.good_run(AZURE_FEDERATED_TOKEN=token, FAKE_TOKEN_IN_ERROR=token, **{failing: "fail"})
+            self.assertEqual(done.returncode, 0)
+            self.assertNotIn(token, done.stdout + done.stderr, (token, failing))
+            for word in ("second line that must not show", FEDERATED_TOKEN):
+                self.assertNotIn(word, done.stdout + done.stderr)
+            if failing == "FAKE_AZ_DEPLOY_LOGIN":
+                self.assertRegex("\n".join(lines), r"(?m)^FAIL: deploy identity sign-in: ERROR: AADSTS70021: the assertion <(token|hidden)> was refused", (token, failing))
+            else:
+                self.assertRegex("\n".join(lines), r"(?m)^FAIL: az group show as the deploy identity: ERROR: \(AuthorizationFailed\) The deploy identity do", (token, failing))
+            self.assertEqual(lines[-1], "probe-done")
+
+    def test_without_a_token_the_sign_in_says_so_with_the_reason_of_the_workflow_and_the_rest_of_the_probe_runs(self):
+        done, lines = self.good_run(AZURE_FEDERATED_TOKEN=None, PROBE_TOKEN_NOTE="the job has no OpenID Connect token request")
+        self.assertEqual(done.returncode, 0)
+        self.assertIn("FAIL: deploy identity sign-in: no token (the job has no OpenID Connect token request)", lines)
+        self.assertEqual([call for call in self.calls if "--service-principal" in call], [], "nothing is tried without a token")
+        self.assertEqual(len([line for line in lines if "deploy identity" in line]), 1, "no group is read with an identity that did not sign in")
+        for expected in ("ok: az login --identity", "ok: az group show of the project group: the Reader role works", "ok: secret volume file is 4000 bytes, as sent",
+                         "ok: scm func-meternaut-usage-0a1b2c3d: private address, GET / gives 401"):
+            self.assertIn(expected, lines)
+        self.assertEqual(self.without_seconds(lines)[-2], "ok: usage build needs no --ignore-requires-python: 3 files, 1.5 MB, N s, hashes ok")
+        self.assertEqual(lines[-1], "probe-done")
+        done, lines = self.good_run(AZURE_FEDERATED_TOKEN="", PROBE_TOKEN_NOTE=None)
+        self.assertIn("FAIL: deploy identity sign-in: no token (the workflow sent none)", lines)
+        self.assertEqual([call for call in self.calls if "--service-principal" in call], [])
+
+    def test_a_sign_in_that_is_refused_says_why_in_a_few_words_and_nothing_is_read_with_that_identity(self):
+        done, lines = self.good_run(FAKE_AZ_DEPLOY_LOGIN="fail")
+        self.assertEqual(done.returncode, 0)
+        self.assertTrue([line for line in lines if line.startswith("FAIL: deploy identity sign-in: ERROR: AADSTS70021")], lines)
+        self.assertEqual([call for call in self.calls if call.startswith("az group show") and "[config=none]" not in call], [], "no read with an identity that is not signed in")
+        self.assertIn("ok: az login --identity", lines)
+        self.assertEqual(lines[-1], "probe-done")
+
+    def test_an_identity_or_a_tenant_that_is_not_given_is_said_and_nothing_is_tried(self):
+        for name in ("PROBE_DEPLOY_CLIENT_ID", "PROBE_DEPLOY_TENANT_ID"):
+            done, lines = self.good_run(**{name: ""})
+            self.assertIn("FAIL: deploy identity sign-in: PROBE_DEPLOY_CLIENT_ID or PROBE_DEPLOY_TENANT_ID is not set", lines, name)
+            self.assertEqual([call for call in self.calls if "--service-principal" in call], [], name)
+
+    def test_a_deploy_identity_that_cannot_read_the_group_says_so_in_a_few_words(self):
+        done, lines = self.good_run(FAKE_AZ_DEPLOY_GROUP="fail")
+        self.assertIn("ok: az login as the deploy identity with the OpenID Connect token", lines)
+        self.assertIn("FAIL: az group show as the deploy identity: ERROR: (AuthorizationFailed) The deploy identity doe", lines, "what the CLI said, cut to a few words")
+        self.assertIn("ok: az group show of the project group: the Reader role works", lines, "the Operator's read is another one and still works")
+
+    # --- pip and the build of the usage app's libraries ---------------------------------------------------------------------------------------------------------------------------------
+
+    def build_run(self, **changes):
+        """A run with nothing but the build test to do: a lock that arrived and a pip that behaves as FAKE_PIP says."""
+        done, lines = self.run_probe({"PROBE_LOCK_BYTES": str(len(USAGE_LOCK)), **changes}, lock=USAGE_LOCK)
+        self.assertEqual(done.returncode, 0)
+        self.assertEqual(lines[-1], "probe-done")
+        self.assertEqual(self.leftover, [], "the folder of the build is deleted whatever came of it")
+        return self.without_seconds(lines), [call for call in self.calls if call.startswith("python3 -m pip install")]
+
+    def test_the_build_runs_the_pip_command_of_the_build_script_for_python_3_13_into_a_folder_of_the_work_folder_and_the_lock_of_the_volume(self):
+        lines, installs = self.build_run()
+        self.assertEqual(lines[-3:], [f"ok: usage lock file is {len(USAGE_LOCK)} bytes, as sent", "ok: usage build needs no --ignore-requires-python: 3 files, 1.5 MB, N s, hashes ok", "probe-done"])
+        (install,) = installs
+        self.assertRegex(install, r"--target /.+/probe-[^/]+/usage/\.python_packages/lib/site-packages --requirement /.+/op/usage-requirements\.txt \[PYTHONPATH=none\]$")
+        self.assertNotIn("--ignore-requires-python", install)
+        self.assertIn("--python-version 3.13", install)
+
+    @staticmethod
+    def pip_words(source):
+        """The words of the first `python3 -m pip install` command of a script, without the folder and the file that it is given (they differ) and without the optional flag."""
+        flat = re.sub(r"\\\n\s*", " ", source)
+        command = re.search(r"python3 -m pip install (.+?)(?: 2>&1\))?\n", flat).group(1)
+        words = shlex.split(command)
+        kept = []
+        skip = False
+        for word in words:
+            if skip:
+                skip = False
+            elif word in ("--target", "--requirement"):
+                skip = True
+            elif word != "$1":
+                kept.append(word)
+        return kept
+
+    def test_the_pip_command_of_the_probe_is_the_one_of_the_build_script_in_every_flag_and_in_the_same_order(self):
+        script, probe = self.pip_words(text("tools/build-function-app.sh")), self.pip_words(text("operator/probe.sh"))
+        self.assertEqual(probe, script, "what the probe tries is what the build does: a flag that one has and the other has not would make its answer worth nothing")
+        for flag in ("--only-binary=:all:", "--require-hashes", "--implementation", "--python-version", "--no-compile", "--platform"):
+            self.assertIn(flag, probe)
+        self.assertIn("3.13", probe, "the libraries are built for the app's runtime, whatever the interpreter of the image is")
+        self.assertNotIn("--ignore-requires-python", probe, "the strict form comes first: the flag is the probe's second attempt, given as the one argument of the function")
+
+    def test_when_the_first_attempt_fails_because_of_requires_python_the_second_adds_the_flag_and_the_probe_says_which_one_worked(self):
+        lines, installs = self.build_run(FAKE_PIP="strict-fails")
+        self.assertEqual(lines[-3:], ["FAIL: usage build without --ignore-requires-python: Requires-Python does not fit the interpreter",
+                                      "ok: usage build only with --ignore-requires-python: 3 files, 1.5 MB, N s, hashes ok", "probe-done"])
+        self.assertEqual(len(installs), 2)
+        first, second = installs
+        self.assertNotIn("--ignore-requires-python", first)
+        self.assertEqual(second.replace(" --ignore-requires-python", ""), first, "the second attempt is the first and that one flag")
+
+    def test_a_hash_a_name_or_a_timeout_is_not_tried_again_because_the_flag_would_not_change_it(self):
+        for mode, said in (("hash", "a hash does not match the lock"), ("network", "a name was not resolved"), ("timeout", "timed out after 240 s")):
+            lines, installs = self.build_run(FAKE_PIP=mode)
+            self.assertEqual(lines[-2:], [f"FAIL: usage build: {said}", "probe-done"], mode)
+            self.assertEqual(len(installs), 1, mode)
+
+    def test_an_error_nobody_planned_for_is_tried_again_with_the_flag_and_both_failures_are_said_in_a_few_words(self):
+        lines, installs = self.build_run(FAKE_PIP="other")
+        failures = [line for line in lines if line.startswith("FAIL: usage build")]
+        self.assertEqual(len(failures), 2, failures)
+        self.assertTrue(failures[0].startswith("FAIL: usage build without --ignore-requires-python: ERROR: something that nobody planned for"), failures[0])
+        self.assertTrue(failures[1].startswith("FAIL: usage build with --ignore-requires-python too: ERROR: something that nobody planned for"), failures[1])
+        self.assertEqual(len(installs), 2)
+
+    def test_without_pip_ensurepip_is_tried_into_the_work_folder_and_the_build_goes_on_with_the_pip_that_it_made(self):
+        lines, installs = self.build_run(FAKE_PIP="missing")
+        self.assertIn("FAIL: python3 -m pip is not there: /usr/bin/python3: No module named pip", lines)
+        self.assertIn("ok: python3 -m ensurepip makes pip 24.0 in the work folder", lines)
+        self.assertEqual(lines[-2], "ok: usage build needs no --ignore-requires-python: 3 files, 1.5 MB, N s, hashes ok")
+        (ensure,) = [call for call in self.calls if call.startswith("python3 -m ensurepip")]
+        self.assertRegex(ensure, r"^python3 -m ensurepip --root /.+/probe-[^/]+/ensurepip \[PYTHONPATH=none\]$", "into the work folder, not into the system's Python")
+        (install,) = installs
+        self.assertRegex(install, r"\[PYTHONPATH=/.+/probe-[^/]+/ensurepip/usr/lib/python3\.12/site-packages\]$", "and the pip that it made is the one that builds")
+
+    def test_without_pip_and_without_a_working_ensurepip_the_build_is_skipped_and_the_probe_says_both(self):
+        lines, installs = self.build_run(FAKE_PIP="missing", FAKE_ENSUREPIP="disabled")
+        self.assertIn("FAIL: python3 -m pip is not there: /usr/bin/python3: No module named pip", lines)
+        self.assertIn("FAIL: python3 -m ensurepip: ERROR: ensurepip is disabled in this Python: install the python3-pip", lines)
+        self.assertEqual(lines[-2], "FAIL: usage build skipped: there is no pip")
+        self.assertEqual(installs, [])
+
+    def test_a_lock_file_that_is_missing_or_not_the_size_that_was_sent_is_said_and_the_size_of_one_that_nobody_measured_is_only_reported(self):
+        done, lines = self.run_probe({"PROBE_LOCK_BYTES": "99"}, lock=USAGE_LOCK)
+        self.assertIn(f"FAIL: usage lock file is {len(USAGE_LOCK)} bytes, 99 were sent", lines)
+        self.assertTrue([line for line in lines if line.startswith("ok: usage build")], "a lock that differs is said, and the build is tried all the same")
+        done, lines = self.run_probe({}, lock=USAGE_LOCK)
+        self.assertIn(f"ok: usage lock file is {len(USAGE_LOCK)} bytes", lines)
+        done, lines = self.run_probe({"PROBE_LOCK_BYTES": "99"})
+        self.assertIn("FAIL: no usage-requirements.txt in the secret volume", lines)
+        self.assertEqual([call for call in self.calls if call.startswith("python3 -m pip install")], [], "nothing is built without a lock")
+
+    def test_nothing_is_built_when_the_output_is_already_full(self):
+        env = {**self.good_env(), "PROBE_URLS": " ".join(f"ftp://host{i}.example.net/" for i in range(200))}
+        done, lines = self.run_probe(env, size=4000, lock=USAGE_LOCK)
+        self.assertEqual(lines[-2], "FAIL: more checks than 120 lines hold; the rest was left out")
+        self.assertEqual([call for call in self.calls if call.startswith("python3 -m pip install")], [], "a build that nobody could be told about is not made")
+
+    # --- the deployment sites of the function apps ---------------------------------------------------------------------------------------------------------------------------------------
+
+    def test_each_deployment_site_is_said_private_or_public_with_the_status_of_a_get_and_what_was_expected_to_be_private_is_failed_when_it_is_not(self):
+        hosts = {"func-a.scm.azurewebsites.net": ("10.53.0.21", "401:0"), "func-b.scm.azurewebsites.net": ("20.50.1.2", "403:0"), "func-c.scm.azurewebsites.net": ("20.50.1.3", "302:0:login.example.net"),
+                 "func-d.scm.azurewebsites.net": ("10.53.0.22", "000:28"), "func-e.scm.azurewebsites.net": ("10.53.0.23", "000:60"), "func-f.scm.azurewebsites.net": ("20.50.1.4", "503:0")}
+        env = {"PROBE_SCM_HOSTS": " ".join(hosts) + " func-g.scm.azurewebsites.net bad*host",
+               "PROBE_PRIVATE_NAMES": "func-a.scm.azurewebsites.net func-b.scm.azurewebsites.net func-f.scm.azurewebsites.net",
+               "FAKE_DNS": " ".join(f"{host}={ip}" for host, (ip, _) in hosts.items()), "FAKE_CURL": " ".join(f"{host}={answer}" for host, (_, answer) in hosts.items())}
+        done, lines = self.run_probe(env)
+        scm = [line for line in lines if line.startswith(("ok: scm", "FAIL: scm"))]
+        self.assertEqual(scm, ["ok: scm func-a: private address, GET / gives 401",
+                               "FAIL: scm func-b: public address, expected private; GET / gives 403",
+                               "ok: scm func-c: public address, GET / gives 302",
+                               "FAIL: scm func-d: private address, GET / timed out (curl 28)",
+                               "FAIL: scm func-e: private address, GET / certificate not trusted (curl 60)",
+                               "FAIL: scm func-f: public address, expected private; GET / gives 503",
+                               "FAIL: scm func-g: the name does not resolve",
+                               "FAIL: scm: not a host name, skipped"])
+        asked = [call for call in self.calls if call.startswith("curl")]
+        self.assertEqual(len(asked), 6, "a name that does not resolve and a name that is not one are not asked")
+        for call in asked:
+            for word in ("--silent", "--output /dev/null", "--max-time 20", "--write-out %{http_code}"):
+                self.assertIn(word, call, "the status and nothing else")
+            for word in ("--location", "--max-redirs", "-H", "--header", "--user", "--data", "--request", "Authorization"):
+                self.assertNotIn(word, call, "an unauthenticated GET that follows no redirect: the status is the site's own, and no content is kept")
+            self.assertRegex(call, r" https://func-[a-f]\.scm\.azurewebsites\.net/$")
+        self.assertEqual(lines[-1], "probe-done")
+
+    # -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
     def test_the_script_has_no_awk_and_no_jq_because_the_image_has_neither_to_rely_on(self):
         source = re.sub(r"(?m)^\s*#.*$", "", text("operator/probe.sh"))
-        for word in (r"\bawk\b", r"\bjq\b", r"\bgawk\b", r"\bnslookup\b", r"\bdig\b", r"\bping\b"):
+        for word in (r"\bawk\b", r"\bjq\b", r"\bgawk\b", r"\bnslookup\b", r"\bdig\b", r"\bping\b", r"\bfind\s+[\"$./-]", r"\bgrep\b"):
             self.assertNotRegex(source, word, word)
 
     def test_the_script_names_only_what_it_may_read_from_the_environment(self):
         source = text("operator/probe.sh")
-        used = set(re.findall(r"\$\{?(OPERATOR_\w+|PROBE_\w+|FAKE_\w+|GITHUB_\w+)", source))
-        self.assertEqual(used, {"OPERATOR_CLIENT_ID", "OPERATOR_GROUP", "OPERATOR_SUBSCRIPTION", "PROBE_NAMES", "PROBE_PRIVATE_NAMES", "PROBE_URLS", "PROBE_SIZE_BYTES", "PROBE_VOLUME",
-                                "PROBE_RESOLV_CONF"})
+        used = set(re.findall(r"\$\{?(AZURE_FEDERATED_\w+|OPERATOR_\w+|PROBE_\w+|FAKE_\w+|GITHUB_\w+)", source))
+        self.assertEqual(used, {"AZURE_FEDERATED_TOKEN", "OPERATOR_CLIENT_ID", "OPERATOR_GROUP", "OPERATOR_SUBSCRIPTION", "PROBE_NAMES", "PROBE_PRIVATE_NAMES", "PROBE_URLS", "PROBE_SIZE_BYTES",
+                                "PROBE_SCM_HOSTS", "PROBE_DEPLOY_CLIENT_ID", "PROBE_DEPLOY_TENANT_ID", "PROBE_TOKEN_NOTE", "PROBE_LOCK_BYTES", "PROBE_VOLUME", "PROBE_RESOLV_CONF", "PROBE_TMP"})
 
     def test_the_script_is_valid_bash(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1536,8 +1923,9 @@ class EventHubsPrivateOnlyRecord(unittest.TestCase):
         self.assertIn("The Event Hubs namespace is the first of the services that were still public to be switched off on the real estate: its public network access is Disabled (read back from Azure), the deploy identity's right to send to the two control hubs is retired, "
                       "the usage app woke from zero on the private namespace, and the public address refuses an anonymous request ([deployed and proven](#event-hubs-private-only-deployed-and-proven-on-2026-11-06)). "
                       "The two function apps, Application Insights and the workspace are still public, and whether the gateway's two loggers reach the private namespace is not known yet.", status)
-        for stale in ("Nothing is private yet", "built, not yet deployed", "built, not yet run"):
+        for stale in ("Nothing is private yet", "built, not yet deployed", "([built, not yet run](#the-checks-of-the-usage-recording-and-the-first-cases-run-in-the-operator))"):
             self.assertNotIn(stale, status, stale)
+        self.assertIn("([phase 1 of publishing code to the private apps](#publishing-code-to-the-private-apps-phase-1): built, not yet run; the apps stay public)", status, "the status keeps what phase 1 says of itself")
         row = [line for line in self.page.split("\n") if line.startswith("| Event Hubs namespace |")][0]
         self.assertIn("**Disabled** on the real estate since 2026-11-06: the action `recording` deployed the template that sets it and read it back from Azure", row)
         self.assertNotIn("**Enabled**", row)
@@ -1648,7 +2036,7 @@ class EventHubsPrivateOnlyRecord(unittest.TestCase):
         self.assertIn("holds none since [the namespace was made private](#changed-on-2026-11-06-the-event-hubs-namespace-is-private)", self.bootstrap.split("\n## ")[1])
         self.assertIn("The order of those four is `recording`, `cases`, `operator`, and then, about ten minutes after `operator` (a new role takes that long to apply), `recording-check` and `cases-run`. Once both checks have passed through the Operator while the namespace is still public, `recording` makes the Event Hubs namespace private",
                       self.bootstrap.split("\n## After it")[1])
-        self.assertIn("On the real estate all of this ran on 2026-11-06 and every run passed.", self.bootstrap.split("\n## After it")[1])
+        self.assertIn("On the real estate the Event Hubs steps of this list ran on 2026-11-06 and every run of them passed.", self.bootstrap.split("\n## After it")[1])
 
     def test_the_pages_that_said_that_the_workflow_sends_or_that_the_namespace_is_public_say_the_new_state(self):
         cases = text("docs/proposals/02-first-cases.md")
@@ -1673,9 +2061,12 @@ class EventHubsPrivateOnlyRecord(unittest.TestCase):
             for anchor in ("event-hubs-private-only-built-not-yet-deployed", "whether-the-usage-app-wakes-from-zero-on-a-private-namespace"):
                 self.assertNotRegex(page, r"\]\([^)\s]*#" + anchor + r"\)", f"{name} links to an anchor that no longer exists")
         for name in names:
-            for stale in ("built, not yet deployed", "not yet deployed", "nothing is private yet", "Nothing is private yet", "Whether it wakes from zero on a private namespace", "whether the usage app wakes from zero on one",
-                          "It is built and not yet deployed"):
+            for stale in ("this change: built, not yet deployed", "([built, not yet deployed](#event-hubs", "nothing is private yet", "Nothing is private yet", "Whether it wakes from zero on a private namespace",
+                          "whether the usage app wakes from zero on one", "It is built and not yet deployed", "private-only in the code, not yet deployed", "private-only (not yet deployed)"):
                 self.assertNotIn(stale, pages[name], f"{name}: {stale}")
+            for line in pages[name].split("\n"):
+                if "not yet deployed" in line:
+                    self.assertNotRegex(line.lower(), r"namespace|event hubs", f"{name}: a line that says 'not yet deployed' names the Event Hubs namespace: {line[:120]}")
         self.assertIn("## Event Hubs private-only (deployed and proven on 2026-11-06)", pages["docs/proposals/07-private-by-default.md"])
         changelog = pages["CHANGELOG.md"]
         newest = "## The Event Hubs namespace is private-only on the real estate (deployed and proven) — 2026-11-06"
@@ -1700,6 +2091,115 @@ class EventHubsPrivateOnlyRecord(unittest.TestCase):
             self.assertIn(words, part, words)
         self.assertNotRegex(self.page, r"\b[Rr]un [0-9]{3}\b", "the run numbers are in the changelog only")
         self.assertNotIn("pna-audit", self.page, "the name of a policy of the tenant is not in a committed page")
+
+
+class PublishingPhaseOneRecord(unittest.TestCase):
+    """docs/proposals/07-private-by-default.md, environment/BOOTSTRAP.md and the changelog: phase 1 of publishing code to the private apps is written down, with what it checks, what it does not, and the order."""
+
+    HEADING = "## Publishing code to the private apps: phase 1"
+
+    def setUp(self):
+        self.page = text("docs/proposals/07-private-by-default.md")
+        self.assertIn(self.HEADING, self.page)
+        self.section = self.page.split(self.HEADING)[1].split("\n## ")[0]
+
+    def test_it_names_the_three_phases_and_says_that_the_apps_stay_public_in_the_first(self):
+        for words in ("This is phase 1: it changes nothing about how the code is published and nothing about who can reach the apps.", "| 1 | One private endpoint for each app, and a second set of checks in the probe",
+                      "The apps stay public | built, not yet run |", "| 2 | The two publish steps run in the Operator, as the deploy identity, while the apps are still public",
+                      "| 3 | `usageAppPublicNetworkAccess` and `casesAppPublicNetworkAccess`", "one value for each app"):
+            self.assertIn(words, self.section, words)
+
+    def test_it_says_as_whom_the_operator_publishes_and_that_the_token_goes_nowhere_but_into_one_secure_value(self):
+        for words in ("As the deploy identity, which holds the right to write to the apps already, and not as the Operator's own identity", "gets no role that writes, so [rule 29](../../AGENTS.md) stays as it is",
+                      "no key, publish profile or personal access token exists", "the audience `api://AzureADTokenExchange`, the one that `azure/login` asks for", "valid for five minutes",
+                      "which is why it is asked for last", "`--secure-env AZURE_FEDERATED_TOKEN`", "on no command line, in no `--env` value, in no file and in no line that the tool, the probe or the summary prints",
+                      "`az login --service-principal --username <client id> --tenant <tenant id> --federated-token <token>`", "with a state folder of its own",
+                      "no hand step is expected (inferred;", "its first step, `azure/login`, signs in with a token of the same audience and subject",
+                      "the probe says why in that one line and goes on with the others"):
+            self.assertIn(words, self.section, words)
+
+    def test_it_says_how_the_usage_package_is_built_which_flag_is_tried_second_and_why_that_is_safe(self):
+        for words in ("The cases app's package is about 2 MB and rides in the container's secret volume (the tool refuses more than 3,000,000 bytes of files)", "The usage app's package is about 24 MB and cannot",
+                      "hash-locked [`src/usage-functions/requirements.txt`](../../src/usage-functions/requirements.txt)", "[`tools/build-function-app.sh`](../../tools/build-function-app.sh)",
+                      "`--only-binary=:all: --require-hashes`", "Only the lock file rides in the request", "the image has Python 3.12", "Whether the build works from 3.12 is the main unknown of this phase",
+                      "pip is told `--python-version 3.13`", "so the probe tries that first", "`--ignore-requires-python`", "The flag is safe only because every version is pinned and every file is checked against its hash",
+                      "A failure of the network, of a certificate or of a hash is not tried again with the flag"):
+            self.assertIn(words, self.section, words)
+
+    def test_it_lists_what_the_probe_checks_now_and_keeps_the_promises_of_the_first_probe(self):
+        for words in ("One `ok:` or `FAIL:` line each, still at most 120 lines, never a token, always ending in `probe-done`, and still always exiting 0", "`python3 -m pip --version`, and `python3 -m ensurepip` when pip is not there",
+                      "`az login --service-principal` as the deploy identity with the run's token, then `az group show` of the project's group as that identity", "The lines print no id",
+                      "The usage app's lock file", "whether `--ignore-requires-python` was needed (the strict form is tried first), the number of files, the size in MB, the seconds, and that the hashes matched",
+                      "`<app>.scm.azurewebsites.net` of each app", "a status only: no content is read and no redirect is followed", "A public address says that the landing zone's policy has not registered the name (yet)",
+                      "The group is given 1,200 seconds now and not 900"):
+            self.assertIn(words, self.section, words)
+
+    def test_it_says_what_a_private_endpoint_needs_with_the_pages_and_their_dates_and_what_could_not_be_verified(self):
+        for words in ("(Learn, read on 2026-11-06)", "functions-networking-options", "updated 2026-10-16", "overview-private-endpoint", "updated 2026-09-17", "That page does not list Flex Consumption, so the Functions page is the source for it",
+                      "`sites` (`sites-<slot>` for a slot)", "`<app>.scm`", "`privatelink.azurewebsites.net`", "Inbound only", "`snet-func` and `snet-cases`, and the endpoints are in `snet-pe`",
+                      "`vnetRouteAllEnabled: false`", "`vnetContentShareEnabled` does not apply", "overview-access-restrictions", "public access is on unless a private endpoint exists, and then it is off",
+                      "the templates always write the value now", "a change of the value on a Linux app restarts it", "no zone, link or zone group is made ([rule 19](../../AGENTS.md))",
+                      "**What could not be verified.** Nothing of this phase has run in Azure.", "Whether the landing zone registers the names of the `sites` sub-resource", "Microsoft Q&A posts say that Kudu on Flex Consumption runs only while a deployment does",
+                      "that is not an official source", "Whether the image has pip or `ensurepip`", "Whether the build inside the container gives the same files as the build on the runner"):
+            self.assertIn(words, self.section, words)
+
+    def test_it_says_what_changed_in_the_templates_the_order_a_person_runs_the_one_side_effect_and_the_cost(self):
+        for words in ("`pe-<app name>`, for the sub-resource `sites`, in the endpoint subnet `snet-pe`", "It is written after every other write to the app", "(`Enabled` or `Disabled`, default `Enabled`)",
+                      "Phase 3 is one changed constant for each app", "The endpoint subnet holds nine endpoints now", "(inferred: eleven are left)",
+                      "1. `recording` and `cases`, each as before. Each makes its app's private endpoint and changes nothing else.", "2. Wait about ten minutes", "The actions do not wait for it in this phase",
+                      "3. `operator-probe`, and read its lines in this order of questions", "4. Phase 2 is built from the answers.", "a client that resolves it through the landing zone's DNS gets the private address, with or without a route to it",
+                      "The way back is deleting the endpoint, which no workflow action does: by hand, break-glass ([rule 18](../../AGENTS.md))", "about 6.57 euros a month", "so the two cost about 13"):
+            self.assertIn(words, self.section, words)
+        self.assertLess(self.section.index("1. `recording` and `cases`"), self.section.index("2. Wait about ten minutes"))
+        self.assertLess(self.section.index("2. Wait about ten minutes"), self.section.index("3. `operator-probe`"))
+
+    def test_the_state_table_the_order_of_the_work_the_decisions_and_the_sources_say_the_same(self):
+        state = self.page.split("## The rule and the state")[1].split("\n## ")[0]
+        self.assertIn("the parameter `usageAppPublicNetworkAccess` | one, for the app and its deployment site (built, not yet deployed)", state)
+        self.assertIn("the parameter `casesAppPublicNetworkAccess` | one, for the app and its deployment site (built, not yet deployed)", state)
+        order = self.page.split("## The order of the work")[1].split("\n## ")[0]
+        self.assertIn("It is done in three phases ([above](#publishing-code-to-the-private-apps-phase-1))", order)
+        self.assertIn("the endpoints and a second set of checks in the probe, with the apps still public (built, not yet run)", order)
+        decisions = self.page.split("## Decisions for the owner")[1].split("\n## ")[0]
+        self.assertIn("changes three of the decisions below", decisions)
+        self.assertIn("no Website Contributor for the Operator (it publishes as the deploy identity, which holds the right already)", decisions)
+        self.assertIn("Phase 1 of publishing code ([above](#publishing-code-to-the-private-apps-phase-1)): nothing of it has run.", self.page.split("## Not checked")[1].split("\n## ")[0])
+        sources = self.page.split("## Sources")[1]
+        for page in ("functions-networking-options", "functions-deployment-technologies", "overview-access-restrictions", "cli/azure/reference-index", "actions/reference/security/oidc"):
+            self.assertIn(page, sources, page)
+        status = self.page.split("\n")[2]
+        self.assertTrue(status.startswith("**Status: decided on 2026-11-06"), status[:80])
+        self.assertIn("[phase 1 of publishing code to the private apps](#publishing-code-to-the-private-apps-phase-1): built, not yet run; the apps stay public", status)
+
+    def test_the_bootstrap_page_says_that_no_hand_step_is_needed_and_in_what_order_to_run(self):
+        page = text("environment/BOOTSTRAP.md")
+        heading = "## Changed on 2026-11-06: publishing code from inside the network, phase 1"
+        self.assertIn(heading, page)
+        paragraph = page.split(heading)[1].split("\n## ")[0]
+        for words in ("**No hand step is needed.**", "[The decision record](../docs/proposals/07-private-by-default.md#publishing-code-to-the-private-apps-phase-1)", "This is the first of three phases, and the apps stay public in it",
+                      "about 6.57 euros a month each", "the sub-resource `sites`, in `snet-pe`",
+                      "no DNS zone, link or zone group", "a parameter that stays `Enabled`, so the apps stay public", "audience `api://AzureADTokenExchange`", "the workflow's `id-token: write` permission is all it needs",
+                      "as one secure value", "Nothing is added to the deploy identity and no credential changes", "the first step of the same job, `azure/login`, signs in with a token of the same audience and subject",
+                      "a person decides, on the owner's word", "nothing is guessed here", "The order is `recording`, `cases`, about ten minutes of waiting for the landing zone's policy, and then `operator-probe`."):
+            self.assertIn(words, paragraph, words)
+        after = page.split("\n## After it")[1].split("\n## ")[0]
+        self.assertIn("Since phase 1 of publishing code from inside the network, the actions `recording` and `cases` also make the two apps' private endpoints; about ten minutes after those runs (the landing zone's policy registers the names), "
+                      "`operator-probe` is run once more and its lines are read ([the section](#changed-on-2026-11-06-publishing-code-from-inside-the-network-phase-1)).", after)
+        self.assertNotIn("The same runs of `recording` and `cases`", after, "'the same runs' was ambiguous next to the sentence about the Event Hubs runs")
+        self.assertLess(after.index("On the real estate the Event Hubs steps of this list ran on 2026-11-06"), after.index("Since phase 1 of publishing code"))
+        self.assertLess(after.index("Since phase 1 of publishing code"), after.index("One yes to the whole list"))
+
+    def test_the_changelog_says_what_the_owner_said_what_changed_what_was_not_checked_and_what_a_person_runs_in_order(self):
+        changelog = text("CHANGELOG.md")
+        heading = "## Publishing code to the private apps, phase 1: a private endpoint for each function app and a second probe (built, not yet run) — 2026-11-06"
+        self.assertIn(heading, changelog)
+        entry = changelog.split(heading)[1].split("\n## ")[0]
+        for words in ("**What the owner said.**", "no resource of the project has a public endpoint (private endpoints only), and no key exists anywhere", "**What changed.**", "`usageAppPublicNetworkAccess` and `casesAppPublicNetworkAccess`",
+                      "no private DNS zone, no link and no zone group", "`--secure-env AZURE_FEDERATED_TOKEN`", "1,200 seconds and not 900", "**Cost.**", "about 6.57 euros a month", "about 13",
+                      "**What was checked.**", "**Not checked, and why it matters.**", "Nothing ran in Azure", "**What a person has to do, in order.**", "`operator-probe`"):
+            self.assertIn(words, entry, words)
+        self.assertLess(entry.index("`recording`"), entry.index("`cases`"))
+        self.assertLess(entry.index("wait about ten minutes"), entry.rindex("`operator-probe`"))
 
 
 class BootstrapOperatorSection(unittest.TestCase):

@@ -53,6 +53,7 @@ ALLOWED = {
         "Microsoft.Network/networkSecurityGroups",
         "Microsoft.Network/virtualNetworks",
         "Microsoft.Network/virtualNetworks/subnets",
+        "Microsoft.Network/privateEndpoints",
         "Microsoft.OperationalInsights/workspaces",
         "Microsoft.OperationalInsights/workspaces/tables",
         "Microsoft.Insights/components",
@@ -286,15 +287,18 @@ class Recording(unittest.TestCase):
 
     def test_nothing_is_public_but_the_function_apps_own_endpoint_and_none_has_a_key(self):
         # Storage, Cosmos DB and Event Hubs have no public endpoint (docs/proposals/07-private-by-default.md): the function app and the Operator reach the namespace through its private endpoint, and the
-        # gateway's two loggers can only do the same. The function app has the platform's endpoint, which it needs for its deployment and which serves no function (no HTTP trigger).
+        # gateway's two loggers can only do the same. The function app has the platform's endpoint, which it needs for its deployment and which serves no function (no HTTP trigger). That endpoint is
+        # written from the parameter usageAppPublicNetworkAccess (Enabled until the Operator publishes the code), and never left unset: a site without the value has its public access switched off
+        # by the first private endpoint that it gets.
         self.assertEqual(self.code.count("publicNetworkAccess: 'Disabled'"), 3)  # storage, cosmos, event hubs
-        self.assertEqual(self.code.count("publicNetworkAccess: 'Enabled'"), 1)  # the function app
+        self.assertEqual(self.code.count("publicNetworkAccess: 'Enabled'"), 0)  # the function app's comes from a parameter that defaults to Enabled
         found = resources(self.source)
         self.assertIn("publicNetworkAccess: 'Disabled'", found["storage"][1])
         self.assertIn("publicNetworkAccess: 'Disabled'", found["cosmos"][1])
         self.assertIn("publicNetworkAccess: 'Disabled'", found["eventHubs"][1])
         self.assertNotIn("publicNetworkAccess: 'Enabled'", found["eventHubs"][1])
-        self.assertIn("publicNetworkAccess: 'Enabled'", found["functionApp"][1])
+        self.assertIn("publicNetworkAccess: usageAppPublicNetworkAccess\n", found["functionApp"][1])
+        self.assertEqual(self.code.count("publicNetworkAccess:"), 4, "every resource that has the property says its value, and the function app's is the parameter's")
         self.assertIn("allowSharedKeyAccess: false", found["storage"][1])
         self.assertIn("defaultToOAuthAuthentication: true", found["storage"][1])
         self.assertIn("disableLocalAuth: true", found["cosmos"][1])
@@ -423,11 +427,11 @@ class Recording(unittest.TestCase):
 
     def test_the_function_app_reaches_every_service_through_a_private_endpoint_and_the_subnets_are_the_two_of_the_model_side(self):
         found = resources(self.source)
-        self.assertEqual(sorted(n for n, (k, _) in found.items() if k == "Microsoft.Network/privateEndpoints"), ["cosmosEndpoint", "eventHubsEndpoint", "storageEndpoints"])
+        self.assertEqual(sorted(n for n, (k, _) in found.items() if k == "Microsoft.Network/privateEndpoints"), ["cosmosEndpoint", "eventHubsEndpoint", "functionAppEndpoint", "storageEndpoints"])
         self.assertIn("var storageServices = [\n  'blob'\n  'queue'\n  'table'\n]", self.code)
         self.assertIn("groupIds: [\n            'Sql'\n          ]", found["cosmosEndpoint"][1])
         self.assertIn("groupIds: [\n            'namespace'\n          ]", found["eventHubsEndpoint"][1])
-        for name in ("storageEndpoints", "cosmosEndpoint", "eventHubsEndpoint"):
+        for name in ("storageEndpoints", "cosmosEndpoint", "eventHubsEndpoint", "functionAppEndpoint"):
             self.assertIn("id: privateEndpointSubnet.id", found[name][1], name)
         self.assertIn("var privateEndpointSubnetName = 'snet-pe'", self.code)
         self.assertIn("var functionSubnetName = 'snet-func'", self.code)
@@ -805,14 +809,15 @@ class Cases(unittest.TestCase):
         self.code = re.sub(r"//.*", "", self.source)
         self.found = resources(self.source)
 
-    def test_it_makes_only_its_own_integration_subnet_and_that_subnets_group_and_no_private_endpoint_dns_storage_account_or_namespace(self):
-        for word in ("Microsoft.ApiManagement", "privateDnsZones", "virtualNetworkPeerings", "routeTables", "privateDnsZoneGroups", "privateEndpoints",
+    def test_it_makes_only_its_own_integration_subnet_that_subnets_group_and_the_apps_private_endpoint_and_no_dns_storage_account_or_namespace(self):
+        for word in ("Microsoft.ApiManagement", "privateDnsZones", "virtualNetworkPeerings", "routeTables", "privateDnsZoneGroups",
                      "Microsoft.DocumentDB"):
             self.assertNotIn(word, self.code, word)
-        for name in ("vnet", "workspace", "insights", "storage", "blobService", "eventHubs", "sharedHostContainers"):
+        self.assertEqual(self.code.count("Microsoft.Network/privateEndpoints"), 1, "the app's own endpoint, and no other")
+        for name in ("vnet", "workspace", "insights", "storage", "blobService", "eventHubs", "sharedHostContainers", "privateEndpointSubnet"):
             self.assertRegex(self.source, rf"(?m)^resource {name} '[^']+' existing = ", name)
         made = sorted(name for name, (_, body) in self.found.items() if not re.search(rf"(?m)^resource {name} '[^']+' existing", self.source))
-        self.assertEqual(made, ["authIdentity", "consoleSignIn", "controlConsumerGroup", "controlHub", "functionApp",
+        self.assertEqual(made, ["authIdentity", "consoleSignIn", "controlConsumerGroup", "controlHub", "functionApp", "functionAppEndpoint",
                                 "functionOwnsHostContainers", "functionPublishesTelemetry", "functionReceivesControl", "functionUsesQueues",
                                 "functionUsesTables", "historyWorkbook", "noBasicAuthForDeployment", "noBasicAuthForFtp", "plan",
                                 "tracesRetention", "webNsg", "webSubnet"])
@@ -1060,6 +1065,80 @@ class Cases(unittest.TestCase):
             self.assertTrue(query.lstrip().startswith(("let ", "traces")), query[:40])
             for word in (".set", ".ingest", ".drop", ".create", ".alter", "externaldata"):
                 self.assertNotIn(word, query, word)
+
+
+class FunctionAppEndpoints(unittest.TestCase):
+    """The private endpoint of each of the two function apps (the usage app on Flex Consumption, the cases app and the console on a Basic plan): the same in both templates, in the
+    endpoint subnet, with no DNS of its own, and written after every other write to the app."""
+
+    TEMPLATES = ("environment/recording/main.bicep", "environment/cases/main.bicep")
+
+    def setUp(self):
+        self.sources = {path: text(path) for path in self.TEMPLATES}
+        self.codes = {path: re.sub(r"//.*", "", source) for path, source in self.sources.items()}
+        self.found = {path: resources(source) for path, source in self.sources.items()}
+
+    def test_each_app_has_exactly_one_endpoint_of_the_group_sites_in_the_endpoint_subnet_named_after_the_app_and_tagged_like_the_rest(self):
+        for path in self.TEMPLATES:
+            found = self.found[path]
+            kind, body = found["functionAppEndpoint"]
+            self.assertEqual(kind, "Microsoft.Network/privateEndpoints", path)
+            of_the_app = [name for name, (k, b) in found.items() if k == "Microsoft.Network/privateEndpoints" and "privateLinkServiceId: functionApp.id" in b]
+            self.assertEqual(of_the_app, ["functionAppEndpoint"], f"{path}: one endpoint on the app")
+            for line in ("  name: 'pe-${functionAppName}'\n", "  location: location\n", "  tags: tags\n", "      id: privateEndpointSubnet.id\n", "        name: 'sites'\n",
+                         "          privateLinkServiceId: functionApp.id\n", "          groupIds: [\n            'sites'\n          ]\n"):
+                self.assertIn(line, body, f"{path}: {line.strip()}")
+            self.assertEqual(body.count("privateLinkServiceConnections"), 1, "one connection, to the app")
+            self.assertEqual(body.count("groupIds"), 1, "and one group, `sites`: the name of the app and its deployment site share the endpoint")
+            self.assertNotIn("manualPrivateLinkServiceConnections", body, "the connection is approved by the endpoint's owner, who is the owner of the app: no request to approve by hand")
+            self.assertEqual(self.sources[path].count("var privateEndpointSubnetName = 'snet-pe'"), 1, path)
+            self.assertRegex(self.sources[path], r"(?m)^resource privateEndpointSubnet 'Microsoft\.Network/virtualNetworks/subnets@[^']+' existing = \{\n  parent: vnet\n  name: privateEndpointSubnetName\n\}\n", path)
+
+    def test_the_two_endpoints_are_the_same_but_for_what_each_waits_for_and_they_are_written_with_the_version_of_the_other_endpoints_of_the_template(self):
+        bodies = {path: re.sub(r"(?s)\n  dependsOn: \[.*?\n  \]", "", self.found[path]["functionAppEndpoint"][1]) for path in self.TEMPLATES}
+        self.assertEqual(bodies["environment/recording/main.bicep"], bodies["environment/cases/main.bicep"], "the same properties in both templates, so that closing one app is the same change as closing the other")
+        versions = {path: set(re.findall(r"'Microsoft\.Network/privateEndpoints@([^']+)'", source)) for path, source in self.sources.items()}
+        self.assertEqual(versions["environment/recording/main.bicep"], {"2025-05-01"})
+        self.assertEqual(versions["environment/cases/main.bicep"], {"2025-05-01"})
+        self.assertEqual(versions["environment/recording/main.bicep"] | versions["environment/cases/main.bicep"], set(re.findall(r"'Microsoft\.Network/privateEndpoints@([^']+)'", text("environment/foundry/main.bicep"))),
+                         "the Foundry resource's endpoint is written with the same version")
+
+    def test_no_dns_zone_no_link_and_no_zone_group_is_made_or_named_by_either_template_and_the_endpoints_hold_no_dns_setting(self):
+        for path in self.TEMPLATES:
+            self.assertNotRegex(self.codes[path], r"(?i)privateDns|virtualNetworkLinks|dnsZone|Microsoft\.Network/dns", f"{path}: the landing zone's policy registers the names of an endpoint in its central zones (AGENTS.md rule 19)")
+            body = self.found[path]["functionAppEndpoint"][1]
+            self.assertNotRegex(body, r"(?i)dns|zone", f"{path}: the endpoint's own body holds no DNS setting")
+            self.assertNotIn("customDnsConfigs", body)
+
+    def test_an_endpoint_is_written_after_every_other_write_to_its_app_because_the_connection_is_written_with_an_if_match(self):
+        for path in self.TEMPLATES:
+            found = self.found[path]
+            children = {name for name, (_, body) in found.items() if re.search(r"(?m)^  (parent|scope): functionApp$", body)}
+            self.assertEqual(children, {"noBasicAuthForDeployment"} | ({"noBasicAuthForFtp", "consoleSignIn"} if path.endswith("cases/main.bicep") else set()), path)
+            self.assertLessEqual(children, depends_on(found["functionAppEndpoint"][1]), f"{path}: the endpoint waits for every child of the app that this template writes")
+            self.assertNotIn("functionAppEndpoint", depends_on(found["functionApp"][1]), "the app is made first")
+            for name in children:
+                self.assertNotIn("functionAppEndpoint", depends_on(found[name][1]), name)
+            others = {name for name, (_, body) in found.items() if "functionAppEndpoint" in depends_on(body)}
+            self.assertEqual(others, set(), f"{path}: nothing waits for the endpoint: it changes nothing that another resource reads, and no role is given on the app")
+
+    def test_the_summaries_of_recording_and_cases_say_that_the_app_has_an_endpoint_of_its_own_that_is_not_waited_for_and_that_the_probe_shows_its_names(self):
+        workflow = text(".github/workflows/deploy-hub.yml")
+        self.assertIn("The app has a private endpoint of its own too, for the app and its deployment site (the sub-resource \\`sites\\`): it is not waited for, the app stays public in this phase, and "
+                      "\\`operator-probe\\` shows whether the landing zone has registered its names.", workflow)
+        self.assertIn("and a private endpoint of its own for the console and its deployment site (the sub-resource \\`sites\\`: it is not waited for, the app stays public in this phase, and "
+                      "\\`operator-probe\\` shows whether the landing zone has registered its names)", workflow)
+        wait = re.search(r"(?ms)^      - name: Wait until the landing zone has registered the usage recording's private endpoints in the central zones\n(.*?)(?=^      - )", workflow).group(1)
+        self.assertIn("RECORDING_ENDPOINTS: ${{ steps.params.outputs.recording_endpoints }}", wait, "the wait takes the services' endpoints from the builder, which does not list the app's own")
+        self.assertNotIn("sites", wait)
+
+    def test_each_app_writes_its_public_access_from_a_parameter_so_that_the_value_is_never_left_to_the_platform(self):
+        # Learn (Azure App Service access restrictions): a site whose publicNetworkAccess is not set has public access switched off by the first private endpoint that it gets. Writing the value
+        # every time keeps the apps public until the parameter says otherwise, and makes closing them one value.
+        for path, name in (("environment/recording/main.bicep", "usageAppPublicNetworkAccess"), ("environment/cases/main.bicep", "casesAppPublicNetworkAccess")):
+            self.assertRegex(self.codes[path], rf"(?m)^@allowed\(\[\n  'Enabled'\n  'Disabled'\n\]\)\nparam {name} string = 'Enabled'$", path)
+            self.assertIn(f"    publicNetworkAccess: {name}\n", self.found[path]["functionApp"][1], path)
+            self.assertEqual(len(re.findall(rf"\b{name}\b", self.codes[path])), 2, f"{path}: declared once and used once")
 
 
 class Planted(unittest.TestCase):
@@ -2137,7 +2216,7 @@ class OperatorWorkflow(unittest.TestCase):
         self.assertNotIn("az provider register", self.text)
         self.assertIn("::warning::", script, "a state that cannot be read is said and does not stop the run")
 
-    def test_the_probe_is_given_a_pinned_image_the_script_the_names_the_size_and_a_summary_and_no_secret(self):
+    def test_the_probe_is_given_a_pinned_image_the_script_the_names_the_size_the_lock_and_a_summary_and_no_secret_but_the_token_of_the_deploy_identity(self):
         block = self.step(self.PROBE)
         script = self.script(self.PROBE)
         self.assertRegex(self.text.split("    steps:")[0], r"(?m)^      OPERATOR_IMAGE: mcr\.microsoft\.com/azure-cli@sha256:[0-9a-f]{64}$", "one pin, in the environment of the job, for every step that runs something in the Operator")
@@ -2145,8 +2224,8 @@ class OperatorWorkflow(unittest.TestCase):
         self.assertIn('--image "$OPERATOR_IMAGE"', script)
         self.assertNotIn("--allow-tag", script, "the workflow pins by digest")
         self.assertIn("python3 tools/operator-run.py run", script)
-        for word in ("--script operator/probe.sh", '--secret-file "size-test=$RUNNER_TEMP/size-test"', '--summary "$GITHUB_STEP_SUMMARY"', '--subnet-id "$subnet_id"', '--identity-id "$identity_id"',
-                     '--name "op-probe-$GITHUB_RUN_ID"', '"${dns[@]}"', "--timeout-seconds 900", "timeout-minutes: 25"):
+        for word in ("--script operator/probe.sh", '--secret-file "size-test=$RUNNER_TEMP/size-test"', '--secret-file "usage-requirements.txt=$lock"', '--summary "$GITHUB_STEP_SUMMARY"', '--subnet-id "$subnet_id"',
+                     '--identity-id "$identity_id"', '--name "op-probe-$GITHUB_RUN_ID"', '"${dns[@]}"', "--timeout-seconds 1200", "timeout-minutes: 25"):
             self.assertTrue(word in script or word in block, word)
         self.assertRegex(script, r'size=400000\n\s+head -c "\$size" /dev/urandom')
         self.assertIn('identity_id=$(az resource list --resource-group "$ENV_RESOURCE_GROUP" --name id-meternaut-operator --query "[0].id" --output tsv || true)', script)
@@ -2155,13 +2234,78 @@ class OperatorWorkflow(unittest.TestCase):
         for word in ("az identity", "Microsoft.ManagedIdentity"):
             self.assertNotIn(word, script, f"{word}: the workflow reads no identity with az identity and names no identity resource type outside the path that removes the retired runner identity")
         self.assertIn('--env "PROBE_SIZE_BYTES=$size"', script)
-        for name in ("OPERATOR_CLIENT_ID", "OPERATOR_GROUP", "OPERATOR_SUBSCRIPTION", "PROBE_NAMES", "PROBE_PRIVATE_NAMES", "PROBE_URLS"):
+        for name in ("OPERATOR_CLIENT_ID", "OPERATOR_GROUP", "OPERATOR_SUBSCRIPTION", "PROBE_NAMES", "PROBE_PRIVATE_NAMES", "PROBE_URLS", "PROBE_SCM_HOSTS", "PROBE_LOCK_BYTES", "PROBE_DEPLOY_CLIENT_ID",
+                     "PROBE_DEPLOY_TENANT_ID"):
             self.assertIn(f'--env "{name}=', script)
         for host in ("mcr.microsoft.com", "management.azure.com", "login.microsoftonline.com", "api.github.com", "codeload.github.com", "github.com", "pipelines.actions.githubusercontent.com",
                      "objects.githubusercontent.com", "pypi.org", "files.pythonhosted.org", "api.applicationinsights.io", "api.loganalytics.io"):
             self.assertIn(f"https://{host}/", script, host)
-        for word in ("--secure-env", "GITHUB_TOKEN", "secrets.", "get-access-token", "az account", "--auth-mode", "listKeys"):
+        for word in ("GITHUB_TOKEN", "get-access-token", "az account", "--auth-mode", "listKeys"):
             self.assertNotIn(word, block, word)
+        self.assertEqual(re.findall(r"secrets\.(\w+)", block), ["AZURE_CLIENT_ID", "AZURE_TENANT_ID"], "the two ids of the deploy identity, which the other steps read from the same secrets, and no other secret")
+        self.assertIn("DEPLOY_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}", block)
+        self.assertIn("DEPLOY_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}", block)
+        self.assertEqual(re.findall(r"--secure-env [A-Za-z_=]+", block), ["--secure-env AZURE_FEDERATED_TOKEN"], "one secure value, and it is named, never given: the tool takes its value from the environment")
+
+    def test_the_token_of_the_deploy_identity_is_asked_for_right_before_the_group_is_made_masked_at_once_and_goes_nowhere_but_the_environment_of_the_one_call_of_the_tool(self):
+        block, script = self.step(self.PROBE), self.script(self.PROBE)
+        order = ('identity_id=$(az resource list', 'head -c "$size" /dev/urandom', "lock_bytes=$(wc -c", "curl_status=0", 'echo "::add-mask::$token"', 'AZURE_FEDERATED_TOKEN="$token" python3 tools/operator-run.py run')
+        positions = [script.index(word) for word in order]
+        self.assertEqual(positions, sorted(positions), "everything else is ready before the token is asked for: it is valid for five minutes")
+        self.assertIn("id-token: write", self.text.split("jobs:")[0], "the job may ask for the token")
+        self.assertIn('"${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=api://AzureADTokenExchange"', script, "the audience that the federated credential trusts, the one that azure/login asks for")
+        self.assertRegex(script, r"printf 'header = \"Authorization: Bearer %s\"\\n' \"\$ACTIONS_ID_TOKEN_REQUEST_TOKEN\" \| curl [^\n]*--config - ", "the bearer of the request is on standard input")
+        self.assertNotRegex(script, r"curl[^\n]*(?:-H |--header)", "and on no command line")
+        self.assertEqual([line.strip() for line in script.splitlines() if "ACTIONS_ID_TOKEN_REQUEST_TOKEN" in line][0:1], ['if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] || [ -z "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" ]; then'])
+        self.assertEqual(sum("ACTIONS_ID_TOKEN_REQUEST_TOKEN" in line for line in script.splitlines()), 2, "the bearer of the request is read twice: tested for, and sent")
+        for variable in ("ACTIONS_ID_TOKEN_REQUEST_URL", "ACTIONS_ID_TOKEN_REQUEST_TOKEN"):
+            self.assertEqual(len(re.findall(rf"(?m)^[^#\n]*{variable}", self.text)), 2, f"{variable} is read in this step only")
+        lines = [line.strip() for line in script.splitlines() if "$token" in line]
+        self.assertEqual(lines[:3], ['if [ -z "$token" ]; then', 'echo "::add-mask::$token"', 'if [ -n "$token" ]; then'])
+        self.assertEqual(len(lines), 4, "the token is tested for, masked, tested for, and handed over: nothing else mentions it")
+        self.assertRegex(lines[3], r'^AZURE_FEDERATED_TOKEN="\$token" python3 tools/operator-run\.py run --resource-group ')
+        self.assertEqual([line.strip() for line in script.splitlines() if "$answer" in line], ["token=$(sed -n 's/.*\"value\" *: *\"\\([^\"]*\\)\".*/\\1/p' <<< \"$answer\")"], "the answer is read once, for the token")
+        self.assertIn("unset answer", script)
+        self.assertLess(script.index('echo "::add-mask::$token"'), script.index('AZURE_FEDERATED_TOKEN="$token" python3'))
+        self.assertEqual(re.findall(r"--secure-env [A-Za-z_=]+", script), ["--secure-env AZURE_FEDERATED_TOKEN"])
+        for value in re.findall(r'--env "[A-Z_]+=([^"]*)"', script):
+            self.assertNotRegex(value, r"(?i)token", "no --env value is the token")
+        self.assertIn('--env "PROBE_TOKEN_NOTE=$note"', script, "without a token the probe is told why, in plain words")
+        for word in ("GITHUB_ENV", "GITHUB_OUTPUT", "GITHUB_STATE", "GITHUB_PATH", "set -x", "xtrace", " tee ", "::set-output", "::save-state"):
+            self.assertNotIn(word, block, f"{word}: the token is written nowhere")
+        for word in ("az login", "azure/login"):
+            self.assertNotIn(word, script, f"{word}: the runner does not sign in again for the probe: the container does")
+        self.assertRegex(script, r'secure=\(\)\n\s+note_args=\(\)\n\s+if \[ -n "\$token" \]; then\n\s+secure=\(--secure-env AZURE_FEDERATED_TOKEN\)\n\s+else\n')
+        self.assertIn('"${note_args[@]}" "${secure[@]}"', script, "both lists are empty arrays when there is nothing to add, and the call stays one call")
+
+    def test_the_lock_file_of_the_usage_app_is_sent_whole_with_its_size_and_every_file_of_the_group_stays_below_the_limit_of_the_tool(self):
+        script = self.script(self.PROBE)
+        self.assertIn("lock=src/usage-functions/requirements.txt\n", script)
+        self.assertIn("lock_bytes=$(wc -c < \"$lock\" | tr -d ' ')\n", script)
+        self.assertIn('--secret-file "usage-requirements.txt=$lock"', script)
+        self.assertIn('--env "PROBE_LOCK_BYTES=$lock_bytes"', script)
+        self.assertIn('--requirement "$source_dir/requirements.txt"', text("tools/build-function-app.sh"), "the lock that the build script builds from is the file that the probe is sent")
+        self.assertIn("requirements.txt", text("operator/probe.sh"))
+        sizes = {"size-test": 400_000, "usage-requirements.txt": (ROOT / "src/usage-functions/requirements.txt").stat().st_size, "probe.sh": (ROOT / "operator/probe.sh").stat().st_size}
+        self.assertLess(sum(sizes.values()), 3_000_000, "the limit of tools/operator-run.py for the files of one group")
+        self.assertLess(sizes["usage-requirements.txt"], 400_000, "far below the size that the probe found a secret volume takes whole")
+        self.assertLess(sizes["probe.sh"], 100_000)
+
+    def test_the_probe_is_given_the_deployment_sites_of_both_apps_and_the_names_of_both_apps_and_their_sites_must_be_private(self):
+        block, script = self.step(self.PROBE), self.script(self.PROBE)
+        self.assertIn("USAGE_APP: ${{ steps.params.outputs.function_app_name }}", block)
+        self.assertIn("CASES_APP: ${{ steps.params.outputs.cases_function_app_name }}", block)
+        self.assertIn('scm_hosts="$USAGE_APP.scm.azurewebsites.net $CASES_APP.scm.azurewebsites.net"', script)
+        self.assertIn('--env "PROBE_SCM_HOSTS=$scm_hosts"', script)
+        self.assertIn('--env "PROBE_NAMES=$private_names"', script)
+        self.assertIn('--env "PROBE_PRIVATE_NAMES=$private_names $scm_hosts"', script)
+        names = re.search(r'(?m)^\s*private_names="(.+)"$', script).group(1).split()
+        self.assertEqual(names[-2:], ["$USAGE_APP.azurewebsites.net", "$CASES_APP.azurewebsites.net"], "the two apps have a private endpoint from this change on, so their names must resolve to a private address")
+        for name in ("$EVENT_HUB_NAMESPACE.servicebus.windows.net", "$STORAGE_ACCOUNT.blob.core.windows.net", "$COSMOS_ACCOUNT.documents.azure.com", "$MODEL_ACCOUNT.cognitiveservices.azure.com",
+                     "$FOUNDRY_ACCOUNT.services.ai.azure.com"):
+            self.assertIn(name, names)
+        self.assertIn("https://$CASES_APP.azurewebsites.net/healthz", script, "the console's health address needs no sign-in")
+        self.assertIn("https://$USAGE_APP.azurewebsites.net/", script)
 
     def test_the_digest_is_the_one_that_the_decision_record_names_and_nothing_in_the_workflow_makes_or_deletes_a_container_group_itself(self):
         digest = re.search(r"OPERATOR_IMAGE: (mcr\.microsoft\.com/azure-cli@sha256:[0-9a-f]{64})", self.text).group(1)
