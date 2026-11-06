@@ -1457,6 +1457,267 @@ class TheProbeStepAsksForTheTokenOfTheDeployIdentity(unittest.TestCase):
         self.assertNotIn(self.TOKEN, tool.Printer([self.TOKEN]).redact(f"a line that says {self.TOKEN} in the middle"))
 
 
+PUBLISH_STEP_AZ = """#!/bin/bash
+# stand-in for az in the publish steps, which only read: the list that finds the Operator's identity and the read of its subnet. FAKE_IDENTITY_ID is what the list prints (FAIL: it fails), FAKE_SUBNET
+# is ok, absent or throttled. The container signs in as the deploy identity, so the step reads no client id and signs in as nobody: any other call of az is an error here.
+echo "az $*" >> "$FAKE_LOG"
+case "$*" in
+  *"resource list"*) if [ "$FAKE_IDENTITY_ID" = "FAIL" ]; then echo "ERROR: fake az: the list is refused" >&2; exit 1; fi; printf '%s' "$FAKE_IDENTITY_ID" ;;
+  *"/subnets/snet-ops"*)
+    case "$FAKE_SUBNET" in
+      ok) echo snet-ops ;;
+      absent) echo "ERROR: (ResourceNotFound) The Resource 'Microsoft.Network/virtualNetworks/vnet-meternaut/subnets/snet-ops' under resource group 'rg-of-the-project' was not found." >&2; exit 1 ;;
+      throttled) echo "ERROR: (TooManyRequests) Too many requests for d0404e2a-5b6c-4d7e-8f90-a1b2c3d4e5f6, try again later." >&2; exit 1 ;;
+    esac ;;
+  *) echo "unexpected az call: $*" >&2; exit 9 ;;
+esac
+"""
+
+PUBLISH_STEP_BASH = """#!/bin/bash
+# stand-in for bash in the step that builds the cases package: it logs the call and makes the package, FAKE_PACKAGE_BYTES long, where the step says (the fifth argument)
+echo "bash $*" >> "$FAKE_LOG"
+head -c "${FAKE_PACKAGE_BYTES-1000}" /dev/zero > "$5"
+"""
+
+
+@unittest.skipIf(BASH is None, "no bash on this machine")
+class ThePublishStepsFindTheOperatorAskForTheTokenAndStartTheContainerGroup(unittest.TestCase):
+    """The two steps that publish the code of an app from inside the network (docs/proposals/07-private-by-default.md, phase 2), run with bash against stand-ins for az, curl and python3: the Operator is
+    found by its name and nothing is changed; the token of the deploy identity is asked for with the bearer on standard input, masked and given to the one call of the tool through its environment and
+    nowhere else; without a token nothing is published; and the call that is built is the one that the tool itself accepts."""
+
+    SUBSCRIPTION = "11111111-2222-3333-4444-555555555555"
+    GROUP = "rg-of-the-project"
+    SUBNET = f"/subscriptions/{SUBSCRIPTION}/resourceGroups/{GROUP}/providers/Microsoft.Network/virtualNetworks/vnet-meternaut/subnets/snet-ops"
+    IDENTITY = f"/subscriptions/{SUBSCRIPTION}/resourceGroups/{GROUP}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/id-meternaut-operator"
+    IMAGE = "mcr.microsoft.com/azure-cli@sha256:" + "ab" * 32
+    DEPLOY_CLIENT = "aaaaaaaa-0000-4000-8000-000000000001"
+    DEPLOY_TENANT = "bbbbbbbb-0000-4000-8000-000000000002"
+    TOKEN = TheProbeStepAsksForTheTokenOfTheDeployIdentity.TOKEN
+    BEARER = TheProbeStepAsksForTheTokenOfTheDeployIdentity.BEARER
+    URL = TheProbeStepAsksForTheTokenOfTheDeployIdentity.URL
+    NO_REQUEST = TheProbeStepAsksForTheTokenOfTheDeployIdentity.NO_REQUEST
+    PUBLISHES = {
+        "usage": {"title": "Publish the usage functions to the function app from inside the network, in the Operator", "app": "func-meternaut-usage-0a1b2c3d", "action": "recording",
+                  "file": "usage-source.zip", "seconds": "2400"},
+        "cases": {"title": "Publish the cases to the function app from inside the network, in the Operator", "app": "func-meternaut-cases-0a1b2c3d", "action": "cases",
+                  "file": "case-functions.zip", "seconds": "1200"},
+    }
+
+    def run_publish(self, kind, curl="ok", request=True, identity=None, subnet="ok", exit_code=0, dns="10.20.0.4,10.20.0.5", size=1234):
+        want = self.PUBLISHES[kind]
+        temp = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        (temp / want["file"]).write_bytes(b"x" * size)
+        env = {"ENV_SUBSCRIPTION_ID": self.SUBSCRIPTION, "ENV_RESOURCE_GROUP": self.GROUP, "ENV_DNS_SERVERS": dns, "GITHUB_RUN_ID": "1234567890", "OPERATOR_IMAGE": self.IMAGE,
+               "ACTION": want["action"], "FUNCTION_APP": want["app"], "DEPLOY_CLIENT_ID": self.DEPLOY_CLIENT, "DEPLOY_TENANT_ID": self.DEPLOY_TENANT,
+               "FAKE_IDENTITY_ID": self.IDENTITY if identity is None else identity, "FAKE_SUBNET": subnet, "FAKE_CURL": curl, "FAKE_TOKEN": self.TOKEN, "FAKE_EXIT": str(exit_code),
+               "RUNNER_TEMP": temp.as_posix(), "GITHUB_STEP_SUMMARY": (temp / "summary.md").as_posix(),
+               "ACTIONS_ID_TOKEN_REQUEST_URL": self.URL if request else "", "ACTIONS_ID_TOKEN_REQUEST_TOKEN": self.BEARER if request else ""}
+        done, lines, _ = run_step_script(want["title"], {"az": PUBLISH_STEP_AZ, "curl": PROBE_STEP_CURL, "python3": PROBE_STEP_PYTHON3}, env, prelude=PROBE_STEP_PRELUDE)
+        calls, other = split_calls(lines)
+        return done, calls, other, temp
+
+    def expected(self, kind, temp, size, dns=("10.20.0.4", "10.20.0.5")):
+        want = self.PUBLISHES[kind]
+        files = ([f"usage-source.zip={temp.as_posix()}/usage-source.zip", "build-function-app.sh=tools/build-function-app.sh"] if kind == "usage" else [f"package.zip={temp.as_posix()}/case-functions.zip"])
+        return (["tools/operator-run.py", "run", "--resource-group", self.GROUP, "--name", "op-publish-1234567890", "--subnet-id", self.SUBNET, "--identity-id", self.IDENTITY, "--image", self.IMAGE,
+                 "--script", "operator/publish.sh"]
+                + [word for pair in files for word in ("--secret-file", pair)]
+                + ["--env", f"PUBLISH_KIND={kind}", "--env", f"PUBLISH_APP={want['app']}", "--env", f"PUBLISH_RESOURCE_GROUP={self.GROUP}", "--env", f"PUBLISH_SUBSCRIPTION={self.SUBSCRIPTION}",
+                    "--env", f"PUBLISH_CLIENT_ID={self.DEPLOY_CLIENT}", "--env", f"PUBLISH_TENANT_ID={self.DEPLOY_TENANT}", "--env", f"PUBLISH_FILE_BYTES={size}", "--secure-env", "AZURE_FEDERATED_TOKEN"]
+                + [word for server in dns for word in ("--dns-server", server)]
+                + ["--timeout-seconds", want["seconds"], "--summary", (temp / "summary.md").as_posix()])
+
+    def environment_of(self, argv):
+        return dict(argv[i + 1].split("=", 1) for i, word in enumerate(argv) if word == "--env")
+
+    def test_each_step_builds_the_call_of_the_tool_with_the_container_script_the_files_the_ids_of_the_deploy_identity_and_the_times(self):
+        for kind in self.PUBLISHES:
+            done, calls, other, temp = self.run_publish(kind, size=4321)
+            self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+            (argv,) = calls
+            self.assertEqual(argv, self.expected(kind, temp, 4321), kind)
+            files = {line.split()[1]: line.split()[2] for line in other if line.startswith("file ")}
+            if kind == "usage":
+                self.assertEqual(files, {"usage-source.zip": "4321", "build-function-app.sh": str((ROOT / "tools" / "build-function-app.sh").stat().st_size)}, "the sources and the build script go whole")
+            else:
+                self.assertEqual(files, {"package.zip": "4321"}, "the finished package goes whole, under the name that the container script looks for")
+            self.assertEqual([line for line in other if line.startswith("az ")], [
+                "az resource list --resource-group rg-of-the-project --name id-meternaut-operator --query [0].id --output tsv",
+                f"az rest --method get --url https://management.azure.com{self.SUBNET}?api-version=2025-05-01 --query name --output tsv"],
+                "the runner reads two things and signs in as nobody: the container signs in as the deploy identity")
+            self.assertEqual(sum(line.startswith("curl ") for line in other), 1, "one request, for the token")
+
+    def test_the_call_is_accepted_by_the_tool_and_the_group_holds_the_token_once_as_a_secure_value_and_the_files_stay_below_its_limit(self):
+        tool = load_operator_tool()
+        for kind, size in (("usage", 40_000), ("cases", 2_100_000)):
+            done, calls, other, temp = self.run_publish(kind, size=size)
+            self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+            (argv,) = calls
+            args = tool.build_parser().parse_args(argv[1:])
+            with mock.patch.dict(os.environ, {"AZURE_FEDERATED_TOKEN": self.TOKEN}):
+                plain, secure, servers = tool.check_options(args)
+            self.assertEqual(secure, [("AZURE_FEDERATED_TOKEN", self.TOKEN)])
+            self.assertEqual(servers, ["10.20.0.4", "10.20.0.5"])
+            self.assertEqual(sorted(name for name, _ in plain), sorted(["PUBLISH_KIND", "PUBLISH_APP", "PUBLISH_RESOURCE_GROUP", "PUBLISH_SUBSCRIPTION", "PUBLISH_CLIENT_ID", "PUBLISH_TENANT_ID",
+                                                                       "PUBLISH_FILE_BYTES"]))
+            with contextlib.chdir(ROOT):
+                files = tool.read_files(args)
+            self.assertEqual(sorted(files), ["build-function-app.sh", "publish.sh", "usage-source.zip"] if kind == "usage" else ["package.zip", "publish.sh"])
+            self.assertEqual(files["publish.sh"], (ROOT / "operator" / "publish.sh").read_bytes().replace(b"\r\n", b"\n"), "the container runs the script of the repository")
+            zip_name = "usage-source.zip" if kind == "usage" else "package.zip"
+            self.assertEqual(len(files[zip_name]), size)
+            self.assertEqual(dict(plain)["PUBLISH_FILE_BYTES"], str(size), "the size that the container compares the file in its volume with")
+            self.assertLess(sum(len(content) for content in files.values()), tool.MAX_FILE_BYTES)
+            document = tool.group_document(args, files, plain, secure, servers, "2026-11-06T07:00:00Z")
+            variables = document["properties"]["containers"][0]["properties"]["environmentVariables"]
+            self.assertEqual([variable for variable in variables if self.TOKEN in json.dumps(variable)], [{"name": "AZURE_FEDERATED_TOKEN", "secureValue": self.TOKEN}])
+            self.assertEqual(json.dumps(document).count(self.TOKEN), 1, "once in the request, as a secure value, which Azure does not show again")
+            self.assertNotIn(self.TOKEN, tool.Printer([self.TOKEN]).redact(f"a line that says {self.TOKEN} in the middle"))
+
+    def test_the_token_is_asked_for_with_the_audience_and_the_bearer_on_standard_input_masked_and_given_to_the_one_call_of_the_tool_only_through_its_environment(self):
+        for kind in self.PUBLISHES:
+            done, calls, other, temp = self.run_publish(kind)
+            self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+            (argv,) = calls
+            self.assertIn(f"curl --silent --fail --max-time 30 --config - {self.URL}&audience=api://AzureADTokenExchange", other, "the audience that the federated credential trusts")
+            self.assertIn(f'curl-stdin header = "Authorization: Bearer {self.BEARER}"', other, "the bearer of the request comes on standard input")
+            self.assertIn(f"token-in-env={self.TOKEN}", other, "the call of the tool has the token in its environment")
+            self.assertEqual(argv.count("--secure-env"), 1)
+            self.assertEqual(argv[argv.index("--secure-env") + 1], "AZURE_FEDERATED_TOKEN", "named and not given: the tool takes the value from the environment")
+            for word in argv + [line for line in other if not line.startswith("token-in-env=")]:
+                self.assertNotIn(self.TOKEN, word, "on no command line and in no line of a stand-in")
+            for word in [word for call in calls for word in call] + [line for line in other if line.startswith(("curl ", "az "))]:
+                self.assertNotIn(self.BEARER, word, "the bearer of the request is on no command line")
+            for value in self.environment_of(argv).values():
+                self.assertNotIn(self.TOKEN, value, "no --env value is the token")
+            self.assertIn(f"::add-mask::{self.TOKEN}", done.stdout.splitlines(), "masked at once")
+            self.assertNotIn(self.TOKEN, done.stdout.replace(f"::add-mask::{self.TOKEN}", ""), "and printed nowhere else")
+            self.assertNotIn(self.TOKEN, done.stderr)
+            self.assertNotIn(self.BEARER, done.stdout + done.stderr)
+            self.assertFalse((temp / "summary.md").exists() and self.TOKEN in (temp / "summary.md").read_text(encoding="utf-8"), "not in the summary of the run")
+            for path in temp.rglob("*"):
+                if path.is_file() and path.name != self.PUBLISHES[kind]["file"]:
+                    self.assertNotIn(self.TOKEN.encode(), path.read_bytes(), f"not in a file of the run: {path.name}")
+
+    def test_a_token_that_is_a_printed_document_is_found_too(self):
+        for kind in self.PUBLISHES:
+            done, calls, other, _ = self.run_publish(kind, curl="pretty")
+            self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+            self.assertIn(f"token-in-env={self.TOKEN}", other)
+
+    def test_without_a_token_nothing_is_published_and_the_step_fails_and_says_why(self):
+        for kind in self.PUBLISHES:
+            for changes, note in (({"request": False}, self.NO_REQUEST), ({"curl": "fail"}, "the request for the token failed (curl exit code 22)"),
+                                  ({"curl": "empty"}, "the answer to the request for the token held none"), ({"curl": '{"message":"nope"}'}, "the answer to the request for the token held none"),
+                                  ({"curl": ""}, "the answer to the request for the token held none")):
+                done, calls, other, _ = self.run_publish(kind, **changes)
+                self.assertEqual(done.returncode, 1, (kind, changes, done.stdout))
+                self.assertEqual(calls, [], "the tool is not called: the container would not be able to sign in, and a group that cannot publish is not made")
+                self.assertIn(f"::error::Nothing was published: the container signs in as the deploy identity with a token of this run, and this run has none: {note}.", done.stdout)
+                self.assertNotIn("::add-mask::", done.stdout)
+                self.assertNotIn(self.BEARER, done.stdout + done.stderr)
+
+    def test_an_operator_that_is_not_there_says_to_run_operator_first_and_the_order_stops_before_a_token_is_asked_for(self):
+        for kind, want in self.PUBLISHES.items():
+            first_run = ("so run operator first, and then " + want["action"] + " again (the order on an estate that has none yet is recording, cases, operator, and then recording and cases again). "
+                         "The template was deployed, and the app was not given its code.")
+            for answer in ("", "None", "FAIL", "id-meternaut-operator", "/not/a/subscription"):
+                done, calls, other, _ = self.run_publish(kind, identity=answer)
+                self.assertEqual(done.returncode, 1, (kind, answer))
+                self.assertIn(f"::error::The identity id-meternaut-operator is not there. The action {want['action']} publishes its code from inside the network, in the Operator, {first_run}", done.stdout)
+                self.assertEqual((calls, [line for line in other if line.startswith("curl")]), ([], []), "no token is asked for and no group is made")
+            done, calls, other, _ = self.run_publish(kind, subnet="absent")
+            self.assertEqual(done.returncode, 1)
+            self.assertIn(f"::error::The subnet snet-ops is not there. The action {want['action']} publishes its code from inside the network, in the Operator, {first_run}", done.stdout)
+            self.assertEqual((calls, [line for line in other if line.startswith("curl")]), ([], []))
+            done, calls, other, _ = self.run_publish(kind, subnet="throttled")
+            self.assertEqual(done.returncode, 1)
+            self.assertIn("::error::The subnet snet-ops could not be read: ERROR: (TooManyRequests) Too many requests for d0404e2a-5b6c-4d7e-8f90-a1b2c3d4e5f6, try again later.", done.stdout,
+                          "an answer that holds the digits 404 inside an id is not taken for NotFound")
+            self.assertNotIn("run operator first", done.stdout)
+            self.assertEqual(calls, [])
+
+    def test_the_landing_zone_s_dns_servers_are_given_one_flag_each_and_none_when_there_are_none(self):
+        for dns, servers in (("10.20.0.4", ["10.20.0.4"]), ("10.20.0.4,10.20.0.5,10.20.0.6", ["10.20.0.4", "10.20.0.5", "10.20.0.6"]), ("", [])):
+            for kind in self.PUBLISHES:
+                done, calls, other, _ = self.run_publish(kind, dns=dns)
+                self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+                argv = calls[0]
+                self.assertEqual([argv[i + 1] for i, word in enumerate(argv) if word == "--dns-server"], servers, (kind, dns))
+
+    def test_a_tool_that_fails_fails_the_step_with_its_exit_code_and_the_group_is_made_once(self):
+        for kind in self.PUBLISHES:
+            for exit_code in (1, 2, 124):
+                done, calls, other, _ = self.run_publish(kind, exit_code=exit_code)
+                self.assertEqual(done.returncode, exit_code, (kind, "the exit code of the tool is the exit code of the step, a timeout included"))
+                self.assertEqual(len(calls), 1, "one group: a second one would publish twice")
+
+    def test_the_step_only_reads_signs_in_as_nobody_and_runs_nothing_but_the_tool_on_the_runner(self):
+        for kind in self.PUBLISHES:
+            for subnet in ("ok", "absent", "throttled"):
+                _, calls, other, _ = self.run_publish(kind, subnet=subnet)
+                for call in (line for line in other if line.startswith("az ")):
+                    self.assertRegex(call, r"^az (resource list|rest --method get) ")
+                    for word in (" create ", " delete ", " update ", " role ", " put ", " post ", " patch ", " container ", " login ", " functionapp ", " webapp ", " account ", "--yes"):
+                        self.assertNotIn(word, call + " ", call)
+            self.assertEqual(sum(line.startswith(("bash", "unzip", "zip", "pip", "python3 -m")) for line in other), 0)
+
+    def test_the_cleanup_asks_the_tool_for_the_groups_of_the_publishes_and_a_failure_is_only_a_warning(self):
+        tool = load_operator_tool()
+        for title in ("Delete any container group of the publish of the usage functions that is left", "Delete any container group of the publish of the cases that is left"):
+            env = {"ENV_RESOURCE_GROUP": self.GROUP}
+            done, lines, _ = run_step_script(title, {"python3": OPERATOR_RUN_PYTHON3}, env)
+            self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+            self.assertEqual(called(lines), [["tools/operator-run.py", "cleanup", "--resource-group", self.GROUP, "--prefix", "op-publish-", "--older-than-minutes", "0"]])
+            done, lines, _ = run_step_script(title, {"python3": OPERATOR_RUN_PYTHON3}, {**env, "FAKE_EXIT": "1"})
+            self.assertEqual(done.returncode, 0, "a group that could not be deleted does not fail a run that was good")
+            self.assertIn("::warning::A container group whose name starts with op-publish- may be left in resource group rg-of-the-project.", done.stdout)
+            args = tool.build_parser().parse_args(called(lines)[0][1:])
+            self.assertEqual((args.prefix, args.older_than_minutes, args.resource_group), ("op-publish-", 0.0, self.GROUP))
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                with mock.patch.dict(os.environ, {"GITHUB_ACTIONS": "true"}):
+                    self.assertEqual(tool.cleanup_command(args, lambda arguments: (0, "[]", "")), 0, "the prefix is one that the tool accepts")
+        done, calls, other, _ = self.run_publish("usage")
+        self.assertTrue(calls[0][calls[0].index("--name") + 1].startswith("op-publish-"), "the prefix of the cleanup is the start of the name that the publish gives its group")
+
+
+@unittest.skipIf(BASH is None, "no bash on this machine")
+class TheCasesPackageIsCheckedAgainstTheLimitOfTheToolBeforeTheOperatorIsLookedFor(unittest.TestCase):
+    """The step that builds the cases app's package, which now travels in the secret volume of the container group: its size, with that of the container script, is checked against the limit of
+    tools/operator-run.py on the runner, with a message that names the way out, and the limit is the tool's."""
+
+    TITLE = "Build the cases app's package"
+
+    def run_build(self, package_bytes):
+        with tempfile.TemporaryDirectory() as temp:
+            env = {"RUNNER_TEMP": Path(temp).as_posix(), "FAKE_PACKAGE_BYTES": str(package_bytes)}
+            done, lines, _ = run_step_script(self.TITLE, {"bash": PUBLISH_STEP_BASH}, env, prelude=PROBE_STEP_PRELUDE)
+            return done, lines, Path(temp).as_posix()
+
+    def script_bytes(self):
+        return (ROOT / "operator" / "publish.sh").stat().st_size
+
+    def test_the_package_is_built_by_the_script_of_the_repository_and_a_package_that_fits_is_said_to_fit(self):
+        done, lines, temp = self.run_build(2_000_000)
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertEqual(lines, [f"bash tools/build-function-app.sh case-functions cases {temp}/case-functions {temp}/case-functions.zip"])
+        self.assertIn(f"The package is 2000000 bytes, and with the script {2_000_000 + self.script_bytes()} of the 3000000 bytes that a container group's request may hold.", done.stdout)
+
+    def test_the_limit_is_the_one_of_the_tool_the_boundary_is_the_same_and_a_package_over_it_stops_the_step_with_the_way_out(self):
+        tool = load_operator_tool()
+        self.assertEqual(tool.MAX_FILE_BYTES, 3_000_000, "the limit that the step checks is the limit of the tool")
+        limit = tool.MAX_FILE_BYTES - self.script_bytes()
+        done, _, _ = self.run_build(limit)
+        self.assertEqual(done.returncode, 0, "exactly at the limit: the tool refuses only what is more")
+        done, _, _ = self.run_build(limit + 1)
+        self.assertEqual(done.returncode, 1)
+        self.assertIn(f"::error::The cases app's package is {limit + 1} bytes, and with the script of the container ({self.script_bytes()} bytes) it is more than the 3000000 bytes of files that a container "
+                      "group's request may hold. The package has to get smaller, or the cases app has to be built in the container from its sources, as the usage app is "
+                      "(docs/proposals/07-private-by-default.md, phase 2).", done.stdout)
+        self.assertNotIn("The package is", done.stdout)
+
+
 POWERSHELLS = []
 
 

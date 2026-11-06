@@ -37,10 +37,11 @@
 // it exists), peering and route tables.
 //
 // The function app has a private endpoint of its own too, for the app's name and for its deployment site, which share it (the group `sites`). The Operator uses it to publish the code from
-// inside the network, in the change after this one (docs/proposals/07-private-by-default.md); the app keeps its public access until then, which the parameter
-// usageAppPublicNetworkAccess says, so that closing the app is one value. It is written to the app every time and is never left empty: Learn says that for a site whose value is not set,
-// a private endpoint switches public access off by itself, and the workflow publishes the code from outside the network until the Operator does it. The workflow waits until the landing zone
-// has registered the endpoint's names before it publishes, because a Flex Consumption deployment ends with a call from the deployment site to the app's own host name, which does not resolve before.
+// inside the network: the action recording runs operator/publish.sh in a container group of the Operator, as the deploy identity, since phase 2 of docs/proposals/07-private-by-default.md.
+// The app keeps its public access until phase 3, which the parameter usageAppPublicNetworkAccess says, so that closing the app is one value. It is written to the app every time and is never left
+// empty: Learn says that for a site whose value is not set, a private endpoint switches public access off by itself, and the app stays public until the publish through the endpoint has been
+// seen to work. The workflow waits until the landing zone has registered the endpoint's names before it publishes, because a Flex Consumption deployment ends with a call from the deployment
+// site to the app's own host name, which does not resolve before.
 //
 // Made after the kit's bicep/infra/apim-gateway-upgrade/supporting-services.bicep and its services/*.bicep, at the commit that
 // the workflow checks out, with these differences, each on purpose:

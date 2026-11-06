@@ -661,24 +661,33 @@ class Workflow(unittest.TestCase):
     def test_every_step_that_publishes_or_starts_a_job_names_the_actions_it_runs_in_and_never_what_if(self):
         found = 0
         for block in self.steps:
-            if "az functionapp deployment source config-zip" in block or "/api/zipdeploy" in block or "--script operator/run-tool.sh" in block:
+            if "--script operator/publish.sh" in block or "--script operator/run-tool.sh" in block:
                 found += 1
                 condition = re.search(r"(?m)^        if: (.+)$", block)
                 self.assertIsNotNone(condition, block[:80])
                 self.assertNotIn("what-if", condition.group(1))
                 self.assertNotIn("always()", condition.group(1))
-        self.assertEqual(found, 4, "two publishes and two job starts (the Operator runs the check tool that sends the control event)")
+        self.assertEqual(found, 4, "two publishes and two job starts, all in the Operator's container: the publish of the usage app and of the cases app, and the check tools that send the control event")
+        for block in self.steps:
+            for word in ("az functionapp deployment source config-zip", "/api/zipdeploy", "az webapp deploy", "az webapp deployment"):
+                self.assertNotIn(word, block, f"no step publishes from the runner any more: {word} is in {block[:80]!r}")
 
     def test_the_recording_is_made_ready_deployed_published_and_listed_in_that_order_and_for_its_action_only(self):
         order = ["Remove the key-based Logic App version of the usage recording, when it is still there", "Deploy the usage recording",
                  "Wait until the landing zone has registered the usage recording's private endpoints in the central zones",
                  "Sign in to Azure again for the publish, because the first sign-in's credential lasts five minutes",
-                 "Build the function app's package", "Publish the usage functions to the function app", "The function app lists its six functions"]
+                 "Pack the usage app's sources for the Operator", "Publish the usage functions to the function app from inside the network, in the Operator",
+                 "Delete any container group of the publish of the usage functions that is left",
+                 "Sign in to Azure again for the list of the functions, because the publish in the Operator can take a quarter of an hour and a credential lasts five minutes",
+                 "The function app lists its six functions"]
         names = self.names()
         positions = [names.index(name) for name in order]
         self.assertEqual(positions, sorted(positions))
         for name in order:
-            self.assertIn("if: inputs.action == 'recording'", self.steps[names.index(name)])
+            if name.startswith("Delete any container group"):
+                self.assertIn("if: always() && inputs.action == 'recording' && steps.publish_usage.outcome != 'skipped'", self.steps[names.index(name)])
+            else:
+                self.assertIn("if: inputs.action == 'recording'", self.steps[names.index(name)])
         deploy = self.steps[names.index("Deploy the usage recording")]
         self.assertIn("--template environment/recording/main.bicep", deploy)
         self.assertIn('--parameters "$RUNNER_TEMP/recording.parameters.json"', deploy)
@@ -721,9 +730,14 @@ class Workflow(unittest.TestCase):
         block = self.steps[names.index(again)]
         self.assertIn("if: inputs.action == 'recording'", block)
         self.assertIn("uses: azure/login@", block)
-        self.assertEqual(self.text.count("uses: azure/login@"), 5, "the first sign-in, one more before each publish (the usage recording's and the cases'), one more after the wait for the cases app and one more before the read-back of the Foundry resource, which follows a wait of up to 40 minutes")
+        self.assertEqual(self.text.count("uses: azure/login@"), 6, "the first sign-in, one more before each publish (the usage recording's and the cases'), one more after the wait for the cases app, one more before the read-back of the Foundry resource, which follows a wait of up to 40 minutes, and one more before the list of the usage functions, which follows a publish in the Operator that can take a quarter of an hour")
         self.assertLess(names.index("Deploy the usage recording"), names.index(again))
-        self.assertLess(names.index(again), names.index("Publish the usage functions to the function app"))
+        self.assertLess(names.index(again), names.index("Publish the usage functions to the function app from inside the network, in the Operator"))
+        later = "Sign in to Azure again for the list of the functions, because the publish in the Operator can take a quarter of an hour and a credential lasts five minutes"
+        self.assertIn("if: inputs.action == 'recording'", self.steps[names.index(later)])
+        self.assertIn("uses: azure/login@", self.steps[names.index(later)])
+        self.assertLess(names.index("Publish the usage functions to the function app from inside the network, in the Operator"), names.index(later))
+        self.assertLess(names.index(later), names.index("The function app lists its six functions"))
 
     def test_the_deploy_workflow_builds_with_the_python_of_the_functions_runtime_as_the_checks_do(self):
         # A run found it: the runner's own Python was 3.12, and the app's library needs 3.13. The checks had 3.13 and could not see it.
@@ -735,22 +749,22 @@ class Workflow(unittest.TestCase):
         self.assertIn(f"uses: {pinned.group(1)}", text(".github/workflows/checks.yml"), "the very action that the checks use")
         self.assertIn('python-version: "3.13"', block)
         self.assertLess(names.index(title), names.index("The tools, the templates and the kit's module pass their checks"))
-        self.assertLess(names.index(title), names.index("Build the function app's package"))
+        self.assertLess(names.index(title), names.index("Pack the usage app's sources for the Operator"))
+        self.assertLess(names.index(title), names.index("Build the cases app's package"), "the cases package is built on the runner, with the libraries, so it needs the runtime of the app")
         self.assertIn("version: '3.13'", text("environment/recording/main.bicep"), "the runtime that the app is made for")
         self.assertIn("python3 -c 'import sys; sys.exit(0 if sys.version_info[:2] == (3, 13) else 1)'", text("tools/build-function-app.sh"))
 
-    def test_the_package_is_built_by_the_script_that_the_checks_use_and_published_with_the_identity_and_no_password(self):
-        (build,) = [b for b in self.steps if b.startswith("name: Build the function app's package")]
-        self.assertIn('bash tools/build-function-app.sh usage-functions usage "$RUNNER_TEMP/usage-functions" "$RUNNER_TEMP/usage-functions.zip"', build)
-        (publish,) = [b for b in self.steps if b.startswith("name: Publish the usage functions to the function app")]
-        self.assertIn("az functionapp deployment source config-zip", publish)
-        self.assertIn('--src "$RUNNER_TEMP/usage-functions.zip"', publish)
-        self.assertIn("--build-remote false", publish)
+    def test_the_usage_sources_are_packed_by_the_script_that_the_checks_use_and_published_in_the_operator_with_the_deploy_identity_and_no_password(self):
+        (pack,) = [b for b in self.steps if b.startswith("name: Pack the usage app's sources for the Operator")]
+        self.assertIn('FUNCTION_APP_SOURCES_ONLY=1 bash tools/build-function-app.sh usage-functions usage "$RUNNER_TEMP/usage-source" "$RUNNER_TEMP/usage-source.zip"', pack)
+        (publish,) = [b for b in self.steps if b.startswith("name: Publish the usage functions to the function app from inside the network, in the Operator")]
+        for word in ("--script operator/publish.sh", '--secret-file "usage-source.zip=$RUNNER_TEMP/usage-source.zip"', '--secret-file "build-function-app.sh=tools/build-function-app.sh"', '--env "PUBLISH_KIND=usage"',
+                     '--env "PUBLISH_APP=$FUNCTION_APP"', "--secure-env AZURE_FEDERATED_TOKEN", '--name "op-publish-$GITHUB_RUN_ID"', '--image "$OPERATOR_IMAGE"', '"${dns[@]}"'):
+            self.assertIn(word, publish, word)
         self.assertIn("FUNCTION_APP: ${{ steps.params.outputs.function_app_name }}", publish)
-        self.assertNotIn("environment/", publish + build)
-        for word in ("az webapp deploy", "publishing-credentials", "--user", "--password", "kit/"):
-            self.assertNotIn(word, publish + build, word)
-        self.assertIn("for attempt in 1 2 3", publish)
+        self.assertNotIn("environment/", publish + pack)
+        for word in ("az webapp deploy", "publishing-credentials", "--user", "--password", "kit/", "config-zip"):
+            self.assertNotIn(word, publish + pack, word)
         checks = text(".github/workflows/checks.yml")
         self.assertIn('bash tools/build-function-app.sh usage-functions usage "$RUNNER_TEMP/usage-functions" "$RUNNER_TEMP/usage-functions.zip"', checks,
                       "the checks build the same package, so a missing wheel is found before a deploy")
@@ -1157,12 +1171,14 @@ class AnAppsPrivateEndpointIsNeverAddedWithoutTheWait(unittest.TestCase):
             "action": "recording", "variable": "RECORDING_ENDPOINTS", "output": "recording_endpoints", "deploy": "Deploy the usage recording",
             "wait": "Wait until the landing zone has registered the usage recording's private endpoints in the central zones",
             "login": "Sign in to Azure again for the publish, because the first sign-in's credential lasts five minutes",
-            "build": "Build the function app's package", "publish": "Publish the usage functions to the function app", "given": "The function app was not given its code."},
+            "build": "Pack the usage app's sources for the Operator", "publish": "Publish the usage functions to the function app from inside the network, in the Operator",
+            "given": "The function app was not given its code."},
         "environment/cases/main.bicep": {
             "action": "cases", "variable": "CASES_ENDPOINTS", "output": "cases_endpoints", "deploy": "Deploy the first cases",
             "wait": "Wait until the landing zone has registered the cases app's private endpoint in the central zone",
             "login": "Sign in to Azure again for the publish of the cases, because the first sign-in's credential lasts five minutes",
-            "build": "Build the cases app's package", "publish": "Publish the cases to the function app", "given": "The cases app was not given its code."},
+            "build": "Build the cases app's package", "publish": "Publish the cases to the function app from inside the network, in the Operator",
+            "given": "The cases app was not given its code."},
     }
 
     def setUp(self):
@@ -1211,6 +1227,140 @@ class AnAppsPrivateEndpointIsNeverAddedWithoutTheWait(unittest.TestCase):
         cases = self.step(self.APPS["environment/cases/main.bicep"]["wait"])
         for words in ("The same wait as the usage recording's", "a deployment site calls its app by that name", "a later probe from the Operator finds the names"):
             self.assertIn(words, cases.replace("\n          # ", " "), words)
+
+
+class TheCodeIsPublishedFromInsideTheNetwork(unittest.TestCase):
+    """Phase 2 of docs/proposals/07-private-by-default.md, read from the text of the workflow and of the container script: the actions recording and cases publish in a container group of the Operator, as
+    the deploy identity, with the token of the run, through the apps' private endpoints, and the runner publishes nothing. The steps are run with bash against stand-ins in test_workflow_scripts.py."""
+
+    PUBLISHES = {
+        "usage": {"action": "recording", "title": "Publish the usage functions to the function app from inside the network, in the Operator", "id": "publish_usage", "seconds": 2400, "minutes": 45,
+                  "cleanup": "Delete any container group of the publish of the usage functions that is left", "files": ["usage-source.zip", "build-function-app.sh"]},
+        "cases": {"action": "cases", "title": "Publish the cases to the function app from inside the network, in the Operator", "id": "publish_cases", "seconds": 1200, "minutes": 25,
+                  "cleanup": "Delete any container group of the publish of the cases that is left", "files": ["package.zip"]},
+    }
+    PROBE = "Run the probe in the Operator"
+
+    def setUp(self):
+        self.text = text(".github/workflows/deploy-hub.yml")
+        self.steps = re.split(r"(?m)^      - ", self.text)[1:]
+        self.names = [re.match(r"name: (.+)", b).group(1) for b in self.steps]
+
+    def step(self, title):
+        (block,) = [b for b in self.steps if b.startswith(f"name: {title}\n")]
+        return block
+
+    def script(self, title):
+        body = self.step(title).split("        run: |\n", 1)[1]
+        return "\n".join(line for line in body.splitlines() if not line.strip().startswith("#"))
+
+    def test_each_publish_finds_the_operator_then_asks_for_the_token_right_before_the_tool_and_the_tool_is_the_last_thing_it_runs(self):
+        for kind, want in self.PUBLISHES.items():
+            script = self.script(want["title"])
+            order = ('identity_id=$(az resource list', "grep -Eq '^/subscriptions/' <<< \"$identity_id\"", 'az rest --method get --url "https://management.azure.com${subnet_id}', "dns=()", "bytes=$(wc -c",
+                     "curl_status=0", 'echo "::add-mask::$token"', 'AZURE_FEDERATED_TOKEN="$token" python3 tools/operator-run.py run')
+            positions = [script.index(word) for word in order]
+            self.assertEqual(positions, sorted(positions), f"{kind}: everything else is ready before the token is asked for: it is valid for five minutes")
+            self.assertEqual(script.count("python3 tools/operator-run.py run"), 1, "one group")
+            self.assertTrue(script.rstrip().endswith('"${dns[@]}" --timeout-seconds ' + str(want["seconds"]) + ' --summary "$GITHUB_STEP_SUMMARY"'), f"{kind}: the tool is the last thing that the step runs")
+            self.assertIn("this run has none", script, f"{kind}: without a token the step stops and says why, and publishes nothing")
+            self.assertLess(script.index("this run has none"), script.index("python3 tools/operator-run.py run"))
+
+    def test_the_code_that_asks_for_the_token_is_the_same_in_the_probe_and_in_the_two_publishes_because_the_probe_has_proven_it_on_the_real_estate(self):
+        def asking(title):
+            found = re.search(r'(?s)if \[ -z "\$\{ACTIONS_ID_TOKEN_REQUEST_URL:-\}" \].*?\n\s*unset answer\n\s*fi', self.script(title))
+            self.assertIsNotNone(found, title)
+            return [line.strip() for line in found.group(0).splitlines()]
+
+        probe = asking(self.PROBE)
+        self.assertGreater(len(probe), 10)
+        for want in self.PUBLISHES.values():
+            self.assertEqual(asking(want["title"]), probe, want["title"])
+
+    def test_the_token_goes_only_through_secure_env_is_written_nowhere_and_the_runner_signs_in_nowhere_in_the_step(self):
+        self.assertIn("id-token: write", self.text.split("jobs:")[0], "the job may ask for the token")
+        for want in self.PUBLISHES.values():
+            block, script = self.step(want["title"]), self.script(want["title"])
+            self.assertEqual(re.findall(r"--secure-env [A-Za-z_=]+", block), ["--secure-env AZURE_FEDERATED_TOKEN"], "one secure value, and it is named, never given")
+            for value in re.findall(r'--env "[A-Z_]+=([^"]*)"', script):
+                self.assertNotRegex(value, r"(?i)token", "no --env value is the token")
+            for word in ("GITHUB_ENV", "GITHUB_OUTPUT", "GITHUB_STATE", "GITHUB_PATH", "set -x", "xtrace", " tee ", "::set-output", "::save-state"):
+                self.assertNotIn(word, block, f"{word}: the token is written nowhere")
+            for word in ("az login", "azure/login", "get-access-token"):
+                self.assertNotIn(word, script, f"{word}: the runner does not sign in for the publish, nor ask for another token: the container does")
+            self.assertEqual(re.findall(r"secrets\.(\w+)", block), ["AZURE_CLIENT_ID", "AZURE_TENANT_ID"], "the two ids of the deploy identity, which the other steps read from the same secrets, and no other secret")
+            self.assertIn("DEPLOY_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}", block)
+            self.assertIn("DEPLOY_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}", block)
+            self.assertIn('--image "$OPERATOR_IMAGE"', script, "the image is the one that is pinned by its digest")
+            self.assertNotIn("--allow-tag", script)
+            self.assertIn('--identity-id "$identity_id"', script, "the group has the Operator's identity (for the pull and for nothing that writes): the container signs in as the deploy identity")
+
+    def test_the_group_is_given_less_time_than_the_step_and_the_comment_says_how_long_and_why(self):
+        for kind, want in self.PUBLISHES.items():
+            block = self.step(want["title"])
+            seconds = int(re.search(r"--timeout-seconds (\d+)", block).group(1))
+            minutes = int(re.search(r"(?m)^        timeout-minutes: (\d+)$", block).group(1))
+            self.assertEqual((seconds, minutes), (want["seconds"], want["minutes"]), kind)
+            self.assertGreaterEqual(minutes * 60 - seconds, 240, f"{kind}: the limit of the step is a second line, at least four minutes behind the limit of the group, which the tool deletes at its own")
+            self.assertIn(f"The container group is given {seconds} seconds", " ".join(block.split()), f"{kind}: the comment says how long the group is given")
+        self.assertLessEqual(self.PUBLISHES["usage"]["minutes"] + 40 + 30, 150, "the wait for the endpoints (40 minutes), the publish and the rest of the run stay below the 150 minutes of the job")
+        self.assertIn("    timeout-minutes: 150\n", self.text)
+
+    def test_each_cleanup_runs_always_right_after_its_publish_takes_the_groups_of_the_publishes_only_and_the_publish_has_the_id_that_it_names(self):
+        for kind, want in self.PUBLISHES.items():
+            publish, cleanup = self.step(want["title"]), self.step(want["cleanup"])
+            self.assertIn(f"        id: {want['id']}\n", publish)
+            self.assertIn(f"        if: always() && inputs.action == '{want['action']}' && steps.{want['id']}.outcome != 'skipped'\n", cleanup)
+            self.assertEqual(self.names.index(want["cleanup"]), self.names.index(want["title"]) + 1, f"{kind}: right after the publish")
+            self.assertIn('python3 tools/operator-run.py cleanup --resource-group "$ENV_RESOURCE_GROUP" --prefix op-publish- --older-than-minutes 0', cleanup)
+            self.assertIn('--name "op-publish-$GITHUB_RUN_ID"', publish, "the prefix of the cleanup is the start of the name that the publish gives its group")
+            self.assertIn("::warning::", cleanup)
+            self.assertNotIn("delete", self.script(want["cleanup"]).replace("deletes", ""), "the tool deletes, not a command of the step")
+
+    def test_the_container_script_reads_what_the_steps_give_it_and_the_files_that_the_steps_send_are_the_ones_it_looks_for_in_its_volume(self):
+        source = re.sub(r"(?m)^\s*#.*$", "", text("operator/publish.sh"))
+        read = set(re.findall(r"\bPUBLISH_[A-Z_]+\b", source))
+        given = set()
+        for want in self.PUBLISHES.values():
+            script = self.script(want["title"])
+            names = set(re.findall(r'--env "(PUBLISH_[A-Z_]+)=', script))
+            self.assertEqual(names, {"PUBLISH_KIND", "PUBLISH_APP", "PUBLISH_RESOURCE_GROUP", "PUBLISH_SUBSCRIPTION", "PUBLISH_CLIENT_ID", "PUBLISH_TENANT_ID", "PUBLISH_FILE_BYTES"}, want["title"])
+            given |= names
+            sent = re.findall(r'--secret-file "([^"=]+)=', script)
+            self.assertEqual(sent, want["files"], want["title"])
+            for name in sent:
+                self.assertIn(f"$volume/{name}", source, f"{name}: the container script looks for the file that the step sends")
+        self.assertEqual(read - given, {"PUBLISH_HOLD_SECONDS", "PUBLISH_VOLUME", "PUBLISH_TMP"}, "the script reads what the steps give it, and an optional hold and the hooks of its tests")
+        self.assertEqual(given - read, set(), "and the steps give it nothing that it does not read")
+        self.assertIn("AZURE_FEDERATED_TOKEN", source)
+
+    def test_the_runner_makes_the_libraries_only_of_the_cases_app_and_only_zips_the_sources_of_the_usage_app(self):
+        builders = [(re.match(r"name: (.+)", b).group(1), b) for b in self.steps if "tools/build-function-app.sh" in b and "--secret-file" not in b]
+        self.assertEqual([name for name, _ in builders], ["Pack the usage app's sources for the Operator", "Build the cases app's package"])
+        self.assertIn("FUNCTION_APP_SOURCES_ONLY=1 bash tools/build-function-app.sh usage-functions usage", builders[0][1])
+        self.assertNotIn("FUNCTION_APP_SOURCES_ONLY", builders[1][1], "the cases package is built whole, with its libraries, on the runner")
+        self.assertNotIn("FUNCTION_APP_BUILD_IN_OPERATOR", self.text, "that switch is set in the container only, by the container script")
+        container = re.sub(r"(?m)^\s*#.*$", "", text("operator/publish.sh"))
+        self.assertIn("FUNCTION_APP_BUILD_IN_OPERATOR=1", container)
+        self.assertIn("FUNCTION_APP_SOURCE_DIR=", container)
+        self.assertNotIn("FUNCTION_APP_SOURCES_ONLY", container, "the container never zips sources: it builds from them")
+
+    def test_the_summaries_say_that_the_code_is_published_from_inside_the_network_and_what_a_stop_at_that_step_means_and_the_order_on_an_estate_that_has_no_operator(self):
+        for words in ("It publishes the usage app's code from inside the network, in a container group of the Operator that signs in as the deploy identity with a token of the run and goes through the "
+                      "app's private endpoint, so on an estate that has no Operator yet it deploys and stops at the publish: the order is then recording, cases, operator, and then recording and cases again.",
+                      "It publishes the app's code from inside the network, in the Operator, as recording does.",
+                      "The actions recording and cases publish their code through it, as the deploy identity.",
+                      "If they stop at the step that publishes the code from inside the network, the deploy and the wait are done and the app was not given its code: the lines say that the Operator is not there",
+                      "If they stop at the step that publishes the code from inside the network, the app and its endpoint are made and the app was not given its code: the lines say that the Operator is not there",
+                      "on an estate that has none the order is recording, cases, operator, and then recording and cases again) or what the container said.",
+                      "The code was published from inside the network: a short-lived container group of the Operator signed in as the deploy identity with a token of this run, built the libraries from the "
+                      "hash-locked lock file and published the package through the app's private endpoint",
+                      "The code was published from inside the network: a short-lived container group of the Operator signed in as the deploy identity with a token of this run and posted the finished "
+                      "package to the deployment site through the app's private endpoint",
+                      "the runner published nothing"):
+            self.assertIn(words, self.text, words)
+        for stale in ("goes from this runner to the public deployment site", "the app was not given its code: the lines say which endpoint is not registered yet. Running"):
+            self.assertNotIn(stale, self.text, "the runner publishes nothing any more")
 
 
 class Planted(unittest.TestCase):
@@ -1263,7 +1413,8 @@ class CasesWorkflow(unittest.TestCase):
                  "Let the cases app go from an integration subnet that is not the one of the template", "Deploy the first cases",
                  "Wait until the landing zone has registered the cases app's private endpoint in the central zone",
                  "Sign in to Azure again for the publish of the cases, because the first sign-in's credential lasts five minutes",
-                 "Build the cases app's package", "Publish the cases to the function app", "Wait until the cases app answers",
+                 "Build the cases app's package", "Publish the cases to the function app from inside the network, in the Operator",
+                 "Delete any container group of the publish of the cases that is left", "Wait until the cases app answers",
                  "Sign in to Azure a third time for the check of the cases, because the second sign-in's credential lasts five minutes too",
                  "Say whether the integration subnet carries the route table of the landing zone's network manager",
                  "The cases app lists its four functions",
@@ -1271,24 +1422,27 @@ class CasesWorkflow(unittest.TestCase):
         positions = [self.names.index(name) for name in order]
         self.assertEqual(positions, sorted(positions))
         for name in order:
-            self.assertIn("if: inputs.action == 'cases'", self.steps[self.names.index(name)], name)
+            if name.startswith("Delete any container group"):
+                self.assertIn("if: always() && inputs.action == 'cases' && steps.publish_cases.outcome != 'skipped'", self.steps[self.names.index(name)], name)
+            else:
+                self.assertIn("if: inputs.action == 'cases'", self.steps[self.names.index(name)], name)
         deploy = self.step("Deploy the first cases")
         self.assertIn("--template environment/cases/main.bicep", deploy)
         self.assertIn('--parameters "$RUNNER_TEMP/cases.parameters.json"', deploy)
         self.assertIn("--output functionAppId", deploy)
         self.assertEqual(self.text.count("--template environment/cases/main.bicep"), 2, "the preview and the deploy, nothing else")
 
-    def test_the_cases_are_published_with_the_identity_and_no_password_from_the_package_that_the_checks_build(self):
-        build, publish = self.step("Build the cases app's package"), self.step("Publish the cases to the function app")
+    def test_the_cases_are_published_in_the_operator_with_the_deploy_identity_and_no_password_from_the_package_that_the_checks_build(self):
+        build, publish = self.step("Build the cases app's package"), self.step("Publish the cases to the function app from inside the network, in the Operator")
         self.assertIn('bash tools/build-function-app.sh case-functions cases "$RUNNER_TEMP/case-functions" "$RUNNER_TEMP/case-functions.zip"', build)
-        self.assertIn('--data-binary "@$RUNNER_TEMP/case-functions.zip"', publish)
-        self.assertIn('"https://$FUNCTION_APP.scm.azurewebsites.net/api/zipdeploy"', publish)
-        self.assertIn("az account get-access-token --resource https://management.azure.com", publish)
-        self.assertIn('--header "Authorization: Bearer $token"', publish)
-        self.assertIn('echo "::add-mask::$token"', publish, "the token is masked before anything can print it")
-        self.assertLess(publish.index("::add-mask::"), publish.index("curl"))
+        for word in ("--script operator/publish.sh", '--secret-file "package.zip=$RUNNER_TEMP/case-functions.zip"', '--env "PUBLISH_KIND=cases"', '--env "PUBLISH_APP=$FUNCTION_APP"',
+                     "--secure-env AZURE_FEDERATED_TOKEN", '--name "op-publish-$GITHUB_RUN_ID"', '--image "$OPERATOR_IMAGE"', '"${dns[@]}"'):
+            self.assertIn(word, publish, word)
         self.assertIn("FUNCTION_APP: ${{ steps.params.outputs.cases_function_app_name }}", publish)
-        for word in ("az webapp deploy", "publishing-credentials", "--user", "--password", "config-zip", "kit/", "environment/"):
+        self.assertIn('echo "::add-mask::$token"', publish, "the token is masked at once")
+        self.assertLess(publish.index("::add-mask::"), publish.index("python3 tools/operator-run.py run"), "and before anything is started with it")
+        self.assertIn("this run has none", publish, "no token: nothing is published, and the step says why")
+        for word in ("az webapp deploy", "publishing-credentials", "--user", "--password", "config-zip", "kit/", "environment/", "zipdeploy", "--data-binary", "get-access-token"):
             self.assertNotIn(word, publish + build, word)
 
     def test_the_flex_version_of_the_cases_app_is_removed_by_its_name_only_while_its_plan_is_flex_consumption_and_before_the_deploy(self):
@@ -1383,7 +1537,7 @@ class CasesWorkflow(unittest.TestCase):
         self.assertNotIn("az ", script, "a wait of minutes cannot hold a credential that lasts five")
         self.assertIn("exit 1", script)
         self.assertIn("uses: azure/login@", third)
-        positions = [self.names.index(name) for name in ("Publish the cases to the function app", "Wait until the cases app answers",
+        positions = [self.names.index(name) for name in ("Publish the cases to the function app from inside the network, in the Operator", "Wait until the cases app answers",
                                                         "Sign in to Azure a third time for the check of the cases, because the second sign-in's credential lasts five minutes too",
                                                         "The cases app lists its four functions")]
         self.assertEqual(positions, sorted(positions))
@@ -2060,7 +2214,8 @@ class RetireWorkflow(unittest.TestCase):
             self.assertLess(self.names.index(deploy), self.names.index(retire), f"{action}: after the template has been deployed, which no longer declares the role")
             between = self.names[self.names.index(deploy) + 1:self.names.index(retire)]
             self.assertEqual(between, [self.READ_BACK] if action == "recording" else [], f"{action}: nothing else of the action comes between the deploy and the retirement, but the read back of the namespace")
-            publish = {"recording": "Publish the usage functions to the function app", "cases": "Publish the cases to the function app"}[action]
+            publish = {"recording": "Publish the usage functions to the function app from inside the network, in the Operator",
+                       "cases": "Publish the cases to the function app from inside the network, in the Operator"}[action]
             self.assertLess(self.names.index(retire), self.names.index(publish), action)
             self.assertLess(self.names.index(retire), self.names.index("What was done"))
             self.assertNotIn("what-if", self.step(retire).split("run:")[0], "a what-if changes nothing")
@@ -2332,7 +2487,7 @@ class OperatorWorkflow(unittest.TestCase):
         self.assertEqual([line.strip() for line in script.splitlines() if "ACTIONS_ID_TOKEN_REQUEST_TOKEN" in line][0:1], ['if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] || [ -z "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" ]; then'])
         self.assertEqual(sum("ACTIONS_ID_TOKEN_REQUEST_TOKEN" in line for line in script.splitlines()), 2, "the bearer of the request is read twice: tested for, and sent")
         for variable in ("ACTIONS_ID_TOKEN_REQUEST_URL", "ACTIONS_ID_TOKEN_REQUEST_TOKEN"):
-            self.assertEqual(len(re.findall(rf"(?m)^[^#\n]*{variable}", self.text)), 2, f"{variable} is read in this step only")
+            self.assertEqual(len(re.findall(rf"(?m)^[^#\n]*{variable}", self.text)), 6, f"{variable} is read in the three steps that ask for the token, each in two lines: the probe's, and the publishes of the usage app and of the cases app")
         lines = [line.strip() for line in script.splitlines() if "$token" in line]
         self.assertEqual(lines[:3], ['if [ -z "$token" ]; then', 'echo "::add-mask::$token"', 'if [ -n "$token" ]; then'])
         self.assertEqual(len(lines), 4, "the token is tested for, masked, tested for, and handed over: nothing else mentions it")
@@ -2384,7 +2539,7 @@ class OperatorWorkflow(unittest.TestCase):
         digest = re.search(r"OPERATOR_IMAGE: (mcr\.microsoft\.com/azure-cli@sha256:[0-9a-f]{64})", self.text).group(1)
         self.assertIn(digest, text("docs/proposals/07-private-by-default.md"))
         self.assertEqual(len(re.findall(r"OPERATOR_IMAGE: ", self.text)), 1, "the pin is made once")
-        self.assertEqual(len(re.findall(r'--image "\$OPERATOR_IMAGE"', self.text)), 3, "and used by the probe and by the two checks")
+        self.assertEqual(len(re.findall(r'--image "\$OPERATOR_IMAGE"', self.text)), 5, "and used by the probe, by the two checks and by the two publishes")
         self.assertNotIn("az container", self.text, "the tool makes, reads and deletes the group")
 
     def test_the_cleanup_deletes_only_groups_of_the_probe_through_the_tool_and_a_failure_is_a_warning(self):
@@ -2467,7 +2622,7 @@ class OperatorChecksWorkflow(unittest.TestCase):
         self.assertEqual(sorted(re.findall(r"python3 tools/cases-check\.py (\w+)", code)), ["functions", "functions"])
         for word in ("eventhubs.azure.net", "servicebus.windows.net/", "/messages?"):
             self.assertNotIn(word, code, f"{word}: the runner takes no token for Event Hubs and posts nothing to it")
-        self.assertEqual(self.text.count("uses: azure/login@"), 5, "no sign-in was added: the runner makes the container group with the credential of the first one")
+        self.assertEqual(self.text.count("uses: azure/login@"), 6, "the check actions added no sign-in: the runner makes the container group with the credential of the first one (the six are the first, those of recording and cases before their publish, the one of cases after its wait, the Foundry read-back's and the one of recording before its list of the functions)")
 
     def test_each_check_runs_the_generic_script_with_its_tool_and_the_arguments_that_the_runner_used_before_and_the_times_are_ordered(self):
         expected = {self.RECORDING: {"tool": "recording-check", "files": ["recording-check.py"], "args": "run --namespace $EVENT_HUB_NAMESPACE --insights $insights --job all --minutes 20", "seconds": 1500, "minutes": 35},

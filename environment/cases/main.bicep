@@ -33,8 +33,9 @@
 // The recording has to exist first.
 //
 // The app has a private endpoint of its own, for the console's name and for the deployment site (the group `sites`, in the endpoint subnet; no private DNS zone group: the landing zone's
-// policy adds it, rule 19). The Operator uses it to publish the code and to knock at the console's front door from inside the network, in the changes after this one
-// (docs/proposals/07-private-by-default.md); the console keeps its public access until then, which the parameter casesAppPublicNetworkAccess says, so that closing it is one value. The value
+// policy adds it, rule 19). The Operator uses it to publish the code since phase 2 of docs/proposals/07-private-by-default.md (the action cases runs operator/publish.sh in a container group of the
+// Operator, as the deploy identity) and will knock at the console's front door from inside the network in phase 3; the console keeps its public access until then, which the parameter
+// casesAppPublicNetworkAccess says, so that closing it is one value. The value
 // is written to the app every time and is never left empty: Learn says that for a site whose value is not set, a private endpoint switches public access off by itself, and
 // the people who approve a change reach the console from outside the network. The workflow waits until the landing zone has registered the endpoint's names before it publishes, so that the
 // two apps behave alike: the usage app's deployment ends with a call to the app's own host name, which does not resolve before.
@@ -131,7 +132,7 @@ param consolePeople string = '[]'
 @description('Directory object ids of the people above: the built-in sign-in lets only these through.')
 param consoleUserObjectIds array = []
 
-@description('Whether the console and the function app take requests from the public internet: Enabled or Disabled. Enabled until the people who approve have a network path to the private endpoint, and until the Operator publishes the code through it, because the deployment workflow publishes it from the GitHub-hosted runner, which is outside the network. It is always written to the app and never left empty: for an app whose value is not set, a private endpoint switches public access off by itself.')
+@description('Whether the console and the function app take requests from the public internet: Enabled or Disabled. Enabled until the people who approve have a network path to the private endpoint, and until the publish through the Operator, which the deployment workflow runs from a container group inside the network since phase 2, has been seen to work through it. It is always written to the app and never left empty: for an app whose value is not set, a private endpoint switches public access off by itself.')
 @allowed([
   'Enabled'
   'Disabled'
