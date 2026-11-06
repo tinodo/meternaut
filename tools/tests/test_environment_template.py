@@ -71,6 +71,16 @@ ALLOWED = {
         "Microsoft.Web/sites/config",
     },
     "environment/cases/planted.bicep": {"Microsoft.Compute/disks", "Microsoft.Network/publicIPAddresses"},
+    "environment/foundry/main.bicep": {
+        "Microsoft.CognitiveServices/accounts",
+        "Microsoft.CognitiveServices/accounts/raiPolicies",
+        "Microsoft.CognitiveServices/accounts/deployments",
+        "Microsoft.CognitiveServices/accounts/projects",
+        "Microsoft.CognitiveServices/accounts/projects/connections",
+        "Microsoft.Network/privateEndpoints",
+        "Microsoft.Insights/components",
+        "Microsoft.Authorization/roleAssignments",
+    },
 }
 
 
@@ -633,7 +643,7 @@ class Workflow(unittest.TestCase):
         block = self.steps[names.index(again)]
         self.assertIn("if: inputs.action == 'recording'", block)
         self.assertIn("uses: azure/login@", block)
-        self.assertEqual(self.text.count("uses: azure/login@"), 4, "the first sign-in, one more before each publish (the usage recording's and the cases') and one more after the wait for the cases app")
+        self.assertEqual(self.text.count("uses: azure/login@"), 5, "the first sign-in, one more before each publish (the usage recording's and the cases'), one more after the wait for the cases app and one more before the read-back of the Foundry resource, which follows a wait of up to 40 minutes")
         self.assertLess(names.index("Deploy the usage recording"), names.index(again))
         self.assertLess(names.index(again), names.index("Publish the usage functions to the function app"))
 
@@ -911,6 +921,28 @@ class Cases(unittest.TestCase):
             self.assertTrue(f"name: '{name}'" in self.code, f"the app reads {name} and the template does not set it")
         self.assertTrue("CONSOLE_PEOPLE" in self.code, "the people are read by people.py")
 
+    def test_the_agents_of_the_foundry_resource_are_reached_with_six_settings_and_the_investigation_is_off_without_an_address(self):
+        body = self.found["functionApp"][1]
+        for line in ("{ name: 'FOUNDRY_PROJECT_ENDPOINT', value: foundryProjectEndpoint }", "{ name: 'FOUNDRY_MODEL_INVESTIGATOR', value: foundryModelInvestigator }",
+                     "{ name: 'FOUNDRY_MODEL_SKEPTIC', value: foundryModelSkeptic }", "{ name: 'INVESTIGATE', value: empty(foundryProjectEndpoint) ? 'off' : 'on' }",
+                     "{ name: 'INVESTIGATE_MAX_CALLS', value: string(investigateMaxCalls) }", "{ name: 'INVESTIGATE_MAX_SECONDS', value: string(investigateMaxSeconds) }"):
+            self.assertIn(line, body)
+        for line in ("param foundryProjectEndpoint string = ''", "param foundryModelInvestigator string = 'gpt-6.1-sol'", "param foundryModelSkeptic string = 'gpt-6-luna'",
+                     "param investigateMaxCalls int = 24", "param investigateMaxSeconds int = 420"):
+            self.assertRegex(self.code, rf"(?m)^{re.escape(line)}$")
+        self.assertEqual(len(re.findall(r"name: '(?:FOUNDRY_\w+|INVESTIGATE\w*)'", body)), 6)
+        self.assertEqual(self.code.count("foundryProjectEndpoint"), 3, "the parameter, the setting and the switch, and nothing else reads it")
+        for word in ("listKeys", "apiKey", "ApiKey", "key:", "credentials"):
+            self.assertNotIn(word, self.code[self.code.index("param foundryProjectEndpoint"):self.code.index("var tags")], word)
+        self.assertEqual(self.code.count("Microsoft.CognitiveServices"), 0, "the role on the project is given by the template of the Foundry resource, which has to make the project first")
+
+    def test_the_template_cannot_ask_for_more_of_the_investigation_than_the_code_accepts(self):
+        self.assertRegex(self.code, r"@minValue\(1\)\n@maxValue\(40\)\nparam investigateMaxCalls int = 24\n")
+        self.assertRegex(self.code, r"@minValue\(30\)\n@maxValue\(600\)\nparam investigateMaxSeconds int = 420\n")
+        limits = dict(re.findall(r"(?m)^LIMIT_INVESTIGATE_(CALLS|SECONDS) = (\d+)$", (ROOT / "src" / "case-functions" / "cases" / "config.py").read_text(encoding="utf-8")))
+        if not limits:
+            self.skipTest("the code does not read the investigation settings yet; src/case-functions/tests/test_config.py holds the names of the template and of config.py together")
+        self.assertEqual(limits, {"CALLS": "40", "SECONDS": "600"}, "the largest value that the template takes is the largest that the code takes")
 
     def test_the_workbook_file_is_valid_json_and_only_reads_the_traces(self):
         import json
@@ -1185,6 +1217,322 @@ class CasesWorkflow(unittest.TestCase):
         self.assertNotRegex(script, r"\baz\s")
         self.assertNotRegex(script, r"--method (put|patch|post|delete)")
         self.assertEqual(self.text.count("console-check.py door"), 1)
+
+
+class Foundry(unittest.TestCase):
+    """The Foundry resource of the agents (environment/foundry/main.bicep): what it makes, how it is shut, who may do what with it, and in what order."""
+
+    def setUp(self):
+        self.source = text("environment/foundry/main.bicep")
+        self.code = re.sub(r"(?m)^\s*//.*$", "", self.source)
+        self.found = resources(self.source)
+
+    def properties_of(self, source, name):
+        match = re.search(rf"(?ms)^resource {name} '[^']+' = \{{\n.*?^  properties: \{{\n(.*?)^  \}}\n", source)
+        self.assertIsNotNone(match, name)
+        return match.group(1)
+
+    def test_it_declares_the_resources_of_the_design_and_makes_no_dns_no_network_and_no_gateway_object(self):
+        self.assertEqual(set(self.found), {"insights", "account", "guardrail", "modelDeployment", "project", "projectPublishesTraces", "tracesConnection", "privateEndpoint",
+                                           "casesMayUseTheAgents"})
+        self.assertRegex(self.source, r"(?m)^resource insights 'Microsoft.Insights/components@2020-02-02' existing = ")
+        for word in ("privateDnsZones", "privateDnsZoneGroups", "virtualNetworkLinks", "virtualNetworkPeerings", "routeTables", "Microsoft.ApiManagement",
+                     "Microsoft.Network/virtualNetworks'", "networkSecurityGroups", "SecurityControl", "optOut"):
+            self.assertNotIn(word, self.code, word)
+
+    def test_the_resource_is_private_has_no_local_authentication_can_hold_projects_and_has_an_identity_of_its_own(self):
+        body = self.found["account"][1]
+        for line in ("kind: 'AIServices'", "name: 'S0'", "type: 'SystemAssigned'", "allowProjectManagement: true", "customSubDomainName: accountName",
+                     "publicNetworkAccess: 'Disabled'", "disableLocalAuth: true", "restore: restoreAccount", "defaultAction: 'Deny'", "ipRules: []", "virtualNetworkRules: []"):
+            self.assertIn(line, body)
+        self.assertEqual(self.code.count("publicNetworkAccess"), 1)
+        self.assertEqual(self.code.count("disableLocalAuth"), 1)
+        for word in ("publicNetworkAccess: 'Enabled'", "disableLocalAuth: false", "allowProjectManagement: false", "'None'", "UserAssigned"):
+            self.assertNotIn(word, self.code, word)
+        self.assertRegex(self.code, r"(?m)^param restoreAccount bool = false$")
+        self.assertRegex(self.code, r"(?s)@minLength\(2\)\n@maxLength\(64\)\nparam accountName string\n")
+
+    def test_the_project_has_an_identity_of_its_own_and_its_name_is_a_parameter_with_the_default_of_the_endpoint(self):
+        body = self.found["project"][1]
+        self.assertIn("parent: account", body)
+        self.assertIn("type: 'SystemAssigned'", body)
+        self.assertIn("name: projectName", body)
+        self.assertIn("location: location", body)
+        self.assertRegex(self.code, r"(?m)^param projectName string = 'meternaut'$")
+        self.assertNotIn("UserAssigned", body)
+
+    def test_the_private_endpoint_is_the_one_of_the_model_account_into_the_same_subnet_and_has_no_dns_zone_group(self):
+        mine = self.properties_of(self.source, "privateEndpoint")
+        theirs = self.properties_of(text("environment/main.bicep"), "privateEndpoint")
+        self.assertEqual(mine, theirs, "the same subnet, the same connection, the same group id: the pattern of the model account")
+        self.assertIn("name: 'pe-${accountName}'", self.found["privateEndpoint"][1])
+        self.assertIn("groupIds: [\n            'account'\n          ]", mine)
+        self.assertIn("'snet-pe'", mine)
+        self.assertEqual(self.code.count("Microsoft.Network/privateEndpoints"), 1, "the one private endpoint")
+        self.assertNotIn("privateDnsZoneGroups", self.code)
+
+    def test_the_order_that_a_real_deploy_needed_is_in_the_template(self):
+        found = self.found
+        # the project after the last deployment, the connection after the role that its identity needs, the private endpoint after every other write to the resource, the roles after it
+        self.assertIn("modelDeployment", depends_on(found["project"][1]))
+        self.assertIn("projectPublishesTraces", depends_on(found["tracesConnection"][1]))
+        self.assertTrue({"modelDeployment", "project", "tracesConnection"} <= depends_on(found["privateEndpoint"][1]))
+        self.assertIn("privateEndpoint", depends_on(found["casesMayUseTheAgents"][1]))
+        self.assertRegex(self.source, r"@batchSize\(1\)\nresource modelDeployment ", "the resource accepts one deployment write at once")
+        self.assertIn("raiPolicyName: guardrail.name", found["modelDeployment"][1], "the guardrail is made before the deployments that use it")
+        # nothing else is written to the resource (or below it) at the same time as its private endpoint: each write is before it or after it, by dependsOn or by a reference
+        def before(name, seen=None):
+            seen = set() if seen is None else seen
+            body = re.sub(r"(?m)^\s*//.*$", "", found[name][1])
+            for other in found:
+                if other != name and other not in seen and (other in depends_on(body) or re.search(rf"\b{other}\b", body)):
+                    seen.add(other)
+                    before(other, seen)
+            return seen
+
+        written = {name for name, (_, body) in found.items() if re.search(r"^  (parent|scope): (account|project)$", body, re.M)} - {"privateEndpoint"}
+        beside = sorted(written - before("privateEndpoint") - {name for name in found if "privateEndpoint" in before(name)})
+        self.assertEqual(beside, [], f"{beside} would be written to the resource while the private endpoint is")
+
+    def test_the_models_are_deployed_as_the_model_account_deploys_them_with_the_guardrail_in_place_of_the_default(self):
+        mine, theirs = self.found["modelDeployment"][1], resources(text("environment/main.bicep"))["modelDeployment"][1]
+        self.assertEqual(mine.replace("raiPolicyName: guardrail.name", "raiPolicyName: 'Microsoft.DefaultV2'"), theirs, "the same name, version, type and capacity from the same list")
+        for line in ("name: model.name", "name: model.sku", "capacity: model.capacity", "version: model.version", "versionUpgradeOption: 'NoAutoUpgrade'", "format: 'OpenAI'"):
+            self.assertIn(line, mine)
+        self.assertRegex(self.code, r"(?m)^param models array$")
+        self.assertNotIn("Microsoft.DefaultV2", self.found["modelDeployment"][1])
+
+    def test_the_guardrail_is_the_default_one_with_the_prompt_shields_that_an_agent_that_reads_tool_results_needs_all_blocking(self):
+        body = self.found["guardrail"][1]
+        self.assertIn("basePolicyName: 'Microsoft.DefaultV2'", body)
+        self.assertIn("mode: 'Blocking'", body)
+        filters = re.findall(r"\{ name: '([A-Za-z ]+)', source: '(\w+)', enabled: (\w+), blocking: (\w+) \}", body)
+        self.assertEqual(filters, [("Jailbreak", "Prompt", "true", "true"), ("Indirect Attack", "Prompt", "true", "true"), ("Indirect Attack", "PostToolCall", "true", "true")])
+        self.assertEqual(body.count("{ name:"), 3, "no other control, and none that annotates only")
+        for word in ("blocking: false", "enabled: false", "severityThreshold", "customBlocklists", "safetyProviders", "egressPolicy"):
+            self.assertNotIn(word, body, word)
+        self.assertRegex(self.code, r"(?m)^param guardrailName string = 'meternaut-agents'$")
+
+    def test_the_roles_are_two_each_on_one_resource_for_one_service_principal_and_none_on_the_group_the_account_or_the_subscription(self):
+        guids = set(re.findall(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", self.code))
+        self.assertEqual(guids, {"53ca6127-db72-4b80-b1b0-d745d6d5456d", "3913510d-42f4-4e42-8a64-420c390055eb"})  # Foundry User, Monitoring Metrics Publisher
+        assignments = {name: body for name, (kind, body) in self.found.items() if kind == "Microsoft.Authorization/roleAssignments"}
+        self.assertEqual(sorted(assignments), ["casesMayUseTheAgents", "projectPublishesTraces"])
+        for name, body in assignments.items():
+            self.assertIn("principalType: 'ServicePrincipal'", body, name)
+        self.assertEqual({name: re.search(r"(?m)^  scope: (.+)$", body).group(1) for name, body in assignments.items()},
+                         {"casesMayUseTheAgents": "project", "projectPublishesTraces": "insights"})
+        self.assertIn("foundryUserRoleId", assignments["casesMayUseTheAgents"])
+        self.assertIn("principalId: casesPrincipalId", assignments["casesMayUseTheAgents"])
+        self.assertIn("monitoringMetricsPublisherRoleId", assignments["projectPublishesTraces"])
+        self.assertIn("principalId: project.identity.principalId", assignments["projectPublishesTraces"])
+        for word in ("scope: account", "scope: resourceGroup", "scope: subscription", "subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '"):
+            self.assertNotIn(word, self.code, word)
+        self.assertRegex(self.code, r"@minLength\(36\)\n@maxLength\(36\)\nparam casesPrincipalId string\n")
+
+    def test_the_foundry_user_role_is_the_one_that_creates_and_runs_agents_and_the_condition_of_the_deploy_identity_names_it(self):
+        self.assertIn("var foundryUserRoleId = '53ca6127-db72-4b80-b1b0-d745d6d5456d'", self.source)
+        page = text("environment/BOOTSTRAP.md").split("## Changed on 2026-11-06")[1]
+        self.assertIn("53ca6127-db72-4b80-b1b0-d745d6d5456d", page, "the hand step adds this id to the condition, and the template gives no other role than the ones in the condition")
+        self.assertIn("3913510d-42f4-4e42-8a64-420c390055eb", text("environment/BOOTSTRAP.md").split("## Added on 2026-11-04 for the usage recording")[1],
+                      "Monitoring Metrics Publisher is in the condition already")
+
+    def test_the_connection_sends_the_traces_with_the_identity_of_the_project_and_holds_no_key(self):
+        body = self.found["tracesConnection"][1]
+        for line in ("parent: project", "category: 'AppInsights'", "target: insights.id", "authType: 'ProjectManagedIdentity'", "isSharedToAll: false"):
+            self.assertIn(line, body)
+        self.assertIn("#disable-next-line BCP036\n    authType:", body, "the Bicep types do not list the value that Microsoft's own templates write")
+        for word in ("credentials", "ApiKey", "apiKey", "key:", "AccountKey"):
+            self.assertNotIn(word, body, word)
+        self.assertIn("name: 'appi-${workload}'", body)
+        self.assertIn("DisableLocalAuth: true", resources(text("environment/recording/main.bicep"))["insights"][1], "the component takes telemetry only with Microsoft Entra ID")
+
+    def test_no_key_or_secret_is_read_written_or_returned_and_the_one_connection_string_is_the_components_own_name(self):
+        for word in ("listKeys", "listConnectionStrings", "listSecrets", "listAccountSas", "AccountKey", "SharedAccessKey", "primaryKey", "secondaryKey", "@secure", "credentials",
+                     "apiKey", "ApiKey", "instrumentationKey", "InstrumentationKey", "password", "WEBSITE_CONTENT"):
+            self.assertNotIn(word, self.code, word)
+        lines = [line.strip() for line in self.code.splitlines() if "ConnectionString" in line]
+        self.assertEqual(lines, ["ApplicationInsightsConnectionString: insights.properties.ConnectionString"],
+                         "the metadata of the connection, as in Microsoft's own templates: it names the component and holds no secret that ingestion accepts")
+
+    def test_no_output_names_a_key_and_the_outputs_are_the_ones_the_workflow_reads(self):
+        outputs = re.findall(r"(?m)^output (\w+) \w+ = (.+)$", self.code)
+        self.assertEqual([name for name, _ in outputs], ["projectEndpoint", "accountName", "projectName", "guardrailName", "privateEndpointName"])
+        for name, value in outputs:
+            for word in ("listKeys", "listSecrets", "ConnectionString", "AccountKey", "primaryKey", "key", "secret", "password", "credentials", "token"):
+                self.assertNotIn(word, (name + " " + value).lower().replace("projectendpoint", ""), (name, word))
+        self.assertIn("'https://${account.name}.services.ai.azure.com/api/projects/${project.name}'", self.code)
+
+    def test_every_type_of_the_foundry_resource_is_at_one_stable_api_version_and_the_endpoint_is_at_the_one_of_the_others(self):
+        versions = set(re.findall(r"'Microsoft\.CognitiveServices/[A-Za-z/]+@([^']+)'", self.source))
+        self.assertEqual(versions, {"2026-09-01"})
+        self.assertEqual(re.findall(r"@[0-9-]+-preview'", self.source), [], "a preview version needs a switch with a fallback (AGENTS.md rule 11 (i)) and the Foundry resource has none")
+        self.assertIn("Microsoft.Network/privateEndpoints@2025-05-01", self.source)
+        self.assertIn("Microsoft.Authorization/roleAssignments@2022-04-01", self.source)
+
+    def test_the_template_names_the_resources_that_the_other_templates_made(self):
+        recording = text("environment/recording/main.bicep")
+        self.assertIn("name: 'appi-${workload}'", recording)
+        self.assertIn("name: 'appi-${workload}'", self.found["insights"][1])
+        self.assertIn("'vnet-${workload}', 'snet-pe'", self.found["privateEndpoint"][1])
+        self.assertIn("name: 'snet-pe'", text("environment/main.bicep"))
+        self.assertRegex(self.code, r"(?m)^param workload string = 'meternaut'$")
+
+    def test_the_template_compiles(self):
+        import json
+        import shutil
+        import subprocess
+
+        python = Path(r"C:\Program Files\Microsoft SDKs\Azure\CLI2\python.exe")
+        az = [str(python), "-IBm", "azure.cli"] if python.exists() else ([shutil.which("az")] if shutil.which("az") else None)
+        bicep = Path.home() / ".azure" / "bin" / ("bicep.exe" if python.exists() else "bicep")
+        if az is None or not bicep.exists():
+            self.skipTest("no Azure CLI with Bicep on this machine: the workflow and the checks compile every template")
+        done = subprocess.run([*az, "bicep", "build", "--file", str(ROOT / "environment" / "foundry" / "main.bicep"), "--stdout"], capture_output=True, text=True)
+        self.assertEqual(done.returncode, 0, done.stderr[-600:])
+        compiled = json.loads(done.stdout)
+        self.assertEqual({r["type"] for r in compiled["resources"]},
+                         {"Microsoft.CognitiveServices/accounts", "Microsoft.CognitiveServices/accounts/raiPolicies", "Microsoft.CognitiveServices/accounts/deployments",
+                          "Microsoft.CognitiveServices/accounts/projects", "Microsoft.CognitiveServices/accounts/projects/connections", "Microsoft.Network/privateEndpoints",
+                          "Microsoft.Authorization/roleAssignments"})
+        self.assertEqual(set(compiled["outputs"]), {"projectEndpoint", "accountName", "projectName", "guardrailName", "privateEndpointName"})
+
+
+class FoundryWorkflow(unittest.TestCase):
+    """The action foundry of the deploy workflow: what runs for it, in what order, and what it reads back."""
+
+    ORDER = ["The usage recording and the cases identity are there, which the Foundry resource builds on", "Deploy the Foundry resource of the agents",
+             "Wait until the landing zone has registered the Foundry resource's private endpoint in the central zones",
+             "Sign in to Azure again for the read-back of the Foundry resource, because the first sign-in's credential lasts five minutes", "Read the Foundry resource back"]
+
+    def setUp(self):
+        self.text = text(".github/workflows/deploy-hub.yml")
+        self.steps = re.split(r"(?m)^      - ", self.text)[1:]
+        self.names = [re.match(r"name: (.+)", b).group(1) for b in self.steps]
+
+    def step(self, title):
+        (block,) = [b for b in self.steps if b.startswith(f"name: {title}")]
+        return block
+
+    def script(self, title):
+        return "\n".join(line for line in self.step(title).split("run:")[1].splitlines() if not line.strip().startswith("#"))
+
+    def test_the_action_is_offered_between_the_recording_check_and_the_cases_and_is_described_in_plain_words(self):
+        options = re.search(r"options:\n((?:          - .+\n)+)", self.text).group(1)
+        offered = re.findall(r"- (\S+)", options)
+        self.assertEqual(offered[offered.index("recording-check") + 1:offered.index("recording-check") + 3], ["foundry", "cases"])
+        description = re.search(r'(?m)^        description: "(what-if: .+)"$', self.text).group(1)
+        self.assertIn(" foundry: the Foundry resource of the agents", description)
+        for word in ("no key", "private endpoint", "model account cannot hold projects"):
+            self.assertIn(word, description.split(" foundry: ")[1])
+
+    def test_the_steps_run_for_the_action_alone_in_the_order_of_the_owner_before_the_cases_and_after_the_settings_are_known(self):
+        positions = [self.names.index(name) for name in self.ORDER]
+        self.assertEqual(positions, sorted(positions))
+        for name in self.ORDER:
+            self.assertIn("if: inputs.action == 'foundry'", self.step(name), name)
+        self.assertLess(self.names.index("Work out the settings"), positions[0])
+        self.assertLess(positions[-1], self.names.index("The usage recording and the contract are there, which the first cases build on"))
+        self.assertEqual(len(re.findall(r"inputs\.action == 'foundry'", self.text)), len(self.ORDER), "these five steps, and no other step that runs for this action")
+
+    def test_the_deploy_makes_the_resource_from_the_template_and_the_file_restores_a_removed_one_and_checks_the_address_it_gives_the_cases_app(self):
+        block = self.step("Deploy the Foundry resource of the agents")
+        for word in ("--template environment/foundry/main.bicep", '--parameters "$RUNNER_TEMP/foundry.parameters.json"', '--name "foundry-$GITHUB_RUN_ID"', "--output projectEndpoint",
+                     "--restore-param restoreAccount", "EXPECTED_ENDPOINT: ${{ steps.params.outputs.foundry_project_endpoint }}"):
+            self.assertIn(word, block)
+        self.assertIn('if [ "${endpoint%/}" != "${EXPECTED_ENDPOINT%/}" ]; then', block)
+        self.assertIn("exit 1", block)
+        self.assertEqual(self.text.count("--template environment/foundry/main.bicep"), 2, "the preview and the deploy, nothing else")
+        self.assertEqual(self.text.count("python3 tools/az-deploy.py create"), len(re.findall(r"python3 tools/az-deploy.py create", self.text)))
+        for word in ("az role", "delete", "listKeys", "listSecrets", "--auth-mode key"):
+            self.assertNotIn(word, block, word)
+
+    def test_nothing_is_deployed_without_the_component_the_cases_identity_and_a_file_that_carries_the_identity(self):
+        title = self.ORDER[0]
+        block = self.step(title)
+        self.assertIn("INSIGHTS_NAME: ${{ steps.params.outputs.appinsights_name }}", block)
+        self.assertIn("CASES_IDENTITY: ${{ steps.params.outputs.cases_identity_name }}", block)
+        self.assertIn("Run recording first", block)
+        self.assertIn("Run cases first", block)
+        self.assertIn('grep -Fqi "\\"$principal\\"" "$RUNNER_TEMP/foundry.parameters.json"', block)
+        script = self.script(title)
+        self.assertEqual(len(re.findall(r"exit 1", script)), 3)
+        self.assertNotIn("az-deploy.py", script)
+        self.assertNotRegex(script, r"--method (put|patch|post|delete)")
+        self.assertLess(self.names.index(title), self.names.index("Deploy the Foundry resource of the agents"))
+
+    def test_the_wait_asks_for_the_zone_of_the_project_endpoints_host_name_fails_without_it_and_creates_no_zone(self):
+        title = self.ORDER[2]
+        block = self.step(title)
+        self.assertIn("PRIVATE_ENDPOINT: ${{ steps.params.outputs.foundry_private_endpoint }}", block)
+        self.assertIn("az network private-endpoint dns-zone-group list", block)
+        self.assertIn("grep -qi 'privatelink.services.ai.azure.com' <<< \"$zones\"", block)
+        self.assertIn("attempts=40", block)
+        script = self.script(title)
+        self.assertEqual(script.rstrip().splitlines()[-1].strip(), "exit 1", "it ends in a failure when no check passed")
+        self.assertIn("do not create a private DNS zone", block)
+        for word in ("az network private-dns", "az network private-endpoint dns-zone-group create", "--method put", "az role", "privateDnsZones"):
+            self.assertNotIn(word, block, word)
+        self.assertLess(self.names.index("Deploy the Foundry resource of the agents"), self.names.index(title))
+
+    def test_the_read_back_signs_in_again_and_runs_the_tool_with_the_names_the_settings_gave_and_the_models_of_the_repository(self):
+        title = self.ORDER[4]
+        block = self.step(title)
+        self.assertIn("uses: azure/login@", self.step(self.ORDER[3]))
+        for word in ("python3 tools/foundry-check.py read-back", '--subscription "$ENV_SUBSCRIPTION_ID"', '--resource-group "$ENV_RESOURCE_GROUP"', '--account "$FOUNDRY_ACCOUNT"',
+                     '--project "$FOUNDRY_PROJECT"', '--guardrail "$FOUNDRY_GUARDRAIL"', '--private-endpoint "$PRIVATE_ENDPOINT"', '--endpoint "$PROJECT_ENDPOINT"',
+                     "--models environment/models.json", '--summary "$GITHUB_STEP_SUMMARY"'):
+            self.assertIn(word, block)
+        for env_name, output in (("FOUNDRY_ACCOUNT", "foundry_account_name"), ("FOUNDRY_PROJECT", "foundry_project_name"), ("FOUNDRY_GUARDRAIL", "foundry_guardrail_name"),
+                                 ("PRIVATE_ENDPOINT", "foundry_private_endpoint"), ("PROJECT_ENDPOINT", "foundry_project_endpoint")):
+            self.assertIn(f"{env_name}: ${{{{ steps.params.outputs.{output} }}}}", block)
+        self.assertEqual(self.text.count("foundry-check.py read-back"), 1)
+        self.assertNotIn("|| true", block, "a difference stops the run")
+        self.assertNotIn("continue-on-error", block)
+        self.assertEqual(self.names.index(title) - self.names.index(self.ORDER[3]), 1)
+
+    def test_the_foundry_file_is_made_checked_against_its_compiled_template_and_the_template_is_compiled_where_the_others_are(self):
+        self.assertIn("environment/foundry/main.bicep environment/cases/main.bicep", self.text)
+        self.assertIn('az bicep build --file environment/foundry/main.bicep --outfile "$RUNNER_TEMP/foundry.json"', self.text)
+        params = [b for b in self.steps if b.startswith("name: Work out the settings\n")][0]
+        self.assertIn('python3 tools/environment-params.py check --params "$RUNNER_TEMP/foundry.parameters.json" --template "$RUNNER_TEMP/foundry.json" --label foundry', params)
+        checks = text(".github/workflows/checks.yml")
+        self.assertIn("environment/recording/main.bicep environment/foundry/main.bicep environment/cases/main.bicep", checks)
+        self.assertIn('az bicep build --file environment/foundry/main.bicep --outfile "$out/foundry.json"', checks)
+        self.assertIn('--params "$out/foundry.parameters.json" --template "$out/foundry.json" --label foundry', checks)
+
+    def test_the_preview_shows_the_foundry_resource_when_the_component_it_connects_to_is_there_and_says_why_not_otherwise(self):
+        block = self.step("What the identity, the model side, the logger, the usage recording and the first cases would change")
+        self.assertIn("INSIGHTS_NAME: ${{ steps.params.outputs.appinsights_name }}", block)
+        self.assertLess(block.index("The Foundry resource cannot be previewed yet"), block.index("--template environment/foundry/main.bicep"))
+        self.assertIn("--restore-param restoreAccount", block[block.index("--template environment/foundry/main.bicep"):])
+        self.assertLess(block.index("--template environment/recording/main.bicep"), block.index("--template environment/foundry/main.bicep"))
+        self.assertLess(block.index("--template environment/foundry/main.bicep"), block.index("--template environment/cases/main.bicep"))
+        self.assertNotIn("az-deploy.py create", block)
+
+    def test_the_cases_app_is_given_the_project_address_from_what_is_in_azure_and_the_cases_action_has_no_step_of_its_own_for_it(self):
+        params = [b for b in self.steps if b.startswith("name: Work out the settings\n")][0]
+        self.assertIn('exists "/subscriptions/$ENV_SUBSCRIPTION_ID/resourceGroups/$ENV_RESOURCE_GROUP/providers/Microsoft.CognitiveServices/accounts/$foundry_account/projects/$foundry_project" 2026-09-01', params)
+        self.assertIn('CASES_PRINCIPAL_ID="$cases_principal" ENV_FOUNDRY_PROJECT_EXISTS="$foundry_exists" python3 tools/environment-params.py build', params)
+        self.assertIn("could not be read", params, "a failure that is not 'not found' stops the run: the app is never given an address by a wrong guess")
+        self.assertNotRegex(params, r"--method (put|patch|post|delete)")
+        self.assertEqual(len(re.findall(r"if: .*'foundry'.*'cases'|if: .*'cases'.*'foundry'", self.text)), 0)
+        self.assertIn('--parameters "$RUNNER_TEMP/cases.parameters.json"', self.step("Deploy the first cases"))
+
+    def test_the_summary_for_a_failed_and_a_finished_run_says_what_the_resources_hold_gives_the_endpoint_and_names_no_key(self):
+        block = self.step("What was done")
+        for env_name, output in (("FOUNDRY_ACCOUNT", "foundry_account_name"), ("FOUNDRY_PROJECT", "foundry_project_name"), ("FOUNDRY_ENDPOINT", "foundry_project_endpoint")):
+            self.assertIn(f"{env_name}: ${{{{ steps.params.outputs.{output} }}}}", block)
+        self.assertEqual(len(re.findall(r"^\s+foundry\) echo ", block, re.M)), 2)
+        (failed, finished) = re.findall(r"(?m)^\s+foundry\) echo \"(.*?)\" ;;$", block)
+        for words in ("\\`$FOUNDRY_ACCOUNT\\`", "\\`$FOUNDRY_PROJECT\\`", "\\`$FOUNDRY_ENDPOINT\\`", "public network access and local authentication are off", "project management is on",
+                      "guardrail that blocks jailbreaks and indirect attacks", "private endpoint is approved", "traces to Application Insights with its identity",
+                      "Foundry User role on the project and nothing else there", "was read back from Azure", "No key was made, read or printed"):
+            self.assertIn(words, finished, words)
+        self.assertIn("run \\`cases\\` only after a run of \\`foundry\\` that passed", failed)
+        for text_ in (failed, finished):
+            for word in ("listKeys", "listSecrets", "primaryKey", "AccountKey", "SharedAccessKey", "connection string", "password"):
+                self.assertNotIn(word, text_, word)
 
 
 class HandSteps(unittest.TestCase):

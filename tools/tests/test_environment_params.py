@@ -65,7 +65,7 @@ class Build(unittest.TestCase):
     def test_good_settings_give_four_files_and_the_outputs(self):
         code, out, err, files = run(SETTINGS)
         self.assertEqual((code, err), (0, ""))
-        self.assertEqual(set(files), {"environment.parameters.json", "logger.parameters.json", "kit.parameters.json", "recording.parameters.json", "planted.parameters.json"})
+        self.assertEqual(set(files), {"environment.parameters.json", "logger.parameters.json", "kit.parameters.json", "recording.parameters.json", "foundry.parameters.json", "planted.parameters.json"})
         env = values(files["environment.parameters.json"])
         self.assertEqual(env["vnetAddressPrefix"], "10.53.0.0/24")
         self.assertEqual(env["peSubnetPrefix"], "10.53.0.0/27")
@@ -522,8 +522,8 @@ class Contract(unittest.TestCase):
     def test_the_contract_of_the_repository_gives_a_fifth_file_that_fits_its_template(self):
         code, out, err, files = self.build()
         self.assertEqual((code, err), (0, ""))
-        self.assertEqual(set(files), {"environment.parameters.json", "logger.parameters.json", "kit.parameters.json", "recording.parameters.json", "contract.parameters.json", "cases.parameters.json",
-                                      "planted.parameters.json"})
+        self.assertEqual(set(files), {"environment.parameters.json", "logger.parameters.json", "kit.parameters.json", "recording.parameters.json", "foundry.parameters.json", "contract.parameters.json",
+                                      "cases.parameters.json", "planted.parameters.json"})
         given = files["contract.parameters.json"]["parameters"]
         declared = bicep_params(CONTRACT_BICEP)
         self.assertEqual(set(given), set(declared))
@@ -783,6 +783,127 @@ class FirstCases(unittest.TestCase):
                       if m.get("product") == "Azure OpenAI GPT6" and re.fullmatch(r"6(\.1)?-sol ShortCo Opt Std DZ", m.get("sku", "")))
         self.assertGreater(dearest, 5, "the price was found")
         self.assertLess(contract["tokenQuotaPerMonth"] / 1_000_000 * dearest, 25)
+
+
+class Foundry(unittest.TestCase):
+    """The parameter file of the Foundry resource of the agents (environment/foundry/main.bicep), the names it carries, and what the cases file takes from it."""
+
+    FOUNDRY = (ROOT / "environment" / "foundry" / "main.bicep").read_text(encoding="utf-8")
+    CASES = (ROOT / "environment" / "cases" / "main.bicep").read_text(encoding="utf-8")
+    CASES_PRINCIPAL = "ABCDEFAB-1234-5678-9ABC-DEF012345678"
+
+    def files(self, **changes):
+        code, out, err, files = run({**SETTINGS, **changes})
+        self.assertEqual((code, err), (0, ""))
+        return files, dict(line.split("=", 1) for line in out.splitlines())
+
+    def cases_file(self, **changes):
+        with tempfile.TemporaryDirectory() as tmp:
+            contract = Path(tmp) / "contract.json"
+            contract.write_text(CONTRACT_FILE.read_text(encoding="utf-8"), encoding="utf-8")
+            code, out, err, files = run({**SETTINGS, **changes}, "--contract", str(contract), "--contract-policy", str(POLICY_FILE))
+        return code, out, err, files
+
+    def test_the_file_fits_the_template_and_every_setting_has_a_value_of_the_right_type(self):
+        files, _ = self.files(CASES_PRINCIPAL_ID=self.CASES_PRINCIPAL)
+        declared = bicep_params(self.FOUNDRY)
+        given = files["foundry.parameters.json"]["parameters"]
+        self.assertTrue(set(given) <= set(declared), set(given) - set(declared))
+        required = {name for name, (_, has_default) in declared.items() if not has_default}
+        self.assertTrue(required <= set(given), required - set(given))
+        types = {"string": str, "int": int, "array": list, "bool": bool}
+        for name, wrapped in given.items():
+            self.assertIsInstance(wrapped["value"], types[declared[name][0]], name)
+        self.assertNotIn("restoreAccount", given, "the deploy sets it only after the platform says that a soft-deleted resource of the name is there")
+
+    def test_the_names_are_a_host_name_inside_its_limit_the_same_on_every_run_and_not_the_model_accounts(self):
+        files, outputs = self.files()
+        again = self.files()[1]
+        token = ep.digest(SETTINGS["ENV_SUBSCRIPTION_ID"], SETTINGS["ENV_RESOURCE_GROUP"])
+        account = outputs["foundry_account_name"]
+        self.assertEqual(account, f"aif-meternaut-agents-{token}")
+        self.assertRegex(account, r"^[A-Za-z0-9][A-Za-z0-9-]{1,63}$")
+        self.assertEqual({k: v for k, v in outputs.items() if k.startswith("foundry_")}, {k: v for k, v in again.items() if k.startswith("foundry_")})
+        self.assertNotEqual(account, outputs["account_name"], "the model account was made with allowProjectManagement false and can never hold a project")
+        self.assertNotIn(outputs["account_name"], account)
+        self.assertEqual((outputs["foundry_project_name"], outputs["foundry_guardrail_name"]), ("meternaut", "meternaut-agents"))
+        self.assertEqual(outputs["foundry_private_endpoint"], f"pe-{account}")
+        self.assertEqual(outputs["foundry_project_endpoint"], f"https://{account}.services.ai.azure.com/api/projects/meternaut")
+        foundry = values(files["foundry.parameters.json"])
+        self.assertEqual((foundry["accountName"], foundry["projectName"], foundry["guardrailName"]), (account, "meternaut", "meternaut-agents"))
+        self.assertEqual((foundry["location"], foundry["owner"]), ("swedencentral", "owner@example.com"))
+
+    def test_the_names_differ_per_subscription_and_group_and_ignore_case(self):
+        base = ep.foundry_names(SETTINGS["ENV_SUBSCRIPTION_ID"], "rg-a")
+        self.assertNotEqual(base["foundry_account_name"], ep.foundry_names(SETTINGS["ENV_SUBSCRIPTION_ID"], "rg-b")["foundry_account_name"])
+        self.assertNotEqual(base["foundry_account_name"], ep.foundry_names("99999999-2222-3333-4444-555555555555", "rg-a")["foundry_account_name"])
+        self.assertEqual(base, ep.foundry_names(SETTINGS["ENV_SUBSCRIPTION_ID"].upper(), "RG-A"))
+
+    def test_the_names_of_the_file_are_the_defaults_of_the_template_and_the_endpoint_has_the_form_that_the_template_returns(self):
+        self.assertIn("param projectName string = 'meternaut'", self.FOUNDRY)
+        self.assertIn("param guardrailName string = 'meternaut-agents'", self.FOUNDRY)
+        self.assertIn("name: 'pe-${accountName}'", self.FOUNDRY)
+        self.assertIn("output projectEndpoint string = 'https://${account.name}.services.ai.azure.com/api/projects/${project.name}'", self.FOUNDRY)
+        outputs = self.files()[1]
+        self.assertTrue(outputs["foundry_project_endpoint"].startswith(f"https://{outputs['foundry_account_name']}.services.ai.azure.com/api/projects/"))
+        self.assertEqual(outputs["foundry_project_endpoint"].rsplit("/", 1)[1], outputs["foundry_project_name"])
+
+    def test_the_models_are_the_ones_of_models_json_and_of_the_model_side_and_nothing_else(self):
+        files, _ = self.files()
+        deployed = values(files["foundry.parameters.json"])["models"]
+        wanted = [{k: m[k] for k in ("name", "version", "sku", "capacity")} for m in json.loads(MODELS.read_text(encoding="utf-8"))]
+        self.assertEqual(deployed, wanted)
+        self.assertEqual(deployed, values(files["environment.parameters.json"])["models"])
+        for model in deployed:
+            self.assertEqual(set(model), {"name", "version", "sku", "capacity"}, "no retirement date reaches the template")
+
+    def test_the_cases_identity_reaches_the_file_and_without_it_a_placeholder_says_so_and_nothing_else_is_asked_of_it(self):
+        files, outputs = self.files(CASES_PRINCIPAL_ID=self.CASES_PRINCIPAL)
+        self.assertEqual(values(files["foundry.parameters.json"])["casesPrincipalId"], self.CASES_PRINCIPAL.lower())
+        self.assertEqual(outputs["cases_principal_known"], "true")
+        for empty in ("", "   "):
+            files, outputs = self.files(CASES_PRINCIPAL_ID=empty)
+            self.assertEqual(values(files["foundry.parameters.json"])["casesPrincipalId"], ep.PLACEHOLDER)
+            self.assertEqual(outputs["cases_principal_known"], "false", "the workflow refuses to deploy the Foundry resource then")
+        files, outputs = self.files()
+        self.assertEqual((values(files["foundry.parameters.json"])["casesPrincipalId"], outputs["cases_principal_known"]), (ep.PLACEHOLDER, "false"))
+        self.assertEqual(run({**SETTINGS, "GATEWAY_PRINCIPAL_ID": ""}, "--preview")[0], 0, "a preview needs no cases identity")
+
+    def test_a_cases_identity_that_is_not_an_object_id_is_refused_without_echoing_it(self):
+        for bad in ("me", "1234", "{" + self.CASES_PRINCIPAL + "}", self.CASES_PRINCIPAL + "0", "not-a-guid-but-with-secret"):
+            code, out, err, files = run({**SETTINGS, "CASES_PRINCIPAL_ID": bad})
+            self.assertEqual((code, out, files), (2, "", {}), bad)
+            self.assertIn("CASES_PRINCIPAL_ID", err)
+            self.assertNotIn("secret", err)
+
+    def test_the_cases_app_is_given_the_project_endpoint_only_when_the_workflow_found_the_project(self):
+        for given in ("", "false", " FALSE "):
+            code, out, err, files = self.cases_file(ENV_FOUNDRY_PROJECT_EXISTS=given)
+            self.assertEqual((code, err), (0, ""))
+            self.assertEqual(values(files["cases.parameters.json"])["foundryProjectEndpoint"], "", given)
+        self.assertEqual(values(self.cases_file()[3]["cases.parameters.json"])["foundryProjectEndpoint"], "", "nobody looked: the investigation stays off")
+        for given in ("true", " True "):
+            code, out, err, files = self.cases_file(ENV_FOUNDRY_PROJECT_EXISTS=given)
+            self.assertEqual((code, err), (0, ""))
+            lines = dict(line.split("=", 1) for line in out.splitlines())
+            self.assertEqual(values(files["cases.parameters.json"])["foundryProjectEndpoint"], lines["foundry_project_endpoint"], given)
+        for refused in ("yes", "1", "exists"):
+            code, out, err, files = self.cases_file(ENV_FOUNDRY_PROJECT_EXISTS=refused)
+            self.assertEqual((code, out, files), (2, "", {}), refused)
+            self.assertIn("ENV_FOUNDRY_PROJECT_EXISTS is true or false", err)
+
+    def test_the_cases_template_takes_the_endpoint_off_by_default_and_names_two_deployed_models_that_differ(self):
+        self.assertIn("param foundryProjectEndpoint string = ''", self.CASES)
+        models = dict(re.findall(r"^param (foundryModelInvestigator|foundryModelSkeptic) string = '([^']+)'$", self.CASES, re.M))
+        self.assertEqual(sorted(models), ["foundryModelInvestigator", "foundryModelSkeptic"])
+        self.assertNotEqual(models["foundryModelInvestigator"], models["foundryModelSkeptic"])
+        deployed = {m["name"] for m in json.loads(MODELS.read_text(encoding="utf-8"))}
+        self.assertTrue(set(models.values()) <= deployed, "the agents use deployments that the Foundry resource has")
+
+    def test_nothing_secret_is_in_the_file(self):
+        text = json.dumps(self.files(CASES_PRINCIPAL_ID=self.CASES_PRINCIPAL)[0]["foundry.parameters.json"]).lower()
+        for word in ("key", "secret", "password", "connectionstring", "token"):
+            self.assertNotIn(word, text, word)
 
 
 class CheckAgainst(unittest.TestCase):

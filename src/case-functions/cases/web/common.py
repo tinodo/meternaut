@@ -144,7 +144,7 @@ def case_rows(ctx: Ctx, cases: Iterable[CaseRecord]) -> list[list[object]]:
     for case in cases:
         rows.append([
             resource_cell(case.resource_name, case.resource_type, case.resource_group), detector_cell(case.detector), words.case_status(case.status),
-            case.recommendation.capitalize() if case.recommendation else "none", confidence(case.confidence), figure(case.saving_usd_month), ctx.when(case.updated_at),
+            words.recommendation_word(case.recommendation), confidence(case.confidence), figure(case.saving_usd_month), ctx.when(case.updated_at),
             fmt('<a href="{href}">Open<span class="visually-hidden"> the notebook for {name}</span></a>', href=ctx.url(f"/why/{link_part(case.case_id)}"),
                 name=case.resource_name),
         ])

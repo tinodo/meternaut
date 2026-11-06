@@ -10,7 +10,8 @@ address, name or mail address is in the repository:
     ENV_SUBSCRIPTION_ID, ENV_RESOURCE_GROUP, ENV_LOCATION, ENV_VNET_PREFIX, ENV_PE_SUBNET_PREFIX,
     ENV_DNS_SERVERS (comma separated), ENV_OWNER, ENV_BUDGET_AMOUNT, ENV_ALERT_EMAILS (comma separated),
     ENV_BUDGET_START, GATEWAY_RESOURCE_ID, GATEWAY_APPINSIGHTS_ID, GATEWAY_PRINCIPAL_ID, GATEWAY_CLIENT_ID,
-    RECORDING_DEPLOYER_ID, RECORDING_READER_IDS (comma separated, may be empty), RECORDING_FRAGMENTS (true or false)
+    RECORDING_DEPLOYER_ID, RECORDING_READER_IDS (comma separated, may be empty), RECORDING_FRAGMENTS (true or false),
+    CASES_PRINCIPAL_ID (may be empty), ENV_FOUNDRY_PROJECT_EXISTS (true or false)
 
 ENV_BUDGET_START is the first day of the month in which the budget was first made, which the workflow reads from the
 existing budget (a budget keeps its start date) or, for a new budget, takes from the current month.
@@ -25,14 +26,20 @@ RECORDING_DEPLOYER_ID is the object id of the identity that the workflow signs i
 token): it gets the right to send to the control hub of the usage recording, so that the check can start a copy job once.
 Nothing reads the usage store with it (the store has no public endpoint). RECORDING_READER_IDS are the object ids of the
 people who may read the usage store (a Cosmos DB data role; they also need a network path to its private endpoint).
+CASES_PRINCIPAL_ID is the object id of the cases app's user-assigned identity (id-meternaut-cases), which the workflow reads
+from Azure: the Foundry resource of the agents gives it the Foundry User role on its project. It does not exist before the
+action `cases` has run once; without it the Foundry file holds a placeholder, says cases_principal_known=false, and the
+workflow refuses to deploy the Foundry resource. ENV_FOUNDRY_PROJECT_EXISTS is true when the workflow found the Foundry
+project in Azure: only then does the cases file carry the project's endpoint (an empty endpoint switches the investigation off).
 
-It writes four ARM parameter files into --out-dir (six, with --contract: the contract's and the first cases'; seven when the gateway identity's client id is known):
+It writes five ARM parameter files into --out-dir (seven, with --contract: the contract's and the first cases'; eight when the gateway identity's client id is known):
 
     environment.parameters.json       for environment/main.bicep (the model side)
     logger.parameters.json            for environment/gateway/logger.bicep
     eventhub-loggers.parameters.json  for environment/gateway/eventhub-loggers.bicep (written when GATEWAY_CLIENT_ID is set, or with --preview)
     kit.parameters.json               for the Citadel gateway-upgrade module (the kit's bicep/infra/apim-gateway-upgrade/main.bicep)
     recording.parameters.json         for environment/recording/main.bicep (the usage recording: Event Hubs, function app, Cosmos DB)
+    foundry.parameters.json           for environment/foundry/main.bicep (the Foundry resource of the agents: project, models, guardrail, private endpoint)
     contract.parameters.json          for environment/gateway/contract.bicep, from --contract (environment/contract.json) and
                                       --contract-policy (environment/gateway/contract-policy.xml)
     cases.parameters.json             for environment/cases/main.bicep (the first cases: the function app that finds leads and writes the
@@ -42,7 +49,8 @@ It writes four ARM parameter files into --out-dir (six, with --contract: the con
 Every value is checked before anything is deployed. The name of the model account is worked out here, from the
 subscription and the resource group, so it is the same on every run (a run after a removal finds, and the workflow
 restores, the soft-deleted account of that name instead of leaving a second one behind); so are the names of the usage
-recording's storage account, Event Hubs namespace, Cosmos DB account and function app, which are host names too. The
+recording's storage account, Event Hubs namespace, Cosmos DB account and function app, which are host names too, and the name of the
+Foundry resource of the agents (aif-meternaut-agents-<digest>, also a host name, which is not the model account's). The
 function app's subnet is the first /27 of the virtual network that does not overlap the private endpoint subnet, and the
 subnet of the first cases' Basic plan is the first /27 that overlaps neither of those two. It prints
 key=value lines for GitHub to read as step outputs.
@@ -103,6 +111,8 @@ PRIVATE_SPACE = ipaddress.ip_network("10.0.0.0/8")
 SKUS = ("DataZoneStandard", "GlobalStandard")
 PLACEHOLDER = "00000000-0000-0000-0000-000000000000"
 IDENTITY_NAME = "id-meternaut-gateway"
+FOUNDRY_PROJECT_NAME = "meternaut"
+FOUNDRY_GUARDRAIL_NAME = "meternaut-agents"
 CONTRACT_NAME = re.compile(r"^[a-z][a-z0-9-]{1,58}[a-z0-9]$")
 CONTRACT_KEYS = {"name", "description", "apis", "allowedModels", "tokensPerMinute", "tokenQuotaPerMonth"}
 CONTRACT_APIS = ("universal-llm-api", "azure-openai-api")
@@ -189,6 +199,22 @@ def legacy_names(subscription: str, group: str) -> dict[str, str]:
 def cases_names(subscription: str, group: str) -> dict[str, str]:
     """The name of the cases app, a host name too. Everything else of the cases app has a fixed name inside the project's group."""
     return {"cases_function_app_name": f"func-meternaut-cases-{digest(subscription, group)}"}
+
+
+def foundry_names(subscription: str, group: str) -> dict[str, str]:
+    """The names of the Foundry resource of the agents (environment/foundry/main.bicep).
+
+    The resource's name is a host name too, so it carries the digest, and it is not the model account's (aif-meternaut-<digest>): that account can never hold a
+    project. The project's name is part of the project endpoint, which is built here from the two names, so that the workflow, the template and the cases app
+    cannot disagree about it."""
+    account = f"aif-meternaut-agents-{digest(subscription, group)}"
+    return {
+        "foundry_account_name": account,
+        "foundry_project_name": FOUNDRY_PROJECT_NAME,
+        "foundry_guardrail_name": FOUNDRY_GUARDRAIL_NAME,
+        "foundry_private_endpoint": f"pe-{account}",
+        "foundry_project_endpoint": f"https://{account}.services.ai.azure.com/api/projects/{FOUNDRY_PROJECT_NAME}",
+    }
 
 
 def planted_parameters(env, location: str, owner: str) -> dict:
@@ -461,6 +487,10 @@ def build(env, models: list[dict], preview: bool = False, contract: dict | None 
     fragments = (env.get("RECORDING_FRAGMENTS") or "false").strip().lower()
     if fragments not in ("true", "false"):
         raise Problem("RECORDING_FRAGMENTS is true or false")
+    cases_principal = (env.get("CASES_PRINCIPAL_ID") or "").strip()
+    if cases_principal and not GUID.match(cases_principal):
+        raise Problem("CASES_PRINCIPAL_ID is the object id of the cases app's user-assigned identity")
+    foundry_exists = exists_flag(env, "ENV_FOUNDRY_PROJECT_EXISTS")
     raw_readers = (env.get("RECORDING_READER_IDS") or "").strip()
     readers = [r.strip() for r in raw_readers.split(",")] if raw_readers else []
     if len(readers) > 5 or len(set(r.lower() for r in readers)) != len(readers) or not all(GUID.match(r) for r in readers):
@@ -497,6 +527,7 @@ def build(env, models: list[dict], preview: bool = False, contract: dict | None 
 
     name = account_name(subscription, group)
     names = recording_names(subscription, group)
+    foundry = foundry_names(subscription, group)
     func_subnet = function_subnet(vnet, subnet)
     web = web_subnet(vnet, subnet, func_subnet)
     endpoint = f"https://{name}.cognitiveservices.azure.com"
@@ -598,6 +629,7 @@ def build(env, models: list[dict], preview: bool = False, contract: dict | None 
         "gateway_name": gateway.group(3),
         "identity_name": IDENTITY_NAME,
         "principal_known": "true" if principal_known else "false",
+        "cases_principal_known": "true" if cases_principal else "false",
         "function_subnet_prefix": str(func_subnet),
         "web_subnet_prefix": str(web),
         "recording_endpoints": ",".join(f"{endpoint_name}:{zone}" for endpoint_name, zone in recording_endpoints(names)),
@@ -608,6 +640,7 @@ def build(env, models: list[dict], preview: bool = False, contract: dict | None 
         "gateway_url": f"https://{gateway.group(3).lower()}.azure-api.net",
         **names,
         **cases_names(subscription, group),
+        **foundry,
         **legacy_names(subscription, group),
     }
     files = {
@@ -615,6 +648,15 @@ def build(env, models: list[dict], preview: bool = False, contract: dict | None 
         "logger.parameters.json": parameters(logger),
         "kit.parameters.json": parameters(kit),
         "recording.parameters.json": parameters(recording),
+        "foundry.parameters.json": parameters({
+            "location": location,
+            "accountName": foundry["foundry_account_name"],
+            "projectName": foundry["foundry_project_name"],
+            "guardrailName": foundry["foundry_guardrail_name"],
+            "models": deployed,
+            "casesPrincipalId": (cases_principal or PLACEHOLDER).lower(),
+            "owner": owner,
+        }),
         "planted.parameters.json": parameters(planted_parameters(env, location, owner)),
     }
     if client or preview:
@@ -646,6 +688,7 @@ def build(env, models: list[dict], preview: bool = False, contract: dict | None 
             "gatewayProductSubscriptionId": f"{need(env, 'GATEWAY_RESOURCE_ID')}/subscriptions/{contract_outputs['contract_subscription']}",
             "modelDetective": contract["allowedModels"][0],
             "modelSkeptic": contract["allowedModels"][1],
+            "foundryProjectEndpoint": foundry["foundry_project_endpoint"] if foundry_exists else "",
             **console_parameters(env),
         })
     return files, outputs

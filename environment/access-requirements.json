@@ -51,8 +51,8 @@
       "identity": "cases",
       "role": "Reader",
       "place": "estate",
-      "why": "Reads the resources, their tags and management locks, and Azure Advisor's cost recommendations: the detectors and the guards of the Watch. It also reads a managed disk or a public IP address of the project's own resource group when the timer checks that a deleted resource is gone. The role reads and changes nothing",
-      "calls": ["resource-graph-query", "advisor-read", "locks-read", "disk-read", "public-ip-read"]
+      "why": "Reads the resources, their tags and management locks, Azure Advisor's cost recommendations, the platform metrics that Azure Monitor keeps for a resource and the pricing settings of the Microsoft Defender for Cloud plans: the detectors, the guards and the read-only tools of the investigator. It also reads a managed disk or a public IP address of the project's own resource group when the timer checks that a deleted resource is gone. The role reads and changes nothing",
+      "calls": ["resource-graph-query", "advisor-read", "locks-read", "metric-definitions-read", "metrics-read", "security-pricings-read", "disk-read", "public-ip-read"]
     },
     {
       "id": "R2",

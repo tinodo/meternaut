@@ -61,6 +61,10 @@ class Detective(unittest.TestCase):
             with self.assertRaises(RoleError, msg=value):
                 roles.parse_detective('{"recommendation":%s,"confidence":0.5,"summary":"x"}' % value)
 
+    def test_a_change_is_one_of_the_recommendations_next_to_delete_keep_and_investigate(self):
+        self.assertEqual(roles.RECOMMENDATIONS, ("delete", "change", "keep", "investigate"))
+        self.assertEqual(roles.parse_detective('{"recommendation":"Change","confidence":0.8,"summary":"A smaller size would do."}').recommendation, "change")
+
     def test_what_is_not_json_is_refused(self):
         for text in ("", "   ", None, 5, "no json here", "{broken", "[1, 2]", "{}", '{"recommendation":"delete"}'):
             with self.assertRaises(RoleError, msg=str(text)):

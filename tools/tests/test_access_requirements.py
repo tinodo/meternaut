@@ -345,6 +345,9 @@ class TheCallsOfTheApp(unittest.TestCase):
         "cost-management-query": lambda m, p: m == "POST" and "CostManagement" in p,
         "advisor-read": lambda m, p: m == "GET" and "Advisor" in p,
         "locks-read": lambda m, p: m == "GET" and "Authorization" in p and "locks" in p,
+        "metric-definitions-read": lambda m, p: m == "GET" and "Microsoft.Insights/metricDefinitions" in p,
+        "metrics-read": lambda m, p: m == "GET" and "Microsoft.Insights/metrics" in p,
+        "security-pricings-read": lambda m, p: m == "GET" and "Microsoft.Security/pricings" in p,
         "gateway-key-read": lambda m, p: m == "POST" and "listSecrets" in p,
         "gateway-chat": lambda m, p: m == "POST" and "chat/completions" in p,
         "disk-read": lambda m, p: m == "GET" and "Microsoft.Compute/disks" in p,
@@ -406,9 +409,55 @@ class TheCallsOfTheApp(unittest.TestCase):
             if method == "POST":
                 self.assertTrue(any(word in pattern.pattern for word in ("ResourceGraph", "CostManagement", "listSecrets", "chat/completions")), pattern.pattern)
 
+    def test_the_calls_to_the_foundry_project_need_no_line_of_this_file_and_hold_the_only_writes_of_the_list(self):
+        # The agents and the conversations are written with the identity's Foundry User role on the project, which the Foundry template assigns inside the project's own group.
+        endpoint = "https://example.services.ai.azure.com/api/projects/meternaut"
+        base = self.watch_calls()
+        calls = cases_http.allowed_calls("example-apim.azure-api.net", f"{PRODUCT}/listSecrets", endpoint)
+        self.assertEqual(calls[:len(base)], base)
+        extra = calls[len(base):]
+        self.assertTrue(extra)
+        for method, pattern in extra:
+            self.assertTrue(pattern.pattern.startswith(re.escape(endpoint)), pattern.pattern)
+            self.assertEqual([n for n, test in self.NAMES.items() if test(method, pattern.pattern.replace("\\", ""))], [], pattern.pattern)
+        self.assertEqual({method for method, _ in extra}, {"GET", "POST", "DELETE"})
+        self.assertEqual([(m, p.pattern) for m, p in calls if m == "DELETE"],
+                         [("DELETE", re.escape(endpoint) + r"/openai/v1/conversations/conv_[A-Za-z0-9_-]{1,100}")], "the one delete is the app's own conversation")
+
     def test_only_the_cases_identity_has_calls_listed(self):
         for grant in MANIFEST["grants"]:
             self.assertEqual(bool(grant.get("calls")), grant["identity"] == "cases", grant["id"])
+
+    def test_the_reads_of_the_investigators_tools_are_gets_and_belong_to_the_reader(self):
+        # Azure Monitor metrics, their definitions and the pricing settings of Microsoft Defender for Cloud are read with Reader (*/read), not with a role of their own.
+        new = {"metric-definitions-read", "metrics-read", "security-pricings-read"}
+        methods = {}
+        for method, pattern in self.watch_calls():
+            text = pattern.pattern.replace("\\", "")
+            for name in new:
+                if self.NAMES[name](method, text):
+                    methods[name] = method
+        self.assertEqual(methods, {name: "GET" for name in new})
+        r1 = next(g for g in MANIFEST["grants"] if g["id"] == "R1")
+        self.assertEqual((r1["role"], new <= set(r1["calls"])), ("Reader", True))
+        for grant in MANIFEST["grants"]:
+            if grant["id"] != "R1":
+                self.assertFalse(new & set(grant.get("calls", [])), grant["id"])
+
+    def test_the_metric_reads_may_name_any_resource_of_the_estate_and_the_pricing_read_only_a_subscription(self):
+        by_name = {}
+        for method, pattern in self.watch_calls():
+            text = pattern.pattern.replace("\\", "")
+            for name in ("metric-definitions-read", "metrics-read", "security-pricings-read"):
+                if self.NAMES[name](method, text):
+                    by_name[name] = pattern
+        resource = f"https://management.azure.com/subscriptions/{PROJECT}/resourceGroups/rg-app/providers/Microsoft.Storage/storageAccounts/acct/blobServices/default"
+        self.assertTrue(by_name["metrics-read"].fullmatch(f"{resource}/providers/Microsoft.Insights/metrics"))
+        self.assertTrue(by_name["metric-definitions-read"].fullmatch(f"{resource}/providers/microsoft.insights/metricdefinitions"))
+        pricings = f"https://management.azure.com/subscriptions/{PROJECT}/providers/Microsoft.Security/pricings"
+        self.assertTrue(by_name["security-pricings-read"].fullmatch(pricings))
+        self.assertFalse(by_name["security-pricings-read"].fullmatch(f"https://management.azure.com/subscriptions/{PROJECT}/resourceGroups/rg/providers/Microsoft.Security/pricings"))
+        self.assertFalse(by_name["metrics-read"].fullmatch(f"https://management.azure.com.evil.example/subscriptions/{PROJECT}/providers/Microsoft.Insights/metrics"))
 
 
 class Check(unittest.TestCase):

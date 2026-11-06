@@ -9,6 +9,8 @@ from .roles import DetectiveAnswer, SkepticAnswer
 
 PROPOSE_CONFIDENCE = 0.7
 STATUSES = ("proposed", "needs_human", "dropped", "error")
+# A case is proposed under the same conditions for a recommendation to delete the resource and for one to change it (a smaller size, another tier).
+PROPOSALS = ("delete", "change")
 
 
 @dataclass(frozen=True)
@@ -36,11 +38,16 @@ def decide(lead: Lead, guards: Guards, detective: DetectiveAnswer, skeptic: Skep
         status = "needs_human"
     elif skeptic is None or skeptic.verdict != "agree":
         status = "needs_human"
-    elif detective.recommendation == "delete" and detective.confidence >= PROPOSE_CONFIDENCE:
+    elif detective.recommendation in PROPOSALS and detective.confidence >= PROPOSE_CONFIDENCE:
         status = "proposed"
     else:
         status = "needs_human"
-    saving = saving_of(lead) if detective.recommendation == "delete" and status != "dropped" else None
+    saving = None
+    if status != "dropped":
+        if detective.recommendation == "delete":
+            saving = saving_of(lead)
+        elif detective.recommendation == "change":
+            saving = lead.advisor_saving_usd  # a change has no figure of its own: only Advisor's, when a finding cites one
     objections = skeptic.objections if skeptic else ()
     if skeptic and not objections and skeptic.verdict != "agree" and skeptic.summary:
         objections = (skeptic.summary,)

@@ -12,8 +12,9 @@ functions  Read only. Waits until the cases app lists its two functions (the app
 run        Sends one event to the control hub of the cases (cases-control) with the identity of the workflow. The app runs one Watch now,
            through the same code as its daily timer, and writes the History of that run to its telemetry, one line per step (docs/proposals/02-first-cases.md
            has the lines). This waits for the end of the run and for the lines that the end counts, prints what the run found and what each
-           case came to, and fails when the run failed, when a case ended in an error, or when no end arrived. Only a GitHub Actions run
-           may send the event (AGENTS.md rule 18). Nothing in Azure is changed by the run: it only reads.
+           case came to, and fails when the run failed, when a case ended in an error, when the investigation was meant to run and did not, or when no end arrived. Only a GitHub Actions run
+           may send the event (AGENTS.md rule 18). Nothing in the estate is changed by the run: it only reads. (The investigation makes its own agents and
+           conversations in its own Foundry project: docs/proposals/06-foundry-agents.md.)
 """
 from __future__ import annotations
 
@@ -123,6 +124,58 @@ def money(value) -> str:
     return f"{value:.2f} USD" if isinstance(value, (int, float)) and not isinstance(value, bool) else "unknown"
 
 
+# What the app says when the investigation did not run for a reason that is no failure: it is switched off, or the app has no Foundry project to ask.
+BENIGN_NOT_RUN = ("it is switched off", "no Foundry endpoint is set")
+NOT_RUN = "the investigation did not run: "
+
+
+def investigation_failed(events: list[dict]) -> bool:
+    """The investigation was meant to run and did not: it ended badly, or the app says that it did not run for a reason other than being off."""
+    if any(e["type"] == "investigation.finished" and e.get("ok") is not True for e in events):
+        return True
+    for e in events:
+        note = e.get("note")
+        if e["type"] == "run.note" and isinstance(note, str) and note.startswith(NOT_RUN) and note[len(NOT_RUN):].strip() not in BENIGN_NOT_RUN:
+            return True
+    return False
+
+
+def investigation_lines(events: list[dict]) -> list[str]:
+    """What the investigation did, in plain words: its budget, how it ended, what it says it examined, and each finding with what the checks of code made of it."""
+    started = next((e for e in events if e["type"] == "investigation.started"), None)
+    finished = next((e for e in events if e["type"] == "investigation.finished"), None)
+    if not started and not finished:
+        return []
+    lines = ["Investigation (two agents in Foundry, with read-only tools):"]
+    if started:
+        lines.append(f"  The Investigator ran on {clean(started.get('modelInvestigator'), 40)} and the Skeptic on {clean(started.get('modelSkeptic'), 40)}; "
+                     f"the budget was {clean(started.get('maxCalls'), 6)} tool calls and {clean(started.get('maxSeconds'), 6)} seconds.")
+    if finished:
+        lines.append(f"  It ended {'well' if finished.get('ok') is True else 'badly'} after {clean(finished.get('seconds'), 12)} seconds: "
+                     f"{clean(finished.get('toolCalls'), 12)} tool calls and {clean(finished.get('tokens'), 12)} tokens through Foundry; findings kept "
+                     f"{clean(finished.get('findingsKept'), 12)}, dropped {clean(finished.get('findingsDropped'), 12)}; cases opened {clean(finished.get('cases'), 12)}, "
+                     f"resources held back by a guard {clean(finished.get('guarded'), 12)}.")
+        if finished.get("note"):
+            lines.append(f"  Why: {clean(finished.get('note'), 300)}")
+        examined = finished.get("examined")
+        if isinstance(examined, list) and examined:
+            lines.append("  What it says it examined: " + "; ".join(clean(x, 160) for x in examined[:10]))
+    else:
+        lines.append("  The end of the investigation did not arrive.")
+    findings = sorted((e for e in events if e["type"] == "investigation.finding"), key=lambda e: e["finding"] if isinstance(e.get("finding"), int) else 0)
+    for e in findings:
+        outcome = "kept" if e.get("kept") is True else f"dropped: {clean(e.get('reason'), 200) or 'no reason given'}"
+        lines.append(f"  Finding {clean(e.get('finding'), 6)}: {clean(e.get('basis'), 60) or 'no basis'}, proposal {clean(e.get('proposal'), 30) or 'none'}, "
+                     f"confidence {clean(e.get('confidence'), 10)}; {clean(e.get('claimed'), 6)} resources claimed, {clean(e.get('handles'), 6)} left after the checks of code "
+                     f"(unknown handles {clean(e.get('unknown'), 6)}, not proven by a measurement {clean(e.get('unproven'), 6)}, repeated {clean(e.get('repeated'), 6)}, "
+                     f"judged lately {clean(e.get('judgedLately'), 6)}, held back by a guard {clean(e.get('guarded'), 6)}, beyond the cap {clean(e.get('capped'), 6)}); "
+                     f"their cost of the last 30 days {money(e.get('coveredCostUsd30d'))} (Cost Management cost lines, not an invoice); "
+                     f"the Skeptic: {clean(e.get('verdict'), 30) or 'no verdict'}; {outcome}")
+        if e.get("summary"):
+            lines.append(f"     {clean(e.get('summary'), 600)}")
+    return lines
+
+
 def case_lines(number: int, result: dict, steps: list[dict]) -> list[str]:
     where = ", ".join(x for x in (clean(result.get("resourceType"), 80), clean(result.get("resourceGroup"), 80)) if x)
     lines = [f"  {number}. {clean(result.get('detector'), 60)}: {clean(result.get('resourceName'), 120)} ({where})",
@@ -148,7 +201,7 @@ def failed(events: list[dict]) -> bool:
     finished = next((e for e in events if e["type"] == "run.finished"), None)
     if count(events, "run.failed") or not finished or finished.get("ok") is not True:
         return True
-    return bool(finished.get("errors")) or any(e.get("status") == "error" for e in events if e["type"] == "case.result")
+    return bool(finished.get("errors")) or any(e.get("status") == "error" for e in events if e["type"] == "case.result") or investigation_failed(events)
 
 
 def summary_lines(request_id: str, events: list[dict]) -> list[str]:
@@ -177,6 +230,7 @@ def summary_lines(request_id: str, events: list[dict]) -> list[str]:
         for e in leads:
             by_detector[clean(e.get("detector"), 60)] = by_detector.get(clean(e.get("detector"), 60), 0) + 1
         lines.append("  Leads by detector: " + ", ".join(f"{name} {n}" for name, n in sorted(by_detector.items())))
+    lines.extend(investigation_lines(events))
     results = [e for e in events if e["type"] == "case.result"]
     if results:
         lines.append("Cases:")

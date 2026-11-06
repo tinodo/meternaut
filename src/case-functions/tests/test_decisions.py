@@ -243,5 +243,45 @@ class Decisions(unittest.TestCase):
         self.assertEqual(decide.decide(lead(), SAFE_GUARDS, detective(), skeptic("agree", [], "Fine.")).objections, ())
 
 
+class AChangeIsDecidedLikeADelete(unittest.TestCase):
+    """The recommendation `change` keeps the resource and alters it (a smaller size, another tier). It is proposed under the same conditions as a delete."""
+
+    def test_both_agree_without_a_guard_and_a_confidence_of_seven_tenths_propose_it(self):
+        outcome = decide.decide(lead(), SAFE_GUARDS, detective("change", 0.7), skeptic())
+        self.assertEqual((outcome.status, outcome.recommendation, outcome.guards), ("proposed", "change", []))
+        self.assertEqual(decide.PROPOSALS, ("delete", "change"))
+
+    def test_the_same_conditions_stop_it(self):
+        self.assertEqual(decide.decide(lead(), SAFE_GUARDS, detective("change", 0.69), skeptic()).status, "needs_human")
+        for verdict in ("disagree", "unsure"):
+            self.assertEqual(decide.decide(lead(), SAFE_GUARDS, detective("change"), skeptic(verdict)).status, "needs_human", verdict)
+        self.assertEqual(decide.decide(lead(), SAFE_GUARDS, detective("change"), None).status, "needs_human")
+        for flag in ("locked", "keepTag", "tooNew", "managedGroup", "unverified"):
+            flags = {"locked": False, "keepTag": False, "tooNew": False, "managedGroup": False, "unverified": False, flag: True}
+            self.assertEqual(decide.decide(lead(), Guards(flags), detective("change", 1.0), skeptic()).status, "needs_human", flag)
+
+    def test_a_change_has_no_figure_of_its_own_even_when_the_resource_has_a_cost(self):
+        outcome = decide.decide(lead(cost_usd_30d=50.0), SAFE_GUARDS, detective("change"), skeptic())
+        self.assertEqual((outcome.status, outcome.monthly_saving_usd), ("proposed", None))
+        self.assertEqual(decide.decide(lead(cost_usd_30d=50.0), SAFE_GUARDS, detective("delete"), skeptic()).monthly_saving_usd, 50.0)
+
+    def test_a_change_that_advisor_has_a_figure_for_saves_advisors_own_figure(self):
+        for detector in (ADVISOR, "investigation"):
+            with self.subTest(detector=detector):
+                outcome = decide.decide(lead(detector=detector, advisor_saving_usd=12.5, cost_usd_30d=50.0), SAFE_GUARDS, detective("change"), skeptic())
+                self.assertEqual(outcome.monthly_saving_usd, 12.5)
+                held = decide.decide(lead(detector=detector, advisor_saving_usd=12.5), GUARDED, detective("change"), skeptic())
+                self.assertEqual((held.status, held.monthly_saving_usd), ("needs_human", 12.5))
+
+    def test_a_delete_of_a_lead_of_the_investigation_saves_the_cost_lines_and_not_advisors_figure(self):
+        outcome = decide.decide(lead(detector="investigation", advisor_saving_usd=12.5, cost_usd_30d=50.0), SAFE_GUARDS, detective("delete"), skeptic())
+        self.assertEqual(outcome.monthly_saving_usd, 50.0)
+
+    def test_keep_and_investigate_have_no_figure_whatever_the_lead_says(self):
+        for recommendation in ("keep", "investigate"):
+            outcome = decide.decide(lead(advisor_saving_usd=12.5, cost_usd_30d=50.0), SAFE_GUARDS, detective(recommendation), skeptic())
+            self.assertIsNone(outcome.monthly_saving_usd, recommendation)
+
+
 if __name__ == "__main__":
     unittest.main()
