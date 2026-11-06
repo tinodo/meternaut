@@ -64,7 +64,7 @@ Both approvers are asked at once, see the same plan and evidence, and answer on 
 - **Decline** takes one tap and closes the request; an optional reason follows.
 - **Ask or suggest** takes a question or another way to do it. It is length-capped and screened, reaches the system as an excerpt (quoted data) and never as an instruction, and approves nothing. The other approver's page never shows it.
 - **Not mine** says the resource is not the person's. Nothing is approved; the request goes back to finding the right owner.
-- **After the OK** the page sends the approver to sign in to Azure. The change runs right after the last approver's sign-in, as that person (for two approvers, not designed yet), and cannot be cancelled. The first of two approvers reads "Recorded. Nothing has changed yet."; the second reads "Submitted. A purchase cannot be cancelled."
+- **After the OK** the page sends the approver to sign in to Azure. The change runs right after the last approver's sign-in, as that person (for two approvers, not designed yet), and cannot be cancelled. The first of two approvers reads "Recorded. Nothing has changed yet."; the second reads "Submitted. A purchase cannot be cancelled." If Azure asks for an extra sign-in check before it makes the change, nothing has changed yet: the page sends the approver to Microsoft Entra once more, and the change is made after that second check, once. A check that is cancelled, refused or not completed closes the request, and the page says "The extra sign-in check was not completed. Nothing was changed. The request is closed."
 
 ### When something goes wrong
 

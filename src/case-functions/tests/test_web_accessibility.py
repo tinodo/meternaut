@@ -8,8 +8,8 @@ from cases.models import Begun, DecideResult, NoteRecord, SwitchRecord
 from cases.web import approval, layout
 
 APPROVE = "Approve and sign in to Azure"
-KINDS = ("declined", "asked", "not_mine", "ran", "ran_unconfirmed", "stopped", "azure_refused", "failed", "signin_failed", "refused_code", "refused_state", "refused_role",
-         "refused_paused", "expired", "duplicate", "error")
+KINDS = ("declined", "asked", "not_mine", "ran", "ran_unconfirmed", "stopped", "azure_refused", "failed", "signin_failed", "step_up_failed", "refused_code", "refused_state",
+         "refused_role", "refused_paused", "expired", "duplicate", "error")
 SUCCESSES = ("declined", "asked", "not_mine", "ran", "ran_unconfirmed")
 # What each step says in practice, for the kinds whose page shows the message of the result.
 MESSAGES = {
@@ -19,6 +19,7 @@ MESSAGES = {
     "azure_refused": "Azure refused to delete the resource (403, AuthorizationFailed): your account has no right to do this here. Nothing was changed.",
     "failed": "The delete was refused or failed (500 InternalError). Check the resource before anything is tried again.",
     "signin_failed": "The sign-in to Azure was cancelled or refused. Nothing is approved.",
+    "step_up_failed": "The extra sign-in check that Azure asked for was not completed. It was cancelled or refused. The change was not made. Nothing was changed. The request is closed.",
     "refused_state": "This sign-in is not valid any more: it was used already, it ran out of time, or somebody else started it. Nothing was changed.",
     "error": "This form is no longer valid. Open the link in the message again. Nothing is approved.",
 }
@@ -370,7 +371,7 @@ class TheWords(unittest.TestCase):
                     self.assertIn(last, (line, "A person approves every change."))
 
     def test_a_page_that_refuses_says_that_nothing_changed(self):
-        refusing = ("refused_code", "refused_state", "refused_paused", "expired", "duplicate", "stopped", "azure_refused", "signin_failed")
+        refusing = ("refused_code", "refused_state", "refused_paused", "expired", "duplicate", "stopped", "azure_refused", "signin_failed", "step_up_failed")
         names = [f"{step} {kind}" for step in ("answer", "begin", "return") for kind in refusing]
         for name in names + ["no token", "413", "415", "405", "GET /nothing", "GET /why/nothing"]:
             with self.subTest(page=name):

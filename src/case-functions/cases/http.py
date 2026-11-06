@@ -23,6 +23,7 @@ GUID = r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]
 # A subscription, a resource group of it, or one resource of it (a child resource has more name segments).
 SCOPE = rf"/subscriptions/{GUID}(?:/resourceGroups/[A-Za-z0-9._()-]{{1,90}}(?:/providers/[A-Za-z0-9.]{{1,80}}(?:/[A-Za-z0-9._()~-]{{1,100}}){{2,16}})?)?"
 RETRY_STATUSES = frozenset({429, 500, 502, 503, 504})
+MAX_CHALLENGE = 1500
 # The endpoint of one Microsoft Foundry project (the default project is called _project), the name of an agent in it and the id of a conversation of it.
 FOUNDRY_ENDPOINT = re.compile(r"https://[a-z0-9][a-z0-9-]{0,62}[a-z0-9]\.services\.ai\.azure\.com/api/projects/[A-Za-z0-9_][A-Za-z0-9_.-]{0,63}")
 FOUNDRY_AGENT_NAME = r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
@@ -32,12 +33,16 @@ Transport = Callable[[str, str, Mapping[str, str], "bytes | None", float], "tupl
 
 
 class HttpError(Exception):
-    """A call that failed. `status` is 0 when no answer arrived. The text never holds a header or a secret."""
+    """A call that failed. `status` is 0 when no answer arrived. The text never holds a header or a secret.
 
-    def __init__(self, status: int, message: str, retry_after: float | None = None) -> None:
+    `challenge` is the `www-authenticate` header of a 401 or a 403, as it came and cut at MAX_CHALLENGE characters, for the one reader that may use it (the claims
+    challenge of the runner). It is never part of the text of the error, so it reaches no log, no History line and no page."""
+
+    def __init__(self, status: int, message: str, retry_after: float | None = None, challenge: str = "") -> None:
         super().__init__(message)
         self.status = status
         self.retry_after = retry_after
+        self.challenge = challenge
 
 
 class Refused(Exception):
@@ -124,6 +129,15 @@ def retry_after(headers: Mapping[str, str]) -> float | None:
     return None
 
 
+def challenge_of(status: int, headers: Mapping[str, str]) -> str:
+    """The `www-authenticate` header of a 401 or a 403 (the name is compared in lower case), cut at MAX_CHALLENGE characters. Empty for any other answer."""
+    if status in (401, 403):
+        for name, value in headers.items():
+            if str(name).lower() == "www-authenticate":
+                return str(value)[:MAX_CHALLENGE]
+    return ""
+
+
 def error_text(status: int, body: bytes, redact: Callable[[str], str]) -> str:
     """The code and the first words of the message of an error body; nothing else of the answer. A body that is not JSON gives its first 120 characters, and a JSON
     body that is nested too deeply to be parsed gives a fixed text."""
@@ -207,4 +221,4 @@ class Client:
                     attempt += 1
                     continue
             message = answer.decode("utf-8", "replace") if status == 0 else error_text(status, answer, self.redact)
-            raise HttpError(status, f"{method} {urlsplit(url).netloc}: {message}", wait)
+            raise HttpError(status, f"{method} {urlsplit(url).netloc}: {message}", wait, challenge_of(status, answer_headers))

@@ -1,3 +1,4 @@
+import base64
 import datetime as dt
 import json
 import unittest
@@ -10,7 +11,7 @@ from cases.detectors import Lead
 from cases.http import Client, HttpError, Refused
 from cases.memory_store import MemoryStore, stamp
 from cases.models import ActionRecord, CaseRecord, NoteRecord, Principal, SwitchRecord
-from cases.runner import Executed, RunnerServices, change_calls, execute, read_calls, tick
+from cases.runner import ASKED_AGAIN, STEP_UP_ABANDONED, STEP_UP_WAIT, Executed, RunnerServices, change_calls, execute, read_calls, tick
 
 OID = "aaaaaaaa-1111-4222-8333-444444444444"
 SUB = "bbbbbbbb-2222-4333-9444-555555555555"
@@ -20,6 +21,15 @@ SETTINGS = ApprovalSettings(change_group=GROUP)
 APPROVER = Principal(OID, "Tino", ("owner", "approver", "ops"))
 DISK = f"/subscriptions/{SUB}/resourceGroups/{GROUP}/providers/Microsoft.Compute/disks/planted-disk-1"
 IP = f"/subscriptions/{SUB}/resourceGroups/{GROUP}/providers/Microsoft.Network/publicIPAddresses/planted-ip-1"
+SCHEME = "Bearer"
+# A claims request with a value that no page, record, line or log has any reason to hold.
+CLAIMS = '{"access_token":{"acrs":{"essential":true,"value":"c-unique-4711"}}}'
+
+
+def challenge(claims: str = CLAIMS, directive: str | None = None) -> dict:
+    """The headers of an answer that holds a claims challenge, as Azure sends it (the transport gives the names in lower case)."""
+    text = directive if directive is not None else f'claims="{base64.b64encode(claims.encode()).decode()}"'
+    return {"www-authenticate": f'{SCHEME} realm="", authorization_uri="https://login.example.test/common/oauth2/authorize", error="insufficient_claims", {text}'}
 
 
 class Clock:
@@ -47,11 +57,15 @@ class FakeAzure:
         self.calls: list[tuple[str, str]] = []
         self.headers: list[dict] = []
         self.delete_status = 200
+        self.delete_headers: dict = {}  # the headers of a refused delete (a claims challenge is one of them)
+        self.delete_answers: list[tuple[int, dict]] = []  # the answers of the next deletes, (status, headers), one each, before `delete_status` applies
         self.reads_before_gone = 1
         self.pending: dict[str, int] = {}
         self.fail_reads = False
         self.read_status = 200
+        self.read_headers: dict = {}
         self.locks_status = 200
+        self.locks_headers: dict = {}
 
     def transport(self, method, url, headers, data, timeout):
         self.calls.append((method, url))
@@ -60,14 +74,14 @@ class FakeAzure:
         key = path.lower()
         if "/providers/microsoft.authorization/locks" in key:
             if self.locks_status >= 300:
-                return self.locks_status, {}, b'{"error":{"code":"AuthorizationFailed","message":"no right to read the locks"}}'
+                return self.locks_status, dict(self.locks_headers), b'{"error":{"code":"AuthorizationFailed","message":"no right to read the locks"}}'
             scope = key.split("/providers/microsoft.authorization/locks")[0]
             return 200, {}, json.dumps({"value": self.locks.get(scope, [])}).encode()
         if self.fail_reads and method == "GET":
             return 500, {}, b"{}"
         if method == "GET":
             if self.read_status >= 300:
-                return self.read_status, {}, b'{"error":{"code":"AuthorizationFailed","message":"no right to read"}}'
+                return self.read_status, dict(self.read_headers), b'{"error":{"code":"AuthorizationFailed","message":"no right to read"}}'
             if key in self.pending:
                 self.pending[key] -= 1
                 if self.pending[key] < 0:
@@ -77,12 +91,13 @@ class FakeAzure:
                 return 404, {}, b'{"error":{"code":"ResourceNotFound","message":"gone"}}'
             return 200, {}, json.dumps(self.resources[key]).encode()
         if method == "DELETE":
-            if self.delete_status >= 300:
-                return self.delete_status, {}, b'{"error":{"code":"AuthorizationFailed","message":"no right to delete"}}'
+            status, answer_headers = self.delete_answers.pop(0) if self.delete_answers else (self.delete_status, self.delete_headers)
+            if status >= 300:
+                return status, dict(answer_headers), b'{"error":{"code":"AuthorizationFailed","message":"no right to delete"}}'
             if key not in self.resources:
                 return 204, {}, b""
             self.pending[key] = self.reads_before_gone
-            return self.delete_status, {}, b""
+            return status, {}, b""
         return 405, {}, b"{}"
 
 
@@ -378,6 +393,171 @@ class WhenAzureRefusesThePerson(Base):
         self.assertIn("Check the resource", done.action.result)
 
 
+class WhenAzureAsksForAnExtraSignInCheck(Base):
+    """A person who signed in without the multifactor check that a change needs can use the console, but Azure answers the delete with a claims challenge (HTTP 401 and a
+    `www-authenticate` header). That is a step-up and not a refusal: nothing was deleted, the plan stays approved and the action waits for the retry."""
+
+    def asked(self, plan=None):
+        """The change of an approved plan, with a delete that Azure answers with a claims challenge."""
+        if plan is None:
+            plan, _ = self.approved()
+        self.azure.delete_answers = [(401, challenge())]
+        return plan, self.make_change(plan)
+
+    def test_a_claims_challenge_on_the_delete_puts_the_action_back_in_the_queue_and_closes_nothing(self):
+        plan, queued = self.approved()
+        self.azure.delete_answers = [(401, challenge())]
+        done = self.make_change(plan)
+        self.assertIsInstance(done, Executed)
+        self.assertEqual((done.kind, done.claims), ("step_up", CLAIMS))
+        action = done.action
+        self.assertEqual((action.state, action.started_at, action.finished_at, action.error, action.result, action.step_up),
+                         ("queued", None, None, None, STEP_UP_WAIT, True))
+        self.assertEqual((action.queued_at, action.correlation_id, action.verification), (queued.queued_at, queued.correlation_id, {}))
+        self.assertEqual(self.store.action_get(plan.plan_id), action)
+        self.assertEqual(self.store.plan_get(plan.plan_id).state, "approved")
+        self.assertEqual(self.store.case_get(plan.case_id).status, "approved")
+        self.assertEqual([d.decision for d in self.store.decisions_of_plan(plan.plan_id)], ["approve"])
+        self.assertIn(DISK.lower(), self.azure.resources, "nothing was deleted")
+        self.assertEqual([m for m, _ in self.azure.calls].count("DELETE"), 1)
+        self.assertEqual([kind for kind, _ in self.events], ["action.started"], "nothing finished: no line says that the change ended")
+
+    def test_the_words_of_the_waiting_action_say_that_nothing_was_changed_and_what_it_waits_for(self):
+        self.assertIn("extra sign-in check", STEP_UP_WAIT)
+        self.assertIn("Nothing was changed yet", STEP_UP_WAIT)
+        self.assertIn("waits", STEP_UP_WAIT)
+
+    def test_the_retry_reads_everything_again_deletes_with_the_new_token_and_closes_the_plan_as_any_change_does(self):
+        plan, step_up = self.asked()
+        self.azure.calls.clear()
+        done = execute(self.s, step_up.action)
+        self.assertEqual((done.kind, done.claims, done.action.state), ("ran", "", "done"))
+        self.assertEqual(done.action.result, "Deleted. Azure no longer lists the resource.", "the words of the wait are gone")
+        self.assertEqual((done.action.step_up, done.action.error, bool(done.action.started_at), bool(done.action.finished_at)), (True, None, True, True))
+        self.assertEqual(self.store.plan_get(plan.plan_id).state, "consumed")
+        self.assertEqual(self.store.case_get(plan.case_id).status, "done")
+        self.assertNotIn(DISK.lower(), self.azure.resources)
+        self.assertEqual([m for m, _ in self.azure.calls][:4], ["GET", "GET", "GET", "DELETE"], "the resource and the locks are read again before the delete")
+        self.assertEqual([m for m, _ in self.azure.calls].count("DELETE"), 1)
+        self.assertEqual([kind for kind, _ in self.events], ["action.started", "action.started", "action.finished"])
+        self.assertEqual(len(self.store.decisions_of_plan(plan.plan_id)), 1, "one approval and one action for the whole way")
+
+    def test_the_retry_makes_the_same_checks_as_any_change_and_stops_before_a_second_delete(self):
+        for label, change, expected in (
+                ("the disk was attached meanwhile", lambda: self.azure.resources[DISK.lower()]["properties"].update(diskState="Attached"), "not unattached any more"),
+                ("a lock was put on it", lambda: self.azure.locks.update({DISK.lower(): [{"name": "l"}]}), "management lock"),
+                ("the tag is gone", lambda: self.azure.resources[DISK.lower()].update(tags={}), "tag any more"),
+                ("changes were paused", lambda: self.store.switch_put(SwitchRecord(name="changes", paused=True, by=OID, at=stamp(NOW))), "paused after the approval"),
+                ("somebody marked it do-not-touch", lambda: self.store.note_put(NoteRecord(note_id="n", oid=OID, kind="do_not_touch", text="no", scope_resource_id=DISK,
+                                                                                            expires_at="2099-01-01T00:00:00Z")), "do-not-touch")):
+            with self.subTest(label):
+                self.setUp()
+                plan, step_up = self.asked()
+                change()
+                done = execute(self.s, step_up.action)
+                self.assertEqual((done.kind, done.action.state), ("stopped", "failed"), done.action.result)
+                self.assertIn(expected, done.action.result)
+                self.assertIn("Nothing was changed", done.action.result)
+                self.assertEqual([m for m, _ in self.azure.calls].count("DELETE"), 1, "only the first delete was made")
+                self.assertIn(DISK.lower(), self.azure.resources)
+                self.assertEqual(self.store.plan_get(plan.plan_id).state, "failed")
+
+    def test_a_second_challenge_is_final_and_says_that_azure_asked_again_and_that_nothing_was_changed(self):
+        plan, step_up = self.asked()
+        self.azure.delete_answers = [(401, challenge())]
+        done = execute(self.s, step_up.action)
+        self.assertEqual((done.kind, done.claims, done.action.state), ("azure_refused", "", "failed"))
+        self.assertEqual((done.action.result, done.action.error), (ASKED_AGAIN, ASKED_AGAIN))
+        for words in ("a second time", "was not made", "Nothing was changed", "does not ask a second time", "The request is closed"):
+            self.assertIn(words, ASKED_AGAIN)
+        self.assertEqual(self.store.plan_get(plan.plan_id).state, "failed")
+        self.assertEqual(self.store.case_get(plan.case_id).status, "failed")
+        self.assertEqual(self.store.action_get(plan.plan_id), done.action)
+        self.assertIn(DISK.lower(), self.azure.resources)
+        self.assertEqual([m for m, _ in self.azure.calls].count("DELETE"), 2, "no third try")
+        self.assertEqual(self.events[-1], ("action.finished", {"planId": plan.plan_id, "family": "delete-disk", "ok": False}))
+
+    def test_a_third_challenge_is_not_reached_because_the_second_closed_the_plan(self):
+        plan, step_up = self.asked()
+        self.azure.delete_answers = [(401, challenge()), (401, challenge())]
+        execute(self.s, step_up.action)
+        again = execute(self.s, self.store.action_get(plan.plan_id))
+        self.assertEqual((again.kind, again.action.state), ("failed", "failed"))
+        self.assertIn("no approval by a named approver", again.action.result)
+        self.assertEqual([m for m, _ in self.azure.calls].count("DELETE"), 2)
+
+    def test_only_a_401_with_a_valid_challenge_steps_up_and_the_rest_is_an_ordinary_refusal(self):
+        good = challenge()["www-authenticate"]
+        claims = base64.b64encode(CLAIMS.encode()).decode()
+        for label, status, headers in (
+                ("no header", 401, {}),
+                ("a header that is not a challenge", 401, {"www-authenticate": f'{SCHEME} realm="x"'}),
+                ("another error", 401, {"www-authenticate": good.replace("insufficient_claims", "invalid_token")}),
+                ("claims that are not base64", 401, challenge(directive='claims="!!!!"')),
+                ("claims that are not JSON", 401, challenge(directive=f'claims="{base64.b64encode(b"not json").decode()}"')),
+                ("claims that are not an object", 401, challenge(directive=f'claims="{base64.b64encode(b"[1]").decode()}"')),
+                ("claims that are too deep", 401, challenge('{"a":{"b":{"c":{"d":{"e":1}}}}}')),
+                ("two claims directives", 401, {"www-authenticate": good + f', claims="{claims}"'}),
+                ("a quote in the header", 401, {"www-authenticate": good.replace("claims=", 'x="a"b", claims=')}),
+                ("another scheme", 401, {"www-authenticate": good.replace(SCHEME, "Basic")}),
+                ("a valid challenge on a 403", 403, challenge()),
+                ("a valid challenge on a 400", 400, challenge())):
+            with self.subTest(label):
+                self.setUp()
+                plan, _ = self.approved()
+                self.azure.delete_answers = [(status, headers)]
+                done = self.make_change(plan)
+                self.assertEqual(done.claims, "")
+                self.assertFalse(done.action.step_up)
+                self.assertEqual((done.kind, done.action.state), ("azure_refused", "failed") if status in (401, 403) else ("failed", "failed"), done.action.result)
+                self.assertEqual(self.store.plan_get(plan.plan_id).state, "failed")
+                self.assertEqual(self.store.case_get(plan.case_id).status, "failed")
+                self.assertIn(DISK.lower(), self.azure.resources)
+                self.assertEqual([m for m, _ in self.azure.calls].count("DELETE"), 1)
+
+    def test_an_ordinary_refusal_does_not_show_the_header_and_says_what_it_said_before(self):
+        plan, _ = self.approved()
+        self.azure.delete_answers = [(401, {"www-authenticate": f'{SCHEME} claims="!!!!", error="insufficient_claims"'})]
+        done = self.make_change(plan)
+        self.assertEqual(done.action.result, "Azure refused to delete the resource (401, AuthorizationFailed): your account has no right to do this here. Nothing was changed.")
+        self.assertNotIn("insufficient_claims", done.action.result + (done.action.error or ""))
+
+    def test_a_challenge_on_a_read_stays_a_refusal_because_only_the_delete_can_step_up(self):
+        for label, attribute, status_attribute, what in (("the resource", "read_headers", "read_status", "read the resource"),
+                                                          ("the locks", "locks_headers", "locks_status", "read the locks")):
+            with self.subTest(label):
+                self.setUp()
+                plan, _ = self.approved()
+                setattr(self.azure, attribute, challenge())
+                setattr(self.azure, status_attribute, 401)
+                done = self.make_change(plan)
+                self.assertEqual((done.kind, done.claims, done.action.state, done.action.step_up), ("azure_refused", "", "failed", False))
+                self.assertIn("Azure refused to " + what, done.action.result)
+                self.assertEqual(self.store.plan_get(plan.plan_id).state, "failed")
+                self.assertNotIn("DELETE", [m for m, _ in self.azure.calls])
+
+    def test_the_claims_are_on_no_record_no_event_and_not_in_the_text_of_the_result_or_of_the_object(self):
+        plan, step_up = self.asked()
+        records = [plan.to_json(), self.store.plan_get(plan.plan_id).to_json(), self.store.action_get(plan.plan_id).to_json(), self.store.case_get(plan.case_id).to_json(),
+                   *[d.to_json() for d in self.store.decisions_of_plan(plan.plan_id)], json.dumps(self.events), repr(step_up), str(step_up), repr(step_up.action)]
+        seen = json.dumps(records)
+        for secret in (CLAIMS, "c-unique-4711", base64.b64encode(CLAIMS.encode()).decode(), "insufficient_claims", SCHEME):
+            self.assertNotIn(secret, seen)
+        self.assertEqual(step_up.claims, CLAIMS, "the claims are for the one that sends the person to Microsoft Entra")
+        done = execute(self.s, step_up.action)
+        self.assertNotIn("c-unique-4711", json.dumps([done.action.to_json(), json.dumps(self.events), repr(done)]))
+
+    def test_only_the_delete_that_the_runner_makes_with_a_persons_token_can_step_up_and_the_timer_has_no_part_in_it(self):
+        plan, step_up = self.asked()
+        self.clock.advance(minutes=5)
+        calls = len(self.azure.calls)
+        result = tick(self.t)
+        self.assertEqual((result.finished, result.expired, result.verified), ([], [], []))
+        self.assertEqual(len(self.azure.calls), calls, "the timer asks Azure nothing about a change that waits")
+        self.assertEqual(self.store.action_get(plan.plan_id), step_up.action)
+        self.assertEqual(self.store.plan_get(plan.plan_id).state, "approved")
+
+
 class AfterTheDelete(Base):
     def test_a_delete_that_azure_accepted_but_that_still_shows_is_unknown_not_done(self):
         plan, _ = self.approved()
@@ -440,6 +620,45 @@ class TheTick(Base):
         self.assertEqual(self.store.case_get(plan.case_id).status, "failed")
         self.assertEqual(self.azure.calls, [])
         self.assertIn(DISK.lower(), self.azure.resources)
+
+    def test_a_step_up_that_nobody_completes_is_closed_after_the_same_limit_with_words_of_its_own_and_nothing_changed(self):
+        plan, _ = self.approved()
+        self.azure.delete_answers = [(401, challenge())]
+        self.make_change(plan)
+        calls = len(self.azure.calls)
+        self.clock.advance(minutes=9)
+        self.assertEqual(tick(self.t).finished, [], "the person may still complete the check")
+        self.assertEqual((self.store.action_get(plan.plan_id).state, self.store.plan_get(plan.plan_id).state), ("queued", "approved"))
+        self.clock.advance(minutes=2)
+        result = tick(self.t)
+        self.assertEqual([a.state for a in result.finished], ["failed"])
+        action = self.store.action_get(plan.plan_id)
+        self.assertEqual((action.state, action.result, action.error), ("failed", STEP_UP_ABANDONED, STEP_UP_ABANDONED))
+        for words in ("extra sign-in check", "not completed in time", "was not made", "Nothing was changed"):
+            self.assertIn(words, STEP_UP_ABANDONED)
+        self.assertNotIn("restart", STEP_UP_ABANDONED, "it was not a restart that ended it")
+        self.assertEqual(self.store.plan_get(plan.plan_id).state, "failed")
+        self.assertEqual(self.store.case_get(plan.case_id).status, "failed")
+        self.assertEqual(len(self.azure.calls), calls, "the timer made no call")
+        self.assertIn(DISK.lower(), self.azure.resources)
+        self.assertEqual(tick(self.t).finished, [], "it is closed once")
+
+    def test_a_queued_action_that_asked_for_a_step_up_is_closed_by_the_timer_also_when_its_plan_was_closed_already(self):
+        plan, _ = self.approved()
+        self.azure.delete_answers = [(401, challenge())]
+        self.make_change(plan)
+        self.store.plan_put(replace(self.store.plan_get(plan.plan_id), state="failed"))  # the close of the plan was made and the close of the action was not
+        self.clock.advance(minutes=11)
+        self.assertEqual([a.state for a in tick(self.t).finished], ["failed"])
+        self.assertEqual((self.store.action_get(plan.plan_id).result, self.store.plan_get(plan.plan_id).state, self.store.case_get(plan.case_id).status),
+                         (STEP_UP_ABANDONED, "failed", "failed"))
+
+    def test_a_queued_action_that_never_asked_for_a_step_up_keeps_its_own_words(self):
+        plan, _ = self.approved()
+        self.clock.advance(minutes=11)
+        tick(self.t)
+        self.assertNotIn("extra sign-in check", self.store.action_get(plan.plan_id).result)
+        self.assertIn("did not start", self.store.action_get(plan.plan_id).result)
 
     def test_the_timer_uses_the_readers_token_and_its_list_has_no_delete(self):
         plan, _ = self.approved()

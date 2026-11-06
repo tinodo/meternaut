@@ -2,13 +2,14 @@
 
 The page shows the plan from the stored plan record and never the models' prose. An answer is a POST with the plan code and a one-time token. Declining, asking
 and "not mine" are recorded by the decider. Approving sends the person to the sign-in to Azure (Microsoft Entra), and the page that the person comes back to
-(`/arm/return`) shows what came of it: the change is made right there, with the person's own token. Each kind of result has a plain page of its own.
+(`/arm/return`) shows what came of it: the change is made right there, with the person's own token. When Azure asks for an extra sign-in check, that page is a redirect to
+the sign-in once more, and the page that the person comes back to then shows what came of it. Each kind of result has a plain page of its own.
 """
 from __future__ import annotations
 
 import re
 
-from ..models import DecideResult, PlanRecord
+from ..models import MAX_SIGNIN_PATH, DecideResult, PlanRecord
 from . import words
 from .common import action_block, effective_state, may_answer, pulled, read
 from .core import MAX_NOTE, Ctx, Response, Safe, clean_line, fmt, join, link_part, parse_time, usd
@@ -17,10 +18,11 @@ from .layout import SIGNIN_ORIGIN, block, button, code, error_summary, form, hid
 REFUSED_ROLE = "I cannot take your OK on this request."
 PAUSED = "Changes are paused here. Nothing has changed, and your OK cannot be recorded now."
 CHANGED = "This plan changed. Nothing is approved. A new message will bring the new plan and code."
-# The only address that an approval may send a person to: the sign-in of Microsoft Entra, with a query that holds nothing but escaped characters.
-SIGNIN_ADDRESS = re.compile(re.escape(SIGNIN_ORIGIN) + r"/[A-Za-z0-9._~%/+=&?-]{1,2000}")
+# The only address that an approval may send a person to: the sign-in of Microsoft Entra, with a query that holds nothing but escaped characters. The same check holds for the
+# first sign-in (`begin`) and for the second one that Azure's claims challenge asks for (the result of `finish`).
+SIGNIN_ADDRESS = re.compile(re.escape(SIGNIN_ORIGIN) + rf"/[A-Za-z0-9._~%/+=&?-]{{1,{MAX_SIGNIN_PATH}}}")
 STATUS = {"declined": 200, "asked": 200, "not_mine": 200, "ran": 200, "ran_unconfirmed": 200, "stopped": 409, "azure_refused": 403, "failed": 502, "signin_failed": 400,
-          "refused_code": 409, "refused_state": 409, "refused_role": 403, "refused_paused": 409, "expired": 410, "duplicate": 409, "error": 500}
+          "step_up_failed": 400, "refused_code": 409, "refused_state": 409, "refused_role": 403, "refused_paused": 409, "expired": 410, "duplicate": 409, "error": 500}
 WHY = "You answered a request on this console."
 
 
@@ -133,8 +135,9 @@ def _state_notice(ctx: Ctx, plan: PlanRecord, state: str, mine: list, action) ->
         return notice("warning", "Expired", paragraph(fmt("This request expired on {when}. Nothing has changed.", when=when)))
     if state == "approved":
         recorded = next((d for d in mine if d.decision == "approve"), None)
-        sentence = (paragraph(fmt("Your OK is recorded since {at}. The change is being made now. Open this page again in a moment.", at=ctx.when(recorded.at))) if recorded
-                    else paragraph("This plan is approved. The change is being made now."))
+        said = words.WAITING_FOR_THE_CHECK if action is not None and action.state == "queued" and action.step_up else "The change is being made now."
+        sentence = (paragraph(fmt("Your OK is recorded since {at}. {said} Open this page again in a moment.", at=ctx.when(recorded.at), said=said)) if recorded
+                    else paragraph(fmt("This plan is approved. {said}", said=said)))
         return notice("info", "Approved", sentence)
     if state == "declined":
         return notice("info", "Declined", "This request was declined. Nothing has changed.")
@@ -227,6 +230,9 @@ def outcome(ctx: Ctx, result: DecideResult, plan_id: str | None) -> Response:
         return show("The change failed", text or "The change failed.", "Look at the resource in Azure before anything is tried again.")
     if kind == "signin_failed":
         return show("The sign-in to Azure was not completed", text or "Nothing is approved.", "The request stays open. Open it again to try again.")
+    if kind == "step_up_failed":
+        return show("The extra sign-in check was not completed", text or "The extra sign-in check that Azure asked for was not completed. The change was not made.",
+                    "Nothing was changed. The request is closed.")
     if kind == "declined":
         return show("Declined", "Declined. Nothing has changed. The request is closed.", paragraph(link(ctx.url("/me/decisions"), "See my decisions")))
     if kind == "asked":
@@ -263,6 +269,15 @@ def _post(ctx: Ctx, plan_id: str) -> tuple[PlanRecord | None, str, Response | No
     return plan, nonce, None
 
 
+def _to_sign_in(ctx: Ctx, location: str, plan_id: str | None) -> Response:
+    """To the sign-in of Microsoft Entra: the address is taken only if it is the one that an approval may send a person to, whatever made it."""
+    if not isinstance(location, str) or not SIGNIN_ADDRESS.fullmatch(location):
+        # The delegate builds this address from its settings. A page that is told to send the person anywhere else refuses: the policy of the page would stop only a browser
+        # that checks a redirect after a form post.
+        return outcome(ctx, DecideResult(False, "error", ""), plan_id)
+    return Response(303, {"Location": location, "Cache-Control": "no-store"}, b"")
+
+
 def _begin(ctx: Ctx, plan_id: str, nonce: str) -> Response:
     """Approving: the person is sent to the sign-in to Azure. Nothing is recorded yet, and nothing changes: the approval is made when the person comes back."""
     form_data = ctx.request.form
@@ -273,11 +288,7 @@ def _begin(ctx: Ctx, plan_id: str, nonce: str) -> Response:
         return outcome(ctx, DecideResult(False, "error", ""), plan_id)
     if begun.refusal is not None or not begun.location:
         return outcome(ctx, begun.refusal or DecideResult(False, "error", ""), plan_id)
-    if not SIGNIN_ADDRESS.fullmatch(begun.location):
-        # The delegate builds this address from its settings. A page that is told to send the person anywhere else refuses: the policy of the page would stop only a browser
-        # that checks a redirect after a form post.
-        return outcome(ctx, DecideResult(False, "error", ""), plan_id)
-    return Response(303, {"Location": begun.location, "Cache-Control": "no-store"}, b"")
+    return _to_sign_in(ctx, begun.location, plan_id)
 
 
 def approval_decide(ctx: Ctx, plan_id: str) -> Response:
@@ -296,9 +307,17 @@ def approval_decide(ctx: Ctx, plan_id: str) -> Response:
 
 
 def arm_return(ctx: Ctx) -> Response:
-    """Where the sign-in to Azure sends the person back to. The approval is recorded and the change is made here, with the person's own token."""
+    """Where the sign-in to Azure sends the person back to. The approval is recorded and the change is made here, with the person's own token.
+
+    When Azure asks for an extra sign-in check, the answer is a redirect to the sign-in of Microsoft Entra once more (the kind step_up, with its address), through the same
+    check as the first one. Anything else is the page of what came of it."""
     result = _call(lambda: ctx.services.delegate.finish(ctx.principal, ctx.request.query))  # type: ignore[arg-type]
-    return outcome(ctx, result, result.plan.plan_id if result.plan is not None else None)
+    plan_id = result.plan.plan_id if result.plan is not None else None
+    if result.kind == "step_up" or result.location:
+        if result.kind == "step_up" and result.location:
+            return _to_sign_in(ctx, result.location, plan_id)
+        return outcome(ctx, DecideResult(False, "error", ""), plan_id)
+    return outcome(ctx, result, plan_id)
 
 
 def approval_ask(ctx: Ctx, plan_id: str) -> Response:

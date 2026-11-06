@@ -24,6 +24,9 @@ SWITCH_NAMES = ("all", "changes", "messages")
 NOTE_KINDS = ("note", "do_not_touch")
 CHANNELS = ("email", "teams", "desk")
 ROLES = ("owner", "approver", "ops")
+# The most characters that the address which the console sends a person to (the sign-in of Microsoft Entra) may have after the host and the slash behind it. The pages refuse a
+# longer one, and the code that makes the address keeps to it.
+MAX_SIGNIN_PATH = 2000
 
 # What a change may be: one family is one kind of change on one kind of resource.
 FAMILIES = {
@@ -161,6 +164,7 @@ class ActionRecord(Record):
     verified_at: str | None = None
     verification: dict = field(default_factory=dict)  # {"gone": bool, "costAfterUsd": float or None, "note": text}
     error: str | None = None
+    step_up: bool = False  # Azure asked for an extra sign-in check: the action waits in the queue for it, and a second ask is final
 
 
 @dataclass(frozen=True)
@@ -231,11 +235,13 @@ class Principal:
 @dataclass(frozen=True)
 class DecideResult:
     ok: bool
-    # Answers: declined, asked, not_mine. What a sign-in to Azure led to: ran, ran_unconfirmed, stopped, azure_refused, failed, signin_failed.
+    # Answers: declined, asked, not_mine. What a sign-in to Azure led to: ran, ran_unconfirmed, stopped, azure_refused, failed, signin_failed, and step_up_failed (the extra
+    # sign-in check that Azure asked for was not completed: the request is closed). step_up: Azure asked for an extra sign-in check, and `location` is where the person goes.
     # Refusals: refused_code, refused_state, refused_role, refused_paused, expired, duplicate, error.
     kind: str
     message: str
     plan: PlanRecord | None = None
+    location: str = field(default="", repr=False)  # only for step_up: the sign-in of Microsoft Entra, to which the person is sent again (it holds the claims request)
 
 
 @dataclass(frozen=True)
@@ -311,8 +317,9 @@ class Decider(Protocol):
 
 
 class Delegate(Protocol):
-    """An approval, in its two steps. `begin` checks the form and gives the address of the sign-in to Azure; `finish` takes the person back from that sign-in,
-    records the approval and makes the change with the person's own token. Meternaut holds no right of its own to change Azure."""
+    """An approval, in its steps. `begin` checks the form and gives the address of the sign-in to Azure; `finish` takes the person back from that sign-in, records the
+    approval and makes the change with the person's own token. When Azure asks for an extra sign-in check, `finish` answers with the kind step_up and the address of
+    the sign-in once more, and the next `finish` makes the change. Meternaut holds no right of its own to change Azure."""
 
     def begin(self, principal: Principal, plan_id: str, code: str, nonce: str, note: str = "", hint: str = "") -> Begun: ...
     def finish(self, principal: Principal, query: dict[str, str]) -> DecideResult: ...

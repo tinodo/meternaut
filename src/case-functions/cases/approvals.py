@@ -198,6 +198,44 @@ class Approvals:
         except StoreError:
             return None, DecideResult(False, "error", "I cannot reach my records right now. Nothing is approved. Try again in a few minutes.")
 
+    def check_stepup(self, principal: Principal, plan_id: str, code: str, resource_id: str) -> tuple[PlanRecord | None, ActionRecord | None, DecideResult | None]:
+        """The checks before the change is tried again, after the approver's extra sign-in check: the plan is approved (not open: the approval is recorded already), with this
+        code and this resource, this person's approval is recorded, the action of the plan waits in the queue for that check, and the switches are not pulled.
+
+        Returns the plan and the action, or the refusal. It records nothing and uses no one-time token: the state of the sign-in was used up when the person came back."""
+        try:
+            return self._stepup(principal, plan_id, code, resource_id)
+        except StoreError:
+            return None, None, DecideResult(False, "error", "I cannot reach my records right now. Nothing was changed.")
+
+    def _stepup(self, principal: Principal, plan_id: str, code: str, resource_id: str) -> tuple[PlanRecord | None, ActionRecord | None, DecideResult | None]:
+        plan = self.store.plan_get(plan_id)
+        if plan is None:
+            return _refused_stepup("refused_state", "This request does not exist. Nothing was changed.")
+        if not principal.has("approver") or principal.oid.lower() not in {a.lower() for a in plan.approvers}:
+            return _refused_stepup("refused_role", "I cannot take your OK on this request.")
+        if plan.state != "approved":
+            return _refused_stepup("refused_state", f"This request is {_words(plan.state)}. Nothing more can be recorded.", plan)
+        if switches.pulled(self.store, "all", "changes"):
+            return _refused_stepup("refused_paused", PAUSED_MESSAGE, plan)
+        if (code or "").strip().upper() != plan.code or plan.resource_id != resource_id:
+            return _refused_stepup("refused_code", "This plan changed. Nothing was changed. A new message will bring the new plan and code.", plan)
+        mine = principal.oid.lower()
+        if not any(d.decision == "approve" and d.plan_code == plan.code and d.approver_oid.lower() == mine for d in self.store.decisions_of_plan(plan_id)):
+            return _refused_stepup("refused_state", "Your OK on this request is not recorded. Nothing was changed.", plan)
+        action = self.store.action_get(plan_id)
+        if action is None or action.plan_id != plan.plan_id or action.state != "queued" or not action.step_up:
+            return _refused_stepup("refused_state", "The change of this request does not wait for an extra sign-in check. Nothing was changed.", plan)
+        return plan, action, None
+
+    def close_waiting(self, plan: PlanRecord, action: ActionRecord, text: str) -> ActionRecord:
+        """The approved change that waited for the approver's extra sign-in check will not be made: the action and the plan fail, and the case with them. Nothing was changed."""
+        failed = replace(action, state="failed", result=text, error=text, finished_at=stamp(self.clock()))
+        self.store.plan_put(_plan_with(plan, state="failed"))  # the plan first: if the next write fails, the timer still closes the action that is queued
+        self.store.action_put(failed)
+        self._set_case(plan.case_id, "failed")
+        return failed
+
     def record_approval(self, principal: Principal, plan: PlanRecord, note: str) -> tuple[DecideResult, ActionRecord | None]:
         """Records the approval of a person who has signed in to Azure, and the action that the change is made under. The change itself is made by the caller.
 
@@ -254,6 +292,10 @@ class Approvals:
 def _words(state: str) -> str:
     return {"consumed": "closed: it ran", "declined": "declined", "withdrawn": "withdrawn", "approved": "approved: its change is being made",
             "failed": "closed: the change failed"}.get(state, state)
+
+
+def _refused_stepup(kind: str, message: str, plan: PlanRecord | None = None) -> tuple[None, None, DecideResult]:
+    return None, None, DecideResult(False, kind, message, plan)
 
 
 def _with(case: CaseRecord, **changes) -> CaseRecord:

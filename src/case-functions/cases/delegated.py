@@ -11,9 +11,15 @@ Meternaut holds no right to change Azure. The flow is the OAuth 2.0 authorizatio
    and the nonce of the request, come from this tenant's endpoint and not be expired, or nothing is recorded.
 4. Only then the approval is recorded, and the change is made with the person's access token (runner.py): it re-reads the resource and the locks, deletes the
    resource and reads until Azure says that it is gone. Azure checks the person's own rights, and the Activity Log shows the person.
+5. A person who signed in without the multifactor check that a change needs can use the console, but Azure answers the delete with a claims challenge (HTTP 401 and a
+   `www-authenticate` header that asks for more claims). That is a step-up and not a refusal: nothing was deleted, the plan stays approved and its action waits in the
+   queue. The person is sent to Microsoft Entra once more, with the claims request that Azure gave, in a new state with a new PKCE verifier and a new nonce. The return of
+   that second sign-in records no second approval: it checks that the approval is recorded and the action waits, redeems the code, checks the ID token as before and makes
+   the change once more. A second challenge is final, and a person who cancels the check ends the request: nothing was changed.
 
 The access token lives in memory for this one request. It is never stored, never logged and never put in a page, and what the code may do with it is the list of
-calls in runner.py (`change_calls`). Errors say what went wrong in plain words and never carry a token or the text of an error description.
+calls in runner.py (`change_calls`). Errors say what went wrong in plain words and never carry a token or the text of an error description. The claims request lives in the
+state of the second sign-in until it is used (ten minutes at most) and nowhere else: it is not in a record, a page, a log or a line of the History.
 """
 from __future__ import annotations
 
@@ -28,9 +34,10 @@ from urllib.parse import quote, urlencode
 
 from .approvals import Approvals
 from .http import Client, HttpError, Refused
-from .models import Begun, DecideResult, PlanRecord, Principal, Store, StoreError
+from .models import ActionRecord, Begun, DecideResult, MAX_SIGNIN_PATH, PlanRecord, Principal, Store, StoreError
 from .roles import clean_text
 from .runner import RunnerServices, execute
+from .store import MAX_NONCE_DATA
 
 if TYPE_CHECKING:
     from .loop_config import LoopSettings
@@ -55,6 +62,7 @@ AGAIN = frozenset({"50076", "50079", "50074", "50158"})
 POLICY = frozenset({"53000", "53001", "53002", "53003", "53004", "530032"})
 USED = frozenset({"70008", "54005", "70000", "9002313"})
 SETUP = frozenset({"65005", "70021", "700016", "700025", "700027", "700213", "7000215", "7000222", "50011", "500113"})
+STEP_UP_SENT = "Azure asks for an extra sign-in check. You go to Microsoft Entra once more to complete it. Nothing was changed yet."
 
 
 @dataclass(frozen=True)
@@ -114,12 +122,16 @@ def new_pkce(token: Callable[[int], str] = secrets.token_urlsafe) -> tuple[str, 
     return verifier, challenge
 
 
-def authorize_url(settings: SigninSettings, state: str, challenge: str, nonce: str, hint: str = "") -> str:
-    """The address of the sign-in at Microsoft Entra. The redirect address is the console's own and is registered on the app registration."""
+def authorize_url(settings: SigninSettings, state: str, challenge: str, nonce: str, hint: str = "", claims: str = "") -> str:
+    """The address of the sign-in at Microsoft Entra. The redirect address is the console's own and is registered on the app registration.
+
+    `claims` is the claims request that Azure gave in a claims challenge (JSON text). It goes in the `claims` parameter, encoded like every other value."""
     query = {"client_id": settings.client_id, "response_type": "code", "redirect_uri": settings.redirect_uri, "response_mode": "query", "scope": SCOPES,
              "state": state, "nonce": nonce, "code_challenge": challenge, "code_challenge_method": "S256"}
     if hint and HINT.fullmatch(hint):
         query["login_hint"] = hint
+    if claims:
+        query["claims"] = claims
     return f"{settings.authorize_url}?{urlencode(query, quote_via=quote, safe='')}"
 
 
@@ -155,6 +167,18 @@ def explain(error: str, aadsts: str) -> str:
     return f"Microsoft Entra did not give a token{named}. Nothing is approved."
 
 
+def explain_stepup(error: str, aadsts: str) -> str:
+    """Why Microsoft Entra did not complete the extra sign-in check, from its error name and its AADSTS number: a sentence that goes after "was not completed"."""
+    error = re.sub(r"[^a-z_]", "", (error or "").lower())[:40]
+    aadsts = re.sub(r"\D", "", aadsts or "")[:7]
+    if aadsts in POLICY:
+        return "A Conditional Access policy of your tenant did not let it through."
+    if error == "access_denied":
+        return "It was cancelled or refused."
+    named = " (" + ", ".join(part for part in (error, f"AADSTS{aadsts}" if aadsts else "") if part) + ")" if error or aadsts else ""
+    return f"Microsoft Entra did not complete it{named}."
+
+
 def _oauth_error(error: HttpError) -> tuple[str, str]:
     """The error name and the AADSTS number in the text of a failed call to the token endpoint (http.error_text keeps those two and nothing else)."""
     found = re.search(r": \d{3} ([a-z_]{3,40})(?: AADSTS(\d{3,7}))?\s*$", str(error))
@@ -167,13 +191,17 @@ class TokenClient:
     def __init__(self, settings: SigninSettings, assertion: Callable[[str], str], client: Client) -> None:
         self.settings, self.assertion, self.client = settings, assertion, client
 
-    def redeem(self, code: str, verifier: str) -> Tokens:
+    def redeem(self, code: str, verifier: str, claims: str = "") -> Tokens:
+        """Redeems the code of a sign-in. After a claims challenge the claims request goes with the code too, as the authorization code flow of MSAL does it (Microsoft Learn,
+        "Conditional access and claims challenges", MSAL for Python)."""
         try:
             proof = self.assertion(ASSERTION_RESOURCE)
         except Exception as error:  # noqa: BLE001 (the platform gave no token: the text says that and no more)
             raise SigninError("Meternaut could not get its own proof of identity from the platform. This is a fault on my side. Nothing is approved.") from error
         form = {"client_id": self.settings.client_id, "scope": SCOPES, "code": code, "redirect_uri": self.settings.redirect_uri, "grant_type": "authorization_code",
                 "code_verifier": verifier, "client_assertion_type": ASSERTION_TYPE, "client_assertion": proof}
+        if claims:
+            form["claims"] = claims
         try:
             answer = self.client.request("POST", self.settings.token_url, form=form, timeout=30, retries=0, retry_network=False).json()
         except HttpError as error:
@@ -198,9 +226,10 @@ class TokenClient:
 
 
 class Delegation:
-    """An approval in its two steps (the Delegate of the pages): `begin` gives the address of the sign-in, `finish` records the approval and makes the change."""
+    """An approval in its steps (the Delegate of the pages): `begin` gives the address of the sign-in, `finish` records the approval and makes the change. When Azure asks for
+    an extra sign-in check, `finish` gives the address of a second sign-in (the kind step_up), and the `finish` of its return makes the change."""
 
-    def __init__(self, store: Store, approvals: Approvals, signin: SigninSettings | None, redeem: Callable[[str, str], Tokens],
+    def __init__(self, store: Store, approvals: Approvals, signin: SigninSettings | None, redeem: Callable[..., Tokens],
                  run: Callable[[str], RunnerServices], *, emit: Callable[..., object] = lambda kind, **fields: None, pkce: Callable[[], tuple[str, str]] = new_pkce,
                  token: Callable[[int], str] = secrets.token_urlsafe) -> None:
         self.store, self.approvals, self.signin, self.redeem, self.run, self.emit, self.pkce, self.token = store, approvals, signin, redeem, run, emit, pkce, token
@@ -233,6 +262,8 @@ class Delegation:
         started = _read(raw)
         if started is None:
             return DecideResult(False, "refused_state", "This sign-in is not valid any more: it was used already, it ran out of time, or somebody else started it. Nothing was changed.")
+        if started.get("stepup"):
+            return self._finish_stepup(principal, started, query)
         plan_id = started["plan"]
         if query.get("error"):
             self.emit("signin.failed", planId=plan_id, reason=re.sub(r"[^a-z_]", "", query["error"].lower())[:40])
@@ -259,11 +290,76 @@ class Delegation:
         if action is None:
             return recorded
         self.emit("approval.recorded", planId=plan_id)
+        return self._change(principal, plan, started, action, tokens)
+
+    def _change(self, principal: Principal, plan: PlanRecord, started: dict, action: ActionRecord, tokens: Tokens) -> DecideResult:
+        """Makes the change with the person's token. When Azure asks for an extra sign-in check, the person is sent to Microsoft Entra once more (and only once)."""
         try:
             done = execute(self.run(tokens.access_token), action)
         except StoreError:
             return DecideResult(False, "error", "I cannot reach my records right now. Look at the resource in Azure before anything is tried again.", plan)
-        return DecideResult(done.kind in ("ran", "ran_unconfirmed"), done.kind, done.action.result or done.action.error or "", self._plan(plan_id) or plan)
+        if done.kind == "step_up" and not started.get("stepup"):
+            return self._ask_again(principal, plan, started, done.action, done.claims, str(tokens.claims.get("preferred_username") or ""))
+        return DecideResult(done.kind in ("ran", "ran_unconfirmed"), done.kind, done.action.result or done.action.error or "", self._plan(plan.plan_id) or plan)
+
+    def _ask_again(self, principal: Principal, plan: PlanRecord, started: dict, action: ActionRecord, request: str, hint: str) -> DecideResult:
+        """Azure asked for an extra sign-in check (a claims challenge): the person goes to Microsoft Entra once more, with the claims request that Azure gave.
+
+        The approval stays recorded, the plan stays approved and the action waits. The new sign-in has a state, a PKCE verifier and a nonce of its own: nothing of the first one
+        is used again. If the request cannot be kept or sent, the change is closed, because nobody can complete a check that cannot be asked for."""
+        settings = self.signin
+        assert settings is not None
+        verifier, challenge = self.pkce()
+        oidc_nonce = self.token(16)
+        data = json.dumps({"plan": plan.plan_id, "code": plan.code, "resource": plan.resource_id, "verifier": verifier, "nonce": oidc_nonce, "note": started["note"],
+                           "stepup": "1", "claims": request}, separators=(",", ":"))
+        if len(data) > MAX_NONCE_DATA:
+            return self._closed(plan, action, "Meternaut cannot keep the request for it: it is too large.")
+        try:
+            state = self.store.nonce_new(principal.oid, PURPOSE, SIGNIN_SECONDS, data)
+        except StoreError:
+            return self._closed(plan, action, "Meternaut could not keep the request for it.")
+        location = authorize_url(settings, state, challenge, oidc_nonce, hint, request)
+        if len(location) > len(f"https://{LOGIN_HOST}/") + MAX_SIGNIN_PATH:
+            return self._closed(plan, action, "Meternaut cannot send you to Microsoft Entra for it: the request is too large.")
+        self.emit("signin.stepup", planId=plan.plan_id)
+        return DecideResult(False, "step_up", STEP_UP_SENT, self._plan(plan.plan_id) or plan, location)
+
+    def _finish_stepup(self, principal: Principal, started: dict, query: dict[str, str]) -> DecideResult:
+        """The return from the sign-in to which Azure's claims challenge sent the person. The approval is recorded and the action waits, so no second approval is recorded: the
+        checks are those of `check_stepup`, then the code is redeemed, the ID token is checked as before and the change is tried once more. From the first check on, whatever
+        stops it closes the request: the state is used up, so the check cannot be tried again, and nothing was changed."""
+        plan_id = started["plan"]
+        plan, action, refusal = self.approvals.check_stepup(principal, plan_id, started["code"], started["resource"])
+        if plan is None or action is None:
+            return refusal or DecideResult(False, "error", "This request cannot be tried again now. Nothing was changed.")
+        if query.get("error"):
+            self.emit("signin.failed", planId=plan_id, reason=re.sub(r"[^a-z_]", "", query["error"].lower())[:40])
+            found = re.search(r"AADSTS(\d{3,7})", query.get("error_description", ""))
+            return self._closed(plan, action, explain_stepup(query["error"], found.group(1) if found else ""))
+        code = query.get("code", "")
+        if not CODE.fullmatch(code):
+            return self._closed(plan, action, "Microsoft Entra sent you back without a code.")
+        try:
+            tokens = self.redeem(code, started["verifier"], started["claims"])
+        except SigninError:
+            self.emit("signin.failed", planId=plan_id, reason="redeem")
+            return self._closed(plan, action, "Microsoft Entra did not give a token for it.")
+        if self._who(tokens.claims, principal, started["nonce"]):
+            self.emit("signin.failed", planId=plan_id, reason="identity")
+            return self._closed(plan, action, "It was done with another account, or it does not belong to this request.")
+        return self._change(principal, plan, started, action, tokens)
+
+    def _closed(self, plan: PlanRecord, action: ActionRecord, why: str) -> DecideResult:
+        """The extra sign-in check cannot be completed, so the change that waited for it will not be made: the action and the plan are closed as failed, with the reason in plain
+        words. Nothing was changed."""
+        text = f"The extra sign-in check that Azure asked for was not completed. {why} The change was not made. Nothing was changed. The request is closed."
+        try:
+            self.approvals.close_waiting(plan, action, text)
+        except StoreError:
+            return DecideResult(False, "error", "I cannot reach my records right now. Nothing was changed. The request closes by itself in a few minutes.", plan)
+        self.emit("action.finished", planId=plan.plan_id, family=plan.family, ok=False)
+        return DecideResult(False, "step_up_failed", text, self._plan(plan.plan_id) or plan)
 
     def _plan(self, plan_id: str) -> PlanRecord | None:
         try:
@@ -291,7 +387,9 @@ class Delegation:
 
 
 def _read(raw: str | None) -> dict | None:
-    """The data that `begin` kept with the state, or None when there is none or it is not what `begin` wrote."""
+    """The data that `begin` (or the step-up) kept with the state, or None when there is none or it is not what they wrote.
+
+    The state of a step-up has `"stepup": "1"` and the claims request of Azure; the first state has neither, and a state that has one of them without the other is refused."""
     if not raw:
         return None
     try:
@@ -300,4 +398,6 @@ def _read(raw: str | None) -> dict | None:
         return None
     if not isinstance(data, dict) or not all(isinstance(data.get(key), str) for key in ("plan", "code", "resource", "verifier", "nonce", "note")):
         return None
-    return data
+    if "stepup" not in data:
+        return None if "claims" in data else data
+    return data if data["stepup"] == "1" and isinstance(data.get("claims"), str) and data["claims"] else None
