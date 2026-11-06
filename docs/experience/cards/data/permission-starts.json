@@ -5,11 +5,11 @@
   "pageUrl": "https://meternaut.contoso.example/ok/r_Ps8Vh4",
   "challengeExample": "For example: some of these containers are read every day",
   "teachExample": "For example: keep dev storage on the hot tier during the load test",
-  "headline": "From Thursday I may move dev storage to a cooler tier without asking each time",
-  "permission": "Your FinOps lead and platform owner wrote this standing permission: storage tier changes in development subscriptions, up to about €500 a month in Expected saving per change at the rates on your bill (a ceiling, not a forecast), until 12 March. It covers 3 of your resources. It never covers a purchase.",
-  "how": "Each time I use it I check every condition first and tell you within minutes. Where Azure allows an undo, I offer it on a page where you sign in to Azure. I add each run to your weekly summary.",
-  "yourChoice": "If you do not want me to use it on your resources, choose Pause changes here before Thursday. That stops my standing permissions for those resources; it does not stop my suggestions.",
+  "headline": "From Thursday dev storage may move to a cooler tier without asking each time",
+  "permission": "I send this card only because your organisation chose the optional standing-permission mode. Your FinOps lead and platform owner granted it, with your organisation's own role, to an identity of its own choosing: storage tier changes in development subscriptions, up to about €500 a month in Expected saving per change at the rates on your bill (a ceiling, not a forecast), until 12 March. It covers 3 of your resources and never a purchase. I hold no right to change Azure.",
+  "how": "Each time it is used, the conditions are checked first and I tell you within minutes. Where Azure allows an undo, I offer it on a page where you sign in to Azure. I add each run to your weekly summary.",
+  "yourChoice": "If you do not want it used on your resources, choose Pause changes here before Thursday. That stops this standing permission for those resources; it does not stop my suggestions.",
   "whyYouGetThis": "you own 3 resources in the development subscriptions this permission covers.",
   "_scenario": "E6 notice",
-  "notificationText": "From Thursday I may move dev storage to a cooler tier without asking each time"
+  "notificationText": "From Thursday dev storage may move to a cooler tier without asking each time"
 }

@@ -34,7 +34,7 @@ Retention values are defaults the adopting organisation sets. A locked policy ca
 | `credentials` | Autopilot credentials | `/credentialId` | Until expired, then as the audit log |
 | `switches` | Kill switches: a switch is on while a trip item exists | `/scope` | Cleared trips 1 year |
 | `agenda` | Ranked open questions | `/estateId` | Closed items 90 days |
-| `consumption` | One item for each approval or rollback grant used | `/requestId` | As the audit log |
+| `consumption` | One item for each approval used | `/requestId` | As the audit log |
 | `preferences` | One record per person (section 8); an opt-out is a separate item | `/objectId` | Until the person deletes it; an opt-out stays |
 
 The account has one region, and zone redundancy is chosen at creation ([Learn](https://learn.microsoft.com/azure/reliability/reliability-cosmos-db-nosql)).
@@ -57,7 +57,7 @@ The account has one region, and zone redundancy is chosen at creation ([Learn](h
 
 `approvals` reads `estate-model` to resolve a page's scope and alone writes `preferences`, for the signed-in person's own record, because a named delegate may decide for that person.
 
-A Cosmos replace right cannot be limited to one field ([Learn](https://learn.microsoft.com/azure/cosmos-db/reference-data-plane-security)), so nobody holds one they do not need. The fields an approval record binds (plan hash, resources, quote, requester, expiry) never change after the Approval service writes them; only its decisions, its status and a revocation are added, by the Approval service alone and under an etag check, and the runner can read the record but not write it. The runner records that it used an approval by **creating** an item in `consumption` whose id derives from the request id (a rollback grant's use derives from the request id and the word rollback); a second create fails, so an approval is used once and so is its undo. The container is separate because only the runner may create there and no one may replace or delete, which `workflows` could do in `ledger`. A CI test fails if a hosted-agent identity holds any right here ([testing](08-testing-and-evaluation.md)).
+A Cosmos replace right cannot be limited to one field ([Learn](https://learn.microsoft.com/azure/cosmos-db/reference-data-plane-security)), so nobody holds one they do not need. The fields an approval record binds (plan hash, resources, quote, requester, expiry) never change after the Approval service writes them; only its decisions, its status and a revocation are added, by the Approval service alone and under an etag check, and the runner can read the record but not write it. The runner records that it used an approval by **creating** an item in `consumption` whose id derives from the request id; a second create fails, so an approval is used once. The container is separate because only the runner may create there and no one may replace or delete, which `workflows` could do in `ledger`. A CI test fails if a hosted-agent identity holds any right here ([testing](08-testing-and-evaluation.md)).
 
 **Queues.** Three queues in the platform storage account carry hand-offs, each with one receiver and fixed senders, assigned per queue (the Storage Queue Data roles): `run` (`approvals` sends, `runner` receives), `inbound` (`bot` and `approvals` send, `workflows` receives) and `outbound` (`workflows` sends, `bot` receives). A message holds ids and, in `inbound`, one length-capped `untrusted_excerpt`.
 
@@ -145,11 +145,11 @@ A candidate becomes the owner of record when a person confirms it; until then th
 
 | Job | How |
 |---|---|
-| **Tap (R1)** | The bot validates the Bot Framework token, then uses the SDK's [user authorization](https://learn.microsoft.com/microsoft-365/agents-sdk/agent-oauth-configuration) to get the tapper's own token (an on-behalf-of exchange) and calls the Approval service with that token and the opaque request id; the service takes the approver from the token, never from the bot. If P3 shows that card actions cannot carry the token, R1 cards open the web page like R2 and R3 (the approval classes, defined in [security](06-security-and-governance.md)) |
+| **Tap** | The bot validates the Bot Framework token, then uses the SDK's [user authorization](https://learn.microsoft.com/microsoft-365/agents-sdk/agent-oauth-configuration) to get the tapper's own token (an on-behalf-of exchange) and calls the Approval service with that token and the opaque request id; the service takes the approver from the token, never from the bot. A tap declines or asks and never approves: a card cannot carry an Azure token, so plan cards open the web page |
 | **Reply** (Explain, Challenge, Teach, chat text) | The bot puts the sender's object id, the opaque id and the text, as an `untrusted_excerpt`, on the `inbound` queue. Respond reads it, caps replies per sender and accepts a Lesson only from a recipient of record for that scope |
 | **Message out** | `workflows` renders the message ([The send step](#the-send-step), below) and leaves it on the `outbound` queue; the bot posts it ([Teams delivery](#teams-delivery)). A proactive message needs the bot [installed for the person](https://learn.microsoft.com/microsoftteams/platform/graph-api/proactive-bots-and-messages/graph-proactive-bots-and-messages): the bot installs itself through Graph (`TeamsAppInstallation.ReadWriteSelfForUser.All`, its own installation only; the app must be in the organisation's app catalogue) |
 
-R2 and R3 cards carry one `Action.OpenUrl` button to the web page; nothing above R1 is approved in Teams.
+Plan cards carry one `Action.OpenUrl` button to the web page; nothing is approved in Teams.
 
 The Bot Service expects an answer within [10 to 15 seconds](https://learn.microsoft.com/azure/bot-service/bot-builder-howto-long-operations-guidance), so the bot acknowledges at once and finishes asynchronously. Teams cannot reach a private endpoint ([Learn](https://learn.microsoft.com/azure/bot-service/dl-network-isolation-concept)), so this endpoint is the one public route; [security](06-security-and-governance.md) says how it is secured.
 
@@ -157,7 +157,7 @@ The Bot Service expects an answer within [10 to 15 seconds](https://learn.micros
 
 ### Pages
 
-The `approvals` app renders the pages on the server, on its private endpoint and behind Entra sign-in ([security](06-security-and-governance.md#8-network)). `/ok/<requestId>` is the page of one request: it shows the exact plan from the stored plan record and takes the decision or, for any other card, shows the card's own words and answers; opening it records no decision. The other routes are the notebook (`/why/<id>`), a person's decisions (`/me/decisions`), the Lessons about their resources (`/me/notes`), Credential runs, with Undo and "Pause changes here" (`/me/activity`), the preferences (`/me/settings`), the kill switch (`/ops/pause`) and the page where the FinOps lead and the platform owner write, review and end a Credential together (`/ops/permissions`). The last two are for the platform owner and the FinOps lead only (the kill switch also for a security reviewer), and no message links to them.
+The `approvals` app renders the pages on the server, on its private endpoint and behind Entra sign-in ([security](06-security-and-governance.md#8-network)). `/ok/<requestId>` is the page of one request: it shows the exact plan from the stored plan record and takes the decision or, for any other card, shows the card's own words and answers; opening it records no decision. The other routes are the notebook (`/why/<id>`), a person's decisions (`/me/decisions`), the Lessons about their resources (`/me/notes`), the changes made as the approver (`/me/activity`), the preferences (`/me/settings`), the kill switch (`/ops/pause`) and the page that shows what Meternaut can change in Azure (`/ops/permissions`). The last two are for the platform owner and the FinOps lead only (the kill switch also for a security reviewer), and no message links to them.
 
 Each page reads through an `approvals` API that takes the person from the sign-in token, resolves their resources from `estate-model` and returns only records in that scope. A decision submitted on `/ok/<requestId>` is refused unless the token's object id is the designated approver or a named delegate and the token carries the class's authentication-context claim; a forwarded link authorises nobody. A decision, an Undo, a preference, a switch or a Credential is handled by the Approval service; any other page action (a note edited, a question asked) reaches Respond on `inbound`, in the bot's shape.
 
@@ -200,7 +200,6 @@ The Approval service writes one record per request, rendered from the stored pla
 | `quote` | Purchases: the stored calculate quote id, amount, currency, term, billing subscription, applied scope type and scopes |
 | `requestedBy` | The requester's object id; for R3 neither approver may be this person |
 | `approvals[]` | Per approver: object id, directory role, decision, time, route (card or page), satisfied authentication-context (`acrs`) claim |
-| `rollback` | The holder of the rollback grant (the approver; for a change under a Credential, each owner of record); the end of the undo window (a starting value of 24 hours for one-tap changes, set per recipe) |
 | `createdAt`, `expiresAt` | Timestamps |
 | `status` | Pending, approved, declined, expired or revoked, written only by the Approval service; consumption is a separate item |
 | `credentialId`, `evaluated` | Autopilot only: the credential and the facts the service read (management-group path, Policy state, owner object id, resource type, SKU, cost) |
@@ -210,9 +209,9 @@ R3 needs two approvals from two different directory objects, one in each of two 
 
 **One decision per approver.** Each approver records one decision against the plan; a second submit by the same person is refused, and the other approver's decision still counts. The short code on a card or page (eight characters from the plan hash) is a display reference, not a secret and not a token; the plan is consumed once, when the Runner runs it.
 
-**Undo.** Only an R1 change rolls back by itself when its check fails. For R2 and R3 a failed check stops, pauses the Credentials that cover the resource and asks the approver, who restores in one tap inside the undo window. That is a rollback grant for a change that can be reversed: held by the approver (for a change made under a Credential, by each owner of record, the first use consuming it) and usable once, because its use is its own item in `consumption`. A purchase cannot be undone. A stolen Teams session can undo a recent change inside the window; that only restores the approved earlier state ([what the safeguards do not stop](06-security-and-governance.md#12-what-each-safeguard-does-not-stop)).
+**Undo.** A failed check stops and tells the approver. Where Azure offers an undo, the approver makes it as a new change, with their own sign-in and rights. A purchase cannot be undone.
 
-**One contract for every verb.** A card button sends an opaque request id, a verb and, when it decides something, the plan code; at most an option key, a scope or a reason chip joins them. Only Challenge, Teach and the text boxes send words (bounded, screened, quoted as untrusted data); free text never approves. The [card manifest](../experience/cards/manifest.json) lists each verb's inputs, plan-code need and return. One contract covers every verb: who may tap (the card's addressee; for a decision, the designated approver or a named delegate, by directory object id); a repeat does nothing (the service answers "already recorded"); a verb is refused when its request is expired, changed, answered or paused, except the three that stay open whatever the record shows: Undo (checked against its own grant and window; a pulled switch holds the run until it is released, and the person is told), "I did not approve this" and "Talk to a person"; a tap returns one immediate response, then the outcome by updating the same message.
+**One contract for every verb.** A card button sends an opaque request id, a verb and, when it decides something, the plan code; at most an option key, a scope or a reason chip joins them. Only Challenge, Teach and the text boxes send words (bounded, screened, quoted as untrusted data); free text never approves. The [card manifest](../experience/cards/manifest.json) lists each verb's inputs, plan-code need and return. One contract covers every verb: who may tap (the card's addressee; for a decision, the designated approver or a named delegate, by directory object id); a repeat does nothing (the service answers "already recorded"); a verb is refused when its request is expired, changed, answered or paused, except the two that stay open whatever the record shows: "I did not approve this" and "Talk to a person"; a tap returns one immediate response, then the outcome by updating the same message.
 
 ```mermaid
 stateDiagram-v2
@@ -227,7 +226,7 @@ stateDiagram-v2
     Approved --> Consumed : the runner consumes it once
     Approved --> Expired : not used in time
     Approved --> Revoked : a kill switch, a changed plan or the approver's own report
-    Consumed --> Restored : the approver's rollback grant, once, inside the undo window
+    Consumed --> Restored : the approver's new approval
 ```
 
 ## 8. Privacy, retention and recovery

@@ -5,12 +5,12 @@
   "pageUrl": "https://meternaut.contoso.example/ok/r_Qx3Wa9",
   "challengeExample": "For example: the processor rose because of the month-end run",
   "teachExample": "For example: this database peaks at every month-end",
-  "headline": "My change to sql-orders did not do what I said it would",
+  "headline": "The change to sql-orders did not do what I said it would",
   "whatHappened": "I said that one size down was safe for sql-orders. At 10:40 the processor stayed above 85 % for ten minutes, so my safety check stopped and asked you whether to restore the old size. You said yes at 10:48.",
   "state": "restored. The database has been at its old size since 10:52, and I found no failed requests in that time. Restored means I checked; if I could not check, I would say unknown.",
-  "paused": "automatic changes on this database and in rg-orders, until a person has looked at them.",
+  "paused": "any standing permission on this database and in rg-orders, until a person has looked at it.",
   "whoUpdates": "Ibrahim, your platform owner, will write to you by 14:00 CET with what we learned. You can reach a person now with the button at the bottom.",
   "_scenario": "E2",
-  "notificationText": "My change to sql-orders did not do what I said it would",
+  "notificationText": "The change to sql-orders did not do what I said it would",
   "whyYouGetThis": "you gave your OK to the change this message is about."
 }

@@ -32,7 +32,7 @@ Nothing is ever approved by e-mail. The platform features named here are general
 | **Purchase request** | A billing owner or a partner contact | After the two approvers approve it | One screen, plain text | All that is needed to act without a call |
 | **Notice e-mails** | People an ownership transfer, the kill switch, an incident, an item parked or a new standing permission affects | When it happens; before a permission's first run | A few lines | What happened or starts, what is paused or covered, who writes next, a link to the page; no decision |
 
-The notice for a standing permission carries the words of the Teams message "A standing permission starts" (C17, [04](04-messages-and-cards.md)) and one link, Pause changes here, to the page. The day-14 notice for a parked item says: "I have parked it and asked your cover to confirm who owns it. I have not said that you did not answer."
+In the optional mode (not built), the notice for a standing permission carries the words of the Teams message "A standing permission starts" (C17, [04](04-messages-and-cards.md)) and one link, Pause changes here, to the page. The day-14 notice for a parked item says: "I have parked it and asked your cover to confirm who owns it. I have not said that you did not answer."
 
 ## The Monday letter
 
@@ -45,7 +45,7 @@ In this letter the system reports on itself, saying what it got wrong as plainly
 | What I learned | At most three bullets, each saying how well it is known: From Microsoft's documentation, Price confirmed, or Seen on your bills |
 | What moved in the bill | The movement, marked estimate until invoiced; the share of spend the system can explain (allocated or shared by a rule); the unallocated rest, its largest lines on the report card |
 | Decisions waiting | Counts per team with ages, never names; groups under five people are rolled up. A parked item goes to the owner's cover or the custodian queue (the team named for unowned estate) |
-| What I did | Changes run under a standing permission, and whether anyone undid them |
+| What I did | Changes made as an approver, and whether anyone undid them |
 | Wins, verified | Only Verified savings are called wins, credited to teams, never to people. Expected and Scenario figures live elsewhere |
 | What I got wrong | Misses first: a saving that came in lower, and how often the system was right against what it said |
 | What I need from you | At most three asks, including what more access would buy |

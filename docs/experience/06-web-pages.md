@@ -12,9 +12,9 @@ Eight pages share one address: six for owners and team leads, two for the platfo
 | **Notebook** `/why/<id>` | The message's recipient | The full reasoning: receipts, tool outputs, objections | An opaque id, from the Evidence row of the Approval page |
 | **My decisions** `/me/decisions` | Each person; team leads for their scope | What I decided, what ran, the outcome, Undo | Nothing: the person signs in and sees their own |
 | **What I know about your resources** `/me/notes` | Owners | Read, edit, expire and delete notes; do-not-touch marks | Nothing |
-| **What I did here** `/me/activity` | Owners | Runs under a standing permission, with Undo and "Pause changes here" | Nothing |
+| **What I did here** `/me/activity` | Owners | Every change made, or tried, for a plan that names the person as approver | Nothing |
 | **Settings** `/me/settings` | Each person | Channel, language, hours, budget, delegates, mutes, "Pause messages", export, delete | Nothing |
-| **Standing permissions** `/ops/permissions` | The FinOps lead and platform owner, together | Write, review and end a standing permission: dry run, evidence, expiry, step-down | Never: no message links here |
+| **Standing permissions** `/ops/permissions` | The platform owner and FinOps lead | What Meternaut can change in Azure: on its own, nothing. Read-only | Never: no message links here |
 | **The kill switch** `/ops/pause` | Platform owner, FinOps lead, security reviewers | Stop work at three levels | Never: no message links here |
 
 ## How the pages are built
@@ -88,7 +88,7 @@ Both approvers are asked at once, see the same plan and evidence, and answer on 
 
 **My decisions** is the person's History. It lists each decision, "No, leave it as it is" included, with when, what ran, the outcome in one of the three saving words with its price basis, and Undo where Azure offers one. It also lists each approval made in the person's name, so one they did not make is seen, and the Done card's "I did not approve this" reports it. A team lead sees the same page for their scope as counts, never a list of people, with small groups suppressed ([attention and trust](08-attention-and-trust.md)).
 
-**What I did here** lists every run under a standing permission: what changed, where, when, the result. Undo reverses the last change only, once, as Azure allows, and also pauses that standing permission until a person has reviewed it. "Pause changes here" stops standing permissions there, not suggestions. "Fewer like this", which only lowers how often it asks, is separate. Only a person resumes a paused permission.
+**What I did here** lists every change made, or tried, for a plan that names the person as approver: what changed, where, when, the result and what the check afterwards found. Each was made with that person's own rights. A run under a standing permission (optional mode, not built) would be listed too. "Pause changes here" would stop it there, not suggestions.
 
 **The notes page** shows everything the system has kept about the owner's resources.
 
