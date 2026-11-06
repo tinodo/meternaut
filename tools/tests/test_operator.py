@@ -274,6 +274,37 @@ class Arguments(unittest.TestCase):
         self.assertEqual((code, az.calls), (2, []))
         self.assertIn("more than 1000 bytes", err)
 
+    def test_the_cap_is_the_measured_limit_with_its_evidence_and_the_message_says_what_was_seen(self):
+        # A container group's request took 466,104 bytes of files (the probe of 2026-11-06) and refused 632,656 (the finished package of the cases app and the container script) with an internal server
+        # error. The 3,000,000 bytes that this constant held first were an assumption: Learn names no limit, and the first cases publish through the Operator found a real one.
+        self.assertEqual(op.MAX_FILE_BYTES, 480_000)
+        self.assertEqual((op.FILES_TAKEN_BYTES, op.FILES_REFUSED_BYTES), (466_104, 632_656))
+        self.assertEqual(op.FILES_TAKEN_BYTES, 400_000 + 44_967 + 21_137, "the file of the size test, the usage app's lock and the probe's script")
+        self.assertEqual(op.FILES_REFUSED_BYTES, 614_068 + 18_588, "the finished package of the cases app and the container script")
+        self.assertLessEqual(op.FILES_TAKEN_BYTES, op.MAX_FILE_BYTES, "what is known to work is within the cap, so the probe is not refused")
+        self.assertLess(op.MAX_FILE_BYTES, op.FILES_REFUSED_BYTES, "what was refused is above it")
+        az = FakeAz()
+        code, _, err = clean_run(az, files={"size-test": b"x" * (op.MAX_FILE_BYTES + 1)})
+        self.assertEqual((code, az.calls), (2, []))
+        for words in ("more than 480000 bytes", "a request with 466104 bytes of files was taken", "one with 632656 was refused with an internal server error (2026-11-06)",
+                      "built in the container from sources"):
+            self.assertIn(words, err, words)
+        self.assertNotIn("3000000", err)
+
+    def test_files_that_are_exactly_at_the_cap_are_taken(self):
+        script_bytes = len(b"echo hi\n")
+        with tempfile.TemporaryDirectory() as tmp:
+            script, big = Path(tmp) / "probe.sh", Path(tmp) / "size-test"
+            script.write_bytes(b"echo hi\n")
+            big.write_bytes(b"x" * (op.MAX_FILE_BYTES - script_bytes))
+            args = op.build_parser().parse_args(["run", "--resource-group", GROUP, "--name", NAME, "--subnet-id", SUBNET, "--identity-id", IDENTITY, "--image", IMAGE, "--script", str(script),
+                                                 "--secret-file", f"size-test={big}"])
+            files = op.read_files(args)
+            self.assertEqual(sum(len(content) for content in files.values()), op.MAX_FILE_BYTES)
+            big.write_bytes(b"x" * (op.MAX_FILE_BYTES - script_bytes + 1))
+            with self.assertRaises(op.Problem):
+                op.read_files(args)
+
     def test_the_script_that_cannot_be_read_is_refused(self):
         az = FakeAz()
         err = io.StringIO()
@@ -2119,9 +2150,10 @@ class PublishingPhaseOneRecord(unittest.TestCase):
             self.assertIn(words, self.section, words)
 
     def test_it_says_how_the_usage_package_is_built_which_flag_is_tried_second_and_why_that_is_safe(self):
-        for words in ("The cases app's package is about 2 MB and rides in the container's secret volume (the tool refuses more than 3,000,000 bytes of files)", "The usage app's package is about 24 MB and cannot",
+        for words in ("Neither package rides in the request", "the usage app's package is 7.0 MB zipped, and the cases app's is 614,068 bytes zipped", "this record first said about 2 MB for it, which was an estimate and was wrong",
+                      "So each is built inside the container from the hash-locked lock file of its app",
                       "hash-locked [`src/usage-functions/requirements.txt`](../../src/usage-functions/requirements.txt)", "[`tools/build-function-app.sh`](../../tools/build-function-app.sh)",
-                      "`--only-binary=:all: --require-hashes`", "Only the lock file rides in the request", "the image has Python 3.12", "Whether the build works from 3.12 was the main unknown of this phase, and the probe of 2026-11-06 answered it: it works, and without the flag",
+                      "`--only-binary=:all: --require-hashes`", "Only the lock file rides in the request of the probe", "the image has Python 3.12", "Whether the build works from 3.12 was the main unknown of this phase, and the probe of 2026-11-06 answered it: it works, and without the flag",
                       "(inferred from pip 25.0.1, and the probe confirmed it)",
                       "pip is told `--python-version 3.13`", "so the probe tries that first", "`--ignore-requires-python`", "The flag is safe only because every version is pinned and every file is checked against its hash",
                       "A failure of the network, of a certificate or of a hash is not tried again with the flag"):
@@ -2322,11 +2354,15 @@ class PublishingPhaseTwoRecord(unittest.TestCase):
     def test_it_says_what_the_runner_and_the_container_do_in_each_action_and_what_stays_on_the_runner(self):
         table = self.section.split("**The steps of the two actions**")[1].split("\n\n")[1]
         for words in ("| `recording` (usage app, Flex Consumption) |", "Packs the app's **sources**: `function_app.py`, `host.json`, the hash lock `requirements.txt` and the `usage` package, about 35 KB zipped, with no libraries, tests or caches",
+                      "Checks the sources, the build script and the container script against the cap of the tool",
                       "makes the container group `op-publish-<run id>` with the sources, the build script and the container script in its secret volume",
-                      "runs `az functionapp deployment source config-zip --build-remote false`, three attempts a minute apart",
-                      "| `cases` (cases app, Basic plan) |", "Builds the **finished package** with its libraries (about 2 MB) and checks that it, with the container script, is within the 3,000,000 bytes that the tool takes",
-                      "posts the package to the deployment site's `api/zipdeploy` with `curl` (the bearer on standard input), five attempts a minute apart, HTTP 200 or 202 accepted"):
+                      "builds the libraries from the lock with the pip command of the build script (under the image's Python 3.12), zips the package, and runs `az functionapp deployment source config-zip --build-remote false`, three attempts a minute apart",
+                      "| `cases` (cases app, Basic plan) |", "Packs the app's **sources**, as for the usage app: `function_app.py`, `host.json`, the hash lock `requirements.txt` and the `cases` package, 206,467 bytes zipped",
+                      "Checks the sources, the build script and the container script against the cap of the tool. Finds the Operator",
+                      "asks for an Azure Resource Manager token as the deploy identity, builds the libraries from the lock with the pip command of the build script (under the image's Python 3.12), "
+                      "zips the package (614,068 bytes on the runner, more than a request takes), and posts the built package to the deployment site's `api/zipdeploy` with `curl` (the bearer on standard input), five attempts a minute apart, HTTP 200 or 202 accepted"):
             self.assertIn(words, table, words)
+        self.assertNotIn("finished package** with its libraries", table, "the runner builds no libraries of either app any more")
         for words in ("Everything after the publish stays on the runner: the list of the functions, the health check of the cases app and the summaries.", "and the health check and the list move inside in phase 3",
                       "so `recording` signs in once more before the list of its functions"):
             self.assertIn(words, self.section, words)
@@ -2343,15 +2379,20 @@ class PublishingPhaseTwoRecord(unittest.TestCase):
     def test_it_says_what_the_container_script_checks_in_which_order_and_what_its_exit_codes_mean(self):
         paragraph = self.section.split("**The container script.**")[1].split("\n\n")[0]
         for words in ("takes everything from its environment, checks it before anything runs (nothing is evaluated and no value is printed back)", "ends with `publish-done: exit code N`",
-                      "The container stays 20 seconds after the work",                       "the deploy identity signs in, which is the first `az` call (three tries)", "for the usage app a token for the App Service resource is fetched at once, while the sign-in's assertion, "
-                      "which lives five minutes, is fresh, because Flex Consumption's `config-zip` asks Microsoft Entra for one (read in the Azure CLI's development source, not in 2.92.0, and not run; a failure is said and does not stop the run)",
+                      "The container stays 20 seconds after the work", "the deploy identity signs in, which is the first `az` call (three tries)",
+                      "the token that the publish needs is fetched at once, while the sign-in's assertion, which lives five minutes, is fresh",
+                      "for the usage app a token for the App Service resource, because Flex Consumption's `config-zip` asks Microsoft Entra for one (read in the Azure CLI's development source, not in 2.92.0, and not run; "
+                      "a failure is said and does not stop the run, and the first usage run had it and passed)",
+                      "for the cases app a token for Azure Resource Manager, which is the bearer of the post (a failure stops the run)",
                       "**both names of the app must resolve to a private address** (three tries each)",
-                      "a public path would prove nothing", "A string that looks like a token is hidden in anything a command said", "the work folder, with the state of the Azure CLI, is deleted at the end",
+                      "a public path would prove nothing", "then the package is built from the sources, the same way for both apps (pip made by `ensurepip` in a work folder, the build script in the Operator's mode, two attempts)",
+                      "then the publish of its kind", "A string that looks like a token is hidden in anything a command said", "the work folder, with the state of the Azure CLI, is deleted at the end",
                       "The exit code is 0 when the code was published, 1 when the publish failed after its attempts, 2 when the input was refused and nothing was run, and 3 when the container could not do it"):
             self.assertIn(words, paragraph, words)
-        self.assertLess(paragraph.index("the size of the file in the volume is compared"), paragraph.index("the deploy identity signs in"))
-        self.assertLess(paragraph.index("the deploy identity signs in"), paragraph.index("a token for the App Service resource is fetched at once"))
-        self.assertLess(paragraph.index("a token for the App Service resource is fetched at once"), paragraph.index("both names of the app must resolve"))
+        order = ("the size of the file in the volume is compared", "the deploy identity signs in", "the token that the publish needs is fetched at once", "**both names of the app must resolve",
+                 "then the package is built from the sources", "then the publish of its kind")
+        for earlier, later in zip(order, order[1:]):
+            self.assertLess(paragraph.index(earlier), paragraph.index(later), f"{earlier} comes before {later}")
 
     def test_it_says_how_long_the_groups_are_given_and_why_and_what_the_first_run_on_an_estate_needs(self):
         time = self.section.split("**The time.**")[1].split("\n\n")[0]
@@ -2365,22 +2406,63 @@ class PublishingPhaseTwoRecord(unittest.TestCase):
                       "the order is `recording`, `cases`, `operator`, and then `recording` and `cases` again, the second round publishing. The Hub summaries say so."):
             self.assertIn(words, first, words)
 
-    def test_it_says_what_is_not_verified_and_that_nothing_has_run_in_azure(self):
+    def test_it_says_what_the_first_runs_showed_and_what_of_the_cases_app_is_known_from_them(self):
+        paragraph = self.section.split("**What the first runs showed**")[1].split("\n\n")[0]
+        for words in ("(2026-11-06, UTC, as the session that ran the Hub reported them)", "`recording` (19:12 to 19:23) published the usage app from the Operator at the first attempt, in 169 seconds",
+                      "the sign-in as the deploy identity worked, the token for the App Service resource was fetched, both names of the app resolved to private addresses",
+                      "the image's Azure CLI was 2.92.0, `ensurepip` made pip 25.0.1", "the sources were 15 files, the build gave 914 files and 7.0 MB zipped in 8 seconds",
+                      "`config-zip` published the package, and the group was deleted",
+                      "the path through the private endpoint, the sign-in as the deploy identity, and Flex Consumption's `config-zip` from the image's Azure CLI are verified for the usage app",
+                      "`cases` failed twice (19:25 and 19:31) when the container group was made, with the internal server error above: no container ran and nothing was published",
+                      "This section describes the cases app as it is built since: from sources, like the usage app."):
+            self.assertIn(words, paragraph, words)
+        self.assertNotRegex(paragraph, r"\b[0-9]{11}\b", "the ids of runs belong in the changelog, not in the decision record")
+        self.assertNotIn("tracking", paragraph, "nor the ids that Azure gave to the failed requests")
+
+    def test_it_says_what_the_size_of_a_request_is_how_it_was_measured_and_that_the_first_figure_was_an_assumption(self):
+        paragraph = self.section.split("**The size of a request.**")[1].split("\n\n")[0]
+        for words in ("takes only a few hundred kilobytes of files, and the tool refuses more than 480,000 bytes of them (`MAX_FILE_BYTES` in [`tools/operator-run.py`](../../tools/operator-run.py), with the evidence next to it)",
+                      "That is a measured limit and not a documented one: Learn names none for a secret volume or for the request",
+                      "the 3,000,000 bytes that the tool held first were an assumption, which was wrong",
+                      "a request with **466,104 bytes** of files was taken (the probe of phase 1: the file of 400,000 bytes, the usage app's lock of 44,967 and the probe's script of 21,137)",
+                      "a request with **632,656 bytes** (the cases app's finished package of 614,068 bytes and the container script of 18,588) was refused twice, at 19:25 and at 19:31 UTC, with "
+                      "\"(InternalServerError) Encountered an internal server error\" when the group was made",
+                      "The limit lies between the two, and where is not known.",
+                      "The cap of 480,000 is a round number just above the largest total that is known to work, so that the probe is not refused.",
+                      "The cases app's package had been taken for about 2 MB on an estimate, and the first build on the runner said 614,068 bytes: the figure was wrong wherever it was written.",
+                      "So neither package rides in the request.", "about 234 KB of files for the cases app (the largest) and about 62 KB for the usage app at the time of writing",
+                      "the runner counts them against the cap before it looks for the Operator, with the evidence in its message"):
+            self.assertIn(words, paragraph, words)
+
+    def test_the_figures_of_the_record_are_the_ones_that_the_tool_holds(self):
+        tool = text("tools/operator-run.py")
+        held = {name: int(re.search(rf"^{name} = ([0-9_]+)", tool, re.M).group(1).replace("_", "")) for name in ("FILES_TAKEN_BYTES", "FILES_REFUSED_BYTES", "MAX_FILE_BYTES")}
+        paragraph = self.section.split("**The size of a request.**")[1].split("\n\n")[0]
+        self.assertEqual(held, {"FILES_TAKEN_BYTES": 466104, "FILES_REFUSED_BYTES": 632656, "MAX_FILE_BYTES": 480000})
+        for name, figure in held.items():
+            self.assertIn(f"{figure:,}", paragraph, f"{name} is written in the record")
+        self.assertLess(held["FILES_TAKEN_BYTES"], held["MAX_FILE_BYTES"], "the cap lets the largest request that is known to work through")
+        self.assertLess(held["MAX_FILE_BYTES"], held["FILES_REFUSED_BYTES"], "and stops what was refused")
+        self.assertEqual(held["FILES_TAKEN_BYTES"], 400_000 + 44_967 + 21_137, "the figure that was taken is the probe of 2026-11-06 as it was sent: the size test, the usage lock and the probe's script")
+
+    def test_it_says_what_is_not_verified_and_that_the_usage_app_is_the_one_that_ran(self):
         part = self.section.split("**What is not verified.**")[1].split("**What a person runs, in order.**")[0]
-        for words in ("Nothing of this phase has run in Azure.", "The first run, end to end: that the container reaches each deployment site through the private endpoint with the token of the deploy identity",
-                      "The probe of phase 1 sent only a `GET` without a sign-in.", "Flex Consumption's `config-zip` from the container against the runner's.",
-                      "The image's Azure CLI is 2.92.0 as the session that ran the Hub reported it, the runner's can differ, and nothing here compared the two. The container's first lines print its CLI version",
-                      "That `config-zip` asks for a token for the App Service resource, which is why the container fetches one early, was read in the CLI's development source by a reviewer and not in 2.92.0.",
-                      "The size of the request. The cases package of about 2 MB travels in the container group's request as a secret volume, about 2.7 MB after base64.",
-                      "The largest request that is known to work is the probe's file of 400,000 bytes, and Learn names no limit for a secret volume or for the request",
-                      "If Azure refuses it, the way out is the one that the step's error names: build the cases app in the container from its sources, as the usage app is (the switch for it exists).",
-                      "How long it takes, and whether a deployment through the private endpoint is slower than one from the runner.",
+        for words in ("The usage app's publish has run in Azure (above), and the cases app's has not.",
+                      "The first `cases` publish through the Operator, after this fix: the container's build of the cases app and the post of the built package to the deployment site.",
+                      "The lock of the cases app holds three libraries (`azure-functions`, `markupsafe` and `werkzeug`), and each is in the usage lock at the same version and with the same hashes, and neither lock has an environment marker",
+                      "nothing has built it alone there", "The `curl` command that posts the package got HTTP 200 from the runner on 2026-11-06 at 15:13", "and has not run from the container.",
+                      "The exact limit of a request, which lies between 466,104 and 632,656 bytes of files.", "a request of the size of the cap has not been made",
+                      "The requests of the two apps are far below it (about 62 KB and about 234 KB).",
+                      "How long the cases publish takes.",
                       "the zips of two builds differ in file times, so the test compares the members and the pip words, not the bytes"):
             self.assertIn(words, part, words)
+        for answered in ("Nothing of this phase has run in Azure.", "The size of the request. The cases package of about 2 MB", "build the cases app in the container from its sources, as the usage app is (the switch for it exists)"):
+            self.assertNotIn(answered, part, answered)
 
     def test_it_says_the_order_a_person_runs_for_the_real_estate_and_for_a_new_one_and_the_cost(self):
         order = self.section.split("**What a person runs, in order.**")[1].split("\n\n**Cost.**")[0]
-        for words in ("On the real estate, where the Operator exists and the apps are public:", "1. `recording`, and then `cases`. Each publishes from inside the network.",
+        for words in ("On the real estate, where the Operator exists and the apps are public:", "1. `recording`, and then `cases`. `cases` is the one that has not published from the Operator yet.",
+                      "`recording` is run again because the container script changed for both kinds", "Each publishes from inside the network.",
                       "2. Read the list of the functions in each summary and the health answer of the cases app (both are still made from the runner), and open the console once.",
                       "On a new estate: `recording`, `cases`, `operator`, and then `recording` and `cases` again. Phase 3 follows when both have passed."):
             self.assertIn(words, order, words)
@@ -2394,16 +2476,20 @@ class PublishingPhaseTwoRecord(unittest.TestCase):
     def test_the_status_the_table_of_the_phases_the_order_of_the_work_and_the_not_checked_say_the_same(self):
         status = self.page.split("\n")[2]
         self.assertIn("The two actions that deploy the apps, `recording` and `cases`, now publish the code from inside the network, in the Operator, as the deploy identity "
-                      "([phase 2](#publishing-code-to-the-private-apps-phase-2): built, not run yet; the apps stay public).", status)
+                      "([phase 2](#publishing-code-to-the-private-apps-phase-2): the usage app was published so on the real estate on 2026-11-06, and the cases app, whose first two attempts were refused because "
+                      "its finished package was too big for a request, is built in the container from its sources since and has not run again; the apps stay public).", status)
         phase_1 = self.page.split("## Publishing code to the private apps: phase 1")[1].split("\n## ")[0]
-        self.assertIn("so that the path through the private endpoint is proved with nothing to lose | built on 2026-11-06, not run yet ([phase 2](#publishing-code-to-the-private-apps-phase-2)) |", phase_1)
+        self.assertIn("so that the path through the private endpoint is proved with nothing to lose | the usage app was published so on 2026-11-06; the cases app is built from sources since its first attempts "
+                      "were refused, and has not run again ([phase 2](#publishing-code-to-the-private-apps-phase-2)) |", phase_1)
         self.assertNotIn("proved with nothing to lose | later |", self.page)
         order = self.page.split("## The order of the work")[1].split("\n## ")[0]
-        self.assertIn("the publish steps through the Operator, still with the apps public (built on 2026-11-06, not run yet: [phase 2](#publishing-code-to-the-private-apps-phase-2)); and then `Disabled` for each app", order)
+        self.assertIn("the publish steps through the Operator, still with the apps public (the usage app was published so on 2026-11-06, and the cases app has not run since its fix: "
+                      "[phase 2](#publishing-code-to-the-private-apps-phase-2)); and then `Disabled` for each app", order)
         not_checked = self.page.split("## Not checked")[1].split("\n## ")[0]
-        self.assertIn("Phase 2 of publishing code ([above](#publishing-code-to-the-private-apps-phase-2)): built and tested against stand-ins; it has not run in Azure. Open: the first run through the private endpoints, "
-                      "Flex Consumption's `config-zip` from the image's Azure CLI against the runner's, the size of a request that carries a secret volume of about 2 MB, how long the publish takes", not_checked)
-        self.assertIn("(the package route: phase 2 of it is built and has not run, see [the section](#publishing-code-to-the-private-apps-phase-2))", self.page)
+        self.assertIn("Phase 2 of publishing code ([above](#publishing-code-to-the-private-apps-phase-2)): the usage app was published through the Operator on 2026-11-06, and the cases app was not: its first two attempts "
+                      "were refused because a request took 632,656 bytes of files, and it is built in the container from sources since. Open: the first `cases` publish through the Operator, the exact limit of a request "
+                      "(between 466,104 and 632,656 bytes of files), how long the cases publish takes", not_checked)
+        self.assertIn("(the package route: phase 2 of it is built, ran for the usage app and has not run for the cases app since its fix, see [the section](#publishing-code-to-the-private-apps-phase-2))", self.page)
         self.assertIn("Read again on 2026-11-06 for phase 2 of publishing code:", self.page.split("## Sources")[1])
         self.assertLess(self.page.index(self.HEADING), self.page.index("## Reading telemetry when the component is private"))
         self.assertLess(self.page.index("## Publishing code to the private apps: phase 1"), self.page.index(self.HEADING))
@@ -2461,6 +2547,107 @@ class PublishingPhaseTwoRecord(unittest.TestCase):
         self.assertLess(entry.index("**What changed.**"), entry.index("**What was checked.**"))
         self.assertLess(entry.index("**What was checked.**"), entry.index("**Not checked, and why it matters.**"))
         self.assertLess(entry.index("**Not checked, and why it matters.**"), entry.index("**What a person has to do, in order.**"))
+
+
+class TheCasesAppIsBuiltInTheContainerRecord(unittest.TestCase):
+    """CHANGELOG.md: the entry about the two failed `cases` runs says what failed, why, the measured limit, what changed, what was checked, what was not, and what a person runs; the older entries stay below it."""
+
+    HEADING = "## The cases app is built in the container, and a request takes at most 480,000 bytes of files (built, not yet run) — 2026-11-06"
+
+    def setUp(self):
+        self.changelog = text("CHANGELOG.md")
+        self.assertIn(self.HEADING, self.changelog)
+        self.entry = self.changelog.split(self.HEADING)[1].split("\n## ")[0]
+
+    def test_it_says_what_failed_with_the_runs_the_error_and_the_sizes_and_what_ran_well(self):
+        part = self.entry.split("**What failed.**")[1].split("**Why.**")[0]
+        for words in ("The Hub action `recording` published the usage app from the Operator at the first attempt (run 42277631207, 19:12 to 19:23 UTC", "in 169 seconds",
+                      "the sign-in as the deploy identity worked, the token for the App Service resource was fetched, both names of the app were private", "the image's Azure CLI was 2.92.0, `ensurepip` made pip 25.0.1",
+                      "the 15 files of sources became 914 files and 7.0 MB zipped in 8 seconds", "`config-zip` published the package, and the group was deleted",
+                      "The Hub action `cases` failed twice (run 42279231858 at 19:25 and run 42279986261 at 19:31), at the step that makes the container group",
+                      "`error: the container group could not be made: ERROR: (InternalServerError) Encountered an internal server error`",
+                      "632,656 bytes of files: the finished package of 614,068 bytes and the container script of 18,588", "No container ran and nothing was published."):
+            self.assertIn(words, part, words)
+
+    def test_it_says_why_the_old_figure_was_wrong_and_what_range_was_measured(self):
+        part = self.entry.split("**Why.**")[1].split("**What changed.**")[0]
+        for words in ("The tool refused more than 3,000,000 bytes of files, and that figure was an assumption of the phase-2 build: Learn names no limit for a secret volume or for the request (read on 2026-11-06). It was wrong.",
+                      "**466,104 bytes** of files (the probe of phase 1 at 16:37: the file of 400,000 bytes, the usage app's lock of 44,967 and the probe's script of 21,137",
+                      "the \"about 475 KB\" that the session that coordinates the work gave is this total, added up exactly", "the **632,656 bytes** that were refused twice",
+                      "Where it lies between the two is not known.", "The cases app's package had also been taken for about 2 MB, on an estimate",
+                      "the first build on the runner said 614,068 bytes, so the figure was wrong wherever it was written",
+                      "its request carries sources and scripts only (about 62 KB), and its package of 7.0 MB zipped could not ride in a request in any case"):
+            self.assertIn(words, part, words)
+
+    def test_the_figures_of_the_entry_are_the_ones_that_the_tool_holds(self):
+        tool = text("tools/operator-run.py")
+        for name in ("FILES_TAKEN_BYTES", "FILES_REFUSED_BYTES", "MAX_FILE_BYTES"):
+            figure = int(re.search(rf"^{name} = ([0-9_]+)", tool, re.M).group(1).replace("_", ""))
+            self.assertIn(f"{figure:,}", self.entry, f"{name} is written in the entry")
+        self.assertIn("(13,896 bytes above it)", self.entry)
+        self.assertEqual(480_000 - 466_104, 13_896)
+
+    def test_it_says_what_changed_in_the_tool_the_container_script_the_hub_and_the_tests(self):
+        part = self.entry.split("**What changed.**")[1].split("**What was checked.**")[0]
+        for words in ("**The tool** ([`tools/operator-run.py`](tools/operator-run.py)).", "The cap on the total bytes of the secret files is 480,000, a named constant (`MAX_FILE_BYTES`) with the two measured figures "
+                      "(`FILES_TAKEN_BYTES` and `FILES_REFUSED_BYTES`) and the date next to it", "the error message says what was seen", "so that what is bigger has to be built in the container from sources",
+                      "**The cases app is built in the container, as the usage app is.**", "`FUNCTION_APP_SOURCES_ONLY=1` mode (52 files, 206,467 bytes zipped)", "about 234 KB of files",
+                      "asks for the Azure Resource Manager token as the deploy identity right after the sign-in (the sign-in's assertion lives five minutes; a failure stops the run before the names and the build)",
+                      "`FUNCTION_APP_BUILD_IN_OPERATOR=1`, the hash lock `src/case-functions/requirements.txt`, the same flags, no `--ignore-requires-python`",
+                      "posts the built package from the work folder to the deployment site's `api/zipdeploy` with `curl`, as before", "The built file never rides in a request, so no request limit applies to it.",
+                      "one pip command and one path exist; the parity tests cover both apps now",
+                      "\"Build the cases app's package\" is now \"Pack the cases app's sources for the Operator\"",
+                      "Both pack steps, the cases one and the usage one, add up the sources, the build script and the container script and stop when the total is above 480,000 bytes, before the Operator is looked for, "
+                      "with a message that names the cap and the evidence", "The names of the other steps, their order, the limits of time, the first-run behaviour and the messages are unchanged.",
+                      "a request of exactly 480,000 bytes is taken, one byte more is refused", "one pins that the lock of the cases app is a part of the usage lock",
+                      "The phase-2 entry below keeps what it said when it was written, with two notes where a sentence of it is no longer true."):
+            self.assertIn(words, part, words)
+
+    def test_it_says_what_was_checked_and_which_flag_the_cases_lock_needs(self):
+        part = self.entry.split("**What was checked.**")[1].split("**Not checked, and why it matters.**")[0]
+        for words in ("The whole suite of the tools passes", "against 1,151 before this change", "the documents check (strict) and the workflow lint (0 findings)",
+                      "Git's bash against stand-ins for `az`, `python3`, `pip`, `curl`, `getent`, `timeout` and `sleep`",
+                      "the Azure Resource Manager token of `cases` is fetched right after the sign-in and a failure of it stops the run before the names",
+                      "the built zip (and not the sources) is what `curl` and `config-zip` take",
+                      "a total of exactly 480,000 bytes passes, one more stops with the message, and the figures of the incident (614,068 and 18,588) stop",
+                      "its three libraries (`azure-functions` 2.3.0, `markupsafe` 3.0.4 and `werkzeug` 3.1.9) are in the usage lock at the same version and with the same hashes, and neither lock has an environment marker",
+                      "with `--python-version 3.13` and without `--ignore-requires-python` (900 files in the probe, 914 in the publish), and no other flag is needed",
+                      "No template changed, so no Bicep build was run."):
+            self.assertIn(words, part, words)
+
+    def test_it_says_what_is_not_checked_and_the_order_a_person_runs(self):
+        part = self.entry.split("**Not checked, and why it matters.**")[1].split("**What a person has to do, in order.**")[0]
+        for words in ("The first `cases` publish through the Operator is the open one.", "Nothing has built the cases libraries alone in the container",
+                      "the same `curl` command got HTTP 200 from the runner at 15:13 on 2026-11-06, and from the container the deployment site answered 401 to a `GET` without a sign-in",
+                      "The exact limit of a request, between 466,104 and 632,656 bytes of files, is not known", "no request of the size of the cap has been made",
+                      "How long the cases publish takes is not known (the usage app's took 169 seconds).", "not on the Linux runner that runs the suite as the Hub's first step", "Info-ZIP, which stores directory entries"):
+            self.assertIn(words, part, words)
+        order = self.entry.split("**What a person has to do, in order.**")[1]
+        for words in ("No hand step.", "(1) After this change is merged, run **`recording`** and then **`cases`**.", "`cases` is the one that has not published from the Operator yet; `recording` is run again because the container script is shared and changed for both kinds.",
+                      "(2) Read the list of the functions in each summary (six and four) and the health answer of the cases app, both still made from the runner, and open the console once.",
+                      "the order on a new estate is `recording`, `cases`, `operator`, and then `recording` and `cases` again", "Phase 3, which makes the apps private and moves the health check and the list of the functions inside, follows when both have passed."):
+            self.assertIn(words, order, words)
+        self.assertLess(order.index("**`recording`**"), order.index("**`cases`**"))
+        for first, second in (("**What failed.**", "**Why.**"), ("**Why.**", "**What changed.**"), ("**What changed.**", "**What was checked.**"), ("**What was checked.**", "**Not checked, and why it matters.**"),
+                              ("**Not checked, and why it matters.**", "**What a person has to do, in order.**")):
+            self.assertLess(self.entry.index(first), self.entry.index(second))
+
+    def test_it_holds_no_placeholder_and_no_id_and_sits_above_the_entries_that_it_corrects(self):
+        self.assertNotIn("@@", self.entry, "no placeholder is left")
+        self.assertNotRegex(self.entry, r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}", "no id of the tenant, the subscription or an object, and none of the tracking ids that Azure gave")
+        self.assertNotIn("func-meternaut-", self.entry, "no name of a real app")
+        below = ("## The code of both function apps is published from inside the network, in the Operator (built, not yet run) — 2026-11-06",
+                 "## The private endpoints of the two function apps are waited for before their code is published (built, not yet run) — 2026-11-06",
+                 "## The Event Hubs namespace is private-only on the real estate (deployed and proven)", "## Publishing code to the private apps, phase 1")
+        positions = [self.changelog.index(title) for title in below]
+        self.assertEqual(positions, sorted(positions), "the older entries keep their order")
+        self.assertLess(self.changelog.index(self.HEADING), positions[0])
+
+    def test_the_two_sentences_of_the_phase_2_entry_that_are_no_longer_true_say_so(self):
+        older = self.changelog.split("## The code of both function apps is published from inside the network, in the Operator (built, not yet run) — 2026-11-06")[1].split("\n## ")[0]
+        for words in ("within the 3,000,000 bytes that the tool takes (that figure was an assumption and it was wrong, and the step was replaced: see the entry above)",
+                      "which is one switch) (answered by the first runs: Azure did not take it, the package was 614,068 bytes and not about 2 MB, and that way out was taken: see the entry above);"):
+            self.assertIn(words, older, words)
 
 
 class BootstrapOperatorSection(unittest.TestCase):

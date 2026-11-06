@@ -29,8 +29,9 @@ Facts that shaped it (Microsoft Learn; the Operator's record has the sources):
   - A secret volume is held in memory (tmpfs) and is read-only. The values travel in the body of the request, which the tool writes to a file that only its user can
     read and removes at the end. Nothing secret is ever on a command line of az, and the values of --secure-env are never printed: they are taken out of every line
     that the tool prints, including what az and the container say.
-  - ARM request limits: the tool refuses more than 3,000,000 bytes of files, a limit of its own that keeps the request below Azure's; what Azure accepts is measured by
-    the probe (operator/probe.sh) with a file of a stated size.
+  - A request takes only a few hundred kilobytes of files: the tool refuses more than MAX_FILE_BYTES (480,000, with the evidence next to it: a request with 466,104 bytes of
+    files was taken, and one with 632,656 was refused with an internal server error). What is bigger is fetched or built inside the container, from the sources and the
+    scripts that do ride in the request.
 
 The image is a reference that cannot change, registry/name@sha256:<64 hex characters>. A tag can move; --allow-tag accepts registry/name:tag for the probe only.
 """
@@ -68,7 +69,16 @@ SUBNET_ID = re.compile(r"^/subscriptions/[0-9a-f-]{36}/resourceGroups/[A-Za-z0-9
 IDENTITY_ID = re.compile(r"^/subscriptions/[0-9a-f-]{36}/resourceGroups/[A-Za-z0-9._()-]{1,90}/providers/Microsoft\.ManagedIdentity/userAssignedIdentities/[A-Za-z0-9_-]{1,128}$", re.I)
 NOT_FOUND = re.compile(r"ResourceNotFound|ContainerGroupNotFound|NotFound|\b404\b", re.I)
 MIN_SECRET_LENGTH = 8
-MAX_FILE_BYTES = 3_000_000
+# The most bytes of files (the script and every --secret-file, before base64) that one container group's request may carry. It is a measured limit and not a documented one: Learn names no limit for a
+# secret volume or for the request, and an assumption of 3,000,000 bytes, which this constant held first, was wrong. What was seen, on 2026-11-06 (UTC, from the Hub runs):
+#   FILES_TAKEN_BYTES    466,104 bytes of files were taken: the probe of the Operator (a file of 400,000 bytes, the usage app's lock of 44,967 and the probe's own script of 21,137)
+#   FILES_REFUSED_BYTES  632,656 bytes of files were refused, twice, with "(InternalServerError) Encountered an internal server error" when the group was made: the finished package of the cases app (614,068
+#                        bytes zipped) and the script of the container (18,588)
+# The real limit lies between the two and is not known. The cap is a round number just above the largest total that is known to work, so that the probe still runs, and no request is ever sent that
+# is not at most about that size. Anything bigger is built in the container from the sources and the scripts that do ride in the request (operator/publish.sh).
+FILES_TAKEN_BYTES = 466_104
+FILES_REFUSED_BYTES = 632_656
+MAX_FILE_BYTES = 480_000
 MIN_NAME, MAX_NAME = 3, 63
 MIN_PREFIX = 4
 LOG_LINES_IN_SUMMARY = 300
@@ -312,7 +322,8 @@ def read_files(args) -> dict[str, bytes]:
         if not FILE_NAME.match(name):
             raise Problem(f"a file of the secret volume is named with letters, digits and . _ -, not {name!r}", 2)
     if sum(len(content) for content in files.values()) > MAX_FILE_BYTES:
-        raise Problem(f"the files are more than {MAX_FILE_BYTES} bytes; this tool refuses that, so that the request stays below Azure's limit", 2)
+        raise Problem(f"the files are more than {MAX_FILE_BYTES} bytes; this tool refuses that: a request with {FILES_TAKEN_BYTES} bytes of files was taken, and one with {FILES_REFUSED_BYTES} was refused "
+                      "with an internal server error (2026-11-06), so what is bigger has to be built in the container from sources", 2)
     return files
 
 

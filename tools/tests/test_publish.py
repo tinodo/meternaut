@@ -1,3 +1,5 @@
+import hashlib
+import io
 import json
 import os
 import re
@@ -92,6 +94,11 @@ case "$1 $2" in
       for number in 1 2 3 4 5 6 7 8 9 10 11 12; do echo "WARNING: line $number of a long error" >&2; done
       exit 1
     fi
+    previous=""
+    for argument in "$@"; do
+      if [ "$previous" = --src ] && [ -n "${FAKE_POSTED:-}" ]; then cp "$argument" "$FAKE_POSTED"; fi
+      previous=$argument
+    done
     echo '{"id": "a long document that --output none keeps out of the log"}'
     exit 0 ;;
   "version --query") echo "${FAKE_AZ_VERSION:-2.92.0}"; exit 0 ;;
@@ -116,7 +123,8 @@ exit 2
 """
 
 STUB_CURL = """#!/bin/bash
-# stand-in for curl, which the publish of the cases runs: what it was given on the command line, on standard input (the bearer of the request) and as the file to post (its size and its hash). FAKE_CURL_CODES
+# stand-in for curl, which the publish of the cases runs: what it was given on the command line, on standard input (the bearer of the request) and as the file to post (its size and its hash, and a copy of it in
+# FAKE_POSTED). FAKE_CURL_CODES
 # is the status of each call in turn, and the last one goes on for the calls after those. The status is what --write-out prints, and the body goes to the file that --output names.
 { echo "curl $*"; echo "curl-stdin $(cat)"; } >> "$FAKE_LOG"
 output=""
@@ -126,6 +134,7 @@ for argument in "$@"; do
   if [ "$previous" = --data-binary ]; then
     file=${argument#@}
     echo "curl-file $(wc -c < "$file" | tr -d ' ') $(sha256sum < "$file" | cut -d' ' -f1)" >> "$FAKE_LOG"
+    if [ -n "${FAKE_POSTED:-}" ]; then cp "$file" "$FAKE_POSTED"; fi
   fi
   previous=$argument
 done
@@ -220,11 +229,13 @@ exit 9
 
 USAGE_SOURCE_FILES = {"function_app.py": b"# the app\n", "host.json": b"{}\n", "requirements.txt": b"azure-core==1.41.0 \\\n    --hash=sha256:" + b"ab" * 32 + b"\n",
                       "usage/__init__.py": b"", "usage/jobs.py": b"# jobs\n"}
+CASES_SOURCE_FILES = {"function_app.py": b"# the cases app\n", "host.json": b"{}\n", "requirements.txt": b"azure-functions==2.3.0 \\\n    --hash=sha256:" + b"cd" * 32 + b"\n",
+                      "cases/__init__.py": b"", "cases/loop.py": b"# loop\n", "cases/web/__init__.py": b"", "cases/web/home.py": b"# home\n"}
 
 
 def source_zip(files=None):
     """The zip of the sources, as tools/build-function-app.sh makes it with FUNCTION_APP_SOURCES_ONLY=1: the files at its root."""
-    path = Path(tempfile.mkdtemp()) / "usage-source.zip"
+    path = Path(tempfile.mkdtemp()) / "sources.zip"
     with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as archive:
         for name, content in (files or USAGE_SOURCE_FILES).items():
             archive.writestr(name, content)
@@ -233,15 +244,12 @@ def source_zip(files=None):
     return data
 
 
-PACKAGE_OF_CASES = b"PK-not-really-a-zip-but-bytes-that-travel-whole-" + bytes(range(256)) * 40
-
-
 class Ran:
-    """What one run of operator/publish.sh did: the process, its lines, the calls that the stand-ins logged, what was left in the work folder, the volume that it was given, and whether anything of the
-    input was run as a command (a file named canary in the folder that the script ran in)."""
+    """What one run of operator/publish.sh did: the process, its lines, the calls that the stand-ins logged, what was left in the work folder, the volume that it was given, whether anything of the
+    input was run as a command (a file named canary in the folder that the script ran in), and the package that was published (a copy that the stand-in of az or curl made of the file that it was given)."""
 
-    def __init__(self, done, calls, leftover, volume, canary):
-        self.done, self.lines, self.calls, self.leftover, self.volume, self.canary = done, done.stdout.splitlines(), calls, leftover, volume, canary
+    def __init__(self, done, calls, leftover, volume, canary, posted=None):
+        self.done, self.lines, self.calls, self.leftover, self.volume, self.canary, self.posted = done, done.stdout.splitlines(), calls, leftover, volume, canary, posted
 
     def calls_of(self, prefix):
         return [call for call in self.calls if call.startswith(prefix)]
@@ -268,12 +276,11 @@ class PublishScript(unittest.TestCase):
                 (bin_dir / name).chmod(0o755)  # on Linux a file that is not executable is skipped in the search of the path, and the real program would answer
             volume = tmp / "op"
             volume.mkdir()
-            main_name = "usage-source.zip" if kind == "usage" else "package.zip"
-            content = package if package is not None else (source_zip() if kind == "usage" else PACKAGE_OF_CASES)
+            main_name = "usage-source.zip" if kind == "usage" else "cases-source.zip"
+            content = package if package is not None else source_zip(CASES_SOURCE_FILES if kind == "cases" else None)
             if content is not False:
                 (volume / main_name).write_bytes(content)
-            if kind == "usage":
-                (volume / "build-function-app.sh").write_text(text("tools/build-function-app.sh"), encoding="utf-8", newline="\n")
+            (volume / "build-function-app.sh").write_text(text("tools/build-function-app.sh"), encoding="utf-8", newline="\n")
             for name, body in (files or {}).items():
                 if body is None:
                     (volume / name).unlink(missing_ok=True)
@@ -283,15 +290,17 @@ class PublishScript(unittest.TestCase):
             work_root.mkdir()
             log = tmp / "log.txt"
             log.write_text("", encoding="utf-8")
+            posted = tmp / "posted.zip"
             script = tmp / "publish.sh"
             script.write_text(text("operator/publish.sh"), encoding="utf-8", newline="\n")
             size = len(content) if content is not False else 0
-            environment = {**os.environ, "STUBS": posix(bin_dir), "PUBLISH_VOLUME": posix(volume), "PUBLISH_TMP": posix(work_root), "FAKE_LOG": posix(log), "REAL_PYTHON": posix(sys.executable),
-                           "PUBLISH_FILE_BYTES": str(sent if sent is not None else size), **self.good_env(kind), **(env or {})}
+            environment = {**os.environ, "STUBS": posix(bin_dir), "PUBLISH_VOLUME": posix(volume), "PUBLISH_TMP": posix(work_root), "FAKE_LOG": posix(log), "FAKE_POSTED": posix(posted),
+                           "REAL_PYTHON": posix(sys.executable), "PUBLISH_FILE_BYTES": str(sent if sent is not None else size), **self.good_env(kind), **(env or {})}
             for name in [name for name, value in environment.items() if value is None]:
                 del environment[name]
             done = subprocess.run([BASH, "-c", 'PATH="$STUBS:$PATH"; export PATH; exec bash "$0"', posix(script)], capture_output=True, text=True, env=environment, cwd=tmp)
-            return Ran(done, log.read_text(encoding="utf-8").splitlines(), sorted(path.name for path in work_root.iterdir()), posix(volume), (tmp / "canary").exists())
+            return Ran(done, log.read_text(encoding="utf-8").splitlines(), sorted(path.name for path in work_root.iterdir()), posix(volume), (tmp / "canary").exists(),
+                       posted.read_bytes() if posted.exists() else None)
 
     # --- a good run ---------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -370,32 +379,63 @@ class PublishScript(unittest.TestCase):
         (install,) = [call for call in ran.calls if call.startswith("python3 -m pip install")]
         self.assertTrue(install.endswith("[PYTHONPATH=none]"))
 
-    def test_a_good_cases_run_signs_in_asks_for_the_token_of_resource_manager_and_posts_the_package_with_the_bearer_on_standard_input(self):
+    # What the stand-in of pip puts into the package, besides the sources: three fake libraries (see STUB_PYTHON)
+    FAKE_LIBRARIES = [".python_packages/lib/site-packages/azure/core/__init__.py", ".python_packages/lib/site-packages/cffi/_rust.abi3.so",
+                      ".python_packages/lib/site-packages/markupsafe/_speedups.cpython-313-x86_64-linux-gnu.so"]
+
+    def members_of_bytes(self, data):
+        with zipfile.ZipFile(io.BytesIO(data)) as archive:
+            return sorted(archive.namelist())
+
+    def test_a_good_cases_run_signs_in_asks_for_the_token_of_resource_manager_builds_the_package_here_and_posts_the_built_package_with_the_bearer_on_standard_input(self):
         ran = self.run_publish(kind="cases")
         self.assertEqual((ran.done.returncode, ran.done.stderr), (0, ""), ran.done.stdout)
-        self.assertEqual(ran.lines, [
+        size = len(source_zip(CASES_SOURCE_FILES))
+        self.assertEqual([re.sub(r", \d+ s, hashes ok$", ", N s, hashes ok", line) for line in ran.lines], [
             "ok: python3 3.12.7",
-            f"ok: package.zip is {len(PACKAGE_OF_CASES)} bytes, as sent",
+            f"ok: cases-source.zip is {size} bytes, as sent",
             "ok: az login as the deploy identity with the OpenID Connect token",
             "ok: az account set",
+            "ok: az account get-access-token for Azure Resource Manager",
             f"ok: {CASES_APP}.scm.azurewebsites.net resolves to a private address",
             f"ok: {CASES_APP}.azurewebsites.net resolves to a private address",
-            "ok: az account get-access-token for Azure Resource Manager",
+            "ok: python3 -m ensurepip makes pip 25.0.1 in the work folder",
+            f"ok: the sources are unpacked: {len(CASES_SOURCE_FILES)} files",
+            f"ok: the cases package is built: {len(CASES_SOURCE_FILES) + 3} files, 1.0 MB zipped, N s, hashes ok",
             "ok: the deployment site took the package (HTTP 200, attempt 1 of 5)",
             "publish-done: exit code 0",
         ])
         (post,) = ran.calls_of("curl ")
-        self.assertIn(f"--request POST --header Content-Type: application/zip --data-binary @{ran.volume}/package.zip https://{CASES_APP}.scm.azurewebsites.net/api/zipdeploy", post)
+        self.assertRegex(post, rf"--request POST --header Content-Type: application/zip --data-binary @/.+/publish-[^/]+/cases\.zip https://{CASES_APP}\.scm\.azurewebsites\.net/api/zipdeploy")
+        self.assertNotIn("cases-source.zip", post, "what is posted is the package that was built in the work folder, and not what came in the volume")
         for flag in ("--config -", "--silent", "--show-error", "--write-out %{http_code}", "--max-time 900"):
             self.assertIn(flag, post)
         self.assertNotIn(ARM_TOKEN, post, "the bearer is on no command line")
         self.assertEqual(ran.calls_of("curl-stdin"), [f'curl-stdin header = "Authorization: Bearer {ARM_TOKEN}"'])
-        import hashlib
-        self.assertEqual(ran.calls_of("curl-file"), [f"curl-file {len(PACKAGE_OF_CASES)} {hashlib.sha256(PACKAGE_OF_CASES).hexdigest()}"], "the package is posted whole, byte for byte")
+        self.assertEqual(ran.calls_of("curl-file"), [f"curl-file {len(ran.posted)} {hashlib.sha256(ran.posted).hexdigest()}"], "the package is posted whole, byte for byte")
+        self.assertEqual(self.members_of_bytes(ran.posted), sorted(list(CASES_SOURCE_FILES) + self.FAKE_LIBRARIES), "the sources that came in the volume, and the libraries that were built here")
         self.assertEqual(ran.calls_of("az functionapp"), [], "the cases are published with curl, as the runner did")
-        self.assertEqual(ran.calls_of("python3"), [], "nothing is built in the container for the cases: the package is finished")
+        self.assertEqual(len(ran.calls_of("python3 -m pip install")), 1, "the package is built here, once")
         self.assertEqual(ran.leftover, [])
         self.assertEqual(ran.calls[-1], "sleep 20")
+
+    def test_the_package_that_az_publishes_for_the_usage_app_is_the_one_that_was_built_here_from_the_sources_in_the_volume(self):
+        ran = self.run_publish()
+        self.assertEqual(ran.done.returncode, 0, ran.done.stdout)
+        self.assertEqual(self.members_of_bytes(ran.posted), sorted(list(USAGE_SOURCE_FILES) + self.FAKE_LIBRARIES))
+
+    def test_the_two_kinds_are_built_by_the_same_command_with_the_same_flags_and_differ_only_in_the_app_that_is_built(self):
+        installs = {}
+        for kind in ("usage", "cases"):
+            ran = self.run_publish(kind=kind)
+            (install,) = [call for call in ran.calls if call.startswith("python3 -m pip install")]
+            installs[kind] = re.sub(r"/[^ ]*/publish-[^/ ]+/", "<work>/", install)
+        self.assertEqual(installs["usage"], installs["cases"], "one pip command, one layout")
+        source = re.sub(r"(?m)^\s*#.*$", "", text("operator/publish.sh"))
+        self.assertIn('build_package usage-functions usage usage || return 3', source)
+        self.assertIn('build_package case-functions cases cases || return 3', source)
+        self.assertEqual(source.count('timeout 300 bash "$volume/build-function-app.sh"'), 1, "the build is run in one place, for both kinds")
+        self.assertEqual(source.count("python3 -m pip install"), 0, "and pip is run by the build script alone")
 
     # --- the input is refused before anything runs --------------------------------------------------------------------------------------------------------------------------------------
 
@@ -444,13 +484,12 @@ class PublishScript(unittest.TestCase):
             self.refused({"PUBLISH_HOLD_SECONDS": value})
 
     def test_a_volume_without_the_file_that_carries_the_code_or_without_the_build_script_is_refused(self):
-        ran = self.refused(None, package=False)
-        self.assertIn("usage-source.zip is not in the secret volume", ran.lines[0])
-        ran = self.refused(None, files={"build-function-app.sh": None})
-        self.assertIn("build-function-app.sh is not in the secret volume", ran.lines[0])
-        ran = self.refused(None, kind="cases", package=False)
-        self.assertIn("package.zip is not in the secret volume", ran.lines[0])
-        self.assertEqual(self.run_publish(None, kind="cases").done.returncode, 0, "the cases need no build script: the package is finished")
+        for kind, name in (("usage", "usage-source.zip"), ("cases", "cases-source.zip")):
+            ran = self.refused(None, kind=kind, package=False)
+            self.assertIn(f"{name} is not in the secret volume", ran.lines[0], kind)
+            ran = self.refused(None, kind=kind, files={"build-function-app.sh": None})
+            self.assertIn("build-function-app.sh is not in the secret volume", ran.lines[0], f"{kind}: both apps are built here, from sources")
+            self.assertEqual(self.run_publish(None, kind=kind).done.returncode, 0, kind)
 
     # --- the token --------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -494,7 +533,7 @@ class PublishScript(unittest.TestCase):
         for kind in ("usage", "cases"):
             ran = self.run_publish(kind=kind, sent=99999)
             self.assertEqual(ran.done.returncode, 3)
-            self.assertRegex(ran.lines[1], r"^FAIL: (usage-source|package)\.zip is \d+ bytes, 99999 were sent$")
+            self.assertRegex(ran.lines[1], r"^FAIL: (usage|cases)-source\.zip is \d+ bytes, 99999 were sent$")
             self.assertEqual(ran.lines[-1], "publish-done: exit code 3")
             self.assertEqual(ran.calls, [], "not even a sign-in: the file is checked first")
             self.assertEqual(ran.leftover, [])
@@ -596,12 +635,39 @@ class PublishScript(unittest.TestCase):
 
     # --- the cases app ----------------------------------------------------------------------------------------------------------------------------------------------------------------
 
-    def test_a_token_of_resource_manager_that_cannot_be_had_or_is_no_token_stops_the_run_before_curl(self):
+    def test_a_token_of_resource_manager_that_cannot_be_had_or_is_no_token_stops_the_run_at_once_before_the_names_the_build_and_curl(self):
         for mode in ("fail", "odd"):
             ran = self.run_publish({"FAKE_AZ_TOKEN": mode}, kind="cases")
             self.assertEqual(ran.done.returncode, 3, mode)
             self.assertTrue([line for line in ran.lines if line.startswith("FAIL: az account get-access-token")], mode)
-            self.assertEqual(ran.calls_of("curl"), [], mode)
+            self.assertEqual((ran.calls_of("curl"), ran.calls_of("getent"), ran.calls_of("python3 -m")), ([], [], []), f"{mode}: nothing is looked up, built or posted")
+            self.assertEqual(ran.leftover, [])
+
+    def test_the_token_of_resource_manager_is_fetched_right_after_the_sign_in_while_the_assertion_is_fresh_before_the_names_and_the_build(self):
+        ran = self.run_publish(kind="cases")
+        calls = [re.sub(r" \[config=.+\]$", "", call) for call in ran.calls if call.startswith(("az ", "getent", "python3 -m", "curl "))]
+        self.assertTrue(calls[0].startswith("az login --service-principal"))
+        self.assertEqual(calls[1], f"az account set --subscription {SUBSCRIPTION}")
+        self.assertEqual(calls[2], "az account get-access-token --resource https://management.azure.com --query accessToken --output tsv")
+        self.assertLess(max(i for i, call in enumerate(calls) if call.startswith("getent")), min(i for i, call in enumerate(calls) if call.startswith("python3 -m")), "the names come before the build")
+        self.assertLess(max(i for i, call in enumerate(calls) if call.startswith("python3 -m pip install")), min(i for i, call in enumerate(calls) if call.startswith("curl ")), "the package is built before it is posted")
+
+    def test_the_cases_app_is_built_like_the_usage_app_and_nothing_is_posted_when_the_build_does_not_work(self):
+        for env, package, said in (({"FAKE_ENSUREPIP": "disabled"}, None, "FAIL: python3 -m ensurepip: ERROR: ensurepip is disabled"),
+                                   ({"FAKE_PIP": "hash"}, None, "FAIL: the build of the libraries failed (attempt 2 of 2)"),
+                                   ({"FAKE_PIP": "network"}, None, "FAIL: the build of the libraries failed (attempt 2 of 2)"),
+                                   ({"FAKE_PIP": "foreign"}, None, "FAIL: the build of the libraries failed (attempt 2 of 2)"),
+                                   (None, source_zip({"function_app.py": b"#\n", "../escape.txt": b"x"}), "FAIL: the sources could not be unpacked: a file of the sources would be unpacked outside the folder")):
+            ran = self.run_publish(env, kind="cases", package=package)
+            self.assertEqual(ran.done.returncode, 3, (env, ran.lines))
+            self.assertTrue([line for line in ran.lines if line.startswith(said)], (said, ran.lines))
+            self.assertEqual(ran.calls_of("curl"), [], "nothing is posted that was not built")
+            self.assertEqual(ran.leftover, [])
+        ran = self.run_publish({"FAKE_PIP": "first-fails"}, kind="cases")
+        self.assertEqual(ran.done.returncode, 0, ran.done.stdout)
+        self.assertEqual(len(ran.calls_of("python3 -m pip install")), 2, "a build that fails once is tried once more, as for the usage app")
+        self.assertIn("FAIL: the build of the libraries failed (attempt 1 of 2)", ran.lines)
+        self.assertEqual(len(ran.calls_of("curl ")), 1)
 
     def test_a_site_that_answers_with_a_failure_is_tried_again_sixty_seconds_later_and_what_it_said_is_shown(self):
         ran = self.run_publish({"FAKE_CURL_CODES": "503 202"}, kind="cases")
@@ -665,10 +731,10 @@ class PublishScript(unittest.TestCase):
 
     def test_the_commands_are_the_ones_that_the_runner_ran_with_the_same_flags_and_attempts(self):
         source = re.sub(r"(?m)^\s*#.*$", "", text("operator/publish.sh"))
-        self.assertIn('az functionapp deployment source config-zip --resource-group "$group" --name "$app" --src "$work/usage.zip" --build-remote false --only-show-errors --output none', source)
+        self.assertIn('az functionapp deployment source config-zip --resource-group "$group" --name "$app" --src "$package_zip" --build-remote false --only-show-errors --output none', source)
         self.assertIn("for attempt in 1 2 3; do\n    if message=$(timeout 600 az functionapp deployment source config-zip", source, "three attempts")
         self.assertIn("sleep 60", source, "a minute between two attempts")
-        for flag in ("--silent", "--show-error", "--write-out '%{http_code}'", "--max-time 900", "--request POST", "--header 'Content-Type: application/zip'", '--data-binary "@$main_file"',
+        for flag in ("--silent", "--show-error", "--write-out '%{http_code}'", "--max-time 900", "--request POST", "--header 'Content-Type: application/zip'", '--data-binary "@$package_zip"',
                      'https://$app.scm.azurewebsites.net/api/zipdeploy', "--resource https://management.azure.com"):
             self.assertIn(flag, source, flag)
         self.assertIn("for attempt in 1 2 3 4 5; do", source, "five attempts, as on the runner")
@@ -713,19 +779,29 @@ class TheBuildScriptInTheOperator(unittest.TestCase):
             self.last_zip = zip_file.read_bytes() if zip_file.exists() else None
             return done, calls, members, sorted(path.name for path in build.iterdir()) if build.exists() else []
 
-    EXPECTED_SOURCES = ["function_app.py", "host.json", "requirements.txt"] + [f"usage/{path.name}" for path in sorted((ROOT / "src" / "usage-functions" / "usage").glob("*.py"))]
+    APPS = {"usage": ("usage-functions", "usage"), "cases": ("case-functions", "cases")}
     EXPECTED_LIBRARIES = [".python_packages/lib/site-packages/azure/core/__init__.py", ".python_packages/lib/site-packages/cffi/_rust.abi3.so",
                           ".python_packages/lib/site-packages/markupsafe/_speedups.cpython-313-x86_64-linux-gnu.so"]
 
-    def test_the_sources_of_the_usage_app_are_zipped_without_libraries_whatever_python_runs_the_script(self):
-        done, calls, members, folder = self.run_build(env={"FUNCTION_APP_SOURCES_ONLY": "1"}, python="3.12.7")
-        self.assertEqual(done.returncode, 0, done.stderr)
-        self.assertEqual(members, sorted(self.EXPECTED_SOURCES), "what the build copies, and nothing of the tests, the caches or the libraries")
-        self.assertEqual([call for call in calls if call.startswith("python3 -m pip")], [], "nothing is installed")
-        self.assertEqual(folder, sorted({name.split("/")[0] for name in self.EXPECTED_SOURCES}))
-        sent = len(self.last_zip) + (ROOT / "tools" / "build-function-app.sh").stat().st_size + (ROOT / "operator" / "publish.sh").stat().st_size
-        self.assertLess(sent, 400_000, "the files of the usage group (the sources, the build script and the container script) are far below the 400,000 bytes that the probe found a secret volume takes "
-                                       "whole: the 24 MB of libraries are made in the container")
+    @staticmethod
+    def expected_sources(kind):
+        """What the build copies of an app: its three files and everything of its code package, except the compiled caches (the tests are in a folder next to the package and are not copied)."""
+        directory, package = TheBuildScriptInTheOperator.APPS[kind]
+        root = ROOT / "src" / directory
+        code = [f"{package}/{path.relative_to(root / package).as_posix()}" for path in sorted((root / package).rglob("*")) if path.is_file() and "__pycache__" not in path.parts]
+        return sorted(["function_app.py", "host.json", "requirements.txt"] + code)
+
+    def test_the_sources_of_each_app_are_zipped_without_libraries_whatever_python_runs_the_script(self):
+        for kind, arguments in self.APPS.items():
+            done, calls, members, folder = self.run_build(arguments=arguments, env={"FUNCTION_APP_SOURCES_ONLY": "1"}, python="3.12.7")
+            self.assertEqual(done.returncode, 0, (kind, done.stderr))
+            self.assertEqual(members, self.expected_sources(kind), f"{kind}: what the build copies, and nothing of the tests, the caches or the libraries")
+            self.assertEqual([call for call in calls if call.startswith("python3 -m pip")], [], "nothing is installed")
+            self.assertEqual(folder, sorted({name.split("/")[0] for name in self.expected_sources(kind)}))
+            sent = len(self.last_zip) + (ROOT / "tools" / "build-function-app.sh").stat().st_size + (ROOT / "operator" / "publish.sh").stat().st_size
+            self.assertLess(sent, 480_000, f"{kind}: the files of the group (the sources, the build script and the container script) are within the cap of tools/operator-run.py: "
+                                           "the libraries are made in the container")
+        self.assertTrue([name for name in self.expected_sources("cases") if name.startswith("cases/web/")], "the cases package has a sub-package, and the build copies it")
 
     def test_the_sources_are_zipped_only_when_a_zip_file_is_named_and_the_two_switches_are_not_set_together_or_set_to_anything_but_1(self):
         for env, said in (({"FUNCTION_APP_SOURCES_ONLY": "1", "FUNCTION_APP_BUILD_IN_OPERATOR": "1"}, "are not set together"), ({"FUNCTION_APP_SOURCES_ONLY": "yes"}, "are 1 or not set"),
@@ -741,11 +817,12 @@ class TheBuildScriptInTheOperator(unittest.TestCase):
         self.assertIn("the fourth argument is the zip file", done.stderr)
 
     def test_the_build_in_the_operator_runs_under_python_3_12_and_makes_the_zip_with_python_and_says_how_many_files(self):
-        done, calls, members, folder = self.run_build(env={"FUNCTION_APP_BUILD_IN_OPERATOR": "1", "FAKE_PIP": "ok"}, python="3.12.7")
-        self.assertEqual(done.returncode, 0, done.stderr)
-        self.assertEqual(members, sorted(self.EXPECTED_SOURCES + self.EXPECTED_LIBRARIES))
-        self.assertEqual(done.stdout.strip(), f"{len(members)} files", "the summary is Python's: the image has no unzip")
-        self.assertTrue([call for call in calls if call.startswith("python3 -m pip install")])
+        for kind, arguments in self.APPS.items():
+            done, calls, members, folder = self.run_build(arguments=arguments, env={"FUNCTION_APP_BUILD_IN_OPERATOR": "1", "FAKE_PIP": "ok"}, python="3.12.7")
+            self.assertEqual(done.returncode, 0, (kind, done.stderr))
+            self.assertEqual(members, sorted(self.expected_sources(kind) + self.EXPECTED_LIBRARIES))
+            self.assertEqual(done.stdout.strip(), f"{len(members)} files", "the summary is Python's: the image has no unzip")
+            self.assertTrue([call for call in calls if call.startswith("python3 -m pip install")])
 
     def test_the_guard_of_the_runner_is_still_there_without_the_switch_and_pip_has_to_run_with_it(self):
         done, calls, members, folder = self.run_build(python="3.12.7")
@@ -778,31 +855,64 @@ class TheBuildScriptInTheOperator(unittest.TestCase):
         self.assertIn("_cffi_backend.cpython-312-x86_64-linux-gnu.so", done.stderr)
         self.assertIsNone(members, "no zip is made of a package that would not load")
 
-    def test_the_build_on_the_runner_and_the_build_in_the_operator_use_the_same_pip_command_and_make_the_same_package(self):
-        runner, runner_calls, runner_members, _ = self.run_build(env={"FAKE_PIP": "ok"}, python="3.13.0")
-        self.assertEqual(runner.returncode, 0, runner.stderr)
-        done, _, sources_members, _ = self.run_build(env={"FUNCTION_APP_SOURCES_ONLY": "1"}, python="3.13.0", zip_name="sources.zip")
-        self.assertEqual(done.returncode, 0, done.stderr)
-        sources_zip = self.last_zip
-
-        def unpacked(tmp):
-            (tmp / "sources.zip").write_bytes(sources_zip)
-            with zipfile.ZipFile(tmp / "sources.zip") as archive:
-                archive.extractall(tmp / "unpacked")
-            return tmp / "unpacked"
-
-        operator, operator_calls, operator_members, _ = self.run_build(env={"FUNCTION_APP_BUILD_IN_OPERATOR": "1", "FAKE_PIP": "ok"}, python="3.12.7", prior=unpacked)
-        self.assertEqual(operator.returncode, 0, operator.stderr)
-        self.assertEqual(operator_members, runner_members, "the same files in the same places: the sources that went to the Operator are what the runner's build copies, and the libraries are made in the same folder")
-        self.assertEqual(sorted(sources_members + self.EXPECTED_LIBRARIES), runner_members)
-
+    def test_the_build_on_the_runner_and_the_build_in_the_operator_use_the_same_pip_command_and_make_the_same_package_for_each_app(self):
         def words_of(calls):
             (install,) = [call for call in calls if call.startswith("python3 -m pip install")]
             words = install.split(" [PYTHONPATH")[0].split()
             return [word for index, word in enumerate(words) if word not in ("--target", "--requirement") and words[index - 1] not in ("--target", "--requirement")]
 
-        self.assertEqual(words_of(operator_calls), words_of(runner_calls), "one pip command: every flag, in the same order")
-        for flag in ("--only-binary=:all:", "--require-hashes", "--no-compile", "--platform", "--implementation", "--python-version"):
-            self.assertIn(flag, words_of(operator_calls))
-        self.assertIn("3.13", words_of(operator_calls))
-        self.assertNotIn("--ignore-requires-python", words_of(operator_calls))
+        all_words = {}
+        for kind, arguments in self.APPS.items():
+            runner, runner_calls, runner_members, _ = self.run_build(arguments=arguments, env={"FAKE_PIP": "ok"}, python="3.13.0")
+            self.assertEqual(runner.returncode, 0, (kind, runner.stderr))
+            done, _, sources_members, _ = self.run_build(arguments=arguments, env={"FUNCTION_APP_SOURCES_ONLY": "1"}, python="3.13.0", zip_name="sources.zip")
+            self.assertEqual(done.returncode, 0, (kind, done.stderr))
+            sources_zip = self.last_zip
+
+            def unpacked(tmp, sources_zip=sources_zip):
+                (tmp / "sources.zip").write_bytes(sources_zip)
+                with zipfile.ZipFile(tmp / "sources.zip") as archive:
+                    archive.extractall(tmp / "unpacked")
+                return tmp / "unpacked"
+
+            operator, operator_calls, operator_members, _ = self.run_build(arguments=arguments, env={"FUNCTION_APP_BUILD_IN_OPERATOR": "1", "FAKE_PIP": "ok"}, python="3.12.7", prior=unpacked)
+            self.assertEqual(operator.returncode, 0, (kind, operator.stderr))
+            self.assertEqual(operator_members, runner_members, f"{kind}: the same files in the same places: the sources that went to the Operator are what the runner's build copies, and the libraries are "
+                                                               "made in the same folder")
+            self.assertEqual(sorted(sources_members + self.EXPECTED_LIBRARIES), runner_members)
+            self.assertEqual(words_of(operator_calls), words_of(runner_calls), f"{kind}: one pip command: every flag, in the same order")
+            all_words[kind] = words_of(operator_calls)
+            for flag in ("--only-binary=:all:", "--require-hashes", "--no-compile", "--platform", "--implementation", "--python-version"):
+                self.assertIn(flag, all_words[kind])
+            self.assertIn("3.13", all_words[kind])
+            self.assertNotIn("--ignore-requires-python", all_words[kind])
+        self.assertEqual(all_words["usage"], all_words["cases"], "the same command for both apps")
+
+    @staticmethod
+    def parse_lock(path):
+        """The packages of a hash lock: name -> (version, the sorted hashes), and the lines that carry an environment marker."""
+        packages, markers, current = {}, [], None
+        for line in text(path).split("\n"):
+            found = re.match(r"^([A-Za-z0-9_.-]+)==(\S+)", line)
+            if found:
+                current = found.group(1).lower()
+                packages[current] = [found.group(2), []]
+            for digest in re.findall(r"--hash=sha256:([0-9a-f]{64})", line):
+                packages[current][1].append(digest)
+            if not line.lstrip().startswith("#") and ";" in line:
+                markers.append(line)
+        return {name: (version, sorted(hashes)) for name, (version, hashes) in packages.items()}, markers
+
+    def test_the_lock_of_the_cases_app_holds_only_what_the_lock_of_the_usage_app_holds_which_is_what_the_operator_has_built_under_python_3_12(self):
+        # The probe of the Operator (2026-11-06) and the first publish of the usage app built the usage lock in the image's Python 3.12, with the pip command of the build script and without
+        # --ignore-requires-python. Nothing built the cases lock there yet. Every package of it, at its version and with the same hashes, is in the usage lock, so it is a part of what was built.
+        # If the cases app gets a library that the usage lock does not hold, this test fails: show that it builds in the Operator (an action of its own, or the first `cases` run), then change it.
+        usage, usage_markers = self.parse_lock("src/usage-functions/requirements.txt")
+        cases, cases_markers = self.parse_lock("src/case-functions/requirements.txt")
+        self.assertEqual(sorted(cases), ["azure-functions", "markupsafe", "werkzeug"])
+        for name, (version, hashes) in cases.items():
+            self.assertIn(name, usage, f"{name}: a library of the cases app that the usage lock does not hold has not been built in the Operator")
+            self.assertEqual(usage[name], (version, hashes), f"{name}: the same version and the same files as the lock that was built in the Operator")
+        for markers in (usage_markers, cases_markers):
+            self.assertEqual(markers, [], "no environment marker in a lock: pip evaluates it for the interpreter that runs it, which is 3.12 in the Operator and 3.13 on the runner")
+        self.assertTrue(all(hashes for _, hashes in cases.values()), "every library of the lock is checked against hashes")
