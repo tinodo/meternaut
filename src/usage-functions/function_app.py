@@ -9,7 +9,8 @@ app = func.FunctionApp()
 
 # Hours 3, 6, 9, 12, 15, 18, 21 and 23, UTC.
 TIMER_SCHEDULE = "0 0 3,6,9,12,15,18,21,23 * * *"
-# Identity-based connection. The platform reads EventHubConnection__fullyQualifiedNamespace, __credential and __clientId.
+# Identity-based connection. The platform reads EventHubConnection__fullyQualifiedNamespace and __credential; __clientId names a user-assigned identity, and
+# without it the connection uses the app's system-assigned identity.
 EVENT_HUB_CONNECTION = "EventHubConnection"
 
 

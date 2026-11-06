@@ -9,7 +9,8 @@ app = func.FunctionApp()
 TIMER_SCHEDULE = "0 30 5 * * *"
 # Every minute: the plans whose time is over, the changes whose start time has come, the changes to check.
 TICK_SCHEDULE = "0 * * * * *"
-# Identity-based connection. The platform reads EventHubConnection__fullyQualifiedNamespace, __credential and __clientId.
+# Identity-based connection. The platform reads EventHubConnection__fullyQualifiedNamespace and __credential; __clientId names a user-assigned identity, and
+# without it the connection uses the app's system-assigned identity.
 EVENT_HUB_CONNECTION = "EventHubConnection"
 
 

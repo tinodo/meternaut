@@ -4,7 +4,7 @@
     python tools/access-requirements.py markdown [--retired]
     python tools/access-requirements.py check [places] [--only R1,R3]
     python tools/access-requirements.py grant [places] [--only R1,R3] [--apply] [--yes]
-    python tools/access-requirements.py retire [places] [--only W1] [--apply] [--yes]
+    python tools/access-requirements.py retire [places] [--only W1,W2] [--apply] [--yes]
 
 Meternaut holds no write right: every grant in the file only reads, and a change to Azure is made with the token of the person who approved it
 (docs/proposals/03-access-and-onboarding.md). The deployment workflow's identity may change only the project's own resource group and must not get a
@@ -34,6 +34,12 @@ retire    Removes what the file lists under "retired". It reads first: for each 
           who is signed in to the Azure CLI: the assignments of that role at that place first, then the role, and only when no assignment of it
           remains. A role that can also be assigned outside the place is left alone. It changes nothing else, a second run finds nothing to retire,
           and it refuses --apply in GitHub Actions like grant. Exit 0 when nothing is left to retire, 1 when something is (also after a dry run).
+          An item with replacedBy is the grant of an identity that an app no longer runs as. Its role is still wanted by the grant that replaces it, so
+          only the assignments that this one identity holds at that place and below it are looked for and removed, never another holder's and never the
+          role. They are removed only while the replacing grant is present for every holder of its identity (read like check does, so the option that
+          names the app is needed); until then the line says 'kept', so that the app is never left without access. An assignment of the identity above the
+          place is reported as 'left alone'. The tool finds the assignments by the object id of the identity, so it must run while the identity exists:
+          Azure keeps the assignments of a deleted identity, shows them as "Identity not found", and the tool cannot tell whose they were.
 
 The places come from options or from the settings that the workflow uses: --project-subscription (ENV_SUBSCRIPTION_ID) and --project-group
 (ENV_RESOURCE_GROUP), where the identities and the two apps are; --cases-site (ACCESS_CASES_SITE) and --usage-site (ACCESS_USAGE_SITE), the names of the
@@ -179,13 +185,20 @@ def load_manifest(path: Path = MANIFEST) -> dict:
         assert isinstance(manifest.get("retired", []), list), "retired is a list"
         used = set(ids)
         current = set(user_assigned)
+        grants = {g["id"]: g for g in manifest["grants"]}
         for item in manifest.get("retired", []):
             assert item["id"] not in used, f"{item['id']}: the id of a retired item is not the id of a grant, and is used once"
             used.add(item["id"])
             assert isinstance(item["identity"], dict) and SIMPLE_NAME.match(str(item["identity"].get("name", ""))), f"{item['id']}: the identity is an object with a name"
             assert item["identity"]["name"] not in current, f"{item['id']}: a retired identity is not an identity of the file"
-            assert item["role"] and item["role"] not in manifest["roles"], f"{item['id']}: a retired role is not a role of the file"
             assert item["place"] in manifest["places"] and item["why"], item["id"]
+            if "replacedBy" in item:
+                replacing = grants.get(item["replacedBy"])
+                assert replacing, f"{item['id']}: replacedBy is the id of a grant of the file"
+                assert (item["role"], item["place"]) == (replacing["role"], replacing["place"]), (
+                    f"{item['id']}: the role and the place of a retired grant are those of the grant that replaces it, {item['replacedBy']}")
+            else:
+                assert item["role"] and item["role"] not in manifest["roles"], f"{item['id']}: a retired role is not a role of the file"
     except (OSError, ValueError, KeyError, AssertionError, TypeError) as e:
         raise Problem(f"{path} is not a valid list of access requirements ({e})") from e
     return manifest
@@ -224,7 +237,8 @@ def markdown_retired(manifest: dict) -> str:
     """The table of what an earlier version granted and is to be removed, for the proposal."""
     rows = ["| # | Identity | Role | Where | Why it is retired |", "|---|---|---|---|---|"]
     for r in manifest.get("retired", []):
-        rows.append(f"| {r['id']} | `{r['identity']['name']}` | {r['role']} (custom role) | {manifest['places'][r['place']]} | {r['why']} |")
+        custom = "" if r["role"] in manifest["roles"] and manifest["roles"][r["role"]]["kind"] == "builtin" else " (custom role)"
+        rows.append(f"| {r['id']} | `{r['identity']['name']}` | {r['role']}{custom} | {manifest['places'][r['place']]} | {r['why']} |")
     return "\n".join(rows)
 
 
@@ -542,7 +556,7 @@ def signed_in(az: Az) -> str:
 
 # ---- what an earlier version granted ---------------------------------------------------------------------------------------------------------------
 
-LEFT_STATES = {"there": "still there", "gone": "gone", "left-alone": "left alone"}
+LEFT_STATES = {"there": "still there", "gone": "gone", "left-alone": "left alone", "kept": "kept"}
 ASSIGNMENT_TAIL = re.compile(rf"/providers/Microsoft\.Authorization/roleAssignments/{GUID}$", re.I)
 NOT_THERE = re.compile(r"could not be found|was not found|does not exist|ResourceNotFound|RoleAssignmentNotFound", re.I)
 STILL_ASSIGNED = re.compile(r"RoleDefinitionHasAssignments|existing role assignments", re.I)
@@ -580,19 +594,63 @@ def inside(scope: str, place: str) -> bool:
     return s == p or s.startswith(p + "/")
 
 
+def of_one_identity(item: dict) -> bool:
+    """A retired item with replacedBy is a grant of an identity that an app no longer runs as. Its role is still wanted, by the grant that replaces it, so only
+    the assignments that this one identity holds are removed: never another holder's, and never the role."""
+    return "replacedBy" in item
+
+
+def recognised(assignment: dict, scope: str, role_id: str) -> dict:
+    """The assignment, when its id is that of a role assignment at or below the scope: nothing else is ever passed to a delete."""
+    given = assignment.get("id")
+    if not (isinstance(given, str) and inside(given, scope) and ASSIGNMENT_TAIL.search(given)):
+        raise Problem(f"Azure listed an assignment of the role {role_id} with an id that this tool does not recognise: {str(given)[:200]}")
+    return assignment
+
+
+def role_of(assignment: dict) -> str:
+    return str((assignment.get("properties") or {}).get("roleDefinitionId", "")).rsplit("/", 1)[-1].lower()
+
+
+def scope_of(assignment: dict) -> str:
+    return str((assignment.get("properties") or {}).get("scope", ""))
+
+
 def assignments_of_role(az: Az, scope: str, role_id: str) -> list[dict]:
     """The assignments of one role at the scope and below it, whoever holds them. Azure keeps the assignment of an identity that was deleted, and the
     portal shows it as 'Identity not found', so this lists by role and never by identity."""
-    found = []
-    for assignment in all_pages(az, f"{ARM}{scope}/providers/Microsoft.Authorization/roleAssignments?api-version={ASSIGNMENTS_API}"):
-        properties = assignment.get("properties") or {}
-        if str(properties.get("roleDefinitionId", "")).rsplit("/", 1)[-1].lower() != role_id.lower() or not inside(str(properties.get("scope", "")), scope):
-            continue
-        given = assignment.get("id")
-        if not (isinstance(given, str) and inside(given, scope) and ASSIGNMENT_TAIL.search(given)):
-            raise Problem(f"Azure listed an assignment of the role {role_id} with an id that this tool does not recognise: {str(given)[:200]}")
-        found.append(assignment)
-    return found
+    return [recognised(assignment, scope, role_id)
+            for assignment in all_pages(az, f"{ARM}{scope}/providers/Microsoft.Authorization/roleAssignments?api-version={ASSIGNMENTS_API}")
+            if role_of(assignment) == role_id.lower() and inside(scope_of(assignment), scope)]
+
+
+def replacement_problems(az: Az, manifest: dict, places: Places, item: dict, scope: str) -> list[str]:
+    """Why the grant that replaces a retired one is not yet in place at this scope for every holder of its identity. Reads like check does."""
+    problems = []
+    for found in examine(az, manifest, places, item["replacedBy"]):
+        if found.scope.rstrip("/").lower() == scope.rstrip("/").lower() and found.state != "present":
+            why = f": {found.detail}" if found.detail else ""
+            problems.append(f"{item['replacedBy']} is not present for {found.holder} at {scope} ({STATES[found.state]}{why})")
+    return problems
+
+
+def find_held(az: Az, manifest: dict, places: Places, item: dict, scope: str, principal: str | None) -> Left:
+    """What a retired identity still holds of one grant at one place: its own assignments of the role and nobody else's. Reads only."""
+    name = item["identity"]["name"]
+    role_id, _, _ = role_state(az, item["role"], manifest["roles"][item["role"]], places)
+    if role_id is None or principal is None:
+        return Left(item, scope, "gone")
+    held = [a for a in assignments(az, principal, scope) if role_of(a) == role_id.lower()]
+    here = [a for a in held if inside(scope_of(a), scope)]
+    outside = sorted({scope_of(a) for a in held if not inside(scope_of(a), scope)})
+    note = f"{name} also holds it at {', '.join(outside)}, outside this place: nothing is removed there" if outside else ""
+    if not here:
+        return Left(item, scope, "left-alone" if outside else "gone", role_id, detail=note)
+    problems = replacement_problems(az, manifest, places, item, scope)
+    if problems:
+        why = "; ".join(problems) + f". The {len(here)} assignment(s) of {name} stay until it is, so that the app is not left without access"
+        return Left(item, scope, "kept", role_id, here, why + (f". {note}" if note else ""))
+    return Left(item, scope, "there", role_id, [recognised(a, scope, role_id) for a in here], note)
 
 
 def find_retired(az: Az, manifest: dict, places: Places, only: str | None = None) -> tuple[list[Left], dict[str, str | None]]:
@@ -605,6 +663,9 @@ def find_retired(az: Az, manifest: dict, places: Places, only: str | None = None
         if name not in identities:
             identities[name] = principal_of(az, places, name)
         for scope in scopes_for(item["place"], places, az):
+            if of_one_identity(item):
+                left.append(find_held(az, manifest, places, item, scope, identities[name]))
+                continue
             key = (subscription_of(scope), item["role"])
             if key not in named:
                 named[key] = custom_roles_named(az, key[0], item["role"])
@@ -629,7 +690,11 @@ def describe_left(left: Left, identities: dict[str, str | None]) -> str:
     lines = [f"  {LEFT_STATES[left.state]:<13}{item['id']}  {name}  {item['role']}  at {left.scope}"]
     if left.detail:
         lines.append(f"               {left.detail}")
-    if left.state == "there":
+    if left.state == "there" and of_one_identity(item):
+        lines.append(f"               {name} holds {len(left.assigned)} assignment(s) of {item['role']} at or below this place:")
+        for assignment in left.assigned:
+            lines.append(f"                 {assignment['id']}")
+    elif left.state == "there":
         lines.append(f"               the custom role exists ({left.role_id}); {len(left.assigned)} assignment(s) of it at or below this place" + (":" if left.assigned else ""))
         for assignment in left.assigned:
             holder = str((assignment.get("properties") or {}).get("principalId", ""))
@@ -639,14 +704,17 @@ def describe_left(left: Left, identities: dict[str, str | None]) -> str:
     return "\n".join(lines)
 
 
-def identity_notes(identities: dict[str, str | None], places: Places) -> list[str]:
+def identity_notes(identities: dict[str, str | None], places: Places, of_one: frozenset[str] = frozenset()) -> list[str]:
     notes = []
     for name, principal in identities.items():
         if principal:
             notes.append(f"  note         {name} still exists in {project_group_scope(places)} (object id {principal}). This tool never deletes an identity: "
                          f"the deployment workflow or the owner removes it.")
         else:
-            notes.append(f"  note         {name} does not exist in {project_group_scope(places)}.")
+            notes.append(f"  note         {name} does not exist in {project_group_scope(places)}." + (
+                " Nothing can be traced to it by name any more: Azure keeps the assignments of a deleted identity, and the portal shows them as 'Identity not found'. "
+                "This tool cannot tell whose they were, so it leaves them. It removes the grants of an identity while the identity exists: run retire before the identity is deleted."
+                if name in of_one else ""))
     return notes
 
 
@@ -654,7 +722,7 @@ def retire_plan(found: list[Left]) -> list[Removal]:
     steps = [Removal("unassign", left.item["role"], left.scope, a["id"]) for left in found if left.state == "there" for a in left.assigned]
     defined: set[str] = set()
     for left in found:
-        if left.state == "there" and left.role_id not in defined:
+        if left.state == "there" and not of_one_identity(left.item) and left.role_id not in defined:
             defined.add(left.role_id)
             steps.append(Removal("undefine", left.item["role"], left.scope, left.role_id))
     return steps
@@ -681,7 +749,7 @@ def apply_retirement(az: Az, found: list[Left], out, sleep=time.sleep) -> None:
                 raise Problem(f"the assignment {assignment['id']} of {left.item['role']} could not be removed: {first_line(err)}")
     handled: set[str] = set()
     for left in found:
-        if left.state != "there" or left.role_id in handled:
+        if left.state != "there" or of_one_identity(left.item) or left.role_id in handled:
             continue
         handled.add(left.role_id)
         remaining = [a for other in found if other.state == "there" and other.role_id == left.role_id for a in assignments_of_role(az, other.scope, left.role_id)]
@@ -705,7 +773,7 @@ def apply_retirement(az: Az, found: list[Left], out, sleep=time.sleep) -> None:
 def show_retired(found: list[Left], identities: dict[str, str | None], places: Places, out) -> None:
     for left in found:
         out(describe_left(left, identities))
-    for note in identity_notes(identities, places):
+    for note in identity_notes(identities, places, frozenset(left.item["identity"]["name"] for left in found if of_one_identity(left.item))):
         out(note)
 
 
@@ -761,9 +829,10 @@ def command_retire(args, az: Az, manifest: dict, places: Places, out, sleep, ask
     found, identities = find_retired(az, manifest, places, args.only)
     show_retired(found, identities, places, out)
     steps = retire_plan(found)
-    blocked = [left for left in found if left.state == "left-alone"]
+    blocked = [left for left in found if left.state in ("left-alone", "kept")]
     if not steps:
-        out("Nothing to retire." if not blocked else "Nothing can be retired until the lines above that say 'left alone' are settled.")
+        stuck = " or ".join(f"'{LEFT_STATES[state]}'" for state in ("left-alone", "kept") if any(left.state == state for left in blocked))
+        out("Nothing to retire." if not blocked else f"Nothing can be retired until the lines above that say {stuck} are settled.")
         return 1 if blocked else 0
     out(f"{len(steps)} change(s) would be made, and nothing else:")
     for step in steps:
@@ -793,7 +862,7 @@ def main(argv=None, az: Az | None = None, env=None, out=print, sleep=time.sleep,
     for name, text in (("check", "read only: which requirements are present"), ("grant", "dry run; with --apply, make what is missing"),
                        ("retire", "dry run; with --apply, remove what an earlier version granted (the list retired)")):
         sub = commands.add_parser(name, help=text)
-        sub.add_argument("--only", help="comma separated ids, for example R1,R3 (retire: W1)")
+        sub.add_argument("--only", help="comma separated ids, for example R1,R3 (retire: W1,W2)")
         sub.add_argument("--project-subscription")
         sub.add_argument("--project-group")
         sub.add_argument("--cases-site", help="the name of the cases app in the project's group, func-meternaut-cases-... (setting ACCESS_CASES_SITE)")

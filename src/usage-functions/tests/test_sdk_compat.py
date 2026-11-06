@@ -118,6 +118,13 @@ class ClientConstructionTests(unittest.TestCase):
         self.assertIsInstance(client, LogsQueryClient)
         self.assertIsInstance(clients.credential("11111111-1111-1111-1111-111111111111"), ManagedIdentityCredential)
 
+    def test_a_credential_without_a_client_id_is_built_from_the_sdk_too_without_a_network_call(self):
+        from usage import clients
+
+        clients.credential.cache_clear()
+        self.addCleanup(clients.credential.cache_clear)
+        self.assertIsInstance(clients.credential(""), ManagedIdentityCredential)
+
 
 if __name__ == "__main__":
     unittest.main()

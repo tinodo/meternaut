@@ -122,11 +122,9 @@ def ingest_batch(stream: str, events: Iterable[EventLike], container: ContainerL
 
 
 def ingest_from_hub(stream: Stream, batch: Iterable[EventLike]) -> BatchSummary:
-    values = config.get_settings(
-        (config.AZURE_CLIENT_ID, config.COSMOS_ENDPOINT, config.COSMOS_DATABASE, stream.container_setting)
-    )
+    values = config.get_settings((config.COSMOS_ENDPOINT, config.COSMOS_DATABASE, stream.container_setting))
     container = clients.cosmos_container(
-        values[config.AZURE_CLIENT_ID],
+        config.client_id(),
         values[config.COSMOS_ENDPOINT],
         values[config.COSMOS_DATABASE],
         values[stream.container_setting],

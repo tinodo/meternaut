@@ -1,4 +1,7 @@
-"""The token of the app's managed identity, from the platform's local endpoint (no key, no secret, no library)."""
+"""The token of the app's managed identity, from the platform's local endpoint (no key, no secret, no library).
+
+The app setting AZURE_CLIENT_ID names a user-assigned identity. Without it the request carries no client id, and the platform answers for the system-assigned
+identity of the app."""
 from __future__ import annotations
 
 import json
@@ -38,7 +41,7 @@ class Identity:
                  clock: Callable[[], float] = time.time, sleep: Callable[[float], None] = time.sleep) -> None:
         self.endpoint = env.get("IDENTITY_ENDPOINT", "")
         self.header = env.get("IDENTITY_HEADER", "")
-        self.client_id = env.get("AZURE_CLIENT_ID", "")
+        self.client_id = (env.get("AZURE_CLIENT_ID") or "").strip()
         self.fetch, self.clock, self.sleep = fetch, clock, sleep
         self._cache: dict[str, tuple[str, float]] = {}
 

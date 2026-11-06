@@ -9,7 +9,9 @@ import base64
 import datetime as dt
 import hashlib
 import json
+import sys
 import unittest
+from unittest import mock
 from urllib.parse import parse_qs, quote, urlencode, urlsplit
 
 from support import ENV, NOW, RG, SUBSCRIPTION, FakeEstate, LogCapture, Ticker, disk_row
@@ -795,6 +797,39 @@ class TheStepUp(Story):
         self.tick()
         self.assert_nothing_deleted_and_closed("failed")
         self.assertEqual(self.store.action_get(self.plan.plan_id).result, STEP_UP_ABANDONED)
+
+
+class TheWholeLoopOnTheSystemAssignedIdentity(TheWholeLoop):
+    """The same story, and every test of it, for an app that has no AZURE_CLIENT_ID: it runs as its own system-assigned identity, which the platform answers for
+    when a request names no client id. The one identity that the console still names is the one of the sign-in's federated credential."""
+
+    def setUp(self):
+        self.asked = []
+        original = fetch
+
+        def recording(url, headers, timeout):
+            self.asked.append(parse_qs(urlsplit(url).query))
+            return original(url, headers, timeout)
+
+        for patcher in (mock.patch.dict(LOOP_ENV), mock.patch.object(sys.modules[__name__], "fetch", recording)):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        del LOOP_ENV["AZURE_CLIENT_ID"]
+        super().setUp()
+
+    def test_no_token_is_asked_for_with_a_client_id_but_the_one_of_the_federated_credential(self):
+        self.test_from_a_planted_disk_to_its_removal_with_the_approvers_own_token_and_the_letters_on_the_way()
+        by_resource = {}
+        for query in self.asked:
+            by_resource.setdefault(query["resource"][0], []).append(query.get("client_id"))
+        self.assertIn("api://AzureADTokenExchange", by_resource, "the sign-in's code was redeemed with a federated assertion")
+        for resource, clients in by_resource.items():
+            if resource == "api://AzureADTokenExchange":
+                self.assertEqual(set(map(tuple, clients)), {(ASSERTION_CLIENT,)})
+            else:
+                self.assertEqual(clients, [None] * len(clients), resource)
+        self.assertGreater(len(by_resource), 2, "Resource Manager, the store and Microsoft Graph were all reached")
+        self.assertNotIn("AZURE_CLIENT_ID", LOOP_ENV)
 
 
 if __name__ == "__main__":

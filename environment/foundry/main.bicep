@@ -15,9 +15,8 @@
 //
 // No key, and nothing public (AGENTS.md rule 23):
 //  - the resource has local authentication off (disableLocalAuth) and public network access off; it is reached through one private endpoint;
-//  - the cases app signs in with its managed identity (a Microsoft Entra token for https://ai.azure.com) and holds the Foundry User role on the
-//    project, which lets it create agents and run them there, and nothing else here. It has two such identities while it moves from the user-assigned
-//    one to its own system-assigned one (environment/BOOTSTRAP.md): both get the role, the second as soon as the app has it;
+//  - the cases app signs in with its system-assigned managed identity (a Microsoft Entra token for https://ai.azure.com) and holds the Foundry User role on the
+//    project, which lets it create agents and run them there, and nothing else here;
 //  - the project's own managed identity sends the agents' traces to the Application Insights component with Microsoft Entra ID: it holds
 //    Monitoring Metrics Publisher on the component, whose local authentication is off (environment/recording/main.bicep).
 //
@@ -66,14 +65,10 @@ param restoreAccount bool = false
 @description('The models deployed in the resource: name, version, deployment type and capacity in thousands of tokens a minute. The workflow reads them from environment/models.json: the names, versions and deployment types are the ones of the model account and the gateway configuration, the capacity is the agentCapacity of the model, because an agent reads everything said so far again at every step and needs more tokens a minute than the gateway.')
 param models array
 
-@description('Principal id of the user-assigned identity of the cases app (id-meternaut-cases). It gets the Foundry User role on the project: it may create agents and run them there, and nothing else here.')
+@description('Principal id of the system-assigned identity of the cases app. It gets the Foundry User role on the project: it may create agents and run them there, and nothing else here. The workflow reads it from the app, and refuses to deploy this resource while the app has no such identity.')
 @minLength(36)
 @maxLength(36)
-param casesPrincipalId string
-
-@description('Principal id of the system-assigned identity of the cases app, which takes over from id-meternaut-cases. When it is given, it gets the Foundry User role on the project as well. Empty: the app has no such identity yet (the action cases gives it one), and no role is given to it. The workflow passes only an object id that it has read from the app.')
-@maxLength(36)
-param casesSystemPrincipalId string = ''
+param casesSystemPrincipalId string
 
 @description('Owner of the resources, as a tag.')
 @minLength(1)
@@ -245,20 +240,6 @@ resource privateEndpoint 'Microsoft.Network/privateEndpoints@2025-05-01' = {
 
 // After the private endpoint, not beside it (see the header).
 resource casesMayUseTheAgents 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  scope: project
-  name: guid(project.id, casesPrincipalId, foundryUserRoleId)
-  properties: {
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', foundryUserRoleId)
-    principalId: casesPrincipalId
-    principalType: 'ServicePrincipal'
-  }
-  dependsOn: [
-    privateEndpoint
-  ]
-}
-
-// The same role for the cases app's system-assigned identity, once it has one (the move from id-meternaut-cases to it is in environment/BOOTSTRAP.md).
-resource casesSystemMayUseTheAgents 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!empty(casesSystemPrincipalId)) {
   scope: project
   name: guid(project.id, casesSystemPrincipalId, foundryUserRoleId)
   properties: {

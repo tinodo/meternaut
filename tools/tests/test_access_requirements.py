@@ -70,9 +70,12 @@ def retired_definition(**changes):
 
 
 class FakeAz:
-    """Answers the Azure CLI commands of the tool from a small model of a tenant, and remembers every command."""
+    """Answers the Azure CLI commands of the tool from a small model of a tenant, and remembers every command.
 
-    def __init__(self, granted=True):
+    granted: the custom roles exist and the system-assigned identities of the two apps hold their requirements.
+    old: the user-assigned identities that the apps ran as before hold the same grants still (what retire finds before it removes them)."""
+
+    def __init__(self, granted=True, old=True):
         self.identities = {"id-meternaut-cases": OLD_CASES, "id-meternaut-usage": OLD_USAGE}
         # The apps of the project's group, and the object id of the system-assigned identity of each (None: the app has none).
         self.sites = {CASES_SITE: NEW_CASES, USAGE_SITE: NEW_USAGE}
@@ -92,13 +95,17 @@ class FakeAz:
         if granted:
             self.roles["Meternaut gateway key reader"] = definition("Meternaut gateway key reader", KEY_READER_ID, GATEWAY_GROUP)
             self.roles["Meternaut usage reader"] = definition("Meternaut usage reader", USAGE_READER_ID, WORKSPACE_GROUP)
-            for principal in (OLD_CASES, NEW_CASES):
-                self.grant(principal, BUILTIN["Reader"], ESTATE)
-                self.grant(principal, BUILTIN["Cost Management Reader"], ESTATE)
-                self.grant(principal, KEY_READER_ID, PRODUCT)
-            for principal in (OLD_USAGE, NEW_USAGE):
-                self.grant(principal, BUILTIN["Monitoring Reader"], INSIGHTS)
-                self.grant(principal, USAGE_READER_ID, WORKSPACE)
+            self.give(NEW_CASES, NEW_USAGE)
+            if old:
+                self.give(OLD_CASES, OLD_USAGE)
+
+    def give(self, cases, usage):
+        """The requirements of the two apps, held by these two principals."""
+        self.grant(cases, BUILTIN["Reader"], ESTATE)
+        self.grant(cases, BUILTIN["Cost Management Reader"], ESTATE)
+        self.grant(cases, KEY_READER_ID, PRODUCT)
+        self.grant(usage, BUILTIN["Monitoring Reader"], INSIGHTS)
+        self.grant(usage, USAGE_READER_ID, WORKSPACE)
 
     def grant(self, principal, role_id, scope):
         self.counter += 1
@@ -269,15 +276,13 @@ class TheFile(unittest.TestCase):
         text = (ROOT / "environment" / "access-requirements.json").read_text(encoding="utf-8")
         self.assertNotIn('"writes"', text)
         self.assertEqual(sorted(MANIFEST["identities"]), ["cases", "usage"])
-        users = sorted(h["name"] for i in MANIFEST["identities"].values() for h in i["holders"] if h["kind"] == "user")
-        self.assertEqual(users, ["id-meternaut-cases", "id-meternaut-usage"])
+        self.assertEqual([h for i in MANIFEST["identities"].values() for h in i["holders"] if h["kind"] == "user"], [], "no app runs as a user-assigned identity that needs a role")
         self.assertNotIn("runner", [g["identity"] for g in MANIFEST["grants"]])
 
-    def test_an_identity_is_what_an_app_runs_as_and_its_holders_are_the_system_assigned_identity_and_while_the_app_moves_the_user_assigned_one(self):
+    def test_an_identity_is_what_an_app_runs_as_and_its_only_holder_is_the_system_assigned_identity_of_the_app(self):
         for key, option in (("cases", "--cases-site"), ("usage", "--usage-site")):
             identity = MANIFEST["identities"][key]
-            self.assertEqual([h["kind"] for h in identity["holders"]], ["system", "user"], key)
-            self.assertEqual(identity["holders"][0], {"kind": "system", "siteOption": option})
+            self.assertEqual(identity["holders"], [{"kind": "system", "siteOption": option}], key)
             self.assertTrue(identity["app"] and identity["madeBy"], key)
             self.assertIn("*", identity["appName"], "the name of an app is a pattern here, never a real name")
         self.assertEqual({k: i["madeBy"] for k, i in MANIFEST["identities"].items()}, {"cases": "cases", "usage": "recording"})
@@ -296,6 +301,10 @@ class TheFile(unittest.TestCase):
             self.assertIn(found, built_in, "a GUID of the file is the id of a built-in role and nothing else")
 
     def test_the_loader_refuses_holders_that_do_not_make_sense(self):
+        def twice(document):
+            for key in ("cases", "usage"):
+                document["identities"][key]["holders"].append({"kind": "user", "name": "id-meternaut-shared"})
+
         for change, word in (
             (lambda d: d["identities"]["cases"].update(holders=[]), "has holders"),
             (lambda d: d["identities"]["cases"].update(holders=[{"kind": "system", "siteOption": "--cases-site"}, {"kind": "system", "siteOption": "--usage-site"}]), "one system-assigned"),
@@ -304,7 +313,7 @@ class TheFile(unittest.TestCase):
             (lambda d: d["identities"]["cases"].update(holders=[{"kind": "system"}]), "siteOption"),
             (lambda d: d["identities"]["cases"].update(holders=[{"kind": "user"}]), "has a name"),
             (lambda d: d["identities"]["cases"].update(holders=[{"kind": "user", "name": "not a name"}]), "has a name"),
-            (lambda d: d["identities"]["usage"]["holders"].__setitem__(1, {"kind": "user", "name": "id-meternaut-cases"}), "holder once"),
+            (twice, "holder once"),
             (lambda d: d["identities"]["usage"]["holders"].__setitem__(0, {"kind": "system", "siteOption": "--cases-site"}), "names one app"),
             (lambda d: d["identities"]["cases"].pop("madeBy"), "madeBy"),
             (lambda d: d["identities"]["cases"].pop("holders"), "holders"),
@@ -317,24 +326,54 @@ class TheFile(unittest.TestCase):
         self.assertIn("holds no write right", said)
 
     def test_the_earlier_writer_is_retired_and_is_not_granted(self):
-        self.assertEqual(MANIFEST["retired"], [{"id": "W1", "identity": {"name": RETIRED_IDENTITY}, "role": RETIRED_ROLE, "place": "projectGroup",
-                                                "why": MANIFEST["retired"][0]["why"]}])
+        self.assertEqual(MANIFEST["retired"][0], {"id": "W1", "identity": {"name": RETIRED_IDENTITY}, "role": RETIRED_ROLE, "place": "projectGroup",
+                                                  "why": MANIFEST["retired"][0]["why"]})
         self.assertTrue(MANIFEST["retired"][0]["why"])
         self.assertNotIn(RETIRED_ROLE, MANIFEST["roles"])
         self.assertNotIn(RETIRED_IDENTITY, [h.get("name") for i in MANIFEST["identities"].values() for h in i["holders"]])
         self.assertIn(MANIFEST["retired"][0]["place"], MANIFEST["places"])
 
+    def test_the_grants_of_the_user_assigned_identities_are_retired_each_one_next_to_the_grant_that_replaces_it(self):
+        self.assertEqual([r["id"] for r in MANIFEST["retired"]], ["W1", "W2", "W3", "W4", "W5", "W6"])
+        grants = {g["id"]: g for g in MANIFEST["grants"]}
+        names = {"cases": "id-meternaut-cases", "usage": "id-meternaut-usage"}
+        for item in MANIFEST["retired"][1:]:
+            replacing = grants[item["replacedBy"]]
+            self.assertEqual((item["role"], item["place"]), (replacing["role"], replacing["place"]), item["id"])
+            self.assertEqual(item["identity"], {"name": names[replacing["identity"]]}, item["id"])
+            self.assertIn(item["role"], MANIFEST["roles"], "the role stays: the grant that replaces it needs it")
+            self.assertTrue(item["why"])
+        self.assertEqual([(r["id"], r["replacedBy"]) for r in MANIFEST["retired"][1:]], [("W2", "R1"), ("W3", "R2"), ("W4", "R3"), ("W5", "R4"), ("W6", "R5")],
+                         "every grant of the old identities is retired, and none besides")
+
     def test_a_retired_item_must_be_complete_and_must_not_be_a_current_grant(self):
+        def as_holder(document):
+            document["identities"]["cases"]["holders"].append({"kind": "user", "name": RETIRED_IDENTITY})
+
         for change, word in (
             (lambda d: d["retired"][0].update(id="R1"), "R1"),
             (lambda d: d["retired"][0].update(role="Reader"), "not a role of the file"),
-            (lambda d: d["retired"][0].update(identity={"name": "id-meternaut-cases"}), "not an identity of the file"),
+            (as_holder, "not an identity of the file"),
             (lambda d: d["retired"][0].update(identity="id-meternaut-runner"), "an object with a name"),
             (lambda d: d["retired"][0].update(identity={}), "an object with a name"),
             (lambda d: d["retired"][0].update(place="nowhere"), "W1"),
             (lambda d: d["retired"][0].update(why=""), "W1"),
             (lambda d: d["retired"].append(dict(d["retired"][0])), "used once"),
             (lambda d: d.update(retired="W1"), "retired is a list"),
+        ):
+            self.assertIn(word, self.broken(change))
+
+    def test_the_grant_of_an_identity_that_an_app_no_longer_runs_as_is_checked_against_the_grant_that_replaces_it(self):
+        def holder_again(document):
+            document["identities"]["cases"]["holders"].append({"kind": "user", "name": "id-meternaut-cases"})
+
+        for change, word in (
+            (lambda d: d["retired"][1].update(replacedBy="R9"), "replacedBy is the id of a grant"),
+            (lambda d: d["retired"][1].update(role="Cost Management Reader"), "those of the grant that replaces it, R1"),
+            (lambda d: d["retired"][1].update(place="gatewayInsights"), "those of the grant that replaces it, R1"),
+            (lambda d: d["retired"][1].update(place="nowhere"), "W2"),
+            (holder_again, "not an identity of the file"),
+            (lambda d: d["retired"][1].update(identity={"name": "bad name"}), "an object with a name"),
         ):
             self.assertIn(word, self.broken(change))
 
@@ -370,12 +409,13 @@ class TheTable(unittest.TestCase):
         self.assertTrue(rows[0].startswith("| # | Identity | Role | Where | What it is for |"))
         self.assertIn("Meternaut gateway key reader (custom role)", rows[4])
 
-    def test_a_row_names_every_holder_of_its_identity(self):
+    def test_a_row_names_the_holder_of_its_identity(self):
         rows = ar.markdown(MANIFEST).splitlines()[2:]
-        cases = "The system-assigned identity of the cases app (`func-meternaut-cases-*`) and the user-assigned identity `id-meternaut-cases`"
-        usage = "The system-assigned identity of the usage app (`func-meternaut-usage-*`) and the user-assigned identity `id-meternaut-usage`"
+        cases = "The system-assigned identity of the cases app (`func-meternaut-cases-*`)"
+        usage = "The system-assigned identity of the usage app (`func-meternaut-usage-*`)"
         for row, (number, holders) in zip(rows, (("R1", cases), ("R2", cases), ("R3", cases), ("R4", usage), ("R5", usage))):
             self.assertTrue(row.startswith(f"| {number} | {holders} | "), row[:120])
+        self.assertNotIn("user-assigned", "\n".join(rows))
 
     def test_the_proposal_shows_exactly_this_table(self):
         text = self.PROPOSAL.read_text(encoding="utf-8")
@@ -396,6 +436,9 @@ class TheTable(unittest.TestCase):
         self.assertEqual(len(rows), 2 + len(MANIFEST["retired"]))
         self.assertTrue(rows[0].startswith("| # | Identity | Role | Where | Why it is retired |"))
         self.assertTrue(rows[2].startswith(f"| W1 | `{RETIRED_IDENTITY}` | {RETIRED_ROLE} (custom role) | "))
+        self.assertTrue(rows[3].startswith("| W2 | `id-meternaut-cases` | Reader | "), "a built-in role is not a custom role")
+        self.assertTrue(rows[5].startswith("| W4 | `id-meternaut-cases` | Meternaut gateway key reader (custom role) | "))
+        self.assertTrue(rows[7].startswith("| W6 | `id-meternaut-usage` | Meternaut usage reader (custom role) | "))
         text = self.PROPOSAL.read_text(encoding="utf-8")
         match = re.search(r"<!-- access-retired:start -->\n(.*?)\n<!-- access-retired:end -->", text, re.S)
         self.assertIsNotNone(match, "the proposal has no marked table of the retired grants")
@@ -536,56 +579,55 @@ class Check(unittest.TestCase):
         fake = FakeAz()
         code, out, _, _ = run(["check", *PLACES], fake)
         self.assertEqual(code, 0)
-        self.assertIn("10 of 10 present.", out, "five requirements, and each of them is held by the app's system-assigned identity and by its user-assigned one")
+        self.assertIn("5 of 5 present.", out)
         self.assertIn("signed in as operator@example.com", out)
         self.assertEqual(fake.writes(), [])
 
-    def test_check_does_not_look_for_what_is_retired(self):
+    def test_check_does_not_look_for_what_is_retired_and_does_not_read_the_user_assigned_identities_at_all(self):
         fake = FakeAz().leave_the_writer()
         code, out, _, _ = run(["check", *PLACES], fake)
-        self.assertEqual((code, "10 of 10 present." in out), (0, True))
+        self.assertEqual((code, "5 of 5 present." in out), (0, True))
         self.assertNotIn("W1", out)
         self.assertNotIn(RETIRED_ROLE, out)
+        self.assertNotIn("id-meternaut", out)
         self.assertFalse([c for c in fake.calls if RETIRED_IDENTITY in c or RETIRED_ROLE in c])
+        self.assertEqual([c for c in fake.calls if c[:2] == ["identity", "show"]], [], "no app runs as a user-assigned identity that needs a role")
 
     def test_a_second_subscription_that_has_no_grant_is_missing(self):
         code, out, _, _ = run(["check", *PLACES, "--estate", ESTATE, "--estate", f"/subscriptions/{SECOND}", "--only", "R1,R2"], FakeAz())
         self.assertEqual(code, 1)
-        self.assertEqual(len(re.findall(r"MISSING", out)), 4, "two roles for each of the two holders")
+        self.assertEqual(len(re.findall(r"MISSING", out)), 2)
         self.assertIn(f"Reader  at /subscriptions/{SECOND}", out)
-        self.assertIn("4 of 8 present.", out)
+        self.assertIn("2 of 4 present.", out)
 
     def test_a_grant_at_a_management_group_counts_for_the_subscriptions_below_it(self):
         fake = FakeAz()
         fake.assignments = [a for a in fake.assignments if a["scope"] != ESTATE]
-        for principal in (OLD_CASES, NEW_CASES):
-            fake.grant(principal, BUILTIN["Reader"], MANAGEMENT_GROUP)
-            fake.grant(principal, BUILTIN["Cost Management Reader"], MANAGEMENT_GROUP)
+        fake.grant(NEW_CASES, BUILTIN["Reader"], MANAGEMENT_GROUP)
+        fake.grant(NEW_CASES, BUILTIN["Cost Management Reader"], MANAGEMENT_GROUP)
         code, out, _, _ = run(["check", *PLACES], fake)
-        self.assertEqual((code, "10 of 10 present." in out), (0, True))
+        self.assertEqual((code, "5 of 5 present." in out), (0, True))
 
     def test_a_grant_on_something_below_the_place_does_not_count(self):
         fake = FakeAz()
         fake.assignments = [a for a in fake.assignments if not (a["scope"] == ESTATE and a["role_id"] == BUILTIN["Reader"])]
-        fake.grant(OLD_CASES, BUILTIN["Reader"], f"{ESTATE}/resourceGroups/rg-one")
         fake.grant(NEW_CASES, BUILTIN["Reader"], f"{ESTATE}/resourceGroups/rg-one")
         code, out, _, _ = run(["check", *PLACES, "--only", "R1"], fake)
-        self.assertEqual((code, out.count("MISSING")), (1, 2))
+        self.assertEqual((code, "MISSING" in out), (1, True))
 
     def test_a_grant_to_another_identity_does_not_count(self):
         fake = FakeAz()
         fake.assignments = [dict(a, principal="somebody-else") if a["scope"] == ESTATE else a for a in fake.assignments]
         code, out, _, _ = run(["check", *PLACES, "--only", "R1,R2"], fake)
-        self.assertEqual((code, out.count("MISSING")), (1, 4))
+        self.assertEqual((code, out.count("MISSING")), (1, 2))
 
-    def test_every_holder_is_checked_for_every_requirement_and_each_line_names_its_holder(self):
+    def test_a_grant_that_only_the_user_assigned_identity_still_holds_does_not_count(self):
         fake = FakeAz()
         fake.assignments = [a for a in fake.assignments if not (a["principal"] == NEW_CASES and a["role_id"] == BUILTIN["Reader"])]
         code, out, _, _ = run(["check", *PLACES, "--only", "R1"], fake)
         self.assertEqual(code, 1)
         self.assertRegex(out, rf"MISSING +R1  {CASES_SITE} \(system-assigned\)  Reader  at {re.escape(ESTATE)}")
-        self.assertRegex(out, rf"present +R1  id-meternaut-cases  Reader  at {re.escape(ESTATE)}")
-        self.assertIn("1 of 2 present.", out)
+        self.assertIn("0 of 1 present.", out)
 
     def test_the_system_assigned_identity_is_found_by_reading_the_app_in_the_project_group_and_nothing_is_written(self):
         fake = FakeAz()
@@ -596,8 +638,10 @@ class Check(unittest.TestCase):
                           f"{ar.ARM}{PROJECT_GROUP}/providers/Microsoft.Web/sites/{USAGE_SITE}?api-version=2024-04-01"], "each app once, however many requirements it has")
         self.assertEqual({c[c.index("--method") + 1] for c in reads}, {"get"})
         listed = " ".join(c[c.index("--url") + 1] for c in fake.calls if c[0] == "rest" and "roleAssignments" in c[c.index("--url") + 1])
-        for principal in (OLD_CASES, NEW_CASES, OLD_USAGE, NEW_USAGE):
+        for principal in (NEW_CASES, NEW_USAGE):
             self.assertIn(f"principalId eq '{principal}'", listed)
+        for principal in (OLD_CASES, OLD_USAGE):
+            self.assertNotIn(principal, listed)
         self.assertEqual(fake.writes(), [])
 
     def test_an_app_without_a_system_assigned_identity_is_cannot_yet_and_says_which_action_makes_it(self):
@@ -607,8 +651,7 @@ class Check(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertRegex(out, rf"cannot yet +R1  {CASES_SITE} \(system-assigned\)  Reader  at {re.escape(ESTATE)}")
         self.assertIn(f"{CASES_SITE} has no system-assigned identity yet: the Hub action cases makes it", out)
-        self.assertRegex(out, r"present +R1  id-meternaut-cases")
-        self.assertIn("1 of 2 present.", out)
+        self.assertIn("0 of 1 present.", out)
 
     def test_an_app_that_does_not_exist_yet_is_cannot_yet_too(self):
         fake = FakeAz()
@@ -616,7 +659,7 @@ class Check(unittest.TestCase):
         code, out, _, _ = run(["check", *PLACES, "--only", "R4"], fake)
         self.assertEqual(code, 1)
         self.assertIn(f"{USAGE_SITE} does not exist yet: the Hub action recording makes it", out)
-        self.assertIn("1 of 2 present.", out)
+        self.assertIn("0 of 1 present.", out)
 
     def test_an_app_whose_identity_block_holds_no_object_id_is_without_an_identity(self):
         group = PROJECT_GROUP
@@ -649,7 +692,7 @@ class Check(unittest.TestCase):
         fake = FakeAz()
         code, out, _, _ = run(["check", "--project-subscription", PROJECT, "--project-group", "rg-project", "--gateway-insights", INSIGHTS, "--usage-site", USAGE_SITE,
                                "--only", "R4,R5"], fake)
-        self.assertEqual((code, "4 of 4 present." in out), (0, True))
+        self.assertEqual((code, "2 of 2 present." in out), (0, True))
         self.assertFalse([c for c in fake.calls if CASES_SITE in " ".join(c)], "the cases app is not read for the requirements of the usage app")
         code, _, err, _ = run(["check", "--project-subscription", PROJECT, "--project-group", "rg-project", "--usage-site", USAGE_SITE, "--only", "R1"], FakeAz())
         self.assertEqual(code, 1)
@@ -662,7 +705,7 @@ class Check(unittest.TestCase):
     def test_the_names_of_the_apps_come_from_the_settings_of_the_workflow_too_and_an_option_wins(self):
         env = {"ACCESS_CASES_SITE": CASES_SITE, "ACCESS_USAGE_SITE": USAGE_SITE}
         code, out, _, _ = run(["check", "--project-subscription", PROJECT, "--project-group", "rg-project", "--gateway", APIM, "--gateway-insights", INSIGHTS], FakeAz(), env=env)
-        self.assertEqual((code, "10 of 10 present." in out), (0, True))
+        self.assertEqual((code, "5 of 5 present." in out), (0, True))
         fake = FakeAz()
         fake.sites["func-meternaut-cases-other"] = None
         code, out, _, _ = run(["check", *PLACES, "--cases-site", "func-meternaut-cases-other", "--only", "R1"], fake, env=env)
@@ -692,26 +735,11 @@ class Check(unittest.TestCase):
         self.assertIn("MISSING", out)
         self.assertIn("the custom role does not exist yet", out)
 
-    def test_an_identity_that_does_not_exist_yet_says_which_action_makes_it(self):
+    def test_a_user_assigned_identity_that_is_gone_does_not_matter_to_check(self):
         fake = FakeAz()
         del fake.identities["id-meternaut-cases"]
         code, out, _, _ = run(["check", *PLACES, "--only", "R1"], fake)
-        self.assertEqual(code, 1)
-        self.assertIn("cannot yet", out)
-        self.assertIn("id-meternaut-cases does not exist yet: the Hub action cases makes it", out)
-        self.assertIn("1 of 2 present.", out)
-
-    def test_an_identity_that_cannot_be_read_stops_the_check_with_the_reason(self):
-        fake = FakeAz()
-
-        def denied(args):
-            if list(args)[:2] == ["identity", "show"]:
-                return 1, "", "ERROR: (AuthorizationFailed) The client does not have authorization to perform action"
-            return fake(args)
-
-        code, out, err, _ = run(["check", *PLACES, "--only", "R1"], denied)
-        self.assertEqual(code, 1)
-        self.assertIn("could not be read", err)
+        self.assertEqual((code, "1 of 1 present." in out), (0, True))
 
     def test_the_workspace_is_read_from_the_gateways_component_when_it_is_not_given(self):
         fake = FakeAz()
@@ -725,7 +753,7 @@ class Check(unittest.TestCase):
         env = {"ENV_SUBSCRIPTION_ID": PROJECT, "ENV_RESOURCE_GROUP": "rg-project", "GATEWAY_RESOURCE_ID": APIM, "GATEWAY_APPINSIGHTS_ID": INSIGHTS,
                "ACCESS_ESTATE_SCOPES": f"{ESTATE}, /subscriptions/{SECOND}", "ACCESS_CASES_SITE": CASES_SITE}
         code, out, _, _ = run(["check", "--only", "R1"], FakeAz(), env=env)
-        self.assertEqual((code, "2 of 4 present." in out), (1, True))
+        self.assertEqual((code, "1 of 2 present." in out), (1, True))
 
     def test_without_an_estate_the_project_subscription_is_the_estate(self):
         code, out, _, _ = run(["check", *PLACES, "--only", "R1"], FakeAz())
@@ -757,10 +785,12 @@ class Grant(unittest.TestCase):
         code, out, _, _ = run(["grant", *PLACES], fake)
         self.assertEqual(code, 0)
         self.assertIn("This was a dry run", out)
-        self.assertIn("12 change(s) would be made, and nothing else", out, "two custom roles, and five requirements for each of the two holders")
+        self.assertIn("7 change(s) would be made, and nothing else", out)
         self.assertEqual(fake.writes(), [])
-        for principal in (OLD_CASES, NEW_CASES, OLD_USAGE, NEW_USAGE):
+        for principal in (NEW_CASES, NEW_USAGE):
             self.assertIn(f"az role assignment create --assignee-object-id {principal} --assignee-principal-type ServicePrincipal", out)
+        for principal in (OLD_CASES, OLD_USAGE):
+            self.assertNotIn(principal, out, "nothing is granted to a user-assigned identity any more")
         self.assertNotIn(RETIRED_IDENTITY, out)
         self.assertNotIn("delete", out)
 
@@ -771,8 +801,8 @@ class Grant(unittest.TestCase):
         writes = fake.writes()
         kinds = [c[:3] for c in writes]
         self.assertEqual(kinds.count(["role", "definition", "create"]), 2)
-        self.assertEqual(kinds.count(["role", "assignment", "create"]), 10)
-        self.assertEqual(len(kinds), 12, "nothing but makes: grant never removes")
+        self.assertEqual(kinds.count(["role", "assignment", "create"]), 5)
+        self.assertEqual(len(kinds), 7, "nothing but makes: grant never removes")
         custom_ids = {r["name"] for r in fake.roles.values()}
         for name in ("Meternaut gateway key reader", "Meternaut usage reader"):
             role_id = fake.roles[name]["name"]
@@ -780,10 +810,10 @@ class Grant(unittest.TestCase):
             assign = next(i for i, c in enumerate(writes) if c[:3] == ["role", "assignment", "create"] and c[c.index("--role") + 1] == role_id)
             self.assertLess(define, assign, "a custom role is made before it is assigned")
         self.assertEqual(len(custom_ids), 2)
-        self.assertTrue(out.rstrip().endswith("10 of 10 present."))
+        self.assertTrue(out.rstrip().endswith("5 of 5 present."))
         self.assertIn("Checking again:", out)
 
-    def test_the_system_assigned_identity_of_an_app_gets_the_roles_of_its_user_assigned_one_at_the_same_places_and_none_besides(self):
+    def test_the_system_assigned_identity_of_each_app_gets_exactly_the_requirements_of_its_app(self):
         fake = FakeAz(**self.EMPTY)
         code, out, _, _ = run(["grant", *PLACES, "--apply", "--yes"], fake)
         self.assertEqual(code, 0, out)
@@ -791,13 +821,11 @@ class Grant(unittest.TestCase):
         def held(principal):
             return sorted((a["role_id"], a["scope"]) for a in fake.assignments if a["principal"] == principal)
 
-        self.assertEqual(held(NEW_CASES), held(OLD_CASES))
-        self.assertEqual(held(NEW_USAGE), held(OLD_USAGE))
-        self.assertEqual(len(held(NEW_CASES)), 3)
-        self.assertEqual(len(held(NEW_USAGE)), 2)
-        self.assertEqual({a["principal"] for a in fake.assignments}, {OLD_CASES, NEW_CASES, OLD_USAGE, NEW_USAGE})
+        self.assertEqual(held(NEW_CASES), sorted([(BUILTIN["Reader"], ESTATE), (BUILTIN["Cost Management Reader"], ESTATE), (fake.roles["Meternaut gateway key reader"]["name"], PRODUCT)]))
+        self.assertEqual(held(NEW_USAGE), sorted([(BUILTIN["Monitoring Reader"], INSIGHTS), (fake.roles["Meternaut usage reader"]["name"], WORKSPACE)]))
+        self.assertEqual({a["principal"] for a in fake.assignments}, {NEW_CASES, NEW_USAGE})
 
-    def test_an_app_that_has_no_system_assigned_identity_yet_blocks_only_its_own_new_holder(self):
+    def test_an_app_that_has_no_system_assigned_identity_yet_blocks_only_its_own_grants(self):
         fake = FakeAz(**self.EMPTY)
         fake.sites[CASES_SITE] = None
         code, out, _, _ = run(["grant", *PLACES, "--apply", "--yes"], fake)
@@ -805,7 +833,7 @@ class Grant(unittest.TestCase):
         self.assertIn(f"{CASES_SITE} has no system-assigned identity yet: the Hub action cases makes it", out)
         self.assertIn("cannot yet", out)
         assigned = [c[c.index("--assignee-object-id") + 1] for c in fake.writes() if c[:3] == ["role", "assignment", "create"]]
-        self.assertEqual(sorted(assigned), sorted([OLD_CASES] * 3 + [OLD_USAGE, NEW_USAGE] * 2), "the app keeps what its user-assigned identity gets, and the other app is complete")
+        self.assertEqual(sorted(assigned), [NEW_USAGE, NEW_USAGE], "the other app is complete")
 
     def test_nothing_is_made_in_the_project_group_and_no_role_that_changes_anything_is_defined(self):
         fake = FakeAz(**self.EMPTY)
@@ -858,18 +886,16 @@ class Grant(unittest.TestCase):
         fake.assignments = [a for a in fake.assignments if not (a["scope"] == ESTATE and a["role_id"] == BUILTIN["Reader"])]
         code, out, _, _ = run(["grant", *PLACES, "--apply", "--yes"], fake)
         self.assertEqual(code, 0)
-        self.assertEqual([c[:3] for c in fake.writes()], [["role", "assignment", "create"]] * 2, "the same role for each of the two holders of the cases identity")
-        for write in fake.writes():
-            self.assertEqual((write[write.index("--role") + 1], write[write.index("--scope") + 1]), (BUILTIN["Reader"], ESTATE))
-        self.assertEqual(sorted(w[w.index("--assignee-object-id") + 1] for w in fake.writes()), sorted([OLD_CASES, NEW_CASES]))
+        self.assertEqual([c[:3] for c in fake.writes()], [["role", "assignment", "create"]])
+        write = fake.writes()[0]
+        self.assertEqual((write[write.index("--role") + 1], write[write.index("--scope") + 1], write[write.index("--assignee-object-id") + 1]), (BUILTIN["Reader"], ESTATE, NEW_CASES))
 
-    def test_a_second_estate_gets_its_two_roles_for_each_holder(self):
+    def test_a_second_estate_gets_its_two_roles(self):
         fake = FakeAz()
         code, out, _, _ = run(["grant", *PLACES, "--estate", ESTATE, "--estate", f"/subscriptions/{SECOND}", "--only", "R1,R2", "--apply", "--yes"], fake)
         self.assertEqual(code, 0)
         made = [(c[c.index("--assignee-object-id") + 1], c[c.index("--role") + 1], c[c.index("--scope") + 1]) for c in fake.writes()]
-        self.assertEqual(sorted(made), sorted((principal, role, f"/subscriptions/{SECOND}") for principal in (OLD_CASES, NEW_CASES)
-                                              for role in (BUILTIN["Reader"], BUILTIN["Cost Management Reader"])))
+        self.assertEqual(sorted(made), sorted([(NEW_CASES, BUILTIN["Reader"], f"/subscriptions/{SECOND}"), (NEW_CASES, BUILTIN["Cost Management Reader"], f"/subscriptions/{SECOND}")]))
 
     def test_a_custom_role_that_differs_is_never_changed(self):
         fake = FakeAz()
@@ -881,15 +907,15 @@ class Grant(unittest.TestCase):
         self.assertIn("Nothing can be granted until", out)
         self.assertIn("role differs", out)
 
-    def test_an_identity_that_does_not_exist_yet_blocks_its_grants_only(self):
+    def test_an_app_that_does_not_exist_yet_blocks_its_grants_only(self):
         fake = FakeAz(**self.EMPTY)
-        del fake.identities["id-meternaut-usage"]
+        del fake.sites[USAGE_SITE]
         code, out, _, _ = run(["grant", *PLACES, "--apply", "--yes"], fake)
         self.assertEqual(code, 1)
-        self.assertIn("cannot yet", out)
+        self.assertIn(f"{USAGE_SITE} does not exist yet: the Hub action recording makes it", out)
         assigned = [c for c in fake.writes() if c[:3] == ["role", "assignment", "create"]]
-        self.assertEqual(len(assigned), 8, "everything but the two roles of the user-assigned identity of the usage app")
-        self.assertEqual({c[c.index("--assignee-object-id") + 1] for c in assigned}, {OLD_CASES, NEW_CASES, NEW_USAGE})
+        self.assertEqual(len(assigned), 3)
+        self.assertTrue(all(c[c.index("--assignee-object-id") + 1] == NEW_CASES for c in assigned))
 
     def test_a_pipeline_may_not_apply_but_a_dry_run_is_allowed(self):
         fake = FakeAz(**self.EMPTY)
@@ -942,10 +968,11 @@ class Grant(unittest.TestCase):
 
 
 class Retire(unittest.TestCase):
-    """What the first version of the console left behind: the writer's role, its assignments (also those of an identity that was deleted) and its identity."""
+    """What the first version of the console left behind: the writer's role, its assignments (also those of an identity that was deleted) and its identity.
+    The user-assigned identities of the two apps hold nothing here (the next class is about them), so their five items are gone."""
 
     def left(self, **options):
-        return FakeAz().leave_the_writer(**options)
+        return FakeAz(old=False).leave_the_writer(**options)
 
     def commands(self, out):
         return [line.strip() for line in out.splitlines() if line.strip().startswith("az ")]
@@ -968,7 +995,7 @@ class Retire(unittest.TestCase):
 
     def test_it_reads_first_names_what_it_found_and_lists_the_assignments_by_role_and_never_by_identity(self):
         fake = self.left(below=1)
-        code, out, _, _ = run(["retire", *PLACES], fake)
+        code, out, _, _ = run(["retire", *PLACES, "--only", "W1"], fake)
         self.assertRegex(out, rf"still there +W1  {RETIRED_IDENTITY}  {RETIRED_ROLE}  at {re.escape(PROJECT_GROUP)}")
         self.assertIn(f"the custom role exists ({RETIRED_ROLE_ID}); 3 assignment(s) of it at or below this place", out)
         self.assertIn("held by id-meternaut-runner", out)
@@ -986,7 +1013,7 @@ class Retire(unittest.TestCase):
         self.assertEqual(fake.of_the_role(), [])
         self.assertNotIn(RETIRED_ROLE, fake.roles)
         self.assertIn("Checking again:", out)
-        self.assertTrue(out.rstrip().endswith("1 of 1 gone."))
+        self.assertTrue(out.rstrip().endswith("6 of 6 gone."))
         first = next(i for i, c in enumerate(fake.calls) if c in fake.writes())
         self.assertEqual(fake.calls[0][:2], ["account", "show"])
         self.assertTrue(any(c[:3] == ["role", "definition", "list"] for c in fake.calls[:first]))
@@ -1009,16 +1036,16 @@ class Retire(unittest.TestCase):
     def test_only_the_assignments_of_that_role_at_that_place_are_removed_and_nothing_else(self):
         fake = self.left(below=1)
         fake.grant("runner-principal", BUILTIN["Reader"], PROJECT_GROUP)
-        fake.grant("case-principal", BUILTIN["Reader"], PROJECT_GROUP)
+        fake.grant(OLD_CASES, BUILTIN["Reader"], PROJECT_GROUP)
         fake.grant("runner-principal", USAGE_READER_ID, WORKSPACE)
         others = [dict(x) for x in fake.assignments if x["role_id"] != RETIRED_ROLE_ID]
         roles = {name: dict(role) for name, role in fake.roles.items() if name != RETIRED_ROLE}
-        code, out, _, _ = run(["retire", *PLACES, "--apply", "--yes"], fake)
+        code, out, _, _ = run(["retire", *PLACES, "--only", "W1", "--apply", "--yes"], fake)
         self.assertEqual(code, 0, out)
         self.assertEqual(fake.assignments, others, "every other assignment of every identity is still there")
         self.assertEqual({n: r for n, r in fake.roles.items()}, roles, "every other role is still there")
         self.assertEqual(sorted({tuple(c[:3]) for c in fake.writes()}), [("role", "assignment", "delete"), ("role", "definition", "delete")])
-        self.assertEqual(fake.identities, {"id-meternaut-cases": "case-principal", "id-meternaut-usage": "usage-principal", RETIRED_IDENTITY: "runner-principal"})
+        self.assertEqual(fake.identities, {"id-meternaut-cases": OLD_CASES, "id-meternaut-usage": OLD_USAGE, RETIRED_IDENTITY: "runner-principal"})
 
     def test_it_never_deletes_an_identity_and_says_who_does(self):
         fake = self.left()
@@ -1040,15 +1067,16 @@ class Retire(unittest.TestCase):
             self.assertEqual((code, len(fake.writes()), "Nothing to retire." in out), (0, before, True), argv)
 
     def test_when_nothing_is_there_it_says_so(self):
-        fake = FakeAz()
+        fake = FakeAz(old=False)
         code, out, _, _ = run(["retire", *PLACES], fake)
         self.assertEqual(code, 0)
         self.assertIn("Nothing to retire.", out)
         self.assertRegex(out, rf"gone +W1  {RETIRED_IDENTITY}")
+        self.assertEqual(len(re.findall(r"^  gone +W\d", out, re.M)), 6)
         self.assertEqual(fake.writes(), [])
 
     def test_an_identity_that_is_still_there_without_any_role_is_reported_and_there_is_nothing_to_retire(self):
-        fake = FakeAz()
+        fake = FakeAz(old=False)
         fake.identities[RETIRED_IDENTITY] = "runner-principal"
         code, out, _, _ = run(["retire", *PLACES, "--apply", "--yes"], fake)
         self.assertEqual(code, 0)
@@ -1091,7 +1119,7 @@ class Retire(unittest.TestCase):
         self.assertIn(f"kept the custom role {RETIRED_ROLE}: 1 assignment(s) of it remain", out)
         self.assertEqual([c for c in fake.calls if c[:3] == ["role", "definition", "delete"]], [])
         self.assertIn(RETIRED_ROLE, fake.roles)
-        self.assertTrue(out.rstrip().endswith("0 of 1 gone."))
+        self.assertTrue(out.rstrip().endswith("5 of 6 gone."))
 
     def test_a_failure_to_remove_an_assignment_stops_at_once_and_says_which(self):
         fake = self.left(orphans=2)
@@ -1185,9 +1213,236 @@ class Retire(unittest.TestCase):
             self.assertIn(word, err)
 
     def test_the_settings_of_the_workflow_are_read_from_the_environment(self):
-        code, out, _, _ = run(["retire"], self.left(), env={"ENV_SUBSCRIPTION_ID": PROJECT, "ENV_RESOURCE_GROUP": "rg-project"})
+        env = {"ENV_SUBSCRIPTION_ID": PROJECT, "ENV_RESOURCE_GROUP": "rg-project", "GATEWAY_RESOURCE_ID": APIM, "GATEWAY_APPINSIGHTS_ID": INSIGHTS}
+        code, out, _, _ = run(["retire"], self.left(), env=env)
         self.assertEqual(code, 1)
         self.assertIn(f"at {PROJECT_GROUP}", out)
+        self.assertIn(f"at {ESTATE}", out)
+        self.assertIn(f"at {INSIGHTS}", out)
+        self.assertIn(f"at {PRODUCT}", out)
+        self.assertIn(f"at {WORKSPACE}", out)
+
+    def test_the_other_places_are_needed_for_the_items_that_name_them_and_not_for_the_others(self):
+        code, _, err, _ = run(["retire", "--project-subscription", PROJECT, "--project-group", "rg-project"], self.left())
+        self.assertEqual(code, 1)
+        self.assertIn("--gateway is not set", err)
+        code, out, _, _ = run(["retire", "--project-subscription", PROJECT, "--project-group", "rg-project", "--only", "W1,W2,W3"], self.left())
+        self.assertEqual(code, 1, "W1 is still there")
+        self.assertRegex(out, r"gone +W2")
+
+
+class RetireTheOldIdentities(unittest.TestCase):
+    """The apps have been flipped: they run as their system-assigned identities, which hold the requirements, and the user-assigned identities of before still hold
+    theirs. Retire removes the old ones, those of the identity of each item and nobody else's, and never a role."""
+
+    NO_SITES = ["--project-subscription", PROJECT, "--project-group", "rg-project", "--gateway", APIM, "--gateway-insights", INSIGHTS]
+    ITEMS = (("W2", "id-meternaut-cases", "Reader", ESTATE), ("W3", "id-meternaut-cases", "Cost Management Reader", ESTATE),
+             ("W4", "id-meternaut-cases", "Meternaut gateway key reader", PRODUCT), ("W5", "id-meternaut-usage", "Monitoring Reader", INSIGHTS),
+             ("W6", "id-meternaut-usage", "Meternaut usage reader", WORKSPACE))
+
+    @staticmethod
+    def old(fake):
+        return [a for a in fake.assignments if a["principal"] in (OLD_CASES, OLD_USAGE)]
+
+    @staticmethod
+    def deletes(fake):
+        return [c for c in fake.calls if c[:3] == ["role", "assignment", "delete"]]
+
+    def test_a_dry_run_finds_the_assignments_of_the_old_identities_by_their_object_ids_and_removes_nothing(self):
+        fake = FakeAz()
+        code, out, _, _ = run(["retire", *PLACES, "--only", "W2,W3,W4,W5,W6"], fake)
+        self.assertEqual(code, 1, "something is left to retire, and a script can tell")
+        self.assertEqual(fake.writes(), [])
+        self.assertIn("5 change(s) would be made, and nothing else", out)
+        self.assertIn("This was a dry run", out)
+        for item, identity, role, place in self.ITEMS:
+            self.assertRegex(out, rf"still there +{item}  {identity}  {role}  at {re.escape(place)}")
+            self.assertIn(f"{identity} holds 1 assignment(s) of {role} at or below this place:", out)
+        commands = [line.strip() for line in out.splitlines() if line.strip().startswith("az ")]
+        self.assertEqual(len(commands), 5)
+        self.assertEqual({command.split("--ids ")[1].split()[0] for command in commands}, {a["id"] for a in self.old(fake)})
+        self.assertEqual([c for c in commands if not c.startswith("az role assignment delete")], [], "no role is deleted: the system-assigned identities need them")
+        lists = [c[c.index("--url") + 1] for c in fake.calls if c[0] == "rest" and "roleAssignments" in c[c.index("--url") + 1]]
+        self.assertTrue(lists)
+        self.assertTrue(all("principalId eq '" in url for url in lists), "every list is of one principal: never the assignments of everybody")
+        self.assertEqual({c[c.index("--method") + 1] for c in fake.calls if c[0] == "rest"}, {"get"})
+
+    def test_apply_removes_the_assignments_of_the_old_identities_and_nothing_else_and_the_apps_keep_their_access(self):
+        fake = FakeAz()
+        system = [dict(a) for a in fake.assignments if a["principal"] in (NEW_CASES, NEW_USAGE)]
+        roles = {name: dict(role) for name, role in fake.roles.items()}
+        identities = dict(fake.identities)
+        code, out, _, _ = run(["retire", *PLACES, "--apply", "--yes"], fake)
+        self.assertEqual(code, 0, out)
+        self.assertEqual([c[:3] for c in fake.writes()], [["role", "assignment", "delete"]] * 5)
+        self.assertEqual(self.old(fake), [])
+        self.assertEqual(fake.assignments, system, "what the system-assigned identities hold is untouched")
+        self.assertEqual(fake.roles, roles, "both custom roles stay")
+        self.assertEqual(fake.identities, identities, "an identity is never deleted")
+        self.assertIn("Checking again:", out)
+        self.assertTrue(out.rstrip().endswith("6 of 6 gone."))
+        self.assertIn("id-meternaut-cases still exists in", out)
+        self.assertIn("never deletes an identity", out)
+        code, out, _, _ = run(["check", *PLACES], fake)
+        self.assertEqual((code, "5 of 5 present." in out), (0, True))
+
+    def test_the_assignments_of_anybody_else_of_the_same_roles_at_the_same_places_stay(self):
+        fake = FakeAz()
+        for role, scope in ((BUILTIN["Reader"], ESTATE), (BUILTIN["Cost Management Reader"], ESTATE), (KEY_READER_ID, PRODUCT), (BUILTIN["Monitoring Reader"], INSIGHTS),
+                            (USAGE_READER_ID, WORKSPACE)):
+            fake.grant("somebody-else", role, scope)
+            fake.grant("a-deleted-identity", role, scope)
+        others = [dict(a) for a in fake.assignments if a["principal"] in ("somebody-else", "a-deleted-identity")]
+        code, out, _, _ = run(["retire", *PLACES, "--apply", "--yes"], fake)
+        self.assertEqual(code, 0, out)
+        self.assertEqual([a for a in fake.assignments if a["principal"] in ("somebody-else", "a-deleted-identity")], others)
+        self.assertEqual(len(self.deletes(fake)), 5)
+
+    def test_a_second_run_has_nothing_to_retire_and_needs_no_name_of_an_app(self):
+        fake = FakeAz()
+        run(["retire", *PLACES, "--apply", "--yes"], fake)
+        before = len(fake.writes())
+        for argv in (["retire", *PLACES, "--apply", "--yes"], ["retire", *PLACES], ["retire", *self.NO_SITES]):
+            code, out, _, _ = run(argv, fake)
+            self.assertEqual((code, len(fake.writes()), "Nothing to retire." in out), (0, before, True), argv)
+
+    def test_a_grant_is_kept_while_the_grant_that_replaces_it_is_not_present_for_the_system_assigned_identity(self):
+        fake = FakeAz()
+        fake.assignments = [a for a in fake.assignments if not (a["principal"] == NEW_CASES and a["role_id"] == BUILTIN["Reader"])]
+        code, out, _, _ = run(["retire", *PLACES, "--apply", "--yes"], fake)
+        self.assertEqual(code, 1)
+        self.assertRegex(out, rf"kept +W2  id-meternaut-cases  Reader  at {re.escape(ESTATE)}")
+        self.assertIn(f"R1 is not present for {CASES_SITE} (system-assigned) at {ESTATE} (MISSING)", out)
+        self.assertIn("The 1 assignment(s) of id-meternaut-cases stay until it is, so that the app is not left without access", out)
+        self.assertEqual(len(self.deletes(fake)), 4, "the other four are removed")
+        self.assertEqual([(a["principal"], a["role_id"]) for a in self.old(fake)], [(OLD_CASES, BUILTIN["Reader"])])
+        self.assertTrue(out.rstrip().endswith("5 of 6 gone."))
+        code, out, _, _ = run(["grant", *PLACES, "--apply", "--yes"], fake)
+        self.assertEqual(code, 0, out)
+        code, out, _, _ = run(["retire", *PLACES, "--apply", "--yes"], fake)
+        self.assertEqual((code, self.old(fake)), (0, []))
+
+    def test_an_app_that_has_no_system_assigned_identity_keeps_every_grant_of_its_old_identity_and_the_other_app_is_not_held_back(self):
+        fake = FakeAz()
+        fake.sites[CASES_SITE] = None
+        code, out, _, _ = run(["retire", *PLACES, "--apply", "--yes"], fake)
+        self.assertEqual(code, 1)
+        for item in ("W2", "W3", "W4"):
+            self.assertRegex(out, rf"kept +{item}  id-meternaut-cases")
+        self.assertIn(f"R1 is not present for {CASES_SITE} (system-assigned) at {ESTATE} (cannot yet: {CASES_SITE} has no system-assigned identity yet", out)
+        self.assertEqual(len(self.deletes(fake)), 2)
+        self.assertEqual({a["principal"] for a in self.old(fake)}, {OLD_CASES})
+
+    def test_when_nothing_can_be_removed_because_of_the_replacements_it_says_so_and_changes_nothing(self):
+        fake = FakeAz()
+        fake.sites[CASES_SITE] = fake.sites[USAGE_SITE] = None
+        for argv in (["retire", *PLACES, "--only", "W2,W3,W4,W5,W6"], ["retire", *PLACES, "--only", "W2,W3,W4,W5,W6", "--apply", "--yes"]):
+            code, out, _, _ = run(argv, fake)
+            self.assertEqual(code, 1, argv)
+            self.assertIn("Nothing can be retired until the lines above that say 'kept' are settled.", out)
+        self.assertEqual((fake.writes(), len(self.old(fake))), ([], 5))
+
+    def test_the_replacement_is_read_like_check_reads_it_and_its_site_is_needed_when_there_is_something_to_remove(self):
+        code, _, err, _ = run(["retire", *self.NO_SITES, "--only", "W2"], FakeAz())
+        self.assertEqual(code, 1)
+        self.assertIn("--cases-site is not set", err)
+        code, _, err, _ = run(["retire", *self.NO_SITES, "--only", "W5"], FakeAz())
+        self.assertEqual(code, 1)
+        self.assertIn("--usage-site is not set", err)
+        code, out, _, _ = run(["retire", *self.NO_SITES, "--only", "W2,W3,W4,W5,W6"], FakeAz(old=False))
+        self.assertEqual((code, "Nothing to retire." in out), (0, True), "nothing is held, so no replacement has to be looked at")
+
+    def test_a_grant_that_the_old_identity_holds_only_above_the_place_is_left_alone(self):
+        fake = FakeAz()
+        fake.assignments = [a for a in fake.assignments if not (a["principal"] == OLD_CASES and a["role_id"] == BUILTIN["Reader"])]
+        fake.grant(OLD_CASES, BUILTIN["Reader"], MANAGEMENT_GROUP)
+        for argv in (["retire", *PLACES, "--only", "W2"], ["retire", *PLACES, "--only", "W2", "--apply", "--yes"]):
+            code, out, _, _ = run(argv, fake)
+            self.assertEqual(code, 1, argv)
+            self.assertRegex(out, r"left alone +W2")
+            self.assertIn(f"id-meternaut-cases also holds it at {MANAGEMENT_GROUP}, outside this place: nothing is removed there", out)
+            self.assertIn("Nothing can be retired until the lines above that say 'left alone' are settled.", out)
+        self.assertEqual(fake.writes(), [])
+
+    def test_what_is_held_at_the_place_and_below_it_is_removed_and_what_is_held_above_it_is_only_reported(self):
+        fake = FakeAz()
+        fake.grant(OLD_CASES, BUILTIN["Reader"], MANAGEMENT_GROUP)
+        fake.grant(OLD_CASES, BUILTIN["Reader"], f"{ESTATE}/resourceGroups/rg-one")
+        code, out, _, _ = run(["retire", *PLACES, "--only", "W2"], fake)
+        self.assertIn("id-meternaut-cases holds 2 assignment(s) of Reader at or below this place:", out)
+        self.assertIn("outside this place: nothing is removed there", out)
+        code, out, _, _ = run(["retire", *PLACES, "--only", "W2", "--apply", "--yes"], fake)
+        self.assertEqual(code, 1, "what is held above the place is still there")
+        self.assertEqual(len(self.deletes(fake)), 2)
+        self.assertEqual([a["scope"] for a in fake.assignments if a["principal"] == OLD_CASES and a["role_id"] == BUILTIN["Reader"]], [MANAGEMENT_GROUP])
+        self.assertRegex(out, r"left alone +W2")
+
+    def test_an_identity_that_was_deleted_before_its_grants_cannot_be_traced_to_it_and_the_note_says_so(self):
+        fake = FakeAz()
+        del fake.identities["id-meternaut-cases"]
+        before = [dict(a) for a in fake.assignments]
+        code, out, _, _ = run(["retire", *PLACES, "--only", "W2,W3,W4", "--apply", "--yes"], fake)
+        self.assertEqual(code, 0, out)
+        self.assertIn("Nothing to retire.", out)
+        self.assertRegex(out, rf"gone +W2  id-meternaut-cases  Reader  at {re.escape(ESTATE)}")
+        self.assertIn(f"id-meternaut-cases does not exist in {PROJECT_GROUP}.", out)
+        self.assertIn("Azure keeps the assignments of a deleted identity, and the portal shows them as 'Identity not found'", out)
+        self.assertIn("run retire before the identity is deleted", out)
+        self.assertEqual((fake.writes(), fake.assignments), ([], before), "an assignment that cannot be traced to the identity is not touched")
+
+    def test_a_custom_role_that_does_not_exist_has_no_assignment_to_retire(self):
+        fake = FakeAz(old=False)
+        del fake.roles["Meternaut gateway key reader"]
+        code, out, _, _ = run(["retire", *PLACES, "--only", "W4"], fake)
+        self.assertEqual(code, 0)
+        self.assertRegex(out, r"gone +W4")
+        self.assertIn("Nothing to retire.", out)
+
+    def test_a_failure_to_remove_an_assignment_of_an_old_identity_stops_at_once_and_says_which(self):
+        fake = FakeAz()
+        fake.unassign_errors = ["ERROR: (AuthorizationFailed) The client does not have authorization to perform action 'Microsoft.Authorization/roleAssignments/delete'"]
+        code, out, err, _ = run(["retire", *PLACES, "--apply", "--yes"], fake)
+        self.assertEqual(code, 1)
+        self.assertIn("could not be removed", err)
+        self.assertIn("of Reader could not be removed", err)
+        self.assertEqual(len(self.deletes(fake)), 1, "it did not go on to the next")
+
+    def test_an_assignment_that_is_gone_already_is_not_an_error(self):
+        fake = FakeAz()
+        gone = next(a["id"] for a in self.old(fake) if a["principal"] == OLD_CASES and a["role_id"] == BUILTIN["Reader"])
+        fake.vanish = {gone}
+        code, out, _, _ = run(["retire", *PLACES, "--apply", "--yes"], fake)
+        self.assertEqual(code, 0, out)
+        self.assertIn(f"the assignment {gone} was gone already", out)
+        self.assertEqual(self.old(fake), [])
+
+    def test_an_assignment_with_an_id_that_is_not_a_role_assignment_is_never_passed_to_a_delete(self):
+        fake = FakeAz()
+        victim = next(a for a in fake.assignments if a["principal"] == OLD_CASES)
+        victim["id"] = f"{ESTATE}/providers/Microsoft.Compute/disks/a-disk"
+        code, _, err, _ = run(["retire", *PLACES, "--apply", "--yes"], fake)
+        self.assertEqual(code, 1)
+        self.assertIn("does not recognise", err)
+        self.assertEqual(fake.writes(), [])
+
+    def test_a_pipeline_may_not_apply_and_it_asks_first_like_the_other_commands(self):
+        fake = FakeAz()
+        code, _, err, _ = run(["retire", *PLACES, "--apply", "--yes"], fake, env={"GITHUB_ACTIONS": "true"})
+        self.assertEqual((code, fake.calls), (1, []))
+        self.assertIn("never a pipeline", err)
+        asked = []
+        code, out, _, _ = run(["retire", *PLACES, "--apply"], fake, answers=("no",), asked=asked)
+        self.assertEqual((code, fake.writes()), (1, []))
+        self.assertIn("operator@example.com", asked[0])
+        self.assertIn("5 change(s)", asked[0])
+
+    def test_nothing_but_role_assignments_of_the_retired_identities_is_ever_deleted(self):
+        fake = FakeAz()
+        run(["retire", *PLACES, "--apply", "--yes"], fake)
+        allowed = {("account", "show"), ("identity", "show"), ("role", "definition"), ("role", "assignment"), ("rest", "--method")}
+        self.assertEqual({tuple(c[:2]) for c in fake.calls} - allowed, set())
+        self.assertEqual({tuple(c[:3]) for c in fake.writes()}, {("role", "assignment", "delete")})
+        self.assertFalse([c for c in fake.calls if c[:2] == ["identity", "delete"] or c[0] == "ad" or c[:3] == ["role", "definition", "delete"]])
 
 
 if __name__ == "__main__":

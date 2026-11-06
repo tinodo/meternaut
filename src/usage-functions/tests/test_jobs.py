@@ -1,3 +1,5 @@
+import sys
+import types
 import unittest
 from datetime import datetime, timedelta, timezone
 from unittest import mock
@@ -313,13 +315,44 @@ class EntryPointTests(unittest.TestCase):
         self.assertIs(deps.new_id, system.new_uuid)
 
     def test_a_missing_app_setting_is_named(self):
-        needed = ("AZURE_CLIENT_ID", "COSMOS_ENDPOINT", "COSMOS_DATABASE", "COSMOS_CONTAINER_CONFIG", "COSMOS_CONTAINER_LLM_USAGE", "GATEWAY_APPINSIGHTS_ID")
+        needed = ("COSMOS_ENDPOINT", "COSMOS_DATABASE", "COSMOS_CONTAINER_CONFIG", "COSMOS_CONTAINER_LLM_USAGE", "GATEWAY_APPINSIGHTS_ID")
         for name in needed:
             with self.subTest(setting=name):
                 env = {key: value for key, value in ENV.items() if key != name}
                 with mock.patch.dict("os.environ", env, clear=True), self.assertRaises(config.ConfigError) as caught:
                     jobs.production_deps(jobs.LLM_JOB)
-                self.assertIn(name, str(caught.exception))
+                self.assertEqual(str(caught.exception), f"Missing required app setting(s): {name}")
+
+    def test_the_client_id_is_not_required_and_without_it_the_app_runs_as_its_system_assigned_identity(self):
+        without = {key: value for key, value in ENV.items() if key != "AZURE_CLIENT_ID"}
+        for env in (without, {**without, "AZURE_CLIENT_ID": ""}, {**without, "AZURE_CLIENT_ID": "   "}):
+            with self.subTest(client_id=env.get("AZURE_CLIENT_ID")), mock.patch.dict("os.environ", env, clear=True), \
+                    mock.patch.object(clients, "cosmos_container", side_effect=lambda *args: args) as container, \
+                    mock.patch.object(clients, "logs_client", side_effect=lambda client_id: ("logs", client_id)):
+                deps = jobs.production_deps(jobs.AGENT_JOB)
+            endpoint = ENV["COSMOS_ENDPOINT"]
+            self.assertEqual(deps.config_container, ("", endpoint, "usage-db", "config-container"))
+            self.assertEqual(deps.usage_container, ("", endpoint, "usage-db", "agent-container"))
+            self.assertEqual(deps.logs, ("logs", ""))
+            self.assertEqual(container.call_count, 2)
+
+    def test_an_empty_client_id_gives_a_credential_without_one_all_the_way_down(self):
+        identity = types.ModuleType("azure.identity")
+        identity.ManagedIdentityCredential = mock.Mock(name="ManagedIdentityCredential")
+        cosmos = types.ModuleType("azure.cosmos")
+        cosmos.CosmosClient = mock.Mock(name="CosmosClient")
+        query = types.ModuleType("azure.monitor.query")
+        query.LogsQueryClient = mock.Mock(name="LogsQueryClient")
+        without = {key: value for key, value in ENV.items() if key != "AZURE_CLIENT_ID"}
+        for cached in (clients.credential, clients.cosmos_client, clients.logs_client):
+            cached.cache_clear()
+            self.addCleanup(cached.cache_clear)
+        with mock.patch.dict(sys.modules, {"azure.identity": identity, "azure.cosmos": cosmos, "azure.monitor.query": query}), \
+                mock.patch.dict("os.environ", without, clear=True):
+            jobs.production_deps(jobs.LLM_JOB)
+        identity.ManagedIdentityCredential.assert_called_once_with()
+        self.assertEqual(cosmos.CosmosClient.call_count, 1, "one client, two containers")
+        query.LogsQueryClient.assert_called_once_with(identity.ManagedIdentityCredential.return_value)
 
     def test_an_app_setting_of_another_job_is_not_needed(self):
         env = {key: value for key, value in ENV.items() if key != "COSMOS_CONTAINER_MCP_USAGE"}

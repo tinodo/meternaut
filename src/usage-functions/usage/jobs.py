@@ -195,7 +195,6 @@ def run_job(spec: JobSpec, make_deps: DepsFactory, trigger: str, request_id: str
 def production_deps(spec: JobSpec) -> JobDeps:
     values = config.get_settings(
         (
-            config.AZURE_CLIENT_ID,
             config.COSMOS_ENDPOINT,
             config.COSMOS_DATABASE,
             config.COSMOS_CONTAINER_CONFIG,
@@ -203,16 +202,15 @@ def production_deps(spec: JobSpec) -> JobDeps:
             config.GATEWAY_APPINSIGHTS_ID,
         )
     )
+    client_id = config.client_id()
 
     def container(setting: str) -> ContainerLike:
-        return clients.cosmos_container(
-            values[config.AZURE_CLIENT_ID], values[config.COSMOS_ENDPOINT], values[config.COSMOS_DATABASE], values[setting]
-        )
+        return clients.cosmos_container(client_id, values[config.COSMOS_ENDPOINT], values[config.COSMOS_DATABASE], values[setting])
 
     return JobDeps(
         config_container=container(config.COSMOS_CONTAINER_CONFIG),
         usage_container=container(spec.container_setting),
-        logs=clients.logs_client(values[config.AZURE_CLIENT_ID]),
+        logs=clients.logs_client(client_id),
         resource_id=values[config.GATEWAY_APPINSIGHTS_ID],
         now=system.utc_now,
         new_id=system.new_uuid,

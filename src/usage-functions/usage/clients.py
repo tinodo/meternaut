@@ -1,7 +1,8 @@
 """The only module that builds Azure SDK clients. Each client is built once and reused.
 
 The SDK modules are imported when a client is first built, not when the app is indexed.
-Every client authenticates with the user-assigned managed identity of the function app.
+Every client authenticates with the managed identity of the function app: the user-assigned identity of the client id that is given or, with no client id,
+the system-assigned identity of the app.
 """
 import logging
 from functools import lru_cache
@@ -21,6 +22,8 @@ logging.getLogger("azure").setLevel(logging.WARNING)
 def credential(client_id: str) -> "TokenCredential":
     from azure.identity import ManagedIdentityCredential
 
+    if not client_id:
+        return ManagedIdentityCredential()
     return ManagedIdentityCredential(client_id=client_id)
 
 

@@ -28,7 +28,6 @@ ALLOWED = {
     },
     "infra/budgets/rg-budget.bicep": {"Microsoft.Consumption/budgets"},
     "environment/recording/main.bicep": {
-        "Microsoft.ManagedIdentity/userAssignedIdentities",
         "Microsoft.Network/virtualNetworks",
         "Microsoft.Network/virtualNetworks/subnets",
         "Microsoft.Network/privateEndpoints",
@@ -332,45 +331,33 @@ class Recording(unittest.TestCase):
         found = resources(self.source)
         assignments = {name: body for name, (kind, body) in found.items() if kind == "Microsoft.Authorization/roleAssignments"}
         self.assertEqual(sorted(assignments), ["functionOwnsBlobs", "functionPublishesTelemetry", "functionReceivesControl", "functionReceivesPii", "functionReceivesUsage",
-                                               "functionUsesQueues", "functionUsesTables", "gatewaySendsPii", "gatewaySendsUsage", "systemOwnsBlobs", "systemPublishesTelemetry",
-                                               "systemReceivesControl", "systemReceivesPii", "systemReceivesUsage", "systemUsesQueues", "systemUsesTables", "workflowSendsControl"])
+                                               "functionUsesQueues", "functionUsesTables", "gatewaySendsPii", "gatewaySendsUsage", "workflowSendsControl"])
         for name, body in assignments.items():
             self.assertIn("principalType: 'ServicePrincipal'", body, name)
             # on the one resource, never on the group, the subscription or the whole namespace
             self.assertRegex(body, r"(?m)^  scope: (usageHub|piiHub|controlHub|storage|insights)$", name)
         data_roles = sorted(n for n, (k, _) in found.items() if k == "Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments")
-        self.assertEqual(data_roles, ["functionWritesUsage", "readersOfTheData", "systemWritesUsage"])
+        self.assertEqual(data_roles, ["functionWritesUsage", "readersOfTheData"])
         self.assertIn("cosmosDataContributorRoleId", found["functionWritesUsage"][1])
-        self.assertIn("principalId: usageIdentity.properties.principalId", found["functionWritesUsage"][1])
-        self.assertIn("cosmosDataContributorRoleId", found["systemWritesUsage"][1])
-        self.assertIn("principalId: functionApp.identity.principalId", found["systemWritesUsage"][1])
+        self.assertIn("principalId: functionApp.identity.principalId", found["functionWritesUsage"][1])
         self.assertIn("cosmosDataReaderRoleId", found["readersOfTheData"][1])
 
-    def test_the_system_assigned_identity_holds_every_role_that_the_user_assigned_one_holds_on_the_same_resource_and_nothing_more(self):
-        # Step one of the move to a system-assigned identity: the new identity is given what the old one has, so that the second step can move the settings without a gap.
+    def test_every_role_of_the_function_app_is_for_its_own_system_assigned_identity_and_has_the_name_that_the_first_step_gave_it(self):
+        # The second step of the move to a system-assigned identity makes no new assignment on an estate where the first step has run: the names are the same. A name has to be known when
+        # the deployment starts and the identity's principal id is not, so the names are seeded with the app's id (Bicep error BCP120 otherwise).
         found = resources(self.source)
-        twins = {"functionReceivesUsage": "systemReceivesUsage", "functionReceivesPii": "systemReceivesPii", "functionReceivesControl": "systemReceivesControl",
-                 "functionOwnsBlobs": "systemOwnsBlobs", "functionUsesQueues": "systemUsesQueues", "functionUsesTables": "systemUsesTables",
-                 "functionPublishesTelemetry": "systemPublishesTelemetry", "functionWritesUsage": "systemWritesUsage"}
-        held_by_the_old = {name for name, (kind, body) in found.items() if "usageIdentity.properties.principalId" in body}
-        self.assertEqual(held_by_the_old, set(twins), "every role of the user-assigned identity has a twin, and the twins are the only ones")
-        held_by_the_new = {name for name, (kind, body) in found.items() if "functionApp.identity.principalId" in body}
-        self.assertEqual(held_by_the_new, set(twins.values()))
-        names = set()
-        for old, new in twins.items():
-            old_body, new_body = found[old][1], found[new][1]
-            self.assertEqual(found[old][0], found[new][0], new)
-            for line in re.findall(r"(?m)^  (?:scope|parent): .+$|^    (?:roleDefinitionId|scope): .+$|^    principalType: .+$", old_body):
-                self.assertIn(line, new_body, f"{new} differs from {old}: {line}")
-            self.assertEqual(depends_on(old_body) - {"functionWritesUsage"}, depends_on(new_body) - {"functionWritesUsage"}, new)
-            # a name that is known when the deployment starts: the principal id of a system-assigned identity is not, so the app's id is the seed
-            seed = re.search(r"(?m)^  name: guid\((.+)\)$", new_body).group(1)
-            self.assertIn("functionApp.id", seed, new)
-            self.assertNotIn("principalId", seed, "Bicep refuses a value that exists only at run time in the name of a role assignment (BCP120)")
-            self.assertNotEqual(re.search(r"(?m)^  name: guid\((.+)\)$", old_body).group(1), seed, "a name of its own, so that the old assignment is left as it is")
-            names.add(seed)
-        self.assertEqual(len(names), len(twins), "each name is of its own")
-        self.assertEqual(set(twins.values()) & depends_on(found["functionApp"][1]), set(), "the app does not wait for roles that wait for the app")
+        names = {"functionReceivesUsage": "guid(usageHub.id, functionApp.id, eventHubsDataReceiverRoleId)", "functionReceivesPii": "guid(piiHub.id, functionApp.id, eventHubsDataReceiverRoleId)",
+                 "functionReceivesControl": "guid(controlHub.id, functionApp.id, eventHubsDataReceiverRoleId)", "functionOwnsBlobs": "guid(storage.id, functionApp.id, storageBlobDataOwnerRoleId)",
+                 "functionUsesQueues": "guid(storage.id, functionApp.id, storageQueueDataContributorRoleId)", "functionUsesTables": "guid(storage.id, functionApp.id, storageTableDataContributorRoleId)",
+                 "functionPublishesTelemetry": "guid(insights.id, functionApp.id, monitoringMetricsPublisherRoleId)", "functionWritesUsage": "guid(cosmos.id, functionApp.id, cosmosDataContributorRoleId)"}
+        held = {name for name, (kind, body) in found.items() if "functionApp.identity.principalId" in body}
+        self.assertEqual(held, set(names), "the roles of the function app are for its own identity, and the other callers' are not")
+        for name, expected in names.items():
+            self.assertIn(f"  name: {expected}\n", found[name][1], name)
+        self.assertEqual(len(set(names.values())), len(names), "each name is of its own")
+        self.assertEqual(set(names) & depends_on(found["functionApp"][1]), set(), "the app does not wait for roles that wait for the app")
+        for word in ("usageIdentity", "UserAssigned", "userAssignedIdentities", "ManagedIdentity"):
+            self.assertNotIn(word, self.code, f"{word}: the user-assigned identity is gone from the template")
 
     def test_nothing_relies_on_an_opt_out_of_the_tenants_policies(self):
         for word in ("SecurityControl", "optOut", "Ignore"):
@@ -389,7 +376,7 @@ class Recording(unittest.TestCase):
             body = found[name][1]
             self.assertIn("eventHubsDataReceiverRoleId", body, name)
             self.assertIn(f"scope: {hub}", body, name)
-            self.assertIn("principalId: usageIdentity.properties.principalId", body, name)
+            self.assertIn("principalId: functionApp.identity.principalId", body, name)
 
     def test_the_applications_insights_of_the_gateway_is_a_parameter_because_it_is_in_another_subscription(self):
         for name in ("gatewayAppInsightsSubscriptionId", "gatewayAppInsightsResourceGroup", "gatewayAppInsightsName"):
@@ -403,18 +390,23 @@ class Recording(unittest.TestCase):
         self.assertIn("reserved: true", found["plan"][1])
         body = found["functionApp"][1]
         self.assertIn("kind: 'functionapp,linux'", body)
-        self.assertIn("type: 'SystemAssigned, UserAssigned'", body, "step one of the move to a system-assigned identity: the new identity next to the old one")
-        self.assertEqual(re.findall(r"'\$\{(\w+)\.id\}': \{\}", body), ["usageIdentity"])
+        self.assertIn("type: 'SystemAssigned'", body, "the app's own identity, and no other")
+        self.assertNotIn("UserAssigned", body.replace("SystemAssignedIdentity", ""))
+        self.assertNotIn("userAssignedIdentities", body)
         self.assertIn("maximumInstanceCount: 10", body)  # the price has a ceiling
         self.assertNotIn("alwaysReady", body)  # nothing runs while nothing is to do
         self.assertIn("virtualNetworkSubnetId: functionSubnet.id", body)
         self.assertRegex(body, r"(?s)runtime: \{\s+name: 'python'\s+version: '3\.13'")
-        # the package and the host storage are reached with the identity, and so are the event hubs and the telemetry
-        self.assertIn("type: 'UserAssignedIdentity'", body)
-        self.assertIn("userAssignedIdentityResourceId: usageIdentity.id", body)
-        for setting in ("AzureWebJobsStorage__credential", "AzureWebJobsStorage__clientId", "EventHubConnection__credential", "EventHubConnection__clientId",
-                        "EventHubConnection__fullyQualifiedNamespace", "APPLICATIONINSIGHTS_AUTHENTICATION_STRING", "AZURE_CLIENT_ID"):
+        # the package and the host storage are reached with the app's own identity, and so are the event hubs and the telemetry
+        self.assertRegex(body, r"(?s)authentication: \{\s+type: 'SystemAssignedIdentity'\s+\}")
+        self.assertNotIn("userAssignedIdentityResourceId", body)
+        for setting in ("AzureWebJobsStorage__credential", "EventHubConnection__credential", "EventHubConnection__fullyQualifiedNamespace", "APPLICATIONINSIGHTS_AUTHENTICATION_STRING"):
             self.assertIn(f"name: '{setting}'", body, setting)
+        # a connection without a client id uses the system-assigned identity: no client id is set, and the telemetry names none
+        for setting in ("AzureWebJobsStorage__clientId", "EventHubConnection__clientId", "AZURE_CLIENT_ID"):
+            self.assertNotIn(f"name: '{setting}'", body, setting)
+        self.assertIn("{ name: 'APPLICATIONINSIGHTS_AUTHENTICATION_STRING', value: 'Authorization=AAD' }", body)
+        self.assertNotIn("ClientId=", self.code)
         # what a Flex Consumption app must not have, and what would be a key
         for setting in ("'AzureWebJobsStorage'", "AzureWebJobsDashboard", "FUNCTIONS_WORKER_RUNTIME", "FUNCTIONS_EXTENSION_VERSION", "WEBSITE_CONTENT", "WEBSITE_RUN_FROM_PACKAGE",
                         "StorageAccountConnectionString", "basicPublishingCredentialsPolicies"):
@@ -442,16 +434,12 @@ class Recording(unittest.TestCase):
         self.assertIn("deploymentContainer", depends_on(found["storageEndpoints"][1]))
         self.assertIn("usageContainers", depends_on(found["cosmosEndpoint"][1]))
         self.assertEqual(depends_on(found["eventHubsEndpoint"][1]), {"usageConsumerGroup", "piiConsumerGroup", "controlConsumerGroup"})
-        for name in ("gatewaySendsUsage", "gatewaySendsPii", "workflowSendsControl", "functionReceivesUsage", "functionReceivesPii", "functionReceivesControl",
-                     "systemReceivesUsage", "systemReceivesPii", "systemReceivesControl"):
+        for name in ("gatewaySendsUsage", "gatewaySendsPii", "workflowSendsControl", "functionReceivesUsage", "functionReceivesPii", "functionReceivesControl"):
             self.assertIn("eventHubsEndpoint", depends_on(found[name][1]), name)
-        for name in ("functionOwnsBlobs", "functionUsesQueues", "functionUsesTables", "systemOwnsBlobs", "systemUsesQueues", "systemUsesTables"):
+        for name in ("functionOwnsBlobs", "functionUsesQueues", "functionUsesTables"):
             self.assertIn("storageEndpoints", depends_on(found[name][1]), name)
         self.assertIn("cosmosEndpoint", depends_on(found["functionWritesUsage"][1]))
-        self.assertIn("cosmosEndpoint", depends_on(found["systemWritesUsage"][1]))
-        self.assertIn("functionWritesUsage", depends_on(found["systemWritesUsage"][1]), "the account's roles are written one at a time")
         self.assertIn("functionWritesUsage", depends_on(found["readersOfTheData"][1]))
-        self.assertIn("systemWritesUsage", depends_on(found["readersOfTheData"][1]))
         self.assertRegex(self.source, r"@batchSize\(1\)\nresource storageEndpoints ")  # one endpoint after the other on the same account
 
     def test_event_hubs_has_no_auto_inflate_so_its_price_has_a_ceiling(self):
@@ -464,8 +452,8 @@ class Recording(unittest.TestCase):
 
     def test_no_output_carries_a_key_or_a_connection_string(self):
         outputs = [line for line in self.code.splitlines() if line.startswith("output ")]
-        self.assertEqual(len(outputs), 10)
-        self.assertEqual(re.findall(r"(?m)^output (\w+) ", self.code), ["functionAppName", "functionAppId", "usageIdentityPrincipalId", "usageIdentityClientId", "usageSystemPrincipalId",
+        self.assertEqual(len(outputs), 8)
+        self.assertEqual(re.findall(r"(?m)^output (\w+) ", self.code), ["functionAppName", "functionAppId", "usageSystemPrincipalId",
                                                                     "eventHubNamespaceName", "eventHubHost", "cosmosAccountName", "cosmosEndpoint", "appInsightsId"])
         self.assertIn("output usageSystemPrincipalId string = functionApp.identity.principalId", self.code)
         for line in outputs:
@@ -482,9 +470,8 @@ class Recording(unittest.TestCase):
 
     def test_the_order_that_the_services_need_is_in_the_template(self):
         found = resources(self.source)
-        self.assertEqual(depends_on(found["functionApp"][1]), {"functionReceivesUsage", "functionReceivesPii", "functionReceivesControl", "functionOwnsBlobs", "functionUsesQueues",
-                                                               "functionUsesTables", "functionPublishesTelemetry", "functionWritesUsage"},
-                         "the roles before the first start of the app: it reads its storage and its event hubs with them")
+        # The roles of a system-assigned identity wait for the app, so the app cannot wait for them: it waits for the private endpoints that its first start needs, as it did through the roles before.
+        self.assertEqual(depends_on(found["functionApp"][1]), {"storageEndpoints", "cosmosEndpoint", "eventHubsEndpoint"})
         self.assertIn("deploymentContainer", depends_on(found["storageEndpoints"][1]))
 
     def test_the_event_hubs_and_their_consumer_groups_are_the_ones_the_functions_name(self):
@@ -504,7 +491,9 @@ class Recording(unittest.TestCase):
         self.assertGreaterEqual(len(read), 10)
         found = resources(self.source)
         given = set(re.findall(r"\{ name: '([A-Za-z0-9_]+)', value: ", found["functionApp"][1]))
-        self.assertEqual(sorted(read - given), [], "the template does not set what the code requires")
+        # AZURE_CLIENT_ID is the client id of a user-assigned identity. The app's own system-assigned identity needs none, so the template sets none and the code reads it when it is set.
+        self.assertNotIn("AZURE_CLIENT_ID", given)
+        self.assertEqual(sorted(read - given - {"AZURE_CLIENT_ID"}), [], "the template does not set what the code requires")
         self.assertEqual(sorted(name for name in given - read if name.isupper() and "__" not in name and not name.startswith(("APPLICATIONINSIGHTS", "EVENTHUB_"))), [],
                          "the template sets a setting that the code never reads")
 
@@ -771,10 +760,9 @@ class Cases(unittest.TestCase):
         for name in ("vnet", "workspace", "insights", "storage", "blobService", "eventHubs", "sharedHostContainers"):
             self.assertRegex(self.source, rf"(?m)^resource {name} '[^']+' existing = ", name)
         made = sorted(name for name, (_, body) in self.found.items() if not re.search(rf"(?m)^resource {name} '[^']+' existing", self.source))
-        self.assertEqual(made, ["authIdentity", "casesIdentity", "consoleSignIn", "controlConsumerGroup", "controlHub", "functionApp",
+        self.assertEqual(made, ["authIdentity", "consoleSignIn", "controlConsumerGroup", "controlHub", "functionApp",
                                 "functionOwnsHostContainers", "functionPublishesTelemetry", "functionReceivesControl", "functionUsesQueues",
                                 "functionUsesTables", "historyWorkbook", "noBasicAuthForDeployment", "noBasicAuthForFtp", "plan",
-                                "systemOwnsHostContainers", "systemPublishesTelemetry", "systemReceivesControl", "systemUsesQueues", "systemUsesTables",
                                 "tracesRetention", "webNsg", "webSubnet", "workflowSendsControl"])
 
     def test_the_plans_subnet_is_delegated_to_basic_plans_holds_nothing_else_and_is_the_one_that_the_model_side_lists_too(self):
@@ -812,7 +800,7 @@ class Cases(unittest.TestCase):
         self.assertEqual(self.code.count("ConnectionString"), 1, "the telemetry's connection string names the component and holds no secret that ingestion accepts")
         self.assertIn("{ name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: insights.properties.ConnectionString }", self.code)
         outputs = [line for line in self.code.splitlines() if line.startswith("output ")]
-        self.assertEqual(len(outputs), 10)
+        self.assertEqual(len(outputs), 8)
         for line in outputs:
             for word in ("listKeys", "ConnectionString", "AccountKey", "primaryKey"):
                 self.assertNotIn(word, line, line)
@@ -829,45 +817,33 @@ class Cases(unittest.TestCase):
         })
         assignments = {name: body for name, (kind, body) in self.found.items() if kind == "Microsoft.Authorization/roleAssignments"}
         self.assertEqual(sorted(assignments), ["functionOwnsHostContainers", "functionPublishesTelemetry", "functionReceivesControl",
-                                               "functionUsesQueues", "functionUsesTables", "systemOwnsHostContainers", "systemPublishesTelemetry",
-                                               "systemReceivesControl", "systemUsesQueues", "systemUsesTables", "workflowSendsControl"])
+                                               "functionUsesQueues", "functionUsesTables", "workflowSendsControl"])
         for name, body in assignments.items():
             self.assertIn("principalType: 'ServicePrincipal'", body, name)
         scopes = {name: re.search(r"(?m)^  scope: (.+)$", body).group(1) for name, body in assignments.items()}
         self.assertEqual(scopes, {"workflowSendsControl": "controlHub", "functionReceivesControl": "controlHub",
                                   "functionOwnsHostContainers": "sharedHostContainers[i]", "functionUsesQueues": "storage", "functionUsesTables": "storage",
-                                  "functionPublishesTelemetry": "insights", "systemReceivesControl": "controlHub", "systemOwnsHostContainers": "sharedHostContainers[i]",
-                                  "systemUsesQueues": "storage", "systemUsesTables": "storage", "systemPublishesTelemetry": "insights"})
+                                  "functionPublishesTelemetry": "insights"})
         self.assertIn("eventHubsDataSenderRoleId", assignments["workflowSendsControl"])
         self.assertIn("principalId: workflowPrincipalId", assignments["workflowSendsControl"])
         self.assertIn("eventHubsDataReceiverRoleId", assignments["functionReceivesControl"])
-        self.assertIn("principalId: casesIdentity.properties.principalId", assignments["functionReceivesControl"])
-        self.assertIn("eventHubsDataReceiverRoleId", assignments["systemReceivesControl"])
-        self.assertIn("principalId: functionApp.identity.principalId", assignments["systemReceivesControl"])
 
-    def test_the_system_assigned_identity_holds_every_role_that_the_user_assigned_one_holds_on_the_same_resource_and_nothing_more(self):
-        # Step one of the move to a system-assigned identity: the new identity is given what the old one has, so that the second step can move the settings without a gap.
-        twins = {"functionReceivesControl": "systemReceivesControl", "functionOwnsHostContainers": "systemOwnsHostContainers", "functionUsesQueues": "systemUsesQueues",
-                 "functionUsesTables": "systemUsesTables", "functionPublishesTelemetry": "systemPublishesTelemetry"}
-        held_by_the_old = {name for name, (kind, body) in self.found.items() if "casesIdentity.properties.principalId" in body}
-        self.assertEqual(held_by_the_old, set(twins), "every role of the user-assigned identity has a twin, and the twins are the only ones")
-        held_by_the_new = {name for name, (kind, body) in self.found.items() if "functionApp.identity.principalId" in body}
-        self.assertEqual(held_by_the_new, set(twins.values()))
-        names = set()
-        for old, new in twins.items():
-            old_body, new_body = self.found[old][1], self.found[new][1]
-            self.assertEqual(self.found[old][0], self.found[new][0], new)
-            for line in re.findall(r"(?m)^  scope: .+$|^    roleDefinitionId: .+$|^    principalType: .+$", old_body):
-                self.assertIn(line, new_body, f"{new} differs from {old}: {line}")
-            self.assertEqual(depends_on(old_body), depends_on(new_body), new)
-            # a name that is known when the deployment starts: the principal id of a system-assigned identity is not, so the app's id is the seed
-            seed = re.search(r"(?m)^  name: guid\((.+)\)$", new_body).group(1)
-            self.assertIn("functionApp.id", seed, new)
-            self.assertNotIn("principalId", seed, "Bicep refuses a value that exists only at run time in the name of a role assignment (BCP120)")
-            self.assertNotEqual(re.search(r"(?m)^  name: guid\((.+)\)$", old_body).group(1), seed, "a name of its own, so that the old assignment is left as it is")
-            names.add(seed)
-        self.assertEqual(len(names), len(twins), "each name is of its own")
-        self.assertEqual(set(twins.values()) & depends_on(self.found["functionApp"][1]), set(), "the app does not wait for roles that wait for the app")
+    def test_every_role_of_the_function_app_is_for_its_own_system_assigned_identity_and_has_the_name_that_the_first_step_gave_it(self):
+        # The second step of the move to a system-assigned identity makes no new assignment on an estate where the first step has run: the names are the same. A name has to be known when
+        # the deployment starts and the identity's principal id is not, so the names are seeded with the app's id (Bicep error BCP120 otherwise).
+        names = {"functionReceivesControl": "guid(controlHub.id, functionApp.id, eventHubsDataReceiverRoleId)",
+                 "functionOwnsHostContainers": "guid(sharedHostContainers[i].id, functionApp.id, storageBlobDataOwnerRoleId)",
+                 "functionUsesQueues": "guid(storage.id, functionApp.id, storageQueueDataContributorRoleId)",
+                 "functionUsesTables": "guid(storage.id, functionApp.id, storageTableDataContributorRoleId)",
+                 "functionPublishesTelemetry": "guid(insights.id, functionApp.id, monitoringMetricsPublisherRoleId)"}
+        held = {name for name, (kind, body) in self.found.items() if "functionApp.identity.principalId" in body}
+        self.assertEqual(held, set(names), "the roles of the app are for its own identity, and the workflow's is not")
+        for name, expected in names.items():
+            self.assertIn(f"  name: {expected}\n", self.found[name][1], name)
+        self.assertEqual(len(set(names.values())), len(names), "each name is of its own")
+        self.assertEqual(set(names) & depends_on(self.found["functionApp"][1]), set(), "the app does not wait for roles that wait for the app")
+        for word in ("casesIdentity", "id-${workload}-cases", "id-meternaut-cases"):
+            self.assertNotIn(word, self.code, f"{word}: the user-assigned identity of the Watch is gone from the template")
 
     def test_the_blob_role_reaches_the_three_shared_host_containers_and_never_the_usage_recordings_package(self):
         self.assertNotIn("deploymentContainer", self.code, "the app's code is pushed to the app, not kept in the storage account")
@@ -890,8 +866,8 @@ class Cases(unittest.TestCase):
         self.assertNotIn("functionAppConfig", self.code)
         body = self.found["functionApp"][1]
         self.assertIn("kind: 'functionapp,linux'", body)
-        self.assertIn("type: 'SystemAssigned, UserAssigned'", body, "step one of the move to a system-assigned identity: the new identity next to the old one")
-        self.assertIn("serverFarmId: plan.id", body)
+        self.assertIn("type: 'SystemAssigned, UserAssigned'", body, "the app's own identity, and the one that only presents the console's sign-in")
+        self.assertEqual(re.findall(r"'\$\{(\w+)\.id\}': \{\}", body), ["authIdentity"], "the only user-assigned identity of the app")
         self.assertIn("virtualNetworkSubnetId: resourceId('Microsoft.Network/virtualNetworks/subnets', virtualNetworkName, webSubnetName)", body)
         self.assertIn("vnetRouteAllEnabled: false", body, "only the private ranges go through the subnet, as for the Flex app that this replaced")
         self.assertIn("linuxFxVersion: 'PYTHON|3.13'", body)
@@ -900,9 +876,15 @@ class Cases(unittest.TestCase):
         for setting, value in (("FUNCTIONS_EXTENSION_VERSION", "~4"), ("FUNCTIONS_WORKER_RUNTIME", "python"), ("WEBSITE_RUN_FROM_PACKAGE", "1"),
                                ("WEBSITES_CONTAINER_START_TIME_LIMIT", "600"), ("SCM_DO_BUILD_DURING_DEPLOYMENT", "false"), ("ENABLE_ORYX_BUILD", "false")):
             self.assertIn(f"{{ name: '{setting}', value: '{value}' }}", body, setting)
-        for setting in ("AzureWebJobsStorage__credential", "AzureWebJobsStorage__clientId", "EventHubConnection__credential", "EventHubConnection__clientId",
-                        "EventHubConnection__fullyQualifiedNamespace", "APPLICATIONINSIGHTS_AUTHENTICATION_STRING", "AZURE_CLIENT_ID"):
+        for setting in ("AzureWebJobsStorage__credential", "EventHubConnection__credential", "EventHubConnection__fullyQualifiedNamespace",
+                        "APPLICATIONINSIGHTS_AUTHENTICATION_STRING"):
             self.assertIn(f"name: '{setting}'", body, setting)
+        self.assertIn("{ name: 'AzureWebJobsStorage__credential', value: 'managedidentity' }", body)
+        self.assertIn("{ name: 'EventHubConnection__credential', value: 'managedidentity' }", body)
+        self.assertIn("{ name: 'APPLICATIONINSIGHTS_AUTHENTICATION_STRING', value: 'Authorization=AAD' }", body, "no client id: the app's own identity is the one that signs the telemetry")
+        settings_code = re.sub(r"//.*", "", body)
+        for setting in ("AzureWebJobsStorage__clientId", "EventHubConnection__clientId", "AZURE_CLIENT_ID", "ClientId="):
+            self.assertNotIn(setting, settings_code, f"{setting}: without a client id a connection uses the app's system-assigned identity")
         for setting in ("'AzureWebJobsStorage'", "AzureWebJobsDashboard", "WEBSITE_CONTENT", "StorageAccountConnectionString", "WEBSITE_RUN_FROM_PACKAGE_BLOB_MI_RESOURCE_ID"):
             self.assertNotIn(setting, body, setting)
         self.assertEqual(self.code.count("allow: false"), 2, "no password for the deployment site and none for FTP")
@@ -911,10 +893,9 @@ class Cases(unittest.TestCase):
         self.assertIn("httpsOnly: true", self.code)
         self.assertIn("minTlsVersion: '1.2'", self.code)
 
-    def test_the_function_app_starts_after_its_roles_and_its_hub(self):
-        self.assertEqual(depends_on(self.found["functionApp"][1]), {"webSubnet", "functionReceivesControl", "functionOwnsHostContainers", "functionUsesQueues",
-                                                                    "functionUsesTables", "functionPublishesTelemetry", "controlConsumerGroup"},
-                         "the roles of the identity that the settings name, before the first start of the app")
+    def test_the_function_app_starts_after_its_subnet_and_its_hub_and_never_waits_for_roles_that_wait_for_its_identity(self):
+        self.assertEqual(depends_on(self.found["functionApp"][1]), {"webSubnet", "controlConsumerGroup"},
+                         "the roles of the app's own identity need the app, so the app cannot wait for them: the host retries until they are there")
 
     def test_the_control_hub_is_one_partition_with_one_group_and_the_app_is_told_both(self):
         self.assertIn("var controlHubName = 'cases-control'", self.code)
@@ -944,21 +925,20 @@ class Cases(unittest.TestCase):
         self.assertNotIn("/arm", body, "the return address of the Azure sign-in is behind the platform's sign-in like every route but /healthz")
         self.assertIn("{ name: 'OVERRIDE_USE_MI_FIC_ASSERTION_CLIENTID', value: signInIsSetUp ? authIdentity.properties.clientId : '' }", self.code, "the setting that the sign-in reads is set whenever the sign-in is")
 
-    def test_meternaut_holds_no_right_to_change_azure_so_the_app_has_two_identities_and_the_one_of_the_sign_in_holds_no_role(self):
+    def test_meternaut_holds_no_right_to_change_azure_so_the_app_has_its_own_identity_and_the_one_of_the_sign_in_holds_no_role(self):
         # A change runs with the token of the person who approves it: no identity of this template may write in Azure, and none is made for that.
         for name, (kind, body) in self.found.items():
             if kind == "Microsoft.Authorization/roleAssignments":
                 self.assertNotIn("authIdentity", body, name)
         for word in ("runnerIdentity", "-runner", "WRITER_", "writer", "roleDefinitions@", "Microsoft.Compute", "Microsoft.Network/publicIPAddresses"):
             self.assertNotIn(word, self.code, word)
-        self.assertEqual(re.findall(r"'\$\{(\w+)\.id\}': \{\}", self.found["functionApp"][1]), ["casesIdentity", "authIdentity"],
-                         "the app has two user-assigned identities: one reads and stores, one only presents the sign-in; the system-assigned one that takes over from the first has no entry here")
+        self.assertEqual(re.findall(r"'\$\{(\w+)\.id\}': \{\}", self.found["functionApp"][1]), ["authIdentity"],
+                         "the one user-assigned identity only presents the sign-in; the app's own system-assigned identity has no entry here")
         self.assertIn("type: 'SystemAssigned, UserAssigned'", self.found["functionApp"][1])
-        self.assertIn("{ name: 'AZURE_CLIENT_ID', value: casesIdentity.properties.clientId }", self.code, "the Watch and the console keep the identity that only reads until the second step")
+        self.assertEqual(sorted(name for name, (kind, _) in self.found.items() if kind == "Microsoft.ManagedIdentity/userAssignedIdentities"), ["authIdentity"])
         self.assertIn("{ name: 'OVERRIDE_USE_MI_FIC_ASSERTION_CLIENTID', value: signInIsSetUp ? authIdentity.properties.clientId : '' }", self.code)
         outputs = re.findall(r"(?m)^output (\w+) ", self.code)
-        self.assertEqual([o for o in outputs if "dentity" in o],
-                         ["casesIdentityPrincipalId", "casesIdentityClientId", "authIdentityPrincipalId", "authIdentityClientId"])
+        self.assertEqual([o for o in outputs if "dentity" in o], ["authIdentityPrincipalId", "authIdentityClientId"])
         self.assertIn("output casesSystemPrincipalId string = functionApp.identity.principalId", self.code)
         self.assertIn("casesSystemPrincipalId", outputs)
 
@@ -1270,11 +1250,12 @@ class CasesWorkflow(unittest.TestCase):
     def test_the_summary_says_that_meternaut_holds_no_right_to_change_azure_and_that_a_person_s_approval_runs_the_change_with_that_person_s_permissions(self):
         block = self.step("What was done")
         (finished,) = re.findall(r"(?m)^\s+cases\) echo \"(The first cases are in resource group.*?)\" ;;$", block)
-        for words in ("its identities (a system-assigned one, which takes over in the next step of the move", "\\`id-meternaut-cases\\`, which its settings still use",
-                      "\\`id-meternaut-console-auth\\`, which only presents the console's sign-in to Microsoft Entra and holds no role", "Meternaut holds no right to change Azure",
-                      "to sign in to Azure Resource Manager", "with that person's own permissions", "its Activity Log names that person"):
+        for words in ("its identities (its own system-assigned one, which reads and stores the records and sends the letters, and \\`id-meternaut-console-auth\\`, which only presents the console's sign-in to Microsoft Entra and holds no role)",
+                      "Meternaut holds no right to change Azure", "to sign in to Azure Resource Manager", "with that person's own permissions", "its Activity Log names that person",
+                      "The app no longer carries the user-assigned identity that it used before, \\`id-meternaut-cases\\`. This workflow does not remove that identity: a person does, "
+                      "in the order of environment/BOOTSTRAP.md (its grants outside the project's group first, with tools/access-requirements.py retire, and the identity after that)"):
             self.assertIn(words, finished)
-        for words in ("three identities", "only writer", "Only the runner", "custom role"):
+        for words in ("three identities", "only writer", "Only the runner", "custom role", "are removed when they are still there", "go with it"):
             self.assertNotIn(words, finished)
         (planted,) = re.findall(r"(?m)^\s+plant\) echo \"(Waste of Meternaut's own.*?)\" ;;$", block)
         self.assertIn("Meternaut holds no right to delete it", planted)
@@ -1294,16 +1275,42 @@ class CasesWorkflow(unittest.TestCase):
         self.assertEqual(self.text.count("console-check.py door"), 1)
 
     def test_the_summaries_of_cases_and_recording_print_the_system_assigned_principal_read_from_the_app_and_say_none_yet_when_there_is_none(self):
-        for title, site_variable, summary in (("The cases app lists its four functions", "SITE_ID", "System-assigned identity of the cases app (object id)"),
-                                              ("The function app lists its six functions", "SITE_ID", "System-assigned identity of the function app (object id)")):
+        for title, site_variable, summary in (("The cases app lists its four functions", "SITE_ID", "Identity of the cases app (object id)"),
+                                              ("The function app lists its six functions", "SITE_ID", "Identity of the function app (object id)")):
             block = self.step(title)
             script = "\n".join(line for line in block.split("run:")[1].splitlines() if not line.strip().startswith("#"))
             self.assertIn(f'system_principal=$(az rest --method get --url "https://management.azure.com${{{site_variable}}}?api-version=2024-04-01" --query identity.principalId --output tsv 2>/dev/null || true)', script, title)
             self.assertIn("if ! grep -Eq '^[0-9a-fA-F-]{36}$' <<< \"$system_principal\"; then system_principal=\"none yet\"; fi", script, title)
             self.assertIn(summary, script, title)
-            self.assertIn("this workflow gives none", script, title)
+            self.assertIn("It is the app's own system-assigned identity.", script, title)
+            self.assertRegex(script, r"This workflow gives (none of them|neither)", title)
             self.assertNotRegex(script, r"--method (put|patch|post|delete)", title)
+            self.assertNotIn("az identity", script, "the user-assigned identity that the app used before is not read any more")
+            self.assertNotIn("USAGE_IDENTITY", block)
+            self.assertNotIn("CASES_IDENTITY", block)
         self.assertIn("The application (client) id that the mailbox tool asks for cannot be read from the app, and the deployment identity may not read the directory", self.step("The cases app lists its four functions"))
+
+    def test_the_two_old_user_assigned_identities_are_neither_looked_for_nor_removed_by_the_workflow_because_retire_needs_them_and_a_person_removes_them(self):
+        # tools/access-requirements.py retire finds the grants of an identity by its object id: Azure keeps the grants of a deleted identity as "Identity not found", and the tool cannot tell
+        # whose they were. The deployment identity cannot see the grants outside the project's group, so the workflow cannot know that they are gone: it leaves the identities alone.
+        code = "\n".join(line for step in self.steps if "run:" in step for line in step.split("run:", 1)[1].splitlines()
+                         if not line.strip().startswith("#") and "echo" not in line)
+        for word in ("id-meternaut-cases", "id-meternaut-usage", "cases_identity_name", "usage_identity_name", "OLD_IDENTITY", "az identity delete", "az identity show"):
+            self.assertNotIn(word, code, word)
+        for line in code.splitlines():
+            if "az identity" in line:
+                self.assertIn("IDENTITY_NAME", line.upper(), f"only the gateway's identity is looked up in the identity list: {line.strip()}")
+        self.assertEqual(len(re.findall(r"Microsoft\.ManagedIdentity/userAssignedIdentities", code)), 1, "the retired runner identity, which is read and removed by that one path, and nothing else")
+        self.assertEqual(len(re.findall(r'az rest --method delete --url "https://management\.azure\.com\$\{identity\}\?api-version=2023-01-31"', code)), 1, "the one that is the retired runner's")
+        finished_recording = re.search(r"(?m)^\s+recording\) echo \"(The usage recording is in resource group.*?)\" ;;$", self.step("What was done")).group(1)
+        for words in ("The app no longer carries the user-assigned identity that it used before, \\`id-meternaut-usage\\`. This workflow does not remove that identity: a person does, "
+                      "in the order of environment/BOOTSTRAP.md (its grants outside the project's group first, with tools/access-requirements.py retire, and the identity after that)",
+                      "its own system-assigned identity"):
+            self.assertIn(words, finished_recording)
+        self.assertNotIn("and so is the user-assigned identity", finished_recording)
+        description = re.search(r'(?m)^        description: "(what-if: .+)"$', self.text).group(1)
+        for words in ("afterwards the user-assigned identity", "it removes the user-assigned identity that the app used before"):
+            self.assertNotIn(words, description, "no action promises to delete an old identity")
 
     def test_the_deployment_identity_never_reads_the_directory_because_it_has_no_right_to(self):
         # The application (client) id of a system-assigned identity is the application id of its service principal, which only the directory has: a person with the owner's session reads it.
@@ -1326,7 +1333,7 @@ class Foundry(unittest.TestCase):
 
     def test_it_declares_the_resources_of_the_design_and_makes_no_dns_no_network_and_no_gateway_object(self):
         self.assertEqual(set(self.found), {"insights", "account", "guardrail", "modelDeployment", "project", "projectPublishesTraces", "tracesConnection", "privateEndpoint",
-                                           "casesMayUseTheAgents", "casesSystemMayUseTheAgents"})
+                                           "casesMayUseTheAgents"})
         self.assertRegex(self.source, r"(?m)^resource insights 'Microsoft.Insights/components@2020-02-02' existing = ")
         for word in ("privateDnsZones", "privateDnsZoneGroups", "virtualNetworkLinks", "virtualNetworkPeerings", "routeTables", "Microsoft.ApiManagement",
                      "Microsoft.Network/virtualNetworks'", "networkSecurityGroups", "SecurityControl", "optOut"):
@@ -1370,7 +1377,6 @@ class Foundry(unittest.TestCase):
         self.assertIn("projectPublishesTraces", depends_on(found["tracesConnection"][1]))
         self.assertTrue({"modelDeployment", "project", "tracesConnection"} <= depends_on(found["privateEndpoint"][1]))
         self.assertIn("privateEndpoint", depends_on(found["casesMayUseTheAgents"][1]))
-        self.assertIn("privateEndpoint", depends_on(found["casesSystemMayUseTheAgents"][1]))
         self.assertRegex(self.source, r"@batchSize\(1\)\nresource modelDeployment ", "the resource accepts one deployment write at once")
         self.assertIn("raiPolicyName: guardrail.name", found["modelDeployment"][1], "the guardrail is made before the deployments that use it")
         # nothing else is written to the resource (or below it) at the same time as its private endpoint: each write is before it or after it, by dependsOn or by a reference
@@ -1410,25 +1416,22 @@ class Foundry(unittest.TestCase):
         guids = set(re.findall(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", self.code))
         self.assertEqual(guids, {"53ca6127-db72-4b80-b1b0-d745d6d5456d", "3913510d-42f4-4e42-8a64-420c390055eb"})  # Foundry User, Monitoring Metrics Publisher
         assignments = {name: body for name, (kind, body) in self.found.items() if kind == "Microsoft.Authorization/roleAssignments"}
-        self.assertEqual(sorted(assignments), ["casesMayUseTheAgents", "casesSystemMayUseTheAgents", "projectPublishesTraces"])
+        self.assertEqual(sorted(assignments), ["casesMayUseTheAgents", "projectPublishesTraces"])
         for name, body in assignments.items():
             self.assertIn("principalType: 'ServicePrincipal'", body, name)
         self.assertEqual({name: re.search(r"(?m)^  scope: (.+)$", body).group(1) for name, body in assignments.items()},
-                         {"casesMayUseTheAgents": "project", "casesSystemMayUseTheAgents": "project", "projectPublishesTraces": "insights"})
+                         {"casesMayUseTheAgents": "project", "projectPublishesTraces": "insights"})
+        # the one identity that holds the Foundry User role is the cases app's own system-assigned one: its principal id is a parameter, so the name is known at the start
         self.assertIn("foundryUserRoleId", assignments["casesMayUseTheAgents"])
-        self.assertIn("principalId: casesPrincipalId", assignments["casesMayUseTheAgents"])
-        # the same role for the system-assigned identity that takes over, once the app has one: the name is of its own and holds the principal id (a parameter, so it is known at the start)
-        self.assertTrue(self.found["casesSystemMayUseTheAgents"][1].startswith("if (!empty(casesSystemPrincipalId)) {"), "no role is given to an identity that the app does not have yet")
-        self.assertIn("foundryUserRoleId", assignments["casesSystemMayUseTheAgents"])
-        self.assertIn("name: guid(project.id, casesSystemPrincipalId, foundryUserRoleId)", assignments["casesSystemMayUseTheAgents"])
-        self.assertIn("name: guid(project.id, casesPrincipalId, foundryUserRoleId)", assignments["casesMayUseTheAgents"])
-        self.assertIn("principalId: casesSystemPrincipalId", assignments["casesSystemMayUseTheAgents"])
+        self.assertIn("name: guid(project.id, casesSystemPrincipalId, foundryUserRoleId)", assignments["casesMayUseTheAgents"], "the name that the first step gave the role: nothing new is made")
+        self.assertIn("principalId: casesSystemPrincipalId", assignments["casesMayUseTheAgents"])
+        self.assertFalse(assignments["casesMayUseTheAgents"].startswith("if ("), "the role is always there: the workflow refuses to deploy while the app has no identity")
         self.assertIn("monitoringMetricsPublisherRoleId", assignments["projectPublishesTraces"])
         self.assertIn("principalId: project.identity.principalId", assignments["projectPublishesTraces"])
         for word in ("scope: account", "scope: resourceGroup", "scope: subscription", "subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '"):
             self.assertNotIn(word, self.code, word)
-        self.assertRegex(self.code, r"@minLength\(36\)\n@maxLength\(36\)\nparam casesPrincipalId string\n")
-        self.assertRegex(self.code, r"@maxLength\(36\)\nparam casesSystemPrincipalId string = ''\n", "optional: empty until the app has a system-assigned identity")
+        self.assertRegex(self.code, r"@minLength\(36\)\n@maxLength\(36\)\nparam casesSystemPrincipalId string\n", "required: no default, and a guid")
+        self.assertNotIn("casesPrincipalId", self.source, "the user-assigned identity of the cases app is gone: only its system-assigned identity holds the role")
 
     def test_the_foundry_user_role_is_the_one_that_creates_and_runs_agents_and_the_condition_of_the_deploy_identity_names_it(self):
         self.assertIn("var foundryUserRoleId = '53ca6127-db72-4b80-b1b0-d745d6d5456d'", self.source)
@@ -1501,7 +1504,7 @@ class Foundry(unittest.TestCase):
 class FoundryWorkflow(unittest.TestCase):
     """The action foundry of the deploy workflow: what runs for it, in what order, and what it reads back."""
 
-    ORDER = ["The usage recording and the cases identity are there, which the Foundry resource builds on", "Deploy the Foundry resource of the agents",
+    ORDER = ["The usage recording and the cases app's identity are there, which the Foundry resource builds on", "Deploy the Foundry resource of the agents",
              "Wait until the landing zone has registered the Foundry resource's private endpoint in the central zones",
              "Sign in to Azure again for the read-back of the Foundry resource, because the first sign-in's credential lasts five minutes", "Read the Foundry resource back"]
 
@@ -1547,16 +1550,19 @@ class FoundryWorkflow(unittest.TestCase):
         for word in ("az role", "delete", "listKeys", "listSecrets", "--auth-mode key"):
             self.assertNotIn(word, block, word)
 
-    def test_nothing_is_deployed_without_the_component_the_cases_identity_and_a_file_that_carries_the_identity(self):
+    def test_nothing_is_deployed_without_the_component_the_cases_app_with_its_own_identity_and_a_file_that_carries_the_identity(self):
         title = self.ORDER[0]
         block = self.step(title)
         self.assertIn("INSIGHTS_NAME: ${{ steps.params.outputs.appinsights_name }}", block)
-        self.assertIn("CASES_IDENTITY: ${{ steps.params.outputs.cases_identity_name }}", block)
+        self.assertIn("CASES_APP: ${{ steps.params.outputs.cases_function_app_name }}", block)
+        self.assertNotIn("CASES_IDENTITY", block, "the user-assigned identity of the cases app is gone: its own system-assigned one is read from the app")
+        self.assertNotIn("az identity", block)
         self.assertIn("Run recording first", block)
         self.assertIn("Run cases first", block)
+        self.assertIn('az rest --method get --url "https://management.azure.com${site}?api-version=2024-04-01" --query identity.principalId --output tsv', block)
         self.assertIn('grep -Fqi "\\"$principal\\"" "$RUNNER_TEMP/foundry.parameters.json"', block)
         script = self.script(title)
-        self.assertEqual(len(re.findall(r"exit 1", script)), 3)
+        self.assertEqual(len(re.findall(r"exit 1", script)), 4, "no component, no app, no identity of the app, and a file that does not carry it")
         self.assertNotIn("az-deploy.py", script)
         self.assertNotRegex(script, r"--method (put|patch|post|delete)")
         self.assertLess(self.names.index(title), self.names.index("Deploy the Foundry resource of the agents"))
@@ -1616,7 +1622,8 @@ class FoundryWorkflow(unittest.TestCase):
         self.assertIn('project_url="/subscriptions/$ENV_SUBSCRIPTION_ID/resourceGroups/$ENV_RESOURCE_GROUP/providers/Microsoft.CognitiveServices/accounts/$foundry_account/projects/$foundry_project"', params)
         self.assertEqual(re.findall(r'exists "\$project_url" ([0-9-]+(?: warning)?)', params), ["2025-06-01", "2025-06-01 warning"], "existence needs the version that the model account uses, not the newest")
         self.assertNotIn("2026-09-01", params)
-        self.assertIn('CASES_PRINCIPAL_ID="$cases_principal" CASES_SYSTEM_PRINCIPAL_ID="$cases_system_principal" ENV_FOUNDRY_PROJECT_EXISTS="$foundry_exists" python3 tools/environment-params.py build', params)
+        self.assertIn('CASES_SYSTEM_PRINCIPAL_ID="$cases_system_principal" ENV_FOUNDRY_PROJECT_EXISTS="$foundry_exists" python3 tools/environment-params.py build', params)
+        self.assertNotIn("CASES_PRINCIPAL_ID", params, "the user-assigned identity of the cases app is no longer looked for")
         self.assertIn("could not be read", params, "a failure that is not 'not found' stops the run: the app is never given an address by a wrong guess")
         self.assertNotRegex(params, r"--method (put|patch|post|delete)")
         self.assertEqual(len(re.findall(r"if: .*'foundry'.*'cases'|if: .*'cases'.*'foundry'", self.text)), 0)
@@ -1630,12 +1637,13 @@ class FoundryWorkflow(unittest.TestCase):
         self.assertEqual(len(re.findall(r"(?m)^\s+cases\)$", params)), 1)
         self.assertEqual(len(re.findall(r"(?m)^\s+what-if\)$", params)), 1)
         self.assertEqual(len(re.findall(r'(?m)^\s+\*\) echo "The action \$ACTION does not use the Foundry project, so it is not looked for\." ;;$', params)), 1)
-        self.assertEqual(params.count("cases_principal=$(az identity list"), 1)
+        self.assertEqual(params.count("az identity list"), 1, "only the gateway identity is looked up in the identity list now")
+        self.assertNotIn("cases_principal=", params.replace("cases_system_principal=", ""))
         self.assertEqual(params.count("cases_system_principal=$(az rest --method get"), 1, "the system-assigned identity is read from the app, once, and not by an action that has nothing to do with the Foundry resource")
         self.assertIn('--url "https://management.azure.com${cases_site}?api-version=2024-04-01" --query identity.principalId --output tsv', params)
         self.assertLess(params.index("what-if|foundry)"), params.index("cases_system_principal=$(az rest"), "inside the branch that only what-if and foundry take")
         self.assertLess(params.index("cases_system_principal=$(az rest"), re.search(r"(?m)^\s+cases\)$", params).start())
-        self.assertLess(params.index("cases_principal=\"\"\n            cases_system_principal=\"\"\n            foundry_exists=false"), params.index("case \"$ACTION\" in"), "false is the answer for every action that does not look")
+        self.assertLess(params.index("cases_system_principal=\"\"\n            foundry_exists=false"), params.index("case \"$ACTION\" in"), "false is the answer for every action that does not look")
         self.assertIn("Nothing was changed: run cases again.", params)
         self.assertIn('echo "::warning::The preview of the cases app assumes that the Foundry project is not in Azure', params)
         self.assertNotIn("ACTION: ${{", params.split("run: |")[0], "the job's ACTION is used")
@@ -1742,8 +1750,8 @@ class HandSteps(unittest.TestCase):
 
     def test_the_writers_role_is_a_retired_step_and_its_removal_and_the_one_new_entra_step_are_listed(self):
         self.assertIn("1. **Retired on 2026-11-05: the writer's custom role and its one assignment. Do not make them.**", self.page)
-        for command in ("python tools/access-requirements.py retire --project-subscription $devSub --project-group $hubGroup\n",
-                        "python tools/access-requirements.py retire --project-subscription $devSub --project-group $hubGroup --apply\n"):
+        for command in ("python tools/access-requirements.py retire --project-subscription $devSub --project-group $hubGroup --only W1\n",
+                        "python tools/access-requirements.py retire --project-subscription $devSub --project-group $hubGroup --only W1 --apply\n"):
             self.assertIn(command, self.change)
         for words in ("user_impersonation", "Azure Service Management", "https://<host>/arm/return", "tools/entra-setup.py", "id-meternaut-runner",
                       "no refresh token", "api://AzureADTokenExchange", "no secret, no certificate"):

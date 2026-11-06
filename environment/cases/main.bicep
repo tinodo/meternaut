@@ -4,16 +4,17 @@
 //   timer (daily) or one control event --> Watch --> Resource Graph, Advisor, Cost Management (read only)
 //   Watch --> Detective and Skeptic (the gateway's chat route) --> guards in code --> one telemetry line per step --> workbook
 //
-// What it holds: two user-assigned identities, a Basic (B1, Linux, always on) plan with the function app (which has a system-assigned identity too) and the subnet
-// that the plan is integrated with, one more event hub (the control hub) in the namespace of the usage recording, the roles that connect them, a longer
-// retention for the traces table of the workspace, and the History workbook.
+// What it holds: one user-assigned identity (the console's sign-in), a Basic (B1, Linux, always on) plan with the function app, which has a system-assigned identity of
+// its own, and the subnet that the plan is integrated with, one more event hub (the control hub) in the namespace of the usage recording, the roles that connect them, a
+// longer retention for the traces table of the workspace, and the History workbook.
 //
-// Identities, and no right to change Azure. The owner prefers system-assigned identities, so the app moves from `id-meternaut-cases` to its own system-assigned
-// identity in two steps (environment/BOOTSTRAP.md). This is the first: the app has the system-assigned identity next to the two user-assigned ones, that identity
-// holds every role that `id-meternaut-cases` holds in this template, and the settings still name `id-meternaut-cases`, so nothing that the app does changes. The
-// second step moves the settings to the system-assigned identity and removes `id-meternaut-cases`, after the roles outside this group have been given to the new
-// identity. `id-meternaut-cases` reads the pilot estate, its cost lines and the gateway's access key, stores the records, and holds the roles below that are for
-// the app. `id-meternaut-console-auth` stays a user-assigned identity (Microsoft documents the secretless sign-in of an App Service app only with that kind:
+// Identities, and no right to change Azure. The app's own system-assigned identity reads the pilot estate, its cost lines and the gateway's access key, stores the
+// records, and holds the roles below that are for the app. The owner prefers system-assigned identities, so it took over from the user-assigned identity
+// `id-meternaut-cases` in two steps (environment/BOOTSTRAP.md): first it was given the roles of the old identity next to it, and a person gave it the roles outside this
+// group; then the settings moved to it and the old identity was taken off the app. This template no longer makes the old identity and no deployment removes it: a person
+// removes it, and what it still holds, after `tools/access-requirements.py retire` has taken away its grants outside this group. The object id of a system-assigned
+// identity exists only once the app does, so its roles are made after the app, and a new estate's app starts before it has them and waits for them. `id-meternaut-console-auth`
+// stays a user-assigned identity (Microsoft documents the secretless sign-in of an App Service app only with that kind:
 // https://learn.microsoft.com/azure/app-service/configure-authentication-provider-aad#use-a-managed-identity-instead-of-a-secret) and holds no role: the
 // console's app registration trusts it through a federated credential, so that the platform's sign-in, and the console when it redeems the code of an Azure
 // Resource Manager sign-in, present its token as the client assertion instead of a client secret. Nothing here gives Meternaut a right to write in Azure. When a
@@ -40,8 +41,8 @@
 // gateway access product's, which the Watch reads from the gateway at the start of a run with its identity (the call needs a role in the
 // gateway's subscription that the template cannot give) and keeps in memory.
 //
-// The cases identity can read nothing of the pilot estate yet: its Reader and Cost Management Reader roles on the pilot subscription, and the
-// role that reads the access product's key, are given once, outside this template, on the owner's written word (environment/BOOTSTRAP.md,
+// The app's system-assigned identity can read nothing of the pilot estate until its Reader and Cost Management Reader roles on the pilot subscription, and the
+// role that reads the access product's key, are given, outside this template, by a person on the owner's written word (environment/BOOTSTRAP.md,
 // AGENTS.md rule 18), because the deployment workflow's identity has no right there and must not get one.
 //
 // The agents: when the Foundry resource of the agents exists (environment/foundry/main.bicep, the action foundry), the workflow passes the address of its
@@ -238,12 +239,6 @@ resource eventHubs 'Microsoft.EventHub/namespaces@2024-01-01' existing = {
   name: eventHubNamespaceName
 }
 
-resource casesIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
-  name: 'id-${workload}-cases'
-  location: location
-  tags: tags
-}
-
 // The identity that the console's app registration trusts through a federated credential, so that the app presents its token (for api://AzureADTokenExchange)
 // as the client assertion instead of a client secret: the built-in sign-in does it to sign a person in, and the console does it to redeem the code of the
 // Azure Resource Manager sign-in that an approval starts. It holds no role and is used for nothing else. No identity of this app holds a right to change Azure.
@@ -308,52 +303,57 @@ resource workflowSendsControl 'Microsoft.Authorization/roleAssignments@2022-04-0
   }
 }
 
+// The app's roles are for its own system-assigned identity. A role assignment's name has to be known when the deployment starts, and the principal id of a
+// system-assigned identity exists only once the app does: so the names are seeded with the app's id (the identity lives and dies with the app, and an app that is
+// deleted and made again needs its old assignments removed first), and the principal id is in the properties, which is read later. The roles wait for the app and the
+// app does not wait for them, so the first start of an app on a new estate comes before the roles and the host waits for them; on an estate that has the roles already,
+// the names are the same and nothing changes.
 resource functionReceivesControl 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   scope: controlHub
-  name: guid(controlHub.id, casesIdentity.id, eventHubsDataReceiverRoleId)
+  name: guid(controlHub.id, functionApp.id, eventHubsDataReceiverRoleId)
   properties: {
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', eventHubsDataReceiverRoleId)
-    principalId: casesIdentity.properties.principalId
+    principalId: functionApp.identity.principalId
     principalType: 'ServicePrincipal'
   }
 }
 
 resource functionOwnsHostContainers 'Microsoft.Authorization/roleAssignments@2022-04-01' = [for (name, i) in sharedHostContainerNames: {
   scope: sharedHostContainers[i]
-  name: guid(sharedHostContainers[i].id, casesIdentity.id, storageBlobDataOwnerRoleId)
+  name: guid(sharedHostContainers[i].id, functionApp.id, storageBlobDataOwnerRoleId)
   properties: {
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', storageBlobDataOwnerRoleId)
-    principalId: casesIdentity.properties.principalId
+    principalId: functionApp.identity.principalId
     principalType: 'ServicePrincipal'
   }
 }]
 
 resource functionUsesQueues 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   scope: storage
-  name: guid(storage.id, casesIdentity.id, storageQueueDataContributorRoleId)
+  name: guid(storage.id, functionApp.id, storageQueueDataContributorRoleId)
   properties: {
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', storageQueueDataContributorRoleId)
-    principalId: casesIdentity.properties.principalId
+    principalId: functionApp.identity.principalId
     principalType: 'ServicePrincipal'
   }
 }
 
 resource functionUsesTables 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   scope: storage
-  name: guid(storage.id, casesIdentity.id, storageTableDataContributorRoleId)
+  name: guid(storage.id, functionApp.id, storageTableDataContributorRoleId)
   properties: {
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', storageTableDataContributorRoleId)
-    principalId: casesIdentity.properties.principalId
+    principalId: functionApp.identity.principalId
     principalType: 'ServicePrincipal'
   }
 }
 
 resource functionPublishesTelemetry 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   scope: insights
-  name: guid(insights.id, casesIdentity.id, monitoringMetricsPublisherRoleId)
+  name: guid(insights.id, functionApp.id, monitoringMetricsPublisherRoleId)
   properties: {
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', monitoringMetricsPublisherRoleId)
-    principalId: casesIdentity.properties.principalId
+    principalId: functionApp.identity.principalId
     principalType: 'ServicePrincipal'
   }
 }
@@ -386,7 +386,6 @@ resource functionApp 'Microsoft.Web/sites@2024-04-01' = {
   identity: {
     type: 'SystemAssigned, UserAssigned'
     userAssignedIdentities: {
-      '${casesIdentity.id}': {}
       '${authIdentity.id}': {}
     }
   }
@@ -411,17 +410,16 @@ resource functionApp 'Microsoft.Web/sites@2024-04-01' = {
         { name: 'WEBSITES_CONTAINER_START_TIME_LIMIT', value: '600' }
         { name: 'SCM_DO_BUILD_DURING_DEPLOYMENT', value: 'false' }
         { name: 'ENABLE_ORYX_BUILD', value: 'false' }
+        // No client id in the connections and no AZURE_CLIENT_ID: a connection without one uses the app's system-assigned identity, which is the identity that the roles
+        // above are for. The sign-in's identity (below) is the one user-assigned identity that the app has, and it is named by its own setting.
         { name: 'AzureWebJobsStorage__credential', value: 'managedidentity' }
-        { name: 'AzureWebJobsStorage__clientId', value: casesIdentity.properties.clientId }
         { name: 'AzureWebJobsStorage__blobServiceUri', value: storage.properties.primaryEndpoints.blob }
         { name: 'AzureWebJobsStorage__queueServiceUri', value: storage.properties.primaryEndpoints.queue }
         { name: 'AzureWebJobsStorage__tableServiceUri', value: storage.properties.primaryEndpoints.table }
         { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: insights.properties.ConnectionString }
-        { name: 'APPLICATIONINSIGHTS_AUTHENTICATION_STRING', value: 'ClientId=${casesIdentity.properties.clientId};Authorization=AAD' }
-        { name: 'AZURE_CLIENT_ID', value: casesIdentity.properties.clientId }
+        { name: 'APPLICATIONINSIGHTS_AUTHENTICATION_STRING', value: 'Authorization=AAD' }
         { name: 'EventHubConnection__fullyQualifiedNamespace', value: eventHubHost }
         { name: 'EventHubConnection__credential', value: 'managedidentity' }
-        { name: 'EventHubConnection__clientId', value: casesIdentity.properties.clientId }
         { name: 'EVENTHUB_CASES_CONTROL_NAME', value: controlHubName }
         { name: 'SCOPE_SUBSCRIPTIONS', value: scopeSubscriptions }
         { name: 'GATEWAY_URL', value: gatewayUrl }
@@ -442,7 +440,7 @@ resource functionApp 'Microsoft.Web/sites@2024-04-01' = {
         { name: 'CONSOLE_PEOPLE', value: consolePeople }
         { name: 'MAIL_SENDER', value: mailSender }
         { name: 'PLAN_TTL_HOURS', value: string(planTtlHours) }
-        // The agents of the Foundry resource (environment/foundry/main.bicep). The app calls the project endpoint with its identity (id-meternaut-cases) and holds no key: the
+        // The agents of the Foundry resource (environment/foundry/main.bicep). The app calls the project endpoint with its system-assigned identity and holds no key: the
         // role that lets it create and run agents is given by the template of the Foundry resource, on the project. No endpoint: the investigation is off.
         { name: 'FOUNDRY_PROJECT_ENDPOINT', value: foundryProjectEndpoint }
         { name: 'FOUNDRY_MODEL_INVESTIGATOR', value: foundryModelInvestigator }
@@ -458,67 +456,8 @@ resource functionApp 'Microsoft.Web/sites@2024-04-01' = {
   }
   dependsOn: [
     webSubnet
-    functionReceivesControl
-    functionOwnsHostContainers
-    functionUsesQueues
-    functionUsesTables
-    functionPublishesTelemetry
     controlConsumerGroup
   ]
-}
-
-// Step one of the move to a system-assigned identity: every role above, for the app's own identity as well. The settings still name `id-meternaut-cases`, so these roles
-// are used only after the second step. A role assignment's name has to be known when the deployment starts, and the principal id of a system-assigned identity exists only
-// once the app does: so the names are seeded with the app's id (the identity lives and dies with the app) and the principal id is in the properties, which is read later.
-// They depend on the app, and the app does not depend on them: the app starts before its own identity has these roles, which is why its settings keep the identity that already has them.
-resource systemReceivesControl 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  scope: controlHub
-  name: guid(controlHub.id, functionApp.id, eventHubsDataReceiverRoleId)
-  properties: {
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', eventHubsDataReceiverRoleId)
-    principalId: functionApp.identity.principalId
-    principalType: 'ServicePrincipal'
-  }
-}
-
-resource systemOwnsHostContainers 'Microsoft.Authorization/roleAssignments@2022-04-01' = [for (name, i) in sharedHostContainerNames: {
-  scope: sharedHostContainers[i]
-  name: guid(sharedHostContainers[i].id, functionApp.id, storageBlobDataOwnerRoleId)
-  properties: {
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', storageBlobDataOwnerRoleId)
-    principalId: functionApp.identity.principalId
-    principalType: 'ServicePrincipal'
-  }
-}]
-
-resource systemUsesQueues 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  scope: storage
-  name: guid(storage.id, functionApp.id, storageQueueDataContributorRoleId)
-  properties: {
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', storageQueueDataContributorRoleId)
-    principalId: functionApp.identity.principalId
-    principalType: 'ServicePrincipal'
-  }
-}
-
-resource systemUsesTables 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  scope: storage
-  name: guid(storage.id, functionApp.id, storageTableDataContributorRoleId)
-  properties: {
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', storageTableDataContributorRoleId)
-    principalId: functionApp.identity.principalId
-    principalType: 'ServicePrincipal'
-  }
-}
-
-resource systemPublishesTelemetry 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  scope: insights
-  name: guid(insights.id, functionApp.id, monitoringMetricsPublisherRoleId)
-  properties: {
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', monitoringMetricsPublisherRoleId)
-    principalId: functionApp.identity.principalId
-    principalType: 'ServicePrincipal'
-  }
 }
 
 // No password for the deployment endpoint (basic authentication stays off for the app's deployment site) and none for FTP: the workflow publishes with its own
@@ -614,10 +553,7 @@ resource historyWorkbook 'Microsoft.Insights/workbooks@2023-06-01' = {
 
 output functionAppName string = functionApp.name
 output functionAppId string = functionApp.id
-@description('Principal id of the function app\'s identity that reads and stores (id-meternaut-cases). It reads the pilot estate with two roles on the pilot subscription, and the gateway access product\'s key with a role in the gateway\'s subscription: both are given once, on the owner\'s written word (environment/BOOTSTRAP.md).')
-output casesIdentityPrincipalId string = casesIdentity.properties.principalId
-output casesIdentityClientId string = casesIdentity.properties.clientId
-@description('Principal id of the function app\'s system-assigned identity, which takes over from id-meternaut-cases: the same roles inside this group (this template) and the same roles outside it (a person gives them once, with tools/access-requirements.py: environment/BOOTSTRAP.md). The Foundry resource gives it its role on the project.')
+@description('Principal id of the function app\'s system-assigned identity. It reads the pilot estate with two roles on the pilot subscription, and the gateway access product\'s key with a role in the gateway\'s subscription: a person gives them (environment/BOOTSTRAP.md). The Foundry resource gives it its role on the project.')
 output casesSystemPrincipalId string = functionApp.identity.principalId
 @description('Principal id of the identity that the console\'s sign-in presents to Microsoft Entra: the federated credential of the app registration names it. It holds no role.')
 output authIdentityPrincipalId string = authIdentity.properties.principalId

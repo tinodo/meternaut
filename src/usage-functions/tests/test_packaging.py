@@ -102,9 +102,18 @@ class NoKeysTests(unittest.TestCase):
             names.update(re.findall(r"\b\w*Credential\b", path.read_text(encoding="utf-8")))
         self.assertEqual(names, {"ManagedIdentityCredential", "TokenCredential"})
 
-    def test_the_credential_is_built_with_a_client_id_only(self):
-        source = (APP_ROOT / "usage" / "clients.py").read_text(encoding="utf-8")
-        self.assertEqual(re.findall(r"ManagedIdentityCredential\((.*?)\)", source), ["client_id=client_id"])
+    def test_the_credential_is_built_in_exactly_two_ways_with_a_client_id_or_without_one_and_nowhere_but_in_clients(self):
+        # The app runs as its system-assigned identity, or as the user-assigned identity that AZURE_CLIENT_ID names. Nothing else is a credential of this app.
+        tree = ast.parse((APP_ROOT / "usage" / "clients.py").read_text(encoding="utf-8"))
+        shapes = sorted(
+            (len(call.args), tuple((keyword.arg, ast.unparse(keyword.value)) for keyword in call.keywords))
+            for call in ast.walk(tree)
+            if isinstance(call, ast.Call) and ast.unparse(call.func) == "ManagedIdentityCredential"
+        )
+        self.assertEqual(shapes, [(0, ()), (0, (("client_id", "client_id"),))])
+        for path in source_files():
+            if path.name != "clients.py":
+                self.assertNotIn("ManagedIdentityCredential(", path.read_text(encoding="utf-8"), path.name)
 
 
 class IndexingSafetyTests(unittest.TestCase):

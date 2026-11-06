@@ -8,6 +8,8 @@ from typing import Mapping
 
 from .http import FOUNDRY_ENDPOINT
 
+# The client id of a user-assigned managed identity that the app runs as. Not set or empty: the app runs as its own system-assigned identity, which is what
+# the platform's token endpoint answers for when no client id is asked for.
 AZURE_CLIENT_ID = "AZURE_CLIENT_ID"
 SCOPE_SUBSCRIPTIONS = "SCOPE_SUBSCRIPTIONS"
 GATEWAY_URL = "GATEWAY_URL"
@@ -42,8 +44,7 @@ LIMIT_INVESTIGATE_CALLS = 40
 DEFAULT_INVESTIGATE_SECONDS = 420
 LIMIT_INVESTIGATE_SECONDS = 600
 
-REQUIRED = (AZURE_CLIENT_ID, SCOPE_SUBSCRIPTIONS, GATEWAY_URL, GATEWAY_PRODUCT_SUBSCRIPTION_ID, MODEL_DETECTIVE, MODEL_SKEPTIC, MAX_CASES_PER_RUN,
-            EVENTHUB_CASES_CONTROL_NAME)
+REQUIRED = (SCOPE_SUBSCRIPTIONS, GATEWAY_URL, GATEWAY_PRODUCT_SUBSCRIPTION_ID, MODEL_DETECTIVE, MODEL_SKEPTIC, MAX_CASES_PER_RUN, EVENTHUB_CASES_CONTROL_NAME)
 OPTIONAL = {MAX_TOKENS_PER_RUN: str(LIMIT_TOKENS_PER_RUN), MAX_COMPLETION_TOKENS: str(LIMIT_COMPLETION_TOKENS), RUN_DEADLINE_SECONDS: str(LIMIT_DEADLINE_SECONDS),
             FOUNDRY_MODEL_INVESTIGATOR: DEFAULT_MODEL_INVESTIGATOR, FOUNDRY_MODEL_SKEPTIC: DEFAULT_MODEL_SKEPTIC,
             INVESTIGATE_MAX_CALLS: str(DEFAULT_INVESTIGATE_CALLS), INVESTIGATE_MAX_SECONDS: str(DEFAULT_INVESTIGATE_SECONDS)}
@@ -65,7 +66,7 @@ class ConfigError(Exception):
 
 @dataclass(frozen=True)
 class Settings:
-    client_id: str
+    client_id: str  # empty: the system-assigned identity of the app
     subscriptions: tuple[str, ...]
     gateway_url: str
     gateway_host: str
@@ -139,7 +140,8 @@ def load(env: Mapping[str, str] | None = None) -> Settings:
     subscriptions = tuple(part.strip().lower() for part in env.get(SCOPE_SUBSCRIPTIONS, "").split(",") if part.strip())
     if env.get(SCOPE_SUBSCRIPTIONS) and not all(GUID.match(s) for s in subscriptions):
         problems.append(f"{SCOPE_SUBSCRIPTIONS} is a comma separated list of subscription ids")
-    if env.get(AZURE_CLIENT_ID) and not GUID.match(env[AZURE_CLIENT_ID]):
+    client_id = (env.get(AZURE_CLIENT_ID) or "").strip()
+    if client_id and not GUID.match(client_id):
         problems.append(f"{AZURE_CLIENT_ID} is a client id")
     gateway = GATEWAY.match(env.get(GATEWAY_URL, ""))
     if env.get(GATEWAY_URL) and not gateway:
@@ -160,7 +162,7 @@ def load(env: Mapping[str, str] | None = None) -> Settings:
         raise ConfigError("; ".join(problems))
     host = gateway.group(1)
     return Settings(
-        client_id=env[AZURE_CLIENT_ID],
+        client_id=client_id,
         subscriptions=subscriptions,
         gateway_url=f"https://{host}.azure-api.net",
         gateway_host=f"{host}.azure-api.net",
