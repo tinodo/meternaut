@@ -65,7 +65,7 @@ class Build(unittest.TestCase):
     def test_good_settings_give_four_files_and_the_outputs(self):
         code, out, err, files = run(SETTINGS)
         self.assertEqual((code, err), (0, ""))
-        self.assertEqual(set(files), {"environment.parameters.json", "logger.parameters.json", "kit.parameters.json", "recording.parameters.json", "foundry.parameters.json", "planted.parameters.json"})
+        self.assertEqual(set(files), {"environment.parameters.json", "logger.parameters.json", "kit.parameters.json", "recording.parameters.json", "foundry.parameters.json", "operator.parameters.json", "planted.parameters.json"})
         env = values(files["environment.parameters.json"])
         self.assertEqual(env["vnetAddressPrefix"], "10.53.0.0/24")
         self.assertEqual(env["peSubnetPrefix"], "10.53.0.0/27")
@@ -525,8 +525,8 @@ class Contract(unittest.TestCase):
     def test_the_contract_of_the_repository_gives_a_fifth_file_that_fits_its_template(self):
         code, out, err, files = self.build()
         self.assertEqual((code, err), (0, ""))
-        self.assertEqual(set(files), {"environment.parameters.json", "logger.parameters.json", "kit.parameters.json", "recording.parameters.json", "foundry.parameters.json", "contract.parameters.json",
-                                      "cases.parameters.json", "planted.parameters.json"})
+        self.assertEqual(set(files), {"environment.parameters.json", "logger.parameters.json", "kit.parameters.json", "recording.parameters.json", "foundry.parameters.json", "operator.parameters.json",
+                                      "contract.parameters.json", "cases.parameters.json", "planted.parameters.json"})
         given = files["contract.parameters.json"]["parameters"]
         declared = bicep_params(CONTRACT_BICEP)
         self.assertEqual(set(given), set(declared))
@@ -940,6 +940,80 @@ class Foundry(unittest.TestCase):
         text = json.dumps(self.files(CASES_SYSTEM_PRINCIPAL_ID=self.SYSTEM_PRINCIPAL)[0]["foundry.parameters.json"]).lower()
         for word in ("key", "secret", "password", "connectionstring", "token"):
             self.assertNotIn(word, text, word)
+
+
+class Operator(unittest.TestCase):
+    """The parameter file of the Operator (environment/operator/main.bicep): the subnet of its container groups is the last free /27 and is made once."""
+
+    OPERATOR = (ROOT / "environment" / "operator" / "main.bicep").read_text(encoding="utf-8")
+
+    def files(self, **changes):
+        code, out, err, files = run({**SETTINGS, **changes})
+        self.assertEqual((code, err), (0, ""))
+        return files, dict(line.split("=", 1) for line in out.splitlines())
+
+    def test_the_file_fits_the_template_and_every_setting_has_a_value_of_the_right_type(self):
+        files, _ = self.files()
+        declared = bicep_params(self.OPERATOR)
+        given = files["operator.parameters.json"]["parameters"]
+        self.assertTrue(set(given) <= set(declared), set(given) - set(declared))
+        required = {name for name, (_, has_default) in declared.items() if not has_default}
+        self.assertTrue(required <= set(given), required - set(given))
+        types = {"string": str, "int": int, "array": list, "bool": bool}
+        for name, wrapped in given.items():
+            self.assertIsInstance(wrapped["value"], types[declared[name][0]], name)
+        operator = values(files["operator.parameters.json"])
+        self.assertEqual(set(operator), {"location", "owner", "opsSubnetPrefix", "opsSubnetExists"}, "a range, a flag and two tags: nothing else, and nothing secret")
+        self.assertEqual((operator["location"], operator["owner"]), ("swedencentral", "owner@example.com"))
+
+    def test_the_subnet_is_the_last_free_27_and_overlaps_none_of_the_other_three(self):
+        files, outputs = self.files()
+        env, operator = values(files["environment.parameters.json"]), values(files["operator.parameters.json"])
+        self.assertEqual(operator["opsSubnetPrefix"], "10.53.0.192/27")
+        self.assertEqual(outputs["ops_subnet_prefix"], "10.53.0.192/27")
+        taken = [ipaddress.ip_network(env[name]) for name in ("peSubnetPrefix", "funcSubnetPrefix", "webSubnetPrefix")]
+        self.assertFalse(any(ipaddress.ip_network(operator["opsSubnetPrefix"]).overlaps(other) for other in taken))
+        self.assertTrue(ipaddress.ip_network(operator["opsSubnetPrefix"]).subnet_of(ipaddress.ip_network(env["vnetAddressPrefix"])))
+        # whichever /27 the endpoints use, the Operator gets the last /27 that the other three leave
+        for endpoints, expected in (("10.53.0.192/27", ("10.53.0.0/27", "10.53.0.224/27", "10.53.0.160/27")),
+                                    ("10.53.0.224/27", ("10.53.0.0/27", "10.53.0.192/27", "10.53.0.160/27"))):
+            files, _ = self.files(ENV_PE_SUBNET_PREFIX=endpoints)
+            env = values(files["environment.parameters.json"])
+            self.assertEqual((env["funcSubnetPrefix"], env["webSubnetPrefix"], values(files["operator.parameters.json"])["opsSubnetPrefix"]), expected, endpoints)
+
+    def test_a_network_with_four_27_gives_one_to_each_and_a_network_without_a_free_one_is_refused_by_name(self):
+        files, _ = self.files(ENV_VNET_PREFIX="10.53.0.0/25")
+        env = values(files["environment.parameters.json"])
+        self.assertEqual((env["peSubnetPrefix"], env["funcSubnetPrefix"], env["webSubnetPrefix"], values(files["operator.parameters.json"])["opsSubnetPrefix"]),
+                         ("10.53.0.0/27", "10.53.0.32/27", "10.53.0.96/27", "10.53.0.64/27"))
+        # an endpoint subnet of a /26 takes two of the four
+        code, out, err, files = run({**SETTINGS, "ENV_VNET_PREFIX": "10.53.0.0/25", "ENV_PE_SUBNET_PREFIX": "10.53.0.0/26"})
+        self.assertEqual((code, out, files), (2, "", {}))
+        self.assertIn("Operator", err)
+        self.assertIn("ENV_VNET_PREFIX", err)
+        # the function that picks it refuses a network that is smaller than a /27, and says so as a problem and not as a traceback
+        small = ipaddress.ip_network("10.53.0.0/28")
+        with self.assertRaises(ep.Problem):
+            ep.ops_subnet(small, small, small, small)
+
+    def test_the_file_says_whether_the_subnet_is_there_already_and_says_no_when_nobody_has_looked(self):
+        # the subnet is made once: a template that makes it again takes away the route table that the landing zone's network manager put on it
+        self.assertIs(values(self.files()[0]["operator.parameters.json"])["opsSubnetExists"], False)
+        for given, expected in (("", False), ("false", False), ("FALSE", False), ("true", True), (" True ", True)):
+            files, _ = self.files(ENV_OPS_SUBNET_EXISTS=given)
+            self.assertIs(values(files["operator.parameters.json"])["opsSubnetExists"], expected, given)
+        for refused in ("yes", "1", "exists"):
+            code, out, err, files = run({**SETTINGS, "ENV_OPS_SUBNET_EXISTS": refused})
+            self.assertEqual((code, out, files), (2, "", {}), refused)
+            self.assertIn("ENV_OPS_SUBNET_EXISTS is true or false", err)
+        self.assertIn("param opsSubnetExists bool = false", self.OPERATOR)
+
+    def test_the_names_the_workflow_reads_are_the_ones_the_template_makes(self):
+        _, outputs = self.files()
+        self.assertEqual((outputs["operator_identity_name"], outputs["operator_subnet_name"]), ("id-meternaut-operator", "snet-ops"))
+        self.assertIn("param workload string = 'meternaut'", self.OPERATOR)
+        self.assertIn("name: 'id-${workload}-operator'", self.OPERATOR)
+        self.assertIn("var opsSubnetName = 'snet-ops'", self.OPERATOR)
 
 
 class CheckAgainst(unittest.TestCase):

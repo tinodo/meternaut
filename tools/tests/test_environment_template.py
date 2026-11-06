@@ -80,6 +80,13 @@ ALLOWED = {
         "Microsoft.Insights/components",
         "Microsoft.Authorization/roleAssignments",
     },
+    "environment/operator/main.bicep": {
+        "Microsoft.ManagedIdentity/userAssignedIdentities",
+        "Microsoft.Network/networkSecurityGroups",
+        "Microsoft.Network/virtualNetworks",
+        "Microsoft.Network/virtualNetworks/subnets",
+        "Microsoft.Authorization/roleAssignments",
+    },
 }
 
 
@@ -1766,6 +1773,176 @@ class HandSteps(unittest.TestCase):
         for name in ("CHANGE_RESOURCE_GROUP", "CHANGE_SUBSCRIPTION_ID", "SIGNIN_TENANT_ID", "SIGNIN_CLIENT_ID"):
             self.assertIn(f"`{name}`", self.change)
             self.assertIn(f"name: '{name}'", self.template, name)
+
+
+class OperatorWorkflow(unittest.TestCase):
+    """The actions operator and operator-probe of the deploy workflow: what runs for each, in what order, and what the probe is given."""
+
+    DEPLOY = "Deploy the Operator, its identity and the subnet of its container groups"
+    PROVIDER = "The resource provider of Container Instances is registered in the subscription"
+    WAIT = "Wait until the landing zone has put its route table on the Operator's subnet"
+    PROBE = "Run the probe in the Operator"
+    CLEANUP = "Delete any container group of the probe that is left"
+    ORDER = [DEPLOY, PROVIDER, WAIT, PROBE, CLEANUP]
+
+    def setUp(self):
+        self.text = text(".github/workflows/deploy-hub.yml")
+        self.steps = re.split(r"(?m)^      - ", self.text)[1:]
+        self.names = [re.match(r"name: (.+)", b).group(1) for b in self.steps]
+
+    def step(self, title):
+        (block,) = [b for b in self.steps if b.startswith(f"name: {title}\n")]
+        return block
+
+    def script(self, title):
+        body = self.step(title).split("        run: |\n", 1)[1]
+        return "\n".join(line for line in body.splitlines() if not line.strip().startswith("#"))
+
+    def test_the_two_actions_are_offered_and_described_in_plain_words(self):
+        offered = re.findall(r"- (\S+)", re.search(r"options:\n((?:          - .+\n)+)", self.text).group(1))
+        self.assertIn("operator", offered)
+        self.assertIn("operator-probe", offered)
+        description = re.search(r'(?m)^        description: "(what-if: .+)"$', self.text).group(1)
+        self.assertIn(" operator: the Operator, the executor that works inside the virtual network", description)
+        self.assertIn(" operator-probe: run operator/probe.sh once in a short-lived container group", description)
+        self.assertIn("deleted at the end whatever happens", description)
+        self.assertIn("It needs operator first.", description)
+
+    def test_each_step_runs_for_its_action_alone_and_in_order_between_the_settings_and_the_summary(self):
+        positions = [self.names.index(name) for name in self.ORDER]
+        self.assertEqual(positions, sorted(positions))
+        self.assertLess(self.names.index("Work out the settings"), positions[0])
+        self.assertLess(positions[-1], self.names.index("What was done"))
+        self.assertIn("if: inputs.action == 'operator'\n", self.step(self.DEPLOY))
+        self.assertIn("if: inputs.action == 'operator-probe'\n", self.step(self.PROVIDER))
+        self.assertIn("if: inputs.action == 'operator' || inputs.action == 'operator-probe'\n", self.step(self.WAIT))
+        self.assertIn("if: inputs.action == 'operator-probe'\n", self.step(self.PROBE))
+        self.assertIn("if: always() && inputs.action == 'operator-probe' && steps.probe.outcome != 'skipped'\n", self.step(self.CLEANUP),
+                      "the second line behind the tool's own delete runs when the run was cancelled too, and only when the probe step started")
+        self.assertIn("id: probe\n", self.step(self.PROBE))
+
+    def test_the_deploy_makes_the_template_with_the_parameter_file_and_asks_for_the_client_id(self):
+        block = self.step(self.DEPLOY)
+        for word in ("--template environment/operator/main.bicep", '--parameters "$RUNNER_TEMP/operator.parameters.json"', '--name "operator-$GITHUB_RUN_ID"', "--output identityClientId"):
+            self.assertIn(word, block)
+        self.assertEqual(self.text.count("--template environment/operator/main.bicep"), 2, "the preview and the deploy, nothing else")
+        self.assertIn("exit 1", block)
+        for word in ("az role", "delete", "listKeys", "listSecrets", "--auth-mode key"):
+            self.assertNotIn(word, block, word)
+
+    def test_the_preview_waits_for_the_network_and_the_settings_know_whether_the_subnet_is_there(self):
+        self.assertIn('if [ "$NETWORK_EXISTS" = true ]; then\n            python3 tools/az-deploy.py what-if --subscription "$ENV_SUBSCRIPTION_ID" --resource-group "$ENV_RESOURCE_GROUP" \\\n'
+                      "              --template environment/operator/main.bicep", self.text)
+        self.assertIn('if [ "$network" = true ]; then ops=$(exists "$vnet/subnets/snet-ops"); else ops=false; fi', self.text)
+        self.assertIn('echo "ops_subnet_exists=$ops" >> "$GITHUB_OUTPUT"', self.text)
+        self.assertIn("ENV_OPS_SUBNET_EXISTS: ${{ steps.network.outputs.ops_subnet_exists }}", self.step("Work out the settings"))
+
+    def test_the_wait_takes_the_endpoint_subnet_as_the_yardstick_waits_twenty_minutes_after_the_deploy_and_only_says_it_before_a_probe(self):
+        block = self.step(self.WAIT)
+        script = self.script(self.WAIT)
+        self.assertIn("timeout-minutes: 25", block)
+        for word in ("table_of snet-pe", "table_of snet-ops", "attempts=40", 'if [ "$ACTION" != "operator" ]; then attempts=1; fi', "sleep 30", "properties.routeTable.id", "api-version=2025-05-01"):
+            self.assertIn(word, script)
+        self.assertEqual(len(re.findall(r"exit 1", script)), 1, "only the action operator stops when the table does not come")
+        self.assertIn("::warning::snet-ops carries no route table", script)
+        self.assertNotRegex(script, r"--method (put|patch|post|delete)")
+
+    def test_the_provider_is_read_and_never_registered_by_the_workflow(self):
+        script = self.script(self.PROVIDER)
+        self.assertIn("az provider show --namespace Microsoft.ContainerInstance --query registrationState", script)
+        self.assertNotIn("az provider register", self.text)
+        self.assertIn("::warning::", script, "a state that cannot be read is said and does not stop the run")
+
+    def test_the_probe_is_given_a_pinned_image_the_script_the_names_the_size_and_a_summary_and_no_secret(self):
+        block = self.step(self.PROBE)
+        script = self.script(self.PROBE)
+        self.assertRegex(block, r"OPERATOR_IMAGE: mcr\.microsoft\.com/azure-cli@sha256:[0-9a-f]{64}\n")
+        self.assertIn('--image "$OPERATOR_IMAGE"', script)
+        self.assertNotIn("--allow-tag", script, "the workflow pins by digest")
+        self.assertIn("python3 tools/operator-run.py run", script)
+        for word in ("--script operator/probe.sh", '--secret-file "size-test=$RUNNER_TEMP/size-test"', '--summary "$GITHUB_STEP_SUMMARY"', '--subnet-id "$subnet_id"', '--identity-id "$identity_id"',
+                     '--name "op-probe-$GITHUB_RUN_ID"', '"${dns[@]}"', "--timeout-seconds 900", "timeout-minutes: 25"):
+            self.assertTrue(word in script or word in block, word)
+        self.assertRegex(script, r'size=400000\n\s+head -c "\$size" /dev/urandom')
+        self.assertIn('identity_id=$(az resource list --resource-group "$ENV_RESOURCE_GROUP" --name id-meternaut-operator --query "[0].id" --output tsv || true)', script)
+        self.assertIn('client=$(az rest --method get --url "https://management.azure.com${identity_id}?api-version=2023-01-31" --query properties.clientId --output tsv || true)', script,
+                      "the client id is read from the identity resource")
+        for word in ("az identity", "Microsoft.ManagedIdentity"):
+            self.assertNotIn(word, script, f"{word}: the workflow reads no identity with az identity and names no identity resource type outside the path that removes the retired runner identity")
+        self.assertIn('--env "PROBE_SIZE_BYTES=$size"', script)
+        for name in ("OPERATOR_CLIENT_ID", "OPERATOR_GROUP", "OPERATOR_SUBSCRIPTION", "PROBE_NAMES", "PROBE_PRIVATE_NAMES", "PROBE_URLS"):
+            self.assertIn(f'--env "{name}=', script)
+        for host in ("mcr.microsoft.com", "management.azure.com", "login.microsoftonline.com", "api.github.com", "codeload.github.com", "github.com", "pipelines.actions.githubusercontent.com",
+                     "objects.githubusercontent.com", "pypi.org", "files.pythonhosted.org", "api.applicationinsights.io", "api.loganalytics.io"):
+            self.assertIn(f"https://{host}/", script, host)
+        for word in ("--secure-env", "GITHUB_TOKEN", "secrets.", "get-access-token", "az account", "--auth-mode", "listKeys"):
+            self.assertNotIn(word, block, word)
+
+    def test_the_digest_is_the_one_that_the_decision_record_names_and_nothing_in_the_workflow_makes_or_deletes_a_container_group_itself(self):
+        digest = re.search(r"OPERATOR_IMAGE: (mcr\.microsoft\.com/azure-cli@sha256:[0-9a-f]{64})", self.text).group(1)
+        self.assertIn(digest, text("docs/proposals/07-private-by-default.md"))
+        self.assertNotIn("az container", self.text, "the tool makes, reads and deletes the group")
+
+    def test_the_cleanup_deletes_only_groups_of_the_probe_through_the_tool_and_a_failure_is_a_warning(self):
+        script = self.script(self.CLEANUP)
+        self.assertIn('python3 tools/operator-run.py cleanup --resource-group "$ENV_RESOURCE_GROUP" --prefix op-probe- --older-than-minutes 0', script)
+        self.assertIn("::warning::", script)
+        self.assertNotIn("delete", script.replace("deletes", ""), "the tool deletes, not a command of the step")
+        self.assertIn("--name \"op-probe-$GITHUB_RUN_ID\"", self.script(self.PROBE), "the prefix of the cleanup is the start of the name that the probe gives its group")
+
+    def test_the_template_is_compiled_linted_and_its_file_is_checked_in_both_workflows(self):
+        for source in (self.text, text(".github/workflows/checks.yml")):
+            self.assertIn("environment/operator/main.bicep", source)
+            self.assertIn('--label operator', source)
+            self.assertIn('operator.json"', source)
+        self.assertIn("environment/foundry/main.bicep environment/cases/main.bicep", self.text)
+
+    def test_both_actions_have_a_line_in_the_summary_for_success_and_for_failure(self):
+        block = self.step("What was done")
+        for action in ("operator", "operator-probe"):
+            self.assertEqual(len(re.findall(rf"(?m)^                {action}\) echo ", block)), 2, action)
+
+
+class OperatorHandStep(unittest.TestCase):
+    """The hand steps of the Operator in environment/BOOTSTRAP.md: one more role in the condition of the deploy identity (Reader), and the resource provider."""
+
+    READER = "acdd72a7-3385-48ef-bd42-f606fba81ae7"
+
+    def setUp(self):
+        self.page = text("environment/BOOTSTRAP.md")
+        self.section = self.page.split("## Changed on 2026-11-06: the Operator")[1].split("\n## ")[0]
+        (self.script,) = re.findall(r"```powershell\n(.*?)\n```", self.section, re.S)
+
+    def test_the_section_follows_the_foundry_section_which_keeps_its_one_block_and_comes_before_the_last_one(self):
+        foundry = self.page.index("## Changed on 2026-11-06: the Foundry resource of the agents")
+        operator = self.page.index("## Changed on 2026-11-06: the Operator")
+        self.assertLess(foundry, operator)
+        self.assertLess(operator, self.page.index("\n## After it"))
+        self.assertEqual(len(re.findall(r"```powershell", self.page.split("## Changed on 2026-11-06: the Foundry resource of the agents")[1].split("\n## ")[0])), 1)
+
+    def test_the_role_is_the_one_that_the_template_gives_and_it_is_added_in_place_with_one_update_and_nothing_is_deleted_or_made(self):
+        self.assertIn(f"var readerRoleId = '{self.READER}'", text("environment/operator/main.bicep"))
+        self.assertIn(f"$reader = '{self.READER}'", self.script)
+        self.assertEqual(len(re.findall(r"^az role assignment update ", self.script, re.M)), 1, "one write")
+        self.assertEqual(sorted(set(re.findall(r"az role assignment (\w+)", self.script))), ["list", "update"])
+        for word in ("role assignment delete", "role assignment create", "--ids", "restore", "Restore"):
+            self.assertNotIn(word, self.script, word)
+        for call in re.findall(r"az role assignment (?:list|update)[^\n]*", self.script):
+            self.assertIn("--subscription $devSub", call, call)
+
+    def test_it_reads_before_it_writes_shows_the_difference_asks_and_reads_back_after(self):
+        order = [self.script.index(word) for word in ("Get-Assignments 'length(@)'", "$old = $text | ConvertFrom-Json", "$shape = {", "Write-Host \"Role ids now:", "Read-Host 'Change the condition as shown? Type yes'",
+                                                      "az role assignment update ", "$new = $text | ConvertFrom-Json", "Write-Host \"Read back:")]
+        self.assertEqual(order, sorted(order))
+        self.assertIn("-ne 'yes') { throw 'Stopped. Nothing was changed.' }", self.script)
+        self.assertGreaterEqual(self.script.count("if ($LASTEXITCODE -ne 0) { throw"), 5)
+        self.assertTrue(self.script.isascii(), "commands that are copied into a console hold plain characters only")
+
+    def test_the_text_says_what_the_deploy_identity_already_covers_what_it_does_not_and_the_two_hand_steps(self):
+        for words in ("Microsoft.ContainerInstance/containerGroups/*", "Microsoft.Network/virtualNetworks/subnets/join/action", "Microsoft.ManagedIdentity/userAssignedIdentities/assign/action",
+                      "lists eight roles and Reader is not one of them", "does not cover registering a resource provider", "**Hand step 1: a resource provider.**", "**Hand step 2: one more role in the condition",
+                      "az provider register --namespace Microsoft.ContainerInstance", "the first `operator-probe` is the test", "Nothing is written until the person types `yes`"):
+            self.assertIn(words, self.section, words)
 
 
 if __name__ == "__main__":
