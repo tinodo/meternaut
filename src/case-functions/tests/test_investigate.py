@@ -51,6 +51,11 @@ def metrics(**totals) -> dict:
     return {"metrics": {name: {"total": total} for name, total in totals.items()}}
 
 
+def recorded(**totals) -> dict:
+    """Evidence in which each metric holds every total that the tools recorded for it, in order. The last is the total of the last measurement."""
+    return {"metrics": {name: {"total": values[-1], "totals": list(values)} for name, values in totals.items()}}
+
+
 def entry(handle: str, metric: str, total) -> dict:
     return {"handle": handle, "metric": metric, "total": total}
 
@@ -210,24 +215,31 @@ class Harness:
 
 # -- agents.py ---------------------------------------------------------------------------------------------------------------------------------------
 
-# Words of particular kinds of resource, of particular measurements and of thresholds. The instructions of the agents may hold none of them: the agents decide
-# what to examine and what counts as waste from what their tools show. Add to this list whenever a word of that kind turns up.
+# Words of particular kinds of resource, of particular measurements, of states of a resource and of thresholds. The instructions of the agents may hold none of them:
+# the agents decide what to examine and what counts as waste from what their tools show. Add to this list whenever a word of that kind turns up.
 RESOURCE_WORDS = ("private endpoint", "endpoint", "disk", "snapshot", "virtual machine", "vm", "storage", "blob", "load balancer", "public ip", "ip address", "app service",
                   "function app", "web app", "sql", "cosmos", "key vault", "kubernetes", "aks", "container", "registry", "redis", "cache", "event hub", "service bus",
                   "api management", "firewall", "bastion", "vnet", "virtual network", "subnet", "network interface", "nat gateway", "dns", "log analytics", "workspace",
                   "application insights", "twins", "pubsub", "signalr", "iot", "databricks", "synapse", "data factory", "openai", "cognitive", "defender", "sentinel",
-                  "backup", "vault", "nic", "gateway")
+                  "backup", "vault", "nic", "gateway",
+                  # kinds of resource that an instruction once named as examples of a quiet one: they say what to leave alone, which is what to look for in reverse
+                  "recovery", "replica", "archive", "cold storage", "copy", "copies", "store", "stores",
+                  # services and types that the first real run reported: a miss of the Investigator is repaired in the general instructions and the tools, never by naming
+                  # what it missed (rule 30)
+                  "dashboard", "search service", "security feature")
 MEASUREMENT_WORDS = ("bytes", "byte", "queries", "query", "connections", "connection", "requests", "request", "transactions", "transaction", "cpu", "memory", "iops",
                      "throughput", "latency", "egress", "ingress", "bandwidth", "dtu", "messages", "invocations", "executions", "utilization", "utilisation", "traffic",
                      "capacity", "percentile")
+STATE_WORDS = ("disconnected", "unattached", "orphan", "orphaned")  # the states of a resource that a rule of waste would name
 THRESHOLD_WORDS = ("zero", "threshold", "percent", "idle for", "at least", "less than", "more than")
 THRESHOLD_SHAPES = (r"\d\s*%", r"\b\d+\s*(?:days?|hours?|weeks?|months?|minutes?|gb|mb|tb|kb)\b", r"\bp\d{2}\b")
 
 
 def banned_in(text: str) -> list[str]:
-    """The words and shapes of RESOURCE_WORDS, MEASUREMENT_WORDS and THRESHOLD_WORDS that the text holds."""
+    """The words and shapes of RESOURCE_WORDS, MEASUREMENT_WORDS, STATE_WORDS and THRESHOLD_WORDS that the text holds, also in the plural ("private endpoints")."""
     lower = text.lower()
-    found = [word for word in RESOURCE_WORDS + MEASUREMENT_WORDS + THRESHOLD_WORDS if re.search(rf"(?<![a-z]){re.escape(word)}(?![a-z])", lower)]
+    words = RESOURCE_WORDS + MEASUREMENT_WORDS + STATE_WORDS + THRESHOLD_WORDS
+    found = [word for word in words if re.search(rf"(?<![a-z]){re.escape(word)}(?:s|es)?(?![a-z])", lower)]
     return found + [shape for shape in THRESHOLD_SHAPES if re.search(shape, lower)]
 
 
@@ -267,9 +279,95 @@ class TheAgentDefinitions(unittest.TestCase):
                          "A call beyond the budget is refused, and if you keep asking for tools after that the investigation ends and loses all of your findings, so stop calling tools in time and write your answer",
                          "something idle, something larger than its use needs, something duplicated, a feature that is paid for and not used, or a commitment that does not fit the use",
                          "An absent measurement is not proof that something is idle", "Look at the window that the data covers",
-                         "recovery copies and rarely read stores", "must be compared with the actual cost lines of what it would cover",
+                         "must be compared with the actual cost lines of what it would cover",
                          "Never write an amount of money", "one finding for a group of similar resources"):
             self.assertIn(sentence, text)
+
+    def test_a_quiet_resource_is_said_to_be_possibly_legitimate_without_naming_a_kind_of_resource(self):
+        text = agents.INVESTIGATOR_INSTRUCTIONS
+        self.assertIn("6. Quiet resources can be legitimate: something may exist to be used rarely or only in a failure. When you cannot rule that out, lower your "
+                      "confidence or propose investigate.", text)
+        for gone in ("recovery", "copies", "stores", "examples"):
+            self.assertNotIn(gone, text)
+
+    def test_every_rule_that_the_investigator_had_before_is_still_there(self):
+        text = agents.INVESTIGATOR_INSTRUCTIONS
+        for sentence in ("1. Your tools are your only source of facts.", "Spend the calls where the cost is, and do not repeat a call.",
+                         "If a tool answers that the budget or the limit is used up, stop calling tools and give your final answer from what you already have.",
+                         "A resource is named only by a handle (r1, r2 and so on) that has a meaning in this run only. "
+                         "Use the handles exactly as the tools gave them and never invent one.",
+                         "4. Waste is one of these: something idle, something larger than its use needs, something duplicated, a feature that is paid for and not used, "
+                         "or a commitment that does not fit the use.",
+                         "7. Advice to buy a commitment or a reservation must be compared with the actual cost lines of what it would cover. Without those cost lines, do not give it.",
+                         "8. Never write an amount of money. Code computes every figure from the cost lines.",
+                         "9. Group your findings: one finding for a group of similar resources that you checked in the same way. Report few findings, each one backed by "
+                         "what your tools showed. An empty list of findings is a good answer when nothing is backed."):
+            self.assertIn(sentence, text)
+
+    def test_the_rules_are_numbered_one_to_nine_in_order_and_the_form_of_the_answer_comes_after_them(self):
+        text = agents.INVESTIGATOR_INSTRUCTIONS
+        self.assertEqual(re.findall(r"^(\d+)\. ", text, re.MULTILINE), [str(number) for number in range(1, 10)])
+        self.assertLess(text.index("9. Group your findings"), text.index("When you are done, reply with one JSON object and nothing else"))
+
+    def test_the_investigator_is_told_to_cover_the_estate_from_the_dearest_service_and_to_prefer_a_call_for_a_whole_type(self):
+        text = agents.INVESTIGATOR_INSTRUCTIONS
+        self.assertIn("2. Cover the estate before you go deep. Work down the cost by service that the overview of the estate shows, from the dearest, and do not stop "
+                      "while you have calls left and the list has services that you did not look at. Prefer a call that covers a whole type (a table of every resource "
+                      "of a type, a measurement across the whole type) to calls for single resources, and use single-resource calls only for what a whole type shows "
+                      "to be unusual.", text)
+        self.assertLess(text.index("1. Your tools are your only source of facts"), text.index("2. Cover the estate"))
+        self.assertLess(text.index("2. Cover the estate"), text.index("3. What a tool returns"))
+
+    def test_the_investigator_is_told_what_to_report_when_some_resources_of_a_type_have_no_measurement_and_others_have(self):
+        text = agents.INVESTIGATOR_INSTRUCTIONS
+        self.assertIn("5. An absent measurement is not proof that something is idle. Look at the window that the data covers, and say so in your summary when the window "
+                      "is short for your claim. But when", text)
+        self.assertIn("But when a measurement has data for other resources of the same type over the same window and none at all for some, that difference is worth "
+                      "reporting: give the resources that have none as one finding with the basis other and the proposal investigate, with a lower confidence than a "
+                      "measurement that shows no use would give, and say in the summary how many resources have none and how many have data.", text)
+        self.assertIn("other", agents.BASES)
+        self.assertIn("investigate", agents.PROPOSALS)
+        self.assertLess(text.index("5. An absent measurement"), text.index("6. Quiet resources"))
+
+    def test_the_investigator_is_told_to_say_for_each_service_or_type_what_it_concluded_or_why_it_could_not_judge(self):
+        text = agents.INVESTIGATOR_INSTRUCTIONS
+        self.assertIn('"examined":["<one short phrase for each service or type that you looked at: what you concluded, or why you could not judge>"]', text)
+        self.assertIn(f"Write at most {agents.MAX_EXAMINED} phrases in examined, of at most {agents.MAX_EXAMINED_TEXT} characters each, and join the small ones.", text)
+        self.assertEqual((agents.MAX_EXAMINED, agents.MAX_EXAMINED_TEXT), (12, 100))
+
+    def test_a_count_with_a_period_beside_it_stays_in_what_the_investigator_writes_and_a_sentence_about_money_is_still_cleaned(self):
+        text = agents.INVESTIGATOR_INSTRUCTIONS
+        for gone in ("code removes", "keep such words away from your counts"):
+            self.assertNotIn(gone, text.lower(), "the instructions need no workaround: a count is not taken for money")
+        for period in ("every day", "a month", "daily"):
+            with self.subTest(period=period):
+                self.assertEqual(roles.clean_text(f"27 have data {period}"), f"27 have data {period}")
+        self.assertEqual(roles.clean_text("27 resources have data every day"), "27 resources have data every day")
+        self.assertEqual(roles.clean_text("42 have none and 27 have data"), "42 have none and 27 have data")
+        self.assertEqual(roles.clean_text("saves about 1200 a month"), "saves about [figure removed] a month")
+        self.assertEqual(roles.clean_text("see https://example.invalid/x"), "see [link removed]")
+        # in the two places where the Investigator writes such a count, and in the one where it might write money
+        summary = "42 resources have no data in the window while 27 have data every day or on some days and 3 show nothing."
+        self.assertEqual(investigate.parse_finding(1, finding(summary=summary))[0].summary, summary)
+        _, examined = investigate.parse_answer(json.dumps({"findings": [], "examined": ["27 of 72 have data every day: no waste seen"]}))
+        self.assertEqual(examined, ["27 of 72 have data every day: no waste seen"])
+        self.assertEqual(investigate.parse_finding(1, finding(summary="Saves about 1200 a month."))[0].summary, "Saves about [figure removed] a month.")
+
+    def test_the_instructions_stay_short_so_that_with_the_tools_the_definition_is_about_nine_thousand_characters(self):
+        self.assertLess(len(agents.INVESTIGATOR_INSTRUCTIONS), 5000, "with the descriptions of the tools (about 3,900 characters) the definition stays near 9,000")
+
+    def test_the_instructions_name_nothing_that_the_first_real_run_found_or_missed(self):
+        for text in (agents.INVESTIGATOR_INSTRUCTIONS, agents.SKEPTIC_INSTRUCTIONS, agents.INVESTIGATOR_DESCRIPTION, agents.SKEPTIC_DESCRIPTION):
+            lower = text.lower()
+            for name in ("private endpoint", "storage account", "dashboard", "load balancer", "search", "security feature", "disconnected", "unattached", "orphan"):
+                self.assertNotIn(name, lower, name)
+
+    def test_the_investigator_is_told_what_code_does_with_a_finding_that_it_cannot_confirm_and_with_a_confidence_out_of_range(self):
+        text = agents.INVESTIGATOR_INSTRUCTIONS
+        self.assertIn("A finding without an entry that code could confirm is left to a person, whatever its basis; under the basis no-usage code drops the resources that "
+                      "it cannot confirm.", text)
+        self.assertNotIn("always left to a person", text, "no-usage is the exception: code drops what it cannot confirm")
+        self.assertIn("A confidence that is not a number from 0 to 1 counts as 0.", text)
 
     def test_the_investigator_is_told_the_shape_of_its_answer_and_the_limits_that_code_enforces(self):
         text = agents.INVESTIGATOR_INSTRUCTIONS
@@ -290,6 +388,8 @@ class TheAgentDefinitions(unittest.TestCase):
         document = json.loads(filled)
         self.assertEqual(sorted(document), ["examined", "findings"])
         self.assertEqual(sorted(document["findings"][0]), ["basis", "confidence", "handles", "metric_evidence", "proposal", "summary"])
+        self.assertEqual(len(document["examined"]), 1)
+        self.assertTrue(document["examined"][0].startswith("<one short phrase for each service or type that you looked at"), document["examined"])
         verdict_form = next(line for line in agents.SKEPTIC_INSTRUCTIONS.splitlines() if line.startswith('{"verdicts"'))
         self.assertEqual(sorted(json.loads(verdict_form)["verdicts"][0]), ["index", "objections", "summary", "verdict"])
 
@@ -302,6 +402,20 @@ class TheAgentDefinitions(unittest.TestCase):
             self.assertIn(sentence, text)
         for word in roles.VERDICTS:
             self.assertIn(word, text)
+
+    def test_the_skeptic_is_told_what_resources_evidence_evidenceshown_and_cited_mean_and_which_measurements_come_first(self):
+        text = agents.SKEPTIC_INSTRUCTIONS
+        for sentence in ("resources is the number of resources that the finding covers: code opens one case for each of them, and your verdict decides all of them",
+                         "evidence holds one row for each resource that code shows you, and evidenceShown is the number of those rows",
+                         "A resource that has no row is not judged by you, and a person looks at it",
+                         "its total over the days that it covers (days), and how many of those days had data (daysWithData)",
+                         "totals lists every total that was recorded for it, in order, when there are several",
+                         "cited is true when the Investigator named that measurement as a basis of its claim and its total is the number that the tools returned",
+                         "cited is false for a measurement that the tools showed and the Investigator did not name",
+                         "The measurements with a total other than 0 come first, and then the cited ones, so that you see what contradicts a claim before what supports it",
+                         "at most six measurements"):
+            self.assertIn(sentence, text)
+        self.assertEqual(investigate.SKEPTIC_METRICS, 6, "the instructions say six")
 
     def test_the_input_of_the_investigator_holds_its_budget_of_calls_and_nothing_else(self):
         self.assertEqual(json.loads(agents.investigator_input(30)), {"budget": {"toolCalls": 30}})
@@ -323,10 +437,24 @@ class TheAgentDefinitions(unittest.TestCase):
     def test_the_scan_notices_the_words_that_it_is_for(self):
         for text, word in (("look at private endpoint use", "private endpoint"), ("fewer bytes than", "bytes"), ("no queries", "queries"), ("few connections", "connections"),
                            ("digital twins", "twins"), ("pubsub units", "pubsub"), ("the defender plans", "defender"), ("zero traffic means idle", "zero"),
-                           ("less than 5% used", "5%"), ("idle for 30 days", "30 days"), ("a virtual machine", "virtual machine"), ("the p95 value", "p95")):
+                           ("less than a tenth", "less than"), ("a virtual machine", "virtual machine"),
+                           ("recovery copies are quiet", "recovery"), ("rarely read stores", "stores"), ("a replica", "replica"), ("an archive", "archive"),
+                           ("cold storage", "cold storage"), ("a backup", "backup"), ("copies of resources", "copies"), ("a copy", "copy"),
+                           # the plural of a word is the word
+                           ("many private endpoints", "private endpoint"), ("some load balancers", "load balancer"), ("storage accounts", "storage"),
+                           ("disks and snapshots", "disk"), ("two vms", "vm"), ("some caches", "cache"), ("these gateways", "gateway"),
+                           # what the first real run reported, and the states that a rule of waste would name
+                           ("a dashboard service", "dashboard"), ("the search service", "search service"), ("a paid security feature", "security feature"),
+                           ("the disconnected ones", "disconnected"), ("an unattached one", "unattached"), ("an orphan", "orphan"), ("orphaned things", "orphaned")):
             with self.subTest(text=text):
-                self.assertTrue(banned_in(text), word)
+                self.assertIn(word, banned_in(text))
+        for text, shape in (("used 5% of it", THRESHOLD_SHAPES[0]), ("a 30 days window", THRESHOLD_SHAPES[1]), ("after 2 hours", THRESHOLD_SHAPES[1]),
+                            ("10 GB used", THRESHOLD_SHAPES[1]), ("the p95 value", THRESHOLD_SHAPES[2])):
+            with self.subTest(text=text):
+                self.assertIn(shape, banned_in(text))
         self.assertEqual(banned_in("Find where this estate pays for something that it does not use or need."), [])
+        self.assertEqual(banned_in("Quiet resources can be legitimate: something may exist to be used rarely or only in a failure."), [])
+        self.assertEqual(banned_in("Cover the estate before you go deep: work down the cost by service, from the dearest, with calls that cover a whole type; peers, tables and calls."), [])
 
     def test_the_investigator_is_defined_with_the_tools_that_the_real_toolbox_offers(self):
         from cases.toolbox import Toolbox
@@ -396,12 +524,25 @@ class TheFieldsOfAFinding(unittest.TestCase):
             self.assertIn("basis or its proposal", self.parse(proposal=bad)[0].reason or "", repr(bad))
             self.assertIn("basis or its proposal", self.parse(basis=bad)[0].reason or "", repr(bad))
 
-    def test_the_confidence_must_be_a_number_and_is_clamped_and_rounded(self):
-        self.assertEqual(self.parse(confidence=7)[0].confidence, 1.0)
-        self.assertEqual(self.parse(confidence=-3)[0].confidence, 0.0)
-        self.assertEqual(self.parse(confidence=0.5)[0].confidence, 0.5)
-        for bad in ("high", True, None, [0.5], float("nan"), float("inf"), 10 ** 400):
-            self.assertEqual(self.parse(confidence=bad)[0].reason, "its confidence is not a number", repr(bad))
+    def test_a_confidence_from_0_to_1_is_kept_rounded_to_hundredths(self):
+        for said, kept in ((0, 0.0), (1, 1.0), (0.5, 0.5), (0.876, 0.88), (0.7, 0.7), (-0.0, 0.0), (0.004, 0.0), (0.996, 1.0)):
+            with self.subTest(said=said):
+                parsed = self.parse(confidence=said)[0]
+                self.assertEqual((parsed.confidence, parsed.note, parsed.reason), (kept, None, None))
+
+    def test_a_confidence_outside_0_and_1_is_not_clamped_it_counts_as_0_and_the_finding_says_so(self):
+        for said, shown in ((85, "85"), (7, "7"), (1.0001, "1.0001"), (-0.01, "-0.01"), (-3, "-3"), (70.5, "70.5"), (1e300, "1e+300"), (10 ** 200, "1e+200")):
+            with self.subTest(said=said):
+                parsed, handles, _ = self.parse(confidence=said)
+                self.assertEqual((parsed.confidence, parsed.reason, handles), (0.0, None, ["r1", "r2"]), "the finding is kept")
+                self.assertEqual(parsed.note, f"the Investigator gave a confidence of {shown}, which is not a number from 0 to 1, so it counts as 0 and a person has to "
+                                              "judge this finding")
+
+    def test_a_confidence_that_is_not_a_number_drops_the_finding(self):
+        for bad in ("high", "0.9", True, False, None, [0.5], {"v": 0.5}, float("nan"), float("inf"), float("-inf"), 10 ** 400, -10 ** 400):
+            parsed = self.parse(confidence=bad)[0]
+            self.assertEqual((parsed.reason, parsed.note), ("its confidence is not a number", None), repr(bad))
+        self.assertEqual(self.parse(confidence=...)[0].reason, "its confidence is not a number")
 
     def test_the_handles_must_be_a_list_that_is_not_empty(self):
         for bad in (None, "r1", [], {"r1": 1}, 5):
@@ -428,15 +569,30 @@ class TheAnswerOfTheSkeptic(unittest.TestCase):
         self.assertEqual(found[0], roles.SkepticAnswer("agree", (), "Fine."))
         self.assertEqual(found[1], roles.SkepticAnswer("disagree", ("It may be a copy.", "Window too short."), "Contested."))
 
-    def test_a_verdict_that_is_not_valid_or_repeats_an_index_is_left_out(self):
+    def test_a_verdict_that_is_not_valid_is_left_out_and_the_others_stand(self):
         good = {"index": 0, "verdict": "agree", "objections": [], "summary": "s"}
         for bad in ({"index": 1, "verdict": "maybe"}, {"index": 5, "verdict": "agree"}, {"index": 2, "verdict": "agree"}, {"index": -1, "verdict": "agree"},
                     {"index": True, "verdict": "agree"},
                     {"index": 0.0, "verdict": "agree"}, {"index": "1", "verdict": "agree"}, {"verdict": "agree"}, {"index": 1}, "agree", None, 5):
             found = investigate.parse_verdicts(json.dumps({"verdicts": [good, bad]}), 2)
             self.assertEqual(sorted(found), [0], repr(bad))
-        found = investigate.parse_verdicts(json.dumps({"verdicts": [good, {**good, "verdict": "disagree"}]}), 1)
-        self.assertEqual(found[0].verdict, "agree", "the first verdict of an index stands")
+
+    def test_an_index_that_the_answer_holds_twice_gets_no_verdict_whatever_the_two_entries_say(self):
+        agree = {"index": 0, "verdict": "agree", "objections": [], "summary": "fine"}
+        other = {"index": 1, "verdict": "disagree", "objections": ["no"], "summary": "n"}
+        for label, twice in (("different verdicts", [agree, {**agree, "verdict": "disagree"}]), ("the same verdict", [agree, dict(agree)]),
+                             ("the same verdict with other words", [agree, {**agree, "summary": "other"}]), ("a valid one and an invalid one", [agree, {**agree, "verdict": "maybe"}]),
+                             ("an invalid one and a valid one", [{**agree, "verdict": "maybe"}, agree]), ("three entries", [agree, {**agree, "verdict": "unsure"}, agree]),
+                             ("a valid one and one without a verdict", [agree, {"index": 0}])):
+            with self.subTest(case=label):
+                found = investigate.parse_verdicts(json.dumps({"verdicts": [twice[0], other] + twice[1:]}), 2)
+                self.assertEqual(sorted(found), [1], "the finding that has two entries has no verdict, and the other one keeps its own")
+                self.assertEqual(found[1].verdict, "disagree")
+
+    def test_an_index_in_the_answer_twice_is_not_decided_by_the_order_of_the_entries(self):
+        agree, disagree = {"index": 0, "verdict": "agree"}, {"index": 0, "verdict": "disagree"}
+        for entries in ([agree, disagree], [disagree, agree]):
+            self.assertEqual(investigate.parse_verdicts(json.dumps({"verdicts": entries}), 1), {})
 
     def test_at_most_three_objections_each_cut_and_cleaned_and_a_summary_of_two_hundred_characters(self):
         raw = {"verdicts": [{"index": 0, "verdict": " Unsure ", "objections": ["a https://evil.example", "b", "c", "d", "", 5, "x" * 500],
@@ -552,6 +708,66 @@ class WhatCodeChecksAgainstTheTools(unittest.TestCase):
         parsed = verified(finding(handles=["r1", "r2"], evidence=[]), FakeToolbox())
         self.assertEqual((parsed.handles, parsed.reason), ([], "no resource of it is left: 2 without a cited measurement that matches the tools and shows no usage"))
 
+    def test_a_short_measurement_that_shows_nil_does_not_cancel_a_longer_one_that_showed_something(self):
+        toolbox = FakeToolbox(evidence={"r1": recorded(MetricA=[2900, 0]), "r2": recorded(MetricA=[0, 0]), "r3": recorded(MetricA=[0, 2900]), "r4": recorded(MetricA=[0])})
+        raw = finding(handles=["r1", "r2", "r3", "r4"], evidence=[entry(handle, "MetricA", 0) for handle in ("r1", "r2", "r3", "r4")])
+        parsed = verified(raw, toolbox)
+        self.assertEqual((parsed.handles, parsed.unproven), (["r2", "r4"], 2))
+        self.assertEqual(parsed.cited, {"r2": {"MetricA": 0}, "r4": {"MetricA": 0}})
+
+    def test_a_claim_of_no_usage_that_cites_the_larger_total_is_a_contradiction_and_so_is_a_cited_nil_next_to_it(self):
+        both = {"metrics": {**recorded(MetricA=[2900, 0])["metrics"], **recorded(MetricB=[0])["metrics"]}}
+        toolbox = FakeToolbox(evidence={"r1": both})
+        for cited in (2900, 0):
+            with self.subTest(cited=cited):
+                parsed = verified(finding(handles=["r1"], evidence=[entry("r1", "MetricA", cited), entry("r1", "MetricB", 0)]), toolbox)
+                self.assertEqual((parsed.handles, parsed.unproven), ([], 1), "a resource with a measurement that showed something is not a resource with no usage")
+
+    def test_a_total_that_is_none_of_the_recorded_totals_is_thrown_away_and_does_not_contradict(self):
+        both = {"metrics": {**recorded(MetricA=[2900, 0])["metrics"], **recorded(MetricB=[0])["metrics"]}}
+        toolbox = FakeToolbox(evidence={"r1": both})
+        parsed = verified(finding(handles=["r1"], evidence=[entry("r1", "MetricA", 5), entry("r1", "MetricB", 0)]), toolbox)
+        self.assertEqual((parsed.handles, parsed.cited), (["r1"], {"r1": {"MetricB": 0}}))
+        alone = verified(finding(handles=["r1"], evidence=[entry("r1", "MetricA", 5)]), toolbox)
+        self.assertEqual((alone.handles, alone.unproven), ([], 1))
+
+    def test_evidence_without_a_usable_list_of_totals_is_read_as_the_one_total(self):
+        for label, aggregate in (("no list", {"total": 0}), ("an empty list", {"total": 0, "totals": []}), ("a text", {"total": 0, "totals": "0"}),
+                                 ("a number", {"total": 0, "totals": 0}), ("a dict", {"total": 0, "totals": {"a": 0}})):
+            with self.subTest(case=label):
+                parsed = verified(finding(handles=["r1"], evidence=[entry("r1", "MetricA", 0)]), FakeToolbox(evidence={"r1": {"metrics": {"MetricA": aggregate}}}))
+                self.assertEqual((parsed.handles, parsed.cited), (["r1"], {"r1": {"MetricA": 0}}))
+        shows_something = verified(finding(handles=["r1"], evidence=[entry("r1", "MetricA", 3)]), FakeToolbox(evidence={"r1": {"metrics": {"MetricA": {"total": 3, "totals": "x"}}}}))
+        self.assertEqual((shows_something.handles, shows_something.unproven), ([], 1))
+
+    def test_a_measurement_that_was_absent_at_some_time_proves_nothing_and_does_not_contradict(self):
+        evidence = {"r1": {"metrics": {"MetricA": {"total": 0, "totals": [None, 0]}, "MetricB": {"total": 0, "totals": [0]}, "MetricC": {"total": 0, "totals": [0, "x"]}}}}
+        toolbox = FakeToolbox(evidence=evidence)
+        parsed = verified(finding(handles=["r1"], evidence=[entry("r1", "MetricA", 0), entry("r1", "MetricC", 0), entry("r1", "MetricB", 0)]), toolbox)
+        self.assertEqual((parsed.handles, parsed.cited), (["r1"], {"r1": {"MetricB": 0}}))
+        only = verified(finding(handles=["r1"], evidence=[entry("r1", "MetricA", 0)]), toolbox)
+        self.assertEqual((only.handles, only.unproven), ([], 1))
+
+    def test_every_recorded_total_is_looked_at_even_beyond_the_number_that_the_toolbox_records(self):
+        many_totals = [0] * 24 + [7]
+        parsed = verified(finding(handles=["r1"], evidence=[entry("r1", "MetricA", 0)]), FakeToolbox(evidence={"r1": recorded(MetricA=many_totals)}))
+        self.assertEqual((parsed.handles, parsed.unproven), ([], 1))
+        fine = verified(finding(handles=["r1"], evidence=[entry("r1", "MetricA", 0)]), FakeToolbox(evidence={"r1": recorded(MetricA=[0] * 24)}))
+        self.assertEqual(fine.handles, ["r1"])
+
+    def test_the_other_bases_accept_any_total_that_the_tools_recorded_and_keep_the_one_that_was_cited(self):
+        toolbox = FakeToolbox(evidence={"r1": recorded(MetricA=[2900, 0])})
+        for basis in ("low-usage", "oversized", "duplicate", "unused-feature", "commitment-misfit", "other"):
+            for cited, kept in ((2900, {"MetricA": 2900}), (0, {"MetricA": 0}), (5, {})):
+                with self.subTest(basis=basis, cited=cited):
+                    parsed = verified(finding(handles=["r1"], basis=basis, evidence=[entry("r1", "MetricA", cited)]), toolbox)
+                    self.assertEqual((parsed.handles, parsed.cited["r1"]), (["r1"], kept))
+
+    def test_the_totals_that_the_skeptic_sees_are_the_recorded_ones_when_there_are_several(self):
+        aggregates = investigate._aggregates({"r1": {"metrics": {"MetricA": {"total": 0, "totals": [2900, 0, None, "x", True, float("nan")]}, "MetricB": {"total": 4}}}}, "r1")
+        self.assertEqual(aggregates["MetricA"]["totals"], [2900, 0, None, None, None, None])
+        self.assertEqual(aggregates["MetricB"]["totals"], [4])
+
     def test_a_finding_of_another_basis_keeps_the_known_resources_with_the_entries_that_matched(self):
         toolbox = FakeToolbox(evidence={"r1": metrics(MetricA=40), "r2": {}, "r3": metrics(MetricA=0)})
         for basis in ("low-usage", "oversized", "duplicate", "unused-feature", "commitment-misfit", "other"):
@@ -597,6 +813,27 @@ class WhatCodeChecksAgainstTheTools(unittest.TestCase):
         small = investigate._properties({"r1": {"properties": {"diskSizeGB": 128, "isEnabled": True, "tier": "Premium_LRS", "Bad Key": 1, "x": "has spaces", 7: 1}}}, "r1")
         self.assertEqual(small, {"diskSizeGB": 128, "isEnabled": True, "tier": "Premium_LRS"})
         self.assertEqual(investigate._properties({"r1": {"properties": "text"}}, "r1"), {})
+
+
+class WhatPassesAsAPlainWord(unittest.TestCase):
+    """What the Skeptic is given is checked once more, to the last character: a line break after a good word is no good word."""
+
+    def test_every_pattern_must_match_the_whole_text(self):
+        for pattern, good in ((investigate.METRIC_NAME, "MetricA (b)"), (investigate.RESOURCE_TYPE, "microsoft.example/things"), (investigate.WORD, "Premium_LRS"),
+                              (investigate.PROPERTY_PATH, "disk.sizeGB")):
+            with self.subTest(pattern=pattern.pattern):
+                self.assertTrue(pattern.fullmatch(good), good)
+                for bad in (good + "\n", good + "\n\n", "\n" + good, good + " x\n"):
+                    self.assertIsNone(pattern.fullmatch(bad), repr(bad))
+
+    def test_a_word_that_ends_in_a_line_break_is_no_word(self):
+        for text in ("Premium_LRS\n", "Premium_LRS\n\n", "Premium_LRS ", " Premium_LRS", "Premium LRS", "", "x" * 33, 5, None):
+            self.assertIsNone(investigate._word_of(text), repr(text))
+        self.assertEqual(investigate._word_of("Premium_LRS"), "Premium_LRS")
+
+    def test_a_key_path_that_ends_in_a_line_break_is_not_a_property_that_the_skeptic_sees(self):
+        evidence = {"r1": {"properties": {"diskSizeGB\n": 1, "diskSizeGB": 2, "tier": "Premium_LRS\n", "kind": "Premium", "x y": 3}}}
+        self.assertEqual(investigate._properties(evidence, "r1"), {"diskSizeGB": 2, "kind": "Premium"})
 
 
 # -- the whole investigation -------------------------------------------------------------------------------------------------------------------------
@@ -651,8 +888,8 @@ class AGoodInvestigation(unittest.TestCase):
         (line,) = self.h.of("investigation.finding")
         self.assertEqual({k: v for k, v in line.items() if k not in ("v", "ts", "runId", "requestId", "type")},
                          {"finding": 1, "basis": "no-usage", "proposal": "delete", "confidence": 0.9, "claimed": 2, "handles": 2, "unknown": 0, "unproven": 0, "repeated": 0,
-                          "judgedLately": 0, "guarded": 0, "capped": 0, "coveredCostUsd30d": 30.0, "verdict": "agree", "kept": True, "reason": None,
-                          "summary": "Nothing used these in the window."})
+                          "judgedLately": 0, "guarded": 0, "capped": 0, "unmeasured": 0, "shown": 2, "coveredCostUsd30d": 30.0, "verdict": "agree", "kept": True,
+                          "reason": None, "note": None, "summary": "Nothing used these in the window."})
 
     def test_the_end_says_what_was_examined_how_many_calls_tokens_and_seconds_and_what_was_kept_and_dropped(self):
         (end,) = self.h.of("investigation.finished")
@@ -724,7 +961,7 @@ class TheCostAndTheSaving(unittest.TestCase):
     def test_a_change_has_no_figure_unless_a_tool_showed_an_advisor_item_and_then_it_is_advisors_own_highest_figure(self):
         toolbox = FakeToolbox(evidence={"r1": metrics(MetricA=0), "r2": {**metrics(MetricA=0), "advisor": [{"savingUsdMonth": 3.0}, {"savingUsdMonth": 7.5},
                                                                                                          {"savingUsdMonth": None}, {"savingUsdMonth": -4}, "x"]}})
-        h = Harness(FakeFoundry(answer(finding(proposal="change", basis="oversized", evidence=[]))), toolbox)
+        h = Harness(FakeFoundry(answer(finding(proposal="change", basis="oversized"))), toolbox)
         h.go()
         results = {r["resourceName"]: r for r in h.of("case.result")}
         self.assertEqual((results["thing-1"]["monthlySavingUsd"], results["thing-1"]["recommendation"], results["thing-1"]["status"]), (None, "change", "proposed"))
@@ -732,7 +969,7 @@ class TheCostAndTheSaving(unittest.TestCase):
 
     def test_a_negative_advisor_figure_is_no_figure(self):
         toolbox = FakeToolbox(evidence={"r1": {**metrics(MetricA=0), "advisor": [{"savingUsdMonth": -4}]}, "r2": metrics(MetricA=0)})
-        h = Harness(FakeFoundry(answer(finding(proposal="change", basis="oversized", evidence=[]))), toolbox)
+        h = Harness(FakeFoundry(answer(finding(proposal="change", basis="oversized"))), toolbox)
         h.go()
         self.assertEqual({r["resourceName"]: r["monthlySavingUsd"] for r in h.of("case.result")}, {"thing-1": None, "thing-2": None})
 
@@ -782,7 +1019,7 @@ class WhatDecidesTheStatus(unittest.TestCase):
         self.assertEqual({tuple(r["objections"]) for r in results.values()}, {("The window is short.",)})
 
     def test_a_finding_that_the_skeptic_gave_no_verdict_for_needs_a_person(self):
-        raw = [finding(handles=["r1"]), finding(handles=["r2"], basis="oversized", evidence=[])]
+        raw = [finding(handles=["r1"]), finding(handles=["r2"], basis="oversized")]
         h = Harness(FakeFoundry(answer(*raw), verdicts(("agree", (), "Fine."))))
         h.go()
         self.assertEqual({r["resourceName"]: r["status"] for r in h.of("case.result")}, {"thing-1": "proposed", "thing-2": "needs_human"})
@@ -790,11 +1027,296 @@ class WhatDecidesTheStatus(unittest.TestCase):
         self.assertIn("no verdict for 1 of 2 findings", h.notes[0])
 
     def test_every_finding_has_its_own_verdict_by_index(self):
-        raw = [finding(handles=["r1"]), finding(handles=["r2"], basis="oversized", evidence=[]), finding(handles=["r3"], basis="duplicate", evidence=[])]
+        raw = [finding(handles=["r1"]), finding(handles=["r2"], basis="oversized"), finding(handles=["r3"], basis="duplicate")]
         h = Harness(FakeFoundry(answer(*raw), verdicts(("disagree", ("No.",), "n"), ("agree", (), "y"), ("unsure", (), "u"))))
         h.go()
         self.assertEqual({r["resourceName"]: r["status"] for r in h.of("case.result")}, {"thing-1": "needs_human", "thing-2": "proposed", "thing-3": "needs_human"})
         self.assertEqual([f["verdict"] for f in h.of("investigation.finding")], ["disagree", "agree", "unsure"])
+
+
+class WhenNoMeasurementBacksAFinding(unittest.TestCase):
+    """A resource whose finding cited no measurement that matched what the tools returned for it is never proposed: the case says so and a person judges it."""
+
+    SAYS = decide.NO_MEASUREMENT
+
+    def run_with(self, raw, skeptic=None, **options):
+        h = Harness(FakeFoundry(answer(raw), skeptic), **options)
+        h.go()
+        return {r["resourceName"]: r for r in h.of("case.result")}, h
+
+    def test_the_sentence_that_a_case_says_is_plain(self):
+        self.assertEqual(self.SAYS, "no measurement backs this finding; a person has to judge it")
+
+    def test_a_finding_of_low_usage_that_asks_for_a_delete_and_cites_nothing_is_not_proposed_whatever_the_agents_say(self):
+        results, h = self.run_with(finding(basis="low-usage", proposal="delete", confidence=1.0, evidence=[]), verdicts(("agree", (), "No reason to keep them.")))
+        for name, r in results.items():
+            with self.subTest(resource=name):
+                self.assertEqual((r["status"], r["recommendation"], r["confidence"], r["objections"]), ("needs_human", "delete", 1.0, [self.SAYS]))
+                self.assertEqual(r["summary"], "Nothing used these in the window.", "the words of the Investigator are left as they were")
+        self.assertEqual((h.result.cases, h.result.proposed, h.result.needs_human, h.result.unmeasured), (2, 0, 2, 2))
+
+    def test_every_basis_and_every_proposal_that_code_can_check_only_by_a_cited_measurement_waits_for_a_person_without_one(self):
+        for basis in ("low-usage", "oversized", "duplicate", "unused-feature", "commitment-misfit", "other"):
+            for proposal in ("delete", "change", "investigate"):
+                with self.subTest(basis=basis, proposal=proposal):
+                    results, _ = self.run_with(finding(basis=basis, proposal=proposal, evidence=[]))
+                    self.assertEqual({r["status"] for r in results.values()}, {"needs_human"})
+                    self.assertEqual({tuple(r["objections"]) for r in results.values()}, {(self.SAYS,)})
+
+    def test_the_same_findings_with_a_cited_measurement_that_matched_the_tools_can_be_proposed(self):
+        for basis in ("no-usage", "low-usage", "oversized", "duplicate", "unused-feature", "commitment-misfit", "other"):
+            for proposal, status in (("delete", "proposed"), ("change", "proposed"), ("investigate", "needs_human")):
+                with self.subTest(basis=basis, proposal=proposal):
+                    results, h = self.run_with(finding(basis=basis, proposal=proposal))
+                    self.assertEqual({r["status"] for r in results.values()}, {status})
+                    self.assertEqual(h.result.unmeasured, 0)
+                    if status == "proposed":
+                        self.assertEqual({tuple(r["objections"]) for r in results.values()}, {()})
+
+    def test_an_entry_that_the_tools_did_not_confirm_is_no_measurement(self):
+        toolbox = FakeToolbox(evidence={"r1": metrics(MetricA=3), "r2": metrics(MetricA=3)})
+        wrong = [entry("r1", "MetricA", 4), entry("r2", "MetricZ", 3), entry("r9", "MetricA", 3), {"handle": "r1", "metric": "MetricA", "total": "3"}]
+        results, _ = self.run_with(finding(basis="low-usage", evidence=wrong), toolbox=toolbox)
+        self.assertEqual({r["status"] for r in results.values()}, {"needs_human"})
+        self.assertEqual({tuple(r["objections"]) for r in results.values()}, {(self.SAYS,)})
+
+    def test_one_resource_of_a_finding_can_be_backed_and_the_other_not(self):
+        results, h = self.run_with(finding(basis="low-usage", evidence=[entry("r1", "MetricA", 0)]))
+        self.assertEqual({name: (r["status"], r["objections"]) for name, r in results.items()}, {"thing-1": ("proposed", []), "thing-2": ("needs_human", [self.SAYS])})
+        (line,) = h.of("investigation.finding")
+        self.assertEqual((line["handles"], line["unmeasured"], line["shown"]), (2, 1, 2))
+        self.assertEqual(h.result.unmeasured, 1)
+
+    def test_a_delete_that_waits_for_a_person_still_shows_the_cost_lines_it_would_save_and_a_change_shows_none(self):
+        deleted, _ = self.run_with(finding(basis="low-usage", proposal="delete", evidence=[]))
+        self.assertEqual({r["monthlySavingUsd"] for r in deleted.values()}, {10.0, 20.0})
+        changed, _ = self.run_with(finding(basis="low-usage", proposal="change", evidence=[]))
+        self.assertEqual({r["monthlySavingUsd"] for r in changed.values()}, {None})
+
+    def test_the_sentence_comes_before_the_objections_of_the_skeptic(self):
+        results, _ = self.run_with(finding(basis="low-usage", evidence=[]), verdicts(("disagree", ("It may be in use.", "The window is short."), "Contested.")))
+        self.assertEqual({tuple(r["objections"]) for r in results.values()}, {(self.SAYS, "It may be in use.", "The window is short.")})
+
+    def test_the_case_in_the_store_has_the_sentence_and_is_not_proposed_and_no_plan_is_made(self):
+        h = Harness(FakeFoundry(answer(finding(basis="low-usage", evidence=[]))), with_store=True)
+        h.go()
+        cases = h.store.cases_recent()
+        self.assertEqual({(c.status, c.objections) for c in cases}, {("needs_human", (self.SAYS,))})
+        self.assertEqual([c.facts["metrics"] for c in cases], [{}, {}], "the digest says that the finding cites no measurement")
+        self.assertEqual(h.store.plans_open(), [])
+
+    def test_one_note_of_the_run_says_how_many_resources_need_a_person_for_it_and_none_is_said_when_all_are_backed(self):
+        _, h = self.run_with(finding(basis="low-usage", evidence=[entry("r1", "MetricA", 0)]))
+        self.assertIn("1 resource of the findings has no measurement that backs the finding, so a person has to judge it", h.notes)
+        _, many_h = self.run_with(finding(basis="low-usage", evidence=[]))
+        self.assertIn("2 resources of the findings have no measurement that backs the finding, so a person has to judge them", many_h.notes)
+        _, backed = self.run_with(finding())
+        self.assertFalse([n for n in backed.notes if "no measurement" in n], backed.notes)
+
+    def test_a_finding_that_the_skeptic_could_not_judge_says_the_sentence_too(self):
+        broken = FakeFoundry(answer(finding(basis="low-usage", evidence=[])))
+        broken.skeptic_error = FoundryError("the project is busy")
+        h = Harness(broken)
+        h.go()
+        self.assertEqual({tuple(r["objections"]) for r in h.of("case.result")}, {(self.SAYS,)})
+
+
+class WhenSomeResourcesOfATypeHaveNoMeasurementAndTheirPeersHaveData(unittest.TestCase):
+    """The Investigator is told to report such resources with the basis other and the proposal investigate. Code keeps that finding and leaves every resource of it to a
+    person, and drops the same finding under the basis no-usage: where nothing was measured, code cannot confirm that nothing was used."""
+
+    SUMMARY = "4 resources of this type have no data in the window and 2 have data."
+    HANDLES = ["r1", "r2", "r3", "r4"]
+
+    @staticmethod
+    def toolbox(totals: bool = True) -> FakeToolbox:
+        """The evidence as the real toolbox records it: an absent measurement has a total of None, and `totals` lists every total that was recorded for it."""
+        def block(total, days_with_data):
+            measurement = {"total": total, "days": 30, "days_with_data": days_with_data}
+            return {"metrics": {"MetricA": {**measurement, "totals": [total]} if totals else measurement}}
+
+        absent, present = block(None, 0), block(12, 30)
+        return FakeToolbox([resource(n) for n in range(1, 7)], {"r1": absent, "r2": absent, "r3": absent, "r4": absent, "r5": present, "r6": present})
+
+    def run_with(self, totals: bool = True, **changes):
+        raw = finding(handles=self.HANDLES, basis="other", proposal="investigate", confidence=0.4, summary=self.SUMMARY, evidence=[])
+        raw.update(changes)
+        h = Harness(FakeFoundry(answer(raw)), self.toolbox(totals), with_store=True)
+        h.go()
+        return h
+
+    def test_the_finding_is_kept_and_each_resource_of_it_is_a_case_that_waits_for_a_person(self):
+        h = self.run_with()
+        (line,) = h.of("investigation.finding")
+        self.assertEqual({key: line[key] for key in ("kept", "basis", "proposal", "confidence", "claimed", "handles", "unmeasured", "unproven", "verdict", "reason")},
+                         {"kept": True, "basis": "other", "proposal": "investigate", "confidence": 0.4, "claimed": 4, "handles": 4, "unmeasured": 4, "unproven": 0,
+                          "verdict": "agree", "reason": None})
+        cases = h.store.cases_recent()
+        self.assertEqual(sorted(c.resource_name for c in cases), ["thing-1", "thing-2", "thing-3", "thing-4"], "the peers that have data are no cases")
+        self.assertEqual({(c.status, c.recommendation, c.confidence, c.summary, c.objections) for c in cases},
+                         {("needs_human", "investigate", 0.4, self.SUMMARY, (decide.NO_MEASUREMENT,))})
+        self.assertEqual({(c.facts["basis"], c.facts["proposal"], tuple(c.facts["metrics"])) for c in cases}, {("other", "investigate", ())})
+        self.assertEqual((h.result.cases, h.result.needs_human, h.result.proposed, h.result.unmeasured), (4, 4, 0, 4))
+        self.assertEqual(h.store.plans_open(), [])
+
+    def test_the_same_finding_with_the_basis_no_usage_is_dropped_because_nothing_was_measured(self):
+        for label, evidence in (("no entry", []), ("an entry with no total", [entry(handle, "MetricA", None) for handle in self.HANDLES]),
+                                ("an entry that claims nil", [entry(handle, "MetricA", 0) for handle in self.HANDLES])):
+            for totals in (True, False):
+                with self.subTest(label, evidence_with_totals=totals):
+                    h = self.run_with(totals, basis="no-usage", metric_evidence=evidence)
+                    (line,) = h.of("investigation.finding")
+                    self.assertEqual((line["kept"], line["handles"], line["unproven"]), (False, 0, 4))
+                    self.assertEqual(line["reason"], "no resource of it is left: 4 without a cited measurement that matches the tools and shows no usage")
+                    self.assertEqual((h.result.cases, h.store.cases_recent()), (0, []))
+
+    def test_an_entry_with_no_total_and_an_entry_for_a_resource_that_has_data_change_nothing(self):
+        h = self.run_with(metric_evidence=[entry("r1", "MetricA", None), entry("r5", "MetricA", 12), entry("r6", "MetricA", 0)])
+        cases = h.store.cases_recent()
+        self.assertEqual(sorted(c.resource_name for c in cases), ["thing-1", "thing-2", "thing-3", "thing-4"])
+        self.assertEqual({(c.status, tuple(c.facts["metrics"])) for c in cases}, {("needs_human", ())})
+
+    def test_the_skeptic_is_shown_the_absent_measurement_of_each_resource_as_it_is(self):
+        h = self.run_with()
+        (one,) = json.loads(h.foundry.inputs()[1])["findings"]
+        self.assertEqual((one["basis"], one["proposal"], one["resources"], one["evidenceShown"]), ("other", "investigate", 4, 4))
+        self.assertEqual(sorted(row["handle"] for row in one["evidence"]), self.HANDLES)
+        for row in one["evidence"]:
+            self.assertEqual(row["metrics"], [{"metric": "MetricA", "cited": False, "total": None, "days": 30, "daysWithData": 0}])
+
+    def test_a_confidence_that_is_not_lower_than_the_gate_still_does_not_propose_a_resource_that_nothing_measured(self):
+        h = self.run_with(confidence=0.95, proposal="delete")
+        self.assertEqual({c.status for c in h.store.cases_recent()}, {"needs_human"})
+        self.assertEqual(h.result.proposed, 0)
+
+
+class WhenTheConfidenceIsOutOfRange(unittest.TestCase):
+    """A model that writes 85 for a percentage must not pass the gate of 0.7: the finding is kept with a confidence of 0, and a person is told why."""
+
+    NOTE = "the Investigator gave a confidence of 85, which is not a number from 0 to 1, so it counts as 0 and a person has to judge this finding"
+
+    def go(self, raw=None, skeptic=None, **options):
+        h = Harness(FakeFoundry(answer(raw if raw is not None else finding(confidence=85)), skeptic), **options)
+        h.go()
+        return h
+
+    def test_a_confidence_of_85_does_not_pass_the_gate_whatever_the_skeptic_says(self):
+        h = self.go(skeptic=verdicts(("agree", (), "Fine.")), with_store=True)
+        self.assertEqual({(r["status"], r["confidence"], tuple(r["objections"])) for r in h.of("case.result")}, {("needs_human", 0.0, (self.NOTE,))})
+        self.assertEqual((h.result.proposed, h.result.needs_human), (0, 2))
+        self.assertEqual({(c.status, c.confidence, c.objections) for c in h.store.cases_recent()}, {("needs_human", 0.0, (self.NOTE,))})
+        self.assertEqual(h.store.plans_open(), [])
+
+    def test_the_line_of_the_finding_and_a_note_of_the_run_show_the_problem_to_a_person(self):
+        h = self.go()
+        (line,) = h.of("investigation.finding")
+        self.assertEqual((line["confidence"], line["note"], line["kept"], line["reason"], line["handles"]), (0.0, self.NOTE, True, None, 2))
+        self.assertIn(f"finding 1: {self.NOTE}", h.notes)
+
+    def test_the_skeptic_is_given_the_confidence_that_counts(self):
+        h = self.go()
+        self.assertEqual(json.loads(h.foundry.inputs()[1])["findings"][0]["confidence"], 0.0)
+
+    def test_the_note_comes_before_the_objections_of_the_skeptic_and_the_sentence_about_a_missing_measurement(self):
+        h = self.go(finding(confidence=85, basis="low-usage", evidence=[]), verdicts(("disagree", ("It may be in use.",), "Contested.")))
+        self.assertEqual({tuple(r["objections"]) for r in h.of("case.result")}, {(self.NOTE, decide.NO_MEASUREMENT, "It may be in use.")})
+
+    def test_a_finding_with_a_confidence_from_0_to_1_has_no_note_and_a_confidence_of_1_is_good_enough(self):
+        h = self.go(finding(confidence=1))
+        (line,) = h.of("investigation.finding")
+        self.assertEqual((line["confidence"], line["note"]), (1.0, None))
+        self.assertEqual({r["status"] for r in h.of("case.result")}, {"proposed"})
+        self.assertFalse([n for n in h.notes if n.startswith("finding ")], h.notes)
+
+    def test_a_finding_that_is_dropped_for_another_reason_keeps_its_note_on_its_line_and_has_no_note_of_the_run(self):
+        h = self.go(finding(handles=["r98"], confidence=85, evidence=[]))
+        (line,) = h.of("investigation.finding")
+        self.assertEqual((line["kept"], line["note"], line["reason"]), (False, self.NOTE, "no resource of it is left: 1 that no tool showed"))
+        self.assertFalse([n for n in h.notes if n.startswith("finding ")], h.notes)
+
+    def test_each_finding_has_its_own_note(self):
+        raw = [finding(handles=["r1"], confidence=85), finding(handles=["r2"], confidence=0.9), finding(handles=["r3"], confidence=-2)]
+        h = Harness(FakeFoundry(answer(*raw)), many(3))
+        h.go()
+        self.assertEqual([line["note"] for line in h.of("investigation.finding")], [self.NOTE, None, self.NOTE.replace("of 85", "of -2")])
+        self.assertEqual({r["resourceName"]: r["status"] for r in h.of("case.result")}, {"thing-1": "needs_human", "thing-2": "proposed", "thing-3": "needs_human"})
+
+
+class WhenTheSkepticLeavesAFindingWithoutAVerdict(unittest.TestCase):
+    """A finding without a verdict (missing, out of range, or given twice) goes to a person, and the step of the Skeptic that its cases record is not ok."""
+
+    RAW = [finding(handles=["r1"]), finding(handles=["r2"], basis="oversized")]
+
+    def go(self, skeptic, raw=None, **options):
+        h = Harness(FakeFoundry(answer(*(raw or self.RAW)), skeptic), with_store=True, **options)
+        h.go()
+        return h
+
+    @staticmethod
+    def skeptic_steps(h):
+        return {c.resource_name: c.steps[1] for c in h.store.cases_recent()}
+
+    def test_a_finding_that_has_no_verdict_records_a_step_of_the_skeptic_that_is_not_ok_and_the_other_finding_records_a_good_one(self):
+        h = self.go(verdicts(("agree", (), "Fine.")))
+        steps = self.skeptic_steps(h)
+        self.assertEqual({k: v for k, v in steps["thing-1"].items() if k != "ms"}, {"step": "skeptic", "model": "model-skeptic", "promptTokens": 500, "completionTokens": 100,
+                                                                                    "ok": True, "note": None})
+        self.assertEqual({k: v for k, v in steps["thing-2"].items() if k != "ms"}, {"step": "skeptic", "model": "model-skeptic", "promptTokens": 500, "completionTokens": 100,
+                                                                                    "ok": False, "note": "no verdict for this finding"})
+        self.assertEqual({r["resourceName"]: r["status"] for r in h.of("case.result")}, {"thing-1": "proposed", "thing-2": "needs_human"})
+
+    def test_the_step_of_the_investigator_is_the_same_for_every_case_and_there_are_two_steps(self):
+        h = self.go(verdicts(("agree", (), "Fine.")))
+        cases = h.store.cases_recent()
+        self.assertEqual({len(c.steps) for c in cases}, {2})
+        self.assertEqual(len({json.dumps(c.steps[0], sort_keys=True) for c in cases}), 1)
+
+    def test_a_verdict_for_an_index_that_does_not_exist_leaves_every_finding_without_one(self):
+        text = json.dumps({"verdicts": [{"index": 5, "verdict": "agree", "objections": [], "summary": "s"}, {"index": -1, "verdict": "agree"}]})
+        h = self.go(text)
+        self.assertEqual({(s["ok"], s["note"]) for s in self.skeptic_steps(h).values()}, {(False, "no verdict for this finding")})
+        self.assertEqual({r["status"] for r in h.of("case.result")}, {"needs_human"})
+        self.assertIn("no verdict for 2 of 2 findings", h.notes[0])
+
+    def test_the_same_index_twice_with_different_verdicts_leaves_that_finding_without_one_and_not_with_the_first(self):
+        text = json.dumps({"verdicts": [{"index": 0, "verdict": "agree", "objections": [], "summary": "yes"}, {"index": 0, "verdict": "disagree", "objections": ["no"], "summary": "no"},
+                                        {"index": 1, "verdict": "agree", "objections": [], "summary": "yes"}]})
+        h = self.go(text)
+        steps = self.skeptic_steps(h)
+        self.assertEqual((steps["thing-1"]["ok"], steps["thing-1"]["note"], steps["thing-2"]["ok"], steps["thing-2"]["note"]), (False, "no verdict for this finding", True, None))
+        self.assertEqual({r["resourceName"]: r["status"] for r in h.of("case.result")}, {"thing-1": "needs_human", "thing-2": "proposed"})
+        self.assertEqual([line["verdict"] for line in h.of("investigation.finding")], [None, "agree"])
+
+    def test_the_same_verdict_twice_for_an_index_is_no_verdict_either(self):
+        text = json.dumps({"verdicts": [{"index": 0, "verdict": "agree"}, {"index": 0, "verdict": "agree"}, {"index": 1, "verdict": "agree"}]})
+        h = self.go(text)
+        self.assertEqual({r["resourceName"]: r["status"] for r in h.of("case.result")}, {"thing-1": "needs_human", "thing-2": "proposed"})
+
+    def test_a_skeptic_that_failed_altogether_records_its_failure_in_every_case_as_before(self):
+        foundry = FakeFoundry(answer(*self.RAW))
+        foundry.skeptic_error = FoundryError("the project is busy")
+        h = Harness(foundry, with_store=True)
+        h.go()
+        self.assertEqual({(s["ok"], s["note"]) for s in self.skeptic_steps(h).values()}, {(False, "the project is busy")})
+
+    def test_the_run_still_says_how_many_findings_had_no_verdict(self):
+        h = self.go(verdicts(("agree", (), "Fine.")))
+        self.assertIn("the Skeptic could not judge every finding (no verdict for 1 of 2 findings); a finding without a verdict needs a person", h.notes)
+
+    def test_a_case_that_the_skeptic_did_not_judge_is_taken_up_again_at_once_and_the_one_that_it_judged_waits(self):
+        clock = Moving()
+        extras = loop_for(clock)
+        Harness(FakeFoundry(answer(*self.RAW), verdicts(("agree", (), "Fine."))), clock=clock, extras=extras).go()
+        clock.advance(hours=1)
+        second = Harness(FakeFoundry(answer(*self.RAW)), clock=clock, extras=extras)
+        second.go()
+        self.assertEqual([r["resourceName"] for r in second.of("case.result")], ["thing-2"])
+        self.assertEqual({r["status"] for r in second.of("case.result")}, {"proposed"})
+        self.assertEqual({c.resource_name: c.runs_seen for c in extras.store.cases_recent()}, {"thing-1": 1, "thing-2": 2})
+        clock.advance(hours=1)
+        third = Harness(FakeFoundry(answer(*self.RAW)), clock=clock, extras=extras)
+        third.go()
+        self.assertEqual(third.result.cases, 0, "both are judged now, and the evidence did not change")
 
 
 class WhatTheSkepticIsGiven(unittest.TestCase):
@@ -814,25 +1336,57 @@ class WhatTheSkepticIsGiven(unittest.TestCase):
             {"handle": "r2", "type": "microsoft.example/things", "costUsd30d": 20.0,
              "metrics": [{"metric": "MetricA", "total": 0, "cited": True}, {"metric": "MetricC", "total": None, "cited": False}]},
             {"handle": "r1", "type": "microsoft.example/things", "costUsd30d": 10.0,
-             "metrics": [{"metric": "MetricA", "total": 0, "cited": True}, {"metric": "MetricB", "total": 12.5, "cited": False}]}])
+             "metrics": [{"metric": "MetricB", "total": 12.5, "cited": False}, {"metric": "MetricA", "total": 0, "cited": True}]}])
 
-    def test_a_measurement_that_the_agent_did_not_cite_is_shown_too_and_so_is_an_absent_one(self):
-        toolbox = FakeToolbox(evidence={"r1": metrics(MetricA=0, MetricZ=99999)})
+    def test_a_measurement_with_a_total_that_is_not_nil_is_shown_first_even_when_the_agent_did_not_cite_it_and_an_absent_one_is_shown_too(self):
+        toolbox = FakeToolbox(evidence={"r1": {"metrics": {"MetricA": {"total": 0}, "MetricZ": {"total": 99999}, "MetricY": {"total": None}}}})
         seen = self.seen(Harness(FakeFoundry(answer(finding(handles=["r1"], evidence=[entry("r1", "MetricA", 0)]))), toolbox))
         row = seen["findings"][0]["evidence"][0]
-        self.assertEqual([(m["metric"], m["total"], m["cited"]) for m in row["metrics"]], [("MetricA", 0, True), ("MetricZ", 99999, False)])
+        self.assertEqual([(m["metric"], m["total"], m["cited"]) for m in row["metrics"]], [("MetricZ", 99999, False), ("MetricA", 0, True), ("MetricY", None, False)])
 
-    def test_a_cited_measurement_is_shown_first_and_the_others_fill_the_room_in_the_order_of_their_names(self):
-        toolbox = FakeToolbox(evidence={"r1": metrics(**{f"Metric{n}": n for n in range(10)})})
-        seen = self.seen(Harness(FakeFoundry(answer(finding(handles=["r1"], basis="low-usage", evidence=[entry("r1", "Metric9", 9)]))), toolbox))
-        shown = [(m["metric"], m["cited"]) for m in seen["findings"][0]["evidence"][0]["metrics"]]
-        self.assertEqual(shown, [("Metric9", True)] + [(f"Metric{n}", False) for n in range(investigate.SKEPTIC_METRICS - 1)])
+    def test_measurements_come_in_this_order_a_total_that_is_not_nil_then_the_cited_ones_then_the_rest_by_name_and_at_most_six(self):
+        totals = {"MetricA": 0, "MetricB": 0, "MetricC": 5, "MetricD": 0, "MetricE": 7, "MetricF": 0, "MetricG": 0, "MetricH": 0}
+        toolbox = FakeToolbox(evidence={"r1": metrics(**totals), "r2": metrics(**totals)})
+        raw = finding(basis="low-usage", evidence=[entry("r1", "MetricD", 0), entry("r1", "MetricG", 0), entry("r2", "MetricE", 7), entry("r2", "MetricH", 0)])
+        rows = {row["handle"]: row for row in self.seen(Harness(FakeFoundry(answer(raw)), toolbox))["findings"][0]["evidence"]}
+        self.assertEqual([(m["metric"], m["cited"]) for m in rows["r1"]["metrics"]],
+                         [("MetricC", False), ("MetricE", False), ("MetricD", True), ("MetricG", True), ("MetricA", False), ("MetricB", False)])
+        self.assertEqual([(m["metric"], m["cited"]) for m in rows["r2"]["metrics"]],
+                         [("MetricE", True), ("MetricC", False), ("MetricH", True), ("MetricA", False), ("MetricB", False), ("MetricD", False)],
+                         "among the measurements that are not nil the cited one comes first")
+        self.assertEqual(investigate.SKEPTIC_METRICS, 6)
+
+    def test_a_measurement_whose_last_total_is_nil_but_whose_record_shows_something_counts_as_not_nil_and_the_totals_are_given(self):
+        toolbox = FakeToolbox(evidence={"r1": {"metrics": {"MetricA": {"total": 0, "totals": [0, 0]}, "MetricB": {"total": 0, "totals": [2900, 0]}, "MetricC": {"total": 4}}}})
+        raw = finding(handles=["r1"], basis="low-usage", evidence=[entry("r1", "MetricA", 0)])
+        row = self.seen(Harness(FakeFoundry(answer(raw)), toolbox))["findings"][0]["evidence"][0]
+        self.assertEqual(row["metrics"], [{"metric": "MetricB", "total": 0, "totals": [2900, 0], "cited": False}, {"metric": "MetricC", "total": 4, "cited": False},
+                                          {"metric": "MetricA", "total": 0, "totals": [0, 0], "cited": True}])
+
+    def test_at_most_the_totals_of_the_limit_are_shown_for_one_measurement_whatever_the_evidence_holds(self):
+        recorded_totals = list(range(1, investigate.MAX_TOTALS + 6))
+        toolbox = FakeToolbox(evidence={"r1": {"metrics": {"MetricA": {"total": recorded_totals[-1], "totals": recorded_totals}, "MetricB": {"total": 0, "totals": [0] * investigate.MAX_TOTALS}}}})
+        row = investigate._row(built(toolbox, ["r1"])[0].items[0], toolbox, investigate.SKEPTIC_METRICS, investigate.FULL, True, True)
+        shown = {m["metric"]: m for m in row["metrics"]}
+        self.assertEqual(shown["MetricA"]["totals"], recorded_totals[: investigate.MAX_TOTALS])
+        self.assertEqual(len(shown["MetricB"]["totals"]), investigate.MAX_TOTALS)
+        self.assertEqual(investigate.MAX_TOTALS, 20)
 
     def test_a_sku_is_shown_only_when_it_is_a_plain_word(self):
         toolbox = FakeToolbox(evidence={"r1": {**metrics(MetricA=0), "sku": "Premium_LRS"}, "r2": {**metrics(MetricA=0), "sku": HOSTILE}})
         rows = {row["handle"]: row for row in self.seen(Harness(FakeFoundry(answer(finding())), toolbox))["findings"][0]["evidence"]}
         self.assertEqual(rows["r1"]["sku"], "Premium_LRS")
         self.assertNotIn("sku", rows["r2"])
+
+    def test_a_metric_a_type_a_sku_and_a_key_path_with_a_line_break_after_them_are_not_given_to_the_skeptic(self):
+        evidence = {"r1": {"metrics": {"MetricA": {"total": 0}, "MetricB\n": {"total": 5}}, "type": "microsoft.example/things\n", "sku": "Premium_LRS\n",
+                           "properties": {"diskSizeGB\n": 1, "tier": "Premium\n", "ok": 1}}}
+        toolbox = FakeToolbox([resource(1, resource_type="microsoft.example/things\n")], evidence)
+        row = self.seen(Harness(FakeFoundry(answer(finding(handles=["r1"], evidence=[entry("r1", "MetricA", 0)]))), toolbox))["findings"][0]["evidence"][0]
+        self.assertEqual(row["type"], "other")
+        self.assertNotIn("sku", row)
+        self.assertEqual([m["metric"] for m in row["metrics"]], ["MetricA"])
+        self.assertEqual(row["properties"], {"ok": 1})
 
     def test_an_advisor_figure_is_in_the_row_and_a_type_that_is_not_one_of_azure_is_other(self):
         toolbox = FakeToolbox([resource(1, resource_type="Not A Type!")], {"r1": {**metrics(MetricA=0), "advisor": [{"savingUsdMonth": 4.0}]}})
@@ -856,22 +1410,169 @@ class WhatTheSkepticIsGiven(unittest.TestCase):
             for word in ("IGNORE", "INSTRUCTIONS", "evil", "::error", "thing-", "rg-app", SUBSCRIPTION, "swedencentral", "Microsoft.Example"):
                 self.assertNotIn(word, text)
 
-    def test_the_input_stays_inside_its_size_by_showing_fewer_rows_and_still_says_how_many_resources_there_are(self):
-        names = {f"Metric{n:02d}" + "x" * 60: n for n in range(12)}
-        toolbox = FakeToolbox([resource(n, cost_usd_30d=float(n)) for n in range(1, 61)], {f"r{n}": metrics(**names) for n in range(1, 61)})
-        first = next(iter(names))
-        raw = [finding(handles=[f"r{n}" for n in range(start, start + 8)], basis="low-usage", evidence=[entry(f"r{n}", first, 0) for n in range(start, start + 8)])
-               for start in range(1, 57, 8)]
-        h = Harness(FakeFoundry(answer(*raw)), toolbox)
+
+def built(toolbox: FakeToolbox, *groups, cited=None) -> list:
+    """The findings of an investigation as they are when the Skeptic is about to be asked: a Finding for each group of handles, with an Item for each handle."""
+    findings = []
+    for number, handles in enumerate(groups, 1):
+        one = investigate.Finding(number, basis="low-usage", proposal="delete", confidence=0.9, summary="Nothing used these in the window.")
+        for handle in handles:
+            held = toolbox.handles[handle]
+            one.items.append(investigate.Item(handle, investigate._lead(held, {}, held.cost_usd_30d, None), dict(cited if cited is not None else {"MetricA": 0})))
+        one.covered_usd = round(sum(item.lead.cost_usd_30d or 0.0 for item in one.items), 2)
+        findings.append(one)
+    return findings
+
+
+def rich(count: int) -> FakeToolbox:
+    """`count` resources, dearest last, each with eight measurements that have every field, a SKU and properties."""
+    aggregate = lambda m: {"total": m, "max": m + 1, "average": m / 2, "days": 30, "days_with_data": 30, "unit": "Count"}
+    evidence = {f"r{n}": {"metrics": {f"Metric{m}": aggregate(m) for m in range(8)}, "sku": "Premium_LRS", "properties": {"diskSizeGB": 128, "tier": "x", "state": "y"}}
+                for n in range(1, count + 1)}
+    return FakeToolbox([resource(n, cost_usd_30d=float(n)) for n in range(1, count + 1)], evidence)
+
+
+class EveryResourceIsShownToTheSkeptic(unittest.TestCase):
+    """The verdict of the Skeptic decides every resource of its finding, so it is shown every resource that gets a case, with the richest rows that fit."""
+
+    @staticmethod
+    def texts_by_level(toolbox, findings):
+        texts = []
+        for level in investigate.DETAIL:
+            with mock.patch.object(investigate, "DETAIL", (level,)), mock.patch.object(investigate, "SKEPTIC_CHARS", 10 ** 9):
+                texts.append(investigate._skeptic_input(findings, toolbox)[0])
+        return texts
+
+    @staticmethod
+    def tight(toolbox, findings) -> int:
+        """A limit of characters at which the poorest rows fit for some of the resources and not for all of them."""
+        with mock.patch.object(investigate, "DETAIL", (investigate.DETAIL[-1],)):
+            with mock.patch.object(investigate, "SKEPTIC_CHARS", 10 ** 9):
+                whole, _ = investigate._skeptic_input(findings, toolbox)
+            with mock.patch.object(investigate, "SKEPTIC_CHARS", 0):
+                bare, _ = investigate._skeptic_input(findings, toolbox)
+        return (len(whole) + len(bare)) // 2
+
+    def test_the_resources_of_all_findings_up_to_the_cap_are_shown_one_row_each(self):
+        raw = [finding(handles=[f"r{n}" for n in range(start, start + 20)]) for start in (1, 21, 41)]
+        h = Harness(FakeFoundry(answer(*raw)), many(60))
+        h.go()
+        seen = json.loads(h.foundry.inputs()[1])["findings"]
+        self.assertEqual([(f["resources"], f["evidenceShown"], len(f["evidence"])) for f in seen], [(20, 20, 20)] * 3)
+        self.assertEqual(sorted(row["handle"] for f in seen for row in f["evidence"]), sorted(f"r{n}" for n in range(1, 61)))
+        self.assertEqual([line["shown"] for line in h.of("investigation.finding")], [20, 20, 20])
+        self.assertEqual({r["status"] for r in h.of("case.result")}, {"proposed"})
+        self.assertEqual(h.result.cases, investigate.MAX_CASES)
+
+    def test_the_rows_of_a_finding_are_dearest_first(self):
+        h = Harness(FakeFoundry(answer(finding(handles=["r1", "r2", "r3", "r4"]))))
+        h.go()
+        (f,) = json.loads(h.foundry.inputs()[1])["findings"]
+        self.assertEqual([row["handle"] for row in f["evidence"]], ["r4", "r3", "r2", "r1"])
+
+    def test_a_big_finding_with_many_long_measurements_gets_poorer_rows_and_still_every_row(self):
+        names = [f"Metric{n:02d}" + "x" * 60 for n in range(12)]
+        toolbox = FakeToolbox([resource(n, cost_usd_30d=float(n)) for n in range(1, 61)], {f"r{n}": metrics(**{name: n for name in names}) for n in range(1, 61)})
+        raw = finding(handles=[f"r{n}" for n in range(1, 61)], basis="low-usage", evidence=[entry(f"r{n}", names[0], n) for n in range(1, 61)])
+        h = Harness(FakeFoundry(answer(raw)), toolbox)
         h.go()
         text = h.foundry.inputs()[1]
+        (f,) = json.loads(text)["findings"]
         self.assertLessEqual(len(text), investigate.SKEPTIC_CHARS)
-        shown = {f["evidenceShown"] for f in json.loads(text)["findings"]}
-        self.assertLess(max(shown), investigate.SKEPTIC_ROWS)
-        self.assertEqual({f["resources"] for f in json.loads(text)["findings"]}, {8})
-        for f in json.loads(text)["findings"]:
-            self.assertEqual(len(f["evidence"]), f["evidenceShown"])
-            self.assertTrue(all(len(row["metrics"]) <= investigate.SKEPTIC_METRICS for row in f["evidence"]))
+        self.assertEqual((f["resources"], f["evidenceShown"], len(f["evidence"])), (60, 60, 60))
+        counts = {len(row["metrics"]) for row in f["evidence"]}
+        self.assertEqual(len(counts), 1, "every row is of the same level")
+        self.assertTrue(1 <= max(counts) < investigate.SKEPTIC_METRICS, counts)
+        self.assertTrue(all(row["metrics"][0]["metric"] == names[0] and row["metrics"][0]["cited"] for row in f["evidence"]), "the cited measurement is among those shown")
+        self.assertEqual({r["status"] for r in h.of("case.result")}, {"proposed"})
+
+    def test_the_levels_go_from_the_richest_row_to_the_poorest_and_the_first_that_fits_is_used(self):
+        toolbox = rich(6)
+        findings = built(toolbox, [f"r{n}" for n in range(1, 7)], cited={"Metric0": 0})
+        texts = self.texts_by_level(toolbox, findings)
+        sizes = [len(text) for text in texts]
+        self.assertEqual(sizes, sorted(sizes, reverse=True))
+        self.assertEqual(len(set(sizes)), len(sizes), "each level is smaller than the one before it")
+        self.assertEqual([level[0] for level in investigate.DETAIL], sorted((level[0] for level in investigate.DETAIL), reverse=True))
+        self.assertEqual(investigate.DETAIL[0][0], investigate.SKEPTIC_METRICS)
+        for index, text in enumerate(texts):
+            with self.subTest(level=index), mock.patch.object(investigate, "SKEPTIC_CHARS", sizes[index]):
+                got, shown = investigate._skeptic_input(findings, toolbox)
+                self.assertEqual((got, len(shown)), (text, 6))
+        rows = [json.loads(text)["findings"][0]["evidence"][0] for text in texts]
+        self.assertEqual([len(row["metrics"]) for row in rows], [6, 6, 4, 3, 2, 1])
+        self.assertEqual(["properties" in row for row in rows], [True, False, False, False, False, False])
+        self.assertEqual(["sku" in row for row in rows], [True, True, True, False, False, False])
+        fields = lambda row: set(row["metrics"][0])
+        full, short, least = {"metric", "cited", "total", "max", "average", "days", "daysWithData", "unit"}, {"metric", "cited", "total", "days", "daysWithData"}, {"metric", "cited", "total"}
+        self.assertEqual([fields(row) for row in rows], [full, full, short, short, least, least])
+        self.assertEqual([m["metric"] for m in rows[0]["metrics"]], [f"Metric{m}" for m in range(1, 7)], "the measurements that are not nil come first")
+        self.assertEqual([m["metric"] for m in rows[5]["metrics"]], ["Metric1"])
+
+    def test_when_even_the_poorest_rows_do_not_fit_the_cheapest_resources_are_left_out(self):
+        toolbox = rich(10)
+        findings = built(toolbox, [f"r{n}" for n in range(1, 6)], [f"r{n}" for n in range(6, 11)])
+        with mock.patch.object(investigate, "DETAIL", (investigate.DETAIL[-1],)):
+            with mock.patch.object(investigate, "SKEPTIC_CHARS", 10 ** 9):
+                whole, _ = investigate._skeptic_input(findings, toolbox)
+            with mock.patch.object(investigate, "SKEPTIC_CHARS", 0):
+                bare, none_shown = investigate._skeptic_input(findings, toolbox)
+        limit = (len(whole) + len(bare)) // 2
+        with mock.patch.object(investigate, "SKEPTIC_CHARS", limit):
+            text, shown = investigate._skeptic_input(findings, toolbox)  # with the whole ladder: no level fits, so the poorest is the one that the resources are cut at
+        self.assertEqual(none_shown, set())
+        self.assertLessEqual(len(text), limit)
+        self.assertTrue(0 < len(shown) < 10, shown)
+        self.assertEqual(shown, {f"r{n}" for n in range(11 - len(shown), 11)}, "the cheapest resources are the ones that are left out")
+        for one in json.loads(text)["findings"]:
+            self.assertEqual((one["resources"], one["evidenceShown"]), (5, len(one["evidence"])))
+        self.assertEqual(sum(f["evidenceShown"] for f in json.loads(text)["findings"]), len(shown))
+        rows = [row for one in json.loads(text)["findings"] for row in one["evidence"]]
+        self.assertEqual({(len(row["metrics"]), tuple(sorted(row["metrics"][0])), "sku" in row, "properties" in row) for row in rows}, {(1, ("cited", "metric", "total"), False, False)},
+                         "the rows are the poorest ones, however many resources are left out")
+
+    def test_a_resource_that_was_not_shown_is_never_proposed_even_when_the_skeptic_agrees_and_its_step_says_so(self):
+        toolbox = rich(10)
+        limit = self.tight(toolbox, built(toolbox, [f"r{n}" for n in range(1, 11)]))
+        raw = finding(handles=[f"r{n}" for n in range(1, 11)], basis="low-usage", evidence=[entry(f"r{n}", "Metric0", 0) for n in range(1, 11)])
+        h = Harness(FakeFoundry(answer(raw)), toolbox, with_store=True)
+        with mock.patch.object(investigate, "SKEPTIC_CHARS", limit):
+            h.go()
+        (one,) = json.loads(h.foundry.inputs()[1])["findings"]
+        shown = {row["handle"] for row in one["evidence"]}
+        hidden = 10 - len(shown)
+        self.assertTrue(0 < hidden < 10, shown)
+        self.assertEqual((one["resources"], one["evidenceShown"]), (10, len(shown)))
+        cases = {c.resource_name: c for c in h.store.cases_recent()}
+        for number in range(1, 11):
+            case, was_shown = cases[f"thing-{number}"], f"r{number}" in shown
+            with self.subTest(resource=number):
+                self.assertEqual(case.status, "proposed" if was_shown else "needs_human")
+                self.assertEqual((case.steps[1]["ok"], case.steps[1]["note"]), (True, None) if was_shown else (False, "this resource was not shown to the Skeptic"))
+        self.assertEqual((h.result.proposed, h.result.needs_human), (len(shown), hidden))
+        (line,) = h.of("investigation.finding")
+        self.assertEqual((line["handles"], line["shown"], line["verdict"]), (10, len(shown), "agree"))
+        self.assertIn(f"{hidden} resource{'' if hidden == 1 else 's'} of the findings {'was' if hidden == 1 else 'were'} not shown to the Skeptic, whose input is limited to "
+                      f"{limit} characters, so a person has to judge {'it' if hidden == 1 else 'them'}", h.notes)
+        self.assertFalse([n for n in h.notes if "could not judge every finding" in n], "the finding itself has its verdict")
+
+    def test_a_skeptic_run_that_fails_says_why_and_does_not_say_which_resources_it_was_not_shown(self):
+        toolbox = rich(10)
+        limit = self.tight(toolbox, built(toolbox, [f"r{n}" for n in range(1, 11)]))
+        raw = finding(handles=[f"r{n}" for n in range(1, 11)], basis="low-usage", evidence=[entry(f"r{n}", "Metric0", 0) for n in range(1, 11)])
+        foundry = FakeFoundry(answer(raw))
+        foundry.skeptic_error = FoundryError("the project is busy")
+        h = Harness(foundry, toolbox, with_store=True)
+        with mock.patch.object(investigate, "SKEPTIC_CHARS", limit):
+            h.go()
+        self.assertEqual(len(foundry.runs), 2, "the Skeptic was asked, with an input that left some resources out")
+        self.assertLess(len(foundry.runs[1]["input"]), limit + 1)
+        self.assertEqual([n for n in h.notes if "not shown to the Skeptic" in n], [])
+        self.assertEqual([n for n in h.notes if "could not judge every finding" in n],
+                         ["the Skeptic could not judge every finding (the project is busy); a finding without a verdict needs a person"])
+        cases = h.store.cases_recent()
+        self.assertEqual((len(cases), {c.status for c in cases}), (10, {"needs_human"}))
+        self.assertEqual({(c.steps[1]["ok"], c.steps[1]["note"]) for c in cases}, {(False, "the project is busy")}, "the one note of the run that failed, for every resource")
 
 
 # -- the guards --------------------------------------------------------------------------------------------------------------------------------------
@@ -1347,6 +2048,88 @@ class WhenItDoesNotRun(unittest.TestCase):
         self.assertLessEqual(len(h.result.note), 240)
 
 
+class TheStateOfAnInvestigation(unittest.TestCase):
+    """`Investigation.state` is what the end of the run reports: `ran` when the Investigator gave an answer that could be read, `off` when it was switched off or has no
+    project, and `failed` when it was meant to run and did not or ended badly."""
+
+    @staticmethod
+    def throws(*args, **kwargs):
+        raise RuntimeError("boom")
+
+    def test_a_result_is_failed_unless_it_ran_or_was_never_meant_to_run(self):
+        self.assertEqual(investigate.Investigation().state, "failed")
+        self.assertEqual(investigate.Investigation(ran=True).state, "ran")
+        self.assertEqual(investigate.Investigation(off=True).state, "off")
+        self.assertEqual(investigate.Investigation(ran=True, off=True).state, "ran", "an investigation that ran is never off")
+        self.assertEqual((investigate.Investigation().off, investigate.Investigation().ran), (False, False))
+
+    def test_it_is_off_when_it_is_switched_off_or_has_no_project_or_no_client(self):
+        switched_off = Harness(settings=make_settings(investigate=False))
+        no_endpoint = Harness(settings=make_settings(foundry_endpoint=None))
+        no_client = Harness()
+        no_client.s.foundry = None
+        for label, h in (("switched off", switched_off), ("no endpoint", no_endpoint), ("no client", no_client)):
+            with self.subTest(label):
+                result = h.go()
+                self.assertEqual((result.state, result.off, result.ran, h.events), ("off", True, False, []))
+
+    def test_it_is_failed_when_the_agents_could_not_be_made_ready(self):
+        foundry = FakeFoundry()
+        foundry.ensure_error = FoundryError("the project did not accept the agent")
+        result = Harness(foundry).go()
+        self.assertEqual((result.state, result.off, result.ran), ("failed", False, False))
+
+    def test_it_is_failed_when_the_investigator_gave_no_answer_or_none_that_could_be_read(self):
+        no_answer = FakeFoundry()
+        no_answer.investigator_error = FoundryError("the budget of the run was reached")
+        for label, foundry in (("no answer", no_answer), ("text", FakeFoundry("I think we should delete r1.")), ("no list", FakeFoundry('{"findings": "none"}')),
+                               ("empty", FakeFoundry(""))):
+            with self.subTest(label):
+                result = Harness(foundry).go()
+                self.assertEqual((result.state, result.off, result.ran), ("failed", False, False))
+
+    def test_it_is_failed_when_something_unexpected_goes_wrong_before_or_after_the_start(self):
+        before, after = FakeFoundry(), FakeFoundry()
+        before.ensure_agent = self.throws
+        after.after_run = self.throws
+        for label, foundry, lines in (("before the start", before, 0), ("after the start", after, 1)):
+            with self.subTest(label):
+                h = Harness(foundry)
+                result = h.go()
+                self.assertEqual((result.state, result.off, result.ran, len(h.events)), ("failed", False, False, lines))
+
+    def test_it_is_failed_when_it_stops_in_the_middle_of_its_cases_and_keeps_the_counts_of_the_cases_that_it_opened(self):
+        h = Harness(FakeFoundry(answer(finding(handles=["r1", "r2"]))))
+        real, seen = decide.decide, []
+
+        def second_fails(*args, **kwargs):
+            seen.append(1)
+            if len(seen) == 2:
+                raise RuntimeError("boom")
+            return real(*args, **kwargs)
+
+        with mock.patch.object(decide, "decide", second_fails):
+            result = h.go()
+        self.assertEqual((result.state, result.cases), ("failed", 1))
+
+    def test_it_ran_when_the_answer_could_be_read_whatever_it_held(self):
+        skeptic_fails = FakeFoundry()
+        skeptic_fails.skeptic_error = FoundryError("the project is busy")
+        for label, foundry in (("no findings", FakeFoundry('{"findings": []}')), ("a finding", FakeFoundry()), ("a finding that is dropped", FakeFoundry(answer(finding(handles=["r98"])))),
+                               ("a finding that nobody judged", skeptic_fails), ("something that is not a finding", FakeFoundry('{"findings": [5]}'))):
+            with self.subTest(label):
+                h = Harness(foundry)
+                result = h.go()
+                self.assertEqual((result.state, result.off, result.ran), ("ran", False, True))
+                self.assertEqual([e["ok"] for e in h.of("investigation.finished")], [True])
+
+    def test_the_lines_that_it_wrote_are_the_ones_of_the_history_by_kind(self):
+        h = Harness(FakeFoundry(answer(finding(handles=["r1"]), finding(handles=["r2"]))))
+        h.go()
+        self.assertEqual(h.s.history.lines("investigation."), 4, "the start, two findings and the end")
+        self.assertEqual((h.s.history.counts["investigation.finding"], h.s.history.counts["case.result"]), (2, 2))
+
+
 class WhenItFindsNothing(unittest.TestCase):
     def test_an_empty_list_of_findings_is_an_investigation_that_ran(self):
         h = Harness(FakeFoundry('{"findings": [], "examined": ["the biggest costs"]}'))
@@ -1463,11 +2246,13 @@ class WhenTheSkepticCannotJudge(unittest.TestCase):
         self.check(h, "no time was left for the Skeptic")
         self.assertEqual(h.store.cases_recent()[0].steps[1]["promptTokens"], None)
 
-    def test_a_verdict_for_some_findings_only_is_said_in_the_note_of_the_step(self):
-        raw = answer(finding(handles=["r1"]), finding(handles=["r2"], basis="duplicate", evidence=[]))
+    def test_a_verdict_for_some_findings_only_is_said_in_the_note_of_the_run_and_in_the_step_of_the_cases_that_have_none(self):
+        raw = answer(finding(handles=["r1"]), finding(handles=["r2"], basis="duplicate"))
         h = Harness(FakeFoundry(raw, verdicts(("agree", (), "Fine."))), with_store=True)
         h.go()
-        self.assertEqual(h.store.cases_recent()[0].steps[1], {**h.store.cases_recent()[0].steps[1], "ok": True, "note": "no verdict for 1 of 2 findings"})
+        cases = {c.resource_name: c for c in h.store.cases_recent()}
+        self.assertEqual((cases["thing-1"].steps[1]["ok"], cases["thing-1"].steps[1]["note"]), (True, None))
+        self.assertEqual((cases["thing-2"].steps[1]["ok"], cases["thing-2"].steps[1]["note"]), (False, "no verdict for this finding"))
         self.assertIn("the Skeptic could not judge every finding (no verdict for 1 of 2 findings); a finding without a verdict needs a person", h.notes)
 
 
@@ -1625,13 +2410,14 @@ def what_the_tools_returned(listed: dict, measured: dict) -> dict:
 
 def disks_estate():
     """The fake estate of test_toolbox with three disks, their cost lines and one measurement, and the real tools over it."""
-    from test_toolbox import DISK, SUB, Estate, point, row, toolbox as real_toolbox
+    from test_toolbox import DISK, SUB, Estate, definition, point, row, toolbox as real_toolbox
     estate = Estate()
     estate.rows = [row(DISK, "disk-a", sku={"name": "Premium_LRS"}, properties={"diskState": "Unattached", "diskSizeGB": 128}),
                    row(DISK, "disk-b", sku={"name": "Standard_LRS"}, properties={"diskState": "Attached", "diskSizeGB": 64}),
                    row(DISK, "disk-c", properties={"diskState": "Unattached", "diskSizeGB": 32})]
     ids = {name: estate.id_of(name).lower() for name in ("disk-a", "disk-b", "disk-c")}
     estate.cost_rows = [(SUB, 30.0, ids["disk-a"], "Storage"), (SUB, 10.0, ids["disk-b"], "Storage"), (SUB, 0.5, ids["disk-c"], "Storage")]
+    estate.definitions[DISK] = [definition("MetricX", "Count", "Total")]
     estate.series = {(ids["disk-a"], "MetricX"): [point(1, total=0), point(2, total=0)], (ids["disk-b"], "MetricX"): [point(1, total=0), point(2, total=3)],
                      (ids["disk-c"], "MetricX"): [point(1, total=0)]}
     return estate, real_toolbox(estate)

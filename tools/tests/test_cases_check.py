@@ -209,12 +209,12 @@ class Parsing(unittest.TestCase):
         for kind in writer.INVESTIGATION_KINDS:
             self.assertIn(f"`{kind}`", record, kind)
         for name in ("investigator", "skeptic", "modelInvestigator", "modelSkeptic", "maxCalls", "maxSeconds", "toolCalls", "findingsKept", "findingsDropped", "examined",
-                     "finding", "basis", "proposal", "confidence", "claimed", "handles", "unknown", "unproven", "repeated", "judgedLately", "guarded", "capped",
-                     "coveredCostUsd30d", "verdict", "kept", "reason", "summary", "cases", "note"):
+                     "finding", "basis", "proposal", "confidence", "claimed", "handles", "unknown", "unproven", "unmeasured", "shown", "repeated", "judgedLately", "guarded",
+                     "capped", "coveredCostUsd30d", "verdict", "kept", "reason", "summary", "cases", "note"):
             self.assertIn(f"{name}=", source, name)
             self.assertIn(f"`{name}`", record, name)
         for reason in cc.BENIGN_NOT_RUN:
-            self.assertIn(f'out.note = "{reason}"', source)
+            self.assertIn(f'True, "{reason}"', source)
         self.assertIn('say(f"' + cc.NOT_RUN + '{investigation.note}")', run)
 
 
@@ -317,6 +317,34 @@ class Run(unittest.TestCase):
             self.assertNotIn("##[", printed)
             self.assertNotIn("```", printed)
         self.assertIn("Finding 3: idle", out)
+
+    def test_the_investigation_state_of_the_end_decides_without_its_lines(self):
+        for state, expected, text in (("ran", 0, "The investigation ran."), ("failed", 1, "The investigation was meant to run and did not, or it ended badly."),
+                                      ("off", 0, "The investigation did not run: it is switched off or the app has no Foundry project.")):
+            code, out, _, _ = self.go([telemetry(a_good_run(investigation=state, investigationLines=0))])
+            self.assertEqual(code, expected, state)
+            self.assertIn(text, out)
+
+    def test_it_waits_for_the_investigation_lines_that_the_end_counts(self):
+        everything = a_good_run(investigation="ran", investigationLines=4)
+        everything[-1:-1] = an_investigation()
+        early = [e for e in everything if e["type"] != "investigation.finished"]
+        code, out, _, asked = self.go([telemetry(early), telemetry(everything)])
+        self.assertEqual((code, len(asked)), (0, 2))
+        self.assertIn("It ended well after 190 seconds", out)
+
+    def test_after_the_deadline_the_investigation_lines_that_did_not_arrive_are_said(self):
+        everything = a_good_run(investigation="ran", investigationLines=4)
+        everything[-1:-1] = an_investigation()
+        early = [e for e in everything if e["type"] != "investigation.finished"]
+        code, out, _, _ = self.go([telemetry(early)], "--minutes", "1")
+        self.assertEqual(code, 0)
+        self.assertIn("the telemetry has not delivered: investigation lines: 3 of 4", out)
+
+    def test_the_text_of_the_end_of_the_run_is_the_one_the_app_writes(self):
+        run = (ROOT / "src" / "case-functions" / "cases" / "run.py").read_text(encoding="utf-8")
+        self.assertIn("investigation=investigation.state", run)
+        self.assertIn('investigationLines=h.lines("investigation.")', run)
 
     def test_the_query_is_made_for_this_request_only_and_through_the_resource_manager(self):
         _, _, _, asked = self.go([telemetry(a_good_run())])

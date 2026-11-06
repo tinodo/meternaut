@@ -98,7 +98,12 @@ def missing_lines(events: list[dict]) -> list[str]:
     if not finished:
         return []
     wanted = {"lead.found": finished.get("leads"), "case.result": finished.get("cases")}
-    return [f"{kind}: {count(events, kind)} of {n}" for kind, n in wanted.items() if isinstance(n, int) and count(events, kind) < n]
+    missing = [f"{kind}: {count(events, kind)} of {n}" for kind, n in wanted.items() if isinstance(n, int) and count(events, kind) < n]
+    written = finished.get("investigationLines")
+    have = sum(1 for e in events if e["type"].startswith("investigation."))
+    if isinstance(written, int) and not isinstance(written, bool) and have < written:
+        missing.append(f"investigation lines: {have} of {written}")
+    return missing
 
 
 def wait_for_run(azure: Azure, insights: str, request_id: str, minutes: float, interval: float = 30.0) -> list[dict]:
@@ -201,7 +206,8 @@ def failed(events: list[dict]) -> bool:
     finished = next((e for e in events if e["type"] == "run.finished"), None)
     if count(events, "run.failed") or not finished or finished.get("ok") is not True:
         return True
-    return bool(finished.get("errors")) or any(e.get("status") == "error" for e in events if e["type"] == "case.result") or investigation_failed(events)
+    return (bool(finished.get("errors")) or any(e.get("status") == "error" for e in events if e["type"] == "case.result") or finished.get("investigation") == "failed"
+            or investigation_failed(events))
 
 
 def summary_lines(request_id: str, events: list[dict]) -> list[str]:
@@ -216,6 +222,10 @@ def summary_lines(request_id: str, events: list[dict]) -> list[str]:
                      f"(started by the {clean(started.get('trigger'), 20) or 'unknown'}).")
         lines.append(f"  Leads {finished.get('leads')}; cases taken {finished.get('cases')}: proposed {finished.get('proposed')}, needs a person {finished.get('needsHuman')}, "
                      f"dropped {finished.get('dropped')}, errors {finished.get('errors')}; tokens through the gateway {finished.get('tokens')}.")
+        words = {"ran": "The investigation ran.", "failed": "The investigation was meant to run and did not, or it ended badly.",
+                 "off": "The investigation did not run: it is switched off or the app has no Foundry project."}
+        if isinstance(finished.get("investigation"), str):
+            lines.append("  " + words.get(finished["investigation"], f"The investigation: {clean(finished['investigation'], 20)}."))
     elif not broken:
         lines.append("  The end of the run did not arrive.")
     late = missing_lines(events)

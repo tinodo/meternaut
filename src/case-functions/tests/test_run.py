@@ -5,7 +5,7 @@ from unittest import mock
 
 from support import (ENV, KEY, NOW, PRODUCT_SUBSCRIPTION, RG, SUBSCRIPTION, FakeEstate, Ticker, detective_says, disk_row, model_reply, pe_row, run_watch,
                      skeptic_says)
-from test_investigate import FakeFoundry, FakeToolbox, answer, finding
+from test_investigate import FakeFoundry, FakeToolbox, answer, entry, finding, metrics, resource
 from test_run_loop import Moving, estate_with, loop_for
 from cases import http, investigate, run
 from cases.foundry import FoundryError
@@ -769,6 +769,125 @@ class WhenTheInvestigationDidNotRun(unittest.TestCase):
         self.assertFalse(summary.ok)
         self.assertEqual([e["type"] for e in events], ["run.started", "run.failed"])
         self.assertEqual((foundry.specs, foundry.runs), ([], []))
+
+
+class TheEndOfTheRunSaysWhatBecameOfTheInvestigation(unittest.TestCase):
+    """`run.finished` has `investigation` (ran, failed or off) and `investigationLines` (the lines of the investigation that this run wrote)."""
+
+    @staticmethod
+    def end(events):
+        return of_type(events, "run.finished")[0]
+
+    @staticmethod
+    def written(events):
+        return len([e for e in events if e["type"].startswith("investigation.")])
+
+    def test_an_investigation_that_gave_an_answer_that_could_be_read_ran_and_its_lines_are_counted(self):
+        _, events, _, _, _ = investigating(estate_with_leads())
+        end = self.end(events)
+        self.assertEqual((end["investigation"], end["investigationLines"]), ("ran", 3), "the start, the one finding and the end")
+        self.assertEqual(self.written(events), 3)
+
+    def test_the_lines_are_the_start_one_line_for_each_finding_that_is_looked_at_and_the_end(self):
+        many = FakeToolbox([resource(n) for n in range(1, 10)], {f"r{n}": metrics(MetricA=0) for n in range(1, 10)})
+        for count, lines in ((0, 2), (1, 3), (3, 5), (8, 10), (9, 10)):
+            with self.subTest(findings=count):
+                raw = [finding(handles=[f"r{n}"]) for n in range(1, count + 1)]
+                _, events, _, _, _ = investigating(estate_with_leads(), FakeFoundry(answer(*raw)), toolbox=many)
+                end = self.end(events)
+                self.assertEqual((end["investigation"], end["investigationLines"], self.written(events)), ("ran", lines, lines), "the ninth finding is not looked at")
+
+    def test_the_lines_of_the_cases_are_not_lines_of_the_investigation(self):
+        _, events, _, _, _ = investigating(estate_with_leads())
+        self.assertEqual(len(investigation_cases(events)), 2)
+        self.assertEqual(self.end(events)["investigationLines"], 3, "the two cases of the one finding add nothing")
+
+    def test_an_answer_with_no_finding_is_an_investigation_that_ran(self):
+        _, events, _, _, _ = investigating(estate_with_leads(), FakeFoundry('{"findings": [], "examined": ["the biggest costs"]}'))
+        end = self.end(events)
+        self.assertEqual((end["investigation"], end["investigationLines"]), ("ran", 2))
+
+    def test_findings_that_code_dropped_still_have_their_lines(self):
+        raw = [finding(handles=["r98"], evidence=[]), 5, finding(handles=["r1"], evidence=[entry("r1", "MetricA", 9)])]
+        _, events, _, _, _ = investigating(estate_with_leads(), FakeFoundry(json.dumps({"findings": raw})))
+        end = self.end(events)
+        self.assertEqual((end["investigation"], end["investigationLines"]), ("ran", 5))
+
+    def test_a_skeptic_that_could_not_judge_does_not_make_the_investigation_failed_because_the_investigator_gave_its_answer(self):
+        foundry = FakeFoundry()
+        foundry.skeptic_error = FoundryError("the project is busy")
+        _, events, _, _, _ = investigating(estate_with_leads(), foundry)
+        end = self.end(events)
+        self.assertEqual((end["investigation"], end["investigationLines"]), ("ran", 3))
+
+    def test_an_investigation_that_is_switched_off_or_has_no_project_is_off_and_wrote_no_line(self):
+        _, events, _, foundry, _ = investigating(estate_with_leads(), env={**INVESTIGATING, "INVESTIGATE": "false"})
+        end = self.end(events)
+        self.assertEqual((end["investigation"], end["investigationLines"], self.written(events), foundry.runs), ("off", 0, 0, []), "the switch is off, the project is set")
+        for label, env in (("no project", ENV), ("no project and the switch is off", {**ENV, "INVESTIGATE": "false"})):
+            with self.subTest(label):
+                _, events, _ = run_watch(estate_with_leads(), env=env)
+                end = self.end(events)
+                self.assertEqual((end["investigation"], end["investigationLines"], self.written(events)), ("off", 0, 0))
+
+    def test_an_investigation_that_was_meant_to_run_and_did_not_failed(self):
+        def throws(*args, **kwargs):
+            raise RuntimeError("boom")
+
+        refused = FakeFoundry()
+        refused.ensure_error = FoundryError("the project did not accept the agent")
+        no_run = FakeFoundry()
+        no_run.investigator_error = FoundryError("the budget of the run was reached")
+        broken_at_once = FakeFoundry()
+        broken_at_once.ensure_agent = throws
+        broken_later = FakeFoundry()
+        broken_later.after_run = throws
+        failing = {"the agents could not be made ready": (refused, 0), "the investigator gave no answer": (no_run, 2), "something unexpected before the start": (broken_at_once, 0),
+                   "something unexpected after the start": (broken_later, 1)}
+        for text in ("I think we should delete the biggest disk.", '{"findings": "none"}', "", "[]"):
+            failing[f"an answer that cannot be read: {text[:12]!r}"] = (FakeFoundry(text), 2)
+        for label, (foundry, lines) in failing.items():
+            with self.subTest(label):
+                _, events, _, _, _ = investigating(estate_with_leads(), foundry)
+                end = self.end(events)
+                self.assertEqual((end["investigation"], end["investigationLines"], self.written(events)), ("failed", lines, lines))
+
+    def test_an_investigation_that_stopped_in_the_middle_of_its_cases_failed_and_the_end_counts_the_cases_that_it_opened_and_the_lines_that_it_wrote(self):
+        real, calls = investigate._open_case, []
+
+        def second_fails(*args, **kwargs):
+            calls.append(1)
+            if len(calls) == 2:
+                raise RuntimeError("boom")
+            return real(*args, **kwargs)
+
+        with mock.patch.object(investigate, "_open_case", second_fails):
+            summary, events, _, _, _ = investigating(estate_with_leads())
+        end = self.end(events)
+        self.assertEqual((end["investigation"], end["investigationLines"], self.written(events)), ("failed", 2, 2), "the start and the finding; the end of the investigation was not reached")
+        self.assertEqual((end["cases"], len(investigation_cases(events)), len(legacy_cases(events))), (4, 1, 3),
+                         "the case that was opened stays, and the older roles judge every lead again because the investigation did not end well")
+
+    def test_the_two_fields_are_in_the_end_of_every_run_that_ends_and_the_other_fields_are_as_they_were(self):
+        for label, env in (("off", ENV), ("on", INVESTIGATING)):
+            with self.subTest(label):
+                _, events, _, _, _ = investigating(estate_with_leads(), env=env)
+                end = self.end(events)
+                self.assertEqual(sorted(k for k in end if k not in ("v", "ts", "runId", "requestId", "type")),
+                                 sorted(["ok", "leads", "cases", "proposed", "needsHuman", "dropped", "errors", "tokens", "seconds", "investigation", "investigationLines"]))
+                self.assertIn(end["investigation"], ("ran", "failed", "off"))
+                self.assertIsInstance(end["investigationLines"], int)
+
+    def test_the_end_of_the_run_counts_the_lines_that_it_wrote_and_no_other_lines(self):
+        for foundry in (FakeFoundry(), FakeFoundry(answer()), FakeFoundry("not json")):
+            _, events, _, _, _ = investigating(estate_with_leads(), foundry)
+            self.assertEqual(self.end(events)["investigationLines"], self.written(events))
+
+    def test_a_run_that_fails_before_the_investigation_has_no_end_and_so_no_fields(self):
+        estate = estate_with_leads()
+        estate.failures = {"secrets": 403}
+        _, events, _, _, _ = investigating(estate)
+        self.assertEqual(of_type(events, "run.finished"), [])
 
 
 class TheFoundryOfTheRun(unittest.TestCase):

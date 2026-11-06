@@ -2,7 +2,7 @@
 """Reads the Foundry resource of the agents back from Azure and fails unless it is as its template says (standard library only).
 
     python tools/foundry-check.py read-back --subscription S --resource-group G --account A --project P --guardrail R \
-        --private-endpoint PE --endpoint URL --models environment/models.json [--summary FILE]
+        --private-endpoint PE --endpoint URL --models environment/models.json [--summary FILE] [--timeout SECONDS]
 
 A deployment that says Succeeded does not say that the resource came out as the template wrote it: tenant policies with the effect Modify rewrite a
 resource while it is made, and a Modify policy does not refuse anything (AGENTS.md rule 19). So what the design rests on is read back, and the run fails
@@ -11,13 +11,15 @@ for each thing that differs:
   - the Foundry resource: public network access Disabled, local authentication off (disableLocalAuth), project management on (allowProjectManagement,
     which cannot be switched on later), and an identity of its own;
   - its private endpoint: made, and approved;
-  - its project: there, with an identity of its own, and an endpoint that is the one that the cases app is given;
+  - its project: there, with an identity of its own, and an endpoint that is reported and is the one that the cases app is given;
   - its model deployments: every model of environment/models.json, with its version, its deployment type and its capacity, and the guardrail;
-  - the guardrail: there, with the Prompt Shields that the agents need, blocking;
+  - the guardrail: there, with the Prompt Shields that the agents need (Jailbreak and Indirect Attack on the user input, Indirect Attack on tool results), each blocking;
   - the connection of the project to Application Insights: there, and with an identity and no key.
 
 It only reads: GET requests of Azure Resource Manager through `az rest`. No key is listed and nothing of the data plane is called (the resource has no public
-endpoint, and the runner is not in the network). It prints names and states, never a value that is a secret, and writes the same lines to --summary.
+endpoint, and the runner is not in the network). A list is read to its end (nextLink is followed, to addresses of Azure Resource Manager only), and no read waits longer
+than --timeout seconds: a stuck `az` fails the run with a message instead of holding it to the limit of the job. It prints names and states, never a value that is a
+secret, and writes the same lines to --summary.
 """
 from __future__ import annotations
 
@@ -34,6 +36,9 @@ API = "2026-09-01"
 NETWORK_API = "2025-05-01"
 ARM = "https://management.azure.com"
 NOT_FOUND = re.compile(r"NotFound|ResourceNotFound|\b404\b", re.I)
+# How long one read of Azure may take, and how many pages one list may have.
+TIMEOUT_SECONDS = 120
+MAX_PAGES = 20
 # A connection that sends traces with an identity. The portal calls it "Project managed identity"; the template writes ProjectManagedIdentity.
 ENTRA_AUTH_TYPES = ("ProjectManagedIdentity", "AAD", "ManagedIdentity")
 # What the guardrail must hold: (name, source) of a Prompt Shield, each blocking.
@@ -50,13 +55,27 @@ class Unreadable(Exception):
     """Azure gave no usable answer. The text is the first line of its error, which holds no token."""
 
 
-def run_az(arguments: list[str]) -> tuple[int, str, str]:
-    done = subprocess.run([os.environ.get("AZ", "az"), *arguments], capture_output=True, text=True)
+class Stuck(Exception):
+    """`az` did not answer in time. The rest is not read: a second read would wait just as long."""
+
+
+def describe(arguments: list[str]) -> str:
+    """Which request it was, for a message: the address without its query, or a plain word when the arguments name none."""
+    if "--url" in arguments and arguments.index("--url") + 1 < len(arguments):
+        return "GET " + arguments[arguments.index("--url") + 1].split("?")[0].replace(ARM, "")
+    return "a request"
+
+
+def run_az(arguments: list[str], timeout: int = TIMEOUT_SECONDS) -> tuple[int, str, str]:
+    try:
+        done = subprocess.run([os.environ.get("AZ", "az"), *arguments], capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        raise Stuck(f"az did not answer within {timeout} seconds ({describe(arguments)})")
     return done.returncode, done.stdout, done.stderr
 
 
-def get(az: Runner, path: str, api: str) -> dict:
-    code, out, err = az(["rest", "--method", "get", "--url", f"{ARM}{path}?api-version={api}", "--output", "json"])
+def get_url(az: Runner, url: str) -> dict:
+    code, out, err = az(["rest", "--method", "get", "--url", url, "--output", "json"])
     if code != 0:
         if NOT_FOUND.search(err):
             raise Gone()
@@ -68,6 +87,31 @@ def get(az: Runner, path: str, api: str) -> dict:
     if not isinstance(document, dict):
         raise Unreadable("the answer is not an object")
     return document
+
+
+def get(az: Runner, path: str, api: str) -> dict:
+    return get_url(az, f"{ARM}{path}?api-version={api}")
+
+
+def get_all(az: Runner, path: str, api: str) -> list:
+    """Every item of a list that Azure gives in pages: nextLink is followed until there is none, to addresses of Azure Resource Manager only, and for a limited number of pages."""
+    items: list = []
+    document = get(az, path, api)
+    pages = 1
+    while True:
+        items.extend(document.get("value") or [])
+        link = document.get("nextLink")
+        if not link:
+            return items
+        if pages >= MAX_PAGES:
+            raise Unreadable(f"the list has more than {MAX_PAGES} pages")
+        if not isinstance(link, str) or not link.startswith(ARM + "/"):
+            raise Unreadable("the list goes on at an address that is not of Azure Resource Manager, and that is not followed")
+        try:
+            document = get_url(az, link)
+        except Gone:
+            raise Unreadable("a later page of the list is not there")
+        pages += 1
 
 
 def read_models(path: Path) -> list[dict]:
@@ -84,19 +128,26 @@ def read_back(az: Runner, subscription: str, group: str, account: str, project: 
               models: list[dict]) -> list[tuple[bool, str]]:
     """One (ok, text) per thing that was read. A thing that cannot be read is a failure too."""
     found: list[tuple[bool, str]] = []
+    halted: list[str] = []
     base = f"/subscriptions/{subscription}/resourceGroups/{group}/providers"
     resource = f"{base}/Microsoft.CognitiveServices/accounts/{account}"
 
     def say(ok: bool, text: str) -> None:
         found.append((ok, text))
 
-    def fetch(label: str, path: str, api: str = API) -> dict | None:
+    def fetch(label: str, path: str, api: str = API, pages: bool = False) -> dict | list | None:
+        """The document at the path, or all items of the list there (pages=True). Once az has not answered in time nothing more is read."""
+        if halted:
+            return None
         try:
-            return get(az, path, api)
+            return get_all(az, path, api) if pages else get(az, path, api)
         except Gone:
             say(False, f"{label} is not there")
         except Unreadable as e:
             say(False, f"{label} could not be read: {e}")
+        except Stuck as e:
+            halted.append(str(e))
+            say(False, f"{label} could not be read: {e}. The read-back stops here: nothing after it was read")
         return None
 
     document = fetch(f"The Foundry resource {account}", resource)
@@ -123,13 +174,15 @@ def read_back(az: Runner, subscription: str, group: str, account: str, project: 
         say(bool((document.get("identity") or {}).get("principalId")), f"The project {project}: " + ("there, with an identity of its own"
             if (document.get("identity") or {}).get("principalId") else "has no identity of its own"))
         given = ((document.get("properties") or {}).get("endpoints") or {}).get("AI Foundry API")
-        if given is not None:
+        if not given:
+            say(False, "The project does not report its endpoint (properties.endpoints['AI Foundry API']), so the address that the cases app is given cannot be checked")
+        else:
             same = str(given).rstrip("/").lower() == endpoint.rstrip("/").lower()
             say(same, "The project endpoint is the one that the cases app is given" if same else f"The project endpoint that Azure reports ({given}) is not the one that the cases app is given ({endpoint})")
 
-    document = fetch("The model deployments", f"{resource}/deployments")
-    if document is not None:
-        deployed = {d.get("name"): d for d in document.get("value") or [] if isinstance(d, dict)}
+    items = fetch("The model deployments", f"{resource}/deployments", pages=True)
+    if items is not None:
+        deployed = {d.get("name"): d for d in items if isinstance(d, dict)}
         for model in models:
             d = deployed.get(model["name"])
             if d is None:
@@ -147,27 +200,33 @@ def read_back(az: Runner, subscription: str, group: str, account: str, project: 
     if document is not None:
         filters = (document.get("properties") or {}).get("contentFilters") or []
         for name, source in SHIELDS:
-            ok = any(isinstance(f, dict) and f.get("name") == name and f.get("source") == source and f.get("enabled") is True and f.get("blocking") is True for f in filters)
+            # Azure returns the whole policy, the filters of its base policy included: the shield is there when the policy names it, and every entry that names it is on and blocking.
+            named = [f for f in filters if isinstance(f, dict) and f.get("name") == name and f.get("source") == source]
+            ok = bool(named) and all(f.get("enabled") is True and f.get("blocking") is True for f in named)
             say(ok, f"The guardrail blocks {name} at {source}" if ok else f"The guardrail does not block {name} at {source}")
 
-    document = fetch(f"The connections of the project {project}", f"{resource}/projects/{project}/connections")
-    if document is not None:
-        traces = [c for c in document.get("value") or [] if isinstance(c, dict) and (c.get("properties") or {}).get("category") == "AppInsights"]
+    items = fetch(f"The connections of the project {project}", f"{resource}/projects/{project}/connections", pages=True)
+    if items is not None:
+        traces = [c for c in items if isinstance(c, dict) and (c.get("properties") or {}).get("category") == "AppInsights"]
         kinds = [(c.get("properties") or {}).get("authType") for c in traces]
         ok = len(traces) == 1 and kinds[0] in ENTRA_AUTH_TYPES
         say(ok, "The project sends its traces to Application Insights with its identity" if ok else f"The project's connection to Application Insights is missing or is not made with an identity (found {len(traces)}, authentication {kinds})")
     return found
 
 
-def main(argv=None, az: Runner = run_az) -> int:
+def main(argv=None, az: Runner | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     commands = parser.add_subparsers(dest="command", required=True)
     check = commands.add_parser("read-back", help="read the Foundry resource back and fail unless it is as its template says")
     for name in ("subscription", "resource-group", "account", "project", "guardrail", "private-endpoint", "endpoint", "models"):
         check.add_argument(f"--{name}", required=True)
     check.add_argument("--summary", help="a file to append the lines to as Markdown (the step summary of a workflow run)")
+    check.add_argument("--timeout", type=int, default=TIMEOUT_SECONDS, help=f"seconds that one read of Azure may take (default {TIMEOUT_SECONDS}); a read that takes longer fails the run")
     args = parser.parse_args(argv)
-    findings = read_back(az, args.subscription, args.resource_group, args.account, args.project, args.guardrail, args.private_endpoint, args.endpoint,
+    if args.timeout < 1:
+        parser.error("--timeout is a number of seconds, one or more")
+    runner = az or (lambda arguments: run_az(arguments, args.timeout))
+    findings = read_back(runner, args.subscription, args.resource_group, args.account, args.project, args.guardrail, args.private_endpoint, args.endpoint,
                          read_models(Path(args.models)))
     lines = [f"{'ok' if ok else 'FAILED'}: {text}" for ok, text in findings]
     print("\n".join(lines))

@@ -32,7 +32,7 @@
 // private Foundry resource makes the project first because a private endpoint bound before the resource has settled fails with
 // AccountProvisioningStateInvalid. The roles come after the private endpoint.
 //
-// API versions: 2026-09-01, the newest stable one of Microsoft.CognitiveServices that has everything used here (the guardrail's sources
+// API versions: 2026-09-01, the newest stable one of Microsoft.CognitiveServices that has everything used here (the REST specification lists it; the guardrail's sources
 // PostToolCall and the mode Blocking exist since 2025-12-01, projects and allowProjectManagement since 2025-06-01).
 //
 // Deployed only by the workflow .github/workflows/deploy-hub.yml, action "foundry" (AGENTS.md rule 18).
@@ -123,6 +123,8 @@ resource account 'Microsoft.CognitiveServices/accounts@2026-09-01' = {
 // on the tool results (Prompt, and PostToolCall for agents). Tool response scanning is a preview feature of the Agent Service, and Learn lists the
 // tools that support it (Azure AI Search, Azure Functions, OpenAPI and others): it may not apply to the function tools that the cases app runs itself.
 // The answers of those tools hold typed values only (AGENTS.md rule 26 (d)), so this is a second layer and not the only one.
+// Checked read-only against the service: Microsoft.DefaultV2 exists (mode Blocking), and Jailbreak and Indirect Attack are valid filter names at the source Prompt. Indirect Attack at
+// PostToolCall is the control that Learn names for the tool response intervention point; whether the service takes it is read back after the deploy (tools/foundry-check.py).
 resource guardrail 'Microsoft.CognitiveServices/accounts/raiPolicies@2026-09-01' = {
   parent: account
   name: guardrailName
@@ -185,7 +187,7 @@ resource projectPublishesTraces 'Microsoft.Authorization/roleAssignments@2022-04
 }
 
 // The connection that makes the Agent Service send the agents' traces to the component, with the project's managed identity and no key. Microsoft's
-// own templates (microsoft-foundry/foundry-samples) write authType ProjectManagedIdentity, which the Bicep types do not list, and put the component's
+// own templates (microsoft-foundry/foundry-samples) write authType ProjectManagedIdentity (their comment calls the value a preview), which the Bicep types do not list, and put the component's
 // connection string in the metadata. That string names the component and holds no secret that ingestion accepts: local authentication of the
 // component is off. A project has one connection of this category at most.
 resource tracesConnection 'Microsoft.CognitiveServices/accounts/projects/connections@2026-09-01' = {

@@ -327,7 +327,8 @@ def execute(s: Services, trigger: str) -> Summary:
     summary.tokens = tokens
     summary.seconds = int(s.monotonic() - started)
     h.emit("run.finished", ok=summary.ok, leads=summary.leads, cases=summary.cases, proposed=summary.proposed, needsHuman=summary.needs_human,
-           dropped=summary.dropped, errors=summary.errors, tokens=summary.tokens, seconds=summary.seconds)
+           dropped=summary.dropped, errors=summary.errors, tokens=summary.tokens, seconds=summary.seconds, investigation=investigation.state,
+           investigationLines=h.lines("investigation."))
     finished = keep(True)
     if finished is not None and s.extras is not None:
         try:
@@ -349,7 +350,7 @@ def run_watch(trigger: str, request_id: str | None, env: Mapping[str, str] | Non
     history = History(new_id(), request_id, clock, redact)
     try:
         settings = cfg.load(env)
-        identity = Identity(env, **({"fetch": fetch} if fetch else {}))
+        identity = Identity(env, sleep=sleep, **({"fetch": fetch} if fetch else {}))
         client = Client(allowed_calls(settings.gateway_host, Gateway.key_path(settings), foundry_endpoint=settings.foundry_endpoint), redact, transport=transport,
                         sleep=sleep, monotonic=monotonic)
         if extras is None:
