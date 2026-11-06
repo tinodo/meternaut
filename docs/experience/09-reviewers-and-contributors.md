@@ -138,7 +138,7 @@ A reply is screened text: it approves nothing and changes nothing in Azure, and 
 
 | Card | Reviewed by | What it adds |
 |---|---|---|
-| Change recipe | Sofia | Approval class in words, what changes and how it is undone, the guard metric, the permissions its role needs, its test on a tiny resource |
+| Change recipe | Sofia | Approval class in words, what changes and how it is undone, the guard metric, the permissions an approver needs, its test on a tiny resource |
 | Detector | Chen | Where it applies, blind spots, expiry, the claims it rests on, its back-test against what later investigations showed. Promotion from shadow to active is [a second decision](../design/04-knowledge-and-learning.md#5-detectors-expensive-reasoning-once-cheap-checks-afterwards) |
 | Card and letter templates | Code owners of the sending app; a native speaker for a translation | Renders (light, dark, high contrast; letters also in classic Outlook) as images with alt text, accessibility results, the comprehension-check result, language status |
 

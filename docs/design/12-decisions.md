@@ -66,7 +66,7 @@
 ## 11. Approval is a bound, displayed, single-use authorization · Accepted
 
 - **Decision.** The approval service renders the canonical plan; cards carry an opaque id; the record binds plan hash, etags, quote, approver id and role, and the authentication claim; consumed once, through a create-only item that only the runner can write. The approver comes from the approver's own token, never from the bot. Purchases need two distinct directory roles. Credentials (autopilot) are policies evaluated in code on facts the model cannot set, never for purchases.
-- **Limits and undo.** One-tap approvals are [capped at five per approver per day](06-security-and-governance.md#approval-classes) (a starting value), and one alarm catches an approval with no card tap or page sign-in behind it (a stolen signed-in session escapes it). Only an R1 change rolls back by itself on a failed check; for R2 and R3 the approver restores with a [rollback grant](05-data-and-integrations.md#7-the-approval-record), usable once; a purchase cannot be undone.
+- **Limits and undo.** One alarm catches an approval with no page sign-in behind it (a stolen signed-in session escapes it). Nothing rolls back by itself; where Azure offers an undo, the approver makes it with their own rights; a purchase cannot be undone.
 - **Instead of.** Trusting a row plus a card; tags or lessons deciding scope.
 - **Cost · security · reversibility.** Small · closes replay, swap and confused-deputy paths · signing the record is a later hardening.
 - **Superseded in part** by [decision 24](#24-a-change-runs-as-the-approver-meternaut-holds-no-right-to-change-azure--accepted).

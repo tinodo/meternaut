@@ -1,6 +1,6 @@
 # Experience design: what people see, receive and decide
 
-**What this document answers.** Meternaut is an AI system that finds savings in Azure and asks the people who own the resources to decide, in Teams and e-mail. It changes Azure only after a person's OK on the exact plan. This folder says what each person sees, receives and decides, in which channel, in what words, and how the system spends and protects people's attention; [the technical design](../design/README.md) says what the system does. It is the front door to fifteen documents, seventeen message templates and six wireframes. Nothing here is built; every example is invented.
+**What this document answers.** Meternaut is an AI system that finds savings in Azure and asks the people who own the resources to decide, in Teams and e-mail. A change is made only after a person's OK on the exact plan, with that person's own rights. This folder says what each person sees, receives and decides, in which channel, in what words, and how the system spends and protects people's attention; [the technical design](../design/README.md) says what the system does. It is the front door to fifteen documents, seventeen message templates and six wireframes. Nothing here is built; every example is invented.
 
 ![A Recommendation card in a Teams chat, with its eight parts numbered: sender, headline, value tile, why and what was checked, three decision buttons, four toggles, the opened Details panel and the footer.](../img/experience-recommendation-card.svg)
 
@@ -35,7 +35,7 @@ People never see the system's internal names. The table is the bridge between th
 | Price basis | **At your agreement's rates**, **At the rates on your bill**, **At list prices. I cannot see your rates.**, **At retail rates. Your partner's rates are not visible.**: beside every saving figure |
 | Scenario, expected, verified saving | **Scenario saving** (no rate or bill line behind it), **Expected saving** (a bill line confirms the meter), **Verified saving** (measured after the change) |
 | Stored quote | **Price check**; "quote" means only an offer from a partner or a billing owner |
-| Credential | **Standing permission** |
+| Credential | **Standing permission**: an optional mode, not built; a customer grants it with its own role to an identity of its own choosing, and Meternaut holds none by default |
 | Approval, Action | **Your OK**, **Change** |
 | Approval classes R1, R2, R3 | **Plan in the card** (its button opens the page; opening approves nothing), **your OK on a page**, **two people** |
 | Ledger | **History** |
@@ -88,7 +88,7 @@ Examples are invented and labelled in every document, and their numbers stay the
 | E3 Two unattached disks | A small saving seen only at list prices, so a Scenario |
 | E4 A one-year compute savings plan | A purchase by two independent approvers, USD 219,000 (about €205,860) over the year, never undone |
 | E5 An AI token spike | A Heads-up that asks first, privately |
-| E6 Dev storage tiering | A change under a standing permission, introduced first, announced afterwards, with Undo |
+| E6 Dev storage tiering | A change under the optional mode (not built), announced afterwards, with Undo |
 
 ## How the experience is kept honest
 

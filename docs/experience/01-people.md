@@ -11,7 +11,7 @@ Twelve invented archetypes stand for everyone the experience serves; their names
 | **Maya**, resource owner | Engineering | Whether a change to what she owns goes ahead | Teams cards, owner pages, approval page | Weekly desk (a digest of up to five items, each its own decision); at most three other unsolicited messages a week |
 | **Tomasz**, budget holder | Product | Whether a spend fits the budget; one of two purchase approvers | Teams cards, approval page | When his budget is touched |
 | **Nadia**, FinOps lead | FinOps Practitioner | How much the system may interrupt people; standing permissions | Monday letter, Azure Monitor Workbooks, kill-switch page | Every Monday |
-| **Ibrahim**, platform owner | FinOps Practitioner; Engineering (platform) | Which scopes the system may change; when to use the kill switch | Monday letter, Workbooks, kill-switch page, platform alerts | Every Monday; on call |
+| **Ibrahim**, platform owner | FinOps Practitioner; Engineering (platform) | Which scopes its plans may touch; when to use the kill switch | Monday letter, Workbooks, kill-switch page, platform alerts | Every Monday; on call |
 | **Chen**, Atlas reviewer | None (project role) | Whether a change to the Atlas (the shared knowledge of how Azure charges) is merged | Review card on a pull request | Per change |
 | **Sofia**, security reviewer | Security (allied) | Whether a recipe for changing Azure, or a permission rule, is safe | Pull-request cards, Workbooks, kill-switch page | Per change; quarterly access review |
 | **Lars**, finance approver | Finance | Finance approval of a purchase; which savings the close accepts | Approval page, monthly letter with CSV | Monthly; per purchase |
@@ -21,7 +21,7 @@ Twelve invented archetypes stand for everyone the experience serves; their names
 | **Jonas**, internal auditor | None (governance role) | Whether the records show what happened and who agreed | Evidence pack, audit log, Workbooks | On the audit cycle |
 | **Elena**, developer | Engineering | Whether to act on a cost comment | Pull-request comment (optional, later) | Per pull request |
 
-A Teams card shows a plan and opens the approval page; opening a plan approves nothing. Every change is approved there, with the approver's own sign-in to Azure ([approval classes](../design/06-security-and-governance.md)). A standing permission lets the system make one kind of change in one place without asking each time, until a date. The kill switch stops the system's changes. Cadences and limits are starting values the adopting organisation sets ([attention and trust](08-attention-and-trust.md)).
+A Teams card shows a plan and opens the approval page; opening a plan approves nothing. Every change is approved there, with the approver's own sign-in to Azure ([approval classes](../design/06-security-and-governance.md)). A standing permission, an optional mode not built, would let a customer's own identity make one kind of change in one place without asking each time. The kill switch stops the system's changes. Cadences and limits are starting values the adopting organisation sets ([attention and trust](08-attention-and-trust.md)).
 
 Delegates, a line manager the owner appointed, and the custodian (the team named for unowned or unreachable estate) provide cover when an owner is away or unknown. They are roles of the moment, not personas.
 

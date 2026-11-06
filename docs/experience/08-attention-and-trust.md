@@ -43,7 +43,6 @@ An **ask** is a Question or a Recommendation; a **push** is any message the syst
 | Weekly desk | At most five items and about ten minutes of work; default Tuesday 10:00 local, the person's choice. Repeats nothing but a folded-in reminder |
 | Monday letter | Arrives before 09:00 local |
 | Receipt and answer | Goals: "Received. Nothing has changed yet" within one second where the host allows; an answer to Explain, Challenge or Teach within two minutes in 95 % of cases, else "I will answer in this thread" |
-| Undo | Only what Azure offers for that resource type; the recipe says |
 | Fatigue review | At least 20 delivered asks to a group in 28 days, over 40 % deferred or declined |
 | Targets | Median time from the first observable interaction to the decision, under two minutes; share decided within seven days, declines included; mute and stop rate; regret and corrections. Never the approval rate, which rewards rubber stamps |
 
@@ -85,7 +84,7 @@ One reminder goes out at day 7: its own message (C9), or part of that week's des
 
 ## Hours, Pause messages, the emergency lane and the review
 
-**Working days, time zone and quiet hours** are stated by the person (Hello card C1, Settings C14), never taken from calendars, presence or out-of-office replies. A push due in quiet hours waits. Where a family's undo has a deadline, the Done card (C6) announces one reminder before it, sent whether or not the person looked.
+**Working days, time zone and quiet hours** are stated by the person (Hello card C1, Settings C14), never taken from calendars, presence or out-of-office replies. A push due in quiet hours waits.
 
 **Channel profiles:** Teams first (the default), e-mail first, or digest only (everything in the weekly desk).
 
@@ -120,7 +119,7 @@ Learn documents the label and thumbs per message, not for card messages; the cli
 
 ### Controls a person always has
 
-- **Pause changes here**, the button on cards C8 and C17, stops standing permissions on those resources at once and can only narrow what the system may do ([06](06-web-pages.md)); suggestions continue. Undo of a change made under a standing permission also pauses that permission until a person has reviewed it. C17 introduces a standing permission before its first run; C8 reports each run.
+- **Pause changes here**, the button on cards C8 and C17 (optional mode, not built), stops standing permissions on those resources at once and can only narrow what the system may do ([06](06-web-pages.md)); suggestions continue. Undo of a change made under a standing permission also pauses that permission until a person has reviewed it.
 - **Fewer like this**, on the card and the pages, lowers how often such asks arrive; standing permissions continue.
 - **I did not approve this,** on the Done card, starts the incident path whatever the record shows, pauses that person's approvals, alerts the platform team and keeps the record. Undo, not this button, reverses the change.
 - **Talk to a person** reaches a human at the adopting organisation: the last button in every card's footer, always visible, and in the same place on every page. It is also how someone reports that a message looks wrong or fake, which feeds the incident path ([03](03-organisation-journeys.md)).

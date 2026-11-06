@@ -7,7 +7,7 @@
   "teachExample": "For example: this is our disaster-recovery environment",
   "headline": "Switch off the web-shop QA environment 19:30 to 07:30 and at weekends, except the last Tuesday",
   "plan": {
-    "when": "at the moment you approve, with your own Azure rights",
+    "when": "once, at the moment you approve, with your own Azure rights. A daily switch-off and switch-on needs your own automation or the optional standing-permission mode. I hold no right to do it.",
     "rows": [
       {
         "resource": "vm-qa-web-01",
