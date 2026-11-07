@@ -2,6 +2,14 @@
 
 All notable changes, newest first. Versions are git tags: `ideation-vN` for the ideation (`docs/01` to `docs/10` and the research), `design-vN` for the design (`docs/design/`; `design-v1` was withdrawn), `experience-vN` for the experience design (`docs/experience/`) and `build-plan-vN` for the build plan (`docs/build-plan/`). A heading without a tag records a change that is not a new edition. The previous editions stay available at their tags, and the earliest are archived under [`docs/_archive/`](docs/_archive/), which is never edited.
 
+## The web page can be closed and reached on the private network: the check of its front door runs inside the network (built, not deployed) — 2026-11-07
+
+**What the owner decided.** No Application Gateway for the web page (its health probes keep an app awake, and he wants it to scale to zero): he reaches the private network instead. So the state to support is public network access `Disabled`, the private endpoint as the only way in, and `CONSOLE_HOST_NAME` unset.
+
+**What changed.** The parameter builder takes `CASES_APP_PUBLIC_NETWORK_ACCESS` as `Disabled` with no host name (it refused that), and its new output `door_in_operator` says that the check of the front door then runs in a container group of the Operator (`op-door-<run id>`): `tools/console-check.py door --private` at the app's own name, with the same expected answers, no credential and nothing written. With public access `Enabled`, or a host name set, the step runs from the runner as before. The constant stays `Enabled`: the owner flips that one line himself when he can reach the private address ([the record](docs/proposals/07-private-by-default.md#the-web-page-on-the-private-network-built-not-deployed), [the bootstrap page](environment/BOOTSTRAP.md#changed-on-2026-11-07-the-web-page-is-closed-and-reached-on-the-private-network)).
+
+**Not checked.** Nothing ran in Azure: not the check against a closed app, and not a workstation's way to the private address (a corporate VPN can break it although the landing zone's DNS answers correctly; the record says what to test).
+
 ## The Watch reads every subscription that its identity can read (built, not deployed) — 2026-11-07
 
 **What the owner ordered.** In writing: "Watch is what checks for cost savings? That must be on the root management group; watch the entire estate."

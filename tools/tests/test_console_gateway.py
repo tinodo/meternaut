@@ -1032,7 +1032,7 @@ class TheDocumentsOfTheConsoleBehindTheGateway(unittest.TestCase):
 
     def test_the_changelog_entry_follows_the_one_of_the_ai_gateway_and_says_what_was_said_built_checked_and_left_open_and_the_older_entry_is_as_it_was(self):
         headings = re.findall(r"(?m)^## .+$", self.changelog)
-        self.assertEqual(headings[7:9], [self.CHANGELOG_HEADING, self.OLDER_HEADING], "the entry of the estate-wide Watch and the six entries of the AI Gateway and of the undo of the API Management changes (test_estate_watch_docs.py, test_aigateway_deployed.py, test_aigateway_docs.py, test_aigateway_agents_docs.py, test_aigateway_subnet_first.py) are above this one, and the entry below it is untouched")
+        self.assertEqual(headings[8:10], [self.CHANGELOG_HEADING, self.OLDER_HEADING], "the entry of the web page, the entry of the estate-wide Watch and the six entries of the AI Gateway and of the undo of the API Management changes (test_estate_watch_docs.py, test_aigateway_deployed.py, test_aigateway_docs.py, test_aigateway_agents_docs.py, test_aigateway_subnet_first.py) are above this one, and the entry below it is untouched")
         positions = [self.entry.index(lead) for lead in ("**What the owner said.**", "**What is built.**", "**Where Learn says something other than the plan assumed.**", "**What was checked.**", "**Not checked.**",
                                                          "**What a person has to do, in order.**")]
         self.assertEqual(positions, sorted(positions))
@@ -1081,7 +1081,7 @@ class TheDocumentsOfTheWebPageOnThePrivateNetwork(unittest.TestCase):
         self.assertLess(self.page.index(self.HEADING), self.page.index("## Reading telemetry when the component is private"))
         self.assertEqual(anchor(self.HEADING), self.ANCHOR)
         self.assertEqual(anchor(self.BOOTSTRAP_HEADING), "changed-on-2026-11-07-the-web-page-is-closed-and-reached-on-the-private-network")
-        pages = {name: text(name) for name in ("docs/proposals/07-private-by-default.md", "README.md", "environment/BOOTSTRAP.md")}
+        pages = {name: text(name) for name in ("docs/proposals/07-private-by-default.md", "docs/proposals/04-the-loop.md", "README.md", "environment/BOOTSTRAP.md")}
         for name, page in pages.items():
             self.assertIn(f"#{self.ANCHOR}", page, f"{name} points at the section")
             for found in re.findall(r"#(the-web-page-on-the-private-network[^)\s]*)", page):
