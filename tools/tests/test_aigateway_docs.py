@@ -43,7 +43,8 @@ class TheDecisionRecord(unittest.TestCase):
                       "AIGatewayPrivateEndpointsNotEnabled", "Reported with this change; not read again here", "Only the way from the gateway to the Foundry resource can be private",
                       "That breaks the rule of [private by default]"):
             self.assertIn(words, PROPOSAL, words)
-        self.assertRegex(PROPOSAL, r"\*\*Status: .*Step 1 of 2 is deployed and checked.*Step 2 of 2 is built and not deployed.*Nothing calls through the gateway, and the agents were not touched\.", "the status at the top says what is true")
+        self.assertRegex(PROPOSAL, r"\*\*Status: .*Step 1 of 2 is deployed and checked.*Step 2 of 2 is built and not deployed.*The Detective and the Skeptic of the cases app call the gateway since the last change of this page.*the agents were not touched\.",
+                         "the status at the top says what is true")
 
     def test_it_lists_what_protects_the_public_endpoint_and_what_is_not_done_and_why(self):
         for words in ("1. **Microsoft Entra ID, and a role.**", "2. **No API key resource.**", "3. **Limits at the gateway.**", "4. **Content safety at the gateway,**",
@@ -65,7 +66,7 @@ class TheDecisionRecord(unittest.TestCase):
             self.assertIn(words, PROPOSAL, words)
 
     def test_it_names_the_three_outcomes_of_step_2_and_who_decides_each(self):
-        for words in ("| It works without a key |", "The owner reads the proof and strikes the exception", "| It needs a key |", "[Rule 23](../../AGENTS.md) says no key",
+        for words in ("| It works without a key |", "The gap in [rule 15 (c)](../../AGENTS.md) ends", "The owner reads the proof, and a change of one line switches it on", "| It needs a key |", "[Rule 23](../../AGENTS.md) says no key",
                       "| It fails (the Agent Service cannot call the gateway, or Responses is not supported) |", "The agents keep calling their deployments, as now.",
                       "The subnet cannot be changed", "delete the gateway and make another"):
             self.assertIn(words, PROPOSAL, words)
@@ -119,15 +120,18 @@ class TheOtherDocuments(unittest.TestCase):
         self.assertIn("The AI Gateway has two actions, `aigateway` and `aigateway-check`, and they are not on that list either", after)
         self.assertLess(after.index("The console behind the platform's Application Gateway is not on that list"), after.index("The AI Gateway has two actions"))
 
-    def test_rule_15_c_ends_the_governance_hub_route_says_that_every_model_call_goes_direct_and_that_the_ai_gateway_is_deployed_and_nothing_calls_through_it(self):
-        (rule,) = [line for line in AGENTS.splitlines() if line.lstrip().startswith("- **(c) Every model call of Meternaut goes direct, privately and with no key, to the model deployments of its own Foundry project**")]
-        for words in ("(2026-11-07, the owner, in capitals: \"UNDO CHANGES TO API MANAGEMENT\")", "**This ends the \"governance hub\" route**",
-                      "The AI Gateway (Azure's separate service, [the decision record](docs/proposals/08-ai-gateway.md)) has been deployed since 2026-11-07, because the owner asked for it in writing "
-                      "(\"Create the AI Gateway with public network access and private routing.\"), and **nothing calls through it**:",
-                      "is built and off (`AGENTS_VIA_AI_GATEWAY` is False) and needs the owner's separate yes, so until it is switched on every model call goes direct, as this rule says.",
-                      "the app reads no key", "it was tried on the service on 2026-11-07: both models answered in a `cases-run`", "is not a model call"):
+    def test_rule_15_c_says_that_every_model_call_goes_through_the_ai_gateway_with_no_direct_path_and_keeps_its_history_in_one_sentence(self):
+        (rule,) = [line for line in AGENTS.splitlines()
+                   if line.lstrip().startswith("- **(c) Every model call of Meternaut goes through the AI Gateway, the governance hub of the Citadel design, with no direct path, not even for a test, unless the owner makes a written exception**")]
+        for words in ("(2026-11-07, the owner, in capitals: \"IT NEEDS TO ADHERE TO THE CITADEL DESIGN PRINCIPLES\")",
+                      "The AI Gateway is Azure's separate service ([the decision record](docs/proposals/08-ai-gateway.md), which also says how it meets the Citadel principles and what is still missing)",
+                      "it has been deployed since 2026-11-07, because the owner asked for it in writing (\"Create the AI Gateway with public network access and private routing.\")",
+                      "The Detective and the Skeptic call it with the cases app's own identity and a Microsoft Entra token for its audience, and no key, and the app's list of allowed calls holds no chat completion to the Foundry resource or to its project.",
+                      "*History:* through API Management until the owner ordered its removal on 2026-11-07, then direct to the Foundry project for a few hours the same day, now through the AI Gateway.",
+                      "**One gap is left, and it is a part of the build that is not done, not an exception that the owner made:** the two agents of the investigation (rule 30) still call the model deployments of their own Foundry resource until step 2",
+                      "(`AGENTS_VIA_AI_GATEWAY` in `tools/environment-params.py`, False today)", "A request that carries no prompt, or that the model service refuses before it runs a model, is not a model call"):
             self.assertIn(words, rule, words)
-        for old in ("Planned end, 2026-11-07", "The older Detective and Skeptic roles keep using the gateway.", "**Exception, 2026-11-06", "with no direct path", "is not used either", "the AI Gateway is not deployed"):
+        for old in ("goes direct, privately and with no key", "**nothing calls through it**", "This ends the \"governance hub\" route", "Planned end, 2026-11-07", "**Exception, 2026-11-06", "is not used either", "the AI Gateway is not deployed"):
             self.assertNotIn(old, rule, old)
 
     def test_the_routes_table_of_the_foundry_agents_has_the_new_row_last_and_every_old_row_is_still_there(self):
@@ -160,7 +164,7 @@ class TheOtherDocuments(unittest.TestCase):
         self.assertEqual(len(rows), 1)
         self.assertIn("built and not deployed", rows[0])
         self.assertIn("is deployed and checked since 2026-11-07", rows[0])
-        bullets = [line for line in README.splitlines() if line.startswith("- **An AI Gateway for the agents' model calls (deployed on 2026-11-07, and nothing calls through it yet; step 2 is built and off)**")]
+        bullets = [line for line in README.splitlines() if line.startswith("- **An AI Gateway for every model call (deployed on 2026-11-07; the Detective and the Skeptic call it, built and not yet run in Azure; step 2 for the agents is built and off)**")]
         self.assertEqual(len(bullets), 1)
         self.assertIn("The owner believed that the gateway can be private. It cannot", bullets[0])
         self.assertLess(README.index("| **[Private by default](docs/proposals/07-private-by-default.md)**"), README.index(rows[0]), "the new row follows the row of the record before it")

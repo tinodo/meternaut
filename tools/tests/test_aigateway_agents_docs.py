@@ -59,7 +59,7 @@ class TheRecordOfStep2(unittest.TestCase):
     def test_the_status_says_that_step_1_is_deployed_step_2_is_built_and_not_deployed_the_switch_is_false_and_the_question_is_open(self):
         status = re.search(r"\*\*Status: .*?\*\* This page records", PROPOSAL).group(0)
         for words in ("Step 1 of 2 is deployed and checked", "Step 2 of 2 is built and not deployed", "`AGENTS_VIA_AI_GATEWAY` in `tools/environment-params.py`, that is False",
-                      "so that nothing changes until the owner flips it", "Nothing calls through the gateway, and the agents were not touched.",
+                      "so that nothing changes until the owner flips it", "The Detective and the Skeptic of the cases app call the gateway since the last change of this page", "and the agents were not touched.",
                       "Whether the connection can call the gateway with the project's own managed identity and no key is not known, and it was not tried"):
             self.assertIn(words, status, words)
         self.assertNotIn("is not built", status)
@@ -197,11 +197,13 @@ class TheOtherDocumentsOfStep2(unittest.TestCase):
         self.assertLess(BOOTSTRAP.index("## Added on 2026-11-07 for the AI Gateway"), BOOTSTRAP.index(SECTION))
         self.assertLess(BOOTSTRAP.index(SECTION), BOOTSTRAP.index("\n## After it\n"))
 
-    def test_rule_15_c_says_that_step_2_is_built_and_off_and_the_switch_is_false_and_the_ai_gateway_is_deployed_and_nothing_calls_through_it(self):
-        (rule,) = [line for line in AGENTS.splitlines() if line.lstrip().startswith("- **(c) Every model call of Meternaut goes direct, privately and with no key, to the model deployments of its own Foundry project**")]
-        self.assertIn("has been deployed since 2026-11-07, because the owner asked for it in writing (\"Create the AI Gateway with public network access and private routing.\"), and **nothing calls through it**: "
-                      "step 2, which gives the project a connection to it and the agents the model names `aigateway/<alias>`, is built and off (`AGENTS_VIA_AI_GATEWAY` is False) and needs the owner's separate yes, "
-                      "so until it is switched on every model call goes direct, as this rule says.", rule)
+    def test_rule_15_c_says_that_step_2_is_the_one_gap_built_and_off_with_the_switch_false_and_that_the_judges_go_through_the_ai_gateway(self):
+        (rule,) = [line for line in AGENTS.splitlines()
+                   if line.lstrip().startswith("- **(c) Every model call of Meternaut goes through the AI Gateway, the governance hub of the Citadel design, with no direct path, not even for a test, unless the owner makes a written exception**")]
+        self.assertIn("**One gap is left, and it is a part of the build that is not done, not an exception that the owner made:** the two agents of the investigation (rule 30) still call the model deployments "
+                      "of their own Foundry resource until step 2, the connection of the Foundry project to the gateway, is switched on with one line (`AGENTS_VIA_AI_GATEWAY` in `tools/environment-params.py`, "
+                      "False today), after the judges are proved on the real estate.", rule)
+        self.assertIn("The Detective and the Skeptic call it with the cases app's own identity", rule)
         self.assertNotIn("is not built", rule)
         self.assertNotIn("is not used either", rule)
         self.assertNotIn("the AI Gateway is not deployed", rule)
@@ -213,7 +215,7 @@ class TheOtherDocumentsOfStep2(unittest.TestCase):
         row = flat(rows[0])
         for words in ("(deployed; step 2 is built and off, the switch is False)", "step 2 builds it behind one switch, `AGENTS_VIA_AI_GATEWAY` in `tools/environment-params.py`, which is False",
                       "The gateway is deployed (2026-11-07); the connection is built, not deployed and not tried", "the three outcomes of step 2 and the order of its real run",
-                      "Until step 2 has run, the agents call their own resource, as in the first row", "**Deployed on 2026-11-07 at the owner's written request, and not used yet:** no call goes through it"):
+                      "Until step 2 has run, the agents call their own resource, as in the first row", "**Deployed on 2026-11-07 at the owner's written request; the Detective and the Skeptic of the cases app call it (built, not yet run in Azure) and the agents do not yet:** step 2 is a separate one-line change"):
             self.assertIn(words, row, words)
         self.assertNotIn("Not used since 2026-11-07", row)
         self.assertIn("`modelInvestigator` and `modelSkeptic` read `<connection>/<alias>`, for example `aigateway/gpt-6.1-sol`", FOUNDRY_AGENTS)
@@ -221,9 +223,9 @@ class TheOtherDocumentsOfStep2(unittest.TestCase):
     def test_the_readme_says_that_step_1_is_deployed_and_step_2_is_built_and_not_deployed(self):
         rows = [line for line in README.splitlines() if line.startswith("| **[An AI Gateway for the agents](docs/proposals/08-ai-gateway.md)**")]
         (row,) = rows
-        self.assertIn("step 2, the Foundry connection and a switch for the agents' model names, is built and not deployed, and the switch is False, so nothing calls through the gateway yet", row)
-        (bullet,) = [line for line in README.splitlines() if line.startswith("- **An AI Gateway for the agents' model calls")]
-        self.assertIn("step 2 is built and off", bullet)
+        self.assertIn("step 2, the Foundry connection and a switch for the agents' model names, is built and not deployed, and the switch is False, so the agents do not call through the gateway yet", row)
+        (bullet,) = [line for line in README.splitlines() if line.startswith("- **An AI Gateway for every model call")]
+        self.assertIn("step 2 for the agents is built and off", bullet)
         self.assertNotIn("both steps are built and not deployed", bullet)
         self.assertIn("`AGENTS_VIA_AI_GATEWAY` in [`tools/environment-params.py`](tools/environment-params.py), that is False, so that nothing changes until the owner flips it", bullet)
         self.assertNotIn("Not built: step 2", bullet)

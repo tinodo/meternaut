@@ -560,7 +560,7 @@ class TheCallsOfTheApp(unittest.TestCase):
         "public-ip-read": lambda m, p: m == "GET" and "Microsoft.Network/publicIPAddresses" in p,
         "subscriptions-list": lambda m, p: m == "GET" and p.endswith("/subscriptions"),
     }
-    # Every model call goes to the app's own Foundry project, with the app's identity: the Foundry User role that the template assigns, no line of this file.
+    # Every model call goes to the AI Gateway, with the app's identity: the AI Gateway Models User role that the gateway's template assigns inside the project's own group, no line of this file.
     NO_AZURE_ROLE: set = set()
 
     @staticmethod
@@ -622,23 +622,31 @@ class TheCallsOfTheApp(unittest.TestCase):
 
     def test_the_calls_to_the_foundry_project_need_no_line_of_this_file_and_hold_the_only_writes_of_the_list(self):
         # The agents and the conversations are written with the identity's Foundry User role on the project, which the Foundry template assigns inside the project's own group.
-        # The same role covers the chat completions of the Detective and the Skeptic, on the project's route and, as a fallback, on the route of the resource that holds the project.
+        # The role covers no chat completion: the Detective and the Skeptic call the AI Gateway (every model call goes through it, AGENTS.md rule 15 (c)), and no call to the Foundry resource or project may be a chat completion.
         endpoint = "https://example.services.ai.azure.com/api/projects/meternaut"
-        resource = "https://example.services.ai.azure.com"
         base = self.watch_calls()
         calls = cases_http.allowed_calls(endpoint)
         self.assertEqual(calls[:len(base)], base)
         extra = calls[len(base):]
         self.assertTrue(extra)
         for method, pattern in extra:
-            self.assertTrue(pattern.pattern.startswith(re.escape(endpoint)) or pattern.pattern.startswith(re.escape(resource) + "/openai/v1/chat"), pattern.pattern)
+            self.assertTrue(pattern.pattern.startswith(re.escape(endpoint)), pattern.pattern)
             self.assertEqual([n for n, test in self.NAMES.items() if test(method, pattern.pattern.replace("\\", ""))], [], pattern.pattern)
         self.assertEqual({method for method, _ in extra}, {"GET", "POST", "DELETE"})
         self.assertEqual([(m, p.pattern) for m, p in calls if m == "DELETE"],
                          [("DELETE", re.escape(endpoint) + r"/openai/v1/conversations/conv_[A-Za-z0-9_-]{1,100}")], "the one delete is the app's own conversation")
-        chats = [(m, p.pattern) for m, p in extra if "chat/completions" in p.pattern]
-        self.assertEqual(chats, [("POST", re.escape(endpoint) + re.escape("/openai/v1/chat/completions")), ("POST", re.escape(resource) + re.escape("/openai/v1/chat/completions"))],
-                         "one POST on the project's route and one on the resource's, and nothing else of the gateway")
+        self.assertEqual([(m, p.pattern) for m, p in extra if "chat/completions" in p.pattern], [], "no chat completion of the Foundry resource or project is allowed")
+
+    def test_the_one_call_to_the_ai_gateway_is_a_post_that_needs_no_line_of_this_file(self):
+        # The token is for the gateway's own audience and the role is assigned by the gateway's template, inside the project's own group (AGENTS.md rule 24).
+        host = "aigw-example-0123abcd.example-01.ai.gateway.azure.com"
+        base = self.watch_calls()
+        calls = cases_http.allowed_calls(None, host)
+        self.assertEqual(calls[:len(base)], base)
+        extra = calls[len(base):]
+        self.assertEqual([(m, p.pattern) for m, p in extra], [("POST", re.escape(f"https://{host}/default/models/openai/v1/chat/completions"))])
+        for method, pattern in extra:
+            self.assertEqual([n for n, test in self.NAMES.items() if test(method, pattern.pattern.replace("\\", ""))], [], pattern.pattern)
 
     def test_only_the_cases_identity_has_calls_listed(self):
         for grant in MANIFEST["grants"]:

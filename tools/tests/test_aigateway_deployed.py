@@ -70,10 +70,10 @@ class TheSwitchIsStillFalse(unittest.TestCase):
 
 
 class TheRulesAndTheRecordSayTheSame(unittest.TestCase):
-    def test_rule_15_c_still_says_that_every_model_call_goes_direct_until_step_2_is_switched_on(self):
+    def test_rule_15_c_says_that_every_model_call_goes_through_the_ai_gateway_and_that_the_agents_are_the_one_gap_until_step_2_is_switched_on(self):
         (rule,) = [line for line in text("AGENTS.md").splitlines()
-                   if line.lstrip().startswith("- **(c) Every model call of Meternaut goes direct, privately and with no key, to the model deployments of its own Foundry project**")]
-        for words in ("**nothing calls through it**", "needs the owner's separate yes, so until it is switched on every model call goes direct, as this rule says.",
+                   if line.lstrip().startswith("- **(c) Every model call of Meternaut goes through the AI Gateway, the governance hub of the Citadel design, with no direct path, not even for a test, unless the owner makes a written exception**")]
+        for words in ("**One gap is left, and it is a part of the build that is not done, not an exception that the owner made:**", "False today), after the judges are proved on the real estate.",
                       "so a new deployment of it needs his written request again", "The owner's own, existing AI Gateway in another subscription is not touched"):
             self.assertIn(words, rule, words)
 
@@ -81,7 +81,7 @@ class TheRulesAndTheRecordSayTheSame(unittest.TestCase):
         section = RECORD.split("## What a person does")[1].split("## Telemetry is off")[0]
         for words in ("Steps 1 to 4 were done on 2026-11-07. Step 5 was not, and it needs the owner's separate yes.", f'"{REQUEST}"', "**Not needed on 2026-11-07, for the Operator's identity:**",
                       "Whether the Foundry Agent Service needs it in step 2 is not known.", "from inside the network in the Operator, passed 4 of 4", "the service never returns `apiFormat` for a model",
-                      "**Not done:** the switch is False, and nothing calls through the gateway."):
+                      "**Not done:** the switch is False, and the agents call their own deployments."):
             self.assertIn(words, section, words)
 
     def test_no_live_page_says_any_more_that_the_gateway_is_not_deployed_or_not_used(self):

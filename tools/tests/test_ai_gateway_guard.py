@@ -151,7 +151,8 @@ class TheGuardRuns(unittest.TestCase):
 class TheRulesSayIt(unittest.TestCase):
     def test_agents_md_says_that_the_input_is_set_only_on_the_owners_written_request(self):
         agents = (ROOT / "AGENTS.md").read_text(encoding="utf-8").replace("\r\n", "\n")
-        (rule,) = [line for line in agents.splitlines() if line.startswith("    - **(c) Every model call of Meternaut goes direct, privately and with no key, to the model deployments of its own Foundry project**")]
+        (rule,) = [line for line in agents.splitlines()
+                   if line.startswith("    - **(c) Every model call of Meternaut goes through the AI Gateway, the governance hub of the Citadel design, with no direct path, not even for a test, unless the owner makes a written exception**")]
         for words in ("\"NO PUBLIC ENDPOINTS UNLESS SPECIFICALLY REQUESTED\"", "the action `aigateway`, the only one that deploys the AI Gateway, stops at its first step unless the workflow input `public_ai_gateway_requested` is set",
                       "which is done only when the owner has asked in writing for a public AI Gateway"):
             self.assertIn(words, rule, words)

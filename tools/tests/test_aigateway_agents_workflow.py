@@ -108,6 +108,7 @@ esac
 SETTINGS_PYTHON3 = """#!/bin/bash
 if [ "$2" = "build" ]; then
   echo "build preview=$([[ " $* " == *" --preview "* ]] && echo yes || echo no) host=[${AIGATEWAY_HOST-unset}] project=[${FOUNDRY_PROJECT_PRINCIPAL_ID-unset}]" >> "$FAKE_LOG"
+  echo "principal cases=[${CASES_SYSTEM_PRINCIPAL_ID-unset}]" >> "$FAKE_LOG"
   printf '%s\\n' "$FAKE_BUILD_OUTPUT"
 else
   echo "check $*" >> "$FAKE_LOG"
@@ -135,16 +136,89 @@ class TheSettingsStepReadsWhatTheSwitchNeedsAndNothingWhileItIsOff(unittest.Test
     def mine(self, lines):
         return [line for line in lines if "/aigateways/" in line or "--query identity.principalId" in line and "/projects/" in line or "/connections/" in line]
 
-    def test_while_the_switch_is_off_nothing_is_read_and_the_builder_gets_nothing_new_and_no_output_is_added(self):
-        for action in ("what-if", "foundry", "aigateway", "cases", "recording", "operator", "plant", "model-side"):
+    def test_while_the_switch_is_off_the_actions_that_have_nothing_to_do_with_the_gateway_read_nothing_of_it_and_the_builder_gets_it_empty(self):
+        # The action foundry reads the host name only while the switch is on, and aigateway reads the project's identity only then; the other actions read neither. (cases and what-if read the host
+        # whatever the switch says: they are in the next tests.)
+        for action in ("foundry", "aigateway", "recording", "operator", "plant", "model-side", "cases-run", "aigateway-check"):
             with self.subTest(action=action):
                 done, lines, out, _ = self.settings(action, build=BUILD_OFF)
                 self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
                 self.assertEqual(self.mine(lines), [])
                 self.assertEqual(self.builds(lines), ["build preview=yes host=[unset] project=[unset]", f"build preview={self.final_preview(action)} host=[] project=[]"], "empty, which the builder reads as not given")
-                self.assertNotIn("aigateway_host=", out)
-                self.assertNotIn("foundry_project_principal=", out)
+                self.assertIn("aigateway_host=\n", out)
+                self.assertIn("foundry_project_principal=\n", out)
                 self.assertNotIn("AI Gateway", done.stdout + done.stderr)
+
+    def test_the_action_cases_reads_the_host_name_of_the_gateway_whether_the_switch_is_on_or_off_and_hands_it_to_the_builder(self):
+        # Every model call of the cases app goes through the AI Gateway (AGENTS.md rule 15 (c)), so the app is made only with the gateway's host name, read from the service and never made up.
+        for build in (BUILD_OFF, BUILD_ON):
+            with self.subTest(switch="on" if build == BUILD_ON else "off"):
+                done, lines, out, _ = self.settings("cases", build=build)
+                self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+                self.assertEqual([line for line in lines if "/aigateways/" in line], [GATEWAY_URL])
+                self.assertEqual(self.builds(lines)[1], f"build preview=no host=[{HOST}] project=[]", "the host goes to the builder; cases does not look for the project's identity")
+                self.assertIn(f"aigateway_host={HOST}\n", out)
+                self.assertIn(f"The service reports the host name of the AI Gateway {GATEWAY}; it goes into the cases file (and into the Foundry file while the switch is on).", done.stdout)
+                self.assertNotIn(HOST, done.stdout + done.stderr, "the host name is an output and is not printed")
+                self.assertEqual([line for line in lines if "--query identity.principalId" in line and "/projects/" in line], [])
+
+    def test_a_gateway_that_is_not_there_stops_the_action_cases_at_once_and_nothing_is_built_after_it_whether_the_switch_is_on_or_off(self):
+        for build in (BUILD_OFF, BUILD_ON):
+            for answer in ("ERROR: (ResourceNotFound) The Resource 'Microsoft.ApiManagement/aigateways/x' was not found.", 'ERROR: Not Found({"error":{"code":"NotFound"}})', "ERROR: the request failed with status 404"):
+                with self.subTest(switch="on" if build == BUILD_ON else "off", answer=answer[:30]):
+                    done, lines, out, _ = self.settings("cases", build=build, FAKE_HOST_ERROR=answer)
+                    self.assertNotEqual(done.returncode, 0)
+                    said = done.stdout + done.stderr
+                    self.assertIn(f"::error::The AI Gateway {GATEWAY} is not in Azure or has not reported its host name. Every model call of the cases app goes through it, so the Detective and the Skeptic have "
+                                  "no route without it and the action cases does not deploy the app. Run aigateway first (the order is in environment/BOOTSTRAP.md). Nothing was changed.", said)
+                    self.assertEqual(self.builds(lines), ["build preview=yes host=[unset] project=[unset]"], "the final files are not made")
+                    self.assertEqual([line for line in lines if line.startswith("check ")], [])
+        for answer in ("", "None", "evil.example.com", f"{HOST}.evil.example.com", f"https://{HOST}", HOST.upper(), f"{HOST}/default"):
+            with self.subTest(answer=answer):
+                done, lines, out, _ = self.settings("cases", build=BUILD_OFF, FAKE_HOST=answer)
+                self.assertNotEqual(done.returncode, 0, answer)
+                self.assertIn("is not in Azure or has not reported its host name. Every model call of the cases app goes through it", done.stdout + done.stderr)
+                self.assertNotIn("aigateway_host=", out)
+        done, lines, _, _ = self.settings("cases", build=BUILD_OFF, FAKE_HOST_ERROR=HOSTILE)
+        self.assertNotEqual(done.returncode, 0)
+        self.assertIn(f"::error::The AI Gateway {GATEWAY} could not be read: {HOSTILE}", done.stdout + done.stderr)
+        self.assertNotIn("Run aigateway first", done.stdout + done.stderr, "a read that failed for another reason is no 'not found'")
+
+    def test_what_if_previews_the_cases_app_with_a_placeholder_when_the_gateway_is_not_there_and_does_not_stop(self):
+        for build in (BUILD_OFF, BUILD_ON):
+            with self.subTest(switch="on" if build == BUILD_ON else "off"):
+                done, lines, out, _ = self.settings("what-if", build=build, FAKE_HOST="")
+                self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+                self.assertIn(f"::warning::The preview of the cases app holds a placeholder for the host name of the AI Gateway, because the gateway {GATEWAY} is not in Azure or has not reported its host name "
+                              "(run aigateway first).", done.stdout + done.stderr)
+                self.assertNotIn("::error::", done.stdout + done.stderr)
+                self.assertEqual(self.builds(lines)[1], "build preview=no host=[] project=[" + (PROJECT_PRINCIPAL if build == BUILD_ON else "") + "]", "no host: the builder uses its placeholder")
+                done, lines, out, _ = self.settings("what-if", build=build, FAKE_HOST_ERROR=HOSTILE)
+                self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+                self.assertIn(f"::warning::The AI Gateway {GATEWAY} could not be read: {HOSTILE}", done.stdout + done.stderr)
+                done, lines, out, _ = self.settings("what-if", build=build)
+                self.assertEqual(self.builds(lines)[1], "build preview=no host=[" + HOST + "] project=[" + (PROJECT_PRINCIPAL if build == BUILD_ON else "") + "]", "the real host when the gateway is there")
+
+    def test_the_cases_apps_identity_is_read_by_what_if_foundry_and_aigateway_whether_the_switch_is_on_or_off_and_by_no_other_action(self):
+        # The one object id serves the Foundry file (Foundry User on the project) and the AI Gateway file (AI Gateway Models User on the gateway). An app that does not exist yet is no error: the
+        # gateway is then made without the role, and the next run gives it.
+        for build in (BUILD_OFF, BUILD_ON):
+            for action in ("what-if", "foundry", "aigateway"):
+                with self.subTest(switch="on" if build == BUILD_ON else "off", action=action):
+                    done, lines, out, _ = self.settings(action, build=build)
+                    self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+                    self.assertEqual(lines.count(f"principal cases=[{CASES_PRINCIPAL}]"), 1, "the final build is given it, and the first, preview build is not")
+                    self.assertIn(f"cases_app_principal={CASES_PRINCIPAL}\n", out)
+                    self.assertIn("its principal id goes into the Foundry file and the AI Gateway file.", done.stdout)
+                    done, lines, out, _ = self.settings(action, build=build, FAKE_SYSTEM="")
+                    self.assertEqual(done.returncode, 0, "an app with no identity yet is no error")
+                    self.assertIn("cases_app_principal=\n", out)
+                    self.assertIn("the Foundry file holds a placeholder and the AI Gateway file gives no role to the app.", done.stdout)
+            for action in ("cases", "recording", "operator", "plant", "model-side", "cases-run"):
+                with self.subTest(switch="on" if build == BUILD_ON else "off", action=action, reads="no"):
+                    done, lines, out, _ = self.settings(action, build=build)
+                    self.assertEqual([line for line in lines if "/providers/Microsoft.Web/sites/" in line], [], "the action does not look for the app's identity")
+                    self.assertIn("cases_app_principal=\n", out)
 
     def test_foundry_reads_the_host_name_from_the_service_with_the_version_that_the_check_uses_and_hands_it_to_the_builder(self):
         done, lines, out, _ = self.settings("foundry")
@@ -153,7 +227,7 @@ class TheSettingsStepReadsWhatTheSwitchNeedsAndNothingWhileItIsOff(unittest.Test
         self.assertEqual(self.builds(lines)[1], f"build preview=no host=[{HOST}] project=[]", "foundry does not look for the project's identity")
         self.assertIn(f"aigateway_host={HOST}\n", out)
         self.assertIn("foundry_project_principal=\n", out)
-        self.assertIn(f"The service reports the host name of the AI Gateway {GATEWAY}; it goes into the Foundry file.", done.stdout)
+        self.assertIn(f"The service reports the host name of the AI Gateway {GATEWAY}; it goes into the cases file (and into the Foundry file while the switch is on).", done.stdout)
         self.assertNotIn(HOST, done.stdout + done.stderr, "the host name is an output and is not printed")
         self.assertEqual([line for line in lines if "--query identity.principalId" in line and "/projects/" in line], [], "foundry does not read the project's identity")
 
@@ -170,7 +244,7 @@ class TheSettingsStepReadsWhatTheSwitchNeedsAndNothingWhileItIsOff(unittest.Test
         done, lines, out, _ = self.settings("what-if")
         self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
         self.assertEqual(self.builds(lines)[1], f"build preview=no host=[{HOST}] project=[{PROJECT_PRINCIPAL}]")
-        for action in ("cases", "cases-run", "recording", "recording-check", "operator", "operator-probe", "plant", "loop-check", "model-side", "aigateway-check"):
+        for action in ("cases-run", "recording", "recording-check", "operator", "operator-probe", "plant", "loop-check", "model-side", "aigateway-check"):
             with self.subTest(action=action):
                 done, lines, out, _ = self.settings(action, FAKE_HOST_ERROR=HOSTILE, FAKE_PROJECT_ERROR=HOSTILE)
                 self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
@@ -233,7 +307,7 @@ class TheSettingsStepReadsWhatTheSwitchNeedsAndNothingWhileItIsOff(unittest.Test
         self.assertIn(f"::warning::The Foundry project could not be read: {HOSTILE}", done.stdout + done.stderr)
         self.assertNotIn("::error::", done.stdout + done.stderr)
 
-    def test_the_step_only_reads_and_the_two_values_are_the_only_things_that_it_adds_to_the_answer_of_the_builder(self):
+    def test_the_step_only_reads_and_the_three_values_are_the_only_things_that_it_adds_to_the_answer_of_the_builder(self):
         done, lines, out, _ = self.settings("what-if")
         for call in lines:
             if call.startswith("az "):
@@ -242,7 +316,7 @@ class TheSettingsStepReadsWhatTheSwitchNeedsAndNothingWhileItIsOff(unittest.Test
         self.assertNotRegex(code, r"--method (put|patch|post|delete)")
         for word in ("listKeys", "listSecrets", "az role", "az ad ", "--yes", "az resource delete"):
             self.assertNotIn(word, code, word)
-        self.assertEqual(re.findall(r"(?m)^\s+echo \"(aigateway_host|foundry_project_principal)=", code), ["aigateway_host", "foundry_project_principal"])
+        self.assertEqual(re.findall(r"(?m)^\s+echo \"(aigateway_host|foundry_project_principal|cases_app_principal)=", code), ["aigateway_host", "foundry_project_principal", "cases_app_principal"])
 
 
 @unittest.skipIf(BASH is None, "no bash on this machine")
@@ -356,6 +430,20 @@ class TheReadBacksAskForMoreOnlyWhileTheSwitchIsOn(unittest.TestCase):
         self.assertEqual(self.arguments(lines), [*plain, "--project-principal", PROJECT_PRINCIPAL])
         done, _, _, _ = self.aigateway(PROJECT_PRINCIPAL=PROJECT_PRINCIPAL, FAKE_EXIT="1")
         self.assertEqual(done.returncode, 1)
+
+    def test_the_read_back_of_the_gateway_asks_for_the_cases_apps_role_only_with_its_object_id_and_otherwise_is_what_it_was(self):
+        # The judges call the gateway with the cases app's identity, so its role is read back when the app has an identity (the settings step read it from the app). Whether the switch is on or off.
+        done, lines, _, _ = self.aigateway()
+        plain = self.arguments(lines)
+        self.assertNotIn("--cases-principal", plain)
+        self.assertEqual(self.arguments(self.aigateway(CASES_PRINCIPAL="")[1]), plain, "an empty object id is none: the app has no identity yet")
+        done, lines, _, _ = self.aigateway(CASES_PRINCIPAL=CASES_PRINCIPAL)
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertEqual(self.arguments(lines), [*plain, "--cases-principal", CASES_PRINCIPAL])
+        done, lines, _, _ = self.aigateway(PROJECT_PRINCIPAL=PROJECT_PRINCIPAL, CASES_PRINCIPAL=CASES_PRINCIPAL)
+        self.assertEqual(self.arguments(lines), [*plain, "--project-principal", PROJECT_PRINCIPAL, "--cases-principal", CASES_PRINCIPAL], "both roles are read back, each with its own flag")
+        done, _, _, _ = self.aigateway(CASES_PRINCIPAL=CASES_PRINCIPAL, FAKE_EXIT="1")
+        self.assertEqual(done.returncode, 1, "a read-back that fails fails the step")
 
 
 @unittest.skipIf(BASH is None, "no bash on this machine")
