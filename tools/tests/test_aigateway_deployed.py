@@ -1,7 +1,7 @@
 """The records of 2026-11-07 about the AI Gateway: it is deployed and checked, nothing calls through it yet, and step 2 is still off.
 
 The owner asked in writing for the gateway ("Create the AI Gateway with public network access and private routing."), the actions `aigateway` and `aigateway-check` ran, and the changelog says what they made,
-proved and found. These tests hold the newest changelog entry, the switch that is still False and the pages that used to say "not deployed" to one story. They call neither Azure nor GitHub."""
+proved and found. These tests hold the changelog entry, the switch that is still False and the pages that used to say "not deployed" to one story. They call neither Azure nor GitHub."""
 import re
 import unittest
 from pathlib import Path
@@ -21,15 +21,15 @@ def flat(source):
 
 
 CHANGELOG = text("CHANGELOG.md")
-ENTRY = CHANGELOG.split("\n## ")[3]
+ENTRY = CHANGELOG.split("\n## ")[4]
 RECORD = flat(text("docs/proposals/08-ai-gateway.md"))
 
 
 class TheChangelogEntry(unittest.TestCase):
-    def test_it_is_the_entry_under_the_newest_one_which_is_the_estate_wide_watch_and_has_at_most_twelve_lines(self):
+    def test_it_is_the_entry_under_the_two_entries_of_the_estate_watch_and_the_web_page_and_has_at_most_twelve_lines(self):
         headings = re.findall(r"(?m)^## (.*)$", CHANGELOG)
-        self.assertTrue(headings[1].startswith("The Watch reads every subscription that its identity can read"), "the entry of 2026-11-07 about the estate-wide Watch follows the newest, the entry of the web page")
-        self.assertEqual(headings[2], TITLE)
+        self.assertTrue(headings[2].startswith("The Watch reads every subscription that its identity can read"), "the entry of 2026-11-07 about the build of the estate-wide Watch follows the entries of the deployed Watch and of the web page")
+        self.assertEqual(headings[3], TITLE)
         self.assertTrue(ENTRY.startswith(TITLE))
         self.assertLessEqual(len(ENTRY.strip().splitlines()), 12, "the owner reads nothing long")
 

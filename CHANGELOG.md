@@ -2,6 +2,16 @@
 
 All notable changes, newest first. Versions are git tags: `ideation-vN` for the ideation (`docs/01` to `docs/10` and the research), `design-vN` for the design (`docs/design/`; `design-v1` was withdrawn), `experience-vN` for the experience design (`docs/experience/`) and `build-plan-vN` for the build plan (`docs/build-plan/`). A heading without a tag records a change that is not a new edition. The previous editions stay available at their tags, and the earliest are archived under [`docs/_archive/`](docs/_archive/), which is never edited.
 
+## The whole-estate Watch is deployed and checked — 2026-11-07
+
+**What the owner ordered, and who gave what.** In writing: "That must be on the root management group; watch the entire estate." A person, in the owner's own session and on his word, gave the cases app's system-assigned identity the read-only roles *Reader* and *Cost Management Reader* at the tenant root management group, with `tools/access-requirements.py grant --only R1,R2 --estate <the group>`, and read back 2 of 2 present.
+
+**What ran.** Hub `cases` (run 42402199092, from `main` at 9ecb3e9) deployed the app with `SCOPE_ALL_SUBSCRIPTIONS` true; read back from the app: that setting true, `SCOPE_SUBSCRIPTIONS` kept as the fallback, no `GATEWAY_*` setting left. Hub `cases-run` (run 42402901444) ended well: "The Watch read 10 subscriptions (every subscription that the app's identity can read)", in 345 seconds, with 11 leads (advisor-cost 4, orphan-managed-disk 1, orphan-private-endpoint 6). The History page showed the run correctly in a read-only browser check, and the Hub's `what-if` (run 42404194478) is green for every template.
+
+**What it found.** The investigation ran 261 seconds, with 9 tool calls and 29,290 tokens, and opened 4 cases (investigate, needs a person) about private endpoints in a subscription other than the pilot's. Notes: its `estate_overview` tool stopped at its 45-second budget and left one subscription unread in that call, and one tool call got a 400 for a metric namespace that is not supported (a detail of the agent's request).
+
+**Not checked.** The scheduled daily run (05:30 UTC) unattended on the whole estate; Advisor, which is still read for each subscription; throttling on a much larger estate. The facts were passed on by the session that ran the Hub; nothing was read from Azure or GitHub here. This change touches documents and tests only.
+
 ## The web page can be closed and reached on the private network: the check of its front door runs inside the network (built, not deployed) — 2026-11-07
 
 **What the owner decided.** No Application Gateway for the web page (its health probes keep an app awake, and he wants it to scale to zero): he reaches the private network instead. So the state to support is public network access `Disabled`, the private endpoint as the only way in, and `CONSOLE_HOST_NAME` unset.
