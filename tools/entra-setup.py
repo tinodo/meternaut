@@ -22,6 +22,12 @@ id 41094075-9dad-400e-a0bd-54e686782033). The OpenID Connect scopes need no perm
 only as a signed-in person. The return address of the second sign-in is https://<host>/arm/return, next to the platform's own
 https://<host>/.auth/login/aad/callback.
 
+<host> is the name that people open. While the function app takes public traffic it is the app's own name, <app>.azurewebsites.net. Once the app is closed and
+the platform's Application Gateway forwards to it, it is the console's host name on that gateway (the repository variable CONSOLE_HOST_NAME): both return
+addresses name that host, because the sign-in sends a person back to the host that the person came on (docs/proposals/07-private-by-default.md). Run the tool
+again with the new host before the variable is set. It only adds the addresses of the new host: the addresses of the app's own name stay, shown as a note,
+until a person removes them in the portal.
+
 A person who may make app registrations, assign people to an enterprise application and consent for the whole tenant (an Application Administrator and
 a Privileged Role Administrator, or a Global Administrator) runs this tool with their own sign-in to the Azure CLI. It never runs in a pipeline
 (AGENTS.md rules 18 and 24): the deployment workflow's identity holds no right in Microsoft Entra and must not get one. The tool makes only the calls of
@@ -304,7 +310,7 @@ def read_config(args: argparse.Namespace) -> Config:
         raise Problem("--tenant-id is required: the id of the tenant (a GUID)")
     host = (args.host or "").lower()
     if not host or not HOST.fullmatch(host):
-        raise Problem("--host is required: the host name of the console, for example func-name.azurewebsites.net")
+        raise Problem("--host is required: the host name that people open, the console's host name on the platform's Application Gateway or the function app's own name (for example func-name.azurewebsites.net)")
     principal = args.identity_principal_id
     if not principal or not GUID.fullmatch(principal):
         raise Problem("--identity-principal-id is required: the object (principal) id of the identity of the sign-in (a GUID)")
@@ -752,7 +758,7 @@ def main(argv: list[str] | None = None, runner: Callable[[list[str]], tuple[int,
     for name, text in (("check", "read only: which items are in order"), ("apply", "dry run; with --apply, make what is missing")):
         sub = commands.add_parser(name, help=text)
         sub.add_argument("--tenant-id")
-        sub.add_argument("--host", help="the host name of the console, for example func-name.azurewebsites.net")
+        sub.add_argument("--host", help="the host name that people open: the console's host name on the platform's Application Gateway (the variable CONSOLE_HOST_NAME), or the function app's own name, for example func-name.azurewebsites.net")
         sub.add_argument("--identity-principal-id", help="the object id of the user-assigned identity that signs in as the app")
         sub.add_argument("--assign", action="append", help="the object id of a person who may sign in; repeat it or separate with commas")
         if name == "apply":

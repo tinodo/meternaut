@@ -1,9 +1,17 @@
+import ast
+import contextlib
+import http.client
 import importlib.util
 import io
 import re
+import subprocess
+import sys
 import tempfile
 import unittest
+import urllib.error
+import urllib.parse
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
 spec = importlib.util.spec_from_file_location("console_check", ROOT / "tools" / "console-check.py")
@@ -197,8 +205,359 @@ class TheCommand(unittest.TestCase):
     def test_it_is_standard_library_only_and_makes_no_write(self):
         source = (ROOT / "tools" / "console-check.py").read_text(encoding="utf-8")
         modules = set(re.findall(r"^(?:import|from) (\w+)", source, re.M))
-        self.assertTrue(modules <= {"argparse", "re", "ssl", "sys", "urllib", "uuid", "typing", "__future__"}, modules)
+        self.assertTrue(modules <= {"argparse", "http", "ipaddress", "re", "socket", "ssl", "sys", "time", "urllib", "uuid", "typing", "__future__"}, modules)
         self.assertNotRegex(source, r'method="(POST|PUT|PATCH|DELETE)"')
+
+
+PROXY = "console.example.net"
+
+
+class Proxied:
+    """The console behind a reverse proxy, the platform's Application Gateway: the platform's sign-in redirects, and `named` is the host that its return address names.
+
+    `form` is how the redirect looks. "entra": straight to Microsoft Entra, with redirect_uri. "own": the sign-in's own address, with post_login_redirect_uri.
+    "path": the same, with a return address that is a path. "bare": the sign-in's own address and no return address at all."""
+
+    def __init__(self, host=PROXY, named=None, form="entra"):
+        self.host, self.named, self.form = host, named or host, form
+        self.calls = []
+
+    def __call__(self, url, headers):
+        self.calls.append((url, dict(headers)))
+        path = url.split(self.host, 1)[1]
+        if path == "/healthz":
+            return 200, {}, b"ok"
+        if self.form == "entra":
+            query = urllib.parse.urlencode({"response_type": "code id_token", "client_id": "client", "redirect_uri": f"https://{self.named}/.auth/login/aad/callback", "state": "s"})
+            where = f"https://login.microsoftonline.com/tenant/oauth2/v2.0/authorize?{query}"
+        elif self.form == "own":
+            where = "/.auth/login/aad?" + urllib.parse.urlencode({"post_login_redirect_uri": f"https://{self.named}{path}"})
+        elif self.form == "path":
+            where = "/.auth/login/aad?" + urllib.parse.urlencode({"post_login_redirect_uri": path})
+        else:
+            where = "/.auth/login/aad"
+        return 302, {"location": where}, b""
+
+
+class TheDoorBehindAReverseProxy(unittest.TestCase):
+    """The front door that people use once the cases app is closed is the console's host name on the platform's Application Gateway. The sign-in of the app builds its return address from the
+    host that it believes the request was made to, so the check also asks that the address names the proxy's name: a sign-in that returns to the app's own name sends a person to a name that
+    a closed app cannot answer on."""
+
+    def test_a_sign_in_that_returns_to_the_proxys_name_passes_in_both_forms_and_the_row_says_so(self):
+        for form in ("entra", "own"):
+            with self.subTest(form=form):
+                passed, rows = cc.door(PROXY, "signin", Proxied(form=form), proxied=True)
+                self.assertTrue(passed, rows)
+                self.assertEqual(len(rows), 1 + len(cc.PAGES) + len(cc.FORGED_PAGES))
+                for path, how, ok, text in rows:
+                    if path != "/healthz":
+                        self.assertTrue(text.endswith(", return address names the host"), text)
+
+    def test_a_sign_in_that_returns_to_the_apps_own_name_fails_behind_a_proxy_and_passes_without_the_flag(self):
+        # What the platform's sign-in does when forwardProxy does not read the proxy's header: the redirect is right and the return address is the app's own name.
+        for form in ("entra", "own"):
+            with self.subTest(form=form):
+                passed, rows = cc.door(PROXY, "signin", Proxied(named=HOST, form=form), proxied=True)
+                self.assertFalse(passed)
+                failed = [row for row in rows if not row[2]]
+                self.assertEqual(len(failed), len(cc.PAGES) + len(cc.FORGED_PAGES), "every redirect names the wrong host; /healthz is no redirect and passes")
+                for path, how, ok, text in failed:
+                    self.assertIn(f"but the return address names {HOST}", text)
+                self.assertTrue(cc.door(PROXY, "signin", Proxied(named=HOST, form=form))[0], "without --proxied the check is what it was")
+
+    def test_a_redirect_that_shows_no_return_address_with_a_host_in_it_passes_and_the_row_says_that_none_was_seen(self):
+        for form in ("bare", "path"):
+            with self.subTest(form=form):
+                passed, rows = cc.door(PROXY, "signin", Proxied(form=form), proxied=True)
+                self.assertTrue(passed, rows)
+                for path, how, ok, text in rows:
+                    if path != "/healthz":
+                        self.assertTrue(text.endswith(", no return address with a host in it"), text)
+
+    def test_a_redirect_that_is_no_sign_in_is_no_sign_in_whatever_it_names(self):
+        elsewhere = "https://example.com/login?redirect_uri=https%3A%2F%2Fconsole.example.net%2F"
+        self.assertEqual(cc.verdict("/", 302, {"location": elsewhere}, "signin", PROXY)[0], False)
+        self.assertEqual(cc.verdict("/", 200, {}, "signin", PROXY)[0], False)
+
+    def test_the_hosts_that_a_redirect_names_are_read_from_both_parameters_in_lower_case_without_a_port(self):
+        entra = "https://login.microsoftonline.com/t/oauth2/v2.0/authorize?"
+        for where, hosts in ((f"{entra}redirect_uri=https%3A%2F%2F{PROXY}%2F.auth%2Flogin%2Faad%2Fcallback", [PROXY]),
+                             ("/.auth/login/aad?post_login_redirect_uri=https%3A%2F%2FConsole.Example.NET%3A443%2Fhistory", [PROXY]),
+                             ("/.auth/login/aad?post_login_redirect_uri=%2Fhistory", []),
+                             ("/.auth/login/aad", []),
+                             (f"{entra}redirect_uri=https%3A%2F%2Fa.example.net%2Fx&post_login_redirect_uri=https%3A%2F%2Fb.example.net%2F", ["a.example.net", "b.example.net"]),
+                             ("/.auth/login/aad?other=https%3A%2F%2Fc.example.net%2F", []),
+                             ("", [])):
+            self.assertEqual(cc.return_hosts(where), hosts, where)
+
+    def test_a_return_address_that_also_names_another_host_fails_even_when_the_first_is_right(self):
+        entra = "https://login.microsoftonline.com/t/oauth2/v2.0/authorize?"
+        where = f"{entra}redirect_uri=https%3A%2F%2F{PROXY}%2Fa&post_login_redirect_uri=https%3A%2F%2F{HOST}%2F"
+        ok, text = cc.verdict("/", 302, {"location": where}, "signin", PROXY)
+        self.assertFalse(ok)
+        self.assertIn(HOST, text)
+        self.assertTrue(cc.verdict("/", 302, {"location": f"{where.split('&')[0]}&post_login_redirect_uri=https%3A%2F%2F{PROXY}%2F"}, "signin", PROXY)[0])
+
+    def test_a_refusal_has_no_redirect_to_read_so_the_flag_changes_nothing(self):
+        def refuses(url, headers):
+            return (200, {}, b"ok") if url.endswith("/healthz") else (503, {}, b"sign-in is not set up")
+
+        self.assertTrue(cc.door(PROXY, "refuse", refuses, proxied=True)[0])
+        self.assertFalse(cc.door(PROXY, "signin", refuses, proxied=True)[0])
+
+    def test_a_page_served_without_a_sign_in_and_a_made_up_header_that_is_trusted_fail_behind_a_proxy_too(self):
+        def leaks(path):
+            def get(url, headers):
+                return (200, {}, b"<html>") if url.split(PROXY, 1)[1] == path else Proxied()(url, headers)
+            return get
+
+        for path in cc.PAGES:
+            with self.subTest(path=path):
+                passed, rows = cc.door(PROXY, "signin", leaks(path), proxied=True)
+                self.assertFalse(passed)
+                self.assertEqual({row[0] for row in rows if not row[2]}, {path})
+
+    def test_every_request_goes_to_the_proxys_name_and_carries_no_credential(self):
+        door = Proxied()
+        cc.door(PROXY, "signin", door, proxied=True)
+        self.assertEqual(len(door.calls), 1 + len(cc.PAGES) + len(cc.FORGED_PAGES))
+        for url, headers in door.calls:
+            self.assertTrue(url.startswith(f"https://{PROXY}/"), url)
+            self.assertFalse({key.lower() for key in headers} & {"authorization", "cookie", "x-api-key", "ocp-apim-subscription-key", "x-original-host"}, headers)
+
+    def test_the_flag_reaches_the_check_through_the_command_line(self):
+        out = io.StringIO()
+        self.assertEqual(cc.main(["door", "--host", PROXY, "--proxied"], Proxied(), out), 0)
+        self.assertIn(f"PASS  /                            no sign-in", out.getvalue().splitlines()[1])
+        out = io.StringIO()
+        self.assertEqual(cc.main(["door", "--host", PROXY, "--proxied"], Proxied(named=HOST), out), 1)
+        self.assertIn(f"but the return address names {HOST}", out.getvalue())
+        self.assertEqual(cc.main(["door", "--host", PROXY], Proxied(named=HOST), io.StringIO()), 0, "without the flag nothing is asked of the return address")
+
+
+class Answers:
+    """The health address as it answers one try after another: (status, body) or an exception to raise. The last answer is the answer of every try after the list."""
+
+    def __init__(self, *answers):
+        self.answers, self.calls = list(answers), []
+
+    def __call__(self, url, headers, timeout):
+        self.calls.append((url, dict(headers), timeout))
+        answer = self.answers.pop(0) if len(self.answers) > 1 else self.answers[0]
+        if isinstance(answer, BaseException):
+            raise answer
+        status, body = answer
+        return status, {}, body
+
+
+def run_health(get, addresses=("10.53.0.21",), tries=5, private=True, interval=10.0, timeout=15.0, host=HOST):
+    """cc.health with a name that resolves to `addresses` (a list, or a list of lists and exceptions, one for each try), and a clock that only counts."""
+    sleeps, out = [], io.StringIO()
+    results = list(addresses) if addresses and isinstance(addresses[0], (list, BaseException)) else [list(addresses)]
+
+    def resolve(name):
+        result = results.pop(0) if len(results) > 1 else results[0]
+        if isinstance(result, BaseException):
+            raise result
+        return result
+
+    ok = cc.health(host, tries, interval, timeout, private, get, resolve, sleeps.append, out)
+    return ok, sleeps, out.getvalue().splitlines()
+
+
+class TheHealthCheckInsideTheNetwork(unittest.TestCase):
+    """The check that the cases app answers once its code is published: made from the Operator, over the app's private endpoint, on the app's own name."""
+
+    URL = f"https://{HOST}/healthz"
+
+    def test_an_app_that_answers_ok_at_once_ends_the_wait_with_one_request_and_no_sleep(self):
+        get = Answers((200, b"ok"))
+        ok, sleeps, lines = run_health(get)
+        self.assertTrue(ok)
+        self.assertEqual(sleeps, [])
+        self.assertEqual(lines, [f"ok: {self.URL} answered 200 ok at try 1, 10.53.0.21 (private)"])
+        self.assertEqual(get.calls, [(self.URL, {}, 15.0)], "one plain request to the health address: no header, no credential, the timeout that was asked for")
+
+    def test_an_app_that_is_still_starting_is_waited_for_with_the_interval_between_the_tries_and_each_try_says_what_it_saw(self):
+        ok, sleeps, lines = run_health(Answers((503, b""), (502, b"Bad Gateway"), (200, b"ok")), interval=7.0)
+        self.assertTrue(ok)
+        self.assertEqual(sleeps, [7.0, 7.0])
+        self.assertEqual(lines, ["try 1 of 5: 10.53.0.21 (private), HTTP 503", "try 2 of 5: 10.53.0.21 (private), HTTP 502 Bad Gatewa",
+                                 f"ok: {self.URL} answered 200 ok at try 3, 10.53.0.21 (private)"])
+
+    def test_an_app_that_never_answers_ok_fails_after_all_its_tries_and_sleeps_between_them_and_not_after_the_last(self):
+        ok, sleeps, lines = run_health(Answers((503, b"")), tries=4)
+        self.assertFalse(ok)
+        self.assertEqual(len(sleeps), 3)
+        self.assertEqual(lines[-1], f"FAIL: {self.URL} did not answer 200 ok in 4 tries")
+        self.assertEqual(len(lines), 5)
+
+    def test_only_the_word_ok_with_status_200_is_healthy_and_a_redirect_is_not_followed_or_taken_for_health(self):
+        for answer in ((200, b"hello"), (200, b""), (302, b"ok"), (301, b""), (204, b"ok"), (401, b"ok"), (403, b"ok")):
+            with self.subTest(answer=answer):
+                self.assertFalse(run_health(Answers(answer), tries=2)[0])
+        self.assertTrue(run_health(Answers((200, b"ok\n")))[0], "a line break after the word is no difference")
+
+    def test_a_try_that_gets_no_answer_says_what_kind_of_failure_it_was_and_the_wait_goes_on(self):
+        for error in (TimeoutError("timed out"), urllib.error.URLError("refused"), http.client.RemoteDisconnected("closed"), ConnectionRefusedError("no"), cc.Problem("no answer")):
+            with self.subTest(error=type(error).__name__):
+                ok, sleeps, lines = run_health(Answers(error, (200, b"ok")))
+                self.assertTrue(ok)
+                self.assertEqual(lines[0], f"try 1 of 5: 10.53.0.21 (private), no answer ({type(error).__name__})")
+                self.assertEqual(len(sleeps), 1)
+
+    def test_a_name_that_does_not_resolve_yet_is_waited_for_and_never_asked(self):
+        import socket
+
+        get = Answers((200, b"ok"))
+        ok, sleeps, lines = run_health(get, addresses=[socket.gaierror("no such name"), socket.gaierror("no such name"), ["10.53.0.21"]])
+        self.assertTrue(ok)
+        self.assertEqual(lines[:2], [f"try 1 of 5: {HOST} does not resolve (gaierror)", f"try 2 of 5: {HOST} does not resolve (gaierror)"])
+        self.assertEqual(len(get.calls), 1, "nothing is asked until the name resolves")
+
+    def test_a_private_name_is_required_when_it_is_asked_for_and_no_request_is_made_to_a_public_address(self):
+        get = Answers((200, b"ok"))
+        ok, sleeps, lines = run_health(get, addresses=["20.50.1.2"], tries=3, private=True)
+        self.assertFalse(ok)
+        self.assertEqual(get.calls, [], "an answer over a public address proves nothing about the path that people take, and a closed app refuses it")
+        self.assertEqual(lines[0], f"try 1 of 3: {HOST} resolves to 20.50.1.2 (public), and a private address is required: the landing zone has not registered the endpoint's name, "
+                                   "or this DNS does not see it")
+        self.assertEqual(len(sleeps), 2)
+        ok, _, lines = run_health(Answers((200, b"ok")), addresses=["20.50.1.2"], private=False)
+        self.assertTrue(ok)
+        self.assertEqual(lines, [f"ok: {self.URL} answered 200 ok at try 1, 20.50.1.2 (public)"])
+
+    def test_one_public_address_among_the_private_ones_makes_the_name_public(self):
+        for addresses in (["10.53.0.21", "20.50.1.2"], ["::1"], ["fd00::1"], ["100.64.0.1"], ["172.32.0.1"], ["192.169.0.1"], [], ["not an address"]):
+            with self.subTest(addresses=addresses):
+                get = Answers((200, b"ok"))
+                self.assertFalse(run_health(get, addresses=addresses, tries=1, private=True)[0])
+                self.assertEqual(get.calls, [])
+
+    def test_the_addresses_of_the_three_private_ranges_are_private_and_nothing_else_is(self):
+        for address in ("10.0.0.1", "10.255.255.255", "172.16.0.1", "172.31.255.255", "192.168.0.1", "192.168.255.255"):
+            self.assertTrue(cc.is_private(address), address)
+        for address in ("9.255.255.255", "11.0.0.1", "172.15.255.255", "172.32.0.0", "192.167.255.255", "192.169.0.0", "127.0.0.1", "169.254.169.254", "20.50.1.2", "::1", "", "x"):
+            self.assertFalse(cc.is_private(address), address)
+
+    def test_a_bad_host_or_a_bad_number_is_refused_before_anything_is_asked(self):
+        get = Answers((200, b"ok"))
+        for host, tries, interval, timeout in (("bad host", 5, 10, 15), ("Example.com/", 5, 10, 15), (HOST, 0, 10, 15), (HOST, 121, 10, 15), (HOST, 5, -1, 15), (HOST, 5, 61, 15),
+                                              (HOST, 5, 10, 0), (HOST, 5, 10, 61)):
+            with self.subTest(host=host, tries=tries, interval=interval, timeout=timeout):
+                with self.assertRaises(cc.Problem):
+                    cc.health(host, tries, interval, timeout, True, get, lambda name: ["10.53.0.21"], lambda seconds: None, io.StringIO())
+        self.assertEqual(get.calls, [])
+
+    def test_the_bounds_that_are_allowed_are_the_ones_that_the_workflow_uses_and_a_little_more(self):
+        self.assertEqual((cc.HEALTH_TRIES_MAX, cc.HEALTH_INTERVAL_MAX, cc.HEALTH_TIMEOUT_MAX), (120, 60, 60))
+        self.assertTrue(run_health(Answers((200, b"ok")), tries=120, interval=60.0, timeout=60.0)[0])
+        self.assertTrue(run_health(Answers((200, b"ok")), tries=1, interval=0.0, timeout=1.0)[0])
+
+    def test_one_request_is_made_by_the_default_getter_with_the_timeout_it_is_given_and_no_second_try(self):
+        seen = []
+
+        class Response:
+            status, headers = 200, {"Content-Type": "text/plain"}
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def read(self, n):
+                return b"ok"
+
+        class Opener:
+            def open(self, request, timeout):
+                seen.append((request.full_url, request.get_method(), timeout, request.get_header("User-agent")))
+                if len(seen) == 1:
+                    return Response()
+                raise TimeoutError("timed out")
+
+        with mock.patch("urllib.request.build_opener", return_value=Opener()):
+            self.assertEqual(cc.fetch_once(self.URL, {}, 7), (200, {"content-type": "text/plain"}, b"ok"))
+            with self.assertRaises(TimeoutError):
+                cc.fetch_once(self.URL, {}, 7)
+        self.assertEqual([entry[:3] for entry in seen], [(self.URL, "GET", 7), (self.URL, "GET", 7)], "each call asks once: the loop of the check is the one that tries again")
+
+    def test_an_error_status_is_an_answer_and_not_a_failure_to_answer(self):
+        error = urllib.error.HTTPError(self.URL, 503, "unavailable", {"Retry-After": "5"}, io.BytesIO(b"busy"))
+
+        class Opener:
+            def open(self, request, timeout):
+                raise error
+
+        with mock.patch("urllib.request.build_opener", return_value=Opener()):
+            self.assertEqual(cc.fetch_once(self.URL, {}, 7), (503, {"retry-after": "5"}, b"busy"))
+
+    def test_the_name_is_resolved_for_the_port_of_https_and_the_addresses_are_sorted_and_listed_once(self):
+        import socket
+
+        answer = [(2, 1, 6, "", ("10.53.0.21", 443)), (2, 1, 6, "", ("10.53.0.21", 443)), (2, 1, 6, "", ("10.53.0.20", 443))]
+        with mock.patch("socket.getaddrinfo", return_value=answer) as lookup:
+            self.assertEqual(cc.resolve_host(HOST), ["10.53.0.20", "10.53.0.21"])
+        lookup.assert_called_once_with(HOST, 443, type=socket.SOCK_STREAM)
+
+    def test_the_command_exits_0_when_the_app_answers_1_when_it_does_not_and_2_for_a_host_that_is_none(self):
+        out = io.StringIO()
+        get = Answers((503, b""), (200, b"ok"))
+        slept = []
+        self.assertEqual(cc.main(["health", "--host", HOST, "--tries", "3", "--interval", "4", "--timeout", "5", "--private"], get, out, lambda name: ["10.53.0.21"], slept.append), 0)
+        self.assertEqual(slept, [4.0])
+        self.assertEqual([call[2] for call in get.calls], [5.0, 5.0])
+        self.assertIn(f"ok: {self.URL} answered 200 ok at try 2", out.getvalue())
+        out = io.StringIO()
+        self.assertEqual(cc.main(["health", "--host", HOST, "--tries", "2", "--interval", "0"], Answers((500, b"")), out, lambda name: ["10.53.0.21"], lambda seconds: None), 1)
+        self.assertIn("FAIL: ", out.getvalue())
+        with contextlib.redirect_stderr(io.StringIO()) as complaints:
+            self.assertEqual(cc.main(["health", "--host", "bad host"], Answers((200, b"ok")), io.StringIO(), lambda name: ["10.53.0.21"], lambda seconds: None), 2)
+            self.assertEqual(cc.main(["health", "--host", HOST, "--tries", "0"], Answers((200, b"ok")), io.StringIO(), lambda name: ["10.53.0.21"], lambda seconds: None), 2)
+            with self.assertRaises(SystemExit) as refused:
+                cc.main(["health", "--host", HOST, "--tries", "many"], Answers((200, b"ok")), io.StringIO())
+        self.assertEqual(refused.exception.code, 2)
+        self.assertIn("console-check: --tries is a number from 1 to 120", complaints.getvalue())
+
+    def test_private_is_off_unless_it_is_asked_for_and_the_defaults_are_the_ones_of_the_workflow(self):
+        seen = []
+
+        def spy(host, tries, interval, timeout, private, *rest):
+            seen.append((host, tries, interval, timeout, private))
+            return True
+
+        with mock.patch.object(cc, "health", spy):
+            cc.main(["health", "--host", HOST.upper()], Answers((200, b"ok")), io.StringIO())
+            cc.main(["health", "--host", HOST, "--private"], Answers((200, b"ok")), io.StringIO())
+        self.assertEqual(seen, [(HOST, 60, 10.0, 15.0, False), (HOST, 60, 10.0, 15.0, True)])
+
+
+class TheToolInTheContainer(unittest.TestCase):
+    """tools/console-check.py runs in the Operator like the two check tools: the image has Python 3.12, and the file is the only one in the secret volume."""
+
+    def test_it_parses_as_python_3_12_and_imports_the_standard_library_only(self):
+        # CI and the function app use Python 3.13, the image of the Operator has 3.12: a syntax of 3.13 would pass every test here and fail in the container.
+        tree = ast.parse((ROOT / "tools" / "console-check.py").read_text(encoding="utf-8"), feature_version=(3, 12))
+        imported = {alias.name.split(".")[0] for node in ast.walk(tree) if isinstance(node, ast.Import) for alias in node.names}
+        imported |= {node.module.split(".")[0] for node in ast.walk(tree) if isinstance(node, ast.ImportFrom) and node.module}
+        self.assertLessEqual(imported, set(sys.stdlib_module_names), sorted(imported - set(sys.stdlib_module_names)))
+
+    def test_it_runs_from_a_folder_that_holds_only_it_and_leaves_nothing_behind(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            volume = Path(tmp)
+            (volume / "console-check.py").write_bytes((ROOT / "tools" / "console-check.py").read_bytes())
+            for command, option in (("health", "--private"), ("door", "--proxied")):
+                done = subprocess.run([sys.executable, "-B", str(volume / "console-check.py"), command, "--help"], capture_output=True, text=True, cwd=volume)
+                self.assertEqual((done.returncode, done.stderr), (0, ""), command)
+                self.assertIn(option, done.stdout, command)
+            self.assertEqual([path.name for path in volume.iterdir()], ["console-check.py"], "nothing was written to the folder: no bytecode, no cache")
+
+    def test_a_host_that_is_not_one_is_refused_with_exit_code_2_and_without_a_trace(self):
+        done = subprocess.run([sys.executable, "-B", str(ROOT / "tools" / "console-check.py"), "health", "--host", "not a host"], capture_output=True, text=True)
+        self.assertEqual(done.returncode, 2)
+        self.assertEqual(done.stderr.strip(), "console-check: --host is a host name")
+        self.assertEqual(done.stdout, "")
 
 
 if __name__ == "__main__":
