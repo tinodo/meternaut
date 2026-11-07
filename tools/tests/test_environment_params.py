@@ -1080,8 +1080,8 @@ class PublicNetworkAccessOfTheApps(unittest.TestCase):
         code, out, err, files = self.build()
         self.assertEqual((code, err), (0, ""))
         self.assertEqual((ep.USAGE_APP_PUBLIC_NETWORK_ACCESS, ep.CASES_APP_PUBLIC_NETWORK_ACCESS), ("Disabled", "Enabled"),
-                         "the usage app has no page for people and its code is published through its private endpoint, so it is closed; the cases app serves the console and stays open until the people who "
-                         "approve have a network path to it (the owner's decision): that is the one value and the one test to change then")
+                         "the usage app has no page for people and its code is published through its private endpoint, so it is closed; the cases app serves the web page and stays open until the owner closes it "
+                         "(he reaches the private network, and flips this one value himself, in a change of its own, when he can reach the private address): that is the one value and the one test to change then")
         self.assertEqual(values(files["recording.parameters.json"])["usageAppPublicNetworkAccess"], "Disabled")
         self.assertEqual(values(files["cases.parameters.json"])["casesAppPublicNetworkAccess"], "Enabled")
         for name, document in files.items():
@@ -1089,13 +1089,15 @@ class PublicNetworkAccessOfTheApps(unittest.TestCase):
                 self.assertFalse({"usageAppPublicNetworkAccess", "casesAppPublicNetworkAccess"} & set(document["parameters"]), f"{name}: the value reaches the file of its own app only")
 
     def test_closing_an_app_is_one_value_and_it_reaches_only_that_app(self):
-        # A closed cases app needs the console's host name on the platform's Application Gateway: without it the build is refused (the next test), so the host name is given here.
+        # A closed cases app builds with a host name on the platform's Application Gateway and, since the owner decided against the gateway (2026-11-07), without one: then the check of its front door runs
+        # in the Operator (tools/tests/test_console_gateway.py has the output and the steps).
         for usage, cases in (("Disabled", "Enabled"), ("Enabled", "Disabled"), ("Disabled", "Disabled"), ("Enabled", "Enabled")):
-            with mock.patch.object(ep, "USAGE_APP_PUBLIC_NETWORK_ACCESS", usage), mock.patch.object(ep, "CASES_APP_PUBLIC_NETWORK_ACCESS", cases):
-                code, _, err, files = self.build(CONSOLE_HOST_NAME="console.example.com")
-            self.assertEqual((code, err), (0, ""), (usage, cases))
-            self.assertEqual(values(files["recording.parameters.json"])["usageAppPublicNetworkAccess"], usage, (usage, cases))
-            self.assertEqual(values(files["cases.parameters.json"])["casesAppPublicNetworkAccess"], cases, (usage, cases))
+            for named in ("", "console.example.com"):
+                with mock.patch.object(ep, "USAGE_APP_PUBLIC_NETWORK_ACCESS", usage), mock.patch.object(ep, "CASES_APP_PUBLIC_NETWORK_ACCESS", cases):
+                    code, _, err, files = self.build(CONSOLE_HOST_NAME=named)
+                self.assertEqual((code, err), (0, ""), (usage, cases, named))
+                self.assertEqual(values(files["recording.parameters.json"])["usageAppPublicNetworkAccess"], usage, (usage, cases, named))
+                self.assertEqual(values(files["cases.parameters.json"])["casesAppPublicNetworkAccess"], cases, (usage, cases, named))
 
     def test_a_value_that_is_not_enabled_or_disabled_is_refused_by_name_because_the_property_must_always_be_written(self):
         for constant in ("USAGE_APP_PUBLIC_NETWORK_ACCESS", "CASES_APP_PUBLIC_NETWORK_ACCESS"):

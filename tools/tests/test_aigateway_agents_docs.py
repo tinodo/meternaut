@@ -230,9 +230,9 @@ class TheOtherDocumentsOfStep2(unittest.TestCase):
 
     def test_the_changelog_has_the_entry_of_step_2_above_the_one_of_step_1_and_below_the_one_of_the_subnet_and_says_what_it_must(self):
         headings = re.findall(r"(?m)^## (.*)$", CHANGELOG)
-        self.assertEqual(headings[5], "An AI Gateway for the agents' model calls, step 2 of 2: built, not deployed, and one switch that is False — 2026-11-07")
-        self.assertEqual(headings[6], "An AI Gateway for the agents' model calls, step 1 of 2: built, not deployed — 2026-11-07")
-        entry = CHANGELOG.split("\n## ")[6]
+        self.assertEqual(headings[6], "An AI Gateway for the agents' model calls, step 2 of 2: built, not deployed, and one switch that is False — 2026-11-07")
+        self.assertEqual(headings[7], "An AI Gateway for the agents' model calls, step 1 of 2: built, not deployed — 2026-11-07")
+        entry = CHANGELOG.split("\n## ")[7]
         leads = ["**What the owner said, and what this step is.**", "**The open question, and why this step exists.**", "**What is built.**", "**What was verified in sources on 2026-11-07, and what was not.**",
                  "**What was checked.**", "**Not checked.**", "**Who decides, and what a person does, in order.**"]
         positions = [entry.index(lead) for lead in leads]

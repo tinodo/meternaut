@@ -4,6 +4,7 @@ import http.client
 import importlib.util
 import io
 import re
+import socket
 import subprocess
 import sys
 import tempfile
@@ -336,6 +337,117 @@ class TheDoorBehindAReverseProxy(unittest.TestCase):
         self.assertEqual(cc.main(["door", "--host", PROXY], Proxied(named=HOST), io.StringIO()), 0, "without the flag nothing is asked of the return address")
 
 
+class TheDoorInsideTheNetwork(unittest.TestCase):
+    """The check of a closed app's front door runs in the Operator, at the app's own name, and asks first for a private address (--private): a closed app answers nobody outside the network, and an answer
+    over a public address would prove nothing about the path that people take."""
+
+    @staticmethod
+    def resolver(*answers):
+        """A name that resolves to the answers one after the other (a list of addresses, or an exception to raise); the last answer is the answer of every lookup after the list."""
+        pending, calls = list(answers), []
+
+        def resolve(name):
+            calls.append(name)
+            answer = pending.pop(0) if len(pending) > 1 else pending[0]
+            if isinstance(answer, BaseException):
+                raise answer
+            return answer
+
+        resolve.calls = calls
+        return resolve
+
+    def test_a_private_name_passes_the_first_row_says_which_address_and_every_other_row_is_the_door_as_it_was(self):
+        resolve, door = self.resolver(["10.53.0.21"]), Door()
+        passed, rows = cc.door(HOST, "signin", door, private=True, resolve=resolve)
+        self.assertTrue(passed, rows)
+        self.assertEqual(rows[0], ("name", "private address", True, "10.53.0.21 (private)"))
+        self.assertEqual(len(rows), 1 + 1 + len(cc.PAGES) + len(cc.FORGED_PAGES))
+        self.assertEqual(rows[1:], cc.door(HOST, "signin", Door())[1], "the rows of the door itself are the ones of a door that was not asked for a private name")
+        self.assertEqual(resolve.calls, [HOST], "the name is looked up once, before anything is asked")
+        self.assertEqual(len(door.calls), 1 + len(cc.PAGES) + len(cc.FORGED_PAGES))
+
+    def test_the_expected_answers_do_not_change_inside_the_network(self):
+        resolve = self.resolver(["10.53.0.21"])
+        self.assertTrue(cc.door(HOST, "refuse", Door("refuse"), private=True, resolve=resolve)[0])
+        self.assertFalse(cc.door(HOST, "signin", Door("refuse"), private=True, resolve=resolve)[0])
+        self.assertFalse(cc.door(HOST, "signin", Door(leak="/history"), private=True, resolve=resolve)[0])
+        passed, rows = cc.door(HOST, "signin", Door(trust_header=True), private=True, resolve=resolve)
+        self.assertFalse(passed)
+        self.assertEqual([row[0] for row in rows if not row[2]], list(cc.FORGED_PAGES), "a made-up sign-in header that the app would trust fails, here too")
+
+    def test_a_public_name_or_one_that_does_not_resolve_ends_the_check_with_one_failed_line_and_no_request(self):
+        required = ", and a private address is required: the landing zone has not registered the endpoint's name, or this DNS does not see it"
+        for answer, text in ((["20.50.1.2"], f"{HOST} resolves to 20.50.1.2 (public){required}"),
+                             (["10.53.0.21", "20.50.1.2"], f"{HOST} resolves to 20.50.1.2 (public){required}"),
+                             (["100.64.0.1"], f"{HOST} resolves to 100.64.0.1 (public){required}"),
+                             ([], f"{HOST} resolves to no address{required}"),
+                             (socket.gaierror("no such name"), f"{HOST} does not resolve (gaierror)"),
+                             (TimeoutError("timed out"), f"{HOST} does not resolve (TimeoutError)")):
+            with self.subTest(answer=repr(answer)):
+                door = Door()
+                passed, rows = cc.door(HOST, "signin", door, private=True, resolve=self.resolver(answer))
+                self.assertFalse(passed)
+                self.assertEqual(rows, [("name", "private address", False, text)])
+                self.assertEqual(door.calls, [], "no request is made to a name that is not private: a closed app refuses it, and it proves nothing")
+
+    def test_without_the_option_nothing_is_looked_up_and_the_door_is_what_it_was(self):
+        resolve = self.resolver(["20.50.1.2"])
+        passed, rows = cc.door(HOST, "signin", Door(), resolve=resolve)
+        self.assertTrue(passed)
+        self.assertEqual(resolve.calls, [])
+        self.assertEqual(len(rows), 1 + len(cc.PAGES) + len(cc.FORGED_PAGES))
+        self.assertNotIn("private address", [row[1] for row in rows])
+
+    def test_a_bad_host_or_expectation_is_refused_before_the_name_is_looked_up(self):
+        resolve = self.resolver(["10.53.0.21"])
+        for host, expect in (("not a host", "signin"), ("not_a_host", "signin"), (HOST, "maybe")):
+            with self.assertRaises(cc.Problem):
+                cc.door(host, expect, Door(), private=True, resolve=resolve)
+        self.assertEqual(resolve.calls, [])
+
+    def test_the_option_reaches_the_check_through_the_command_line_and_the_lines_and_the_exit_codes_say_what_was_seen(self):
+        out = io.StringIO()
+        self.assertEqual(cc.main(["door", "--host", HOST, "--private"], Door(), out, self.resolver(["10.53.0.21"])), 0)
+        lines = out.getvalue().splitlines()
+        self.assertEqual(lines[0], f"PASS  {'name':28} {'private address':24} 10.53.0.21 (private)")
+        self.assertEqual(len(lines), 1 + 1 + len(cc.PAGES) + len(cc.FORGED_PAGES))
+        door, out = Door(), io.StringIO()
+        self.assertEqual(cc.main(["door", "--host", HOST, "--private"], door, out, self.resolver(["20.50.1.2"])), 1)
+        self.assertEqual(len(out.getvalue().splitlines()), 1)
+        self.assertTrue(out.getvalue().startswith(f"FAIL  {'name':28} {'private address':24} {HOST} resolves to 20.50.1.2 (public)"), out.getvalue())
+        self.assertEqual(door.calls, [])
+        with tempfile.TemporaryDirectory() as tmp:
+            summary = Path(tmp) / "summary.md"
+            self.assertEqual(cc.main(["door", "--host", HOST, "--private", "--summary", str(summary)], Door(), io.StringIO(), self.resolver(["10.53.0.21"])), 0)
+            self.assertIn("PASS  name", summary.read_text(encoding="utf-8"))
+        self.assertEqual(cc.main(["door", "--host", HOST], Door(), io.StringIO(), self.resolver(OSError("must not be asked"))), 0, "without the option the lookup is never made")
+
+    def test_the_option_is_off_unless_it_is_asked_for_and_goes_with_the_other_options(self):
+        seen = []
+
+        def spy(host, expect, get, proxied, private, resolve):
+            seen.append((host, expect, proxied, private))
+            return True, []
+
+        with mock.patch.object(cc, "door", spy):
+            cc.main(["door", "--host", HOST.upper()], Door(), io.StringIO())
+            cc.main(["door", "--host", HOST, "--private", "--expect", "refuse"], Door(), io.StringIO())
+            cc.main(["door", "--host", HOST, "--proxied", "--private"], Door(), io.StringIO())
+        self.assertEqual(seen, [(HOST, "signin", False, False), (HOST, "refuse", False, True), (HOST, "signin", True, True)])
+
+    def test_the_lookup_is_the_one_of_the_health_check_and_the_private_ranges_are_the_same(self):
+        answer = [(2, 1, 6, "", ("10.53.0.21", 443)), (2, 1, 6, "", ("10.53.0.20", 443))]
+        with mock.patch("socket.getaddrinfo", return_value=answer) as lookup:
+            passed, rows = cc.door(HOST, "signin", Door(), private=True)
+        self.assertTrue(passed, rows)
+        lookup.assert_called_once_with(HOST, 443, type=socket.SOCK_STREAM)
+        self.assertEqual(rows[0][3], "10.53.0.20 (private)", "the addresses are sorted, as the health check lists them")
+        for address in ("10.0.0.1", "172.16.0.1", "192.168.1.1"):
+            self.assertTrue(cc.private_name(HOST, lambda name, address=address: [address])[0], address)
+        for address in ("9.255.255.255", "172.32.0.1", "192.169.0.1", "127.0.0.1", "169.254.169.254", "::1"):
+            self.assertFalse(cc.private_name(HOST, lambda name, address=address: [address])[0], address)
+
+
 class Answers:
     """The health address as it answers one try after another: (status, body) or an exception to raise. The last answer is the answer of every try after the list."""
 
@@ -547,7 +659,7 @@ class TheToolInTheContainer(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             volume = Path(tmp)
             (volume / "console-check.py").write_bytes((ROOT / "tools" / "console-check.py").read_bytes())
-            for command, option in (("health", "--private"), ("door", "--proxied")):
+            for command, option in (("health", "--private"), ("door", "--proxied"), ("door", "--private")):
                 done = subprocess.run([sys.executable, "-B", str(volume / "console-check.py"), command, "--help"], capture_output=True, text=True, cwd=volume)
                 self.assertEqual((done.returncode, done.stderr), (0, ""), command)
                 self.assertIn(option, done.stdout, command)

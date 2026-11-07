@@ -24,7 +24,7 @@ def flat(source):
 
 
 CHANGELOG = text("CHANGELOG.md")
-ENTRY = CHANGELOG.split("\n## ")[1]
+ENTRY = CHANGELOG.split("\n## ")[2]
 BOOTSTRAP = text("environment/BOOTSTRAP.md")
 RECORD = text("docs/proposals/03-access-and-onboarding.md")
 FIRST_CASES = text("docs/proposals/02-first-cases.md")
@@ -36,8 +36,8 @@ def section(source, heading):
 
 
 class TheChangelogEntry(unittest.TestCase):
-    def test_it_is_the_newest_entry_and_is_short(self):
-        self.assertEqual(re.findall(r"(?m)^## (.*)$", CHANGELOG)[0], TITLE)
+    def test_it_is_the_second_entry_and_is_short(self):
+        self.assertEqual(re.findall(r"(?m)^## (.*)$", CHANGELOG)[1], TITLE, "the newest entry is the one of the web page (test_console_gateway.py)")
         self.assertTrue(ENTRY.startswith(TITLE))
         self.assertLessEqual(len(ENTRY.strip().splitlines()), 15, "the owner reads nothing long")
 

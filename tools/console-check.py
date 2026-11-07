@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Reads the front door of the console, with no sign-in, and says whether it is shut; and waits for the app's health address from inside the network.
 
-    python tools/console-check.py door --host <name> [--expect signin|refuse] [--proxied] [--summary FILE]
+    python tools/console-check.py door --host <name> [--expect signin|refuse] [--proxied] [--private] [--summary FILE]
     python tools/console-check.py health --host <name>.azurewebsites.net [--tries 60] [--interval 10] [--timeout 15] [--private]
 
 door    The console serves a person only after Microsoft Entra has signed them in, and the app refuses every request when that sign-in is not set up. This
@@ -19,6 +19,12 @@ door    The console serves a person only after Microsoft Entra has signed them i
         sign-in has to carry that name too: the return address that the platform's sign-in builds (redirect_uri, or post_login_redirect_uri when the redirect is
         the sign-in's own) must name --host and not the app's own name, which a closed app cannot answer on. A redirect that shows no return address with a host
         in it passes, and the line says so. Without --proxied the check is what it was.
+
+        With --private the name has to resolve to private addresses only (the app's private endpoint, registered in the landing zone's central zone), and that is
+        read first: a name that resolves to a public address, or not at all, makes no request and ends the check with one failed line that says which. The
+        check is made this way, in the Operator and on the app's own name, when the app that serves the web page takes no public traffic and no host name of a
+        gateway is set: a closed app answers nobody outside the network, so there is nothing to knock at from the runner, and an answer over a public address
+        would prove nothing about the path that people take. The expected answers are the same.
 
 health  Waits until https://<host>/healthz answers 200 with the word ok, for the check that the cases app answers after its code was published. It runs in the
         Operator, a container group inside the network (operator/run-tool.sh runs this file there), because an app that takes no public traffic answers nobody
@@ -126,13 +132,19 @@ def verdict(path: str, status: int, headers: dict, expect: str, proxied_host: st
     return status == 503, str(status)
 
 
-def door(host: str, expect: str, get: Fetch = fetch, proxied: bool = False) -> tuple[bool, list[tuple[str, str, bool, str]]]:
+def door(host: str, expect: str, get: Fetch = fetch, proxied: bool = False, private: bool = False,
+         resolve: Callable[[str], list[str]] | None = None) -> tuple[bool, list[tuple[str, str, bool, str]]]:
     if not HOST.match(host):
         raise Problem("--host is a host name")
     if expect not in ("signin", "refuse"):
         raise Problem("--expect is signin or refuse")
     named = host if proxied else None
     rows: list[tuple[str, str, bool, str]] = []
+    if private:
+        ok, text = private_name(host, resolve or resolve_host)
+        rows.append(("name", "private address", ok, text))
+        if not ok:
+            return False, rows
     status, _, body = get(f"https://{host}/healthz", {})
     rows.append(("/healthz", "no sign-in", status == 200 and body.strip() == b"ok", f"{status} {body.strip()[:10].decode('ascii', 'replace')}"))
     for path in PAGES:
@@ -158,6 +170,19 @@ def is_private(address: str) -> bool:
     except ValueError:
         return False
     return any(value in network for network in PRIVATE_NETWORKS)
+
+
+def private_name(host: str, resolve: Callable[[str], list[str]]) -> tuple[bool, str]:
+    """Whether the name resolves, as this machine resolves it, to private addresses only, and the words that say what was seen. A closed app is reached through its private endpoint and nowhere else."""
+    try:
+        addresses = resolve(host)
+    except OSError as error:
+        return False, f"{host} does not resolve ({type(error).__name__})"
+    if addresses and all(is_private(address) for address in addresses):
+        return True, f"{addresses[0]} (private)"
+    public = [address for address in addresses if not is_private(address)]
+    seen = f"{public[0]} (public)" if public else "no address"
+    return False, f"{host} resolves to {seen}, and a private address is required: the landing zone has not registered the endpoint's name, or this DNS does not see it"
 
 
 def health(host: str, tries: int, interval: float, timeout: float, private: bool, get: Callable[..., "tuple[int, dict, bytes]"] = fetch_once,
@@ -211,14 +236,14 @@ def main(argv=None, get: Callable[..., "tuple[int, dict, bytes]"] | None = None,
     parser.add_argument("--tries", type=int, default=60, help="health: most tries")
     parser.add_argument("--interval", type=float, default=10, help="health: seconds between two tries")
     parser.add_argument("--timeout", type=float, default=15, help="health: seconds that one request may take")
-    parser.add_argument("--private", action="store_true", help="health: the name has to resolve to private addresses only")
+    parser.add_argument("--private", action="store_true", help="door and health: the name has to resolve to private addresses only")
     args = parser.parse_args(argv)
     host = args.host.strip().lower()
     try:
         if args.command == "health":
             request = get if get is not None else fetch_once
             return 0 if health(host, args.tries, args.interval, args.timeout, args.private, request, resolve, sleep, out) else 1
-        passed, rows = door(host, args.expect, get or fetch, args.proxied)
+        passed, rows = door(host, args.expect, get or fetch, args.proxied, args.private, resolve)
     except Problem as error:
         print(f"console-check: {error}", file=sys.stderr)
         return 2

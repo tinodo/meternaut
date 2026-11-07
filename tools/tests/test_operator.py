@@ -1801,6 +1801,14 @@ class RunToolWithTheRealTools(ScriptRunner, unittest.TestCase):
         self.assertEqual(ran.lines, [f"ok: python3 {version}", "ok: az login --identity", "ok: running recording-check.py functions", self.SITE_ERROR, "run-tool-done: exit code 1"])
         self.assertEqual(ran.calls, [f"az login --identity --client-id {CLIENT_ID} --allow-no-subscriptions --output none", "sleep 20"], "the sign-in, nothing asked of Azure, and the hold")
 
+    def test_the_console_check_runs_from_the_volume_on_its_own_with_the_arguments_of_the_workflow_and_its_door_refuses_a_name_that_is_none_before_it_asks_anything(self):
+        # The check of a closed app's front door runs in the Operator (docs/proposals/07-private-by-default.md, the web page on the private network): the tool is the only file in the volume.
+        ran = self.run_real("console-check", "door --host not_a_host --expect signin --private", ["console-check.py"])
+        self.assertEqual(ran.done.returncode, 2, ran.done.stdout)
+        version = "%d.%d.%d" % sys.version_info[:3]
+        self.assertEqual(ran.lines, [f"ok: python3 {version}", "ok: az login --identity", "ok: running console-check.py door", "console-check: --host is a host name", "run-tool-done: exit code 2"])
+        self.assertEqual(ran.calls, [f"az login --identity --client-id {CLIENT_ID} --allow-no-subscriptions --output none", "sleep 20"], "the sign-in, nothing asked of Azure, and the hold")
+
     def test_the_cases_check_finds_the_recording_check_in_the_same_folder_and_needs_it(self):
         ran = self.run_real("cases-check", "functions --site not-an-id", ["cases-check.py", "recording-check.py"])
         self.assertEqual(ran.done.returncode, 1)
@@ -1825,11 +1833,14 @@ class TheToolsInTheContainer(unittest.TestCase):
     """The tools that the Operator runs are the very files of tools/, and they run in the image's Python 3.12 and from a folder that holds only the files that are sent."""
 
     TOOLS = ("recording-check.py", "cases-check.py")
+    # The check of the web page's front door runs in the Operator too (a closed app answers nobody outside the network): it sends no event and loads no other tool, so it needs none of the checks below that
+    # belong to the two tools that send one, and tools/tests/test_console_check.py runs it from a folder of its own.
+    ALL_TOOLS = TOOLS + ("console-check.py",)
 
     def test_both_parse_as_python_3_12_and_import_the_standard_library_only(self):
         # CI and the function app use Python 3.13, the image of the Operator has 3.12: a syntax of 3.13 would pass every test here and fail in the container.
         import ast
-        for name in self.TOOLS:
+        for name in self.ALL_TOOLS:
             tree = ast.parse(text(f"tools/{name}"), feature_version=(3, 12))
             imported = {alias.name.split(".")[0] for node in ast.walk(tree) if isinstance(node, ast.Import) for alias in node.names}
             imported |= {node.module.split(".")[0] for node in ast.walk(tree) if isinstance(node, ast.ImportFrom) and node.module}
@@ -2813,8 +2824,10 @@ class BothAppsArePublishedAndTheUsageAppIsPrivateRecord(unittest.TestCase):
         self.assertIn("The owner has to decide about the shared Azure Monitor private link scope too (as the session that coordinates the work reported on 2026-11-06): "
                       "Application Insights and the workspace are still public until then.", order)
         readme = text("README.md")
-        self.assertIn("Still open: the cases app's phase 3 (it serves the console, and the owner decided on 2026-11-06 that the people who approve reach it through the platform's Application Gateway: the code, the tests and the documents "
-                      "are built and nothing is deployed, [the section](docs/proposals/07-private-by-default.md#publishing-code-to-the-private-apps-phase-3-for-the-cases-app-the-console-behind-the-platforms-application-gateway-built-not-deployed)), "
+        self.assertIn("Still open: the cases app's phase 3 (it serves the console; the owner decided on 2026-11-06 that the people who approve reach it through the platform's Application Gateway, and on 2026-11-07 that "
+                      "there is no gateway for it and that he reaches the private network instead: the code, the tests and the documents for both are built and nothing is deployed, "
+                      "[the gateway route](docs/proposals/07-private-by-default.md#publishing-code-to-the-private-apps-phase-3-for-the-cases-app-the-console-behind-the-platforms-application-gateway-built-not-deployed) "
+                      "and [the web page on the private network](docs/proposals/07-private-by-default.md#the-web-page-on-the-private-network-built-not-deployed)), "
                       "the telemetry read once Application Insights is private, "
                       "and the console check; two decisions are the owner's (a public repository, and the traces of Foundry's agents).", readme)
         self.assertIn("The code of both apps is published from the Operator, as the deploy identity, since 2026-11-06 ([phase 2](docs/proposals/07-private-by-default.md#publishing-code-to-the-private-apps-phase-2)), "
