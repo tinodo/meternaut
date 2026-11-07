@@ -4,9 +4,9 @@
 //   timer (daily) or one control event --> Watch --> Resource Graph, Advisor, Cost Management (read only)
 //   Watch --> Detective and Skeptic (chat completions through the AI Gateway, with the app's identity and no key) --> guards in code --> one telemetry line per step --> workbook
 //
-// What it holds: one user-assigned identity (the console's sign-in), a Basic (B1, Linux, always on) plan with the function app, which has a system-assigned identity of
-// its own, and the subnet that the plan is integrated with, one more event hub (the control hub) in the namespace of the usage recording, the roles that connect them, a
-// longer retention for the traces table of the workspace, and the History workbook.
+// What it holds: one user-assigned identity (the console's sign-in), a plan with the function app, which has a system-assigned identity of its own (the plan is of the kind that
+// casesAppPlan names: Flex Consumption, or Basic, which is B1, Linux, always on), the subnet that the app is integrated with, one more event hub (the control hub) in the namespace of the
+// usage recording, the roles that connect them, a longer retention for the traces table of the workspace, and the History workbook.
 //
 // Identities, and no right to change Azure. The app's own system-assigned identity reads the subscriptions that it was given the read-only roles for, and their cost lines, stores the
 // records, holds Foundry User on its own Foundry project (a role that environment/foundry/main.bicep gives, inside the project's group: it lets the app make and run its agents),
@@ -24,14 +24,17 @@
 // scope https://management.azure.com/user_impersonation, no refresh token) and runs the one change with that person's token: Azure checks that person's own
 // rights, and its Activity Log names that person (docs/proposals/04-the-loop.md, docs/proposals/05-run-as-the-approver.md).
 //
-// Why not Flex Consumption, which the first cases ran on: its front end held some requests to the console for 15 to 60 seconds and
-// answered some with "The service is unavailable" (CHANGELOG.md). A Basic plan has no such front end, no cold start, and runs the
-// timers, the control hub's trigger and the console on one instance for about 13 US dollars a month.
+// Which plan, and why. The first cases ran on Flex Consumption. On 2026-11-05 its front end held some requests to the console for 15 to 60 seconds and answered some with "The service is
+// unavailable" (CHANGELOG.md), and the app moved to a Basic plan, which has no such front end and no cold start, for about 13 US dollars a month. On 2026-11-07 the owner ordered it back
+// onto Flex Consumption, which scales to zero and bills per execution: a tool that finds waste must not carry an idle plan. Whether the stall is still there is measured (the action
+// page-latency) and the Basic definition stays here as the way back: one value, CASES_APP_PLAN in tools/environment-params.py, and the action cases
+// (docs/proposals/07-private-by-default.md, "The web page on Flex Consumption").
 //
 // It makes no storage account and no namespace: the app shares the storage account (blob, queue and table private
 // endpoints) and the Event Hubs namespace (private endpoint) of environment/recording/main.bicep, so nothing new is billed except the
-// plan, tokens and the app's own private endpoint (below). The only network it makes is the app's own integration subnet (the usage recording's subnet is delegated to Flex
-// Consumption and cannot serve a Basic plan), that subnet's network security group, and that one endpoint, which goes into the endpoint subnet that the model side made.
+// plan, tokens and the app's own private endpoint (below). A Flex app makes no subnet: it uses the function subnet snet-func, which the model side made and delegated to Microsoft.App/environments
+// (the owner's network is small), and it keeps its code package in one container of that storage account. A Basic app makes its own integration subnet (snet-func is delegated to Flex
+// Consumption and cannot serve a Basic plan) and that subnet's network security group. Either one makes one endpoint, which goes into the endpoint subnet that the model side made.
 // The recording has to exist first.
 //
 // The app has a private endpoint of its own, for the console's name and for the deployment site (the group `sites`, in the endpoint subnet; no private DNS zone group: the landing zone's
@@ -45,7 +48,7 @@
 // the people who approve a change reach the console from outside the network. The workflow waits until the landing zone has registered the endpoint's names before it publishes, so that the
 // two apps behave alike: the usage app's deployment ends with a call to the app's own host name, which does not resolve before.
 //
-// The subnet is made once and then left alone (webSubnetExists): the landing zone's network manager puts a route table on a new subnet
+// A Basic app's subnet is made once and then left alone (webSubnetExists): the landing zone's network manager puts a route table on a new subnet
 // about a minute after it is made, and a template that makes the subnet again takes that table away, and with it the subnet's way to
 // the landing zone's DNS. The app on it then cannot resolve a name, and cannot start. That happened to the first subnet (snet-web) on
 // 2026-11-05, in the second deploy of this template, and the subnet was replaced by this one (snet-cases).
@@ -66,8 +69,8 @@
 // in an error that says so when the app's identity does not yet hold AI Gateway Models User on the gateway (the action aigateway gives it, once this app has its identity).
 //
 // Deployed only by the workflow .github/workflows/deploy-hub.yml, action "cases" (AGENTS.md rule 18). The code of the function app
-// is published by the same action, from src/case-functions. A Basic plan cannot take over a Flex Consumption app: the action removes
-// the Flex app and its plan first, when they are still there, and this template then makes an app of the same name, so that the host
+// is published by the same action, from src/case-functions. An app cannot move between a Flex Consumption plan and a Basic plan: when casesAppPlan names the other kind than the one that the
+// app runs on, the action removes that app, its plan and its private endpoint first, and this template then makes an app of the same name, so that the host
 // name, the sign-in's reply address and the links in the letters stay as they were.
 targetScope = 'resourceGroup'
 

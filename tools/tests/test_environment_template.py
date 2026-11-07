@@ -1466,7 +1466,7 @@ class CasesWorkflow(unittest.TestCase):
         self.assertIn("grep -Fxq 'Microsoft.App/environments'", script, "a Flex Consumption app needs the delegation that the model side gave the function subnet")
         self.assertIn("properties.virtualNetworkSubnetId", script)
         self.assertIn("::error::The subnet $FUNCTION_SUBNET is still taken by another plan:$taken.", script)
-        for words in ("the usage recording's app", "the change that retires the usage recording", "run cases again", "no other subnet is made for it", "Nothing was changed: the web page's app is still where it was."):
+        for words in ("the usage recording's app", "the action retire-old removes it and its plan", "run cases again", "no other subnet is made for it", "Nothing was changed: the web page's app is still where it was."):
             self.assertIn(words, script, words)
         self.assertIn("is not there. A Flex Consumption app uses the function subnet that model-side makes, and no new subnet is made for it", script)
         self.assertIn("serviceAssociationLinks", script, "the platform's links on the subnet are said, as read")
@@ -1486,7 +1486,7 @@ class CasesWorkflow(unittest.TestCase):
         self.assertIn("CASES_APP_PLAN: ${{ steps.params.outputs.cases_app_plan }}", deploy)
         self.assertIn("CASES_SUBNET: ${{ steps.params.outputs.cases_subnet_name }}", deploy)
         self.assertIn('if [ "$CASES_APP_PLAN" = Flex ] && grep -Eqi \'subnet|ServiceAssociationLink|delegat|InUse\' "$RUNNER_TEMP/cases-deploy.err"; then', deploy)
-        for words in ("still taken by another plan", "the usage recording's app and its plan have to be removed first", "no new subnet is made", "set CASES_APP_PLAN back to Basic"):
+        for words in ("still taken by another plan", "the usage recording's app and its plan have to be removed first (the action retire-old does it)", "no new subnet is made", "set CASES_APP_PLAN back to Basic"):
             self.assertIn(words, deploy, words)
         self.assertIn('--output functionAppId 2> "$RUNNER_TEMP/cases-deploy.err"', deploy)
 
