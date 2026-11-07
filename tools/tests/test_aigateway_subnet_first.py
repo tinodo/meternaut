@@ -61,7 +61,7 @@ RECORD = text("docs/proposals/08-ai-gateway.md")
 BOOTSTRAP = text("environment/BOOTSTRAP.md")
 CHANGELOG = text("CHANGELOG.md")
 README = text("README.md")
-PREVIEW = "What the model side, the usage recording, the Foundry resource, the first cases, the Operator and the AI Gateway's templates would change"
+PREVIEW = "What the model side, the base, the Foundry resource, the first cases, the Operator and the AI Gateway's templates would change"
 GUARD = "Refuse the AI Gateway unless the owner asked for a public one in writing"
 RECORD_SECTION = "## The subnet is made first, and the gateway after the landing zone's route table\n"
 BOOTSTRAP_SECTION = "## Added on 2026-11-07 for the AI Gateway"
@@ -351,7 +351,7 @@ class TheActionMakesTheSubnetThenWaitsThenMakesTheGateway(unittest.TestCase):
     def test_every_other_action_still_has_the_steps_that_it_had(self):
         counts = {action: len(re.findall(rf"inputs\.action == '{action}'", WORKFLOW)) for action in ("aigateway", "aigateway-check")}
         self.assertEqual(counts, {"aigateway": 10, "aigateway-check": 4}, "the nine steps of the action and the guard before them")
-        self.assertEqual(WORKFLOW.count("uses: azure/login@"), 9, "the first sign-in and eight more: the one that this change adds is one of them")
+        self.assertEqual(WORKFLOW.count("uses: azure/login@"), 8, "the first sign-in and seven more: the one that this change adds is one of them")
 
 
 BASH = AW.BASH

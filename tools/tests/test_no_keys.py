@@ -78,7 +78,7 @@ class NoKeys(unittest.TestCase):
 
     def test_the_scan_reads_what_it_is_meant_to_read(self):
         names = {relative for relative, _ in files()}
-        for expected in ("environment/recording/main.bicep", "environment/cases/main.bicep", "environment/main.bicep", ".github/workflows/deploy-hub.yml", "tools/recording-check.py",
+        for expected in ("environment/base/main.bicep", "environment/cases/main.bicep", "environment/main.bicep", ".github/workflows/deploy-hub.yml", "tools/check-helpers.py", "tools/retire-old.py",
                          "tools/cases-check.py", "tools/build-function-app.sh", "operator/probe.sh", "operator/run-tool.sh", "environment/operator/main.bicep"):
             self.assertIn(expected, names)
         self.assertNotIn("tools/tests/test_no_keys.py", names)

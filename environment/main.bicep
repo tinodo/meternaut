@@ -1,13 +1,11 @@
-// The model side of the first environment: a small network (a subnet for private endpoints and a subnet that the usage
-// recording's function app is integrated with), one Foundry account with the first models, reachable only through a
-// private endpoint, and a budget. Nothing of Meternaut calls this account any more: since 2026-11-07 every model call goes direct to the
-// models of the agents' own Foundry resource (environment/foundry), and Meternaut makes nothing on the owner's API Management instance
-// (the owner ordered the undo of what it had added). The account stays as it is until the owner decides about it. This template makes
-// no role for any caller: a deployment does not delete what a template no longer lists, so a person removes the role that the old gateway
-// identity still holds on the account.
+// The network of Meternaut and its budget: a small virtual network with a subnet for private endpoints (snet-pe), a subnet for a Flex Consumption function app (snet-func), a subnet
+// for the cases app (snet-cases), and the budget of the resource group. The action that deploys it is still called model-side: that is its old name, from the time when it also made
+// a model account. That account (aif-meternaut-<digest>, with its private endpoint) was removed on 2026-11-07, because since the owner's order of that day every model call goes direct to the
+// models of the agents' own Foundry resource (environment/foundry) and nothing called it; the action retire-old deletes it. The models themselves are listed in environment/models.json,
+// which the Foundry resource and the AI Gateway read.
 //
 // Left out on purpose (AGENTS.md rule 19), because the landing zone provides it:
-//  - private DNS zones, virtual network links and the private endpoint's DNS zone group: a policy registers the
+//  - private DNS zones, virtual network links and the private endpoints' DNS zone groups: a policy registers each
 //    endpoint in the central zones about ten minutes after it exists;
 //  - peering and route tables: the network manager joins a new virtual network to the hub and routes it;
 //  - an API Management instance: Meternaut makes none and touches none.
@@ -25,11 +23,6 @@ param location string = resourceGroup().location
 @description('Short name of the workload, used in resource names and tags.')
 param workload string = 'meternaut'
 
-@description('Name of the Foundry account. It is also the host name, so it is unique worldwide: 2 to 64 characters, letters, digits and hyphens.')
-@minLength(2)
-@maxLength(64)
-param accountName string
-
 @description('Address space of the virtual network, for example 10.53.0.0/24.')
 param vnetAddressPrefix string
 
@@ -39,7 +32,7 @@ param networkExists bool = false
 @description('Address range of the private endpoint subnet, inside the virtual network, for example 10.53.0.0/27.')
 param peSubnetPrefix string
 
-@description('Address range of the subnet that the function app of the usage recording is integrated with, inside the virtual network and apart from the private endpoint subnet, for example 10.53.0.32/27. A Flex Consumption app needs a /27 at least, for itself alone.')
+@description('Address range of the subnet that a Flex Consumption function app is integrated with, inside the virtual network and apart from the private endpoint subnet, for example 10.53.0.32/27. A Flex Consumption app needs a /27 at least, for itself alone. The subnet is delegated to Flex Consumption and holds nothing else.')
 param funcSubnetPrefix string
 
 @description('Address range of the subnet that the Basic plan of the first cases is integrated with, inside the virtual network and apart from the other two subnets, for example 10.53.0.224/27. It is delegated to Microsoft.Web/serverFarms. environment/cases/main.bicep makes the same subnet (snet-cases); it is listed here too, so that this template, run again, does not take it away from the plan.')
@@ -48,12 +41,6 @@ param webSubnetPrefix string
 @description('DNS servers of the landing zone. A virtual network on Azure-provided DNS cannot resolve the central private zones.')
 @minLength(1)
 param dnsServers array
-
-@description('Restore the soft-deleted account of this name instead of creating a new one. The workflow sets it only after the platform reports that such an account exists.')
-param restoreAccount bool = false
-
-@description('The models deployed in the account: name, version, deployment type and capacity in thousands of tokens a minute. The workflow reads them from environment/models.json, which the Foundry resource of the agents (environment/foundry) reads too, so the two lists cannot differ.')
-param models array
 
 @description('Owner of the resources, as a tag.')
 @minLength(1)
@@ -74,7 +61,7 @@ param budgetStartDate string
 
 var tags = {
   workload: workload
-  component: 'model-side'
+  component: 'network'
   environment: 'dev'
   owner: owner
   'meternaut-stage': 'first-environment'
@@ -90,7 +77,7 @@ resource nsg 'Microsoft.Network/networkSecurityGroups@2025-05-01' = {
 }
 
 // No rule of its own: the default rules let the function app reach the virtual network and the internet (the landing zone's
-// firewall decides there), and nothing is let in.
+// firewall decides there), and nothing is let in. The subnet of a Flex Consumption function app (the cases app moves to one).
 resource funcNsg 'Microsoft.Network/networkSecurityGroups@2025-05-01' = {
   name: 'nsg-${workload}-func'
   location: location
@@ -137,7 +124,7 @@ resource vnet 'Microsoft.Network/virtualNetworks@2025-05-01' = if (!networkExist
       }
       {
         // Delegated to Flex Consumption (not to Microsoft.Web/serverFarms, which is for Premium and Dedicated plans). The
-        // subnet holds nothing else: it cannot hold a private endpoint.
+        // subnet holds nothing else: it cannot hold a private endpoint. The usage app that used it was removed on 2026-11-07; the cases app reuses it.
         name: 'snet-func'
         properties: {
           addressPrefix: funcSubnetPrefix
@@ -179,74 +166,6 @@ resource vnet 'Microsoft.Network/virtualNetworks@2025-05-01' = if (!networkExist
   }
 }
 
-resource account 'Microsoft.CognitiveServices/accounts@2025-06-01' = {
-  name: accountName
-  location: location
-  tags: tags
-  kind: 'AIServices'
-  sku: {
-    name: 'S0'
-  }
-  properties: {
-    customSubDomainName: accountName
-    publicNetworkAccess: 'Disabled'
-    disableLocalAuth: true
-    restore: restoreAccount
-    networkAcls: {
-      defaultAction: 'Deny'
-      ipRules: []
-      virtualNetworkRules: []
-    }
-  }
-}
-
-// One at a time: the account accepts one deployment write at once.
-@batchSize(1)
-resource modelDeployment 'Microsoft.CognitiveServices/accounts/deployments@2025-06-01' = [for model in models: {
-  parent: account
-  name: model.name
-  sku: {
-    name: model.sku
-    capacity: model.capacity
-  }
-  properties: {
-    model: {
-      format: 'OpenAI'
-      name: model.name
-      version: model.version
-    }
-    versionUpgradeOption: 'NoAutoUpgrade'
-    raiPolicyName: 'Microsoft.DefaultV2'
-  }
-}]
-
-// No privateDnsZoneGroups child: the landing zone's policy adds it (see the header).
-resource privateEndpoint 'Microsoft.Network/privateEndpoints@2025-05-01' = {
-  name: 'pe-${accountName}'
-  location: location
-  tags: tags
-  properties: {
-    subnet: {
-      id: resourceId('Microsoft.Network/virtualNetworks/subnets', 'vnet-${workload}', 'snet-pe')
-    }
-    privateLinkServiceConnections: [
-      {
-        name: 'account'
-        properties: {
-          privateLinkServiceId: account.id
-          groupIds: [
-            'account'
-          ]
-        }
-      }
-    ]
-  }
-  dependsOn: [
-    modelDeployment
-    vnet
-  ]
-}
-
 module budget '../infra/budgets/rg-budget.bicep' = {
   name: 'budget'
   params: {
@@ -257,8 +176,5 @@ module budget '../infra/budgets/rg-budget.bicep' = {
   }
 }
 
-@description('Base address of the model endpoint (the cognitiveservices.azure.com host that the landing zone registers privately).')
-output endpoint string = account.properties.endpoint
-
-output accountName string = account.name
-output privateEndpointName string = privateEndpoint.name
+output virtualNetworkName string = 'vnet-${workload}'
+output budgetName string = '${workload}-hub'

@@ -1,4 +1,5 @@
 import contextlib
+import copy
 import importlib.util
 import io
 import json
@@ -62,8 +63,45 @@ MANIFEST = ar.load_manifest()
 BUILTIN = {name: spec["id"] for name, spec in MANIFEST["roles"].items() if spec["kind"] == "builtin"}
 
 
+def file_as_it_was_before_the_usage_app_was_retired():
+    """The file of the repository with what the retirement of 2026-11-07 took out put back as it was: the usage app and its identity, the custom role Meternaut usage reader, the two reads that the app
+    made (R4, R5) and the retired items W5 and W6 (the grants of the user-assigned identity that the app ran as before) in place of W9 and W10. The tool's rules for a custom role, for an app with two reads
+    and for a grant that replaces another are pinned against a file that has all of them, and the file in the repository has none of them any more: most of the tests run the tool against this file, and
+    the class RetireTheUsageApp runs it against the real one."""
+    document = json.loads((ROOT / "environment" / "access-requirements.json").read_text(encoding="utf-8"))
+    document["identities"]["usage"] = {"app": "the usage app", "appName": "func-meternaut-usage-*", "madeBy": "recording", "holders": [{"kind": "system", "siteOption": "--usage-site"}]}
+    document["roles"]["Meternaut usage reader"] = {
+        "kind": "custom", "definedIn": "workspaceGroup",
+        "description": "Reads one table (AppMetrics, the metrics of workspace-based Application Insights) of the central workspace, so that the usage copy job of Meternaut can read the gateway token metrics. Nothing else.",
+        "actions": ["Microsoft.OperationalInsights/workspaces/read", "Microsoft.OperationalInsights/workspaces/query/read", "Microsoft.OperationalInsights/workspaces/query/AppMetrics/read"]}
+    document["grants"] += [
+        {"id": "R4", "identity": "usage", "role": "Monitoring Reader", "place": "gatewayInsights",
+         "why": "Reads the gateway's Application Insights component, where the gateway records the token metrics of every call"},
+        {"id": "R5", "identity": "usage", "role": "Meternaut usage reader", "place": "centralWorkspace",
+         "why": "Reads one table (AppMetrics) of the central workspace. The component is workspace-based and the workspace asks for workspace permissions, so the role on the component alone returns no rows"}]
+    replaced = [
+        {"id": "W5", "identity": {"name": "id-meternaut-usage"}, "role": "Monitoring Reader", "place": "gatewayInsights", "replacedBy": "R4",
+         "why": "Held by the user-assigned identity that the usage app ran as before its own system-assigned identity took over (R4). Only that identity's assignment is removed, and the role stays: R4 needs it"},
+        {"id": "W6", "identity": {"name": "id-meternaut-usage"}, "role": "Meternaut usage reader", "place": "centralWorkspace", "replacedBy": "R5",
+         "why": "Held by the user-assigned identity that the usage app ran as before its own system-assigned identity took over (R5). Only that identity's assignment is removed, and the custom role stays: R5 needs it"}]
+    retired = [item for item in document["retired"] if item["id"] not in ("W9", "W10")]
+    document["retired"] = retired[:3] + replaced + retired[3:]
+    return document
+
+
+def load(document):
+    """The manifest that the loader makes of a document, which it reads from a file."""
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "access-requirements.json"
+        path.write_text(json.dumps(document), encoding="utf-8")
+        return ar.load_manifest(path)
+
+
+OLD = load(file_as_it_was_before_the_usage_app_was_retired())
+
+
 def definition(name, role_id, group, **changes):
-    spec = MANIFEST["roles"][name]
+    spec = OLD["roles"][name]
     value = {"name": role_id, "roleName": name, "assignableScopes": [group],
              "permissions": [{"actions": list(spec["actions"]), "notActions": [], "dataActions": [], "notDataActions": []}]}
     value.update(changes)
@@ -156,6 +194,21 @@ class FakeAz:
             self.grant(f"deleted-principal-{n + 1}", KEY_READER_ID, PRODUCT)
         for n in range(below):
             self.grant("somebody-with-the-role", KEY_READER_ID, APIM)
+        return self
+
+    def leave_the_usage_app(self, orphans=1, below=1):
+        """What the usage recording left for the file of the repository (W9, W10): Monitoring Reader on the old gateway's Application Insights for the usage app's system-assigned identity, for the
+        user-assigned identity id-meternaut-usage and for somebody else (whose assignment stays); the custom role Meternaut usage reader, defined in the central workspace's group, held by both of the
+        app's identities, by identities that were deleted since (Azure keeps them) and, optionally, by somebody on the workspace itself, which is below the group."""
+        self.roles["Meternaut usage reader"] = definition("Meternaut usage reader", USAGE_READER_ID, WORKSPACE_GROUP)
+        for principal in (NEW_USAGE, OLD_USAGE, "somebody-else"):
+            self.grant(principal, BUILTIN["Monitoring Reader"], INSIGHTS)
+        for principal in (NEW_USAGE, OLD_USAGE):
+            self.grant(principal, USAGE_READER_ID, WORKSPACE)
+        for n in range(orphans):
+            self.grant(f"deleted-principal-{n + 1}", USAGE_READER_ID, WORKSPACE_GROUP)
+        for n in range(below):
+            self.grant("somebody-with-the-role", USAGE_READER_ID, WORKSPACE)
         return self
 
     def leave_the_deployer(self, orphans=0, below=0):
@@ -271,7 +324,8 @@ class FakeAz:
         return 1, "", f"unexpected command {a[:3]}"
 
 
-def run(argv, fake, env=None, answers=("yes",), asked=None):
+def run(argv, fake, env=None, answers=("yes",), asked=None, real=False):
+    """Runs the tool against the model of Azure. It reads the file as it was before the usage app was retired, unless real is true (the file of the repository)."""
     lines, errors, sleeps = [], io.StringIO(), []
     answers = list(answers)
 
@@ -280,15 +334,17 @@ def run(argv, fake, env=None, answers=("yes",), asked=None):
             asked.append(prompt)
         return answers.pop(0) if answers else None
 
-    with contextlib.redirect_stderr(errors):
+    manifest = contextlib.nullcontext() if real else mock.patch.object(ar, "load_manifest", lambda path=None: OLD)
+    with contextlib.redirect_stderr(errors), manifest:
         code = ar.main(argv, az=ar.Az(fake), env={} if env is None else env, out=lines.append, sleep=sleeps.append, ask=ask)
     return code, "\n".join(lines), errors.getvalue(), sleeps
 
 
 class TheFile(unittest.TestCase):
-    def broken(self, change):
-        """The file with one change, written to a place where the loader can read it; returns what the loader says."""
-        document = json.loads((ROOT / "environment" / "access-requirements.json").read_text(encoding="utf-8"))
+    def broken(self, change, real=False):
+        """The file with one change, written to a place where the loader can read it; returns what the loader says. It starts from the file as it was before the usage app was retired, which
+        has what the loader's rules are about (two apps, a custom role, a grant that replaces another), unless real is true: then it starts from the file of the repository."""
+        document = json.loads((ROOT / "environment" / "access-requirements.json").read_text(encoding="utf-8")) if real else file_as_it_was_before_the_usage_app_was_retired()
         change(document)
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "broken.json"
@@ -298,24 +354,26 @@ class TheFile(unittest.TestCase):
         return str(raised.exception)
 
     def test_it_loads_and_every_reference_resolves(self):
-        self.assertEqual([g["id"] for g in MANIFEST["grants"]], ["R1", "R2", "R4", "R5"], "R3, the key reader, is retired")
+        self.assertEqual([g["id"] for g in MANIFEST["grants"]], ["R1", "R2"], "R3, the key reader, and R4 and R5, the usage app's two reads, are retired")
         for grant in MANIFEST["grants"]:
             self.assertIn(grant["identity"], MANIFEST["identities"])
             self.assertIn(grant["place"], MANIFEST["places"])
             self.assertIn(grant["role"], MANIFEST["roles"])
+        for item in MANIFEST["retired"]:
+            self.assertIn(item["place"], MANIFEST["places"], item["id"])
 
     def test_the_built_in_roles_are_the_ones_that_azure_has_and_all_of_them_only_read(self):
         self.assertEqual(BUILTIN, {"Reader": "acdd72a7-3385-48ef-bd42-f606fba81ae7", "Cost Management Reader": "72fafb9e-0641-4937-9268-a91bfd8191a3",
                                    "Monitoring Reader": "43d0d8ad-25c7-4714-9337-8ba259a9fe05"})
 
-    def test_meternaut_holds_no_write_right_and_reads_no_key_and_the_one_custom_role_only_reads(self):
+    def test_meternaut_holds_no_write_right_and_reads_no_key_and_the_file_has_no_custom_role_since_the_last_one_was_retired(self):
         customs = [name for name, spec in MANIFEST["roles"].items() if spec["kind"] == "custom"]
-        self.assertEqual(sorted(customs), ["Meternaut usage reader"])
-        for name in customs:
-            for action in MANIFEST["roles"][name]["actions"]:
-                self.assertNotIn("*", action, name)
-                self.assertTrue(action.endswith("/read"), f"{name}: {action}")
-            self.assertFalse(any(re.search(r"write|delete", a, re.I) for a in MANIFEST["roles"][name]["actions"]), name)
+        self.assertEqual(customs, [], "Meternaut usage reader, the last one, was retired as W10 on 2026-11-07")
+        for name, spec in OLD["roles"].items():
+            if spec["kind"] == "custom":
+                for action in spec["actions"]:
+                    self.assertNotIn("*", action, name)
+                    self.assertTrue(action.endswith("/read"), f"{name}: {action}")
         text = (ROOT / "environment" / "access-requirements.json").read_text(encoding="utf-8")
         for word in ("listSecrets", "listKeys", "/action"):
             self.assertNotIn(word, text, f"{word}: since 2026-11-07 no role of the file reads a key")
@@ -335,17 +393,18 @@ class TheFile(unittest.TestCase):
     def test_nothing_in_the_file_says_that_a_role_changes_azure_and_no_identity_is_a_writer(self):
         text = (ROOT / "environment" / "access-requirements.json").read_text(encoding="utf-8")
         self.assertNotIn('"writes"', text)
-        self.assertEqual(sorted(MANIFEST["identities"]), ["cases", "usage"])
+        self.assertEqual(sorted(MANIFEST["identities"]), ["cases"], "the usage app, the other identity, was retired on 2026-11-07")
         self.assertEqual([h for i in MANIFEST["identities"].values() for h in i["holders"] if h["kind"] == "user"], [], "no app runs as a user-assigned identity that needs a role")
         self.assertNotIn("runner", [g["identity"] for g in MANIFEST["grants"]])
 
     def test_an_identity_is_what_an_app_runs_as_and_its_only_holder_is_the_system_assigned_identity_of_the_app(self):
-        for key, option in (("cases", "--cases-site"), ("usage", "--usage-site")):
+        for key, option in (("cases", "--cases-site"),):
             identity = MANIFEST["identities"][key]
             self.assertEqual(identity["holders"], [{"kind": "system", "siteOption": option}], key)
             self.assertTrue(identity["app"] and identity["madeBy"], key)
             self.assertIn("*", identity["appName"], "the name of an app is a pattern here, never a real name")
-        self.assertEqual({k: i["madeBy"] for k, i in MANIFEST["identities"].items()}, {"cases": "cases", "usage": "recording"})
+        self.assertEqual({k: i["madeBy"] for k, i in MANIFEST["identities"].items()}, {"cases": "cases"})
+        self.assertEqual({k: i["madeBy"] for k, i in OLD["identities"].items()}, {"cases": "cases", "usage": "recording"}, "the file before the retirement, which the tests of the tool run against")
 
     def test_the_options_that_name_the_apps_are_options_of_every_command_and_have_a_setting_each(self):
         self.assertEqual(ar.SITE_OPTIONS, {"--cases-site": "ACCESS_CASES_SITE", "--usage-site": "ACCESS_USAGE_SITE"})
@@ -394,19 +453,50 @@ class TheFile(unittest.TestCase):
         self.assertIn(MANIFEST["retired"][0]["place"], MANIFEST["places"])
 
     def test_the_grants_of_the_user_assigned_identities_are_retired_each_one_next_to_the_grant_that_replaces_it(self):
-        self.assertEqual([r["id"] for r in MANIFEST["retired"]], ["W1", "W2", "W3", "W5", "W6", "W7", "W8"])
-        grants = {g["id"]: g for g in MANIFEST["grants"]}
+        self.assertEqual([r["id"] for r in MANIFEST["retired"]], ["W1", "W2", "W3", "W7", "W8", "W9", "W10"])
         names = {"cases": "id-meternaut-cases", "usage": "id-meternaut-usage"}
-        replaced = [r for r in MANIFEST["retired"] if "replacedBy" in r]
-        for item in replaced:
-            replacing = grants[item["replacedBy"]]
-            self.assertEqual((item["role"], item["place"]), (replacing["role"], replacing["place"]), item["id"])
-            self.assertEqual(item["identity"], {"name": names[replacing["identity"]]}, item["id"])
-            self.assertIn(item["role"], MANIFEST["roles"], "the role stays: the grant that replaces it needs it")
-            self.assertTrue(item["why"])
-        self.assertEqual([(r["id"], r["replacedBy"]) for r in replaced], [("W2", "R1"), ("W3", "R2"), ("W5", "R4"), ("W6", "R5")],
-                         "every grant of the old identities is retired, and none besides")
-        self.assertEqual([r["id"] for r in MANIFEST["retired"] if "replacedBy" not in r], ["W1", "W7", "W8"], "the three custom roles that are gone whole")
+        for manifest, ids, pairs in ((MANIFEST, ["W1", "W7", "W8", "W9", "W10"], [("W2", "R1"), ("W3", "R2")]),
+                                     (OLD, ["W1", "W7", "W8"], [("W2", "R1"), ("W3", "R2"), ("W5", "R4"), ("W6", "R5")])):
+            grants = {g["id"]: g for g in manifest["grants"]}
+            replaced = [r for r in manifest["retired"] if "replacedBy" in r]
+            for item in replaced:
+                replacing = grants[item["replacedBy"]]
+                self.assertEqual((item["role"], item["place"]), (replacing["role"], replacing["place"]), item["id"])
+                self.assertEqual(item["identity"], {"name": names[replacing["identity"]]}, item["id"])
+                self.assertIn(item["role"], manifest["roles"], "the role stays: the grant that replaces it needs it")
+                self.assertTrue(item["why"])
+            self.assertEqual([(r["id"], r["replacedBy"]) for r in replaced], pairs, "every grant of the old identities that something replaces is retired, and none besides")
+            self.assertEqual([r["id"] for r in manifest["retired"] if "replacedBy" not in r and "roleStays" not in r and r["id"] not in ("W9", "W10")], ids[:3],
+                             "the three custom roles that are gone whole")
+
+    def test_the_usage_apps_two_reads_are_retired_as_w9_and_w10_the_way_w7_and_w8_were_and_nothing_replaces_them(self):
+        retired = {r["id"]: r for r in MANIFEST["retired"]}
+        w9, w10 = retired["W9"], retired["W10"]
+        self.assertEqual((w9["identity"], w9["role"], w9["place"], w9["roleStays"]), ({"name": "id-meternaut-usage"}, "Monitoring Reader", "gatewayInsights", True))
+        self.assertEqual(w9["alsoHeldBy"], {"app": "the usage app", "appName": "func-meternaut-usage-*", "siteOption": "--usage-site"}, "the system-assigned identity of the app holds it too")
+        self.assertEqual(w9["identityRemovedBy"], "the Hub action retire-old")
+        self.assertEqual((w10["identity"], w10["role"], w10["place"]), ({"name": "id-meternaut-usage"}, "Meternaut usage reader", "centralWorkspace"))
+        for item in (w9, w10):
+            self.assertNotIn("replacedBy", item, f"{item['id']}: nothing replaces it: the app is gone")
+            self.assertIn("2026-11-07", item["why"], item["id"])
+            self.assertIn(item["place"], MANIFEST["places"], item["id"])
+        self.assertIn("Run this before the Hub action retire-old", w9["why"], "the identity and the app are read, and the Hub action deletes both")
+        self.assertIn("then the role itself", w10["why"], "the custom role is gone whole, like W7's and W8's")
+        self.assertNotIn("Meternaut usage reader", MANIFEST["roles"])
+        self.assertNotIn("usage", MANIFEST["identities"])
+        self.assertIn("workspace", MANIFEST["places"]["centralWorkspace"], "the place is the workspace and the resource group that holds it, where the role was defined")
+        self.assertNotIn("roleStays", {k for r in MANIFEST["retired"] if r["id"] != "W9" for k in r})
+
+    def test_the_loader_refuses_the_two_new_kinds_of_retired_item_when_they_make_no_sense(self):
+        for change, word in (
+            (lambda d: [r for r in d["retired"] if r["id"] == "W9"][0].update(roleStays=False), "roleStays is true"),
+            (lambda d: [r for r in d["retired"] if r["id"] == "W9"][0].update(role="Meternaut usage reader"), "built-in role"),
+            (lambda d: [r for r in d["retired"] if r["id"] == "W9"][0].update(replacedBy="R1"), "two kinds of item"),
+            (lambda d: [r for r in d["retired"] if r["id"] == "W9"][0].update(alsoHeldBy={"app": "the usage app"}), "alsoHeldBy names the app"),
+            (lambda d: [r for r in d["retired"] if r["id"] == "W9"][0]["alsoHeldBy"].update(siteOption="--other-site"), "alsoHeldBy names the app"),
+            (lambda d: [r for r in d["retired"] if r["id"] == "W10"][0].update(alsoHeldBy={"app": "a", "appName": "b-*", "siteOption": "--usage-site"}), "belongs to an item with roleStays"),
+        ):
+            self.assertIn(word, self.broken(change, real=True), word)
 
     def test_the_deployment_identitys_role_in_the_gateways_group_is_retired_whole_and_is_not_looked_up(self):
         self.assertNotIn(DEPLOYER, MANIFEST["roles"])
@@ -498,15 +588,15 @@ class TheTable(unittest.TestCase):
         rows = ar.markdown(MANIFEST).splitlines()
         self.assertEqual(len(rows), 2 + len(MANIFEST["grants"]))
         self.assertTrue(rows[0].startswith("| # | Identity | Role | Where | What it is for |"))
-        self.assertIn("Meternaut usage reader (custom role)", rows[5])
+        self.assertEqual([row.split(" | ")[0] for row in rows[2:]], ["| R1", "| R2"])
         self.assertNotIn("key reader", "\n".join(rows))
+        self.assertNotIn("usage", "\n".join(rows), "the usage app and its two reads were retired on 2026-11-07")
 
     def test_a_row_names_the_holder_of_its_identity(self):
         rows = ar.markdown(MANIFEST).splitlines()[2:]
         cases = "The system-assigned identity of the cases app (`func-meternaut-cases-*`)"
-        usage = "The system-assigned identity of the usage app (`func-meternaut-usage-*`)"
-        for row, (number, holders) in zip(rows, (("R1", cases), ("R2", cases), ("R4", usage), ("R5", usage))):
-            self.assertTrue(row.startswith(f"| {number} | {holders} | "), row[:120])
+        for row, number in zip(rows, ("R1", "R2")):
+            self.assertTrue(row.startswith(f"| {number} | {cases} | "), row[:120])
         self.assertNotIn("user-assigned", "\n".join(rows))
 
     def test_the_proposal_shows_exactly_this_table(self):
@@ -516,7 +606,7 @@ class TheTable(unittest.TestCase):
         self.assertEqual(match.group(1), ar.markdown(MANIFEST), "run: python tools/access-requirements.py markdown, and paste it between the markers")
 
     def test_the_command_prints_it(self):
-        code, out, _, _ = run(["markdown"], FakeAz())
+        code, out, _, _ = run(["markdown"], FakeAz(), real=True)
         self.assertEqual((code, out), (0, ar.markdown(MANIFEST)))
 
     def test_no_row_of_the_table_says_that_a_role_changes_azure(self):
@@ -529,17 +619,20 @@ class TheTable(unittest.TestCase):
         self.assertTrue(rows[0].startswith("| # | Identity | Role | Where | Why it is retired |"))
         self.assertTrue(rows[2].startswith(f"| W1 | `{RETIRED_IDENTITY}` | {RETIRED_ROLE} (custom role) | "))
         self.assertTrue(rows[3].startswith("| W2 | `id-meternaut-cases` | Reader | "), "a built-in role is not a custom role")
-        self.assertTrue(rows[6].startswith("| W6 | `id-meternaut-usage` | Meternaut usage reader (custom role) | "))
-        self.assertTrue(rows[7].startswith("| W7 | `id-meternaut-cases` | Meternaut gateway key reader (custom role) | The resource group of the owner's API Management instance"))
-        self.assertTrue(rows[8].startswith(f"| W8 | `{DEPLOYER_IDENTITY}` | {DEPLOYER} (custom role) | The resource group of the owner's API Management instance"))
+        self.assertTrue(rows[5].startswith("| W7 | `id-meternaut-cases` | Meternaut gateway key reader (custom role) | The resource group of the owner's API Management instance"))
+        self.assertTrue(rows[6].startswith(f"| W8 | `{DEPLOYER_IDENTITY}` | {DEPLOYER} (custom role) | The resource group of the owner's API Management instance"))
+        self.assertTrue(rows[7].startswith("| W9 | `id-meternaut-usage` and the system-assigned identity of the usage app (`func-meternaut-usage-*`) | Monitoring Reader | "
+                                           "The old gateway's Application Insights component | "), "a built-in role again, and the app's own identity is named too")
+        self.assertTrue(rows[8].startswith("| W10 | `id-meternaut-usage` | Meternaut usage reader (custom role) | The central workspace that the component writes to, and the resource group that holds it | "))
         self.assertNotIn("| W4 |", "\n".join(rows), "the old grant of the key reader is folded into W7")
+        self.assertNotIn("| W5 |", "\n".join(rows), "the grants of the usage app's user-assigned identity are folded into W9 and W10")
         text = self.PROPOSAL.read_text(encoding="utf-8")
         match = re.search(r"<!-- access-retired:start -->\n(.*?)\n<!-- access-retired:end -->", text, re.S)
         self.assertIsNotNone(match, "the proposal has no marked table of the retired grants")
         self.assertEqual(match.group(1), ar.markdown_retired(MANIFEST), "run: python tools/access-requirements.py markdown --retired, and paste it between the markers")
 
     def test_the_command_prints_the_retired_table_with_an_option(self):
-        code, out, _, _ = run(["markdown", "--retired"], FakeAz())
+        code, out, _, _ = run(["markdown", "--retired"], FakeAz(), real=True)
         self.assertEqual((code, out), (0, ar.markdown_retired(MANIFEST)))
 
 
@@ -883,7 +976,7 @@ class Check(unittest.TestCase):
         self.assertFalse(any(c[0] == "rest" and INSIGHTS in c[c.index("--url") + 1] and "roleAssignments" not in c[c.index("--url") + 1] for c in fake.calls))
 
     def test_the_settings_of_the_workflow_are_read_from_the_environment(self):
-        env = {"ENV_SUBSCRIPTION_ID": PROJECT, "ENV_RESOURCE_GROUP": "rg-project", "GATEWAY_RESOURCE_ID": APIM, "GATEWAY_APPINSIGHTS_ID": INSIGHTS,
+        env = {"ENV_SUBSCRIPTION_ID": PROJECT, "ENV_RESOURCE_GROUP": "rg-project", "ACCESS_GATEWAY_ID": APIM, "ACCESS_GATEWAY_INSIGHTS_ID": INSIGHTS,
                "ACCESS_ESTATE_SCOPES": f"{ESTATE}, /subscriptions/{SECOND}", "ACCESS_CASES_SITE": CASES_SITE}
         code, out, _, _ = run(["check", "--only", "R1"], FakeAz(), env=env)
         self.assertEqual((code, "1 of 2 present." in out), (1, True))
@@ -993,7 +1086,7 @@ class Grant(unittest.TestCase):
         fake = FakeAz(**self.EMPTY)
         run(["grant", *PLACES, "--apply", "--yes", "--only", "R5"], fake)
         ((path, content),) = fake.definition_files
-        spec = MANIFEST["roles"]["Meternaut usage reader"]
+        spec = OLD["roles"]["Meternaut usage reader"]
         self.assertEqual(content, {"Name": "Meternaut usage reader", "IsCustom": True, "Description": spec["description"], "Actions": spec["actions"],
                                    "NotActions": [], "DataActions": [], "NotDataActions": [], "AssignableScopes": [WORKSPACE_GROUP]})
         self.assertFalse(os.path.exists(path))
@@ -1367,7 +1460,7 @@ class Retire(unittest.TestCase):
             self.assertIn(word, err)
 
     def test_the_settings_of_the_workflow_are_read_from_the_environment(self):
-        env = {"ENV_SUBSCRIPTION_ID": PROJECT, "ENV_RESOURCE_GROUP": "rg-project", "GATEWAY_RESOURCE_ID": APIM, "GATEWAY_APPINSIGHTS_ID": INSIGHTS}
+        env = {"ENV_SUBSCRIPTION_ID": PROJECT, "ENV_RESOURCE_GROUP": "rg-project", "ACCESS_GATEWAY_ID": APIM, "ACCESS_GATEWAY_INSIGHTS_ID": INSIGHTS}
         code, out, _, _ = run(["retire"], self.left(), env=env)
         self.assertEqual(code, 1)
         self.assertIn(f"at {PROJECT_GROUP}", out)
@@ -1798,6 +1891,123 @@ class RetireTheDeployer(unittest.TestCase):
         self.assertIn("Identity not found", out)
         self.assertIn(f"{RETIRED_IDENTITY} does not exist in", out)
         self.assertNotIn("every assignment of the role at this place is removed, whoever holds it", out, "that wording is for an identity that is not looked up")
+
+
+class RetireTheUsageApp(unittest.TestCase):
+    """The usage app's two reads (W9, W10), retired on 2026-11-07 with the usage recording, against the file of the repository. W9 is the built-in role Monitoring Reader on the old gateway's
+    Application Insights component, which stays because other people hold it: only the own assignments of the usage app's two identities are removed (its system-assigned identity, found by reading the
+    app, and the user-assigned identity id-meternaut-usage). W10 is the custom role Meternaut usage reader, which goes whole, as W7 and W8 did: every assignment of it at the central workspace's resource
+    group and below, whoever holds it, and then the role. A person runs `retire --only W9,W10` in the owner's session, before the Hub action retire-old deletes the app and its identity."""
+
+    ONLY = ["--only", "W9,W10"]
+    APP = f"{USAGE_SITE} (system-assigned)"
+
+    def left(self, **options):
+        return FakeAz(granted=False).leave_the_usage_app(**options)
+
+    def go(self, argv, fake, **more):
+        return run(["retire", *PLACES, *self.ONLY, *argv], fake, real=True, **more)
+
+    def test_a_dry_run_names_both_identities_and_the_role_lists_what_each_holds_and_removes_nothing(self):
+        fake = self.left(orphans=1, below=1)
+        code, out, _, _ = self.go([], fake)
+        self.assertEqual(code, 1, "something is left to retire, and a script can tell")
+        self.assertEqual(fake.writes(), [])
+        self.assertRegex(out, rf"still there +W9  id-meternaut-usage  Monitoring Reader  at {re.escape(INSIGHTS)}")
+        self.assertRegex(out, rf"still there +W9  {re.escape(self.APP)}  Monitoring Reader  at {re.escape(INSIGHTS)}")
+        self.assertRegex(out, rf"still there +W10  id-meternaut-usage  Meternaut usage reader  at {re.escape(WORKSPACE)}")
+        self.assertIn("id-meternaut-usage holds 1 assignment(s) of Monitoring Reader at or below this place", out)
+        self.assertIn(f"{self.APP} holds 1 assignment(s) of Monitoring Reader at or below this place", out)
+        self.assertIn(f"the custom role exists ({USAGE_READER_ID}); 4 assignment(s) of it at or below {WORKSPACE_GROUP} (the resource group where the role was defined)", out)
+        self.assertIn("the Hub action retire-old removes it, after this tool has taken away its grants", out, "the identity is deleted by the Hub action, never by this tool")
+        self.assertIn("7 change(s) would be made, and nothing else", out)
+        self.assertIn("This was a dry run", out)
+        commands = [line.strip() for line in out.splitlines() if line.strip().startswith("az ")]
+        self.assertEqual(len([c for c in commands if c.startswith("az role assignment delete")]), 6)
+        self.assertEqual(commands[-1].split("   #")[0], f"az role definition delete --subscription {WORKSPACE_SUB} --name {USAGE_READER_ID}")
+        self.assertEqual({c[c.index("--method") + 1] for c in fake.calls if c[0] == "rest"}, {"get"}, "the app is only read")
+        self.assertEqual([c for c in fake.calls if c[:2] == ["identity", "delete"]], [])
+
+    def test_apply_removes_the_own_assignments_of_the_two_identities_every_assignment_of_the_role_then_the_role_and_nothing_else(self):
+        fake = self.left(orphans=2, below=1)
+        somebody_else = [dict(a) for a in fake.assignments if a["principal"] == "somebody-else"]
+        self.assertEqual(len(somebody_else), 1)
+        code, out, _, _ = self.go(["--apply", "--yes"], fake)
+        self.assertEqual(code, 0, out)
+        self.assertEqual([c[:3] for c in fake.writes()], [["role", "assignment", "delete"]] * 7 + [["role", "definition", "delete"]])
+        self.assertEqual(fake.assignments, somebody_else, "what somebody else holds on the old component is still there: the role is built in and stays")
+        self.assertEqual(fake.roles, {}, "the custom role is gone, and no built-in role is ever deleted")
+        self.assertEqual([c for c in fake.calls if c[:2] in (["identity", "delete"], ["resource", "delete"])], [], "neither the identity nor the app is touched: the Hub action retire-old deletes them")
+        self.assertEqual({c[c.index("--method") + 1] for c in fake.calls if c[0] == "rest"}, {"get"})
+        self.assertIn("Checking again:", out)
+        self.assertTrue(out.rstrip().endswith("3 of 3 gone."))
+
+    def test_a_second_run_has_nothing_to_retire(self):
+        fake = self.left()
+        self.go(["--apply", "--yes"], fake)
+        before = len(fake.writes())
+        for argv in (["--apply", "--yes"], []):
+            code, out, _, _ = self.go(argv, fake)
+            self.assertEqual((code, len(fake.writes()), "Nothing to retire." in out), (0, before, True), argv)
+        code, out, _, _ = run(["retire", *PLACES], fake, real=True)
+        self.assertEqual((code, len(fake.writes()), "Nothing to retire." in out), (0, before, True), "the whole list of the retired items")
+
+    def test_an_app_that_is_gone_cannot_be_traced_so_its_own_assignment_is_said_to_stay_and_the_user_assigned_identitys_is_still_removed(self):
+        fake = self.left()
+        del fake.sites[USAGE_SITE]
+        code, out, _, _ = self.go([], fake)
+        self.assertEqual(code, 1)
+        self.assertIn("so nothing can be traced to its identity by name", out)
+        self.assertIn("this tool cannot tell whose they were", out)
+        code, out, _, _ = self.go(["--apply", "--yes"], fake)
+        held = {(a["principal"], a["role_id"]) for a in fake.assignments}
+        self.assertIn((NEW_USAGE, BUILTIN["Monitoring Reader"]), held, "an assignment that cannot be traced to the app stays: Azure shows it as 'Identity not found', and the role is built in")
+        self.assertNotIn((OLD_USAGE, BUILTIN["Monitoring Reader"]), held, "the user-assigned identity still exists, so its own assignment is removed")
+        self.assertEqual(fake.of_the_role(USAGE_READER_ID), [], "the custom role is removed whole whoever holds it, so this part does not depend on the app")
+        self.assertNotIn("Meternaut usage reader", fake.roles)
+
+    def test_the_name_of_the_usage_app_is_needed_for_w9_and_not_for_w10(self):
+        places = [x for x in PLACES if x not in ("--usage-site", USAGE_SITE)]
+        code, _, err, _ = run(["retire", *places, "--only", "W9"], self.left(), real=True)
+        self.assertEqual(code, 1)
+        self.assertIn("--usage-site", err)
+        fake = self.left()
+        code, out, _, _ = run(["retire", *places, "--only", "W10"], fake, real=True)
+        self.assertEqual(code, 1, out)
+        self.assertRegex(out, r"still there +W10")
+        self.assertEqual(fake.writes(), [])
+
+    def test_the_role_is_kept_while_an_assignment_of_it_remains_and_the_built_in_reads_are_still_removed(self):
+        fake = self.left()
+        fake.stubborn = {fake.of_the_role(USAGE_READER_ID)[0]["id"]}
+        code, out, _, _ = self.go(["--apply", "--yes"], fake)
+        self.assertEqual(code, 1)
+        self.assertIn("kept the custom role Meternaut usage reader: 1 assignment(s) of it remain", out)
+        self.assertEqual([c for c in fake.calls if c[:3] == ["role", "definition", "delete"]], [])
+        self.assertIn("Meternaut usage reader", fake.roles)
+        self.assertEqual([a for a in fake.assignments if a["principal"] in (NEW_USAGE, OLD_USAGE) and a["role_id"] == BUILTIN["Monitoring Reader"]], [])
+
+    def test_a_role_that_can_also_be_assigned_outside_the_workspaces_group_is_left_alone_and_the_built_in_reads_are_still_removed(self):
+        fake = self.left()
+        fake.roles["Meternaut usage reader"]["assignableScopes"].append(f"/subscriptions/{WORKSPACE_SUB}")
+        code, out, _, _ = self.go([], fake)
+        self.assertEqual(code, 1)
+        self.assertRegex(out, r"left alone +W10")
+        self.assertIn("outside this place", out)
+        before = len(fake.of_the_role(USAGE_READER_ID))
+        self.go(["--apply", "--yes"], fake)
+        self.assertEqual(len(fake.of_the_role(USAGE_READER_ID)), before, "nothing of a role that is not only the project's is touched")
+        self.assertIn("Meternaut usage reader", fake.roles)
+        self.assertEqual([a for a in fake.assignments if a["principal"] in (NEW_USAGE, OLD_USAGE) and a["role_id"] == BUILTIN["Monitoring Reader"]], [])
+
+    def test_a_pipeline_may_not_apply_and_a_dry_run_is_allowed(self):
+        fake = self.left()
+        code, _, err, _ = self.go(["--apply", "--yes"], fake, env={"GITHUB_ACTIONS": "true"})
+        self.assertEqual((code, fake.calls), (1, []))
+        self.assertIn("never a pipeline", err)
+        code, out, _, _ = self.go([], fake, env={"GITHUB_ACTIONS": "true"})
+        self.assertIn("dry run", out)
+        self.assertEqual(fake.writes(), [])
 
 
 if __name__ == "__main__":

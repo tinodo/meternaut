@@ -164,7 +164,7 @@ class WorkOutTheFoundrySettings(unittest.TestCase):
         self.assertIn(f"The service reports the host name of the AI Gateway {GATEWAY_NAME}; it goes into the cases file", done.stdout)
 
     def test_every_other_action_looks_for_none_of_them_so_a_refused_read_cannot_stop_it(self):
-        for action in ("loop-check", "operator", "recording"):
+        for action in ("loop-check", "operator", "base"):
             with self.subTest(action=action):
                 done, lines, _ = self.run_step(action, project=self.HOSTILE, system="FAIL", gateway="FAIL")
                 self.assertEqual(done.returncode, 0, done.stderr)
@@ -236,9 +236,9 @@ class WorkOutTheFoundrySettings(unittest.TestCase):
     ACTIONS = re.findall(r"^          - (\S+)$", re.search(r"(?ms)^      action:\n(.*?)^      \w", WORKFLOW).group(1), re.M)
 
     def test_the_actions_of_the_workflow_are_the_ones_without_the_three_that_made_objects_on_the_instance(self):
-        self.assertEqual(self.ACTIONS, ["what-if", "model-side", "recording", "recording-check", "foundry", "cases", "cases-run", "page-latency", "plant", "loop-check", "operator", "operator-probe",
+        self.assertEqual(self.ACTIONS, ["what-if", "model-side", "base", "retire-old", "foundry", "cases", "cases-run", "page-latency", "plant", "loop-check", "operator", "operator-probe",
                                         "aigateway", "aigateway-check"])
-        for retired in ("gateway-prepare", "gateway", "contract"):
+        for retired in ("gateway-prepare", "gateway", "contract", "recording", "recording-check"):
             self.assertNotIn(retired, self.ACTIONS)
 
     def test_no_action_looks_at_the_owners_api_management_instance_or_at_a_gateway_identity_and_every_action_builds_and_checks_its_files_without_a_word_of_alarm(self):
@@ -261,7 +261,7 @@ class WorkOutTheFoundrySettings(unittest.TestCase):
                 self.assertRegex(builds[1], r"^build preview=no foundry_project=\w+ cases_system=\[[0-9a-f-]*\] retired=\[unsetunsetunset\] contract=no policies=yes aigw=\[[a-z0-9.-]*\]$",
                                  "the builder is given nothing of the retired settings")
                 labels = [re.search(r"--label (\S+)", line).group(1) for line in lines if line.startswith("check ")]
-                self.assertEqual(labels, ["environment", "recording", "foundry", "cases", "operator", "planted"], "every file is checked against its template")
+                self.assertEqual(labels, ["environment", "base", "foundry", "cases", "operator", "planted"], "every file is checked against its template")
 
     def test_the_step_names_nothing_of_the_instance_its_identity_its_loggers_or_the_contract(self):
         # The comments of the step say that it looks at none of them; the commands do not name them.
@@ -269,7 +269,7 @@ class WorkOutTheFoundrySettings(unittest.TestCase):
         for word in ("GATEWAY_RESOURCE_ID", "GATEWAY_PRINCIPAL_ID", "GATEWAY_CLIENT_ID", "RECORDING_FRAGMENTS", "--contract", "contract_files", "identity list", "loggers", "ApiManagement/service",
                      "usage-eventhub-logger", "gateway_subscription", "gateway_resource_group", "identity_name", "--apim"):
             self.assertNotIn(word, script, word)
-        self.assertIn("GATEWAY_APPINSIGHTS_ID", WORKFLOW, "the one secret of the gateway's side that is still read: the usage recording's copy jobs read that Application Insights component")
+        self.assertNotIn("GATEWAY_APPINSIGHTS_ID", WORKFLOW, "no secret of the gateway's side is read any more: the usage recording that read the Application Insights component was removed on 2026-11-07")
         self.assertNotIn("GATEWAY_RESOURCE_ID", WORKFLOW)
 
     def test_the_lookups_only_read(self):
@@ -296,7 +296,7 @@ esac
 class TheFoundryResourceBuildsOnWhatIsThere(unittest.TestCase):
     """The check before the deploy of the Foundry resource: the component for the traces, the cases app with its own system-assigned identity, and a file that carries the identity's object id."""
 
-    TITLE = "The usage recording and the cases app's identity are there, which the Foundry resource builds on"
+    TITLE = "The base and the cases app's identity are there, which the Foundry resource builds on"
     SITE_CALL = ("az rest --method get --url https://management.azure.com/subscriptions/sub-of-the-project/resourceGroups/rg-of-the-project/providers/Microsoft.Web"
                  "/sites/func-meternaut-cases-abc123?api-version=2024-04-01 --query identity.principalId --output tsv")
 
@@ -318,11 +318,11 @@ class TheFoundryResourceBuildsOnWhatIsThere(unittest.TestCase):
         done, _, _ = self.run_step(site=CASES_PRINCIPAL.upper())
         self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
 
-    def test_a_component_that_is_not_there_stops_the_step_and_says_to_run_the_recording_first(self):
+    def test_a_component_that_is_not_there_stops_the_step_and_says_to_run_the_base_first(self):
         for answer in ("", "None"):
             done, lines, _ = self.run_step(component=answer)
             self.assertEqual(done.returncode, 1, answer)
-            self.assertIn("Run recording first", done.stdout)
+            self.assertIn("Run base first", done.stdout)
             self.assertEqual(len(lines), 1, "the app is not asked for when the first thing is missing")
 
     def test_an_app_that_is_not_there_or_has_no_identity_of_its_own_stops_the_step_and_says_to_run_cases_first(self):
@@ -504,12 +504,13 @@ APP_WAIT_AZ = """az() {
 
 
 @unittest.skipIf(BASH is None, "no bash on this machine")
-class WaitForTheEndpointsOfTheTwoApps(unittest.TestCase):
-    """The waits of the actions recording and cases for the landing zone's policy to register the private endpoint of each function app in its central zone before the code is published. The first
-    `recording` after the usage app's endpoint was made failed at the publish, because the app's own name did not resolve until the zone had its record (2026-11-06): so the app's endpoint is in the list of
-    the recording's wait, and the cases action waits for its own. Each runs against a stand-in for az that registers the endpoints from the check that the test names on."""
+class WaitForTheEndpointsOfTheBaseAndTheCasesApp(unittest.TestCase):
+    """The waits of the actions base and cases for the landing zone's policy to register private endpoints in its central zones before anything uses their names: the base's four (the storage account's
+    three and the Event Hubs namespace's) before an app starts, and the cases app's own before its code is published. A deployment of an app after its endpoint was made failed at the publish, because the
+    app's own name did not resolve until the zone had its record (2026-11-06): so the cases action waits for its own endpoint. Each runs against a stand-in for az that registers the endpoints from the
+    check that the test names on."""
 
-    RECORDING = "Wait until the landing zone has registered the usage recording's private endpoints in the central zones"
+    BASE = "Wait until the landing zone has registered the base's private endpoints in the central zones"
     CASES = "Wait until the landing zone has registered the cases app's private endpoint in the central zone"
     SUBSCRIPTION = "11111111-2222-3333-4444-555555555555"
     GROUP = "rg-of-the-project"
@@ -520,10 +521,10 @@ class WaitForTheEndpointsOfTheTwoApps(unittest.TestCase):
         spec = importlib.util.spec_from_file_location("environment_params_of_the_wait_tests", ROOT / "tools" / "environment-params.py")
         cls.params = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(cls.params)
-        names = cls.params.recording_names(cls.SUBSCRIPTION, cls.GROUP)
-        cls.recording = cls.params.recording_endpoints(names)
+        names = cls.params.base_names(cls.SUBSCRIPTION, cls.GROUP)
+        cls.base = cls.params.base_endpoints(names)
         cls.cases = cls.params.cases_endpoints(cls.params.cases_names(cls.SUBSCRIPTION, cls.GROUP))
-        cls.usage_endpoint = f"pe-{names['function_app_name']}"
+        cls.namespace_endpoint = f"pe-{names['event_hub_namespace']}"
         cls.cases_endpoint = cls.cases[0][0]
 
     def run_wait(self, title, variable, pairs, registered, failing=0, two_checks=False):
@@ -545,48 +546,48 @@ class WaitForTheEndpointsOfTheTwoApps(unittest.TestCase):
     def sleeps(self, lines):
         return [line for line in lines if line.startswith("sleep")]
 
-    def test_the_list_of_the_recording_holds_the_app_s_endpoint_with_the_zone_of_app_service_and_the_cases_list_holds_the_cases_app_s(self):
-        self.assertEqual(len(self.recording), 6, "the five endpoints of the services and the usage app's own")
-        self.assertIn((self.usage_endpoint, self.ZONE_OF_THE_APPS), self.recording)
+    def test_the_list_of_the_base_holds_the_four_endpoints_of_the_storage_account_and_the_namespace_and_the_cases_list_holds_the_cases_app_s(self):
+        self.assertEqual(len(self.base), 4, "the storage account's three (blob, queue and table) and the namespace's, and no app's own: the usage app was removed on 2026-11-07")
+        self.assertEqual(self.base[-1], (self.namespace_endpoint, "privatelink.servicebus.windows.net"))
+        self.assertNotIn(self.ZONE_OF_THE_APPS, [zone for _, zone in self.base])
         self.assertEqual(self.cases, [(self.cases_endpoint, self.ZONE_OF_THE_APPS)])
-        self.assertNotEqual(self.usage_endpoint, self.cases_endpoint)
 
-    def test_the_recording_wait_ends_at_once_when_all_six_endpoints_are_registered_and_asks_about_each_one_including_the_app_s(self):
-        done, lines, _ = self.run_wait(self.RECORDING, "RECORDING_ENDPOINTS", self.recording, self.registered(self.recording))
+    def test_the_base_wait_ends_at_once_when_all_four_endpoints_are_registered_and_asks_about_each_one(self):
+        done, lines, _ = self.run_wait(self.BASE, "BASE_ENDPOINTS", self.base, self.registered(self.base))
         self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
-        self.assertIn("The landing zone's policy has registered every private endpoint of the usage recording, the function app's own included, in its central zone.", done.stdout)
-        self.assertEqual(self.named(lines), [endpoint for endpoint, _ in self.recording])
-        self.assertIn(self.usage_endpoint, self.named(lines))
+        self.assertIn("The landing zone's policy has registered every private endpoint of the base in its central zone.", done.stdout)
+        self.assertEqual(self.named(lines), [endpoint for endpoint, _ in self.base])
         self.assertEqual(self.sleeps(lines), [])
 
-    def test_an_app_endpoint_that_is_registered_later_than_the_others_keeps_the_recording_waiting_and_is_the_one_that_the_message_names(self):
-        done, lines, _ = self.run_wait(self.RECORDING, "RECORDING_ENDPOINTS", self.recording, self.registered(self.recording, **{self.usage_endpoint: 3}))
+    def test_an_endpoint_that_is_registered_later_than_the_others_keeps_the_base_waiting_and_is_the_one_that_the_message_names(self):
+        done, lines, _ = self.run_wait(self.BASE, "BASE_ENDPOINTS", self.base, self.registered(self.base, **{self.namespace_endpoint: 3}))
         self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
-        self.assertIn(f"Not registered yet: {self.usage_endpoint} (check 1 of 40).", done.stdout)
-        self.assertIn(f"Not registered yet: {self.usage_endpoint} (check 2 of 40).", done.stdout)
+        self.assertIn(f"Not registered yet: {self.namespace_endpoint} (check 1 of 40).", done.stdout)
+        self.assertIn(f"Not registered yet: {self.namespace_endpoint} (check 2 of 40).", done.stdout)
         self.assertNotIn("(check 3 of 40)", done.stdout, "registered at the third check")
-        self.assertEqual((len(self.checks(lines)), self.sleeps(lines)), (18, ["sleep 60"] * 2), "three checks of six endpoints, and a minute between them")
+        self.assertEqual((len(self.checks(lines)), self.sleeps(lines)), (12, ["sleep 60"] * 2), "three checks of four endpoints, and a minute between them")
 
-    def test_an_app_endpoint_that_never_gets_its_zone_group_or_gets_another_zone_fails_the_recording_and_the_code_is_not_published(self):
-        others = [pair for pair in self.recording if pair[0] != self.usage_endpoint]
+    def test_an_endpoint_that_never_gets_its_zone_group_or_gets_another_zone_fails_the_base_and_says_what_it_means(self):
+        others = [pair for pair in self.base if pair[0] != self.namespace_endpoint]
         for label, registered in (("no zone group", self.registered(others)),
-                                  ("a zone group of another zone", self.registered(others) + [f"{self.usage_endpoint}=privatelink.blob.core.windows.net"]),
-                                  ("a zone whose name only ends like the zone of the apps", self.registered(others) + [f"{self.usage_endpoint}=other-{self.ZONE_OF_THE_APPS}"])):
-            done, lines, _ = self.run_wait(self.RECORDING, "RECORDING_ENDPOINTS", self.recording, registered, two_checks=True)
+                                  ("a zone group of another zone", self.registered(others) + [f"{self.namespace_endpoint}=privatelink.blob.core.windows.net"]),
+                                  ("a zone whose name only ends like the zone of the namespace", self.registered(others) + [f"{self.namespace_endpoint}=other-privatelink.servicebus.windows.net"])):
+            done, lines, _ = self.run_wait(self.BASE, "BASE_ENDPOINTS", self.base, registered, two_checks=True)
             self.assertEqual(done.returncode, 1, label)
-            self.assertEqual((len(self.checks(lines)), len(self.sleeps(lines))), (12, 2), f"{label}: two checks of six endpoints")
-            self.assertIn(f"Not registered yet: {self.usage_endpoint} (check 2 of 40).", done.stdout, label)
-            self.assertIn(f"::error::The landing zone's policy has not registered these private endpoints in their central zones: {self.usage_endpoint}. The function app was not given its code.", done.stdout, label)
+            self.assertEqual((len(self.checks(lines)), len(self.sleeps(lines))), (8, 1), f"{label}: two checks of four endpoints")
+            self.assertIn(f"Not registered yet: {self.namespace_endpoint} (check 2 of 40).", done.stdout, label)
+            self.assertIn(f"::error::The landing zone's policy has not registered these private endpoints in their central zones: {self.namespace_endpoint}. "
+                          "An app that starts now could not reach its storage or its namespace by their private names.", done.stdout, label)
             self.assertIn("do not create a private DNS zone", done.stdout)
 
-    def test_the_recording_gives_up_after_forty_checks_a_minute_apart_and_no_sleep_follows_the_last(self):
-        pairs = [self.recording[-2], self.recording[-1]]
-        self.assertEqual(pairs[-1][0], self.usage_endpoint, "the app's own endpoint is the last of the list")
-        done, lines, _ = self.run_wait(self.RECORDING, "RECORDING_ENDPOINTS", pairs, self.registered(pairs[:1]))
+    def test_the_base_gives_up_after_forty_checks_a_minute_apart_and_no_sleep_follows_the_last(self):
+        pairs = [self.base[-2], self.base[-1]]
+        self.assertEqual(pairs[-1][0], self.namespace_endpoint, "the namespace's endpoint is the last of the list")
+        done, lines, _ = self.run_wait(self.BASE, "BASE_ENDPOINTS", pairs, self.registered(pairs[:1]))
         self.assertEqual(done.returncode, 1)
         self.assertEqual((len(self.checks(lines)), len(self.sleeps(lines))), (80, 39), "forty checks of two endpoints, and no sleep after the last check")
         self.assertEqual(set(self.sleeps(lines)), {"sleep 60"})
-        self.assertIn(f"Not registered yet: {self.usage_endpoint} (check 40 of 40).", done.stdout)
+        self.assertIn(f"Not registered yet: {self.namespace_endpoint} (check 40 of 40).", done.stdout)
 
     def test_the_cases_wait_ends_at_once_asks_about_the_one_endpoint_of_the_cases_app_and_says_so(self):
         done, lines, _ = self.run_wait(self.CASES, "CASES_ENDPOINTS", self.cases, self.registered(self.cases))
@@ -623,7 +624,7 @@ class WaitForTheEndpointsOfTheTwoApps(unittest.TestCase):
             self.assertIn("The cases app was not given its code.", done.stdout, label)
 
     def test_the_waits_only_read_the_zone_groups_and_make_no_zone(self):
-        for title, variable, pairs in ((self.RECORDING, "RECORDING_ENDPOINTS", self.recording), (self.CASES, "CASES_ENDPOINTS", self.cases)):
+        for title, variable, pairs in ((self.BASE, "BASE_ENDPOINTS", self.base), (self.CASES, "CASES_ENDPOINTS", self.cases)):
             done, lines, _ = self.run_wait(title, variable, pairs, self.registered(pairs))
             self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
             self.assertEqual(len(lines), len(pairs))
@@ -672,17 +673,17 @@ OPERATOR_CLIENT = "6e5f3a1c-2b7d-4c8e-9f10-3a4b5c6d7e8f"
 
 @unittest.skipIf(BASH is None, "no bash on this machine")
 class FindTheOperator(unittest.TestCase):
-    """The step that finds the Operator for recording-check and cases-run: what it finds, what it says when the Operator is not there, and that it only reads."""
+    """The step that finds the Operator for cases-run: what it finds, what it says when the Operator is not there, and that it only reads."""
 
     TITLE = "Find the Operator, which runs the check from inside the network"
 
-    def run_step(self, identity_id=OPERATOR_IDENTITY, client=OPERATOR_CLIENT, subnet="ok", action="recording-check"):
+    def run_step(self, identity_id=OPERATOR_IDENTITY, client=OPERATOR_CLIENT, subnet="ok", action="cases-run"):
         return run_step_script(self.TITLE, {"az": OPERATOR_FIND_AZ},
                                {"FAKE_IDENTITY_ID": identity_id, "FAKE_CLIENT": client, "FAKE_SUBNET": subnet, "ACTION": action, "ENV_SUBSCRIPTION_ID": "sub-of-the-project",
                                 "ENV_RESOURCE_GROUP": "rg-of-the-project"})
 
     def test_the_operator_that_is_there_is_found_and_its_ids_are_the_outputs_of_the_step(self):
-        for action in ("recording-check", "cases-run"):
+        for action in ("cases-run",):
             done, lines, out = self.run_step(action=action)
             self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
             self.assertEqual(lines, ["az resource list --resource-group rg-of-the-project --name id-meternaut-operator --query [0].id --output tsv",
@@ -695,7 +696,7 @@ class FindTheOperator(unittest.TestCase):
         for answer in ("", "None", "FAIL", "id-meternaut-operator", "/not/a/subscription"):
             done, lines, out = self.run_step(identity_id=answer, action="cases-run")
             self.assertEqual(done.returncode, 1, answer)
-            self.assertIn("The identity id-meternaut-operator is not there. The action cases-run runs its check in the Operator, so run operator first (the order is recording, cases, operator). Nothing was changed.",
+            self.assertIn("The identity id-meternaut-operator is not there. The action cases-run runs its check in the Operator, so run operator first (the order is base, cases, operator). Nothing was changed.",
                           done.stdout, answer)
             self.assertEqual((len(lines), out), (1, ""), "the identity is not read and the subnet is not asked for when the list finds nothing")
 
@@ -710,7 +711,7 @@ class FindTheOperator(unittest.TestCase):
     def test_a_subnet_that_is_not_there_says_to_run_operator_first_and_any_other_answer_stops_the_step_with_what_it_said(self):
         done, lines, out = self.run_step(subnet="absent")
         self.assertEqual((done.returncode, out), (1, ""))
-        self.assertIn("The subnet snet-ops is not there. The action recording-check runs its check in the Operator, so run operator first (the order is recording, cases, operator). Nothing was changed.", done.stdout)
+        self.assertIn("The subnet snet-ops is not there. The action cases-run runs its check in the Operator, so run operator first (the order is base, cases, operator). Nothing was changed.", done.stdout)
         self.assertEqual(len(lines), 3)
         done, lines, out = self.run_step(subnet="throttled")
         self.assertEqual((done.returncode, out), (1, ""))
@@ -728,10 +729,10 @@ class FindTheOperator(unittest.TestCase):
 
 
 @unittest.skipIf(BASH is None, "no bash on this machine")
-class TheControlHubsAreThereBeforeTheOperatorIsDeployed(unittest.TestCase):
-    """The step of the action operator that reads the two control hubs, which the Operator is given a role on, before anything is deployed."""
+class TheControlHubIsThereBeforeTheOperatorIsDeployed(unittest.TestCase):
+    """The step of the action operator that reads the control hub, which the Operator is given a role on, before anything is deployed."""
 
-    TITLE = "The control hubs that the Operator is given a role on are there"
+    TITLE = "The control hub that the Operator is given a role on is there"
     URL = ("az rest --method get --url https://management.azure.com/subscriptions/sub-of-the-project/resourceGroups/rg-of-the-project/providers/Microsoft.EventHub/namespaces/evhns-meternaut-abc123"
            "/eventhubs?api-version=2024-01-01 --query value[].name --output tsv")
 
@@ -739,42 +740,34 @@ class TheControlHubsAreThereBeforeTheOperatorIsDeployed(unittest.TestCase):
         return run_step_script(self.TITLE, {"az": OPERATOR_HUBS_AZ},
                                {"FAKE_HUBS": hubs, "ENV_SUBSCRIPTION_ID": "sub-of-the-project", "ENV_RESOURCE_GROUP": "rg-of-the-project", "EVENT_HUB_NAMESPACE": "evhns-meternaut-abc123"})
 
-    def test_both_hubs_there_ends_the_step_well_with_one_read(self):
-        done, lines, _ = self.run_step("ai-usage\\npii-usage\\nusage-control\\ncases-control\\n")
-        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
-        self.assertEqual(lines, [self.URL])
-        self.assertIn("Both control hubs are there.", done.stdout)
+    def test_the_hub_there_ends_the_step_well_with_one_read_whatever_else_the_namespace_still_holds(self):
+        for hubs in ("cases-control\\n", "ai-usage\\npii-usage\\nusage-control\\ncases-control\\n"):
+            done, lines, _ = self.run_step(hubs)
+            self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+            self.assertEqual(lines, [self.URL])
+            self.assertIn("The control hub is there.", done.stdout)
 
     def test_a_hub_that_is_missing_stops_the_step_and_says_which_action_makes_it_and_that_nothing_was_changed(self):
-        done, _, _ = self.run_step("ai-usage\\npii-usage\\ncases-control\\n")
-        self.assertEqual(done.returncode, 1)
-        self.assertIn("The control hub usage-control is not there. Run recording first", done.stdout)
-        self.assertNotIn("cases-control is not there", done.stdout)
-        done, _, _ = self.run_step("ai-usage\\npii-usage\\nusage-control\\n")
-        self.assertEqual(done.returncode, 1)
-        self.assertIn("The control hub cases-control is not there. Run cases first (after recording)", done.stdout)
-        self.assertNotIn("usage-control is not there", done.stdout)
-        for hubs in ("NOTFOUND", "", "ai-usage\\n"):
+        for hubs in ("ai-usage\\npii-usage\\nusage-control\\n", "NOTFOUND", "", "ai-usage\\n"):
             done, _, _ = self.run_step(hubs)
             self.assertEqual(done.returncode, 1, hubs)
-            self.assertIn("Run recording first", done.stdout)
-            self.assertIn("Run cases first (after recording)", done.stdout)
-            self.assertIn("so the actions recording and cases run before operator. Nothing was changed.", done.stdout)
+            self.assertIn("The control hub cases-control is not there. Run cases first (after base): it makes the hub.", done.stdout)
+            self.assertIn("The Operator is given a role on the control hub, so the actions base and cases run before operator. Nothing was changed.", done.stdout)
 
     def test_a_name_that_only_looks_like_a_hub_is_not_the_hub(self):
-        for hubs in ("usage-control-2\\ncases-control\\n", "my-usage-control\\ncases-control\\n", "Usage-Control\\ncases-control\\n", "usage-control \\ncases-control\\n"):
+        for hubs in ("cases-control-2\\n", "my-cases-control\\n", "Cases-Control\\n", "cases-control \\n"):
             done, _, _ = self.run_step(hubs)
             self.assertEqual(done.returncode, 1, hubs)
-            self.assertIn("The control hub usage-control is not there.", done.stdout)
+            self.assertIn("The control hub cases-control is not there.", done.stdout)
 
     def test_a_read_that_fails_for_another_reason_than_not_found_stops_the_step_with_what_it_said(self):
         done, _, _ = self.run_step("THROTTLED")
         self.assertEqual(done.returncode, 1)
         self.assertIn("The event hubs of the namespace could not be read: ERROR: (TooManyRequests) Too many requests, try again later.", done.stdout)
-        self.assertNotIn("Run recording first", done.stdout, "an unreadable list is not a missing hub")
+        self.assertNotIn("Run cases first", done.stdout, "an unreadable list is not a missing hub")
 
     def test_the_step_only_reads(self):
-        done, lines, _ = self.run_step("usage-control\\ncases-control\\n")
+        done, lines, _ = self.run_step("cases-control\\n")
         self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
         for call in lines:
             self.assertRegex(call, r"^az rest --method get ")
@@ -809,7 +802,7 @@ def load_operator_tool():
 
 @unittest.skipIf(BASH is None, "no bash on this machine")
 class TheChecksBuildTheCallOfTheOperatorTool(unittest.TestCase):
-    """The steps of recording-check and cases-run, run with bash against a stand-in for python3: the call of tools/operator-run.py that each builds, and that the tool itself accepts it."""
+    """The steps of cases-run, run with bash against a stand-in for python3: the call of tools/operator-run.py that the check builds, and that the tool itself accepts it."""
 
     SUBSCRIPTION = "11111111-2222-3333-4444-555555555555"
     GROUP = "rg-of-the-project"
@@ -817,7 +810,6 @@ class TheChecksBuildTheCallOfTheOperatorTool(unittest.TestCase):
     IDENTITY = f"/subscriptions/{SUBSCRIPTION}/resourceGroups/{GROUP}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/id-meternaut-operator"
     IMAGE = "mcr.microsoft.com/azure-cli@sha256:" + "ab" * 32
     INSIGHTS = f"/subscriptions/{SUBSCRIPTION}/resourceGroups/{GROUP}/providers/Microsoft.Insights/components/appi-meternaut"
-    RECORDING = "Start the copy jobs once and read what they say"
     CASES = "Start one Watch and read its History"
 
     def run_check(self, title, dns="10.20.0.4,10.20.0.5", exit_code=0):
@@ -843,48 +835,37 @@ class TheChecksBuildTheCallOfTheOperatorTool(unittest.TestCase):
             files = tool.read_files(args)
         return args, dict(plain), secure, servers, files
 
-    def test_the_copy_jobs_are_started_by_the_tool_in_the_operator_with_the_arguments_that_the_runner_used_before(self):
-        done, calls = self.run_check(self.RECORDING)
-        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
-        (argv,) = calls
-        self.assertEqual(argv[:-1], self.expected("recording-check", ["recording-check.py"], f"run --namespace evhns-meternaut-0a1b2c3d --insights {self.INSIGHTS} --job all --minutes 20", 1500))
-        self.assertTrue(argv[-1].endswith("summary.md"), "the log of the container goes into the summary of the run")
-        args, plain, secure, servers, files = self.accepted_by_the_tool(argv)
-        self.assertEqual((secure, servers), ([], ["10.20.0.4", "10.20.0.5"]), "no secure value: nothing in the call is a secret")
-        self.assertEqual(plain["TOOL_ARGS"], f"run --namespace evhns-meternaut-0a1b2c3d --insights {self.INSIGHTS} --job all --minutes 20")
-        self.assertEqual(sorted(files), ["recording-check.py", "run-tool.sh"])
-        self.assertEqual((args.timeout_seconds, args.name, args.cpu, args.memory), (1500, "op-check-1234567890", 1.0, 1.5))
-
     def test_the_watch_is_started_by_the_tool_in_the_operator_and_both_check_files_are_in_the_volume(self):
         done, calls = self.run_check(self.CASES)
         self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
         (argv,) = calls
-        self.assertEqual(argv[:-1], self.expected("cases-check", ["cases-check.py", "recording-check.py"], f"run --namespace evhns-meternaut-0a1b2c3d --insights {self.INSIGHTS} --minutes 30", 2400))
+        self.assertEqual(argv[:-1], self.expected("cases-check", ["cases-check.py", "check-helpers.py"], f"run --namespace evhns-meternaut-0a1b2c3d --insights {self.INSIGHTS} --minutes 30", 2400))
+        self.assertTrue(argv[-1].endswith("summary.md"), "the log of the container goes into the summary of the run")
         args, plain, secure, servers, files = self.accepted_by_the_tool(argv)
-        self.assertEqual((secure, servers), ([], ["10.20.0.4", "10.20.0.5"]))
-        self.assertEqual(sorted(files), ["cases-check.py", "recording-check.py", "run-tool.sh"], "cases-check.py loads recording-check.py from its own folder")
+        self.assertEqual((secure, servers), ([], ["10.20.0.4", "10.20.0.5"]), "no secure value: nothing in the call is a secret")
+        self.assertEqual(plain["TOOL_ARGS"], f"run --namespace evhns-meternaut-0a1b2c3d --insights {self.INSIGHTS} --minutes 30")
+        self.assertEqual(sorted(files), ["cases-check.py", "check-helpers.py", "run-tool.sh"], "cases-check.py loads check-helpers.py from its own folder")
         self.assertEqual(files["run-tool.sh"], (ROOT / "operator" / "run-tool.sh").read_bytes().replace(b"\r\n", b"\n"))
-        self.assertEqual(args.timeout_seconds, 2400)
+        self.assertEqual((args.timeout_seconds, args.name, args.cpu, args.memory), (2400, "op-check-1234567890", 1.0, 1.5))
 
     def test_the_landing_zone_s_dns_servers_are_given_one_flag_each_and_none_when_there_are_none(self):
         for dns, servers in (("10.20.0.4", ["10.20.0.4"]), ("10.20.0.4,10.20.0.5,10.20.0.6", ["10.20.0.4", "10.20.0.5", "10.20.0.6"]), ("", [])):
-            for title in (self.RECORDING, self.CASES):
+            for title in (self.CASES,):
                 done, calls = self.run_check(title, dns=dns)
                 self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
                 argv = calls[0]
                 self.assertEqual([argv[i + 1] for i, word in enumerate(argv) if word == "--dns-server"], servers, (title, dns))
 
     def test_a_tool_that_fails_fails_the_step_and_the_step_calls_the_tool_once(self):
-        for title in (self.RECORDING, self.CASES):
+        for title in (self.CASES,):
             done, calls = self.run_check(title, exit_code=1)
             self.assertEqual(done.returncode, 1, title)
             self.assertEqual(len(calls), 1, "the group is made once: a second event would start a second job")
             done, calls = self.run_check(title, exit_code=124)
             self.assertEqual(done.returncode, 124, "the exit code of the tool is the exit code of the step, a timeout included")
 
-    def test_the_lists_of_the_functions_are_still_read_from_the_runner_before_the_group_is_made(self):
-        for title, tool, app in (("Before the copy jobs are started, the function app lists its six functions", "recording-check", "func-meternaut-usage-0a1b2c3d"),
-                                 ("Before the Watch is started, the cases app lists its four functions", "cases-check", "func-meternaut-cases-0a1b2c3d")):
+    def test_the_list_of_the_functions_is_still_read_from_the_runner_before_the_group_is_made(self):
+        for title, tool, app in (("Before the Watch is started, the cases app lists its four functions", "cases-check", "func-meternaut-cases-0a1b2c3d"),):
             done, lines, _ = run_step_script(title, {"python3": OPERATOR_RUN_PYTHON3}, {"ENV_SUBSCRIPTION_ID": self.SUBSCRIPTION, "ENV_RESOURCE_GROUP": self.GROUP, "SITE_NAME": app})
             self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
             self.assertEqual(called(lines), [[f"tools/{tool}.py", "functions", "--site", f"/subscriptions/{self.SUBSCRIPTION}/resourceGroups/{self.GROUP}/providers/Microsoft.Web/sites/{app}", "--minutes", "5"]])
