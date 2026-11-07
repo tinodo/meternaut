@@ -34,7 +34,7 @@ from .http import HttpError
 from .memory_store import parse, stamp
 from .models import CaseRecord, StoreError
 from .roles import DetectiveAnswer, RoleError, SkepticAnswer, clean_text
-from .toolbox import Resource, Toolbox
+from .toolbox import SUBSCRIPTION_SECONDS, Resource, Toolbox
 
 if TYPE_CHECKING:
     from .run import Services
@@ -524,7 +524,11 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
     budget = max(1.0, float(st.investigate_max_seconds))
     deadline = began + budget
     s.client.deadline = deadline
-    toolbox = toolbox if toolbox is not None else Toolbox(s.arm, st.subscriptions, s.clock(), [])
+    if toolbox is None:
+        toolbox = Toolbox(s.arm, st.subscriptions, s.clock(), [])
+        # One call may take at most an eighth of the investigation's time, or the default, for reading the subscriptions, so that a call over a large estate cannot use the time that the
+        # Investigator needs for its answer and the Skeptic for its verdicts.
+        toolbox.read_seconds = min(SUBSCRIPTION_SECONDS, max(5.0, budget / 8))
     try:
         investigator_ref = s.foundry.ensure_agent(agents.investigator(st, toolbox.specs))
         skeptic_ref = s.foundry.ensure_agent(agents.skeptic(st))

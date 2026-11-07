@@ -55,12 +55,13 @@ PROJECT_PRINCIPAL = SETTINGS["FOUNDRY_PROJECT_PRINCIPAL_ID"]
 # gatewayProductSubscriptionId, modelDetective and modelSkeptic (the Detective and the Skeptic call the models of the Foundry project directly, and the app reads no key; the template's defaults apply to
 # the two models), and the output lost the line gateway_url. Second change (the retirement of the actions that made objects on the instance): environment.parameters.json and recording.parameters.json lost
 # gatewayPrincipalId (no role is made for a gateway identity any more), the four files logger, eventhub-loggers, kit and contract are not written at all, and the output lost the lines gateway_subscription,
-# gateway_resource_group, gateway_name, identity_name and principal_known. Every other file is what it was.
+# gateway_resource_group, gateway_name, identity_name and principal_known. Every other file is what it was. Third change (the Watch reads every subscription that its identity can read, 2026-11-07):
+# cases.parameters.json gained scopeAllSubscriptions (true); every other file and the output are what they were.
 GOLDEN = {
     "aigateway-policies.json": "e6d99d1633ab16afc3410e50dbdcb7e290f0e125f4283b4b19f63a8eebb8395c",
     "aigateway-subnet.parameters.json": "a2a16b02fd7a1d54d8949ad89796d4ea89d6bf1907db1f5b621205699a5a0196",
     "aigateway.parameters.json": "77593485df872804654eae54c91724ac5fd0a50b4afd33a625bf59d3a542d0a5",
-    "cases.parameters.json": "151f0b102aa94b9b4004113dcc4d4b129b514129461cbf3b11d4b648100360b7",
+    "cases.parameters.json": "de1effc78bc153e5e7ce88d242b9d8904700ecf2a656bd0d7df7b370454a6cdf",
     "environment.parameters.json": "f96d09a1eab2372a668e50d5a1ecee07faf2d7b70cacd3986ac4868b45379bed",
     "foundry.parameters.json": "ed5e8a14727de3595a0ab4bc5b0fcc4979c7d35b088536fce62f80651e59e99d",
     "operator.parameters.json": "78972401f11e209ef6bbdbba2c7cab95921b372e1dc570765d953aa01b2b2f90",

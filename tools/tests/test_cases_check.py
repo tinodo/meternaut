@@ -282,6 +282,35 @@ class Run(unittest.TestCase):
         _, out, _, _ = self.go([telemetry(a_good_run())])
         self.assertNotIn("Investigation", out)
 
+    def test_the_summary_says_how_many_subscriptions_the_watch_read_and_where_its_list_came_from(self):
+        for scope_from, words in (("estate", "(every subscription that the app's identity can read)"), ("setting", "(the subscriptions of the app's setting)"),
+                                  ("setting-fallback", "because the list that its identity can read could not be had")):
+            events = a_good_run()
+            events[0] = event("run.started", trigger="control", subscriptions=23, scopes=["11111111", "22222222", "33333333", "44444444", "55555555"], scopeFrom=scope_from,
+                              detectors=["orphan-private-endpoint"])
+            code, out, err, _ = self.go([telemetry(events)])
+            self.assertEqual((code, err), (0, ""))
+            self.assertIn(f"The Watch read 23 subscriptions {words}" if scope_from != "setting-fallback" else words, out, scope_from)
+            self.assertIn("; the first: 11111111, 22222222, 33333333, 44444444, 55555555.", out)
+        events = a_good_run()
+        events[0] = event("run.started", trigger="timer", subscriptions=1, scopes=["11111111"], scopeFrom="estate", detectors=[])
+        self.assertIn("The Watch read 1 subscription (every subscription that the app's identity can read); the first: 11111111.", self.go([telemetry(events)])[1])
+
+    def test_a_run_whose_started_line_has_no_count_gets_no_line_about_subscriptions_and_a_bad_count_is_not_trusted(self):
+        _, out, _, _ = self.go([telemetry(a_good_run())])
+        self.assertNotIn("The Watch read", out, "an older app wrote scopes and no count")
+        for bad in (True, "23", None, 2.5, [1]):
+            events = a_good_run()
+            events[0] = event("run.started", trigger="control", subscriptions=bad, scopes=["sub1"], detectors=[])
+            self.assertNotIn("The Watch read", self.go([telemetry(events)])[1], repr(bad))
+
+    def test_text_in_the_started_line_cannot_start_a_command_or_run_long(self):
+        events = a_good_run()
+        events[0] = event("run.started", trigger="control", subscriptions=2, scopes=["::error::x `rm`", "\nline"], scopeFrom="::set-output::", detectors=[])
+        out = self.go([telemetry(events)])[1]
+        self.assertNotIn("::error::", out)
+        self.assertNotIn("`", out)
+
     def test_findings_are_listed_in_their_own_order_and_an_end_that_did_not_arrive_is_said(self):
         events = a_good_run()
         started, first, second, _ = an_investigation()

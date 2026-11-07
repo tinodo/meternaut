@@ -666,12 +666,13 @@ class WhenTheInvestigationRan(unittest.TestCase):
         self.assertEqual((finished["cases"], finished["proposed"], finished["needsHuman"], finished["dropped"], finished["errors"]), (6, 1, 2, 2, 1))
 
     def test_the_time_of_the_collection_still_counts_against_the_deadline_of_the_cases(self):
+        # The reading of the subscriptions may use 60% of the deadline (READ_SHARE), so a collection of 50 seconds fits in a deadline of 100 and the time that it took is not given back.
         estate = estate_with(planted_disk=True, endpoints=0)
         clock = Moving()
         ticker = Ticker()
         estate.first_call = lambda: ticker.jump(50)
-        estate.after_chat = lambda: ticker.jump(20)
-        summary, events, _, _, _ = investigating(estate, env={**INVESTIGATING, "RUN_DEADLINE_SECONDS": "60"}, ticker=ticker, clock=clock, extras=loop_for(clock))
+        estate.after_chat = lambda: ticker.jump(60)
+        summary, events, _, _, _ = investigating(estate, env={**INVESTIGATING, "RUN_DEADLINE_SECONDS": "100"}, ticker=ticker, clock=clock, extras=loop_for(clock))
         (legacy,) = legacy_cases(events)
         self.assertEqual(legacy["status"], "error", "only the time of the investigation is added to the deadline of the cases")
         self.assertIn("the deadline of the run was reached", legacy["summary"])

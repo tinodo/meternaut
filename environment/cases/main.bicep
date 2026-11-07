@@ -1,4 +1,4 @@
-// The first cases of Meternaut: the function app that finds leads in the pilot estate, lets two model roles work on each one
+// The first cases of Meternaut: the function app that finds leads in the estate that its identity can read, lets two model roles work on each one
 // through the model deployments of the agents' own Foundry project, and writes every step to a History that a workbook shows (docs/proposals/02-first-cases.md).
 //
 //   timer (daily) or one control event --> Watch --> Resource Graph, Advisor, Cost Management (read only)
@@ -8,7 +8,7 @@
 // its own, and the subnet that the plan is integrated with, one more event hub (the control hub) in the namespace of the usage recording, the roles that connect them, a
 // longer retention for the traces table of the workspace, and the History workbook.
 //
-// Identities, and no right to change Azure. The app's own system-assigned identity reads the pilot estate and its cost lines, stores the
+// Identities, and no right to change Azure. The app's own system-assigned identity reads the subscriptions that it was given the read-only roles for, and their cost lines, stores the
 // records, holds Foundry User on its own Foundry project (a role that environment/foundry/main.bicep gives, inside the project's group: it lets the app make and run its agents
 // and ask the model deployments of that project for a chat completion), and holds the roles below that are for the app. The owner prefers system-assigned identities, so it took over from the user-assigned identity
 // `id-meternaut-cases` in two steps (environment/BOOTSTRAP.md): first it was given the roles of the old identity next to it, and a person gave it the roles outside this
@@ -51,9 +51,10 @@
 // No key of any kind (AGENTS.md rule 23): the app's host storage, its Event Hubs trigger and its telemetry use its identity, its calls to the model deployments of the
 // Foundry project carry its identity's token, and its code is pushed with the deployment workflow's own identity token (no deployment password). The app reads no key at all.
 //
-// The app's system-assigned identity can read nothing of the pilot estate until its Reader and Cost Management Reader roles on the pilot subscription are given,
-// outside this template, by a person on the owner's written word (environment/BOOTSTRAP.md, AGENTS.md rule 18), because the deployment workflow's identity has
-// no right there and must not get one.
+// The app's system-assigned identity can read nothing until its Reader and Cost Management Reader roles are given, outside this template, by a person on the owner's
+// written word (environment/BOOTSTRAP.md, AGENTS.md rule 18), because the deployment workflow's identity has no right there and must not get one. A person gives them
+// on the pilot subscription, or on the tenant root management group: the Watch reads every subscription that its identity can read (scopeAllSubscriptions, below), so a
+// grant at the group is all that it takes to watch the entire estate, and removing it brings the Watch back to the subscriptions that are still granted. This template grants nothing.
 //
 // The agents: when the Foundry resource of the agents exists (environment/foundry/main.bicep, the action foundry), the workflow passes the address of its
 // project, and the app then lets agents of that project investigate the estate (the settings FOUNDRY_* and INVESTIGATE*). The app signs in to the project with
@@ -98,9 +99,12 @@ param webSubnetPrefix string
 @description('True when the app\'s integration subnet is in Azure already. The template then leaves it alone: a template that makes the subnet again takes away the route table that the landing zone\'s network manager put on it, and the app on it loses its way to the landing zone\'s DNS. The deployment workflow reads this from Azure.')
 param webSubnetExists bool = false
 
-@description('The subscriptions that the Watch reads, comma separated.')
+@description('The subscriptions that the Watch reads, comma separated. While scopeAllSubscriptions is true it is only the fallback, for a run that cannot get the list of subscriptions that the app\'s identity can read.')
 @minLength(36)
 param scopeSubscriptions string
+
+@description('True: the Watch reads every subscription that the app\'s own system-assigned identity can read (the list that Azure Resource Manager gives it at the start of each run). A person widens or narrows that list with the read-only roles Reader and Cost Management Reader, at a subscription or at the management group above it, outside this template (AGENTS.md rule 18): this parameter grants nothing, and the one resource group where the console may run a change stays the one below. False: only scopeSubscriptions. The parameter builder (tools/environment-params.py) passes true.')
+param scopeAllSubscriptions bool = false
 
 @description('Model deployment of the Detective: a deployment of the Foundry resource of the agents (environment/models.json), which the Detective calls for a chat completion on the Foundry project, as the agents call theirs.')
 param modelDetective string = 'gpt-6-luna'
@@ -432,6 +436,7 @@ resource functionApp 'Microsoft.Web/sites@2024-04-01' = {
         { name: 'EventHubConnection__credential', value: 'managedidentity' }
         { name: 'EVENTHUB_CASES_CONTROL_NAME', value: controlHubName }
         { name: 'SCOPE_SUBSCRIPTIONS', value: scopeSubscriptions }
+        { name: 'SCOPE_ALL_SUBSCRIPTIONS', value: scopeAllSubscriptions ? 'true' : 'false' }
         { name: 'MODEL_DETECTIVE', value: modelDetective }
         { name: 'MODEL_SKEPTIC', value: modelSkeptic }
         { name: 'MAX_CASES_PER_RUN', value: string(maxCasesPerRun) }
@@ -603,7 +608,7 @@ resource historyWorkbook 'Microsoft.Insights/workbooks@2023-06-01' = {
 
 output functionAppName string = functionApp.name
 output functionAppId string = functionApp.id
-@description('Principal id of the function app\'s system-assigned identity. It reads the pilot estate with two roles on the pilot subscription: a person gives them (environment/BOOTSTRAP.md). The Foundry resource gives it its role on the project, Foundry User, which it also uses for the chat completions of the Detective and the Skeptic. It reads no key and holds no other role.')
+@description('Principal id of the function app\'s system-assigned identity. It reads what two roles let it read, Reader and Cost Management Reader, on the pilot subscription or on the tenant root management group: a person gives them (environment/BOOTSTRAP.md). The Foundry resource gives it its role on the project, Foundry User, which it also uses for the chat completions of the Detective and the Skeptic. It reads no key and holds no other role.')
 output casesSystemPrincipalId string = functionApp.identity.principalId
 @description('Principal id of the identity that the console\'s sign-in presents to Microsoft Entra: the federated credential of the app registration names it. It holds no role.')
 output authIdentityPrincipalId string = authIdentity.properties.principalId

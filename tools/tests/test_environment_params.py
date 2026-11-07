@@ -1148,5 +1148,61 @@ class PublicNetworkAccessOfTheApps(unittest.TestCase):
         self.assertTrue(ep.check_against(self.doc(a="x", c={}), self.TEMPLATE, "t"))
 
 
+class WhatTheWatchReads(unittest.TestCase):
+    """The Watch reads every subscription that its identity can read (the owner's order of 2026-11-07: watch the entire estate). The parameter builder says so through one named constant, and the
+    template takes it with the default false, so that a file that leaves it out keeps what the app did before: it reads only the subscription of scopeSubscriptions."""
+
+    CASES_TEMPLATE = (ROOT / "environment" / "cases" / "main.bicep").read_text(encoding="utf-8")
+    CONFIG = (ROOT / "src" / "case-functions" / "cases" / "config.py").read_text(encoding="utf-8")
+
+    def build(self, **changes):
+        return run({**SETTINGS, **changes})
+
+    def test_the_constant_is_true_and_is_one_line_among_the_constants_near_the_top_of_the_builder(self):
+        self.assertIs(ep.SCOPE_ALL_SUBSCRIPTIONS, True, "the owner wants the entire estate: this is the one value, and the one test, to change to read only the subscription of this estate")
+        source = TOOL.read_text(encoding="utf-8")
+        self.assertEqual(re.findall(r"(?m)^SCOPE_ALL_SUBSCRIPTIONS = (True|False)$", source), ["True"], "one constant, one line")
+        self.assertLess(source.index("\nSCOPE_ALL_SUBSCRIPTIONS = True\n"), source.index("\ndef "), "near the top, with the other constants")
+
+    def test_the_value_reaches_the_file_of_the_cases_app_only_and_the_subscription_stays_as_the_fallback(self):
+        code, out, err, files = self.build()
+        self.assertEqual((code, err), (0, ""))
+        cases = values(files["cases.parameters.json"])
+        self.assertIs(cases["scopeAllSubscriptions"], True)
+        self.assertEqual(cases["scopeSubscriptions"], SETTINGS["ENV_SUBSCRIPTION_ID"], "the explicit list stays: it is what the Watch reads when the list of its identity cannot be had")
+        for name, document in files.items():
+            if name != "cases.parameters.json":
+                self.assertNotIn("scopeAllSubscriptions", document.get("parameters", {}), name)
+        self.assertNotIn("scope", "".join(line.split("=", 1)[0] for line in out.splitlines()), "no output of the workflow carries it")
+
+    def test_the_other_value_is_written_too_so_that_a_deploy_of_cases_sets_the_setting_either_way(self):
+        with mock.patch.object(ep, "SCOPE_ALL_SUBSCRIPTIONS", False):
+            code, _, err, files = self.build()
+        self.assertEqual((code, err), (0, ""))
+        self.assertIs(values(files["cases.parameters.json"])["scopeAllSubscriptions"], False)
+
+    def test_a_value_that_is_not_true_or_false_is_refused_by_name(self):
+        for bad in ("True", "true", "yes", 1, 0, None, ""):
+            with mock.patch.object(ep, "SCOPE_ALL_SUBSCRIPTIONS", bad):
+                code, out, err, files = self.build()
+            self.assertEqual((code, out, files), (2, "", {}), repr(bad))
+            self.assertIn("SCOPE_ALL_SUBSCRIPTIONS (in tools/environment-params.py) is True or False", err)
+
+    def test_the_template_takes_a_bool_with_the_default_false_and_gives_it_to_the_app_as_the_setting_that_the_code_reads(self):
+        self.assertEqual(bicep_params(self.CASES_TEMPLATE)["scopeAllSubscriptions"], ("bool", True))
+        self.assertIn("\nparam scopeAllSubscriptions bool = false\n", self.CASES_TEMPLATE, "a file that leaves it out keeps the old behaviour")
+        self.assertIn("        { name: 'SCOPE_ALL_SUBSCRIPTIONS', value: scopeAllSubscriptions ? 'true' : 'false' }\n", self.CASES_TEMPLATE)
+        self.assertIn('\nSCOPE_ALL_SUBSCRIPTIONS = "SCOPE_ALL_SUBSCRIPTIONS"\n', self.CONFIG)
+        self.assertIn("        { name: 'SCOPE_SUBSCRIPTIONS', value: scopeSubscriptions }\n", self.CASES_TEMPLATE, "the explicit list is still set: it is the fallback")
+
+    def test_the_template_grants_nothing_for_it_because_a_person_gives_the_read_only_roles_outside_it(self):
+        # AGENTS.md rule 18: the roles of the app's identity at a subscription or at a management group are given by a person; the deployment workflow's identity has no right there and must not get one.
+        self.assertIn("\ntargetScope = 'resourceGroup'\n", self.CASES_TEMPLATE)
+        self.assertNotIn("managementGroups", self.CASES_TEMPLATE)
+        self.assertNotIn("Microsoft.Management", self.CASES_TEMPLATE)
+        for role, name in (("acdd72a7-3385-48ef-bd42-f606fba81ae7", "Reader"), ("72fafb9e-0641-4937-9268-a91bfd8191a3", "Cost Management Reader")):
+            self.assertNotIn(role, self.CASES_TEMPLATE, f"{name} is given by a person")
+
+
 if __name__ == "__main__":
     unittest.main()

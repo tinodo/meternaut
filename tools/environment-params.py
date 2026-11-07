@@ -58,7 +58,8 @@ It writes these ARM parameter files into --out-dir:
     cases.parameters.json             for environment/cases/main.bicep (the first cases: the function app that finds leads and writes the History). It is always written, and it names nothing of
                                       the owner's API Management instance: the Detective and the Skeptic call the model deployments of the agents' own Foundry project, so the file carries the project's
                                       address (when ENV_FOUNDRY_PROJECT_EXISTS says that the project is in Azure). Their two model names are the defaults of the template, which are names of
-                                      environment/models.json (a test holds the two together).
+                                      environment/models.json (a test holds the two together). It also says what the Watch reads: scopeSubscriptions (this estate's subscription, the fallback) and
+                                      scopeAllSubscriptions, the constant SCOPE_ALL_SUBSCRIPTIONS near the top of this file (True: every subscription that the app's identity can read).
 
                                       What each function app takes from the public internet is not a setting of the workflow: USAGE_APP_PUBLIC_NETWORK_ACCESS (Disabled) and CASES_APP_PUBLIC_NETWORK_ACCESS (Enabled until the
                                       people who approve have a path to the console), near the top of this file, go into recording.parameters.json and cases.parameters.json (usageAppPublicNetworkAccess,
@@ -113,6 +114,11 @@ PLACEHOLDER = "00000000-0000-0000-0000-000000000000"
 PUBLIC_NETWORK_ACCESS = ("Enabled", "Disabled")
 USAGE_APP_PUBLIC_NETWORK_ACCESS = "Disabled"
 CASES_APP_PUBLIC_NETWORK_ACCESS = "Enabled"
+# What the Watch of the cases app reads (docs/proposals/02-first-cases.md). True: every subscription that the app's own system-assigned identity can read, which a person widens or narrows with
+# the read-only roles Reader and Cost Management Reader at a subscription or at the management group above it (the owner's order of 2026-11-07: watch the entire estate). Until those roles exist
+# above the pilot subscription the identity reads only that one, so the Watch simply reads that one. False: only the subscription of this estate (cases.parameters.json: scopeSubscriptions). The value
+# reaches the app as the setting SCOPE_ALL_SUBSCRIPTIONS; it grants nothing, and what the console may change stays the one resource group of this estate.
+SCOPE_ALL_SUBSCRIPTIONS = True
 # Whether the two agents of the investigation call their models through the AI Gateway (docs/proposals/08-ai-gateway.md, step 2). False: they call the model deployments of their own Foundry resource, as they
 # did before, and no parameter file, no output and no action differs from what it was. One value and a commit turn it on, in a change of its own, after the owner has said yes in plain words and after the actions
 # aigateway and aigateway-check have passed on the real estate. True: the action foundry makes the project's connection to the gateway, the action aigateway gives the project's identity AI Gateway Models User
@@ -634,6 +640,8 @@ def build(env, models: list[dict], preview: bool = False, aigateway_policies: li
             raise Problem(f"{setting} (in tools/environment-params.py) is Enabled or Disabled, so that the template always writes the property")
     if not isinstance(AGENTS_VIA_AI_GATEWAY, bool):
         raise Problem("AGENTS_VIA_AI_GATEWAY (in tools/environment-params.py) is True or False")
+    if not isinstance(SCOPE_ALL_SUBSCRIPTIONS, bool):
+        raise Problem("SCOPE_ALL_SUBSCRIPTIONS (in tools/environment-params.py) is True or False")
     gateway_host = ai_gateway_host(env, preview)
     console_host = console_host_name(env)
     if CASES_APP_PUBLIC_NETWORK_ACCESS == "Disabled" and not console_host:
@@ -766,6 +774,7 @@ def build(env, models: list[dict], preview: bool = False, aigateway_policies: li
             "webSubnetPrefix": str(web),
             "webSubnetExists": web_subnet_exists(env),
             "scopeSubscriptions": subscription.lower(),
+            "scopeAllSubscriptions": SCOPE_ALL_SUBSCRIPTIONS,
             "foundryProjectEndpoint": foundry["foundry_project_endpoint"] if foundry_exists else "",
             "casesAppPublicNetworkAccess": CASES_APP_PUBLIC_NETWORK_ACCESS,
             **console_parameters(env),

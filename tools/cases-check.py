@@ -216,11 +216,26 @@ def failed(events: list[dict]) -> bool:
             or investigation_failed(events))
 
 
+def subscriptions_line(started: dict) -> str | None:
+    """How many subscriptions the Watch read, and where its list came from, from the run.started line. None for a run whose line carries no count (an older app)."""
+    number = started.get("subscriptions")
+    if isinstance(number, bool) or not isinstance(number, int):
+        return None
+    where = {"estate": "every subscription that the app's identity can read",
+             "setting": "the subscriptions of the app's setting",
+             "setting-fallback": "the subscriptions of the app's setting, because the list that its identity can read could not be had"}.get(started.get("scopeFrom"), "")
+    first = ", ".join(clean(x, 8) for x in (started.get("scopes") or [])[:5] if isinstance(x, str)) if isinstance(started.get("scopes"), list) else ""
+    return (f"  The Watch read {number} subscription{'' if number == 1 else 's'}" + (f" ({where})" if where else "") + (f"; the first: {first}" if first else "") + ".")
+
+
 def summary_lines(request_id: str, events: list[dict]) -> list[str]:
     started = next((e for e in events if e["type"] == "run.started"), {})
     finished = next((e for e in events if e["type"] == "run.finished"), None)
     broken = [e for e in events if e["type"] == "run.failed"]
     lines = [f"Request {request_id}:"]
+    reading = subscriptions_line(started)
+    if reading:
+        lines.append(reading)
     for e in broken:
         lines.append(f"  The run failed: {clean(e.get('reason'), 400)}")
     if finished:

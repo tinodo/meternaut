@@ -8,7 +8,7 @@ from __future__ import annotations
 import datetime as dt
 import math
 import re
-from typing import Callable, NamedTuple
+from typing import Callable, NamedTuple, Sequence
 from urllib.parse import quote, urlsplit
 
 from .http import ARM_HOST, SCOPE, Client, HttpError
@@ -21,7 +21,9 @@ LOCKS_API = "2016-09-01"
 METRICS_API = "2023-10-01"
 METRIC_DEFINITIONS_API = "2018-01-01"
 SECURITY_API = "2024-01-01"
+SUBSCRIPTIONS_API = "2022-12-01"
 MAX_PAGES = 10
+SUBSCRIPTION_PAGES = 30  # the pages of the list of subscriptions that are followed, at most
 SCOPE_ID = re.compile(SCOPE, re.I)
 GROUP_SCOPE = re.compile(r"^(/subscriptions/[^/]+/resourceGroups/[^/]+)", re.I)
 RESOURCE_PATH = re.compile(r"/providers/[^/]+/[^/]+/[^/]+", re.I)
@@ -49,6 +51,10 @@ class MetricPoint(NamedTuple):
 
 def _bad(what: str) -> HttpError:
     return HttpError(200, f"{what} gave an answer that the app does not understand")
+
+
+class TooManyPages(HttpError):
+    """A Resource Graph result that has more pages than the app reads. It is an HttpError (status 0) as it always was; graph_many tells it from the others."""
 
 
 def _number(value: object) -> float | None:
@@ -88,15 +94,16 @@ class Arm:
             raise _bad(service)
         return str(link)
 
-    def graph(self, subscription: str, query: str) -> list[dict]:
-        """The rows of one Resource Graph query in one subscription, every page of them."""
+    def graph(self, subscription: "str | Sequence[str]", query: str) -> list[dict]:
+        """The rows of one Resource Graph query in one subscription, or in a list of them (a row names its own subscription in `subscriptionId`), every page of them."""
+        subscriptions = [subscription] if isinstance(subscription, str) else list(subscription)
         rows: list[dict] = []
         skip = None
         for _ in range(MAX_PAGES):
             options: dict[str, object] = {"resultFormat": "objectArray", "$top": 1000}
             if skip:
                 options["$skipToken"] = skip
-            body = {"subscriptions": [subscription], "query": query, "options": options}
+            body = {"subscriptions": subscriptions, "query": query, "options": options}
             data = self.client.request("POST", f"{ARM}/providers/Microsoft.ResourceGraph/resources?api-version={GRAPH_API}", headers=self._headers(),
                                        body=body, timeout=60).json()
             if not isinstance(data, dict) or not isinstance(data.get("data"), list):
@@ -105,7 +112,44 @@ class Arm:
             skip = data.get("$skipToken")
             if not skip:
                 return rows
-        raise HttpError(0, f"Resource Graph returned more than {MAX_PAGES} pages")
+        raise TooManyPages(0, f"Resource Graph returned more than {MAX_PAGES} pages")
+
+    def graph_many(self, subscriptions: Sequence[str], query: str) -> list[dict]:
+        """The rows of one query across several subscriptions, from one query for all of them: Learn recommends grouping subscriptions (fewer than 300 in a group) over a query for
+        each one, because a group costs less of the quota (the quota is 15 queries in 5 seconds, and a page of a result is a query too). A result of more than MAX_PAGES pages
+        does not fit: the same query is then made for each half of the list, and so on down to one subscription, whose own result may be as long as it always could be."""
+        try:
+            return self.graph(list(subscriptions), query)
+        except TooManyPages:
+            if len(subscriptions) < 2:
+                raise
+            middle = len(subscriptions) // 2
+            return self.graph_many(subscriptions[:middle], query) + self.graph_many(subscriptions[middle:], query)
+
+    def subscriptions(self) -> list[dict]:
+        """The subscriptions that the identity can read, as Azure Resource Manager lists them (every state of them), every page. The next-page link is followed only on the same
+        host and the same path."""
+        found: list[dict] = []
+        link: str | None = f"{ARM}/subscriptions?api-version={SUBSCRIPTIONS_API}"
+        for _ in range(SUBSCRIPTION_PAGES):
+            data = self.client.request("GET", link, headers=self._headers(), timeout=60).json()
+            if not isinstance(data, dict) or not isinstance(data.get("value", []), list):
+                raise _bad("Azure Resource Manager")
+            found += [item for item in data.get("value", []) if isinstance(item, dict)]
+            link = self._next_subscriptions(data.get("nextLink"))
+            if not link:
+                return found
+        raise HttpError(0, f"the list of subscriptions has more than {SUBSCRIPTION_PAGES} pages")
+
+    @staticmethod
+    def _next_subscriptions(link: object) -> str | None:
+        """The next page of the list of subscriptions, only when it is on the same host and the same path (a link to anywhere else is not followed)."""
+        if not link:
+            return None
+        parts = urlsplit(str(link))
+        if parts.scheme != "https" or parts.netloc.lower() != ARM_HOST or parts.path.lower().rstrip("/") != "/subscriptions":
+            raise _bad("Azure Resource Manager")
+        return str(link)
 
     def _cost_rows(self, subscription: str, start: dt.date, end: dt.date, dimensions: tuple[str, ...]) -> list[tuple[list[str], float, str]]:
         """Every row of one Cost Management query that groups the actual cost from start to end (both days included) by the dimensions: the value of each

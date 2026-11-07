@@ -2,6 +2,16 @@
 
 All notable changes, newest first. Versions are git tags: `ideation-vN` for the ideation (`docs/01` to `docs/10` and the research), `design-vN` for the design (`docs/design/`; `design-v1` was withdrawn), `experience-vN` for the experience design (`docs/experience/`) and `build-plan-vN` for the build plan (`docs/build-plan/`). A heading without a tag records a change that is not a new edition. The previous editions stay available at their tags, and the earliest are archived under [`docs/_archive/`](docs/_archive/), which is never edited.
 
+## The Watch reads every subscription that its identity can read (built, not deployed) — 2026-11-07
+
+**What the owner ordered.** In writing: "Watch is what checks for cost savings? That must be on the root management group; watch the entire estate."
+
+**What changed.** The Watch no longer reads only the subscription that its setting names. At the start of every run it asks Azure which subscriptions its own identity can read (the enabled ones, at most 1,000) and reads those, so a person widens or narrows it with the read roles that they give the identity. The setting is `SCOPE_ALL_SUBSCRIPTIONS` (Bicep default false; the Hub's builder passes true, one constant in `tools/environment-params.py`). `SCOPE_SUBSCRIPTIONS` stays as the fallback; with neither, the run says why and stops. The limits are as they were: three cases, the same tokens and calls. A large estate gets 60% of the run's deadline for reading, and the subscriptions that were not read are named in a note. `run.started` carries the count and the first five ids. A change can still be made only in the one resource group of the loop.
+
+**What a person does.** On the owner's word, give the cases app's identity *Reader* and *Cost Management Reader* at the tenant root management group: `python tools/access-requirements.py grant --estate <the group's id> --only R1,R2` (a dry run; `--apply` makes it), then run the Hub actions `cases` and `cases-run` ([the bootstrap page](environment/BOOTSTRAP.md#changed-on-2026-11-07-the-watch-reads-every-subscription-that-its-identity-can-read)). Until the grant exists, the Watch reads the pilot subscription only. This change grants nothing.
+
+**Not checked.** Nothing ran against Azure: not the list call, not the throttling of Resource Graph and Cost Management on many subscriptions, not a grant at a management group. Advisor is still read for each subscription. The tests use stand-ins and a fake clock, and a mutation of the list and of the deadline code fails them.
+
 ## The AI Gateway is deployed and checked, and nothing calls through it yet — 2026-11-07
 
 **What the owner asked.** In writing: "Create the AI Gateway with public network access and private routing." His earlier words stand: no public endpoints unless specifically requested, and "I LEAN STRONG TOWARDS YOU CREATING AN AI GATEWAY". His own AI Gateway, in another subscription, is not touched (it is only read, as before).

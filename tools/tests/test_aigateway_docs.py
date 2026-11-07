@@ -145,9 +145,9 @@ class TheOtherDocuments(unittest.TestCase):
 
     def test_the_changelog_has_the_entry_of_step_1_above_the_console_entry_and_says_what_it_must(self):
         headings = re.findall(r"(?m)^## (.*)$", CHANGELOG)
-        self.assertEqual(headings[5], "An AI Gateway for the agents' model calls, step 1 of 2: built, not deployed — 2026-11-07")
-        self.assertTrue(headings[6].startswith("The console behind the platform's Application Gateway"), "the entry of the console change follows, as the owner's coordinator asked")
-        entry = flat(CHANGELOG.split("\n## ")[6])
+        self.assertEqual(headings[6], "An AI Gateway for the agents' model calls, step 1 of 2: built, not deployed — 2026-11-07")
+        self.assertTrue(headings[7].startswith("The console behind the platform's Application Gateway"), "the entry of the console change follows, as the owner's coordinator asked")
+        entry = flat(CHANGELOG.split("\n## ")[7])
         for words in ("**What the owner said.**", "I LEAN STRONG TOWARDS YOU CREATING AN AI GATEWAY", "You should NOT create a DDOS PLAN.", "**What the owner has to know first: the frontend is public, and he decides whether to accept that.**",
                       "**What is built.**", "Nothing is deployed: no Azure change, no Hub run and no workflow run was made", "**What was checked.**", "**Not checked.**", "**What a person has to do, in order.**",
                       "That is an exception to the rule of [private by default]", "Microsoft publishes no address range and no service tag for the Foundry Agent Service"):

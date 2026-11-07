@@ -248,7 +248,76 @@ class Investigation(unittest.TestCase):
         self.assertEqual(self.investigation(settings), (None, False, "gpt-6.1-sol", "gpt-6-luna", 40, 420))
 
 
+class ScopeSwitch(unittest.TestCase):
+    """SCOPE_ALL_SUBSCRIPTIONS: the Watch reads every subscription that its own identity can read (the owner's order of 2026-11-07). Off or not set, only SCOPE_SUBSCRIPTIONS."""
+
+    WITHOUT_LIST = {key: value for key, value in ENV.items() if key != "SCOPE_SUBSCRIPTIONS"}
+
+    def test_the_switch_is_off_when_it_is_not_set_so_that_an_older_setting_file_reads_what_it_read(self):
+        self.assertIs(config.load(ENV).all_subscriptions, False)
+        self.assertIs(config.load({**ENV, "SCOPE_ALL_SUBSCRIPTIONS": ""}).all_subscriptions, False)
+        self.assertEqual(config.SCOPE_ALL_SUBSCRIPTIONS, "SCOPE_ALL_SUBSCRIPTIONS")
+        self.assertNotIn("SCOPE_ALL_SUBSCRIPTIONS", config.OPTIONAL, "the default is in the code, and the template always writes the setting")
+
+    def test_the_values_that_the_other_switches_take_are_taken(self):
+        for value in ("true", "True", " TRUE ", "on", "1", "yes"):
+            self.assertIs(config.load({**ENV, "SCOPE_ALL_SUBSCRIPTIONS": value}).all_subscriptions, True, value)
+        for value in ("false", "False", "off", "0", "no"):
+            self.assertIs(config.load({**ENV, "SCOPE_ALL_SUBSCRIPTIONS": value}).all_subscriptions, False, value)
+
+    def test_a_value_that_is_neither_is_named_and_does_not_turn_it_on(self):
+        for value in ("maybe", "all", "2", "enabled"):
+            with self.assertRaises(config.ConfigError, msg=value) as raised:
+                config.load({**ENV, "SCOPE_ALL_SUBSCRIPTIONS": value})
+            self.assertIn("SCOPE_ALL_SUBSCRIPTIONS is on or off", str(raised.exception))
+
+    def test_with_the_switch_on_the_explicit_list_is_optional_and_is_kept_as_the_fallback(self):
+        on = {**self.WITHOUT_LIST, "SCOPE_ALL_SUBSCRIPTIONS": "true"}
+        settings = config.load(on)
+        self.assertEqual((settings.all_subscriptions, settings.subscriptions), (True, ()))
+        with_list = config.load({**on, "SCOPE_SUBSCRIPTIONS": f"{SUBSCRIPTION.upper()}"})
+        self.assertEqual((with_list.all_subscriptions, with_list.subscriptions), (True, (SUBSCRIPTION,)))
+        self.assertEqual(config.load({**ENV, "SCOPE_ALL_SUBSCRIPTIONS": "true"}).subscriptions, (SUBSCRIPTION,), "the template sets both")
+
+    def test_with_the_switch_off_the_list_is_still_required_and_is_named_when_it_is_missing(self):
+        for switch in ({}, {"SCOPE_ALL_SUBSCRIPTIONS": "false"}, {"SCOPE_ALL_SUBSCRIPTIONS": ""}):
+            with self.assertRaises(config.ConfigError, msg=switch) as raised:
+                config.load({**self.WITHOUT_LIST, **switch})
+            self.assertIn("SCOPE_SUBSCRIPTIONS is not set", str(raised.exception))
+
+    def test_a_list_that_is_given_is_checked_whatever_the_switch_says(self):
+        for switch in ("true", "false"):
+            with self.assertRaises(config.ConfigError, msg=switch) as raised:
+                config.load({**ENV, "SCOPE_ALL_SUBSCRIPTIONS": switch, "SCOPE_SUBSCRIPTIONS": "not-a-guid"})
+            self.assertIn("SCOPE_SUBSCRIPTIONS is a comma separated list of subscription ids", str(raised.exception))
+
+    def test_the_other_settings_are_still_required_with_the_switch_on(self):
+        for name in ("MODEL_DETECTIVE", "MODEL_SKEPTIC", "MAX_CASES_PER_RUN", "EVENTHUB_CASES_CONTROL_NAME"):
+            env = {**self.WITHOUT_LIST, "SCOPE_ALL_SUBSCRIPTIONS": "true"}
+            del env[name]
+            with self.assertRaises(config.ConfigError, msg=name) as raised:
+                config.load(env)
+            self.assertIn(f"{name} is not set", str(raised.exception))
+
+    def test_the_switch_raises_no_limit_that_the_owner_set(self):
+        # The owner's standing limits (AGENTS.md rule 15 (g)) are ceilings that no setting raises, and a larger estate gets no larger budget.
+        settings = config.load({**ENV, "SCOPE_ALL_SUBSCRIPTIONS": "true"})
+        self.assertEqual((settings.max_cases, settings.max_tokens_per_run, settings.max_completion_tokens, settings.deadline_seconds), (3, 40000, 2000, 900))
+        self.assertEqual((config.LIMIT_CASES, config.LIMIT_TOKENS_PER_RUN, config.LIMIT_COMPLETION_TOKENS, config.LIMIT_DEADLINE_SECONDS), (3, 40000, 2000, 900))
+        self.assertEqual(settings.investigate_max_calls, config.DEFAULT_INVESTIGATE_CALLS)
+        self.assertLessEqual(settings.investigate_max_calls, config.LIMIT_INVESTIGATE_CALLS)
+
+
 class TemplateAndCode(unittest.TestCase):
+    def test_the_template_asks_for_the_switch_as_a_bool_that_is_off_unless_the_parameter_files_say_so(self):
+        template = (REPO_ROOT / "environment" / "cases" / "main.bicep").read_text(encoding="utf-8")
+        self.assertIn("\nparam scopeAllSubscriptions bool = false\n", template)
+        self.assertIn("{ name: 'SCOPE_ALL_SUBSCRIPTIONS', value: scopeAllSubscriptions ? 'true' : 'false' }", template)
+        self.assertIn("{ name: 'SCOPE_SUBSCRIPTIONS', value: scopeSubscriptions }", template, "the explicit list is still given: it is the fallback")
+        # the value that the template writes is one that the code reads as on, and the other as off
+        self.assertIs(config.load({**ENV, "SCOPE_ALL_SUBSCRIPTIONS": "true"}).all_subscriptions, True)
+        self.assertIs(config.load({**ENV, "SCOPE_ALL_SUBSCRIPTIONS": "false"}).all_subscriptions, False)
+
     def test_the_template_sets_every_required_setting_and_no_setting_that_the_code_never_reads(self):
         template = (REPO_ROOT / "environment" / "cases" / "main.bicep").read_text(encoding="utf-8")
         given = set(re.findall(r"\{ name: '([A-Za-z0-9_]+)', value: ", template))

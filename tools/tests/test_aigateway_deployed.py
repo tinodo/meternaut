@@ -21,13 +21,15 @@ def flat(source):
 
 
 CHANGELOG = text("CHANGELOG.md")
-ENTRY = CHANGELOG.split("\n## ")[1]
+ENTRY = CHANGELOG.split("\n## ")[2]
 RECORD = flat(text("docs/proposals/08-ai-gateway.md"))
 
 
 class TheChangelogEntry(unittest.TestCase):
-    def test_it_is_the_newest_entry_and_has_at_most_twelve_lines(self):
-        self.assertEqual(re.findall(r"(?m)^## (.*)$", CHANGELOG)[0], TITLE)
+    def test_it_is_the_entry_under_the_newest_one_which_is_the_estate_wide_watch_and_has_at_most_twelve_lines(self):
+        headings = re.findall(r"(?m)^## (.*)$", CHANGELOG)
+        self.assertTrue(headings[0].startswith("The Watch reads every subscription that its identity can read"), "the entry of 2026-11-07 about the estate-wide Watch is the newest")
+        self.assertEqual(headings[1], TITLE)
         self.assertTrue(ENTRY.startswith(TITLE))
         self.assertLessEqual(len(ENTRY.strip().splitlines()), 12, "the owner reads nothing long")
 

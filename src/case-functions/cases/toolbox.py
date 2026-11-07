@@ -61,6 +61,7 @@ from dataclasses import dataclass, field
 from typing import Callable, Iterable, TypeVar
 
 from .arm import SCOPE_ID, Arm, CostLine, MetricPoint
+from .detectors import some
 from .foundry import FunctionTool
 from .http import HttpError, Refused
 from .identity import IdentityError
@@ -83,6 +84,10 @@ ADVISOR_PAGE = 20
 RESOLVE_CHUNK = 25  # resource ids in one read of Resource Graph
 PARALLEL_READS = 8
 READ_BUDGET_SECONDS = 60.0  # of one measurement
+SUBSCRIPTION_SECONDS = 45.0  # what the reads of the subscriptions in one tool call may take in all: a call that has used it reads no further subscription (what it read is kept)
+NOT_READ_SHOWN = 5  # the subscriptions that an answer names, by label, when some were not read or could not be: it counts the rest
+MAX_BLOCKS = 20  # the subscriptions that estate_overview and paid_features show when the estate has more: the dearest ones, with a count of the others
+SUBSCRIPTION_NOTES = 10  # the notes about one subscription that could not be read: the later ones are counted in one note
 MAX_DEPTH = 3  # key levels of a property; only the exact paths of KNOWN_PATHS may have one more
 MAX_SEGMENT = 32  # characters of one key of a property
 MAX_NODES = 4000  # values looked at in the properties of one resource
@@ -699,6 +704,11 @@ class Toolbox:
         self.monotonic: Callable[[], float] = time.monotonic  # the clock of the time budget of a measurement; a test replaces it
         self.workers = PARALLEL_READS
         self.budget_seconds = READ_BUDGET_SECONDS
+        self.read_seconds = SUBSCRIPTION_SECONDS  # the time of the reads of the subscriptions in one call; the investigation or a test sets it
+        self._began = 0.0  # when the call that is running began
+        self._timed = False  # whether a call is running, so that its time can be used up
+        self._skipped: dict[str, None] = {}  # the subscriptions that this call did not read because its time was used up, in the order of the list
+        self._noted = 0
         self._lock = threading.Lock()
         self._calls = 0
         self._next_handle = 1
@@ -708,7 +718,9 @@ class Toolbox:
         self._counts: dict[str, tuple[int, dict[str, int]]] = {}
         self._costs: dict[str, _Costs | None] = {}
         self._advice: dict[str, list[_Advice]] = {}
+        self._pricings: dict[str, list[dict]] = {}
         self._metric_names: dict[str, list[dict]] = {}
+        self._without: set[tuple[str, str]] = set()  # (subscription, type) of which a read found no resource, so that a later call does not look there again
         self._reads: dict[tuple[str, str, int], dict[str, str]] = {}  # (type, metric, days) -> handle -> how its measurement counts: every resource whose numbers were shown
         self._missing: set[str] = set()  # ids that Resource Graph did not return
 
@@ -718,10 +730,20 @@ class Toolbox:
         return SPECS
 
     def call(self, name: str, arguments: dict) -> str:
-        """Runs one tool. It never raises: a tool that fails answers {"error": "<a word from a fixed list>"}."""
+        """Runs one tool. It never raises: a tool that fails answers {"error": "<a word from a fixed list>"}.
+
+        The reads of the subscriptions in one call take at most `read_seconds` in all. A call that has used that reads no further subscription (what it has read stays in the
+        caches, so a later call goes on from there), and its answer says how many were not read (`not_read`) while a note says which."""
         with self._lock:
             self._calls += 1
-            answer = self._answer(name, arguments)
+            self._began, self._timed, self._skipped = self.monotonic(), True, {}
+            try:
+                answer = self._answer(name, arguments)
+            finally:
+                self._timed = False
+            if self._skipped:
+                self.notes.append(f"{_logged_name(name)}: the time for reading the subscriptions ({self.read_seconds:g} seconds in one call) was used up, so "
+                                  f"{len(self._skipped)} were not read in this call ({some(list(self._skipped))})")
             try:
                 text = _dump(answer)
             except (TypeError, ValueError):  # a value that JSON cannot hold, such as a number that is not finite
@@ -759,19 +781,57 @@ class Toolbox:
     def _label(self, sub: str) -> str:
         return f"s{list(self.subscriptions).index(sub) + 1}"
 
+    def _say(self, text: str) -> None:
+        """A note about a subscription that could not be read. The first SUBSCRIPTION_NOTES of a run are kept and the others are counted in one note, so that an estate with many
+        subscriptions does not write a line for each."""
+        self._noted += 1
+        if self._noted <= SUBSCRIPTION_NOTES:
+            self.notes.append(text)
+        elif self._noted == SUBSCRIPTION_NOTES + 1:
+            self.notes.append(f"more subscriptions could not be read, and the notes about them are not repeated after the first {SUBSCRIPTION_NOTES}")
+
     def _note(self, sub: str, what: str, error: Exception) -> None:
-        self.notes.append(f"{sub[:8]}: {what} could not be read ({str(error)[:200]})")
+        self._say(f"{sub[:8]}: {what} could not be read ({str(error)[:200]})")
+
+    def _late(self) -> bool:
+        """True when the call that is running has used the time that its reads of the subscriptions may take (read_seconds)."""
+        return self._timed and self.monotonic() - self._began >= self.read_seconds
+
+    def _skip(self, sub: str) -> None:
+        self._skipped[sub] = None
+
+    def _labels(self, subs: Iterable[str]) -> list[str]:
+        return [self._label(sub) for sub in subs]
+
+    def _listing(self, said: dict, key: str, subs: list[str]) -> None:
+        """Puts a list of subscriptions in an answer by label: all of them when there are few, and else the first few and the count under `<key>_count`."""
+        said[key] = self._labels(subs[:NOT_READ_SHOWN])
+        if len(subs) > NOT_READ_SHOWN:
+            said[f"{key}_count"] = len(subs)
+
+    def _unread(self) -> dict:
+        """What an answer says of the subscriptions that this call did not read because its time was used up: how many and which first, and what to do."""
+        if not self._skipped:
+            return {}
+        subs = list(self._skipped)
+        return {"not_read": {"count": len(subs), "first": self._labels(subs[:NOT_READ_SHOWN]),
+                             "why": "the time of one call for reading subscriptions was used up; call again to go on with them"}}
 
     def _today(self) -> dt.date:
         moment = self.now if self.now.tzinfo else self.now.replace(tzinfo=dt.timezone.utc)
         return moment.astimezone(dt.timezone.utc).date()
 
-    def _each(self, read: Callable[[str], T], what: str) -> tuple[list[tuple[str, T]], list[str]]:
-        """Runs a read in every subscription. A subscription that cannot be read is a note and is returned in the second list; when none can be read, the error is raised."""
+    def _each(self, read: Callable[[str], T], what: str, ready: Callable[[str], bool] = lambda sub: False) -> tuple[list[tuple[str, T]], list[str]]:
+        """Runs a read in every subscription. A subscription that cannot be read is a note and is returned in the second list; when none can be read, the error is raised.
+
+        A subscription that the call has no time left for is not read, unless `ready` says that its read is in a cache already: it is in `_skipped` and in neither list."""
         done: list[tuple[str, T]] = []
         failed: list[str] = []
         last: Exception | None = None
         for sub in self.subscriptions:
+            if not ready(sub) and self._late():
+                self._skip(sub)
+                continue
             try:
                 done.append((sub, read(sub)))
             except READ_ERRORS as error:
@@ -782,9 +842,13 @@ class Toolbox:
             raise last
         return done, failed
 
-    def _costs_of(self, sub: str) -> _Costs | None:
-        """The cost lines of a subscription, read once in a run. None when they could not be read or are not in US dollars."""
+    def _costs_of(self, sub: str, force: bool = False) -> _Costs | None:
+        """The cost lines of a subscription, read once in a run. None when they could not be read or are not in US dollars, and, when the call has no time left to read them
+        (the subscription is then in `_skipped`, and nothing is remembered, so a later call reads them), None as well. `force` reads them whatever the time."""
         if sub not in self._costs:
+            if not force and self._late():
+                self._skip(sub)
+                return None
             self._costs[sub] = self._read_costs(sub)
         return self._costs[sub]
 
@@ -796,7 +860,7 @@ class Toolbox:
             self._note(sub, "the cost lines", error)
             return None
         if any(line.currency != "USD" for line in lines):
-            self.notes.append(f"{sub[:8]}: the cost lines are not in US dollars, so no tool shows a cost for it")
+            self._say(f"{sub[:8]}: the cost lines are not in US dollars, so no tool shows a cost for it")
             return None
         return _Costs.of(lines)
 
@@ -889,15 +953,17 @@ class Toolbox:
         return len(page)
 
     def _caveats(self, failed: list[str]) -> dict:
-        """The parts of an answer that say what could not be read: the subscriptions without costs, and the ones whose resources could not be read."""
+        """The parts of an answer that say what could not be read: the subscriptions without costs, the ones whose resources could not be read, and the ones that this call had
+        no time to read (their costs, which a later call reads, are not counted as unavailable). A list of subscriptions names the first few and counts the rest."""
         said: dict = {}
-        blind = [self._label(sub) for sub in self.subscriptions if self._costs_of(sub) is None]
+        blind = [sub for sub in self.subscriptions if self._costs_of(sub) is None and sub not in self._skipped]
         if blind:
             said["costs"] = "unavailable"
             if len(blind) < len(self.subscriptions):
-                said["costs_unavailable"] = blind
+                self._listing(said, "costs_unavailable", blind)
         if failed:
-            said["unavailable"] = [self._label(sub) for sub in failed]
+            self._listing(said, "unavailable", failed)
+        said.update(self._unread())
         return said
 
     def _sub_of(self, key: str) -> str | None:
@@ -955,6 +1021,9 @@ class Toolbox:
     def _tool_estate_overview(self, args: dict) -> dict:
         blocks: list[dict] = []
         for sub in self.subscriptions:
+            if not (sub in self._counts and sub in self._costs) and self._late():
+                self._skip(sub)
+                continue
             block: dict = {"subscription": self._label(sub)}
             try:
                 total, counts = self._type_counts(sub)
@@ -962,7 +1031,7 @@ class Toolbox:
                 self._note(sub, "the resources", error)
                 blocks.append({**block, "error": "unavailable"})
                 continue
-            costs = self._costs_of(sub)
+            costs = self._costs_of(sub, force=True)  # a subscription is shown whole or not at all
             block["resources"] = total
             if costs is None:
                 block["costs"] = "unavailable"
@@ -981,11 +1050,20 @@ class Toolbox:
             blocks.append(block)
         if blocks and all("error" in block for block in blocks):
             return {"error": "unavailable"}
-        answer = {"window_days": MAX_DAYS, "subscriptions": blocks}
+        answer = {"window_days": MAX_DAYS, "subscriptions": blocks, **self._unread()}
+        if len(blocks) > MAX_BLOCKS:
+            # An estate with many subscriptions: the dearest are shown, and the count of the others says that there are more.
+            blocks.sort(key=lambda block: (-(block.get("cost30d") or 0.0), len(block["subscription"]), block["subscription"]))
+            answer["subscriptions_not_shown"] = len(blocks) - MAX_BLOCKS
+            del blocks[MAX_BLOCKS:]
         while len(_dump(answer)) > MAX_RESULT_CHARS:
             lists = [(len(block[key]), key == "types", block, key) for block in blocks for key in ("types", "services") if block.get(key)]
             if not lists:
-                raise TooLarge()
+                if len(blocks) <= 1:
+                    raise TooLarge()
+                blocks.pop()
+                answer["subscriptions_not_shown"] = answer.get("subscriptions_not_shown", 0) + 1
+                continue
             _, _, block, key = max(lists, key=lambda item: item[:2])
             block[key].pop()
             block[f"{key}_not_shown"] = block.get(f"{key}_not_shown", 0) + 1
@@ -993,7 +1071,7 @@ class Toolbox:
 
     def _listed(self, kind: str, order: str) -> tuple[list[_Entry], list[str]]:
         """The resources of one type in the order of a listing, and the subscriptions whose resources could not be read."""
-        done, failed = self._each(lambda sub: self._load_type(sub, kind), "the resources of a type")
+        done, failed = self._each(lambda sub: self._load_type(sub, kind), "the resources of a type", ready=lambda sub: (sub, kind) in self._by_type)
         entries = [entry for _, found in done for entry in found]
 
         def cost(entry: _Entry) -> float:
@@ -1029,28 +1107,49 @@ class Toolbox:
             row[0] = self._show(entry, shown)
         return answer
 
-    def _one_of_type(self, kind: str) -> str | None:
-        """The id of one resource of the type, from a list that was read before or else from a read of its own."""
+    def _one_of_type(self, kind: str) -> tuple[str | None, bool]:
+        """The id of one resource of the type, from a list that was read before or else from reads of its own, one subscription after the other until a resource is found, and
+        whether every subscription was looked at (False when the time of the call ran out first)."""
         for sub in self.subscriptions:
             if self._by_type.get((sub, kind)):
-                return self._entries[self._by_type[(sub, kind)][0]].resource.resource_id
-        done, _ = self._each(lambda sub: self.arm.graph(sub, ONE_OF_TYPE.format(type=kind)), "a resource of the type")
-        for _, rows in done:
+                return self._entries[self._by_type[(sub, kind)][0]].resource.resource_id, True
+        last: Exception | None = None
+        looked = incomplete = False
+        for sub in self.subscriptions:
+            if (sub, kind) in self._without:
+                looked = True
+                continue
+            if self._late():
+                self._skip(sub)
+                incomplete = True
+                continue
+            try:
+                rows = self.arm.graph(sub, ONE_OF_TYPE.format(type=kind))
+            except READ_ERRORS as error:
+                self._note(sub, "a resource of the type", error)
+                last = error
+                continue
+            looked = True
             for row in rows:
                 if str(row.get("id") or "").lower().startswith("/subscriptions/"):
-                    return str(row["id"])
-        return None
+                    return str(row["id"]), True
+            self._without.add((sub, kind))
+        if last is not None and not looked:
+            raise last
+        return None, not incomplete
 
     def _names_of(self, kind: str) -> list[dict]:
         if kind not in self._metric_names:
             found: dict[str, dict] = {}
-            resource_id = self._one_of_type(kind)
+            resource_id, complete = self._one_of_type(kind)
             for definition in self.arm.metric_definitions(resource_id) if resource_id else []:
                 name = definition.get("name")
                 word = metric_word(name.get("value") if isinstance(name, dict) else None)
                 # A metric that is only offered for a chosen dimension cannot be measured without one, and metric_summary names none.
                 if word is not None and definition.get("isDimensionRequired") is not True:
                     found.setdefault(word, {"name": word, "unit": token_word(definition.get("unit"), 16), "aggregation": token_word(definition.get("primaryAggregationType"), 16)})
+            if not complete:
+                return []  # no resource was found in the subscriptions that were looked at, and the others were not: nothing is remembered, a later call looks again
             self._metric_names[kind] = sorted(found.values(), key=lambda item: item["name"].lower())
         return self._metric_names[kind]
 
@@ -1073,7 +1172,7 @@ class Toolbox:
         kind, offset = args["type"], args["offset"] or 0
         names = self._names_of(kind)
         rows = [dict(item) for item in names[offset:]]
-        answer: dict = {"type": kind, "total": len(names), "offset": offset, "returned": 0, "next_offset": None, "metrics": rows}
+        answer: dict = {"type": kind, "total": len(names), "offset": offset, "returned": 0, "next_offset": None, **self._unread(), "metrics": rows}
         _page(answer, rows, offset, len(names))
         return answer
 
@@ -1233,15 +1332,16 @@ class Toolbox:
         for sub in self.subscriptions:
             costs = self._costs_of(sub)
             if costs is None:
-                blind += 1
+                if sub not in self._skipped:
+                    blind += 1
                 continue
             for key, per_service in costs.by_resource.items():
                 found = type_of_id(key)
                 if kind and found != kind:
                     continue
                 lines += [(amount, name, found, key) for name, amount in per_service.items() if not service or name.lower() == service.lower()]
-        if self.subscriptions and blind == len(self.subscriptions):
-            return {"costs": "unavailable", "lines": []}
+        if self.subscriptions and blind + len(self._skipped) == len(self.subscriptions):
+            return {"costs": "unavailable", "lines": [], **self._unread()}
         lines.sort(key=lambda line: (-line[0], line[3], line[1]))
         page = lines[:limit]
         self._resolve_quietly([key for _, _, _, key in page])
@@ -1250,6 +1350,7 @@ class Toolbox:
         answer: dict = {"service": service, "type": kind, "total": len(lines), "usd_total": _money(sum(line[0] for line in lines)), "returned": 0, "lines": rows}
         if blind:
             answer["costs"] = "unavailable"
+        answer.update(self._unread())
         while True:
             answer["returned"] = len(rows)
             if len(_dump(answer)) <= MAX_RESULT_CHARS or not rows:
@@ -1272,7 +1373,7 @@ class Toolbox:
 
     def _tool_advisor_items(self, args: dict) -> dict:
         offset = args["offset"] or 0
-        done, failed = self._each(self._advice_for, "the cost recommendations")
+        done, failed = self._each(self._advice_for, "the cost recommendations", ready=lambda sub: sub in self._advice)
         items = sorted((advice for _, found in done for advice in found),
                        key=lambda advice: (-(advice.annual if advice.annual is not None else -1.0), advice.facts["type_id"] or "", advice.resource_id.lower()))
         page = items[offset:offset + ADVISOR_PAGE]
@@ -1286,7 +1387,8 @@ class Toolbox:
                          "lookback": facts["lookback"], "reserved_type": facts["reserved_type"], "sku": facts["sku"]})
         answer: dict = {"total": len(items), "offset": offset, "returned": 0, "next_offset": None}
         if failed:
-            answer["unavailable"] = [self._label(sub) for sub in failed]
+            self._listing(answer, "unavailable", failed)
+        answer.update(self._unread())
         answer["items"] = rows
         _page(answer, rows, offset, len(items))
         for row, advice, entry in zip(rows, page, entries):
@@ -1302,11 +1404,18 @@ class Toolbox:
                         seen.append(item)
         return answer
 
+    def _pricings_for(self, sub: str) -> list[dict]:
+        if sub not in self._pricings:
+            self._pricings[sub] = self.arm.security_pricings(sub)
+        return self._pricings[sub]
+
     def _tool_paid_features(self, args: dict) -> dict:
-        done, _ = self._each(self.arm.security_pricings, "the paid features")
+        done, _ = self._each(self._pricings_for, "the paid features", ready=lambda sub: sub in self._pricings)
         found = dict(done)
         blocks: list[dict] = []
         for sub in self.subscriptions:
+            if sub in self._skipped:
+                continue
             block: dict = {"subscription": self._label(sub)}
             if sub not in found:
                 block["error"] = "unavailable"
@@ -1320,11 +1429,20 @@ class Toolbox:
                                       "coverage": token_word(properties.get("resourcesCoverageStatus"), 24)})
                 block["plans"] = sorted(plans, key=lambda plan: plan["plan"].lower())
             blocks.append(block)
-        answer = {"subscriptions": blocks}
+        answer = {"subscriptions": blocks, **self._unread()}
+        if len(blocks) > MAX_BLOCKS:
+            # An estate with many subscriptions: those with the most plans that are not free are shown, and the count of the others says that there are more.
+            blocks.sort(key=lambda block: (-sum(1 for plan in block.get("plans", []) if plan["tier"] not in (None, "Free")), len(block["subscription"]), block["subscription"]))
+            answer["subscriptions_not_shown"] = len(blocks) - MAX_BLOCKS
+            del blocks[MAX_BLOCKS:]
         while len(_dump(answer)) > MAX_RESULT_CHARS:
             longest = max((block for block in blocks if block.get("plans")), key=lambda block: len(block["plans"]), default=None)
             if longest is None:
-                raise TooLarge()
+                if len(blocks) <= 1:
+                    raise TooLarge()
+                blocks.pop()
+                answer["subscriptions_not_shown"] = answer.get("subscriptions_not_shown", 0) + 1
+                continue
             longest["plans"].pop()
             longest["plans_not_shown"] = longest.get("plans_not_shown", 0) + 1
         return answer

@@ -15,6 +15,7 @@ ARG = "https://management.azure.com/providers/Microsoft.ResourceGraph/resources?
 COST = f"https://management.azure.com/subscriptions/{SUBSCRIPTION}/providers/Microsoft.CostManagement/query?api-version=2023-11-01"
 ADVISOR = f"https://management.azure.com/subscriptions/{SUBSCRIPTION}/providers/Microsoft.Advisor/recommendations?api-version=2023-01-01&$filter=Category%20eq%20%27Cost%27"
 LOCKS = f"https://management.azure.com/subscriptions/{SUBSCRIPTION}/providers/Microsoft.Authorization/locks?api-version=2016-09-01"
+SUBSCRIPTIONS = "https://management.azure.com/subscriptions?api-version=2022-12-01"
 CHAT = f"{ENDPOINT}/openai/v1/chat/completions"
 RESOURCE_CHAT = "https://example-account.services.ai.azure.com/openai/v1/chat/completions"
 
@@ -47,14 +48,14 @@ def ok(document=None):
 class TheList(unittest.TestCase):
     def test_the_calls_of_the_app_are_allowed(self):
         c, script, _ = client(ok())
-        for method, url in (("POST", ARG), ("POST", COST), ("GET", ADVISOR), ("GET", LOCKS), ("POST", CHAT), ("POST", RESOURCE_CHAT)):
+        for method, url in (("POST", ARG), ("POST", COST), ("GET", ADVISOR), ("GET", LOCKS), ("POST", CHAT), ("POST", RESOURCE_CHAT), ("GET", SUBSCRIPTIONS)):
             c.request(method, url)
-        self.assertEqual(len(script.calls), 6)
+        self.assertEqual(len(script.calls), 7)
 
     def test_the_watch_without_a_foundry_project_makes_the_reads_of_azure_and_nothing_else(self):
         plain = http.allowed_calls()
-        self.assertEqual(len(plain), 7)
-        self.assertEqual(sorted(method for method, _ in plain), ["GET"] * 5 + ["POST"] * 2)
+        self.assertEqual(len(plain), 8)
+        self.assertEqual(sorted(method for method, _ in plain), ["GET"] * 6 + ["POST"] * 2)
         for _, pattern in plain:
             self.assertTrue(pattern.pattern.startswith(re.escape("https://management.azure.com")), pattern.pattern)
         c = http.Client(plain, Redactor(), transport=Script(ok()), sleep=lambda s: None)
@@ -97,6 +98,39 @@ class TheList(unittest.TestCase):
         with self.assertRaises(http.Refused):
             c.request("PUT", ARG)
         c.request("POST", ARG + "&x=1")
+
+    def test_the_one_get_of_the_list_of_subscriptions_is_allowed_and_nothing_around_it(self):
+        # The Watch lists the subscriptions that its own identity can read (scope.py). That is the one call whose address ends at /subscriptions.
+        arm = "https://management.azure.com"
+        c, script, _ = client(ok())
+        for url in (SUBSCRIPTIONS, f"{arm}/subscriptions?api-version=2022-12-01&$skiptoken=abc", f"{arm}/Subscriptions?api-version=2022-12-01"):
+            c.request("GET", url)
+        self.assertEqual(len(script.calls), 3)
+        refused = [
+            ("POST", f"{arm}/subscriptions?api-version=2022-12-01"),
+            ("PUT", f"{arm}/subscriptions?api-version=2022-12-01"),
+            ("DELETE", f"{arm}/subscriptions?api-version=2022-12-01"),
+            ("GET", f"{arm}/subscriptions/?api-version=2022-12-01"),
+            ("GET", f"{arm}/subscriptions/{SUBSCRIPTION}?api-version=2022-12-01"),
+            ("GET", f"{arm}/subscriptions/{SUBSCRIPTION}/resourcegroups?api-version=2021-04-01"),
+            ("GET", f"{arm}/subscriptions/{SUBSCRIPTION}/providers/Microsoft.Compute/virtualMachines?api-version=2024-03-01"),
+            ("GET", f"{arm}/subscriptions/{SUBSCRIPTION}/locations?api-version=2022-12-01"),
+            ("GET", f"{arm}/tenants?api-version=2022-12-01"),
+            ("GET", f"{arm}/providers/Microsoft.Management/managementGroups?api-version=2021-04-01"),
+            ("GET", "https://management.azure.com.evil.example/subscriptions?api-version=2022-12-01"),
+            ("GET", "http://management.azure.com/subscriptions?api-version=2022-12-01"),
+            ("GET", "https://other.example/subscriptions"),
+        ]
+        for method, url in refused:
+            with self.assertRaises(http.Refused, msg=f"{method} {url}"):
+                c.request(method, url)
+        self.assertEqual(len(script.calls), 3, "nothing else left the app")
+
+    def test_the_list_of_subscriptions_is_a_read_that_needs_no_foundry_project_and_changes_nothing_in_the_calls_that_there_were(self):
+        plain = http.allowed_calls()
+        self.assertEqual([(m, p.pattern) for m, p in plain][-1], ("GET", re.escape("https://management.azure.com") + "/subscriptions"))
+        self.assertEqual(plain, http.allowed_calls(None))
+        self.assertEqual(http.allowed_calls(ENDPOINT)[:len(plain)], plain)
 
 
 class Retries(unittest.TestCase):
@@ -518,6 +552,32 @@ class RetryAfter(unittest.TestCase):
         self.assertEqual(http.retry_after({"x-ms-ratelimit-microsoft.costmanagement-entity-retry-after": "7.5"}), 7.5)
         self.assertIsNone(http.retry_after({"retry-after": "Wed, 21 Oct 2026 07:28:00 GMT"}))
         self.assertIsNone(http.retry_after({"content-type": "x"}))
+
+    def test_when_several_headers_give_a_wait_the_longest_binds_and_a_header_that_is_not_a_number_does_not_hide_the_others(self):
+        # Cost Management has one for its entity, one for its client and one for its tenant.
+        self.assertEqual(http.retry_after({"x-ms-ratelimit-microsoft.costmanagement-entity-retry-after": "9", "x-ms-ratelimit-microsoft.costmanagement-tenant-retry-after": "40",
+                                           "retry-after": "12"}), 40.0)
+        self.assertEqual(http.retry_after({"retry-after": "Wed, 21 Oct 2026 07:28:00 GMT", "x-ms-ratelimit-microsoft.costmanagement-entity-retry-after": "7"}), 7.0)
+
+    def test_the_time_that_the_quota_of_resource_graph_resets_after_is_a_wait_of_that_time_and_a_second_more(self):
+        # Learn, "Guidance for throttled requests in Azure Resource Graph": x-ms-user-quota-resets-after, hh:mm:ss, on every answer; 15 queries in 5 seconds.
+        self.assertEqual(http.retry_after({"x-ms-user-quota-resets-after": "00:00:03", "x-ms-user-quota-remaining": "0"}), 4.0)
+        self.assertEqual(http.retry_after({"x-ms-user-quota-resets-after": "00:01:02.5"}), 63.5)
+        self.assertEqual(http.retry_after({"x-ms-user-quota-resets-after": "1:00:00"}), 3601.0)
+        self.assertEqual(http.retry_after({"x-ms-user-quota-resets-after": "00:00:03", "retry-after": "10"}), 10.0, "the longer of the two")
+        for bad in ("", "soon", "00:00", "00:61:00", "-1:00:00", "00:00:03 seconds"):
+            self.assertIsNone(http.retry_after({"x-ms-user-quota-resets-after": bad}), bad)
+
+    def test_a_throttled_resource_graph_query_waits_for_the_quota_to_reset_and_is_made_again(self):
+        c, script, sleeps = client((429, {"x-ms-user-quota-remaining": "0", "x-ms-user-quota-resets-after": "00:00:04"}, b'{"error":{"code":"RateLimiting","message":"slow down"}}'), ok({"data": []}))
+        self.assertEqual(c.request("POST", ARG, body={"query": "q"}).status, 200)
+        self.assertEqual((len(script.calls), sleeps), (2, [5.0]))
+
+    def test_a_quota_that_resets_in_more_than_a_minute_is_a_refusal_and_not_a_wait(self):
+        c, script, sleeps = client((429, {"x-ms-user-quota-resets-after": "00:05:00"}, b'{"error":{"code":"RateLimiting","message":"slow down"}}'))
+        with self.assertRaises(http.HttpError) as raised:
+            c.request("POST", ARG, body={"query": "q"})
+        self.assertEqual((raised.exception.status, len(script.calls), sleeps, raised.exception.retry_after), (429, 1, [], 301.0))
 
 
 TOKEN_URL = "https://login.microsoftonline.com/aaaaaaaa-1111-4222-8333-444444444444/oauth2/v2.0/token"
