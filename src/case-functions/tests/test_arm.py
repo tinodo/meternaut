@@ -7,14 +7,14 @@ from cases import arm as arm_module
 from cases.arm import Arm
 from cases.http import Client, HttpError, allowed_calls
 from cases.redact import Redactor
-from test_http import PRODUCT_SUBSCRIPTION, Script, ok
+from test_http import Script, ok
 
 RESOURCE = f"/subscriptions/{SUBSCRIPTION}/resourceGroups/rg-app/providers/Microsoft.Network/privateEndpoints/pe-one"
 
 
 def arm_with(*answers):
     script = Script(*answers)
-    client = Client(allowed_calls("example-apim.azure-api.net", f"{PRODUCT_SUBSCRIPTION}/listSecrets"), Redactor(), transport=script, sleep=lambda s: None, jitter=lambda: 0.5)
+    client = Client(allowed_calls(), Redactor(), transport=script, sleep=lambda s: None, jitter=lambda: 0.5)
     return Arm(client, lambda resource: TOKEN), script
 
 

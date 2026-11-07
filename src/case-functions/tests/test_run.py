@@ -3,8 +3,8 @@ import re
 import unittest
 from unittest import mock
 
-from support import (ENV, KEY, NOW, PRODUCT_SUBSCRIPTION, RG, SUBSCRIPTION, FakeEstate, Ticker, detective_says, disk_row, model_reply, pe_row, run_watch,
-                     skeptic_says)
+from support import (ENV, ENV_NO_PROJECT, FOUNDRY_ENDPOINT, KEY, NOW, RG, SUBSCRIPTION, TOKEN, FakeEstate, Ticker, detective_says, disk_row, model_reply, pe_row,
+                     run_watch, skeptic_says)
 from test_investigate import FakeFoundry, FakeToolbox, answer, entry, finding, metrics, resource
 from test_run_loop import Moving, estate_with, loop_for
 from cases import http, investigate, run
@@ -100,31 +100,32 @@ class AGoodRun(unittest.TestCase):
                 self.assertNotIn(hidden, prompt)
         self.assertEqual([json.loads(p)["case"]["caseId"] for p in prompts[::2]], ["c1", "c2", "c3"])
 
-    def test_the_key_is_in_no_log_line_and_no_history_line(self):
-        self.assertNotIn(KEY, "\n".join(self.messages))
-        self.assertNotIn("other-secret-key-value", "\n".join(self.messages))
-        self.assertNotIn(KEY, json.dumps(self.events))
+    def test_the_token_is_in_no_log_line_and_no_history_line_and_no_key_is_known(self):
+        self.assertNotIn(TOKEN, "\n".join(self.messages))
+        self.assertNotIn(TOKEN, json.dumps(self.events))
 
-    def test_the_key_goes_in_the_api_key_header_of_the_gateway_and_nowhere_else(self):
+    def test_the_token_goes_in_the_authorization_header_of_every_call_and_no_call_carries_a_key(self):
         for call in self.estate.calls:
-            self.assertEqual("api-key" in call["headers"], call["host"] == "example-apim.azure-api.net", call["url"])
-            self.assertEqual("Authorization" in call["headers"], call["host"] == "management.azure.com", call["url"])
-            self.assertNotIn(KEY, call["url"])
-        self.assertEqual({c["headers"]["api-key"] for c in self.estate.chat_calls()}, {KEY})
+            self.assertIn("Authorization", call["headers"], call["url"])
+            self.assertNotIn("api-key", call["headers"], call["url"])
+            self.assertNotIn(TOKEN, call["url"])
+            self.assertIn(call["host"], ("management.azure.com", FOUNDRY_ENDPOINT.split("/")[2]), call["url"])
+        self.assertEqual({c["host"] for c in self.estate.chat_calls()}, {FOUNDRY_ENDPOINT.split("/")[2]}, "the models are called on the Foundry resource and nowhere else")
+        self.assertTrue(all(c["path"] == "/api/projects/meternaut/openai/v1/chat/completions" for c in self.estate.chat_calls()))
 
     def test_the_app_makes_only_the_calls_that_are_on_its_list_and_changes_nothing(self):
-        allowed = http.allowed_calls("example-apim.azure-api.net", f"{PRODUCT_SUBSCRIPTION}/listSecrets")
+        allowed = http.allowed_calls(FOUNDRY_ENDPOINT)
         for call in self.estate.calls:
             bare = f"https://{call['host']}{call['path']}"
             self.assertTrue(any(m == call["method"] and p.fullmatch(bare) for m, p in allowed), f"{call['method']} {bare}")
         self.assertLessEqual({c["method"] for c in self.estate.calls}, {"GET", "POST"})
         posts = sorted({c["path"].rsplit("/", 1)[-1].lower() for c in self.estate.calls if c["method"] == "POST"})
-        self.assertEqual(posts, ["completions", "listsecrets", "query", "resources"])
+        self.assertEqual(posts, ["completions", "query", "resources"])
 
-    def test_the_one_key_is_read_once_at_the_start(self):
+    def test_no_key_is_read_and_the_run_starts_with_a_read_of_the_estate(self):
         paths = [c["path"].rsplit("/", 1)[-1].lower() for c in self.estate.calls]
-        self.assertEqual(paths.count("listsecrets"), 1)
-        self.assertEqual(paths[0], "listsecrets")
+        self.assertNotIn("listsecrets", paths)
+        self.assertEqual(paths[0], "resources", "the first call is a read of the estate: there is no key to read first")
 
     def test_cost_lines_are_asked_for_the_thirty_closed_days(self):
         (call,) = [c for c in self.estate.calls if "costmanagement" in c["path"].lower()]
@@ -186,8 +187,8 @@ class WhatTheModelsSay(unittest.TestCase):
         self.assertEqual(summary.tokens, 5 * 850, "the tokens of the answer that was thrown away are counted")
 
 
-class WhenTheGatewayRefuses(unittest.TestCase):
-    def test_a_gateway_that_refuses_every_call_ends_every_case_in_an_error_without_a_retry_loop(self):
+class WhenTheModelServiceRefuses(unittest.TestCase):
+    def test_a_model_service_that_refuses_every_call_ends_every_case_in_an_error_without_a_retry_loop(self):
         estate = estate_with_leads()
         estate.failures = {"chat": 403}
         summary, events, messages = run_watch(estate)
@@ -195,15 +196,15 @@ class WhenTheGatewayRefuses(unittest.TestCase):
         self.assertEqual(len(estate.chat_calls()), 3, "one call for each case, no retry")
         for result in of_type(events, "case.result"):
             self.assertEqual(result["status"], "error")
-            self.assertIn("the gateway refused", result["summary"])
-        self.assertNotIn(KEY, "\n".join(messages))
+            self.assertIn("the Foundry resource refused the model call", result["summary"])
+        self.assertNotIn(TOKEN, "\n".join(messages))
 
     def test_an_allowance_that_is_used_up_is_not_waited_for(self):
         estate = estate_with_leads()
         estate.chat_replies = [(429, {"retry-after": "86400"}, {"statusCode": 429, "message": "token quota exceeded"})] * 3
         summary, events, _ = run_watch(estate)
         self.assertEqual((summary.errors, estate.sleeps, len(estate.chat_calls())), (3, [], 3))
-        self.assertTrue(all("the gateway refused" in r["summary"] for r in of_type(events, "case.result")))
+        self.assertTrue(all("the Foundry resource refused the model call" in r["summary"] for r in of_type(events, "case.result")))
 
     def test_a_rate_limit_of_a_second_is_waited_for_and_the_run_goes_on(self):
         estate = estate_with_leads()
@@ -212,22 +213,46 @@ class WhenTheGatewayRefuses(unittest.TestCase):
         self.assertEqual((summary.errors, summary.proposed), (0, 3))
         self.assertEqual(estate.sleeps, [1.0])
 
-    def test_a_key_that_cannot_be_read_ends_the_run_before_anything_is_read(self):
+    def test_the_run_needs_no_key_so_a_refusal_of_a_model_call_is_the_only_thing_that_can_go_wrong_before_the_cases(self):
         estate = estate_with_leads()
-        estate.failures = {"secrets": 403}
-        summary, events, messages = run_watch(estate)
-        self.assertFalse(summary.ok)
-        self.assertEqual([e["type"] for e in events], ["run.started", "run.failed"])
-        self.assertIn("the key of the access product could not be read", events[-1]["reason"])
-        self.assertEqual([c for c in estate.calls if "resourcegraph" in c["path"].lower()], [], "nothing of the estate was read")
-        self.assertEqual(len(estate.chat_calls()), 0)
+        summary, events, _ = run_watch(estate)
+        self.assertTrue(summary.ok)
+        self.assertEqual([e["type"] for e in events][:2], ["run.started", "lead.found"], "the run does not stop to read anything first")
+        self.assertNotIn("run.failed", [e["type"] for e in events])
 
-    def test_the_key_is_not_in_the_failing_runs_lines_even_when_the_gateway_echoes_it(self):
+    def test_a_run_without_the_address_of_the_foundry_project_is_not_aborted_and_each_case_ends_in_an_error_that_says_why(self):
         estate = estate_with_leads()
-        estate.chat_replies = [(400, {"error": {"code": "BadRequest", "message": f"api-key {KEY} is wrong"}})] * 3
+        summary, events, messages = run_watch(estate, env=ENV_NO_PROJECT)
+        self.assertEqual((summary.ok, summary.leads, summary.cases, summary.errors, summary.proposed), (True, 4, 3, 3, 0))
+        self.assertNotIn("run.failed", [e["type"] for e in events])
+        self.assertEqual(events[-1]["type"], "run.finished")
+        for result in of_type(events, "case.result"):
+            self.assertEqual((result["status"], result["summary"]), ("error", "the Foundry project's address is not set"))
+        self.assertEqual(estate.chat_calls(), [], "there was nowhere to call")
+        self.assertTrue([c for c in estate.calls if "resourcegraph" in c["path"].lower()], "the estate was read as always")
+        failed = [s for s in of_type(events, "case.step") if not s["ok"]]
+        self.assertEqual([(s["step"], s["note"]) for s in failed], [("detective", "the Foundry project's address is not set")] * 3)
+
+    def test_the_token_is_not_in_the_failing_runs_lines_even_when_the_service_echoes_it(self):
+        estate = estate_with_leads()
+        estate.chat_replies = [(400, {"error": {"code": "BadRequest", "message": f"token {TOKEN} is wrong"}})] * 3
         summary, events, messages = run_watch(estate)
         self.assertEqual(summary.errors, 3)
-        self.assertNotIn(KEY, "\n".join(messages))
+        self.assertNotIn(TOKEN, "\n".join(messages))
+        self.assertNotIn(TOKEN, json.dumps(events))
+
+    def test_a_route_that_the_service_does_not_serve_ends_the_case_in_words_that_say_which_route_in_the_first_200_characters(self):
+        estate = estate_with_leads()
+        estate.chat_replies = [(404, {}, {"error": {"code": "404", "message": "Resource not found"}})] * 20
+        summary, events, _ = run_watch(estate)
+        self.assertEqual(summary.errors, 3)
+        for result in of_type(events, "case.result"):
+            self.assertIn("no chat completions route took the call: POST /openai/v1/chat/completions, the project's route answered 404 and the resource's route answered 404", result["summary"])
+        notes = [s["note"] for s in of_type(events, "case.step") if not s["ok"]]
+        self.assertEqual(len(notes), 3)
+        for note in notes:
+            self.assertLessEqual(len(note), 200)
+            self.assertIn("answered 404 and the resource's route answered 404", note)
 
 
 class WhenTheEstateCannotBeRead(unittest.TestCase):
@@ -285,16 +310,17 @@ class WhenTheEstateCannotBeRead(unittest.TestCase):
         estate = estate_with_leads()
         summary, events, _ = run_watch(estate, fetch=lambda url, headers, timeout: (500, b"{}"))
         self.assertFalse(summary.ok)
-        self.assertEqual(events[-1]["type"], "run.failed")
-        self.assertIn("managed identity", events[-1]["reason"])
+        self.assertEqual(events[-1], {**events[-1], "type": "run.failed", "reason": "no detector could read any subscription"})
+        self.assertTrue(any("managed identity" in e["note"] for e in of_type(events, "run.note")), "the note of the subscription says why it could not be read")
+        self.assertEqual(estate.calls, [])
 
     def test_wrong_settings_are_a_failed_run_with_the_names_of_the_settings_and_no_call(self):
         estate = estate_with_leads()
-        env = {k: v for k, v in ENV.items() if k not in ("GATEWAY_URL", "MODEL_SKEPTIC")}
+        env = {k: v for k, v in ENV.items() if k not in ("SCOPE_SUBSCRIPTIONS", "MODEL_SKEPTIC")}
         summary, events, _ = run_watch(estate, env=env)
         self.assertFalse(summary.ok)
         self.assertEqual([e["type"] for e in events], ["run.failed"])
-        self.assertIn("GATEWAY_URL is not set", events[0]["reason"])
+        self.assertIn("SCOPE_SUBSCRIPTIONS is not set", events[0]["reason"])
         self.assertIn("MODEL_SKEPTIC is not set", events[0]["reason"])
         self.assertEqual(estate.calls, [])
 
@@ -358,13 +384,14 @@ class Limits(unittest.TestCase):
         summary, events, _ = run_watch(estate, env={**ENV, "RUN_DEADLINE_SECONDS": "60"}, ticker=Ticker(step=100))
         self.assertFalse(summary.ok)
         self.assertEqual(events[-1]["type"], "run.failed")
-        self.assertIn("the deadline of the run was reached", events[-1]["reason"])
+        self.assertEqual(events[-1]["reason"], "the deadline of 60 seconds was reached before any detector could read")
         self.assertEqual(estate.calls, [])
 
     def test_a_deadline_that_passes_while_the_estate_is_read_fails_the_run_and_says_so(self):
         estate = estate_with_leads()
+        estate.failures = {f"graph:{name}": 400 for name in estate.graph} | {"advisor": 403}
         ticker = Ticker()
-        estate.after_secrets = lambda: ticker.jump(1000)
+        estate.first_call = lambda: ticker.jump(1000)
         summary, events, _ = run_watch(estate, env={**ENV, "RUN_DEADLINE_SECONDS": "60"}, ticker=ticker)
         self.assertFalse(summary.ok)
         self.assertEqual(events[-1]["type"], "run.failed")
@@ -642,7 +669,7 @@ class WhenTheInvestigationRan(unittest.TestCase):
         estate = estate_with(planted_disk=True, endpoints=0)
         clock = Moving()
         ticker = Ticker()
-        estate.after_secrets = lambda: ticker.jump(50)
+        estate.first_call = lambda: ticker.jump(50)
         estate.after_chat = lambda: ticker.jump(20)
         summary, events, _, _, _ = investigating(estate, env={**INVESTIGATING, "RUN_DEADLINE_SECONDS": "60"}, ticker=ticker, clock=clock, extras=loop_for(clock))
         (legacy,) = legacy_cases(events)
@@ -679,9 +706,9 @@ class WhenTheInvestigationRan(unittest.TestCase):
         self.assertEqual(kinds.count("investigation.finished"), 1)
         self.assertEqual(kinds[-1], "run.finished")
 
-    def test_the_key_of_the_gateway_is_in_no_line_of_a_run_with_the_investigation(self):
+    def test_the_token_is_in_no_line_of_a_run_with_the_investigation(self):
         _, _, messages, _, _ = investigating(estate_with_leads())
-        self.assertNotIn(KEY, "\n".join(messages))
+        self.assertNotIn(TOKEN, "\n".join(messages))
 
 
 class WhenTheInvestigationDidNotRun(unittest.TestCase):
@@ -712,12 +739,14 @@ class WhenTheInvestigationDidNotRun(unittest.TestCase):
         self.assertEqual(self.notes(events), ["the investigation did not run: it is switched off"])
         self.assertEqual((foundry.specs, foundry.runs), ([], []))
 
-    def test_when_the_project_is_not_set_there_is_no_client_of_it(self):
+    def test_when_the_project_is_not_set_there_is_no_client_of_it_and_the_two_roles_have_nowhere_to_call(self):
         estate = estate_with_leads()
         with mock.patch.object(run, "Foundry") as client:
-            summary, events, _ = run_watch(estate)
+            summary, events, _ = run_watch(estate, env=ENV_NO_PROJECT)
         client.assert_not_called()
-        self.assert_as_before(summary, events, estate)
+        self.assertEqual(self.notes(events), ["the investigation did not run: it is switched off"])
+        self.assertEqual((summary.ok, summary.leads, summary.cases, summary.errors, summary.proposed), (True, 4, 3, 3, 0), "the run is not aborted: each case ends in an error")
+        self.assertEqual(estate.chat_calls(), [])
 
     def test_when_the_agents_cannot_be_made_ready_it_is_skipped(self):
         estate = estate_with_leads()
@@ -762,12 +791,12 @@ class WhenTheInvestigationDidNotRun(unittest.TestCase):
         kinds = [e["type"] for e in events]
         self.assertEqual(kinds[5:7], ["run.note", "case.started"])
 
-    def test_a_run_that_cannot_read_the_key_never_reaches_the_investigation(self):
+    def test_a_run_whose_estate_cannot_be_read_never_reaches_the_investigation(self):
         estate = estate_with_leads()
-        estate.failures = {"secrets": 403}
+        estate.failures = {f"graph:{name}": 400 for name in estate.graph} | {"advisor": 403}
         summary, events, _, foundry, _ = investigating(estate)
         self.assertFalse(summary.ok)
-        self.assertEqual([e["type"] for e in events], ["run.started", "run.failed"])
+        self.assertEqual(events[-1], {**events[-1], "type": "run.failed", "reason": "no detector could read any subscription"})
         self.assertEqual((foundry.specs, foundry.runs), ([], []))
 
 
@@ -824,7 +853,7 @@ class TheEndOfTheRunSaysWhatBecameOfTheInvestigation(unittest.TestCase):
         _, events, _, foundry, _ = investigating(estate_with_leads(), env={**INVESTIGATING, "INVESTIGATE": "false"})
         end = self.end(events)
         self.assertEqual((end["investigation"], end["investigationLines"], self.written(events), foundry.runs), ("off", 0, 0, []), "the switch is off, the project is set")
-        for label, env in (("no project", ENV), ("no project and the switch is off", {**ENV, "INVESTIGATE": "false"})):
+        for label, env in (("no project", ENV_NO_PROJECT), ("no project and the switch is off", {**ENV_NO_PROJECT, "INVESTIGATE": "false"})):
             with self.subTest(label):
                 _, events, _ = run_watch(estate_with_leads(), env=env)
                 end = self.end(events)
@@ -885,7 +914,7 @@ class TheEndOfTheRunSaysWhatBecameOfTheInvestigation(unittest.TestCase):
 
     def test_a_run_that_fails_before_the_investigation_has_no_end_and_so_no_fields(self):
         estate = estate_with_leads()
-        estate.failures = {"secrets": 403}
+        estate.failures = {f"graph:{name}": 400 for name in estate.graph} | {"advisor": 403}
         _, events, _, _, _ = investigating(estate)
         self.assertEqual(of_type(events, "run.finished"), [])
 
@@ -911,12 +940,12 @@ class TheFoundryOfTheRun(unittest.TestCase):
             seen.append(kwargs.get("foundry_endpoint", "missing"))
             return real(*args, **kwargs)
 
-        for env, expected in ((ENV, None), (INVESTIGATING, ENDPOINT)):
+        for env, expected in ((ENV_NO_PROJECT, None), (ENV, FOUNDRY_ENDPOINT), (INVESTIGATING, ENDPOINT)):
             seen.clear()
             with mock.patch.object(run, "allowed_calls", spy), mock.patch.object(investigate, "Toolbox", lambda *a: FakeToolbox()):
                 run_watch(estate_with_leads(), env=env, foundry=FakeFoundry())
-            self.assertEqual(seen, [expected])
-        allowed = real("example-apim.azure-api.net", "/k/listSecrets", foundry_endpoint=ENDPOINT)
+            self.assertEqual(seen, [expected], "the project is on the list when it is set, also with the investigation off: the two older roles call their models there")
+        allowed = real(foundry_endpoint=ENDPOINT)
         self.assertTrue(any(method == "POST" and pattern.fullmatch(f"{ENDPOINT}/openai/v1/responses") for method, pattern in allowed))
 
 

@@ -11,7 +11,7 @@ from pathlib import Path
 from unittest import mock
 from urllib.parse import parse_qs, urlsplit
 
-from support import APP_ROOT, NOW, PRODUCT_SUBSCRIPTION, SUBSCRIPTION, TOKEN
+from support import APP_ROOT, NOW, SUBSCRIPTION, TOKEN
 from cases import toolbox as tb
 from cases.arm import Arm
 from cases.foundry import FunctionTool
@@ -235,7 +235,7 @@ def big_estate(count):
 
 
 def toolbox(estate, subscriptions=(SUB,), notes=None):
-    client = Client(allowed_calls("example-apim.azure-api.net", f"{PRODUCT_SUBSCRIPTION}/listSecrets"), Redactor(), transport=estate, sleep=lambda s: None, jitter=lambda: 0.5)
+    client = Client(allowed_calls(), Redactor(), transport=estate, sleep=lambda s: None, jitter=lambda: 0.5)
     return Toolbox(Arm(client, lambda resource: TOKEN), subscriptions, NOW, [] if notes is None else notes)
 
 
@@ -890,7 +890,7 @@ class TheFailures(unittest.TestCase):
         def no_token(resource):
             raise IdentityError("the platform's managed identity endpoint is not available")
 
-        client = Client(allowed_calls("example-apim.azure-api.net", f"{PRODUCT_SUBSCRIPTION}/listSecrets"), Redactor(), transport=standard(), sleep=lambda s: None)
+        client = Client(allowed_calls(), Redactor(), transport=standard(), sleep=lambda s: None)
         box = Toolbox(Arm(client, no_token), (SUB,), NOW, [])
         self.assertEqual(box.call("list_resources", {"type": VM}), '{"error":"unavailable"}')
         self.assertEqual(box.call("estate_overview", {}), '{"error":"unavailable"}')
@@ -1495,7 +1495,7 @@ class TheQueries(unittest.TestCase):
                         self.assertNotIn(part.split("=")[0].strip().lower(), TABLE_COLUMNS, f"{name}: {part.strip()}")
 
     def test_the_fake_refuses_such_an_alias_as_the_real_service_does_so_that_the_mistake_cannot_pass_in_silence(self):
-        client = Client(allowed_calls("example-apim.azure-api.net", f"{PRODUCT_SUBSCRIPTION}/listSecrets"), Redactor(), transport=standard(), sleep=lambda s: None)
+        client = Client(allowed_calls(), Redactor(), transport=standard(), sleep=lambda s: None)
         arm = Arm(client, lambda resource: TOKEN)
         for alias in ("kind = tostring(kind)", "managedBy = tostring(managedBy)", "sku = tostring(sku)"):
             with self.assertRaises(HttpError) as raised:
@@ -2734,7 +2734,7 @@ def full_session(estate=None):
 class TheCallsOfTheToolbox(unittest.TestCase):
     def test_every_call_is_on_the_list_of_calls_of_the_app_and_is_a_read_or_a_query(self):
         estate, box = full_session()
-        allowed = allowed_calls("example-apim.azure-api.net", f"{PRODUCT_SUBSCRIPTION}/listSecrets")
+        allowed = allowed_calls()
         self.assertGreaterEqual(len(estate.calls), 8)
         for call in estate.calls:
             bare = f"https://management.azure.com{call['path']}"
@@ -2758,7 +2758,7 @@ class TheCallsOfTheToolbox(unittest.TestCase):
     def test_a_call_that_the_list_leaves_out_is_unavailable_for_the_tool_that_makes_it_and_the_rest_goes_on(self):
         for dropped, tool, arguments in (("metrics", "metric_summary", {"handles": ["r1"], "metric": VM1_METRIC}), ("metricDefinitions", "metric_names", {"type": VM}),
                                          ("pricings", "paid_features", {})):
-            allowed = [(m, p) for m, p in allowed_calls("example-apim.azure-api.net", f"{PRODUCT_SUBSCRIPTION}/listSecrets") if not p.pattern.endswith(dropped)]
+            allowed = [(m, p) for m, p in allowed_calls() if not p.pattern.endswith(dropped)]
             estate = standard()
             box = Toolbox(Arm(Client(tuple(allowed), Redactor(), transport=estate, sleep=lambda s: None), lambda resource: TOKEN), (SUB,), NOW, [])
             listed(box, VM)

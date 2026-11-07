@@ -242,7 +242,7 @@ class WhenTheStoreFails(unittest.TestCase):
         clock = Moving()
         extras = loop_for(clock)
         estate = estate_with()
-        estate.failures["secrets"] = 403
+        estate.failures = {f"graph:{name}": 400 for name in estate.graph} | {"advisor": 403}
         summary, _, _ = watch(estate, extras, clock)
         self.assertFalse(summary.ok)
         (run,) = extras.store.runs_recent()

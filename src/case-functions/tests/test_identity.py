@@ -282,7 +282,8 @@ class TheCallers(unittest.TestCase):
         estate = FakeEstate()
         summary, events, _ = run_watch(estate, fetch=self.down)
         self.assertFalse(summary.ok)
-        self.assertEqual((events[-1]["type"], events[-1]["reason"]), ("run.failed", "IdentityError: the managed identity endpoint answered 503 after 3 tries"))
+        self.assertEqual((events[-1]["type"], events[-1]["reason"]), ("run.failed", "no detector could read any subscription"))
+        self.assertTrue(any("the managed identity endpoint answered 503 after 3 tries" in e["note"] for e in events if e["type"] == "run.note"))
         self.assertEqual((estate.sleeps, estate.calls), ([2, 5], []))
 
     def test_the_timer_pauses_with_the_sleep_that_it_was_given(self):

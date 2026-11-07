@@ -227,7 +227,7 @@ def summary_lines(request_id: str, events: list[dict]) -> list[str]:
         lines.append(f"  The run ended {'well' if finished.get('ok') is True else 'badly'} after {clean(finished.get('seconds'), 12)} seconds "
                      f"(started by the {clean(started.get('trigger'), 20) or 'unknown'}).")
         lines.append(f"  Leads {finished.get('leads')}; cases taken {finished.get('cases')}: proposed {finished.get('proposed')}, needs a person {finished.get('needsHuman')}, "
-                     f"dropped {finished.get('dropped')}, errors {finished.get('errors')}; tokens through the gateway {finished.get('tokens')}.")
+                     f"dropped {finished.get('dropped')}, errors {finished.get('errors')}; tokens of the Detective and the Skeptic {finished.get('tokens')}.")
         words = {"ran": "The investigation ran.", "failed": "The investigation was meant to run and did not, or it ended badly.",
                  "off": "The investigation did not run: it is switched off or the app has no Foundry project."}
         if isinstance(finished.get("investigation"), str):

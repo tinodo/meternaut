@@ -9,7 +9,7 @@ import unittest
 from unittest import mock
 
 from support import APP_ROOT
-from test_packaging import FORBIDDEN, ONLY_IN_THE_GATEWAY_MODULE
+from test_packaging import FORBIDDEN, KEY_WORDS
 from test_web_support import MAYA, OPS, TINO, Console, make_action, make_decision
 
 WEB = APP_ROOT / "cases" / "web"
@@ -62,7 +62,7 @@ class ThePackage(unittest.TestCase):
 
     def test_no_file_of_the_package_or_of_its_tests_holds_a_word_that_a_key_or_a_secret_leaves_behind(self):
         also = ("".join(parts) for parts in (("instrumentation", "key"), ("DefaultEndpoints", "Protocol"), ("list", "Keys"), ("list", "Connection", "Strings"), ("secondary", "Key")))
-        words = tuple(FORBIDDEN) + tuple(ONLY_IN_THE_GATEWAY_MODULE) + tuple(also)
+        words = tuple(FORBIDDEN) + tuple(KEY_WORDS) + tuple(also)
         for path in modules() + OUR_TESTS:
             text = path.read_text(encoding="utf-8").lower()
             for word in words:

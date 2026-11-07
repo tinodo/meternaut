@@ -76,13 +76,14 @@ PROJECT_PRINCIPAL = SETTINGS["FOUNDRY_PROJECT_PRINCIPAL_ID"]
 
 # What the builder wrote for exactly these inputs on main before this change (the files byte for byte, and what it printed). While the switch is False the hashes are what they were.
 # The hashes of the files are of their LF form: the builder writes with the platform's line ending (CRLF on Windows, LF on the runner), and build() below reads the files with LF.
-# Two entries were re-recorded on purpose, by the change that makes the AI Gateway's subnet first and the gateway after the landing zone's route table (docs/proposals/08-ai-gateway.md): aigateway.parameters.json
-# lost the two parameters of the subnet (aigwSubnetPrefix and aigwSubnetExists), and aigateway-subnet.parameters.json is the new file that holds them. Every other file and the output are what they were.
+# Two entries were re-recorded on purpose, by the change that undoes what Meternaut added to the owner's API Management instance (the Detective and the Skeptic call the models of the
+# Foundry project directly, and the app reads no key): cases.parameters.json lost gatewayUrl, gatewayProductSubscriptionId, modelDetective and modelSkeptic (the template's defaults apply to
+# the two models) and is now written without a contract, and the output lost the line gateway_url, which only the steps of the cases action read. Every other file is what it was.
 GOLDEN = {
     "aigateway-policies.json": "e6d99d1633ab16afc3410e50dbdcb7e290f0e125f4283b4b19f63a8eebb8395c",
     "aigateway-subnet.parameters.json": "a2a16b02fd7a1d54d8949ad89796d4ea89d6bf1907db1f5b621205699a5a0196",
     "aigateway.parameters.json": "77593485df872804654eae54c91724ac5fd0a50b4afd33a625bf59d3a542d0a5",
-    "cases.parameters.json": "035e3af64fe8d3f1af3f7ab2570fa82e59781229dabab1787b8cfc6396fe3cda",
+    "cases.parameters.json": "151f0b102aa94b9b4004113dcc4d4b129b514129461cbf3b11d4b648100360b7",
     "contract.parameters.json": "fac642ef8d4e8df00202bc6fa0a612dac23f6f4aa976a1e90c99230f872a5b34",
     "environment.parameters.json": "b3518aceb6b97b21d7facb4704d1321b7830db54acc76e44e566f02c6c711a30",
     "eventhub-loggers.parameters.json": "bfbbf7eca0ec37809376167054e45b66fea66b813f700fb274fa378c9a3cd918",
@@ -93,7 +94,7 @@ GOLDEN = {
     "planted.parameters.json": "62ecf7282a7bf4c968db91a3943ba20a99dc7ac04fcabb7816aadf6f68f9759c",
     "recording.parameters.json": "eb65c2e5146f0154ec93c838266d4ecbe6b125549ecde970a884082630aa2cbb",
 }
-GOLDEN_OUTPUT = "6ac0ce8490b25dd35c4c2bb3bd93479ab494cf565ab59afafbbce79a2f727488"
+GOLDEN_OUTPUT = "20be29222a1f38dadbba9033213d166817b5410a71a0a3c5fbe8511e30a6310d"
 
 FOUNDRY = (ROOT / "environment" / "foundry" / "main.bicep").read_text(encoding="utf-8")
 CASES = (ROOT / "environment" / "cases" / "main.bicep").read_text(encoding="utf-8")
@@ -170,7 +171,7 @@ class TheSwitchIsOffAndNothingDiffers(unittest.TestCase):
     def test_no_output_is_added_while_it_is_off(self):
         _, out, _, _ = build(SETTINGS)
         self.assertFalse([key for key in outputs(out) if "ai_gateway" in key or key == "aigateway_connection_name"])
-        self.assertEqual(len(out.splitlines()), 46)
+        self.assertEqual(len(out.splitlines()), 45)
 
     def test_a_switch_that_is_not_true_or_false_is_refused_by_name(self):
         for bad in ("False", "no", 0, 1, None, "true"):
@@ -206,7 +207,7 @@ class TheSwitchIsOn(unittest.TestCase):
         plain = values(build(SETTINGS)[3], "cases.parameters.json")
         self.assertEqual({k: v for k, v in cases.items() if not k.startswith("foundryModel")}, plain)
         self.assertNotEqual(cases["foundryModelInvestigator"].lower(), cases["foundryModelSkeptic"].lower(), "the Skeptic is another model than the Investigator")
-        self.assertEqual(cases["modelDetective"], "gpt-6-luna", "the older Detective and Skeptic keep using the hub's gateway and their own names")
+        self.assertNotIn("modelDetective", cases, "the older Detective and the Skeptic call the deployments of the project directly, with the template's default names")
 
     def test_the_workflow_is_told_that_it_is_on_and_the_name_of_the_connection_and_nothing_else_is_added(self):
         _, out, _, _ = self.on()

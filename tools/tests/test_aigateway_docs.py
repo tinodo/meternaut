@@ -117,19 +117,15 @@ class TheOtherDocuments(unittest.TestCase):
         self.assertIn("The AI Gateway has two actions, `aigateway` and `aigateway-check`, and they are not on that list either", after)
         self.assertLess(after.index("The console behind the platform's Application Gateway is not on that list"), after.index("The AI Gateway has two actions"))
 
-    def test_rule_15_c_records_the_planned_end_with_the_true_status_and_leaves_the_exception_as_it_was(self):
-        (rule,) = [line for line in AGENTS.splitlines() if line.lstrip().startswith("- **(c) Every model call goes through the governance hub,**")]
-        before, after = rule.split(" **Planned end, 2026-11-07")
-        for words in ("**Exception, 2026-11-06 (recorded from the owner's reply \"Great! Let's see!\" after he was told that Foundry agents call their models directly; the owner may strike it):**",
-                      "the two agents of the investigation (rule 30) call the model deployments of their own Foundry resource directly, without the gateway. No key is used.",
-                      "**Correction, the same day:**", "The exception ends when the owner chooses a route:", "The older Detective and Skeptic roles keep using the gateway."):
-            self.assertIn(words, before, words)
-        self.assertTrue(before.endswith("The older Detective and Skeptic roles keep using the gateway."), "the sentence is added at the end, and nothing before it changed place")
-        self.assertEqual(
-            after,
-            " (the owner, 2026-11-06: \"I LEAN STRONG TOWARDS YOU CREATING AN AI GATEWAY\"):** the agents' model calls go through an AI Gateway, Azure's separate service (not API Management), keyless if the "
-            "Foundry connection allows it. Step 1, the gateway itself with its models, limits, roles and check, is built and not deployed ([the decision record](docs/proposals/08-ai-gateway.md)); "
-            "step 2, the Foundry connection and the switch of the agents, is built and not deployed, the switch is False and the route is not tried. The exception above stands unchanged until the agents have been switched.")
+    def test_rule_15_c_ends_the_governance_hub_route_says_that_every_model_call_goes_direct_and_that_the_ai_gateway_is_not_used(self):
+        (rule,) = [line for line in AGENTS.splitlines() if line.lstrip().startswith("- **(c) Every model call of Meternaut goes direct, privately and with no key, to the model deployments of its own Foundry project**")]
+        for words in ("(2026-11-07, the owner, in capitals: \"UNDO CHANGES TO API MANAGEMENT\")", "**This ends the \"governance hub\" route**",
+                      "The AI Gateway (Azure's separate service, [the decision record](docs/proposals/08-ai-gateway.md)) is not used either: it has no private front door, and nothing public is added for it.",
+                      "Its two steps stay built, not deployed and off (`AGENTS_VIA_AI_GATEWAY` is False) until a later change retires them.",
+                      "the app reads no key", "it is not tried on the service until the first `cases-run`", "is not a model call"):
+            self.assertIn(words, rule, words)
+        for old in ("Planned end, 2026-11-07", "The older Detective and Skeptic roles keep using the gateway.", "**Exception, 2026-11-06", "with no direct path"):
+            self.assertNotIn(old, rule, old)
 
     def test_the_routes_table_of_the_foundry_agents_has_the_new_row_last_and_every_old_row_is_still_there(self):
         table = [line for line in FOUNDRY_AGENTS.splitlines() if line.startswith("| **")]
@@ -146,9 +142,9 @@ class TheOtherDocuments(unittest.TestCase):
 
     def test_the_changelog_has_the_entry_of_step_1_above_the_console_entry_and_says_what_it_must(self):
         headings = re.findall(r"(?m)^## (.*)$", CHANGELOG)
-        self.assertEqual(headings[2], "An AI Gateway for the agents' model calls, step 1 of 2: built, not deployed — 2026-11-07")
-        self.assertTrue(headings[3].startswith("The console behind the platform's Application Gateway"), "the entry of the console change follows, as the owner's coordinator asked")
-        entry = flat(CHANGELOG.split("\n## ")[3])
+        self.assertEqual(headings[3], "An AI Gateway for the agents' model calls, step 1 of 2: built, not deployed — 2026-11-07")
+        self.assertTrue(headings[4].startswith("The console behind the platform's Application Gateway"), "the entry of the console change follows, as the owner's coordinator asked")
+        entry = flat(CHANGELOG.split("\n## ")[4])
         for words in ("**What the owner said.**", "I LEAN STRONG TOWARDS YOU CREATING AN AI GATEWAY", "You should NOT create a DDOS PLAN.", "**What the owner has to know first: the frontend is public, and he decides whether to accept that.**",
                       "**What is built.**", "Nothing is deployed: no Azure change, no Hub run and no workflow run was made", "**What was checked.**", "**Not checked.**", "**What a person has to do, in order.**",
                       "That is an exception to the rule of [private by default]", "Microsoft publishes no address range and no service tag for the Foundry Agent Service"):

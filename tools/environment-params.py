@@ -46,7 +46,7 @@ console on the app's own name. With a name, the console's address (the setting C
 passes it as consoleHostName, and the outputs console_host (the name that people open: that name, or the app's own) and console_host_set say what the check of the console's front door knocks at.
 CASES_APP_PUBLIC_NETWORK_ACCESS is refused as Disabled while no name is set.
 
-It writes five ARM parameter files into --out-dir (seven, with --contract: the contract's and the first cases'; eight when the gateway identity's client id is known):
+It writes these ARM parameter files into --out-dir (the contract's with --contract, and the one for the gateway identity's loggers when its client id is known or with --preview):
 
     environment.parameters.json       for environment/main.bicep (the model side)
     logger.parameters.json            for environment/gateway/logger.bicep
@@ -64,9 +64,10 @@ It writes five ARM parameter files into --out-dir (seven, with --contract: the c
     aigateway-policies.json           the gateway-wide policies that the action aigateway applies to the gateway's default workspace (a plain list, not a parameter file),
                                       all three from --aigateway-policies (environment/aigateway/policies.json, checked against the models and against the owner's standing limit
                                       of AGENTS.md rule 15 (g)); none is written when the virtual network has no free range for the gateway's subnet (the outputs say so)
-    cases.parameters.json             for environment/cases/main.bicep (the first cases: the function app that finds leads and writes the
-                                      History); written together with the contract, because it names the contract's subscription whose
-                                      key the app reads at the start of a run
+    cases.parameters.json             for environment/cases/main.bicep (the first cases: the function app that finds leads and writes the History). It is always written, and it names no
+                                      contract and no gateway: the Detective and the Skeptic call the model deployments of the agents' own Foundry project, so the file carries the project's
+                                      address (when ENV_FOUNDRY_PROJECT_EXISTS says that the project is in Azure). Their two model names are the defaults of the template, which are names of
+                                      environment/models.json (a test holds the two together).
 
                                       What each function app takes from the public internet is not a setting of the workflow: USAGE_APP_PUBLIC_NETWORK_ACCESS (Disabled) and CASES_APP_PUBLIC_NETWORK_ACCESS (Enabled until the
                                       people who approve have a path to the console), near the top of this file, go into recording.parameters.json and cases.parameters.json (usageAppPublicNetworkAccess,
@@ -962,7 +963,6 @@ def build(env, models: list[dict], preview: bool = False, contract: dict | None 
         "console_host": console_host or f"{cases_names(subscription, group)['cases_function_app_name']}{APP_OWN_DOMAIN}",
         "console_host_set": "true" if console_host else "false",
         "cases_public_network_access": CASES_APP_PUBLIC_NETWORK_ACCESS,
-        "gateway_url": f"https://{gateway.group(3).lower()}.azure-api.net",
         **names,
         **cases_names(subscription, group),
         **foundry,
@@ -996,6 +996,21 @@ def build(env, models: list[dict], preview: bool = False, contract: dict | None 
             "opsSubnetExists": ops_subnet_exists(env),
             "eventHubNamespaceName": names["event_hub_namespace"],
         }),
+        # The first cases need nothing of the gateway and nothing of a contract: the file is written in every build, with the Foundry facts of this one.
+        "cases.parameters.json": parameters({
+            "location": location,
+            "owner": owner,
+            "storageAccountName": names["storage_account_name"],
+            "eventHubNamespaceName": names["event_hub_namespace"],
+            "functionAppName": outputs["cases_function_app_name"],
+            "webSubnetPrefix": str(web),
+            "webSubnetExists": web_subnet_exists(env),
+            "scopeSubscriptions": subscription.lower(),
+            "foundryProjectEndpoint": foundry["foundry_project_endpoint"] if foundry_exists else "",
+            "casesAppPublicNetworkAccess": CASES_APP_PUBLIC_NETWORK_ACCESS,
+            **console_parameters(env),
+            **routed,
+        }),
     }
     if client or preview:
         files["eventhub-loggers.parameters.json"] = parameters({
@@ -1012,24 +1027,6 @@ def build(env, models: list[dict], preview: bool = False, contract: dict | None 
         outputs.update(contract_outputs)
         if len(contract["allowedModels"]) < 2:
             raise Problem("the contract's allowedModels hold at least two models: the Skeptic of the first cases has to be another model than the Detective")
-        files["cases.parameters.json"] = parameters({
-            "location": location,
-            "owner": owner,
-            "storageAccountName": names["storage_account_name"],
-            "eventHubNamespaceName": names["event_hub_namespace"],
-            "functionAppName": outputs["cases_function_app_name"],
-            "webSubnetPrefix": str(web),
-            "webSubnetExists": web_subnet_exists(env),
-            "scopeSubscriptions": subscription.lower(),
-            "gatewayUrl": outputs["gateway_url"],
-            "gatewayProductSubscriptionId": f"{need(env, 'GATEWAY_RESOURCE_ID')}/subscriptions/{contract_outputs['contract_subscription']}",
-            "modelDetective": contract["allowedModels"][0],
-            "modelSkeptic": contract["allowedModels"][1],
-            "foundryProjectEndpoint": foundry["foundry_project_endpoint"] if foundry_exists else "",
-            "casesAppPublicNetworkAccess": CASES_APP_PUBLIC_NETWORK_ACCESS,
-            **console_parameters(env),
-            **routed,
-        })
     if aigateway_policies is not None:
         aigateway_written, aigateway_outputs = aigateway_files(env, subscription, group, location, owner, vnet, (subnet, func_subnet, web, ops), foundry, models, aigateway_policies, preview)
         files.update(aigateway_written)

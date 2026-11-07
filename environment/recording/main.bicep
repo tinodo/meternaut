@@ -89,10 +89,12 @@ param cosmosAccountName string
 @maxLength(60)
 param functionAppName string
 
-@description('Principal id of the gateway identity. It may send to the two usage event hubs, and does nothing else here.')
+@description('Principal id of the gateway identity. It may send to the two usage event hubs, and does nothing else here. The all-zero id that the parameter builder writes while the identity is not known (it does not exist, or no longer exists) means "none": the two roles are then not made.')
 @minLength(36)
 @maxLength(36)
 param gatewayPrincipalId string
+
+var noGatewayIdentity = '00000000-0000-0000-0000-000000000000'
 
 @description('Subscription of the Application Insights component that the gateway writes its token metrics to.')
 @minLength(36)
@@ -451,8 +453,9 @@ resource eventHubsEndpoint 'Microsoft.Network/privateEndpoints@2025-05-01' = {
 // copy job; the function app reads each of the three. The deployment workflow's identity holds no role on any hub: the control event is sent by the
 // Operator, which holds Azure Event Hubs Data Sender on the control hub (environment/operator/main.bicep), and the namespace takes no traffic from the
 // workflow's runner. The role that the workflow's identity held here is retired by the action recording, which deletes that one assignment after the
-// deploy when it is still there, because a template never removes an assignment that it stops declaring.
-resource gatewaySendsUsage 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+// deploy when it is still there, because a template never removes an assignment that it stops declaring. The two roles of the gateway identity are made only when that identity is known
+// (the owner ordered the undo of what Meternaut added to his API Management instance on 2026-11-07, so the identity may be gone, and a role for a principal that does not exist is refused).
+resource gatewaySendsUsage 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (gatewayPrincipalId != noGatewayIdentity) {
   scope: usageHub
   name: guid(usageHub.id, gatewayPrincipalId, eventHubsDataSenderRoleId)
   properties: {
@@ -465,7 +468,7 @@ resource gatewaySendsUsage 'Microsoft.Authorization/roleAssignments@2022-04-01' 
   ]
 }
 
-resource gatewaySendsPii 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+resource gatewaySendsPii 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (gatewayPrincipalId != noGatewayIdentity) {
   scope: piiHub
   name: guid(piiHub.id, gatewayPrincipalId, eventHubsDataSenderRoleId)
   properties: {

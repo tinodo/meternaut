@@ -1,7 +1,8 @@
+import dataclasses
 import re
 import unittest
 
-from support import ENV, REPO_ROOT, SUBSCRIPTION
+from support import ENV, ENV_NO_PROJECT, FOUNDRY_ENDPOINT, REPO_ROOT, SUBSCRIPTION
 from cases import config
 
 
@@ -9,14 +10,22 @@ class Load(unittest.TestCase):
     def test_the_settings_of_the_template_are_read(self):
         settings = config.load(ENV)
         self.assertEqual(settings.subscriptions, (SUBSCRIPTION,))
-        self.assertEqual(settings.gateway_url, "https://example-apim.azure-api.net")
-        self.assertEqual(settings.gateway_host, "example-apim.azure-api.net")
+        self.assertEqual(settings.foundry_endpoint, FOUNDRY_ENDPOINT, "the two older roles call their models on the Foundry project of the agents")
         self.assertEqual((settings.model_detective, settings.model_skeptic), ("gpt-6-luna", "gpt-6.1-sol"))
         self.assertEqual((settings.max_cases, settings.max_tokens_per_run, settings.max_completion_tokens, settings.deadline_seconds), (3, 40000, 2000, 900))
 
+    def test_the_app_reads_no_setting_about_a_gateway_or_a_key_and_ignores_one_that_an_older_deploy_left(self):
+        for name in ("GATEWAY_URL", "GATEWAY_PRODUCT_SUBSCRIPTION_ID", "GATEWAY", "PRODUCT_SUBSCRIPTION"):
+            self.assertFalse(hasattr(config, name), name)
+        for name in ("gateway_url", "gateway_host", "product_subscription_id"):
+            self.assertNotIn(name, {f.name for f in dataclasses.fields(config.Settings)})
+        self.assertFalse([name for name in config.REQUIRED if "GATEWAY" in name])
+        left_over = {**ENV, "GATEWAY_URL": "https://example-apim.azure-api.net", "GATEWAY_PRODUCT_SUBSCRIPTION_ID": "/subscriptions/x"}
+        self.assertEqual(config.load(left_over), config.load(ENV), "a setting that nothing reads is not an error")
+
     def test_a_trailing_slash_and_upper_case_ids_are_normalised(self):
-        settings = config.load({**ENV, "GATEWAY_URL": "https://example-apim.azure-api.net/", "SCOPE_SUBSCRIPTIONS": f" {SUBSCRIPTION.upper()} , {SUBSCRIPTION[:-1]}6 "})
-        self.assertEqual(settings.gateway_url, "https://example-apim.azure-api.net")
+        settings = config.load({**ENV, "FOUNDRY_PROJECT_ENDPOINT": FOUNDRY_ENDPOINT + "/", "SCOPE_SUBSCRIPTIONS": f" {SUBSCRIPTION.upper()} , {SUBSCRIPTION[:-1]}6 "})
+        self.assertEqual(settings.foundry_endpoint, FOUNDRY_ENDPOINT)
         self.assertEqual(settings.subscriptions, (SUBSCRIPTION, SUBSCRIPTION[:-1] + "6"))
 
     def test_every_missing_setting_is_named(self):
@@ -27,19 +36,17 @@ class Load(unittest.TestCase):
             self.assertIn(f"{name} is not set", str(raised.exception))
 
     def test_every_wrong_setting_is_named_at_once(self):
-        env = {**ENV, "GATEWAY_URL": "http://example.com", "SCOPE_SUBSCRIPTIONS": "not-a-guid", "MODEL_DETECTIVE": "Bad Model", "MAX_CASES_PER_RUN": "many",
-               "GATEWAY_PRODUCT_SUBSCRIPTION_ID": "/subscriptions/x", "AZURE_CLIENT_ID": "x"}
+        env = {**ENV, "SCOPE_SUBSCRIPTIONS": "not-a-guid", "MODEL_DETECTIVE": "Bad Model", "MAX_CASES_PER_RUN": "many", "AZURE_CLIENT_ID": "x"}
         with self.assertRaises(config.ConfigError) as raised:
             config.load(env)
         text = str(raised.exception)
-        for name in ("GATEWAY_URL", "SCOPE_SUBSCRIPTIONS", "MODEL_DETECTIVE", "MAX_CASES_PER_RUN", "GATEWAY_PRODUCT_SUBSCRIPTION_ID", "AZURE_CLIENT_ID"):
+        for name in ("SCOPE_SUBSCRIPTIONS", "MODEL_DETECTIVE", "MAX_CASES_PER_RUN", "AZURE_CLIENT_ID"):
             self.assertIn(name, text)
 
-    def test_the_gateway_must_be_an_api_management_address_and_nothing_else(self):
-        for url in ("https://example.com", "https://evil.azure-api.net.example.com", "https://example-apim.azure-api.net/path", "https://user@example-apim.azure-api.net",
-                    "https://-x.azure-api.net"):
-            with self.assertRaises(config.ConfigError, msg=url):
-                config.load({**ENV, "GATEWAY_URL": url})
+    def test_without_the_address_of_the_foundry_project_the_app_still_starts_and_the_two_roles_have_nowhere_to_call(self):
+        settings = config.load(ENV_NO_PROJECT)
+        self.assertIsNone(settings.foundry_endpoint)
+        self.assertFalse(settings.investigate)
 
     def test_limits_are_bounded(self):
         for name, value in (("MAX_CASES_PER_RUN", "0"), ("MAX_CASES_PER_RUN", "11"), ("MAX_TOKENS_PER_RUN", "10"), ("MAX_TOKENS_PER_RUN", "10000000"),
@@ -72,10 +79,9 @@ class ClientId(unittest.TestCase):
     CLIENT = ENV["AZURE_CLIENT_ID"]
     WITHOUT = {key: value for key, value in ENV.items() if key != "AZURE_CLIENT_ID"}
 
-    def test_the_client_id_is_not_a_required_setting_and_the_other_seven_are(self):
+    def test_the_client_id_is_not_a_required_setting_and_the_other_four_are(self):
         self.assertNotIn("AZURE_CLIENT_ID", config.REQUIRED)
-        self.assertEqual(config.REQUIRED, ("SCOPE_SUBSCRIPTIONS", "GATEWAY_URL", "GATEWAY_PRODUCT_SUBSCRIPTION_ID", "MODEL_DETECTIVE", "MODEL_SKEPTIC", "MAX_CASES_PER_RUN",
-                                           "EVENTHUB_CASES_CONTROL_NAME"))
+        self.assertEqual(config.REQUIRED, ("SCOPE_SUBSCRIPTIONS", "MODEL_DETECTIVE", "MODEL_SKEPTIC", "MAX_CASES_PER_RUN", "EVENTHUB_CASES_CONTROL_NAME"))
         self.assertEqual(config.AZURE_CLIENT_ID, "AZURE_CLIENT_ID", "the name stays: the app reads it when it is set")
 
     def test_without_a_client_id_the_app_runs_as_its_system_assigned_identity(self):
@@ -93,11 +99,11 @@ class ClientId(unittest.TestCase):
 
     def test_the_wrong_client_id_is_named_with_the_other_problems_and_a_missing_one_is_not(self):
         with self.assertRaises(config.ConfigError) as raised:
-            config.load({**self.WITHOUT, "GATEWAY_URL": "http://example.com", "AZURE_CLIENT_ID": "x"})
-        self.assertEqual(str(raised.exception).split("; "), ["AZURE_CLIENT_ID is a client id", "GATEWAY_URL is https://<name>.azure-api.net"])
+            config.load({**self.WITHOUT, "MAX_CASES_PER_RUN": "many", "AZURE_CLIENT_ID": "x"})
+        self.assertEqual(str(raised.exception).split("; "), ["AZURE_CLIENT_ID is a client id", "MAX_CASES_PER_RUN is not a whole number"])
         with self.assertRaises(config.ConfigError) as raised:
-            config.load({key: value for key, value in self.WITHOUT.items() if key != "GATEWAY_URL"})
-        self.assertEqual(str(raised.exception), "GATEWAY_URL is not set")
+            config.load({key: value for key, value in self.WITHOUT.items() if key != "MODEL_SKEPTIC"})
+        self.assertEqual(str(raised.exception), "MODEL_SKEPTIC is not set")
 
 
 class Investigation(unittest.TestCase):
@@ -110,7 +116,7 @@ class Investigation(unittest.TestCase):
                 settings.investigate_max_seconds)
 
     def test_without_the_endpoint_the_app_does_not_investigate_and_the_defaults_are_the_ones_that_were_fixed(self):
-        self.assertEqual(self.investigation(config.load(ENV)), (None, False, "gpt-6.1-sol", "gpt-6-luna", 40, 420))
+        self.assertEqual(self.investigation(config.load(ENV_NO_PROJECT)), (None, False, "gpt-6.1-sol", "gpt-6-luna", 40, 420))
         self.assertEqual(self.investigation(config.load({**ENV, "FOUNDRY_PROJECT_ENDPOINT": "", "INVESTIGATE": ""})), (None, False, "gpt-6.1-sol", "gpt-6-luna", 40, 420))
         self.assertEqual((config.OPTIONAL["FOUNDRY_MODEL_INVESTIGATOR"], config.OPTIONAL["FOUNDRY_MODEL_SKEPTIC"], config.OPTIONAL["INVESTIGATE_MAX_CALLS"],
                           config.OPTIONAL["INVESTIGATE_MAX_SECONDS"]), ("gpt-6.1-sol", "gpt-6-luna", "40", "420"))
@@ -118,7 +124,7 @@ class Investigation(unittest.TestCase):
             self.assertNotIn(name, config.REQUIRED)
 
     def test_the_endpoint_turns_the_investigation_on_unless_it_is_switched_off(self):
-        self.assertEqual(self.investigation(config.load({**ENV, "FOUNDRY_PROJECT_ENDPOINT": self.ENDPOINT})), (self.ENDPOINT, True, "gpt-6.1-sol", "gpt-6-luna", 40, 420))
+        self.assertEqual(self.investigation(config.load({**ENV_NO_PROJECT, "FOUNDRY_PROJECT_ENDPOINT": self.ENDPOINT})), (self.ENDPOINT, True, "gpt-6.1-sol", "gpt-6-luna", 40, 420))
         for value in ("off", "OFF", "0", "false", "False", "no", " off "):
             self.assertFalse(config.load({**ENV, "FOUNDRY_PROJECT_ENDPOINT": self.ENDPOINT, "INVESTIGATE": value}).investigate, value)
         for value in ("on", "ON", "1", "true", "True", "yes", " on "):
@@ -133,7 +139,7 @@ class Investigation(unittest.TestCase):
 
     def test_the_investigation_cannot_be_on_without_an_endpoint(self):
         with self.assertRaises(config.ConfigError) as raised:
-            config.load({**ENV, "INVESTIGATE": "on"})
+            config.load({**ENV_NO_PROJECT, "INVESTIGATE": "on"})
         self.assertEqual(str(raised.exception), "INVESTIGATE is on and FOUNDRY_PROJECT_ENDPOINT is not set")
 
     def test_the_endpoint_has_to_be_the_endpoint_of_a_project_and_a_slash_at_the_end_is_taken_off(self):
@@ -226,18 +232,18 @@ class Investigation(unittest.TestCase):
         self.assertEqual(config.load({**ENV, "INVESTIGATE_MAX_CALLS": "24"}).investigate_max_seconds, 420, "the seconds are not touched")
 
     def test_every_problem_is_named_at_once_with_the_older_ones_and_their_texts_do_not_change(self):
-        env = {**ENV, "GATEWAY_URL": "http://example.com", "FOUNDRY_PROJECT_ENDPOINT": "https://evil.example/api/projects/p", "FOUNDRY_MODEL_SKEPTIC": "gpt-6.1-sol",
+        env = {**ENV, "MODEL_DETECTIVE": "Bad Model", "FOUNDRY_PROJECT_ENDPOINT": "https://evil.example/api/projects/p", "FOUNDRY_MODEL_SKEPTIC": "gpt-6.1-sol",
                "INVESTIGATE": "maybe", "INVESTIGATE_MAX_CALLS": "99", "INVESTIGATE_MAX_SECONDS": "x", "MAX_CASES_PER_RUN": "many"}
         with self.assertRaises(config.ConfigError) as raised:
             config.load(env)
         self.assertEqual(str(raised.exception).split("; "), [
-            "GATEWAY_URL is https://<name>.azure-api.net", "MAX_CASES_PER_RUN is not a whole number",
+            "MODEL_DETECTIVE is a model name", "MAX_CASES_PER_RUN is not a whole number",
             "FOUNDRY_PROJECT_ENDPOINT is https://<account>.services.ai.azure.com/api/projects/<project>",
             "FOUNDRY_MODEL_INVESTIGATOR and FOUNDRY_MODEL_SKEPTIC are the same model, and the Skeptic has to be another model than the Investigator",
             "INVESTIGATE is on or off", "INVESTIGATE_MAX_CALLS is not between 1 and 40", "INVESTIGATE_MAX_SECONDS is not a whole number"])
 
     def test_settings_that_are_made_by_hand_without_the_new_fields_have_their_defaults(self):
-        settings = config.Settings(client_id="c", subscriptions=("s",), gateway_url="u", gateway_host="h", product_subscription_id="p", model_detective="a", model_skeptic="b",
+        settings = config.Settings(client_id="c", subscriptions=("s",), model_detective="a", model_skeptic="b",
                                    max_cases=1, max_tokens_per_run=1000, max_completion_tokens=100, deadline_seconds=60)
         self.assertEqual(self.investigation(settings), (None, False, "gpt-6.1-sol", "gpt-6-luna", 40, 420))
 

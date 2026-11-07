@@ -195,11 +195,12 @@ class TheOtherDocumentsOfStep2(unittest.TestCase):
         self.assertLess(BOOTSTRAP.index("## Added on 2026-11-07 for the AI Gateway"), BOOTSTRAP.index(SECTION))
         self.assertLess(BOOTSTRAP.index(SECTION), BOOTSTRAP.index("\n## After it\n"))
 
-    def test_rule_15_c_says_in_one_sentence_that_the_route_is_built_and_the_switch_is_false_and_the_exception_is_as_it_was(self):
-        (rule,) = [line for line in AGENTS.splitlines() if line.lstrip().startswith("- **(c) Every model call goes through the governance hub,**")]
-        self.assertIn("step 2, the Foundry connection and the switch of the agents, is built and not deployed, the switch is False and the route is not tried. The exception above stands unchanged until the agents have been switched.", rule)
+    def test_rule_15_c_says_that_the_two_steps_are_built_and_not_deployed_and_the_switch_is_false_and_the_ai_gateway_is_not_used(self):
+        (rule,) = [line for line in AGENTS.splitlines() if line.lstrip().startswith("- **(c) Every model call of Meternaut goes direct, privately and with no key, to the model deployments of its own Foundry project**")]
+        self.assertIn("The AI Gateway (Azure's separate service, [the decision record](docs/proposals/08-ai-gateway.md)) is not used either: it has no private front door, and nothing public is added for it. "
+                      "Its two steps stay built, not deployed and off (`AGENTS_VIA_AI_GATEWAY` is False) until a later change retires them.", rule)
         self.assertNotIn("is not built", rule)
-        self.assertEqual(rule.count("Planned end, 2026-11-07"), 1)
+        self.assertEqual(rule.count("Planned end, 2026-11-07"), 0, "the planned end of the exception is gone with the exception: the governance-hub route ended on 2026-11-07")
 
     def test_the_routes_row_says_built_not_deployed_with_the_switch(self):
         rows = [line for line in FOUNDRY_AGENTS.splitlines() if line.startswith("| **AI Gateway, Azure's separate service")]
@@ -221,9 +222,9 @@ class TheOtherDocumentsOfStep2(unittest.TestCase):
 
     def test_the_changelog_has_the_entry_of_step_2_above_the_one_of_step_1_and_below_the_one_of_the_subnet_and_says_what_it_must(self):
         headings = re.findall(r"(?m)^## (.*)$", CHANGELOG)
-        self.assertEqual(headings[1], "An AI Gateway for the agents' model calls, step 2 of 2: built, not deployed, and one switch that is False — 2026-11-07")
-        self.assertEqual(headings[2], "An AI Gateway for the agents' model calls, step 1 of 2: built, not deployed — 2026-11-07")
-        entry = CHANGELOG.split("\n## ")[2]
+        self.assertEqual(headings[2], "An AI Gateway for the agents' model calls, step 2 of 2: built, not deployed, and one switch that is False — 2026-11-07")
+        self.assertEqual(headings[3], "An AI Gateway for the agents' model calls, step 1 of 2: built, not deployed — 2026-11-07")
+        entry = CHANGELOG.split("\n## ")[3]
         leads = ["**What the owner said, and what this step is.**", "**The open question, and why this step exists.**", "**What is built.**", "**What was verified in sources on 2026-11-07, and what was not.**",
                  "**What was checked.**", "**Not checked.**", "**Who decides, and what a person does, in order.**"]
         positions = [entry.index(lead) for lead in leads]

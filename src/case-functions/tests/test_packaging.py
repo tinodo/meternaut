@@ -8,20 +8,19 @@ import unittest
 from support import APP_ROOT, REPO_ROOT
 
 APP_FILES = ("function_app.py", "host.json", "requirements.txt")
-# Words that a key, a connection string or a secret leaves behind. Nothing in the app may hold one, except the module that reads the one key
-# that the gateway always requires (AGENTS.md rule 23 names it, and tools/tests/test_no_keys.py holds the exception to this one file).
+# Words that a key, a connection string or a secret leaves behind. Nothing in the app may hold one: it holds no key at all (AGENTS.md rule 23), and the one key that it
+# once read, the access product's key of the gateway, is gone with the gateway.
 FORBIDDEN = (
     "DefaultAzureCredential", "AzureNamedKeyCredential", "AzureKeyCredential", "AzureSasCredential", "ClientSecretCredential", "Credential(",
     "from_connection_string", "connection_string", "ConnectionString", "AccountKey", "SharedAccessKey", "SharedAccessSignature",
     "listKeys", "listConnectionStrings", "secondaryKey", "master_key", "sas_token", "client_secret", "password",
 )
-ONLY_IN_THE_GATEWAY_MODULE = ("listSecrets", "primaryKey")
-GATEWAY_MODULE = "gateway.py"
+KEY_WORDS = ("listSecrets", "primaryKey")
 # The only modules that write. The store writes records to its own tables (PUT, DELETE of one entity); the runner is the one component that changes Azure
 # (DELETE of a disk or a public IP address, on its own list of calls, and only with the token that a person's sign-in to Azure gave it: no identity of the app
 # holds a right to change Azure); the Foundry client deletes the conversations that it made itself, in Meternaut's own Foundry project and nowhere else (the test
 # of its calls below holds the list, and the one DELETE of http.py's list of calls is that conversation). Everything else asks questions: a GET, or a POST that asks for
-# a query result, a key, a completion or a token.
+# a query result, a completion or a token.
 WRITERS = {"store.py": {"PUT", "DELETE"}, "runner.py": {"DELETE"}, "foundry.py": {"DELETE"}, "http.py": {"DELETE"}}
 WRITE_WORDS = ('"PUT"', '"DELETE"', '"PATCH"', "/delete", "/write", "/deallocate", "/resize", "/restart", "regeneratePrimaryKey")
 
@@ -117,15 +116,13 @@ class NoKeysTests(unittest.TestCase):
                 with self.subTest(file=path.name, word=word):
                     self.assertNotIn(word.lower(), text.lower())
 
-    def test_only_the_gateway_module_reads_the_key(self):
+    def test_no_module_of_the_app_reads_a_key_and_the_gateway_module_is_gone(self):
+        self.assertFalse((APP_ROOT / "cases" / "gateway.py").exists())
         for path in source_files():
             text = path.read_text(encoding="utf-8")
-            for word in ONLY_IN_THE_GATEWAY_MODULE:
+            for word in KEY_WORDS:
                 with self.subTest(file=path.name, word=word):
-                    if path.name == GATEWAY_MODULE:
-                        self.assertIn(word, text)
-                    else:
-                        self.assertNotIn(word.lower(), text.lower())
+                    self.assertNotIn(word.lower(), text.lower())
 
     def test_the_app_names_no_credential_class_at_all_it_asks_the_platform_for_a_token(self):
         for path in package_files():
@@ -219,7 +216,7 @@ class WhatTheAppIs(unittest.TestCase):
         code = (
             "import sys; sys.path.insert(0, sys.argv[1]); "
             "import cases, cases.config, cases.http, cases.identity, cases.arm, cases.detectors, cases.evidence, cases.guards, cases.roles, cases.decide, "
-            "cases.gateway, cases.foundry, cases.events, cases.run, cases.control, cases.redact, cases.models, cases.memory_store, cases.store, cases.approvals, cases.claims, "
+            "cases.modelcalls, cases.foundry, cases.events, cases.run, cases.control, cases.redact, cases.models, cases.memory_store, cases.store, cases.approvals, cases.claims, "
             "cases.runner, cases.people, cases.switches, cases.wiring, cases.loop_config, cases.delegated, cases.console, cases.loop, cases.web, cases.mail, cases.letters, "
             "cases.agents, cases.investigate; "            "print(sorted(name for name in sys.modules if name == 'azure' or name.startswith('azure.')))"
         )

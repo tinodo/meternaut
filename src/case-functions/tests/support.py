@@ -23,24 +23,29 @@ if str(APP_ROOT) not in sys.path:
 logging.getLogger().addHandler(logging.NullHandler())
 
 SUBSCRIPTION = "11111111-2222-3333-4444-555555555555"
-GATEWAY_GROUP = "/subscriptions/66666666-7777-8888-9999-000000000000/resourceGroups/rg-gateway/providers/Microsoft.ApiManagement/service/example-apim"
-PRODUCT_SUBSCRIPTION = f"{GATEWAY_GROUP}/subscriptions/meternaut-agents-sub-01"
+# The app holds no key. This is a secret value that must never reach a log line, a History line or an error text: the tests use it for any secret that a service may echo.
 KEY = "K3y-VALUE-that-must-never-be-logged-0123456789abcdef"
 TOKEN = "eyJhbGciOiJub25lIn0.eyJvaWQiOiJ4In0.signature-value-123"
 NOW = dt.datetime(2026, 11, 4, 12, 0, 0, tzinfo=dt.timezone.utc)
+# The Foundry project of the agents, which the Detective and the Skeptic call for their chat completions too.
+FOUNDRY_ENDPOINT = "https://example-account.services.ai.azure.com/api/projects/meternaut"
+CHAT_ROUTE = "/openai/v1/chat/completions"
 
+# INVESTIGATE is off: the tests of the Watch judge every lead with the Detective and the Skeptic, as they always did. A test that wants the investigation turns it on.
 ENV = {
     "AZURE_CLIENT_ID": "99999999-8888-7777-6666-555555555555",
     "SCOPE_SUBSCRIPTIONS": SUBSCRIPTION,
-    "GATEWAY_URL": "https://example-apim.azure-api.net",
-    "GATEWAY_PRODUCT_SUBSCRIPTION_ID": PRODUCT_SUBSCRIPTION,
     "MODEL_DETECTIVE": "gpt-6-luna",
     "MODEL_SKEPTIC": "gpt-6.1-sol",
     "MAX_CASES_PER_RUN": "3",
     "EVENTHUB_CASES_CONTROL_NAME": "cases-control",
+    "FOUNDRY_PROJECT_ENDPOINT": FOUNDRY_ENDPOINT,
+    "INVESTIGATE": "off",
     "IDENTITY_ENDPOINT": "http://127.0.0.1:8081/msi/token",
     "IDENTITY_HEADER": "identity-header-value",
 }
+# The same without a Foundry project: the app does not investigate, and the Detective and the Skeptic have nowhere to call.
+ENV_NO_PROJECT = {k: v for k, v in ENV.items() if k not in ("FOUNDRY_PROJECT_ENDPOINT", "INVESTIGATE")}
 
 RG = f"/subscriptions/{SUBSCRIPTION}/resourceGroups"
 
@@ -79,8 +84,8 @@ class FakeEstate:
 
     `graph` maps the name that heads a Resource Graph query (`// meternaut:<name>`) to its rows. `locks` is the answer of the subscription-wide list of
     locks and `locks_at` maps a lower-case scope to the answer of the list of that scope. `failures` maps a source (`graph:<name>`, `advisor`, `locks`,
-    `locks_at`, `costs`, `secrets`, `chat`) to a status that is answered instead (or to a list of statuses, one for each call).
-    `after_chat` and `after_secrets` are called after each answer of the model and after the answer with the key, to move a clock.
+    `locks_at`, `costs`, `chat`) to a status that is answered instead (or to a list of statuses, one for each call).
+    `after_chat` is called after each answer of the model, to move a clock. `first_call` is called before the first call of any kind, for the same reason.
     """
 
     def __init__(self) -> None:
@@ -96,7 +101,7 @@ class FakeEstate:
         self.calls: list[dict] = []
         self.sleeps: list[float] = []
         self.after_chat = None
-        self.after_secrets = None
+        self.first_call = None
 
     # -- the answers ---------------------------------------------------------------------------------------------------------------------------
     def model(self, model: str, system: str, user: str) -> tuple:
@@ -114,6 +119,8 @@ class FakeEstate:
         return planned
 
     def __call__(self, method: str, url: str, headers, data, timeout):
+        if self.first_call and not self.calls:
+            self.first_call()
         parts = urlsplit(url)
         body = json.loads(data.decode("utf-8")) if data else None
         self.calls.append({"method": method, "url": url, "host": parts.netloc, "path": parts.path, "headers": dict(headers), "body": body, "timeout": timeout})
@@ -138,14 +145,7 @@ class FakeEstate:
             failed = self._failure("locks_at")
             scope = path.split("/providers/microsoft.authorization/locks")[0]
             return (failed, {}, b'{"error":{"code":"Failed","message":"boom"}}') if failed else self._json({"value": self.locks_at.get(scope, [])})
-        if path.endswith("/listsecrets"):
-            failed = self._failure("secrets")
-            if failed:
-                return failed, {}, b'{"error":{"code":"Forbidden","message":"no right"}}'
-            if self.after_secrets:
-                self.after_secrets()
-            return self._json({"primaryKey": KEY, "secondaryKey": "other-secret-key-value"})
-        if path.endswith("/models/chat/completions"):
+        if path.endswith(CHAT_ROUTE):
             failed = self._failure("chat")
             if failed:
                 return failed, {"retry-after": "1"} if failed == 429 else {}, b'{"statusCode":%d,"message":"refused"}' % failed
@@ -165,10 +165,10 @@ class FakeEstate:
 
     # -- what the tests ask -----------------------------------------------------------------------------------------------------------------------
     def prompts(self) -> list[str]:
-        return [call["body"]["messages"][1]["content"] for call in self.calls if call["path"].endswith("/models/chat/completions")]
+        return [call["body"]["messages"][1]["content"] for call in self.calls if call["path"].endswith(CHAT_ROUTE)]
 
     def chat_calls(self) -> list[dict]:
-        return [call for call in self.calls if call["path"].endswith("/models/chat/completions")]
+        return [call for call in self.calls if call["path"].endswith(CHAT_ROUTE)]
 
 
 def identity_fetch(url, headers, timeout):

@@ -358,6 +358,7 @@ class Recording(unittest.TestCase):
             "3913510d-42f4-4e42-8a64-420c390055eb",  # Monitoring Metrics Publisher
             "00000000-0000-0000-0000-000000000001",  # Cosmos DB built-in Data Reader
             "00000000-0000-0000-0000-000000000002",  # Cosmos DB built-in Data Contributor
+            "00000000-0000-0000-0000-000000000000",  # the builder's placeholder for a gateway identity that is not known: the two roles of the gateway are not made then
         })
         found = resources(self.source)
         assignments = {name: body for name, (kind, body) in found.items() if kind == "Microsoft.Authorization/roleAssignments"}
@@ -394,6 +395,17 @@ class Recording(unittest.TestCase):
         for word in ("SecurityControl", "optOut", "Ignore"):
             self.assertNotIn(word, self.code, word)
         self.assertNotIn("tags: union(", self.code)
+
+    def test_the_two_roles_of_the_gateway_identity_are_made_only_for_an_identity_that_is_known(self):
+        # The owner ordered the undo of what Meternaut added to his API Management instance (2026-11-07): the gateway identity may be gone, and a role for a principal that does not exist is
+        # refused. The parameter builder writes an all-zero id while the identity is not known (a preview), and the template reads that as "none".
+        found = resources(self.source)
+        self.assertIn("var noGatewayIdentity = '00000000-0000-0000-0000-000000000000'", self.code)
+        for name in ("gatewaySendsUsage", "gatewaySendsPii"):
+            self.assertTrue(found[name][1].startswith("if (gatewayPrincipalId != noGatewayIdentity) {"), f"{name} is made only for a known identity")
+        for name in ("functionReceivesUsage", "functionReceivesPii", "functionReceivesControl", "functionOwnsBlobs", "functionUsesQueues", "functionUsesTables", "functionPublishesTelemetry"):
+            self.assertNotIn("if (", found[name][1].split("\n", 1)[0], f"{name}: the roles of the app are never conditional")
+        self.assertRegex(self.code, r"(?m)^param gatewayPrincipalId string$", "the parameter stays required: the builder always writes it")
 
     def test_the_gateway_only_sends_and_the_function_app_only_receives_each_on_the_hub_it_uses(self):
         found = resources(self.source)
@@ -659,7 +671,8 @@ class Workflow(unittest.TestCase):
         self.assertLess(names.index("Add the Citadel module's objects to the gateway"), names.index("The two model APIs refuse a call that is not made with a contract's key"))
 
     def test_the_contract_is_added_only_after_the_gateway_has_the_apis_it_grants(self):
-        first, second = [b for b in self.steps if b.startswith("name: What the first contract would change")], self.contract_steps()
+        first = [b for b in self.steps if b.startswith("name: What the first contract would change")]
+        second = [b for b in self.contract_steps() if not b.startswith("name: Read the gateway and its Application Insights")]
         self.assertEqual(len(first), 1)
         self.assertIn("inputs.action == 'what-if' || inputs.action == 'contract'", first[0])
         self.assertIn("run gateway first", first[0].lower().replace("::error::", ""))
@@ -667,6 +680,7 @@ class Workflow(unittest.TestCase):
         self.assertEqual(names[:3], ["What the first contract would change in the gateway", "Add the first contract to the gateway", "Test the gateway with the contract's key"])
         order = [self.text.index(f"- name: {n}") for n in names[:3]]
         self.assertEqual(order, sorted(order))
+        self.assertLess(self.text.index("- name: Read the gateway and its Application Insights"), order[0], "the gateway is read first, and only for the actions that change it")
 
     def test_the_limit_check_is_opt_in_and_reaches_the_script_only_through_the_environment(self):
         self.assertRegex(self.text, r"(?s)check_limits:\n\s+description: .+?\n\s+type: boolean\n\s+required: false\n\s+default: false")
@@ -809,9 +823,30 @@ class Workflow(unittest.TestCase):
             self.assertNotIn("RECORDING_DEPLOYER_ID", text(path), path)
         self.assertNotIn("workflowPrincipalId", text("tools/environment-params.py"))
 
-    def test_the_recording_needs_the_gateway_identity_to_exist(self):
+    def test_the_recording_does_not_need_the_gateway_identity_to_exist_and_only_the_actions_that_make_an_object_of_the_gateway_look_for_it(self):
+        # The owner ordered the undo of what Meternaut added to his API Management instance (2026-11-07): the gateway identity may be gone, so the usage recording makes the two roles
+        # of that identity only when it is known (environment/recording/main.bicep) and no longer stops when it is not there.
         (block,) = [b for b in self.steps if b.startswith("name: Find the gateway identity")]
-        self.assertIn("inputs.action == 'recording'", block)
+        self.assertIn("if: inputs.action == 'gateway-prepare' || inputs.action == 'gateway'\n", block)
+        self.assertNotIn("'recording'", block)
+        self.assertNotIn("usage recording still gives it", block)
+        self.assertIn("Run model-side first", block)
+        for other in self.steps:
+            if "steps.found.outputs" in other:
+                condition = re.search(r"(?m)^        if: (.+)$", other).group(1)
+                self.assertIn(condition, ("inputs.action == 'gateway-prepare'", "inputs.action == 'gateway'"), "only the two actions that change the instance use what that step found")
+
+    def test_the_step_that_reads_the_gateway_runs_only_for_the_actions_that_change_it_and_the_settings_step_looks_for_its_identity_only_for_four_actions(self):
+        (read,) = [b for b in self.steps if b.startswith("name: Read the gateway and its Application Insights")]
+        self.assertIn("if: inputs.action == 'gateway-prepare' || inputs.action == 'gateway' || inputs.action == 'contract'\n", read)
+        self.assertIn("gateway-prep.py facts", read)
+        (settings,) = [b for b in self.steps if b.startswith("name: Work out the settings\n")]
+        self.assertIn("what-if|gateway-prepare|gateway|recording)\n", settings, "the four actions that look for the gateway identity")
+        self.assertIn("The action $ACTION does not use the gateway identity, so it is not looked for", settings)
+        self.assertIn("The gateway identity does not exist yet; the role assignment is shown with a placeholder.", settings)
+        self.assertEqual(settings.count("az identity list"), 1, "one lookup of the gateway identity, inside that branch")
+        self.assertEqual(settings.count("/loggers?"), 1, "one read of the loggers, for what-if and gateway only")
+        self.assertIn('if [ -z "$principal" ]; then preview="--preview"; fi', settings, "an identity that is not known gives the preview files, and the action goes on with the facts that it read")
 
     def test_the_event_hub_loggers_are_added_only_by_gateway_prepare_and_only_when_the_namespace_exists(self):
         names = self.names()
@@ -1429,7 +1464,7 @@ class CasesWorkflow(unittest.TestCase):
         return block
 
     def test_the_cases_are_made_ready_deployed_published_and_listed_in_that_order_and_for_their_action_only(self):
-        order = ["The usage recording and the contract are there, which the first cases build on",
+        order = ["The usage recording is there, which the first cases build on",
                  "Remove the Flex Consumption version of the cases app, when it is still there",
                  "Remove what the Flex Consumption version left in the storage account, when it is still there",
                  "Let the cases app go from an integration subnet that is not the one of the template", "Deploy the first cases",
@@ -1617,15 +1652,20 @@ class CasesWorkflow(unittest.TestCase):
         self.assertLess(self.names.index(title), self.names.index("Start one Watch and read its History"))
         self.assertLess(self.names.index("Deploy the first cases"), self.names.index(title), "the template has stopped attaching it by then")
 
-    def test_the_check_before_the_deploy_writes_nothing_and_reads_no_key(self):
-        block = self.step("The usage recording and the contract are there, which the first cases build on")
+    def test_the_check_before_the_deploy_writes_nothing_reads_no_key_and_asks_nothing_of_the_gateway_or_the_contract(self):
+        block = self.step("The usage recording is there, which the first cases build on")
         self.assertNotIn("az-deploy.py", block)
         self.assertNotRegex(block, r"--method (put|patch|post|delete)")
         self.assertNotIn("listSecrets", block)
+        self.assertNotIn("primaryKey", block)
         self.assertIn("exit 1", block)
         self.assertIn("Run recording first", block)
-        self.assertIn("Run contract first", block)
-        self.assertIn("properties.gatewayUrl", block)
+        # The cases app reads no key and calls no model through the owner's API Management instance (2026-11-07): the step makes no call to it and needs no setting of it.
+        for word in ("Run contract first", "gatewayUrl", "CONTRACT_SUBSCRIPTION", "EXPECTED_GATEWAY_URL", "GATEWAY_RESOURCE_ID", "ApiManagement", "/subscriptions?", "steps.params.outputs.gateway_url",
+                     "steps.params.outputs.contract_subscription"):
+            self.assertNotIn(word, block, word)
+        self.assertIn("STORAGE_ACCOUNT: ${{ steps.params.outputs.storage_account_name }}", block)
+        self.assertIn("EVENT_HUB_NAMESPACE: ${{ steps.params.outputs.event_hub_namespace }}", block)
 
     def test_one_watch_is_started_only_by_its_own_action_and_never_reads_the_contracts_key(self):
         block = self.step("Start one Watch and read its History")
@@ -1941,7 +1981,7 @@ class FoundryWorkflow(unittest.TestCase):
         for name in self.ORDER:
             self.assertIn("if: inputs.action == 'foundry'", self.step(name), name)
         self.assertLess(self.names.index("Work out the settings"), positions[0])
-        self.assertLess(positions[-1], self.names.index("The usage recording and the contract are there, which the first cases build on"))
+        self.assertLess(positions[-1], self.names.index("The usage recording is there, which the first cases build on"))
         self.assertEqual(len(re.findall(r"inputs\.action == 'foundry'", self.text)), len(self.ORDER), "these five steps, and no other step that runs for this action")
 
     def test_the_deploy_makes_the_resource_from_the_template_and_the_file_restores_a_removed_one_and_checks_the_address_it_gives_the_cases_app(self):
@@ -2049,7 +2089,10 @@ class FoundryWorkflow(unittest.TestCase):
         self.assertIn('--url "https://management.azure.com${cases_site}?api-version=2024-04-01" --query identity.principalId --output tsv', params)
         self.assertLess(params.index("what-if|foundry)"), params.index("cases_system_principal=$(az rest"), "inside the branch that only what-if and foundry take")
         self.assertLess(params.index("cases_system_principal=$(az rest"), re.search(r"(?m)^\s+cases\)$", params).start())
-        self.assertLess(params.index("cases_system_principal=\"\"\n            foundry_exists=false"), params.index("case \"$ACTION\" in"), "false is the answer for every action that does not look")
+        defaults = params.index("cases_system_principal=\"\"\n            foundry_exists=false")
+        self.assertLess(defaults, params.index("cases_system_principal=$(az rest"), "false is the answer for every action that does not look")
+        self.assertLess(defaults, params.index("case \"$ACTION\" in", defaults), "and the defaults are set before the case that looks")
+        self.assertLess(params.index("case \"$ACTION\" in"), defaults, "the case of the gateway identity comes first: it has nothing to do with the Foundry facts, which are read whether or not the identity is there")
         self.assertIn("Nothing was changed: run cases again.", params)
         self.assertIn('echo "::warning::The preview of the cases app assumes that the Foundry project is not in Azure', params)
         self.assertNotIn("ACTION: ${{", params.split("run: |")[0], "the job's ACTION is used")
@@ -2058,10 +2101,12 @@ class FoundryWorkflow(unittest.TestCase):
     def test_the_texts_of_the_watch_say_that_it_changes_no_resource_of_the_estate_and_what_the_investigation_adds(self):
         block = self.step("Start one Watch and read its History")
         comment = " ".join(line.strip()[2:] for line in block.splitlines() if line.strip().startswith("# "))
-        for words in ("The Watch changes no resource of the estate: it reads Azure and calls the models through the gateway.", "With the investigation on (the cases app has the address of the Foundry project",
-                      "it also creates its agents and conversations in its own Foundry project, and those agents call the models of that resource directly, not through the gateway "
-                      "(the exception to AGENTS.md rule 15 (c))."):
+        for words in ("The Watch changes no resource of the estate: it reads Azure and calls the model deployments of its own Foundry project directly, with its own identity and no key",
+                      "With the investigation on (the cases app has the address of the Foundry project",
+                      "it also creates its agents and conversations in its own Foundry project, and those agents call the models of that resource directly too "
+                      "(AGENTS.md rule 15 (c))."):
             self.assertIn(words, comment)
+        self.assertNotIn("through the gateway", comment)
         for old in ("only reads Azure", "it only reads", "went through the gateway", "Nothing in Azure was changed"):
             self.assertNotIn(old, self.text, old)
         description = re.search(r'(?m)^        description: "(what-if: .+)"$', self.text).group(1)
@@ -2378,7 +2423,7 @@ class RetireWorkflow(unittest.TestCase):
         for words in ("the Event Hubs namespace takes no public traffic (its public network access is Disabled and its private endpoint is the only way in, so from then on only the Operator can send to it from outside the apps)",
                       "after its deploy the action reads that back from Azure and retires the deploy identity's old right to send to the control hub usage-control, when that is still there",
                       "on an estate where the namespace is still public, run it only after recording-check and cases-run have passed through the Operator",
-                      "after its deploy it retires the deploy identity's old right to send to the control hub cases-control, when that is still there, and it needs the usage recording and the contract first."):
+                      "after its deploy it retires the deploy identity's old right to send to the control hub cases-control, when that is still there, and it needs the usage recording first."):
             self.assertIn(words, description, words)
         self.assertLess(description.index("recording: "), description.index("the Event Hubs namespace takes no public traffic"))
         self.assertLess(description.index("the Event Hubs namespace takes no public traffic"), description.index(" recording-check: "))

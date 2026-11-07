@@ -2,8 +2,8 @@
 """The access that Meternaut needs outside its own resource group, and the installer that reads it (standard library only).
 
     python tools/access-requirements.py markdown [--retired]
-    python tools/access-requirements.py check [places] [--only R1,R3]
-    python tools/access-requirements.py grant [places] [--only R1,R3] [--apply] [--yes]
+    python tools/access-requirements.py check [places] [--only R1,R4]
+    python tools/access-requirements.py grant [places] [--only R1,R4] [--apply] [--yes]
     python tools/access-requirements.py retire [places] [--only W1,W2] [--apply] [--yes]
 
 Meternaut holds no write right: every grant in the file only reads, and a change to Azure is made with the token of the person who approved it
@@ -45,9 +45,9 @@ retire    Removes what the file lists under "retired". It reads first: for each 
 The places come from options or from the settings that the workflow uses: --project-subscription (ENV_SUBSCRIPTION_ID) and --project-group
 (ENV_RESOURCE_GROUP), where the identities and the two apps are; --cases-site (ACCESS_CASES_SITE) and --usage-site (ACCESS_USAGE_SITE), the names of the
 cases app and of the usage app in that group (func-meternaut-cases-* and func-meternaut-usage-*; each is needed only by the requirements of the app that it
-names); --gateway (GATEWAY_RESOURCE_ID), the API Management instance; --gateway-insights (GATEWAY_APPINSIGHTS_ID); --estate (ACCESS_ESTATE_SCOPES, comma
-separated; default: the project subscription), what the Watch reads; --workspace (ACCESS_WORKSPACE_ID; default: the workspace of the gateway's component);
---product-subscription (default: from environment/contract.json).
+names); --gateway (GATEWAY_RESOURCE_ID), the API Management instance, whose resource group is where the retired custom role was defined (the item W7);
+--gateway-insights (GATEWAY_APPINSIGHTS_ID); --estate (ACCESS_ESTATE_SCOPES, comma
+separated; default: the project subscription), what the Watch reads; --workspace (ACCESS_WORKSPACE_ID; default: the workspace of the gateway's component).
 The Azure CLI is `az`, or the command in the variable AZ (for example "C:\\path\\python.exe" -IBm azure.cli).
 """
 from __future__ import annotations
@@ -67,9 +67,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = ROOT / "environment" / "access-requirements.json"
-CONTRACT = ROOT / "environment" / "contract.json"
 
-GUID = r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
+GUID =  r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
 NAME = r"[A-Za-z0-9._()-]{1,90}"
 GROUP_PATH = rf"/subscriptions/{GUID}/resourceGroups/{NAME}"
 SUBSCRIPTION = re.compile(rf"^/subscriptions/{GUID}$", re.I)
@@ -246,10 +245,9 @@ def markdown_retired(manifest: dict) -> str:
 # ---- the places ----------------------------------------------------------------------------------------------------------------------------------
 
 class Places:
-    def __init__(self, project_subscription=None, project_group=None, estate=None, gateway=None, gateway_insights=None, workspace=None,
-                 product_subscription=None, sites=None) -> None:
+    def __init__(self, project_subscription=None, project_group=None, estate=None, gateway=None, gateway_insights=None, workspace=None, sites=None) -> None:
         self.project_subscription, self.project_group, self.estate = project_subscription, project_group, list(estate or [])
-        self.gateway, self.gateway_insights, self.workspace, self.product_subscription = gateway, gateway_insights, workspace, product_subscription
+        self.gateway, self.gateway_insights, self.workspace = gateway, gateway_insights, workspace
         self.sites = dict(sites or {})
 
 
@@ -270,7 +268,6 @@ def read_places(args, env) -> Places:
         gateway_insights=checked(pick("gateway_insights", "GATEWAY_APPINSIGHTS_ID"), INSIGHTS, "--gateway-insights",
                                  "the resource id of the gateway's Application Insights component"),
         workspace=checked(pick("workspace", "ACCESS_WORKSPACE_ID"), WORKSPACE, "--workspace", "the resource id of the central Log Analytics workspace"),
-        product_subscription=checked(args.product_subscription, SIMPLE_NAME, "--product-subscription", "the name of one subscription of the gateway"),
         sites={option: checked(pick(option[2:].replace("-", "_"), setting), SITE_NAME, option, "the name of a function app: letters, digits and hyphens")
                for option, setting in SITE_OPTIONS.items()},
     )
@@ -279,11 +276,6 @@ def read_places(args, env) -> Places:
             raise Problem(f"--estate holds {scope}: a subscription, a management group or a resource group, as a resource id")
     if not places.estate and places.project_subscription:
         places.estate = [f"/subscriptions/{places.project_subscription}"]
-    if not places.product_subscription:
-        try:
-            places.product_subscription = f"{json.loads(CONTRACT.read_text(encoding='utf-8'))['name']}-sub-01"
-        except (OSError, ValueError, KeyError):
-            places.product_subscription = None
     return places
 
 
@@ -308,9 +300,8 @@ def workspace_of(az: Az, places: Places) -> str:
 def scopes_for(place: str, places: Places, az: Az) -> list[str]:
     if place == "estate":
         return need(places.estate, "--estate or --project-subscription", "what the Watch reads")
-    if place == "gatewayProductSubscription":
-        gateway = need(places.gateway, "--gateway", "the resource id of the API Management instance")
-        return [f"{gateway}/subscriptions/{need(places.product_subscription, '--product-subscription', 'the gateway subscription of the access product')}"]
+    if place == "gatewayGroup":
+        return [APIM.match(need(places.gateway, "--gateway", "the resource id of the API Management instance")).group(1)]
     if place == "gatewayInsights":
         return [need(places.gateway_insights, "--gateway-insights", "the resource id of the gateway's Application Insights component")]
     if place == "centralWorkspace":
@@ -865,7 +856,7 @@ def main(argv=None, az: Az | None = None, env=None, out=print, sleep=time.sleep,
     for name, text in (("check", "read only: which requirements are present"), ("grant", "dry run; with --apply, make what is missing"),
                        ("retire", "dry run; with --apply, remove what an earlier version granted (the list retired)")):
         sub = commands.add_parser(name, help=text)
-        sub.add_argument("--only", help="comma separated ids, for example R1,R3 (retire: W1,W2)")
+        sub.add_argument("--only", help="comma separated ids, for example R1,R4 (retire: W1,W2)")
         sub.add_argument("--project-subscription")
         sub.add_argument("--project-group")
         sub.add_argument("--cases-site", help="the name of the cases app in the project's group, func-meternaut-cases-... (setting ACCESS_CASES_SITE)")
@@ -874,7 +865,6 @@ def main(argv=None, az: Az | None = None, env=None, out=print, sleep=time.sleep,
         sub.add_argument("--gateway")
         sub.add_argument("--gateway-insights")
         sub.add_argument("--workspace")
-        sub.add_argument("--product-subscription")
         if name != "check":
             sub.add_argument("--apply", action="store_true", help="make the changes (the default is a dry run)")
             sub.add_argument("--yes", action="store_true", help="do not ask first")

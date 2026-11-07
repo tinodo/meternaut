@@ -488,7 +488,7 @@ class TheWholeLoop(Story):
         self.clock.advance(days=3)
         self.tick()
         hosts = {host for _, _, host, _, _ in self.world.calls}
-        self.assertEqual(hosts, {"management.azure.com", "stexample.table.core.windows.net", "example-apim.azure-api.net", "graph.microsoft.com", "login.microsoftonline.com"})
+        self.assertEqual(hosts, {"management.azure.com", "stexample.table.core.windows.net", "example-account.services.ai.azure.com", "graph.microsoft.com", "login.microsoftonline.com"})
         writes = [(phase, method, host) for phase, method, host, path, _ in self.world.calls if method in ("PUT", "DELETE", "PATCH") and host == "management.azure.com"]
         self.assertEqual(writes, [("approval", "DELETE", "management.azure.com")], "the one change was made during the approval, with the person's token")
 

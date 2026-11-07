@@ -1,9 +1,9 @@
 """The one place where the app makes an HTTPS call.
 
-A call is made only to a fixed list of addresses with a fixed method, every one of them a read (two of the POSTs ask for a query result,
-for the key of the gateway access product and for a completion): a call to anything else is refused before it leaves the app, so a
-mistake in the code cannot become a write to Azure. Timeouts are set, and a failure that may pass is retried a bounded number of times.
-The one exception is the Foundry project of the app: the app makes and reads its own agents there and makes and deletes its own conversations (foundry_calls).
+A call is made only to a fixed list of addresses with a fixed method, every one of them a read (the POSTs of Azure ask for a query result): a call to
+anything else is refused before it leaves the app, so a mistake in the code cannot become a write to Azure. Timeouts are set, and a failure that may pass is
+retried a bounded number of times. The one exception is the Foundry resource of the app: the app makes and reads its own agents there, makes and deletes its own
+conversations and asks its own model deployments for a chat completion (foundry_calls).
 """
 from __future__ import annotations
 
@@ -28,6 +28,8 @@ MAX_CHALLENGE = 1500
 FOUNDRY_ENDPOINT = re.compile(r"https://[a-z0-9][a-z0-9-]{0,62}[a-z0-9]\.services\.ai\.azure\.com/api/projects/[A-Za-z0-9_][A-Za-z0-9_.-]{0,63}")
 FOUNDRY_AGENT_NAME = r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
 FOUNDRY_CONVERSATION_ID = r"conv_[A-Za-z0-9_-]{1,100}"
+# The one route of a chat completion, on the project's endpoint and on the endpoint of the resource that holds the project (the same host).
+CHAT_PATH = "/openai/v1/chat/completions"
 
 Transport = Callable[[str, str, Mapping[str, str], "bytes | None", float], "tuple[int, Mapping[str, str], bytes]"]
 
@@ -64,25 +66,34 @@ class Response:
             raise HttpError(self.status, "the answer is nested too deeply to be read") from error
 
 
-def foundry_calls(endpoint: str) -> tuple[tuple[str, "re.Pattern[str]"], ...]:
-    """The calls to one Foundry project. They make and read Meternaut's own agents there and make, use and delete its own conversations, and nothing else: no
-    other host, no other project, no other method, and no DELETE of an agent. The patterns are exact (no case folding) and nothing may follow the names."""
+def resource_of(endpoint: str) -> str:
+    """The address of the Foundry resource that holds the project: the endpoint of the project without its path. The resource has one host, which the project shares."""
     if not FOUNDRY_ENDPOINT.fullmatch(endpoint):
         raise ValueError("the endpoint of the Foundry project is not https://<account>.services.ai.azure.com/api/projects/<project>")
+    return endpoint.split("/api/projects/", 1)[0]
+
+
+def foundry_calls(endpoint: str) -> tuple[tuple[str, "re.Pattern[str]"], ...]:
+    """The calls to one Foundry project and the resource that holds it. They make and read Meternaut's own agents there, make, use and delete its own conversations and ask its
+    own model deployments for a chat completion (on the project's route and on the resource's), and nothing else: no other host, no other project, no other method, and no
+    DELETE of an agent. The patterns are exact (no case folding) and nothing may follow the names."""
     base = re.escape(endpoint)
+    resource = re.escape(resource_of(endpoint))
     return (
         ("GET", re.compile(base + rf"/agents/{FOUNDRY_AGENT_NAME}")),
         ("POST", re.compile(base + "/agents")),
         ("POST", re.compile(base + rf"/agents/{FOUNDRY_AGENT_NAME}/versions")),
         ("POST", re.compile(base + "/openai/v1/conversations")),
         ("POST", re.compile(base + "/openai/v1/responses")),
+        ("POST", re.compile(base + CHAT_PATH)),
+        ("POST", re.compile(resource + CHAT_PATH)),
         ("DELETE", re.compile(base + rf"/openai/v1/conversations/{FOUNDRY_CONVERSATION_ID}")),
     )
 
 
-def allowed_calls(gateway_host: str, key_path: str, foundry_endpoint: str | None = None) -> tuple[tuple[str, "re.Pattern[str]"], ...]:
-    """(method, address without its query) of every call that the app may make. `key_path` is the path of the one call that asks for the key.
-    `foundry_endpoint` adds the calls of foundry_calls for that one project; without it the app makes none."""
+def allowed_calls(foundry_endpoint: str | None = None) -> tuple[tuple[str, "re.Pattern[str]"], ...]:
+    """(method, address without its query) of every call that the app may make. `foundry_endpoint` adds the calls of foundry_calls for that one project;
+    without it the app makes none, and every call of the Watch to Azure is a read."""
     arm = re.escape(f"https://{ARM_HOST}")
     calls = (
         ("POST", re.compile(arm + r"/providers/Microsoft\.ResourceGraph/resources", re.I)),
@@ -92,8 +103,6 @@ def allowed_calls(gateway_host: str, key_path: str, foundry_endpoint: str | None
         ("GET", re.compile(arm + rf"{SCOPE}/providers/Microsoft\.Insights/metricDefinitions", re.I)),
         ("GET", re.compile(arm + rf"{SCOPE}/providers/Microsoft\.Insights/metrics", re.I)),
         ("GET", re.compile(arm + rf"/subscriptions/{GUID}/providers/Microsoft\.Security/pricings", re.I)),
-        ("POST", re.compile(re.escape(f"https://{ARM_HOST}{key_path}"), re.I)),
-        ("POST", re.compile(re.escape(f"https://{gateway_host}/models/chat/completions"), re.I)),
     )
     return calls if foundry_endpoint is None else calls + foundry_calls(foundry_endpoint)
 
