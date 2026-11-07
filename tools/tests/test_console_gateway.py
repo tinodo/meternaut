@@ -995,7 +995,7 @@ class TheDocumentsOfTheConsoleBehindTheGateway(unittest.TestCase):
                       "and the documents for that are built, nothing is deployed, and the app is still public", status)
         self.assertNotIn("built, not yet deployed", status)
         state = section_of(self.page, "## The rule and the state")
-        cases = [line for line in state.split("\n") if line.startswith("| Cases function app (Basic plan;")][0]
+        cases = [line for line in state.split("\n") if line.startswith("| Cases function app (")][0]
         self.assertIn("**Enabled**, until phase 3 for this app. The owner decided on 2026-11-06 that the app is closed", cases)
         breaks = section_of(self.page, "## What private access breaks")
         for lead in ("| Checking the console's access |", "| People using the console |"):
@@ -1180,7 +1180,7 @@ class TheDocumentsOfTheWebPageOnThePrivateNetwork(unittest.TestCase):
                       f"that is built too, and not deployed ([the web page on the private network](#{self.ANCHOR})).", status)
         self.assertLess(status.index("The owner then decided that the cases app"), status.index("On 2026-11-07 the owner decided against the gateway"))
         state = section_of(self.page, "## The rule and the state")
-        cases = [line for line in state.split("\n") if line.startswith("| Cases function app (Basic plan;")][0]
+        cases = [line for line in state.split("\n") if line.startswith("| Cases function app (")][0]
         self.assertIn("On 2026-11-07 he decided against the gateway: he flips the value himself, in a change of its own, when he can reach the private address, and the check of the front door runs in the Operator", cases)
         breaks = section_of(self.page, "## What private access breaks")
         row = [line for line in breaks.split("\n") if line.startswith("| Checking the console's access |")][0]

@@ -13,10 +13,12 @@
 # (usage-source.zip or cases-source.zip, made by tools/build-function-app.sh with FUNCTION_APP_SOURCES_ONLY=1) and that same script (build-function-app.sh), and the libraries are built here from
 # the hash-locked requirements.txt in the sources, with the one pip command of that script (FUNCTION_APP_BUILD_IN_OPERATOR=1): the same build for both apps. The two kinds of publish:
 #   usage   the Flex Consumption app: `az functionapp deployment source config-zip` of the built package, as the runner ran it before
-#   cases   the Basic plan app: the built package is posted to the deployment site's zip deployment, with curl, as the runner did
+#   cases   the web page's app, which runs on the plan that PUBLISH_PLAN names: on Flex Consumption it is published as the usage app is (`az functionapp deployment source config-zip`), and on a Basic plan the
+#           built package is posted to the deployment site's zip deployment, with curl, as the runner did
 #
 # What it reads, all from the environment (none of it is a secret, except the one that says so):
 #   PUBLISH_KIND            usage or cases
+#   PUBLISH_PLAN            Flex or Basic: the plan that the app runs on (the workflow passes CASES_APP_PLAN of tools/environment-params.py). Optional: empty is Flex for usage and Basic for cases. The usage app is always Flex Consumption.
 #   PUBLISH_APP             the name of the function app
 #   PUBLISH_RESOURCE_GROUP  the app's resource group
 #   PUBLISH_SUBSCRIPTION    the subscription of that group
@@ -114,6 +116,17 @@ case "$kind" in
   usage | cases) ;;
   *) refuse "PUBLISH_KIND is usage or cases" ;;
 esac
+plan=${PUBLISH_PLAN:-}
+if [ -z "$plan" ]; then
+  if [ "$kind" = usage ]; then plan=Flex; else plan=Basic; fi
+fi
+case "$plan" in
+  Flex | Basic) ;;
+  *) refuse "PUBLISH_PLAN is Flex or Basic" ;;
+esac
+if [ "$kind" = usage ] && [ "$plan" != Flex ]; then
+  refuse "the usage app runs on Flex Consumption: PUBLISH_PLAN is Flex for it"
+fi
 app=${PUBLISH_APP:-}
 [[ $app =~ $app_name ]] || refuse "PUBLISH_APP is not the name of a function app"
 group=${PUBLISH_RESOURCE_GROUP:-}
@@ -139,7 +152,7 @@ fi
 
 missing=""
 programs="az python3 timeout sed getent"
-if [ "$kind" = cases ]; then
+if [ "$plan" = Basic ]; then
   programs="$programs curl"
 fi
 for program in $programs; do
@@ -198,7 +211,7 @@ fi
 # The Azure CLI gets every new token with the sign-in's assertion, the OpenID Connect token, which is valid for five minutes: the sign-in was only the first exchange. The start of the group, pip and
 # the build come before the publish, so the token that the publish needs is fetched now, while the assertion is fresh, and the CLI finds it in its cache. It is the lesson of the Hub's new sign-in
 # before each publish.
-if [ "$kind" = usage ]; then
+if [ "$plan" = Flex ]; then
   # On a Flex Consumption app `az functionapp deployment source config-zip` asks Microsoft Entra for one more token, for the App Service resource (read in the Azure CLI's development source, not in
   # 2.92.0). A failure is said and does not stop the run: the publish says what it needs.
   if message=$(timeout 120 az account get-access-token --resource https://appservice.azure.com --output none 2>&1); then
@@ -324,14 +337,20 @@ with zipfile.ZipFile(sys.argv[1]) as archive:
 }
 
 publish_usage() {
-  local attempt
+  publish_flex usage-functions usage usage
+}
+
+# The Flex Consumption app, whichever it is: the package is built here ($1 is the app's directory under src, $2 the name of its code package, $3 what the package is called here) and published with the
+# command that the runner ran for the usage app before, with the same flags and the same attempts. The web page's app is published this way while it runs on Flex Consumption.
+publish_flex() {
+  local app_directory=$1 package_name=$2 label=$3 attempt
   # The version of the CLI that does the publish is said, because what `config-zip` does for a Flex Consumption app depends on it (the image is pinned by its digest).
   say ok "az $(timeout 60 az version --query '"azure-cli"' --output tsv 2> /dev/null | head -n 1 | tr -cd '0-9A-Za-z.-' | cut -c1-20)"
-  build_package usage-functions usage usage || return 3
-  # The same command, with the same flags and the same attempts, as the step that ran it on the runner. A site that has just been made may need a minute before it takes a package.
+  build_package "$app_directory" "$package_name" "$label" || return 3
+  # A site that has just been made may need a minute before it takes a package.
   for attempt in 1 2 3; do
     if message=$(timeout 600 az functionapp deployment source config-zip --resource-group "$group" --name "$app" --src "$package_zip" --build-remote false --only-show-errors --output none 2>&1); then
-      say ok "the usage package is published to $app (attempt $attempt of 3)"
+      say ok "the $label package is published to $app (attempt $attempt of 3)"
       return 0
     fi
     say FAIL "the publish did not go through (attempt $attempt of 3)"
@@ -369,6 +388,9 @@ publish_cases() {
 
 if [ "$kind" = usage ]; then
   publish_usage
+  code=$?
+elif [ "$plan" = Flex ]; then
+  publish_flex case-functions cases cases
   code=$?
 else
   publish_cases
