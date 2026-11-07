@@ -765,7 +765,7 @@ class TheDocumentsOfTheConsoleBehindTheGateway(unittest.TestCase):
 
     def test_the_changelog_entry_follows_the_one_of_the_ai_gateway_and_says_what_was_said_built_checked_and_left_open_and_the_older_entry_is_as_it_was(self):
         headings = re.findall(r"(?m)^## .+$", self.changelog)
-        self.assertEqual(headings[3:5], [self.CHANGELOG_HEADING, self.OLDER_HEADING], "the three entries of the AI Gateway (test_aigateway_docs.py, test_aigateway_agents_docs.py, test_aigateway_subnet_first.py) are above this one, and the entry below it is untouched")
+        self.assertEqual(headings[4:6], [self.CHANGELOG_HEADING, self.OLDER_HEADING], "the four entries of the AI Gateway and of the undo of the API Management changes (test_aigateway_docs.py, test_aigateway_agents_docs.py, test_aigateway_subnet_first.py) are above this one, and the entry below it is untouched")
         positions = [self.entry.index(lead) for lead in ("**What the owner said.**", "**What is built.**", "**Where Learn says something other than the plan assumed.**", "**What was checked.**", "**Not checked.**",
                                                          "**What a person has to do, in order.**")]
         self.assertEqual(positions, sorted(positions))

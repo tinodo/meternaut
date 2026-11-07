@@ -248,7 +248,7 @@ class Run(unittest.TestCase):
         code, out, err, _ = self.go([telemetry(a_good_run())])
         self.assertEqual((code, err), (0, ""))
         for text in ("The run ended well after 41 seconds (started by the control).",
-                     "Leads 2; cases taken 1: proposed 0, needs a person 1, dropped 0, errors 0; tokens through the gateway 1960.",
+                     "Leads 2; cases taken 1: proposed 0, needs a person 1, dropped 0, errors 0; tokens of the Detective and the Skeptic 1960.",
                      "Leads by detector: orphan-managed-disk 1, orphan-private-endpoint 1",
                      "1. orphan-private-endpoint: pe1 (microsoft.network/privateendpoints, rg1)",
                      "status needs_human, confidence 0.8; cost of the last 30 days 3.10 USD (Cost Management cost lines, not an invoice); monthly saving if removed 3.10 USD",
@@ -443,7 +443,7 @@ class Run(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn(cc.SECTION_TITLE, text)
         for printed in out.splitlines():
-            if "tokens through the gateway" in printed:
+            if "tokens of the Detective and the Skeptic" in printed:
                 self.assertIn(printed, text)
 
     def test_text_from_the_estate_cannot_start_a_runner_command_or_break_out_of_the_code_block(self):
