@@ -35,9 +35,15 @@ but the subscription and the group, and it refuses unless both are the ones of t
 Role assignments of the usage app's identities: a deleted identity leaves its role assignments behind (Azure shows them as "Identity not found"). The tool reads the object ids of the
 identities before it deletes them, and when it is done it lists the assignments of those ids at or below the project's resource group, so that a person can remove them. It deletes none.
 
-show   Read only. Says for each item of the list whether it is there, and whether a soft-deleted model account of that name is left.
-run    Deletes, as above. Only a GitHub Actions run may do that (AGENTS.md rule 18). Exit 0 when everything on the list is gone, 1 when something could not be deleted or read (nothing
-       after it is touched, and the second run goes on from there), 2 when it refuses.
+The function subnet: the usage app was integrated with the subnet snet-func (virtual network vnet-meternaut), and the cases app, which runs on Flex Consumption, uses that subnet too:
+the action cases refuses to deploy while another app holds it. So after the deletes the tool reads the subnet again, lists the apps of the group that are integrated with it (the usage
+app, which was just deleted, must not be one) and reads again until no app but the cases app is, for at most 15 minutes. It prints the platform's links on the subnet (service
+association links) as information: a link can stay for a while after its app is gone, and it does not stop the action cases, whose own check looks at the apps. Then it says that
+snet-func is free. When another app still holds the subnet, the run fails and names that app. A subnet that is not there is said, and is no error (the action model-side makes it).
+
+show   Read only. Says for each item of the list whether it is there, whether a soft-deleted model account of that name is left, and which apps are integrated with snet-func.
+run    Deletes, as above. Only a GitHub Actions run may do that (AGENTS.md rule 18). Exit 0 when everything on the list is gone and snet-func is free, 1 when something could not be
+       deleted or read, or when another app holds snet-func (nothing after a failed delete is touched, and the second run goes on from there), 2 when it refuses.
 """
 from __future__ import annotations
 
@@ -72,6 +78,12 @@ USAGE_HUBS = ("ai-usage", "pii-usage", "usage-control")
 USAGE_PLAN = "plan-meternaut-usage"
 USAGE_IDENTITY = "id-meternaut-usage"
 
+# The function subnet that the usage app was integrated with and that the cases app (Flex Consumption) uses.
+NETWORK = "vnet-meternaut"
+FUNCTION_SUBNET = "snet-func"
+SUBNET_API = "2025-05-01"
+SITES_API = "2024-04-01"
+
 
 class Problem(Exception):
     """Something a person can fix or must know; printed without a trace."""
@@ -84,6 +96,10 @@ class Refused(Problem):
 def digest(subscription: str, group: str) -> str:
     """Eight hex characters that depend on the subscription and the group only: the same as tools/environment-params.py makes."""
     return hashlib.sha256(f"{subscription}/{group}".lower().encode("utf-8")).hexdigest()[:8]
+
+
+def subnet_id(subscription: str, group: str) -> str:
+    return f"/subscriptions/{subscription}/resourceGroups/{group}/providers/Microsoft.Network/virtualNetworks/{NETWORK}/subnets/{FUNCTION_SUBNET}"
 
 
 class Item:
@@ -190,6 +206,40 @@ class Azure:
                 return False
             self.sleep(POLL_SECONDS)
 
+    def get(self, url: str, what: str) -> dict | None:
+        """One read with az rest: the answer as a dictionary, or None when Azure says that it is not there. Any other answer stops the run."""
+        code, out, err = self.runner(["rest", "--method", "get", "--url", url, "--output", "json"])
+        if code == 0:
+            try:
+                document = json.loads(out) if out.strip() else {}
+            except ValueError as e:
+                raise Problem(f"{what} could not be read: the answer is not JSON") from e
+            return document if isinstance(document, dict) else {}
+        if GROUP_NOT_FOUND.search(err or ""):
+            raise Problem(f"the resource group is not there: {first_line(err)}")
+        if NOT_FOUND.search(err or ""):
+            return None
+        raise Problem(f"{what} could not be read: {first_line(err)}")
+
+    def function_subnet(self, subscription: str, group: str) -> dict | None:
+        return self.get(f"{ARM}{subnet_id(subscription, group)}?api-version={SUBNET_API}", f"the function subnet {FUNCTION_SUBNET}")
+
+    def apps_on_the_function_subnet(self, subscription: str, group: str) -> list[tuple[str, str]]:
+        """The name and the plan of every app of the group that is integrated with the function subnet, as Azure lists the apps (pages followed)."""
+        wanted = subnet_id(subscription, group).lower()
+        found: list[tuple[str, str]] = []
+        url = f"{ARM}/subscriptions/{subscription}/resourceGroups/{group}/providers/Microsoft.Web/sites?api-version={SITES_API}"
+        while url:
+            page = self.get(url, "the apps of the resource group")
+            if page is None:
+                raise Problem("the apps of the resource group could not be listed: Azure says that the group is not there")
+            for site in page.get("value") or []:
+                properties = (site.get("properties") or {}) if isinstance(site, dict) else {}
+                if str(properties.get("virtualNetworkSubnetId") or "").lower() == wanted:
+                    found.append((str(site.get("name", "")), str(properties.get("serverFarmId") or "").rsplit("/", 1)[-1] or "unknown plan"))
+            url = page.get("nextLink")
+        return found
+
     def assignments_of(self, scope: str, principal: str) -> list[dict]:
         """The role assignments of one object id at, above and below the scope, as Azure lists them (pages followed)."""
         found: list[dict] = []
@@ -229,6 +279,58 @@ def refuse_unless_the_workflows_own(args, environ) -> None:
         raise Refused("the subscription is not the one of the workflow's setting ENV_SUBSCRIPTION_ID. Nothing was read or changed")
 
 
+def describe_the_subnet(subnet: dict) -> tuple[str, list[str]]:
+    """What the subnet is delegated to, and the platform's links on it (service association links), as Azure shows them."""
+    properties = subnet.get("properties") or {}
+    delegated = sorted({str((d.get("properties") or {}).get("serviceName", "")) for d in properties.get("delegations") or [] if isinstance(d, dict)} - {""})
+    links = []
+    for link in properties.get("serviceAssociationLinks") or []:
+        if isinstance(link, dict):
+            body = link.get("properties") or {}
+            links.append(f"{link.get('name', 'a link')} ({body.get('linkedResourceType', 'unknown type')}, {body.get('link', 'unknown resource')})")
+    return ", ".join(delegated) or "nothing", links
+
+
+def show_the_function_subnet(azure: Azure, subscription: str, group: str, out) -> None:
+    subnet = azure.function_subnet(subscription, group)
+    if subnet is None:
+        out(f"  the function subnet {FUNCTION_SUBNET}: is not there (the action model-side makes it)")
+        return
+    delegated, _ = describe_the_subnet(subnet)
+    holders = azure.apps_on_the_function_subnet(subscription, group)
+    out(f"  the function subnet {FUNCTION_SUBNET} (delegated to {delegated}): apps integrated with it: " + (", ".join(f"{name} (plan {plan})" for name, plan in holders) or "none"))
+
+
+def free_the_function_subnet(azure: Azure, subscription: str, group: str, out) -> None:
+    """After the deletes: no app but the cases app may be integrated with the function subnet, so that the action cases (Flex Consumption) can use it. Reads until that is so."""
+    cases_app = f"func-meternaut-cases-{digest(subscription, group)}"
+    subnet = azure.function_subnet(subscription, group)
+    if subnet is None:
+        out(f"The function subnet {FUNCTION_SUBNET} is not there, so no app is integrated with it. The action model-side makes it, and the action cases needs it.")
+        return
+    delegated, links = describe_the_subnet(subnet)
+    out(f"The function subnet {FUNCTION_SUBNET} is delegated to {delegated}.")
+    if links:
+        out("The platform's links on the subnet (service association links), as read: " + "; ".join(links)
+            + ". A link can stay for a while after its app is gone: it does not stop the action cases, which looks at the apps.")
+    else:
+        out("The subnet carries no service association link.")
+    deadline = azure.clock() + WAIT_SECONDS
+    while True:
+        on_it = azure.apps_on_the_function_subnet(subscription, group)
+        others = [f"{name} (plan {plan})" for name, plan in on_it if name.lower() != cases_app.lower()]
+        if not others:
+            break
+        if azure.clock() >= deadline:
+            raise Problem(f"the function subnet {FUNCTION_SUBNET} is still taken by {', '.join(others)}, {WAIT_SECONDS // 60} minutes after the deletes. The action cases needs it for itself: "
+                          "a person looks at that app (it has to be deleted, or moved to another subnet) and runs the action again. Nothing else was changed")
+        azure.sleep(POLL_SECONDS)
+    if on_it:
+        out(f"The function subnet {FUNCTION_SUBNET} is free for the cases app: only the cases app {cases_app} is integrated with it, as intended.")
+    else:
+        out(f"The function subnet {FUNCTION_SUBNET} is free: no app is integrated with it, so the action cases can use it.")
+
+
 def command_show(args, azure: Azure, out) -> int:
     out(f"What is still there in resource group {args.resource_group}, of what Meternaut does not use any more (read only):")
     for item in items(args.subscription, args.resource_group):
@@ -237,6 +339,7 @@ def command_show(args, azure: Azure, out) -> int:
         if item.kind == "model-account":
             for location in azure.soft_deleted(args.resource_group, item.name):
                 out(f"  the soft-deleted old model account {item.name} ({location}): still there, and a run purges it")
+    show_the_function_subnet(azure, args.subscription, args.resource_group, out)
     return 0
 
 
@@ -266,7 +369,15 @@ def command_run(args, azure: Azure, environ, out) -> int:
             line += purge_account(azure, group, item.name, out)
         out(f"  {item.what} {item.name}: {line}")
     out(f"{deleted} deleted, {absent} were not there.")
-    list_left_behind(azure, args.subscription, group, identities, out)
+    problems: list[str] = []
+    for after in (lambda: free_the_function_subnet(azure, args.subscription, group, out),
+                  lambda: list_left_behind(azure, args.subscription, group, identities, out)):
+        try:
+            after()
+        except Problem as e:
+            problems.append(str(e))
+    if problems:
+        raise Problem("; ".join(problems))
     return 0
 
 

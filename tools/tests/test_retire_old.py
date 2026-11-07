@@ -26,6 +26,9 @@ GROUP = "rg-example"
 TOKEN = ro.digest(SUB, GROUP)
 BASE = f"/subscriptions/{SUB}/resourceGroups/{GROUP}/providers"
 NAMESPACE = f"{BASE}/Microsoft.EventHub/namespaces/evhns-meternaut-{TOKEN}"
+SUBNET = f"{BASE}/Microsoft.Network/virtualNetworks/vnet-meternaut/subnets/snet-func"
+WEB_SUBNET = f"{BASE}/Microsoft.Network/virtualNetworks/vnet-meternaut/subnets/snet-cases"
+CASES_SITE = f"{BASE}/Microsoft.Web/sites/func-meternaut-cases-{TOKEN}"
 USAGE_PRINCIPAL = "aaaaaaaa-0000-4000-8000-000000000001"
 IDENTITY_PRINCIPAL = "bbbbbbbb-0000-4000-8000-000000000002"
 ENVIRONMENT = {"GITHUB_ACTIONS": "true", "ENV_SUBSCRIPTION_ID": SUB, "ENV_RESOURCE_GROUP": GROUP}
@@ -76,7 +79,7 @@ class Clock:
 
 
 class FakeAzure:
-    """A model of the project's resource group: what is there, what a read and a delete say, the soft-deleted accounts and the role assignments."""
+    """A model of the project's resource group: what is there, what a read and a delete say, the soft-deleted accounts, the role assignments, the function subnet and the apps on it."""
 
     def __init__(self, present=True, stays=True) -> None:
         self.resources: dict[str, dict] = {}
@@ -90,14 +93,34 @@ class FakeAzure:
         self.list_deleted_error: str | None = None
         self.stuck_after_purge = False
         self.hidden: dict[str, int] = {}
+        self.delegations = ["Microsoft.App/environments"]
+        self.links: list[dict] = []
+        self.integration: dict[str, str] = {}
+        self.plan_of: dict[str, str] = {}
+        self.ghosts: dict[str, int] = {}
+        self.rest_errors: dict[str, str] = {}
+        self.rest_urls: list[tuple[str, str]] = []
+        self.page_size = 0
         if present:
             for _, _, resource_id, _ in THE_LIST:
                 self.resources[resource_id.lower()] = {"id": resource_id}
             self.resources[THE_LIST[0][2].lower()]["identity"] = {"type": "SystemAssigned", "principalId": USAGE_PRINCIPAL}
             self.resources[THE_LIST[-1][2].lower()]["properties"] = {"principalId": IDENTITY_PRINCIPAL}
+            self.integration[THE_LIST[0][2].lower()] = SUBNET
+            self.plan_of[THE_LIST[0][2].lower()] = THE_LIST[1][2]
         if stays:
             for resource_id in WHAT_STAYS:
                 self.resources[resource_id.lower()] = {"id": resource_id}
+            self.integration[CASES_SITE.lower()] = WEB_SUBNET
+            self.plan_of[CASES_SITE.lower()] = f"{BASE}/Microsoft.Web/serverfarms/plan-meternaut-cases-basic"
+
+    def add_app(self, name: str, subnet: str | None = None, plan: str = "plan-elsewhere") -> str:
+        site = f"{BASE}/Microsoft.Web/sites/{name}"
+        self.resources[site.lower()] = {"id": site}
+        if subnet:
+            self.integration[site.lower()] = subnet
+        self.plan_of[site.lower()] = f"{BASE}/Microsoft.Web/serverfarms/{plan}"
+        return site
 
     def ids(self) -> set[str]:
         return set(self.resources)
@@ -107,6 +130,23 @@ class FakeAzure:
 
     def option(self, args: list[str], name: str) -> str:
         return args[args.index(name) + 1]
+
+    def sites_page(self, url: str):
+        skip = int(re.search(r"skiptoken=(\d+)", url).group(1)) if "skiptoken=" in url else 0
+        keys = [k for k in self.resources if "/microsoft.web/sites/" in k and "/slots/" not in k]
+        keys += [k for k, left in self.ghosts.items() if left > 0 and k not in self.resources]
+        if skip == 0:
+            self.ghosts = {k: left - 1 for k, left in self.ghosts.items() if left > 1}
+        size = self.page_size or len(keys) or 1
+        value = []
+        for key in keys[skip:skip + size]:
+            site_id = self.resources.get(key, {}).get("id", key)
+            value.append({"id": site_id, "name": site_id.rsplit("/", 1)[-1],
+                          "properties": {"virtualNetworkSubnetId": self.integration.get(key), "serverFarmId": self.plan_of.get(key)}})
+        body = {"value": value}
+        if skip + size < len(keys):
+            body["nextLink"] = f"{url.split('&$skiptoken')[0]}&$skiptoken={skip + size}"
+        return 0, json.dumps(body), ""
 
     def __call__(self, args):
         self.calls.append(list(args))
@@ -160,6 +200,19 @@ class FakeAzure:
             return 0, "", ""
         if a[0] == "rest":
             url = self.option(a, "--url")
+            self.rest_urls.append((self.option(a, "--method"), url))
+            for part, error in self.rest_errors.items():
+                if part in url:
+                    return 1, "", error
+            if "/providers/Microsoft.Web/sites?" in url:
+                return self.sites_page(url)
+            if "/subnets/" in url and "roleAssignments" not in url:
+                path = url[len(ro.ARM):url.index("?")]
+                if path.lower() not in self.resources:
+                    return 3, "", self.not_found(path)
+                body = {"id": path, "name": path.rsplit("/", 1)[-1],
+                        "properties": {"delegations": [{"properties": {"serviceName": name}} for name in self.delegations], "serviceAssociationLinks": self.links}}
+                return 0, json.dumps(body), ""
             principal = re.search(r"principalId eq '([^']+)'", url)
             scope = url[len(ro.ARM):url.index("/providers/Microsoft.Authorization/roleAssignments")]
             value = [{"id": x["id"], "properties": {"scope": x["scope"], "principalId": x["principal"]}} for x in self.assignments
@@ -546,6 +599,163 @@ class Show(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(len([x for x in out.splitlines() if x.endswith(": was not there")]), 11)
 
+    def test_it_says_which_apps_are_integrated_with_the_function_subnet_and_changes_nothing(self):
+        fake = FakeAzure()
+        code, out, _, _ = go(SHOW, fake)
+        self.assertEqual(code, 0)
+        self.assertIn(f"  the function subnet snet-func (delegated to Microsoft.App/environments): apps integrated with it: func-meternaut-usage-{TOKEN} (plan plan-meternaut-usage)", out)
+        self.assertEqual(fake.writes(), [])
+        go(RUN, fake)
+        code, out, _, _ = go(SHOW, fake)
+        self.assertIn("apps integrated with it: none", out)
+
+    def test_a_subnet_that_is_not_there_is_said_and_is_no_error(self):
+        fake = FakeAzure(present=False, stays=False)
+        code, out, _, _ = go(SHOW, fake)
+        self.assertEqual(code, 0)
+        self.assertIn("  the function subnet snet-func: is not there (the action model-side makes it)", out)
+
+
+class TheFunctionSubnet(unittest.TestCase):
+    """The action cases, on Flex Consumption, refuses to deploy while another app holds snet-func: the run reads it after the deletes and says that it is free."""
+
+    FREE = "The function subnet snet-func is free: no app is integrated with it, so the action cases can use it."
+
+    def test_after_the_deletes_it_reads_the_subnet_and_the_apps_and_says_that_snet_func_is_free(self):
+        fake = FakeAzure()
+        code, out, err, _ = go(RUN, fake)
+        self.assertEqual(code, 0, err)
+        self.assertLess(out.index("11 deleted, 0 were not there."), out.index("The function subnet snet-func is delegated to Microsoft.App/environments."))
+        self.assertIn("The subnet carries no service association link.", out)
+        self.assertIn(self.FREE, out)
+        last_delete = max(n for n, c in enumerate(fake.calls) if c[:2] == ["resource", "delete"])
+        subnet_reads = [n for n, c in enumerate(fake.calls) if c[0] == "rest" and "/subnets/snet-func?api-version=2025-05-01" in c[c.index("--url") + 1]]
+        app_reads = [n for n, c in enumerate(fake.calls) if c[0] == "rest" and "/providers/Microsoft.Web/sites?api-version=2024-04-01" in c[c.index("--url") + 1]]
+        self.assertTrue(subnet_reads and app_reads)
+        self.assertGreater(min(subnet_reads), last_delete, "the subnet is read back after the last delete")
+        self.assertGreater(min(app_reads), last_delete, "the apps are listed after the last delete")
+        self.assertNotIn(THE_LIST[0][2].lower(), fake.ids())
+
+    def test_the_cases_app_on_the_subnet_is_what_is_meant_and_is_said_so(self):
+        fake = FakeAzure()
+        fake.integration[CASES_SITE.lower()] = SUBNET
+        code, out, _, _ = go(RUN, fake)
+        self.assertEqual(code, 0)
+        self.assertIn(f"The function subnet snet-func is free for the cases app: only the cases app func-meternaut-cases-{TOKEN} is integrated with it, as intended.", out)
+        self.assertNotIn(self.FREE, out)
+
+    def test_another_app_on_the_subnet_fails_the_run_after_fifteen_minutes_and_names_the_app_and_its_plan(self):
+        fake = FakeAzure()
+        elsewhere = fake.add_app("func-elsewhere", SUBNET, "plan-elsewhere")
+        code, out, err, clock = go(RUN, fake)
+        self.assertEqual(code, 1)
+        self.assertIn("the function subnet snet-func is still taken by func-elsewhere (plan plan-elsewhere), 15 minutes after the deletes", err)
+        self.assertIn("The action cases needs it for itself", err)
+        self.assertNotIn("is free", out)
+        self.assertGreaterEqual(clock.now, ro.WAIT_SECONDS)
+        self.assertIn(elsewhere.lower(), fake.ids(), "an app that is not on the list is never deleted")
+        self.assertEqual({c[c.index("--ids") + 1] for c in fake.calls if c[:2] == ["resource", "delete"]}, {i[2] for i in THE_LIST})
+
+    def test_the_usage_app_that_is_still_listed_for_a_while_after_it_is_gone_is_waited_for(self):
+        fake = FakeAzure()
+        fake.ghosts[THE_LIST[0][2].lower()] = 3
+        code, out, _, clock = go(RUN, fake)
+        self.assertEqual(code, 0)
+        self.assertEqual(clock.sleeps, [ro.POLL_SECONDS] * 3)
+        self.assertIn(self.FREE, out)
+
+    def test_the_usage_app_that_stays_in_the_list_fails_the_run_and_is_named(self):
+        fake = FakeAzure()
+        fake.ghosts[THE_LIST[0][2].lower()] = 10 ** 6
+        code, _, err, _ = go(RUN, fake)
+        self.assertEqual(code, 1)
+        self.assertIn(f"is still taken by func-meternaut-usage-{TOKEN} (plan plan-meternaut-usage)", err)
+
+    def test_a_subnet_that_is_not_there_is_said_and_is_no_error_and_no_app_is_listed(self):
+        fake = FakeAzure()
+        del fake.resources[SUBNET.lower()]
+        code, out, err, _ = go(RUN, fake)
+        self.assertEqual(code, 0, err)
+        self.assertIn("The function subnet snet-func is not there, so no app is integrated with it. The action model-side makes it, and the action cases needs it.", out)
+        self.assertEqual([u for _, u in fake.rest_urls if "/providers/Microsoft.Web/sites?" in u], [])
+
+    def test_the_platforms_links_on_the_subnet_are_said_as_information_and_do_not_fail_the_run(self):
+        fake = FakeAzure()
+        fake.links = [{"name": "legionservicelink", "properties": {"linkedResourceType": "Microsoft.App/environments", "link": THE_LIST[1][2]}}]
+        code, out, _, _ = go(RUN, fake)
+        self.assertEqual(code, 0)
+        self.assertIn(f"The platform's links on the subnet (service association links), as read: legionservicelink (Microsoft.App/environments, {THE_LIST[1][2]}).", out)
+        self.assertIn("A link can stay for a while after its app is gone: it does not stop the action cases, which looks at the apps.", out)
+        self.assertIn(self.FREE, out)
+
+    def test_a_subnet_that_is_delegated_to_something_else_is_said_and_the_run_does_not_judge_it(self):
+        fake = FakeAzure()
+        fake.delegations = ["Microsoft.Web/serverFarms"]
+        code, out, _, _ = go(RUN, fake)
+        self.assertEqual(code, 0)
+        self.assertIn("The function subnet snet-func is delegated to Microsoft.Web/serverFarms.", out)
+
+    def test_an_app_on_another_subnet_or_none_or_on_a_subnet_of_another_network_does_not_hold_it(self):
+        fake = FakeAzure()
+        fake.add_app("func-on-the-web-subnet", WEB_SUBNET)
+        fake.add_app("func-with-no-integration", None)
+        fake.add_app("func-on-another-network", SUBNET.replace("vnet-meternaut", "vnet-other"))
+        code, out, _, _ = go(RUN, fake)
+        self.assertEqual(code, 0)
+        self.assertIn(self.FREE, out)
+
+    def test_the_ids_are_compared_without_regard_to_case(self):
+        fake = FakeAzure()
+        fake.add_app("func-elsewhere", SUBNET.replace("resourceGroups", "resourcegroups").replace("subnets", "SUBNETS").upper())
+        code, _, err, _ = go(RUN, fake)
+        self.assertEqual(code, 1)
+        self.assertIn("is still taken by func-elsewhere", err)
+
+    def test_the_apps_are_listed_page_by_page(self):
+        fake = FakeAzure()
+        fake.page_size = 1
+        fake.add_app("func-elsewhere", SUBNET)
+        code, _, err, _ = go(RUN, fake)
+        self.assertEqual(code, 1)
+        self.assertIn("is still taken by func-elsewhere", err)
+        self.assertGreaterEqual(len([u for _, u in fake.rest_urls if "/providers/Microsoft.Web/sites?" in u and "skiptoken=1" in u]), 1, "the second page was read")
+
+    def test_only_gets_are_made_and_only_of_the_subnet_the_apps_and_the_assignments_in_the_project_group(self):
+        fake = FakeAzure()
+        go(RUN, fake)
+        self.assertEqual({method for method, _ in fake.rest_urls}, {"get"})
+        kinds = {"subnet" if "/subnets/" in url else "apps" if "/providers/Microsoft.Web/sites?" in url else "assignments" if "roleAssignments" in url else url for _, url in fake.rest_urls}
+        self.assertEqual(kinds, {"subnet", "apps", "assignments"})
+        for _, url in fake.rest_urls:
+            self.assertIn(f"/subscriptions/{SUB}/resourceGroups/{GROUP}/", url)
+
+    def test_a_subnet_that_cannot_be_read_fails_the_run_and_the_leftover_assignments_are_still_looked_for(self):
+        fake = FakeAzure()
+        fake.rest_errors["/subnets/snet-func"] = "ERROR: (AuthorizationFailed) The client does not have authorization to perform action 'Microsoft.Network/virtualNetworks/subnets/read'."
+        code, out, err, _ = go(RUN, fake)
+        self.assertEqual(code, 1)
+        self.assertIn("the function subnet snet-func could not be read: ERROR: (AuthorizationFailed)", err)
+        self.assertIn("No role assignment of the usage app's identities is left in the resource group.", out)
+        self.assertEqual(fake.ids() & {i[2].lower() for i in THE_LIST}, set(), "everything on the list was deleted before the subnet was read")
+
+    def test_the_summary_file_says_that_snet_func_is_free(self):
+        fake = FakeAzure()
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "summary.md"
+            code, _, _, _ = go([*RUN, "--summary", str(path)], fake)
+            text = path.read_text(encoding="utf-8")
+        self.assertEqual(code, 0)
+        self.assertIn(self.FREE, text)
+
+    def test_the_names_are_the_ones_of_the_template_and_the_parameter_builder(self):
+        template = (ROOT / "environment" / "main.bicep").read_text(encoding="utf-8")
+        self.assertIn("param workload string = 'meternaut'", template)
+        self.assertIn(f"name: 'vnet-${{workload}}'", template)
+        self.assertEqual(ro.NETWORK, "vnet-meternaut")
+        self.assertIn(f"name: '{ro.FUNCTION_SUBNET}'", template)
+        self.assertEqual(ro.FUNCTION_SUBNET, ep.CASES_SUBNET_NAMES["Flex"], "the subnet that the Flex Consumption app of the cases uses")
+        self.assertEqual(ro.subnet_id(SUB, GROUP), SUBNET)
+
 
 WORKFLOW = (ROOT / ".github" / "workflows" / "deploy-hub.yml").read_text(encoding="utf-8")
 
@@ -611,8 +821,19 @@ class TheHubAction(unittest.TestCase):
         text = WORKFLOW[WORKFLOW.index("retire-old) echo \"What Meternaut does not use any more was deleted"):]
         text = text[:text.index(";;")]
         for words in ("and nothing else", "The Event Hubs namespace, the hub \\`cases-control\\`, the storage account, the workspace, Application Insights and every subnet were not touched",
-                      "Running \\`retire-old\\` again is safe: it finds nothing."):
+                      "Running \\`retire-old\\` again is safe: it finds nothing.",
+                      "The function subnet \\`snet-func\\` was read back after the deletes: it is free (no app but the cases app is integrated with it), so the action \\`cases\\` can put the web page's Flex Consumption app on it"):
             self.assertIn(words, text)
+
+    def test_the_stopped_summary_says_what_to_do_when_another_app_holds_the_function_subnet(self):
+        text = WORKFLOW[WORKFLOW.index("retire-old) echo \"The run stopped before it had deleted everything"):]
+        text = text[:text.index(";;")]
+        for words in ("the lines stop at the function subnet \\`snet-func\\`, another app still holds it", "the line names that app and its plan", "a person deletes that app or moves it to another subnet"):
+            self.assertIn(words, text)
+
+    def test_the_description_says_that_it_reads_back_that_the_function_subnet_is_free(self):
+        text = WORKFLOW[WORKFLOW.index("description: \"what-if"):WORKFLOW.index("type: choice")]
+        self.assertIn("and then reads back that the function subnet snet-func is free (no app but the cases app is integrated with it), which the action cases needs for its Flex Consumption app", text)
 
     def test_the_old_settings_are_read_by_nothing(self):
         for name in ("GATEWAY_RESOURCE_ID", "GATEWAY_APPINSIGHTS_ID", "RECORDING_READER_IDS"):
