@@ -250,7 +250,9 @@ resource modelOfProvider 'Microsoft.ApiManagement/aigateways/workspaces/modelPro
   }
 }]
 
-// The name that a caller sends in the `model` field. One target each, so there is no routing and no failover: priority and weight are the service's own defaults.
+// The name that a caller sends in the `model` field. The resource name and `aliasName` are both the deployment's name, dots included: the specification allows dots in an
+// alias's name (^[a-zA-Z0-9_.-]+$, where a model's name allows none) and the portal's own code keeps them, so a caller gets that name whether the service reads the property or the
+// resource name at this API version (docs/proposals/08-ai-gateway.md). One target each, so there is no routing and no failover: priority and weight are the service's own defaults.
 #disable-next-line BCP081
 resource aliasOfModel 'Microsoft.ApiManagement/aigateways/workspaces/aliases@2025-09-01-preview' = [for (model, index) in models: {
   parent: workspace

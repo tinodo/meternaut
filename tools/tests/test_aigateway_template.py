@@ -128,6 +128,9 @@ class Template(unittest.TestCase):
         for word in ("name: model.name", "aliasName: model.name", "resourceId: modelOfProvider[index].id", "priority: 0", "weight: 1"):
             self.assertIn(word, alias, word)
         self.assertEqual(alias.count("resourceId:"), 1, "one target for each alias: no routing and no failover")
+        comment = re.sub(r"\s*\n//\s*", " ", SOURCE)
+        self.assertIn("are both the deployment's name, dots included: the specification allows dots in an alias's name (^[a-zA-Z0-9_.-]+$, where a model's name allows none)", comment,
+                      "the template says why the alias resource keeps the dots and the model's does not")
         self.assertIn("'/openai/v1/chat/completions'", CODE, "the agents and the check use chat completions")
 
     def test_the_roles_are_the_two_of_the_plan_each_on_its_own_scope_and_never_on_the_group(self):
