@@ -2,7 +2,7 @@
 write the History.
 
 Nothing here changes Azure. The limits of docs/proposals/02-first-cases.md are applied here: the cases per run, the tokens per run and per
-call, the deadline, the retries (in http.py) and the refusals of the gateway. The investigation (investigate.py) has a budget of its own, and the time that it
+call, the deadline, the retries (in http.py) and the refusals of the model service. The investigation (investigate.py) has a budget of its own, and the time that it
 takes is not taken from the deadline of the cases that follow it.
 """
 from __future__ import annotations
@@ -24,10 +24,10 @@ from .detectors import DETECTOR_NAMES, Context, Lead
 from .events import History
 from .evidence import EvidenceError
 from .foundry import Foundry
-from .gateway import Gateway, GatewayError
 from .http import Client, HttpError, allowed_calls, default_transport
 from .identity import Identity, IdentityError
 from .memory_store import stamp
+from .modelcalls import ModelError, Models
 from .models import CaseRecord, RunRecord, StoreError
 from .redact import Redactor
 from .roles import RoleError, clean_text
@@ -42,7 +42,7 @@ class Services:
     settings: cfg.Settings
     client: Client
     arm: Arm
-    gateway: Gateway
+    models: Models
     history: History
     redact: Redactor
     clock: Callable[[], dt.datetime]
@@ -135,10 +135,10 @@ def work_case(s: Services, number: int, lead: Lead, context: Context, tokens_bef
             raise CaseEnded("the token budget of the run was reached")
         chat = None
         try:
-            chat = s.gateway.chat(model, system, user, st.max_completion_tokens)
+            chat = s.models.chat(model, system, user, st.max_completion_tokens)
             used += chat.total_tokens
             answer = parse(chat.text)
-        except (GatewayError, RoleError) as error:
+        except (ModelError, RoleError) as error:
             note = clean_text(s.redact(error), 200)
             step(name, model, started, False, note, (chat.prompt_tokens, chat.completion_tokens) if chat else None)
             raise CaseEnded(note) from error
@@ -217,14 +217,7 @@ def execute(s: Services, trigger: str) -> Summary:
 
     h.emit("run.started", trigger=trigger, scopes=[x[:8] for x in st.subscriptions], detectors=list(DETECTOR_NAMES))
     keep(False)
-    try:
-        s.gateway.open()
-    except GatewayError as error:
-        reason = clean_text(s.redact(error), 300)
-        h.emit("run.failed", reason=reason)
-        summary.ok = False
-        keep(True, reason)
-        return summary
+    s.models.open()
 
     found: list[Lead] = []
     contexts: dict[str, Context] = {}
@@ -351,13 +344,12 @@ def run_watch(trigger: str, request_id: str | None, env: Mapping[str, str] | Non
     try:
         settings = cfg.load(env)
         identity = Identity(env, sleep=sleep, **({"fetch": fetch} if fetch else {}))
-        client = Client(allowed_calls(settings.gateway_host, Gateway.key_path(settings), foundry_endpoint=settings.foundry_endpoint), redact, transport=transport,
-                        sleep=sleep, monotonic=monotonic)
+        client = Client(allowed_calls(foundry_endpoint=settings.foundry_endpoint), redact, transport=transport, sleep=sleep, monotonic=monotonic)
         if extras is None:
             extras = wiring.build_extras(env, identity.token, redact, transport=transport, sleep=sleep, monotonic=monotonic, clock=clock)
         if foundry is None and settings.foundry_endpoint:
             foundry = Foundry(settings.foundry_endpoint, client, identity.token, redact)
-        services = Services(settings, client, Arm(client, identity.token), Gateway(settings, client, identity.token, redact), history, redact, clock, monotonic, extras,
+        services = Services(settings, client, Arm(client, identity.token), Models(settings, client, identity.token, redact), history, redact, clock, monotonic, extras,
                             foundry)
         return execute(services, trigger)
     except Exception as error:  # noqa: BLE001 (the History must say how every run ended)

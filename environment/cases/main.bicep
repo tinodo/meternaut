@@ -1,15 +1,16 @@
 // The first cases of Meternaut: the function app that finds leads in the pilot estate, lets two model roles work on each one
-// through the gateway, and writes every step to a History that a workbook shows (docs/proposals/02-first-cases.md).
+// through the model deployments of the agents' own Foundry project, and writes every step to a History that a workbook shows (docs/proposals/02-first-cases.md).
 //
 //   timer (daily) or one control event --> Watch --> Resource Graph, Advisor, Cost Management (read only)
-//   Watch --> Detective and Skeptic (the gateway's chat route) --> guards in code --> one telemetry line per step --> workbook
+//   Watch --> Detective and Skeptic (chat completions on the Foundry project, direct and keyless) --> guards in code --> one telemetry line per step --> workbook
 //
 // What it holds: one user-assigned identity (the console's sign-in), a Basic (B1, Linux, always on) plan with the function app, which has a system-assigned identity of
 // its own, and the subnet that the plan is integrated with, one more event hub (the control hub) in the namespace of the usage recording, the roles that connect them, a
 // longer retention for the traces table of the workspace, and the History workbook.
 //
-// Identities, and no right to change Azure. The app's own system-assigned identity reads the pilot estate, its cost lines and the gateway's access key, stores the
-// records, and holds the roles below that are for the app. The owner prefers system-assigned identities, so it took over from the user-assigned identity
+// Identities, and no right to change Azure. The app's own system-assigned identity reads the pilot estate and its cost lines, stores the
+// records, holds Foundry User on its own Foundry project (a role that environment/foundry/main.bicep gives, inside the project's group: it lets the app make and run its agents
+// and ask the model deployments of that project for a chat completion), and holds the roles below that are for the app. The owner prefers system-assigned identities, so it took over from the user-assigned identity
 // `id-meternaut-cases` in two steps (environment/BOOTSTRAP.md): first it was given the roles of the old identity next to it, and a person gave it the roles outside this
 // group; then the settings moved to it and the old identity was taken off the app. This template no longer makes the old identity and no deployment removes it: a person
 // removes it, and what it still holds, after `tools/access-requirements.py retire` has taken away its grants outside this group. The object id of a system-assigned
@@ -47,18 +48,18 @@
 // the landing zone's DNS. The app on it then cannot resolve a name, and cannot start. That happened to the first subnet (snet-web) on
 // 2026-11-05, in the second deploy of this template, and the subnet was replaced by this one (snet-cases).
 //
-// No key of any kind (AGENTS.md rule 23): the app's host storage, its Event Hubs trigger and its telemetry use its identity, and its
-// code is pushed with the deployment workflow's own identity token (no deployment password). The only key it ever touches is the
-// gateway access product's, which the Watch reads from the gateway at the start of a run with its identity (the call needs a role in the
-// gateway's subscription that the template cannot give) and keeps in memory.
+// No key of any kind (AGENTS.md rule 23): the app's host storage, its Event Hubs trigger and its telemetry use its identity, its calls to the model deployments of the
+// Foundry project carry its identity's token, and its code is pushed with the deployment workflow's own identity token (no deployment password). The app reads no key at all.
 //
-// The app's system-assigned identity can read nothing of the pilot estate until its Reader and Cost Management Reader roles on the pilot subscription, and the
-// role that reads the access product's key, are given, outside this template, by a person on the owner's written word (environment/BOOTSTRAP.md,
-// AGENTS.md rule 18), because the deployment workflow's identity has no right there and must not get one.
+// The app's system-assigned identity can read nothing of the pilot estate until its Reader and Cost Management Reader roles on the pilot subscription are given,
+// outside this template, by a person on the owner's written word (environment/BOOTSTRAP.md, AGENTS.md rule 18), because the deployment workflow's identity has
+// no right there and must not get one.
 //
 // The agents: when the Foundry resource of the agents exists (environment/foundry/main.bicep, the action foundry), the workflow passes the address of its
 // project, and the app then lets agents of that project investigate the estate (the settings FOUNDRY_* and INVESTIGATE*). The app signs in to the project with
-// its own identity, and the template of the Foundry resource gives that identity its role on the project. Without the address the investigation is off.
+// its own identity, and the template of the Foundry resource gives that identity its role on the project. Without the address the investigation is off, and so are the model calls
+// of the Detective and the Skeptic, which are chat completions on the same project: they are what judges the waste that Meternaut planted itself, and every one of them ends in an
+// error that says so (the first run of the action cases-run shows whether the project takes them).
 //
 // Deployed only by the workflow .github/workflows/deploy-hub.yml, action "cases" (AGENTS.md rule 18). The code of the function app
 // is published by the same action, from src/case-functions. A Basic plan cannot take over a Flex Consumption app: the action removes
@@ -101,18 +102,10 @@ param webSubnetExists bool = false
 @minLength(36)
 param scopeSubscriptions string
 
-@description('Address of the gateway, https://<name>.azure-api.net.')
-@minLength(1)
-param gatewayUrl string
-
-@description('Resource id of the gateway access product\'s subscription, whose key the Watch reads at the start of a run.')
-@minLength(1)
-param gatewayProductSubscriptionId string
-
-@description('Model deployment of the Detective.')
+@description('Model deployment of the Detective: a deployment of the Foundry resource of the agents (environment/models.json), which the Detective calls for a chat completion on the Foundry project, as the agents call theirs.')
 param modelDetective string = 'gpt-6-luna'
 
-@description('Model deployment of the Skeptic. It has to be another model than the Detective: the app refuses to start with the same model for both.')
+@description('Model deployment of the Skeptic, in the same resource. It has to be another model than the Detective: the app refuses to start with the same model for both.')
 param modelSkeptic string = 'gpt-6.1-sol'
 
 @description('Most cases that one run takes up. The app refuses a higher number than 3.')
@@ -422,7 +415,7 @@ resource functionApp 'Microsoft.Web/sites@2024-04-01' = {
         { name: 'FUNCTIONS_EXTENSION_VERSION', value: '~4' }
         { name: 'FUNCTIONS_WORKER_RUNTIME', value: 'python' }
         { name: 'WEBSITE_RUN_FROM_PACKAGE', value: '1' }
-        // The host's start-up asks the DNS of the landing zone for the names of the storage account, the namespace and the gateway, and each lookup of a subnet that cannot reach
+        // The host's start-up asks the DNS of the landing zone for the names of the storage account and the namespace, and each lookup of a subnet that cannot reach
         // that DNS waits 30 seconds. The platform gives a container 230 seconds by default to answer, and then stops the whole site and starts it again; ten minutes let a slow start finish.
         { name: 'WEBSITES_CONTAINER_START_TIME_LIMIT', value: '600' }
         { name: 'SCM_DO_BUILD_DURING_DEPLOYMENT', value: 'false' }
@@ -439,8 +432,6 @@ resource functionApp 'Microsoft.Web/sites@2024-04-01' = {
         { name: 'EventHubConnection__credential', value: 'managedidentity' }
         { name: 'EVENTHUB_CASES_CONTROL_NAME', value: controlHubName }
         { name: 'SCOPE_SUBSCRIPTIONS', value: scopeSubscriptions }
-        { name: 'GATEWAY_URL', value: gatewayUrl }
-        { name: 'GATEWAY_PRODUCT_SUBSCRIPTION_ID', value: gatewayProductSubscriptionId }
         { name: 'MODEL_DETECTIVE', value: modelDetective }
         { name: 'MODEL_SKEPTIC', value: modelSkeptic }
         { name: 'MAX_CASES_PER_RUN', value: string(maxCasesPerRun) }
@@ -612,7 +603,7 @@ resource historyWorkbook 'Microsoft.Insights/workbooks@2023-06-01' = {
 
 output functionAppName string = functionApp.name
 output functionAppId string = functionApp.id
-@description('Principal id of the function app\'s system-assigned identity. It reads the pilot estate with two roles on the pilot subscription, and the gateway access product\'s key with a role in the gateway\'s subscription: a person gives them (environment/BOOTSTRAP.md). The Foundry resource gives it its role on the project.')
+@description('Principal id of the function app\'s system-assigned identity. It reads the pilot estate with two roles on the pilot subscription: a person gives them (environment/BOOTSTRAP.md). The Foundry resource gives it its role on the project, Foundry User, which it also uses for the chat completions of the Detective and the Skeptic. It reads no key and holds no other role.')
 output casesSystemPrincipalId string = functionApp.identity.principalId
 @description('Principal id of the identity that the console\'s sign-in presents to Microsoft Entra: the federated credential of the app registration names it. It holds no role.')
 output authIdentityPrincipalId string = authIdentity.properties.principalId

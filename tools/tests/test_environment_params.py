@@ -65,7 +65,8 @@ class Build(unittest.TestCase):
     def test_good_settings_give_four_files_and_the_outputs(self):
         code, out, err, files = run(SETTINGS)
         self.assertEqual((code, err), (0, ""))
-        self.assertEqual(set(files), {"environment.parameters.json", "logger.parameters.json", "kit.parameters.json", "recording.parameters.json", "foundry.parameters.json", "operator.parameters.json", "planted.parameters.json"})
+        self.assertEqual(set(files), {"environment.parameters.json", "logger.parameters.json", "kit.parameters.json", "recording.parameters.json", "foundry.parameters.json", "operator.parameters.json", "planted.parameters.json",
+                                      "cases.parameters.json"})
         env = values(files["environment.parameters.json"])
         self.assertEqual(env["vnetAddressPrefix"], "10.53.0.0/24")
         self.assertEqual(env["peSubnetPrefix"], "10.53.0.0/27")
@@ -650,7 +651,7 @@ class Contract(unittest.TestCase):
 
 
 class FirstCases(unittest.TestCase):
-    """The parameter file of the first cases app (environment/cases/main.bicep): it names what the usage recording made, and the contract's key."""
+    """The parameter file of the first cases app (environment/cases/main.bicep): it names what the usage recording made, and nothing of a gateway or a contract."""
 
     CASES = (ROOT / "environment" / "cases" / "main.bicep").read_text(encoding="utf-8")
 
@@ -707,17 +708,30 @@ class FirstCases(unittest.TestCase):
             self.assertIn("ENV_WEB_SUBNET_EXISTS is true or false", err)
         self.assertIn("param webSubnetExists bool = false", self.CASES)
 
-    def test_it_reads_the_pilot_subscription_and_the_gateway_with_the_contracts_key(self):
+    def test_it_reads_the_pilot_subscription_and_names_no_gateway_and_no_contract_and_no_key(self):
         files, lines = self.build()
         cases = values(files["cases.parameters.json"])
         self.assertEqual(cases["scopeSubscriptions"], SETTINGS["ENV_SUBSCRIPTION_ID"])
-        self.assertEqual(cases["gatewayUrl"], "https://example-apim.azure-api.net")
-        self.assertEqual(lines["gateway_url"], cases["gatewayUrl"])
-        self.assertEqual(cases["gatewayProductSubscriptionId"], SETTINGS["GATEWAY_RESOURCE_ID"] + "/subscriptions/meternaut-agents-sub-01")
-        contract = json.loads(CONTRACT_FILE.read_text(encoding="utf-8"))
-        self.assertEqual(cases["modelDetective"], contract["allowedModels"][0])
-        self.assertEqual(cases["modelSkeptic"], contract["allowedModels"][1], "the Skeptic is another model than the Detective, so that it is more independent")
-        self.assertNotEqual(cases["modelDetective"], cases["modelSkeptic"])
+        self.assertFalse([name for name in cases if "gateway" in name.lower() or "product" in name.lower() or "contract" in name.lower()], "the app reads no key, so the file names no gateway")
+        self.assertNotIn("gatewayUrl", cases)
+        self.assertNotIn("gatewayProductSubscriptionId", cases)
+        self.assertNotIn("gateway_url", lines, "no step of the workflow knocks at the gateway's address any more")
+        self.assertNotIn("azure-api.net", json.dumps(files["cases.parameters.json"]))
+        self.assertNotIn("/subscriptions/meternaut-agents-sub-01", json.dumps(files["cases.parameters.json"]))
+
+    def test_the_two_older_roles_are_given_two_different_deployments_of_the_agents_resource_by_the_defaults_of_the_template(self):
+        # The Detective and the Skeptic call the model deployments of the agents' own Foundry resource (environment/foundry/main.bicep deploys environment/models.json), so the names that the
+        # template defaults to are deployments of that resource and they differ: the file leaves them out and the template's defaults are what the app is given.
+        cases = values(self.build()[0]["cases.parameters.json"])
+        self.assertNotIn("modelDetective", cases)
+        self.assertNotIn("modelSkeptic", cases)
+        models = dict(re.findall(r"^param (modelDetective|modelSkeptic) string = '([^']+)'$", self.CASES, re.M))
+        self.assertEqual(sorted(models), ["modelDetective", "modelSkeptic"])
+        self.assertNotEqual(models["modelDetective"], models["modelSkeptic"], "the Skeptic is another model than the Detective, so that it is more independent")
+        deployed = {m["name"] for m in json.loads(MODELS.read_text(encoding="utf-8"))}
+        self.assertTrue(set(models.values()) <= deployed, "the Detective and the Skeptic call deployments that the Foundry resource of the agents has")
+        self.assertEqual(models["modelDetective"], json.loads(CONTRACT_FILE.read_text(encoding="utf-8"))["allowedModels"][0], "as they were while the contract named them")
+        self.assertEqual(models["modelSkeptic"], json.loads(CONTRACT_FILE.read_text(encoding="utf-8"))["allowedModels"][1])
 
     def test_a_contract_with_one_model_is_refused_because_the_skeptic_has_to_be_another_model(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -737,8 +751,24 @@ class FirstCases(unittest.TestCase):
         self.assertNotIn("id-${workload}-cases", self.CASES, "the user-assigned identity that the app's system-assigned one replaced is not made any more")
         self.assertNotIn("cases_identity_name", lines)
 
-    def test_without_a_contract_there_is_no_cases_file(self):
-        self.assertNotIn("cases.parameters.json", run(SETTINGS)[3])
+    def test_the_cases_file_does_not_depend_on_the_contract_and_is_the_same_with_or_without_it(self):
+        # The contract is the API Management side, which Meternaut is leaving: the first cases are deployed without it.
+        without = run(SETTINGS)
+        self.assertEqual(without[0], 0)
+        with_contract = self.build()[0]["cases.parameters.json"]
+        self.assertEqual(without[3]["cases.parameters.json"], with_contract)
+        self.assertNotIn("contract.parameters.json", without[3], "the contract's own file is still made only when the contract is asked for")
+        self.assertNotIn("contract_subscription", dict(line.split("=", 1) for line in without[1].splitlines()))
+        self.assertEqual(self.build()[1]["contract_subscription"], "meternaut-agents-sub-01", "the contract action keeps its output")
+
+    def test_the_cases_file_is_written_with_no_gateway_identity_at_all_in_a_preview_and_it_names_the_foundry_project_when_the_workflow_found_it(self):
+        settings = {k: v for k, v in SETTINGS.items() if k not in ("GATEWAY_PRINCIPAL_ID", "GATEWAY_CLIENT_ID", "RECORDING_FRAGMENTS")}
+        code, out, err, files = run({**settings, "ENV_FOUNDRY_PROJECT_EXISTS": "true"}, "--preview")
+        self.assertEqual((code, err), (0, ""))
+        cases = values(files["cases.parameters.json"])
+        lines = dict(line.split("=", 1) for line in out.splitlines())
+        self.assertEqual(cases["foundryProjectEndpoint"], lines["foundry_project_endpoint"])
+        self.assertTrue(cases["foundryProjectEndpoint"].endswith(".services.ai.azure.com/api/projects/meternaut"))
 
     PEOPLE = '[{"oid": "AAAAAAAA-1111-4222-8333-444444444444", "name": "Tino", "roles": ["owner", "approver", "ops"], "mail": "tino@example.com"}]'
     APP = "11111111-2222-3333-4444-555555555555"
@@ -1085,7 +1115,8 @@ class AiGateway(unittest.TestCase):
         mine = {"aigateway-subnet.parameters.json", "aigateway.parameters.json", "aigateway-policies.json"}
         self.assertTrue(mine <= set(files))
         self.assertEqual(set(files) - mine,
-                         {"environment.parameters.json", "logger.parameters.json", "kit.parameters.json", "recording.parameters.json", "foundry.parameters.json", "operator.parameters.json", "planted.parameters.json"})
+                         {"environment.parameters.json", "logger.parameters.json", "kit.parameters.json", "recording.parameters.json", "foundry.parameters.json", "operator.parameters.json", "planted.parameters.json",
+                          "cases.parameters.json"})
         self.assertEqual({key: value for key, value in outputs.items() if key.startswith("aigateway_")},
                          {"aigateway_name": outputs["aigateway_name"], "aigateway_subnet_name": "snet-aigw", "aigateway_subnet_prefix": "10.53.0.128/26",
                           "aigateway_aliases": "gpt-6-luna gpt-6.1-sol", "aigateway_files": "true"})

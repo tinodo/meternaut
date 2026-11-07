@@ -14,7 +14,7 @@ import urllib.error
 from unittest import mock
 from urllib.parse import parse_qs, urlsplit
 
-from support import LogCapture, PRODUCT_SUBSCRIPTION
+from support import LogCapture
 from cases import foundry as fo
 from cases import http
 from cases.foundry import AgentRun, AgentSpec, Foundry, FoundryError, FunctionTool
@@ -163,7 +163,7 @@ class Rig:
         self.clock, self.token, self.resources, self.sleeps = Clock(), token, [], []
         self.service = Service(self.clock)
         self.redact = redact or Redactor()
-        calls = allowed if allowed is not None else http.allowed_calls("example-apim.azure-api.net", f"{PRODUCT_SUBSCRIPTION}/listSecrets", ENDPOINT)
+        calls = allowed if allowed is not None else http.allowed_calls(ENDPOINT)
         self.client = Client(calls, self.redact, transport=self.service, sleep=self.sleeps.append, jitter=lambda: 0.5, monotonic=self.clock)
         self.service.client = self.client
         self.lookup = lookup or Lookup("10.1.2.3")
@@ -1242,7 +1242,7 @@ class Errors(unittest.TestCase):
         self.assertEqual(rig.service.calls, [])
 
     def test_a_client_without_the_calls_of_the_project_is_refused_by_its_list_and_says_which_call(self):
-        rig = Rig(allowed=http.allowed_calls("example-apim.azure-api.net", f"{PRODUCT_SUBSCRIPTION}/listSecrets"))
+        rig = Rig(allowed=http.allowed_calls())
         with self.assertRaises(FoundryError) as raised:
             rig.foundry.ensure_agent(spec())
         self.assertEqual(str(raised.exception), f"Foundry read agent failed: the app makes no GET call to {HOST}{PROJECT}/agents/{NAME}"[:150])
@@ -2040,38 +2040,47 @@ class HostKind(unittest.TestCase):
 class TheListOfCalls(unittest.TestCase):
     """http.allowed_calls with the endpoint of a project: what the client may call, and the calls that it may not."""
 
-    LIST = http.allowed_calls("example-apim.azure-api.net", f"{PRODUCT_SUBSCRIPTION}/listSecrets", ENDPOINT)
+    LIST = http.allowed_calls(ENDPOINT)
 
     def check(self, method, url):
         Client(self.LIST, Redactor()).check(method, url)
 
     def test_the_calls_of_the_client_are_allowed(self):
         for method, path in (("GET", f"/agents/{NAME}?api-version=v1"), ("POST", "/agents?api-version=v1"), ("POST", f"/agents/{NAME}/versions?api-version=v1"),
-                             ("POST", "/openai/v1/conversations"), ("POST", "/openai/v1/responses"), ("DELETE", "/openai/v1/conversations/conv_0001abc"),
+                             ("POST", "/openai/v1/conversations"), ("POST", "/openai/v1/responses"), ("POST", "/openai/v1/chat/completions"),
+                             ("DELETE", "/openai/v1/conversations/conv_0001abc"),
                              ("GET", f"/agents/{'a' * 63}"), ("DELETE", "/openai/v1/conversations/conv_" + "A_b-9" * 20)):
             self.check(method, f"{ENDPOINT}{path}")
+        self.check("POST", f"https://{HOST}/openai/v1/chat/completions")
 
     def test_without_the_endpoint_the_app_makes_no_call_to_foundry_and_the_other_calls_are_the_same(self):
-        plain = http.allowed_calls("example-apim.azure-api.net", f"{PRODUCT_SUBSCRIPTION}/listSecrets")
+        plain = http.allowed_calls()
         self.assertEqual(self.LIST[:len(plain)], plain)
-        self.assertEqual(len(self.LIST) - len(plain), 6)
+        self.assertEqual(len(self.LIST) - len(plain), 8)
         client = Client(plain, Redactor())
-        for method, path in (("GET", f"/agents/{NAME}"), ("POST", "/agents"), ("POST", "/openai/v1/responses"), ("DELETE", "/openai/v1/conversations/conv_1")):
+        for method, path in (("GET", f"/agents/{NAME}"), ("POST", "/agents"), ("POST", "/openai/v1/responses"), ("POST", "/openai/v1/chat/completions"),
+                             ("DELETE", "/openai/v1/conversations/conv_1")):
             with self.assertRaises(http.Refused):
                 client.check(method, f"{ENDPOINT}{path}")
-        self.assertEqual(http.allowed_calls("g.azure-api.net", "/k", None), http.allowed_calls("g.azure-api.net", "/k"))
+        with self.assertRaises(http.Refused):
+            client.check("POST", f"https://{HOST}/openai/v1/chat/completions")
+        self.assertEqual(http.allowed_calls(None), http.allowed_calls())
 
-    def test_the_added_calls_are_exactly_these_and_all_on_the_endpoint_of_the_project(self):
-        added = [(method, pattern.pattern) for method, pattern in self.LIST[len(self.LIST) - 6:]]
+    def test_the_added_calls_are_exactly_these_and_all_on_the_host_of_the_project(self):
+        added = [(method, pattern.pattern) for method, pattern in self.LIST[len(self.LIST) - 8:]]
         base = re.escape(ENDPOINT)
+        resource = re.escape(f"https://{HOST}")
         self.assertEqual(added, [("GET", base + f"/agents/{http.FOUNDRY_AGENT_NAME}"), ("POST", base + "/agents"), ("POST", base + f"/agents/{http.FOUNDRY_AGENT_NAME}/versions"),
-                                 ("POST", base + "/openai/v1/conversations"), ("POST", base + "/openai/v1/responses"),
+                                 ("POST", base + "/openai/v1/conversations"), ("POST", base + "/openai/v1/responses"), ("POST", base + "/openai/v1/chat/completions"),
+                                 ("POST", resource + "/openai/v1/chat/completions"),
                                  ("DELETE", base + f"/openai/v1/conversations/{http.FOUNDRY_CONVERSATION_ID}")])
         self.assertEqual({m for m, _ in added}, {"GET", "POST", "DELETE"})
+        self.assertEqual([m for m, p in added if "chat" in p], ["POST", "POST"], "a chat completion is a POST and nothing else")
 
     def test_another_host_another_account_another_project_and_another_scheme_are_refused(self):
-        paths = (f"/agents/{NAME}", "/agents", "/openai/v1/responses", "/openai/v1/conversations", "/openai/v1/conversations/conv_1")
-        methods = {f"/agents/{NAME}": "GET", "/agents": "POST", "/openai/v1/responses": "POST", "/openai/v1/conversations": "POST", "/openai/v1/conversations/conv_1": "DELETE"}
+        paths = (f"/agents/{NAME}", "/agents", "/openai/v1/responses", "/openai/v1/conversations", "/openai/v1/conversations/conv_1", "/openai/v1/chat/completions")
+        methods = {f"/agents/{NAME}": "GET", "/agents": "POST", "/openai/v1/responses": "POST", "/openai/v1/conversations": "POST", "/openai/v1/conversations/conv_1": "DELETE",
+                   "/openai/v1/chat/completions": "POST"}
         for other in (f"https://other-account.services.ai.azure.com{PROJECT}", f"https://{HOST}/api/projects/proj-example2", f"https://{HOST}/api/projects/proj-exampl",
                       f"https://{HOST}/api/projects/PROJ-EXAMPLE", f"https://{HOST}/api/projects/_project", f"https://{HOST.upper()}{PROJECT}", f"http://{HOST}{PROJECT}",
                       f"https://{HOST}.evil.example{PROJECT}", f"https://evil.example/{HOST}{PROJECT}", f"https://acct-example.openai.azure.com{PROJECT}",
@@ -2121,15 +2130,15 @@ class TheListOfCalls(unittest.TestCase):
                          f"https://{HOST}/api/projects/.p", f"https://{HOST}/api/projects/..p"):
             with self.subTest(endpoint=endpoint):
                 with self.assertRaises(ValueError):
-                    http.allowed_calls("g.azure-api.net", "/k", endpoint)
-        http.allowed_calls("g.azure-api.net", "/k", "https://a1.services.ai.azure.com/api/projects/_project")
-        http.allowed_calls("g.azure-api.net", "/k", "https://a1.services.ai.azure.com/api/projects/proj.v2")
+                    http.allowed_calls(endpoint)
+        http.allowed_calls("https://a1.services.ai.azure.com/api/projects/_project")
+        http.allowed_calls("https://a1.services.ai.azure.com/api/projects/proj.v2")
 
     def test_the_dot_of_a_project_name_is_a_dot_and_not_any_character_in_the_list_of_calls(self):
         dotted = f"https://{HOST}/api/projects/proj.v2"
-        client = Client(http.allowed_calls("g.azure-api.net", "/k", dotted), Redactor())
+        client = Client(http.allowed_calls(dotted), Redactor())
         for method, path in (("GET", f"/agents/{NAME}"), ("POST", "/agents"), ("POST", f"/agents/{NAME}/versions"), ("POST", "/openai/v1/conversations"),
-                             ("POST", "/openai/v1/responses"), ("DELETE", "/openai/v1/conversations/conv_1")):
+                             ("POST", "/openai/v1/responses"), ("POST", "/openai/v1/chat/completions"), ("DELETE", "/openai/v1/conversations/conv_1")):
             client.check(method, dotted + path)
             for other in ("projXv2", "proj-v2", "proj_v2", "proj.v3", "proj.v", "proj..v2", "proj.v2.x", "proj", "proj.v2/.."):
                 with self.subTest(method=method, path=path, other=other):

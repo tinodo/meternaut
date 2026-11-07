@@ -8,7 +8,7 @@ from cases.arm import CostLine, MetricPoint
 from cases.http import Client, HttpError, Refused, allowed_calls
 from cases.redact import Redactor
 from test_arm import arm_with
-from test_http import PRODUCT_SUBSCRIPTION, Script, ok
+from test_http import Script, ok
 
 RESOURCE = f"/subscriptions/{SUBSCRIPTION}/resourceGroups/rg-app/providers/Microsoft.Storage/storageAccounts/acct"
 CHILD = f"{RESOURCE}/blobServices/default"
@@ -234,7 +234,7 @@ class Metrics(unittest.TestCase):
 
 class TheCallsThatAreAllowed(unittest.TestCase):
     def client(self):
-        return Client(allowed_calls("example-apim.azure-api.net", f"{PRODUCT_SUBSCRIPTION}/listSecrets"), Redactor(), transport=Script(ok()), sleep=lambda s: None)
+        return Client(allowed_calls(), Redactor(), transport=Script(ok()), sleep=lambda s: None)
 
     def test_the_three_reads_are_allowed_as_gets_with_or_without_a_query(self):
         c = self.client()

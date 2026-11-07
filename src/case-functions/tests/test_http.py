@@ -6,16 +6,17 @@ import urllib.error
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import parse_qs
 
-from support import GATEWAY_GROUP, KEY, PRODUCT_SUBSCRIPTION, SUBSCRIPTION
+from support import KEY, SUBSCRIPTION
 from cases import http
 from cases.redact import Redactor
 
+ENDPOINT = "https://example-account.services.ai.azure.com/api/projects/meternaut"
 ARG = "https://management.azure.com/providers/Microsoft.ResourceGraph/resources?api-version=2022-10-01"
 COST = f"https://management.azure.com/subscriptions/{SUBSCRIPTION}/providers/Microsoft.CostManagement/query?api-version=2023-11-01"
 ADVISOR = f"https://management.azure.com/subscriptions/{SUBSCRIPTION}/providers/Microsoft.Advisor/recommendations?api-version=2023-01-01&$filter=Category%20eq%20%27Cost%27"
 LOCKS = f"https://management.azure.com/subscriptions/{SUBSCRIPTION}/providers/Microsoft.Authorization/locks?api-version=2016-09-01"
-SECRETS = f"https://management.azure.com{PRODUCT_SUBSCRIPTION}/listSecrets?api-version=2024-05-01"
-CHAT = "https://example-apim.azure-api.net/models/chat/completions"
+CHAT = f"{ENDPOINT}/openai/v1/chat/completions"
+RESOURCE_CHAT = "https://example-account.services.ai.azure.com/openai/v1/chat/completions"
 
 
 class Script:
@@ -35,7 +36,7 @@ class Script:
 def client(*answers, redact=None):
     sleeps = []
     script = Script(*answers)
-    allowed = http.allowed_calls("example-apim.azure-api.net", f"{PRODUCT_SUBSCRIPTION}/listSecrets")
+    allowed = http.allowed_calls(ENDPOINT)
     return http.Client(allowed, redact or Redactor(), transport=script, sleep=sleeps.append, jitter=lambda: 0.5), script, sleeps
 
 
@@ -46,27 +47,43 @@ def ok(document=None):
 class TheList(unittest.TestCase):
     def test_the_calls_of_the_app_are_allowed(self):
         c, script, _ = client(ok())
-        for method, url in (("POST", ARG), ("POST", COST), ("GET", ADVISOR), ("GET", LOCKS), ("POST", SECRETS), ("POST", CHAT)):
+        for method, url in (("POST", ARG), ("POST", COST), ("GET", ADVISOR), ("GET", LOCKS), ("POST", CHAT), ("POST", RESOURCE_CHAT)):
             c.request(method, url)
         self.assertEqual(len(script.calls), 6)
+
+    def test_the_watch_without_a_foundry_project_makes_the_reads_of_azure_and_nothing_else(self):
+        plain = http.allowed_calls()
+        self.assertEqual(len(plain), 7)
+        self.assertEqual(sorted(method for method, _ in plain), ["GET"] * 5 + ["POST"] * 2)
+        for _, pattern in plain:
+            self.assertTrue(pattern.pattern.startswith(re.escape("https://management.azure.com")), pattern.pattern)
+        c = http.Client(plain, Redactor(), transport=Script(ok()), sleep=lambda s: None)
+        for method, url in (("POST", CHAT), ("POST", RESOURCE_CHAT), ("POST", "https://management.azure.com/subscriptions/" + SUBSCRIPTION +
+                                                                        "/resourceGroups/rg/providers/Microsoft.ApiManagement/service/x/subscriptions/y/listSecrets")):
+            with self.assertRaises(http.Refused, msg=url):
+                c.request(method, url)
 
     def test_nothing_else_is_allowed(self):
         c, script, _ = client(ok())
         arm = "https://management.azure.com"
         refused = [
             ("PUT", f"{arm}/subscriptions/{SUBSCRIPTION}/resourceGroups/rg?api-version=2021-04-01"),
-            ("DELETE", f"{arm}{GATEWAY_GROUP}/subscriptions/meternaut-agents-sub-01?api-version=2024-05-01"),
+            ("DELETE", f"{arm}/subscriptions/{SUBSCRIPTION}/resourceGroups/rg/providers/Microsoft.Compute/disks/d?api-version=2024-03-02"),
             ("PATCH", f"{arm}/subscriptions/{SUBSCRIPTION}/providers/Microsoft.Advisor/recommendations"),
             ("POST", f"{arm}/subscriptions/{SUBSCRIPTION}/providers/Microsoft.Advisor/recommendations"),
             ("GET", ARG.split("?")[0]),
             ("POST", f"{arm}/subscriptions/{SUBSCRIPTION}/resourceGroups/rg/providers/Microsoft.Compute/virtualMachines/vm/deallocate"),
-            ("POST", f"{arm}{PRODUCT_SUBSCRIPTION}/regeneratePrimaryKey"),
-            ("POST", f"{arm}{GATEWAY_GROUP}/subscriptions/another/listSecrets"),
+            ("POST", f"{arm}/subscriptions/{SUBSCRIPTION}/resourceGroups/rg/providers/Microsoft.ApiManagement/service/x/subscriptions/y/listSecrets"),
             ("POST", f"{arm}/subscriptions/{SUBSCRIPTION}/providers/Microsoft.CostManagement/exports"),
             ("POST", "https://management.azure.com.evil.example/providers/Microsoft.ResourceGraph/resources"),
             ("POST", "http://management.azure.com/providers/Microsoft.ResourceGraph/resources"),
-            ("POST", "https://example-apim.azure-api.net/models/other"),
-            ("POST", "https://other-apim.azure-api.net/models/chat/completions"),
+            ("POST", f"{ENDPOINT}/openai/v1/other"),
+            ("POST", f"{ENDPOINT}/openai/v1/chat/completions/extra"),
+            ("GET", CHAT),
+            ("POST", "https://other-account.services.ai.azure.com/api/projects/meternaut/openai/v1/chat/completions"),
+            ("POST", "https://other-account.services.ai.azure.com/openai/v1/chat/completions"),
+            ("POST", "https://example-apim.azure-api.net/models/chat/completions"),
+            ("POST", "https://example-account.openai.azure.com/openai/v1/chat/completions"),
             ("GET", "https://graph.microsoft.com/v1.0/me"),
             ("POST", "https://login.microsoftonline.com/common/oauth2/token"),
         ]
@@ -209,7 +226,7 @@ def timed(*answers, now=0.0, deadline=None):
         clock["now"] += seconds
 
     script = Script(*answers)
-    allowed = http.allowed_calls("example-apim.azure-api.net", f"{PRODUCT_SUBSCRIPTION}/listSecrets")
+    allowed = http.allowed_calls(ENDPOINT)
     c = http.Client(allowed, Redactor(), transport=script, sleep=sleep, jitter=lambda: 0.5, monotonic=lambda: clock["now"])
     c.deadline = deadline
     return c, script, sleeps

@@ -12,8 +12,6 @@ from .http import FOUNDRY_ENDPOINT
 # the platform's token endpoint answers for when no client id is asked for.
 AZURE_CLIENT_ID = "AZURE_CLIENT_ID"
 SCOPE_SUBSCRIPTIONS = "SCOPE_SUBSCRIPTIONS"
-GATEWAY_URL = "GATEWAY_URL"
-GATEWAY_PRODUCT_SUBSCRIPTION_ID = "GATEWAY_PRODUCT_SUBSCRIPTION_ID"
 MODEL_DETECTIVE = "MODEL_DETECTIVE"
 MODEL_SKEPTIC = "MODEL_SKEPTIC"
 MAX_CASES_PER_RUN = "MAX_CASES_PER_RUN"
@@ -44,15 +42,13 @@ LIMIT_INVESTIGATE_CALLS = 40
 DEFAULT_INVESTIGATE_SECONDS = 420
 LIMIT_INVESTIGATE_SECONDS = 600
 
-REQUIRED = (SCOPE_SUBSCRIPTIONS, GATEWAY_URL, GATEWAY_PRODUCT_SUBSCRIPTION_ID, MODEL_DETECTIVE, MODEL_SKEPTIC, MAX_CASES_PER_RUN, EVENTHUB_CASES_CONTROL_NAME)
+REQUIRED = (SCOPE_SUBSCRIPTIONS, MODEL_DETECTIVE, MODEL_SKEPTIC, MAX_CASES_PER_RUN, EVENTHUB_CASES_CONTROL_NAME)
 OPTIONAL = {MAX_TOKENS_PER_RUN: str(LIMIT_TOKENS_PER_RUN), MAX_COMPLETION_TOKENS: str(LIMIT_COMPLETION_TOKENS), RUN_DEADLINE_SECONDS: str(LIMIT_DEADLINE_SECONDS),
             FOUNDRY_MODEL_INVESTIGATOR: DEFAULT_MODEL_INVESTIGATOR, FOUNDRY_MODEL_SKEPTIC: DEFAULT_MODEL_SKEPTIC,
             INVESTIGATE_MAX_CALLS: str(DEFAULT_INVESTIGATE_CALLS), INVESTIGATE_MAX_SECONDS: str(DEFAULT_INVESTIGATE_SECONDS)}
 
 GUID = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
-GATEWAY = re.compile(r"^https://([a-z0-9][a-z0-9-]{0,48}[a-z0-9])\.azure-api\.net/?$")
-PRODUCT_SUBSCRIPTION = re.compile(
-    r"^/subscriptions/[0-9a-fA-F-]{36}/resourceGroups/[A-Za-z0-9._()-]{1,90}/providers/Microsoft\.ApiManagement/service/[A-Za-z0-9-]{1,50}/subscriptions/[A-Za-z0-9_-]{1,80}$")
+# The name of a model deployment of the Foundry resource of the agents: the Detective and the Skeptic name theirs by it, and so do the agents.
 MODEL = re.compile(r"^[a-z0-9][a-z0-9.-]{1,63}$")
 # The name of a model deployment in a Foundry project.
 DEPLOYMENT = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
@@ -71,9 +67,6 @@ class ConfigError(Exception):
 class Settings:
     client_id: str  # empty: the system-assigned identity of the app
     subscriptions: tuple[str, ...]
-    gateway_url: str
-    gateway_host: str
-    product_subscription_id: str
     model_detective: str
     model_skeptic: str
     max_cases: int
@@ -146,11 +139,6 @@ def load(env: Mapping[str, str] | None = None) -> Settings:
     client_id = (env.get(AZURE_CLIENT_ID) or "").strip()
     if client_id and not GUID.match(client_id):
         problems.append(f"{AZURE_CLIENT_ID} is a client id")
-    gateway = GATEWAY.match(env.get(GATEWAY_URL, ""))
-    if env.get(GATEWAY_URL) and not gateway:
-        problems.append(f"{GATEWAY_URL} is https://<name>.azure-api.net")
-    if env.get(GATEWAY_PRODUCT_SUBSCRIPTION_ID) and not PRODUCT_SUBSCRIPTION.match(env[GATEWAY_PRODUCT_SUBSCRIPTION_ID]):
-        problems.append(f"{GATEWAY_PRODUCT_SUBSCRIPTION_ID} is the resource id of one subscription of the gateway")
     for name in (MODEL_DETECTIVE, MODEL_SKEPTIC):
         if env.get(name) and not MODEL.match(env[name]):
             problems.append(f"{name} is a model name")
@@ -161,15 +149,11 @@ def load(env: Mapping[str, str] | None = None) -> Settings:
     max_completion = _integer(env, MAX_COMPLETION_TOKENS, 100, LIMIT_COMPLETION_TOKENS, OPTIONAL[MAX_COMPLETION_TOKENS], problems)
     deadline = _integer(env, RUN_DEADLINE_SECONDS, 60, LIMIT_DEADLINE_SECONDS, OPTIONAL[RUN_DEADLINE_SECONDS], problems)
     investigation = _investigation(env, problems)
-    if problems or gateway is None:
+    if problems:
         raise ConfigError("; ".join(problems))
-    host = gateway.group(1)
     return Settings(
         client_id=client_id,
         subscriptions=subscriptions,
-        gateway_url=f"https://{host}.azure-api.net",
-        gateway_host=f"{host}.azure-api.net",
-        product_subscription_id=env[GATEWAY_PRODUCT_SUBSCRIPTION_ID],
         model_detective=env[MODEL_DETECTIVE],
         model_skeptic=env[MODEL_SKEPTIC],
         max_cases=max_cases,

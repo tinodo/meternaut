@@ -9,7 +9,7 @@ from cases.arm import Arm
 from cases.detectors import ADVISOR, DETECTORS, Context, Lead
 from cases.http import Client, allowed_calls
 from cases.redact import Redactor
-from test_http import PRODUCT_SUBSCRIPTION, Script, ok
+from test_http import Script, ok
 
 
 def lead(**changes) -> Lead:
@@ -121,7 +121,7 @@ class Advisor(unittest.TestCase):
 
 def reader(estate_answers):
     script = Script(*estate_answers)
-    client = Client(allowed_calls("example-apim.azure-api.net", f"{PRODUCT_SUBSCRIPTION}/listSecrets"), Redactor(), transport=script, sleep=lambda s: None, jitter=lambda: 0.5)
+    client = Client(allowed_calls(), Redactor(), transport=script, sleep=lambda s: None, jitter=lambda: 0.5)
     return Arm(client, lambda resource: TOKEN)
 
 
@@ -131,8 +131,7 @@ class Collect(unittest.TestCase):
         return FakeEstate()
 
     def collect(self, estate):
-        arm = Arm(Client(allowed_calls("example-apim.azure-api.net", f"{PRODUCT_SUBSCRIPTION}/listSecrets"), Redactor(), transport=estate, sleep=lambda s: None, jitter=lambda: 0.5),
-                  lambda r: TOKEN)
+        arm = Arm(Client(allowed_calls(), Redactor(), transport=estate, sleep=lambda s: None, jitter=lambda: 0.5), lambda r: TOKEN)
         notes: list[str] = []
         return detectors.collect(arm, SUBSCRIPTION, NOW, notes), notes
 

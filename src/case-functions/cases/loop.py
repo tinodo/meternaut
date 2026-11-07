@@ -14,7 +14,6 @@ from . import config as cfg
 from . import loop_config, runner, wiring
 from .arm import Arm
 from .events import History
-from .gateway import Gateway
 from .http import Client, allowed_calls, default_transport
 from .identity import Identity
 from .memory_store import parse, utc_now
@@ -51,14 +50,14 @@ def tick(env: Mapping[str, str] | None = None, *, transport=default_transport, s
         settings = loop_config.load(env)
         if settings is None:
             return None
-        watch = cfg.load(env)
+        cfg.load(env)  # the timer runs only while the settings of the app are valid
         options = {"sleep": sleep, **({"fetch": fetch} if fetch else {})}
         reader = Identity(env, **options)
         extras = wiring.build_extras(env, reader.token, redact, transport=transport, sleep=sleep, monotonic=monotonic, clock=clock)
         if extras is None:
             return None
         check_client = Client(read_calls(settings.change_subscription, settings.change_group), redact, transport=transport, sleep=sleep, monotonic=monotonic)
-        reader_client = Client(allowed_calls(watch.gateway_host, Gateway.key_path(watch)), redact, transport=transport, sleep=sleep, monotonic=monotonic)
+        reader_client = Client(allowed_calls(), redact, transport=transport, sleep=sleep, monotonic=monotonic)
         history = History(uuid.uuid4().hex, None, clock, redact)
         services = RunnerServices(extras.store, check_client, reader.token, wiring.approval_settings(settings), settings.change_subscription,
                                   arm=Arm(reader_client, reader.token), clock=clock, sleep=sleep, emit=history.emit)
