@@ -122,6 +122,18 @@ PLACEHOLDER = "00000000-0000-0000-0000-000000000000"
 PUBLIC_NETWORK_ACCESS = ("Enabled", "Disabled")
 USAGE_APP_PUBLIC_NETWORK_ACCESS = "Disabled"
 CASES_APP_PUBLIC_NETWORK_ACCESS = "Enabled"
+# The plan that the cases app, which serves the web page, runs on: "Flex" (Flex Consumption: it scales to zero and bills per execution, so an idle web page costs nothing; the app uses the function subnet
+# snet-func) or "Basic" (B1, always on, about 13 US dollars a month; the app uses its own subnet snet-cases). It is Flex since the owner ordered it on 2026-11-07, and Basic is the way back: the first cases ran on
+# Flex and moved to Basic on 2026-11-05 because the platform's front end held requests to the web page for 15 to 60 seconds, and whether that still happens is measured with the action page-latency
+# (docs/proposals/07-private-by-default.md, "The web page on Flex Consumption"). One value and a commit change it, and the action cases then removes the app of the other kind and its plan, and makes the new ones.
+CASES_APP_PLAN = "Flex"
+CASES_APP_PLANS = ("Flex", "Basic")
+# The plan of each kind, by its exact name (environment/cases/main.bicep makes them: a test holds the names together) and the tier that Azure reports for it. The action cases removes the other kind's app and plan
+# by these names only, and only while the plan is of that tier.
+CASES_PLAN_NAMES = {"Flex": "plan-meternaut-cases", "Basic": "plan-meternaut-cases-basic"}
+CASES_PLAN_TIERS = {"Flex": "FlexConsumption", "Basic": "Basic"}
+# The subnet that the app is integrated with, by kind: the function subnet that the model side made and that is delegated to Microsoft.App/environments (Flex), or the subnet delegated to Microsoft.Web/serverFarms (Basic).
+CASES_SUBNET_NAMES = {"Flex": "snet-func", "Basic": "snet-cases"}
 # What the Watch of the cases app reads (docs/proposals/02-first-cases.md). True: every subscription that the app's own system-assigned identity can read, which a person widens or narrows with
 # the read-only roles Reader and Cost Management Reader at a subscription or at the management group above it (the owner's order of 2026-11-07: watch the entire estate). Until those roles exist
 # above the pilot subscription the identity reads only that one, so the Watch simply reads that one. False: only the subscription of this estate (cases.parameters.json: scopeSubscriptions). The value
@@ -656,6 +668,8 @@ def build(env, models: list[dict], preview: bool = False, aigateway_policies: li
             raise Problem(f"{setting} (in tools/environment-params.py) is Enabled or Disabled, so that the template always writes the property")
     if not isinstance(AGENTS_VIA_AI_GATEWAY, bool):
         raise Problem("AGENTS_VIA_AI_GATEWAY (in tools/environment-params.py) is True or False")
+    if CASES_APP_PLAN not in CASES_APP_PLANS:
+        raise Problem(f"CASES_APP_PLAN (in tools/environment-params.py) is Flex or Basic, not {CASES_APP_PLAN!r}: Flex scales to zero, and Basic is the way back")
     if not isinstance(SCOPE_ALL_SUBSCRIPTIONS, bool):
         raise Problem("SCOPE_ALL_SUBSCRIPTIONS (in tools/environment-params.py) is True or False")
     gateway_host = ai_gateway_host(env, preview)
@@ -689,6 +703,7 @@ def build(env, models: list[dict], preview: bool = False, aigateway_policies: li
     name = account_name(subscription, group)
     names = recording_names(subscription, group)
     foundry = foundry_names(subscription, group)
+    other_cases_plan = next(kind for kind in CASES_APP_PLANS if kind != CASES_APP_PLAN)
     func_subnet = function_subnet(vnet, subnet)
     web = web_subnet(vnet, subnet, func_subnet)
     ops = ops_subnet(vnet, subnet, func_subnet, web)
@@ -746,6 +761,13 @@ def build(env, models: list[dict], preview: bool = False, aigateway_policies: li
         "console_host_set": "true" if console_host else "false",
         "door_in_operator": "true" if door_in_operator else "false",
         "cases_public_network_access": CASES_APP_PUBLIC_NETWORK_ACCESS,
+        "cases_app_plan": CASES_APP_PLAN,
+        "cases_plan_name": CASES_PLAN_NAMES[CASES_APP_PLAN],
+        "cases_plan_tier": CASES_PLAN_TIERS[CASES_APP_PLAN],
+        "cases_other_plan_name": CASES_PLAN_NAMES[other_cases_plan],
+        "cases_other_plan_tier": CASES_PLAN_TIERS[other_cases_plan],
+        "cases_subnet_name": CASES_SUBNET_NAMES[CASES_APP_PLAN],
+        "function_subnet_name": CASES_SUBNET_NAMES["Flex"],
         **names,
         **cases_names(subscription, group),
         **foundry,
@@ -787,6 +809,7 @@ def build(env, models: list[dict], preview: bool = False, aigateway_policies: li
             "functionAppName": outputs["cases_function_app_name"],
             "webSubnetPrefix": str(web),
             "webSubnetExists": web_subnet_exists(env),
+            "casesAppPlan": CASES_APP_PLAN,
             "scopeSubscriptions": subscription.lower(),
             "scopeAllSubscriptions": SCOPE_ALL_SUBSCRIPTIONS,
             "foundryProjectEndpoint": foundry["foundry_project_endpoint"] if foundry_exists else "",

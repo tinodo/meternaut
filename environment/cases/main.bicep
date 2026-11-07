@@ -96,7 +96,14 @@ param eventHubNamespaceName string
 @maxLength(60)
 param functionAppName string
 
-@description('Address range of the subnet that the app\'s Basic plan is integrated with, inside the virtual network and apart from the other two subnets, for example 10.53.0.224/27. It is delegated to Microsoft.Web/serverFarms and holds nothing else.')
+@description('Which plan the web page and the app run on: Flex (Flex Consumption, scales to zero, billed per execution: the app takes the function subnet snet-func that the model side made, which is delegated to Microsoft.App/environments) or Basic (B1, Linux, always on, about 13 US dollars a month, with the subnet snet-cases below: the way back). tools/environment-params.py sets it from the constant CASES_APP_PLAN. Moving the app between the two needs a new app: the action cases removes the app of the other kind and its plan first.')
+@allowed([
+  'Flex'
+  'Basic'
+])
+param casesAppPlan string = 'Flex'
+
+@description('Address range of the subnet that the app\'s Basic plan is integrated with, inside the virtual network and apart from the other two subnets, for example 10.53.0.224/27. It is delegated to Microsoft.Web/serverFarms and holds nothing else. Only a Basic app uses it: a Flex app uses snet-func.')
 param webSubnetPrefix string
 
 @description('True when the app\'s integration subnet is in Azure already. The template then leaves it alone: a template that makes the subnet again takes away the route table that the landing zone\'s network manager put on it, and the app on it loses its way to the landing zone\'s DNS. The deployment workflow reads this from Azure.')
@@ -186,8 +193,14 @@ var tags = {
 
 var virtualNetworkName = 'vnet-${workload}'
 var webSubnetName = 'snet-cases'
+var functionSubnetName = 'snet-func'
 var privateEndpointSubnetName = 'snet-pe'
 var controlHubName = 'cases-control'
+var deploymentContainerName = 'app-package-cases'
+
+// Flex: Flex Consumption, which scales to zero and bills per execution; the app uses snet-func, the subnet that the model side made for it. Basic: the B1 plan on snet-cases.
+var isFlex = casesAppPlan == 'Flex'
+var integrationSubnetName = isFlex ? functionSubnetName : webSubnetName
 
 // The app takes the three settings of the sign-in to Azure (SIGNIN_TENANT_ID, SIGNIN_CLIENT_ID and OVERRIDE_USE_MI_FIC_ASSERTION_CLIENTID) together or not at all, and
 // refuses to run the loop with a part of them. Until the console's app registration exists (consoleAppClientId is empty) nobody can sign in and nobody can approve a change,
@@ -214,7 +227,8 @@ resource privateEndpointSubnet 'Microsoft.Network/virtualNetworks/subnets@2025-0
 }
 
 // No rule of its own, like the other function subnet's: the default rules let the app reach the virtual network and the internet (the landing
-// zone's firewall decides there), and nothing is let in.
+// zone's firewall decides there), and nothing is let in. It belongs to the Basic plan's subnet below and is written whatever the plan is, so that
+// nothing changes for the way back.
 resource webNsg 'Microsoft.Network/networkSecurityGroups@2025-05-01' = {
   name: 'nsg-${workload}-web'
   location: location
@@ -227,8 +241,8 @@ resource webNsg 'Microsoft.Network/networkSecurityGroups@2025-05-01' = {
 // The same subnet is in environment/main.bicep, so that a later run of the model-side action does not take it away from the plan. Delegated to
 // Microsoft.Web/serverFarms, which is what a Basic plan's regional virtual network integration needs (the usage recording's subnet is delegated
 // to Microsoft.App/environments, for Flex Consumption, and a subnet has one delegation). It holds nothing else. It is made only while it is not
-// there: see webSubnetExists, and the header.
-resource webSubnet 'Microsoft.Network/virtualNetworks/subnets@2025-05-01' = if (!webSubnetExists) {
+// there: see webSubnetExists, and the header. A Flex app does not use it, and the template then leaves it as it is: it stays for the way back to Basic.
+resource webSubnet 'Microsoft.Network/virtualNetworks/subnets@2025-05-01' = if (!isFlex && !webSubnetExists) {
   parent: vnet
   name: webSubnetName
   properties: {
@@ -293,6 +307,17 @@ resource sharedHostContainers 'Microsoft.Storage/storageAccounts/blobServices/co
   name: name
 }]
 
+// A Flex Consumption app keeps its code package in a container of its own in the shared storage account, as the usage recording's app does in another one, and reads it with its
+// system-assigned identity. Only a Flex app has it: a Basic app runs from a package on its plan's own storage. The action cases removes the container, and the role on it, when the
+// app goes back to Basic.
+resource deploymentContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-05-01' = if (isFlex) {
+  parent: blobService
+  name: deploymentContainerName
+  properties: {
+    publicAccess: 'None'
+  }
+}
+
 // The hub for the control events of the check action: one event, sent by the Operator (environment/operator/main.bicep, which holds Azure Event Hubs Data Sender on this hub), starts one run now.
 resource controlHub 'Microsoft.EventHub/namespaces/eventhubs@2024-01-01' = {
   parent: eventHubs
@@ -350,6 +375,17 @@ resource functionOwnsHostContainers 'Microsoft.Authorization/roleAssignments@202
   }
 }]
 
+// The Flex app reads and replaces its own code package: Storage Blob Data Owner on its one container, and on no other container of its own.
+resource functionOwnsOwnPackage 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (isFlex) {
+  scope: deploymentContainer
+  name: guid(deploymentContainer.id, functionApp.id, storageBlobDataOwnerRoleId)
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', storageBlobDataOwnerRoleId)
+    principalId: functionApp.identity.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
 resource functionUsesQueues 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   scope: storage
   name: guid(storage.id, functionApp.id, storageQueueDataContributorRoleId)
@@ -380,14 +416,19 @@ resource functionPublishesTelemetry 'Microsoft.Authorization/roleAssignments@202
   }
 }
 
-// A Basic plan, Linux, one instance, always on: the console, the timers and the control hub's trigger run on it side by side. About 13 US dollars a month at the
-// price list of Sweden Central (0.018 US dollars an hour), whatever it does. It takes the integration subnet above; a plan is in the region of its subnet.
+// The plan is of the kind that casesAppPlan says. Flex: Flex Consumption (FC1), which scales to zero and bills for the memory of an instance while it executes and for the executions, after a free
+// monthly grant, so that an idle web page costs nothing; it is named plan-<workload>-cases. Basic: B1, Linux, one instance, always on: the console, the timers and the control hub's trigger run on
+// it side by side, about 13 US dollars a month at the price list of Sweden Central (0.018 US dollars an hour), whatever it does; it is named plan-<workload>-cases-basic. The two have different names,
+// so that the action cases removes the plan of the other kind by its exact name. A plan is in the region of its subnet.
 resource plan 'Microsoft.Web/serverfarms@2024-04-01' = {
-  name: 'plan-${workload}-cases-basic'
+  name: isFlex ? 'plan-${workload}-cases' : 'plan-${workload}-cases-basic'
   location: location
   tags: tags
-  kind: 'linux'
-  sku: {
+  kind: isFlex ? 'functionapp' : 'linux'
+  sku: isFlex ? {
+    name: 'FC1'
+    tier: 'FlexConsumption'
+  } : {
     name: 'B1'
     tier: 'Basic'
   }
@@ -398,8 +439,23 @@ resource plan 'Microsoft.Web/serverfarms@2024-04-01' = {
 
 var eventHubHost = replace(replace(eventHubs.properties.serviceBusEndpoint, 'https://', ''), ':443/', '')
 
-// No Azure Files content share, no storage connection string, no deployment password (the workflow pushes the code with its own identity's token to the app's
-// deployment endpoint, which keeps it on the plan's own storage and runs the app from that package).
+// Only a Basic app is given these: a Flex Consumption app refuses them, and takes its runtime and its package from functionAppConfig instead.
+var basicOnlyAppSettings = isFlex ? [] : [
+  { name: 'FUNCTIONS_EXTENSION_VERSION', value: '~4' }
+  { name: 'FUNCTIONS_WORKER_RUNTIME', value: 'python' }
+  { name: 'WEBSITE_RUN_FROM_PACKAGE', value: '1' }
+  // The host's start-up asks the DNS of the landing zone for the names of the storage account and the namespace, and each lookup of a subnet that cannot reach
+  // that DNS waits 30 seconds. The platform gives a container 230 seconds by default to answer, and then stops the whole site and starts it again; ten minutes let a slow start finish.
+  { name: 'WEBSITES_CONTAINER_START_TIME_LIMIT', value: '600' }
+  { name: 'SCM_DO_BUILD_DURING_DEPLOYMENT', value: 'false' }
+  { name: 'ENABLE_ORYX_BUILD', value: 'false' }
+]
+
+// No Azure Files content share, no storage connection string, no deployment password. Basic: the workflow pushes the code with its own identity's token to the app's deployment endpoint, which keeps it
+// on the plan's own storage and runs the app from that package. Flex: the code is a package in the container app-package-cases, which the app reads with its system-assigned identity, and which the
+// Operator replaces with `az functionapp deployment source config-zip` as it does for the usage recording's app. One instance at the most: a run is one function execution that waits for
+// models, a timer must not run twice at once, the control hub has one partition and one person uses the web page (the limit is per group of functions: with four, the group of the web page scaled out
+// to four instances for one request every four seconds, and every fourth request waited 40 to 46 seconds). No always-ready instance: the app scales to zero and bills nothing while it is idle.
 resource functionApp 'Microsoft.Web/sites@2024-04-01' = {
   name: functionAppName
   location: location
@@ -416,22 +472,33 @@ resource functionApp 'Microsoft.Web/sites@2024-04-01' = {
     httpsOnly: true
     publicNetworkAccess: casesAppPublicNetworkAccess
     clientAffinityEnabled: false
-    virtualNetworkSubnetId: resourceId('Microsoft.Network/virtualNetworks/subnets', virtualNetworkName, webSubnetName)
-    vnetRouteAllEnabled: false
+    virtualNetworkSubnetId: resourceId('Microsoft.Network/virtualNetworks/subnets', virtualNetworkName, integrationSubnetName)
+    vnetRouteAllEnabled: isFlex ? null : false
+    functionAppConfig: isFlex ? {
+      deployment: {
+        storage: {
+          type: 'blobContainer'
+          value: '${storage.properties.primaryEndpoints.blob}${deploymentContainerName}'
+          authentication: {
+            type: 'SystemAssignedIdentity'
+          }
+        }
+      }
+      scaleAndConcurrency: {
+        maximumInstanceCount: 1
+        instanceMemoryMB: 2048
+      }
+      runtime: {
+        name: 'python'
+        version: '3.13'
+      }
+    } : null
     siteConfig: {
-      linuxFxVersion: 'PYTHON|3.13'
-      alwaysOn: true
+      linuxFxVersion: isFlex ? null : 'PYTHON|3.13'
+      alwaysOn: isFlex ? null : true
       minTlsVersion: '1.2'
-      ftpsState: 'Disabled'
-      appSettings: [
-        { name: 'FUNCTIONS_EXTENSION_VERSION', value: '~4' }
-        { name: 'FUNCTIONS_WORKER_RUNTIME', value: 'python' }
-        { name: 'WEBSITE_RUN_FROM_PACKAGE', value: '1' }
-        // The host's start-up asks the DNS of the landing zone for the names of the storage account and the namespace, and each lookup of a subnet that cannot reach
-        // that DNS waits 30 seconds. The platform gives a container 230 seconds by default to answer, and then stops the whole site and starts it again; ten minutes let a slow start finish.
-        { name: 'WEBSITES_CONTAINER_START_TIME_LIMIT', value: '600' }
-        { name: 'SCM_DO_BUILD_DURING_DEPLOYMENT', value: 'false' }
-        { name: 'ENABLE_ORYX_BUILD', value: 'false' }
+      ftpsState: isFlex ? null : 'Disabled'
+      appSettings: concat(basicOnlyAppSettings, [
         // No client id in the connections and no AZURE_CLIENT_ID: a connection without one uses the app's system-assigned identity, which is the identity that the roles
         // above are for. The sign-in's identity (below) is the one user-assigned identity that the app has, and it is named by its own setting.
         { name: 'AzureWebJobsStorage__credential', value: 'managedidentity' }
@@ -475,11 +542,12 @@ resource functionApp 'Microsoft.Web/sites@2024-04-01' = {
         // The client id of the identity whose token is the client assertion: the platform's sign-in reads it, and so does the console when it redeems the code of the
         // Azure Resource Manager sign-in (the app registration's federated credential trusts that identity).
         { name: 'OVERRIDE_USE_MI_FIC_ASSERTION_CLIENTID', value: signInIsSetUp ? authIdentity.properties.clientId : '' }
-      ]
+      ])
     }
   }
   dependsOn: [
     webSubnet
+    deploymentContainer
     controlConsumerGroup
   ]
 }
@@ -494,7 +562,8 @@ resource noBasicAuthForDeployment 'Microsoft.Web/sites/basicPublishingCredential
   }
 }
 
-resource noBasicAuthForFtp 'Microsoft.Web/sites/basicPublishingCredentialsPolicies@2024-04-01' = {
+// A Flex Consumption app has no FTP endpoint, so only a Basic app has this policy.
+resource noBasicAuthForFtp 'Microsoft.Web/sites/basicPublishingCredentialsPolicies@2024-04-01' = if (!isFlex) {
   parent: functionApp
   name: 'ftp'
   properties: {
