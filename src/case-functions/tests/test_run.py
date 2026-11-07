@@ -3,7 +3,7 @@ import re
 import unittest
 from unittest import mock
 
-from support import (ENV, ENV_NO_PROJECT, FOUNDRY_ENDPOINT, KEY, NOW, RG, SUBSCRIPTION, TOKEN, FakeEstate, Ticker, detective_says, disk_row, model_reply, pe_row,
+from support import (ENV, ENV_NO_PROJECT, FOUNDRY_ENDPOINT, GATEWAY_HOST, KEY, NOW, RG, SUBSCRIPTION, TOKEN, FakeEstate, Ticker, detective_says, disk_row, model_reply, pe_row,
                      run_watch, skeptic_says)
 from test_investigate import FakeFoundry, FakeToolbox, answer, entry, finding, metrics, resource
 from test_run_loop import Moving, estate_with, loop_for
@@ -109,12 +109,13 @@ class AGoodRun(unittest.TestCase):
             self.assertIn("Authorization", call["headers"], call["url"])
             self.assertNotIn("api-key", call["headers"], call["url"])
             self.assertNotIn(TOKEN, call["url"])
-            self.assertIn(call["host"], ("management.azure.com", FOUNDRY_ENDPOINT.split("/")[2]), call["url"])
-        self.assertEqual({c["host"] for c in self.estate.chat_calls()}, {FOUNDRY_ENDPOINT.split("/")[2]}, "the models are called on the Foundry resource and nowhere else")
-        self.assertTrue(all(c["path"] == "/api/projects/meternaut/openai/v1/chat/completions" for c in self.estate.chat_calls()))
+            self.assertIn(call["host"], ("management.azure.com", GATEWAY_HOST), call["url"])
+        self.assertEqual({c["host"] for c in self.estate.chat_calls()}, {GATEWAY_HOST}, "the models are called on the AI Gateway and nowhere else")
+        self.assertTrue(all(c["path"] == "/default/models/openai/v1/chat/completions" and c["method"] == "POST" for c in self.estate.chat_calls()))
+        self.assertTrue(all(c["body"]["model"] in ("gpt-6-luna", "gpt-6.1-sol") for c in self.estate.chat_calls()), "the model of a call is the name of an alias of the gateway")
 
     def test_the_app_makes_only_the_calls_that_are_on_its_list_and_changes_nothing(self):
-        allowed = http.allowed_calls(FOUNDRY_ENDPOINT)
+        allowed = http.allowed_calls(FOUNDRY_ENDPOINT, GATEWAY_HOST)
         for call in self.estate.calls:
             bare = f"https://{call['host']}{call['path']}"
             self.assertTrue(any(m == call["method"] and p.fullmatch(bare) for m, p in allowed), f"{call['method']} {bare}")
@@ -196,7 +197,7 @@ class WhenTheModelServiceRefuses(unittest.TestCase):
         self.assertEqual(len(estate.chat_calls()), 3, "one call for each case, no retry")
         for result in of_type(events, "case.result"):
             self.assertEqual(result["status"], "error")
-            self.assertIn("the Foundry resource refused the model call", result["summary"])
+            self.assertIn("the AI Gateway refused the app's identity", result["summary"])
         self.assertNotIn(TOKEN, "\n".join(messages))
 
     def test_an_allowance_that_is_used_up_is_not_waited_for(self):
@@ -204,7 +205,7 @@ class WhenTheModelServiceRefuses(unittest.TestCase):
         estate.chat_replies = [(429, {"retry-after": "86400"}, {"statusCode": 429, "message": "token quota exceeded"})] * 3
         summary, events, _ = run_watch(estate)
         self.assertEqual((summary.errors, estate.sleeps, len(estate.chat_calls())), (3, [], 3))
-        self.assertTrue(all("the Foundry resource refused the model call" in r["summary"] for r in of_type(events, "case.result")))
+        self.assertTrue(all("the AI Gateway told the call to wait" in r["summary"] for r in of_type(events, "case.result")))
 
     def test_a_rate_limit_of_a_second_is_waited_for_and_the_run_goes_on(self):
         estate = estate_with_leads()
@@ -220,18 +221,21 @@ class WhenTheModelServiceRefuses(unittest.TestCase):
         self.assertEqual([e["type"] for e in events][:2], ["run.started", "lead.found"], "the run does not stop to read anything first")
         self.assertNotIn("run.failed", [e["type"] for e in events])
 
-    def test_a_run_without_the_address_of_the_foundry_project_is_not_aborted_and_each_case_ends_in_an_error_that_says_why(self):
+    def test_a_run_without_the_host_of_the_ai_gateway_does_not_start_and_the_history_says_why(self):
+        # Every model call goes through the AI Gateway: without its host the Watch has no route for the Detective and the Skeptic, so it does not read the estate to judge nothing.
         estate = estate_with_leads()
-        summary, events, messages = run_watch(estate, env=ENV_NO_PROJECT)
-        self.assertEqual((summary.ok, summary.leads, summary.cases, summary.errors, summary.proposed), (True, 4, 3, 3, 0))
-        self.assertNotIn("run.failed", [e["type"] for e in events])
-        self.assertEqual(events[-1]["type"], "run.finished")
-        for result in of_type(events, "case.result"):
-            self.assertEqual((result["status"], result["summary"]), ("error", "the Foundry project's address is not set"))
-        self.assertEqual(estate.chat_calls(), [], "there was nowhere to call")
-        self.assertTrue([c for c in estate.calls if "resourcegraph" in c["path"].lower()], "the estate was read as always")
-        failed = [s for s in of_type(events, "case.step") if not s["ok"]]
-        self.assertEqual([(s["step"], s["note"]) for s in failed], [("detective", "the Foundry project's address is not set")] * 3)
+        env = {k: v for k, v in ENV.items() if k != "AIGATEWAY_HOST"}
+        summary, events, messages = run_watch(estate, env=env)
+        self.assertFalse(summary.ok)
+        self.assertEqual([e["type"] for e in events], ["run.failed"])
+        self.assertIn("AIGATEWAY_HOST is not set", events[0]["reason"])
+        self.assertEqual(estate.calls, [], "nothing was called, and the host of the Foundry project is not what was missing")
+        for bad in ("https://" + GATEWAY_HOST, GATEWAY_HOST + "/default", "evil.example.com", f"{GATEWAY_HOST}.evil.example.com"):
+            estate = estate_with_leads()
+            summary, events, _ = run_watch(estate, env={**ENV, "AIGATEWAY_HOST": bad})
+            self.assertFalse(summary.ok, bad)
+            self.assertIn("AIGATEWAY_HOST is the host name of the AI Gateway", events[0]["reason"])
+            self.assertEqual(estate.calls, [], bad)
 
     def test_the_token_is_not_in_the_failing_runs_lines_even_when_the_service_echoes_it(self):
         estate = estate_with_leads()
@@ -241,18 +245,18 @@ class WhenTheModelServiceRefuses(unittest.TestCase):
         self.assertNotIn(TOKEN, "\n".join(messages))
         self.assertNotIn(TOKEN, json.dumps(events))
 
-    def test_a_route_that_the_service_does_not_serve_ends_the_case_in_words_that_say_which_route_in_the_first_200_characters(self):
+    def test_an_alias_that_the_gateway_does_not_know_ends_the_case_in_words_that_say_so_in_the_first_200_characters(self):
         estate = estate_with_leads()
         estate.chat_replies = [(404, {}, {"error": {"code": "404", "message": "Resource not found"}})] * 20
         summary, events, _ = run_watch(estate)
         self.assertEqual(summary.errors, 3)
         for result in of_type(events, "case.result"):
-            self.assertIn("no chat completions route took the call: POST /openai/v1/chat/completions, the project's route answered 404 and the resource's route answered 404", result["summary"])
+            self.assertIn("the AI Gateway knows no alias named gpt-6-luna", result["summary"])
         notes = [s["note"] for s in of_type(events, "case.step") if not s["ok"]]
         self.assertEqual(len(notes), 3)
         for note in notes:
             self.assertLessEqual(len(note), 200)
-            self.assertIn("answered 404 and the resource's route answered 404", note)
+            self.assertIn("the AI Gateway knows no alias named gpt-6-luna", note)
 
 
 class WhenTheEstateCannotBeRead(unittest.TestCase):
@@ -740,14 +744,14 @@ class WhenTheInvestigationDidNotRun(unittest.TestCase):
         self.assertEqual(self.notes(events), ["the investigation did not run: it is switched off"])
         self.assertEqual((foundry.specs, foundry.runs), ([], []))
 
-    def test_when_the_project_is_not_set_there_is_no_client_of_it_and_the_two_roles_have_nowhere_to_call(self):
+    def test_when_the_project_is_not_set_there_is_no_client_of_it_and_the_two_roles_still_judge_through_the_ai_gateway(self):
         estate = estate_with_leads()
         with mock.patch.object(run, "Foundry") as client:
             summary, events, _ = run_watch(estate, env=ENV_NO_PROJECT)
         client.assert_not_called()
         self.assertEqual(self.notes(events), ["the investigation did not run: it is switched off"])
-        self.assertEqual((summary.ok, summary.leads, summary.cases, summary.errors, summary.proposed), (True, 4, 3, 3, 0), "the run is not aborted: each case ends in an error")
-        self.assertEqual(estate.chat_calls(), [])
+        self.assertEqual((summary.ok, summary.leads, summary.cases, summary.errors, summary.proposed), (True, 4, 3, 0, 3), "the model calls do not need the project: they go through the gateway")
+        self.assertEqual({c["host"] for c in estate.chat_calls()}, {GATEWAY_HOST})
 
     def test_when_the_agents_cannot_be_made_ready_it_is_skipped(self):
         estate = estate_with_leads()

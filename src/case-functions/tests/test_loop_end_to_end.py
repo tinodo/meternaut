@@ -14,7 +14,7 @@ import unittest
 from unittest import mock
 from urllib.parse import parse_qs, quote, urlencode, urlsplit
 
-from support import ENV, NOW, RG, SUBSCRIPTION, FakeEstate, LogCapture, Ticker, disk_row
+from support import ENV, GATEWAY_HOST, NOW, RG, SUBSCRIPTION, FakeEstate, LogCapture, Ticker, disk_row
 
 from cases import console, loop, loop_config, run
 from cases.http import Client
@@ -488,7 +488,8 @@ class TheWholeLoop(Story):
         self.clock.advance(days=3)
         self.tick()
         hosts = {host for _, _, host, _, _ in self.world.calls}
-        self.assertEqual(hosts, {"management.azure.com", "stexample.table.core.windows.net", "example-account.services.ai.azure.com", "graph.microsoft.com", "login.microsoftonline.com"})
+        self.assertEqual(hosts, {"management.azure.com", "stexample.table.core.windows.net", GATEWAY_HOST, "graph.microsoft.com", "login.microsoftonline.com"},
+                         "the model calls go to the AI Gateway and to no other host")
         writes = [(phase, method, host) for phase, method, host, path, _ in self.world.calls if method in ("PUT", "DELETE", "PATCH") and host == "management.azure.com"]
         self.assertEqual(writes, [("approval", "DELETE", "management.azure.com")], "the one change was made during the approval, with the person's token")
 

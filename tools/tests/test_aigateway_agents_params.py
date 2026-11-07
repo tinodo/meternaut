@@ -57,12 +57,15 @@ PROJECT_PRINCIPAL = SETTINGS["FOUNDRY_PROJECT_PRINCIPAL_ID"]
 # gatewayPrincipalId (no role is made for a gateway identity any more), the four files logger, eventhub-loggers, kit and contract are not written at all, and the output lost the lines gateway_subscription,
 # gateway_resource_group, gateway_name, identity_name and principal_known. Every other file is what it was. Third change (the Watch reads every subscription that its identity can read, 2026-11-07):
 # cases.parameters.json gained scopeAllSubscriptions (true); every other file and the output are what they were. Fourth change (the web page can be closed with no host name on a gateway, 2026-11-07):
-# the output gained one line, door_in_operator (false for these inputs, which carry a host name: it is true only for a closed cases app with none); every file is what it was.
+# the output gained one line, door_in_operator (false for these inputs, which carry a host name: it is true only for a closed cases app with none); every file is what it was. Fifth change (every model
+# call goes through the AI Gateway, 2026-11-07): cases.parameters.json gained aiGatewayHost (the placeholder, because these inputs name no gateway) and aigateway.parameters.json gained
+# casesPrincipalId (the object id of the cases app's identity, CASES_SYSTEM_PRINCIPAL_ID, which these inputs carry: the gateway gives it AI Gateway Models User); every other file and the output
+# are what they were.
 GOLDEN = {
     "aigateway-policies.json": "e6d99d1633ab16afc3410e50dbdcb7e290f0e125f4283b4b19f63a8eebb8395c",
     "aigateway-subnet.parameters.json": "a2a16b02fd7a1d54d8949ad89796d4ea89d6bf1907db1f5b621205699a5a0196",
-    "aigateway.parameters.json": "77593485df872804654eae54c91724ac5fd0a50b4afd33a625bf59d3a542d0a5",
-    "cases.parameters.json": "de1effc78bc153e5e7ce88d242b9d8904700ecf2a656bd0d7df7b370454a6cdf",
+    "aigateway.parameters.json": "936fc16a2a06d5aa3a029f319eab1dcd23c547800eaee01e5183539e746393d2",
+    "cases.parameters.json": "e19ac40dbc0cebde2ea429235be78759fe1a550d69c2002c1b50c960b1a3792e",
     "environment.parameters.json": "f96d09a1eab2372a668e50d5a1ecee07faf2d7b70cacd3986ac4868b45379bed",
     "foundry.parameters.json": "ed5e8a14727de3595a0ab4bc5b0fcc4979c7d35b088536fce62f80651e59e99d",
     "operator.parameters.json": "78972401f11e209ef6bbdbba2c7cab95921b372e1dc570765d953aa01b2b2f90",
@@ -118,14 +121,20 @@ class TheSwitchIsOffAndNothingDiffers(unittest.TestCase):
         self.assertEqual({name: hashlib.sha256(content).hexdigest() for name, content in files.items()}, GOLDEN)
         self.assertEqual(hashlib.sha256(out.encode("utf-8")).hexdigest(), GOLDEN_OUTPUT, "the key=value lines that the workflow reads are the same too")
 
-    def test_what_the_switch_is_for_is_not_even_read_while_it_is_off(self):
-        # A host name, a bad one, the name of the action: none of it changes a byte or is refused while the switch is False.
-        for extra in ({"AIGATEWAY_HOST": HOST}, {"AIGATEWAY_HOST": "https://evil.example/x"}, {"ACTION": "foundry"}, {"ACTION": "foundry", "AIGATEWAY_HOST": ""}, {"ACTION": "aigateway"}):
+    def test_the_host_of_the_gateway_goes_into_the_cases_file_alone_while_it_is_off_and_nothing_else_differs(self):
+        # The cases file always names the AI Gateway (every model call goes through it), and the host is checked whatever the action is. The Foundry file, the other files and the output are
+        # what they were: with the switch off nothing asks for the project's connection, and the host is never printed.
+        for extra in ({"AIGATEWAY_HOST": HOST}, {"ACTION": "foundry"}, {"ACTION": "foundry", "AIGATEWAY_HOST": ""}, {"ACTION": "aigateway"}, {"ACTION": "cases", "AIGATEWAY_HOST": HOST}):
             with self.subTest(extra=extra):
                 code, out, err, files = build({**SETTINGS, **extra})
                 self.assertEqual((code, err), (0, ""))
-                self.assertEqual({name: hashlib.sha256(content).hexdigest() for name, content in files.items()}, GOLDEN)
+                self.assertEqual({name: hashlib.sha256(content).hexdigest() for name, content in files.items() if name != "cases.parameters.json"},
+                                 {name: digest for name, digest in GOLDEN.items() if name != "cases.parameters.json"})
                 self.assertEqual(hashlib.sha256(out.encode("utf-8")).hexdigest(), GOLDEN_OUTPUT)
+                self.assertEqual(values(files, "cases.parameters.json")["aiGatewayHost"], extra.get("AIGATEWAY_HOST") or ep.PLACEHOLDER_AIGATEWAY_HOST)
+        code, out, err, files = build({**SETTINGS, "AIGATEWAY_HOST": "https://evil.example/x"})
+        self.assertEqual((code, out, files), (2, "", {}), "a host that is set is checked while the switch is off too: the cases file carries it")
+        self.assertNotIn("evil", err)
         without = {key: value for key, value in SETTINGS.items() if key != "FOUNDRY_PROJECT_PRINCIPAL_ID"}
         code, _, err, files = build({**without, "ACTION": "aigateway"})
         self.assertEqual((code, err), (0, ""), "no identity of the project is asked for while the switch is off")
@@ -179,8 +188,9 @@ class TheSwitchIsOn(unittest.TestCase):
         self.assertEqual((code, err), (0, ""))
         cases = values(files, "cases.parameters.json")
         self.assertEqual((cases["foundryModelInvestigator"], cases["foundryModelSkeptic"]), ("aigateway/gpt-6.1-sol", "aigateway/gpt-6-luna"))
+        self.assertEqual(cases["aiGatewayHost"], HOST, "the same host serves the judges and, through the connection, the agents")
         plain = values(build(SETTINGS)[3], "cases.parameters.json")
-        self.assertEqual({k: v for k, v in cases.items() if not k.startswith("foundryModel")}, plain)
+        self.assertEqual({k: v for k, v in cases.items() if not k.startswith("foundryModel") and k != "aiGatewayHost"}, {k: v for k, v in plain.items() if k != "aiGatewayHost"})
         self.assertNotEqual(cases["foundryModelInvestigator"].lower(), cases["foundryModelSkeptic"].lower(), "the Skeptic is another model than the Investigator")
         self.assertNotIn("modelDetective", cases, "the older Detective and the Skeptic call the deployments of the project directly, with the template's default names")
 
@@ -228,7 +238,7 @@ class TheSwitchIsOn(unittest.TestCase):
         self.assertEqual(values(files, "aigateway.parameters.json")["foundryProjectPrincipalId"], PROJECT_PRINCIPAL.lower(), "the template gives it AI Gateway Models User on the gateway")
 
     def test_a_preview_and_every_action_that_needs_neither_go_on_without_them(self):
-        for action, preview in (("foundry", True), ("aigateway", True), ("what-if", False), ("cases", False), ("recording", False), ("operator", False), ("model-side", False), ("", False)):
+        for action, preview in (("foundry", True), ("aigateway", True), ("cases", True), ("what-if", False), ("recording", False), ("operator", False), ("model-side", False), ("", False)):
             with self.subTest(action=action, preview=preview):
                 env = {**SETTINGS, "ACTION": action}
                 env.pop("FOUNDRY_PROJECT_PRINCIPAL_ID")
@@ -236,7 +246,15 @@ class TheSwitchIsOn(unittest.TestCase):
                 self.assertEqual((code, err), (0, ""))
                 self.assertFalse({"aiGatewayHost", "aiGatewayModels"} & set(values(files, "foundry.parameters.json")), "no host, so no connection is asked for")
                 self.assertEqual(values(files, "cases.parameters.json")["foundryModelInvestigator"], "aigateway/gpt-6.1-sol")
+                self.assertEqual(values(files, "cases.parameters.json")["aiGatewayHost"], ep.PLACEHOLDER_AIGATEWAY_HOST, "the judges' host is a placeholder where the gateway is not named")
                 self.assertEqual(outputs(out)["agents_via_ai_gateway"], "true", "the workflow reads that the switch is on from the first, preview, run")
+
+    def test_the_action_cases_is_refused_without_the_gateway_whether_the_switch_is_on_or_off(self):
+        for switch in (False, True):
+            code, out, err, files = build({**{k: v for k, v in SETTINGS.items() if k != "FOUNDRY_PROJECT_PRINCIPAL_ID"}, "ACTION": "cases"}, switch=switch)
+            self.assertEqual((code, out, files), (2, "", {}), switch)
+            self.assertIn("the AI Gateway cannot be named: AIGATEWAY_HOST", err)
+            self.assertIn("Run the action aigateway first", err)
 
     def test_an_object_id_that_is_not_one_is_still_refused_and_never_echoed(self):
         code, out, err, files = self.on(ACTION="aigateway", FOUNDRY_PROJECT_PRINCIPAL_ID="not-a-guid-secret")

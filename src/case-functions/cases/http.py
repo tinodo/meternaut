@@ -73,6 +73,8 @@ def foundry_calls(endpoint: str) -> tuple[tuple[str, "re.Pattern[str]"], ...]:
     """The calls to one Foundry project. They make and read Meternaut's own agents there and make, use and delete its own conversations, and nothing else: no other host, no other
     project, no other method, no DELETE of an agent, and no chat completion, because a model is never called direct: its calls go through the AI Gateway (ai_gateway_calls). The
     patterns are exact (no case folding) and nothing may follow the names."""
+    if not FOUNDRY_ENDPOINT.fullmatch(endpoint):
+        raise ValueError("the endpoint of the Foundry project is not https://<account>.services.ai.azure.com/api/projects/<project>")
     base = re.escape(endpoint)
     return (
         ("GET", re.compile(base + rf"/agents/{FOUNDRY_AGENT_NAME}")),

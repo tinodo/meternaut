@@ -2,7 +2,7 @@ import dataclasses
 import re
 import unittest
 
-from support import ENV, ENV_NO_PROJECT, FOUNDRY_ENDPOINT, REPO_ROOT, SUBSCRIPTION
+from support import ENV, ENV_NO_PROJECT, FOUNDRY_ENDPOINT, GATEWAY_HOST, REPO_ROOT, SUBSCRIPTION
 from cases import config
 
 
@@ -10,16 +10,19 @@ class Load(unittest.TestCase):
     def test_the_settings_of_the_template_are_read(self):
         settings = config.load(ENV)
         self.assertEqual(settings.subscriptions, (SUBSCRIPTION,))
-        self.assertEqual(settings.foundry_endpoint, FOUNDRY_ENDPOINT, "the two older roles call their models on the Foundry project of the agents")
+        self.assertEqual(settings.foundry_endpoint, FOUNDRY_ENDPOINT, "the project of the agents: the investigation's agents and conversations are there")
+        self.assertEqual(settings.ai_gateway_host, GATEWAY_HOST, "every model call of the Detective and the Skeptic goes to the AI Gateway")
         self.assertEqual((settings.model_detective, settings.model_skeptic), ("gpt-6-luna", "gpt-6.1-sol"))
         self.assertEqual((settings.max_cases, settings.max_tokens_per_run, settings.max_completion_tokens, settings.deadline_seconds), (3, 40000, 2000, 900))
 
-    def test_the_app_reads_no_setting_about_a_gateway_or_a_key_and_ignores_one_that_an_older_deploy_left(self):
+    def test_the_app_reads_the_host_of_the_ai_gateway_and_no_setting_of_api_management_or_a_key_and_ignores_one_that_an_older_deploy_left(self):
         for name in ("GATEWAY_URL", "GATEWAY_PRODUCT_SUBSCRIPTION_ID", "GATEWAY", "PRODUCT_SUBSCRIPTION"):
             self.assertFalse(hasattr(config, name), name)
-        for name in ("gateway_url", "gateway_host", "product_subscription_id"):
-            self.assertNotIn(name, {f.name for f in dataclasses.fields(config.Settings)})
-        self.assertFalse([name for name in config.REQUIRED if "GATEWAY" in name])
+        fields = {f.name for f in dataclasses.fields(config.Settings)}
+        for name in ("gateway_url", "gateway_host", "product_subscription_id", "api_key", "key"):
+            self.assertNotIn(name, fields)
+        self.assertIn("ai_gateway_host", fields)
+        self.assertEqual([name for name in config.REQUIRED if "GATEWAY" in name], ["AIGATEWAY_HOST"], "the one setting about a gateway is the AI Gateway's host")
         left_over = {**ENV, "GATEWAY_URL": "https://example-apim.azure-api.net", "GATEWAY_PRODUCT_SUBSCRIPTION_ID": "/subscriptions/x"}
         self.assertEqual(config.load(left_over), config.load(ENV), "a setting that nothing reads is not an error")
 
@@ -43,10 +46,11 @@ class Load(unittest.TestCase):
         for name in ("SCOPE_SUBSCRIPTIONS", "MODEL_DETECTIVE", "MAX_CASES_PER_RUN", "AZURE_CLIENT_ID"):
             self.assertIn(name, text)
 
-    def test_without_the_address_of_the_foundry_project_the_app_still_starts_and_the_two_roles_have_nowhere_to_call(self):
+    def test_without_the_address_of_the_foundry_project_the_app_still_starts_and_the_two_roles_still_judge_through_the_ai_gateway(self):
         settings = config.load(ENV_NO_PROJECT)
         self.assertIsNone(settings.foundry_endpoint)
         self.assertFalse(settings.investigate)
+        self.assertEqual(settings.ai_gateway_host, GATEWAY_HOST)
 
     def test_limits_are_bounded(self):
         for name, value in (("MAX_CASES_PER_RUN", "0"), ("MAX_CASES_PER_RUN", "11"), ("MAX_TOKENS_PER_RUN", "10"), ("MAX_TOKENS_PER_RUN", "10000000"),
@@ -79,9 +83,9 @@ class ClientId(unittest.TestCase):
     CLIENT = ENV["AZURE_CLIENT_ID"]
     WITHOUT = {key: value for key, value in ENV.items() if key != "AZURE_CLIENT_ID"}
 
-    def test_the_client_id_is_not_a_required_setting_and_the_other_four_are(self):
+    def test_the_client_id_is_not_a_required_setting_and_the_other_five_are(self):
         self.assertNotIn("AZURE_CLIENT_ID", config.REQUIRED)
-        self.assertEqual(config.REQUIRED, ("SCOPE_SUBSCRIPTIONS", "MODEL_DETECTIVE", "MODEL_SKEPTIC", "MAX_CASES_PER_RUN", "EVENTHUB_CASES_CONTROL_NAME"))
+        self.assertEqual(config.REQUIRED, ("SCOPE_SUBSCRIPTIONS", "MODEL_DETECTIVE", "MODEL_SKEPTIC", "AIGATEWAY_HOST", "MAX_CASES_PER_RUN", "EVENTHUB_CASES_CONTROL_NAME"))
         self.assertEqual(config.AZURE_CLIENT_ID, "AZURE_CLIENT_ID", "the name stays: the app reads it when it is set")
 
     def test_without_a_client_id_the_app_runs_as_its_system_assigned_identity(self):
@@ -292,7 +296,7 @@ class ScopeSwitch(unittest.TestCase):
             self.assertIn("SCOPE_SUBSCRIPTIONS is a comma separated list of subscription ids", str(raised.exception))
 
     def test_the_other_settings_are_still_required_with_the_switch_on(self):
-        for name in ("MODEL_DETECTIVE", "MODEL_SKEPTIC", "MAX_CASES_PER_RUN", "EVENTHUB_CASES_CONTROL_NAME"):
+        for name in ("MODEL_DETECTIVE", "MODEL_SKEPTIC", "AIGATEWAY_HOST", "MAX_CASES_PER_RUN", "EVENTHUB_CASES_CONTROL_NAME"):
             env = {**self.WITHOUT_LIST, "SCOPE_ALL_SUBSCRIPTIONS": "true"}
             del env[name]
             with self.assertRaises(config.ConfigError, msg=name) as raised:
@@ -308,7 +312,45 @@ class ScopeSwitch(unittest.TestCase):
         self.assertLessEqual(settings.investigate_max_calls, config.LIMIT_INVESTIGATE_CALLS)
 
 
+class TheGateway(unittest.TestCase):
+    """AIGATEWAY_HOST: the host of the AI Gateway, the one address of every model call (AGENTS.md rule 15 (c)). The Watch does not start without it."""
+
+    def test_the_host_is_required_and_the_name_of_the_setting_is_the_one_of_the_template(self):
+        self.assertEqual(config.AIGATEWAY_HOST, "AIGATEWAY_HOST")
+        self.assertIn("AIGATEWAY_HOST", config.REQUIRED)
+        self.assertNotIn("AIGATEWAY_HOST", config.OPTIONAL, "no default: the app never guesses a host that a token is sent to")
+        for env in ({k: v for k, v in ENV.items() if k != "AIGATEWAY_HOST"}, {**ENV, "AIGATEWAY_HOST": ""}):
+            with self.assertRaises(config.ConfigError) as raised:
+                config.load(env)
+            self.assertEqual(str(raised.exception), "AIGATEWAY_HOST is not set")
+
+    def test_the_host_is_trimmed_and_lower_cased(self):
+        for value in (GATEWAY_HOST, f"  {GATEWAY_HOST.upper()} ", f"{GATEWAY_HOST}\n"):
+            self.assertEqual(config.load({**ENV, "AIGATEWAY_HOST": value}).ai_gateway_host, GATEWAY_HOST)
+
+    def test_a_host_that_is_not_under_the_domain_of_the_service_is_refused_because_a_token_goes_to_it(self):
+        for bad in ("evil.example.com", f"{GATEWAY_HOST}.evil.example.com", f"https://{GATEWAY_HOST}", f"{GATEWAY_HOST}/default", f"{GATEWAY_HOST}:443", f"user@{GATEWAY_HOST}",
+                    ".ai.gateway.azure.com", "ai.gateway.azure.com", f"a b.{GATEWAY_HOST}", "x" * 250 + ".ai.gateway.azure.com", "-x.ai.gateway.azure.com", "x_y.ai.gateway.azure.com",
+                    "example.azure-api.net", "example.services.ai.azure.com", "   "):
+            with self.subTest(bad=bad[:40]):
+                with self.assertRaises(config.ConfigError) as raised:
+                    config.load({**ENV, "AIGATEWAY_HOST": bad})
+                self.assertIn("AIGATEWAY_HOST is", str(raised.exception))
+                for echoed in ("evil", "user@", "https://", "example.azure-api.net", "example.services", "xxxxxxxx"):
+                    self.assertNotIn(echoed, str(raised.exception), "the value is not echoed")
+
+    def test_a_host_that_is_wrong_is_named_with_the_other_problems_and_never_kept(self):
+        with self.assertRaises(config.ConfigError) as raised:
+            config.load({**ENV, "AIGATEWAY_HOST": "evil.example.com", "MAX_CASES_PER_RUN": "many"})
+        self.assertEqual(str(raised.exception).split("; "), ["AIGATEWAY_HOST is the host name of the AI Gateway, under .ai.gateway.azure.com, without a scheme, a port or a path",
+                                                              "MAX_CASES_PER_RUN is not a whole number"])
+
+
 class TemplateAndCode(unittest.TestCase):
+    def test_the_template_asks_for_the_host_of_the_gateway_with_no_default_and_gives_it_to_the_app(self):
+        template = (REPO_ROOT / "environment" / "cases" / "main.bicep").read_text(encoding="utf-8")
+        self.assertRegex(template, r"@minLength\(22\)\s*\n@maxLength\(253\)\s*\nparam aiGatewayHost string\n", "a required string with the bounds of a host name, and no default")
+        self.assertIn("{ name: 'AIGATEWAY_HOST', value: aiGatewayHost }", template)
     def test_the_template_asks_for_the_switch_as_a_bool_that_is_off_unless_the_parameter_files_say_so(self):
         template = (REPO_ROOT / "environment" / "cases" / "main.bicep").read_text(encoding="utf-8")
         self.assertIn("\nparam scopeAllSubscriptions bool = false\n", template)

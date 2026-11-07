@@ -467,11 +467,61 @@ class FirstCases(unittest.TestCase):
         files, lines = self.build()
         cases = values(files["cases.parameters.json"])
         self.assertEqual(cases["scopeSubscriptions"], SETTINGS["ENV_SUBSCRIPTION_ID"])
-        self.assertFalse([name for name in cases if "gateway" in name.lower() or "product" in name.lower() or "contract" in name.lower()], "the app reads no key, so the file names no gateway")
+        self.assertEqual([name for name in cases if "gateway" in name.lower() or "product" in name.lower() or "contract" in name.lower()], ["aiGatewayHost"],
+                         "the app reads no key, so the file names no gateway of API Management: the one gateway that it names is the AI Gateway's host")
         self.assertNotIn("gatewayUrl", cases)
         self.assertNotIn("gatewayProductSubscriptionId", cases)
         self.assertNotIn("gateway_url", lines, "no step of the workflow knocks at the gateway's address any more")
         self.assertNotIn("azure-api.net", json.dumps(files["cases.parameters.json"]))
+
+    def test_the_cases_file_names_the_ai_gateway_that_every_model_call_goes_through(self):
+        # With the host that the workflow read from the service, the file carries it; in a preview and a what-if, where the gateway may not be in Azure yet, a placeholder that is no gateway.
+        host = "aigw-meternaut-0123abcd.swedencentral-01.ai.gateway.azure.com"
+        for extra in ((), ("--preview",)):
+            code, out, err, files = run({**SETTINGS, "AIGATEWAY_HOST": host, "ACTION": "cases"}, *extra)
+            self.assertEqual((code, err), (0, ""))
+            self.assertEqual(values(files["cases.parameters.json"])["aiGatewayHost"], host, extra)
+            self.assertNotIn(host, out, "the host name is not printed")
+        for action, extra in (("", ()), ("what-if", ()), ("cases", ("--preview",)), ("foundry", ()), ("recording", ()), ("aigateway", ())):
+            code, out, err, files = run({**SETTINGS, "ACTION": action}, *extra)
+            self.assertEqual((code, err), (0, ""), action)
+            self.assertEqual(values(files["cases.parameters.json"])["aiGatewayHost"], ep.PLACEHOLDER_AIGATEWAY_HOST, f"{action!r}: the placeholder, because the gateway is not named")
+        self.assertRegex(ep.PLACEHOLDER_AIGATEWAY_HOST, ep.AIGATEWAY_HOST.pattern, "the placeholder is a valid host name, so that the file fits the template's checks")
+        self.assertIn("placeholder", ep.PLACEHOLDER_AIGATEWAY_HOST)
+        declared = bicep_params(self.CASES)
+        self.assertEqual(declared["aiGatewayHost"], ("string", False), "required by the template: no default, so that no file can leave it out")
+
+    def test_the_action_cases_is_refused_without_the_host_of_the_gateway_and_says_what_to_do(self):
+        for missing in (None, "", "   "):
+            env = {**SETTINGS, "ACTION": "cases"}
+            if missing is not None:
+                env["AIGATEWAY_HOST"] = missing
+            code, out, err, files = run(env)
+            self.assertEqual((code, out, files), (2, "", {}), repr(missing))
+            self.assertIn("the AI Gateway cannot be named: AIGATEWAY_HOST", err)
+            self.assertIn("every model call of the cases app goes through the gateway", err)
+            self.assertIn("Run the action aigateway first", err)
+
+    def test_a_host_that_is_set_is_checked_whatever_the_action_is_and_is_never_echoed(self):
+        host = "aigw-meternaut-0123abcd.swedencentral-01.ai.gateway.azure.com"
+        for action in ("cases", "what-if", "foundry", "aigateway", ""):
+            for bad in ("evil.example.com", f"{host}.evil.example.com", f"https://{host}", f"{host}/default", f"{host}:443", ".ai.gateway.azure.com", "x_y.ai.gateway.azure.com"):
+                with self.subTest(action=action, bad=bad[:30]):
+                    code, out, err, files = run({**SETTINGS, "ACTION": action, "AIGATEWAY_HOST": bad})
+                    self.assertEqual((code, out, files), (2, "", {}))
+                    self.assertIn("AIGATEWAY_HOST is the host name that the service reports for the AI Gateway, under .ai.gateway.azure.com", err)
+                    self.assertNotIn("evil", err)
+        code, _, err, files = run({**SETTINGS, "ACTION": "cases", "AIGATEWAY_HOST": f"  {host.upper()} "})
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(values(files["cases.parameters.json"])["aiGatewayHost"], host, "trimmed and in lower case")
+
+    def test_the_host_of_the_gateway_reaches_the_cases_file_alone_while_the_agents_switch_is_off(self):
+        host = "aigw-meternaut-0123abcd.swedencentral-01.ai.gateway.azure.com"
+        files, _ = self.build(AIGATEWAY_HOST=host, ACTION="foundry")
+        self.assertFalse({"aiGatewayHost", "aiGatewayModels"} & set(values(files["foundry.parameters.json"])), "no connection of the Foundry project to the gateway while the switch is off")
+        for name, document in files.items():
+            if name != "cases.parameters.json":
+                self.assertNotIn(host, json.dumps(document), name)
 
     def test_the_two_older_roles_are_given_two_different_deployments_of_the_agents_resource_by_the_defaults_of_the_template(self):
         # The Detective and the Skeptic call the model deployments of the agents' own Foundry resource (environment/foundry/main.bicep deploys environment/models.json), so the names that the
@@ -857,7 +907,7 @@ class AiGateway(unittest.TestCase):
             for setting, wrapped in given.items():
                 self.assertIsInstance(wrapped["value"], types[declared[setting][0]], (name, setting))
         gateway = values(files["aigateway.parameters.json"])
-        self.assertEqual(set(gateway), {"location", "owner", "gatewayName", "foundryAccountName", "models", "foundryProjectPrincipalId"},
+        self.assertEqual(set(gateway), {"location", "owner", "gatewayName", "foundryAccountName", "models", "foundryProjectPrincipalId", "casesPrincipalId"},
                          "names, a flag and the models: nothing secret, nothing of the subnet, and the telemetry stays at the template's default, which is off")
         subnet = values(files["aigateway-subnet.parameters.json"])
         self.assertEqual(set(subnet), {"location", "owner", "aigwSubnetPrefix", "aigwSubnetExists"},
@@ -866,6 +916,7 @@ class AiGateway(unittest.TestCase):
         self.assertEqual(bicep_params(self.TEMPLATE)["telemetryEnabled"], ("bool", True))
         self.assertIn("param telemetryEnabled bool = false", self.TEMPLATE)
         self.assertEqual(bicep_params(self.TEMPLATE)["foundryProjectPrincipalId"], ("string", True))
+        self.assertEqual(bicep_params(self.TEMPLATE)["casesPrincipalId"], ("string", True), "empty means none: the app has no identity before the action cases has made it")
         for moved in ("aigwSubnetPrefix", "aigwSubnetExists"):
             self.assertNotIn(moved, bicep_params(self.TEMPLATE), "the gateway's template no longer takes the subnet's settings")
 
@@ -948,6 +999,22 @@ class AiGateway(unittest.TestCase):
             code, out, err, files = run({**SETTINGS, "FOUNDRY_PROJECT_PRINCIPAL_ID": refused}, "--aigateway-policies", str(self.POLICIES))
             self.assertEqual((code, out, files), (2, "", {}), refused)
             self.assertIn("FOUNDRY_PROJECT_PRINCIPAL_ID", err)
+            self.assertNotIn(refused, err, "a value that is not an object id is not echoed")
+
+    def test_the_principal_of_the_cases_app_is_the_one_that_the_workflow_reads_from_the_app_and_is_empty_when_the_app_has_no_identity_yet(self):
+        # The same object id that the Foundry file gets (CASES_SYSTEM_PRINCIPAL_ID): the Detective and the Skeptic call the gateway with that identity, so it gets AI Gateway Models User on it.
+        files, _ = self.files()
+        self.assertEqual(values(files["aigateway.parameters.json"])["casesPrincipalId"], "", "no identity yet: the gateway is made without the role, and the next run gives it")
+        files, _ = self.files(CASES_SYSTEM_PRINCIPAL_ID="AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE")
+        self.assertEqual(values(files["aigateway.parameters.json"])["casesPrincipalId"], "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
+        self.assertEqual(values(files["foundry.parameters.json"])["casesSystemPrincipalId"], "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", "the one id serves both files")
+        for action in ("aigateway", "what-if", "cases", ""):
+            files, _ = self.files(CASES_SYSTEM_PRINCIPAL_ID="aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", ACTION=action, AIGATEWAY_HOST="aigw-x.swedencentral-01.ai.gateway.azure.com")
+            self.assertEqual(values(files["aigateway.parameters.json"])["casesPrincipalId"], "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", action)
+        for refused in ("not-a-guid", "12345678-1234-1234-1234-12345678901"):
+            code, out, err, files = run({**SETTINGS, "CASES_SYSTEM_PRINCIPAL_ID": refused}, "--aigateway-policies", str(self.POLICIES))
+            self.assertEqual((code, out, files), (2, "", {}), refused)
+            self.assertIn("CASES_SYSTEM_PRINCIPAL_ID", err)
             self.assertNotIn(refused, err, "a value that is not an object id is not echoed")
 
     def test_two_models_whose_resource_names_would_be_the_same_are_refused_and_so_is_a_name_the_service_cannot_take(self):

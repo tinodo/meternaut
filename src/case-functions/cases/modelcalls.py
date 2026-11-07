@@ -66,7 +66,11 @@ class Models:
                                            retry_after_max=60, retry_statuses=CHAT_RETRY_STATUSES, retry_network=False)
         except HttpError as error:
             raise self._failure(model, error) from error
-        return self._read(response.json())
+        try:
+            data = response.json()
+        except HttpError as error:
+            raise ModelError("the answer of the AI Gateway is not a completion") from error
+        return self._read(data)
 
     @staticmethod
     def _failure(model: str, error: HttpError) -> ModelError:

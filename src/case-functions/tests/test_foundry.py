@@ -2047,16 +2047,27 @@ class TheListOfCalls(unittest.TestCase):
 
     def test_the_calls_of_the_client_are_allowed(self):
         for method, path in (("GET", f"/agents/{NAME}?api-version=v1"), ("POST", "/agents?api-version=v1"), ("POST", f"/agents/{NAME}/versions?api-version=v1"),
-                             ("POST", "/openai/v1/conversations"), ("POST", "/openai/v1/responses"), ("POST", "/openai/v1/chat/completions"),
+                             ("POST", "/openai/v1/conversations"), ("POST", "/openai/v1/responses"),
                              ("DELETE", "/openai/v1/conversations/conv_0001abc"),
                              ("GET", f"/agents/{'a' * 63}"), ("DELETE", "/openai/v1/conversations/conv_" + "A_b-9" * 20)):
             self.check(method, f"{ENDPOINT}{path}")
-        self.check("POST", f"https://{HOST}/openai/v1/chat/completions")
+
+    def test_no_chat_completion_to_the_foundry_resource_or_project_is_allowed_a_model_is_called_through_the_ai_gateway_only(self):
+        # Every model call of Meternaut goes through the AI Gateway (AGENTS.md rule 15 (c)): neither the project's route nor the resource's route of a chat completion is on the list.
+        for url in (f"{ENDPOINT}/openai/v1/chat/completions", f"https://{HOST}/openai/v1/chat/completions", f"{ENDPOINT}/openai/chat/completions",
+                    f"https://{HOST}/openai/deployments/gpt-6-luna/chat/completions", f"{ENDPOINT}/chat/completions"):
+            for method in ("POST", "GET"):
+                with self.subTest(method=method, url=url):
+                    with self.assertRaises(http.Refused):
+                        self.check(method, url)
+        for _, pattern in self.LIST:
+            self.assertNotIn("chat", pattern.pattern, "no call of the Foundry list is a chat completion")
+        self.assertFalse(hasattr(http, "resource_of") or hasattr(http, "CHAT_PATH"), "the route of the project and of the resource, and their fallback, are gone")
 
     def test_without_the_endpoint_the_app_makes_no_call_to_foundry_and_the_other_calls_are_the_same(self):
         plain = http.allowed_calls()
         self.assertEqual(self.LIST[:len(plain)], plain)
-        self.assertEqual(len(self.LIST) - len(plain), 8)
+        self.assertEqual(len(self.LIST) - len(plain), 6)
         client = Client(plain, Redactor())
         for method, path in (("GET", f"/agents/{NAME}"), ("POST", "/agents"), ("POST", "/openai/v1/responses"), ("POST", "/openai/v1/chat/completions"),
                              ("DELETE", "/openai/v1/conversations/conv_1")):
@@ -2067,20 +2078,17 @@ class TheListOfCalls(unittest.TestCase):
         self.assertEqual(http.allowed_calls(None), http.allowed_calls())
 
     def test_the_added_calls_are_exactly_these_and_all_on_the_host_of_the_project(self):
-        added = [(method, pattern.pattern) for method, pattern in self.LIST[len(self.LIST) - 8:]]
+        added = [(method, pattern.pattern) for method, pattern in self.LIST[len(self.LIST) - 6:]]
         base = re.escape(ENDPOINT)
-        resource = re.escape(f"https://{HOST}")
         self.assertEqual(added, [("GET", base + f"/agents/{http.FOUNDRY_AGENT_NAME}"), ("POST", base + "/agents"), ("POST", base + f"/agents/{http.FOUNDRY_AGENT_NAME}/versions"),
-                                 ("POST", base + "/openai/v1/conversations"), ("POST", base + "/openai/v1/responses"), ("POST", base + "/openai/v1/chat/completions"),
-                                 ("POST", resource + "/openai/v1/chat/completions"),
+                                 ("POST", base + "/openai/v1/conversations"), ("POST", base + "/openai/v1/responses"),
                                  ("DELETE", base + f"/openai/v1/conversations/{http.FOUNDRY_CONVERSATION_ID}")])
         self.assertEqual({m for m, _ in added}, {"GET", "POST", "DELETE"})
-        self.assertEqual([m for m, p in added if "chat" in p], ["POST", "POST"], "a chat completion is a POST and nothing else")
+        self.assertEqual([m for m, p in added if "chat" in p], [], "no chat completion is on the list of the Foundry project")
 
     def test_another_host_another_account_another_project_and_another_scheme_are_refused(self):
-        paths = (f"/agents/{NAME}", "/agents", "/openai/v1/responses", "/openai/v1/conversations", "/openai/v1/conversations/conv_1", "/openai/v1/chat/completions")
-        methods = {f"/agents/{NAME}": "GET", "/agents": "POST", "/openai/v1/responses": "POST", "/openai/v1/conversations": "POST", "/openai/v1/conversations/conv_1": "DELETE",
-                   "/openai/v1/chat/completions": "POST"}
+        paths = (f"/agents/{NAME}", "/agents", "/openai/v1/responses", "/openai/v1/conversations", "/openai/v1/conversations/conv_1")
+        methods = {f"/agents/{NAME}": "GET", "/agents": "POST", "/openai/v1/responses": "POST", "/openai/v1/conversations": "POST", "/openai/v1/conversations/conv_1": "DELETE"}
         for other in (f"https://other-account.services.ai.azure.com{PROJECT}", f"https://{HOST}/api/projects/proj-example2", f"https://{HOST}/api/projects/proj-exampl",
                       f"https://{HOST}/api/projects/PROJ-EXAMPLE", f"https://{HOST}/api/projects/_project", f"https://{HOST.upper()}{PROJECT}", f"http://{HOST}{PROJECT}",
                       f"https://{HOST}.evil.example{PROJECT}", f"https://evil.example/{HOST}{PROJECT}", f"https://acct-example.openai.azure.com{PROJECT}",
@@ -2138,7 +2146,7 @@ class TheListOfCalls(unittest.TestCase):
         dotted = f"https://{HOST}/api/projects/proj.v2"
         client = Client(http.allowed_calls(dotted), Redactor())
         for method, path in (("GET", f"/agents/{NAME}"), ("POST", "/agents"), ("POST", f"/agents/{NAME}/versions"), ("POST", "/openai/v1/conversations"),
-                             ("POST", "/openai/v1/responses"), ("POST", "/openai/v1/chat/completions"), ("DELETE", "/openai/v1/conversations/conv_1")):
+                             ("POST", "/openai/v1/responses"), ("DELETE", "/openai/v1/conversations/conv_1")):
             client.check(method, dotted + path)
             for other in ("projXv2", "proj-v2", "proj_v2", "proj.v3", "proj.v", "proj..v2", "proj.v2.x", "proj", "proj.v2/.."):
                 with self.subTest(method=method, path=path, other=other):
