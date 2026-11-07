@@ -1439,6 +1439,7 @@ class CasesWorkflow(unittest.TestCase):
         self.assertIn("Reader and Cost Management Reader", script)
         self.assertIn("tools/exchange-setup.py", script)
         self.assertIn("Run `foundry` after this run", script.replace("\\`", "`"))
+        self.assertIn("`aigateway` (on the owner's written word, as for its first run), which gives it AI Gateway Models User on the gateway", script.replace("\\`", "`"), "the gateway's role is keyed by the app's principal id, so a new identity has none until aigateway is run again")
 
     def test_the_private_endpoint_of_the_removed_app_goes_too_by_its_exact_name_because_a_disconnected_one_does_not_reach_a_new_app(self):
         block = self.step("Remove the cases app of the other plan kind and its plan, when the kind has changed and they are still there")

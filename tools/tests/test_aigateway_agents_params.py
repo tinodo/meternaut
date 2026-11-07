@@ -57,14 +57,16 @@ PROJECT_PRINCIPAL = SETTINGS["FOUNDRY_PROJECT_PRINCIPAL_ID"]
 # gatewayPrincipalId (no role is made for a gateway identity any more), the four files logger, eventhub-loggers, kit and contract are not written at all, and the output lost the lines gateway_subscription,
 # gateway_resource_group, gateway_name, identity_name and principal_known. Every other file is what it was. Third change (the Watch reads every subscription that its identity can read, 2026-11-07):
 # cases.parameters.json gained scopeAllSubscriptions (true); every other file and the output are what they were. Fourth change (the web page can be closed with no host name on a gateway, 2026-11-07):
-# the output gained one line, door_in_operator (false for these inputs, which carry a host name: it is true only for a closed cases app with none); every file is what it was. Fifth change (the web page
-# runs on Flex Consumption or on a Basic plan, 2026-11-07): cases.parameters.json gained casesAppPlan ("Flex"), and the output gained seven lines about the plan kind (cases_app_plan, cases_plan_name,
-# cases_plan_tier, cases_other_plan_name, cases_other_plan_tier, cases_subnet_name and function_subnet_name); every other file is what it was.
+# the output gained one line, door_in_operator (false for these inputs, which carry a host name: it is true only for a closed cases app with none); every file is what it was. Fifth change (every model
+# call goes through the AI Gateway, 2026-11-07): cases.parameters.json gained aiGatewayHost (the placeholder, because these inputs name no gateway) and aigateway.parameters.json gained
+# casesPrincipalId (the object id of the cases app's identity, CASES_SYSTEM_PRINCIPAL_ID, which these inputs carry: the gateway gives it AI Gateway Models User); every other file and the output
+# are what they were. Sixth change (the web page runs on Flex Consumption or on a Basic plan, 2026-11-07): cases.parameters.json gained casesAppPlan ("Flex"), and the output gained seven lines about the
+# plan kind (cases_app_plan, cases_plan_name, cases_plan_tier, cases_other_plan_name, cases_other_plan_tier, cases_subnet_name and function_subnet_name); every other file is what it was.
 GOLDEN = {
     "aigateway-policies.json": "e6d99d1633ab16afc3410e50dbdcb7e290f0e125f4283b4b19f63a8eebb8395c",
     "aigateway-subnet.parameters.json": "a2a16b02fd7a1d54d8949ad89796d4ea89d6bf1907db1f5b621205699a5a0196",
-    "aigateway.parameters.json": "77593485df872804654eae54c91724ac5fd0a50b4afd33a625bf59d3a542d0a5",
-    "cases.parameters.json": "2c01d3150ab37bb1d80f6a1ae69b86e6cd917fc7854697ff5874266cc8e60555",
+    "aigateway.parameters.json": "936fc16a2a06d5aa3a029f319eab1dcd23c547800eaee01e5183539e746393d2",
+    "cases.parameters.json": "143771250a37fe14b8d97e4ea1e7532272733149437c24a53e095d2a87fb1539",
     "environment.parameters.json": "f96d09a1eab2372a668e50d5a1ecee07faf2d7b70cacd3986ac4868b45379bed",
     "foundry.parameters.json": "ed5e8a14727de3595a0ab4bc5b0fcc4979c7d35b088536fce62f80651e59e99d",
     "operator.parameters.json": "78972401f11e209ef6bbdbba2c7cab95921b372e1dc570765d953aa01b2b2f90",
