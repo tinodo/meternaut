@@ -56,6 +56,9 @@ PRODUCT_SUBSCRIPTION = re.compile(
 MODEL = re.compile(r"^[a-z0-9][a-z0-9.-]{1,63}$")
 # The name of a model deployment in a Foundry project.
 DEPLOYMENT = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
+# What an agent names as its model: a deployment of the project, or `<connection>/<model>` for a model behind a connection of the project, which is how the agents reach the AI Gateway
+# (docs/proposals/08-ai-gateway.md, step 2). Each part is a DEPLOYMENT, and nothing else is allowed: one slash at most, and no empty part.
+AGENT_MODEL = re.compile(rf"{DEPLOYMENT.pattern}(?:/{DEPLOYMENT.pattern})?")
 SWITCH_ON = ("1", "true", "on", "yes")
 SWITCH_OFF = ("0", "false", "off", "no")
 
@@ -117,8 +120,8 @@ def _investigation(env: Mapping[str, str], problems: list[str]) -> dict:
     investigator = env.get(FOUNDRY_MODEL_INVESTIGATOR) or OPTIONAL[FOUNDRY_MODEL_INVESTIGATOR]
     skeptic = env.get(FOUNDRY_MODEL_SKEPTIC) or OPTIONAL[FOUNDRY_MODEL_SKEPTIC]
     for name, value in ((FOUNDRY_MODEL_INVESTIGATOR, investigator), (FOUNDRY_MODEL_SKEPTIC, skeptic)):
-        if not DEPLOYMENT.fullmatch(value):
-            problems.append(f"{name} is a model name")
+        if not AGENT_MODEL.fullmatch(value):
+            problems.append(f"{name} is a model name or <connection>/<model>")
     if investigator.lower() == skeptic.lower():
         problems.append(f"{FOUNDRY_MODEL_INVESTIGATOR} and {FOUNDRY_MODEL_SKEPTIC} are the same model, and the Skeptic has to be another model than the Investigator")
     investigate = _switch(env, INVESTIGATE, bool(endpoint), problems)
