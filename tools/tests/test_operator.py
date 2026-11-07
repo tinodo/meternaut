@@ -1994,7 +1994,7 @@ class EventHubsPrivateOnlyRecord(unittest.TestCase):
     def test_it_says_who_calls_the_namespace_afterwards_and_the_runner_is_not_one(self):
         table = self.section.split("**Who calls the namespace afterwards.**")[1].split("**The order that was run**")[0]
         for words in ("| The usage app (three Event Hub triggers and the control hub's trigger) | Virtual network integration, private endpoint | It woke from zero on the private namespace, from the control event, and ran the three copy jobs",
-                      "| The cases app (the control hub's trigger) | The same | It runs on a Basic plan that is always on, so it has no wake from zero. The Watch of `cases-run` passed after the flip.",
+                      "| The cases app (the control hub's trigger) | The same | On 2026-11-06 it ran on a Basic plan that is always on, so it had no wake from zero, and the Watch of `cases-run` passed after the flip; on Flex Consumption (since 2026-11-07) the trigger wakes it from zero as the usage app's does",
                       "| The Operator's container groups | Inside the network, the private endpoint | The probe resolved the namespace's name to a private address and made no connection to it. "
                       "The checks sent over it, before the flip and after it: after the flip the namespace takes nothing else, so that send proves the path |",
                       "| The deployment workflow's runner | None | It sends nothing and reads nothing from the namespace; a test pins that no step of `recording-check` or `cases-run` does. The public address refuses a request from outside since the flip",
@@ -2399,10 +2399,11 @@ class PublishingPhaseTwoRecord(unittest.TestCase):
                       "Checks the sources, the build script and the container script against the cap of the tool",
                       "makes the container group `op-publish-<run id>` with the sources, the build script and the container script in its secret volume",
                       "builds the libraries from the lock with the pip command of the build script (under the image's Python 3.12), zips the package, and runs `az functionapp deployment source config-zip --build-remote false`, three attempts a minute apart",
-                      "| `cases` (cases app, Basic plan) |", "Packs the app's **sources**, as for the usage app: `function_app.py`, `host.json`, the hash lock `requirements.txt` and the `cases` package, 208,046 bytes zipped on the runner",
+                      "| `cases` (cases app, Basic plan or Flex Consumption) |", "Packs the app's **sources**, as for the usage app: `function_app.py`, `host.json`, the hash lock `requirements.txt` and the `cases` package, 208,046 bytes zipped on the runner",
                       "Checks the sources, the build script and the container script against the cap of the tool. Finds the Operator",
                       "asks for an Azure Resource Manager token as the deploy identity, builds the libraries from the lock with the pip command of the build script (under the image's Python 3.12), "
-                      "zips the package (614,068 bytes on the runner, more than a request takes), and posts the built package to the deployment site's `api/zipdeploy` with `curl` (the bearer on standard input), five attempts a minute apart, HTTP 200 or 202 accepted"):
+                      "zips the package (614,068 bytes on the runner, more than a request takes), and posts the built package to the deployment site's `api/zipdeploy` with `curl` (the bearer on standard input), five attempts a minute apart, HTTP 200 or 202 accepted "
+                      "(on a Basic plan; on Flex Consumption it publishes the built package with `az functionapp deployment source config-zip`, as for the usage app, three attempts a minute apart"):
             self.assertIn(words, table, words)
         self.assertNotIn("finished package** with its libraries", table, "the runner builds no libraries of either app any more")
         for words in ("Everything after the publish stays on the runner: the list of the functions, the health check of the cases app and the summaries.",
@@ -2748,7 +2749,7 @@ class BothAppsArePublishedAndTheUsageAppIsPrivateRecord(unittest.TestCase):
                       "Azure shows Disabled and the state Running", "anonymous requests to its public address got HTTP 403, for `/`, for `/admin/host/status` and for the deployment site's `/`"):
             self.assertIn(words, usage, words)
         self.assertNotIn("built, not yet deployed", usage)
-        cases = [line for line in state.split("\n") if line.startswith("| Cases function app (Basic plan;")][0]
+        cases = [line for line in state.split("\n") if line.startswith("| Cases function app (")][0]
         self.assertIn("**Enabled**, until phase 3 for this app. The owner decided on 2026-11-06 that the app is closed and that the people who approve reach the console through the platform's Application Gateway: "
                       "the code for that is built and not deployed, and the value flips in a later change, after the gateway objects exist and the owner has said yes ([phase 3 for the cases app](#publishing-code-to-the-private-apps-phase-3-for-the-cases-app-the-console-behind-the-platforms-application-gateway-built-not-deployed))", cases)
         self.assertNotIn("**Disabled**", cases)

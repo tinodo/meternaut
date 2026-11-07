@@ -419,6 +419,48 @@ class PublishScript(unittest.TestCase):
         self.assertEqual(ran.leftover, [])
         self.assertEqual(ran.calls[-1], "sleep 20")
 
+    def test_a_good_cases_run_on_flex_consumption_is_published_with_config_zip_as_the_usage_app_is_and_curl_is_never_called(self):
+        ran = self.run_publish({"PUBLISH_PLAN": "Flex"}, kind="cases")
+        self.assertEqual((ran.done.returncode, ran.done.stderr), (0, ""), ran.done.stdout)
+        size = len(source_zip(CASES_SOURCE_FILES))
+        self.assertEqual([re.sub(r", \d+ s, hashes ok$", ", N s, hashes ok", line) for line in ran.lines], [
+            "ok: python3 3.12.7",
+            f"ok: cases-source.zip is {size} bytes, as sent",
+            "ok: az login as the deploy identity with the OpenID Connect token",
+            "ok: az account set",
+            "ok: az token for the App Service resource, fetched while the OpenID Connect token is fresh",
+            f"ok: {CASES_APP}.scm.azurewebsites.net resolves to a private address",
+            f"ok: {CASES_APP}.azurewebsites.net resolves to a private address",
+            "ok: az 2.92.0",
+            "ok: python3 -m ensurepip makes pip 25.0.1 in the work folder",
+            f"ok: the sources are unpacked: {len(CASES_SOURCE_FILES)} files",
+            f"ok: the cases package is built: {len(CASES_SOURCE_FILES) + 3} files, 1.0 MB zipped, N s, hashes ok",
+            f"ok: the cases package is published to {CASES_APP} (attempt 1 of 3)",
+            "publish-done: exit code 0",
+        ])
+        (publish,) = ran.calls_of("az functionapp")
+        self.assertRegex(publish, rf"^az functionapp deployment source config-zip --resource-group {GROUP} --name {CASES_APP} --src /.+/publish-[^/]+/cases\.zip --build-remote false --only-show-errors --output none ")
+        self.assertEqual(ran.calls_of("curl"), [], "a Flex Consumption app has no zip deployment that curl posts to: it is published as the usage app is")
+        (token,) = ran.calls_of("az account get-access-token")
+        self.assertIn("--resource https://appservice.azure.com", token, "the token that config-zip asks Microsoft Entra for, fetched while the OpenID Connect token is fresh")
+        self.assertEqual(self.members_of_bytes(ran.posted), sorted(list(CASES_SOURCE_FILES) + self.FAKE_LIBRARIES), "the sources that came in the volume, and the libraries that were built here")
+        self.assertEqual(ran.leftover, [])
+
+    def test_a_cases_run_with_no_plan_is_a_basic_run_and_a_plan_that_is_not_flex_or_basic_is_refused_and_the_usage_app_is_flex_only(self):
+        ran = self.run_publish({"PUBLISH_PLAN": None}, kind="cases")
+        self.assertEqual(ran.done.returncode, 0, ran.done.stdout)
+        self.assertEqual(len(ran.calls_of("curl ")), 1, "no plan: Basic, as it was before the plan was a setting")
+        self.assertEqual(ran.calls_of("az functionapp"), [])
+        ran = self.run_publish({"PUBLISH_PLAN": "Basic"}, kind="cases")
+        self.assertEqual(len(ran.calls_of("curl ")), 1)
+        for value in ("flex", "basic", "Basic ", " Flex", "Premium", "FlexConsumption", "Flex; touch canary", "$(touch canary)", "Flex\nBasic"):
+            self.refused({"PUBLISH_PLAN": value}, kind="cases")
+        self.assertIn("PUBLISH_PLAN", self.refused({"PUBLISH_PLAN": "nope"}, kind="cases").lines[0])
+        self.assertIn("PUBLISH_PLAN", self.refused({"PUBLISH_PLAN": "Basic"}).lines[0], "the usage app runs on Flex Consumption only")
+        ran = self.run_publish({"PUBLISH_PLAN": "Flex"})
+        self.assertEqual(ran.done.returncode, 0, ran.done.stdout)
+        self.assertEqual(len(ran.calls_of("az functionapp")), 1)
+
     def test_the_package_that_az_publishes_for_the_usage_app_is_the_one_that_was_built_here_from_the_sources_in_the_volume(self):
         ran = self.run_publish()
         self.assertEqual(ran.done.returncode, 0, ran.done.stdout)
@@ -432,8 +474,9 @@ class PublishScript(unittest.TestCase):
             installs[kind] = re.sub(r"/[^ ]*/publish-[^/ ]+/", "<work>/", install)
         self.assertEqual(installs["usage"], installs["cases"], "one pip command, one layout")
         source = re.sub(r"(?m)^\s*#.*$", "", text("operator/publish.sh"))
-        self.assertIn('build_package usage-functions usage usage || return 3', source)
-        self.assertIn('build_package case-functions cases cases || return 3', source)
+        self.assertIn('publish_flex usage-functions usage usage', source)
+        self.assertIn('publish_flex case-functions cases cases', source, "the web page's app on Flex Consumption is built and published as the usage app is")
+        self.assertIn('build_package case-functions cases cases || return 3', source, "and on a Basic plan it is built here too, and posted")
         self.assertEqual(source.count('timeout 300 bash "$volume/build-function-app.sh"'), 1, "the build is run in one place, for both kinds")
         self.assertEqual(source.count("python3 -m pip install"), 0, "and pip is run by the build script alone")
 
@@ -712,7 +755,7 @@ class PublishScript(unittest.TestCase):
     def test_the_script_reads_only_the_variables_it_names_and_the_names_of_its_tests(self):
         source = text("operator/publish.sh")
         used = set(re.findall(r"\$\{?(AZURE_FEDERATED_\w+|PUBLISH_\w+|FUNCTION_APP_\w+|FAKE_\w+|GITHUB_\w+|OPERATOR_\w+)", source))
-        self.assertEqual(used, {"AZURE_FEDERATED_TOKEN", "PUBLISH_KIND", "PUBLISH_APP", "PUBLISH_RESOURCE_GROUP", "PUBLISH_SUBSCRIPTION", "PUBLISH_CLIENT_ID", "PUBLISH_TENANT_ID", "PUBLISH_FILE_BYTES",
+        self.assertEqual(used, {"AZURE_FEDERATED_TOKEN", "PUBLISH_KIND", "PUBLISH_PLAN", "PUBLISH_APP", "PUBLISH_RESOURCE_GROUP", "PUBLISH_SUBSCRIPTION", "PUBLISH_CLIENT_ID", "PUBLISH_TENANT_ID", "PUBLISH_FILE_BYTES",
                                 "PUBLISH_HOLD_SECONDS", "PUBLISH_VOLUME", "PUBLISH_TMP"})
         self.assertEqual(set(re.findall(r"\b(FUNCTION_APP_[A-Z_]+)=", re.sub(r"(?m)^\s*#.*$", "", source))), {"FUNCTION_APP_SOURCE_DIR", "FUNCTION_APP_BUILD_IN_OPERATOR"},
                          "the two switches that the build script has for the Operator, and not the third")

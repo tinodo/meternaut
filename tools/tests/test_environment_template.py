@@ -564,7 +564,7 @@ class Workflow(unittest.TestCase):
                 self.assertIsNotNone(condition, block[:80])
                 self.assertNotIn("what-if", condition.group(1))
                 self.assertNotIn("always()", condition.group(1))
-        self.assertEqual(found, 7, "two publishes and five job starts, all in the Operator's container: the publish of the usage app and of the cases app, the check tools that send the control event, the health check of the cases app, the check of the web page's front door, and the check of the AI Gateway")
+        self.assertEqual(found, 8, "two publishes and six job starts, all in the Operator's container: the publish of the usage app and of the cases app, the check tools that send the control event, the health check of the cases app, the measurement of the web page's answering time, the check of the web page's front door, and the check of the AI Gateway")
         for block in self.steps:
             for word in ("az functionapp deployment source config-zip", "/api/zipdeploy", "az webapp deploy", "az webapp deployment"):
                 self.assertNotIn(word, block, f"no step publishes from the runner any more: {word} is in {block[:80]!r}")
@@ -599,7 +599,7 @@ class Workflow(unittest.TestCase):
             self.assertIn(f"[?name=='${variable}']", block)
         self.assertEqual(re.findall(r'az resource delete --ids "\$(\w+)"', block), ["site", "plan", "connection", "storage"])
         self.assertEqual(self.text.count("az resource delete"), 4)
-        self.assertEqual(len(re.findall(r"(?m)^.*\baz (?:\S+ )*?(?:--method )?delete\b.*$", self.text)), 13, "no other delete, of any kind: four of the Logic App version, two of the Flex version of the cases app, two of what that version left in the storage account (the role on its container, then the container), one that takes the app's integration with an earlier subnet away, one that removes that subnet, one that removes the retired runner identity of the first loop, and the two that retire the deploy identity's old right to send to a control hub (one assignment each, by its id)")
+        self.assertEqual(len(re.findall(r"(?m)^.*\baz (?:\S+ )*?(?:--method )?delete\b.*$", self.text)), 15, "no other delete, of any kind: four of the Logic App version, four of the cases app of the other plan kind (the app, its plan, its private endpoint, and each role assignment of its old identity in the group, by its id), two of what the Flex version left in the storage account when the app goes back to Basic (the role on its container, then the container), one that takes the app's integration with an earlier subnet away, one that removes that subnet, one that removes the retired runner identity of the first loop, and the two that retire the deploy identity's old right to send to a control hub (one assignment each, by its id)")
         self.assertNotIn("--yes", block)
         for kind in ("Microsoft.Web/sites", "Microsoft.Web/serverfarms", "Microsoft.Web/connections", "Microsoft.Storage/storageAccounts"):
             self.assertIn(f"--resource-type {kind}", block)
@@ -715,10 +715,13 @@ class Cases(unittest.TestCase):
         for name in ("vnet", "workspace", "insights", "storage", "blobService", "eventHubs", "sharedHostContainers", "privateEndpointSubnet"):
             self.assertRegex(self.source, rf"(?m)^resource {name} '[^']+' existing = ", name)
         made = sorted(name for name, (_, body) in self.found.items() if not re.search(rf"(?m)^resource {name} '[^']+' existing", self.source))
-        self.assertEqual(made, ["authIdentity", "consoleSignIn", "controlConsumerGroup", "controlHub", "functionApp", "functionAppEndpoint",
-                                "functionOwnsHostContainers", "functionPublishesTelemetry", "functionReceivesControl", "functionUsesQueues",
+        self.assertEqual(made, ["authIdentity", "consoleSignIn", "controlConsumerGroup", "controlHub", "deploymentContainer", "functionApp", "functionAppEndpoint",
+                                "functionOwnsHostContainers", "functionOwnsOwnPackage", "functionPublishesTelemetry", "functionReceivesControl", "functionUsesQueues",
                                 "functionUsesTables", "historyWorkbook", "noBasicAuthForDeployment", "noBasicAuthForFtp", "plan",
                                 "tracesRetention", "webNsg", "webSubnet"])
+        for name in ("deploymentContainer", "functionOwnsOwnPackage"):
+            self.assertTrue(self.found[name][1].startswith("if (isFlex) {"), f"{name}: only a Flex app has its own package container and the role on it")
+        self.assertTrue(self.found["noBasicAuthForFtp"][1].startswith("if (!isFlex) {"), "a Flex Consumption app has no FTP endpoint")
 
     def test_the_plans_subnet_is_delegated_to_basic_plans_holds_nothing_else_and_is_the_one_that_the_model_side_lists_too(self):
         subnet, nsg = self.found["webSubnet"][1], self.found["webNsg"][1]
@@ -742,10 +745,12 @@ class Cases(unittest.TestCase):
         # On 2026-11-05 the second deploy of this template made snet-web again; the landing zone's network manager had put a route table on it a minute after the first make,
         # the second make had none, and the app on the subnet lost its way to the landing zone's DNS and could not start.
         self.assertRegex(self.code, r"(?m)^param webSubnetExists bool = false$")
-        self.assertTrue(self.found["webSubnet"][1].startswith("if (!webSubnetExists) {"), "the subnet is made only while it is not there")
+        self.assertTrue(self.found["webSubnet"][1].startswith("if (!isFlex && !webSubnetExists) {"), "the subnet is made only while it is not there, and only for a Basic app: a Flex app uses snet-func")
         self.assertNotIn("routeTable", self.code, "the route table is the landing zone's, not the template's")
-        self.assertIn("virtualNetworkSubnetId: resourceId('Microsoft.Network/virtualNetworks/subnets', virtualNetworkName, webSubnetName)", self.found["functionApp"][1],
+        self.assertIn("virtualNetworkSubnetId: resourceId('Microsoft.Network/virtualNetworks/subnets', virtualNetworkName, integrationSubnetName)", self.found["functionApp"][1],
                       "the app names the subnet by its id, which exists whether or not the template made it")
+        self.assertIn("var integrationSubnetName = isFlex ? functionSubnetName : webSubnetName", self.code)
+        self.assertIn("var functionSubnetName = 'snet-func'", self.code, "the Flex app uses the subnet that the model side made for the usage recording: the owner's network is small and makes no new subnet")
         self.assertNotIn("webSubnet.id", self.code)
 
     def test_no_key_is_read_or_written_anywhere(self):
@@ -770,13 +775,14 @@ class Cases(unittest.TestCase):
             "3913510d-42f4-4e42-8a64-420c390055eb",  # Monitoring Metrics Publisher
         }, "no Azure Event Hubs Data Sender here: the Operator sends the control event, in its own template")
         assignments = {name: body for name, (kind, body) in self.found.items() if kind == "Microsoft.Authorization/roleAssignments"}
-        self.assertEqual(sorted(assignments), ["functionOwnsHostContainers", "functionPublishesTelemetry", "functionReceivesControl",
+        self.assertEqual(sorted(assignments), ["functionOwnsHostContainers", "functionOwnsOwnPackage", "functionPublishesTelemetry", "functionReceivesControl",
                                                "functionUsesQueues", "functionUsesTables"])
         for name, body in assignments.items():
             self.assertIn("principalType: 'ServicePrincipal'", body, name)
         scopes = {name: re.search(r"(?m)^  scope: (.+)$", body).group(1) for name, body in assignments.items()}
         self.assertEqual(scopes, {"functionReceivesControl": "controlHub",
-                                  "functionOwnsHostContainers": "sharedHostContainers[i]", "functionUsesQueues": "storage", "functionUsesTables": "storage",
+                                  "functionOwnsHostContainers": "sharedHostContainers[i]", "functionOwnsOwnPackage": "deploymentContainer",
+                                  "functionUsesQueues": "storage", "functionUsesTables": "storage",
                                   "functionPublishesTelemetry": "insights"})
         self.assertIn("eventHubsDataReceiverRoleId", assignments["functionReceivesControl"])
 
@@ -785,6 +791,7 @@ class Cases(unittest.TestCase):
         # the deployment starts and the identity's principal id is not, so the names are seeded with the app's id (Bicep error BCP120 otherwise).
         names = {"functionReceivesControl": "guid(controlHub.id, functionApp.id, eventHubsDataReceiverRoleId)",
                  "functionOwnsHostContainers": "guid(sharedHostContainers[i].id, functionApp.id, storageBlobDataOwnerRoleId)",
+                 "functionOwnsOwnPackage": "guid(deploymentContainer.id, functionApp.id, storageBlobDataOwnerRoleId)",
                  "functionUsesQueues": "guid(storage.id, functionApp.id, storageQueueDataContributorRoleId)",
                  "functionUsesTables": "guid(storage.id, functionApp.id, storageTableDataContributorRoleId)",
                  "functionPublishesTelemetry": "guid(insights.id, functionApp.id, monitoringMetricsPublisherRoleId)"}
@@ -797,9 +804,9 @@ class Cases(unittest.TestCase):
         for word in ("casesIdentity", "id-${workload}-cases", "id-meternaut-cases"):
             self.assertNotIn(word, self.code, f"{word}: the user-assigned identity of the Watch is gone from the template")
 
-    def test_the_blob_role_reaches_the_three_shared_host_containers_and_never_the_usage_recordings_package(self):
-        self.assertNotIn("deploymentContainer", self.code, "the app's code is pushed to the app, not kept in the storage account")
-        self.assertNotIn("app-package-cases", self.code)
+    def test_the_blob_role_reaches_the_three_shared_host_containers_and_a_flex_apps_own_container_and_never_the_usage_recordings_package(self):
+        self.assertIn("var deploymentContainerName = 'app-package-cases'", self.code, "a Flex app keeps its package in a container of its own, a Basic app on its plan's own storage")
+        self.assertEqual(self.code.count("app-package-cases"), 1)
         self.assertIn("var sharedHostContainerNames = [\n  'azure-webjobs-hosts'\n  'azure-webjobs-secrets'\n  'azure-webjobs-eventhub'\n]", self.code)
         self.assertNotIn("app-package-usage", self.source)
         for name, (kind, body) in self.found.items():
@@ -808,26 +815,69 @@ class Cases(unittest.TestCase):
         recording = text("environment/recording/main.bicep")
         self.assertIn("'app-package-usage'", recording, "the container that this app must not reach is the recording's")
 
-    def test_the_function_app_runs_on_a_basic_plan_always_on_with_an_identity_for_everything_and_no_password_for_its_deployment(self):
+    def test_the_plan_is_flex_consumption_or_basic_as_casesAppPlan_says_and_the_two_plans_have_the_names_that_the_parameter_builder_removes_them_by(self):
+        # The action cases removes the plan of the other kind by its exact name, so the template and tools/environment-params.py hold the same names and tiers.
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("environment_params", ROOT / "tools" / "environment-params.py")
+        params = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(params)
+        self.assertRegex(self.code, r"(?m)^@allowed\(\[\n  'Flex'\n  'Basic'\n\]\)\nparam casesAppPlan string = 'Flex'$")
+        self.assertEqual(params.CASES_APP_PLANS, ("Flex", "Basic"))
+        self.assertEqual(params.CASES_APP_PLAN, "Flex", "the web page is on Flex Consumption, which scales to zero, unless the measurement says that the stall is back")
+        plan = self.found["plan"][1]
+        self.assertIn("var isFlex = casesAppPlan == 'Flex'", self.code)
+        self.assertIn("name: isFlex ? 'plan-${workload}-cases' : 'plan-${workload}-cases-basic'", plan)
+        self.assertEqual(params.CASES_PLAN_NAMES, {"Flex": "plan-meternaut-cases", "Basic": "plan-meternaut-cases-basic"})
+        self.assertIn("kind: isFlex ? 'functionapp' : 'linux'", plan)
+        self.assertRegex(plan, r"sku: isFlex \? \{\n    name: 'FC1'\n    tier: 'FlexConsumption'\n  \} : \{\n    name: 'B1'\n    tier: 'Basic'\n  \}")
+        self.assertEqual(params.CASES_PLAN_TIERS, {"Flex": "FlexConsumption", "Basic": "Basic"})
+        self.assertIn("reserved: true", plan)
+        self.assertEqual(params.CASES_SUBNET_NAMES, {"Flex": "snet-func", "Basic": "snet-cases"})
+        self.assertIn("var webSubnetName = 'snet-cases'", self.code)
+        self.assertIn("var functionSubnetName = 'snet-func'", self.code)
+
+    def test_a_flex_app_has_the_usage_apps_shape_with_its_own_package_container_one_instance_and_no_always_ready_instance(self):
+        body = self.found["functionApp"][1]
+        self.assertIn("functionAppConfig: isFlex ? {", body)
+        flex = body[body.index("functionAppConfig: isFlex ? {"):body.index("    } : null\n")]
+        self.assertIn("value: '${storage.properties.primaryEndpoints.blob}${deploymentContainerName}'", flex)
+        self.assertIn("type: 'blobContainer'", flex)
+        self.assertRegex(flex, r"authentication: \{\n\s+type: 'SystemAssignedIdentity'\n\s+\}", "the package is read with the app's own identity: no key, no connection string")
+        self.assertNotIn("userAssignedIdentityResourceId", flex)
+        self.assertIn("maximumInstanceCount: 1", flex, "a run waits for models, a timer must not run twice at once, and with more instances the platform sent requests to instances that were not ready")
+        self.assertIn("instanceMemoryMB: 2048", flex)
+        self.assertNotIn("alwaysReady", self.code, "no always-ready instance: the app scales to zero and bills nothing while it is idle")
+        self.assertRegex(flex, r"runtime: \{\n\s+name: 'python'\n\s+version: '3.13'\n\s+\}")
+        recording = text("environment/recording/main.bicep")
+        self.assertIn("type: 'SystemAssignedIdentity'", recording, "the usage app, which is proven, keeps its package the same way")
+        self.assertEqual(self.found["deploymentContainer"][0], "Microsoft.Storage/storageAccounts/blobServices/containers")
+        self.assertIn("publicAccess: 'None'", self.found["deploymentContainer"][1])
+        for setting in ("linuxFxVersion", "alwaysOn", "ftpsState", "vnetRouteAllEnabled"):
+            self.assertRegex(body, rf"{setting}: isFlex \? null : ", f"{setting} is not set on a Flex Consumption app")
+        basic_only = self.code[self.code.index("var basicOnlyAppSettings = isFlex ? [] : ["):self.code.index("resource functionApp ")]
+        for setting in ("FUNCTIONS_EXTENSION_VERSION", "FUNCTIONS_WORKER_RUNTIME", "WEBSITE_RUN_FROM_PACKAGE", "WEBSITES_CONTAINER_START_TIME_LIMIT", "SCM_DO_BUILD_DURING_DEPLOYMENT", "ENABLE_ORYX_BUILD"):
+            self.assertIn(f"name: '{setting}'", basic_only, f"{setting}: a Flex Consumption app refuses it")
+            self.assertEqual(self.code.count(f"name: '{setting}'"), 1, setting)
+        self.assertIn("appSettings: concat(basicOnlyAppSettings, [", body)
+
+    def test_a_basic_app_is_the_way_back_with_the_plan_always_on_an_identity_for_everything_and_no_password_for_its_deployment(self):
         plan = self.found["plan"][1]
         self.assertIn("name: 'B1'", plan)
         self.assertIn("tier: 'Basic'", plan)
-        self.assertIn("kind: 'linux'", plan)
+        self.assertIn("kind: isFlex ? 'functionapp' : 'linux'", plan)
         self.assertIn("reserved: true", plan)
-        self.assertNotIn("FlexConsumption", self.code)
-        self.assertNotIn("functionAppConfig", self.code)
         body = self.found["functionApp"][1]
         self.assertIn("kind: 'functionapp,linux'", body)
         self.assertIn("type: 'SystemAssigned, UserAssigned'", body, "the app's own identity, and the one that only presents the console's sign-in")
         self.assertEqual(re.findall(r"'\$\{(\w+)\.id\}': \{\}", body), ["authIdentity"], "the only user-assigned identity of the app")
-        self.assertIn("virtualNetworkSubnetId: resourceId('Microsoft.Network/virtualNetworks/subnets', virtualNetworkName, webSubnetName)", body)
-        self.assertIn("vnetRouteAllEnabled: false", body, "only the private ranges go through the subnet, as for the Flex app that this replaced")
-        self.assertIn("linuxFxVersion: 'PYTHON|3.13'", body)
-        self.assertIn("alwaysOn: true", body, "timers and the control hub's trigger need an instance that is always there")
-        self.assertIn("ftpsState: 'Disabled'", body)
+        self.assertIn("virtualNetworkSubnetId: resourceId('Microsoft.Network/virtualNetworks/subnets', virtualNetworkName, integrationSubnetName)", body)
+        self.assertIn("vnetRouteAllEnabled: isFlex ? null : false", body, "only the private ranges go through the subnet, as for the Flex app that this replaced")
+        self.assertIn("linuxFxVersion: isFlex ? null : 'PYTHON|3.13'", body)
+        self.assertIn("alwaysOn: isFlex ? null : true", body, "timers and the control hub's trigger need an instance that is always there on a Basic plan")
+        self.assertIn("ftpsState: isFlex ? null : 'Disabled'", body)
         for setting, value in (("FUNCTIONS_EXTENSION_VERSION", "~4"), ("FUNCTIONS_WORKER_RUNTIME", "python"), ("WEBSITE_RUN_FROM_PACKAGE", "1"),
                                ("WEBSITES_CONTAINER_START_TIME_LIMIT", "600"), ("SCM_DO_BUILD_DURING_DEPLOYMENT", "false"), ("ENABLE_ORYX_BUILD", "false")):
-            self.assertIn(f"{{ name: '{setting}', value: '{value}' }}", body, setting)
+            self.assertIn(f"{{ name: '{setting}', value: '{value}' }}", self.code, setting)
         for setting in ("AzureWebJobsStorage__credential", "EventHubConnection__credential", "EventHubConnection__fullyQualifiedNamespace",
                         "APPLICATIONINSIGHTS_AUTHENTICATION_STRING"):
             self.assertIn(f"name: '{setting}'", body, setting)
@@ -845,8 +895,8 @@ class Cases(unittest.TestCase):
         self.assertIn("httpsOnly: true", self.code)
         self.assertIn("minTlsVersion: '1.2'", self.code)
 
-    def test_the_function_app_starts_after_its_subnet_and_its_hub_and_never_waits_for_roles_that_wait_for_its_identity(self):
-        self.assertEqual(depends_on(self.found["functionApp"][1]), {"webSubnet", "controlConsumerGroup"},
+    def test_the_function_app_starts_after_its_subnet_its_container_and_its_hub_and_never_waits_for_roles_that_wait_for_its_identity(self):
+        self.assertEqual(depends_on(self.found["functionApp"][1]), {"webSubnet", "deploymentContainer", "controlConsumerGroup"},
                          "the roles of the app's own identity need the app, so the app cannot wait for them: the host retries until they are there")
 
     def test_the_control_hub_is_one_partition_with_one_group_and_the_app_is_told_both(self):
@@ -1206,7 +1256,10 @@ class TheCodeIsPublishedFromInsideTheNetwork(unittest.TestCase):
         for want in self.PUBLISHES.values():
             script = self.script(want["title"])
             names = set(re.findall(r'--env "(PUBLISH_[A-Z_]+)=', script))
-            self.assertEqual(names, {"PUBLISH_KIND", "PUBLISH_APP", "PUBLISH_RESOURCE_GROUP", "PUBLISH_SUBSCRIPTION", "PUBLISH_CLIENT_ID", "PUBLISH_TENANT_ID", "PUBLISH_FILE_BYTES"}, want["title"])
+            expected = {"PUBLISH_KIND", "PUBLISH_APP", "PUBLISH_RESOURCE_GROUP", "PUBLISH_SUBSCRIPTION", "PUBLISH_CLIENT_ID", "PUBLISH_TENANT_ID", "PUBLISH_FILE_BYTES"}
+            if want["action"] == "cases":
+                expected.add("PUBLISH_PLAN")  # the plan kind of the web page's app: the usage app is always Flex Consumption and says nothing
+            self.assertEqual(names, expected, want["title"])
             given |= names
             sent = re.findall(r'--secret-file "([^"=]+)=', script)
             self.assertEqual(sent, want["files"], want["title"])
@@ -1241,7 +1294,8 @@ class TheCodeIsPublishedFromInsideTheNetwork(unittest.TestCase):
                       "The code was published from inside the network: a short-lived container group of the Operator signed in as the deploy identity with a token of this run, built the libraries from the "
                       "hash-locked lock file and published the package through the app's private endpoint",
                       "The code was published from inside the network: a short-lived container group of the Operator signed in as the deploy identity with a token of this run, built the libraries from the "
-                      "hash-locked lock file (the sources went in the request, because the finished package is too big for it) and posted the finished package to the deployment site through the app's private endpoint",
+                      "hash-locked lock file (the sources went in the request, because the finished package is too big for it) and published the finished package through the app's private endpoint: with "
+                      "the Azure CLI's zip deployment command while the app is on Flex Consumption, as the usage app's is, and posted to the deployment site while it is on a Basic plan",
                       "the runner published nothing"):
             self.assertIn(words, self.text, words)
         for stale in ("goes from this runner to the public deployment site", "the app was not given its code: the lines say which endpoint is not registered yet. Running"):
@@ -1293,7 +1347,8 @@ class CasesWorkflow(unittest.TestCase):
 
     def test_the_cases_are_made_ready_deployed_published_and_listed_in_that_order_and_for_their_action_only(self):
         order = ["The usage recording is there, which the first cases build on",
-                 "Remove the Flex Consumption version of the cases app, when it is still there",
+                 "The function subnet is free for the cases app, which runs on Flex Consumption",
+                 "Remove the cases app of the other plan kind and its plan, when the kind has changed and they are still there",
                  "Remove what the Flex Consumption version left in the storage account, when it is still there",
                  "Let the cases app go from an integration subnet that is not the one of the template", "Deploy the first cases",
                  "Wait until the landing zone has registered the cases app's private endpoint in the central zone",
@@ -1335,19 +1390,106 @@ class CasesWorkflow(unittest.TestCase):
         for word in ("az webapp deploy", "publishing-credentials", "--user", "--password", "config-zip", "kit/", "environment/", "zipdeploy", "--data-binary", "get-access-token", "package.zip", "case-functions.zip"):
             self.assertNotIn(word, publish + pack, word)
 
-    def test_the_flex_version_of_the_cases_app_is_removed_by_its_name_only_while_its_plan_is_flex_consumption_and_before_the_deploy(self):
-        block = self.step("Remove the Flex Consumption version of the cases app, when it is still there")
+    def test_the_app_of_the_other_plan_kind_is_removed_by_its_name_only_while_its_plan_is_of_that_kind_before_the_deploy_each_thing_read_before_and_after(self):
+        title = "Remove the cases app of the other plan kind and its plan, when the kind has changed and they are still there"
+        block = self.step(title)
         self.assertIn("if: inputs.action == 'cases'", block)
-        self.assertIn("FUNCTION_APP: ${{ steps.params.outputs.cases_function_app_name }}", block)
-        self.assertIn('Microsoft.Web/sites/$FUNCTION_APP"', block)
-        self.assertIn('if [ "$tier" != "FlexConsumption" ]; then', block, "a site that is already on another plan is left alone")
-        self.assertIn("--query sku.tier", block)
-        self.assertEqual(re.findall(r'az rest --method delete --url "https://management\.azure\.com\$\{(\w+)\}\?api-version=2024-04-01"', block), ["site", "plan"])
-        self.assertLess(block.index('--method delete --url "https://management.azure.com${site}'), block.index('--method delete --url "https://management.azure.com${plan}'))
+        for line in ("FUNCTION_APP: ${{ steps.params.outputs.cases_function_app_name }}", "WANTED_KIND: ${{ steps.params.outputs.cases_app_plan }}", "WANTED_TIER: ${{ steps.params.outputs.cases_plan_tier }}",
+                     "OTHER_PLAN: ${{ steps.params.outputs.cases_other_plan_name }}", "OTHER_TIER: ${{ steps.params.outputs.cases_other_plan_tier }}"):
+            self.assertIn(line, block, line)
         script = "\n".join(line for line in block.split("run:")[1].splitlines() if not line.strip().startswith("#"))
-        for word in ("az resource delete", "--yes", "usage", "LEGACY"):
+        self.assertIn('site="$group/providers/Microsoft.Web/sites/$FUNCTION_APP"', script, "the app is named exactly")
+        self.assertIn('if [ "$tier" = "$WANTED_TIER" ]; then', script, "an app that is already on the plan kind that is asked for is left alone")
+        self.assertIn('if [ "$tier" != "$OTHER_TIER" ] || [ "${plan_name,,}" != "${OTHER_PLAN,,}" ]; then', script, "only the other kind's plan, by its exact name and while it is of that tier: any other plan stops the run")
+        self.assertIn("a plan that this workflow does not know is never deleted", script)
+        self.assertEqual(re.findall(r'az rest --method delete --url "https://management\.azure\.com\$\{(\w+)\}\?api-version=(\S+)"', script), [("site", "2024-04-01"), ("plan", "2024-04-01"), ("endpoint", "2025-05-01"), ("id", "2022-04-01")],
+                         "the app, then its plan, then its private endpoint, then each assignment of the removed identity, by its id, and nothing else")
+        for first, second in (("site", "plan"), ("plan", "endpoint"), ("endpoint", "id")):
+            self.assertLess(script.index(f'--method delete --url "https://management.azure.com${{{first}}}'), script.index(f'--method delete --url "https://management.azure.com${{{second}}}'), f"{first} before {second}")
+        self.assertIn("--query sku.tier", script)
+        for thing, reads in (("site", 3), ("plan", 2), ("endpoint", 3)):
+            self.assertEqual(len(re.findall(rf'gone "\${thing}"', script)), reads, f"the {thing} is read before it is removed (the plan is read for its tier) and read again after")
+        self.assertIn("Read back: the cases app is gone.", script)
+        self.assertIn("Read back: the plan $plan_name is gone.", script)
+        self.assertIn('grep -Eqi \'NotFound|\\b404\\b\' <<< "$found"', script, "only 'not found' is taken for not there: any other failure of a read stops the run")
+        for word in ("az resource delete", "--yes", "usage", "LEGACY", "az role assignment delete"):
             self.assertNotIn(word, script, word)
-        self.assertLess(self.names.index("Remove the Flex Consumption version of the cases app, when it is still there"), self.names.index("Deploy the first cases"))
+        self.assertLess(self.names.index(title), self.names.index("Deploy the first cases"))
+        self.assertLess(self.names.index("The function subnet is free for the cases app, which runs on Flex Consumption"), self.names.index(title),
+                        "a refusal of the subnet leaves the web page where it was")
+
+    def test_the_removed_apps_role_assignments_in_the_group_are_deleted_because_the_template_names_them_after_the_app_and_gives_them_to_a_new_identity(self):
+        # An app that is made again has a new system-assigned identity; the template names its assignments after the app's id, and Azure refuses to change the identity of an assignment that exists.
+        block = self.step("Remove the cases app of the other plan kind and its plan, when the kind has changed and they are still there")
+        script = "\n".join(line for line in block.split("run:")[1].splitlines() if not line.strip().startswith("#"))
+        self.assertIn("--query identity.principalId", script, "the identity is read before the app is deleted: it cannot be read afterwards")
+        self.assertLess(script.index("--query identity.principalId"), script.index('--method delete --url "https://management.azure.com${site}'))
+        self.assertIn("roleAssignments?api-version=2022-04-01&\\$filter=principalId%20eq%20%27${principal}%27", script, "the assignments of that principal at, above and below the group")
+        self.assertIn('case "${scope,,}/" in\n                  "${group,,}/"*)', script, "only those at or below the project's group count")
+        template = text("environment/cases/main.bicep")
+        for role in re.findall(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", " ".join(re.findall(r'named_after_the_app="([^"]+)"', script))):
+            self.assertIn(role, template, "every role that the step expects to be made again under the same name is one of the template's")
+        self.assertEqual(sorted(re.findall(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", " ".join(re.findall(r'named_after_the_app="([^"]+)"', script)))),
+                         sorted(re.findall(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.sub(r"//.*", "", template))), "the five roles that the template names after the app, no more and no fewer")
+        self.assertIn("Read back: the assignments that the template makes again are gone.", script)
+        self.assertIn('echo "::error::These assignments of the removed app\'s identity are still listed after the delete', script, "one that the deploy would be refused for stops the run, and says what a person does")
+        self.assertIn("sleep 90", script, "the host name is let go a little after the app")
+        self.assertIn('echo "### The cases app was made again on the $WANTED_KIND plan"', script)
+        self.assertIn("**The new app has a new system-assigned identity**", script, "the summary says what a person gives it again")
+        self.assertIn("Reader and Cost Management Reader", script)
+        self.assertIn("tools/exchange-setup.py", script)
+        self.assertIn("Run `foundry` after this run", script.replace("\\`", "`"))
+        self.assertIn("`aigateway` (on the owner's written word, as for its first run), which gives it AI Gateway Models User on the gateway", script.replace("\\`", "`"), "the gateway's role is keyed by the app's principal id, so a new identity has none until aigateway is run again")
+
+    def test_the_private_endpoint_of_the_removed_app_goes_too_by_its_exact_name_because_a_disconnected_one_does_not_reach_a_new_app(self):
+        block = self.step("Remove the cases app of the other plan kind and its plan, when the kind has changed and they are still there")
+        script = "\n".join(line for line in block.split("run:")[1].splitlines() if not line.strip().startswith("#"))
+        template = text("environment/cases/main.bicep")
+        made = re.search(r"resource functionAppEndpoint 'Microsoft\.Network/privateEndpoints@(\S+)' = \{\s+name: 'pe-\$\{functionAppName\}'", template)
+        self.assertIsNotNone(made, "the template's endpoint is named after the app")
+        self.assertIn(f'if gone "$endpoint" {made.group(1)}; then', script, "read with the api-version that the template writes it with")
+        self.assertIn(f'--method delete --url "https://management.azure.com${{endpoint}}?api-version={made.group(1)}"', script)
+        self.assertIn('endpoint="$group/providers/Microsoft.Network/privateEndpoints/pe-$FUNCTION_APP"', script, "the endpoint of the template, by its exact name, and no other")
+        self.assertLess(script.index("Read back: the plan $plan_name is gone."), script.index('endpoint="$group/'), "the endpoint is not taken from under an app that is still there")
+        self.assertIn("Read back: the private endpoint pe-$FUNCTION_APP is gone.", script)
+        self.assertIn("The app's private endpoint pe-$FUNCTION_APP is not there: nothing to remove.", script)
+        self.assertNotIn("az network private-endpoint", script, "the generic command is not used: the endpoint is read and deleted through the same call as everything else in the step")
+        wait = self.step("Wait until the landing zone has registered the cases app's private endpoint in the central zone")
+        self.assertIn("dns-zone-group list", wait, "the wait that follows the deploy is for the zone group of the new endpoint, which an endpoint that was kept would already have")
+
+    def test_the_function_subnet_is_read_before_anything_is_removed_and_a_plan_that_still_holds_it_is_named_with_what_to_do(self):
+        title = "The function subnet is free for the cases app, which runs on Flex Consumption"
+        block = self.step(title)
+        self.assertIn("if: inputs.action == 'cases' && steps.params.outputs.cases_app_plan == 'Flex'", block, "only for a Flex app: a Basic app has its own subnet")
+        self.assertIn("FUNCTION_SUBNET: ${{ steps.params.outputs.function_subnet_name }}", block)
+        script = "\n".join(line for line in block.split("run:")[1].splitlines() if not line.strip().startswith("#"))
+        self.assertNotRegex(script, r"--method (put|patch|post|delete)", "it only reads")
+        self.assertIn("grep -Fxq 'Microsoft.App/environments'", script, "a Flex Consumption app needs the delegation that the model side gave the function subnet")
+        self.assertIn("properties.virtualNetworkSubnetId", script)
+        self.assertIn("::error::The subnet $FUNCTION_SUBNET is still taken by another plan:$taken.", script)
+        for words in ("the usage recording's app", "the action retire-old removes it and its plan", "run cases again", "no other subnet is made for it", "Nothing was changed: the web page's app is still where it was."):
+            self.assertIn(words, script, words)
+        self.assertIn("is not there. A Flex Consumption app uses the function subnet that model-side makes, and no new subnet is made for it", script)
+        self.assertIn("serviceAssociationLinks", script, "the platform's links on the subnet are said, as read")
+        self.assertIn('${name,,}" = "${FUNCTION_APP,,}"', script, "the cases app itself is not another plan")
+        self.assertLess(self.names.index("The usage recording is there, which the first cases build on"), self.names.index(title))
+
+    def test_a_flex_app_is_published_with_the_plan_kind_and_the_container_does_it_the_way_that_the_usage_app_is_published(self):
+        publish = self.step("Publish the cases to the function app from inside the network, in the Operator")
+        self.assertIn("CASES_APP_PLAN: ${{ steps.params.outputs.cases_app_plan }}", publish)
+        self.assertIn('--env "PUBLISH_KIND=cases" --env "PUBLISH_PLAN=$CASES_APP_PLAN"', publish)
+        script = text("operator/publish.sh")
+        for line in ('plan=${PUBLISH_PLAN:-}', 'publish_flex()', 'publish_cases()', "az functionapp deployment source config-zip --resource-group \"$group\" --name \"$app\" --src \"$package_zip\" --build-remote false"):
+            self.assertIn(line, script, line)
+
+    def test_the_deploy_says_what_to_do_when_the_subnet_is_the_reason_that_a_flex_app_was_refused(self):
+        deploy = self.step("Deploy the first cases")
+        self.assertIn("CASES_APP_PLAN: ${{ steps.params.outputs.cases_app_plan }}", deploy)
+        self.assertIn("CASES_SUBNET: ${{ steps.params.outputs.cases_subnet_name }}", deploy)
+        self.assertIn('if [ "$CASES_APP_PLAN" = Flex ] && grep -Eqi \'subnet|ServiceAssociationLink|delegat|InUse\' "$RUNNER_TEMP/cases-deploy.err"; then', deploy)
+        for words in ("still taken by another plan", "the usage recording's app and its plan have to be removed first (the action retire-old does it)", "no new subnet is made", "set CASES_APP_PLAN back to Basic"):
+            self.assertIn(words, deploy, words)
+        self.assertIn('--output functionAppId 2> "$RUNNER_TEMP/cases-deploy.err"', deploy)
 
     def test_what_the_flex_version_left_in_the_storage_account_is_removed_by_name_and_nothing_else_in_the_account_is_touched(self):
         title = "Remove what the Flex Consumption version left in the storage account, when it is still there"
@@ -1364,8 +1506,9 @@ class CasesWorkflow(unittest.TestCase):
         script = "\n".join(line for line in block.split("run:")[1].splitlines() if not line.strip().startswith("#"))
         for word in ("app-package-usage", "azure-webjobs", "az storage", "--account-key", "--yes", "az resource delete", "--all"):
             self.assertNotIn(word, script, word)
-        self.assertLess(self.names.index("Remove the Flex Consumption version of the cases app, when it is still there"), self.names.index(title))
+        self.assertLess(self.names.index("Remove the cases app of the other plan kind and its plan, when the kind has changed and they are still there"), self.names.index(title))
         self.assertLess(self.names.index(title), self.names.index("Deploy the first cases"))
+        self.assertIn("if: inputs.action == 'cases' && steps.params.outputs.cases_app_plan == 'Basic'", block, "a Flex app keeps its package in that container: the step runs only for a Basic app")
 
     def test_the_network_is_looked_for_before_the_files_are_made_and_the_answers_go_into_them(self):
         title = "Find out what of the network is there already"
@@ -1395,7 +1538,8 @@ class CasesWorkflow(unittest.TestCase):
         self.assertIn("if: inputs.action == 'cases'", block)
         self.assertIn("FUNCTION_APP: ${{ steps.params.outputs.cases_function_app_name }}", block)
         self.assertIn("--query properties.virtualNetworkSubnetId", block)
-        self.assertIn('"${current##*/}" = "snet-cases"', block, "an app that is on the template's subnet is left alone")
+        self.assertIn('"${current##*/}" = "$CASES_SUBNET"', block, "an app that is on the template's subnet (snet-func for a Flex app, snet-cases for a Basic one) is left alone")
+        self.assertIn("CASES_SUBNET: ${{ steps.params.outputs.cases_subnet_name }}", block)
         self.assertEqual(len(re.findall(r"--method delete", block)), 1)
         self.assertIn('${site}/networkConfig/virtualNetwork?api-version=2024-04-01', block, "the app's own integration, nothing else")
         self.assertIn("::warning::", block, "a refusal is said, and the template's own change follows")
@@ -1407,7 +1551,8 @@ class CasesWorkflow(unittest.TestCase):
         title = "Say whether the integration subnet carries the route table of the landing zone's network manager"
         block = self.step(title)
         self.assertIn("if: inputs.action == 'cases'", block)
-        self.assertIn("for name in snet-pe snet-cases; do", block)
+        self.assertIn('for name in snet-pe "$CASES_SUBNET"; do', block, "the subnet of the plan kind that is asked for")
+        self.assertIn("CASES_SUBNET: ${{ steps.params.outputs.cases_subnet_name }}", block)
         self.assertIn("--query properties.routeTable.id", block)
         self.assertIn("::warning::", block)
         script = "\n".join(line for line in block.split("run:")[1].splitlines() if not line.strip().startswith("#"))
@@ -1775,6 +1920,106 @@ class Foundry(unittest.TestCase):
                           "Microsoft.CognitiveServices/accounts/projects", "Microsoft.CognitiveServices/accounts/projects/connections", "Microsoft.Network/privateEndpoints",
                           "Microsoft.Authorization/roleAssignments"})
         self.assertEqual(set(compiled["outputs"]), {"projectEndpoint", "accountName", "projectName", "guardrailName", "privateEndpointName"})
+
+
+class PageLatencyWorkflow(unittest.TestCase):
+    """The action page-latency: how fast the web page answers, measured by tools/console-check.py latency in a container group of the Operator, over the app's private endpoint. It only reads."""
+
+    FIND = "Find the Operator, which runs the check from inside the network"
+    PLAN = "Say which plan the web page runs on"
+    MEASURE = "Measure how fast the web page answers, from inside the network, in the Operator"
+    CLEANUP = "Delete any container group of the latency measurement that is left"
+
+    def setUp(self):
+        self.text = text(".github/workflows/deploy-hub.yml")
+        self.steps = re.split(r"(?m)^      - ", self.text)[1:]
+        self.names = [re.match(r"name: (.+)", b).group(1) for b in self.steps]
+
+    def step(self, title):
+        (block,) = [b for b in self.steps if b.startswith(f"name: {title}\n")]
+        return block
+
+    def script(self, title):
+        body = self.step(title).split("        run: |\n", 1)[1]
+        return "\n".join(line for line in body.splitlines() if not line.strip().startswith("#"))
+
+    def test_the_action_is_one_of_the_options_with_a_minutes_input_of_20_by_default_and_a_description(self):
+        options = re.search(r"(?m)^        options:\n((?:          - [a-z-]+\n)+)", self.text).group(1)
+        self.assertIn("          - page-latency\n", options)
+        self.assertLess(options.index("- cases-run"), options.index("- page-latency"))
+        self.assertRegex(self.text, r'(?m)^      minutes:\n        description: "Only with page-latency: [^"]+"\n        type: string\n        required: false\n        default: "20"\n')
+        description = re.search(r'(?m)^        description: "(what-if: .+)"$', self.text).group(1)
+        for words in ("page-latency: measure how fast the web page answers, by the Operator from inside the network over the app's private endpoint and with no credential",
+                      "a request to /healthz every ten seconds for the minutes of the input minutes (20 at the most)", "It only reads, and it needs operator first.",
+                      "docs/proposals/07-private-by-default.md (the web page on Flex Consumption)"):
+            self.assertIn(words, description, words)
+
+    def test_the_steps_find_the_operator_say_the_plan_measure_and_clean_up_in_that_order_and_for_this_action_only(self):
+        positions = [self.names.index(name) for name in (self.FIND, self.PLAN, self.MEASURE, self.CLEANUP)]
+        self.assertEqual(positions, sorted(positions))
+        self.assertLess(self.names.index("Work out the settings"), positions[0])
+        self.assertLess(positions[-1], self.names.index("What was done"))
+        self.assertIn("if: inputs.action == 'page-latency'\n", self.step(self.PLAN))
+        self.assertIn("if: inputs.action == 'page-latency'\n", self.step(self.MEASURE))
+        self.assertIn("if: always() && inputs.action == 'page-latency' && steps.latency.outcome != 'skipped'\n", self.step(self.CLEANUP), "the second line behind the tool's own delete")
+        self.assertIn("id: latency\n", self.step(self.MEASURE))
+
+    def test_it_reads_only_nothing_is_written_deployed_deleted_or_sent_and_no_credential_is_given_to_the_container(self):
+        for title in (self.PLAN, self.MEASURE):
+            script = self.script(title)
+            self.assertNotRegex(script, r"--method (put|patch|post|delete)", title)
+            for word in ("az deployment", "tools/az-deploy.py", "az role", "AZURE_FEDERATED_TOKEN", "--secure-env", "ACTIONS_ID_TOKEN", "az eventhubs", "tools/cases-check.py", "tools/recording-check.py"):
+                self.assertNotIn(word, script, f"{title}: {word}")
+        script = self.script(self.MEASURE)
+        self.assertIn('--secret-file "console-check.py=tools/console-check.py"', script, "the one tool, and nothing else in the volume")
+        self.assertEqual(script.count("--secret-file"), 1)
+        self.assertIn('--env "TOOL_NAME=console-check" --env "TOOL_ARGS=latency --host $FUNCTION_APP.azurewebsites.net --private --minutes $MINUTES --interval 10"', script.replace(" \\\n            ", " "),
+                      "over the app's private endpoint, on the app's own name, and the name has to resolve to a private address there")
+        self.assertIn("--script operator/run-tool.sh", script)
+        self.assertIn('--name "op-latency-$GITHUB_RUN_ID"', script, "the prefix of the cleanup is the start of this name, and of no other group's")
+        self.assertIn('--timeout-seconds "$seconds" --summary "$GITHUB_STEP_SUMMARY"', script)
+        self.assertIn("seconds=$((MINUTES * 60 + 300))", script, "the measurement's minutes and five more: 1500 seconds at the most, which is the Operator's 25 minutes")
+        self.assertIn('"${dns[@]}"', script)
+        self.assertEqual(self.step(self.CLEANUP).count("--prefix op-latency-"), 1)
+        for other in ("op-check-", "op-door-", "op-health-", "op-probe-", "op-publish-", "op-aigw-"):
+            self.assertNotIn(other, self.step(self.MEASURE) + self.step(self.CLEANUP), other)
+
+    def test_the_minutes_reach_the_script_through_the_environment_and_are_checked_before_anything_runs(self):
+        block = self.step(self.MEASURE)
+        self.assertIn("MINUTES: ${{ inputs.minutes }}", block)
+        script = self.script(self.MEASURE)
+        self.assertNotIn("${{", script, "no expression inside a script (tools/workflow-lint.py)")
+        self.assertIn('if ! [[ "$MINUTES" =~ ^[0-9]{1,2}$ ]] || [ "$MINUTES" -lt 1 ] || [ "$MINUTES" -gt 20 ]; then', script)
+        self.assertLess(script.index('"$MINUTES" -gt 20'), script.index("python3 tools/operator-run.py run"))
+        self.assertIn("timeout-minutes: 30\n", block, "the group is given at most 25 minutes, and the step a second line five minutes behind")
+
+    def test_the_summary_of_the_run_has_the_summary_lines_of_the_tool_and_a_failed_rule_is_a_failed_run_with_words_for_what_to_do(self):
+        script = self.script(self.MEASURE)
+        self.assertIn('| tee "$RUNNER_TEMP/latency.log" || status=$?', script, "the exit code of the tool is kept, and the log is kept to read the summary from")
+        self.assertIn("sed -n -E 's/^\\| (latency: [0-9]+ requests, p50.*|after the quiet gap: .*|verdict: .*)$/\\1/p' \"$RUNNER_TEMP/latency.log\"", script)
+        self.assertIn('echo "### How fast the web page answers: $MINUTES minutes, from inside the network"', script)
+        self.assertIn('exit "$status"', script)
+        self.assertIn("set CASES_APP_PLAN to Basic in tools/environment-params.py and run cases", script)
+        tool = text("tools/console-check.py")
+        for line in ("latency: {len(seconds)} requests, p50", "after the quiet gap: {len(cold)} requests", "verdict: "):
+            self.assertIn(line, tool, "the lines that the step's sed picks out are the ones that the tool prints")
+
+    def test_the_plan_is_read_and_said_so_that_the_measurement_says_what_it_measured(self):
+        script = self.script(self.PLAN)
+        self.assertIn("--query properties.serverFarmId", script)
+        self.assertIn("--query sku.tier", script)
+        self.assertIn("The cases app is not there, so there is no web page to measure. Run cases first.", script)
+        self.assertIn("WANTED_KIND: ${{ steps.params.outputs.cases_app_plan }}", self.step(self.PLAN))
+
+    def test_the_summaries_say_what_a_stall_means_and_that_nothing_was_changed(self):
+        block = self.step("What was done")
+        failed, finished = re.findall(r"(?m)^\s+page-latency\) echo \"(.*?)\" ;;$", block)
+        for words in ("Nothing was changed: the measurement only reads.", "that the Operator is not there (run \\`operator\\` first)", "that the cases app is not there (run \\`cases\\` first)",
+                      "set CASES_APP_PLAN to Basic in tools/environment-params.py and run \\`cases\\`", "Running \\`page-latency\\` again is safe."):
+            self.assertIn(words, failed, words)
+        for words in ("asked the web page's \\`/healthz\\` over the app's private endpoint with no credential", "this runner asked nothing",
+                      "The decision needs two such measurements of 20 minutes each. Nothing was changed."):
+            self.assertIn(words, finished, words)
 
 
 class FoundryWorkflow(unittest.TestCase):
@@ -2224,6 +2469,8 @@ class RetireWorkflow(unittest.TestCase):
         expression = re.sub(r"inputs\.action == '([a-z-]+)'", lambda m: "True" if m.group(1) == action else "False", expression)
         # Which of the two steps that knock at the front door runs is decided by an output of the settings step, not by the action: for a question about the action alone either may run.
         expression = re.sub(r"steps\.params\.outputs\.door_in_operator (==|!=) 'true'", "True", expression)
+        # Which plan kind the cases app is on is decided by the constant CASES_APP_PLAN, not by the action: for a question about the action alone either may run.
+        expression = re.sub(r"steps\.params\.outputs\.cases_app_plan == '(?:Flex|Basic)'", "True", expression)
         expression = re.sub(r"steps\.\w+\.outcome != 'skipped'", "True", expression).replace("always()", "True").replace("&&", " and ").replace("||", " or ")
         assert re.fullmatch(r"[\sA-Za-z()]*", expression) and set(re.findall(r"[A-Za-z]+", expression)) <= {"True", "False", "and", "or"}, expression
         return bool(eval(expression, {"__builtins__": {}}))
@@ -2236,6 +2483,8 @@ class RetireWorkflow(unittest.TestCase):
             self.assertIsInstance(self.runs_for(block, "recording"), bool, condition)
         self.assertTrue(self.runs_for("name: x\n        run: |\n          true\n", "recording"))
         self.assertTrue(self.runs_for("name: x\n        if: inputs.action == 'recording-check' || inputs.action == 'cases-run'\n        run: |\n          true\n", "cases-run"))
+        self.assertTrue(self.runs_for("name: x\n        if: inputs.action == 'cases' && steps.params.outputs.cases_app_plan == 'Basic'\n        run: |\n          true\n", "cases"))
+        self.assertFalse(self.runs_for("name: x\n        if: inputs.action == 'cases' && steps.params.outputs.cases_app_plan == 'Flex'\n        run: |\n          true\n", "cases-run"))
         self.assertFalse(self.runs_for("name: x\n        if: inputs.action == 'recording'\n        run: |\n          true\n", "recording-check"))
 
     def test_the_what_if_says_what_changes_for_the_namespace_and_the_two_control_hubs_and_that_the_list_does_not_show_the_retirement(self):
@@ -2470,7 +2719,7 @@ class OperatorWorkflow(unittest.TestCase):
         digest = re.search(r"OPERATOR_IMAGE: (mcr\.microsoft\.com/azure-cli@sha256:[0-9a-f]{64})", self.text).group(1)
         self.assertIn(digest, text("docs/proposals/07-private-by-default.md"))
         self.assertEqual(len(re.findall(r"OPERATOR_IMAGE: ", self.text)), 1, "the pin is made once")
-        self.assertEqual(len(re.findall(r'--image "\$OPERATOR_IMAGE"', self.text)), 8, "and used by the probe, by the two checks, by the health check of the cases app, by the check of the web page's front door, by the check of the AI Gateway and by the two publishes")
+        self.assertEqual(len(re.findall(r'--image "\$OPERATOR_IMAGE"', self.text)), 9, "and used by the probe, by the two checks, by the health check of the cases app, by the measurement of the web page's answering time, by the check of the web page's front door, by the check of the AI Gateway and by the two publishes")
         self.assertNotIn("az container", self.text, "the tool makes, reads and deletes the group")
 
     def test_the_cleanup_deletes_only_groups_of_the_probe_through_the_tool_and_a_failure_is_a_warning(self):
@@ -2538,7 +2787,7 @@ class OperatorChecksWorkflow(unittest.TestCase):
             self.assertLess(positions[-1], self.names.index("What was done"))
             self.assertIn(f"if: inputs.action == '{action}'\n", self.step(listing))
             self.assertIn(f"if: inputs.action == '{action}'\n", self.step(check))
-        self.assertIn("if: inputs.action == 'recording-check' || inputs.action == 'cases-run'\n", self.step(self.FIND))
+        self.assertIn("if: inputs.action == 'recording-check' || inputs.action == 'cases-run' || inputs.action == 'page-latency'\n", self.step(self.FIND))
         self.assertIn("id: operator\n", self.step(self.FIND))
         self.assertIn("id: copy_jobs\n", self.step(self.RECORDING))
         self.assertIn("id: watch\n", self.step(self.CASES))
@@ -2661,7 +2910,7 @@ class OperatorChecksWorkflow(unittest.TestCase):
         description = re.search(r'(?m)^        description: "(what-if: .+)"$', self.text).group(1)
         self.assertIn("recording-check: start the copy jobs once through the control hub and read what they say from the function app's telemetry, both by the Operator from inside the network "
                       "(the check tool runs in a short-lived container group of the Operator): it needs operator first. cases:", description)
-        self.assertIn("cases-run: start one Watch through the control hub and read its History from the telemetry, both by the Operator from inside the network: it needs operator first. plant:", description)
+        self.assertIn("cases-run: start one Watch through the control hub and read its History from the telemetry, both by the Operator from inside the network: it needs operator first. page-latency:", description)
 
     def test_the_summaries_say_where_the_work_was_done_what_to_do_when_the_operator_or_its_role_is_missing_and_what_the_operator_now_holds(self):
         block = self.step("What was done")

@@ -1217,6 +1217,79 @@ class PublicNetworkAccessOfTheApps(unittest.TestCase):
         self.assertTrue(ep.check_against(self.doc(a="x", c={}), self.TEMPLATE, "t"))
 
 
+class ThePlanOfTheCasesApp(unittest.TestCase):
+    """The web page's app runs on Flex Consumption or on a Basic plan, from one constant (docs/proposals/07-private-by-default.md, "The web page on Flex Consumption"): both values build valid files, the
+    two differ in nothing but the plan, and the way back is the one value."""
+
+    CASES_TEMPLATE = (ROOT / "environment" / "cases" / "main.bicep").read_text(encoding="utf-8")
+
+    def build(self, plan=None, **changes):
+        if plan is None:
+            return run({**SETTINGS, **changes})
+        with mock.patch.object(ep, "CASES_APP_PLAN", plan):
+            return run({**SETTINGS, **changes})
+
+    def test_the_constant_is_flex_and_is_one_line_among_the_constants_near_the_top_of_the_builder(self):
+        self.assertEqual(ep.CASES_APP_PLAN, "Flex", "the owner ordered that the web page scales to zero; Basic is the way back, and the one value and the one test to change then")
+        self.assertEqual(ep.CASES_APP_PLANS, ("Flex", "Basic"))
+        source = TOOL.read_text(encoding="utf-8")
+        self.assertEqual(re.findall(r'(?m)^CASES_APP_PLAN = "(Flex|Basic)"$', source), ["Flex"], "one constant, one line")
+        self.assertLess(source.index('\nCASES_APP_PLAN = "Flex"\n'), source.index("\ndef "), "near the top, with the other constants")
+
+    def test_both_values_build_valid_parameter_files_that_the_template_takes(self):
+        declared = bicep_params(self.CASES_TEMPLATE)
+        for plan in ("Flex", "Basic"):
+            with self.subTest(plan=plan):
+                code, out, err, files = self.build(plan)
+                self.assertEqual((code, err), (0, ""))
+                given = values(files["cases.parameters.json"])
+                self.assertEqual(given["casesAppPlan"], plan)
+                self.assertFalse(set(given) - set(declared), f"{plan}: a setting that the template does not take")
+                self.assertFalse({name for name, (_, has_default) in declared.items() if not has_default} - set(given), f"{plan}: a setting that the template needs and the file does not give")
+                self.assertEqual(declared["casesAppPlan"], ("string", True))
+        self.assertIn("param casesAppPlan string = 'Flex'\n", self.CASES_TEMPLATE, "the template's default is the constant's")
+        self.assertRegex(self.CASES_TEMPLATE, r"@allowed\(\[\n  'Flex'\n  'Basic'\n\]\)\nparam casesAppPlan")
+
+    def test_the_two_values_differ_in_the_plan_alone_and_nothing_else_changes_for_the_way_back(self):
+        results = {plan: self.build(plan) for plan in ("Flex", "Basic")}
+        for plan, (code, out, err, files) in results.items():
+            self.assertEqual((code, err), (0, ""), plan)
+        flex_files, basic_files = results["Flex"][3], results["Basic"][3]
+        self.assertEqual(set(flex_files), set(basic_files))
+        for name in flex_files:
+            if name != "cases.parameters.json":
+                self.assertEqual(flex_files[name], basic_files[name], f"{name}: the plan reaches the file of the cases app only")
+        flex, basic = values(flex_files["cases.parameters.json"]), values(basic_files["cases.parameters.json"])
+        self.assertEqual({k: v for k, v in flex.items() if k != "casesAppPlan"}, {k: v for k, v in basic.items() if k != "casesAppPlan"},
+                         "the subnet's range, the identities, the settings, the people and the public access are the same: the app moves and nothing else does")
+        self.assertEqual(flex["webSubnetPrefix"], basic["webSubnetPrefix"], "the Basic plan's subnet range is always given, so that the way back needs nothing else")
+        lines = {plan: dict(line.split("=", 1) for line in results[plan][1].splitlines()) for plan in results}
+        plan_keys = {"cases_app_plan", "cases_plan_name", "cases_plan_tier", "cases_other_plan_name", "cases_other_plan_tier", "cases_subnet_name"}
+        for key in set(lines["Flex"]) - plan_keys:
+            self.assertEqual(lines["Flex"][key], lines["Basic"][key], key)
+        self.assertEqual(set(lines["Flex"]), set(lines["Basic"]))
+
+    def test_the_plan_and_the_subnet_of_each_kind_and_the_plan_that_the_action_removes_are_named_by_the_builder(self):
+        expected = {"Flex": {"cases_app_plan": "Flex", "cases_plan_name": "plan-meternaut-cases", "cases_plan_tier": "FlexConsumption", "cases_other_plan_name": "plan-meternaut-cases-basic",
+                             "cases_other_plan_tier": "Basic", "cases_subnet_name": "snet-func", "function_subnet_name": "snet-func"},
+                    "Basic": {"cases_app_plan": "Basic", "cases_plan_name": "plan-meternaut-cases-basic", "cases_plan_tier": "Basic", "cases_other_plan_name": "plan-meternaut-cases",
+                              "cases_other_plan_tier": "FlexConsumption", "cases_subnet_name": "snet-cases", "function_subnet_name": "snet-func"}}
+        for plan, want in expected.items():
+            with self.subTest(plan=plan):
+                _, out, _, _ = self.build(plan)
+                lines = dict(line.split("=", 1) for line in out.splitlines())
+                self.assertEqual({key: lines[key] for key in want}, want)
+        self.assertEqual(ep.CASES_PLAN_NAMES["Flex"], "plan-meternaut-cases")
+        self.assertIn("name: isFlex ? 'plan-${workload}-cases' : 'plan-${workload}-cases-basic'", self.CASES_TEMPLATE, "the names that the workflow removes a plan by are the template's")
+
+    def test_a_value_that_is_not_flex_or_basic_is_refused_by_name_before_anything_is_written(self):
+        for bad in ("flex", "basic", "FlexConsumption", "Premium", "", None, True, 1):
+            with self.subTest(bad=bad), mock.patch.object(ep, "CASES_APP_PLAN", bad):
+                code, out, err, files = run(SETTINGS)
+                self.assertEqual((code, out, files), (2, "", {}), repr(bad))
+                self.assertIn("CASES_APP_PLAN (in tools/environment-params.py) is Flex or Basic", err)
+
+
 class WhatTheWatchReads(unittest.TestCase):
     """The Watch reads every subscription that its identity can read (the owner's order of 2026-11-07: watch the entire estate). The parameter builder says so through one named constant, and the
     template takes it with the default false, so that a file that leaves it out keeps what the app did before: it reads only the subscription of scopeSubscriptions."""

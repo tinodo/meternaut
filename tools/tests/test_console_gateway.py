@@ -855,7 +855,7 @@ class TheDocumentsOfTheConsoleBehindTheGateway(unittest.TestCase):
                       "`httpSettings.forwardProxy` with the convention `Custom` and the header `X-Original-Host`. Without one it gets `NoProxy`, its default (inferred:",
                       "3. **The two checks that asked the app on its public name.**", "*The wait until the app answers* runs in the Operator.", "(`op-health-<run id>`)", "`health` through [`operator/run-tool.sh`]",
                       "at most 60 tries of at most 15 seconds, ten seconds apart", "With `--private` the name has to resolve to a private address inside the network",
-                      "The container signs in as the Operator's own identity and holds no token of the deploy identity.", "Its two files are about 23 KB, far below the 480,000 bytes that a request takes",
+                      "The container signs in as the Operator's own identity and holds no token of the deploy identity.", "Its two files are about 33 KB (the tool also measures the web page's answering time since 2026-11-07), far below the 480,000 bytes that a request takes",
                       "A fresh sign-in comes before the step", "a step after it deletes any group that is left (the prefix is `op-health-`)",
                       "*The check of the front door* knocks at the console's host name when there is one.", "so the check is of the path that people take",
                       "never a page: for every path of the console, for `/arm/return` with and without a code, and with a made-up sign-in header",
@@ -865,8 +865,8 @@ class TheDocumentsOfTheConsoleBehindTheGateway(unittest.TestCase):
                       "4. **The return addresses.**", "needs no new option: `--host` is the name that people open", "removes nothing. The addresses of the app's own name stay until a person removes them in the portal"):
             self.assertIn(words, self.section, words)
         sizes = (ROOT / "tools" / "console-check.py").stat().st_size + (ROOT / "operator" / "run-tool.sh").stat().st_size
-        self.assertLess(sizes, 24_000, "about 23 KB, as the record says (the door's option --private made the tool a little longer)")
-        self.assertGreater(sizes, 22_000)
+        self.assertLess(sizes, 36_000, "about 33 KB, as the record says (the door's option --private and the measurement of the answering time made the tool longer)")
+        self.assertGreater(sizes, 30_000)
 
     def test_what_learn_says_is_quoted_with_its_pages_and_the_two_differences_from_the_plan_are_named(self):
         table = self.section.split("**What Learn says** (read on 2026-11-06).")[1].split("**Where Learn says something other than the plan assumed.**")[0]
@@ -995,7 +995,7 @@ class TheDocumentsOfTheConsoleBehindTheGateway(unittest.TestCase):
                       "and the documents for that are built, nothing is deployed, and the app is still public", status)
         self.assertNotIn("built, not yet deployed", status)
         state = section_of(self.page, "## The rule and the state")
-        cases = [line for line in state.split("\n") if line.startswith("| Cases function app (Basic plan;")][0]
+        cases = [line for line in state.split("\n") if line.startswith("| Cases function app (")][0]
         self.assertIn("**Enabled**, until phase 3 for this app. The owner decided on 2026-11-06 that the app is closed", cases)
         breaks = section_of(self.page, "## What private access breaks")
         for lead in ("| Checking the console's access |", "| People using the console |"):
@@ -1180,7 +1180,7 @@ class TheDocumentsOfTheWebPageOnThePrivateNetwork(unittest.TestCase):
                       f"that is built too, and not deployed ([the web page on the private network](#{self.ANCHOR})).", status)
         self.assertLess(status.index("The owner then decided that the cases app"), status.index("On 2026-11-07 the owner decided against the gateway"))
         state = section_of(self.page, "## The rule and the state")
-        cases = [line for line in state.split("\n") if line.startswith("| Cases function app (Basic plan;")][0]
+        cases = [line for line in state.split("\n") if line.startswith("| Cases function app (")][0]
         self.assertIn("On 2026-11-07 he decided against the gateway: he flips the value himself, in a change of its own, when he can reach the private address, and the check of the front door runs in the Operator", cases)
         breaks = section_of(self.page, "## What private access breaks")
         row = [line for line in breaks.split("\n") if line.startswith("| Checking the console's access |")][0]

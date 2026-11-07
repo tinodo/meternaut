@@ -236,8 +236,8 @@ class WorkOutTheFoundrySettings(unittest.TestCase):
     ACTIONS = re.findall(r"^          - (\S+)$", re.search(r"(?ms)^      action:\n(.*?)^      \w", WORKFLOW).group(1), re.M)
 
     def test_the_actions_of_the_workflow_are_the_ones_without_the_three_that_made_objects_on_the_instance(self):
-        self.assertEqual(self.ACTIONS, ["what-if", "model-side", "recording", "recording-check", "foundry", "cases", "cases-run", "plant", "loop-check", "operator", "operator-probe", "aigateway",
-                                        "aigateway-check"])
+        self.assertEqual(self.ACTIONS, ["what-if", "model-side", "recording", "recording-check", "foundry", "cases", "cases-run", "page-latency", "plant", "loop-check", "operator", "operator-probe",
+                                        "aigateway", "aigateway-check"])
         for retired in ("gateway-prepare", "gateway", "contract"):
             self.assertNotIn(retired, self.ACTIONS)
 
@@ -1466,12 +1466,12 @@ class ThePublishStepsFindTheOperatorAskForTheTokenAndStartTheContainerGroup(unit
                   "file": "cases-source.zip", "seconds": "1200"},
     }
 
-    def run_publish(self, kind, curl="ok", request=True, identity=None, subnet="ok", exit_code=0, dns="10.20.0.4,10.20.0.5", size=1234):
+    def run_publish(self, kind, curl="ok", request=True, identity=None, subnet="ok", exit_code=0, dns="10.20.0.4,10.20.0.5", size=1234, plan="Flex"):
         want = self.PUBLISHES[kind]
         temp = Path(self.enterContext(tempfile.TemporaryDirectory()))
         (temp / want["file"]).write_bytes(b"x" * size)
         env = {"ENV_SUBSCRIPTION_ID": self.SUBSCRIPTION, "ENV_RESOURCE_GROUP": self.GROUP, "ENV_DNS_SERVERS": dns, "GITHUB_RUN_ID": "1234567890", "OPERATOR_IMAGE": self.IMAGE,
-               "ACTION": want["action"], "FUNCTION_APP": want["app"], "DEPLOY_CLIENT_ID": self.DEPLOY_CLIENT, "DEPLOY_TENANT_ID": self.DEPLOY_TENANT,
+               "ACTION": want["action"], "FUNCTION_APP": want["app"], "DEPLOY_CLIENT_ID": self.DEPLOY_CLIENT, "DEPLOY_TENANT_ID": self.DEPLOY_TENANT, "CASES_APP_PLAN": plan,
                "FAKE_IDENTITY_ID": self.IDENTITY if identity is None else identity, "FAKE_SUBNET": subnet, "FAKE_CURL": curl, "FAKE_TOKEN": self.TOKEN, "FAKE_EXIT": str(exit_code),
                "RUNNER_TEMP": temp.as_posix(), "GITHUB_STEP_SUMMARY": (temp / "summary.md").as_posix(),
                "ACTIONS_ID_TOKEN_REQUEST_URL": self.URL if request else "", "ACTIONS_ID_TOKEN_REQUEST_TOKEN": self.BEARER if request else ""}
@@ -1479,13 +1479,15 @@ class ThePublishStepsFindTheOperatorAskForTheTokenAndStartTheContainerGroup(unit
         calls, other = split_calls(lines)
         return done, calls, other, temp
 
-    def expected(self, kind, temp, size, dns=("10.20.0.4", "10.20.0.5")):
+    def expected(self, kind, temp, size, dns=("10.20.0.4", "10.20.0.5"), plan="Flex"):
         want = self.PUBLISHES[kind]
         files = [f"{want['file']}={temp.as_posix()}/{want['file']}", "build-function-app.sh=tools/build-function-app.sh"]
+        # the web page's app is told the plan kind that it runs on; the usage app is always Flex Consumption and says nothing
+        kinds = ["--env", f"PUBLISH_KIND={kind}"] + (["--env", f"PUBLISH_PLAN={plan}"] if kind == "cases" else [])
         return (["tools/operator-run.py", "run", "--resource-group", self.GROUP, "--name", "op-publish-1234567890", "--subnet-id", self.SUBNET, "--identity-id", self.IDENTITY, "--image", self.IMAGE,
                  "--script", "operator/publish.sh"]
                 + [word for pair in files for word in ("--secret-file", pair)]
-                + ["--env", f"PUBLISH_KIND={kind}", "--env", f"PUBLISH_APP={want['app']}", "--env", f"PUBLISH_RESOURCE_GROUP={self.GROUP}", "--env", f"PUBLISH_SUBSCRIPTION={self.SUBSCRIPTION}",
+                + kinds + ["--env", f"PUBLISH_APP={want['app']}", "--env", f"PUBLISH_RESOURCE_GROUP={self.GROUP}", "--env", f"PUBLISH_SUBSCRIPTION={self.SUBSCRIPTION}",
                     "--env", f"PUBLISH_CLIENT_ID={self.DEPLOY_CLIENT}", "--env", f"PUBLISH_TENANT_ID={self.DEPLOY_TENANT}", "--env", f"PUBLISH_FILE_BYTES={size}", "--secure-env", "AZURE_FEDERATED_TOKEN"]
                 + [word for server in dns for word in ("--dns-server", server)]
                 + ["--timeout-seconds", want["seconds"], "--summary", (temp / "summary.md").as_posix()])
@@ -1520,7 +1522,7 @@ class ThePublishStepsFindTheOperatorAskForTheTokenAndStartTheContainerGroup(unit
             self.assertEqual(secure, [("AZURE_FEDERATED_TOKEN", self.TOKEN)])
             self.assertEqual(servers, ["10.20.0.4", "10.20.0.5"])
             self.assertEqual(sorted(name for name, _ in plain), sorted(["PUBLISH_KIND", "PUBLISH_APP", "PUBLISH_RESOURCE_GROUP", "PUBLISH_SUBSCRIPTION", "PUBLISH_CLIENT_ID", "PUBLISH_TENANT_ID",
-                                                                       "PUBLISH_FILE_BYTES"]))
+                                                                       "PUBLISH_FILE_BYTES"] + (["PUBLISH_PLAN"] if kind == "cases" else [])))
             with contextlib.chdir(ROOT):
                 files = tool.read_files(args)
             zip_name = self.PUBLISHES[kind]["file"]
