@@ -682,7 +682,7 @@ class Workflow(unittest.TestCase):
                 self.assertIsNotNone(condition, block[:80])
                 self.assertNotIn("what-if", condition.group(1))
                 self.assertNotIn("always()", condition.group(1))
-        self.assertEqual(found, 4, "two publishes and two job starts, all in the Operator's container: the publish of the usage app and of the cases app, and the check tools that send the control event")
+        self.assertEqual(found, 5, "two publishes and three job starts, all in the Operator's container: the publish of the usage app and of the cases app, the check tools that send the control event, and the health check of the cases app")
         for block in self.steps:
             for word in ("az functionapp deployment source config-zip", "/api/zipdeploy", "az webapp deploy", "az webapp deployment"):
                 self.assertNotIn(word, block, f"no step publishes from the runner any more: {word} is in {block[:80]!r}")
@@ -745,7 +745,7 @@ class Workflow(unittest.TestCase):
         block = self.steps[names.index(again)]
         self.assertIn("if: inputs.action == 'recording'", block)
         self.assertIn("uses: azure/login@", block)
-        self.assertEqual(self.text.count("uses: azure/login@"), 6, "the first sign-in, one more before each publish (the usage recording's and the cases'), one more after the wait for the cases app, one more before the read-back of the Foundry resource, which follows a wait of up to 40 minutes, and one more before the list of the usage functions, which follows a publish in the Operator that can take a quarter of an hour")
+        self.assertEqual(self.text.count("uses: azure/login@"), 7, "the first sign-in, one more before each publish (the usage recording's and the cases'), one more before the health check of the cases app in the Operator and one more after it, one more before the read-back of the Foundry resource, which follows a wait of up to 40 minutes, and one more before the list of the usage functions, which follows a publish in the Operator that can take a quarter of an hour")
         self.assertLess(names.index("Deploy the usage recording"), names.index(again))
         self.assertLess(names.index(again), names.index("Publish the usage functions to the function app from inside the network, in the Operator"))
         later = "Sign in to Azure again for the list of the functions, because the publish in the Operator can take a quarter of an hour and a credential lasts five minutes"
@@ -1432,16 +1432,20 @@ class CasesWorkflow(unittest.TestCase):
                  "Wait until the landing zone has registered the cases app's private endpoint in the central zone",
                  "Sign in to Azure again for the publish of the cases, because the first sign-in's credential lasts five minutes",
                  "Pack the cases app's sources for the Operator", "Publish the cases to the function app from inside the network, in the Operator",
-                 "Delete any container group of the publish of the cases that is left", "Wait until the cases app answers",
-                 "Sign in to Azure a third time for the check of the cases, because the second sign-in's credential lasts five minutes too",
+                 "Delete any container group of the publish of the cases that is left",
+                 "Sign in to Azure again for the health check of the cases app in the Operator, because the publish in the Operator can take a quarter of an hour and a credential lasts five minutes",
+                 "Wait until the cases app answers", "Delete any container group of the health check of the cases app that is left",
+                 "Sign in to Azure a fourth time for the check of the cases, because the third sign-in's credential lasts five minutes too",
                  "Say whether the integration subnet carries the route table of the landing zone's network manager",
                  "The cases app lists its four functions",
                  "Remove the first integration subnet of the cases app, snet-web, when it is still there and nothing uses it"]
         positions = [self.names.index(name) for name in order]
         self.assertEqual(positions, sorted(positions))
+        second_lines = {"Delete any container group of the publish of the cases that is left": "publish_cases",
+                        "Delete any container group of the health check of the cases app that is left": "health_cases"}
         for name in order:
-            if name.startswith("Delete any container group"):
-                self.assertIn("if: always() && inputs.action == 'cases' && steps.publish_cases.outcome != 'skipped'", self.steps[self.names.index(name)], name)
+            if name in second_lines:
+                self.assertIn(f"if: always() && inputs.action == 'cases' && steps.{second_lines[name]}.outcome != 'skipped'", self.steps[self.names.index(name)], name)
             else:
                 self.assertIn("if: inputs.action == 'cases'", self.steps[self.names.index(name)], name)
         deploy = self.step("Deploy the first cases")
@@ -1543,23 +1547,39 @@ class CasesWorkflow(unittest.TestCase):
         self.assertNotIn("exit 1", script, "it says what the landing zone has done and never fails the run")
         self.assertNotIn("sleep", script)
         self.assertNotRegex(block, r"--method (put|patch|post|delete)")
-        self.assertLess(self.names.index("Sign in to Azure a third time for the check of the cases, because the second sign-in's credential lasts five minutes too"),
-                        self.names.index(title), "a fresh credential: the second one is old by the time the app has answered")
+        self.assertLess(self.names.index("Sign in to Azure a fourth time for the check of the cases, because the third sign-in's credential lasts five minutes too"),
+                        self.names.index(title), "a fresh credential: the third one is old by the time the app has answered")
         self.assertLess(self.names.index(title), self.names.index("The cases app lists its four functions"))
 
-    def test_the_wait_for_the_app_holds_no_credential_and_the_check_after_it_signs_in_again(self):
+    def test_the_wait_for_the_app_runs_in_the_operator_on_the_apps_own_name_with_no_token_of_the_deploy_identity_and_the_checks_after_it_sign_in_again(self):
+        # Once the app is closed this runner cannot reach it: the health address is asked from inside the network, as the publish is (docs/proposals/07-private-by-default.md).
+        again = "Sign in to Azure again for the health check of the cases app in the Operator, because the publish in the Operator can take a quarter of an hour and a credential lasts five minutes"
+        fourth = "Sign in to Azure a fourth time for the check of the cases, because the third sign-in's credential lasts five minutes too"
+        cleanup = "Delete any container group of the health check of the cases app that is left"
         wait = self.step("Wait until the cases app answers")
-        third = self.step("Sign in to Azure a third time for the check of the cases, because the second sign-in's credential lasts five minutes too")
-        self.assertIn('"https://$FUNCTION_APP.azurewebsites.net/healthz"', wait)
-        self.assertIn("timeout-minutes: 25", wait)
         script = "\n".join(line for line in wait.split("run:")[1].splitlines() if not line.strip().startswith("#"))
-        self.assertNotIn("az ", script, "a wait of minutes cannot hold a credential that lasts five")
-        self.assertIn("exit 1", script)
-        self.assertIn("uses: azure/login@", third)
-        positions = [self.names.index(name) for name in ("Publish the cases to the function app from inside the network, in the Operator", "Wait until the cases app answers",
-                                                        "Sign in to Azure a third time for the check of the cases, because the second sign-in's credential lasts five minutes too",
+        self.assertIn("id: health_cases\n", wait)
+        self.assertIn("timeout-minutes: 35\n", wait)
+        self.assertIn("FUNCTION_APP: ${{ steps.params.outputs.cases_function_app_name }}", wait)
+        for word in ('--name "op-health-$GITHUB_RUN_ID"', "--script operator/run-tool.sh", '--secret-file "console-check.py=tools/console-check.py"', '--env "TOOL_NAME=console-check"',
+                     '--env "TOOL_ARGS=health --host $FUNCTION_APP.azurewebsites.net --tries 60 --interval 10 --timeout 15 --private"', '--image "$OPERATOR_IMAGE"', '"${dns[@]}"',
+                     "--timeout-seconds 1800", '--summary "$GITHUB_STEP_SUMMARY"', "id-meternaut-operator", "snet-ops"):
+            self.assertIn(word, script, word)
+        for word in ("curl", "--secure-env", "ACTIONS_ID_TOKEN", "AZURE_FEDERATED_TOKEN", "DEPLOY_CLIENT_ID", "DEPLOY_TENANT_ID", "sleep", "https://$FUNCTION_APP.azurewebsites.net/healthz", "get-access-token"):
+            self.assertNotIn(word, script, f"the runner asks nothing of the app and the container gets no token of the deploy identity: {word}")
+        self.assertNotRegex(script, r"--method (put|patch|post|delete)", "nothing is changed here")
+        self.assertIn("exit \"$status\"", script, "the tool's own exit code stops the run")
+        self.assertIn("uses: azure/login@", self.step(again))
+        self.assertIn("uses: azure/login@", self.step(fourth))
+        self.assertIn("if: always() && inputs.action == 'cases' && steps.health_cases.outcome != 'skipped'\n", self.step(cleanup))
+        self.assertIn("--prefix op-health- --older-than-minutes 0", self.step(cleanup))
+        self.assertIn("::warning::", self.step(cleanup), "a failed cleanup is a warning: the tool has deleted its group already")
+        positions = [self.names.index(name) for name in ("Publish the cases to the function app from inside the network, in the Operator", again, "Wait until the cases app answers", cleanup, fourth,
                                                         "The cases app lists its four functions")]
         self.assertEqual(positions, sorted(positions))
+        tries, interval, timeout, seconds, minutes = 60, 10, 15, 1800, 35
+        self.assertLess(tries * (timeout + interval), seconds, "the group is given longer than the tool waits for the app")
+        self.assertLess(seconds, minutes * 60, "and the step is given longer than the group, which the tool deletes at its own limit")
 
     def test_the_first_subnet_is_removed_by_its_name_when_nothing_holds_it_and_a_hold_is_said_and_is_no_error(self):
         title = "Remove the first integration subnet of the cases app, snet-web, when it is still there and nothing uses it"
@@ -1642,8 +1662,11 @@ class CasesWorkflow(unittest.TestCase):
     def test_the_front_door_is_knocked_at_by_its_own_action_and_after_every_cases_run_with_no_credential_and_no_write(self):
         block = self.step("Knock at the console's front door")
         self.assertIn("if: inputs.action == 'loop-check' || inputs.action == 'cases'", block)
-        self.assertIn("FUNCTION_APP: ${{ steps.params.outputs.cases_function_app_name }}", block)
-        self.assertIn('python3 tools/console-check.py door --host "$FUNCTION_APP.azurewebsites.net" --expect "$expect" --summary "$GITHUB_STEP_SUMMARY"', block)
+        for word in ("CONSOLE_HOST: ${{ steps.params.outputs.console_host }}", "CONSOLE_HOST_SET: ${{ steps.params.outputs.console_host_set }}",
+                     "CASES_PUBLIC_ACCESS: ${{ steps.params.outputs.cases_public_network_access }}"):
+            self.assertIn(word, block, "the address that is knocked at comes from the settings step: the console's host name, or the app's own name when there is none")
+        self.assertNotIn("FUNCTION_APP", block)
+        self.assertIn('python3 tools/console-check.py door --host "$CONSOLE_HOST" --expect "$expect" "${proxied[@]}" --summary "$GITHUB_STEP_SUMMARY"', block)
         self.assertIn("/arm/return", block, "the return address of the Azure sign-in is part of what is asked")
         script = "\n".join(line for line in block.split("run:")[1].splitlines() if not line.strip().startswith("#"))
         self.assertNotRegex(script, r"\baz\s")
@@ -2561,7 +2584,7 @@ class OperatorWorkflow(unittest.TestCase):
         digest = re.search(r"OPERATOR_IMAGE: (mcr\.microsoft\.com/azure-cli@sha256:[0-9a-f]{64})", self.text).group(1)
         self.assertIn(digest, text("docs/proposals/07-private-by-default.md"))
         self.assertEqual(len(re.findall(r"OPERATOR_IMAGE: ", self.text)), 1, "the pin is made once")
-        self.assertEqual(len(re.findall(r'--image "\$OPERATOR_IMAGE"', self.text)), 5, "and used by the probe, by the two checks and by the two publishes")
+        self.assertEqual(len(re.findall(r'--image "\$OPERATOR_IMAGE"', self.text)), 6, "and used by the probe, by the two checks, by the health check of the cases app and by the two publishes")
         self.assertNotIn("az container", self.text, "the tool makes, reads and deletes the group")
 
     def test_the_cleanup_deletes_only_groups_of_the_probe_through_the_tool_and_a_failure_is_a_warning(self):
@@ -2644,7 +2667,7 @@ class OperatorChecksWorkflow(unittest.TestCase):
         self.assertEqual(sorted(re.findall(r"python3 tools/cases-check\.py (\w+)", code)), ["functions", "functions"])
         for word in ("eventhubs.azure.net", "servicebus.windows.net/", "/messages?"):
             self.assertNotIn(word, code, f"{word}: the runner takes no token for Event Hubs and posts nothing to it")
-        self.assertEqual(self.text.count("uses: azure/login@"), 6, "the check actions added no sign-in: the runner makes the container group with the credential of the first one (the six are the first, those of recording and cases before their publish, the one of cases after its wait, the Foundry read-back's and the one of recording before its list of the functions)")
+        self.assertEqual(self.text.count("uses: azure/login@"), 7, "the check actions added no sign-in: the runner makes the container group with the credential of the first one (the seven are the first, those of recording and cases before their publish, the two of cases around the health check in the Operator, the Foundry read-back's and the one of recording before its list of the functions)")
 
     def test_each_check_runs_the_generic_script_with_its_tool_and_the_arguments_that_the_runner_used_before_and_the_times_are_ordered(self):
         expected = {self.RECORDING: {"tool": "recording-check", "files": ["recording-check.py"], "args": "run --namespace $EVENT_HUB_NAMESPACE --insights $insights --job all --minutes 20", "seconds": 1500, "minutes": 35},

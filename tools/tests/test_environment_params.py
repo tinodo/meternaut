@@ -1306,11 +1306,11 @@ class PublicNetworkAccessOfTheApps(unittest.TestCase):
     RECORDING_TEMPLATE = (ROOT / "environment" / "recording" / "main.bicep").read_text(encoding="utf-8")
     CASES_TEMPLATE = (ROOT / "environment" / "cases" / "main.bicep").read_text(encoding="utf-8")
 
-    def build(self):
+    def build(self, **changes):
         with tempfile.TemporaryDirectory() as tmp:
             contract = Path(tmp) / "contract.json"
             contract.write_text(CONTRACT_FILE.read_text(encoding="utf-8"), encoding="utf-8")
-            return run(SETTINGS, "--contract", str(contract), "--contract-policy", str(POLICY_FILE))
+            return run({**SETTINGS, **changes}, "--contract", str(contract), "--contract-policy", str(POLICY_FILE))
 
     def test_the_usage_app_is_closed_and_the_cases_app_is_open_until_the_people_have_a_path_and_the_values_reach_their_parameter_files(self):
         code, out, err, files = self.build()
@@ -1325,9 +1325,10 @@ class PublicNetworkAccessOfTheApps(unittest.TestCase):
                 self.assertFalse({"usageAppPublicNetworkAccess", "casesAppPublicNetworkAccess"} & set(document["parameters"]), f"{name}: the value reaches the file of its own app only")
 
     def test_closing_an_app_is_one_value_and_it_reaches_only_that_app(self):
+        # A closed cases app needs the console's host name on the platform's Application Gateway: without it the build is refused (the next test), so the host name is given here.
         for usage, cases in (("Disabled", "Enabled"), ("Enabled", "Disabled"), ("Disabled", "Disabled"), ("Enabled", "Enabled")):
             with mock.patch.object(ep, "USAGE_APP_PUBLIC_NETWORK_ACCESS", usage), mock.patch.object(ep, "CASES_APP_PUBLIC_NETWORK_ACCESS", cases):
-                code, _, err, files = self.build()
+                code, _, err, files = self.build(CONSOLE_HOST_NAME="console.example.com")
             self.assertEqual((code, err), (0, ""), (usage, cases))
             self.assertEqual(values(files["recording.parameters.json"])["usageAppPublicNetworkAccess"], usage, (usage, cases))
             self.assertEqual(values(files["cases.parameters.json"])["casesAppPublicNetworkAccess"], cases, (usage, cases))

@@ -35,6 +35,10 @@ project in Azure: only then does the cases file carry the project's endpoint (an
 ENV_AIGW_SUBNET_EXISTS is true when the workflow found the AI Gateway's subnet (snet-aigw) in Azure: the template then leaves it alone (AGENTS.md rule 27).
 FOUNDRY_PROJECT_PRINCIPAL_ID (may be empty) is the object id of the Foundry project's system-assigned identity: the AI Gateway template gives it AI Gateway Models User on the
 gateway. Nothing sets it before the step that connects the project to the gateway; empty means none yet. It is checked as a GUID.
+CONSOLE_HOST_NAME (optional) is the host name that the console has on the platform's Application Gateway, which forwards to the cases app (docs/proposals/07-private-by-default.md). Empty: people open the
+console on the app's own name. With a name, the console's address (the setting CONSOLE_HOST, which the letters' links and the return address of the Azure sign-in are built from) is that name, the cases file
+passes it as consoleHostName, and the outputs console_host (the name that people open: that name, or the app's own) and console_host_set say what the check of the console's front door knocks at.
+CASES_APP_PUBLIC_NETWORK_ACCESS is refused as Disabled while no name is set.
 
 It writes five ARM parameter files into --out-dir (seven, with --contract: the contract's and the first cases'; eight when the gateway identity's client id is known):
 
@@ -285,12 +289,31 @@ def planted_parameters(env, location: str, owner: str) -> dict:
 
 ROLES_OF_PEOPLE = ("owner", "approver", "ops")
 ADDRESS = re.compile(r"^[A-Za-z0-9._%+'-]{1,64}@[A-Za-z0-9.-]{1,200}\.[A-Za-z]{2,24}$")
+# The name under which people open the console behind the platform's Application Gateway: a name of at least two labels that ends in letters, in lower case. It is an address that
+# people type and that the gateway's listener answers to, so it is never a scheme, a port, a path or an address, and never one of the app's own names (<app>.azurewebsites.net).
+CONSOLE_HOST_NAME = re.compile(r"^(?=.{4,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$")
+APP_OWN_DOMAIN = ".azurewebsites.net"
+
+
+def console_host_name(env) -> str:
+    """The host name that the console has on the platform's Application Gateway, from the optional variable CONSOLE_HOST_NAME, in lower case; empty when there is none.
+
+    Empty: people open the console on the app's own name, and everything is as it was. A name makes the console's address in the letters and the return address of the Azure sign-in that name
+    (the setting CONSOLE_HOST), and tells the platform's sign-in to read the host of a request from the header X-Original-Host that the gateway adds (environment/cases/main.bicep)."""
+    value = (env.get("CONSOLE_HOST_NAME") or "").strip().lower()
+    if not value:
+        return ""
+    if value.endswith(APP_OWN_DOMAIN):
+        raise Problem("CONSOLE_HOST_NAME is the name that people use on the platform's Application Gateway, and not one of the app's own names: leave it empty when there is no gateway name")
+    if not CONSOLE_HOST_NAME.match(value):
+        raise Problem("CONSOLE_HOST_NAME is a host name such as console.example.com (letters, digits, hyphens and dots; no scheme, port or path)")
+    return value
 
 
 def console_parameters(env) -> dict:
-    """The console, the people and the mail of the cases app, from three optional variables. None of them is a secret: an app registration's client id,
-    the people (directory object id, name, roles and address of each) and the address of the shared mailbox. Without a client id the sign-in is not set up
-    and the console refuses every request."""
+    """The console, the people and the mail of the cases app, from four optional variables. None of them is a secret: an app registration's client id,
+    the people (directory object id, name, roles and address of each), the address of the shared mailbox and the host name that the console has on the platform's Application Gateway.
+    Without a client id the sign-in is not set up and the console refuses every request. Without a host name the console is opened on the app's own name."""
     client = (env.get("CONSOLE_APP_CLIENT_ID") or "").strip()
     if client and not GUID.match(client):
         raise Problem("CONSOLE_APP_CLIENT_ID is the client id of the console's app registration")
@@ -322,6 +345,7 @@ def console_parameters(env) -> dict:
         "consolePeople": json.dumps([{**p, "oid": p["oid"].lower()} for p in people], separators=(",", ":")) if people else "[]",
         "consoleUserObjectIds": [p["oid"].lower() for p in people],
         "mailSender": sender,
+        "consoleHostName": console_host_name(env),
     }
 
 
@@ -723,6 +747,14 @@ def build(env, models: list[dict], preview: bool = False, contract: dict | None 
     for setting, value in (("USAGE_APP_PUBLIC_NETWORK_ACCESS", USAGE_APP_PUBLIC_NETWORK_ACCESS), ("CASES_APP_PUBLIC_NETWORK_ACCESS", CASES_APP_PUBLIC_NETWORK_ACCESS)):
         if value not in PUBLIC_NETWORK_ACCESS:
             raise Problem(f"{setting} (in tools/environment-params.py) is Enabled or Disabled, so that the template always writes the property")
+    console_host = console_host_name(env)
+    if CASES_APP_PUBLIC_NETWORK_ACCESS == "Disabled" and not console_host:
+        # A closed app answers nobody outside the network, so the check of the console's front door, which knocks from the runner, would have nothing to knock at and would pass or fail for
+        # the wrong reason; people would have no address either. Refused here, in every action, rather than left out of a run without a word (docs/proposals/07-private-by-default.md).
+        raise Problem("CASES_APP_PUBLIC_NETWORK_ACCESS (in tools/environment-params.py) is Disabled and CONSOLE_HOST_NAME is not set. The cases app would take no public traffic, so nobody could open "
+                      "the console, and the check of its front door, which knocks from the runner, would have no address to knock at: what a visitor without a sign-in gets would not be checked. "
+                      "Set CONSOLE_HOST_NAME to the console's host name on the platform's Application Gateway once the gateway and its DNS record exist (environment/BOOTSTRAP.md), "
+                      "or leave the app's public access Enabled")
 
     dns = items(need(env, "ENV_DNS_SERVERS"), "ENV_DNS_SERVERS", 3)
     for server in dns:
@@ -864,6 +896,9 @@ def build(env, models: list[dict], preview: bool = False, contract: dict | None 
         "cases_endpoints": ",".join(f"{endpoint_name}:{zone}" for endpoint_name, zone in cases_endpoints(cases_names(subscription, group))),
         "appinsights_name": "appi-meternaut",
         "cases_hub_name": "cases-control",
+        "console_host": console_host or f"{cases_names(subscription, group)['cases_function_app_name']}{APP_OWN_DOMAIN}",
+        "console_host_set": "true" if console_host else "false",
+        "cases_public_network_access": CASES_APP_PUBLIC_NETWORK_ACCESS,
         "gateway_url": f"https://{gateway.group(3).lower()}.azure-api.net",
         **names,
         **cases_names(subscription, group),
