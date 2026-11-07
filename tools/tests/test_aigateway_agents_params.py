@@ -57,22 +57,21 @@ PROJECT_PRINCIPAL = SETTINGS["FOUNDRY_PROJECT_PRINCIPAL_ID"]
 # gatewayPrincipalId (no role is made for a gateway identity any more), the four files logger, eventhub-loggers, kit and contract are not written at all, and the output lost the lines gateway_subscription,
 # gateway_resource_group, gateway_name, identity_name and principal_known. Every other file is what it was. Third change (the Watch reads every subscription that its identity can read, 2026-11-07):
 # cases.parameters.json gained scopeAllSubscriptions (true); every other file and the output are what they were. Fourth change (the web page can be closed with no host name on a gateway, 2026-11-07):
-# the output gained one line, door_in_operator (false for these inputs, which carry a host name: it is true only for a closed cases app with none); every file is what it was. Fifth change (every model
-# call goes through the AI Gateway, 2026-11-07): cases.parameters.json gained aiGatewayHost (the placeholder, because these inputs name no gateway) and aigateway.parameters.json gained
-# casesPrincipalId (the object id of the cases app's identity, CASES_SYSTEM_PRINCIPAL_ID, which these inputs carry: the gateway gives it AI Gateway Models User); every other file and the output
-# are what they were.
+# the output gained one line, door_in_operator (false for these inputs, which carry a host name: it is true only for a closed cases app with none); every file is what it was. Fifth change (the web page
+# runs on Flex Consumption or on a Basic plan, 2026-11-07): cases.parameters.json gained casesAppPlan ("Flex"), and the output gained seven lines about the plan kind (cases_app_plan, cases_plan_name,
+# cases_plan_tier, cases_other_plan_name, cases_other_plan_tier, cases_subnet_name and function_subnet_name); every other file is what it was.
 GOLDEN = {
     "aigateway-policies.json": "e6d99d1633ab16afc3410e50dbdcb7e290f0e125f4283b4b19f63a8eebb8395c",
     "aigateway-subnet.parameters.json": "a2a16b02fd7a1d54d8949ad89796d4ea89d6bf1907db1f5b621205699a5a0196",
-    "aigateway.parameters.json": "936fc16a2a06d5aa3a029f319eab1dcd23c547800eaee01e5183539e746393d2",
-    "cases.parameters.json": "e19ac40dbc0cebde2ea429235be78759fe1a550d69c2002c1b50c960b1a3792e",
+    "aigateway.parameters.json": "77593485df872804654eae54c91724ac5fd0a50b4afd33a625bf59d3a542d0a5",
+    "cases.parameters.json": "2c01d3150ab37bb1d80f6a1ae69b86e6cd917fc7854697ff5874266cc8e60555",
     "environment.parameters.json": "f96d09a1eab2372a668e50d5a1ecee07faf2d7b70cacd3986ac4868b45379bed",
     "foundry.parameters.json": "ed5e8a14727de3595a0ab4bc5b0fcc4979c7d35b088536fce62f80651e59e99d",
     "operator.parameters.json": "78972401f11e209ef6bbdbba2c7cab95921b372e1dc570765d953aa01b2b2f90",
     "planted.parameters.json": "62ecf7282a7bf4c968db91a3943ba20a99dc7ac04fcabb7816aadf6f68f9759c",
     "recording.parameters.json": "1151a3f2462d5cd97d2f2d7be9839c8fdd4a9f6c84a7fd38c0b356cb35cc2064",
 }
-GOLDEN_OUTPUT = "3bcea576e85a4395b709710f1233ffa1e9ae37898483bcac590ef0bfbe620ec7"
+GOLDEN_OUTPUT = "ef59c2656e70ad6b6774061a4924d21ea53030e51b2f3ceb225fa9de1a369b90"
 
 FOUNDRY = (ROOT / "environment" / "foundry" / "main.bicep").read_text(encoding="utf-8")
 CASES = (ROOT / "environment" / "cases" / "main.bicep").read_text(encoding="utf-8")
@@ -155,7 +154,7 @@ class TheSwitchIsOffAndNothingDiffers(unittest.TestCase):
     def test_no_output_is_added_while_it_is_off(self):
         _, out, _, _ = build(SETTINGS)
         self.assertFalse([key for key in outputs(out) if "ai_gateway" in key or key == "aigateway_connection_name"])
-        self.assertEqual(len(out.splitlines()), 38, "the 37 lines that there were and door_in_operator (the web page, 2026-11-07), which is not about the AI Gateway: no line of the switch is among them")
+        self.assertEqual(len(out.splitlines()), 45, "the 37 lines that there were, door_in_operator (the web page, 2026-11-07) and the seven lines of the plan kind of the web page's app, which are not about the AI Gateway: no line of the switch is among them")
 
     def test_a_switch_that_is_not_true_or_false_is_refused_by_name(self):
         for bad in ("False", "no", 0, 1, None, "true"):
