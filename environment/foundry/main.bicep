@@ -74,7 +74,7 @@ param models array
 @maxLength(36)
 param casesSystemPrincipalId string
 
-@description('Host name of the AI Gateway (Microsoft.ApiManagement/aigateways, environment/aigateway/main.bicep), as the service reports it in properties.frontend.defaultHostname: under .ai.gateway.azure.com. The workflow reads it from the service and passes it only while the switch AGENTS_VIA_AI_GATEWAY in tools/environment-params.py is True. Empty: no connection to the gateway is made, and nothing here is different for an estate that has no gateway.')
+@description('Host name of the AI Gateway (the separate service that environment/aigateway/main.bicep makes), as the service reports it in properties.frontend.defaultHostname: under .ai.gateway.azure.com. The workflow reads it from the service and passes it only while the switch AGENTS_VIA_AI_GATEWAY in tools/environment-params.py is True. Empty: no connection to the gateway is made, and nothing here is different for an estate that has no gateway.')
 @maxLength(253)
 param aiGatewayHost string = ''
 
