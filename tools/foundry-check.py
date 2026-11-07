@@ -2,7 +2,7 @@
 """Reads the Foundry resource of the agents back from Azure and fails unless it is as its template says (standard library only).
 
     python tools/foundry-check.py read-back --subscription S --resource-group G --account A --project P --guardrail R \
-        --private-endpoint PE --endpoint URL --models environment/models.json [--summary FILE] [--timeout SECONDS]
+        --private-endpoint PE --endpoint URL --models environment/models.json [--ai-gateway-host HOST --connection NAME] [--summary FILE] [--timeout SECONDS]
 
 A deployment that says Succeeded does not say that the resource came out as the template wrote it: tenant policies with the effect Modify rewrite a
 resource while it is made, and a Modify policy does not refuse anything (AGENTS.md rule 19). So what the design rests on is read back, and the run fails
@@ -15,7 +15,12 @@ for each thing that differs:
   - its model deployments: every model of environment/models.json, with its version, its deployment type and its capacity (`agentCapacity` of the model, which is the
     capacity of this resource and not the one of the model account), and the guardrail;
   - the guardrail: there, with the Prompt Shields that the agents need (Jailbreak and Indirect Attack on the user input, Indirect Attack on tool results), each blocking;
-  - the connection of the project to Application Insights: there, and with an identity and no key.
+  - the connection of the project to Application Insights: there, and with an identity and no key;
+  - only with --ai-gateway-host and --connection (the switch of the agents' route through the AI Gateway is on, docs/proposals/08-ai-gateway.md, step 2): the connection of the project to the
+    gateway, read with a GET of its own and held to what the template writes: the category ApiManagement, the authentication ProjectManagedIdentity (the project's own identity), the audience
+    https://azure-api.net/aigateway, the target (the gateway's host with the path /default/models/openai/v1), the model not in the path, the models listed by their aliases with the versions of
+    environment/models.json, not shared, and no credentials. The service does not return a secret, and nothing of its answer is printed but fixed words, the names of the models, a few plain values
+    and the names (never the values) of credentials, if there were any. Whether the Agent Service can call the gateway through it is not read here: only a run of the agents shows that.
 
 It only reads: GET requests of Azure Resource Manager through `az rest`. No key is listed and nothing of the data plane is called (the resource has no public
 endpoint, and the runner is not in the network). A list is read to its end (nextLink is followed, to addresses of Azure Resource Manager only), and no read waits longer
@@ -32,6 +37,7 @@ import subprocess
 import sys
 from pathlib import Path
 from typing import Callable
+from urllib.parse import urlsplit
 
 API = "2026-09-01"
 NETWORK_API = "2025-05-01"
@@ -44,6 +50,11 @@ MAX_PAGES = 20
 ENTRA_AUTH_TYPES = ("ProjectManagedIdentity", "AAD", "ManagedIdentity")
 # What the guardrail must hold: (name, source) of a Prompt Shield, each blocking.
 SHIELDS = (("Jailbreak", "Prompt"), ("Indirect Attack", "Prompt"), ("Indirect Attack", "PostToolCall"))
+# The connection to the AI Gateway (environment/foundry/main.bicep): the audience of the gateway's tokens, the base of its OpenAI route, and the host names that the service gives a gateway.
+GATEWAY_AUDIENCE = "https://azure-api.net/aigateway"
+GATEWAY_PATH = "/default/models/openai/v1"
+GATEWAY_HOST = re.compile(r"^(?=.{4,253}$)[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?\.ai\.gateway\.azure\.com$")
+CONNECTION_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{1,63}$")
 
 Runner = Callable[[list[str]], tuple[int, str, str]]
 
@@ -125,9 +136,79 @@ def read_models(path: Path) -> list[dict]:
     return models
 
 
+def plain(value: object, limit: int = 60) -> str:
+    """A value of an answer as it may be printed: letters, digits and . _ : / - only, cut, and never two colons in a row. Nothing else of an answer is ever printed."""
+    text = re.sub(r"[^A-Za-z0-9._:/ -]", "?", "" if value is None else str(value)).replace("::", ": :")
+    return text if len(text) <= limit else text[: limit - 3] + "..."
+
+
+def gateway_connection(document: dict, host: str, connection: str, models: list[dict]) -> list[tuple[bool, str]]:
+    """One (ok, text) for each thing that the connection of the project to the AI Gateway has to be, read from the answer of Azure for it.
+
+    The answer is held to what environment/foundry/main.bicep writes: the category ApiManagement with the project's managed identity (ProjectManagedIdentity), the audience of the gateway's tokens, the
+    base of the gateway's OpenAI route on its host, the model not in the path, the models listed by their aliases (the deployments' names, with their versions), not shared, and no credentials. The
+    service does not return a secret, and this does not print one: it prints fixed words, the names of the models, a few plain values and the names (never the values) of any credentials."""
+    properties = document.get("properties") or {}
+    metadata = properties.get("metadata") if isinstance(properties.get("metadata"), dict) else {}
+    found: list[tuple[bool, str]] = []
+    category, auth = properties.get("category"), properties.get("authType")
+    good = category == "ApiManagement" and auth == "ProjectManagedIdentity"
+    found.append((good, f"The connection {connection} to the AI Gateway is of the category ApiManagement and authenticates with the project's own identity (ProjectManagedIdentity)" if good
+                  else f"The connection {connection} differs from its template: its category is {plain(category)} and its authentication {plain(auth)}, not ApiManagement and ProjectManagedIdentity"))
+    audience = properties.get("audience")
+    found.append((audience == GATEWAY_AUDIENCE, f"The connection's audience is {GATEWAY_AUDIENCE}, the one that the gateway asks a token for" if audience == GATEWAY_AUDIENCE
+                  else f"The connection's audience is not {GATEWAY_AUDIENCE}: " + (f"the service reports {plain(audience)}" if audience else "the service reports none (it may not return the property: the portal shows it)")))
+    target = properties.get("target")
+    parts = urlsplit(target if isinstance(target, str) else "")
+    right_host = parts.scheme == "https" and (parts.hostname or "").lower() == host.lower() and parts.port is None and not parts.username
+    right_path = parts.path.rstrip("/") == GATEWAY_PATH and not parts.query and not parts.fragment
+    if right_host and right_path:
+        said = f"The connection's target is the gateway's host with the path {GATEWAY_PATH}"
+    elif not isinstance(target, str) or not target:
+        said = "The connection has no target"
+    elif right_host:
+        said = (f"The connection's target is on the gateway's host and its path is {plain(parts.path)}"
+                + (" with a query or a fragment" if parts.query or parts.fragment else "") + f", and it has to be {GATEWAY_PATH}")
+    else:
+        said = f"The connection's target is not on the gateway's host (its path is {plain(parts.path)}, and it has to be {GATEWAY_PATH})"
+    found.append((right_host and right_path, said))
+    credentials = properties.get("credentials")
+    clean = credentials is None or credentials == {}
+    named = ", ".join(sorted(plain(k, 30) for k in credentials)[:5]) if isinstance(credentials, dict) else "a value that is not an object"
+    found.append((clean, "The connection holds no credentials: the project's identity is the credential" if clean
+                  else f"The connection holds credentials (names only: {named}). No key is used by this project (AGENTS.md rule 23)"))
+    shared = properties.get("isSharedToAll")
+    found.append((shared is not True, "The connection is not shared with the other projects of the resource" if shared is not True
+                  else "The connection is shared with every project of the resource, and the template does not share it"))
+    in_path = str(metadata.get("deploymentInPath", "")).lower()
+    found.append((in_path == "false", "The model is sent in the body of the request, not in the path (deploymentInPath is false), where the gateway reads the alias" if in_path == "false"
+                  else f"deploymentInPath is {plain(metadata.get('deploymentInPath')) or 'not set'}, and it has to be false: the gateway reads the alias from the body"))
+    listed = metadata.get("models")
+    try:
+        entries = json.loads(listed) if isinstance(listed, str) else listed
+    except ValueError:
+        entries = None
+    if not isinstance(entries, list) or any(not isinstance(e, dict) for e in entries):
+        found.append((False, "The connection lists no models that can be read (metadata.models is not a list of models)"))
+    else:
+        by_name = {e.get("name"): ((e.get("properties") or {}).get("model") or {}) for e in entries}
+        missing = [m["name"] for m in models if by_name.get(m["name"]) is None]
+        wrong = [m["name"] for m in models if m["name"] in by_name and (by_name[m["name"]].get("name") != m["name"] or by_name[m["name"]].get("version") != m["version"]
+                                                                        or by_name[m["name"]].get("format") != "OpenAI")]
+        extra = sorted(plain(n, 40) for n in by_name if n not in {m["name"] for m in models})
+        ok = not missing and not wrong and not extra and len(entries) == len(models)
+        names = ", ".join(m["name"] for m in models)
+        found.append((ok, f"The connection lists the models {names}: each named by its alias, with the version of environment/models.json" if ok
+                      else "The connection's list of models differs from environment/models.json: " + "; ".join(
+                          part for part in (f"missing {', '.join(missing)}" if missing else "", f"another model or version for {', '.join(wrong)}" if wrong else "",
+                                            f"not an alias of the gateway: {', '.join(extra)}" if extra else "", "a model is listed twice" if len(entries) != len(by_name) else "") if part)))
+    return found
+
+
 def read_back(az: Runner, subscription: str, group: str, account: str, project: str, guardrail: str, private_endpoint: str, endpoint: str,
-              models: list[dict]) -> list[tuple[bool, str]]:
-    """One (ok, text) per thing that was read. A thing that cannot be read is a failure too."""
+              models: list[dict], gateway_host: str = "", connection: str = "") -> list[tuple[bool, str]]:
+    """One (ok, text) per thing that was read. A thing that cannot be read is a failure too. With a gateway host (the switch of the agents' route through the AI Gateway is on) the project's
+    connection to the gateway is read back too, with a GET of its own."""
     found: list[tuple[bool, str]] = []
     halted: list[str] = []
     base = f"/subscriptions/{subscription}/resourceGroups/{group}/providers"
@@ -213,6 +294,10 @@ def read_back(az: Runner, subscription: str, group: str, account: str, project: 
         kinds = [(c.get("properties") or {}).get("authType") for c in traces]
         ok = len(traces) == 1 and kinds[0] in ENTRA_AUTH_TYPES
         say(ok, "The project sends its traces to Application Insights with its identity" if ok else f"The project's connection to Application Insights is missing or is not made with an identity (found {len(traces)}, authentication {kinds})")
+    if gateway_host:
+        document = fetch(f"The connection {connection} to the AI Gateway", f"{resource}/projects/{project}/connections/{connection}")
+        if document is not None:
+            found.extend(gateway_connection(document, gateway_host, connection, models))
     return found
 
 
@@ -223,13 +308,19 @@ def main(argv=None, az: Runner | None = None) -> int:
     for name in ("subscription", "resource-group", "account", "project", "guardrail", "private-endpoint", "endpoint", "models"):
         check.add_argument(f"--{name}", required=True)
     check.add_argument("--summary", help="a file to append the lines to as Markdown (the step summary of a workflow run)")
+    check.add_argument("--ai-gateway-host", default="", help="the host name of the AI Gateway: given, the project's connection to it is read back too (the switch of the agents' route is on); needs --connection")
+    check.add_argument("--connection", default="", help="the name of the project's connection to the AI Gateway; needs --ai-gateway-host")
     check.add_argument("--timeout", type=int, default=TIMEOUT_SECONDS, help=f"seconds that one read of Azure may take (default {TIMEOUT_SECONDS}); a read that takes longer fails the run")
     args = parser.parse_args(argv)
     if args.timeout < 1:
         parser.error("--timeout is a number of seconds, one or more")
+    if bool(args.ai_gateway_host) != bool(args.connection):
+        parser.error("--ai-gateway-host and --connection go together")
+    if args.ai_gateway_host and (not GATEWAY_HOST.match(args.ai_gateway_host) or not CONNECTION_NAME.match(args.connection)):
+        parser.error("--ai-gateway-host is the host name that the service reports for the AI Gateway (under .ai.gateway.azure.com) and --connection the name of a connection")
     runner = az or (lambda arguments: run_az(arguments, args.timeout))
     findings = read_back(runner, args.subscription, args.resource_group, args.account, args.project, args.guardrail, args.private_endpoint, args.endpoint,
-                         read_models(Path(args.models)))
+                         read_models(Path(args.models)), args.ai_gateway_host, args.connection)
     lines = [f"{'ok' if ok else 'FAILED'}: {text}" for ok, text in findings]
     print("\n".join(lines))
     failed = [text for ok, text in findings if not ok]

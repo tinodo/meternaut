@@ -35,6 +35,12 @@ project in Azure: only then does the cases file carry the project's endpoint (an
 ENV_AIGW_SUBNET_EXISTS is true when the workflow found the AI Gateway's subnet (snet-aigw) in Azure: the template then leaves it alone (AGENTS.md rule 27).
 FOUNDRY_PROJECT_PRINCIPAL_ID (may be empty) is the object id of the Foundry project's system-assigned identity: the AI Gateway template gives it AI Gateway Models User on the
 gateway. Nothing sets it before the step that connects the project to the gateway; empty means none yet. It is checked as a GUID.
+AGENTS_VIA_AI_GATEWAY (a constant near the top of this file, False) is the switch of the agents' route through the AI Gateway (docs/proposals/08-ai-gateway.md, step 2). While it is False nothing below is read,
+no parameter file differs by a byte from what it was, and no output is added. When it is True: AIGATEWAY_HOST is the host name that the service reports for the gateway
+(properties.frontend.defaultHostname, under .ai.gateway.azure.com), which the workflow reads from the service and passes only to the actions that need it. It goes into foundry.parameters.json with the
+aliases (aiGatewayHost, aiGatewayModels), so that the Foundry resource makes the project's connection; the cases file carries the model names `<connection>/<alias>` (foundryModelInvestigator and
+foundryModelSkeptic); and two outputs are added (agents_via_ai_gateway=true and aigateway_connection_name), which the workflow reads. The builder refuses True without the host when ACTION (the job's own setting,
+the name of the action) is foundry, and without FOUNDRY_PROJECT_PRINCIPAL_ID when ACTION is aigateway: a --preview, and every other action, goes on without them.
 CONSOLE_HOST_NAME (optional) is the host name that the console has on the platform's Application Gateway, which forwards to the cases app (docs/proposals/07-private-by-default.md). Empty: people open the
 console on the app's own name. With a name, the console's address (the setting CONSOLE_HOST, which the letters' links and the return address of the Azure sign-in are built from) is that name, the cases file
 passes it as consoleHostName, and the outputs console_host (the name that people open: that name, or the app's own) and console_host_set say what the check of the console's front door knocks at.
@@ -142,6 +148,17 @@ PLACEHOLDER = "00000000-0000-0000-0000-000000000000"
 PUBLIC_NETWORK_ACCESS = ("Enabled", "Disabled")
 USAGE_APP_PUBLIC_NETWORK_ACCESS = "Disabled"
 CASES_APP_PUBLIC_NETWORK_ACCESS = "Enabled"
+# Whether the two agents of the investigation call their models through the AI Gateway (docs/proposals/08-ai-gateway.md, step 2). False: they call the model deployments of their own Foundry resource, as they
+# did before, and no parameter file, no output and no action differs from what it was. One value and a commit turn it on, in a change of its own, after the owner has said yes in plain words and after the actions
+# aigateway and aigateway-check have passed on the real estate. True: the action foundry makes the project's connection to the gateway, the action aigateway gives the project's identity AI Gateway Models User
+# on the gateway, and the action cases passes the model names `<connection>/<alias>` to the app. The way back is the value False and a run of cases (the record says what stays). Nothing here has run.
+AGENTS_VIA_AI_GATEWAY = False
+# The name of the project's connection to the gateway (the default of environment/foundry/main.bicep): an agent names its model `<connection>/<alias>`. The two models of the agents are the defaults of
+# environment/cases/main.bicep; a test holds the three together.
+AIGATEWAY_CONNECTION_NAME = "aigateway"
+AGENT_MODELS = {"foundryModelInvestigator": "gpt-6.1-sol", "foundryModelSkeptic": "gpt-6-luna"}
+# The host name that the service reports for the gateway (properties.frontend.defaultHostname): under the service's own domain, which the check of the gateway and the workflow ask for too.
+AIGATEWAY_HOST = re.compile(r"^(?=.{4,253}$)[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?\.ai\.gateway\.azure\.com$")
 # The central private DNS zone in which the landing zone's policy registers the names of an App Service app (the app's own and its deployment site's) for the endpoint of the sub-resource `sites`.
 # A Flex Consumption deployment ends with a call from the deployment site to the app's own host name, and while the zone has no record of a new endpoint that name does not resolve: the first
 # `recording` after the usage app's endpoint was made failed at the publish for that reason (docs/proposals/07-private-by-default.md, phase 1). So the endpoint of an app is always waited for.
@@ -442,6 +459,36 @@ def aigw_subnet_exists(env: dict) -> bool:
     return exists_flag(env, "ENV_AIGW_SUBNET_EXISTS")
 
 
+def ai_gateway_host(env: dict, preview: bool) -> str:
+    """The host name of the AI Gateway for the agents' route through it: AIGATEWAY_HOST. Empty while AGENTS_VIA_AI_GATEWAY is False, and then the setting is not even read.
+
+    The workflow reads the host from the service (properties.frontend.defaultHostname), only for the actions that use it, and the builder never makes one up: it is the target of the project's connection.
+    A True switch that cannot name the gateway is refused when the action is foundry, the one that makes the connection (ACTION is the job's own setting). A --preview, and every action that makes no
+    connection, goes on without a host, and the parameters of the connection are then left out of the file."""
+    if not AGENTS_VIA_AI_GATEWAY:
+        return ""
+    host = (env.get("AIGATEWAY_HOST") or "").strip().lower()
+    if not host:
+        if (env.get("ACTION") or "").strip() == "foundry" and not preview:
+            raise Problem("AGENTS_VIA_AI_GATEWAY (in tools/environment-params.py) is True and the AI Gateway cannot be named: AIGATEWAY_HOST, the host name that the service reports for it, is not set, so the Foundry "
+                          "project's connection cannot be made. Run the action aigateway first (the workflow reads the host name from the service), or set the constant back to False")
+        return ""
+    if not AIGATEWAY_HOST.match(host):
+        raise Problem("AIGATEWAY_HOST is the host name that the service reports for the AI Gateway, under .ai.gateway.azure.com")
+    return host
+
+
+def agent_models(models: list[dict]) -> dict[str, str]:
+    """The model names that the cases app is given when the agents go through the AI Gateway: `<connection>/<alias>`, the alias being the deployment's name (environment/aigateway/main.bicep)."""
+    deployed = {m["name"] for m in models}
+    missing = [name for name in AGENT_MODELS.values() if name not in deployed]
+    if missing:
+        raise Problem(f"AGENTS_VIA_AI_GATEWAY (in tools/environment-params.py) is True and the models of the agents ({', '.join(missing)}) are not in environment/models.json: there is no alias to name")
+    if not all(AIGATEWAY_ALIAS.match(m["name"]) for m in models):
+        raise Problem("the model names are the gateway's aliases: letters, digits, _ . and - only")
+    return {parameter: f"{AIGATEWAY_CONNECTION_NAME}/{name}" for parameter, name in AGENT_MODELS.items()}
+
+
 def recording_endpoints(names: dict[str, str]) -> list[tuple[str, str]]:
     """The private endpoints of the usage recording and the central private DNS zone that the landing zone registers each in: the three of the storage account, the Cosmos DB account's, the
     Event Hubs namespace's and the function app's own. The workflow waits for every one of them before it publishes the code. The app's own is in the list because the deployment of a package ends
@@ -556,11 +603,13 @@ def read_aigateway_policies(path: Path, models: list[dict]) -> list[dict]:
 
 
 def aigateway_files(env: dict, subscription: str, group: str, location: str, owner: str, vnet: ipaddress.IPv4Network, taken: tuple[ipaddress.IPv4Network, ...],
-                    foundry: dict[str, str], models: list[dict], policies: list[dict]) -> tuple[dict, dict[str, str]]:
+                    foundry: dict[str, str], models: list[dict], policies: list[dict], preview: bool = False) -> tuple[dict, dict[str, str]]:
     """The AI Gateway's parameter file and policy file, and its outputs (environment/aigateway/main.bicep; the action aigateway applies the policies).
 
     A network with no free range for the gateway's subnet gets no file: aigateway_files is false, aigateway_subnet_prefix is empty, and the action says why it stops.
-    A model's resource in the gateway has the deployment's name with its dots replaced by hyphens (the service's pattern allows none); its alias keeps the name."""
+    A model's resource in the gateway has the deployment's name with its dots replaced by hyphens (the service's pattern allows none); its alias keeps the name.
+    While AGENTS_VIA_AI_GATEWAY is True the action aigateway gives the Foundry project's identity AI Gateway Models User, so it needs the identity's object id: without it the builder refuses
+    (a --preview goes on, and any other action leaves the setting alone)."""
     resources = [m["name"].replace(".", "-") for m in models]
     if len(set(resources)) != len(resources) or not all(AIGATEWAY_MODEL_RESOURCE.match(r) for r in resources):
         raise Problem("the model names make the names of the gateway's model resources (the dots become hyphens): each is 3 to 63 lower-case letters, digits and hyphens, and no two are the same")
@@ -569,6 +618,9 @@ def aigateway_files(env: dict, subscription: str, group: str, location: str, own
     project_principal = (env.get("FOUNDRY_PROJECT_PRINCIPAL_ID") or "").strip()
     if project_principal and not GUID.match(project_principal):
         raise Problem("FOUNDRY_PROJECT_PRINCIPAL_ID is the object id of the Foundry project's system-assigned identity, or empty")
+    if AGENTS_VIA_AI_GATEWAY and not project_principal and not preview and (env.get("ACTION") or "").strip() == "aigateway":
+        raise Problem("AGENTS_VIA_AI_GATEWAY (in tools/environment-params.py) is True and FOUNDRY_PROJECT_PRINCIPAL_ID is not set: the Foundry project's identity gets AI Gateway Models User on the gateway, and "
+                      "the project has no identity to give it to. Run the action foundry first, or set the constant back to False")
     name = aigateway_name(subscription, group)
     prefix = aigw_subnet(vnet, taken)
     outputs = {
@@ -747,6 +799,9 @@ def build(env, models: list[dict], preview: bool = False, contract: dict | None 
     for setting, value in (("USAGE_APP_PUBLIC_NETWORK_ACCESS", USAGE_APP_PUBLIC_NETWORK_ACCESS), ("CASES_APP_PUBLIC_NETWORK_ACCESS", CASES_APP_PUBLIC_NETWORK_ACCESS)):
         if value not in PUBLIC_NETWORK_ACCESS:
             raise Problem(f"{setting} (in tools/environment-params.py) is Enabled or Disabled, so that the template always writes the property")
+    if not isinstance(AGENTS_VIA_AI_GATEWAY, bool):
+        raise Problem("AGENTS_VIA_AI_GATEWAY (in tools/environment-params.py) is True or False")
+    gateway_host = ai_gateway_host(env, preview)
     console_host = console_host_name(env)
     if CASES_APP_PUBLIC_NETWORK_ACCESS == "Disabled" and not console_host:
         # A closed app answers nobody outside the network, so the check of the console's front door, which knocks from the runner, would have nothing to knock at and would pass or fail for
@@ -905,20 +960,26 @@ def build(env, models: list[dict], preview: bool = False, contract: dict | None 
         **foundry,
         **legacy_names(subscription, group),
     }
+    # The connection to the AI Gateway is asked for only while the switch is on and the host is known: the parameters are left out otherwise, so that the file is what it was (the template's defaults are empty).
+    foundry_values = {
+        "location": location,
+        "accountName": foundry["foundry_account_name"],
+        "projectName": foundry["foundry_project_name"],
+        "guardrailName": foundry["foundry_guardrail_name"],
+        "models": agent_deployed,
+        "casesSystemPrincipalId": (cases_system_principal or PLACEHOLDER).lower(),
+        "owner": owner,
+    }
+    routed = agent_models(models) if AGENTS_VIA_AI_GATEWAY else {}
+    if gateway_host:
+        foundry_values["aiGatewayHost"] = gateway_host
+        foundry_values["aiGatewayModels"] = [{"name": m["name"], "version": m["version"]} for m in models]
     files = {
         "environment.parameters.json": parameters(environment),
         "logger.parameters.json": parameters(logger),
         "kit.parameters.json": parameters(kit),
         "recording.parameters.json": parameters(recording),
-        "foundry.parameters.json": parameters({
-            "location": location,
-            "accountName": foundry["foundry_account_name"],
-            "projectName": foundry["foundry_project_name"],
-            "guardrailName": foundry["foundry_guardrail_name"],
-            "models": agent_deployed,
-            "casesSystemPrincipalId": (cases_system_principal or PLACEHOLDER).lower(),
-            "owner": owner,
-        }),
+        "foundry.parameters.json": parameters(foundry_values),
         "planted.parameters.json": parameters(planted_parameters(env, location, owner)),
         "operator.parameters.json": parameters({
             "location": location,
@@ -959,11 +1020,14 @@ def build(env, models: list[dict], preview: bool = False, contract: dict | None 
             "foundryProjectEndpoint": foundry["foundry_project_endpoint"] if foundry_exists else "",
             "casesAppPublicNetworkAccess": CASES_APP_PUBLIC_NETWORK_ACCESS,
             **console_parameters(env),
+            **routed,
         })
     if aigateway_policies is not None:
-        aigateway_written, aigateway_outputs = aigateway_files(env, subscription, group, location, owner, vnet, (subnet, func_subnet, web, ops), foundry, models, aigateway_policies)
+        aigateway_written, aigateway_outputs = aigateway_files(env, subscription, group, location, owner, vnet, (subnet, func_subnet, web, ops), foundry, models, aigateway_policies, preview)
         files.update(aigateway_written)
         outputs.update(aigateway_outputs)
+    if AGENTS_VIA_AI_GATEWAY:
+        outputs.update({"agents_via_ai_gateway": "true", "aigateway_connection_name": AIGATEWAY_CONNECTION_NAME})
     return files, outputs
 
 

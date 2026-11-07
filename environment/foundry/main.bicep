@@ -3,13 +3,16 @@
 // What it holds: a Foundry resource (kind AIServices) that can hold projects, one project (meternaut) with the agents in it, the same two
 // model deployments as the model account, one guardrail (a content safety policy with Prompt Shields) that the deployments use and the agents
 // inherit from them, a connection of the project to the Application Insights component of the first environment for the agents' traces, one
-// private endpoint, and the roles that connect them.
+// private endpoint, and the roles that connect them. Only when the host name of the AI Gateway is given (aiGatewayHost), also a second connection of the project:
+// to that gateway, with the project's own managed identity and no key, so that the agents can name their models `<connection>/<alias>`
+// (docs/proposals/08-ai-gateway.md, step 2). Empty, which is the default, none of it is made and the template is as it was.
 //
 // Why a new resource: the model account (environment/main.bicep) was made with allowProjectManagement false, and Microsoft Learn says that
 // setting cannot be changed after the account exists (Create a project for Microsoft Foundry), so that account can never hold a project or an
 // agent. It stays as it is and keeps serving the gateway.
 //
-// The agents call the deployments below directly, not through the gateway. That is a temporary exception to AGENTS.md rule 15 (c), whose
+// The agents call the deployments below directly, not through the gateway, until the connection to the AI Gateway is asked for (the switch AGENTS_VIA_AI_GATEWAY in
+// tools/environment-params.py, which is False). That is a temporary exception to AGENTS.md rule 15 (c), whose
 // record lists the routes that end it. A route through the gateway needs one new API on the owner's API Management instance, which the owner
 // has to approve (rule 15 (b)); the first reason given here, the gateway's tier, was wrong (CHANGELOG.md).
 //
@@ -30,7 +33,8 @@
 // deployment, and the private endpoint after every other write to the resource: a write to the resource while its private endpoint
 // connection is written made an earlier deploy of the model account fail with IfMatchPreconditionFailed, and Microsoft's own template for a
 // private Foundry resource makes the project first because a private endpoint bound before the resource has settled fails with
-// AccountProvisioningStateInvalid. The roles come after the private endpoint.
+// AccountProvisioningStateInvalid. The connection to the AI Gateway is one more such write: it comes after the connection for traces (one write at a
+// time) and before the private endpoint. The roles come after the private endpoint.
 //
 // API versions: 2026-09-01, the newest stable one of Microsoft.CognitiveServices that has everything used here (the REST specification lists it; the guardrail's sources
 // PostToolCall and the mode Blocking exist since 2025-12-01, projects and allowProjectManagement since 2025-06-01).
@@ -69,6 +73,18 @@ param models array
 @minLength(36)
 @maxLength(36)
 param casesSystemPrincipalId string
+
+@description('Host name of the AI Gateway (Microsoft.ApiManagement/aigateways, environment/aigateway/main.bicep), as the service reports it in properties.frontend.defaultHostname: under .ai.gateway.azure.com. The workflow reads it from the service and passes it only while the switch AGENTS_VIA_AI_GATEWAY in tools/environment-params.py is True. Empty: no connection to the gateway is made, and nothing here is different for an estate that has no gateway.')
+@maxLength(253)
+param aiGatewayHost string = ''
+
+@description('The models of the AI Gateway that the connection lists, each with the name of its alias (the deployment\'s name, which is what an agent sends as the model) and the version of the model. The workflow reads them from environment/models.json. Used only with aiGatewayHost.')
+param aiGatewayModels array = []
+
+@description('Name of the connection to the AI Gateway. An agent names its model `<connection name>/<alias>`. Used only with aiGatewayHost; tools/environment-params.py (AIGATEWAY_CONNECTION_NAME) holds the same name, and a test holds the two together.')
+@minLength(2)
+@maxLength(64)
+param aiGatewayConnectionName string = 'aigateway'
 
 @description('Owner of the resources, as a tag.')
 @minLength(1)
@@ -210,6 +226,52 @@ resource tracesConnection 'Microsoft.CognitiveServices/accounts/projects/connect
   ]
 }
 
+// The connection that lets the agents call their models through the AI Gateway (docs/proposals/08-ai-gateway.md, step 2): made only when the host name of the gateway is given. An agent then names its model
+// `<connection name>/<alias>`. It is the shape of Microsoft's own samples, with one difference that is not known to work and has not been tried:
+//  - category ApiManagement with authType ProjectManagedIdentity, an audience and empty credentials is the sample for API Management (microsoft-foundry/foundry-samples,
+//    infrastructure-setup-bicep/01-connections/apim), whose every example points at *.azure-api.net. The one sample for this service (01-connections/ai-gateway-tier) uses the category ModelGateway with an API key.
+//    No key is used here (AGENTS.md rule 23): whether the service accepts this category for this target, and whether the Agent Service then calls the gateway with a token of the project's identity, is what the
+//    first run shows. If it needs a key, the owner decides, and no template builds that path.
+//  - the audience is the one that the gateway asks for (a Microsoft Entra token for https://azure-api.net/aigateway, and the role AI Gateway Models User on the gateway, which environment/aigateway/main.bicep gives
+//    the project's identity when its object id is given).
+//  - the target is the base of the gateway's OpenAI route (https://<host>/default/models/openai/v1): the Agent Service adds chat/completions, because Responses routing is not offered for this service yet (Learn, "Bring your own
+//    model to Foundry Agent Service"), and the model goes in the request body (deploymentInPath false), where the alias is read. A static list of the models lets the runtime resolve `<connection>/<alias>` without a lookup.
+//  - not shared to the other projects of the resource.
+// The bicep types do not list the value ProjectManagedIdentity (the connection for traces is written the same way), and may not list audience either: the warnings are switched off on those two lines only.
+// It is written after the connection for traces and before the private endpoint, like every other write to the resource (see the header): the resource accepts one write at a time.
+var aiGatewayModelList = [for model in aiGatewayModels: {
+  name: model.name
+  properties: {
+    model: {
+      name: model.name
+      version: model.version
+      format: 'OpenAI'
+    }
+  }
+}]
+
+resource aiGatewayConnection 'Microsoft.CognitiveServices/accounts/projects/connections@2026-09-01' = if (!empty(aiGatewayHost)) {
+  parent: project
+  name: aiGatewayConnectionName
+  properties: {
+    category: 'ApiManagement'
+    target: 'https://${aiGatewayHost}/default/models/openai/v1'
+    #disable-next-line BCP036
+    authType: 'ProjectManagedIdentity'
+    #disable-next-line BCP037
+    audience: 'https://azure-api.net/aigateway'
+    isSharedToAll: false
+    credentials: {}
+    metadata: {
+      deploymentInPath: 'false'
+      models: string(aiGatewayModelList)
+    }
+  }
+  dependsOn: [
+    tracesConnection
+  ]
+}
+
 // No privateDnsZoneGroups child: the landing zone's policy adds it (see the header).
 resource privateEndpoint 'Microsoft.Network/privateEndpoints@2025-05-01' = {
   name: 'pe-${accountName}'
@@ -235,6 +297,7 @@ resource privateEndpoint 'Microsoft.Network/privateEndpoints@2025-05-01' = {
     modelDeployment
     project
     tracesConnection
+    aiGatewayConnection
   ]
 }
 
