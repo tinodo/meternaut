@@ -11,7 +11,12 @@ from .http import FOUNDRY_ENDPOINT
 # The client id of a user-assigned managed identity that the app runs as. Not set or empty: the app runs as its own system-assigned identity, which is what
 # the platform's token endpoint answers for when no client id is asked for.
 AZURE_CLIENT_ID = "AZURE_CLIENT_ID"
+# The subscriptions that the Watch reads, as a comma separated list of ids.
 SCOPE_SUBSCRIPTIONS = "SCOPE_SUBSCRIPTIONS"
+# On: the Watch reads every subscription that its own identity can read (the list that Azure Resource Manager gives it, made once at the start of a run), so a person widens or
+# narrows what it watches by the roles that they give the identity, at a subscription or at a management group above it (scope.py). SCOPE_SUBSCRIPTIONS is then optional, and when it is
+# given it is what the Watch reads if that list cannot be had. Off or not set: only SCOPE_SUBSCRIPTIONS.
+SCOPE_ALL_SUBSCRIPTIONS = "SCOPE_ALL_SUBSCRIPTIONS"
 MODEL_DETECTIVE = "MODEL_DETECTIVE"
 MODEL_SKEPTIC = "MODEL_SKEPTIC"
 MAX_CASES_PER_RUN = "MAX_CASES_PER_RUN"
@@ -42,6 +47,7 @@ LIMIT_INVESTIGATE_CALLS = 40
 DEFAULT_INVESTIGATE_SECONDS = 420
 LIMIT_INVESTIGATE_SECONDS = 600
 
+# SCOPE_SUBSCRIPTIONS is required unless SCOPE_ALL_SUBSCRIPTIONS is on (load below): the template always sets it, as the fallback.
 REQUIRED = (SCOPE_SUBSCRIPTIONS, MODEL_DETECTIVE, MODEL_SKEPTIC, MAX_CASES_PER_RUN, EVENTHUB_CASES_CONTROL_NAME)
 OPTIONAL = {MAX_TOKENS_PER_RUN: str(LIMIT_TOKENS_PER_RUN), MAX_COMPLETION_TOKENS: str(LIMIT_COMPLETION_TOKENS), RUN_DEADLINE_SECONDS: str(LIMIT_DEADLINE_SECONDS),
             FOUNDRY_MODEL_INVESTIGATOR: DEFAULT_MODEL_INVESTIGATOR, FOUNDRY_MODEL_SKEPTIC: DEFAULT_MODEL_SKEPTIC,
@@ -79,6 +85,8 @@ class Settings:
     investigate: bool = False
     investigate_max_calls: int = DEFAULT_INVESTIGATE_CALLS
     investigate_max_seconds: int = DEFAULT_INVESTIGATE_SECONDS
+    # True: `subscriptions` is only the fallback, and the list that a run reads is made at its start (scope.py). The run then works with a copy whose `subscriptions` is that list.
+    all_subscriptions: bool = False
 
 
 def _integer(env: Mapping[str, str], name: str, low: int, high: int, default: str, problems: list[str]) -> int:
@@ -132,7 +140,9 @@ def _investigation(env: Mapping[str, str], problems: list[str]) -> dict:
 
 def load(env: Mapping[str, str] | None = None) -> Settings:
     env = os.environ if env is None else env
-    problems = [f"{name} is not set" for name in REQUIRED if not env.get(name)]
+    problems: list[str] = []
+    all_subscriptions = _switch(env, SCOPE_ALL_SUBSCRIPTIONS, False, problems)
+    problems += [f"{name} is not set" for name in REQUIRED if not env.get(name) and not (name == SCOPE_SUBSCRIPTIONS and all_subscriptions)]
     subscriptions = tuple(part.strip().lower() for part in env.get(SCOPE_SUBSCRIPTIONS, "").split(",") if part.strip())
     if env.get(SCOPE_SUBSCRIPTIONS) and not all(GUID.match(s) for s in subscriptions):
         problems.append(f"{SCOPE_SUBSCRIPTIONS} is a comma separated list of subscription ids")
@@ -160,5 +170,6 @@ def load(env: Mapping[str, str] | None = None) -> Settings:
         max_tokens_per_run=max_tokens,
         max_completion_tokens=max_completion,
         deadline_seconds=deadline,
+        all_subscriptions=all_subscriptions,
         **investigation,
     )

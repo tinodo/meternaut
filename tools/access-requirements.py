@@ -48,7 +48,7 @@ The places come from options or from the settings that the workflow uses: --proj
 cases app and of the usage app in that group (func-meternaut-cases-* and func-meternaut-usage-*; each is needed only by the requirements of the app that it
 names); --gateway (GATEWAY_RESOURCE_ID), the API Management instance, whose resource group is where the retired custom roles were defined (the items W7 and W8);
 --gateway-insights (GATEWAY_APPINSIGHTS_ID); --estate (ACCESS_ESTATE_SCOPES, comma
-separated; default: the project subscription), what the Watch reads; --workspace (ACCESS_WORKSPACE_ID; default: the workspace of the gateway's component).
+separated; default: the project subscription), what the Watch reads: a subscription, or a management group such as the tenant root management group above the subscriptions to watch (the app then reads every subscription that its identity can read; a grant at the group counts for everything below it); --workspace (ACCESS_WORKSPACE_ID; default: the workspace of the gateway's component).
 The Azure CLI is `az`, or the command in the variable AZ (for example "C:\\path\\python.exe" -IBm azure.cli).
 """
 from __future__ import annotations

@@ -13,19 +13,20 @@ import os
 import time
 import uuid
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Callable, Mapping
 
 from . import config as cfg
 from . import decide, detectors, evidence, guards, investigate, roles, wiring
+from . import scope as scope_mod
 from .approvals import is_fixture
 from .arm import Arm, scopes_of
-from .detectors import DETECTOR_NAMES, Context, Lead
+from .detectors import DETECTOR_NAMES, Context, Estate, Lead
 from .events import History
 from .evidence import EvidenceError
 from .foundry import Foundry
 from .http import Client, HttpError, allowed_calls, default_transport
-from .identity import Identity, IdentityError
+from .identity import Identity
 from .memory_store import stamp
 from .modelcalls import ModelError, Models
 from .models import CaseRecord, RunRecord, StoreError
@@ -34,6 +35,12 @@ from .roles import RoleError, clean_text
 
 MAX_LEAD_EVENTS = 50
 PROMPT_TOKEN_RESERVE = 2000
+# What the reading of the subscriptions may use of the run's deadline. The rest is for the cases that follow (the Detective and the Skeptic) and for the checks around them; the
+# investigation has a time of its own, which is not taken from the deadline. A subscription that the share has no time for is not read, and the History says which.
+READ_SHARE = 0.6
+# A subscription that was started inside the share may finish its own reads (Advisor, locks, cost lines) this much later; a call after that is refused by the client, as after the deadline.
+READ_GRACE = 0.1
+SCOPES_SHOWN = 5  # the subscriptions that run.started names, at eight characters each; it also carries their count
 LOG = logging.getLogger("meternaut.run")
 
 
@@ -192,6 +199,30 @@ def _recently_judged(s: Services, lead: Lead) -> bool:
     return age < dt.timedelta(days=ex.settings.recheck_days)
 
 
+def _currency_notes(contexts: Mapping[str, Context]) -> list[str]:
+    """What the cost lines said about their currency: a note for each currency that is not US dollars, naming the subscription when it is one and counting them when they are more."""
+    by_currency: dict[str, list[str]] = {}
+    for subscription, context in contexts.items():
+        if context.currency not in (None, "USD"):
+            by_currency.setdefault(str(context.currency), []).append(subscription)
+    notes = []
+    for currency, found in by_currency.items():
+        if len(found) == 1:
+            notes.append(f"{found[0][:8]}: the cost lines are in {currency}, so no figure is shown in US dollars")
+        else:
+            notes.append(f"the cost lines of {len(found)} subscriptions ({detectors.some(found)}) are in {currency}, so no figure is shown in US dollars for them")
+    return notes
+
+
+def _unread_note(estate: Estate, deadline_seconds: int) -> str:
+    """Which subscriptions were not read, and why: a count and the first few ids, never the whole list."""
+    count = len(estate.unread)
+    what = f"{count} subscription{' was' if count == 1 else 's were'} not read ({detectors.some(estate.unread)})"
+    if estate.stopped == "identity":
+        return f"{what}: {estate.reason}"
+    return f"{what}: the time for reading them ({int(READ_SHARE * deadline_seconds)} of the {deadline_seconds} seconds of the run) was used up"
+
+
 def execute(s: Services, trigger: str) -> Summary:
     h, st = s.history, s.settings
     started = s.monotonic()
@@ -215,29 +246,52 @@ def execute(s: Services, trigger: str) -> Summary:
             LOG.warning(s.redact(f"the run could not be kept in the store: {error}"))
         return record
 
-    h.emit("run.started", trigger=trigger, scopes=[x[:8] for x in st.subscriptions], detectors=list(DETECTOR_NAMES))
+    # The subscriptions of this run are listed once, here. Every later read, the tools of the investigation and the History work with this list (a copy of the settings that
+    # holds it), so that they cannot differ. What a change may touch does not depend on it: plans and changes are keyed on the one subscription and group of the loop.
+    loop_subscription = s.extras.settings.change_subscription if s.extras is not None else None
+    refusal = None
+    try:
+        scope = scope_mod.resolve(s.arm, st, loop_subscription, s.redact)
+    except scope_mod.ScopeError as error:
+        scope, refusal = scope_mod.Scope((), "none"), clean_text(s.redact(error), 300)
+    notes.extend(scope.notes)
+    st = replace(st, subscriptions=scope.subscriptions)
+    s = replace(s, settings=st)
+    # With many subscriptions the line carries their count and the first few ids, not all of them.
+    h.emit("run.started", trigger=trigger, subscriptions=len(scope.subscriptions), scopes=[x[:8] for x in scope.subscriptions[:SCOPES_SHOWN]], scopeFrom=scope.source,
+           detectors=list(DETECTOR_NAMES))
     keep(False)
     s.models.open()
+    if refusal:
+        for note in notes:
+            h.emit("run.note", note=clean_text(note, 300))
+        h.emit("run.failed", reason=refusal)
+        summary.ok = False
+        keep(True, refusal)
+        return summary
 
-    found: list[Lead] = []
-    contexts: dict[str, Context] = {}
-    read = 0
-    for subscription in st.subscriptions:
-        try:
-            collected = detectors.collect(s.arm, subscription, s.clock(), notes)
-        except (IdentityError, HttpError) as error:
-            notes.append(f"{subscription[:8]}: the subscription could not be read ({s.redact(error)})")
-            continue
-        read += collected.sources_read
-        found += collected.leads
-        contexts[subscription] = collected.context
-        if collected.context.currency not in (None, "USD"):
-            notes.append(f"{subscription[:8]}: the cost lines are in {collected.context.currency}, so no figure is shown in US dollars")
+    # The share of the deadline for reading: the subscription of the loop first (the waste that Meternaut plants itself is there), then the others in the order of their ids.
+    read_deadline = started + READ_SHARE * st.deadline_seconds
+    s.client.deadline = min(deadline, started + (READ_SHARE + READ_GRACE) * st.deadline_seconds)
+    estate = detectors.collect_estate(s.arm, sorted(st.subscriptions, key=lambda sub: sub != loop_subscription), s.clock(), notes,
+                                      out_of_time=lambda: s.monotonic() >= read_deadline)
+    s.client.deadline = deadline
+    found: list[Lead] = estate.leads
+    contexts: dict[str, Context] = estate.contexts
+    read = estate.sources_read
+    notes.extend(_currency_notes(contexts))
+    if estate.unread:
+        notes.append(_unread_note(estate, st.deadline_seconds))
     for note in notes:
         h.emit("run.note", note=clean_text(note, 300))
     if read == 0:
         too_late = s.monotonic() >= deadline
-        reason = (f"the deadline of {st.deadline_seconds} seconds was reached before any detector could read" if too_late else "no detector could read any subscription")
+        if too_late:
+            reason = f"the deadline of {st.deadline_seconds} seconds was reached before any detector could read"
+        elif estate.stopped == "time":
+            reason = f"the time for reading the subscriptions ({int(READ_SHARE * st.deadline_seconds)} of the {st.deadline_seconds} seconds of the run) was used up before any detector could read"
+        else:
+            reason = "no detector could read any subscription"
         h.emit("run.failed", reason=reason)
         summary.ok = False
         keep(True, reason)

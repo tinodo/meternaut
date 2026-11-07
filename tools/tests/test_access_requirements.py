@@ -475,6 +475,21 @@ class TheFile(unittest.TestCase):
     def test_a_file_with_a_missing_reference_is_refused(self):
         self.broken(lambda d: d["grants"][0].update(role="Owner"))
 
+    def test_the_estate_is_the_tenant_root_management_group_or_each_subscription_and_the_roles_of_the_reader_cover_the_list_of_subscriptions(self):
+        # The owner's order of 2026-11-07: the Watch reads every subscription that its identity can read, so the grant is made once at the group above them.
+        place = MANIFEST["places"]["estate"]
+        for words in ("tenant root management group", "every subscription that its identity can read", "SCOPE_ALL_SUBSCRIPTIONS", "each subscription", "SCOPE_SUBSCRIPTIONS", "fallback"):
+            self.assertIn(words, place)
+        grants = {g["id"]: g for g in MANIFEST["grants"]}
+        for grant_id in ("R1", "R2"):
+            self.assertEqual(grants[grant_id]["place"], "estate", grant_id)
+            self.assertIn("tenant root management group or each subscription", grants[grant_id]["why"], grant_id)
+        self.assertEqual(grants["R1"]["calls"][0], "subscriptions-list", "the list of the subscriptions that the identity can read is a read of the Reader")
+        self.assertEqual(grants["R1"]["role"], "Reader")
+        self.assertNotIn("subscriptions-list", grants["R2"]["calls"])
+        self.assertIn("tenant root management group", MANIFEST["about"])
+        self.assertNotRegex(json.dumps(MANIFEST), r"/providers/Microsoft\.Management/managementGroups/[0-9a-fA-F]{8}-", "no management group of a real tenant")
+
 
 class TheTable(unittest.TestCase):
     PROPOSAL = (ROOT / "docs" / "proposals" / "03-access-and-onboarding.md")
@@ -543,6 +558,7 @@ class TheCallsOfTheApp(unittest.TestCase):
         "security-pricings-read": lambda m, p: m == "GET" and "Microsoft.Security/pricings" in p,
         "disk-read": lambda m, p: m == "GET" and "Microsoft.Compute/disks" in p,
         "public-ip-read": lambda m, p: m == "GET" and "Microsoft.Network/publicIPAddresses" in p,
+        "subscriptions-list": lambda m, p: m == "GET" and p.endswith("/subscriptions"),
     }
     # Every model call goes to the app's own Foundry project, with the app's identity: the Foundry User role that the template assigns, no line of this file.
     NO_AZURE_ROLE: set = set()
@@ -694,6 +710,28 @@ class Check(unittest.TestCase):
         fake.grant(NEW_CASES, BUILTIN["Cost Management Reader"], MANAGEMENT_GROUP)
         code, out, _, _ = run(["check", *PLACES], fake)
         self.assertEqual((code, "4 of 4 present." in out), (0, True))
+
+    def test_the_estate_may_be_a_management_group_such_as_the_tenant_root_and_only_a_grant_at_it_counts(self):
+        # The Watch reads every subscription that its identity can read: a person gives R1 and R2 once, at the group above the subscriptions, and that is the one place to check.
+        fake = FakeAz()
+        argv = ["check", *PLACES, "--estate", MANAGEMENT_GROUP, "--only", "R1,R2"]
+        code, out, _, _ = run(argv, fake)
+        self.assertEqual((code, out.count("MISSING"), "0 of 2 present." in out), (1, 2, True), "the grants on the pilot subscription are below the group, and a grant below the place does not count")
+        self.assertIn(f"Reader  at {MANAGEMENT_GROUP}", out)
+        self.assertIn(f"Cost Management Reader  at {MANAGEMENT_GROUP}", out)
+        fake.grant(NEW_CASES, BUILTIN["Reader"], MANAGEMENT_GROUP)
+        fake.grant(NEW_CASES, BUILTIN["Cost Management Reader"], MANAGEMENT_GROUP)
+        code, out, _, _ = run(argv, fake)
+        self.assertEqual((code, "2 of 2 present." in out), (0, True))
+        self.assertEqual(fake.writes(), [], "check reads and writes nothing")
+        asked = [c for c in fake.calls if c[0] == "rest" and f"{ar.ARM}{MANAGEMENT_GROUP}/providers/Microsoft.Authorization/roleAssignments" in " ".join(c)]
+        self.assertTrue(asked, "the assignments are read at the group")
+
+    def test_a_management_group_is_written_in_full_and_a_name_that_is_not_one_is_refused(self):
+        for bad in ("landing-zones", "/managementGroups/landing-zones", "/providers/Microsoft.Management/managementGroups/", "/providers/Microsoft.Management/managementGroups/a b"):
+            code, _, err, _ = run(["check", *PLACES, "--estate", bad], FakeAz())
+            self.assertEqual(code, 1, bad)
+            self.assertIn("--estate holds", err)
 
     def test_a_grant_on_something_below_the_place_does_not_count(self):
         fake = FakeAz()
@@ -985,6 +1023,25 @@ class Grant(unittest.TestCase):
         self.assertEqual(code, 0)
         made = [(c[c.index("--assignee-object-id") + 1], c[c.index("--role") + 1], c[c.index("--scope") + 1]) for c in fake.writes()]
         self.assertEqual(sorted(made), sorted([(NEW_CASES, BUILTIN["Reader"], f"/subscriptions/{SECOND}"), (NEW_CASES, BUILTIN["Cost Management Reader"], f"/subscriptions/{SECOND}")]))
+
+    def test_a_management_group_as_the_estate_gets_its_two_roles_with_the_exact_commands_and_nothing_else(self):
+        # The owner's order of 2026-11-07: the Watch reads the entire estate, so a person grants R1 and R2 once at the tenant root management group (here a group by another name).
+        argv = ["grant", *PLACES, "--estate", MANAGEMENT_GROUP, "--only", "R1,R2"]
+        fake = FakeAz()
+        code, out, _, _ = run(argv, fake)
+        self.assertEqual(code, 0)
+        self.assertIn("2 change(s) would be made, and nothing else", out)
+        self.assertEqual(fake.writes(), [], "a dry run writes nothing")
+        for role in ("Reader", "Cost Management Reader"):
+            self.assertIn(f"--assignee-object-id {NEW_CASES} --assignee-principal-type ServicePrincipal --role \"{BUILTIN[role]}\" --scope {MANAGEMENT_GROUP}   # {role}", out)
+        code, out, _, _ = run([*argv, "--apply", "--yes"], fake)
+        self.assertEqual(code, 0, out)
+        made = [(c[c.index("--assignee-object-id") + 1], c[c.index("--role") + 1], c[c.index("--scope") + 1]) for c in fake.writes()]
+        self.assertEqual(sorted(made), sorted([(NEW_CASES, BUILTIN["Reader"], MANAGEMENT_GROUP), (NEW_CASES, BUILTIN["Cost Management Reader"], MANAGEMENT_GROUP)]))
+        self.assertTrue(out.rstrip().endswith("2 of 2 present."), "it reads back at the group")
+        self.assertEqual({c[:3] for c in map(tuple, fake.writes())}, {("role", "assignment", "create")}, "it only makes assignments: nothing is defined or removed")
+        code, out, _, _ = run([*argv, "--apply", "--yes"], fake)
+        self.assertEqual((code, "Nothing to grant." in out), (0, True), "a second run has nothing to do")
 
     def test_a_custom_role_that_differs_is_never_changed(self):
         fake = FakeAz()

@@ -8,11 +8,13 @@ from __future__ import annotations
 import datetime as dt
 import hashlib
 import re
+from collections import Counter
 from dataclasses import dataclass, field
-from typing import Callable
+from typing import Callable, Sequence
 
 from .arm import Arm
 from .http import HttpError
+from .identity import IdentityError
 
 ADVISOR = "advisor-cost"
 RECENT_DAYS = 7
@@ -65,7 +67,8 @@ resources
 | where tostring(properties.extended.instanceView.powerState.code) =~ 'PowerState/stopped'
 | project id, name, type, resourceGroup, subscriptionId, location, tags, managedBy = tostring(managedBy), vmSize = tostring(properties.hardwareProfile.vmSize)"""
 
-# Context, read once for each subscription: what was created in the last seven days, and which resource groups a platform manages.
+# Context, read once for each subscription: what was created in the last seven days, and which resource groups a platform manages. A query that runs for several subscriptions at once
+# names the subscription of a row in its `targetId` and its `id`.
 RECENT_CREATIONS = """// meternaut:recent-creations
 resourcechanges
 | extend changeTime = todatetime(properties.changeAttributes.timestamp), changeType = tostring(properties.changeType), targetId = tolower(tostring(properties.targetResourceId))
@@ -76,7 +79,7 @@ MANAGED_GROUPS = """// meternaut:managed-groups
 resourcecontainers
 | where type =~ 'microsoft.resources/subscriptions/resourcegroups'
 | where isnotempty(tostring(managedBy))
-| project name = tolower(name)"""
+| project id = tolower(id), name = tolower(name)"""
 
 CONNECTION_STATES = frozenset({"approved", "pending", "rejected", "disconnected"})
 TARGET_SERVICES = frozenset({
@@ -283,28 +286,128 @@ def advisor_lead(recommendation: dict, subscription: str) -> Lead | None:
                 location="", tags={}, managed_by="", facts=facts, advisor_saving_usd=saving)
 
 
-def collect(arm: Arm, subscription: str, now: dt.datetime, notes: list[str]) -> Collected:
-    """Every lead of one subscription, with the context for the guards and the cost lines. A source that cannot be read is a note, not a stop."""
-    today = now.date()
-    leads: list[Lead] = []
-    context = Context()
-    read = failed = 0
+GRAPH_CHUNK = 50  # the subscriptions that one Resource Graph query reads: Learn recommends groups of fewer than 300 (the guidance for throttled requests)
+SHOWN = 3  # the ids of subscriptions that a note names, at eight characters each
+SUBSCRIPTION_OF_ID = re.compile(r"^/subscriptions/([0-9a-fA-F-]{36})(?:/|$)")
 
-    def note(source: str, error: Exception) -> None:
-        notes.append(f"{subscription[:8]}: {source} could not be read ({str(error)[:200]})")
+# What a source is called in a note, and the order in which the notes of the sources are kept.
+LOCKS, RECENT, GROUPS, COSTS = "management locks", "recent creations", "managed resource groups", "cost lines"
+SOURCES = (*(d.name for d in DETECTORS), ADVISOR, LOCKS, RECENT, GROUPS, COSTS)
 
+
+def some(subscriptions: Sequence[str], shown: int = SHOWN) -> str:
+    """The first few subscriptions, at eight characters each, and how many more there are: a note names a few and counts the rest."""
+    first = ", ".join(sub[:8] for sub in subscriptions[:shown])
+    return first + (f" and {len(subscriptions) - shown} more" if len(subscriptions) > shown else "")
+
+
+class Problems:
+    """What could not be read, by source. A source that failed in one subscription is a note of its own, as it always was; one that failed in several is one note that counts them,
+    so that an estate with many subscriptions does not write a line for each."""
+
+    def __init__(self) -> None:
+        self.failed: dict[str, dict[str, str]] = {}
+
+    def add(self, source: str, subscription: str, error: object) -> None:
+        self.failed.setdefault(source, {})[subscription] = str(error)[:200]
+
+    def notes(self) -> list[str]:
+        notes = []
+        for source in SOURCES:
+            found = self.failed.get(source)
+            if not found:
+                continue
+            if len(found) == 1:
+                ((sub, text),) = found.items()
+                notes.append(f"{sub[:8]}: {source} could not be read ({text})")
+            else:
+                reason = Counter(found.values()).most_common(1)[0][0][:120]
+                notes.append(f"{source} could not be read in {len(found)} subscriptions ({some(list(found))}): {reason}")
+        return notes
+
+
+@dataclass
+class Estate:
+    """What the reading of many subscriptions came to: the leads, the context of each subscription that was read, and the subscriptions that were not read (`unread`, in the order
+    of reading) with the reason: "time" (the time for reading them was used up) or "identity" (the identity gave no token; `reason` has the text)."""
+
+    leads: list[Lead] = field(default_factory=list)
+    contexts: dict[str, Context] = field(default_factory=dict)
+    collected: dict[str, Collected] = field(default_factory=dict)
+    sources_read: int = 0
+    sources_failed: int = 0
+    unread: list[str] = field(default_factory=list)
+    stopped: str = ""
+    reason: str = ""
+
+
+@dataclass
+class _Graph:
+    """What the Resource Graph queries of one group of subscriptions gave for one of them."""
+
+    leads: list[Lead] = field(default_factory=list)
+    read: int = 0
+    failed: int = 0
+    recent: set[str] | None = None
+    groups: set[str] | None = None
+
+
+def _owner(row: dict, chunk: Sequence[str], members: set[str]) -> str | None:
+    """The subscription that a row of a query for several belongs to: the one that the row names (its subscriptionId, or the id in its `id` or its `targetId`) when it is one
+    of the group, and the group's own when the group is one subscription. A row of no subscription of the group is nobody's."""
+    for value in (row.get("subscriptionId"), row.get("id"), row.get("targetId")):
+        text = str(value or "").strip().lower()
+        found = SUBSCRIPTION_OF_ID.match(text)
+        candidate = found.group(1) if found else text
+        if candidate in members:
+            return candidate
+    return chunk[0] if len(chunk) == 1 else None
+
+
+def _read_graph(arm: Arm, chunk: Sequence[str], now: dt.datetime, problems: Problems) -> dict[str, _Graph]:
+    """The eight Resource Graph queries (the six detectors and the two of the context) for a group of subscriptions, each one query for the whole group."""
+    members = set(chunk)
+    graph = {sub: _Graph() for sub in chunk}
     for detector in DETECTORS:
         try:
-            rows = arm.graph(subscription, detector.query)
+            rows = arm.graph_many(chunk, detector.query)
         except HttpError as error:
-            failed += 1
-            note(detector.name, error)
+            for sub in chunk:
+                graph[sub].failed += 1
+                problems.add(detector.name, sub, error)
             continue
-        read += 1
+        for sub in chunk:
+            graph[sub].read += 1
         for row in rows:
-            lead = detector.build(row, now)
+            owner = _owner(row, chunk, members)
+            lead = detector.build(row, now) if owner else None
             if lead:
-                leads.append(lead)
+                graph[owner].leads.append(lead)
+    for query, source, key in ((RECENT_CREATIONS, RECENT, "targetId"), (MANAGED_GROUPS, GROUPS, "name")):
+        try:
+            rows = arm.graph_many(chunk, query)
+        except HttpError as error:
+            for sub in chunk:
+                problems.add(source, sub, error)
+            continue
+        found: dict[str, set[str]] = {sub: set() for sub in chunk}
+        for row in rows:
+            owner = _owner(row, chunk, members)
+            if owner:
+                found[owner].add(str(row.get(key, "")).lower())
+        for sub in chunk:
+            if source == RECENT:
+                graph[sub].recent = found[sub]
+            else:
+                graph[sub].groups = found[sub]
+    return graph
+
+
+def _read_subscription(arm: Arm, subscription: str, today: dt.date, graph: _Graph, problems: Problems) -> Collected:
+    """What is read for one subscription alone (Advisor, its locks and its cost lines) joined to what its group's queries gave."""
+    leads = list(graph.leads)
+    context = Context(recent=graph.recent, managed_groups=graph.groups)
+    read, failed = graph.read, graph.failed
     try:
         for recommendation in arm.advisor_cost(subscription):
             lead = advisor_lead(recommendation, subscription)
@@ -313,24 +416,65 @@ def collect(arm: Arm, subscription: str, now: dt.datetime, notes: list[str]) -> 
         read += 1
     except HttpError as error:
         failed += 1
-        note(ADVISOR, error)
+        problems.add(ADVISOR, subscription, error)
     try:
         context.locks = arm.locks(subscription)
     except HttpError as error:
-        note("management locks", error)
-    try:
-        context.recent = {str(row.get("targetId", "")).lower() for row in arm.graph(subscription, RECENT_CREATIONS)}
-    except HttpError as error:
-        note("recent creations", error)
-    try:
-        context.managed_groups = {str(row.get("name", "")).lower() for row in arm.graph(subscription, MANAGED_GROUPS)}
-    except HttpError as error:
-        note("managed resource groups", error)
+        problems.add(LOCKS, subscription, error)
     try:
         context.costs, context.currency = arm.costs(subscription, today - dt.timedelta(days=30), today - dt.timedelta(days=1))
     except HttpError as error:
-        note("cost lines", error)
+        problems.add(COSTS, subscription, error)
     return Collected(leads, context, read, failed)
+
+
+def collect_estate(arm: Arm, subscriptions: Sequence[str], now: dt.datetime, notes: list[str], out_of_time: Callable[[], bool] = lambda: False) -> Estate:
+    """Every lead, and the context for the guards and the cost lines, of every subscription of the list, in the order of the list.
+
+    The Resource Graph queries run for a group of GRAPH_CHUNK subscriptions at a time, one query for the whole group; Advisor, the locks and the cost lines for each subscription.
+    A source that cannot be read is a note, not a stop. `out_of_time` is asked before every group and every subscription: when it says yes, no further subscription is started and the
+    rest are `unread`. A subscription is read as a whole or not at all, so the rest of a group whose time ran out is unread, and its leads are not used. When the identity gives no
+    token nothing could be read after that either, and the reading stops with that reason. The notes of what could not be read are added to `notes`."""
+    today = now.date()
+    problems = Problems()
+    estate = Estate()
+    order = list(dict.fromkeys(subscriptions))
+    done = 0
+    try:
+        stop = False
+        for start in range(0, len(order), GRAPH_CHUNK):
+            if out_of_time():
+                break
+            chunk = order[start:start + GRAPH_CHUNK]
+            graph = _read_graph(arm, chunk, now, problems)
+            for sub in chunk:
+                if out_of_time():
+                    stop = True
+                    break
+                collected = _read_subscription(arm, sub, today, graph[sub], problems)
+                estate.collected[sub], estate.contexts[sub] = collected, collected.context
+                estate.leads += collected.leads
+                estate.sources_read += collected.sources_read
+                estate.sources_failed += collected.sources_failed
+                done += 1
+            if stop:
+                break
+    except IdentityError as error:
+        estate.stopped, estate.reason = "identity", str(error)
+    if done < len(order) and not estate.stopped:
+        estate.stopped = "time"
+    estate.unread = order[done:]
+    notes.extend(problems.notes())
+    return estate
+
+
+def collect(arm: Arm, subscription: str, now: dt.datetime, notes: list[str]) -> Collected:
+    """Every lead of one subscription, with the context for the guards and the cost lines. A source that cannot be read is a note, not a stop. An identity that gives no token
+    raises IdentityError."""
+    estate = collect_estate(arm, [subscription], now, notes)
+    if estate.stopped == "identity":
+        raise IdentityError(estate.reason)
+    return estate.collected[subscription]
 
 
 def rank(leads: list[Lead], contexts: dict[str, Context]) -> list[Lead]:

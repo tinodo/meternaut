@@ -93,7 +93,8 @@ def foundry_calls(endpoint: str) -> tuple[tuple[str, "re.Pattern[str]"], ...]:
 
 def allowed_calls(foundry_endpoint: str | None = None) -> tuple[tuple[str, "re.Pattern[str]"], ...]:
     """(method, address without its query) of every call that the app may make. `foundry_endpoint` adds the calls of foundry_calls for that one project;
-    without it the app makes none, and every call of the Watch to Azure is a read."""
+    without it the app makes none, and every call of the Watch to Azure is a read. The one GET of /subscriptions lists the subscriptions that the app's own identity can read
+    (scope.py): the Reader role covers it (R1 of environment/access-requirements.json), and the address has no part after it."""
     arm = re.escape(f"https://{ARM_HOST}")
     calls = (
         ("POST", re.compile(arm + r"/providers/Microsoft\.ResourceGraph/resources", re.I)),
@@ -103,6 +104,7 @@ def allowed_calls(foundry_endpoint: str | None = None) -> tuple[tuple[str, "re.P
         ("GET", re.compile(arm + rf"{SCOPE}/providers/Microsoft\.Insights/metricDefinitions", re.I)),
         ("GET", re.compile(arm + rf"{SCOPE}/providers/Microsoft\.Insights/metrics", re.I)),
         ("GET", re.compile(arm + rf"/subscriptions/{GUID}/providers/Microsoft\.Security/pricings", re.I)),
+        ("GET", re.compile(arm + r"/subscriptions", re.I)),
     )
     return calls if foundry_endpoint is None else calls + foundry_calls(foundry_endpoint)
 
@@ -127,15 +129,27 @@ def default_transport(method: str, url: str, headers: Mapping[str, str], data: b
         return error.code, {k.lower(): v for k, v in error.headers.items()}, error.read()
 
 
+QUOTA_RESETS = re.compile(r"^(\d{1,3}):([0-5]?\d):([0-5]?\d(?:\.\d{1,7})?)$")
+
+
 def retry_after(headers: Mapping[str, str]) -> float | None:
-    """Seconds to wait, from Retry-After or a service's own header that ends in -retry-after (Cost Management has one)."""
+    """Seconds to wait, from Retry-After, from a service's own header that ends in -retry-after (Cost Management has several, for its entity, its client and its tenant) or from the
+    time that Azure Resource Graph says its quota resets after (x-ms-user-quota-resets-after, hh:mm:ss, which it adds to every answer: Learn, "Guidance for throttled requests in
+    Azure Resource Graph"). The longest of them is the one that binds. None when no header gives a number."""
+    waits: list[float] = []
     for name, value in headers.items():
+        text = str(value).strip()
         if name == "retry-after" or name.endswith("-retry-after"):
             try:
-                return max(0.0, float(value))
+                waits.append(max(0.0, float(text)))
             except ValueError:
-                return None
-    return None
+                continue
+        elif name == "x-ms-user-quota-resets-after":
+            found = QUOTA_RESETS.match(text)
+            if found:
+                # A second more than the quota says, so that the quota has reset when the call is made again.
+                waits.append(int(found.group(1)) * 3600 + int(found.group(2)) * 60 + float(found.group(3)) + 1.0)
+    return max(waits) if waits else None
 
 
 def challenge_of(status: int, headers: Mapping[str, str]) -> str:
