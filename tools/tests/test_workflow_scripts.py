@@ -71,11 +71,17 @@ def run_step_script(name, stand_ins, env, files=None, prelude=""):
 
 CASES_PRINCIPAL = "7d3c1f52-3b0a-4f6e-9a55-0c1f5f2b9d11"
 SYSTEM_PRINCIPAL = "3b9e2f81-6c4d-4a7e-8f10-2d5a9c7b1e44"
+GATEWAY_NAME = "aigw-meternaut-abc123"
+GATEWAY_HOST = "aigw-meternaut-abc123.swedencentral-01.ai.gateway.azure.com"
 
 FOUNDRY_SETTINGS_AZ = """#!/bin/bash
 echo "az $*" >> "$FAKE_LOG"
 case "$*" in
   *"identity list"*|*"/loggers"*|*"Microsoft.ApiManagement/service"*) echo "the owner's API Management instance and its identity must not be looked at: $*" >&2; exit 8 ;;
+  *"/providers/Microsoft.ApiManagement/aigateways/"*)
+    if [ "$FAKE_GATEWAY" = "FAIL" ]; then echo "$FAKE_SYSTEM_ERROR" >&2; exit 1; fi
+    if [ "$FAKE_GATEWAY" = "ABSENT" ]; then echo "ERROR: (ResourceNotFound) The Resource 'Microsoft.ApiManagement/aigateways/aigw-meternaut-abc123' under resource group 'rg-of-the-project' was not found." >&2; exit 1; fi
+    printf '%s' "$FAKE_GATEWAY" ;;
   *"/providers/Microsoft.Web/sites/"*)
     if [ "$FAKE_SYSTEM" = "FAIL" ]; then echo "$FAKE_SYSTEM_ERROR" >&2; exit 1; fi
     if [ "$FAKE_SYSTEM" = "ABSENT" ]; then echo "ERROR: (ResourceNotFound) The Resource 'Microsoft.Web/sites/func-meternaut-cases-abc123' under resource group 'rg-of-the-project' was not found." >&2; exit 1; fi
@@ -88,8 +94,8 @@ esac
 
 FOUNDRY_SETTINGS_PYTHON3 = """#!/bin/bash
 if [ "$2" = "build" ]; then
-  echo "build preview=$([[ " $* " == *" --preview "* ]] && echo yes || echo no) foundry_project=${ENV_FOUNDRY_PROJECT_EXISTS-unset} cases_system=[${CASES_SYSTEM_PRINCIPAL_ID-unset}] retired=[${GATEWAY_PRINCIPAL_ID-unset}${GATEWAY_CLIENT_ID-unset}${RECORDING_FRAGMENTS-unset}] contract=$([[ " $* " == *" --contract"* ]] && echo yes || echo no) policies=$([[ " $* " == *" --aigateway-policies environment/aigateway/policies.json"* ]] && echo yes || echo no)" >> "$FAKE_LOG"
-  printf 'cases_function_app_name=func-meternaut-cases-abc123\\nfoundry_account_name=aif-meternaut-agents-abc123\\nfoundry_project_name=meternaut\\n'
+  echo "build preview=$([[ " $* " == *" --preview "* ]] && echo yes || echo no) foundry_project=${ENV_FOUNDRY_PROJECT_EXISTS-unset} cases_system=[${CASES_SYSTEM_PRINCIPAL_ID-unset}] retired=[${GATEWAY_PRINCIPAL_ID-unset}${GATEWAY_CLIENT_ID-unset}${RECORDING_FRAGMENTS-unset}] contract=$([[ " $* " == *" --contract"* ]] && echo yes || echo no) policies=$([[ " $* " == *" --aigateway-policies environment/aigateway/policies.json"* ]] && echo yes || echo no) aigw=[${AIGATEWAY_HOST-unset}]" >> "$FAKE_LOG"
+  printf 'cases_function_app_name=func-meternaut-cases-abc123\\nfoundry_account_name=aif-meternaut-agents-abc123\\nfoundry_project_name=meternaut\\naigateway_name=aigw-meternaut-abc123\\nagents_via_ai_gateway=false\\n'
 else
   echo "check $*" >> "$FAKE_LOG"
 fi
@@ -105,20 +111,22 @@ class WorkOutTheFoundrySettings(unittest.TestCase):
                     "/accounts/aif-meternaut-agents-abc123/projects/meternaut?api-version=2025-06-01 --query name --output tsv")
     SITE_CALL = ("az rest --method get --url https://management.azure.com/subscriptions/sub-of-the-project/resourceGroups/rg-of-the-project/providers/Microsoft.Web"
                  "/sites/func-meternaut-cases-abc123?api-version=2024-04-01 --query identity.principalId --output tsv")
-    PREVIEW = "build preview=yes foundry_project=unset cases_system=[unset] retired=[unsetunsetunset] contract=no policies=yes"
+    PREVIEW = "build preview=yes foundry_project=unset cases_system=[unset] retired=[unsetunsetunset] contract=no policies=yes aigw=[unset]"
     HOSTILE = "ERROR: (AuthorizationFailed) The client '40404040-4040-4040-4040-404040404040' with object id 'a404b404-0000-0000-0000-000000000404' does not have authorization"
+    GATEWAY_CALL = ("az rest --method get --url https://management.azure.com/subscriptions/sub-of-the-project/resourceGroups/rg-of-the-project/providers/Microsoft.ApiManagement"
+                    f"/aigateways/{GATEWAY_NAME}?api-version=2025-09-01-preview --query properties.frontend.defaultHostname --output tsv")
 
-    def run_step(self, action="what-if", project="found", system=SYSTEM_PRINCIPAL, **env):
+    def run_step(self, action="what-if", project="found", system=SYSTEM_PRINCIPAL, gateway=GATEWAY_HOST, **env):
         return run_step_script("Work out the settings", {"az": FOUNDRY_SETTINGS_AZ, "python3": FOUNDRY_SETTINGS_PYTHON3},
                                {"ACTION": action, "FAKE_PROJECT": project,
-                                "FAKE_SYSTEM": system, "FAKE_SYSTEM_ERROR": self.HOSTILE,
+                                "FAKE_SYSTEM": system, "FAKE_SYSTEM_ERROR": self.HOSTILE, "FAKE_GATEWAY": gateway,
                                 "ENV_SUBSCRIPTION_ID": "sub-of-the-project", "ENV_RESOURCE_GROUP": "rg-of-the-project", **env})
 
     def builds(self, lines):
         return [line for line in lines if line.startswith("build ")]
 
-    def final(self, project="false", system=""):
-        return f"build preview=no foundry_project={project} cases_system=[{system}] retired=[unsetunsetunset] contract=no policies=yes"
+    def final(self, project="false", system="", host=""):
+        return f"build preview=no foundry_project={project} cases_system=[{system}] retired=[unsetunsetunset] contract=no policies=yes aigw=[{host}]"
 
     def user_assigned_lookups(self, lines):
         return [line for line in lines if line.startswith("az identity list")]
@@ -126,11 +134,12 @@ class WorkOutTheFoundrySettings(unittest.TestCase):
     def test_what_if_looks_for_the_identity_of_the_app_and_for_the_project_with_the_version_that_the_model_account_uses(self):
         done, lines, _ = self.run_step("what-if")
         self.assertEqual(done.returncode, 0, done.stderr)
-        self.assertEqual(self.builds(lines), [self.PREVIEW, self.final("true", SYSTEM_PRINCIPAL)])
+        self.assertEqual(self.builds(lines), [self.PREVIEW, self.final("true", SYSTEM_PRINCIPAL, GATEWAY_HOST)])
         self.assertIn(self.PROJECT_CALL, lines, "existence does not need the newest version")
         self.assertIn(self.SITE_CALL, lines, "the system-assigned identity is read from the app, and the version is the one that the other reads of the app use")
+        self.assertIn(self.GATEWAY_CALL, lines, "the host name of the AI Gateway is read from the service, so that the preview shows the real one")
         self.assertEqual(self.user_assigned_lookups(lines), [], "no identity is listed: the user-assigned one that the app used before is not looked for, and neither is the gateway's")
-        self.assertIn("The cases app's system-assigned identity exists; its principal id goes into the Foundry file.", done.stdout)
+        self.assertIn("The cases app's system-assigned identity exists; its principal id goes into the Foundry file and the AI Gateway file.", done.stdout)
         self.assertIn("The Foundry project is in Azure: true.", done.stdout)
 
     def test_foundry_needs_the_identity_and_never_looks_for_the_project(self):
@@ -139,25 +148,28 @@ class WorkOutTheFoundrySettings(unittest.TestCase):
         self.assertEqual(self.builds(lines), [self.PREVIEW, self.final("false", SYSTEM_PRINCIPAL)])
         self.assertIn(self.SITE_CALL, lines)
         self.assertEqual([line for line in lines if "/projects/" in line], [])
+        self.assertNotIn(self.GATEWAY_CALL, lines, "while the switch of the agents is off, foundry reads nothing of the AI Gateway")
         self.assertEqual(self.user_assigned_lookups(lines), [], "foundry has no use for any identity of the gateway")
         self.assertIn("The action foundry does not use the Foundry project, so it is not looked for.", done.stdout)
 
-    def test_cases_needs_the_project_and_never_looks_for_the_identity(self):
+    def test_cases_needs_the_project_and_the_ai_gateway_and_never_looks_for_the_identity(self):
         done, lines, _ = self.run_step("cases", system="FAIL")
         self.assertEqual(done.returncode, 0, done.stderr)
-        self.assertEqual(self.builds(lines), [self.PREVIEW, self.final("true", "")])
+        self.assertEqual(self.builds(lines), [self.PREVIEW, self.final("true", "", GATEWAY_HOST)])
         self.assertIn(self.PROJECT_CALL, lines)
+        self.assertIn(self.GATEWAY_CALL, lines, "every model call goes through the AI Gateway, so the action reads its host name from the service")
         self.assertEqual([line for line in lines if "Microsoft.Web/sites" in line], [], "the cases app is not given a role on the project by this action")
         self.assertEqual(self.user_assigned_lookups(lines), [], "cases has no use for any identity of the gateway")
         self.assertIn("The Foundry project is in Azure: true.", done.stdout)
+        self.assertIn(f"The service reports the host name of the AI Gateway {GATEWAY_NAME}; it goes into the cases file", done.stdout)
 
     def test_every_other_action_looks_for_none_of_them_so_a_refused_read_cannot_stop_it(self):
         for action in ("loop-check", "operator", "recording"):
             with self.subTest(action=action):
-                done, lines, _ = self.run_step(action, project=self.HOSTILE, system="FAIL")
+                done, lines, _ = self.run_step(action, project=self.HOSTILE, system="FAIL", gateway="FAIL")
                 self.assertEqual(done.returncode, 0, done.stderr)
                 self.assertEqual(self.builds(lines), [self.PREVIEW, self.final()])
-                self.assertEqual([line for line in lines if "/projects/" in line or "Microsoft.Web/sites" in line], [])
+                self.assertEqual([line for line in lines if "/projects/" in line or "Microsoft.Web/sites" in line or "aigateways" in line], [])
                 self.assertEqual(self.user_assigned_lookups(lines), [])
                 self.assertIn(f"The action {action} does not use the Foundry project, so it is not looked for.", done.stdout)
 
@@ -195,7 +207,7 @@ class WorkOutTheFoundrySettings(unittest.TestCase):
         self.assertIn("::warning::meternaut could not be read: " + self.HOSTILE, said)
         self.assertNotIn("::error::", said, "a preview is not stopped by a read")
         self.assertIn("::warning::The preview of the cases app assumes that the Foundry project is not in Azure, because the read of the project failed", said)
-        self.assertEqual(self.builds(lines)[1], self.final("false", SYSTEM_PRINCIPAL))
+        self.assertEqual(self.builds(lines)[1], self.final("false", SYSTEM_PRINCIPAL, GATEWAY_HOST))
         self.assertIn("The Foundry project is in Azure: false.", done.stdout)
         self.assertEqual([line for line in lines if line.startswith("check ")][-1].split("--label ")[1], "planted", "the files were checked as always")
 
@@ -206,8 +218,9 @@ class WorkOutTheFoundrySettings(unittest.TestCase):
                 with self.subTest(action=action, answer=answer):
                     done, lines, _ = self.run_step(action, system=answer)
                     self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
-                    self.assertEqual(self.builds(lines)[1], self.final("true" if action == "what-if" else "false", ""))
-                    self.assertIn("The cases app has no system-assigned identity yet (the action cases makes the app with it); the Foundry file holds a placeholder.", done.stdout)
+                    self.assertEqual(self.builds(lines)[1], self.final("true", "", GATEWAY_HOST) if action == "what-if" else self.final("false", ""))
+                    self.assertIn("The cases app has no system-assigned identity yet (the action cases makes the app with it); the Foundry file holds a placeholder and the AI Gateway file gives no role to the app.",
+                                  done.stdout)
                     self.assertNotIn("::error::", done.stdout + done.stderr)
 
     def test_a_lookup_of_the_system_assigned_identity_that_fails_stops_the_run_even_when_the_error_holds_the_digits_404_inside_an_object_id(self):
@@ -230,8 +243,8 @@ class WorkOutTheFoundrySettings(unittest.TestCase):
 
     def test_no_action_looks_at_the_owners_api_management_instance_or_at_a_gateway_identity_and_every_action_builds_and_checks_its_files_without_a_word_of_alarm(self):
         # The owner ordered the undo of what Meternaut added to his API Management instance (2026-11-07): after it the instance has no gateway identity and no loggers of ours, and nothing here
-        # looks for them. The stand-in of the Azure CLI fails any call that would: so the step has to go through for every action, with the facts that the action itself needs (cases and
-        # foundry read the project and the identity of the cases app, what-if reads both) and with no warning.
+        # looks for them. The stand-in of the Azure CLI fails any call that would: so the step has to go through for every action, with the facts that the action itself needs (cases reads the project
+        # and the host name of the AI Gateway, foundry and aigateway read the identity of the cases app, what-if reads all three) and with no warning.
         for action in self.ACTIONS:
             with self.subTest(action=action):
                 done, lines, _ = self.run_step(action)
@@ -245,7 +258,8 @@ class WorkOutTheFoundrySettings(unittest.TestCase):
                     self.assertNotRegex(call, r"identity list|/loggers|ApiManagement/service|--apim", call)
                 builds = self.builds(lines)
                 self.assertEqual(builds[0], self.PREVIEW)
-                self.assertRegex(builds[1], r"^build preview=no foundry_project=\w+ cases_system=\[[0-9a-f-]*\] retired=\[unsetunsetunset\] contract=no policies=yes$", "the builder is given nothing of the retired settings")
+                self.assertRegex(builds[1], r"^build preview=no foundry_project=\w+ cases_system=\[[0-9a-f-]*\] retired=\[unsetunsetunset\] contract=no policies=yes aigw=\[[a-z0-9.-]*\]$",
+                                 "the builder is given nothing of the retired settings")
                 labels = [re.search(r"--label (\S+)", line).group(1) for line in lines if line.startswith("check ")]
                 self.assertEqual(labels, ["environment", "recording", "foundry", "cases", "operator", "planted"], "every file is checked against its template")
 

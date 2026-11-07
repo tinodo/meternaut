@@ -147,7 +147,8 @@ class TheSettingsStepReadsWhatTheSwitchNeedsAndNothingWhileItIsOff(unittest.Test
                 self.assertEqual(self.builds(lines), ["build preview=yes host=[unset] project=[unset]", f"build preview={self.final_preview(action)} host=[] project=[]"], "empty, which the builder reads as not given")
                 self.assertIn("aigateway_host=\n", out)
                 self.assertIn("foundry_project_principal=\n", out)
-                self.assertNotIn("AI Gateway", done.stdout + done.stderr)
+                self.assertNotIn("host name of the AI Gateway", done.stdout + done.stderr)
+                self.assertNotIn("Foundry project's system-assigned identity", done.stdout + done.stderr)
 
     def test_the_action_cases_reads_the_host_name_of_the_gateway_whether_the_switch_is_on_or_off_and_hands_it_to_the_builder(self):
         # Every model call of the cases app goes through the AI Gateway (AGENTS.md rule 15 (c)), so the app is made only with the gateway's host name, read from the service and never made up.

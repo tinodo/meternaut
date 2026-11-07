@@ -191,7 +191,7 @@ class TheBuilderWritesAFileForEachTemplate(unittest.TestCase):
         files, _ = self.build()
         subnet, gateway = AP.values(files, "aigateway-subnet.parameters.json"), AP.values(files, "aigateway.parameters.json")
         self.assertEqual(set(subnet), {"location", "owner", "aigwSubnetPrefix", "aigwSubnetExists"}, "no workload: the template's default is the one of every other file of the gateway")
-        self.assertEqual(set(gateway), {"location", "owner", "gatewayName", "foundryAccountName", "models", "foundryProjectPrincipalId"})
+        self.assertEqual(set(gateway), {"location", "owner", "gatewayName", "foundryAccountName", "models", "foundryProjectPrincipalId", "casesPrincipalId"})
         self.assertFalse({"aigwSubnetPrefix", "aigwSubnetExists"} & set(gateway))
         self.assertEqual((subnet["aigwSubnetPrefix"], subnet["aigwSubnetExists"]), ("10.53.0.128/26", False))
         self.assertEqual((subnet["location"], subnet["owner"]), (gateway["location"], gateway["owner"]))
@@ -488,7 +488,7 @@ class TheSummaryAndTheDescriptionSayItInPlainWords(unittest.TestCase):
     def test_a_stop_lists_what_may_exist_subnet_first_and_says_what_each_place_of_stopping_means(self):
         said = self.summary("failure")
         for words in ("Part of the AI Gateway may exist now: the subnet `snet-aigw` with its network security group (made first, and only when it was not there), and then the gateway "
-                      f"`{AG.GATEWAY}` with its own identity, its provider, its models and aliases, and two roles.",
+                      f"`{AG.GATEWAY}` with its own identity, its provider, its models and aliases, and its roles (the Operator's, and the cases app's when the app had an identity).",
                       "If the lines stop before the subnet is made, nothing was changed:",
                       "If the subnet's deploy failed, the lines say why (for example that the range is taken) and the gateway was not made.",
                       "If the lines stop at the wait for the landing zone's route table, the subnet exists and the gateway is not made, because it is made on the subnet as the landing zone leaves it: "
@@ -569,7 +569,7 @@ class TheDocumentsSayWhatTheActionDoes(unittest.TestCase):
                       "the landing zone's route table is on the subnet)", flat(section))
 
     def test_the_readme_lists_both_templates(self):
-        (bullet,) = [line for line in README.splitlines() if line.startswith("- **An AI Gateway for the agents' model calls")]
+        (bullet,) = [line for line in README.splitlines() if line.startswith("- **An AI Gateway for every model call")]
         self.assertIn("Built: the templates [`environment/aigateway/subnet.bicep`](environment/aigateway/subnet.bicep) (its subnet, made first) and [`environment/aigateway/main.bicep`](environment/aigateway/main.bicep) "
                       "(the gateway, made after the landing zone's route table is on the subnet)", bullet)
 
