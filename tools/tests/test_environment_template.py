@@ -617,7 +617,7 @@ class Cases(unittest.TestCase):
         self.assertIn("var webSubnetName = 'snet-cases'", self.code)
         self.assertIn("var functionSubnetName = 'snet-func'", self.code)
 
-    def test_a_flex_app_has_the_usage_apps_shape_with_its_own_package_container_one_instance_and_no_always_ready_instance(self):
+    def test_a_flex_app_has_its_own_package_container_one_instance_and_no_always_ready_instance(self):
         body = self.found["functionApp"][1]
         self.assertIn("functionAppConfig: isFlex ? {", body)
         flex = body[body.index("functionAppConfig: isFlex ? {"):body.index("    } : null\n")]
@@ -629,8 +629,6 @@ class Cases(unittest.TestCase):
         self.assertIn("instanceMemoryMB: 2048", flex)
         self.assertNotIn("alwaysReady", self.code, "no always-ready instance: the app scales to zero and bills nothing while it is idle")
         self.assertRegex(flex, r"runtime: \{\n\s+name: 'python'\n\s+version: '3.13'\n\s+\}")
-        recording = text("environment/recording/main.bicep")
-        self.assertIn("type: 'SystemAssignedIdentity'", recording, "the usage app, which is proven, keeps its package the same way")
         self.assertEqual(self.found["deploymentContainer"][0], "Microsoft.Storage/storageAccounts/blobServices/containers")
         self.assertIn("publicAccess: 'None'", self.found["deploymentContainer"][1])
         for setting in ("linuxFxVersion", "alwaysOn", "ftpsState", "vnetRouteAllEnabled"):
@@ -1054,7 +1052,7 @@ class TheCodeIsPublishedFromInsideTheNetwork(unittest.TestCase):
                       "on an estate that has none the order is base, cases, operator, and then cases again) or what the container said.",
                       "The code was published from inside the network: a short-lived container group of the Operator signed in as the deploy identity with a token of this run, built the libraries from the "
                       "hash-locked lock file (the sources went in the request, because the finished package is too big for it) and published the finished package through the app's private endpoint: with "
-                      "the Azure CLI's zip deployment command while the app is on Flex Consumption, as the usage app's is, and posted to the deployment site while it is on a Basic plan",
+                      "the Azure CLI's zip deployment command while the app is on Flex Consumption, as the usage app's was, and posted to the deployment site while it is on a Basic plan",
                       "the runner published nothing"):
             self.assertIn(words, self.text, words)
         for stale in ("goes from this runner to the public deployment site", "the app was not given its code: the lines say which endpoint is not registered yet. Running"):
@@ -1226,14 +1224,14 @@ class CasesWorkflow(unittest.TestCase):
         self.assertIn("grep -Fxq 'Microsoft.App/environments'", script, "a Flex Consumption app needs the delegation that the model side gave the function subnet")
         self.assertIn("properties.virtualNetworkSubnetId", script)
         self.assertIn("::error::The subnet $FUNCTION_SUBNET is still taken by another plan:$taken.", script)
-        for words in ("the usage recording's app", "the action retire-old removes it and its plan", "run cases again", "no other subnet is made for it", "Nothing was changed: the web page's app is still where it was."):
+        for words in ("the usage app", "the action retire-old removes it and its plan", "run cases again", "no other subnet is made for it", "Nothing was changed: the web page's app is still where it was."):
             self.assertIn(words, script, words)
         self.assertIn("is not there. A Flex Consumption app uses the function subnet that model-side makes, and no new subnet is made for it", script)
         self.assertIn("serviceAssociationLinks", script, "the platform's links on the subnet are said, as read")
         self.assertIn('${name,,}" = "${FUNCTION_APP,,}"', script, "the cases app itself is not another plan")
-        self.assertLess(self.names.index("The usage recording is there, which the first cases build on"), self.names.index(title))
+        self.assertLess(self.names.index("The base is there, which the first cases build on"), self.names.index(title))
 
-    def test_a_flex_app_is_published_with_the_plan_kind_and_the_container_does_it_the_way_that_the_usage_app_is_published(self):
+    def test_a_flex_app_is_published_with_the_plan_kind_and_the_container_does_it_with_the_zip_deployment_command_of_the_azure_cli(self):
         publish = self.step("Publish the cases to the function app from inside the network, in the Operator")
         self.assertIn("CASES_APP_PLAN: ${{ steps.params.outputs.cases_app_plan }}", publish)
         self.assertIn('--env "PUBLISH_KIND=cases" --env "PUBLISH_PLAN=$CASES_APP_PLAN"', publish)
@@ -1246,7 +1244,7 @@ class CasesWorkflow(unittest.TestCase):
         self.assertIn("CASES_APP_PLAN: ${{ steps.params.outputs.cases_app_plan }}", deploy)
         self.assertIn("CASES_SUBNET: ${{ steps.params.outputs.cases_subnet_name }}", deploy)
         self.assertIn('if [ "$CASES_APP_PLAN" = Flex ] && grep -Eqi \'subnet|ServiceAssociationLink|delegat|InUse\' "$RUNNER_TEMP/cases-deploy.err"; then', deploy)
-        for words in ("still taken by another plan", "the usage recording's app and its plan have to be removed first (the action retire-old does it)", "no new subnet is made", "set CASES_APP_PLAN back to Basic"):
+        for words in ("still taken by another plan", "the usage app and its plan have to be removed first (the action retire-old does it)", "no new subnet is made", "set CASES_APP_PLAN back to Basic"):
             self.assertIn(words, deploy, words)
         self.assertIn('--output functionAppId 2> "$RUNNER_TEMP/cases-deploy.err"', deploy)
 

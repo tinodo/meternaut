@@ -735,8 +735,8 @@ jobs:
           FUNCTION_APP: ${{ steps.params.outputs.cases_function_app_name }}
           FUNCTION_SUBNET: ${{ steps.params.outputs.function_subnet_name }}
         run: |
-          # A Flex Consumption app is integrated with a subnet that is delegated to Microsoft.App/environments, and the only one that the model side made is the function subnet snet-func, which the usage recording's app
-          # is on until the usage recording is retired. The owner's network is small, so no new subnet is made for the web page: the app uses this one, and the usage recording's app has to be gone from it first. This step reads
+          # A Flex Consumption app is integrated with a subnet that is delegated to Microsoft.App/environments, and the only one that the model side made is the function subnet snet-func, which the usage app
+          # is on until the action retire-old deletes it. The owner's network is small, so no new subnet is made for the web page: the app uses this one, and the usage app has to be gone from it first. This step reads
           # before anything is changed, and it comes before the step that removes the app of the other kind, so that a refusal leaves the web page where it was. Learn says that more than one Flex Consumption app can share a
           # subnet (Create and manage function apps in the Flex Consumption plan, Subnet sharing), but one app then affects the performance of the other, and the order is that the web page has the subnet to itself.
           vnet="/subscriptions/$ENV_SUBSCRIPTION_ID/resourceGroups/$ENV_RESOURCE_GROUP/providers/Microsoft.Network/virtualNetworks/vnet-meternaut"
@@ -763,7 +763,7 @@ jobs:
             if [[ "${integrated,,}" == */subnets/"${FUNCTION_SUBNET,,}" ]]; then taken="$taken $name (plan ${plan##*/})"; fi
           done <<< "$apps"
           if [ -n "$taken" ]; then
-            echo "::error::The subnet $FUNCTION_SUBNET is still taken by another plan:$taken. The web page's Flex Consumption app needs it, and no other subnet is made for it. If that is the usage recording's app, the action retire-old removes it and its plan: run that first, wait until it has finished, and run cases again. If it is something else, a person removes that app and its plan or moves it to another subnet, and then cases is run again. Nothing was changed: the web page's app is still where it was."
+            echo "::error::The subnet $FUNCTION_SUBNET is still taken by another plan:$taken. The web page's Flex Consumption app needs it, and no other subnet is made for it. If that is the usage app, the action retire-old removes it and its plan: run that first, wait until it has finished, and run cases again. If it is something else, a person removes that app and its plan or moves it to another subnet, and then cases is run again. Nothing was changed: the web page's app is still where it was."
             exit 1
           fi
           echo "No other app is integrated with the subnet $FUNCTION_SUBNET: it is free for the cases app."
@@ -969,7 +969,7 @@ jobs:
             --name "cases-$GITHUB_RUN_ID" --output functionAppId 2> "$RUNNER_TEMP/cases-deploy.err"); then
             cat "$RUNNER_TEMP/cases-deploy.err" >&2
             if [ "$CASES_APP_PLAN" = Flex ] && grep -Eqi 'subnet|ServiceAssociationLink|delegat|InUse' "$RUNNER_TEMP/cases-deploy.err"; then
-              echo "::error::The deployment of the cases app on Flex Consumption was refused, and the text above names the subnet. The app uses the function subnet $CASES_SUBNET and no other (no new subnet is made: the owner's network is small). If the subnet is still taken by another plan, the usage recording's app and its plan have to be removed first (the action retire-old does it), and the platform can take a while to let go of a subnet that an app has left: run cases again then. If it is something else, a person looks at the subnet's links. The app of the other kind was removed before this step and is not there: run cases again once the subnet is free, or set CASES_APP_PLAN back to Basic in tools/environment-params.py and run cases."
+              echo "::error::The deployment of the cases app on Flex Consumption was refused, and the text above names the subnet. The app uses the function subnet $CASES_SUBNET and no other (no new subnet is made: the owner's network is small). If the subnet is still taken by another plan, the usage app and its plan have to be removed first (the action retire-old does it), and the platform can take a while to let go of a subnet that an app has left: run cases again then. If it is something else, a person looks at the subnet's links. The app of the other kind was removed before this step and is not there: run cases again once the subnet is free, or set CASES_APP_PLAN back to Basic in tools/environment-params.py and run cases."
             fi
             exit 1
           fi
