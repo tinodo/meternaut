@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Reads the front door of the console, with no sign-in, and says whether it is shut; and waits for the app's health address from inside the network.
+"""Reads the front door of the console, with no sign-in, and says whether it is shut; waits for the app's health address from inside the network; and measures how fast it answers.
 
     python tools/console-check.py door --host <name> [--expect signin|refuse] [--proxied] [--private] [--summary FILE]
     python tools/console-check.py health --host <name>.azurewebsites.net [--tries 60] [--interval 10] [--timeout 15] [--private]
+    python tools/console-check.py latency --host <name>.azurewebsites.net --private --minutes N --interval S [--idle-minutes M] [--after-idle K] [--timeout 75]
 
 door    The console serves a person only after Microsoft Entra has signed them in, and the app refuses every request when that sign-in is not set up. This
         check makes the requests that an anonymous visitor (or a script) would make and passes only when none of them gets a page:
@@ -31,11 +32,21 @@ health  Waits until https://<host>/healthz answers 200 with the word ok, for the
         outside it. One request each try, no redirect followed, and a line for each try. With --private the name has to resolve to private addresses only (the
         app's private endpoint, registered in the landing zone's central zone): an answer over a public address proves nothing about the path that people take.
 
+latency Measures how long the web page takes to answer, for the decision in docs/proposals/07-private-by-default.md ("The web page on Flex Consumption"). It asks
+        https://<host>/healthz, which needs no sign-in, once every --interval seconds (5 to 60) for --minutes minutes (1 to 20: the Operator's container group has to finish
+        within 25 minutes), one line for each request (the time in UTC, the status, the seconds), and then waits --idle-minutes with no request (8 for a run of 16 minutes or
+        more, half the run below that, 0 for none: the platform scales an idle app down to zero in a few minutes) and asks --after-idle more times (3), so that the first
+        answer after the gap shows what a start from zero costs. A request may take --timeout seconds (75), longer than the minute that the platform's front end held requests
+        for on 2026-11-05. It ends with a summary line: the count, the median, the 95th percentile, the slowest, the number of requests that were not answered 200 with the
+        word ok, and the numbers that took more than 5 and more than 15 seconds, and one line that applies the rule: the exit code is 0 when no request took more than 15
+        seconds and none was not 200, and 1 otherwise (and when --private finds a public address). It runs in the Operator, over the app's private endpoint, as health does.
+
 Standard library only. It reads; it sends no credential and changes nothing.
 """
 from __future__ import annotations
 
 import argparse
+import datetime
 import http.client
 import ipaddress
 import re
@@ -61,6 +72,13 @@ RETURN_PARAMETERS = ("redirect_uri", "post_login_redirect_uri")
 # The addresses that a private endpoint is given: the ranges of RFC 1918. A name that resolves to anything else is a public address.
 PRIVATE_NETWORKS = tuple(ipaddress.ip_network(network) for network in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"))
 HEALTH_TRIES_MAX, HEALTH_INTERVAL_MAX, HEALTH_TIMEOUT_MAX = 120, 60, 60
+# The latency measurement: one request every few seconds for some minutes, and a few more after a quiet time, so that a start from zero shows. The Operator's container group has to finish in 25 minutes
+# (the group is made for the run and a start takes one to two minutes), so a run is 20 minutes at the most. A line is about 45 characters and the log of a container keeps 16 KB and the run's summary
+# 300 lines, so a request every five seconds at the fastest. A request may wait longer than the minute that the platform's front end held requests for on 2026-11-05, so that a stall shows as it was.
+LATENCY_MINUTES_MAX, LATENCY_INTERVAL_MIN, LATENCY_INTERVAL_MAX, LATENCY_TIMEOUT_DEFAULT, LATENCY_TIMEOUT_MAX = 20, 5, 60, 75, 120
+LATENCY_IDLE_DEFAULT_MINUTES, LATENCY_AFTER_IDLE_DEFAULT, LATENCY_AFTER_IDLE_MAX = 8, 3, 10
+# The two limits of the rule in docs/proposals/07-private-by-default.md ("The web page on Flex Consumption"): the web page stays on Flex only if no request took longer than the second and none was not 200.
+SLOW_SECONDS, STALL_SECONDS = 5.0, 15.0
 
 
 class Problem(Exception):
@@ -225,24 +243,131 @@ def health(host: str, tries: int, interval: float, timeout: float, private: bool
     return False
 
 
+def percentile(sorted_seconds: list[float], percent: float) -> float:
+    """The nearest-rank percentile of a sorted list: the smallest value that at least `percent` per cent of the values do not exceed."""
+    rank = max(1, -(-len(sorted_seconds) * percent // 100))
+    return sorted_seconds[int(rank) - 1]
+
+
+def latency(host: str, minutes: int, interval: float, private: bool, idle_minutes: int | None = None, after_idle: int = LATENCY_AFTER_IDLE_DEFAULT,
+            timeout: float = LATENCY_TIMEOUT_DEFAULT, get: Callable[..., "tuple[int, dict, bytes]"] = fetch_once, resolve: Callable[[str], list[str]] = resolve_host,
+            sleep: Callable[[float], None] = time.sleep, clock: Callable[[], float] = time.monotonic,
+            now: Callable[[], datetime.datetime] = lambda: datetime.datetime.now(datetime.timezone.utc), out=sys.stdout) -> int:
+    """Asks https://<host>/healthz every `interval` seconds for `minutes` minutes, and says how long each answer took and what the whole run came to.
+
+    The run is a steady part, then a quiet gap of `idle_minutes` with no request (long enough for the platform to scale the app down to zero), then `after_idle` requests, so that the first
+    answer after the gap shows what a start from zero costs. A request that took more than the timeout, or that got no answer, is a line of its own and counts as not answered with 200.
+    One line for each request (the time in UTC, the status, the seconds), a summary line (the count, the median, the 95th percentile, the slowest, how many were not 200, how many took more than 5
+    and more than 15 seconds) and a last line that applies the rule of docs/proposals/07-private-by-default.md. Returns 0 when no request took more than 15 seconds and none was not 200, 1 when
+    one did, and 1 when the name did not resolve to a private address (with --private) and nothing was asked. It reads only and sends no credential."""
+    if not HOST.match(host):
+        raise Problem("--host is a host name")
+    if not 1 <= minutes <= LATENCY_MINUTES_MAX:
+        raise Problem(f"--minutes is a whole number from 1 to {LATENCY_MINUTES_MAX}: the Operator's container group has to finish within 25 minutes")
+    if not LATENCY_INTERVAL_MIN <= interval <= LATENCY_INTERVAL_MAX:
+        raise Problem(f"--interval is a number of seconds from {LATENCY_INTERVAL_MIN} to {LATENCY_INTERVAL_MAX}")
+    if not 1 <= timeout <= LATENCY_TIMEOUT_MAX:
+        raise Problem(f"--timeout is a number of seconds from 1 to {LATENCY_TIMEOUT_MAX}")
+    if idle_minutes is None:
+        idle_minutes = LATENCY_IDLE_DEFAULT_MINUTES if minutes >= 2 * LATENCY_IDLE_DEFAULT_MINUTES else minutes // 2
+    if idle_minutes < 0 or idle_minutes >= minutes:
+        raise Problem("--idle-minutes is a whole number from 0 up to one less than --minutes")
+    if idle_minutes and not 1 <= after_idle <= LATENCY_AFTER_IDLE_MAX:
+        raise Problem(f"--after-idle is a number of requests from 1 to {LATENCY_AFTER_IDLE_MAX}")
+    steady = minutes * 60 - idle_minutes * 60 - ((after_idle - 1) * interval if idle_minutes else 0)
+    if steady < interval:
+        raise Problem("the run is too short for its quiet gap: raise --minutes or lower --idle-minutes")
+    url = f"https://{host}/healthz"
+    if private:
+        ok, text = private_name(host, resolve)
+        print(f"name: {text}", file=out)
+        if not ok:
+            print("FAIL: no request was made: with --private the name has to resolve to private addresses only", file=out)
+            return 1
+    gap = f", then {idle_minutes} minutes with no request, then {after_idle} requests" if idle_minutes else ""
+    print(f"latency: {url} every {interval:g} seconds for {minutes} minutes (requests for {minutes - idle_minutes} minutes{gap}), a request may take {timeout:g} seconds", file=out)
+    seconds: list[float] = []
+    cold: list[float] = []
+    not_ok = 0
+
+    def ask(label: str) -> None:
+        nonlocal not_ok
+        at = now().strftime("%H:%M:%S")
+        started = clock()
+        try:
+            status, _, body = get(url, {}, timeout)
+        except (OSError, http.client.HTTPException, Problem) as error:
+            took = clock() - started
+            answer, verdict_ok = f"no answer ({type(error).__name__})", False
+        else:
+            took = clock() - started
+            word = body.strip()[:10].decode("ascii", "replace")
+            verdict_ok = status == 200 and body.strip() == b"ok"
+            answer = str(status) if verdict_ok else f"{status} {word}".rstrip()
+        seconds.append(took)
+        if label:
+            cold.append(took)
+        if not verdict_ok:
+            not_ok += 1
+        print(f"{at}  {answer:24} {took:7.3f} s{'  ' + label if label else ''}", file=out)
+
+    begun = clock()
+    while True:
+        began = clock()
+        ask("")
+        wait = max(interval - (clock() - began), 0)
+        if clock() - begun + wait >= steady:
+            break
+        sleep(wait)
+    if idle_minutes:
+        print(f"{now().strftime('%H:%M:%S')}  quiet gap of {idle_minutes} minutes: no request", file=out)
+        sleep(idle_minutes * 60)
+        for number in range(after_idle):
+            began = clock()
+            ask("after the quiet gap")
+            if number < after_idle - 1:
+                sleep(max(interval - (clock() - began), 0))
+    ordered = sorted(seconds)
+    slow, stalled = sum(1 for value in seconds if value > SLOW_SECONDS), sum(1 for value in seconds if value > STALL_SECONDS)
+    print(f"latency: {len(seconds)} requests, p50 {percentile(ordered, 50):.2f} s, p95 {percentile(ordered, 95):.2f} s, max {ordered[-1]:.2f} s, "
+          f"{not_ok} not 200, {slow} slower than {SLOW_SECONDS:g} s, {stalled} slower than {STALL_SECONDS:g} s", file=out)
+    if cold:
+        first = cold[0]
+        print(f"after the quiet gap: {len(cold)} requests, the first took {first:.2f} s, the slowest {max(cold):.2f} s", file=out)
+    if stalled == 0 and not_ok == 0:
+        print(f"verdict: no request took more than {STALL_SECONDS:g} seconds and none was not 200", file=out)
+        return 0
+    print(f"verdict: {stalled} of {len(seconds)} requests took more than {STALL_SECONDS:g} seconds and {not_ok} did not answer 200: the rule of docs/proposals/07-private-by-default.md is not met", file=out)
+    return 1
+
+
 def main(argv=None, get: Callable[..., "tuple[int, dict, bytes]"] | None = None, out=sys.stdout,
-         resolve: Callable[[str], list[str]] = resolve_host, sleep: Callable[[float], None] = time.sleep) -> int:
+         resolve: Callable[[str], list[str]] = resolve_host, sleep: Callable[[float], None] = time.sleep,
+         clock: Callable[[], float] = time.monotonic, now: Callable[[], datetime.datetime] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("command", choices=["door", "health"])
+    parser.add_argument("command", choices=["door", "health", "latency"])
     parser.add_argument("--host", required=True)
     parser.add_argument("--expect", default="signin", help="door: signin or refuse")
     parser.add_argument("--proxied", action="store_true", help="door: the host is a reverse proxy's name, and the sign-in's return address has to name it")
     parser.add_argument("--summary", help="door: append the rows to this file")
     parser.add_argument("--tries", type=int, default=60, help="health: most tries")
-    parser.add_argument("--interval", type=float, default=10, help="health: seconds between two tries")
-    parser.add_argument("--timeout", type=float, default=15, help="health: seconds that one request may take")
-    parser.add_argument("--private", action="store_true", help="door and health: the name has to resolve to private addresses only")
+    parser.add_argument("--interval", type=float, default=10, help="health and latency: seconds between two tries or requests")
+    parser.add_argument("--timeout", type=float, default=None, help="health: seconds that one request may take (15); latency: the same (75)")
+    parser.add_argument("--private", action="store_true", help="door, health and latency: the name has to resolve to private addresses only")
+    parser.add_argument("--minutes", type=int, default=20, help=f"latency: minutes that the run takes, at most {LATENCY_MINUTES_MAX}")
+    parser.add_argument("--idle-minutes", type=int, default=None, help="latency: minutes with no request before the last few requests (8 for a run of 16 minutes or more, half the run below that; 0 for none)")
+    parser.add_argument("--after-idle", type=int, default=LATENCY_AFTER_IDLE_DEFAULT, help="latency: requests after the quiet gap")
     args = parser.parse_args(argv)
     host = args.host.strip().lower()
     try:
         if args.command == "health":
             request = get if get is not None else fetch_once
-            return 0 if health(host, args.tries, args.interval, args.timeout, args.private, request, resolve, sleep, out) else 1
+            return 0 if health(host, args.tries, args.interval, 15.0 if args.timeout is None else args.timeout, args.private, request, resolve, sleep, out) else 1
+        if args.command == "latency":
+            request = get if get is not None else fetch_once
+            return latency(host, args.minutes, args.interval, args.private, args.idle_minutes, args.after_idle,
+                           LATENCY_TIMEOUT_DEFAULT if args.timeout is None else args.timeout, request, resolve, sleep, clock,
+                           now or (lambda: datetime.datetime.now(datetime.timezone.utc)), out)
         passed, rows = door(host, args.expect, get or fetch, args.proxied, args.private, resolve)
     except Problem as error:
         print(f"console-check: {error}", file=sys.stderr)

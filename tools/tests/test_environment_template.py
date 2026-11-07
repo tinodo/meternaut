@@ -715,10 +715,13 @@ class Cases(unittest.TestCase):
         for name in ("vnet", "workspace", "insights", "storage", "blobService", "eventHubs", "sharedHostContainers", "privateEndpointSubnet"):
             self.assertRegex(self.source, rf"(?m)^resource {name} '[^']+' existing = ", name)
         made = sorted(name for name, (_, body) in self.found.items() if not re.search(rf"(?m)^resource {name} '[^']+' existing", self.source))
-        self.assertEqual(made, ["authIdentity", "consoleSignIn", "controlConsumerGroup", "controlHub", "functionApp", "functionAppEndpoint",
-                                "functionOwnsHostContainers", "functionPublishesTelemetry", "functionReceivesControl", "functionUsesQueues",
+        self.assertEqual(made, ["authIdentity", "consoleSignIn", "controlConsumerGroup", "controlHub", "deploymentContainer", "functionApp", "functionAppEndpoint",
+                                "functionOwnsHostContainers", "functionOwnsOwnPackage", "functionPublishesTelemetry", "functionReceivesControl", "functionUsesQueues",
                                 "functionUsesTables", "historyWorkbook", "noBasicAuthForDeployment", "noBasicAuthForFtp", "plan",
                                 "tracesRetention", "webNsg", "webSubnet"])
+        for name in ("deploymentContainer", "functionOwnsOwnPackage"):
+            self.assertTrue(self.found[name][1].startswith("if (isFlex) {"), f"{name}: only a Flex app has its own package container and the role on it")
+        self.assertTrue(self.found["noBasicAuthForFtp"][1].startswith("if (!isFlex) {"), "a Flex Consumption app has no FTP endpoint")
 
     def test_the_plans_subnet_is_delegated_to_basic_plans_holds_nothing_else_and_is_the_one_that_the_model_side_lists_too(self):
         subnet, nsg = self.found["webSubnet"][1], self.found["webNsg"][1]
@@ -742,10 +745,12 @@ class Cases(unittest.TestCase):
         # On 2026-11-05 the second deploy of this template made snet-web again; the landing zone's network manager had put a route table on it a minute after the first make,
         # the second make had none, and the app on the subnet lost its way to the landing zone's DNS and could not start.
         self.assertRegex(self.code, r"(?m)^param webSubnetExists bool = false$")
-        self.assertTrue(self.found["webSubnet"][1].startswith("if (!webSubnetExists) {"), "the subnet is made only while it is not there")
+        self.assertTrue(self.found["webSubnet"][1].startswith("if (!isFlex && !webSubnetExists) {"), "the subnet is made only while it is not there, and only for a Basic app: a Flex app uses snet-func")
         self.assertNotIn("routeTable", self.code, "the route table is the landing zone's, not the template's")
-        self.assertIn("virtualNetworkSubnetId: resourceId('Microsoft.Network/virtualNetworks/subnets', virtualNetworkName, webSubnetName)", self.found["functionApp"][1],
+        self.assertIn("virtualNetworkSubnetId: resourceId('Microsoft.Network/virtualNetworks/subnets', virtualNetworkName, integrationSubnetName)", self.found["functionApp"][1],
                       "the app names the subnet by its id, which exists whether or not the template made it")
+        self.assertIn("var integrationSubnetName = isFlex ? functionSubnetName : webSubnetName", self.code)
+        self.assertIn("var functionSubnetName = 'snet-func'", self.code, "the Flex app uses the subnet that the model side made for the usage recording: the owner's network is small and makes no new subnet")
         self.assertNotIn("webSubnet.id", self.code)
 
     def test_no_key_is_read_or_written_anywhere(self):
@@ -770,13 +775,14 @@ class Cases(unittest.TestCase):
             "3913510d-42f4-4e42-8a64-420c390055eb",  # Monitoring Metrics Publisher
         }, "no Azure Event Hubs Data Sender here: the Operator sends the control event, in its own template")
         assignments = {name: body for name, (kind, body) in self.found.items() if kind == "Microsoft.Authorization/roleAssignments"}
-        self.assertEqual(sorted(assignments), ["functionOwnsHostContainers", "functionPublishesTelemetry", "functionReceivesControl",
+        self.assertEqual(sorted(assignments), ["functionOwnsHostContainers", "functionOwnsOwnPackage", "functionPublishesTelemetry", "functionReceivesControl",
                                                "functionUsesQueues", "functionUsesTables"])
         for name, body in assignments.items():
             self.assertIn("principalType: 'ServicePrincipal'", body, name)
         scopes = {name: re.search(r"(?m)^  scope: (.+)$", body).group(1) for name, body in assignments.items()}
         self.assertEqual(scopes, {"functionReceivesControl": "controlHub",
-                                  "functionOwnsHostContainers": "sharedHostContainers[i]", "functionUsesQueues": "storage", "functionUsesTables": "storage",
+                                  "functionOwnsHostContainers": "sharedHostContainers[i]", "functionOwnsOwnPackage": "deploymentContainer",
+                                  "functionUsesQueues": "storage", "functionUsesTables": "storage",
                                   "functionPublishesTelemetry": "insights"})
         self.assertIn("eventHubsDataReceiverRoleId", assignments["functionReceivesControl"])
 
@@ -785,6 +791,7 @@ class Cases(unittest.TestCase):
         # the deployment starts and the identity's principal id is not, so the names are seeded with the app's id (Bicep error BCP120 otherwise).
         names = {"functionReceivesControl": "guid(controlHub.id, functionApp.id, eventHubsDataReceiverRoleId)",
                  "functionOwnsHostContainers": "guid(sharedHostContainers[i].id, functionApp.id, storageBlobDataOwnerRoleId)",
+                 "functionOwnsOwnPackage": "guid(deploymentContainer.id, functionApp.id, storageBlobDataOwnerRoleId)",
                  "functionUsesQueues": "guid(storage.id, functionApp.id, storageQueueDataContributorRoleId)",
                  "functionUsesTables": "guid(storage.id, functionApp.id, storageTableDataContributorRoleId)",
                  "functionPublishesTelemetry": "guid(insights.id, functionApp.id, monitoringMetricsPublisherRoleId)"}
@@ -797,9 +804,9 @@ class Cases(unittest.TestCase):
         for word in ("casesIdentity", "id-${workload}-cases", "id-meternaut-cases"):
             self.assertNotIn(word, self.code, f"{word}: the user-assigned identity of the Watch is gone from the template")
 
-    def test_the_blob_role_reaches_the_three_shared_host_containers_and_never_the_usage_recordings_package(self):
-        self.assertNotIn("deploymentContainer", self.code, "the app's code is pushed to the app, not kept in the storage account")
-        self.assertNotIn("app-package-cases", self.code)
+    def test_the_blob_role_reaches_the_three_shared_host_containers_and_a_flex_apps_own_container_and_never_the_usage_recordings_package(self):
+        self.assertIn("var deploymentContainerName = 'app-package-cases'", self.code, "a Flex app keeps its package in a container of its own, a Basic app on its plan's own storage")
+        self.assertEqual(self.code.count("app-package-cases"), 1)
         self.assertIn("var sharedHostContainerNames = [\n  'azure-webjobs-hosts'\n  'azure-webjobs-secrets'\n  'azure-webjobs-eventhub'\n]", self.code)
         self.assertNotIn("app-package-usage", self.source)
         for name, (kind, body) in self.found.items():
@@ -808,26 +815,69 @@ class Cases(unittest.TestCase):
         recording = text("environment/recording/main.bicep")
         self.assertIn("'app-package-usage'", recording, "the container that this app must not reach is the recording's")
 
-    def test_the_function_app_runs_on_a_basic_plan_always_on_with_an_identity_for_everything_and_no_password_for_its_deployment(self):
+    def test_the_plan_is_flex_consumption_or_basic_as_casesAppPlan_says_and_the_two_plans_have_the_names_that_the_parameter_builder_removes_them_by(self):
+        # The action cases removes the plan of the other kind by its exact name, so the template and tools/environment-params.py hold the same names and tiers.
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("environment_params", ROOT / "tools" / "environment-params.py")
+        params = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(params)
+        self.assertRegex(self.code, r"(?m)^@allowed\(\[\n  'Flex'\n  'Basic'\n\]\)\nparam casesAppPlan string = 'Flex'$")
+        self.assertEqual(params.CASES_APP_PLANS, ("Flex", "Basic"))
+        self.assertEqual(params.CASES_APP_PLAN, "Flex", "the web page is on Flex Consumption, which scales to zero, unless the measurement says that the stall is back")
+        plan = self.found["plan"][1]
+        self.assertIn("var isFlex = casesAppPlan == 'Flex'", self.code)
+        self.assertIn("name: isFlex ? 'plan-${workload}-cases' : 'plan-${workload}-cases-basic'", plan)
+        self.assertEqual(params.CASES_PLAN_NAMES, {"Flex": "plan-meternaut-cases", "Basic": "plan-meternaut-cases-basic"})
+        self.assertIn("kind: isFlex ? 'functionapp' : 'linux'", plan)
+        self.assertRegex(plan, r"sku: isFlex \? \{\n    name: 'FC1'\n    tier: 'FlexConsumption'\n  \} : \{\n    name: 'B1'\n    tier: 'Basic'\n  \}")
+        self.assertEqual(params.CASES_PLAN_TIERS, {"Flex": "FlexConsumption", "Basic": "Basic"})
+        self.assertIn("reserved: true", plan)
+        self.assertEqual(params.CASES_SUBNET_NAMES, {"Flex": "snet-func", "Basic": "snet-cases"})
+        self.assertIn("var webSubnetName = 'snet-cases'", self.code)
+        self.assertIn("var functionSubnetName = 'snet-func'", self.code)
+
+    def test_a_flex_app_has_the_usage_apps_shape_with_its_own_package_container_one_instance_and_no_always_ready_instance(self):
+        body = self.found["functionApp"][1]
+        self.assertIn("functionAppConfig: isFlex ? {", body)
+        flex = body[body.index("functionAppConfig: isFlex ? {"):body.index("    } : null\n")]
+        self.assertIn("value: '${storage.properties.primaryEndpoints.blob}${deploymentContainerName}'", flex)
+        self.assertIn("type: 'blobContainer'", flex)
+        self.assertRegex(flex, r"authentication: \{\n\s+type: 'SystemAssignedIdentity'\n\s+\}", "the package is read with the app's own identity: no key, no connection string")
+        self.assertNotIn("userAssignedIdentityResourceId", flex)
+        self.assertIn("maximumInstanceCount: 1", flex, "a run waits for models, a timer must not run twice at once, and with more instances the platform sent requests to instances that were not ready")
+        self.assertIn("instanceMemoryMB: 2048", flex)
+        self.assertNotIn("alwaysReady", self.code, "no always-ready instance: the app scales to zero and bills nothing while it is idle")
+        self.assertRegex(flex, r"runtime: \{\n\s+name: 'python'\n\s+version: '3.13'\n\s+\}")
+        recording = text("environment/recording/main.bicep")
+        self.assertIn("type: 'SystemAssignedIdentity'", recording, "the usage app, which is proven, keeps its package the same way")
+        self.assertEqual(self.found["deploymentContainer"][0], "Microsoft.Storage/storageAccounts/blobServices/containers")
+        self.assertIn("publicAccess: 'None'", self.found["deploymentContainer"][1])
+        for setting in ("linuxFxVersion", "alwaysOn", "ftpsState", "vnetRouteAllEnabled"):
+            self.assertRegex(body, rf"{setting}: isFlex \? null : ", f"{setting} is not set on a Flex Consumption app")
+        basic_only = self.code[self.code.index("var basicOnlyAppSettings = isFlex ? [] : ["):self.code.index("resource functionApp ")]
+        for setting in ("FUNCTIONS_EXTENSION_VERSION", "FUNCTIONS_WORKER_RUNTIME", "WEBSITE_RUN_FROM_PACKAGE", "WEBSITES_CONTAINER_START_TIME_LIMIT", "SCM_DO_BUILD_DURING_DEPLOYMENT", "ENABLE_ORYX_BUILD"):
+            self.assertIn(f"name: '{setting}'", basic_only, f"{setting}: a Flex Consumption app refuses it")
+            self.assertEqual(self.code.count(f"name: '{setting}'"), 1, setting)
+        self.assertIn("appSettings: concat(basicOnlyAppSettings, [", body)
+
+    def test_a_basic_app_is_the_way_back_with_the_plan_always_on_an_identity_for_everything_and_no_password_for_its_deployment(self):
         plan = self.found["plan"][1]
         self.assertIn("name: 'B1'", plan)
         self.assertIn("tier: 'Basic'", plan)
-        self.assertIn("kind: 'linux'", plan)
+        self.assertIn("kind: isFlex ? 'functionapp' : 'linux'", plan)
         self.assertIn("reserved: true", plan)
-        self.assertNotIn("FlexConsumption", self.code)
-        self.assertNotIn("functionAppConfig", self.code)
         body = self.found["functionApp"][1]
         self.assertIn("kind: 'functionapp,linux'", body)
         self.assertIn("type: 'SystemAssigned, UserAssigned'", body, "the app's own identity, and the one that only presents the console's sign-in")
         self.assertEqual(re.findall(r"'\$\{(\w+)\.id\}': \{\}", body), ["authIdentity"], "the only user-assigned identity of the app")
-        self.assertIn("virtualNetworkSubnetId: resourceId('Microsoft.Network/virtualNetworks/subnets', virtualNetworkName, webSubnetName)", body)
-        self.assertIn("vnetRouteAllEnabled: false", body, "only the private ranges go through the subnet, as for the Flex app that this replaced")
-        self.assertIn("linuxFxVersion: 'PYTHON|3.13'", body)
-        self.assertIn("alwaysOn: true", body, "timers and the control hub's trigger need an instance that is always there")
-        self.assertIn("ftpsState: 'Disabled'", body)
+        self.assertIn("virtualNetworkSubnetId: resourceId('Microsoft.Network/virtualNetworks/subnets', virtualNetworkName, integrationSubnetName)", body)
+        self.assertIn("vnetRouteAllEnabled: isFlex ? null : false", body, "only the private ranges go through the subnet, as for the Flex app that this replaced")
+        self.assertIn("linuxFxVersion: isFlex ? null : 'PYTHON|3.13'", body)
+        self.assertIn("alwaysOn: isFlex ? null : true", body, "timers and the control hub's trigger need an instance that is always there on a Basic plan")
+        self.assertIn("ftpsState: isFlex ? null : 'Disabled'", body)
         for setting, value in (("FUNCTIONS_EXTENSION_VERSION", "~4"), ("FUNCTIONS_WORKER_RUNTIME", "python"), ("WEBSITE_RUN_FROM_PACKAGE", "1"),
                                ("WEBSITES_CONTAINER_START_TIME_LIMIT", "600"), ("SCM_DO_BUILD_DURING_DEPLOYMENT", "false"), ("ENABLE_ORYX_BUILD", "false")):
-            self.assertIn(f"{{ name: '{setting}', value: '{value}' }}", body, setting)
+            self.assertIn(f"{{ name: '{setting}', value: '{value}' }}", self.code, setting)
         for setting in ("AzureWebJobsStorage__credential", "EventHubConnection__credential", "EventHubConnection__fullyQualifiedNamespace",
                         "APPLICATIONINSIGHTS_AUTHENTICATION_STRING"):
             self.assertIn(f"name: '{setting}'", body, setting)
@@ -845,8 +895,8 @@ class Cases(unittest.TestCase):
         self.assertIn("httpsOnly: true", self.code)
         self.assertIn("minTlsVersion: '1.2'", self.code)
 
-    def test_the_function_app_starts_after_its_subnet_and_its_hub_and_never_waits_for_roles_that_wait_for_its_identity(self):
-        self.assertEqual(depends_on(self.found["functionApp"][1]), {"webSubnet", "controlConsumerGroup"},
+    def test_the_function_app_starts_after_its_subnet_its_container_and_its_hub_and_never_waits_for_roles_that_wait_for_its_identity(self):
+        self.assertEqual(depends_on(self.found["functionApp"][1]), {"webSubnet", "deploymentContainer", "controlConsumerGroup"},
                          "the roles of the app's own identity need the app, so the app cannot wait for them: the host retries until they are there")
 
     def test_the_control_hub_is_one_partition_with_one_group_and_the_app_is_told_both(self):

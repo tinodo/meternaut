@@ -206,7 +206,7 @@ class TheCommand(unittest.TestCase):
     def test_it_is_standard_library_only_and_makes_no_write(self):
         source = (ROOT / "tools" / "console-check.py").read_text(encoding="utf-8")
         modules = set(re.findall(r"^(?:import|from) (\w+)", source, re.M))
-        self.assertTrue(modules <= {"argparse", "http", "ipaddress", "re", "socket", "ssl", "sys", "time", "urllib", "uuid", "typing", "__future__"}, modules)
+        self.assertTrue(modules <= {"argparse", "datetime", "http", "ipaddress", "re", "socket", "ssl", "sys", "time", "urllib", "uuid", "typing", "__future__"}, modules)
         self.assertNotRegex(source, r'method="(POST|PUT|PATCH|DELETE)"')
 
 
@@ -645,6 +645,209 @@ class TheHealthCheckInsideTheNetwork(unittest.TestCase):
         self.assertEqual(seen, [(HOST, 60, 10.0, 15.0, False), (HOST, 60, 10.0, 15.0, True)])
 
 
+class Clock:
+    """A clock that only counts: the monotonic reading, the sleeps that move it, and the time of day (UTC) that goes with it."""
+
+    START = cc.datetime.datetime(2026, 11, 7, 12, 0, 0, tzinfo=cc.datetime.timezone.utc)
+
+    def __init__(self):
+        self.t = 0.0
+        self.slept = []
+
+    def __call__(self):
+        return self.t
+
+    def sleep(self, seconds):
+        self.slept.append(seconds)
+        self.t += seconds
+
+    def now(self):
+        return self.START + cc.datetime.timedelta(seconds=self.t)
+
+
+class Timed:
+    """The health address as it answers, request after request, with the time that each answer takes on the fake clock: (status, body, seconds) or (exception, seconds). The last
+    answer is the answer of every request after the list. The seconds that each request was started at are kept."""
+
+    def __init__(self, clock, *answers):
+        self.clock, self.answers, self.started, self.timeouts = clock, list(answers), [], []
+
+    def __call__(self, url, headers, timeout):
+        self.started.append(self.clock.t)
+        self.timeouts.append(timeout)
+        answer = self.answers.pop(0) if len(self.answers) > 1 else self.answers[0]
+        self.clock.t += answer[-1]
+        if isinstance(answer[0], BaseException):
+            raise answer[0]
+        status, body, _ = answer
+        return status, {}, body
+
+
+def run_latency(*answers, minutes=4, interval=10.0, private=True, idle=None, after_idle=3, timeout=75.0, addresses=("10.53.0.21",), host=HOST):
+    """cc.latency on the fake clock; the answers are those of Timed, and the name resolves to `addresses`."""
+    clock = Clock()
+    get = Timed(clock, *answers)
+    out = io.StringIO()
+    code = cc.latency(host, minutes, interval, private, idle, after_idle, timeout, get, lambda name: list(addresses), clock.sleep, clock, clock.now, out)
+    return code, out.getvalue().splitlines(), get, clock
+
+
+class TheLatencyMeasurement(unittest.TestCase):
+    """The web page's answering time, measured from inside the network over the app's private endpoint, for the decision in docs/proposals/07-private-by-default.md."""
+
+    URL = f"https://{HOST}/healthz"
+    FAST = (200, b"ok", 0.25)
+
+    def test_a_run_asks_every_interval_for_its_minutes_with_a_quiet_gap_and_three_requests_after_it(self):
+        code, lines, get, clock = run_latency(self.FAST, minutes=20)
+        # 20 minutes: 8 of them quiet (the default for a run of 16 minutes or more), then 3 requests ten seconds apart, so the requests before the gap fill 700 seconds
+        self.assertEqual(len(get.started), 70 + 3)
+        self.assertEqual(get.started[:3], [0.0, 10.0, 20.0], "the interval is counted from the start of a request, not from its end")
+        self.assertEqual(get.started[69], 690.0)
+        self.assertEqual(get.started[70], 690.0 + 0.25 + 480.0, "the first request after the gap is made when the gap, which starts when the last request is answered, is over")
+        self.assertEqual(get.started[71] - get.started[70], 10.0)
+        self.assertEqual(clock.slept.count(480.0), 1, "one quiet gap of eight minutes")
+        self.assertLessEqual(clock.t, 20 * 60, "the run does not take more than the minutes that were asked for")
+        self.assertGreater(clock.t, 19 * 60)
+        self.assertEqual(code, 0)
+
+    def test_every_request_is_a_line_with_the_time_the_status_and_the_seconds_and_the_gap_and_the_requests_after_it_are_named(self):
+        code, lines, get, clock = run_latency(self.FAST, (503, b"", 21.5), self.FAST, minutes=4, interval=10.0)
+        self.assertEqual(lines[0], "name: 10.53.0.21 (private)")
+        self.assertTrue(lines[1].startswith(f"latency: {self.URL} every 10 seconds for 4 minutes"), lines[1])
+        requests = [line for line in lines if re.match(r"^\d\d:\d\d:\d\d  ", line)]
+        self.assertEqual(requests[0], f"12:00:00  {'200':24} {0.25:7.3f} s")
+        self.assertEqual(requests[1], f"12:00:10  {'503':24} {21.5:7.3f} s", "the time is when the request was made")
+        self.assertEqual(requests[2], f"12:00:31  {'200':24} {0.25:7.3f} s", "a request that took longer than the interval is followed at once, and nothing is asked in parallel")
+        self.assertIn("quiet gap of 2 minutes: no request", "\n".join(lines))
+        after = [line for line in requests if line.endswith("after the quiet gap")]
+        self.assertEqual(len(after), 3)
+
+    def test_the_summary_line_has_the_count_the_median_the_95th_percentile_the_slowest_and_the_three_counts(self):
+        # 10 requests before the gap and 3 after it: twelve at 0.25 s, and one of 16 s that is not answered 200
+        code, lines, get, clock = run_latency(*[self.FAST] * 4, (503, b"unavailable", 16.0), *[self.FAST] * 8, minutes=4, interval=10.0)
+        summary = [line for line in lines if line.startswith("latency: ") and "requests, p50" in line]
+        self.assertEqual(summary, ["latency: 13 requests, p50 0.25 s, p95 16.00 s, max 16.00 s, 1 not 200, 1 slower than 5 s, 1 slower than 15 s"])
+        self.assertEqual(code, 1)
+        self.assertEqual(lines[-1], "verdict: 1 of 13 requests took more than 15 seconds and 1 did not answer 200: the rule of docs/proposals/07-private-by-default.md is not met")
+
+    def test_a_run_with_no_request_over_15_seconds_and_none_that_was_not_200_meets_the_rule_even_when_one_took_more_than_5(self):
+        code, lines, get, clock = run_latency(self.FAST, (200, b"ok", 6.5), self.FAST, minutes=4)
+        self.assertEqual(code, 0)
+        self.assertIn("1 slower than 5 s, 0 slower than 15 s", "\n".join(lines))
+        self.assertEqual(lines[-1], "verdict: no request took more than 15 seconds and none was not 200")
+
+    def test_exactly_15_seconds_is_not_more_than_15_and_exactly_5_is_not_more_than_5(self):
+        code, lines, _, _ = run_latency((200, b"ok", 15.0), (200, b"ok", 5.0), self.FAST, minutes=4)
+        self.assertEqual(code, 0)
+        self.assertIn("0 not 200, 1 slower than 5 s, 0 slower than 15 s", "\n".join(lines))
+
+    def test_a_request_that_gets_no_answer_is_a_line_and_is_not_200_and_the_run_goes_on(self):
+        code, lines, get, clock = run_latency(self.FAST, (TimeoutError("timed out"), 75.0), self.FAST, minutes=4)
+        self.assertEqual(code, 1)
+        self.assertIn(f"12:00:10  {'no answer (TimeoutError)':24} {75.0:7.3f} s", lines)
+        self.assertIn("1 not 200, 1 slower than 5 s, 1 slower than 15 s", "\n".join(lines))
+        for error in (urllib.error.URLError("refused"), http.client.RemoteDisconnected("closed"), ConnectionResetError("reset"), cc.Problem("no answer")):
+            with self.subTest(error=type(error).__name__):
+                _, lines, _, _ = run_latency(self.FAST, (error, 0.5), self.FAST, minutes=4)
+                self.assertTrue(any(f"no answer ({type(error).__name__})" in line for line in lines))
+
+    def test_only_status_200_with_the_word_ok_is_an_answer(self):
+        for answer in ((200, b"hello", 0.25), (200, b"", 0.25), (302, b"ok", 0.25), (401, b"ok", 0.25), (500, b"", 0.25)):
+            with self.subTest(answer=answer):
+                code, lines, _, _ = run_latency(self.FAST, answer, self.FAST, minutes=4)
+                self.assertEqual(code, 1)
+                self.assertIn("1 not 200,", "\n".join(lines))
+        self.assertEqual(run_latency((200, b"ok\n", 0.25), minutes=4)[0], 0)
+
+    def test_a_name_that_is_not_private_makes_no_request_when_private_is_asked_for_and_is_a_failure(self):
+        for addresses in (["20.50.1.2"], ["10.53.0.21", "20.50.1.2"], [], ["::1"]):
+            with self.subTest(addresses=addresses):
+                code, lines, get, clock = run_latency(self.FAST, addresses=addresses)
+                self.assertEqual(code, 1)
+                self.assertEqual(get.started, [], "a closed app refuses a request over a public address, and an answer over one proves nothing about the path that people take")
+                self.assertTrue(lines[0].startswith("name: "), lines[0])
+                self.assertEqual(lines[-1], "FAIL: no request was made: with --private the name has to resolve to private addresses only")
+        code, lines, get, _ = run_latency(self.FAST, addresses=["20.50.1.2"], private=False, minutes=4)
+        self.assertEqual(code, 0, "without --private the name is not looked at")
+        self.assertNotEqual(get.started, [])
+
+    def test_the_defaults_are_eight_quiet_minutes_for_a_run_of_sixteen_or_more_half_the_run_below_that_and_none_when_it_is_off(self):
+        for minutes, idle in ((20, 8), (16, 8), (15, 7), (10, 5), (4, 2), (3, 1), (2, 1), (1, 0)):
+            with self.subTest(minutes=minutes):
+                _, lines, _, clock = run_latency(self.FAST, minutes=minutes)
+                if idle:
+                    self.assertIn(f"quiet gap of {idle} minutes: no request", "\n".join(lines))
+                    self.assertEqual(clock.slept.count(idle * 60.0), 1)
+                else:
+                    self.assertNotIn("quiet gap", "\n".join(lines))
+        _, lines, get, clock = run_latency(self.FAST, minutes=4, idle=0)
+        self.assertNotIn("quiet gap", "\n".join(lines))
+        self.assertEqual(len(get.started), 24, "four minutes of a request every ten seconds")
+        self.assertFalse(any(line.endswith("after the quiet gap") for line in lines))
+        _, lines, get, _ = run_latency(self.FAST, minutes=10, idle=3, after_idle=2)
+        self.assertEqual(sum(1 for line in lines if line.endswith("after the quiet gap")), 2)
+
+    def test_the_first_answer_after_the_gap_is_reported_apart_so_that_a_start_from_zero_shows(self):
+        code, lines, get, clock = run_latency(*[self.FAST] * 10, (200, b"ok", 8.0), self.FAST, self.FAST, minutes=4)
+        self.assertEqual(code, 0)
+        self.assertIn("after the quiet gap: 3 requests, the first took 8.00 s, the slowest 8.00 s", lines)
+        self.assertEqual(lines[-1], "verdict: no request took more than 15 seconds and none was not 200")
+
+    def test_the_percentiles_are_the_nearest_rank_ones(self):
+        values = [float(n) for n in range(1, 101)]
+        self.assertEqual((cc.percentile(values, 50), cc.percentile(values, 95), cc.percentile(values, 100)), (50.0, 95.0, 100.0))
+        self.assertEqual((cc.percentile([3.0], 50), cc.percentile([3.0], 95)), (3.0, 3.0))
+        self.assertEqual((cc.percentile([1.0, 9.0], 50), cc.percentile([1.0, 9.0], 95)), (1.0, 9.0))
+        self.assertEqual(cc.percentile([1.0, 2.0, 3.0, 4.0], 50), 2.0)
+
+    def test_the_timeout_that_was_asked_for_goes_to_every_request_and_the_default_is_longer_than_the_minute_that_the_front_end_held_requests_for(self):
+        _, _, get, _ = run_latency(self.FAST, minutes=4, timeout=90.0)
+        self.assertEqual(set(get.timeouts), {90.0})
+        self.assertGreater(cc.LATENCY_TIMEOUT_DEFAULT, 60)
+        self.assertEqual(cc.LATENCY_MINUTES_MAX, 20)
+
+    def test_bad_numbers_and_a_bad_host_are_refused_before_anything_is_asked(self):
+        for kwargs in ({"minutes": 0}, {"minutes": 21}, {"interval": 4.0}, {"interval": 61.0}, {"timeout": 0.0}, {"timeout": 121.0}, {"idle": -1}, {"idle": 4, "minutes": 4},
+                       {"idle": 2, "after_idle": 0}, {"idle": 2, "after_idle": 11}, {"minutes": 2, "idle": 1, "interval": 60.0}, {"host": "not a host"}, {"host": "Example.com/"}):
+            with self.subTest(kwargs=kwargs):
+                clock = Clock()
+                get = Timed(clock, self.FAST)
+                arguments = {"minutes": 4, "interval": 10.0, "idle": None, "after_idle": 3, "timeout": 75.0, "host": HOST, **kwargs}
+                with self.assertRaises(cc.Problem):
+                    cc.latency(arguments["host"], arguments["minutes"], arguments["interval"], True, arguments["idle"], arguments["after_idle"], arguments["timeout"], get,
+                               lambda name: ["10.53.0.21"], clock.sleep, clock, clock.now, io.StringIO())
+                self.assertEqual(get.started, [])
+
+    def test_the_command_runs_the_measurement_with_the_flags_of_the_workflow_and_exits_with_the_rule(self):
+        clock = Clock()
+        get = Timed(clock, self.FAST)
+        out = io.StringIO()
+        code = cc.main(["latency", "--host", HOST.upper(), "--private", "--minutes", "4", "--interval", "10"], get, out, lambda name: ["10.53.0.21"], clock.sleep, clock, clock.now)
+        self.assertEqual(code, 0)
+        self.assertEqual(set(get.timeouts), {75.0})
+        self.assertIn("latency: 13 requests, p50 0.25 s", out.getvalue())
+        clock = Clock()
+        code = cc.main(["latency", "--host", HOST, "--private", "--minutes", "4", "--interval", "10"], Timed(clock, (200, b"ok", 0.25), (504, b"", 30.0)), io.StringIO(),
+                       lambda name: ["10.53.0.21"], clock.sleep, clock, clock.now)
+        self.assertEqual(code, 1)
+        with contextlib.redirect_stderr(io.StringIO()) as complaints:
+            self.assertEqual(cc.main(["latency", "--host", HOST, "--minutes", "21"], Timed(clock, self.FAST), io.StringIO(), lambda name: ["10.53.0.21"], clock.sleep, clock, clock.now), 2)
+        self.assertIn("console-check: --minutes is a whole number from 1 to 20", complaints.getvalue())
+
+    def test_the_other_commands_keep_their_defaults(self):
+        seen = []
+
+        def spy(host, tries, interval, timeout, private, *rest):
+            seen.append((host, tries, interval, timeout, private))
+            return True
+
+        with mock.patch.object(cc, "health", spy):
+            cc.main(["health", "--host", HOST], Answers((200, b"ok")), io.StringIO())
+            cc.main(["health", "--host", HOST, "--timeout", "7"], Answers((200, b"ok")), io.StringIO())
+        self.assertEqual(seen, [(HOST, 60, 10.0, 15.0, False), (HOST, 60, 10.0, 7.0, False)], "the health check still asks for 15 seconds a request unless it is told otherwise")
+
+
 class TheToolInTheContainer(unittest.TestCase):
     """tools/console-check.py runs in the Operator like the two check tools: the image has Python 3.12, and the file is the only one in the secret volume."""
 
@@ -659,7 +862,7 @@ class TheToolInTheContainer(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             volume = Path(tmp)
             (volume / "console-check.py").write_bytes((ROOT / "tools" / "console-check.py").read_bytes())
-            for command, option in (("health", "--private"), ("door", "--proxied"), ("door", "--private")):
+            for command, option in (("health", "--private"), ("door", "--proxied"), ("door", "--private"), ("latency", "--minutes"), ("latency", "--idle-minutes")):
                 done = subprocess.run([sys.executable, "-B", str(volume / "console-check.py"), command, "--help"], capture_output=True, text=True, cwd=volume)
                 self.assertEqual((done.returncode, done.stderr), (0, ""), command)
                 self.assertIn(option, done.stdout, command)
