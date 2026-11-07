@@ -32,7 +32,7 @@ is checked as a GUID and never printed when it is not one. CASES_PRINCIPAL_ID, t
 system-assigned one replaced, is no longer read: the workflow does not look for the two retired identities, and a person removes them (environment/BOOTSTRAP.md).
 ENV_FOUNDRY_PROJECT_EXISTS is true when the workflow found the Foundry
 project in Azure: only then does the cases file carry the project's endpoint (an empty endpoint switches the investigation off).
-ENV_AIGW_SUBNET_EXISTS is true when the workflow found the AI Gateway's subnet (snet-aigw) in Azure: the template then leaves it alone (AGENTS.md rule 27).
+ENV_AIGW_SUBNET_EXISTS is true when the workflow found the AI Gateway's subnet (snet-aigw) in Azure: the template of the subnet (environment/aigateway/subnet.bicep) then leaves it alone (AGENTS.md rule 27).
 FOUNDRY_PROJECT_PRINCIPAL_ID (may be empty) is the object id of the Foundry project's system-assigned identity: the AI Gateway template gives it AI Gateway Models User on the
 gateway. Nothing sets it before the step that connects the project to the gateway; empty means none yet. It is checked as a GUID.
 AGENTS_VIA_AI_GATEWAY (a constant near the top of this file, False) is the switch of the agents' route through the AI Gateway (docs/proposals/08-ai-gateway.md, step 2). While it is False nothing below is read,
@@ -58,10 +58,12 @@ It writes five ARM parameter files into --out-dir (seven, with --contract: the c
                                       whose two control hubs it reads, which the usage recording and the first cases make)
     contract.parameters.json          for environment/gateway/contract.bicep, from --contract (environment/contract.json) and
                                       --contract-policy (environment/gateway/contract-policy.xml)
-    aigateway.parameters.json         for environment/aigateway/main.bicep (the AI Gateway: its subnet, models and aliases, and its roles), and
+    aigateway-subnet.parameters.json  for environment/aigateway/subnet.bicep (the AI Gateway's subnet and its network security group: the action aigateway deploys it first, and waits for the
+                                      landing zone's route table on the subnet before it deploys the gateway),
+    aigateway.parameters.json         for environment/aigateway/main.bicep (the AI Gateway: its models and aliases, and its roles; the subnet has to be there already), and
     aigateway-policies.json           the gateway-wide policies that the action aigateway applies to the gateway's default workspace (a plain list, not a parameter file),
-                                      both from --aigateway-policies (environment/aigateway/policies.json, checked against the models and against the owner's standing limit
-                                      of AGENTS.md rule 15 (g)); neither is written when the virtual network has no free range for the gateway's subnet (the outputs say so)
+                                      all three from --aigateway-policies (environment/aigateway/policies.json, checked against the models and against the owner's standing limit
+                                      of AGENTS.md rule 15 (g)); none is written when the virtual network has no free range for the gateway's subnet (the outputs say so)
     cases.parameters.json             for environment/cases/main.bicep (the first cases: the function app that finds leads and writes the
                                       History); written together with the contract, because it names the contract's subscription whose
                                       key the app reads at the start of a run
@@ -81,7 +83,8 @@ subnet of the first cases' Basic plan is the first /27 that overlaps neither of 
 Instances) is the last /27 that overlaps none of the three; Microsoft Learn recommends a /24 for container groups, which a small virtual network cannot
 spare, and it is passed as a flag when it is in Azure already (ENV_OPS_SUBNET_EXISTS). The AI Gateway's subnet (snet-aigw, delegated to Microsoft.App/environments, for the gateway's own
 use) is the last /26 that overlaps none of those four, and the last /27 when the network has no free /26: the service wants at least a /27, and a /26 leaves room to scale. It is passed as a
-flag too when it is in Azure already (ENV_AIGW_SUBNET_EXISTS). A network with no free /27 left is not refused here: the AI Gateway is an optional preview service, so its files are not
+flag too when it is in Azure already (ENV_AIGW_SUBNET_EXISTS), and it has a parameter file of its own, apart from the gateway's, because the action makes the subnet first and waits for the landing zone's route
+table on it before it makes the gateway. A network with no free /27 left is not refused here: the AI Gateway is an optional preview service, so its files are not
 written, the outputs say so (aigateway_subnet_prefix is empty) and the action aigateway stops with that reason. The gateway's name is aigw-meternaut-<digest>, 23 characters, inside the
 service's limit of 24. It prints
 key=value lines for GitHub to read as step outputs.
@@ -440,7 +443,7 @@ def aigateway_name(subscription: str, group: str) -> str:
 
 
 def aigw_subnet(vnet: ipaddress.IPv4Network, taken: tuple[ipaddress.IPv4Network, ...]) -> ipaddress.IPv4Network | None:
-    """The subnet that the AI Gateway reaches its backends through (environment/aigateway/main.bicep): the last free /26, and the last free /27 when the network has no free /26.
+    """The subnet that the AI Gateway reaches its backends through (environment/aigateway/subnet.bicep makes it): the last free /26, and the last free /27 when the network has no free /26.
 
     The service wants a /27 at least, delegated to Microsoft.App/environments and empty, and it takes the subnet when the gateway is made (the portal says that it cannot be changed
     afterwards). A /26 leaves room to scale, and the virtual network of a small environment (a /24) can spare one. Like the Basic plan's and the Operator's, it is the last free block,
@@ -604,8 +607,9 @@ def read_aigateway_policies(path: Path, models: list[dict]) -> list[dict]:
 
 def aigateway_files(env: dict, subscription: str, group: str, location: str, owner: str, vnet: ipaddress.IPv4Network, taken: tuple[ipaddress.IPv4Network, ...],
                     foundry: dict[str, str], models: list[dict], policies: list[dict], preview: bool = False) -> tuple[dict, dict[str, str]]:
-    """The AI Gateway's parameter file and policy file, and its outputs (environment/aigateway/main.bicep; the action aigateway applies the policies).
+    """The AI Gateway's two parameter files and its policy file, and its outputs (environment/aigateway/subnet.bicep, environment/aigateway/main.bicep; the action aigateway applies the policies).
 
+    The subnet has a file of its own, because the action deploys the subnet first, waits until the landing zone has put its route table on it, and only then deploys the gateway (AGENTS.md rule 27).
     A network with no free range for the gateway's subnet gets no file: aigateway_files is false, aigateway_subnet_prefix is empty, and the action says why it stops.
     A model's resource in the gateway has the deployment's name with its dots replaced by hyphens (the service's pattern allows none); its alias keeps the name.
     While AGENTS_VIA_AI_GATEWAY is True the action aigateway gives the Foundry project's identity AI Gateway Models User, so it needs the identity's object id: without it the builder refuses
@@ -633,12 +637,16 @@ def aigateway_files(env: dict, subscription: str, group: str, location: str, own
     if prefix is None:
         return {}, outputs
     files = {
+        "aigateway-subnet.parameters.json": parameters({
+            "location": location,
+            "owner": owner,
+            "aigwSubnetPrefix": str(prefix),
+            "aigwSubnetExists": aigw_subnet_exists(env),
+        }),
         "aigateway.parameters.json": parameters({
             "location": location,
             "owner": owner,
             "gatewayName": name,
-            "aigwSubnetPrefix": str(prefix),
-            "aigwSubnetExists": aigw_subnet_exists(env),
             "foundryAccountName": foundry["foundry_account_name"],
             "models": [{"name": m["name"], "version": m["version"]} for m in models],
             "foundryProjectPrincipalId": project_principal.lower(),
@@ -1103,7 +1111,7 @@ def main(argv=None, environ=None) -> int:
     build_parser.add_argument("--preview", action="store_true", help="for a what-if: the gateway identity may not exist yet")
     build_parser.add_argument("--contract", help="the contract (environment/contract.json); also writes contract.parameters.json")
     build_parser.add_argument("--contract-policy", help="the contract's policy template (environment/gateway/contract-policy.xml)")
-    build_parser.add_argument("--aigateway-policies", help="the AI Gateway's gateway-wide policies (environment/aigateway/policies.json); also writes aigateway.parameters.json and aigateway-policies.json")
+    build_parser.add_argument("--aigateway-policies", help="the AI Gateway's gateway-wide policies (environment/aigateway/policies.json); also writes aigateway-subnet.parameters.json, aigateway.parameters.json and aigateway-policies.json")
     check_parser = commands.add_parser("check", help="check a parameter file against a compiled template (az bicep build --outfile)")
     check_parser.add_argument("--params", required=True)
     check_parser.add_argument("--template", required=True)

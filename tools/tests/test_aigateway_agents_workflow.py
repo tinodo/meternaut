@@ -384,7 +384,8 @@ class TheSummaryAddsWhatTheSwitchChangesAndNothingWhileItIsOff(unittest.TestCase
 
 class TheTextsAreWrittenAsTheRulesSay(unittest.TestCase):
     def test_no_step_was_added_for_the_switch_and_the_steps_of_the_actions_are_the_ones_they_were(self):
-        for action, count in (("foundry", 5), ("aigateway", 7), ("aigateway-check", 4)):
+        # aigateway has two steps more than the switch found: the subnet is made first, and the sign-in before the gateway's deploy (test_aigateway_subnet_first.py). The switch added none.
+        for action, count in (("foundry", 5), ("aigateway", 9), ("aigateway-check", 4)):
             self.assertEqual(len(re.findall(rf"inputs\.action == '{action}'", WORKFLOW)), count, action)
 
     def test_the_three_actions_are_described_with_the_switch_in_plain_words_and_the_description_stays_one_line(self):
@@ -400,7 +401,7 @@ class TheTextsAreWrittenAsTheRulesSay(unittest.TestCase):
                       "and needs that connection first.", cases)
 
     def test_the_comments_of_the_changed_steps_say_that_the_switch_is_false_until_the_owner_says_yes_and_that_nothing_has_run(self):
-        for name in (SETTINGS, PRECHECK, "Deploy the Foundry resource of the agents", FOUNDRY_READ_BACK, AIGATEWAY_READ_BACK, "Deploy the AI Gateway, its subnet, its models and aliases, and its roles", SUMMARY):
+        for name in (SETTINGS, PRECHECK, "Deploy the Foundry resource of the agents", FOUNDRY_READ_BACK, AIGATEWAY_READ_BACK, "Deploy the AI Gateway, its models and aliases, and its roles", SUMMARY):
             comment = re.sub(r"\s*\n\s*#\s*", " ", step(name))
             self.assertIn("AGENTS_VIA_AI_GATEWAY", comment, name)
             self.assertIn("False until the owner has said yes", comment, name)

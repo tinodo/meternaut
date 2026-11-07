@@ -714,6 +714,7 @@ class TheTemplateAndTheToolAgree(unittest.TestCase):
     """The tool reads back what the template makes: the words that both name are the same, so a change of one is a failing test until the other follows."""
 
     TEMPLATE = (ROOT / "environment" / "aigateway" / "main.bicep").read_text(encoding="utf-8")
+    SUBNET_TEMPLATE = (ROOT / "environment" / "aigateway" / "subnet.bicep").read_text(encoding="utf-8")
 
     def test_the_names_the_versions_and_the_roles_are_the_templates(self):
         self.assertEqual(set(re.findall(r"Microsoft\.ApiManagement/aigateways[^'@]*@([^']+)'", self.TEMPLATE)), {prep.API})
@@ -721,7 +722,8 @@ class TheTemplateAndTheToolAgree(unittest.TestCase):
         self.assertIn(f"var contentSafetySeverity = '{prep.SEVERITY}'", self.TEMPLATE)
         self.assertIn(f"var foundryUserRoleId = '{prep.FOUNDRY_USER}'", self.TEMPLATE)
         self.assertIn(f"var aiGatewayModelsUserRoleId = '{prep.MODELS_USER}'", self.TEMPLATE)
-        self.assertIn(f"serviceName: '{prep.SUBNET_DELEGATION}'", self.TEMPLATE)
+        self.assertIn(f"serviceName: '{prep.SUBNET_DELEGATION}'", self.SUBNET_TEMPLATE, "the subnet is made, and delegated, by the template of the subnet: the gateway's template only names it")
+        self.assertNotIn("serviceName:", self.TEMPLATE)
         for category in prep.CATEGORIES:
             self.assertIn(f"{category}: contentSafetySeverity", self.TEMPLATE)
         self.assertEqual(prep.AI_GATEWAY_ROLES[prep.MODELS_USER], "AI Gateway Models User")

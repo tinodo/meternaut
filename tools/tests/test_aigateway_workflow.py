@@ -29,8 +29,10 @@ OLD_ROLES = ("5e0bd9bd-7b93-4f28-af87-19fc36ad61bd", "2b629674-e913-4c01-ae53-ef
 GROUP_SCOPE = f"/subscriptions/{SUBSCRIPTION}/resourceGroups/{GROUP}"
 
 READY = "The network, the Foundry resource of the agents and the Operator are there, the service is offered here, and the deploy identity may give the roles of the AI Gateway"
-DEPLOY = "Deploy the AI Gateway, its subnet, its models and aliases, and its roles"
+SUBNET = "Make the AI Gateway's subnet"
 WAIT = "Wait until the landing zone has put its route table on the AI Gateway's subnet"
+GATEWAY_LOGIN = "Sign in to Azure again for the gateway, because the subnet's deploy and the wait for the route table can take up to 25 minutes and the first sign-in's credential lasts five minutes"
+DEPLOY = "Deploy the AI Gateway, its models and aliases, and its roles"
 LOGIN = "Sign in to Azure again for the limits, the built-in key and the read-back of the AI Gateway, because the first sign-in's credential lasts five minutes"
 POLICIES = "Apply the gateway-wide limits to the AI Gateway"
 KEY = "Delete the built-in key of the AI Gateway when the service lets it be deleted"
@@ -39,8 +41,9 @@ FIND = "Find the Operator, which runs the AI Gateway check from inside the netwo
 HOST = "Read the host name of the AI Gateway from the service"
 CHECK = "Run the AI Gateway check in the Operator"
 CLEANUP = "Delete any container group of the AI Gateway check that is left"
-APPLY = [READY, DEPLOY, WAIT, LOGIN, POLICIES, KEY, READ_BACK]
+APPLY = [READY, SUBNET, WAIT, GATEWAY_LOGIN, DEPLOY, LOGIN, POLICIES, KEY, READ_BACK]
 CHECKING = [FIND, HOST, CHECK, CLEANUP]
+LOGINS = (GATEWAY_LOGIN, LOGIN)
 
 
 def find_bash():
@@ -299,8 +302,9 @@ esac
         done, lines, _, _ = run_script(WAIT, {"az": az}, self.ENV, prelude='sleep() { echo "sleep $*" >> "$FAKE_LOG"; }\n')
         self.assertEqual(done.returncode, 1)
         self.assertEqual((lines.count("read"), lines.count("sleep 30")), (40, 39), "40 checks half a minute apart: twenty minutes")
-        self.assertIn("::error::The landing zone's network manager has put a route table on snet-pe and has not put one on snet-aigw in 20 minutes. The gateway may have no way out and no DNS. "
-                      "Nothing else was changed: run aigateway again later, which repeats only what is missing.", done.stdout)
+        self.assertIn("::error::The landing zone's network manager has put a route table on snet-pe and has not put one on snet-aigw in 20 minutes. The gateway was not made, because it is made on the subnet "
+                      "as the landing zone leaves it. Nothing else was changed: run aigateway again later, which repeats only what is missing.", done.stdout)
+        self.assertNotIn("The gateway may have no way out and no DNS", done.stdout, "the old text said that the gateway was made")
 
     def test_the_limits_the_key_and_the_read_back_are_the_tools_called_with_the_names_the_builder_gives_and_nothing_else_is_done(self):
         env = {**self.ENV, "FOUNDRY_ACCOUNT": ACCOUNT, "VNET_NAME": "vnet-meternaut", "SUBNET_NAME": "snet-aigw", "OPERATOR_IDENTITY": "id-meternaut-operator"}
@@ -480,25 +484,29 @@ class TheStepsAreWrittenAsTheRulesSay(unittest.TestCase):
         self.assertIn("id: aigw_host\n", step(HOST))
         self.assertIn("id: aigw_check\n", step(CHECK))
 
-    def test_the_order_inside_the_action_is_check_deploy_wait_sign_in_limits_key_read_back(self):
+    def test_the_order_inside_the_action_is_check_subnet_wait_sign_in_gateway_sign_in_limits_key_read_back(self):
         names = self.names()
         self.assertEqual([names.index(name) for name in APPLY], sorted(names.index(name) for name in APPLY))
-        self.assertEqual(APPLY, [READY, DEPLOY, WAIT, LOGIN, POLICIES, KEY, READ_BACK])
-        self.assertIn("uses: azure/login@", step(LOGIN))
+        self.assertEqual(APPLY, [READY, SUBNET, WAIT, GATEWAY_LOGIN, DEPLOY, LOGIN, POLICIES, KEY, READ_BACK])
+        for name in LOGINS:
+            self.assertIn("uses: azure/login@", step(name))
+        self.assertGreater(names.index(GATEWAY_LOGIN), names.index(WAIT), "a fresh credential for the gateway's deploy: the subnet's deploy and the wait before it take up to 25 minutes")
         for name in (POLICIES, KEY, READ_BACK):
-            self.assertGreater(names.index(name), names.index(LOGIN), "a fresh credential: the wait before them takes up to 20 minutes")
+            self.assertGreater(names.index(name), names.index(LOGIN), "a fresh credential: the deploy before them can take a while")
         self.assertLess(names.index(KEY), names.index(READ_BACK), "the read-back shows the end state of the keys")
 
     def test_the_template_is_deployed_once_and_previewed_once_and_nothing_else_makes_the_gateway(self):
         self.assertEqual(WORKFLOW.count("--template environment/aigateway/main.bicep"), 2, "the preview and the deploy, nothing else")
+        self.assertEqual(WORKFLOW.count("--template environment/aigateway/subnet.bicep"), 2, "the preview and the deploy of the subnet, nothing else")
         deploy = code_of(DEPLOY)
         for word in ("--output gatewayName", '--name "aigateway-$GITHUB_RUN_ID"', '--parameters "$RUNNER_TEMP/aigateway.parameters.json"'):
             self.assertIn(word, deploy, word)
+        self.assertNotIn("subnet.bicep", deploy, "the gateway's deploy makes no subnet")
         self.assertEqual(WORKFLOW.count("python3 tools/aigateway-prep.py"), 3, "the limits, the key and the read-back")
         self.assertEqual(len(re.findall(r"aigateway-prep\.py (policies|remove-key|read-back)", WORKFLOW)), 3)
 
     def test_no_step_of_the_two_actions_makes_a_key_a_role_a_dns_object_or_a_deletion_of_its_own(self):
-        scripts = [name for name in [*APPLY, *CHECKING] if name != LOGIN]
+        scripts = [name for name in [*APPLY, *CHECKING] if name not in LOGINS]
         for name in scripts:
             code = code_of(name)
             for word in ("az role assignment create", "az role assignment delete", "az role definition", "az network private-dns", "az network private-endpoint", "az keyvault", "listKeys", "listSecrets",
@@ -545,18 +553,24 @@ class TheStepsAreWrittenAsTheRulesSay(unittest.TestCase):
             self.assertIn("environment/aigateway/main.bicep", source)
             self.assertIn('aigateway.json"', source)
             self.assertIn("--label aigateway", source)
-        self.assertIn("environment/operator/main.bicep environment/aigateway/main.bicep", WORKFLOW)
+            self.assertIn("environment/aigateway/subnet.bicep", source, "the subnet's template is compiled and linted too")
+            self.assertIn('aigateway-subnet.json"', source)
+            self.assertIn("--label aigateway-subnet", source)
+            self.assertIn("aigateway-subnet.parameters.json", source)
+        self.assertIn("environment/operator/main.bicep environment/aigateway/main.bicep environment/aigateway/subnet.bicep", WORKFLOW)
+        self.assertIn("environment/operator/main.bicep environment/aigateway/main.bicep environment/aigateway/subnet.bicep", CHECKS)
         self.assertIn("--aigateway-policies environment/aigateway/policies.json", CHECKS)
 
     def test_the_preview_reads_the_foundry_resource_and_the_operator_first_and_says_why_it_waits(self):
         preview = step("What the identity, the model side, the logger, the usage recording and the first cases would change")
         self.assertIn("FOUNDRY_ACCOUNT: ${{ steps.params.outputs.foundry_account_name }}", preview)
         block = preview.split("The AI Gateway, in the project's resource group")[1]
-        for word in ("The AI Gateway cannot be previewed: the virtual network has no free range for its subnet", "The AI Gateway cannot be previewed yet: its subnet goes into the virtual network",
+        for word in ("The AI Gateway cannot be previewed: the virtual network has no free range for its subnet",
+                     "The AI Gateway cannot be previewed yet: the subnet that it is made on goes into the virtual network",
                      "The AI Gateway cannot be previewed yet: it reads the Foundry resource of the agents and the Operator's identity, and the actions foundry and operator make them.",
                      "--template environment/aigateway/main.bicep --parameters \"$RUNNER_TEMP/aigateway.parameters.json\""):
             self.assertIn(word, block, word)
-        self.assertLess(block.index("cannot be previewed yet: its subnet"), block.index("--template environment/aigateway/main.bicep"))
+        self.assertLess(block.index("cannot be previewed yet: the subnet that it is made on"), block.index("--template environment/aigateway/main.bicep"))
         self.assertNotRegex(block, r"--method (put|patch|post|delete)")
 
     def test_both_actions_have_a_line_in_the_summary_for_success_and_for_failure(self):
