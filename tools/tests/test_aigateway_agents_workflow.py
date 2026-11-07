@@ -92,8 +92,7 @@ def run_step(name, stand_ins, env, files=None):
 SETTINGS_AZ = """#!/bin/bash
 echo "az $*" >> "$FAKE_LOG"
 case "$*" in
-  *"identity list"*) printf '%s' "$FAKE_IDENTITY" ;;
-  *"/loggers?"*) printf 'appinsights-logger\\n' ;;
+  *"identity list"*|*"/loggers"*|*"ApiManagement/service"*) echo "the owner's API Management instance and its identity must not be looked at: $*" >&2; exit 8 ;;
   *"/aigateways/"*)
     if [ -n "$FAKE_HOST_ERROR" ]; then echo "$FAKE_HOST_ERROR" >&2; exit 1; fi
     printf '%s' "$FAKE_HOST" ;;
@@ -115,25 +114,23 @@ else
 fi
 """
 
-BUILD_OFF = "\n".join(["gateway_subscription=sub1", "gateway_resource_group=rg1", "identity_name=id-meternaut-gateway", f"cases_function_app_name=func-meternaut-cases-0123abcd",
-                       f"foundry_account_name={ACCOUNT}", f"foundry_project_name={PROJECT}", f"aigateway_name={GATEWAY}"])
+BUILD_OFF = "\n".join([f"cases_function_app_name=func-meternaut-cases-0123abcd", f"foundry_account_name={ACCOUNT}", f"foundry_project_name={PROJECT}", f"aigateway_name={GATEWAY}"])
 BUILD_ON = BUILD_OFF + "\nagents_via_ai_gateway=true\naigateway_connection_name=aigateway"
 
 
 @unittest.skipIf(BASH is None, "no bash on this machine")
 class TheSettingsStepReadsWhatTheSwitchNeedsAndNothingWhileItIsOff(unittest.TestCase):
     def settings(self, action, build=BUILD_ON, **changes):
-        env = {"ACTION": action, "ENV_SUBSCRIPTION_ID": SUBSCRIPTION, "ENV_RESOURCE_GROUP": GROUP, "FAKE_IDENTITY": f"{GATEWAY_PRINCIPAL}\t{GATEWAY_CLIENT}", "FAKE_BUILD_OUTPUT": build,
-               "FAKE_HOST": HOST, "FAKE_PROJECT_PRINCIPAL": PROJECT_PRINCIPAL, "FAKE_SYSTEM": CASES_PRINCIPAL,
-               "GATEWAY_RESOURCE_ID": "/subscriptions/66666666-7777-8888-9999-000000000000/resourceGroups/rg1/providers/Microsoft.ApiManagement/service/apim1", **changes}
+        env = {"ACTION": action, "ENV_SUBSCRIPTION_ID": SUBSCRIPTION, "ENV_RESOURCE_GROUP": GROUP, "FAKE_BUILD_OUTPUT": build,
+               "FAKE_HOST": HOST, "FAKE_PROJECT_PRINCIPAL": PROJECT_PRINCIPAL, "FAKE_SYSTEM": CASES_PRINCIPAL, **changes}
         return run_step(SETTINGS, {"az": SETTINGS_AZ, "python3": SETTINGS_PYTHON3}, env)
 
     def builds(self, lines):
         return [line for line in lines if line.startswith("build ")]
 
     def final_preview(self, action):
-        """Only the actions that show or make an object of the gateway's instance (or give its identity a role) look for the gateway identity: for every other one the files that carry it are previews."""
-        return "no" if action in ("what-if", "gateway-prepare", "gateway", "recording") else "yes"
+        """Only the first pass of the step is a preview: no action looks for the identity of a gateway of the owner's API Management instance any more, so the final build is a plain one for every action."""
+        return "no"
 
     def mine(self, lines):
         return [line for line in lines if "/aigateways/" in line or "--query identity.principalId" in line and "/projects/" in line or "/connections/" in line]
@@ -153,7 +150,7 @@ class TheSettingsStepReadsWhatTheSwitchNeedsAndNothingWhileItIsOff(unittest.Test
         done, lines, out, _ = self.settings("foundry")
         self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
         self.assertEqual([line for line in lines if "/aigateways/" in line], [GATEWAY_URL])
-        self.assertEqual(self.builds(lines)[1], f"build preview=yes host=[{HOST}] project=[]", "foundry does not look for the identity of the gateway, so its files that carry it are previews")
+        self.assertEqual(self.builds(lines)[1], f"build preview=no host=[{HOST}] project=[]", "foundry does not look for the project's identity")
         self.assertIn(f"aigateway_host={HOST}\n", out)
         self.assertIn("foundry_project_principal=\n", out)
         self.assertIn(f"The service reports the host name of the AI Gateway {GATEWAY}; it goes into the Foundry file.", done.stdout)
@@ -165,7 +162,7 @@ class TheSettingsStepReadsWhatTheSwitchNeedsAndNothingWhileItIsOff(unittest.Test
         self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
         self.assertEqual([line for line in lines if "/projects/" in line], [PROJECT_URL])
         self.assertEqual([line for line in lines if "/aigateways/" in line], [])
-        self.assertEqual(self.builds(lines)[1], f"build preview=yes host=[] project=[{PROJECT_PRINCIPAL}]")
+        self.assertEqual(self.builds(lines)[1], f"build preview=no host=[] project=[{PROJECT_PRINCIPAL}]")
         self.assertIn(f"foundry_project_principal={PROJECT_PRINCIPAL}\n", out)
         self.assertIn("The Foundry project's system-assigned identity exists; its object id goes into the AI Gateway file.", done.stdout)
 
@@ -173,7 +170,7 @@ class TheSettingsStepReadsWhatTheSwitchNeedsAndNothingWhileItIsOff(unittest.Test
         done, lines, out, _ = self.settings("what-if")
         self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
         self.assertEqual(self.builds(lines)[1], f"build preview=no host=[{HOST}] project=[{PROJECT_PRINCIPAL}]")
-        for action in ("cases", "cases-run", "recording", "operator", "plant", "loop-check", "model-side", "gateway", "contract", "aigateway-check"):
+        for action in ("cases", "cases-run", "recording", "recording-check", "operator", "operator-probe", "plant", "loop-check", "model-side", "aigateway-check"):
             with self.subTest(action=action):
                 done, lines, out, _ = self.settings(action, FAKE_HOST_ERROR=HOSTILE, FAKE_PROJECT_ERROR=HOSTILE)
                 self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
@@ -365,7 +362,7 @@ class TheReadBacksAskForMoreOnlyWhileTheSwitchIsOn(unittest.TestCase):
 class TheSummaryAddsWhatTheSwitchChangesAndNothingWhileItIsOff(unittest.TestCase):
     def summary(self, action, status, on=True):
         env = {"ACTION": action, "JOB_STATUS": status, "ENV_RESOURCE_GROUP": GROUP, "AIGATEWAY_NAME": GATEWAY, "FOUNDRY_ACCOUNT": ACCOUNT, "FOUNDRY_PROJECT": PROJECT,
-               "FOUNDRY_ENDPOINT": "https://example", "ACCOUNT_NAME": "x", "CONTRACT_NAME": "y", "GITHUB_RUN_ID": "1",
+               "FOUNDRY_ENDPOINT": "https://example", "ACCOUNT_NAME": "x", "GITHUB_RUN_ID": "1",
                **({"AGENTS_VIA_AI_GATEWAY": "true", "CONNECTION_NAME": "aigateway"} if on else {})}
         done, _, _, text = run_step(SUMMARY, {}, env)
         self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
@@ -406,7 +403,8 @@ class TheSummaryAddsWhatTheSwitchChangesAndNothingWhileItIsOff(unittest.TestCase
 class TheTextsAreWrittenAsTheRulesSay(unittest.TestCase):
     def test_no_step_was_added_for_the_switch_and_the_steps_of_the_actions_are_the_ones_they_were(self):
         # aigateway has two steps more than the switch found: the subnet is made first, and the sign-in before the gateway's deploy (test_aigateway_subnet_first.py). The switch added none.
-        for action, count in (("foundry", 5), ("aigateway", 9), ("aigateway-check", 4)):
+        # The tenth is the guard that stops the action at the first step of the job unless the owner asked for a public AI Gateway in writing (test_ai_gateway_guard.py).
+        for action, count in (("foundry", 5), ("aigateway", 10), ("aigateway-check", 4)):
             self.assertEqual(len(re.findall(rf"inputs\.action == '{action}'", WORKFLOW)), count, action)
 
     def test_the_three_actions_are_described_with_the_switch_in_plain_words_and_the_description_stays_one_line(self):
@@ -433,7 +431,8 @@ class TheTextsAreWrittenAsTheRulesSay(unittest.TestCase):
     def test_the_settings_step_reads_the_service_with_the_version_of_the_check_and_the_environment_variables_of_the_builder_are_the_ones_it_documents(self):
         code = script_of(SETTINGS)
         self.assertIn("api-version=2025-09-01-preview", code)
-        self.assertIn("AIGATEWAY_HOST=\"$aigateway_host\" FOUNDRY_PROJECT_PRINCIPAL_ID=\"$project_principal\" GATEWAY_PRINCIPAL_ID=\"$principal\"", code)
+        self.assertIn("AIGATEWAY_HOST=\"$aigateway_host\" FOUNDRY_PROJECT_PRINCIPAL_ID=\"$project_principal\" CASES_SYSTEM_PRINCIPAL_ID=\"$cases_system_principal\"", code)
+        self.assertNotIn("GATEWAY_PRINCIPAL_ID", code)
         builder = (ROOT / "tools" / "environment-params.py").read_text(encoding="utf-8")
         for variable in ("AIGATEWAY_HOST", "FOUNDRY_PROJECT_PRINCIPAL_ID", "ACTION"):
             self.assertIn(variable, builder.split('"""\nfrom __future__')[0], f"{variable} is documented in the builder")

@@ -122,7 +122,7 @@ class TheOtherDocuments(unittest.TestCase):
         for words in ("(2026-11-07, the owner, in capitals: \"UNDO CHANGES TO API MANAGEMENT\")", "**This ends the \"governance hub\" route**",
                       "The AI Gateway (Azure's separate service, [the decision record](docs/proposals/08-ai-gateway.md)) is not used either: it has no private front door, and nothing public is added for it.",
                       "Its two steps stay built, not deployed and off (`AGENTS_VIA_AI_GATEWAY` is False) until a later change retires them.",
-                      "the app reads no key", "it is not tried on the service until the first `cases-run`", "is not a model call"):
+                      "the app reads no key", "it was tried on the service on 2026-11-07: both models answered in a `cases-run`", "is not a model call"):
             self.assertIn(words, rule, words)
         for old in ("Planned end, 2026-11-07", "The older Detective and Skeptic roles keep using the gateway.", "**Exception, 2026-11-06", "with no direct path"):
             self.assertNotIn(old, rule, old)
@@ -142,9 +142,9 @@ class TheOtherDocuments(unittest.TestCase):
 
     def test_the_changelog_has_the_entry_of_step_1_above_the_console_entry_and_says_what_it_must(self):
         headings = re.findall(r"(?m)^## (.*)$", CHANGELOG)
-        self.assertEqual(headings[3], "An AI Gateway for the agents' model calls, step 1 of 2: built, not deployed — 2026-11-07")
-        self.assertTrue(headings[4].startswith("The console behind the platform's Application Gateway"), "the entry of the console change follows, as the owner's coordinator asked")
-        entry = flat(CHANGELOG.split("\n## ")[4])
+        self.assertEqual(headings[4], "An AI Gateway for the agents' model calls, step 1 of 2: built, not deployed — 2026-11-07")
+        self.assertTrue(headings[5].startswith("The console behind the platform's Application Gateway"), "the entry of the console change follows, as the owner's coordinator asked")
+        entry = flat(CHANGELOG.split("\n## ")[5])
         for words in ("**What the owner said.**", "I LEAN STRONG TOWARDS YOU CREATING AN AI GATEWAY", "You should NOT create a DDOS PLAN.", "**What the owner has to know first: the frontend is public, and he decides whether to accept that.**",
                       "**What is built.**", "Nothing is deployed: no Azure change, no Hub run and no workflow run was made", "**What was checked.**", "**Not checked.**", "**What a person has to do, in order.**",
                       "That is an exception to the rule of [private by default]", "Microsoft publishes no address range and no service tag for the Foundry Agent Service"):

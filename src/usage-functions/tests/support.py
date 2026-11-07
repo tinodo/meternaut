@@ -23,7 +23,7 @@ logging.getLogger().addHandler(logging.NullHandler())
 
 from usage import jobs  # noqa: E402  (needs the path above)
 
-# The kit's clone: the owner's working copy, or the checkout of the CI workflows. None of them is required.
+# The kit's clone: the owner's working copy, when there is one. No CI workflow checks the kit out any more (2026-11-07), so the one test that needs it is skipped there. It is not required.
 KIT_ROOTS = (REPO_ROOT / "local" / "working-files" / "citadel", REPO_ROOT / "kit")
 
 NOW = datetime(2026, 11, 4, 12, 0, 37, 250000, tzinfo=timezone.utc)

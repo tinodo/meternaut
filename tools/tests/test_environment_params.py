@@ -5,7 +5,6 @@ import json
 import re
 import tempfile
 import unittest
-import xml.etree.ElementTree as ET
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest import mock
@@ -17,11 +16,7 @@ ep = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(ep)
 
 MODELS = ROOT / "environment" / "models.json"
-CONTRACT_FILE = ROOT / "environment" / "contract.json"
-POLICY_FILE = ROOT / "environment" / "gateway" / "contract-policy.xml"
 BICEP = (ROOT / "environment" / "main.bicep").read_text(encoding="utf-8")
-LOGGER = (ROOT / "environment" / "gateway" / "logger.bicep").read_text(encoding="utf-8")
-CONTRACT_BICEP = (ROOT / "environment" / "gateway" / "contract.bicep").read_text(encoding="utf-8")
 SETTINGS = {
     "ENV_SUBSCRIPTION_ID": "11111111-2222-3333-4444-555555555555",
     "ENV_RESOURCE_GROUP": "rg-example",
@@ -33,9 +28,14 @@ SETTINGS = {
     "ENV_BUDGET_AMOUNT": "25",
     "ENV_ALERT_EMAILS": "owner@example.com",
     "ENV_BUDGET_START": "2026-11-01",
-    "GATEWAY_RESOURCE_ID": "/subscriptions/66666666-7777-8888-9999-000000000000/resourceGroups/rg-gateway/providers/Microsoft.ApiManagement/service/example-apim",
     "GATEWAY_APPINSIGHTS_ID": "/subscriptions/66666666-7777-8888-9999-000000000000/resourceGroups/rg-gateway/providers/microsoft.insights/components/example-insights",
+}
+# The settings of the retired actions that touched the owner's API Management instance (the owner ordered the undo of what Meternaut had added to it, 2026-11-07): nothing reads them any more.
+RETIRED_SETTINGS = {
+    "GATEWAY_RESOURCE_ID": "/subscriptions/66666666-7777-8888-9999-000000000000/resourceGroups/rg-gateway/providers/Microsoft.ApiManagement/service/example-apim",
     "GATEWAY_PRINCIPAL_ID": "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE",
+    "GATEWAY_CLIENT_ID": "BBBBBBBB-1111-2222-3333-CCCCCCCCCCCC",
+    "RECORDING_FRAGMENTS": "true",
 }
 READER = "12345678-1234-1234-1234-123456789012"
 RECORDING = (ROOT / "environment" / "recording" / "main.bicep").read_text(encoding="utf-8")
@@ -65,22 +65,21 @@ class Build(unittest.TestCase):
     def test_good_settings_give_four_files_and_the_outputs(self):
         code, out, err, files = run(SETTINGS)
         self.assertEqual((code, err), (0, ""))
-        self.assertEqual(set(files), {"environment.parameters.json", "logger.parameters.json", "kit.parameters.json", "recording.parameters.json", "foundry.parameters.json", "operator.parameters.json", "planted.parameters.json",
+        self.assertEqual(set(files), {"environment.parameters.json", "recording.parameters.json", "foundry.parameters.json", "operator.parameters.json", "planted.parameters.json",
                                       "cases.parameters.json"})
         env = values(files["environment.parameters.json"])
         self.assertEqual(env["vnetAddressPrefix"], "10.53.0.0/24")
         self.assertEqual(env["peSubnetPrefix"], "10.53.0.0/27")
         self.assertEqual(env["dnsServers"], ["10.20.0.4"])
-        self.assertEqual(env["gatewayPrincipalId"], "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
+        self.assertNotIn("gatewayPrincipalId", env, "the model side makes no role for any gateway identity")
         self.assertEqual(env["budgetStartDate"], "2026-11-01")
         self.assertEqual([m["name"] for m in env["models"]], [m["name"] for m in json.loads(MODELS.read_text())])
         lines = dict(line.split("=", 1) for line in out.splitlines())
         self.assertEqual(lines["account_name"], env["accountName"])
         self.assertEqual(lines["private_endpoint"], "pe-" + env["accountName"])
         self.assertEqual(lines["endpoint"], f"https://{env['accountName']}.cognitiveservices.azure.com")
-        self.assertEqual(lines["gateway_name"], "example-apim")
-        self.assertEqual(lines["gateway_resource_group"], "rg-gateway")
-        self.assertEqual(lines["principal_known"], "true")
+        for retired in ("gateway_name", "gateway_subscription", "gateway_resource_group", "identity_name", "principal_known"):
+            self.assertNotIn(retired, lines, retired)
 
     def test_the_account_name_is_a_valid_host_name_and_the_same_on_every_run(self):
         names = {values(run(SETTINGS)[3]["environment.parameters.json"])["accountName"] for _ in range(3)}
@@ -106,12 +105,26 @@ class Build(unittest.TestCase):
         self.assertEqual(bicep_params(BICEP)["restoreAccount"], ("bool", True))
         self.assertNotIn("restoreAccount", given)
 
-    def test_the_logger_file_matches_the_logger_template(self):
-        declared = bicep_params(LOGGER)
-        given = run(SETTINGS)[3]["logger.parameters.json"]["parameters"]
-        self.assertEqual(set(given), set(declared))
-        self.assertEqual(values(run(SETTINGS)[3]["logger.parameters.json"]), {
-            "apimName": "example-apim", "appInsightsName": "example-insights", "appInsightsResourceGroup": "rg-gateway"})
+    def test_nothing_of_the_owners_api_management_instance_reaches_a_file_or_an_output(self):
+        # The owner ordered the undo of what Meternaut had added to his instance (2026-11-07): the builder makes no file for it, names no object of it and reads no setting that names it.
+        code, out, err, files = run({**SETTINGS, **RETIRED_SETTINGS})
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(files, run(SETTINGS)[3], "a leftover setting of the retired actions changes no file")
+        self.assertEqual(out, run(SETTINGS)[1], "and no output")
+        for name in ("logger.parameters.json", "eventhub-loggers.parameters.json", "kit.parameters.json", "contract.parameters.json"):
+            self.assertNotIn(name, files, name)
+        text = (out + json.dumps(files)).lower()
+        for word in ("example-apim", "apim", "microsoft.apimanagement/service", "contract", "usage-eventhub-logger"):
+            self.assertNotIn(word, text, word)
+        self.assertNotIn("GATEWAY_RESOURCE_ID", TOOL.read_text(encoding="utf-8"), "the instance's resource id is not a setting of the builder any more")
+
+    def test_the_options_of_the_retired_contract_are_gone(self):
+        for option in ("--contract", "--contract-policy"):
+            err = io.StringIO()
+            with redirect_stderr(err), self.assertRaises(SystemExit) as stopped:
+                ep.main(["build", "--models", str(MODELS), "--out-dir", ".", option, "x"], environ=SETTINGS)
+            self.assertEqual(stopped.exception.code, 2, option)
+            self.assertIn("unrecognized arguments", err.getvalue(), option)
 
     def test_the_names_the_workflow_removes_are_the_ones_the_template_gives(self):
         lines = dict(line.split("=", 1) for line in run(SETTINGS)[1].splitlines())
@@ -147,10 +160,10 @@ class Recording(unittest.TestCase):
         for name, wrapped in given.items():
             self.assertIsInstance(wrapped["value"], types[declared[name][0]], name)
 
-    def test_the_gateway_and_the_readers_reach_the_template_and_the_workflow_does_not(self):
+    def test_the_readers_reach_the_template_and_the_workflow_and_the_gateway_do_not(self):
         files, outputs = self.files(RECORDING_READER_IDS=f"{READER.upper()}")
         recording = values(files["recording.parameters.json"])
-        self.assertEqual(recording["gatewayPrincipalId"], "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
+        self.assertNotIn("gatewayPrincipalId", recording, "no role is made for a gateway identity any more: nothing sends to the two usage hubs from the owner's instance")
         self.assertEqual(recording["gatewayAppInsightsSubscriptionId"], "66666666-7777-8888-9999-000000000000")
         self.assertEqual((recording["gatewayAppInsightsResourceGroup"], recording["gatewayAppInsightsName"]), ("rg-gateway", "example-insights"))
         self.assertNotIn("workflowPrincipalId", recording, "no template gives the workflow's identity a role on an event hub: the Operator sends the control events")
@@ -282,156 +295,29 @@ class Recording(unittest.TestCase):
             self.assertNotIn("workflowPrincipalId", document["parameters"], name)
         code, out, err, files = run({**SETTINGS, "RECORDING_DEPLOYER_ID": "me"})
         self.assertEqual((code, err), (0, ""), "a leftover setting is not read, so a wrong value cannot stop a run")
-        with tempfile.TemporaryDirectory() as tmp:
-            contract = Path(tmp) / "contract.json"
-            contract.write_text(CONTRACT_FILE.read_text(encoding="utf-8"), encoding="utf-8")
-            code, out, err, files = run(SETTINGS, "--contract", str(contract), "--contract-policy", str(POLICY_FILE))
-        self.assertEqual((code, err), (0, ""))
-        self.assertIn("cases.parameters.json", files)
         for name, document in files.items():
             self.assertNotIn("workflowPrincipalId", document["parameters"], name)
 
 
-class KitSettings(unittest.TestCase):
-    """The choices made for the Citadel gateway-upgrade module are held here, with the reason for each."""
-
-    def setUp(self):
-        self.kit = values(run(SETTINGS)[3]["kit.parameters.json"])
-
-    def test_no_prompt_and_no_answer_is_logged(self):
-        llm = self.kit["azureMonitorLogSettings"]["largeLanguageModel"]
-        self.assertEqual((llm["requests"]["messages"], llm["responses"]["messages"]), ("none", "none"))
-        for side in ("frontend", "backend"):
-            for direction in ("request", "response"):
-                self.assertEqual(self.kit["azureMonitorLogSettings"][side][direction]["body"]["bytes"], 0)
-        self.assertEqual(self.kit["appInsightsLogSettings"]["body"]["bytes"], 0)
-
-    def test_the_personal_data_flag_stays_on_because_a_fragment_needs_it(self):
-        # the module creates the ai-foundry-compatibility fragment only with this flag, and the inference APIs include it
-        self.assertTrue(self.kit["enablePIIAnonymization"])
-
-    def test_the_named_values_are_never_empty_and_name_the_account(self):
-        endpoint = values(run(SETTINGS)[3]["environment.parameters.json"])["accountName"]
-        for key in ("aiLanguageServiceUrl", "contentSafetyServiceUrl"):
-            self.assertEqual(self.kit[key], f"https://{endpoint}.cognitiveservices.azure.com/")
-
-    def test_only_the_two_inference_apis_are_deployed(self):
-        self.assertTrue(self.kit["updateUniversalLLMApi"] and self.kit["updateAzureOpenAIApi"])
-        for key in ("updateUnifiedAiApi", "updateReleaseVersionApi", "updateOpenAIRealtimeApi",
-                    "updateRedisCache", "enableRedisCache", "updateEmbeddingsBackend", "enableEmbeddingsBackend"):
-            self.assertIs(self.kit[key], False, key)
-
-    def test_the_unified_api_is_not_deployed_but_its_fragments_are_because_the_two_apis_include_one(self):
-        # The service refused the policies of both inference APIs, in a real run, because set-response-headers did not exist:
-        # the module creates it only with enableUnifiedAiApi, and both policies include it.
-        self.assertIs(self.kit["updateUnifiedAiApi"], False)
-        self.assertIs(self.kit["enableUnifiedAiApi"], True)
-
-    def test_callers_use_the_contracts_key_and_no_second_azure_monitor_logger_is_made(self):
-        self.assertIs(self.kit["enableJwtAuth"], False)
-        self.assertIs(self.kit["deployAzureMonitorLogger"], False)
-        self.assertNotIn("logAnalyticsWorkspaceResourceId", self.kit)
-
-    def test_the_service_level_logging_is_replaced_on_purpose(self):
-        self.assertIs(self.kit["updateAppInsightsDiagnostics"], True)
-
-    def test_the_backend_holds_exactly_the_models_that_are_deployed(self):
-        (backend,) = self.kit["llmBackendConfig"]
-        deployed = values(run(SETTINGS)[3]["environment.parameters.json"])["models"]
-        self.assertEqual([(m["name"], m["modelVersion"], m["sku"], m["capacity"]) for m in backend["supportedModels"]],
-                         [(m["name"], m["version"], m["sku"], m["capacity"]) for m in deployed])
-        self.assertEqual((backend["backendType"], backend["authType"]), ("ai-foundry", "managed-identity"))
-        self.assertTrue(backend["endpoint"].startswith("https://aif-meternaut-") and backend["endpoint"].endswith(".cognitiveservices.azure.com/"))
-
-    def test_the_gateway_identity_is_the_one_the_template_grants_a_role(self):
-        self.assertEqual(self.kit["managedIdentityName"], ep.IDENTITY_NAME)
-        self.assertEqual(self.kit["apimServiceName"], "example-apim")
-
-    def test_nothing_secret_is_in_the_file(self):
-        text = json.dumps(run(SETTINGS)[3]["kit.parameters.json"]).lower()
-        for word in ("key", "secret", "password", "connectionstring"):
-            self.assertNotIn(word, text.replace("subscriptionkey", ""), word)
-
-
 class Preview(unittest.TestCase):
-    def test_a_run_before_the_identity_exists_needs_the_preview_flag(self):
-        env = {**SETTINGS, "GATEWAY_PRINCIPAL_ID": ""}
-        code, out, err, files = run(env)
-        self.assertEqual(code, 2)
-        self.assertIn("GATEWAY_PRINCIPAL_ID", err)
-        self.assertEqual(files, {})
-        code, out, err, files = run(env, "--preview")
-        self.assertEqual((code, err), (0, ""))
-        self.assertIn("principal_known=false", out)
-        self.assertEqual(values(files["environment.parameters.json"])["gatewayPrincipalId"], ep.PLACEHOLDER)
+    """The flag --preview is for the facts that are not known yet (the AI Gateway's host name and its project's identity): there is no gateway identity to wait for any more."""
 
-    def test_the_usage_recording_reads_the_placeholder_as_no_gateway_identity(self):
-        # The recording makes the two roles of the gateway identity only for an identity that is known (the owner ordered the undo of what Meternaut added to his API Management
-        # instance on 2026-11-07, so the identity may be gone): the template compares with the same all-zero id that the builder writes while the identity is not known.
-        code, out, err, files = run({**SETTINGS, "GATEWAY_PRINCIPAL_ID": ""}, "--preview")
-        self.assertEqual((code, err), (0, ""))
-        self.assertEqual(values(files["recording.parameters.json"])["gatewayPrincipalId"], ep.PLACEHOLDER)
-        template = (TOOL.parents[1] / "environment" / "recording" / "main.bicep").read_text(encoding="utf-8")
-        self.assertIn(f"var noGatewayIdentity = '{ep.PLACEHOLDER}'", template)
-        self.assertEqual(ep.PLACEHOLDER, "00000000-0000-0000-0000-000000000000")
+    def test_the_flag_changes_no_file_and_no_output_while_the_agents_do_not_go_through_the_ai_gateway(self):
+        self.assertIs(ep.AGENTS_VIA_AI_GATEWAY, False)
+        plain, preview = run(SETTINGS), run(SETTINGS, "--preview")
+        self.assertEqual((plain[0], plain[2]), (0, ""))
+        self.assertEqual(preview[0:3], plain[0:3])
+        self.assertEqual(preview[3], plain[3])
 
-
-class EventHubLoggers(unittest.TestCase):
-    """The file for the two Event Hub loggers, and the choice that makes the module create the two fragments that use them."""
-
-    CLIENT = "BBBBBBBB-1111-2222-3333-CCCCCCCCCCCC"
-
-    def test_without_the_identitys_client_id_no_file_is_written(self):
+    def test_no_gateway_identity_is_needed_by_any_run_and_the_usage_recording_makes_no_role_for_one(self):
         code, out, err, files = run(SETTINGS)
-        self.assertEqual((code, err), (0, ""))
-        self.assertNotIn("eventhub-loggers.parameters.json", files)
-
-    def test_with_it_the_file_names_the_namespace_the_two_hubs_and_the_identity(self):
-        code, out, err, files = run({**SETTINGS, "GATEWAY_CLIENT_ID": self.CLIENT})
-        self.assertEqual((code, err), (0, ""))
-        lines = dict(line.split("=", 1) for line in out.splitlines())
-        loggers = values(files["eventhub-loggers.parameters.json"])
-        self.assertEqual(loggers, {
-            "apimName": "example-apim",
-            "eventHubHost": lines["event_hub_namespace"] + ".servicebus.windows.net",
-            "usageHubName": "ai-usage",
-            "piiHubName": "pii-usage",
-            "identityClientId": self.CLIENT.lower(),
-        })
-
-    def test_the_preview_uses_a_placeholder_and_says_nothing_secret(self):
-        code, out, err, files = run({**SETTINGS, "GATEWAY_PRINCIPAL_ID": ""}, "--preview")
-        self.assertEqual((code, err), (0, ""))
-        self.assertEqual(values(files["eventhub-loggers.parameters.json"])["identityClientId"], ep.PLACEHOLDER)
-
-    def test_the_file_matches_the_parameters_of_the_template_and_the_hubs_are_the_ones_the_recording_makes(self):
-        template = (ROOT / "environment" / "gateway" / "eventhub-loggers.bicep").read_text(encoding="utf-8")
-        declared = bicep_params(template)
-        files = run({**SETTINGS, "GATEWAY_CLIENT_ID": self.CLIENT})[3]
-        given = files["eventhub-loggers.parameters.json"]["parameters"]
-        self.assertTrue(set(given) <= set(declared), set(given) - set(declared))
-        self.assertTrue({name for name, (_, has_default) in declared.items() if not has_default} <= set(given))
-        self.assertIn("var usageHubName = 'ai-usage'", RECORDING)
-        self.assertIn("var piiHubName = 'pii-usage'", RECORDING)
-        self.assertEqual((values(files["eventhub-loggers.parameters.json"])["usageHubName"], values(files["eventhub-loggers.parameters.json"])["piiHubName"]), ("ai-usage", "pii-usage"))
-        self.assertEqual(values(files["eventhub-loggers.parameters.json"])["eventHubHost"], values(files["recording.parameters.json"])["eventHubNamespaceName"] + ".servicebus.windows.net")
-
-    def test_a_client_id_that_is_not_one_is_refused(self):
-        for bad in ("me", "1234", "{" + self.CLIENT + "}"):
-            code, out, err, files = run({**SETTINGS, "GATEWAY_CLIENT_ID": bad})
-            self.assertEqual((code, out, files), (2, "", {}), bad)
-            self.assertIn("GATEWAY_CLIENT_ID", err)
-
-    def test_the_fragments_are_off_unless_the_workflow_found_both_loggers(self):
-        self.assertIs(values(run(SETTINGS)[3]["kit.parameters.json"])["deployUsageRecordingFragments"], False)
-        self.assertIs(values(run({**SETTINGS, "RECORDING_FRAGMENTS": "false"})[3]["kit.parameters.json"])["deployUsageRecordingFragments"], False)
-        self.assertIs(values(run({**SETTINGS, "RECORDING_FRAGMENTS": "TRUE"})[3]["kit.parameters.json"])["deployUsageRecordingFragments"], True)
-
-    def test_anything_but_true_or_false_is_refused(self):
-        for bad in ("yes", "1", "truee"):
-            code, out, err, files = run({**SETTINGS, "RECORDING_FRAGMENTS": bad})
-            self.assertEqual((code, out, files), (2, "", {}), bad)
-            self.assertIn("RECORDING_FRAGMENTS", err)
+        self.assertEqual((code, err), (0, ""), "no setting names a gateway identity, and a run needs none")
+        recording = (TOOL.parents[1] / "environment" / "recording" / "main.bicep").read_text(encoding="utf-8")
+        self.assertNotIn("gatewayPrincipalId", recording)
+        self.assertNotIn("noGatewayIdentity", recording)
+        self.assertNotIn("gatewaySends", recording)
+        self.assertNotIn("eventHubsDataSenderRoleId", recording, "the recording's template gives no role to send to an event hub")
+        self.assertEqual(ep.PLACEHOLDER, "00000000-0000-0000-0000-000000000000", "the all-zero id is still what the Foundry file holds until the cases app has an identity")
 
 
 class Refusals(unittest.TestCase):
@@ -444,8 +330,6 @@ class Refusals(unittest.TestCase):
 
     def test_a_missing_setting_is_named(self):
         for name in SETTINGS:
-            if name == "GATEWAY_PRINCIPAL_ID":
-                continue
             env = {k: v for k, v in SETTINGS.items() if k != name}
             code, _, err, _ = run(env)
             self.assertEqual(code, 2, name)
@@ -454,7 +338,6 @@ class Refusals(unittest.TestCase):
 
     def test_bad_ids_names_and_labels(self):
         self.refused(ENV_SUBSCRIPTION_ID="not-a-guid")
-        self.refused(GATEWAY_PRINCIPAL_ID="1234")
         for bad in ("rg name", "rg/x", "rg;x", "-", "a" * 91, "rg.", "$(x)"):
             self.refused(ENV_RESOURCE_GROUP=bad)
         for bad in ("Sweden Central", "sweden_central", "x", "https://x"):
@@ -462,11 +345,10 @@ class Refusals(unittest.TestCase):
         for bad in ('o"wner', "o<wner", "a" * 65, "o;wner", "o\nwner"):
             self.refused(ENV_OWNER=bad)
 
-    def test_the_gateway_ids_must_have_the_shape_of_the_right_resource(self):
-        for bad in ("", "/subscriptions/x", SETTINGS["GATEWAY_APPINSIGHTS_ID"], SETTINGS["GATEWAY_RESOURCE_ID"] + "/apis/x",
-                    SETTINGS["GATEWAY_RESOURCE_ID"].replace("service/example-apim", "service/bad name")):
-            self.refused(GATEWAY_RESOURCE_ID=bad)
-        for bad in ("", SETTINGS["GATEWAY_RESOURCE_ID"], SETTINGS["GATEWAY_APPINSIGHTS_ID"].replace("66666666", "77777777")):
+    def test_the_application_insights_id_must_have_the_shape_of_the_right_resource(self):
+        # The only id of the gateway's side that the builder still reads: the usage recording's copy jobs read that component. The instance's own id is not a setting any more.
+        for bad in ("", "/subscriptions/x", RETIRED_SETTINGS["GATEWAY_RESOURCE_ID"], SETTINGS["GATEWAY_APPINSIGHTS_ID"] + "/x",
+                    SETTINGS["GATEWAY_APPINSIGHTS_ID"].replace("components/example-insights", "components/")):
             self.refused(GATEWAY_APPINSIGHTS_ID=bad)
 
     def test_address_ranges_must_be_private_ipv4_and_nested(self):
@@ -529,147 +411,13 @@ class Models(unittest.TestCase):
         self.assertEqual(code, 2)
 
 
-class Contract(unittest.TestCase):
-    """The contract of environment/contract.json and its policy: what reaches the gateway is what the contract says."""
-
-    def setUp(self):
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        self.tmp = Path(tmp.name)
-
-    def write(self, name, text):
-        path = self.tmp / name
-        path.write_text(text, encoding="utf-8")
-        return path
-
-    def contract(self, **changes):
-        return {**json.loads(CONTRACT_FILE.read_text(encoding="utf-8")), **changes}
-
-    def build(self, contract=None, policy=None, models=MODELS):
-        contract_path = self.write("contract.json", json.dumps(self.contract() if contract is None else contract))
-        policy_path = self.write("policy.xml", POLICY_FILE.read_text(encoding="utf-8") if policy is None else policy)
-        return run(SETTINGS, "--contract", str(contract_path), "--contract-policy", str(policy_path), models=models)
-
-    def refused(self, contract=None, policy=None, **kw):
-        code, out, err, files = self.build(contract, policy, **kw)
-        self.assertEqual((code, out, files), (2, "", {}), (contract, policy))
-        return err
-
-    def test_the_contract_of_the_repository_gives_a_fifth_file_that_fits_its_template(self):
-        code, out, err, files = self.build()
-        self.assertEqual((code, err), (0, ""))
-        self.assertEqual(set(files), {"environment.parameters.json", "logger.parameters.json", "kit.parameters.json", "recording.parameters.json", "foundry.parameters.json", "operator.parameters.json",
-                                      "contract.parameters.json", "cases.parameters.json", "planted.parameters.json"})
-        given = files["contract.parameters.json"]["parameters"]
-        declared = bicep_params(CONTRACT_BICEP)
-        self.assertEqual(set(given), set(declared))
-        self.assertTrue(all(not has_default for _, has_default in declared.values()), "every setting of the contract is given, none is left to a default")
-        types = {"string": str, "array": list}
-        for name, wrapped in given.items():
-            self.assertIsInstance(wrapped["value"], types[declared[name][0]], name)
-        lines = dict(line.split("=", 1) for line in out.splitlines())
-        self.assertEqual((lines["contract_name"], lines["contract_subscription"]), ("meternaut-agents", "meternaut-agents-sub-01"))
-        self.assertEqual(lines["contract_apis"], "universal-llm-api,azure-openai-api")
-        self.assertEqual(values(files["contract.parameters.json"])["apimName"], "example-apim")
-
-    def test_without_a_contract_there_is_no_contract_file(self):
-        self.assertNotIn("contract.parameters.json", run(SETTINGS)[3])
-
-    def test_the_policy_carries_the_contracts_models_and_limits_and_counts_for_each_subscription(self):
-        contract = self.contract()
-        policy = values(self.build()[3]["contract.parameters.json"])["policyXml"]
-        self.assertNotIn("@@", policy)
-        inbound = ET.fromstring(policy).find("inbound")
-        (models,) = [v for v in inbound.findall("set-variable") if v.get("name") == "allowedModels"]
-        self.assertEqual(models.get("value"), ",".join(contract["allowedModels"]))
-        (limit,) = inbound.findall("llm-token-limit")
-        self.assertEqual(limit.get("tokens-per-minute"), str(contract["tokensPerMinute"]))
-        self.assertEqual(limit.get("token-quota"), str(contract["tokenQuotaPerMonth"]))
-        self.assertEqual((limit.get("token-quota-period"), limit.get("estimate-prompt-tokens")), ("Monthly", "false"))
-        self.assertEqual(limit.get("counter-key"), "@(context.Subscription.Id)")
-        self.assertIn("set-llm-requested-model", [f.get("fragment-id") for f in inbound.findall("include-fragment")])
-
-    def test_a_contract_that_names_a_model_that_is_not_deployed_is_refused(self):
-        for models in (["gpt-9"], [], ["gpt-6-luna", "gpt-6-luna"], "gpt-6-luna", [1], [["gpt-6-luna"]], ["gpt-6-luna", "gpt-6.1-sol", "x"]):
-            self.refused(self.contract(allowedModels=models))
-
-    def test_the_token_rate_may_not_be_more_than_the_smallest_deployment_can_serve(self):
-        self.assertEqual(self.build(self.contract(tokensPerMinute=20000))[0], 0)
-        self.assertIn("20000", self.refused(self.contract(tokensPerMinute=20001)))
-        models = [{"name": "big", "version": "2026-09-22", "sku": "DataZoneStandard", "capacity": 20, "agentCapacity": 20, "retirementDate": "2028-03-11"},
-                  {"name": "also-big", "version": "2026-09-22", "sku": "DataZoneStandard", "capacity": 20, "agentCapacity": 20, "retirementDate": "2028-03-11"},
-                  {"name": "small", "version": "2026-09-22", "sku": "DataZoneStandard", "capacity": 5, "agentCapacity": 5, "retirementDate": "2028-03-11"}]
-        path = self.write("models.json", json.dumps(models))
-        self.assertIn("5000", self.refused(self.contract(allowedModels=["big", "small"], tokensPerMinute=10000), models=path))
-        self.assertEqual(self.build(self.contract(allowedModels=["big", "also-big"], tokensPerMinute=10000), models=path)[0], 0)
-
-    def test_numbers_names_and_apis_are_checked(self):
-        for changes in ({"tokensPerMinute": 0}, {"tokensPerMinute": True}, {"tokensPerMinute": "10000"}, {"tokensPerMinute": 10.5},
-                        {"tokenQuotaPerMonth": 9999}, {"tokenQuotaPerMonth": 1_000_000_001}, {"tokenQuotaPerMonth": None},
-                        {"name": "Meternaut"}, {"name": "ab"}, {"name": "-ab"}, {"name": "a" * 61}, {"name": "a b"}, {"name": "x;y"}, {"name": "ab-"},
-                        {"description": ""}, {"description": "a\nb"}, {"description": "x" * 401}, {"description": 5},
-                        {"apis": []}, {"apis": ["unified-ai-api"]}, {"apis": ["universal-llm-api", "universal-llm-api"]},
-                        {"apis": "universal-llm-api"}, {"apis": [["x"]]}):
-            self.refused(self.contract(**changes))
-        self.refused({**self.contract(), "key": "x"})
-        missing = self.contract()
-        del missing["name"]
-        self.refused(missing)
-        self.assertEqual(self.build(self.contract(apis=["universal-llm-api"], tokenQuotaPerMonth=10000))[0], 0)
-
-    def test_a_policy_template_that_lost_a_rule_is_refused(self):
-        template = POLICY_FILE.read_text(encoding="utf-8")
-        for broken in (template.replace("@@TOKEN_QUOTA@@", "1000"),
-                       template.replace("@@ALLOWED_MODELS@@", "@@ALLOWED_MODELS@@,@@ALLOWED_MODELS@@"),
-                       template.replace('counter-key="@(context.Subscription.Id)"', 'counter-key="shared"'),
-                       template.replace('<include-fragment fragment-id="set-llm-requested-model" />', ""),
-                       template.replace('name="allowedModels"', 'name="allowed"'),
-                       template.replace('token-quota-period="Monthly"', 'token-quota-period="Daily"'),
-                       template.replace('estimate-prompt-tokens="false"', 'estimate-prompt-tokens="true"'),
-                       template.replace("<inbound>", '<inbound><llm-token-limit counter-key="x" tokens-per-minute="1" />'),
-                       template.replace("<inbound>", "<inbound>@@EXTRA@@"),
-                       # a rule the template does not have, nested or not, in any section
-                       template.replace("</inbound>", '<choose><when condition="@(true)"><set-variable name="allowedModels" value="" /></when></choose></inbound>'),
-                       template.replace("</inbound>", '<return-response><set-status code="200" /></return-response></inbound>'),
-                       template.replace("</inbound>", '<set-variable name="allowedModels" value="" /></inbound>'),
-                       template.replace("</inbound>", '<set-header name="x" exists-action="override"><value>1</value></set-header></inbound>'),
-                       template.replace("</outbound>", '<set-variable name="allowedModels" value="" /></outbound>'),
-                       template.replace("</backend>", '<set-variable name="allowedModels" value="" /></backend>'),
-                       template.replace("</on-error>", '<llm-token-limit counter-key="x" tokens-per-minute="1" /></on-error>'),
-                       template.replace("<base />", '<base><set-variable name="allowedModels" value="" /></base>', 1),
-                       template.replace('<include-fragment fragment-id="set-llm-requested-model" />', '<include-fragment fragment-id="set-llm-requested-model" /><include-fragment fragment-id="ai-usage" />'),
-                       template.replace('<set-variable name="enableResponseHeaders" value="@(true)" />', '<set-variable name="enableResponseHeaders" value="@(true)" /><set-variable name="other" value="1" />'),
-                       template.replace('<set-variable name="enableResponseHeaders" value="@(true)" />', '<set-variable name="enableResponseHeaders" value="@(false)" />'),
-                       template.replace("<llm-token-limit ", '<llm-token-limit retry-after-variable-name="x" '),
-                       # the same rules in another order
-                       template.replace('<set-variable name="enableResponseHeaders" value="@(true)" />', "").replace("<base />", '<base /><set-variable name="enableResponseHeaders" value="@(true)" />', 1),
-                       template.replace("<inbound>", "<inbound><backend />"),
-                       template.replace("</policies>", ""),
-                       "<policies><backend /></policies>",
-                       ""):
-            self.refused(policy=broken)
-
-    def test_the_two_files_go_together_and_must_be_readable(self):
-        for extra in (("--contract", str(CONTRACT_FILE)), ("--contract-policy", str(POLICY_FILE))):
-            code, _, err, files = run(SETTINGS, *extra)
-            self.assertEqual((code, files), (2, {}))
-            self.assertIn("go together", err)
-        missing = str(self.tmp / "missing")
-        self.assertEqual(run(SETTINGS, "--contract", missing, "--contract-policy", str(POLICY_FILE))[0], 2)
-        self.assertEqual(run(SETTINGS, "--contract", str(CONTRACT_FILE), "--contract-policy", missing)[0], 2)
-        self.assertEqual(run(SETTINGS, "--contract", str(self.write("c.json", "{")), "--contract-policy", str(POLICY_FILE))[0], 2)
-
-
 class FirstCases(unittest.TestCase):
-    """The parameter file of the first cases app (environment/cases/main.bicep): it names what the usage recording made, and nothing of a gateway or a contract."""
+    """The parameter file of the first cases app (environment/cases/main.bicep): it names what the usage recording made, and nothing of the owner's API Management instance."""
 
     CASES = (ROOT / "environment" / "cases" / "main.bicep").read_text(encoding="utf-8")
 
     def build(self, **changes):
-        with tempfile.TemporaryDirectory() as tmp:
-            contract = Path(tmp) / "contract.json"
-            contract.write_text(CONTRACT_FILE.read_text(encoding="utf-8"), encoding="utf-8")
-            code, out, err, files = run({**SETTINGS, **changes}, "--contract", str(contract), "--contract-policy", str(POLICY_FILE))
+        code, out, err, files = run({**SETTINGS, **changes})
         self.assertEqual((code, err), (0, ""))
         return files, dict(line.split("=", 1) for line in out.splitlines())
 
@@ -710,15 +458,12 @@ class FirstCases(unittest.TestCase):
         for given, expected in (("", False), ("false", False), ("FALSE", False), ("true", True), (" True ", True)):
             self.assertIs(values(self.build(ENV_WEB_SUBNET_EXISTS=given)[0]["cases.parameters.json"])["webSubnetExists"], expected, given)
         for refused in ("yes", "1", "exists"):
-            with tempfile.TemporaryDirectory() as tmp:
-                contract = Path(tmp) / "contract.json"
-                contract.write_text(CONTRACT_FILE.read_text(encoding="utf-8"), encoding="utf-8")
-                code, out, err, files = run({**SETTINGS, "ENV_WEB_SUBNET_EXISTS": refused}, "--contract", str(contract), "--contract-policy", str(POLICY_FILE))
+            code, out, err, files = run({**SETTINGS, "ENV_WEB_SUBNET_EXISTS": refused})
             self.assertEqual((code, out, files), (2, "", {}), refused)
             self.assertIn("ENV_WEB_SUBNET_EXISTS is true or false", err)
         self.assertIn("param webSubnetExists bool = false", self.CASES)
 
-    def test_it_reads_the_pilot_subscription_and_names_no_gateway_and_no_contract_and_no_key(self):
+    def test_it_reads_the_pilot_subscription_and_names_nothing_of_the_api_management_instance_and_no_key(self):
         files, lines = self.build()
         cases = values(files["cases.parameters.json"])
         self.assertEqual(cases["scopeSubscriptions"], SETTINGS["ENV_SUBSCRIPTION_ID"])
@@ -727,7 +472,6 @@ class FirstCases(unittest.TestCase):
         self.assertNotIn("gatewayProductSubscriptionId", cases)
         self.assertNotIn("gateway_url", lines, "no step of the workflow knocks at the gateway's address any more")
         self.assertNotIn("azure-api.net", json.dumps(files["cases.parameters.json"]))
-        self.assertNotIn("/subscriptions/meternaut-agents-sub-01", json.dumps(files["cases.parameters.json"]))
 
     def test_the_two_older_roles_are_given_two_different_deployments_of_the_agents_resource_by_the_defaults_of_the_template(self):
         # The Detective and the Skeptic call the model deployments of the agents' own Foundry resource (environment/foundry/main.bicep deploys environment/models.json), so the names that the
@@ -740,19 +484,7 @@ class FirstCases(unittest.TestCase):
         self.assertNotEqual(models["modelDetective"], models["modelSkeptic"], "the Skeptic is another model than the Detective, so that it is more independent")
         deployed = {m["name"] for m in json.loads(MODELS.read_text(encoding="utf-8"))}
         self.assertTrue(set(models.values()) <= deployed, "the Detective and the Skeptic call deployments that the Foundry resource of the agents has")
-        self.assertEqual(models["modelDetective"], json.loads(CONTRACT_FILE.read_text(encoding="utf-8"))["allowedModels"][0], "as they were while the contract named them")
-        self.assertEqual(models["modelSkeptic"], json.loads(CONTRACT_FILE.read_text(encoding="utf-8"))["allowedModels"][1])
-
-    def test_a_contract_with_one_model_is_refused_because_the_skeptic_has_to_be_another_model(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            contract = json.loads(CONTRACT_FILE.read_text(encoding="utf-8"))
-            contract["allowedModels"] = contract["allowedModels"][:1]
-            path = Path(tmp) / "contract.json"
-            path.write_text(json.dumps(contract), encoding="utf-8")
-            code, out, err, files = run(SETTINGS, "--contract", str(path), "--contract-policy", str(POLICY_FILE))
-        self.assertEqual(code, 2)
-        self.assertIn("at least two models", err)
-        self.assertEqual(out, "")
+        self.assertEqual(set(models.values()), set(ep.AGENT_MODELS.values()), "the same two deployments that the agents use, as they were when a contract named them")
 
     def test_the_hub_and_the_one_identity_are_the_ones_the_template_makes(self):
         _, lines = self.build()
@@ -761,24 +493,23 @@ class FirstCases(unittest.TestCase):
         self.assertNotIn("id-${workload}-cases", self.CASES, "the user-assigned identity that the app's system-assigned one replaced is not made any more")
         self.assertNotIn("cases_identity_name", lines)
 
-    def test_the_cases_file_does_not_depend_on_the_contract_and_is_the_same_with_or_without_it(self):
-        # The contract is the API Management side, which Meternaut is leaving: the first cases are deployed without it.
-        without = run(SETTINGS)
-        self.assertEqual(without[0], 0)
-        with_contract = self.build()[0]["cases.parameters.json"]
-        self.assertEqual(without[3]["cases.parameters.json"], with_contract)
-        self.assertNotIn("contract.parameters.json", without[3], "the contract's own file is still made only when the contract is asked for")
-        self.assertNotIn("contract_subscription", dict(line.split("=", 1) for line in without[1].splitlines()))
-        self.assertEqual(self.build()[1]["contract_subscription"], "meternaut-agents-sub-01", "the contract action keeps its output")
+    def test_the_cases_file_depends_on_nothing_of_the_api_management_instance_and_is_the_same_whatever_a_leftover_setting_says(self):
+        # The contract and the gateway were the API Management side, which Meternaut has left: the first cases are deployed without it, and a setting of the retired actions changes nothing.
+        plain = run(SETTINGS)
+        self.assertEqual(plain[0], 0)
+        leftover = run({**SETTINGS, **RETIRED_SETTINGS, "GATEWAY_PRINCIPAL_ID": "not-a-guid", "GATEWAY_CLIENT_ID": "x", "RECORDING_FRAGMENTS": "maybe"})
+        self.assertEqual((leftover[0], leftover[2]), (0, ""))
+        self.assertEqual(plain[3]["cases.parameters.json"], leftover[3]["cases.parameters.json"])
+        self.assertNotIn("contract_subscription", dict(line.split("=", 1) for line in plain[1].splitlines()))
 
-    def test_the_cases_file_is_written_with_no_gateway_identity_at_all_in_a_preview_and_it_names_the_foundry_project_when_the_workflow_found_it(self):
-        settings = {k: v for k, v in SETTINGS.items() if k not in ("GATEWAY_PRINCIPAL_ID", "GATEWAY_CLIENT_ID", "RECORDING_FRAGMENTS")}
-        code, out, err, files = run({**settings, "ENV_FOUNDRY_PROJECT_EXISTS": "true"}, "--preview")
-        self.assertEqual((code, err), (0, ""))
-        cases = values(files["cases.parameters.json"])
-        lines = dict(line.split("=", 1) for line in out.splitlines())
-        self.assertEqual(cases["foundryProjectEndpoint"], lines["foundry_project_endpoint"])
-        self.assertTrue(cases["foundryProjectEndpoint"].endswith(".services.ai.azure.com/api/projects/meternaut"))
+    def test_the_cases_file_names_the_foundry_project_when_the_workflow_found_it_and_a_preview_changes_nothing_of_it(self):
+        for extra in ((), ("--preview",)):
+            code, out, err, files = run({**SETTINGS, "ENV_FOUNDRY_PROJECT_EXISTS": "true"}, *extra)
+            self.assertEqual((code, err), (0, ""))
+            cases = values(files["cases.parameters.json"])
+            lines = dict(line.split("=", 1) for line in out.splitlines())
+            self.assertEqual(cases["foundryProjectEndpoint"], lines["foundry_project_endpoint"])
+            self.assertTrue(cases["foundryProjectEndpoint"].endswith(".services.ai.azure.com/api/projects/meternaut"))
 
     PEOPLE = '[{"oid": "AAAAAAAA-1111-4222-8333-444444444444", "name": "Tino", "roles": ["owner", "approver", "ops"], "mail": "tino@example.com"}]'
     APP = "11111111-2222-3333-4444-555555555555"
@@ -813,10 +544,7 @@ class FirstCases(unittest.TestCase):
         }
         for label, change in bad.items():
             with self.subTest(label):
-                with tempfile.TemporaryDirectory() as tmp:
-                    contract = Path(tmp) / "contract.json"
-                    contract.write_text(CONTRACT_FILE.read_text(encoding="utf-8"), encoding="utf-8")
-                    code, out, err, _ = run({**SETTINGS, **change}, "--contract", str(contract), "--contract-policy", str(POLICY_FILE))
+                code, out, err, _ = run({**SETTINGS, **change})
                 self.assertEqual(code, 2, err)
                 self.assertEqual(out, "")
 
@@ -840,17 +568,6 @@ class FirstCases(unittest.TestCase):
         self.assertTrue(set(given) <= set(declared), set(given) - set(declared))
         self.assertTrue({name for name, (_, has_default) in declared.items() if not has_default} <= set(given))
 
-    def test_the_token_allowance_of_the_contract_covers_a_month_of_runs_and_stays_under_the_standing_limit(self):
-        contract = json.loads(CONTRACT_FILE.read_text(encoding="utf-8"))
-        self.assertGreaterEqual(contract["tokenQuotaPerMonth"], 2_000_000)
-        # AGENTS.md rule 15(g): at most 25 EUR of model calls in total. Even if every token of the month were an output token of the
-        # dearer model (DataZone Standard, the price snapshot's figure), the allowance would stay under that limit.
-        snapshot = json.loads((ROOT / "docs" / "design" / "cost" / "prices-snapshot.json").read_text(encoding="utf-8"))
-        dearest = max(m["prices"]["EUR"] for m in snapshot["meters"]
-                      if m.get("product") == "Azure OpenAI GPT6" and re.fullmatch(r"6(\.1)?-sol ShortCo Opt Std DZ", m.get("sku", "")))
-        self.assertGreater(dearest, 5, "the price was found")
-        self.assertLess(contract["tokenQuotaPerMonth"] / 1_000_000 * dearest, 25)
-
 
 class Foundry(unittest.TestCase):
     """The parameter file of the Foundry resource of the agents (environment/foundry/main.bicep), the names it carries, and what the cases file takes from it."""
@@ -865,11 +582,7 @@ class Foundry(unittest.TestCase):
         return files, dict(line.split("=", 1) for line in out.splitlines())
 
     def cases_file(self, **changes):
-        with tempfile.TemporaryDirectory() as tmp:
-            contract = Path(tmp) / "contract.json"
-            contract.write_text(CONTRACT_FILE.read_text(encoding="utf-8"), encoding="utf-8")
-            code, out, err, files = run({**SETTINGS, **changes}, "--contract", str(contract), "--contract-policy", str(POLICY_FILE))
-        return code, out, err, files
+        return run({**SETTINGS, **changes})
 
     def test_the_file_fits_the_template_and_every_setting_has_a_value_of_the_right_type(self):
         files, _ = self.files(CASES_SYSTEM_PRINCIPAL_ID=self.SYSTEM_PRINCIPAL)
@@ -952,7 +665,7 @@ class Foundry(unittest.TestCase):
         files, outputs = self.files()
         self.assertEqual((values(files["foundry.parameters.json"])["casesSystemPrincipalId"], outputs["cases_system_principal_known"]), (ep.PLACEHOLDER, "false"),
                          "nobody looked: the file holds a placeholder, and no role is ever given to it because the workflow refuses to deploy")
-        self.assertEqual(run({**SETTINGS, "GATEWAY_PRINCIPAL_ID": ""}, "--preview")[0], 0, "a preview needs no cases identity")
+        self.assertEqual(run({**SETTINGS, "CASES_SYSTEM_PRINCIPAL_ID": ""}, "--preview")[0], 0, "a preview needs no cases identity")
 
     def test_a_system_assigned_identity_that_is_not_an_object_id_is_refused_without_echoing_it(self):
         for bad in ("me", "1234", "{" + self.SYSTEM_PRINCIPAL + "}", self.SYSTEM_PRINCIPAL + "0", "not-a-guid-but-with-secret"):
@@ -1125,7 +838,7 @@ class AiGateway(unittest.TestCase):
         mine = {"aigateway-subnet.parameters.json", "aigateway.parameters.json", "aigateway-policies.json"}
         self.assertTrue(mine <= set(files))
         self.assertEqual(set(files) - mine,
-                         {"environment.parameters.json", "logger.parameters.json", "kit.parameters.json", "recording.parameters.json", "foundry.parameters.json", "operator.parameters.json", "planted.parameters.json",
+                         {"environment.parameters.json", "recording.parameters.json", "foundry.parameters.json", "operator.parameters.json", "planted.parameters.json",
                           "cases.parameters.json"})
         self.assertEqual({key: value for key, value in outputs.items() if key.startswith("aigateway_")},
                          {"aigateway_name": outputs["aigateway_name"], "aigateway_subnet_name": "snet-aigw", "aigateway_subnet_prefix": "10.53.0.128/26",
@@ -1361,10 +1074,7 @@ class PublicNetworkAccessOfTheApps(unittest.TestCase):
     CASES_TEMPLATE = (ROOT / "environment" / "cases" / "main.bicep").read_text(encoding="utf-8")
 
     def build(self, **changes):
-        with tempfile.TemporaryDirectory() as tmp:
-            contract = Path(tmp) / "contract.json"
-            contract.write_text(CONTRACT_FILE.read_text(encoding="utf-8"), encoding="utf-8")
-            return run({**SETTINGS, **changes}, "--contract", str(contract), "--contract-policy", str(POLICY_FILE))
+        return run({**SETTINGS, **changes})
 
     def test_the_usage_app_is_closed_and_the_cases_app_is_open_until_the_people_have_a_path_and_the_values_reach_their_parameter_files(self):
         code, out, err, files = self.build()

@@ -61,7 +61,8 @@ RECORD = text("docs/proposals/08-ai-gateway.md")
 BOOTSTRAP = text("environment/BOOTSTRAP.md")
 CHANGELOG = text("CHANGELOG.md")
 README = text("README.md")
-PREVIEW = "What the identity, the model side, the logger, the usage recording and the first cases would change"
+PREVIEW = "What the model side, the usage recording, the Foundry resource, the first cases, the Operator and the AI Gateway's templates would change"
+GUARD = "Refuse the AI Gateway unless the owner asked for a public one in writing"
 RECORD_SECTION = "## The subnet is made first, and the gateway after the landing zone's route table\n"
 BOOTSTRAP_SECTION = "## Added on 2026-11-07 for the AI Gateway"
 ENTRY = "The AI Gateway's subnet is made first, and the gateway after the landing zone's route table: built, not deployed — 2026-11-07"
@@ -236,8 +237,11 @@ class TheActionMakesTheSubnetThenWaitsThenMakesTheGateway(unittest.TestCase):
     def names(self):
         return [name for name, _ in blocks()]
 
-    def test_the_steps_that_run_for_aigateway_are_these_nine_in_this_order(self):
+    def test_the_steps_that_run_for_aigateway_are_these_nine_in_this_order_after_the_guard_that_is_the_first_step_of_the_job(self):
         ran = [name for name, body in blocks() if re.search(r"(?m)^        if: inputs\.action == 'aigateway'$", body)]
+        self.assertEqual(ran[0], GUARD, "the guard that stops the action unless the owner asked for a public AI Gateway in writing is the first step of the job (test_ai_gateway_guard.py)")
+        self.assertEqual(self.names()[0], GUARD)
+        ran = ran[1:]
         self.assertEqual(ran, [AW.READY, AW.SUBNET, AW.WAIT, AW.GATEWAY_LOGIN, AW.DEPLOY, AW.LOGIN, AW.POLICIES, AW.KEY, AW.READ_BACK])
         names = self.names()
         positions = [names.index(name) for name in ran]
@@ -346,7 +350,7 @@ class TheActionMakesTheSubnetThenWaitsThenMakesTheGateway(unittest.TestCase):
 
     def test_every_other_action_still_has_the_steps_that_it_had(self):
         counts = {action: len(re.findall(rf"inputs\.action == '{action}'", WORKFLOW)) for action in ("aigateway", "aigateway-check")}
-        self.assertEqual(counts, {"aigateway": 9, "aigateway-check": 4})
+        self.assertEqual(counts, {"aigateway": 10, "aigateway-check": 4}, "the nine steps of the action and the guard before them")
         self.assertEqual(WORKFLOW.count("uses: azure/login@"), 9, "the first sign-in and eight more: the one that this change adds is one of them")
 
 
@@ -576,9 +580,9 @@ class TheDocumentsSayWhatTheActionDoes(unittest.TestCase):
 
     def test_the_changelog_has_the_entry_on_top_and_says_what_it_must(self):
         headings = re.findall(r"(?m)^## (.*)$", CHANGELOG)
-        self.assertEqual(headings[1], ENTRY)
-        self.assertTrue(headings[2].startswith("An AI Gateway for the agents' model calls, step 2 of 2"), "the entries of the two steps follow")
-        entry = CHANGELOG.split("\n## ")[2]
+        self.assertEqual(headings[2], ENTRY)
+        self.assertTrue(headings[3].startswith("An AI Gateway for the agents' model calls, step 2 of 2"), "the entries of the two steps follow")
+        entry = CHANGELOG.split("\n## ")[3]
         leads = ["**What was found.**", "**What changed.**", "**What was checked.**", "**Not checked.**", "**Who decides, and what a person does.**"]
         positions = [entry.index(lead) for lead in leads]
         self.assertEqual(positions, sorted(positions))
@@ -597,7 +601,7 @@ class TheDocumentsSayWhatTheActionDoes(unittest.TestCase):
         self.assertRegex(flat_entry.split("**What was checked.**")[1].split("**Not checked.**")[0], r"\d,\d{3} tests", "and it says how many tests passed")
 
     def test_nothing_of_the_owners_environment_is_in_what_this_change_wrote(self):
-        entry = CHANGELOG.split("\n## ")[2]
+        entry = CHANGELOG.split("\n## ")[3]
         for label, part in (("the template of the subnet", SUBNET), ("the section of the record", self.record_section()), ("the entry", entry)):
             self.assertNotRegex(part, r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}", f"{label}: no id")
         for label, part in (("the section of the record", self.record_section()), ("the entry", entry)):

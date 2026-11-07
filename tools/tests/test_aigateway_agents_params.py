@@ -29,11 +29,7 @@ SETTINGS = {
     "ENV_BUDGET_AMOUNT": "25",
     "ENV_ALERT_EMAILS": "owner@example.com",
     "ENV_BUDGET_START": "2026-11-01",
-    "GATEWAY_RESOURCE_ID": "/subscriptions/66666666-7777-8888-9999-000000000000/resourceGroups/rg-gateway/providers/Microsoft.ApiManagement/service/example-apim",
     "GATEWAY_APPINSIGHTS_ID": "/subscriptions/66666666-7777-8888-9999-000000000000/resourceGroups/rg-gateway/providers/microsoft.insights/components/example-insights",
-    "GATEWAY_PRINCIPAL_ID": "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE",
-    "GATEWAY_CLIENT_ID": "bbbbbbbb-1111-2222-3333-cccccccccccc",
-    "RECORDING_FRAGMENTS": "true",
     "RECORDING_READER_IDS": "12345678-1234-1234-1234-123456789012",
     "CASES_SYSTEM_PRINCIPAL_ID": "12345678-dddd-eeee-ffff-123456789012",
     "ENV_FOUNDRY_PROJECT_EXISTS": "true",
@@ -44,27 +40,6 @@ MODELS = [
     {"name": "gpt-6-luna", "version": "2026-09-22", "sku": "DataZoneStandard", "capacity": 20, "agentCapacity": 20, "retirementDate": "2028-03-11"},
     {"name": "gpt-6.1-sol", "version": "2026-09-29", "sku": "DataZoneStandard", "capacity": 20, "agentCapacity": 50, "retirementDate": "2028-03-11"},
 ]
-CONTRACT = {"name": "meternaut-agents", "description": "A contract for the tests.", "apis": ["universal-llm-api", "azure-openai-api"], "allowedModels": ["gpt-6-luna", "gpt-6.1-sol"],
-            "tokensPerMinute": 10000, "tokenQuotaPerMonth": 2000000}
-POLICY = """<policies>
-    <inbound>
-        <base />
-        <include-fragment fragment-id="set-llm-requested-model" />
-        <set-variable name="allowedModels" value="@@ALLOWED_MODELS@@" />
-        <llm-token-limit counter-key="@(context.Subscription.Id)" tokens-per-minute="@@TOKENS_PER_MINUTE@@" estimate-prompt-tokens="false" token-quota="@@TOKEN_QUOTA@@" token-quota-period="Monthly" />
-        <set-variable name="enableResponseHeaders" value="@(true)" />
-    </inbound>
-    <backend>
-        <base />
-    </backend>
-    <outbound>
-        <base />
-    </outbound>
-    <on-error>
-        <base />
-    </on-error>
-</policies>
-"""
 LIMITS = [
     {"type": "tokenLimit", "count": 50000, "period": "minute", "counterKey": ["identity"], "scope": "workspace"},
     {"type": "requestRateLimit", "callsPerPeriod": 60, "periodSeconds": 60, "counterKey": ["identity"], "scope": "workspace"},
@@ -76,25 +51,23 @@ PROJECT_PRINCIPAL = SETTINGS["FOUNDRY_PROJECT_PRINCIPAL_ID"]
 
 # What the builder wrote for exactly these inputs on main before this change (the files byte for byte, and what it printed). While the switch is False the hashes are what they were.
 # The hashes of the files are of their LF form: the builder writes with the platform's line ending (CRLF on Windows, LF on the runner), and build() below reads the files with LF.
-# Two entries were re-recorded on purpose, by the change that undoes what Meternaut added to the owner's API Management instance (the Detective and the Skeptic call the models of the
-# Foundry project directly, and the app reads no key): cases.parameters.json lost gatewayUrl, gatewayProductSubscriptionId, modelDetective and modelSkeptic (the template's defaults apply to
-# the two models) and is now written without a contract, and the output lost the line gateway_url, which only the steps of the cases action read. Every other file is what it was.
+# Re-recorded on purpose, by the changes that undo what Meternaut added to the owner's API Management instance (2026-11-07). First change: cases.parameters.json lost gatewayUrl,
+# gatewayProductSubscriptionId, modelDetective and modelSkeptic (the Detective and the Skeptic call the models of the Foundry project directly, and the app reads no key; the template's defaults apply to
+# the two models), and the output lost the line gateway_url. Second change (the retirement of the actions that made objects on the instance): environment.parameters.json and recording.parameters.json lost
+# gatewayPrincipalId (no role is made for a gateway identity any more), the four files logger, eventhub-loggers, kit and contract are not written at all, and the output lost the lines gateway_subscription,
+# gateway_resource_group, gateway_name, identity_name and principal_known. Every other file is what it was.
 GOLDEN = {
     "aigateway-policies.json": "e6d99d1633ab16afc3410e50dbdcb7e290f0e125f4283b4b19f63a8eebb8395c",
     "aigateway-subnet.parameters.json": "a2a16b02fd7a1d54d8949ad89796d4ea89d6bf1907db1f5b621205699a5a0196",
     "aigateway.parameters.json": "77593485df872804654eae54c91724ac5fd0a50b4afd33a625bf59d3a542d0a5",
     "cases.parameters.json": "151f0b102aa94b9b4004113dcc4d4b129b514129461cbf3b11d4b648100360b7",
-    "contract.parameters.json": "fac642ef8d4e8df00202bc6fa0a612dac23f6f4aa976a1e90c99230f872a5b34",
-    "environment.parameters.json": "b3518aceb6b97b21d7facb4704d1321b7830db54acc76e44e566f02c6c711a30",
-    "eventhub-loggers.parameters.json": "bfbbf7eca0ec37809376167054e45b66fea66b813f700fb274fa378c9a3cd918",
+    "environment.parameters.json": "f96d09a1eab2372a668e50d5a1ecee07faf2d7b70cacd3986ac4868b45379bed",
     "foundry.parameters.json": "ed5e8a14727de3595a0ab4bc5b0fcc4979c7d35b088536fce62f80651e59e99d",
-    "kit.parameters.json": "06caf0bfdc71fa354484739384af1051b4d6905ddb0ef0c7116f54f779436206",
-    "logger.parameters.json": "c927ceeb63d035fcd792dfad822f47ac8dcd01a11fec4cc48adc068a1a234d03",
     "operator.parameters.json": "78972401f11e209ef6bbdbba2c7cab95921b372e1dc570765d953aa01b2b2f90",
     "planted.parameters.json": "62ecf7282a7bf4c968db91a3943ba20a99dc7ac04fcabb7816aadf6f68f9759c",
-    "recording.parameters.json": "eb65c2e5146f0154ec93c838266d4ecbe6b125549ecde970a884082630aa2cbb",
+    "recording.parameters.json": "1151a3f2462d5cd97d2f2d7be9839c8fdd4a9f6c84a7fd38c0b356cb35cc2064",
 }
-GOLDEN_OUTPUT = "20be29222a1f38dadbba9033213d166817b5410a71a0a3c5fbe8511e30a6310d"
+GOLDEN_OUTPUT = "e61ff4a4b1cae124c45659f163fdf20988ca4e526d89bf93206fd3f93c462f67"
 
 FOUNDRY = (ROOT / "environment" / "foundry" / "main.bicep").read_text(encoding="utf-8")
 CASES = (ROOT / "environment" / "cases" / "main.bicep").read_text(encoding="utf-8")
@@ -102,14 +75,14 @@ CASES_CONFIG = (ROOT / "src" / "case-functions" / "cases" / "config.py").read_te
 
 
 def build(env, models=None, preview=False, switch=False, full=True):
-    """Runs the builder like the workflow does, with the contract and the AI Gateway's limits (full), and returns the exit code, what it printed, what it said and the files as bytes."""
+    """Runs the builder like the workflow does, with the AI Gateway's limits (full), and returns the exit code, what it printed, what it said and the files as bytes."""
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)
-        for name, content in (("models.json", json.dumps(MODELS if models is None else models)), ("contract.json", json.dumps(CONTRACT)), ("policy.xml", POLICY), ("limits.json", json.dumps(LIMITS))):
+        for name, content in (("models.json", json.dumps(MODELS if models is None else models)), ("limits.json", json.dumps(LIMITS))):
             (tmp / name).write_text(content, encoding="utf-8")
         arguments = ["build", "--models", str(tmp / "models.json"), "--out-dir", str(tmp / "out"), *(["--preview"] if preview else [])]
         if full:
-            arguments += ["--contract", str(tmp / "contract.json"), "--contract-policy", str(tmp / "policy.xml"), "--aigateway-policies", str(tmp / "limits.json")]
+            arguments += ["--aigateway-policies", str(tmp / "limits.json")]
         out, err = io.StringIO(), io.StringIO()
         with mock.patch.object(ep, "AGENTS_VIA_AI_GATEWAY", switch), redirect_stdout(out), redirect_stderr(err):
             code = ep.main(arguments, environ=env)
@@ -171,7 +144,7 @@ class TheSwitchIsOffAndNothingDiffers(unittest.TestCase):
     def test_no_output_is_added_while_it_is_off(self):
         _, out, _, _ = build(SETTINGS)
         self.assertFalse([key for key in outputs(out) if "ai_gateway" in key or key == "aigateway_connection_name"])
-        self.assertEqual(len(out.splitlines()), 45)
+        self.assertEqual(len(out.splitlines()), 37)
 
     def test_a_switch_that_is_not_true_or_false_is_refused_by_name(self):
         for bad in ("False", "no", 0, 1, None, "true"):

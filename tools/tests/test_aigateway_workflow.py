@@ -477,7 +477,7 @@ class TheStepsAreWrittenAsTheRulesSay(unittest.TestCase):
                     self.assertIn("        if: always() && inputs.action == 'aigateway-check' && steps.aigw_check.outcome != 'skipped'\n", step(name))
                 else:
                     self.assertIn(f"        if: inputs.action == '{action}'\n", step(name), name)
-        self.assertEqual(len(re.findall(r"inputs\.action == 'aigateway'", WORKFLOW)), len(APPLY), "these steps, and no other step that runs for this action")
+        self.assertEqual(len(re.findall(r"inputs\.action == 'aigateway'", WORKFLOW)), len(APPLY) + 1, "these steps and the guard that stops the action at the first step of the job (test_ai_gateway_guard.py), and no other step that runs for this action")
         self.assertEqual(len(re.findall(r"inputs\.action == 'aigateway-check'", WORKFLOW)), len(CHECKING), "the steps of the check, one condition each, and nothing else")
         self.assertIn("id: aigateway\n", step(DEPLOY))
         self.assertIn("id: aigw_operator\n", step(FIND))
@@ -544,7 +544,8 @@ class TheStepsAreWrittenAsTheRulesSay(unittest.TestCase):
         self.assertNotRegex(network, r"--method (put|patch|post|delete)")
         params = step("Work out the settings")
         self.assertIn("ENV_AIGW_SUBNET_EXISTS: ${{ steps.network.outputs.aigw_subnet_exists }}", params)
-        self.assertIn('contract_files="--contract environment/contract.json --contract-policy environment/gateway/contract-policy.xml --aigateway-policies environment/aigateway/policies.json"', params)
+        self.assertIn('policies="--aigateway-policies environment/aigateway/policies.json"', params)
+        self.assertNotIn("--contract", params, "no contract is built any more")
         self.assertIn('if [ -f "$RUNNER_TEMP/aigateway.parameters.json" ]; then', params, "the file is checked when there is one: a network with no free range has none")
         self.assertIn('--params "$RUNNER_TEMP/aigateway.parameters.json" --template "$RUNNER_TEMP/aigateway.json" --label aigateway', params)
 
@@ -562,7 +563,7 @@ class TheStepsAreWrittenAsTheRulesSay(unittest.TestCase):
         self.assertIn("--aigateway-policies environment/aigateway/policies.json", CHECKS)
 
     def test_the_preview_reads_the_foundry_resource_and_the_operator_first_and_says_why_it_waits(self):
-        preview = step("What the identity, the model side, the logger, the usage recording and the first cases would change")
+        preview = step("What the model side, the usage recording, the Foundry resource, the first cases, the Operator and the AI Gateway's templates would change")
         self.assertIn("FOUNDRY_ACCOUNT: ${{ steps.params.outputs.foundry_account_name }}", preview)
         block = preview.split("The AI Gateway, in the project's resource group")[1]
         for word in ("The AI Gateway cannot be previewed: the virtual network has no free range for its subnet",

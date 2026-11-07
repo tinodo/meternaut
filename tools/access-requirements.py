@@ -29,7 +29,8 @@ grant     A dry run: prints what is missing and the exact commands that would ma
           (it reports the difference) and refuses to run in GitHub Actions: no pipeline may hold these rights.
 retire    Removes what the file lists under "retired". It reads first: for each retired item it looks for (a) the identity, by name, in the project's
           group (it is reported and never deleted: a person removes the old identities of the two apps after this tool has taken away their grants, and the
-          deployment workflow or the owner removes the retired runner identity), (b) the assignments of the retired custom
+          deployment workflow or the owner removes the retired runner identity; the deployment identity's own retired role, W8, names an identity that
+          is in the bootstrap group and says "lookup": false, so it is not looked for), (b) the assignments of the retired custom
           role at that place and below it, whoever holds them (an identity that was deleted leaves its assignment, which the portal shows as "Identity
           not found"), and (c) the custom role itself. A dry run prints the exact commands. With --apply it runs them, with the rights of the person
           who is signed in to the Azure CLI: the assignments of that role at that place first, then the role, and only when no assignment of it
@@ -45,7 +46,7 @@ retire    Removes what the file lists under "retired". It reads first: for each 
 The places come from options or from the settings that the workflow uses: --project-subscription (ENV_SUBSCRIPTION_ID) and --project-group
 (ENV_RESOURCE_GROUP), where the identities and the two apps are; --cases-site (ACCESS_CASES_SITE) and --usage-site (ACCESS_USAGE_SITE), the names of the
 cases app and of the usage app in that group (func-meternaut-cases-* and func-meternaut-usage-*; each is needed only by the requirements of the app that it
-names); --gateway (GATEWAY_RESOURCE_ID), the API Management instance, whose resource group is where the retired custom role was defined (the item W7);
+names); --gateway (GATEWAY_RESOURCE_ID), the API Management instance, whose resource group is where the retired custom roles were defined (the items W7 and W8);
 --gateway-insights (GATEWAY_APPINSIGHTS_ID); --estate (ACCESS_ESTATE_SCOPES, comma
 separated; default: the project subscription), what the Watch reads; --workspace (ACCESS_WORKSPACE_ID; default: the workspace of the gateway's component).
 The Azure CLI is `az`, or the command in the variable AZ (for example "C:\\path\\python.exe" -IBm azure.cli).
@@ -147,6 +148,12 @@ def json_file(document):
 
 # ---- the file ------------------------------------------------------------------------------------------------------------------------------------
 
+def looked_up(item: dict) -> bool:
+    """False for a retired custom role whose holder is not looked up by name in the project's group: the deployment identity lives in the bootstrap group, so a
+    lookup there would say that it does not exist. The role is removed whole, whoever holds it, so nothing is said about an identity that was not read."""
+    return bool(item["identity"].get("lookup", True))
+
+
 def load_manifest(path: Path = MANIFEST) -> dict:
     try:
         manifest = json.loads(path.read_text(encoding="utf-8"))
@@ -190,9 +197,11 @@ def load_manifest(path: Path = MANIFEST) -> dict:
             assert item["id"] not in used, f"{item['id']}: the id of a retired item is not the id of a grant, and is used once"
             used.add(item["id"])
             assert isinstance(item["identity"], dict) and SIMPLE_NAME.match(str(item["identity"].get("name", ""))), f"{item['id']}: the identity is an object with a name"
+            assert isinstance(item["identity"].get("lookup", True), bool), f"{item['id']}: lookup is true or false"
             assert item["identity"]["name"] not in current, f"{item['id']}: a retired identity is not an identity of the file"
             assert item["place"] in manifest["places"] and item["why"], item["id"]
             if "replacedBy" in item:
+                assert looked_up(item), f"{item['id']}: the grant of an identity that is not looked up is not one that a grant replaces"
                 replacing = grants.get(item["replacedBy"])
                 assert replacing, f"{item['id']}: replacedBy is the id of a grant of the file"
                 assert (item["role"], item["place"]) == (replacing["role"], replacing["place"]), (
@@ -652,7 +661,7 @@ def find_retired(az: Az, manifest: dict, places: Places, only: str | None = None
     named: dict[tuple[str, str], list[dict]] = {}
     for item in selected_retired(manifest, only):
         name = item["identity"]["name"]
-        if name not in identities:
+        if looked_up(item) and name not in identities:
             identities[name] = principal_of(az, places, name)
         for scope in scopes_for(item["place"], places, az):
             if of_one_identity(item):
@@ -690,8 +699,11 @@ def describe_left(left: Left, identities: dict[str, str | None]) -> str:
         lines.append(f"               the custom role exists ({left.role_id}); {len(left.assigned)} assignment(s) of it at or below this place" + (":" if left.assigned else ""))
         for assignment in left.assigned:
             holder = str((assignment.get("properties") or {}).get("principalId", ""))
-            who = name if holder and holder.lower() == (identities.get(name) or "").lower() else (
-                f"{holder} (an identity that is not {name}, or one that was deleted: the portal shows that as 'Identity not found')")
+            if not looked_up(item):
+                who = f"{holder} ({name}, or another identity: every assignment of the role at this place is removed, whoever holds it)"
+            else:
+                who = name if holder and holder.lower() == (identities.get(name) or "").lower() else (
+                    f"{holder} (an identity that is not {name}, or one that was deleted: the portal shows that as 'Identity not found')")
             lines.append(f"                 {assignment['id']}  held by {who}")
     return "\n".join(lines)
 

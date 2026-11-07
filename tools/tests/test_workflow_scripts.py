@@ -43,104 +43,6 @@ def step_script(name):
     return textwrap.dedent(run.group(1))
 
 
-AZ = """#!/bin/bash
-case "$*" in
-  *"identity list"*) printf '%s' "$FAKE_IDENTITY" ;;
-  *"rest "*) printf '%s' "$FAKE_LOGGERS" ;;
-  *) echo "unexpected az call: $*" >&2; exit 9 ;;
-esac
-"""
-
-PYTHON3 = """#!/bin/bash
-if [ "$2" = "build" ]; then
-  echo "build principal=${GATEWAY_PRINCIPAL_ID-unset} client=${GATEWAY_CLIENT_ID-unset} fragments=${RECORDING_FRAGMENTS-unset} preview=$([[ " $* " == *" --preview "* ]] && echo yes || echo no)" >> "$FAKE_LOG"
-  printf 'gateway_subscription=sub1\\ngateway_resource_group=rg1\\nidentity_name=id-meternaut-gateway\\n'
-else
-  echo "check $*" >> "$FAKE_LOG"
-fi
-"""
-
-
-@unittest.skipIf(BASH is None, "no bash on this machine")
-class WorkOutTheSettings(unittest.TestCase):
-    """The shell of the step that decides what the later steps ask for, run against stand-ins for the Azure CLI and the parameter builder."""
-
-    def run_step(self, identity, loggers, action="gateway"):
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp = Path(tmp)
-            bin_dir = tmp / "bin"
-            bin_dir.mkdir()
-            for name, body in (("az", AZ), ("python3", PYTHON3)):
-                path = bin_dir / name
-                path.write_text(body, encoding="utf-8", newline="\n")
-                path.chmod(path.stat().st_mode | stat.S_IEXEC)
-            script = tmp / "step.sh"
-            script.write_text(step_script("Work out the settings"), encoding="utf-8", newline="\n")
-            log = tmp / "log.txt"
-            log.write_text("", encoding="utf-8")
-            (tmp / "out.txt").write_text("", encoding="utf-8")
-            env = {**os.environ,
-                   "PATH": f"{bin_dir.as_posix()}{os.pathsep}{os.environ['PATH']}",
-                   "ACTION": action, "FAKE_IDENTITY": identity, "FAKE_LOGGERS": loggers, "FAKE_LOG": log.as_posix(),
-                   "GITHUB_OUTPUT": (tmp / "out.txt").as_posix(), "RUNNER_TEMP": tmp.as_posix(),
-                   "GATEWAY_RESOURCE_ID": "/subscriptions/66666666-7777-8888-9999-000000000000/resourceGroups/rg1/providers/Microsoft.ApiManagement/service/apim1"}
-            done = subprocess.run([BASH, "-e", "-o", "pipefail", script.as_posix()], capture_output=True, text=True, env=env, cwd=ROOT)
-            return done, log.read_text(encoding="utf-8").splitlines(), (tmp / "out.txt").read_text(encoding="utf-8")
-
-    def builds(self, lines):
-        return [line for line in lines if line.startswith("build ")]
-
-    def test_the_identity_on_one_line_and_both_loggers_present_turns_the_fragments_on(self):
-        done, lines, out = self.run_step(f"{PRINCIPAL}\t{CLIENT}", "appinsights-logger\nusage-eventhub-logger\npii-usage-eventhub-logger\n")
-        self.assertEqual(done.returncode, 0, done.stderr)
-        self.assertEqual(self.builds(lines), ["build principal=unset client=unset fragments=unset preview=yes",
-                                              f"build principal={PRINCIPAL} client={CLIENT} fragments=true preview=no"])
-        self.assertIn("gateway_subscription=sub1", out)
-
-    def test_the_identity_on_two_lines_is_read_the_same_way(self):
-        done, lines, _ = self.run_step(f"{PRINCIPAL}\n{CLIENT}", "appinsights-logger\n")
-        self.assertEqual(done.returncode, 0, done.stderr)
-        self.assertEqual(self.builds(lines)[1], f"build principal={PRINCIPAL} client={CLIENT} fragments=false preview=no")
-
-    def test_one_logger_is_not_enough(self):
-        for loggers in ("usage-eventhub-logger\n", "pii-usage-eventhub-logger\n", "", "usage-eventhub-logger-2\npii-usage-eventhub-logger\n"):
-            done, lines, _ = self.run_step(f"{PRINCIPAL}\t{CLIENT}", loggers)
-            self.assertEqual(done.returncode, 0, done.stderr)
-            self.assertIn("fragments=false", self.builds(lines)[1], loggers)
-
-    def test_without_the_identity_the_files_that_carry_it_are_previews_and_the_run_goes_on_without_a_word_of_alarm(self):
-        for action in ("what-if", "gateway-prepare", "gateway", "recording"):
-            for identity in ("", "None", PRINCIPAL):
-                with self.subTest(action=action, identity=identity):
-                    done, lines, _ = self.run_step(identity, "usage-eventhub-logger\npii-usage-eventhub-logger\n", action)
-                    self.assertEqual(done.returncode, 0, done.stderr)
-                    self.assertEqual(self.builds(lines), ["build principal=unset client=unset fragments=unset preview=yes", "build principal= client= fragments=false preview=yes"], "the final build is the preview")
-                    self.assertIn("The gateway identity does not exist yet; the role assignment is shown with a placeholder.", done.stdout)
-                    self.assertNotIn("::warning::", done.stdout + done.stderr)
-                    self.assertNotIn("::error::", done.stdout + done.stderr)
-                    self.assertEqual([line for line in lines if line.startswith("check ")][-1].split("--label ")[1], "planted", "the files were checked as always")
-        done, _, _ = self.run_step("", "", "recording")
-        self.assertIn("The usage recording makes no role for the gateway identity then", done.stdout)
-
-    def test_only_the_actions_that_show_or_make_an_object_of_the_instance_or_give_its_identity_a_role_look_for_the_identity_and_the_loggers(self):
-        # The stand-in answers an identity and both loggers: an action that does not look for them builds its files with no identity at all.
-        for action, looks in (("what-if", True), ("gateway-prepare", True), ("gateway", True), ("recording", True), ("contract", False), ("model-side", False), ("cases", False), ("cases-run", False),
-                              ("foundry", False), ("operator", False), ("recording-check", False), ("plant", False), ("loop-check", False), ("aigateway", False), ("aigateway-check", False)):
-            with self.subTest(action=action):
-                done, lines, _ = self.run_step(f"{PRINCIPAL}\t{CLIENT}", "usage-eventhub-logger\npii-usage-eventhub-logger\n", action)
-                self.assertEqual(done.returncode, 0, done.stderr)
-                expected = f"build principal={PRINCIPAL} client={CLIENT} fragments={'true' if action in ('what-if', 'gateway') else 'false'} preview=no" if looks else "build principal= client= fragments=false preview=yes"
-                self.assertEqual(self.builds(lines)[1], expected)
-                self.assertEqual("does not use the gateway identity" in done.stdout, not looks)
-                self.assertNotIn("::warning::", done.stdout + done.stderr)
-
-    def test_every_parameter_file_is_checked_against_its_template(self):
-        done, lines, _ = self.run_step(f"{PRINCIPAL}\t{CLIENT}", "")
-        checks = [line for line in lines if line.startswith("check ")]
-        labels = [re.search(r"--label (\S+)", line).group(1) for line in checks]
-        self.assertEqual(labels, ["environment", "logger", "eventhub-loggers", "kit", "recording", "foundry", "contract", "cases", "operator", "planted"])
-
-
 def run_step_script(name, stand_ins, env, files=None, prelude=""):
     """Run the `run:` script of a step with bash, as the runner does, with stand-ins for the commands that it calls first on the PATH.
 
@@ -173,8 +75,7 @@ SYSTEM_PRINCIPAL = "3b9e2f81-6c4d-4a7e-8f10-2d5a9c7b1e44"
 FOUNDRY_SETTINGS_AZ = """#!/bin/bash
 echo "az $*" >> "$FAKE_LOG"
 case "$*" in
-  *"identity list"*"--subscription"*) printf '%s' "$FAKE_IDENTITY" ;;
-  *"/loggers?"*) printf '%s' "$FAKE_LOGGERS" ;;
+  *"identity list"*|*"/loggers"*|*"Microsoft.ApiManagement/service"*) echo "the owner's API Management instance and its identity must not be looked at: $*" >&2; exit 8 ;;
   *"/providers/Microsoft.Web/sites/"*)
     if [ "$FAKE_SYSTEM" = "FAIL" ]; then echo "$FAKE_SYSTEM_ERROR" >&2; exit 1; fi
     if [ "$FAKE_SYSTEM" = "ABSENT" ]; then echo "ERROR: (ResourceNotFound) The Resource 'Microsoft.Web/sites/func-meternaut-cases-abc123' under resource group 'rg-of-the-project' was not found." >&2; exit 1; fi
@@ -187,8 +88,8 @@ esac
 
 FOUNDRY_SETTINGS_PYTHON3 = """#!/bin/bash
 if [ "$2" = "build" ]; then
-  echo "build preview=$([[ " $* " == *" --preview "* ]] && echo yes || echo no) foundry_project=${ENV_FOUNDRY_PROJECT_EXISTS-unset} cases_system=[${CASES_SYSTEM_PRINCIPAL_ID-unset}]" >> "$FAKE_LOG"
-  printf 'gateway_subscription=sub1\\ngateway_resource_group=rg1\\nidentity_name=id-meternaut-gateway\\ncases_function_app_name=func-meternaut-cases-abc123\\nfoundry_account_name=aif-meternaut-agents-abc123\\nfoundry_project_name=meternaut\\n'
+  echo "build preview=$([[ " $* " == *" --preview "* ]] && echo yes || echo no) foundry_project=${ENV_FOUNDRY_PROJECT_EXISTS-unset} cases_system=[${CASES_SYSTEM_PRINCIPAL_ID-unset}] retired=[${GATEWAY_PRINCIPAL_ID-unset}${GATEWAY_CLIENT_ID-unset}${RECORDING_FRAGMENTS-unset}] contract=$([[ " $* " == *" --contract"* ]] && echo yes || echo no) policies=$([[ " $* " == *" --aigateway-policies environment/aigateway/policies.json"* ]] && echo yes || echo no)" >> "$FAKE_LOG"
+  printf 'cases_function_app_name=func-meternaut-cases-abc123\\nfoundry_account_name=aif-meternaut-agents-abc123\\nfoundry_project_name=meternaut\\n'
 else
   echo "check $*" >> "$FAKE_LOG"
 fi
@@ -204,27 +105,23 @@ class WorkOutTheFoundrySettings(unittest.TestCase):
                     "/accounts/aif-meternaut-agents-abc123/projects/meternaut?api-version=2025-06-01 --query name --output tsv")
     SITE_CALL = ("az rest --method get --url https://management.azure.com/subscriptions/sub-of-the-project/resourceGroups/rg-of-the-project/providers/Microsoft.Web"
                  "/sites/func-meternaut-cases-abc123?api-version=2024-04-01 --query identity.principalId --output tsv")
-    PREVIEW = "build preview=yes foundry_project=unset cases_system=[unset]"
+    PREVIEW = "build preview=yes foundry_project=unset cases_system=[unset] retired=[unsetunsetunset] contract=no policies=yes"
     HOSTILE = "ERROR: (AuthorizationFailed) The client '40404040-4040-4040-4040-404040404040' with object id 'a404b404-0000-0000-0000-000000000404' does not have authorization"
 
-    def run_step(self, action="what-if", project="found", identity=f"{PRINCIPAL}\t{CLIENT}", system=SYSTEM_PRINCIPAL):
+    def run_step(self, action="what-if", project="found", system=SYSTEM_PRINCIPAL, **env):
         return run_step_script("Work out the settings", {"az": FOUNDRY_SETTINGS_AZ, "python3": FOUNDRY_SETTINGS_PYTHON3},
-                               {"ACTION": action, "FAKE_IDENTITY": identity, "FAKE_PROJECT": project, "FAKE_LOGGERS": "appinsights-logger\n",
+                               {"ACTION": action, "FAKE_PROJECT": project,
                                 "FAKE_SYSTEM": system, "FAKE_SYSTEM_ERROR": self.HOSTILE,
-                                "ENV_SUBSCRIPTION_ID": "sub-of-the-project", "ENV_RESOURCE_GROUP": "rg-of-the-project",
-                                "GATEWAY_RESOURCE_ID": "/subscriptions/66666666-7777-8888-9999-000000000000/resourceGroups/rg1/providers/Microsoft.ApiManagement/service/apim1"})
+                                "ENV_SUBSCRIPTION_ID": "sub-of-the-project", "ENV_RESOURCE_GROUP": "rg-of-the-project", **env})
 
     def builds(self, lines):
         return [line for line in lines if line.startswith("build ")]
 
-    def final(self, project="false", system="", preview=False):
-        return f"build preview={'yes' if preview else 'no'} foundry_project={project} cases_system=[{system}]"
+    def final(self, project="false", system=""):
+        return f"build preview=no foundry_project={project} cases_system=[{system}] retired=[unsetunsetunset] contract=no policies=yes"
 
     def user_assigned_lookups(self, lines):
-        return [line for line in lines if line.startswith("az identity list") and "--subscription" not in line]
-
-    def gateway_identity_lookups(self, lines):
-        return [line for line in lines if line.startswith("az identity list") and "--subscription" in line]
+        return [line for line in lines if line.startswith("az identity list")]
 
     def test_what_if_looks_for_the_identity_of_the_app_and_for_the_project_with_the_version_that_the_model_account_uses(self):
         done, lines, _ = self.run_step("what-if")
@@ -232,36 +129,34 @@ class WorkOutTheFoundrySettings(unittest.TestCase):
         self.assertEqual(self.builds(lines), [self.PREVIEW, self.final("true", SYSTEM_PRINCIPAL)])
         self.assertIn(self.PROJECT_CALL, lines, "existence does not need the newest version")
         self.assertIn(self.SITE_CALL, lines, "the system-assigned identity is read from the app, and the version is the one that the other reads of the app use")
-        self.assertEqual(self.user_assigned_lookups(lines), [], "the user-assigned identity that the app used before is not looked for")
+        self.assertEqual(self.user_assigned_lookups(lines), [], "no identity is listed: the user-assigned one that the app used before is not looked for, and neither is the gateway's")
         self.assertIn("The cases app's system-assigned identity exists; its principal id goes into the Foundry file.", done.stdout)
         self.assertIn("The Foundry project is in Azure: true.", done.stdout)
 
     def test_foundry_needs_the_identity_and_never_looks_for_the_project(self):
         done, lines, _ = self.run_step("foundry", project="ERROR: (AuthorizationFailed) a read that would stop the run if it were made")
         self.assertEqual(done.returncode, 0, done.stderr)
-        self.assertEqual(self.builds(lines), [self.PREVIEW, self.final("false", SYSTEM_PRINCIPAL, preview=True)])
+        self.assertEqual(self.builds(lines), [self.PREVIEW, self.final("false", SYSTEM_PRINCIPAL)])
         self.assertIn(self.SITE_CALL, lines)
         self.assertEqual([line for line in lines if "/projects/" in line], [])
-        self.assertEqual(self.user_assigned_lookups(lines), [])
-        self.assertEqual(self.gateway_identity_lookups(lines), [], "foundry has no use for the identity of the gateway")
+        self.assertEqual(self.user_assigned_lookups(lines), [], "foundry has no use for any identity of the gateway")
         self.assertIn("The action foundry does not use the Foundry project, so it is not looked for.", done.stdout)
 
     def test_cases_needs_the_project_and_never_looks_for_the_identity(self):
         done, lines, _ = self.run_step("cases", system="FAIL")
         self.assertEqual(done.returncode, 0, done.stderr)
-        self.assertEqual(self.builds(lines), [self.PREVIEW, self.final("true", "", preview=True)])
+        self.assertEqual(self.builds(lines), [self.PREVIEW, self.final("true", "")])
         self.assertIn(self.PROJECT_CALL, lines)
         self.assertEqual([line for line in lines if "Microsoft.Web/sites" in line], [], "the cases app is not given a role on the project by this action")
-        self.assertEqual(self.user_assigned_lookups(lines), [])
-        self.assertEqual(self.gateway_identity_lookups(lines), [], "cases has no use for the identity of the gateway")
+        self.assertEqual(self.user_assigned_lookups(lines), [], "cases has no use for any identity of the gateway")
         self.assertIn("The Foundry project is in Azure: true.", done.stdout)
 
     def test_every_other_action_looks_for_none_of_them_so_a_refused_read_cannot_stop_it(self):
-        for action, preview in (("loop-check", True), ("operator", True), ("recording", False)):
+        for action in ("loop-check", "operator", "recording"):
             with self.subTest(action=action):
                 done, lines, _ = self.run_step(action, project=self.HOSTILE, system="FAIL")
                 self.assertEqual(done.returncode, 0, done.stderr)
-                self.assertEqual(self.builds(lines), [self.PREVIEW, self.final(preview=preview)])
+                self.assertEqual(self.builds(lines), [self.PREVIEW, self.final()])
                 self.assertEqual([line for line in lines if "/projects/" in line or "Microsoft.Web/sites" in line], [])
                 self.assertEqual(self.user_assigned_lookups(lines), [])
                 self.assertIn(f"The action {action} does not use the Foundry project, so it is not looked for.", done.stdout)
@@ -269,7 +164,7 @@ class WorkOutTheFoundrySettings(unittest.TestCase):
     def test_an_object_id_in_capitals_is_passed_on_as_it_is(self):
         done, lines, _ = self.run_step("foundry", system=SYSTEM_PRINCIPAL.upper())
         self.assertEqual(done.returncode, 0, done.stderr)
-        self.assertEqual(self.builds(lines)[1], self.final("false", SYSTEM_PRINCIPAL.upper(), preview=True))
+        self.assertEqual(self.builds(lines)[1], self.final("false", SYSTEM_PRINCIPAL.upper()))
 
     def test_a_project_that_is_not_there_gives_false_however_the_service_says_so_and_the_final_build_still_follows(self):
         for action, answer in (("cases", "ERROR: (ResourceNotFound) The Resource 'Microsoft.CognitiveServices/accounts/x/projects/meternaut' was not found."),
@@ -311,7 +206,7 @@ class WorkOutTheFoundrySettings(unittest.TestCase):
                 with self.subTest(action=action, answer=answer):
                     done, lines, _ = self.run_step(action, system=answer)
                     self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
-                    self.assertEqual(self.builds(lines)[1], self.final("true" if action == "what-if" else "false", "", preview=action != "what-if"))
+                    self.assertEqual(self.builds(lines)[1], self.final("true" if action == "what-if" else "false", ""))
                     self.assertIn("The cases app has no system-assigned identity yet (the action cases makes the app with it); the Foundry file holds a placeholder.", done.stdout)
                     self.assertNotIn("::error::", done.stdout + done.stderr)
 
@@ -325,36 +220,43 @@ class WorkOutTheFoundrySettings(unittest.TestCase):
                 self.assertEqual(self.builds(lines), [self.PREVIEW], "no file was made with a placeholder for an identity that may be there")
                 self.assertEqual([line for line in lines if line.startswith("check ")], [])
 
-    def test_without_the_gateway_identity_cases_and_foundry_still_read_their_own_facts_and_build_their_files(self):
-        # The owner ordered the undo of what Meternaut added to his API Management instance: the gateway identity may be gone, and no action that makes nothing of the instance looks for it.
-        for action, project, system in (("cases", "true", ""), ("foundry", "false", SYSTEM_PRINCIPAL)):
-            for identity in ("", "None"):
-                with self.subTest(action=action, identity=identity):
-                    done, lines, _ = self.run_step(action, identity=identity)
-                    self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
-                    self.assertEqual(self.builds(lines), [self.PREVIEW, self.final(project, system, preview=True)],
-                                     "the facts that the action needs are read all the same, and the final files are built")
-                    self.assertEqual(self.gateway_identity_lookups(lines), [])
-                    self.assertEqual([line for line in lines if "/loggers" in line], [], "the loggers of the instance are not read either")
-                    labels = [re.search(r"--label (\S+)", line).group(1) for line in lines if line.startswith("check ")]
-                    self.assertEqual(labels, ["environment", "logger", "eventhub-loggers", "kit", "recording", "foundry", "contract", "cases", "operator", "planted"], "every file is checked against its template")
-                    self.assertIn(f"The action {action} does not use the gateway identity, so it is not looked for", done.stdout)
-                    self.assertNotIn("::warning::", done.stdout + done.stderr)
-                    self.assertNotIn("::error::", done.stdout + done.stderr)
+    ACTIONS = re.findall(r"^          - (\S+)$", re.search(r"(?ms)^      action:\n(.*?)^      \w", WORKFLOW).group(1), re.M)
 
-    def test_without_the_gateway_identity_what_if_and_recording_go_on_with_a_placeholder_and_without_a_warning(self):
-        for action in ("what-if", "recording"):
-            for identity in ("", "None"):
-                with self.subTest(action=action, identity=identity):
-                    done, lines, _ = self.run_step(action, identity=identity)
-                    self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
-                    self.assertEqual(len(self.gateway_identity_lookups(lines)), 1, "one read of the identity, and nothing after it")
-                    self.assertEqual([line for line in lines if "/loggers" in line], [], "an identity that is not there has no loggers to read")
-                    self.assertEqual(self.builds(lines)[0], self.PREVIEW)
-                    self.assertTrue(self.builds(lines)[1].startswith("build preview=yes "), self.builds(lines)[1])
-                    self.assertIn("The gateway identity does not exist yet; the role assignment is shown with a placeholder.", done.stdout)
-                    self.assertNotIn("::warning::", done.stdout + done.stderr)
-                    self.assertNotIn("::error::", done.stdout + done.stderr)
+    def test_the_actions_of_the_workflow_are_the_ones_without_the_three_that_made_objects_on_the_instance(self):
+        self.assertEqual(self.ACTIONS, ["what-if", "model-side", "recording", "recording-check", "foundry", "cases", "cases-run", "plant", "loop-check", "operator", "operator-probe", "aigateway",
+                                        "aigateway-check"])
+        for retired in ("gateway-prepare", "gateway", "contract"):
+            self.assertNotIn(retired, self.ACTIONS)
+
+    def test_no_action_looks_at_the_owners_api_management_instance_or_at_a_gateway_identity_and_every_action_builds_and_checks_its_files_without_a_word_of_alarm(self):
+        # The owner ordered the undo of what Meternaut added to his API Management instance (2026-11-07): after it the instance has no gateway identity and no loggers of ours, and nothing here
+        # looks for them. The stand-in of the Azure CLI fails any call that would: so the step has to go through for every action, with the facts that the action itself needs (cases and
+        # foundry read the project and the identity of the cases app, what-if reads both) and with no warning.
+        for action in self.ACTIONS:
+            with self.subTest(action=action):
+                done, lines, _ = self.run_step(action)
+                self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+                said = done.stdout + done.stderr
+                self.assertNotIn("::warning::", said)
+                self.assertNotIn("::error::", said)
+                self.assertNotIn("gateway identity", said, "no word about an identity that does not exist")
+                self.assertNotIn("placeholder", said.replace("the Foundry file holds a placeholder", ""))
+                for call in (line for line in lines if line.startswith("az ")):
+                    self.assertNotRegex(call, r"identity list|/loggers|ApiManagement/service|--apim", call)
+                builds = self.builds(lines)
+                self.assertEqual(builds[0], self.PREVIEW)
+                self.assertRegex(builds[1], r"^build preview=no foundry_project=\w+ cases_system=\[[0-9a-f-]*\] retired=\[unsetunsetunset\] contract=no policies=yes$", "the builder is given nothing of the retired settings")
+                labels = [re.search(r"--label (\S+)", line).group(1) for line in lines if line.startswith("check ")]
+                self.assertEqual(labels, ["environment", "recording", "foundry", "cases", "operator", "planted"], "every file is checked against its template")
+
+    def test_the_step_names_nothing_of_the_instance_its_identity_its_loggers_or_the_contract(self):
+        # The comments of the step say that it looks at none of them; the commands do not name them.
+        script = "\n".join(line for line in step_script("Work out the settings").splitlines() if not line.lstrip().startswith("#"))
+        for word in ("GATEWAY_RESOURCE_ID", "GATEWAY_PRINCIPAL_ID", "GATEWAY_CLIENT_ID", "RECORDING_FRAGMENTS", "--contract", "contract_files", "identity list", "loggers", "ApiManagement/service",
+                     "usage-eventhub-logger", "gateway_subscription", "gateway_resource_group", "identity_name", "--apim"):
+            self.assertNotIn(word, script, word)
+        self.assertIn("GATEWAY_APPINSIGHTS_ID", WORKFLOW, "the one secret of the gateway's side that is still read: the usage recording's copy jobs read that Application Insights component")
+        self.assertNotIn("GATEWAY_RESOURCE_ID", WORKFLOW)
 
     def test_the_lookups_only_read(self):
         done, lines, _ = self.run_step("what-if")
@@ -2181,7 +2083,7 @@ class WhatWasDone(unittest.TestCase):
             summary.write_text("", encoding="utf-8")
             script = tmp / "all.sh"
             script.write_text("summary_of() {\n" + step_script("What was done") + "\n}\nfor ACTION in " + " ".join(actions) + "; do\n  export ACTION\n  summary_of\ndone\n", encoding="utf-8", newline="\n")
-            env = {**os.environ, "JOB_STATUS": status, "ACCOUNT_NAME": "aif-meternaut-abc", "CONTRACT_NAME": "meternaut-pilot", "FOUNDRY_ACCOUNT": "aif-meternaut-agents-abc", "FOUNDRY_PROJECT": "meternaut",
+            env = {**os.environ, "JOB_STATUS": status, "ACCOUNT_NAME": "aif-meternaut-abc", "FOUNDRY_ACCOUNT": "aif-meternaut-agents-abc", "FOUNDRY_PROJECT": "meternaut",
                    "FOUNDRY_ENDPOINT": "https://aif-meternaut-agents-abc.services.ai.azure.com/api/projects/meternaut", "ENV_RESOURCE_GROUP": "rg-of-the-project",
                    "GITHUB_STEP_SUMMARY": summary.as_posix()}
             done = subprocess.run([BASH, "-e", "-o", "pipefail", script.as_posix()], capture_output=True, text=True, env=env, cwd=ROOT)
@@ -2198,6 +2100,16 @@ class WhatWasDone(unittest.TestCase):
                 for action, body in sections.items():
                     self.assertGreater(len(body.strip()), 60, (status, action))
 
+    def test_no_summary_speaks_of_an_action_that_made_objects_on_the_instance_or_of_a_contract_or_a_module_or_a_logger_that_is_gone(self):
+        for status in ("success", "failure"):
+            with self.subTest(status=status):
+                done, actions, sections = self.run_all(status)
+                self.assertEqual(done.returncode, 0, done.stderr)
+                self.assertEqual(sorted(sections), sorted(actions))
+                for action, body in sections.items():
+                    for word in ("gateway-prepare", "`gateway`", "`contract`", "Citadel module", "contract", "Event Hub logger", "the key of a contract", "gateway identity"):
+                        self.assertNotIn(word, body, (status, action, word))
+
     def test_the_name_of_the_retired_identity_is_printed_in_the_summary_of_the_cases(self):
         done, _, sections = self.run_all("success")
         self.assertEqual(done.returncode, 0, done.stderr)
@@ -2209,7 +2121,8 @@ class WhatWasDone(unittest.TestCase):
         self.assertIn("No resource of the estate was changed; with the investigation on, the Watch also created its agents and conversations in its own Foundry project.", finished["cases-run"])
         self.assertIn("The tokens that the lines above count are those of the Detective and the Skeptic, which call the model deployments of the agents' own Foundry project directly, with the app's identity "
                       "and no key, and so do the agents of the investigation", finished["cases-run"])
-        self.assertIn("that route was not tried before, and a failure says which route was asked and what it answered", finished["cases-run"])
+        self.assertIn("that route was tried on 2026-11-07 and both models answered, and a failure says which route was asked and what it answered", finished["cases-run"])
+        self.assertNotIn("not tried before", finished["cases-run"])
         self.assertIn("It changes no resource of the estate; with the investigation on it may also have created agents and conversations in its own Foundry project before it stopped.", failed["cases-run"])
         for body in (finished["cases-run"], failed["cases-run"]):
             for old in ("It only reads Azure, so nothing was changed", "tokens that went through the gateway", "Nothing in Azure was changed", "Calls that go through the gateway", "not through the gateway"):
