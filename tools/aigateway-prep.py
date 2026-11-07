@@ -544,8 +544,13 @@ def read_back(az: Runner, target: Target, vnet: str, subnet: str, foundry_accoun
                 problems.append("the model and its version")
             if not str(deployment.get("resourceId") or "").lower().endswith(f"/accounts/{foundry_account}/deployments/{model['name']}".lower()):
                 problems.append("the deployment that it points to")
-            if properties.get("apiFormat") != "OpenAIChatCompletions":
+            # The service does not echo `apiFormat` back (read from the live gateway on 2026-11-07: a model holds its deployment, version, policies, provider kind and its supported
+            # endpoints, and no format). So the format is judged by what the service does report: a format that is reported must be the template's, and the endpoints must list the chat completions route.
+            reported_format = properties.get("apiFormat")
+            if reported_format is not None and reported_format != "OpenAIChatCompletions":
                 problems.append("the API format")
+            if "/openai/v1/chat/completions" not in (properties.get("supportedEndpoints") or []):
+                problems.append("the chat completions endpoint")
             if len(safety) != 1 or any(safety[0].get(category) != SEVERITY for category in CATEGORIES):
                 problems.append(f"content safety at {SEVERITY} for the four categories")
             say(ok(f"The model {resource}: deployment {safe(model['name'])} version {safe(model['version'])}, content safety {SEVERITY} for the four categories") if not problems
