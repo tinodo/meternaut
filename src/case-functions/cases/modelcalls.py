@@ -1,15 +1,13 @@
-"""The model calls of the Detective and the Skeptic: a chat completion of a model deployment of the agents' own Foundry resource.
+"""The model calls of the Detective and the Skeptic: a chat completion through the AI Gateway.
 
-Every model call of Meternaut goes direct, privately and with no key, to a deployment of its own Foundry resource, the way the agents' calls do (AGENTS.md rule 15 (c)): a POST of
-`/openai/v1/chat/completions` with the app's own managed identity's token for the resource https://ai.azure.com. The first route is the project's, on the project endpoint that the
-agents use. Nothing here reads a key, and the token is registered for redaction so that no error text can hold it.
+Every model call of Meternaut goes through the AI Gateway, the governance hub of the Citadel design, and there is no direct path to a model (AGENTS.md rule 15 (c), docs/proposals/08-ai-gateway.md):
+a POST of `/default/models/openai/v1/chat/completions` on the gateway's own host (the setting AIGATEWAY_HOST), with a token of the app's own managed identity for the audience
+https://azure-api.net/aigateway, and the alias as `model`. The aliases have the names of the model deployments (environment/aigateway/main.bicep), so MODEL_DETECTIVE and MODEL_SKEPTIC name them.
+The gateway accepts only a Microsoft Entra token, so nothing here reads or sends a key; the identity needs the role AI Gateway Models User on the gateway (environment/aigateway/main.bicep gives
+it, and a new role takes up to ten minutes to apply). The gateway's own limits apply to the app as to every caller. The token is registered for redaction so that no error text can hold it.
 
-Read on Microsoft Learn on 2026-11-07. Tried on the service on 2026-11-07: a chat completion for both models was answered (cases-run), the History does not say which route answered. The project's route is the documented one: "Use reasoning models with Microsoft Foundry Models"
-(https://learn.microsoft.com/azure/foundry/foundry-models/how-to/use-chat-reasoning) calls an OpenAI client whose base is the PROJECT endpoint plus `/openai/v1`
-(https://<resource>.services.ai.azure.com/api/projects/<project>/openai/v1/chat/completions), with the token scope https://ai.azure.com/.default, and `model` is the deployment's name. The
-resource's own route (https://<resource>.services.ai.azure.com/openai/v1/chat/completions, which the pages of the single models show) stays only as the fallback: a 404 or a 405 from the
-project's route sends the call, once, to it (the same host, the same token), and the route that answers is the one used for the rest of the run. Which of the two answered on 2026-11-07 is not claimed:
-the History does not say. A failure says which routes were asked and what each answered, in plain words, and never holds the token.
+Verified on the service on 2026-11-07, with the Operator's identity (tools/aigateway-check.py): the route answers 200 with usage numbers for both aliases, 401 for a request with no token and 404 for
+an alias that does not exist. Not tried on the service: this app's own identity, which has the role only after the action aigateway has run with it.
 """
 from __future__ import annotations
 
@@ -17,24 +15,23 @@ from dataclasses import dataclass
 from typing import Callable
 
 from .config import Settings
-from .foundry import RESOURCE
-from .http import CHAT_PATH, Client, HttpError, resource_of
+from .http import AI_GATEWAY_CHAT_PATH, Client, HttpError
 from .identity import IdentityError
 from .redact import Redactor
 
+# The audience of the gateway's tokens. A managed identity asks the platform for this resource (the scope of the same name with /.default is the same audience).
+AUDIENCE = "https://azure-api.net/aigateway"
 CHAT_TIMEOUT = 90
 CHAT_RETRY_STATUSES = frozenset({429, 503})
-# What a route that the service does not serve answers: the call was not carried out, so the other route may be asked.
-ROUTE_NOT_SERVED = frozenset({404, 405})
-NO_ENDPOINT = "the Foundry project's address is not set"
+NO_GATEWAY = "the AI Gateway's host name is not set"
 
 
 class ModelError(Exception):
-    """The Foundry project or the model gave no usable answer. The text never holds the token."""
+    """The AI Gateway or the model gave no usable answer. The text never holds the token."""
 
 
 class ModelRefused(ModelError):
-    """The Foundry resource itself refused the call: the allowance is used up, or the identity or the model is not allowed."""
+    """The AI Gateway itself refused the call: its token was not accepted, the identity has no role, or a limit is used up."""
 
 
 @dataclass(frozen=True)
@@ -48,58 +45,43 @@ class Chat:
 class Models:
     def __init__(self, settings: Settings, client: Client, token: Callable[[str], str], redact: Redactor) -> None:
         self.settings, self.client, self.token, self.redact = settings, client, token, redact
-        self._first = 0  # the route that answered last: the call starts there
 
     def open(self) -> None:
         """Nothing to read first: the app's identity is the credential, and there is no key. It stays so that a run starts the way it always did."""
 
-    def routes(self) -> list[tuple[str, str]]:
-        """(what it is called in an error text, its address): the project's route, then the resource's. Empty when the project's address is not set."""
-        endpoint = self.settings.foundry_endpoint
-        if not endpoint:
-            return []
-        return [("the project's route", f"{endpoint}{CHAT_PATH}"), ("the resource's route", f"{resource_of(endpoint)}{CHAT_PATH}")]
-
     def chat(self, model: str, system: str, user: str, max_completion_tokens: int) -> Chat:
-        routes = self.routes()
-        if not routes:
-            raise ModelError(NO_ENDPOINT)
+        host = self.settings.ai_gateway_host
+        if not host:
+            raise ModelError(NO_GATEWAY)
         body = {"model": model, "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
                 "max_completion_tokens": max_completion_tokens}
         try:
-            token = self.token(RESOURCE)
+            token = self.token(AUDIENCE)
         except IdentityError as error:
-            raise ModelError(f"no token could be had for the model service ({self.redact(error)})") from None
+            raise ModelError(f"no token could be had for the AI Gateway ({self.redact(error)})") from None
         self.redact.add(token)
-        missed: list[tuple[str, HttpError]] = []
-        for index in list(range(self._first, len(routes))) + list(range(self._first)):
-            name, url = routes[index]
-            try:
-                # A call whose answer did not arrive may have been carried out and paid for, so only a refusal that says "not now" (429, 503) is repeated.
-                response = self.client.request("POST", url, headers={"Authorization": f"Bearer {token}"}, body=body, timeout=CHAT_TIMEOUT, retries=2, retry_after_max=60,
-                                               retry_statuses=CHAT_RETRY_STATUSES, retry_network=False)
-            except HttpError as error:
-                if error.status in ROUTE_NOT_SERVED:
-                    missed.append((name, error))
-                    continue
-                raise self._failure(model, name, error) from error
-            self._first = index
-            return self._read(response.json())
-        raise self._not_served(model, missed) from missed[-1][1]
+        try:
+            # A call whose answer did not arrive may have been carried out and paid for, so only a refusal that says "not now" (429, 503) is repeated.
+            response = self.client.request("POST", f"https://{host}{AI_GATEWAY_CHAT_PATH}", headers={"Authorization": f"Bearer {token}"}, body=body, timeout=CHAT_TIMEOUT, retries=2,
+                                           retry_after_max=60, retry_statuses=CHAT_RETRY_STATUSES, retry_network=False)
+        except HttpError as error:
+            raise self._failure(model, error) from error
+        return self._read(response.json())
 
     @staticmethod
-    def _failure(model: str, route: str, error: HttpError) -> ModelError:
-        """What a failed call says, in plain words: which route was asked, and what the service answered (already redacted by the client)."""
-        if error.status in (401, 403, 429):
-            return ModelRefused(f"the Foundry resource refused the model call on {route} ({error})")
+    def _failure(model: str, error: HttpError) -> ModelError:
+        """What a failed call says, in plain words: what the gateway answered and what usually causes it (the text of the error is already redacted by the client)."""
+        if error.status == 401:
+            return ModelRefused(f"the AI Gateway did not accept the app's token ({error}): the audience is {AUDIENCE}")
+        if error.status == 403:
+            return ModelRefused(f"the AI Gateway refused the app's identity ({error}): it needs the role AI Gateway Models User on the gateway, and a new role takes up to ten minutes to apply")
+        if error.status == 429:
+            return ModelRefused(f"the AI Gateway told the call to wait ({error}): a limit of the gateway or of the model deployment")
+        if error.status == 404:
+            return ModelError(f"the AI Gateway knows no alias named {model} ({error}): the aliases are the names of the model deployments")
         if error.status == 400:
-            return ModelError(f"{route} (POST {CHAT_PATH}) did not accept the call: check that {model} is a deployment of the resource and that it takes chat completions ({error})")
-        return ModelError(f"the Foundry resource gave no answer to the model call on {route} ({error})")
-
-    @staticmethod
-    def _not_served(model: str, missed: list[tuple[str, HttpError]]) -> ModelError:
-        said = " and ".join(f"{name} answered {error.status}" for name, error in missed)
-        return ModelError(f"no chat completions route took the call: POST {CHAT_PATH}, {said}. Check that {model} is a deployment of the resource ({missed[-1][1]})")
+            return ModelError(f"the AI Gateway did not accept the call ({error}): check that {model} is an alias that takes chat completions, and the content safety of the gateway")
+        return ModelError(f"the AI Gateway gave no answer to the model call ({error})")
 
     @staticmethod
     def _read(data: object) -> Chat:
@@ -109,9 +91,9 @@ class Models:
             usage = data.get("usage") or {}  # type: ignore[union-attr]
             prompt, completion, total = (int(usage.get(name, 0)) for name in ("prompt_tokens", "completion_tokens", "total_tokens"))
         except (KeyError, IndexError, TypeError, ValueError, AttributeError) as error:
-            raise ModelError("the answer of the Foundry resource is not a completion") from error
+            raise ModelError("the answer of the AI Gateway is not a completion") from error
         if min(prompt, completion, total) < 0:
-            raise ModelError("the answer of the Foundry resource reports a usage that is not valid")
+            raise ModelError("the answer of the AI Gateway reports a usage that is not valid")
         if not isinstance(text, str) or not text.strip():
             reason = choice.get("finish_reason") if isinstance(choice, dict) else None
             raise ModelError("the model gave no text" + (" (it used its whole completion budget on its reasoning)" if reason == "length" else ""))

@@ -6,7 +6,7 @@ import re
 from dataclasses import dataclass
 from typing import Mapping
 
-from .http import FOUNDRY_ENDPOINT
+from .http import AI_GATEWAY_HOST, FOUNDRY_ENDPOINT
 
 # The client id of a user-assigned managed identity that the app runs as. Not set or empty: the app runs as its own system-assigned identity, which is what
 # the platform's token endpoint answers for when no client id is asked for.
@@ -19,6 +19,10 @@ SCOPE_SUBSCRIPTIONS = "SCOPE_SUBSCRIPTIONS"
 SCOPE_ALL_SUBSCRIPTIONS = "SCOPE_ALL_SUBSCRIPTIONS"
 MODEL_DETECTIVE = "MODEL_DETECTIVE"
 MODEL_SKEPTIC = "MODEL_SKEPTIC"
+# The host of the AI Gateway (the service reports it as properties.frontend.defaultHostname; the workflow reads it from the service and environment/cases/main.bicep sets it). Every model call of
+# the Detective and the Skeptic goes to it, and to no other address (AGENTS.md rule 15 (c)), so the Watch does not start without it. MODEL_DETECTIVE and MODEL_SKEPTIC name aliases of the gateway,
+# which have the names of the deployments (environment/aigateway/main.bicep).
+AIGATEWAY_HOST = "AIGATEWAY_HOST"
 MAX_CASES_PER_RUN = "MAX_CASES_PER_RUN"
 EVENTHUB_CASES_CONTROL_NAME = "EVENTHUB_CASES_CONTROL_NAME"
 
@@ -48,13 +52,13 @@ DEFAULT_INVESTIGATE_SECONDS = 420
 LIMIT_INVESTIGATE_SECONDS = 600
 
 # SCOPE_SUBSCRIPTIONS is required unless SCOPE_ALL_SUBSCRIPTIONS is on (load below): the template always sets it, as the fallback.
-REQUIRED = (SCOPE_SUBSCRIPTIONS, MODEL_DETECTIVE, MODEL_SKEPTIC, MAX_CASES_PER_RUN, EVENTHUB_CASES_CONTROL_NAME)
+REQUIRED = (SCOPE_SUBSCRIPTIONS, MODEL_DETECTIVE, MODEL_SKEPTIC, AIGATEWAY_HOST, MAX_CASES_PER_RUN, EVENTHUB_CASES_CONTROL_NAME)
 OPTIONAL = {MAX_TOKENS_PER_RUN: str(LIMIT_TOKENS_PER_RUN), MAX_COMPLETION_TOKENS: str(LIMIT_COMPLETION_TOKENS), RUN_DEADLINE_SECONDS: str(LIMIT_DEADLINE_SECONDS),
             FOUNDRY_MODEL_INVESTIGATOR: DEFAULT_MODEL_INVESTIGATOR, FOUNDRY_MODEL_SKEPTIC: DEFAULT_MODEL_SKEPTIC,
             INVESTIGATE_MAX_CALLS: str(DEFAULT_INVESTIGATE_CALLS), INVESTIGATE_MAX_SECONDS: str(DEFAULT_INVESTIGATE_SECONDS)}
 
 GUID = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
-# The name of a model deployment of the Foundry resource of the agents: the Detective and the Skeptic name theirs by it, and so do the agents.
+# The name of a model of the Detective and the Skeptic: an alias of the AI Gateway, which has the name of the model deployment of the agents' own Foundry resource, and so do the agents.
 MODEL = re.compile(r"^[a-z0-9][a-z0-9.-]{1,63}$")
 # The name of a model deployment in a Foundry project.
 DEPLOYMENT = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
@@ -79,6 +83,8 @@ class Settings:
     max_tokens_per_run: int
     max_completion_tokens: int
     deadline_seconds: int
+    # The host of the AI Gateway: the only address of a model call. Empty only in a Settings that a test builds by hand (a chat then refuses to start); load() never gives an empty one.
+    ai_gateway_host: str = ""
     foundry_endpoint: str | None = None
     foundry_model_investigator: str = DEFAULT_MODEL_INVESTIGATOR
     foundry_model_skeptic: str = DEFAULT_MODEL_SKEPTIC
@@ -154,6 +160,11 @@ def load(env: Mapping[str, str] | None = None) -> Settings:
             problems.append(f"{name} is a model name")
     if env.get(MODEL_DETECTIVE) and env.get(MODEL_DETECTIVE) == env.get(MODEL_SKEPTIC):
         problems.append(f"{MODEL_DETECTIVE} and {MODEL_SKEPTIC} are the same model, and the Skeptic has to be another model than the Detective")
+    raw_host = env.get(AIGATEWAY_HOST) or ""
+    gateway_host = raw_host.strip().lower()
+    if raw_host and (not AI_GATEWAY_HOST.fullmatch(gateway_host) or len(gateway_host) > 253):
+        problems.append(f"{AIGATEWAY_HOST} is the host name of the AI Gateway, under .ai.gateway.azure.com, without a scheme, a port or a path")
+        gateway_host = ""
     max_cases = _integer(env, MAX_CASES_PER_RUN, 1, LIMIT_CASES, str(LIMIT_CASES), problems)
     max_tokens = _integer(env, MAX_TOKENS_PER_RUN, 1000, LIMIT_TOKENS_PER_RUN, OPTIONAL[MAX_TOKENS_PER_RUN], problems)
     max_completion = _integer(env, MAX_COMPLETION_TOKENS, 100, LIMIT_COMPLETION_TOKENS, OPTIONAL[MAX_COMPLETION_TOKENS], problems)
@@ -170,6 +181,7 @@ def load(env: Mapping[str, str] | None = None) -> Settings:
         max_tokens_per_run=max_tokens,
         max_completion_tokens=max_completion,
         deadline_seconds=deadline,
+        ai_gateway_host=gateway_host,
         all_subscriptions=all_subscriptions,
         **investigation,
     )

@@ -1,16 +1,17 @@
 // The first cases of Meternaut: the function app that finds leads in the estate that its identity can read, lets two model roles work on each one
-// through the model deployments of the agents' own Foundry project, and writes every step to a History that a workbook shows (docs/proposals/02-first-cases.md).
+// through the AI Gateway, and writes every step to a History that a workbook shows (docs/proposals/02-first-cases.md).
 //
 //   timer (daily) or one control event --> Watch --> Resource Graph, Advisor, Cost Management (read only)
-//   Watch --> Detective and Skeptic (chat completions on the Foundry project, direct and keyless) --> guards in code --> one telemetry line per step --> workbook
+//   Watch --> Detective and Skeptic (chat completions through the AI Gateway, with the app's identity and no key) --> guards in code --> one telemetry line per step --> workbook
 //
 // What it holds: one user-assigned identity (the console's sign-in), a Basic (B1, Linux, always on) plan with the function app, which has a system-assigned identity of
 // its own, and the subnet that the plan is integrated with, one more event hub (the control hub) in the namespace of the usage recording, the roles that connect them, a
 // longer retention for the traces table of the workspace, and the History workbook.
 //
 // Identities, and no right to change Azure. The app's own system-assigned identity reads the subscriptions that it was given the read-only roles for, and their cost lines, stores the
-// records, holds Foundry User on its own Foundry project (a role that environment/foundry/main.bicep gives, inside the project's group: it lets the app make and run its agents
-// and ask the model deployments of that project for a chat completion), and holds the roles below that are for the app. The owner prefers system-assigned identities, so it took over from the user-assigned identity
+// records, holds Foundry User on its own Foundry project (a role that environment/foundry/main.bicep gives, inside the project's group: it lets the app make and run its agents),
+// holds AI Gateway Models User on the AI Gateway (a role that environment/aigateway/main.bicep gives, in the same group: it lets the app call the gateway's models, which is how every model
+// call of the Detective and the Skeptic goes), and holds the roles below that are for the app. The owner prefers system-assigned identities, so it took over from the user-assigned identity
 // `id-meternaut-cases` in two steps (environment/BOOTSTRAP.md): first it was given the roles of the old identity next to it, and a person gave it the roles outside this
 // group; then the settings moved to it and the old identity was taken off the app. This template no longer makes the old identity and no deployment removes it: a person
 // removes it, and what it still holds, after `tools/access-requirements.py retire` has taken away its grants outside this group. The object id of a system-assigned
@@ -49,8 +50,7 @@
 // the landing zone's DNS. The app on it then cannot resolve a name, and cannot start. That happened to the first subnet (snet-web) on
 // 2026-11-05, in the second deploy of this template, and the subnet was replaced by this one (snet-cases).
 //
-// No key of any kind (AGENTS.md rule 23): the app's host storage, its Event Hubs trigger and its telemetry use its identity, its calls to the model deployments of the
-// Foundry project carry its identity's token, and its code is pushed with the deployment workflow's own identity token (no deployment password). The app reads no key at all.
+// No key of any kind (AGENTS.md rule 23): the app's host storage, its Event Hubs trigger and its telemetry use its identity, its calls to the AI Gateway carry its identity's token, and its code is pushed with the deployment workflow's own identity token (no deployment password). The app reads no key at all.
 //
 // The app's system-assigned identity can read nothing until its Reader and Cost Management Reader roles are given, outside this template, by a person on the owner's
 // written word (environment/BOOTSTRAP.md, AGENTS.md rule 18), because the deployment workflow's identity has no right there and must not get one. A person gives them
@@ -59,9 +59,11 @@
 //
 // The agents: when the Foundry resource of the agents exists (environment/foundry/main.bicep, the action foundry), the workflow passes the address of its
 // project, and the app then lets agents of that project investigate the estate (the settings FOUNDRY_* and INVESTIGATE*). The app signs in to the project with
-// its own identity, and the template of the Foundry resource gives that identity its role on the project. Without the address the investigation is off, and so are the model calls
-// of the Detective and the Skeptic, which are chat completions on the same project: they are what judges the waste that Meternaut planted itself, and every one of them ends in an
-// error that says so (the first run of the action cases-run shows whether the project takes them).
+// its own identity, and the template of the Foundry resource gives that identity its role on the project. Without the address the investigation is off.
+//
+// The model calls of the Detective and the Skeptic need the AI Gateway (environment/aigateway/main.bicep, the action aigateway), which is the one address that they call: the workflow reads its host
+// name from the service and passes it as aiGatewayHost, and the action cases stops when the gateway is not there. They are what judges the waste that Meternaut planted itself, and every one of them ends
+// in an error that says so when the app's identity does not yet hold AI Gateway Models User on the gateway (the action aigateway gives it, once this app has its identity).
 //
 // Deployed only by the workflow .github/workflows/deploy-hub.yml, action "cases" (AGENTS.md rule 18). The code of the function app
 // is published by the same action, from src/case-functions. A Basic plan cannot take over a Flex Consumption app: the action removes
@@ -107,11 +109,16 @@ param scopeSubscriptions string
 @description('True: the Watch reads every subscription that the app\'s own system-assigned identity can read (the list that Azure Resource Manager gives it at the start of each run). A person widens or narrows that list with the read-only roles Reader and Cost Management Reader, at a subscription or at the management group above it, outside this template (AGENTS.md rule 18): this parameter grants nothing, and the one resource group where the console may run a change stays the one below. False: only scopeSubscriptions. The parameter builder (tools/environment-params.py) passes true.')
 param scopeAllSubscriptions bool = false
 
-@description('Model deployment of the Detective: a deployment of the Foundry resource of the agents (environment/models.json), which the Detective calls for a chat completion on the Foundry project, as the agents call theirs.')
+@description('Model of the Detective: an alias of the AI Gateway, which has the name of a model deployment of the Foundry resource of the agents (environment/models.json). The Detective calls it for a chat completion through the AI Gateway, as every model call of Meternaut goes (AGENTS.md rule 15 (c)).')
 param modelDetective string = 'gpt-6-luna'
 
-@description('Model deployment of the Skeptic, in the same resource. It has to be another model than the Detective: the app refuses to start with the same model for both.')
+@description('Model of the Skeptic, an alias of the same gateway. It has to be another model than the Detective: the app refuses to start with the same model for both.')
 param modelSkeptic string = 'gpt-6.1-sol'
+
+@description('The host name of the AI Gateway, as the service reports it (properties.frontend.defaultHostname, under .ai.gateway.azure.com). The only address that the Detective and the Skeptic call: the deployment workflow reads it from the service, and the action cases stops when the gateway is not there. The app refuses to start without it.')
+@minLength(22)
+@maxLength(253)
+param aiGatewayHost string
 
 @description('Most cases that one run takes up. The app refuses a higher number than 3.')
 @minValue(1)
@@ -440,6 +447,9 @@ resource functionApp 'Microsoft.Web/sites@2024-04-01' = {
         { name: 'SCOPE_ALL_SUBSCRIPTIONS', value: scopeAllSubscriptions ? 'true' : 'false' }
         { name: 'MODEL_DETECTIVE', value: modelDetective }
         { name: 'MODEL_SKEPTIC', value: modelSkeptic }
+        // The AI Gateway: the one address of every model call of the Detective and the Skeptic. The app's own identity calls it with a token for https://azure-api.net/aigateway and holds the role
+        // AI Gateway Models User on the gateway (environment/aigateway/main.bicep gives it). No key: the gateway accepts only a Microsoft Entra token.
+        { name: 'AIGATEWAY_HOST', value: aiGatewayHost }
         { name: 'MAX_CASES_PER_RUN', value: string(maxCasesPerRun) }
         { name: 'STORE_ACCOUNT_NAME', value: storage.name }
         // The one resource group, in the one subscription, in which the console runs a change (it refuses one anywhere else). Azure allows the change only when the
@@ -609,7 +619,7 @@ resource historyWorkbook 'Microsoft.Insights/workbooks@2023-06-01' = {
 
 output functionAppName string = functionApp.name
 output functionAppId string = functionApp.id
-@description('Principal id of the function app\'s system-assigned identity. It reads what two roles let it read, Reader and Cost Management Reader, on the pilot subscription or on the tenant root management group: a person gives them (environment/BOOTSTRAP.md). The Foundry resource gives it its role on the project, Foundry User, which it also uses for the chat completions of the Detective and the Skeptic. It reads no key and holds no other role.')
+@description('Principal id of the function app\'s system-assigned identity. It reads what two roles let it read, Reader and Cost Management Reader, on the pilot subscription or on the tenant root management group: a person gives them (environment/BOOTSTRAP.md). The Foundry resource gives it its role on the project, Foundry User, and the AI Gateway gives it AI Gateway Models User, which it uses for the chat completions of the Detective and the Skeptic. It reads no key and holds no other role.')
 output casesSystemPrincipalId string = functionApp.identity.principalId
 @description('Principal id of the identity that the console\'s sign-in presents to Microsoft Entra: the federated credential of the app registration names it. It holds no role.')
 output authIdentityPrincipalId string = authIdentity.properties.principalId
