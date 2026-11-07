@@ -490,7 +490,7 @@ class Foundry:
         return self.redact(": ".join(part for part in parts if part))[:WORDS_LIMIT]
 
     def _code(self, error: object) -> str:
-        """The code of an error object of the service when it is a plain token (letters, digits and . _ -, at most 64) that the redactor leaves alone, and "" otherwise. It is the one part of an
+        """The code of an error object of the service when it is a plain token (letters, digits and . _ -, at most 24) that the redactor leaves alone, and "" otherwise. It is the one part of an
         answer that the fixed words of route_failure quote."""
         value = error.get("code") if isinstance(error, dict) else None
         if isinstance(value, int) and not isinstance(value, bool):

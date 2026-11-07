@@ -152,7 +152,7 @@ A run of the Investigator that gives an answer, with the model `aigateway/gpt-6.
 | `aigateway`, early | The Foundry project is not in Azure | The identity of the project cannot be read | Run `foundry` first. The gateway exists, so the switch does not stop it |
 | `foundry`, early | The AI Gateway is not in Azure | The host name cannot be read | Run `aigateway` first |
 | `foundry`, the deployment | Azure refuses the connection and names it | The service does not take this shape for this target (the category, the `authType`, the audience or the target) | Nothing else changed: the connection comes before the private endpoint, so the endpoint and the rest are as they were. The owner decides: another shape, a key (his decision under rule 23; no path for it is built) or the direct route (the switch back to False) |
-| `foundry`, the read-back | One field differs, or a credential is held | The service took the connection and stored something else | The same decision. A credential of any kind is a stop |
+| `foundry`, the read-back | One field differs, or a credential is held | The service took the connection and stored something else | The same decision. A credential of any kind is a stop. An audience that the service does not return may only mean that a GET does not show it: look at the connection in the portal before the owner decides |
 | `cases`, before the deploy | The connection does not exist | The app would name a model that nothing resolves | Run `aigateway` and then `foundry`. Nothing was deployed |
 | `cases-run`, the History | "the model call through the connection aigateway failed: …" | One of the causes below | The check that the words give |
 
