@@ -54,7 +54,7 @@ def world(policies=None, keys=("master",)):
     for model in MODELS:
         resource = model["name"].replace(".", "-")
         models.append({"name": resource, "properties": {
-            "displayName": model["name"], "apiFormat": "OpenAIChatCompletions",
+            "displayName": model["name"], "providerKind": "Foundry", "supportedEndpoints": ["/openai/v1/chat/completions", "/openai/v1/responses"],
             "deployment": {"resourceId": f"{ACCOUNT_ID}/deployments/{model['name']}", "modelName": model["name"], "modelVersion": model["version"]},
             "policies": [{"type": "contentSafety", "hateSeverity": "Medium", "violenceSeverity": "Medium", "sexualSeverity": "Medium", "selfHarmSeverity": "Medium", "scope": "resource"}]}})
         aliases.append({"name": model["name"], "properties": {
@@ -545,6 +545,8 @@ class ReadBack(unittest.TestCase):
             "a model has another version": (models(lambda m: m[0]["properties"]["deployment"].update(modelVersion="2000-01-01")), "The model gpt-6-luna differs from its template: the model and its version"),
             "a model points to another deployment": (models(lambda m: m[0]["properties"]["deployment"].update(resourceId=ACCOUNT_ID + "/deployments/other")), "the deployment that it points to"),
             "a model has another API format": (models(lambda m: m[1]["properties"].update(apiFormat="OpenAIResponses")), "the API format"),
+            "a model does not list the chat completions endpoint": (models(lambda m: m[0]["properties"].update(supportedEndpoints=["/openai/v1/responses"])), "the chat completions endpoint"),
+            "a model lists no endpoint at all": (models(lambda m: m[1]["properties"].pop("supportedEndpoints")), "the chat completions endpoint"),
             "content safety is at High for one category": (models(lambda m: m[0]["properties"]["policies"][0].update(hateSeverity="High")), "content safety at Medium for the four categories"),
             "content safety is missing": (models(lambda m: m[0]["properties"].update(policies=[])), "content safety at Medium for the four categories"),
             "content safety is there twice": (models(lambda m: m[0]["properties"]["policies"].append(copy.deepcopy(m[0]["properties"]["policies"][0]))), "content safety at Medium"),
