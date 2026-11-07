@@ -1733,7 +1733,7 @@ class Foundry(unittest.TestCase):
         return match.group(1)
 
     def test_it_declares_the_resources_of_the_design_and_makes_no_dns_no_network_and_no_gateway_object(self):
-        self.assertEqual(set(self.found), {"insights", "account", "guardrail", "modelDeployment", "project", "projectPublishesTraces", "tracesConnection", "privateEndpoint",
+        self.assertEqual(set(self.found), {"insights", "account", "guardrail", "modelDeployment", "project", "projectPublishesTraces", "tracesConnection", "aiGatewayConnection", "privateEndpoint",
                                            "casesMayUseTheAgents"})
         self.assertRegex(self.source, r"(?m)^resource insights 'Microsoft.Insights/components@2020-02-02' existing = ")
         for word in ("privateDnsZones", "privateDnsZoneGroups", "virtualNetworkLinks", "virtualNetworkPeerings", "routeTables", "Microsoft.ApiManagement",
@@ -1852,9 +1852,12 @@ class Foundry(unittest.TestCase):
         self.assertIn("DisableLocalAuth: true", resources(text("environment/recording/main.bicep"))["insights"][1], "the component takes telemetry only with Microsoft Entra ID")
 
     def test_no_key_or_secret_is_read_written_or_returned_and_the_one_connection_string_is_the_components_own_name(self):
-        for word in ("listKeys", "listConnectionStrings", "listSecrets", "listAccountSas", "AccountKey", "SharedAccessKey", "primaryKey", "secondaryKey", "@secure", "credentials",
+        for word in ("listKeys", "listConnectionStrings", "listSecrets", "listAccountSas", "AccountKey", "SharedAccessKey", "primaryKey", "secondaryKey", "@secure",
                      "apiKey", "ApiKey", "instrumentationKey", "InstrumentationKey", "password", "WEBSITE_CONTENT"):
             self.assertNotIn(word, self.code, word)
+        # The connection to the AI Gateway writes the property that Microsoft's sample for the project's identity writes, and it is empty: the project's identity is the credential
+        # (test_aigateway_agents_template.py holds the connection itself to that).
+        self.assertEqual(re.findall(r"credentials[^\n]*", self.code), ["credentials: {}"])
         lines = [line.strip() for line in self.code.splitlines() if "ConnectionString" in line]
         self.assertEqual(lines, ["ApplicationInsightsConnectionString: insights.properties.ConnectionString"],
                          "the metadata of the connection, as in Microsoft's own templates: it names the component and holds no secret that ingestion accepts")

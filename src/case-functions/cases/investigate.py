@@ -22,7 +22,7 @@ import logging
 import math
 import re
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Mapping
+from typing import TYPE_CHECKING, Callable, Mapping
 
 from . import agents, decide, guards, roles, wiring
 from .approvals import is_fixture
@@ -479,6 +479,19 @@ def _figure(value: float | None) -> float | None:
     return None if value is None else round(value, 2)
 
 
+def _why(s: "Services", error: Exception) -> str:
+    """Why a call of the Agent Service failed, in at most 200 characters: the fixed words of the route when the model of the agent goes through a connection and the answer is about that route
+    (FoundryError.route), and the text of the error as it always was in every other case."""
+    return clean_text(s.redact(getattr(error, "route", "") or error), 200)
+
+
+def _own_words(note: Callable[[str], None], error: Exception) -> None:
+    """The fixed words of a route say what to check. The words of the Agent Service as they came (redacted and cut by the client) say what it found: when there are fixed words, those are kept in
+    a note of their own too, so that a cause that the fixed words did not name right can still be read."""
+    if getattr(error, "route", ""):
+        note(f"the words of the Agent Service: {error}")
+
+
 def investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str], *, toolbox: Toolbox | None = None) -> Investigation:
     """The whole investigation, with its own budget (INVESTIGATE_MAX_CALLS and INVESTIGATE_MAX_SECONDS). It never raises: when it cannot run, the result says why.
 
@@ -516,7 +529,8 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
         investigator_ref = s.foundry.ensure_agent(agents.investigator(st, toolbox.specs))
         skeptic_ref = s.foundry.ensure_agent(agents.skeptic(st))
     except FoundryError as error:
-        out.note = f"the agents could not be made ready ({clean_text(s.redact(error), 200)})"
+        _own_words(note, error)
+        out.note = f"the agents could not be made ready ({_why(s, error)})"
         return out
     h.emit("investigation.started", investigator=investigator_ref, skeptic=skeptic_ref, modelInvestigator=st.foundry_model_investigator,
            modelSkeptic=st.foundry_model_skeptic, maxCalls=st.investigate_max_calls, maxSeconds=int(budget))
@@ -552,7 +566,8 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
         out.tool_calls = len(_made(partial.calls)) if partial is not None else len(toolbox.log)
         out.tokens = partial.input_tokens + partial.output_tokens if partial is not None else 0
         flush_notes()
-        out.note = f"the investigator gave no answer ({clean_text(s.redact(error), 200)})"
+        _own_words(note, error)
+        out.note = f"the investigator gave no answer ({_why(s, error)})"
         finished(False, note=out.note)
         return out
     made = _made(answer.calls)
@@ -648,7 +663,8 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
                 if tokens is None and partial is not None:
                     tokens = (partial.input_tokens, partial.output_tokens)
                     out.tokens += partial.input_tokens + partial.output_tokens
-                skeptic_step = step("skeptic", st.foundry_model_skeptic, started, False, tokens, clean_text(s.redact(error), 200))
+                skeptic_step = step("skeptic", st.foundry_model_skeptic, started, False, tokens, _why(s, error))
+                _own_words(note, error)
                 hidden = 0  # the run did not judge anything, and its note says why
             flush_notes()
         if not skeptic_step["ok"] or unjudged:

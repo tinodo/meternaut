@@ -11,7 +11,7 @@ on:
   workflow_dispatch:
     inputs:
       action:
-        description: "what-if: show what the next steps would change and change nothing. model-side: the gateway's identity, then the network, the model account with its private endpoint and the budget. gateway-prepare: attach the identity to the gateway and add the Application Insights logger, and the two Event Hub loggers when the usage recording's namespace exists. gateway: add the Citadel module's objects to the gateway (with the two fragments that use the Event Hub loggers when both loggers exist, without them otherwise). contract: add the first contract (a product, its policy and its key) and test the gateway with that key. recording: the usage recording of the gateway's calls, which is a Log Analytics workspace, an Event Hubs namespace, a Cosmos DB account, a storage account and a function app with its own system-assigned identity, with private endpoints and without any key; the Event Hubs namespace takes no public traffic (its public network access is Disabled and its private endpoint is the only way in, so from then on only the Operator can send to it from outside the apps), and after its deploy the action reads that back from Azure and retires the deploy identity's old right to send to the control hub usage-control, when that is still there; on an estate where the namespace is still public, run it only after recording-check and cases-run have passed through the Operator; it first removes the key-based Logic App version of it, when that is still there. It publishes the usage app's code from inside the network, in a container group of the Operator that signs in as the deploy identity with a token of the run and goes through the app's private endpoint, so on an estate that has no Operator yet it deploys and stops at the publish: the order is then recording, cases, operator, and then recording and cases again. recording-check: start the copy jobs once through the control hub and read what they say from the function app's telemetry, both by the Operator from inside the network (the check tool runs in a short-lived container group of the Operator): it needs operator first. cases: the first cases, which is a second function app on the usage recording's network, storage and namespace, with its own system-assigned identity and one user-assigned identity for the console's sign-in, a control hub, a longer retention of the traces and the History workbook; its Watch changes no resource of the estate (with the investigation on it also creates agents and conversations in its own Foundry project), after its deploy it retires the deploy identity's old right to send to the control hub cases-control, when that is still there, and it needs the usage recording and the contract first. It publishes the app's code from inside the network, in the Operator, as recording does.         cases-run: start one Watch through the control hub and read its History from the telemetry, both by the Operator from inside the network: it needs operator first. plant: make waste of Meternaut's own (an unattached disk, and with plant_public_ip an unassigned public IP address) in the project's resource group,         tagged for the loop, so that the whole loop can be shown on something that belongs to nobody else. loop-check: knock at the console's front door without a sign-in and pass only when nobody gets a page. foundry: the Foundry resource of the agents (the model account cannot hold projects, so this is a second resource): a project, the same models, a guardrail, one private endpoint and the connection that sends the agents' traces, with no key; it needs recording and cases to have run once, and it is run before the next cases, which is then given the project's address. operator: the Operator, the executor that works inside the virtual network for what the workflow cannot do from outside it once the services are private (docs/proposals/07-private-by-default.md): its identity, the subnet of its container groups and three roles (Reader on the project's group, and Azure Event Hubs Data Sender on the two control hubs, which the actions recording and cases make, so it runs after them); it waits until the landing zone has put its route table on that subnet, and it starts nothing, so nothing is paid until a run uses it. The actions recording and cases publish their code through it, as the deploy identity. operator-probe: run operator/probe.sh once in a short-lived container group of the Operator and print what it finds (does the identity sign in, do the names of private endpoints resolve to private addresses, which addresses can a group reach, and how does a package get in); the group is deleted at the end whatever happens, and it costs cents. It needs operator first. aigateway: the AI Gateway of the agents' model calls (Azure's AI Gateway, a preview service that is not API Management): a subnet that is delegated to it, the gateway with a system-assigned identity, a model and an alias for each model of the agents' Foundry resource, the gateway-wide token, request and cost limits, content safety on each model, and AI Gateway Models User for the Operator's identity, with no key; it needs foundry and operator first. Its frontend is public whatever is asked, because the service has no private frontend, so access is by Microsoft Entra ID and role assignments only. After the deploy the action waits for the landing zone's route table on the subnet, applies the limits, deletes the built-in key master when the service lets it be deleted, and reads everything back; it changes nothing of the agents, which keep calling their model deployments. aigateway-check: call each alias of the AI Gateway once with the Operator's token, and once without a token and once with a wrong alias, by the Operator from inside the network (the check tool runs in a short-lived container group of the Operator): it needs aigateway and operator first, and about ten minutes after aigateway, because a new role takes up to ten minutes to apply."
+        description: "what-if: show what the next steps would change and change nothing. model-side: the gateway's identity, then the network, the model account with its private endpoint and the budget. gateway-prepare: attach the identity to the gateway and add the Application Insights logger, and the two Event Hub loggers when the usage recording's namespace exists. gateway: add the Citadel module's objects to the gateway (with the two fragments that use the Event Hub loggers when both loggers exist, without them otherwise). contract: add the first contract (a product, its policy and its key) and test the gateway with that key. recording: the usage recording of the gateway's calls, which is a Log Analytics workspace, an Event Hubs namespace, a Cosmos DB account, a storage account and a function app with its own system-assigned identity, with private endpoints and without any key; the Event Hubs namespace takes no public traffic (its public network access is Disabled and its private endpoint is the only way in, so from then on only the Operator can send to it from outside the apps), and after its deploy the action reads that back from Azure and retires the deploy identity's old right to send to the control hub usage-control, when that is still there; on an estate where the namespace is still public, run it only after recording-check and cases-run have passed through the Operator; it first removes the key-based Logic App version of it, when that is still there. It publishes the usage app's code from inside the network, in a container group of the Operator that signs in as the deploy identity with a token of the run and goes through the app's private endpoint, so on an estate that has no Operator yet it deploys and stops at the publish: the order is then recording, cases, operator, and then recording and cases again. recording-check: start the copy jobs once through the control hub and read what they say from the function app's telemetry, both by the Operator from inside the network (the check tool runs in a short-lived container group of the Operator): it needs operator first. cases: the first cases, which is a second function app on the usage recording's network, storage and namespace, with its own system-assigned identity and one user-assigned identity for the console's sign-in, a control hub, a longer retention of the traces and the History workbook; its Watch changes no resource of the estate (with the investigation on it also creates agents and conversations in its own Foundry project), after its deploy it retires the deploy identity's old right to send to the control hub cases-control, when that is still there, and it needs the usage recording and the contract first. With the switch AGENTS_VIA_AI_GATEWAY on (it is off), it gives the app the model names `aigateway/<alias>` for the agents, which name the project's connection to the AI Gateway, and needs that connection first. It publishes the app's code from inside the network, in the Operator, as recording does.         cases-run: start one Watch through the control hub and read its History from the telemetry, both by the Operator from inside the network: it needs operator first. plant: make waste of Meternaut's own (an unattached disk, and with plant_public_ip an unassigned public IP address) in the project's resource group,         tagged for the loop, so that the whole loop can be shown on something that belongs to nobody else. loop-check: knock at the console's front door without a sign-in and pass only when nobody gets a page. foundry: the Foundry resource of the agents (the model account cannot hold projects, so this is a second resource): a project, the same models, a guardrail, one private endpoint and the connection that sends the agents' traces, with no key; it needs recording and cases to have run once, and it is run before the next cases, which is then given the project's address. With the switch AGENTS_VIA_AI_GATEWAY in tools/environment-params.py on (it is off), it also makes the project's connection to the AI Gateway, with the project's own identity and no key, and reads it back: it then needs aigateway first. operator: the Operator, the executor that works inside the virtual network for what the workflow cannot do from outside it once the services are private (docs/proposals/07-private-by-default.md): its identity, the subnet of its container groups and three roles (Reader on the project's group, and Azure Event Hubs Data Sender on the two control hubs, which the actions recording and cases make, so it runs after them); it waits until the landing zone has put its route table on that subnet, and it starts nothing, so nothing is paid until a run uses it. The actions recording and cases publish their code through it, as the deploy identity. operator-probe: run operator/probe.sh once in a short-lived container group of the Operator and print what it finds (does the identity sign in, do the names of private endpoints resolve to private addresses, which addresses can a group reach, and how does a package get in); the group is deleted at the end whatever happens, and it costs cents. It needs operator first. aigateway: the AI Gateway of the agents' model calls (Azure's AI Gateway, a preview service that is not API Management): a subnet that is delegated to it, the gateway with a system-assigned identity, a model and an alias for each model of the agents' Foundry resource, the gateway-wide token, request and cost limits, content safety on each model, and AI Gateway Models User for the Operator's identity, with no key; it needs foundry and operator first. Its frontend is public whatever is asked, because the service has no private frontend, so access is by Microsoft Entra ID and role assignments only. After the deploy the action waits for the landing zone's route table on the subnet, applies the limits, deletes the built-in key master when the service lets it be deleted, and reads everything back; it changes nothing of the agents, which keep calling their model deployments. With the switch AGENTS_VIA_AI_GATEWAY on (it is off), it also gives the Foundry project's identity AI Gateway Models User on the gateway, and needs foundry to have run. aigateway-check: call each alias of the AI Gateway once with the Operator's token, and once without a token and once with a wrong alias, by the Operator from inside the network (the check tool runs in a short-lived container group of the Operator): it needs aigateway and operator first, and about ten minutes after aigateway, because a new role takes up to ten minutes to apply."
         type: choice
         required: true
         default: what-if
@@ -282,7 +282,62 @@ jobs:
                 echo "The Foundry project is in Azure: $foundry_exists." ;;
               *) echo "The action $ACTION does not use the Foundry project, so it is not looked for." ;;
             esac
-            GATEWAY_PRINCIPAL_ID="$principal" GATEWAY_CLIENT_ID="$client" RECORDING_FRAGMENTS="$fragments" CASES_SYSTEM_PRINCIPAL_ID="$cases_system_principal" ENV_FOUNDRY_PROJECT_EXISTS="$foundry_exists" python3 tools/environment-params.py build --models environment/models.json --out-dir "$RUNNER_TEMP" $contract_files > /dev/null
+            # The agents' route through the AI Gateway: the switch AGENTS_VIA_AI_GATEWAY in tools/environment-params.py, which is False until the owner has said yes (docs/proposals/08-ai-gateway.md, step 2). The builder says in its
+            # first answer whether the switch is on. Only then is anything read, and only by the actions that use it: foundry reads the host name of the gateway, the target of the project's connection, from the service
+            # (it is never made up), aigateway reads the object id of the Foundry project's identity, which gets AI Gateway Models User on the gateway, and what-if shows what it can. A thing that is not there stops the
+            # action here, before anything is changed, and says which action makes it. Off, nothing is read and the builder is given nothing new.
+            aigateway_host=""
+            project_principal=""
+            if [ "$(sed -n 's/^agents_via_ai_gateway=//p' <<< "$outputs")" = true ]; then
+              gateway_name=$(sed -n 's/^aigateway_name=//p' <<< "$outputs")
+              if [ "$ACTION" = foundry ] || [ "$ACTION" = what-if ]; then
+                if reported=$(az rest --method get --url "https://management.azure.com/subscriptions/$ENV_SUBSCRIPTION_ID/resourceGroups/$ENV_RESOURCE_GROUP/providers/Microsoft.ApiManagement/aigateways/${gateway_name}?api-version=2025-09-01-preview" --query properties.frontend.defaultHostname --output tsv 2>&1); then
+                  :
+                elif grep -Eqi 'NotFound|\b404\b' <<< "$reported"; then
+                  reported=""
+                elif [ "$ACTION" = what-if ]; then
+                  echo "::warning::The AI Gateway $gateway_name could not be read: $reported"
+                  reported=""
+                else
+                  echo "::error::The AI Gateway $gateway_name could not be read: $reported" >&2
+                  exit 1
+                fi
+                if grep -Eq '^[a-z0-9]([a-z0-9.-]*[a-z0-9])?\.ai\.gateway\.azure\.com$' <<< "$reported"; then
+                  aigateway_host="$reported"
+                  echo "The service reports the host name of the AI Gateway $gateway_name; it goes into the Foundry file."
+                elif [ "$ACTION" = foundry ]; then
+                  echo "::error::The switch AGENTS_VIA_AI_GATEWAY (tools/environment-params.py) is True, and the AI Gateway $gateway_name is not in Azure or has not reported its host name. Run aigateway first, or set the switch back to False. Nothing was changed." >&2
+                  exit 1
+                else
+                  echo "::warning::The preview of the Foundry resource shows no connection to the AI Gateway, because the gateway $gateway_name is not in Azure or has not reported its host name (run aigateway first)."
+                fi
+              fi
+              if [ "$ACTION" = aigateway ] || [ "$ACTION" = what-if ]; then
+                if reported=$(az rest --method get --url "https://management.azure.com${project_url}?api-version=2025-06-01" --query identity.principalId --output tsv 2>&1); then
+                  :
+                elif grep -Eqi 'NotFound|\b404\b' <<< "$reported"; then
+                  reported=""
+                elif [ "$ACTION" = what-if ]; then
+                  echo "::warning::The Foundry project could not be read: $reported"
+                  reported=""
+                else
+                  echo "::error::The Foundry project could not be read: $reported" >&2
+                  exit 1
+                fi
+                if grep -Eq '^[0-9a-fA-F-]{36}$' <<< "$reported"; then
+                  project_principal="$reported"
+                  echo "The Foundry project's system-assigned identity exists; its object id goes into the AI Gateway file."
+                elif [ "$ACTION" = aigateway ]; then
+                  echo "::error::The switch AGENTS_VIA_AI_GATEWAY (tools/environment-params.py) is True, and the Foundry project $foundry_project is not in Azure or has no identity of its own, so it cannot be given AI Gateway Models User on the gateway. Run foundry first, or set the switch back to False. Nothing was changed." >&2
+                  exit 1
+                else
+                  echo "::warning::The preview of the AI Gateway gives the Foundry project's identity no role, because the project is not in Azure or has no identity of its own (run foundry first)."
+                fi
+              fi
+              echo "aigateway_host=$aigateway_host" >> "$GITHUB_OUTPUT"
+              echo "foundry_project_principal=$project_principal" >> "$GITHUB_OUTPUT"
+            fi
+            AIGATEWAY_HOST="$aigateway_host" FOUNDRY_PROJECT_PRINCIPAL_ID="$project_principal" GATEWAY_PRINCIPAL_ID="$principal" GATEWAY_CLIENT_ID="$client" RECORDING_FRAGMENTS="$fragments" CASES_SYSTEM_PRINCIPAL_ID="$cases_system_principal" ENV_FOUNDRY_PROJECT_EXISTS="$foundry_exists" python3 tools/environment-params.py build --models environment/models.json --out-dir "$RUNNER_TEMP" $contract_files > /dev/null
           else
             echo "The gateway identity does not exist yet; the role assignment is shown with a placeholder."
           fi
@@ -1037,6 +1092,9 @@ jobs:
           # A second Foundry resource, because the model account was made with allowProjectManagement false and can never hold a project: its project, the models of environment/models.json,
           # a guardrail with Prompt Shields, one private endpoint, the connection that sends the agents' traces with the project's identity, and two roles (environment/foundry/main.bicep).
           # Local authentication and public network access are off, and no key exists. A resource of this name that was removed earlier is restored.
+          # With the switch AGENTS_VIA_AI_GATEWAY on (tools/environment-params.py, False until the owner has said yes) the file also carries the host name of the AI Gateway and the aliases, and the template makes the
+          # project's connection to the gateway too, with the project's own identity and no key: whether the service takes that connection is not known until this runs (docs/proposals/08-ai-gateway.md, step 2). If it is
+          # refused, the deploy says so and the run stops there: the resource is as it was, and the owner decides. The way back is the switch set to False.
           endpoint=$(python3 tools/az-deploy.py create --subscription "$ENV_SUBSCRIPTION_ID" --resource-group "$ENV_RESOURCE_GROUP" \
             --template environment/foundry/main.bicep --parameters "$RUNNER_TEMP/foundry.parameters.json" \
             --name "foundry-$GITHUB_RUN_ID" --output projectEndpoint --restore-param restoreAccount)
@@ -1093,13 +1151,19 @@ jobs:
           FOUNDRY_GUARDRAIL: ${{ steps.params.outputs.foundry_guardrail_name }}
           PRIVATE_ENDPOINT: ${{ steps.params.outputs.foundry_private_endpoint }}
           PROJECT_ENDPOINT: ${{ steps.params.outputs.foundry_project_endpoint }}
+          AIGATEWAY_HOST: ${{ steps.params.outputs.aigateway_host }}
+          CONNECTION_NAME: ${{ steps.params.outputs.aigateway_connection_name }}
         run: |
           # A deployment that says Succeeded does not say that the resource came out as the template wrote it: the tenant's Modify policies rewrite a resource while it is made, and do not refuse it
           # (AGENTS.md rule 19). The run fails unless public network access is Disabled, local authentication is off, project management is on, the project, its identity, the private endpoint,
           # every model of environment/models.json, the guardrail and the connection for traces are there as the template says. Only GET requests; no key is listed.
+          # With the switch AGENTS_VIA_AI_GATEWAY on (tools/environment-params.py, False until the owner has said yes), the settings step has read the gateway's host name, and the connection of the project to the gateway is
+          # read back too, with a GET of its own: its category, its authentication with the project's own identity, its audience, its target, its models and that it holds no credentials. Off, the call is what it was.
+          gateway=()
+          if [ -n "$AIGATEWAY_HOST" ]; then gateway=(--ai-gateway-host "$AIGATEWAY_HOST" --connection "$CONNECTION_NAME"); fi
           python3 tools/foundry-check.py read-back --subscription "$ENV_SUBSCRIPTION_ID" --resource-group "$ENV_RESOURCE_GROUP" --account "$FOUNDRY_ACCOUNT" \
             --project "$FOUNDRY_PROJECT" --guardrail "$FOUNDRY_GUARDRAIL" --private-endpoint "$PRIVATE_ENDPOINT" --endpoint "$PROJECT_ENDPOINT" \
-            --models environment/models.json --summary "$GITHUB_STEP_SUMMARY"
+            --models environment/models.json --summary "$GITHUB_STEP_SUMMARY" "${gateway[@]}"
 
       - name: The usage recording and the contract are there, which the first cases build on
         if: inputs.action == 'cases'
@@ -1108,6 +1172,10 @@ jobs:
           EVENT_HUB_NAMESPACE: ${{ steps.params.outputs.event_hub_namespace }}
           CONTRACT_SUBSCRIPTION: ${{ steps.params.outputs.contract_subscription }}
           EXPECTED_GATEWAY_URL: ${{ steps.params.outputs.gateway_url }}
+          AGENTS_VIA_AI_GATEWAY: ${{ steps.params.outputs.agents_via_ai_gateway }}
+          CONNECTION_NAME: ${{ steps.params.outputs.aigateway_connection_name }}
+          FOUNDRY_ACCOUNT: ${{ steps.params.outputs.foundry_account_name }}
+          FOUNDRY_PROJECT: ${{ steps.params.outputs.foundry_project_name }}
         run: |
           # The app uses the recording's storage account, namespace and subnet, and the contract's subscription (the app reads that
           # subscription's key at the start of a run), and it is given the gateway's address from the instance's name.
@@ -1133,6 +1201,21 @@ jobs:
             exit 1
           fi
           echo "The usage recording's storage account and namespace are there, the contract's subscription is in the gateway, and the gateway answers on ${actual%/}."
+          # The agents' route through the AI Gateway (the switch AGENTS_VIA_AI_GATEWAY in tools/environment-params.py, False until the owner has said yes: docs/proposals/08-ai-gateway.md, step 2): the app is then given the model
+          # names <connection>/<alias>, and an agent whose model names a connection that the project does not have cannot run. So the connection has to be in the project before the app is changed: aigateway gives the
+          # project's identity its role on the gateway, and then foundry makes the connection. Off, nothing more is read.
+          if [ "$AGENTS_VIA_AI_GATEWAY" = true ]; then
+            connection="/subscriptions/$ENV_SUBSCRIPTION_ID/resourceGroups/$ENV_RESOURCE_GROUP/providers/Microsoft.CognitiveServices/accounts/$FOUNDRY_ACCOUNT/projects/$FOUNDRY_PROJECT/connections/$CONNECTION_NAME"
+            if found=$(az rest --method get --url "https://management.azure.com${connection}?api-version=2026-09-01" --query name --output tsv 2>&1); then
+              echo "The Foundry project $FOUNDRY_PROJECT has the connection $CONNECTION_NAME to the AI Gateway: the app is given the model names that name it."
+            elif grep -Eqi 'NotFound|\b404\b' <<< "$found"; then
+              echo "::error::The switch AGENTS_VIA_AI_GATEWAY (tools/environment-params.py) is True, so the cases app is given model names that name the connection $CONNECTION_NAME, and the Foundry project $FOUNDRY_PROJECT has no such connection. Run aigateway and then foundry first (the order is in environment/BOOTSTRAP.md), or set the switch back to False. Nothing was deployed."
+              exit 1
+            else
+              echo "::error::The connection $CONNECTION_NAME of the Foundry project $FOUNDRY_PROJECT could not be read: $found. Nothing was deployed."
+              exit 1
+            fi
+          fi
 
       - name: Remove the Flex Consumption version of the cases app, when it is still there
         if: inputs.action == 'cases'
@@ -1611,6 +1694,8 @@ jobs:
           # The Watch changes no resource of the estate: it reads Azure and calls the models through the gateway. With the investigation on (the cases app has the address of the Foundry
           # project, which the action cases passes on once the action foundry has made the project) it also creates its agents and conversations in its own Foundry project, and
           # those agents call the models of that resource directly, not through the gateway (the exception to AGENTS.md rule 15 (c)).
+          # With the switch AGENTS_VIA_AI_GATEWAY on (tools/environment-params.py, False until the owner has said yes) they call them through the project's connection and the AI Gateway instead, and an answer
+          # of the Agent Service that says why it could not is in the History in words (docs/proposals/08-ai-gateway.md, step 2).
           # tools/cases-check.py runs inside the network, in a container group of the Operator, as it ran on this runner before, with the same arguments. It loads tools/recording-check.py from its own folder, so
           # both files go into the container's secret volume. The container signs in with the Operator's own identity (no key: it holds Azure Event Hubs Data Sender on the control hub and Reader on the group),
           # operator/run-tool.sh runs the tool and gives its exit code, and the container is told that it is in a GitHub Actions run, which it is (tools/operator-run.py refuses anywhere else; AGENTS.md rule 18).
@@ -1989,6 +2074,8 @@ jobs:
           # and made only while it is not there: AGENTS.md rule 27), the gateway with a system-assigned identity and that subnet as its backend subnet, the Foundry User role for its identity on the Foundry resource,
           # one provider, a model and an alias for each model of environment/models.json with content safety at Medium, and AI Gateway Models User for the Operator's identity (environment/aigateway/main.bicep).
           # The frontend of the service is public and no template can change that; no API key and no private DNS object is made. The limits and the built-in key are handled by the steps below.
+          # With the switch AGENTS_VIA_AI_GATEWAY on (step 2, tools/environment-params.py, False until the owner has said yes) the file also carries the object id of the Foundry project's identity, and the template gives that
+          # identity AI Gateway Models User on the gateway too (the role that the condition of the deploy identity's right to assign roles lists already). The connection itself is made by the action foundry.
           name=$(python3 tools/az-deploy.py create --subscription "$ENV_SUBSCRIPTION_ID" --resource-group "$ENV_RESOURCE_GROUP" \
             --template environment/aigateway/main.bicep --parameters "$RUNNER_TEMP/aigateway.parameters.json" \
             --name "aigateway-$GITHUB_RUN_ID" --output gatewayName)
@@ -2065,13 +2152,18 @@ jobs:
           VNET_NAME: ${{ steps.params.outputs.vnet_name }}
           SUBNET_NAME: ${{ steps.params.outputs.aigateway_subnet_name }}
           OPERATOR_IDENTITY: ${{ steps.params.outputs.operator_identity_name }}
+          PROJECT_PRINCIPAL: ${{ steps.params.outputs.foundry_project_principal }}
         run: |
           # A deployment that says Succeeded does not say that the gateway came out as the template wrote it. The run fails unless the gateway is Succeeded, its backend subnet is the one of the template and is delegated,
           # it has a system-assigned identity, the provider, every model (with content safety at Medium), every alias and every limit are as written, the Operator's identity holds AI Gateway Models User on the gateway,
           # the gateway's identity holds Foundry User on the Foundry resource, and no API key but the built-in one exists. publicNetworkAccess is printed as the service reports it and is not judged: the frontend is
           # public, because the service has no private one. Only GET requests; the names of the API keys are read, never a value.
+          # With the switch AGENTS_VIA_AI_GATEWAY on (tools/environment-params.py, False until the owner has said yes), the settings step has read the object id of the Foundry project's identity, and the read-back also
+          # fails unless that identity holds AI Gateway Models User on the gateway. Off, the call is what it was.
+          project=()
+          if [ -n "$PROJECT_PRINCIPAL" ]; then project=(--project-principal "$PROJECT_PRINCIPAL"); fi
           python3 tools/aigateway-prep.py read-back --subscription "$ENV_SUBSCRIPTION_ID" --resource-group "$ENV_RESOURCE_GROUP" --gateway "$GATEWAY_NAME" --vnet "$VNET_NAME" --subnet "$SUBNET_NAME" \
-            --foundry-account "$FOUNDRY_ACCOUNT" --operator-identity "$OPERATOR_IDENTITY" --models environment/models.json --policies "$RUNNER_TEMP/aigateway-policies.json" --summary "$GITHUB_STEP_SUMMARY"
+            --foundry-account "$FOUNDRY_ACCOUNT" --operator-identity "$OPERATOR_IDENTITY" --models environment/models.json --policies "$RUNNER_TEMP/aigateway-policies.json" --summary "$GITHUB_STEP_SUMMARY" "${project[@]}"
 
       - name: Find the Operator, which runs the AI Gateway check from inside the network
         id: aigw_operator
@@ -2174,6 +2266,8 @@ jobs:
           FOUNDRY_ACCOUNT: ${{ steps.params.outputs.foundry_account_name }}
           FOUNDRY_PROJECT: ${{ steps.params.outputs.foundry_project_name }}
           FOUNDRY_ENDPOINT: ${{ steps.params.outputs.foundry_project_endpoint }}
+          AGENTS_VIA_AI_GATEWAY: ${{ steps.params.outputs.agents_via_ai_gateway }}
+          CONNECTION_NAME: ${{ steps.params.outputs.aigateway_connection_name }}
         run: |
           {
             echo "### Hub: $ACTION, $JOB_STATUS"
@@ -2217,5 +2311,21 @@ jobs:
                 aigateway) echo "The AI Gateway \`$AIGATEWAY_NAME\` is in resource group \`$ENV_RESOURCE_GROUP\` and was read back from Azure: it is Succeeded, its backend subnet is \`snet-aigw\` (delegated to Microsoft.App/environments, with the landing zone's route table on it when the landing zone puts one on this network), and it has a system-assigned identity that holds Foundry User on the Foundry resource of the agents. It has one provider, a model and an alias for each model of environment/models.json with content safety at Medium, and the gateway-wide limits of environment/aigateway/policies.json: a token limit, a request rate limit, and a cost limit for the day and one for the month, each counted for every caller alone. The Operator's identity holds AI Gateway Models User on the gateway. No API key was made: the service makes one named master, and the lines above say whether the service let it be deleted (a refusal is a recorded finding and not an error). THE FRONTEND OF THE GATEWAY IS PUBLIC. The service has no private frontend, and its own setting for one has no effect. A request needs a Microsoft Entra token and a role on the gateway, and there is no filter on the address (docs/proposals/08-ai-gateway.md). The agents were not changed: they keep calling their model deployments, and nothing calls the gateway yet. A new role takes up to ten minutes to apply, and then \`aigateway-check\` calls each alias from inside the network." ;;
                 aigateway-check) echo "The Operator, from inside the network, asked for a token for the AI Gateway with its own identity and no key, and sent one small chat completion to each alias. The lines above give each answer's status and the tokens that it used. The gateway also refused a request with no token and a request with an alias that does not exist, as it should. This runner did not call the gateway: the Operator did. The agents were not changed." ;;
               esac
+            fi
+            # The route of the agents through the AI Gateway (the switch AGENTS_VIA_AI_GATEWAY in tools/environment-params.py, False until the owner has said yes: docs/proposals/08-ai-gateway.md, step 2): what the three
+            # actions that it changes add to what is said above. With the switch off nothing is added.
+            if [ "$AGENTS_VIA_AI_GATEWAY" = true ]; then
+              echo
+              if [ "$JOB_STATUS" != "success" ]; then
+                if [ "$ACTION" = aigateway ]; then echo "**The switch of the agents' route is on.** The action also needs the Foundry project's identity, for AI Gateway Models User on the gateway. If the lines above stop at the settings, the project is not in Azure or has no identity of its own: run \`foundry\` first. Nothing was changed before that. The way back is the switch set to False in tools/environment-params.py."; fi
+                if [ "$ACTION" = foundry ]; then echo "**The switch of the agents' route is on.** The action also needs the AI Gateway and makes the project's connection to it. If the lines above stop at the settings, the gateway is not in Azure: run \`aigateway\` first. Nothing was changed. If the deploy was refused at the connection, the service did not take a connection of the category ApiManagement with the project's own identity for the gateway's address. That is the open question of step 2 (docs/proposals/08-ai-gateway.md): nothing is repaired from here, no key is built (rule 23), and the owner decides. If the read-back failed, the lines say which property of the connection differs. The cases app was not changed. The way back is the switch set to False."; fi
+                if [ "$ACTION" = cases ]; then echo "**The switch of the agents' route is on.** The action first checks that the project has the connection \`$CONNECTION_NAME\`, because the app is given model names that name it. If the lines above stop there, run \`aigateway\` and then \`foundry\` first. Nothing was deployed. The way back is the switch set to False."; fi
+                if [ "$ACTION" = cases-run ]; then echo "**The switch of the agents' route is on.** With the investigation on, the agents' model calls go through the project's connection and the AI Gateway. When the Agent Service could not call the model, the History says so in words: the status and the code that the service answered with, and what to check."; fi
+              else
+                if [ "$ACTION" = aigateway ]; then echo "**The switch of the agents' route is on.** The Foundry project's identity holds AI Gateway Models User on the gateway (read back from Azure). A new role takes up to ten minutes to apply. The next action is \`foundry\`, which makes the project's connection to the gateway. The agents still call their model deployments until \`cases\` has run."; fi
+                if [ "$ACTION" = foundry ]; then echo "**The switch of the agents' route is on.** The project has the connection \`$CONNECTION_NAME\` to the AI Gateway, with the project's own identity and no key. It was read back from Azure: its category, its authentication, its audience, its target, its models, and that it holds no credentials. WHETHER THE AGENT SERVICE CAN CALL THE GATEWAY THROUGH IT IS NOT KNOWN: only a run of the agents shows that. The next action is \`cases\`, which gives the app the model names that name the connection, and then \`cases-run\`."; fi
+                if [ "$ACTION" = cases ]; then echo "**The switch of the agents' route is on.** The cases app was given the model names \`$CONNECTION_NAME/<alias>\` for the Investigator and the Skeptic: their model calls go through the project's connection and the AI Gateway, and no longer straight to the model deployments. Nothing of this has run before. \`cases-run\` shows whether the Agent Service can call the gateway. When it cannot, the History says why in words (the status and the code that the service gave), the investigation does not run, and the older path judges the leads. The way back is the switch set to False in tools/environment-params.py, and a run of \`cases\`."; fi
+                if [ "$ACTION" = cases-run ]; then echo "**The switch of the agents' route is on.** The sentence above about the agents calling the models of the Foundry resource directly is not true for this run: with the investigation on, their model calls go through the project's connection and the AI Gateway, and the History line \`investigation.started\` names the models as \`$CONNECTION_NAME/<alias>\`. Read the investigation lines above: when the Agent Service could not call the model, the line says so in words."; fi
+              fi
             fi
           } >> "$GITHUB_STEP_SUMMARY"

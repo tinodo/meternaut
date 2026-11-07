@@ -63,16 +63,84 @@ STATUSES = frozenset({"failed", "in_progress", "cancelled", "queued", "incomplet
 # one of them, and the words that it uses to refuse the other are not relied on: see Foundry._respond. A service refuses an unknown field with a 400, and some stacks with a 422.
 AGENT_KEYS = ("agent_reference", "agent")
 FIRST_CALL_REFUSALS = frozenset({400, 422})
+# The model of an agent may be named `<connection>/<model>`: it is then called through a connection of the project, which for this project is the AI Gateway (docs/proposals/08-ai-gateway.md, step 2).
+# A call of a run that such a model fails is explained in fixed words that a person can act on (FoundryError.route), and only when the service's own status and words say that the failure is about the
+# route: a call that the service refuses for another reason keeps its own words and gets no explanation. What the Agent Service says when the gateway refuses it is not known (nothing of this has run), so the
+# cause is found from the HTTP status of the answer and from words in the code and the message of the error, and an answer that none of them fits is left as it was.
+ROUTE_PURPOSES = frozenset({"response", "function output", "create agent", "new version"})
+CONNECTION_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
+ROUTE_CODE = re.compile(r"[A-Za-z0-9._-]{1,24}")
+
+
+@dataclass(frozen=True)
+class RouteCause:
+    """What one kind of answer means for a call through a connection. `statuses` and `words` say it: the HTTP status of the call, or words in the code and the message of the error. `proof` is what the
+    words must also hold when the answer carries an HTTP status, so that a refusal of the app's own call (a 401 or a 403 for the app's token, a 404 for an agent) is not taken for the route's, and
+    `proof_in_response` asks for it in the error object of a response that completed too. `cause` and `check` are the fixed words of the explanation."""
+
+    statuses: frozenset
+    words: re.Pattern
+    proof: re.Pattern | None
+    proof_in_response: bool
+    cause: str
+    check: str
+
+
+ROUTE_CAUSES = (
+    RouteCause(frozenset({401}), re.compile(r"\b401\b|unauthori[sz]ed|unauthenticated|invalid[ _]?token|audience|authentication (?:failed|error)"),
+               re.compile(r"gateway|connection|upstream|audience"), False,
+               "the gateway did not accept the token of the project", "Check the audience and the service principal."),
+    RouteCause(frozenset({403}), re.compile(r"\b403\b|forbidden|permission[ _]?denied|not authori[sz]ed|authori[sz]ation|access denied"),
+               re.compile(r"gateway|connection|upstream"), False,
+               "the gateway refused the project's identity", "Check its role AI Gateway Models User on the gateway."),
+    RouteCause(frozenset({404}), re.compile(r"\b404\b|not[ _]?found|does not exist|no such|unknown model"), re.compile(r"model|deployment|connection|gateway|alias"), True,
+               "the connection or the model was not found", "Check the target and the model names of the connection."),
+    RouteCause(frozenset({429}), re.compile(r"\b429\b|rate[ _]?limit|too many requests|throttl|quota"), None, False,
+               "the call was told to wait", "Check the limits of the gateway and of the model."),
+    RouteCause(frozenset({502, 503, 504}), re.compile(r"timed? ?out|unreachable|could not connect|connection refused|bad gateway|service unavailable|gateway timeout"), None, False,
+               "the gateway did not answer well", "Run aigateway-check and read the status of the Agent Service."),
+    RouteCause(frozenset({424}), re.compile(r"(?!)"), None, False, "the call to the gateway failed", "Read the log of the gateway."),
+    RouteCause(frozenset(), re.compile(r"connection|gateway|upstream"), None, False, "the connection or the gateway cannot be used", "Check the connection in the project."),
+)
+
+
+def connection_of(model: object) -> str:
+    """The connection that a model name goes through: the part before the slash of `<connection>/<model>`, and "" for a plain deployment name or a name that is not shaped like one."""
+    name, slash, rest = model.partition("/") if isinstance(model, str) else ("", "", "")
+    return name if slash and rest and CONNECTION_NAME.fullmatch(name) else ""
+
+
+def route_failure(model: object, purpose: str, status: int | None, code: str, words: str, dns: str | None = None) -> str:
+    """The fixed words for a failed call of an agent whose model goes through a connection, or "" when the model has none, the call is not one that the route can fail, or the answer says nothing
+    about the route. They name the connection, say what happened, quote the HTTP status and the code of the service when there are some, and say what to check; they hold nothing else of the answer.
+
+    `status` is the HTTP status of the call, or None for an error object inside a response that completed. A 403 or a 404 of a call whose host name does not lead to a private address (`dns`) may be a
+    failure before the project's endpoint was reached, and is left to the text that says so."""
+    connection = connection_of(model)
+    if not connection or purpose not in ROUTE_PURPOSES or (status in (403, 404) and dns not in (None, "private")):
+        return ""
+    text = f"{code} {words}".lower()
+    for rule in ROUTE_CAUSES:
+        if not ((status in rule.statuses) or rule.words.search(text)):
+            continue
+        if rule.proof is not None and (status is not None or rule.proof_in_response) and not rule.proof.search(text):
+            continue
+        detail = [part for part in (f"HTTP {status}" if status else "", f"code {code}" if code else "") if part]
+        return f"the model call through the connection {connection} failed: {rule.cause}" + (f" ({', '.join(detail)})" if detail else "") + f". {rule.check}"
+    return ""
 
 
 class FoundryError(Exception):
     """The service gave no usable answer. The text says what was asked and what went wrong: the HTTP status, a fact about the DNS of the host when that may be the
     cause, and the code and the message that the service itself gave (redacted and cut). It never holds a token, a request, an answer of a tool or the text of a model.
-    `status` is the HTTP status when there was one, and `words` the code and the message of the service as they are in the text. `partial` is what the run had come
-    to when it failed (its calls and its tokens)."""
+    `status` is the HTTP status when there was one, and `words` the code and the message of the service as they are in the text. `code` is the service's own code when it is
+    a plain token. `route` is the fixed explanation of route_failure when the model of the agent goes through a connection and the answer is about that route, and "" otherwise.
+    `partial` is what the run had come to when it failed (its calls and its tokens)."""
 
     status: int | None = None
     words: str = ""
+    code: str = ""
+    route: str = ""
     partial: AgentRun | None = None
 
 
@@ -180,6 +248,8 @@ class Foundry:
         self._dns: str | None = None
         self._key = AGENT_KEYS[0]  # the key of the agent reference that a response is sent with
         self._key_open = True  # until the service has answered a response: only that first answer may send the client to the other key
+        self._models: dict[str, str] = {}  # the model of each agent that this client has made sure of, by name
+        self._model: str | None = None  # the model of the agent that the calls in hand are for
 
     def ensure_agent(self, spec: AgentSpec) -> str:
         """Creates the agent when it is not there and a new version when its definition differs. Returns "name:version".
@@ -188,6 +258,7 @@ class Foundry:
         what it stores, so the stored definition itself is not compared. It takes one GET when nothing changed. A 409 on the creation (another run made the agent a
         moment ago) is no failure: the agent is read and compared like any agent."""
         payload = _payload(spec)
+        self._models[spec.name], self._model = spec.model, spec.model
         try:
             digest = hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")).hexdigest()
         except (TypeError, ValueError):
@@ -238,6 +309,7 @@ class Foundry:
         HTTP 400 or 422, whatever it says, it is made again, once, with `agent` (the article on function calling), and the key that worked is kept for every later call. That
         first call carries no function output, so repeating it is safe. No other call and no other answer starts that; a second failure is raised."""
         reference = self._reference(agent)
+        self._model = self._models.get(reference["name"])
         if not isinstance(user_input, str) or not user_input.strip():
             raise FoundryError("Foundry: the run has no input")
         if isinstance(max_calls, bool) or not isinstance(max_calls, int) or max_calls < 0:
@@ -398,7 +470,10 @@ class Foundry:
         words = self._words(document.get("error") if isinstance(document, dict) else None)
         if words:
             parts.append(words)
-        return self._error("; ".join(parts), error.status or None, words)
+        failure = self._error("; ".join(parts), error.status or None, words)
+        failure.code = self._code(document.get("error") if isinstance(document, dict) else None)
+        failure.route = route_failure(self._model, purpose, failure.status, failure.code, words, self._dns)
+        return failure
 
     def _words(self, error: object) -> str:
         """The code and the message of an error object of the service. They are its own words: they lose every control character, go through the redactor and
@@ -413,6 +488,14 @@ class Foundry:
             if isinstance(value, str):
                 parts.append(_plain(self.redact(value[:20000])))
         return self.redact(": ".join(part for part in parts if part))[:WORDS_LIMIT]
+
+    def _code(self, error: object) -> str:
+        """The code of an error object of the service when it is a plain token (letters, digits and . _ -, at most 24) that the redactor leaves alone, and "" otherwise. It is the one part of an
+        answer that the fixed words of route_failure quote."""
+        value = error.get("code") if isinstance(error, dict) else None
+        if isinstance(value, int) and not isinstance(value, bool):
+            value = str(value)
+        return value if isinstance(value, str) and ROUTE_CODE.fullmatch(value) and self.redact(value) == value else ""
 
     def _error(self, text: str, status: int | None = None, words: str = "") -> FoundryError:
         error = FoundryError(self.redact(text))
@@ -482,7 +565,10 @@ class Foundry:
         """The output items of an answer that completed. An answer that failed, was cut short or is not done yet is an error."""
         if document.get("error"):
             words = self._words(document["error"])
-            raise self._error(f"Foundry {purpose} failed: the response failed" + (f"; {words}" if words else ""), None, words)
+            failure = self._error(f"Foundry {purpose} failed: the response failed" + (f"; {words}" if words else ""), None, words)
+            failure.code = self._code(document["error"])
+            failure.route = route_failure(self._model, purpose, None, failure.code, words)
+            raise failure
         status = document.get("status")
         if status not in (None, "completed"):
             details = document.get("incomplete_details")

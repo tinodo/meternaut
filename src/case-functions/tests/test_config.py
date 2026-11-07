@@ -158,10 +158,10 @@ class Investigation(unittest.TestCase):
         settings = config.load({**ENV, "FOUNDRY_MODEL_INVESTIGATOR": "Deploy_1.a-b", "FOUNDRY_MODEL_SKEPTIC": "gpt-6-sol"})
         self.assertEqual((settings.foundry_model_investigator, settings.foundry_model_skeptic), ("Deploy_1.a-b", "gpt-6-sol"))
         for name in ("FOUNDRY_MODEL_INVESTIGATOR", "FOUNDRY_MODEL_SKEPTIC"):
-            for value in ("bad name", "-x", "a/b", "x" * 65, "a\n", "é"):
+            for value in ("bad name", "-x", "x" * 65, "a\n", "é"):
                 with self.assertRaises(config.ConfigError, msg=f"{name}={value}") as raised:
                     config.load({**ENV, name: value})
-                self.assertEqual(str(raised.exception), f"{name} is a model name")
+                self.assertEqual(str(raised.exception), f"{name} is a model name or <connection>/<model>")
             self.assertEqual(config.load({**ENV, name: "x" * 64}).__dict__[name.lower()], "x" * 64)
         for investigator, skeptic in (("gpt-6-luna", "gpt-6-luna"), ("gpt-6-luna", "GPT-6-Luna"), ("gpt-6.1-sol", None)):
             env = {**ENV, "FOUNDRY_MODEL_INVESTIGATOR": investigator}
@@ -172,6 +172,28 @@ class Investigation(unittest.TestCase):
             with self.assertRaises(config.ConfigError, msg=f"{investigator} {skeptic}") as raised:
                 config.load(env)
             self.assertEqual(str(raised.exception), "FOUNDRY_MODEL_INVESTIGATOR and FOUNDRY_MODEL_SKEPTIC are the same model, and the Skeptic has to be another model than the Investigator")
+
+    def test_a_model_may_be_named_by_a_connection_and_a_model_and_in_no_other_way_with_a_slash(self):
+        # The agents reach the AI Gateway through a connection of the project: their model is `<connection>/<alias>` (docs/proposals/08-ai-gateway.md, step 2).
+        settings = config.load({**ENV, "FOUNDRY_MODEL_INVESTIGATOR": "aigateway/gpt-6.1-sol", "FOUNDRY_MODEL_SKEPTIC": "aigateway/gpt-6-luna"})
+        self.assertEqual((settings.foundry_model_investigator, settings.foundry_model_skeptic), ("aigateway/gpt-6.1-sol", "aigateway/gpt-6-luna"))
+        for name in ("FOUNDRY_MODEL_INVESTIGATOR", "FOUNDRY_MODEL_SKEPTIC"):
+            for value in ("a/b", "A_1.x-y/Z_2.q-r", "x" * 64 + "/" + "y" * 64):
+                self.assertEqual(config.load({**ENV, name: value}).__dict__[name.lower()], value)
+            for value in ("a/b/c", "/b", "a/", "/", "a//b", "a /b", "a/ b", "a/-b", "-a/b", "a/b\n", "a\n/b", "x" * 65 + "/b", "a/" + "y" * 65, "a\\b", "a/é", "é/b", "a:b/c", "a/b?x=1",
+                          "a/b/", "a/.b", ".a/b", "a%2Fb", "a/b c"):
+                with self.assertRaises(config.ConfigError, msg=f"{name}={value!r}") as raised:
+                    config.load({**ENV, name: value})
+                self.assertEqual(str(raised.exception), f"{name} is a model name or <connection>/<model>")
+
+    def test_the_skeptic_differs_from_the_investigator_in_the_whole_name_whatever_the_case(self):
+        for investigator, skeptic in (("aigateway/gpt-6-luna", "aigateway/gpt-6-luna"), ("aigateway/gpt-6-luna", "AIGateway/GPT-6-Luna")):
+            with self.assertRaises(config.ConfigError, msg=f"{investigator} {skeptic}") as raised:
+                config.load({**ENV, "FOUNDRY_MODEL_INVESTIGATOR": investigator, "FOUNDRY_MODEL_SKEPTIC": skeptic})
+            self.assertEqual(str(raised.exception), "FOUNDRY_MODEL_INVESTIGATOR and FOUNDRY_MODEL_SKEPTIC are the same model, and the Skeptic has to be another model than the Investigator")
+        # Two names are two models for this rule, also when they end in the same model: the route is part of the name.
+        settings = config.load({**ENV, "FOUNDRY_MODEL_INVESTIGATOR": "aigateway/gpt-6-luna", "FOUNDRY_MODEL_SKEPTIC": "gpt-6-luna"})
+        self.assertEqual((settings.foundry_model_investigator, settings.foundry_model_skeptic), ("aigateway/gpt-6-luna", "gpt-6-luna"))
 
     def test_a_model_that_is_the_default_of_the_other_is_the_same_model(self):
         with self.assertRaises(config.ConfigError) as raised:
