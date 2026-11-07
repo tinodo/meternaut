@@ -31,9 +31,14 @@ project in Azure: only then does the cases file carry the project's endpoint (an
 ENV_AIGW_SUBNET_EXISTS is true when the workflow found the AI Gateway's subnet (snet-aigw) in Azure: the template of the subnet (environment/aigateway/subnet.bicep) then leaves it alone (AGENTS.md rule 27).
 FOUNDRY_PROJECT_PRINCIPAL_ID (may be empty) is the object id of the Foundry project's system-assigned identity: the AI Gateway template gives it AI Gateway Models User on the
 gateway. Nothing sets it before the step that connects the project to the gateway; empty means none yet. It is checked as a GUID.
-AGENTS_VIA_AI_GATEWAY (a constant near the top of this file, False) is the switch of the agents' route through the AI Gateway (docs/proposals/08-ai-gateway.md, step 2). While it is False nothing below is read,
-no parameter file differs by a byte from what it was, and no output is added. When it is True: AIGATEWAY_HOST is the host name that the service reports for the gateway
-(properties.frontend.defaultHostname, under .ai.gateway.azure.com), which the workflow reads from the service and passes only to the actions that need it. It goes into foundry.parameters.json with the
+AIGATEWAY_HOST is the host name that the service reports for the AI Gateway (properties.frontend.defaultHostname, under .ai.gateway.azure.com), which the workflow reads from the service for the
+actions that need it and the builder never makes up. Every model call of the cases app goes through the gateway (AGENTS.md rule 15 (c)), so the cases file always carries it (aiGatewayHost, which
+the app reads as AIGATEWAY_HOST): the action cases is refused without it, and a --preview and the what-if action use the placeholder PLACEHOLDER_AIGATEWAY_HOST instead. A value that is set is
+checked, whatever the action. The same host serves the agents' route when the switch below is on.
+CASES_SYSTEM_PRINCIPAL_ID is also the principal of the role AI Gateway Models User on the AI Gateway, which the file of the gateway (casesPrincipalId) gives it: the Detective and the Skeptic call the
+gateway with that identity. Empty means none yet, and the gateway is then made without the role; the next run of the action aigateway gives it.
+AGENTS_VIA_AI_GATEWAY (a constant near the top of this file, False) is the switch of the agents' route through the AI Gateway (docs/proposals/08-ai-gateway.md, step 2). While it is False the
+Foundry file has no connection and the cases file has the plain model names of the agents, and no output is added. When it is True: AIGATEWAY_HOST goes into foundry.parameters.json with the
 aliases (aiGatewayHost, aiGatewayModels), so that the Foundry resource makes the project's connection; the cases file carries the model names `<connection>/<alias>` (foundryModelInvestigator and
 foundryModelSkeptic); and two outputs are added (agents_via_ai_gateway=true and aigateway_connection_name), which the workflow reads. The builder refuses True without the host when ACTION (the job's own setting,
 the name of the action) is foundry, and without FOUNDRY_PROJECT_PRINCIPAL_ID when ACTION is aigateway: a --preview, and every other action, goes on without them.
@@ -58,9 +63,10 @@ It writes these ARM parameter files into --out-dir:
                                       all three from --aigateway-policies (environment/aigateway/policies.json, checked against the models and against the owner's standing limit
                                       of AGENTS.md rule 15 (g)); none is written when the virtual network has no free range for the gateway's subnet (the outputs say so)
     cases.parameters.json             for environment/cases/main.bicep (the first cases: the function app that finds leads and writes the History). It is always written, and it names nothing of
-                                      the owner's API Management instance: the Detective and the Skeptic call the model deployments of the agents' own Foundry project, so the file carries the project's
-                                      address (when ENV_FOUNDRY_PROJECT_EXISTS says that the project is in Azure). Their two model names are the defaults of the template, which are names of
-                                      environment/models.json (a test holds the two together). It also says what the Watch reads: scopeSubscriptions (this estate's subscription, the fallback) and
+                                      the owner's API Management instance: the Detective and the Skeptic call the AI Gateway, so the file carries the gateway's host name (aiGatewayHost, from
+                                      AIGATEWAY_HOST, or the placeholder for a preview and a what-if), and the project's address (when ENV_FOUNDRY_PROJECT_EXISTS says that the project is in Azure). Their two
+                                      model names are the defaults of the template, which are names of environment/models.json and the aliases of the gateway (a test holds the three together).
+                                      It also says what the Watch reads: scopeSubscriptions (this estate's subscription, the fallback) and
                                       scopeAllSubscriptions, the constant SCOPE_ALL_SUBSCRIPTIONS near the top of this file (True: every subscription that the app's identity can read).
 
                                       What each function app takes from the public internet is not a setting of the workflow: USAGE_APP_PUBLIC_NETWORK_ACCESS (Disabled) and CASES_APP_PUBLIC_NETWORK_ACCESS (Enabled until the
@@ -132,6 +138,9 @@ AIGATEWAY_CONNECTION_NAME = "aigateway"
 AGENT_MODELS = {"foundryModelInvestigator": "gpt-6.1-sol", "foundryModelSkeptic": "gpt-6-luna"}
 # The host name that the service reports for the gateway (properties.frontend.defaultHostname): under the service's own domain, which the check of the gateway and the workflow ask for too.
 AIGATEWAY_HOST = re.compile(r"^(?=.{4,253}$)[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?\.ai\.gateway\.azure\.com$")
+# What the cases file carries for the gateway's host name in a --preview and in a what-if, where the gateway may not be in Azure yet. It matches the pattern above and is no gateway: the action cases
+# never deploys it (it is refused without the real host).
+PLACEHOLDER_AIGATEWAY_HOST = "placeholder-gateway.ai.gateway.azure.com"
 # The central private DNS zone in which the landing zone's policy registers the names of an App Service app (the app's own and its deployment site's) for the endpoint of the sub-resource `sites`.
 # A Flex Consumption deployment ends with a call from the deployment site to the app's own host name, and while the zone has no record of a new endpoint that name does not resolve: the first
 # `recording` after the usage app's endpoint was made failed at the publish for that reason (docs/proposals/07-private-by-default.md, phase 1). So the endpoint of an app is always waited for.
@@ -412,21 +421,23 @@ def aigw_subnet_exists(env: dict) -> bool:
 
 
 def ai_gateway_host(env: dict, preview: bool) -> str:
-    """The host name of the AI Gateway for the agents' route through it: AIGATEWAY_HOST. Empty while AGENTS_VIA_AI_GATEWAY is False, and then the setting is not even read.
+    """The host name of the AI Gateway: AIGATEWAY_HOST, trimmed and in lower case, or empty when it is not set.
 
-    The workflow reads the host from the service (properties.frontend.defaultHostname), only for the actions that use it, and the builder never makes one up: it is the target of the project's connection.
-    A True switch that cannot name the gateway is refused when the action is foundry, the one that makes the connection (ACTION is the job's own setting). A --preview, and every action that makes no
-    connection, goes on without a host, and the parameters of the connection are then left out of the file."""
-    if not AGENTS_VIA_AI_GATEWAY:
-        return ""
+    The workflow reads the host from the service (properties.frontend.defaultHostname), only for the actions that use it, and the builder never makes one up. Every model call of the cases app goes
+    through the gateway (AGENTS.md rule 15 (c)), so the action cases is refused without it, and so is the action foundry while AGENTS_VIA_AI_GATEWAY is True (the host is the target of the project's
+    connection); ACTION is the job's own setting. A --preview, and every other action, goes on without a host: the cases file then carries the placeholder, and the Foundry file no connection.
+    A value that is set is checked whatever the action is, and never echoed."""
     host = (env.get("AIGATEWAY_HOST") or "").strip().lower()
-    if not host:
-        if (env.get("ACTION") or "").strip() == "foundry" and not preview:
+    if host and not AIGATEWAY_HOST.match(host):
+        raise Problem("AIGATEWAY_HOST is the host name that the service reports for the AI Gateway, under .ai.gateway.azure.com")
+    action = (env.get("ACTION") or "").strip()
+    if not host and not preview:
+        if action == "cases":
+            raise Problem("the AI Gateway cannot be named: AIGATEWAY_HOST, the host name that the service reports for it, is not set, and every model call of the cases app goes through the gateway. "
+                          "Run the action aigateway first (the workflow reads the host name from the service)")
+        if AGENTS_VIA_AI_GATEWAY and action == "foundry":
             raise Problem("AGENTS_VIA_AI_GATEWAY (in tools/environment-params.py) is True and the AI Gateway cannot be named: AIGATEWAY_HOST, the host name that the service reports for it, is not set, so the Foundry "
                           "project's connection cannot be made. Run the action aigateway first (the workflow reads the host name from the service), or set the constant back to False")
-        return ""
-    if not AIGATEWAY_HOST.match(host):
-        raise Problem("AIGATEWAY_HOST is the host name that the service reports for the AI Gateway, under .ai.gateway.azure.com")
     return host
 
 
@@ -555,13 +566,15 @@ def read_aigateway_policies(path: Path, models: list[dict]) -> list[dict]:
 
 
 def aigateway_files(env: dict, subscription: str, group: str, location: str, owner: str, vnet: ipaddress.IPv4Network, taken: tuple[ipaddress.IPv4Network, ...],
-                    foundry: dict[str, str], models: list[dict], policies: list[dict], preview: bool = False) -> tuple[dict, dict[str, str]]:
+                    foundry: dict[str, str], models: list[dict], policies: list[dict], cases_principal: str = "", preview: bool = False) -> tuple[dict, dict[str, str]]:
     """The AI Gateway's two parameter files and its policy file, and its outputs (environment/aigateway/subnet.bicep, environment/aigateway/main.bicep; the action aigateway applies the policies).
 
     The subnet has a file of its own, because the action deploys the subnet first, waits until the landing zone has put its route table on it, and only then deploys the gateway (AGENTS.md rule 27).
     A network with no free range for the gateway's subnet gets no file: aigateway_files is false, aigateway_subnet_prefix is empty, and the action says why it stops.
     A model's resource in the gateway has the deployment's name with its dots replaced by hyphens (the service's pattern allows none); its alias keeps the name.
-    While AGENTS_VIA_AI_GATEWAY is True the action aigateway gives the Foundry project's identity AI Gateway Models User, so it needs the identity's object id: without it the builder refuses
+    The gateway file gives AI Gateway Models User to the cases app's identity, whose object id is `cases_principal` (CASES_SYSTEM_PRINCIPAL_ID, which the workflow reads from the app): the Detective and
+    the Skeptic call the gateway with it. Empty means none yet, as the app has no identity before the action cases has made it, and the gateway is then made without that role.
+    While AGENTS_VIA_AI_GATEWAY is True the action aigateway gives the Foundry project's identity AI Gateway Models User too, so it needs the identity's object id: without it the builder refuses
     (a --preview goes on, and any other action leaves the setting alone)."""
     resources = [m["name"].replace(".", "-") for m in models]
     if len(set(resources)) != len(resources) or not all(AIGATEWAY_MODEL_RESOURCE.match(r) for r in resources):
@@ -599,6 +612,7 @@ def aigateway_files(env: dict, subscription: str, group: str, location: str, own
             "foundryAccountName": foundry["foundry_account_name"],
             "models": [{"name": m["name"], "version": m["version"]} for m in models],
             "foundryProjectPrincipalId": project_principal.lower(),
+            "casesPrincipalId": cases_principal.lower(),
         }),
         "aigateway-policies.json": policies,
     }
@@ -748,7 +762,7 @@ def build(env, models: list[dict], preview: bool = False, aigateway_policies: li
         "owner": owner,
     }
     routed = agent_models(models) if AGENTS_VIA_AI_GATEWAY else {}
-    if gateway_host:
+    if AGENTS_VIA_AI_GATEWAY and gateway_host:
         foundry_values["aiGatewayHost"] = gateway_host
         foundry_values["aiGatewayModels"] = [{"name": m["name"], "version": m["version"]} for m in models]
     files = {
@@ -763,7 +777,8 @@ def build(env, models: list[dict], preview: bool = False, aigateway_policies: li
             "opsSubnetExists": ops_subnet_exists(env),
             "eventHubNamespaceName": names["event_hub_namespace"],
         }),
-        # The first cases need nothing of the owner's API Management instance: the file is written in every build, with the Foundry facts of this one.
+        # The first cases need nothing of the owner's API Management instance: the file is written in every build, with the Foundry facts of this one. Every model call goes through the AI Gateway, so
+        # the file always names its host (the placeholder in a preview and a what-if, where the gateway may not be in Azure yet: the action cases is refused without the real one).
         "cases.parameters.json": parameters({
             "location": location,
             "owner": owner,
@@ -775,13 +790,15 @@ def build(env, models: list[dict], preview: bool = False, aigateway_policies: li
             "scopeSubscriptions": subscription.lower(),
             "scopeAllSubscriptions": SCOPE_ALL_SUBSCRIPTIONS,
             "foundryProjectEndpoint": foundry["foundry_project_endpoint"] if foundry_exists else "",
+            "aiGatewayHost": gateway_host or PLACEHOLDER_AIGATEWAY_HOST,
             "casesAppPublicNetworkAccess": CASES_APP_PUBLIC_NETWORK_ACCESS,
             **console_parameters(env),
             **routed,
         }),
     }
     if aigateway_policies is not None:
-        aigateway_written, aigateway_outputs = aigateway_files(env, subscription, group, location, owner, vnet, (subnet, func_subnet, web, ops), foundry, models, aigateway_policies, preview)
+        aigateway_written, aigateway_outputs = aigateway_files(env, subscription, group, location, owner, vnet, (subnet, func_subnet, web, ops), foundry, models, aigateway_policies,
+                                                               cases_system_principal, preview)
         files.update(aigateway_written)
         outputs.update(aigateway_outputs)
     if AGENTS_VIA_AI_GATEWAY:

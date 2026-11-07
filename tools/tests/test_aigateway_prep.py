@@ -27,6 +27,7 @@ GATEWAY_PRINCIPAL = "aaaaaaaa-0000-0000-0000-000000000001"
 OPERATOR_PRINCIPAL = "bbbbbbbb-0000-0000-0000-000000000002"
 PROJECT_PRINCIPAL = "cccccccc-0000-0000-0000-000000000003"
 OTHER_PRINCIPAL = "dddddddd-0000-0000-0000-000000000004"
+CASES_PRINCIPAL = "eeeeeeee-0000-0000-0000-000000000005"
 SECRET = "THE-VALUE-OF-A-KEY-THAT-NOTHING-MAY-PRINT"
 MODELS = json.loads((ROOT / "environment" / "models.json").read_text(encoding="utf-8"))
 POLICIES = json.loads((ROOT / "environment" / "aigateway" / "policies.json").read_text(encoding="utf-8"))
@@ -611,6 +612,42 @@ class ReadBack(unittest.TestCase):
         self.assertIn(f"note: AI Gateway User is also held on the gateway by the principal {OTHER_PRINCIPAL}", out)
         self.assertNotIn("8e3af657", out, "a role of no concern to the gateway's data actions is not listed")
 
+    def test_the_cases_apps_principal_is_required_when_it_is_given_and_is_a_note_when_it_is_not(self):
+        # The Detective and the Skeptic call the gateway with the cases app's own identity, so the role of that identity is read back like the Operator's.
+        azure = Azure()
+        code, out, _ = self.command(azure)
+        self.assertEqual(code, 0, out)
+        self.assertIn("note: No principal of the cases app was given: the app has no identity of its own before the action cases has made it", out)
+        azure = Azure()
+        code, out, _ = self.command(azure, "--cases-principal", CASES_PRINCIPAL)
+        self.assertEqual(code, 1)
+        self.assertIn("FAILED: The cases app's identity does not hold AI Gateway Models User on the gateway, so the Detective and the Skeptic cannot call the models", out)
+        self.assertNotIn("No principal of the cases app was given", out)
+        azure = Azure()
+        azure.doc(GATEWAY_ROLES)["value"].append(assignment(prep.MODELS_USER, CASES_PRINCIPAL.upper(), GATEWAY_ID.upper()))
+        code, out, _ = self.command(azure, "--cases-principal", CASES_PRINCIPAL)
+        self.assertEqual(code, 0, out)
+        self.assertIn("ok: The cases app's identity holds AI Gateway Models User on the gateway", out)
+        self.assertNotIn("is also held on the gateway by the principal", out, "the three callers that are expected are not listed as others")
+        self.assertEqual(azure.writes(), [], "only reads")
+
+    def test_the_cases_apps_role_on_another_scope_or_another_role_is_not_the_role_that_is_asked_for(self):
+        for role, scope in ((prep.FOUNDRY_USER, GATEWAY_ID), ("caad7a21-134e-43f4-a550-c5ffc17e051c", GATEWAY_ID), (prep.MODELS_USER, BASE), (prep.MODELS_USER, ACCOUNT_ID)):
+            azure = Azure()
+            azure.doc(GATEWAY_ROLES)["value"].append(assignment(role, CASES_PRINCIPAL, scope))
+            code, out, _ = self.command(azure, "--cases-principal", CASES_PRINCIPAL)
+            self.assertEqual(code, 1, (role, scope))
+            self.assertIn("FAILED: The cases app's identity does not hold AI Gateway Models User on the gateway", out)
+
+    def test_what_else_is_held_is_only_a_note_also_when_the_cases_principal_is_given(self):
+        azure = Azure()
+        azure.doc(GATEWAY_ROLES)["value"].append(assignment(prep.MODELS_USER, CASES_PRINCIPAL, GATEWAY_ID))
+        azure.doc(GATEWAY_ROLES)["value"].append(assignment(prep.MODELS_USER, OTHER_PRINCIPAL, GATEWAY_ID))
+        code, out, _ = self.command(azure, "--cases-principal", CASES_PRINCIPAL, "--project-principal", PROJECT_PRINCIPAL)
+        self.assertEqual(code, 1, "the project's role is missing, and that fails")
+        self.assertIn(f"note: AI Gateway Models User is also held on the gateway by the principal {OTHER_PRINCIPAL}", out)
+        self.assertNotIn(f"also held on the gateway by the principal {CASES_PRINCIPAL}", out)
+
     def test_what_else_the_gateway_holds_is_listed_and_does_not_fail_the_run(self):
         azure = Azure()
         azure.doc(f"{WORKSPACE}/modelProviders")["value"].append({"name": "second", "properties": {"kind": "OpenAI"}})
@@ -689,6 +726,12 @@ class ReadBack(unittest.TestCase):
         code, out, err = self.command(azure, "--project-principal", "not-an-object-id")
         self.assertEqual((code, out), (2, ""))
         self.assertIn("--project-principal is an object id", err)
+        self.assertEqual(azure.calls, [])
+        azure = Azure()
+        code, out, err = self.command(azure, "--cases-principal", "not-an-object-id")
+        self.assertEqual((code, out), (2, ""))
+        self.assertIn("--cases-principal is an object id", err)
+        self.assertNotIn("not-an-object-id", err)
         self.assertEqual(azure.calls, [])
         azure = Azure()
         code, out, err = run(["read-back", *ARGUMENTS, "--vnet", "../x", "--subnet", "snet-aigw", "--foundry-account", ACCOUNT, "--operator-identity", OPERATOR,

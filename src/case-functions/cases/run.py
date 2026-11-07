@@ -398,7 +398,7 @@ def run_watch(trigger: str, request_id: str | None, env: Mapping[str, str] | Non
     try:
         settings = cfg.load(env)
         identity = Identity(env, sleep=sleep, **({"fetch": fetch} if fetch else {}))
-        client = Client(allowed_calls(foundry_endpoint=settings.foundry_endpoint), redact, transport=transport, sleep=sleep, monotonic=monotonic)
+        client = Client(allowed_calls(foundry_endpoint=settings.foundry_endpoint, ai_gateway_host=settings.ai_gateway_host), redact, transport=transport, sleep=sleep, monotonic=monotonic)
         if extras is None:
             extras = wiring.build_extras(env, identity.token, redact, transport=transport, sleep=sleep, monotonic=monotonic, clock=clock)
         if foundry is None and settings.foundry_endpoint:

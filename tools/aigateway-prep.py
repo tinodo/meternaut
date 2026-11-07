@@ -4,7 +4,7 @@
     python tools/aigateway-prep.py policies --subscription S --resource-group G --gateway N --file aigateway-policies.json [--summary FILE] [--timeout SECONDS]
     python tools/aigateway-prep.py remove-key --subscription S --resource-group G --gateway N [--summary FILE] [--timeout SECONDS]
     python tools/aigateway-prep.py read-back --subscription S --resource-group G --gateway N --vnet V --subnet SN --foundry-account A --operator-identity ID \
-        --models environment/models.json --policies aigateway-policies.json [--project-principal OBJECT-ID] [--summary FILE] [--timeout SECONDS]
+        --models environment/models.json --policies aigateway-policies.json [--project-principal OBJECT-ID] [--cases-principal OBJECT-ID] [--summary FILE] [--timeout SECONDS]
 
 It calls the Azure CLI (`az rest`), which the workflow has signed in, and only Azure Resource Manager: the gateway's own endpoint is public and is never called from here (the check
 runs in the Operator, tools/aigateway-check.py). Only GitHub Actions may write (AGENTS.md rule 18): the two writing commands refuse to run anywhere else. Nothing that a response holds is
@@ -23,7 +23,7 @@ remove-key  The service makes a key named master on every gateway, an all-access
             known about the service's answer. A key with another name is never deleted here: it is not the built-in one and not this project's.
 read-back   Reads the gateway and what hangs on it and fails for each thing that is not as the template and the file say: the state of the gateway, the backend subnet and its delegation,
             the system-assigned identity, the provider, every model (deployment, version, content safety at Medium for the four categories), every alias, the gateway-wide policies, the
-            roles (the Operator's identity holds AI Gateway Models User on the gateway, the gateway's identity holds Foundry User on the Foundry resource) and the names of the API keys. It
+            roles (the Operator's identity and the cases app's, when it is given, hold AI Gateway Models User on the gateway; the gateway's identity holds Foundry User on the Foundry resource) and the names of the API keys. It
             prints publicNetworkAccess as the service reports it and does not judge it: the service has no private frontend, and the template says so.
 """
 from __future__ import annotations
@@ -452,7 +452,7 @@ def role_of(assignment: dict) -> str:
 
 
 def read_back(az: Runner, target: Target, vnet: str, subnet: str, foundry_account: str, operator_identity: str, models: list[dict], wanted: list[dict],
-              project_principal: str = "") -> list[Line]:
+              project_principal: str = "", cases_principal: str = "") -> list[Line]:
     """One line for each thing that was read. A thing that cannot be read is a failure too."""
     found: list[Line] = []
     halted: list[str] = []
@@ -608,7 +608,13 @@ def read_back(az: Runner, target: Target, vnet: str, subnet: str, foundry_accoun
             say(ok("The Foundry project's identity holds AI Gateway Models User on the gateway") if has else failed("The Foundry project's identity does not hold AI Gateway Models User on the gateway"))
         else:
             say(note("No principal of the Foundry project was given: the step that connects the project to the gateway gives it AI Gateway Models User"))
-        expected = {operator_principal, project_principal.lower()} - {""}
+        if cases_principal:
+            has = (MODELS_USER, cases_principal.lower(), here) in assignments
+            say(ok("The cases app's identity holds AI Gateway Models User on the gateway") if has
+                else failed("The cases app's identity does not hold AI Gateway Models User on the gateway, so the Detective and the Skeptic cannot call the models"))
+        else:
+            say(note("No principal of the cases app was given: the app has no identity of its own before the action cases has made it, and a later run of aigateway gives it AI Gateway Models User"))
+        expected = {operator_principal, project_principal.lower(), cases_principal.lower()} - {""}
         for role, principal, scope in assignments:
             if role in AI_GATEWAY_ROLES and principal not in expected:
                 say(note(f"{AI_GATEWAY_ROLES[role]} is also held on the gateway by the principal {safe(principal)} (scope {tail(scope)})"))
@@ -657,6 +663,7 @@ def parse(argv) -> argparse.Namespace:
         sub.add_argument("--timeout", type=int, default=TIMEOUT_SECONDS, help=f"seconds that one request of Azure may take (default {TIMEOUT_SECONDS})")
         if name == "read-back":
             sub.add_argument("--project-principal", default="", help="the object id of the Foundry project's system-assigned identity, when it is known")
+            sub.add_argument("--cases-principal", default="", help="the object id of the cases app's system-assigned identity, when it is known: it has to hold AI Gateway Models User on the gateway")
     args = parser.parse_args(argv)
     if args.timeout < 1:
         parser.error("--timeout is a number of seconds, one or more")
@@ -687,8 +694,10 @@ def main(argv=None, az: Runner | None = None, sleep: Callable[[float], None] = t
                 raise Problem(f"--{flag.replace('_', '-')} is a resource name", 2)
         if args.project_principal and not GUID.match(args.project_principal):
             raise Problem("--project-principal is an object id, or empty", 2)
+        if args.cases_principal and not GUID.match(args.cases_principal):
+            raise Problem("--cases-principal is an object id, or empty", 2)
         lines = read_back(runner, target, args.vnet, args.subnet, args.foundry_account, args.operator_identity, read_models(Path(args.models)), read_policies(Path(args.policies)),
-                          args.project_principal)
+                          args.project_principal, args.cases_principal)
         return report("The AI Gateway, read back from Azure", lines, args.summary)
     except Problem as e:
         print(f"error: {e}", file=sys.stderr)

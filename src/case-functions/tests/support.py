@@ -27,9 +27,11 @@ SUBSCRIPTION = "11111111-2222-3333-4444-555555555555"
 KEY = "K3y-VALUE-that-must-never-be-logged-0123456789abcdef"
 TOKEN = "eyJhbGciOiJub25lIn0.eyJvaWQiOiJ4In0.signature-value-123"
 NOW = dt.datetime(2026, 11, 4, 12, 0, 0, tzinfo=dt.timezone.utc)
-# The Foundry project of the agents, which the Detective and the Skeptic call for their chat completions too.
+# The Foundry project of the agents (the investigation's agents and conversations; the model calls of the Detective and the Skeptic do not go there: they go through the AI Gateway).
 FOUNDRY_ENDPOINT = "https://example-account.services.ai.azure.com/api/projects/meternaut"
-CHAT_ROUTE = "/openai/v1/chat/completions"
+# The AI Gateway, which every model call goes through: its host (the service reports it) and its one route of a chat completion.
+GATEWAY_HOST = "aigw-meternaut-0123abcd.swedencentral-01.ai.gateway.azure.com"
+CHAT_ROUTE = "/default/models/openai/v1/chat/completions"
 
 # INVESTIGATE is off: the tests of the Watch judge every lead with the Detective and the Skeptic, as they always did. A test that wants the investigation turns it on.
 ENV = {
@@ -37,6 +39,7 @@ ENV = {
     "SCOPE_SUBSCRIPTIONS": SUBSCRIPTION,
     "MODEL_DETECTIVE": "gpt-6-luna",
     "MODEL_SKEPTIC": "gpt-6.1-sol",
+    "AIGATEWAY_HOST": GATEWAY_HOST,
     "MAX_CASES_PER_RUN": "3",
     "EVENTHUB_CASES_CONTROL_NAME": "cases-control",
     "FOUNDRY_PROJECT_ENDPOINT": FOUNDRY_ENDPOINT,
@@ -44,7 +47,7 @@ ENV = {
     "IDENTITY_ENDPOINT": "http://127.0.0.1:8081/msi/token",
     "IDENTITY_HEADER": "identity-header-value",
 }
-# The same without a Foundry project: the app does not investigate, and the Detective and the Skeptic have nowhere to call.
+# The same without a Foundry project: the app does not investigate, and the Detective and the Skeptic judge the leads through the AI Gateway as before.
 ENV_NO_PROJECT = {k: v for k, v in ENV.items() if k not in ("FOUNDRY_PROJECT_ENDPOINT", "INVESTIGATE")}
 
 RG = f"/subscriptions/{SUBSCRIPTION}/resourceGroups"

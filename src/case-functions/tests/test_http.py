@@ -11,13 +11,16 @@ from cases import http
 from cases.redact import Redactor
 
 ENDPOINT = "https://example-account.services.ai.azure.com/api/projects/meternaut"
+GATEWAY = "aigw-meternaut-0123abcd.swedencentral-01.ai.gateway.azure.com"
 ARG = "https://management.azure.com/providers/Microsoft.ResourceGraph/resources?api-version=2022-10-01"
 COST = f"https://management.azure.com/subscriptions/{SUBSCRIPTION}/providers/Microsoft.CostManagement/query?api-version=2023-11-01"
 ADVISOR = f"https://management.azure.com/subscriptions/{SUBSCRIPTION}/providers/Microsoft.Advisor/recommendations?api-version=2023-01-01&$filter=Category%20eq%20%27Cost%27"
 LOCKS = f"https://management.azure.com/subscriptions/{SUBSCRIPTION}/providers/Microsoft.Authorization/locks?api-version=2016-09-01"
 SUBSCRIPTIONS = "https://management.azure.com/subscriptions?api-version=2022-12-01"
-CHAT = f"{ENDPOINT}/openai/v1/chat/completions"
-RESOURCE_CHAT = "https://example-account.services.ai.azure.com/openai/v1/chat/completions"
+# The one route of a chat completion that the app may call: the AI Gateway's. The Foundry project's and the Foundry resource's own routes are not on the list.
+CHAT = f"https://{GATEWAY}/default/models/openai/v1/chat/completions"
+DIRECT_CHAT = f"{ENDPOINT}/openai/v1/chat/completions"
+DIRECT_RESOURCE_CHAT = "https://example-account.services.ai.azure.com/openai/v1/chat/completions"
 
 
 class Script:
@@ -37,7 +40,7 @@ class Script:
 def client(*answers, redact=None):
     sleeps = []
     script = Script(*answers)
-    allowed = http.allowed_calls(ENDPOINT)
+    allowed = http.allowed_calls(ENDPOINT, GATEWAY)
     return http.Client(allowed, redact or Redactor(), transport=script, sleep=sleeps.append, jitter=lambda: 0.5), script, sleeps
 
 
@@ -48,9 +51,9 @@ def ok(document=None):
 class TheList(unittest.TestCase):
     def test_the_calls_of_the_app_are_allowed(self):
         c, script, _ = client(ok())
-        for method, url in (("POST", ARG), ("POST", COST), ("GET", ADVISOR), ("GET", LOCKS), ("POST", CHAT), ("POST", RESOURCE_CHAT), ("GET", SUBSCRIPTIONS)):
+        for method, url in (("POST", ARG), ("POST", COST), ("GET", ADVISOR), ("GET", LOCKS), ("POST", CHAT), ("GET", SUBSCRIPTIONS)):
             c.request(method, url)
-        self.assertEqual(len(script.calls), 7)
+        self.assertEqual(len(script.calls), 6)
 
     def test_the_watch_without_a_foundry_project_makes_the_reads_of_azure_and_nothing_else(self):
         plain = http.allowed_calls()
@@ -59,10 +62,73 @@ class TheList(unittest.TestCase):
         for _, pattern in plain:
             self.assertTrue(pattern.pattern.startswith(re.escape("https://management.azure.com")), pattern.pattern)
         c = http.Client(plain, Redactor(), transport=Script(ok()), sleep=lambda s: None)
-        for method, url in (("POST", CHAT), ("POST", RESOURCE_CHAT), ("POST", "https://management.azure.com/subscriptions/" + SUBSCRIPTION +
+        for method, url in (("POST", CHAT), ("POST", DIRECT_CHAT), ("POST", DIRECT_RESOURCE_CHAT), ("POST", "https://management.azure.com/subscriptions/" + SUBSCRIPTION +
                                                                         "/resourceGroups/rg/providers/Microsoft.ApiManagement/service/x/subscriptions/y/listSecrets")):
             with self.assertRaises(http.Refused, msg=url):
                 c.request(method, url)
+
+    def test_the_one_call_to_the_ai_gateway_is_one_exact_post_on_its_host_and_its_route(self):
+        calls = http.ai_gateway_calls(GATEWAY)
+        self.assertEqual([(m, p.pattern) for m, p in calls], [("POST", re.escape(f"https://{GATEWAY}/default/models/openai/v1/chat/completions"))])
+        plain = http.allowed_calls()
+        self.assertEqual(http.allowed_calls(None, GATEWAY), plain + calls, "the gateway's call is added to the reads of Azure, after them")
+        self.assertEqual(http.allowed_calls(ENDPOINT, GATEWAY)[-1:], calls)
+        self.assertEqual(http.allowed_calls(ENDPOINT, GATEWAY)[:len(http.allowed_calls(ENDPOINT))], http.allowed_calls(ENDPOINT))
+
+    def test_everything_around_the_one_route_of_the_gateway_is_refused(self):
+        c, script, _ = client(ok())
+        refused = [
+            ("GET", CHAT),
+            ("PUT", CHAT),
+            ("PATCH", CHAT),
+            ("DELETE", CHAT),
+            ("POST", CHAT + "/extra"),
+            ("POST", CHAT[:-1]),
+            ("POST", f"https://{GATEWAY}/default/models/openai/v1/responses"),
+            ("POST", f"https://{GATEWAY}/default/models/openai/v1/embeddings"),
+            ("POST", f"https://{GATEWAY}/default/models"),
+            ("GET", f"https://{GATEWAY}/default/models"),
+            ("POST", f"https://{GATEWAY}/default/models/openai/v1/chat/completions/"),
+            ("POST", f"https://{GATEWAY}/openai/v1/chat/completions"),
+            ("POST", f"https://{GATEWAY}/default/tools/mcp"),
+            ("POST", f"https://{GATEWAY}/other/models/openai/v1/chat/completions"),
+            ("POST", f"https://{GATEWAY.upper()}/default/models/openai/v1/chat/completions"),
+            ("POST", f"http://{GATEWAY}/default/models/openai/v1/chat/completions"),
+            ("POST", f"https://{GATEWAY}:8443/default/models/openai/v1/chat/completions"),
+            ("POST", f"https://user@{GATEWAY}/default/models/openai/v1/chat/completions"),
+            ("POST", f"https://{GATEWAY}.evil.example/default/models/openai/v1/chat/completions"),
+            ("POST", f"https://evil.example/{GATEWAY}/default/models/openai/v1/chat/completions"),
+            ("POST", f"https://aigw-other-89abcdef.eastus2-01.ai.gateway.azure.com/default/models/openai/v1/chat/completions"),
+            ("POST", f"https://{GATEWAY.replace('.', '-')}/default/models/openai/v1/chat/completions"),
+            ("POST", "https://example-apim.azure-api.net/default/models/openai/v1/chat/completions"),
+            ("POST", f"https://api.openai.com/default/models/openai/v1/chat/completions"),
+        ]
+        for method, url in refused:
+            with self.assertRaises(http.Refused, msg=f"{method} {url}"):
+                c.request(method, url)
+        self.assertEqual(script.calls, [], "nothing left the app")
+
+    def test_the_host_of_the_gateway_is_checked_when_the_list_is_made(self):
+        for host in ("", "evil.example.com", "ai.gateway.azure.com", ".ai.gateway.azure.com", GATEWAY.upper(), f"https://{GATEWAY}", f"{GATEWAY}/default", f"{GATEWAY}:443",
+                     f"a b.{GATEWAY}", f"{GATEWAY}.evil.example.com", "-x.ai.gateway.azure.com", "x_y.ai.gateway.azure.com", "x" * 250 + ".ai.gateway.azure.com",
+                     "example.azure-api.net", "x.services.ai.azure.com"):
+            with self.assertRaises(ValueError, msg=host[:60]):
+                http.ai_gateway_calls(host)
+            with self.assertRaises(ValueError, msg=host[:60]):
+                http.allowed_calls(None, host)
+        http.ai_gateway_calls("a.ai.gateway.azure.com")
+        http.ai_gateway_calls(GATEWAY)
+
+    def test_no_chat_completion_to_the_foundry_project_or_resource_is_allowed_even_with_both_lists(self):
+        c, script, _ = client(ok())
+        for method, url in (("POST", DIRECT_CHAT), ("POST", DIRECT_RESOURCE_CHAT), ("POST", f"{ENDPOINT}/openai/chat/completions"), ("GET", DIRECT_CHAT)):
+            with self.assertRaises(http.Refused, msg=url):
+                c.request(method, url)
+        self.assertEqual(script.calls, [])
+        for _, pattern in http.allowed_calls(ENDPOINT, GATEWAY):
+            if "services" in pattern.pattern:
+                self.assertNotIn("chat", pattern.pattern, "the Foundry list holds no chat completion")
+        self.assertFalse(hasattr(http, "CHAT_PATH") or hasattr(http, "resource_of"), "the direct routes and their helpers are gone")
 
     def test_nothing_else_is_allowed(self):
         c, script, _ = client(ok())
@@ -260,7 +326,7 @@ def timed(*answers, now=0.0, deadline=None):
         clock["now"] += seconds
 
     script = Script(*answers)
-    allowed = http.allowed_calls(ENDPOINT)
+    allowed = http.allowed_calls(ENDPOINT, GATEWAY)
     c = http.Client(allowed, Redactor(), transport=script, sleep=sleep, jitter=lambda: 0.5, monotonic=lambda: clock["now"])
     c.deadline = deadline
     return c, script, sleeps

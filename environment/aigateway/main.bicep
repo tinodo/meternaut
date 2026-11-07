@@ -1,7 +1,8 @@
-// The AI Gateway of the agents' model calls: Azure's AI Gateway (preview), the separate service Microsoft.ApiManagement/aigateways, which is not a classic
-// API Management instance (docs/proposals/08-ai-gateway.md). This template is step 1 of 2: the gateway, its models and aliases, and its roles.
-// Step 2 (a later change) connects the Foundry project to it and moves the model names of the cases app. Nothing here touches the agents, which keep calling
-// their model deployments as they do now.
+// The AI Gateway of Meternaut's model calls: Azure's AI Gateway (preview), the separate service Microsoft.ApiManagement/aigateways, which is not a classic
+// API Management instance (docs/proposals/08-ai-gateway.md). It is the governance hub of the Citadel design: every model call of Meternaut goes through it, with no direct path
+// (AGENTS.md rule 15 (c)). This template is step 1 of 2: the gateway, its models and aliases, and its roles, which serve the Detective and the Skeptic of the cases app.
+// Step 2 (built, and off behind a switch) connects the Foundry project to it so that the agents call through it too, and moves their model names. Nothing here touches the agents,
+// which keep calling their model deployments until step 2 is switched on.
 //
 // What it holds:
 //  - the gateway aigw-<workload>-<suffix>, with a system-assigned identity and the subnet snet-aigw as its backend subnet. The gateway reaches its backends through that subnet, so the call
@@ -15,7 +16,8 @@
 //  - on each model, a content safety policy at Medium for the four categories. The deployment's own guardrail (environment/foundry/main.bicep) still runs on every
 //    call that the gateway makes to the deployment: a request has to pass each of the two. The gateway has no Prompt Shields; the guardrail has.
 //  - AI Gateway Models User on the gateway for the Operator's identity (the Operator, environment/operator/main.bicep, runs the check, tools/aigateway-check.py),
-//    and for the Foundry project's identity when its principal id is given. Step 2 gives it, and an empty value means none yet.
+//    for the cases app's identity when its principal id is given (its Detective and Skeptic call the gateway with it), and for the Foundry project's identity when its principal id is given.
+//    Step 2 gives the project's, and an empty value means none yet.
 //  - optionally, the OpenTelemetry exporter to the shared Application Insights component. It is off, and what is missing for turning it on is in the proposal.
 //
 // THE FRONTEND IS PUBLIC, AND NO TEMPLATE CAN CHANGE THAT. The service offers no private endpoint, and the setting publicNetworkAccess Disabled has no effect (Learn,
@@ -64,6 +66,10 @@ param models array
 @description('Principal id of the system-assigned identity of the Foundry project. It gets AI Gateway Models User on the gateway. Empty means none yet: the step that connects the project to the gateway gives it. The template works without it.')
 @maxLength(36)
 param foundryProjectPrincipalId string = ''
+
+@description('Principal id of the system-assigned identity of the cases app. It gets AI Gateway Models User on the gateway: every model call of the Detective and the Skeptic goes through the gateway with that identity. Empty means none: the app has no identity before the action cases has made it, and the action aigateway then makes the gateway without the role (the next run gives it). The workflow reads it from the app.')
+@maxLength(36)
+param casesPrincipalId string = ''
 
 @description('Switch for the OpenTelemetry exporter to the shared Application Insights component. Off. Turning it on needs three things that no template can do: the component\'s Azure Monitor workspace ingestion has to be on, the resource provider Microsoft.Monitor has to be registered, and the gateway\'s identity needs Monitoring Metrics Publisher on the component\'s data collection rule, which a person gives (the proposal lists them).')
 param telemetryEnabled bool = false
@@ -248,6 +254,18 @@ resource projectCallsTheModels 'Microsoft.Authorization/roleAssignments@2022-04-
   properties: {
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', aiGatewayModelsUserRoleId)
     principalId: foundryProjectPrincipalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+// The cases app calls the models for the Detective and the Skeptic, with its own identity: every model call of Meternaut goes through this gateway (AGENTS.md rule 15 (c)). It may list and invoke
+// the models and nothing else. Empty until the app has an identity (the action cases makes the app), and the role needs up to ten minutes to apply, so a Watch started right after waits for it.
+resource casesCallsTheModels 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!empty(casesPrincipalId)) {
+  scope: gateway
+  name: guid(gateway.id, casesPrincipalId, aiGatewayModelsUserRoleId)
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', aiGatewayModelsUserRoleId)
+    principalId: casesPrincipalId
     principalType: 'ServicePrincipal'
   }
 }

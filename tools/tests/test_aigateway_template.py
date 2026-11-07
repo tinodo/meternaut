@@ -56,6 +56,7 @@ class Template(unittest.TestCase):
             "aliasOfModel": "Microsoft.ApiManagement/aigateways/workspaces/aliases",
             "operatorCallsTheModels": "Microsoft.Authorization/roleAssignments",
             "projectCallsTheModels": "Microsoft.Authorization/roleAssignments",
+            "casesCallsTheModels": "Microsoft.Authorization/roleAssignments",
             "insights": "Microsoft.Insights/components",
             "telemetryExporter": "Microsoft.ApiManagement/aigateways/workspaces/telemetryExporters",
         })
@@ -147,6 +148,18 @@ class Template(unittest.TestCase):
             self.assertIn(scope, ("account", "gateway"), "a role on the gateway or on the Foundry resource, never on the group or the subscription")
         self.assertIn(f"var aiGatewayModelsUserRoleId = '{MODELS_USER}'", CODE)
         self.assertRegex(CODE, r"(?m)^param foundryProjectPrincipalId string = ''$", "empty means none yet: the template works without it")
+
+    def test_the_cases_apps_identity_holds_ai_gateway_models_user_on_the_gateway_when_it_is_given_and_none_when_it_is_not(self):
+        # Every model call of the Detective and the Skeptic goes through the gateway with the app's own identity (AGENTS.md rule 15 (c)).
+        cases = self.found["casesCallsTheModels"][1]
+        for word in ("if (!empty(casesPrincipalId))", "scope: gateway", "name: guid(gateway.id, casesPrincipalId, aiGatewayModelsUserRoleId)", "principalId: casesPrincipalId",
+                     "principalType: 'ServicePrincipal'", "roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', aiGatewayModelsUserRoleId)"):
+            self.assertIn(word, cases, word)
+        self.assertRegex(CODE, r"(?m)^@maxLength\(36\)\nparam casesPrincipalId string = ''$", "empty means none: the app has no identity before the action cases has made it")
+        self.assertEqual(len(re.findall(r"roleDefinitions', aiGatewayModelsUserRoleId", CODE)), 3, "the Operator, the Foundry project and the cases app hold the one role of the callers, and no other caller does")
+        header = re.sub(r"\s*\n//\s*", " ", SOURCE.split("targetScope", 1)[0])
+        for words in ("every model call of Meternaut goes through it, with no direct path", "for the cases app's identity when its principal id is given"):
+            self.assertIn(words, header, words)
 
     def test_the_telemetry_is_off_by_default_sends_no_payload_and_has_no_connection_string(self):
         exporter = self.found["telemetryExporter"][1]

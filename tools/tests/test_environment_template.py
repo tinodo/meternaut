@@ -1909,7 +1909,7 @@ class FoundryWorkflow(unittest.TestCase):
         params = [b for b in self.steps if b.startswith("name: Work out the settings\n")][0]
         self.assertIn("exists() {\n            local found level=\"${3:-error}\"", params, "the level of the annotation is the caller's")
         self.assertIn('echo "::${level}::${1##*/} could not be read: $found" >&2', params)
-        self.assertEqual(len(re.findall(r"(?m)^\s+(what-if\|foundry)\)$", params)), 1, "the identity is looked for by what-if and foundry only")
+        self.assertEqual(len(re.findall(r"(?m)^\s+(what-if\|foundry\|aigateway)\)$", params)), 1, "the identity is looked for by what-if, foundry and aigateway only: the Foundry file and the AI Gateway file carry it")
         self.assertEqual(len(re.findall(r"(?m)^\s+cases\)$", params)), 1)
         self.assertEqual(len(re.findall(r"(?m)^\s+what-if\)$", params)), 1)
         self.assertEqual(len(re.findall(r'(?m)^\s+\*\) echo "The action \$ACTION does not use the Foundry project, so it is not looked for\." ;;$', params)), 1)
@@ -1917,12 +1917,12 @@ class FoundryWorkflow(unittest.TestCase):
         self.assertNotIn("cases_principal=", params.replace("cases_system_principal=", ""))
         self.assertEqual(params.count("cases_system_principal=$(az rest --method get"), 1, "the system-assigned identity is read from the app, once, and not by an action that has nothing to do with the Foundry resource")
         self.assertIn('--url "https://management.azure.com${cases_site}?api-version=2024-04-01" --query identity.principalId --output tsv', params)
-        self.assertLess(params.index("what-if|foundry)"), params.index("cases_system_principal=$(az rest"), "inside the branch that only what-if and foundry take")
+        self.assertLess(params.index("what-if|foundry|aigateway)"), params.index("cases_system_principal=$(az rest"), "inside the branch that only what-if, foundry and aigateway take")
         self.assertLess(params.index("cases_system_principal=$(az rest"), re.search(r"(?m)^\s+cases\)$", params).start())
         defaults = params.index("cases_system_principal=\"\"\n            foundry_exists=false")
         self.assertLess(defaults, params.index("cases_system_principal=$(az rest"), "false is the answer for every action that does not look")
         self.assertLess(defaults, params.index("case \"$ACTION\" in"), "and the defaults are set before the first case that looks")
-        self.assertEqual(params.count("case \"$ACTION\" in"), 2, "the two cases of the Foundry facts: no case for the identity of a gateway of the owner's API Management instance comes before them")
+        self.assertEqual(params.count("case \"$ACTION\" in"), 3, "the two cases of the Foundry facts and the one of the AI Gateway's host name: no case for the identity of a gateway of the owner's API Management instance comes before them")
         self.assertIn("Nothing was changed: run cases again.", params)
         self.assertIn('echo "::warning::The preview of the cases app assumes that the Foundry project is not in Azure', params)
         self.assertNotIn("ACTION: ${{", params.split("run: |")[0], "the job's ACTION is used")
@@ -1931,12 +1931,12 @@ class FoundryWorkflow(unittest.TestCase):
     def test_the_texts_of_the_watch_say_that_it_changes_no_resource_of_the_estate_and_what_the_investigation_adds(self):
         block = self.step("Start one Watch and read its History")
         comment = " ".join(line.strip()[2:] for line in block.splitlines() if line.strip().startswith("# "))
-        for words in ("The Watch changes no resource of the estate: it reads Azure and calls the model deployments of its own Foundry project directly, with its own identity and no key",
+        for words in ("The Watch changes no resource of the estate: it reads Azure and calls the AI Gateway with its own identity and no key",
                       "With the investigation on (the cases app has the address of the Foundry project",
-                      "it also creates its agents and conversations in its own Foundry project, and those agents call the models of that resource directly too "
-                      "(AGENTS.md rule 15 (c))."):
+                      "it also creates its agents and conversations in its own Foundry project, and those agents call the models of that resource directly "
+                      "(the one gap of that rule, until step 2 is switched on)."):
             self.assertIn(words, comment)
-        self.assertNotIn("through the gateway", comment)
+        self.assertNotIn("calls the model deployments of its own Foundry project directly, with its own identity", comment)
         for old in ("only reads Azure", "it only reads", "went through the gateway", "Nothing in Azure was changed"):
             self.assertNotIn(old, self.text, old)
         description = re.search(r'(?m)^        description: "(what-if: .+)"$', self.text).group(1)
@@ -2254,7 +2254,7 @@ class RetireWorkflow(unittest.TestCase):
         for words in ("the Event Hubs namespace takes no public traffic (its public network access is Disabled and its private endpoint is the only way in, so from then on only the Operator can send to it from outside the apps)",
                       "after its deploy the action reads that back from Azure and retires the deploy identity's old right to send to the control hub usage-control, when that is still there",
                       "on an estate where the namespace is still public, run it only after recording-check and cases-run have passed through the Operator",
-                      "after its deploy it retires the deploy identity's old right to send to the control hub cases-control, when that is still there, and it needs the usage recording first."):
+                      "after its deploy it retires the deploy identity's old right to send to the control hub cases-control, when that is still there, and it needs the usage recording and the AI Gateway first"):
             self.assertIn(words, description, words)
         self.assertLess(description.index("recording: "), description.index("the Event Hubs namespace takes no public traffic"))
         self.assertLess(description.index("the Event Hubs namespace takes no public traffic"), description.index(" recording-check: "))
