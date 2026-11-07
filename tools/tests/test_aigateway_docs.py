@@ -154,6 +154,7 @@ class TheOtherDocuments(unittest.TestCase):
                       "That is an exception to the rule of [private by default]", "Microsoft publishes no address range and no service tag for the Foundry Agent Service"):
             self.assertIn(words, entry, words)
         self.assertFalse("NNNN" in entry, "the line about what was checked is written")
+        self.assertRegex(entry.split("**What was checked.**")[1].split("**Not checked.**")[0], r"\d,\d{3} tests", "and it says how many tests passed")
 
     def test_the_readme_lists_the_record_in_its_table_and_in_its_status(self):
         rows = [line for line in README.splitlines() if line.startswith("| **[An AI Gateway for the agents](docs/proposals/08-ai-gateway.md)**")]
