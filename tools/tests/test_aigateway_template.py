@@ -128,6 +128,8 @@ class Template(unittest.TestCase):
         for word in ("name: model.name", "aliasName: model.name", "resourceId: modelOfProvider[index].id", "priority: 0", "weight: 1"):
             self.assertIn(word, alias, word)
         self.assertEqual(alias.count("resourceId:"), 1, "one target for each alias: no routing and no failover")
+        self.assertRegex(CODE, r"(?m)^@batchSize\(1\)\n#disable-next-line BCP081\nresource aliasOfModel ", "the aliases are written one after another, like the models")
+        self.assertEqual(depends_on(alias), {"modelOfProvider"}, "and only after every model is written: nothing of the gateway's configuration is written twice at once")
         comment = re.sub(r"\s*\n//\s*", " ", SOURCE)
         self.assertIn("are both the deployment's name, dots included: the specification allows dots in an alias's name (^[a-zA-Z0-9_.-]+$, where a model's name allows none)", comment,
                       "the template says why the alias resource keeps the dots and the model's does not")

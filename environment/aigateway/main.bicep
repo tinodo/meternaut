@@ -253,6 +253,9 @@ resource modelOfProvider 'Microsoft.ApiManagement/aigateways/workspaces/modelPro
 // The name that a caller sends in the `model` field. The resource name and `aliasName` are both the deployment's name, dots included: the specification allows dots in an
 // alias's name (^[a-zA-Z0-9_.-]+$, where a model's name allows none) and the portal's own code keeps them, so a caller gets that name whether the service reads the property or the
 // resource name at this API version (docs/proposals/08-ai-gateway.md). One target each, so there is no routing and no failover: priority and weight are the service's own defaults.
+// One at a time too, and only after every model is written: the service is a preview, nothing is known of how it takes two writes into one workspace at once, and the one resource of this project that
+// takes one write at a time (the Foundry resource) refuses the second with a precondition error. The extra minute costs nothing; a refused write costs a run.
+@batchSize(1)
 #disable-next-line BCP081
 resource aliasOfModel 'Microsoft.ApiManagement/aigateways/workspaces/aliases@2025-09-01-preview' = [for (model, index) in models: {
   parent: workspace
@@ -268,6 +271,9 @@ resource aliasOfModel 'Microsoft.ApiManagement/aigateways/workspaces/aliases@202
       }
     ]
   }
+  dependsOn: [
+    modelOfProvider
+  ]
 }]
 
 // The Operator runs the check: it calls each alias with its own token. It may list and invoke the models and nothing else, and it holds no right to change the gateway.
