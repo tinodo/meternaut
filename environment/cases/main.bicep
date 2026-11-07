@@ -35,10 +35,11 @@
 //
 // The app has a private endpoint of its own, for the console's name and for the deployment site (the group `sites`, in the endpoint subnet; no private DNS zone group: the landing zone's
 // policy adds it, rule 19). The Operator uses it to publish the code since phase 2 of docs/proposals/07-private-by-default.md (the action cases runs operator/publish.sh in a container group of the
-// Operator, as the deploy identity) and to ask the app's health address once the code is published. People do not reach the console on the app's own name once it is closed: they reach it on
-// consoleHostName, a host name on the platform's Application Gateway, which forwards to this endpoint (the objects that the platform team adds are in the same record). The console keeps its public
-// access until the gateway is there and the owner has said so, which the parameter casesAppPublicNetworkAccess says, so that closing it is one value (the parameter builder refuses that value
-// without a console host name). The value
+// Operator, as the deploy identity) and to ask the app's health address once the code is published. Nobody reaches the console on the app's own name from outside the network once it is closed: people reach it on
+// consoleHostName, a host name on the platform's Application Gateway, which forwards to this endpoint (the objects that the platform team adds are in the same record), or, with no gateway (the owner's decision
+// of 2026-11-07) and no consoleHostName, on the app's own name from the private network, where it resolves to this endpoint. The console keeps its public
+// access until the owner closes it, which the parameter casesAppPublicNetworkAccess says, so that closing it is one value (the parameter builder takes that value with a console host name and without one:
+// with none, the check of the front door runs in the Operator). The value
 // is written to the app every time and is never left empty: Learn says that for a site whose value is not set, a private endpoint switches public access off by itself, and
 // the people who approve a change reach the console from outside the network. The workflow waits until the landing zone has registered the endpoint's names before it publishes, so that the
 // two apps behave alike: the usage app's deployment ends with a call to the app's own host name, which does not resolve before.

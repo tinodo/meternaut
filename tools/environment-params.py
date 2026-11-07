@@ -40,7 +40,9 @@ the name of the action) is foundry, and without FOUNDRY_PROJECT_PRINCIPAL_ID whe
 CONSOLE_HOST_NAME (optional) is the host name that the console has on the platform's Application Gateway, which forwards to the cases app (docs/proposals/07-private-by-default.md). Empty: people open the
 console on the app's own name. With a name, the console's address (the setting CONSOLE_HOST, which the letters' links and the return address of the Azure sign-in are built from) is that name, the cases file
 passes it as consoleHostName, and the outputs console_host (the name that people open: that name, or the app's own) and console_host_set say what the check of the console's front door knocks at.
-CASES_APP_PUBLIC_NETWORK_ACCESS is refused as Disabled while no name is set.
+CASES_APP_PUBLIC_NETWORK_ACCESS may be Disabled with no name set: that is how the owner closes the web page and reaches it on the private network, and nothing is refused. The output door_in_operator says
+where the check of the front door runs. False: from the runner, at the name that people open. True (only for Disabled and no name): inside the network, in the Operator, at the app's own name, because a closed app
+answers nobody outside the network (docs/proposals/07-private-by-default.md).
 
 It writes these ARM parameter files into --out-dir:
 
@@ -62,7 +64,7 @@ It writes these ARM parameter files into --out-dir:
                                       scopeAllSubscriptions, the constant SCOPE_ALL_SUBSCRIPTIONS near the top of this file (True: every subscription that the app's identity can read).
 
                                       What each function app takes from the public internet is not a setting of the workflow: USAGE_APP_PUBLIC_NETWORK_ACCESS (Disabled) and CASES_APP_PUBLIC_NETWORK_ACCESS (Enabled until the
-                                      people who approve have a path to the console), near the top of this file, go into recording.parameters.json and cases.parameters.json (usageAppPublicNetworkAccess,
+                                      owner closes the web page, which he reaches on the private network), near the top of this file, go into recording.parameters.json and cases.parameters.json (usageAppPublicNetworkAccess,
                                       casesAppPublicNetworkAccess). Closing an app is one value and a commit, and
                                       the property is always written: an app whose value is not set has its public access switched off by the first private endpoint (docs/proposals/07-private-by-default.md).
 
@@ -108,9 +110,9 @@ PRIVATE_SPACE = ipaddress.ip_network("10.0.0.0/8")
 SKUS = ("DataZoneStandard", "GlobalStandard")
 PLACEHOLDER = "00000000-0000-0000-0000-000000000000"
 # What each function app takes from the public internet. The usage app is closed (Disabled): it has no page for people, and its code is published from inside the network, in the Operator, through its
-# private endpoint (docs/proposals/07-private-by-default.md, phases 2 and 3). The cases app stays Enabled until the people who approve have a network path to the console, which is the owner's decision
-# (the same record, "The console for people"): one value, and a commit, closes it. They go into every parameter file, so that the property is never left unset: for an app whose value is not set,
-# the first private endpoint switches public access off by itself (Learn, App Service access restrictions).
+# private endpoint (docs/proposals/07-private-by-default.md, phases 2 and 3). The cases app stays Enabled until the owner closes it: one value, and a commit, and he then reaches the web page on the private
+# network (the build takes Disabled with a host name on a gateway and without one: with none, the check of the front door runs in the Operator, door_in_operator). They go into every parameter file, so that
+# the property is never left unset: for an app whose value is not set, the first private endpoint switches public access off by itself (Learn, App Service access restrictions).
 PUBLIC_NETWORK_ACCESS = ("Enabled", "Disabled")
 USAGE_APP_PUBLIC_NETWORK_ACCESS = "Disabled"
 CASES_APP_PUBLIC_NETWORK_ACCESS = "Enabled"
@@ -644,13 +646,9 @@ def build(env, models: list[dict], preview: bool = False, aigateway_policies: li
         raise Problem("SCOPE_ALL_SUBSCRIPTIONS (in tools/environment-params.py) is True or False")
     gateway_host = ai_gateway_host(env, preview)
     console_host = console_host_name(env)
-    if CASES_APP_PUBLIC_NETWORK_ACCESS == "Disabled" and not console_host:
-        # A closed app answers nobody outside the network, so the check of the console's front door, which knocks from the runner, would have nothing to knock at and would pass or fail for
-        # the wrong reason; people would have no address either. Refused here, in every action, rather than left out of a run without a word (docs/proposals/07-private-by-default.md).
-        raise Problem("CASES_APP_PUBLIC_NETWORK_ACCESS (in tools/environment-params.py) is Disabled and CONSOLE_HOST_NAME is not set. The cases app would take no public traffic, so nobody could open "
-                      "the console, and the check of its front door, which knocks from the runner, would have no address to knock at: what a visitor without a sign-in gets would not be checked. "
-                      "Set CONSOLE_HOST_NAME to the console's host name on the platform's Application Gateway once the gateway and its DNS record exist (environment/BOOTSTRAP.md), "
-                      "or leave the app's public access Enabled")
+    # A closed cases app with no host name on a gateway is a state of its own, and nothing is refused: people reach the web page on the private network, at the app's own name. The runner cannot knock at it,
+    # because a closed app answers nobody outside the network, so the workflow checks the front door inside the network, in the Operator, at that name (docs/proposals/07-private-by-default.md).
+    door_in_operator = CASES_APP_PUBLIC_NETWORK_ACCESS == "Disabled" and not console_host
 
     dns = items(need(env, "ENV_DNS_SERVERS"), "ENV_DNS_SERVERS", 3)
     for server in dns:
@@ -732,6 +730,7 @@ def build(env, models: list[dict], preview: bool = False, aigateway_policies: li
         "cases_hub_name": "cases-control",
         "console_host": console_host or f"{cases_names(subscription, group)['cases_function_app_name']}{APP_OWN_DOMAIN}",
         "console_host_set": "true" if console_host else "false",
+        "door_in_operator": "true" if door_in_operator else "false",
         "cases_public_network_access": CASES_APP_PUBLIC_NETWORK_ACCESS,
         **names,
         **cases_names(subscription, group),

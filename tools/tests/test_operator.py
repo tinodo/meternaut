@@ -1801,6 +1801,14 @@ class RunToolWithTheRealTools(ScriptRunner, unittest.TestCase):
         self.assertEqual(ran.lines, [f"ok: python3 {version}", "ok: az login --identity", "ok: running recording-check.py functions", self.SITE_ERROR, "run-tool-done: exit code 1"])
         self.assertEqual(ran.calls, [f"az login --identity --client-id {CLIENT_ID} --allow-no-subscriptions --output none", "sleep 20"], "the sign-in, nothing asked of Azure, and the hold")
 
+    def test_the_console_check_runs_from_the_volume_on_its_own_with_the_arguments_of_the_workflow_and_its_door_refuses_a_name_that_is_none_before_it_asks_anything(self):
+        # The check of a closed app's front door runs in the Operator (docs/proposals/07-private-by-default.md, the web page on the private network): the tool is the only file in the volume.
+        ran = self.run_real("console-check", "door --host not_a_host --expect signin --private", ["console-check.py"])
+        self.assertEqual(ran.done.returncode, 2, ran.done.stdout)
+        version = "%d.%d.%d" % sys.version_info[:3]
+        self.assertEqual(ran.lines, [f"ok: python3 {version}", "ok: az login --identity", "ok: running console-check.py door", "console-check: --host is a host name", "run-tool-done: exit code 2"])
+        self.assertEqual(ran.calls, [f"az login --identity --client-id {CLIENT_ID} --allow-no-subscriptions --output none", "sleep 20"], "the sign-in, nothing asked of Azure, and the hold")
+
     def test_the_cases_check_finds_the_recording_check_in_the_same_folder_and_needs_it(self):
         ran = self.run_real("cases-check", "functions --site not-an-id", ["cases-check.py", "recording-check.py"])
         self.assertEqual(ran.done.returncode, 1)
@@ -1825,11 +1833,14 @@ class TheToolsInTheContainer(unittest.TestCase):
     """The tools that the Operator runs are the very files of tools/, and they run in the image's Python 3.12 and from a folder that holds only the files that are sent."""
 
     TOOLS = ("recording-check.py", "cases-check.py")
+    # The check of the web page's front door runs in the Operator too (a closed app answers nobody outside the network): it sends no event and loads no other tool, so it needs none of the checks below that
+    # belong to the two tools that send one, and tools/tests/test_console_check.py runs it from a folder of its own.
+    ALL_TOOLS = TOOLS + ("console-check.py",)
 
     def test_both_parse_as_python_3_12_and_import_the_standard_library_only(self):
         # CI and the function app use Python 3.13, the image of the Operator has 3.12: a syntax of 3.13 would pass every test here and fail in the container.
         import ast
-        for name in self.TOOLS:
+        for name in self.ALL_TOOLS:
             tree = ast.parse(text(f"tools/{name}"), feature_version=(3, 12))
             imported = {alias.name.split(".")[0] for node in ast.walk(tree) if isinstance(node, ast.Import) for alias in node.names}
             imported |= {node.module.split(".")[0] for node in ast.walk(tree) if isinstance(node, ast.ImportFrom) and node.module}

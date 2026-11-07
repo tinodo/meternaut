@@ -564,7 +564,7 @@ class Workflow(unittest.TestCase):
                 self.assertIsNotNone(condition, block[:80])
                 self.assertNotIn("what-if", condition.group(1))
                 self.assertNotIn("always()", condition.group(1))
-        self.assertEqual(found, 6, "two publishes and four job starts, all in the Operator's container: the publish of the usage app and of the cases app, the check tools that send the control event, the health check of the cases app, and the check of the AI Gateway")
+        self.assertEqual(found, 7, "two publishes and five job starts, all in the Operator's container: the publish of the usage app and of the cases app, the check tools that send the control event, the health check of the cases app, the check of the web page's front door, and the check of the AI Gateway")
         for block in self.steps:
             for word in ("az functionapp deployment source config-zip", "/api/zipdeploy", "az webapp deploy", "az webapp deployment"):
                 self.assertNotIn(word, block, f"no step publishes from the runner any more: {word} is in {block[:80]!r}")
@@ -1025,7 +1025,8 @@ class FunctionAppEndpoints(unittest.TestCase):
         self.assertIn("and six private endpoints that the landing zone has registered in its central zones: the five of the services, and the function app's own for the app and its deployment site "
                       "(the sub-resource \\`sites\\`), which the code is not published before, because a deployment ends with a call to the app's own name. The app stays public in this phase.", workflow)
         self.assertIn("and a private endpoint of its own for the console and its deployment site (the sub-resource \\`sites\\`), which the landing zone has registered in its central zone: the code is not "
-                      "published before that, so that the two apps behave alike and a later probe finds the names. The app stays public in this phase.", workflow)
+                      "published before that, so that the two apps behave alike and a later probe finds the names. The app's public network access is \\`$CASES_PUBLIC_ACCESS\\` (the constant "
+                      "CASES_APP_PUBLIC_NETWORK_ACCESS in tools/environment-params.py).", workflow)
         self.assertIn("If they stop at the wait for the landing zone's policy, the endpoints are made and the app was not given its code: the lines say which endpoint is not registered yet.", workflow)
         self.assertIn("If they stop at the wait for the landing zone's policy, the app and its endpoint are made and the app was not given its code: the lines say that the endpoint is not registered yet.", workflow)
         for stale in ("not waited for", "nothing waits for its names", "operator-probe\\` shows whether the landing zone has registered its names"):
@@ -1532,10 +1533,12 @@ class CasesWorkflow(unittest.TestCase):
 
     def test_the_front_door_is_knocked_at_by_its_own_action_and_after_every_cases_run_with_no_credential_and_no_write(self):
         block = self.step("Knock at the console's front door")
-        self.assertIn("if: inputs.action == 'loop-check' || inputs.action == 'cases'", block)
-        for word in ("CONSOLE_HOST: ${{ steps.params.outputs.console_host }}", "CONSOLE_HOST_SET: ${{ steps.params.outputs.console_host_set }}",
-                     "CASES_PUBLIC_ACCESS: ${{ steps.params.outputs.cases_public_network_access }}"):
+        self.assertIn("if: steps.params.outputs.door_in_operator != 'true' && (inputs.action == 'loop-check' || inputs.action == 'cases')", block,
+                      "from the runner, except for a closed app with no host name: the next step, inside the network, checks that one")
+        for word in ("CONSOLE_HOST: ${{ steps.params.outputs.console_host }}", "CONSOLE_HOST_SET: ${{ steps.params.outputs.console_host_set }}"):
             self.assertIn(word, block, "the address that is knocked at comes from the settings step: the console's host name, or the app's own name when there is none")
+        self.assertNotIn("CASES_PUBLIC_ACCESS", block, "the step does not look at the app's public access any more: the condition of the step keeps the closed app for the Operator's step")
+        self.assertNotIn("NOT CHECKED", block)
         self.assertNotIn("FUNCTION_APP", block)
         self.assertIn('python3 tools/console-check.py door --host "$CONSOLE_HOST" --expect "$expect" "${proxied[@]}" --summary "$GITHUB_STEP_SUMMARY"', block)
         self.assertIn("/arm/return", block, "the return address of the Azure sign-in is part of what is asked")
@@ -2219,6 +2222,8 @@ class RetireWorkflow(unittest.TestCase):
             return True
         expression = match.group(1)
         expression = re.sub(r"inputs\.action == '([a-z-]+)'", lambda m: "True" if m.group(1) == action else "False", expression)
+        # Which of the two steps that knock at the front door runs is decided by an output of the settings step, not by the action: for a question about the action alone either may run.
+        expression = re.sub(r"steps\.params\.outputs\.door_in_operator (==|!=) 'true'", "True", expression)
         expression = re.sub(r"steps\.\w+\.outcome != 'skipped'", "True", expression).replace("always()", "True").replace("&&", " and ").replace("||", " or ")
         assert re.fullmatch(r"[\sA-Za-z()]*", expression) and set(re.findall(r"[A-Za-z]+", expression)) <= {"True", "False", "and", "or"}, expression
         return bool(eval(expression, {"__builtins__": {}}))
@@ -2465,7 +2470,7 @@ class OperatorWorkflow(unittest.TestCase):
         digest = re.search(r"OPERATOR_IMAGE: (mcr\.microsoft\.com/azure-cli@sha256:[0-9a-f]{64})", self.text).group(1)
         self.assertIn(digest, text("docs/proposals/07-private-by-default.md"))
         self.assertEqual(len(re.findall(r"OPERATOR_IMAGE: ", self.text)), 1, "the pin is made once")
-        self.assertEqual(len(re.findall(r'--image "\$OPERATOR_IMAGE"', self.text)), 7, "and used by the probe, by the two checks, by the health check of the cases app, by the check of the AI Gateway and by the two publishes")
+        self.assertEqual(len(re.findall(r'--image "\$OPERATOR_IMAGE"', self.text)), 8, "and used by the probe, by the two checks, by the health check of the cases app, by the check of the web page's front door, by the check of the AI Gateway and by the two publishes")
         self.assertNotIn("az container", self.text, "the tool makes, reads and deletes the group")
 
     def test_the_cleanup_deletes_only_groups_of_the_probe_through_the_tool_and_a_failure_is_a_warning(self):
