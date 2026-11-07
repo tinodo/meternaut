@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "about": "The access that Meternaut needs outside its own resource group. Meternaut holds no write right: every grant below only reads, and a change to Azure is made with the token of the person who approved it, so that Azure checks that person's own rights (docs/proposals/03-access-and-onboarding.md). The deployment workflow's identity holds no right there and must not get one (AGENTS.md rule 18), so a person who may assign roles at each place grants it. Each line of grants is one role of one identity at one place. An identity is what a function app runs as, and the principals that hold its grants are listed as its holders: the app's own system-assigned identity, found on the app with the option that siteOption names. While an app is moved between kinds of identity, both kinds are holders (a user-assigned one has a name), so that the app is never without access. The list retired records what an earlier version granted and must now be removed: either a custom role that is no longer wanted at all (every assignment of it, then the role), or, with replacedBy, a grant of an identity that an app no longer runs as (only that identity's own assignment: the role stays, because the grant that replaces it needs it). tools/access-requirements.py reads this file: it checks what is granted, grants what is missing only with --apply, and with retire removes what is retired, again only with --apply. docs/proposals/03-access-and-onboarding.md shows the two tables that the tool prints, and a test keeps them the same.",
+  "about": "The access that Meternaut needs outside its own resource group. Meternaut holds no write right: every grant below only reads, and a change to Azure is made with the token of the person who approved it, so that Azure checks that person's own rights (docs/proposals/03-access-and-onboarding.md). The deployment workflow's identity holds no right there and must not get one (AGENTS.md rule 18), so a person who may assign roles at each place grants it. Each line of grants is one role of one identity at one place. An identity is what a function app runs as, and the principals that hold its grants are listed as its holders: the app's own system-assigned identity, found on the app with the option that siteOption names. While an app is moved between kinds of identity, both kinds are holders (a user-assigned one has a name), so that the app is never without access. The list retired records what an earlier version granted and must now be removed: either a custom role that is no longer wanted at all (every assignment of it, then the role), or, with replacedBy, a grant of an identity that an app no longer runs as (only that identity's own assignment: the role stays, because the grant that replaces it needs it). tools/access-requirements.py reads this file: it checks what is granted, grants what is missing only with --apply, and with retire removes what is retired, again only with --apply. On 2026-11-07 the owner ordered the undo of what Meternaut added to his API Management instance: the cases app reads no key any more, so the custom role that read one (W7) and its grant are retired, and retire removes every assignment of that role at the instance's resource group and below it, then the role. R4 and R5, the usage app's reads of the gateway's telemetry, stay for now. docs/proposals/03-access-and-onboarding.md shows the two tables that the tool prints, and a test keeps them the same.",
   "identities": {
     "cases": {
       "app": "the cases app",
@@ -21,8 +21,8 @@
   },
   "places": {
     "estate": "Each subscription that the Watch reads (the app setting SCOPE_SUBSCRIPTIONS), or a management group above them",
-    "gatewayProductSubscription": "The one subscription of the gateway's access product that the Watch uses, below the API Management instance",
     "gatewayInsights": "The gateway's Application Insights component",
+    "gatewayGroup": "The resource group of the owner's API Management instance, and everything below it",
     "centralWorkspace": "The central workspace that the component writes to",
     "projectGroup": "The project's own resource group, where Meternaut plants waste of its own"
   },
@@ -38,15 +38,6 @@
     "Monitoring Reader": {
       "kind": "builtin",
       "id": "43d0d8ad-25c7-4714-9337-8ba259a9fe05"
-    },
-    "Meternaut gateway key reader": {
-      "kind": "custom",
-      "definedIn": "gatewayGroup",
-      "description": "Reads the key of one gateway subscription, so that the first cases of Meternaut can call the models through the gateway. Nothing else.",
-      "actions": [
-        "Microsoft.ApiManagement/service/subscriptions/read",
-        "Microsoft.ApiManagement/service/subscriptions/listSecrets/action"
-      ]
     },
     "Meternaut usage reader": {
       "kind": "custom",
@@ -75,14 +66,6 @@
       "place": "estate",
       "why": "Reads the cost lines of every resource for the last 30 days, so that every figure is Cost Management's and never a model's",
       "calls": ["cost-management-query"]
-    },
-    {
-      "id": "R3",
-      "identity": "cases",
-      "role": "Meternaut gateway key reader",
-      "place": "gatewayProductSubscription",
-      "why": "Reads the one key of the gateway's access product at the start of each run, because the gateway always asks for it. The role allows that read and nothing else of the gateway (the one remaining key: AGENTS.md rule 23)",
-      "calls": ["gateway-key-read"]
     },
     {
       "id": "R4",
@@ -124,14 +107,6 @@
       "why": "Held by the user-assigned identity that the cases app ran as before its own system-assigned identity took over (R2). Only that identity's assignment is removed, and the role stays: R2 needs it"
     },
     {
-      "id": "W4",
-      "identity": { "name": "id-meternaut-cases" },
-      "role": "Meternaut gateway key reader",
-      "place": "gatewayProductSubscription",
-      "replacedBy": "R3",
-      "why": "Held by the user-assigned identity that the cases app ran as before its own system-assigned identity took over (R3). Only that identity's assignment is removed, and the custom role stays: R3 needs it"
-    },
-    {
       "id": "W5",
       "identity": { "name": "id-meternaut-usage" },
       "role": "Monitoring Reader",
@@ -146,6 +121,13 @@
       "place": "centralWorkspace",
       "replacedBy": "R5",
       "why": "Held by the user-assigned identity that the usage app ran as before its own system-assigned identity took over (R5). Only that identity's assignment is removed, and the custom role stays: R5 needs it"
+    },
+    {
+      "id": "W7",
+      "identity": { "name": "id-meternaut-cases" },
+      "role": "Meternaut gateway key reader",
+      "place": "gatewayGroup",
+      "why": "A custom role of an earlier version that read one key of one subscription of the owner's API Management instance (and nothing else), so that the cases app could call the models through that instance. It was held by the cases app's own system-assigned identity and, before that, by this user-assigned identity. The owner ordered the undo of what Meternaut added to that instance on 2026-11-07, and the app reads no key any more: it calls the models of its own Foundry project with its own identity. Every assignment of the role at the instance's resource group and below it is removed, whoever holds it, and then the role itself"
     }
   ]
 }

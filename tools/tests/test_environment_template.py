@@ -395,6 +395,17 @@ class Recording(unittest.TestCase):
             self.assertNotIn(word, self.code, word)
         self.assertNotIn("tags: union(", self.code)
 
+    def test_the_two_roles_of_the_gateway_identity_are_made_only_for_an_identity_that_is_known(self):
+        # The owner ordered the undo of what Meternaut added to his API Management instance (2026-11-07): the gateway identity may be gone, and a role for a principal that does not exist is
+        # refused. The parameter builder writes an all-zero id while the identity is not known (a preview), and the template reads that as "none".
+        found = resources(self.source)
+        self.assertIn("var noGatewayIdentity = '00000000-0000-0000-0000-000000000000'", self.code)
+        for name in ("gatewaySendsUsage", "gatewaySendsPii"):
+            self.assertTrue(found[name][1].startswith("if (gatewayPrincipalId != noGatewayIdentity) {"), f"{name} is made only for a known identity")
+        for name in ("functionReceivesUsage", "functionReceivesPii", "functionReceivesControl", "functionOwnsBlobs", "functionUsesQueues", "functionUsesTables", "functionPublishesTelemetry"):
+            self.assertNotIn("if (", found[name][1].split("\n", 1)[0], f"{name}: the roles of the app are never conditional")
+        self.assertRegex(self.code, r"(?m)^param gatewayPrincipalId string$", "the parameter stays required: the builder always writes it")
+
     def test_the_gateway_only_sends_and_the_function_app_only_receives_each_on_the_hub_it_uses(self):
         found = resources(self.source)
         for name, hub, principal in (("gatewaySendsUsage", "usageHub", "gatewayPrincipalId"), ("gatewaySendsPii", "piiHub", "gatewayPrincipalId")):

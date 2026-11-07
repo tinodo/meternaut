@@ -35,7 +35,7 @@ CONNECTION_URL = (f"az rest --method get --url https://management.azure.com/subs
                   f"/projects/{PROJECT}/connections/aigateway?api-version=2026-09-01 --query name --output tsv")
 
 SETTINGS = "Work out the settings"
-PRECHECK = "The usage recording and the contract are there, which the first cases build on"
+PRECHECK = "The usage recording is there, which the first cases build on"
 FOUNDRY_READ_BACK = "Read the Foundry resource back"
 AIGATEWAY_READ_BACK = "Read the AI Gateway back"
 SUMMARY = "What was done"
@@ -131,6 +131,10 @@ class TheSettingsStepReadsWhatTheSwitchNeedsAndNothingWhileItIsOff(unittest.Test
     def builds(self, lines):
         return [line for line in lines if line.startswith("build ")]
 
+    def final_preview(self, action):
+        """Only the actions that show or make an object of the gateway's instance (or give its identity a role) look for the gateway identity: for every other one the files that carry it are previews."""
+        return "no" if action in ("what-if", "gateway-prepare", "gateway", "recording") else "yes"
+
     def mine(self, lines):
         return [line for line in lines if "/aigateways/" in line or "--query identity.principalId" in line and "/projects/" in line or "/connections/" in line]
 
@@ -140,7 +144,7 @@ class TheSettingsStepReadsWhatTheSwitchNeedsAndNothingWhileItIsOff(unittest.Test
                 done, lines, out, _ = self.settings(action, build=BUILD_OFF)
                 self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
                 self.assertEqual(self.mine(lines), [])
-                self.assertEqual(self.builds(lines), ["build preview=yes host=[unset] project=[unset]", "build preview=no host=[] project=[]"], "empty, which the builder reads as not given")
+                self.assertEqual(self.builds(lines), ["build preview=yes host=[unset] project=[unset]", f"build preview={self.final_preview(action)} host=[] project=[]"], "empty, which the builder reads as not given")
                 self.assertNotIn("aigateway_host=", out)
                 self.assertNotIn("foundry_project_principal=", out)
                 self.assertNotIn("AI Gateway", done.stdout + done.stderr)
@@ -149,7 +153,7 @@ class TheSettingsStepReadsWhatTheSwitchNeedsAndNothingWhileItIsOff(unittest.Test
         done, lines, out, _ = self.settings("foundry")
         self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
         self.assertEqual([line for line in lines if "/aigateways/" in line], [GATEWAY_URL])
-        self.assertEqual(self.builds(lines)[1], f"build preview=no host=[{HOST}] project=[]")
+        self.assertEqual(self.builds(lines)[1], f"build preview=yes host=[{HOST}] project=[]", "foundry does not look for the identity of the gateway, so its files that carry it are previews")
         self.assertIn(f"aigateway_host={HOST}\n", out)
         self.assertIn("foundry_project_principal=\n", out)
         self.assertIn(f"The service reports the host name of the AI Gateway {GATEWAY}; it goes into the Foundry file.", done.stdout)
@@ -161,7 +165,7 @@ class TheSettingsStepReadsWhatTheSwitchNeedsAndNothingWhileItIsOff(unittest.Test
         self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
         self.assertEqual([line for line in lines if "/projects/" in line], [PROJECT_URL])
         self.assertEqual([line for line in lines if "/aigateways/" in line], [])
-        self.assertEqual(self.builds(lines)[1], f"build preview=no host=[] project=[{PROJECT_PRINCIPAL}]")
+        self.assertEqual(self.builds(lines)[1], f"build preview=yes host=[] project=[{PROJECT_PRINCIPAL}]")
         self.assertIn(f"foundry_project_principal={PROJECT_PRINCIPAL}\n", out)
         self.assertIn("The Foundry project's system-assigned identity exists; its object id goes into the AI Gateway file.", done.stdout)
 
@@ -175,7 +179,7 @@ class TheSettingsStepReadsWhatTheSwitchNeedsAndNothingWhileItIsOff(unittest.Test
                 self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
                 self.assertEqual([line for line in lines if "/aigateways/" in line], [])
                 self.assertEqual([line for line in lines if "--query identity.principalId" in line and "/projects/" in line], [])
-                self.assertEqual(self.builds(lines)[1], "build preview=no host=[] project=[]")
+                self.assertEqual(self.builds(lines)[1], f"build preview={self.final_preview(action)} host=[] project=[]")
 
     def test_a_gateway_that_is_not_there_stops_foundry_at_once_and_says_what_to_run_first_and_nothing_is_built_after_it(self):
         for answer in ("ERROR: (ResourceNotFound) The Resource 'Microsoft.ApiManagement/aigateways/x' was not found.", 'ERROR: Not Found({"error":{"code":"NotFound"}})', "ERROR: the request failed with status 404"):
@@ -250,8 +254,6 @@ class TheCasesActionChecksTheConnectionFirst(unittest.TestCase):
 echo "az $*" >> "$FAKE_LOG"
 case "$*" in
   *"resource list"*) printf '%s' "found" ;;
-  *"/subscriptions?"*) printf 'meternaut-agents-sub-01\\n' ;;
-  *"api-version=2024-05-01 --query properties.gatewayUrl"*) printf '%s' "https://example-apim.azure-api.net" ;;
   *"/connections/"*)
     if [ -n "$FAKE_CONNECTION_ERROR" ]; then echo "$FAKE_CONNECTION_ERROR" >&2; exit 1; fi
     echo aigateway ;;
@@ -259,11 +261,30 @@ case "$*" in
 esac
 """
     ENV = {"ENV_SUBSCRIPTION_ID": SUBSCRIPTION, "ENV_RESOURCE_GROUP": GROUP, "STORAGE_ACCOUNT": "stmeternautfn0123abcd", "EVENT_HUB_NAMESPACE": "evhns-meternaut-0123abcd",
-           "CONTRACT_SUBSCRIPTION": "meternaut-agents-sub-01", "EXPECTED_GATEWAY_URL": "https://example-apim.azure-api.net", "GATEWAY_RESOURCE_ID": "/subscriptions/66666666-7777-8888-9999-000000000000"
-           "/resourceGroups/rg1/providers/Microsoft.ApiManagement/service/example-apim", "FOUNDRY_ACCOUNT": ACCOUNT, "FOUNDRY_PROJECT": PROJECT, "CONNECTION_NAME": "aigateway"}
+           "FOUNDRY_ACCOUNT": ACCOUNT, "FOUNDRY_PROJECT": PROJECT, "CONNECTION_NAME": "aigateway"}
 
     def check(self, **changes):
         return run_step(PRECHECK, {"az": self.AZ}, {**self.ENV, **changes})
+
+    def test_the_step_needs_the_recordings_storage_account_and_namespace_and_nothing_of_the_gateway_or_the_contract(self):
+        done, lines, _, _ = self.check()
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertEqual([line for line in lines if line.startswith("az ")], [line for line in lines if line.startswith("az resource list ")])
+        self.assertEqual(len(lines), 2, "one read for the storage account and one for the namespace")
+        for word in ("ApiManagement", "gatewayUrl", "listSecrets", "/subscriptions/66666666", "subscriptions?"):
+            self.assertFalse([line for line in lines if word in line], word)
+        self.assertIn("The usage recording's storage account and namespace are there.", done.stdout)
+        self.assertNotIn("contract", done.stdout.lower())
+        code = "\n".join(line for line in script_of(PRECHECK).splitlines() if not line.strip().startswith("#"))
+        for word in ("GATEWAY_RESOURCE_ID", "CONTRACT_SUBSCRIPTION", "EXPECTED_GATEWAY_URL", "primaryKey", "gatewayUrl"):
+            self.assertNotIn(word, code, word)
+        self.assertNotIn("CONTRACT_SUBSCRIPTION", step(PRECHECK))
+        self.assertNotIn("steps.params.outputs.gateway_url", step(PRECHECK))
+
+    def test_a_missing_storage_account_or_namespace_stops_the_step_and_says_to_run_recording_first(self):
+        done, _, _, _ = run_step(PRECHECK, {"az": self.AZ.replace("""printf '%s' "found" """, "printf ''")}, dict(self.ENV))
+        self.assertEqual(done.returncode, 1)
+        self.assertIn("Run recording first: the first cases use its storage account and namespace.", done.stdout)
 
     def test_while_the_switch_is_off_the_step_is_what_it_was_and_does_not_look_for_the_connection(self):
         for off in ({}, {"AGENTS_VIA_AI_GATEWAY": ""}, {"AGENTS_VIA_AI_GATEWAY": "false"}):

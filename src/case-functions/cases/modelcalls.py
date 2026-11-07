@@ -4,10 +4,12 @@ Every model call of Meternaut goes direct, privately and with no key, to a deplo
 `/openai/v1/chat/completions` with the app's own managed identity's token for the resource https://ai.azure.com. The first route is the project's, on the project endpoint that the
 agents use. Nothing here reads a key, and the token is registered for redaction so that no error text can hold it.
 
-Read on Microsoft Learn on 2026-11-07 and NOT TRIED ON THE SERVICE. The pages show Responses on the project endpoint and Chat Completions on the endpoint of the resource
-(https://<resource>.services.ai.azure.com/openai/v1/chat/completions); none shows chat completions on the project endpoint. So a 404 or a 405 from the project's route sends the call, once,
-to the resource's route (the same host, the same token), and the route that answers is the one used for the rest of the run. The first `cases-run` shows which one the service takes. A failure
-says which routes were asked and what each answered, in plain words, and never holds the token.
+Read on Microsoft Learn on 2026-11-07 and NOT TRIED ON THE SERVICE until the first `cases-run`. The project's route is the documented one: "Use reasoning models with Microsoft Foundry Models"
+(https://learn.microsoft.com/azure/foundry/foundry-models/how-to/use-chat-reasoning) calls an OpenAI client whose base is the PROJECT endpoint plus `/openai/v1`
+(https://<resource>.services.ai.azure.com/api/projects/<project>/openai/v1/chat/completions), with the token scope https://ai.azure.com/.default, and `model` is the deployment's name. The
+resource's own route (https://<resource>.services.ai.azure.com/openai/v1/chat/completions, which the pages of the single models show) stays only as the fallback: a 404 or a 405 from the
+project's route sends the call, once, to it (the same host, the same token), and the route that answers is the one used for the rest of the run. The first `cases-run` shows which one the
+service takes. A failure says which routes were asked and what each answered, in plain words, and never holds the token.
 """
 from __future__ import annotations
 

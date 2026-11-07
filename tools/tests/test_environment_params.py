@@ -365,6 +365,16 @@ class Preview(unittest.TestCase):
         self.assertIn("principal_known=false", out)
         self.assertEqual(values(files["environment.parameters.json"])["gatewayPrincipalId"], ep.PLACEHOLDER)
 
+    def test_the_usage_recording_reads_the_placeholder_as_no_gateway_identity(self):
+        # The recording makes the two roles of the gateway identity only for an identity that is known (the owner ordered the undo of what Meternaut added to his API Management
+        # instance on 2026-11-07, so the identity may be gone): the template compares with the same all-zero id that the builder writes while the identity is not known.
+        code, out, err, files = run({**SETTINGS, "GATEWAY_PRINCIPAL_ID": ""}, "--preview")
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(values(files["recording.parameters.json"])["gatewayPrincipalId"], ep.PLACEHOLDER)
+        template = (TOOL.parents[1] / "environment" / "recording" / "main.bicep").read_text(encoding="utf-8")
+        self.assertIn(f"var noGatewayIdentity = '{ep.PLACEHOLDER}'", template)
+        self.assertEqual(ep.PLACEHOLDER, "00000000-0000-0000-0000-000000000000")
+
 
 class EventHubLoggers(unittest.TestCase):
     """The file for the two Event Hub loggers, and the choice that makes the module create the two fragments that use them."""
