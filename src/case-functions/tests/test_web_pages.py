@@ -486,6 +486,13 @@ class TheHistory(unittest.TestCase):
         older = console.get("/history", query={"run": "run00001"})
         self.assertIn("very-old", older.content, "a run that is far back is complete")
 
+    def test_the_page_says_that_a_case_is_a_resource_that_meternaut_only_reads_and_does_not_use(self):
+        # A case about a service in the subscription (a Web PubSub, a Grafana) is a finding and no part of Meternaut: the page says so where the cases start.
+        reply = seeded().get("/history")
+        self.assertEqual(reply.status, 200)
+        self.assertIn("A case is a resource in the subscription that the search found and that may be unused or too big. Meternaut only reads it and does not use it. "
+                      "Nothing is changed until a person approves a plan.", reply.content)
+
     def test_twenty_runs_are_shown_newest_first(self):
         console = Console()
         for n in range(25):

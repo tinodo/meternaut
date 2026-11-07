@@ -36,6 +36,7 @@ def history(ctx: Ctx) -> Response:
     parts: list[object] = [
         Safe("<h1>What Meternaut did</h1>"),
         paragraph("Every run of the search and every case that the runs looked at, newest first. This page shows what was found and what happened to it. It is not a cost report.", "lead"),
+        paragraph("A case is a resource in the subscription that the search found and that may be unused or too big. Meternaut only reads it and does not use it. Nothing is changed until a person approves a plan."),
         paragraph("Money is in US dollars. An estimated saving is an estimate from cost lines of the last 30 days."),
         Safe("<h2>Runs</h2>"),
     ]
