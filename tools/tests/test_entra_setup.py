@@ -1073,5 +1073,58 @@ class TheCallsOfTheTool(unittest.TestCase):
             self.assertTrue(all(g in tenant.grants for g in before["grants"]))
 
 
+class TheConsoleOnThePlatformsGateway(unittest.TestCase):
+    """Behind the platform's Application Gateway the console is opened on a host name of its own (docs/proposals/07-private-by-default.md, phase 3 for the cases app). Both return addresses then name that
+    host, which is the one the sign-in sends a person back to. This tool needs no new option for it: --host is the name that people open. It adds the addresses of the new host in one change and removes
+    nothing, so the addresses of the app's own name, which a closed app no longer answers on, stay until a person removes them in the portal."""
+
+    GATEWAY_HOST = "console.example.com"
+    ARGS = ["--tenant-id", TENANT, "--host", GATEWAY_HOST, "--identity-principal-id", IDENTITY, "--assign", PERSON]
+    NEW = [f"https://{GATEWAY_HOST}/.auth/login/aad/callback", f"https://{GATEWAY_HOST}/arm/return"]
+
+    def test_the_two_return_addresses_of_the_gateway_s_host_are_asked_for_and_the_ones_of_the_apps_own_name_are_a_note(self):
+        tenant = FakeTenant()
+        tenant.existing_everything()
+        code, out, _, _ = run(["check", *self.ARGS], tenant)
+        self.assertEqual(code, 1)
+        self.assertIn(f"the redirect address {self.NEW[0]} of the platform's sign-in is missing", out)
+        self.assertRegex(out, rf"MISSING +{LABEL_RETURN} {re.escape(self.NEW[1])}")
+        self.assertIn("7 of 9 in order.", out)
+        self.assertIn(f"left alone because this tool removes nothing: redirect addresses {CALLBACK}, {ARM_RETURN}", out)
+        self.assertEqual(tenant.writes(), [])
+
+    def test_one_change_adds_the_two_addresses_of_the_gateway_s_host_after_the_ones_that_are_there_and_removes_nothing(self):
+        tenant = FakeTenant()
+        app, _ = tenant.existing_everything()
+        code, out, _, _ = run(["apply", *self.ARGS, "--apply", "--yes"], tenant)
+        self.assertEqual(code, 0, out)
+        (change,) = tenant.writes()
+        self.assertEqual((change[0], change[1]), ("PATCH", f"applications/{app['id']}"))
+        self.assertEqual(change[2]["web"]["redirectUris"], [CALLBACK, ARM_RETURN, *self.NEW], "what is there stays, in its order, and the new addresses follow")
+        self.assertEqual(sorted(change[2]), ["web"], "nothing else of the app is sent: the permissions, the credential and the people are in order already")
+        self.assertIn("Left as they were: 2 other redirect addresses", out)
+        self.assertIn("9 of 9 in order.", out)
+        self.assertNotIn("DELETE", {call[0] for call in tenant.calls})
+        code, out, _, _ = run(["apply", *self.ARGS, "--apply", "--yes"], tenant)
+        self.assertEqual((code, "Nothing to make." in out), (0, True), "a second run has nothing to add")
+
+    def test_a_host_name_in_capitals_is_the_same_host_and_the_apps_own_name_still_works_as_before(self):
+        cfg = es.read_config(es.argparse.Namespace(tenant_id=TENANT, host=self.GATEWAY_HOST.upper(), identity_principal_id=IDENTITY, assign=None))
+        self.assertEqual((cfg.callback, cfg.arm_return), tuple(self.NEW))
+        tenant = FakeTenant()
+        tenant.existing_everything()
+        code, out, _, _ = run(["check", *ARGS], tenant)
+        self.assertEqual((code, "9 of 9 in order." in out), (0, True), "the default is what it was")
+
+    def test_the_help_says_that_the_host_is_the_name_that_people_open_and_the_tool_still_makes_only_the_calls_of_its_list(self):
+        source = (ROOT / "tools" / "entra-setup.py").read_text(encoding="utf-8")
+        self.assertIn("the host name that people open: the console's host name on the platform's Application Gateway (the variable CONSOLE_HOST_NAME), or the function app's own name", source)
+        self.assertIn("It only adds the addresses of the new host: the addresses of the app's own name stay", source)
+        tenant = FakeTenant()
+        run(["apply", *self.ARGS, "--apply", "--yes"], tenant)
+        for method, route, _ in tenant.calls:
+            self.assertTrue(any(m == method and p.fullmatch(route) for m, p in es.CALLS), f"{method} {route}")
+
+
 if __name__ == "__main__":
     unittest.main()

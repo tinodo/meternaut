@@ -2257,8 +2257,8 @@ class PublishingPhaseOneRecord(unittest.TestCase):
         self.assertIn("The actions wait for the registration of each app's endpoint before they publish.", order)
         self.assertIn("the endpoints and a second set of checks in the probe, with the apps still public (done on 2026-11-06: both endpoints exist, and every check of the probe passed)", order)
         self.assertIn("the publish steps through the Operator, still with the apps public (done on 2026-11-06 for both apps: [phase 2](#publishing-code-to-the-private-apps-phase-2)); and then `Disabled` for each app, "
-                      "with the access check and the cases app's health check moved inside. The usage app is done and proven ([the section](#publishing-code-to-the-private-apps-phase-3-for-the-usage-app-deployed-and-proven-on-2026-11-06)); "
-                      "the cases app waits for the decision about people.", order)
+                      "with the cases app's health check moved inside and its access check made through the gateway's host name. The usage app is done and proven ([the section](#publishing-code-to-the-private-apps-phase-3-for-the-usage-app-deployed-and-proven-on-2026-11-06)); "
+                      "the cases app is built for the gateway and waits for the gateway objects and the owner's yes ([phase 3 for the cases app](#publishing-code-to-the-private-apps-phase-3-for-the-cases-app-the-console-behind-the-platforms-application-gateway-built-not-deployed)).", order)
         self.assertNotIn("not read in the landing zone; a fact to check, which the probe reports", order)
         decisions = self.page.split("## Decisions for the owner")[1].split("\n## ")[0]
         self.assertIn("changes three of the decisions below", decisions)
@@ -2738,7 +2738,8 @@ class BothAppsArePublishedAndTheUsageAppIsPrivateRecord(unittest.TestCase):
             self.assertIn(words, usage, words)
         self.assertNotIn("built, not yet deployed", usage)
         cases = [line for line in state.split("\n") if line.startswith("| Cases function app (Basic plan;")][0]
-        self.assertIn("**Enabled**, until phase 3 for this app, which waits for the owner's decision about how the people who approve reach the console ([the decisions](#decisions-for-the-owner))", cases)
+        self.assertIn("**Enabled**, until phase 3 for this app. The owner decided on 2026-11-06 that the app is closed and that the people who approve reach the console through the platform's Application Gateway: "
+                      "the code for that is built and not deployed, and the value flips in a later change, after the gateway objects exist and the owner has said yes ([phase 3 for the cases app](#publishing-code-to-the-private-apps-phase-3-for-the-cases-app-the-console-behind-the-platforms-application-gateway-built-not-deployed))", cases)
         self.assertNotIn("**Disabled**", cases)
 
     def test_the_section_says_what_changed_what_the_runs_showed_what_they_show_and_do_not_and_what_is_open(self):
@@ -2790,8 +2791,9 @@ class BothAppsArePublishedAndTheUsageAppIsPrivateRecord(unittest.TestCase):
         not_checked = self.page.split("## Not checked")[1].split("\n## ")[0]
         open_part, closed_part = not_checked.split("**Closed by the runs of 2026-11-06**")
         for words in ("Phase 3 of publishing code for the cases app ([the usage app is done](#publishing-code-to-the-private-apps-phase-3-for-the-usage-app-deployed-and-proven-on-2026-11-06)): "
-                      "it waits for the owner's decision about how the people who approve reach the console.",
-                      "The check of the console's front door and the health check of the cases app still run from the runner, and they move inside only when that app is closed.",
+                      "the owner decided that the people who approve reach the console through the platform's Application Gateway, and the code for that is built and not deployed "
+                      "([the section](#publishing-code-to-the-private-apps-phase-3-for-the-cases-app-the-console-behind-the-platforms-application-gateway-built-not-deployed)).",
+                      "The health check of the cases app is built to run in the Operator, and the check of the console's front door to knock at the gateway's host name.",
                       "Application Insights and the workspace are still public. They need the owner's decision about the shared Azure Monitor private link scope",
                       "the exact limit of a request (between 466,104 and 632,656 bytes of files; the runs did not narrow it)", "the machines of the other people who approve were not tested",
                       "The two waits and what a deployment site accepts from inside the network are in the closed list below."):
@@ -2811,7 +2813,9 @@ class BothAppsArePublishedAndTheUsageAppIsPrivateRecord(unittest.TestCase):
         self.assertIn("The owner has to decide about the shared Azure Monitor private link scope too (as the session that coordinates the work reported on 2026-11-06): "
                       "Application Insights and the workspace are still public until then.", order)
         readme = text("README.md")
-        self.assertIn("Still open: the cases app's phase 3 (it serves the console, so it waits for the owner's decision about how the people who approve reach it), the telemetry read once Application Insights is private, "
+        self.assertIn("Still open: the cases app's phase 3 (it serves the console, and the owner decided on 2026-11-06 that the people who approve reach it through the platform's Application Gateway: the code, the tests and the documents "
+                      "are built and nothing is deployed, [the section](docs/proposals/07-private-by-default.md#publishing-code-to-the-private-apps-phase-3-for-the-cases-app-the-console-behind-the-platforms-application-gateway-built-not-deployed)), "
+                      "the telemetry read once Application Insights is private, "
                       "and the console check; two decisions are the owner's (a public repository, and the traces of Foundry's agents).", readme)
         self.assertIn("The code of both apps is published from the Operator, as the deploy identity, since 2026-11-06 ([phase 2](docs/proposals/07-private-by-default.md#publishing-code-to-the-private-apps-phase-2)), "
                       "and the usage app was closed after that: anonymous requests to its public address get HTTP 403 "
