@@ -56,7 +56,8 @@ PROJECT_PRINCIPAL = SETTINGS["FOUNDRY_PROJECT_PRINCIPAL_ID"]
 # the two models), and the output lost the line gateway_url. Second change (the retirement of the actions that made objects on the instance): environment.parameters.json and recording.parameters.json lost
 # gatewayPrincipalId (no role is made for a gateway identity any more), the four files logger, eventhub-loggers, kit and contract are not written at all, and the output lost the lines gateway_subscription,
 # gateway_resource_group, gateway_name, identity_name and principal_known. Every other file is what it was. Third change (the Watch reads every subscription that its identity can read, 2026-11-07):
-# cases.parameters.json gained scopeAllSubscriptions (true); every other file and the output are what they were.
+# cases.parameters.json gained scopeAllSubscriptions (true); every other file and the output are what they were. Fourth change (the web page can be closed with no host name on a gateway, 2026-11-07):
+# the output gained one line, door_in_operator (false for these inputs, which carry a host name: it is true only for a closed cases app with none); every file is what it was.
 GOLDEN = {
     "aigateway-policies.json": "e6d99d1633ab16afc3410e50dbdcb7e290f0e125f4283b4b19f63a8eebb8395c",
     "aigateway-subnet.parameters.json": "a2a16b02fd7a1d54d8949ad89796d4ea89d6bf1907db1f5b621205699a5a0196",
@@ -68,7 +69,7 @@ GOLDEN = {
     "planted.parameters.json": "62ecf7282a7bf4c968db91a3943ba20a99dc7ac04fcabb7816aadf6f68f9759c",
     "recording.parameters.json": "1151a3f2462d5cd97d2f2d7be9839c8fdd4a9f6c84a7fd38c0b356cb35cc2064",
 }
-GOLDEN_OUTPUT = "e61ff4a4b1cae124c45659f163fdf20988ca4e526d89bf93206fd3f93c462f67"
+GOLDEN_OUTPUT = "3bcea576e85a4395b709710f1233ffa1e9ae37898483bcac590ef0bfbe620ec7"
 
 FOUNDRY = (ROOT / "environment" / "foundry" / "main.bicep").read_text(encoding="utf-8")
 CASES = (ROOT / "environment" / "cases" / "main.bicep").read_text(encoding="utf-8")
@@ -145,7 +146,7 @@ class TheSwitchIsOffAndNothingDiffers(unittest.TestCase):
     def test_no_output_is_added_while_it_is_off(self):
         _, out, _, _ = build(SETTINGS)
         self.assertFalse([key for key in outputs(out) if "ai_gateway" in key or key == "aigateway_connection_name"])
-        self.assertEqual(len(out.splitlines()), 37)
+        self.assertEqual(len(out.splitlines()), 38, "the 37 lines that there were and door_in_operator (the web page, 2026-11-07), which is not about the AI Gateway: no line of the switch is among them")
 
     def test_a_switch_that_is_not_true_or_false_is_refused_by_name(self):
         for bad in ("False", "no", 0, 1, None, "true"):

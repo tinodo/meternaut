@@ -2824,8 +2824,10 @@ class BothAppsArePublishedAndTheUsageAppIsPrivateRecord(unittest.TestCase):
         self.assertIn("The owner has to decide about the shared Azure Monitor private link scope too (as the session that coordinates the work reported on 2026-11-06): "
                       "Application Insights and the workspace are still public until then.", order)
         readme = text("README.md")
-        self.assertIn("Still open: the cases app's phase 3 (it serves the console, and the owner decided on 2026-11-06 that the people who approve reach it through the platform's Application Gateway: the code, the tests and the documents "
-                      "are built and nothing is deployed, [the section](docs/proposals/07-private-by-default.md#publishing-code-to-the-private-apps-phase-3-for-the-cases-app-the-console-behind-the-platforms-application-gateway-built-not-deployed)), "
+        self.assertIn("Still open: the cases app's phase 3 (it serves the console; the owner decided on 2026-11-06 that the people who approve reach it through the platform's Application Gateway, and on 2026-11-07 that "
+                      "there is no gateway for it and that he reaches the private network instead: the code, the tests and the documents for both are built and nothing is deployed, "
+                      "[the gateway route](docs/proposals/07-private-by-default.md#publishing-code-to-the-private-apps-phase-3-for-the-cases-app-the-console-behind-the-platforms-application-gateway-built-not-deployed) "
+                      "and [the web page on the private network](docs/proposals/07-private-by-default.md#the-web-page-on-the-private-network-built-not-deployed)), "
                       "the telemetry read once Application Insights is private, "
                       "and the console check; two decisions are the owner's (a public repository, and the traces of Foundry's agents).", readme)
         self.assertIn("The code of both apps is published from the Operator, as the deploy identity, since 2026-11-06 ([phase 2](docs/proposals/07-private-by-default.md#publishing-code-to-the-private-apps-phase-2)), "
