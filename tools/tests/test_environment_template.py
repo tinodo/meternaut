@@ -90,6 +90,21 @@ ALLOWED = {
         "Microsoft.EventHub/namespaces/eventhubs",
         "Microsoft.Authorization/roleAssignments",
     },
+    "environment/aigateway/main.bicep": {
+        "Microsoft.Network/networkSecurityGroups",
+        "Microsoft.Network/virtualNetworks",
+        "Microsoft.Network/virtualNetworks/subnets",
+        "Microsoft.CognitiveServices/accounts",
+        "Microsoft.ManagedIdentity/userAssignedIdentities",
+        "Microsoft.Insights/components",
+        "Microsoft.ApiManagement/aigateways",
+        "Microsoft.ApiManagement/aigateways/workspaces",
+        "Microsoft.ApiManagement/aigateways/workspaces/modelProviders",
+        "Microsoft.ApiManagement/aigateways/workspaces/modelProviders/models",
+        "Microsoft.ApiManagement/aigateways/workspaces/aliases",
+        "Microsoft.ApiManagement/aigateways/workspaces/telemetryExporters",
+        "Microsoft.Authorization/roleAssignments",
+    },
 }
 
 
