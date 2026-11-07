@@ -41,8 +41,6 @@ def code_of(source):
 
 WORKFLOW = text(".github/workflows/deploy-hub.yml")
 MODELS = ROOT / "environment" / "models.json"
-CONTRACT_FILE = ROOT / "environment" / "contract.json"
-POLICY_FILE = ROOT / "environment" / "gateway" / "contract-policy.xml"
 SETTINGS = {
     "ENV_SUBSCRIPTION_ID": "11111111-2222-3333-4444-555555555555",
     "ENV_RESOURCE_GROUP": "rg-example",
@@ -54,9 +52,7 @@ SETTINGS = {
     "ENV_BUDGET_AMOUNT": "25",
     "ENV_ALERT_EMAILS": "owner@example.com",
     "ENV_BUDGET_START": "2026-11-01",
-    "GATEWAY_RESOURCE_ID": "/subscriptions/66666666-7777-8888-9999-000000000000/resourceGroups/rg-gateway/providers/Microsoft.ApiManagement/service/example-apim",
     "GATEWAY_APPINSIGHTS_ID": "/subscriptions/66666666-7777-8888-9999-000000000000/resourceGroups/rg-gateway/providers/microsoft.insights/components/example-insights",
-    "GATEWAY_PRINCIPAL_ID": "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE",
 }
 
 
@@ -65,7 +61,7 @@ def build(**changes):
     with tempfile.TemporaryDirectory() as tmp:
         out, err = io.StringIO(), io.StringIO()
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-            code = ep.main(["build", "--models", str(MODELS), "--out-dir", tmp, "--contract", str(CONTRACT_FILE), "--contract-policy", str(POLICY_FILE)], environ={**SETTINGS, **changes})
+            code = ep.main(["build", "--models", str(MODELS), "--out-dir", tmp], environ={**SETTINGS, **changes})
         files = {p.name: json.loads(p.read_text(encoding="utf-8")) for p in Path(tmp).glob("*.json")}
     return code, out.getvalue(), err.getvalue(), files
 
@@ -765,7 +761,7 @@ class TheDocumentsOfTheConsoleBehindTheGateway(unittest.TestCase):
 
     def test_the_changelog_entry_follows_the_one_of_the_ai_gateway_and_says_what_was_said_built_checked_and_left_open_and_the_older_entry_is_as_it_was(self):
         headings = re.findall(r"(?m)^## .+$", self.changelog)
-        self.assertEqual(headings[4:6], [self.CHANGELOG_HEADING, self.OLDER_HEADING], "the four entries of the AI Gateway and of the undo of the API Management changes (test_aigateway_docs.py, test_aigateway_agents_docs.py, test_aigateway_subnet_first.py) are above this one, and the entry below it is untouched")
+        self.assertEqual(headings[5:7], [self.CHANGELOG_HEADING, self.OLDER_HEADING], "the five entries of the AI Gateway and of the undo of the API Management changes (test_aigateway_docs.py, test_aigateway_agents_docs.py, test_aigateway_subnet_first.py) are above this one, and the entry below it is untouched")
         positions = [self.entry.index(lead) for lead in ("**What the owner said.**", "**What is built.**", "**Where Learn says something other than the plan assumed.**", "**What was checked.**", "**Not checked.**",
                                                          "**What a person has to do, in order.**")]
         self.assertEqual(positions, sorted(positions))

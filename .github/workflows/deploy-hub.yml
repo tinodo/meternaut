@@ -1,9 +1,10 @@
 name: Hub
 
 # The only way anything of Meternaut reaches Azure (AGENTS.md rule 18). It began as the workflow of the Citadel governance hub: the owner's existing API Management instance with Microsoft's
-# Citadel rules, and the private model account behind it. Since 2026-11-07 Meternaut makes nothing on that instance any more (the owner ordered the undo of what it added), and every model
-# call goes direct to the Foundry project of the agents. The actions that still make objects on the instance (gateway-prepare, gateway and contract) are retired by the next change, and the
-# actions that remain look for nothing of the gateway. Nothing starts this workflow but a click on "Run workflow" in the Actions tab. It signs
+# Citadel rules, and the private model account behind it. Since 2026-11-07 Meternaut makes, changes and reads nothing on that instance (the owner ordered the undo of what it added): the actions
+# that made objects on it are gone, and every model call goes direct to the Foundry project of the agents. The AI Gateway (Azure's separate service) is not deployed either, because its front
+# door is public only: the action aigateway stops at its first step unless the input public_ai_gateway_requested is set, which only the owner's written request for a public AI Gateway allows.
+# Nothing starts this workflow but a click on "Run workflow" in the Actions tab. It signs
 # in to Azure with OpenID Connect and a credential that exists only for the main branch, so a copy of this file on any
 # other branch cannot sign in. "what-if" reads and changes nothing.
 # What it does, and what to set up once before the first run: environment/BOOTSTRAP.md.
@@ -12,16 +13,13 @@ on:
   workflow_dispatch:
     inputs:
       action:
-        description: "what-if: show what the next steps would change and change nothing. model-side: the gateway's identity, then the network, the model account with its private endpoint and the budget. gateway-prepare: attach the identity to the gateway and add the Application Insights logger, and the two Event Hub loggers when the usage recording's namespace exists. gateway: add the Citadel module's objects to the gateway (with the two fragments that use the Event Hub loggers when both loggers exist, without them otherwise). contract: add the first contract (a product, its policy and its key) and test the gateway with that key. recording: the usage recording of the gateway's calls, which is a Log Analytics workspace, an Event Hubs namespace, a Cosmos DB account, a storage account and a function app with its own system-assigned identity, with private endpoints and without any key; the Event Hubs namespace takes no public traffic (its public network access is Disabled and its private endpoint is the only way in, so from then on only the Operator can send to it from outside the apps), and after its deploy the action reads that back from Azure and retires the deploy identity's old right to send to the control hub usage-control, when that is still there; on an estate where the namespace is still public, run it only after recording-check and cases-run have passed through the Operator; it first removes the key-based Logic App version of it, when that is still there. It publishes the usage app's code from inside the network, in a container group of the Operator that signs in as the deploy identity with a token of the run and goes through the app's private endpoint, so on an estate that has no Operator yet it deploys and stops at the publish: the order is then recording, cases, operator, and then recording and cases again. recording-check: start the copy jobs once through the control hub and read what they say from the function app's telemetry, both by the Operator from inside the network (the check tool runs in a short-lived container group of the Operator): it needs operator first. cases: the first cases, which is a second function app on the usage recording's network, storage and namespace, with its own system-assigned identity and one user-assigned identity for the console's sign-in, a control hub, a longer retention of the traces and the History workbook; its Watch changes no resource of the estate (with the investigation on it also creates agents and conversations in its own Foundry project), after its deploy it retires the deploy identity's old right to send to the control hub cases-control, when that is still there, and it needs the usage recording first. With the switch AGENTS_VIA_AI_GATEWAY on (it is off), it gives the app the model names `aigateway/<alias>` for the agents, which name the project's connection to the AI Gateway, and needs that connection first. It publishes the app's code from inside the network, in the Operator, as recording does.         cases-run: start one Watch through the control hub and read its History from the telemetry, both by the Operator from inside the network: it needs operator first. plant: make waste of Meternaut's own (an unattached disk, and with plant_public_ip an unassigned public IP address) in the project's resource group,         tagged for the loop, so that the whole loop can be shown on something that belongs to nobody else. loop-check: knock at the console's front door without a sign-in and pass only when nobody gets a page. foundry: the Foundry resource of the agents (the model account cannot hold projects, so this is a second resource): a project, the same models, a guardrail, one private endpoint and the connection that sends the agents' traces, with no key; it needs recording and cases to have run once, and it is run before the next cases, which is then given the project's address. With the switch AGENTS_VIA_AI_GATEWAY in tools/environment-params.py on (it is off), it also makes the project's connection to the AI Gateway, with the project's own identity and no key, and reads it back: it then needs aigateway first. operator: the Operator, the executor that works inside the virtual network for what the workflow cannot do from outside it once the services are private (docs/proposals/07-private-by-default.md): its identity, the subnet of its container groups and three roles (Reader on the project's group, and Azure Event Hubs Data Sender on the two control hubs, which the actions recording and cases make, so it runs after them); it waits until the landing zone has put its route table on that subnet, and it starts nothing, so nothing is paid until a run uses it. The actions recording and cases publish their code through it, as the deploy identity. operator-probe: run operator/probe.sh once in a short-lived container group of the Operator and print what it finds (does the identity sign in, do the names of private endpoints resolve to private addresses, which addresses can a group reach, and how does a package get in); the group is deleted at the end whatever happens, and it costs cents. It needs operator first. aigateway: the AI Gateway of the agents' model calls (Azure's AI Gateway, a preview service that is not API Management): first its subnet, which is delegated to it and made only when it is not there, and, after the landing zone's route table is on that subnet, the gateway with a system-assigned identity, a model and an alias for each model of the agents' Foundry resource, content safety on each model, and AI Gateway Models User for the Operator's identity, with no key; it needs foundry and operator first. The gateway is made on the subnet as the landing zone leaves it, so the action makes the subnet, waits for the landing zone's route table on it (20 minutes at most: when the table does not come the gateway is not made, and a second run repeats only what is missing), signs in again and then makes the gateway. Its frontend is public whatever is asked, because the service has no private frontend, so access is by Microsoft Entra ID and role assignments only. After the deploy the action applies the gateway-wide token, request and cost limits, deletes the built-in key master when the service lets it be deleted, and reads everything back; it changes nothing of the agents, which keep calling their model deployments. With the switch AGENTS_VIA_AI_GATEWAY on (it is off), it also gives the Foundry project's identity AI Gateway Models User on the gateway, and needs foundry to have run. aigateway-check: call each alias of the AI Gateway once with the Operator's token, and once without a token and once with a wrong alias, by the Operator from inside the network (the check tool runs in a short-lived container group of the Operator): it needs aigateway and operator first, and about ten minutes after aigateway, because a new role takes up to ten minutes to apply."
+        description: "what-if: show what the next steps would change and change nothing. model-side: the network, the model account with its private endpoint and the budget (nothing of Meternaut calls that account now, and the owner decides about it). recording: the usage recording that was made for the gateway's calls (it is idle since the undo of 2026-11-07, and stays until the owner decides about it), which is a Log Analytics workspace, an Event Hubs namespace, a Cosmos DB account, a storage account and a function app with its own system-assigned identity, with private endpoints and without any key; the Event Hubs namespace takes no public traffic (its public network access is Disabled and its private endpoint is the only way in, so from then on only the Operator can send to it from outside the apps), and after its deploy the action reads that back from Azure and retires the deploy identity's old right to send to the control hub usage-control, when that is still there; on an estate where the namespace is still public, run it only after recording-check and cases-run have passed through the Operator; it first removes the key-based Logic App version of it, when that is still there. It publishes the usage app's code from inside the network, in a container group of the Operator that signs in as the deploy identity with a token of the run and goes through the app's private endpoint, so on an estate that has no Operator yet it deploys and stops at the publish: the order is then recording, cases, operator, and then recording and cases again. recording-check: start the copy jobs once through the control hub and read what they say from the function app's telemetry, both by the Operator from inside the network (the check tool runs in a short-lived container group of the Operator): it needs operator first. cases: the first cases, which is a second function app on the usage recording's network, storage and namespace, with its own system-assigned identity and one user-assigned identity for the console's sign-in, a control hub, a longer retention of the traces and the History workbook; its Watch changes no resource of the estate (with the investigation on it also creates agents and conversations in its own Foundry project), after its deploy it retires the deploy identity's old right to send to the control hub cases-control, when that is still there, and it needs the usage recording first. With the switch AGENTS_VIA_AI_GATEWAY on (it is off), it gives the app the model names `aigateway/<alias>` for the agents, which name the project's connection to the AI Gateway, and needs that connection first. It publishes the app's code from inside the network, in the Operator, as recording does.         cases-run: start one Watch through the control hub and read its History from the telemetry, both by the Operator from inside the network: it needs operator first. plant: make waste of Meternaut's own (an unattached disk, and with plant_public_ip an unassigned public IP address) in the project's resource group,         tagged for the loop, so that the whole loop can be shown on something that belongs to nobody else. loop-check: knock at the console's front door without a sign-in and pass only when nobody gets a page. foundry: the Foundry resource of the agents (the model account cannot hold projects, so this is a second resource): a project, the same models, a guardrail, one private endpoint and the connection that sends the agents' traces, with no key; it needs recording and cases to have run once, and it is run before the next cases, which is then given the project's address. With the switch AGENTS_VIA_AI_GATEWAY in tools/environment-params.py on (it is off), it also makes the project's connection to the AI Gateway, with the project's own identity and no key, and reads it back: it then needs aigateway first. operator: the Operator, the executor that works inside the virtual network for what the workflow cannot do from outside it once the services are private (docs/proposals/07-private-by-default.md): its identity, the subnet of its container groups and three roles (Reader on the project's group, and Azure Event Hubs Data Sender on the two control hubs, which the actions recording and cases make, so it runs after them); it waits until the landing zone has put its route table on that subnet, and it starts nothing, so nothing is paid until a run uses it. The actions recording and cases publish their code through it, as the deploy identity. operator-probe: run operator/probe.sh once in a short-lived container group of the Operator and print what it finds (does the identity sign in, do the names of private endpoints resolve to private addresses, which addresses can a group reach, and how does a package get in); the group is deleted at the end whatever happens, and it costs cents. It needs operator first. aigateway: refused at its first step unless the input public_ai_gateway_requested is set, which only the owner's written request for a public AI Gateway allows (its frontend is public and cannot be made private). When it is set: the AI Gateway of the agents' model calls (Azure's AI Gateway, a preview service that is not API Management): first its subnet, which is delegated to it and made only when it is not there, and, after the landing zone's route table is on that subnet, the gateway with a system-assigned identity, a model and an alias for each model of the agents' Foundry resource, content safety on each model, and AI Gateway Models User for the Operator's identity, with no key; it needs foundry and operator first. The gateway is made on the subnet as the landing zone leaves it, so the action makes the subnet, waits for the landing zone's route table on it (20 minutes at most: when the table does not come the gateway is not made, and a second run repeats only what is missing), signs in again and then makes the gateway. Its frontend is public whatever is asked, because the service has no private frontend, so access is by Microsoft Entra ID and role assignments only. After the deploy the action applies the gateway-wide token, request and cost limits, deletes the built-in key master when the service lets it be deleted, and reads everything back; it changes nothing of the agents, which keep calling their model deployments. With the switch AGENTS_VIA_AI_GATEWAY on (it is off), it also gives the Foundry project's identity AI Gateway Models User on the gateway, and needs foundry to have run. aigateway-check: call each alias of the AI Gateway once with the Operator's token, and once without a token and once with a wrong alias, by the Operator from inside the network (the check tool runs in a short-lived container group of the Operator): it needs aigateway and operator first, and about ten minutes after aigateway, because a new role takes up to ten minutes to apply."
         type: choice
         required: true
         default: what-if
         options:
           - what-if
           - model-side
-          - gateway-prepare
-          - gateway
-          - contract
           - recording
           - recording-check
           - foundry
@@ -33,8 +31,8 @@ on:
           - operator-probe
           - aigateway
           - aigateway-check
-      check_limits:
-        description: "Only with contract: also prove the token limit, with one request larger than a minute's allowance and then a refusal by the gateway. It uses about a minute of the contract's tokens and blocks the key for up to a minute."
+      public_ai_gateway_requested:
+        description: "Only with aigateway: set it only when the owner has asked in writing for a public AI Gateway. The AI Gateway's front door is public and cannot be made private, so the action aigateway stops at its first step, before it signs in to Azure, unless this is set. aigateway-check, what-if and every other action ignore it."
         type: boolean
         required: false
         default: false
@@ -74,7 +72,6 @@ jobs:
       ENV_BUDGET_AMOUNT: ${{ vars.ENV_BUDGET_AMOUNT }}
       ENV_ALERT_EMAILS: ${{ vars.ENV_ALERT_EMAILS }}
       RECORDING_READER_IDS: ${{ vars.RECORDING_READER_IDS }}
-      GATEWAY_RESOURCE_ID: ${{ secrets.GATEWAY_RESOURCE_ID }}
       GATEWAY_APPINSIGHTS_ID: ${{ secrets.GATEWAY_APPINSIGHTS_ID }}
       CONSOLE_APP_CLIENT_ID: ${{ vars.CONSOLE_APP_CLIENT_ID }}
       CONSOLE_PEOPLE: ${{ vars.CONSOLE_PEOPLE }}
@@ -86,46 +83,40 @@ jobs:
       # something in the Operator (the probe, and the checks of the usage recording and of the first cases) uses this one pin, which only a person changes, on purpose.
       OPERATOR_IMAGE: mcr.microsoft.com/azure-cli@sha256:67afdcb4f3efce0b33aadba0b8a72402b6f071741400fd75cc5cb8a1d7bf1d98
     steps:
+      - name: Refuse the AI Gateway unless the owner asked for a public one in writing
+        if: inputs.action == 'aigateway'
+        env:
+          PUBLIC_AI_GATEWAY_REQUESTED: ${{ inputs.public_ai_gateway_requested }}
+        run: |
+          # The AI Gateway's front door is public and cannot be made private (docs/proposals/08-ai-gateway.md), and the owner's rule is that nothing public is made unless he specifically asks for it
+          # (AGENTS.md rule 15 (c)). So this action stops here, as the first step of the job, before anything is checked out, read or signed in to, unless the input says that he asked in writing.
+          if [ "$PUBLIC_AI_GATEWAY_REQUESTED" != true ]; then
+            echo "::error::The AI Gateway is not deployed: its front door is public and cannot be made private, and nothing public is made unless the owner has asked for it in writing. Set the input public_ai_gateway_requested only when he has. Nothing was changed."
+            exit 1
+          fi
+          echo "The input public_ai_gateway_requested is set: the owner has asked in writing for a public AI Gateway."
+
       - name: Check out the repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-
-      - name: Check out the Citadel kit at the commit that was read
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: Azure-Samples/ai-hub-gateway-solution-accelerator
-          ref: 81599b31dfbaee20ebd3a6d2ba9b07dde3c31814
-          path: kit
-          persist-credentials: false
-
-      - name: Apply the patches to the kit's module
-        run: |
-          # environment/kit-patches/*.patch: what each one does, and why, is at its top. A patch that does not apply stops the run.
-          for patch in environment/kit-patches/*.patch; do
-            git -C kit apply --check "../$patch"
-            git -C kit apply "../$patch"
-          done
 
       - name: Set up Python 3.13, the runtime of the function app
         uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.13"
 
-      - name: The tools, the templates and the kit's module pass their checks
+      - name: The tools and the templates pass their checks
         run: |
           python3 -m unittest discover -s tools/tests
           python3 -m unittest discover -s src/usage-functions/tests
           python3 -m unittest discover -s src/case-functions/tests
           python3 tools/workflow-lint.py
-          for template in environment/main.bicep environment/gateway/identity.bicep environment/gateway/logger.bicep environment/gateway/eventhub-loggers.bicep environment/gateway/contract.bicep environment/recording/main.bicep environment/foundry/main.bicep environment/cases/main.bicep environment/cases/planted.bicep environment/operator/main.bicep environment/aigateway/main.bicep environment/aigateway/subnet.bicep; do
+          for template in environment/main.bicep environment/recording/main.bicep environment/foundry/main.bicep environment/cases/main.bicep environment/cases/planted.bicep environment/operator/main.bicep environment/aigateway/main.bicep environment/aigateway/subnet.bicep; do
             az bicep build --file "$template" --stdout > /dev/null
             az bicep lint --file "$template"
           done
           az bicep build --file environment/main.bicep --outfile "$RUNNER_TEMP/environment.json"
-          az bicep build --file environment/gateway/logger.bicep --outfile "$RUNNER_TEMP/logger.json"
-          az bicep build --file environment/gateway/eventhub-loggers.bicep --outfile "$RUNNER_TEMP/eventhub-loggers.json"
-          az bicep build --file environment/gateway/contract.bicep --outfile "$RUNNER_TEMP/contract.json"
           az bicep build --file environment/recording/main.bicep --outfile "$RUNNER_TEMP/recording.json"
           az bicep build --file environment/foundry/main.bicep --outfile "$RUNNER_TEMP/foundry.json"
           az bicep build --file environment/cases/main.bicep --outfile "$RUNNER_TEMP/cases.json"
@@ -133,7 +124,6 @@ jobs:
           az bicep build --file environment/operator/main.bicep --outfile "$RUNNER_TEMP/operator.json"
           az bicep build --file environment/aigateway/main.bicep --outfile "$RUNNER_TEMP/aigateway.json"
           az bicep build --file environment/aigateway/subnet.bicep --outfile "$RUNNER_TEMP/aigateway-subnet.json"
-          az bicep build --file kit/bicep/infra/apim-gateway-upgrade/main.bicep --outfile "$RUNNER_TEMP/kit.json"
 
       - name: Sign in to Azure
         uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
@@ -150,11 +140,6 @@ jobs:
           # recording and cases retire: no template gives it a role on an event hub any more (the Operator sends the control events).
           oid=$(python3 tools/recording-check.py whoami)
           echo "oid=$oid" >> "$GITHUB_OUTPUT"
-
-      - name: Read the gateway and its Application Insights
-        # Only the actions that change the owner's API Management instance read it first (an update in progress refuses writes). Every other action is not held up by the state of the instance.
-        if: inputs.action == 'gateway-prepare' || inputs.action == 'gateway' || inputs.action == 'contract'
-        run: python3 tools/gateway-prep.py facts --apim "$GATEWAY_RESOURCE_ID" --insights "$GATEWAY_APPINSIGHTS_ID" --summary "$GITHUB_STEP_SUMMARY" > /dev/null
 
       - name: The resource group is there
         run: az group show --name "$ENV_RESOURCE_GROUP" --query "{name:name, location:location, state:properties.provisioningState}" --output table
@@ -215,9 +200,10 @@ jobs:
           ENV_OPS_SUBNET_EXISTS: ${{ steps.network.outputs.ops_subnet_exists }}
           ENV_AIGW_SUBNET_EXISTS: ${{ steps.network.outputs.aigw_subnet_exists }}
         run: |
-          # The gateway identity does not exist before model-side has run, so this first pass is a preview: it gives the names.
+          # This first pass is a preview: it gives the names, before the facts that are read from Azure below are known. Nothing of the owner's API Management instance is read or made here: since 2026-11-07
+          # no action looks at the instance, its identity or its loggers.
           # The AI Gateway's policy file goes in too: it is checked against the models and against the owner's standing limit, and its files are written only when the virtual network has a free range for the gateway's subnet.
-          contract_files="--contract environment/contract.json --contract-policy environment/gateway/contract-policy.xml --aigateway-policies environment/aigateway/policies.json"
+          policies="--aigateway-policies environment/aigateway/policies.json"
           exists() {
             local found level="${3:-error}"
             if found=$(az rest --method get --url "https://management.azure.com${1}?api-version=${2}" --query name --output tsv 2>&1); then
@@ -229,42 +215,10 @@ jobs:
               return 1
             fi
           }
-          outputs=$(python3 tools/environment-params.py build --models environment/models.json --out-dir "$RUNNER_TEMP" --preview $contract_files)
+          outputs=$(python3 tools/environment-params.py build --models environment/models.json --out-dir "$RUNNER_TEMP" --preview $policies)
           echo "$outputs" >> "$GITHUB_OUTPUT"
-          gateway_subscription=$(sed -n 's/^gateway_subscription=//p' <<< "$outputs")
-          gateway_group=$(sed -n 's/^gateway_resource_group=//p' <<< "$outputs")
-          identity_name=$(sed -n 's/^identity_name=//p' <<< "$outputs")
-          # The gateway identity, and the loggers of the owner's API Management instance, matter only to the actions that show an API Management object (what-if), make one (gateway-prepare, gateway)
-          # or give the identity a role (the usage recording gives it the right to send to its two usage hubs). Every other action does not look for them, so that nothing on the instance can stop
-          # it. Where the identity is not there, its role assignment is shown with a placeholder, and the two policy fragments that use the Event Hub loggers are asked for only when both loggers
-          # are in the instance (the service refuses a fragment whose logger is missing).
-          principal=""
-          client=""
-          fragments=false
-          case "$ACTION" in
-            what-if|gateway-prepare|gateway|recording)
-              identity=$(az identity list --subscription "$gateway_subscription" --resource-group "$gateway_group" --query "[?name=='$identity_name'] | [0].[principalId, clientId]" --output tsv)
-              # The two values come back on one line or on two, depending on the CLI: either way, the first is the principal id and the second the client id.
-              principal=$(printf '%s' "$identity" | tr '\t' '\n' | sed -n 1p)
-              client=$(printf '%s' "$identity" | tr '\t' '\n' | sed -n 2p)
-              if grep -Eq '^[0-9a-fA-F-]{36}$' <<< "$principal" && grep -Eq '^[0-9a-fA-F-]{36}$' <<< "$client"; then
-                echo "The gateway identity exists; its principal id and client id are used."
-                case "$ACTION" in
-                  what-if|gateway)
-                    loggers=$(az rest --method get --url "https://management.azure.com${GATEWAY_RESOURCE_ID}/loggers?api-version=2024-05-01" --query "value[].name" --output tsv)
-                    if grep -Fxq usage-eventhub-logger <<< "$loggers" && grep -Fxq pii-usage-eventhub-logger <<< "$loggers"; then fragments=true; fi
-                    echo "Both Event Hub loggers are in the gateway: $fragments." ;;
-                esac
-              else
-                principal=""
-                client=""
-                echo "The gateway identity does not exist yet; the role assignment is shown with a placeholder."
-                if [ "$ACTION" = recording ]; then echo "The usage recording makes no role for the gateway identity then: its template makes the two roles only for an identity that is known."; fi
-              fi ;;
-            *) echo "The action $ACTION does not use the gateway identity, so it is not looked for: the files that carry it hold a placeholder, and this action deploys none of them." ;;
-          esac
           {
-            # The facts of the Foundry resource, which the cases app and the Foundry file need, and which have nothing to do with the gateway. The Foundry file names the cases app's identity
+            # The facts of the Foundry resource, which the cases app and the Foundry file need. The Foundry file names the cases app's identity
             # (its object id: the Foundry User role goes to it), and the cases app is given the project's address only while the project is
             # in Azure: an address with no project behind it would switch the investigation on and make every run fail. Only the actions that use an answer look for it, so that a read
             # that Azure throttles or refuses cannot stop an action that has nothing to do with the Foundry resource: what-if shows both, foundry needs the identity, cases needs the project.
@@ -360,19 +314,12 @@ jobs:
               echo "foundry_project_principal=$project_principal" >> "$GITHUB_OUTPUT"
             fi
           }
-          # The final build, with the facts above. Without the gateway identity the files that carry it hold a placeholder (--preview), exactly as the first pass built them, and the Foundry file and
-          # the cases file carry what was read from Azure all the same.
-          preview=""
-          if [ -z "$principal" ]; then preview="--preview"; fi
-          AIGATEWAY_HOST="$aigateway_host" FOUNDRY_PROJECT_PRINCIPAL_ID="$project_principal" GATEWAY_PRINCIPAL_ID="$principal" GATEWAY_CLIENT_ID="$client" RECORDING_FRAGMENTS="$fragments" CASES_SYSTEM_PRINCIPAL_ID="$cases_system_principal" ENV_FOUNDRY_PROJECT_EXISTS="$foundry_exists" python3 tools/environment-params.py build --models environment/models.json --out-dir "$RUNNER_TEMP" $preview $contract_files > /dev/null
+          # The final build, with the facts above: the Foundry file and the cases file carry what was read from Azure.
+          AIGATEWAY_HOST="$aigateway_host" FOUNDRY_PROJECT_PRINCIPAL_ID="$project_principal" CASES_SYSTEM_PRINCIPAL_ID="$cases_system_principal" ENV_FOUNDRY_PROJECT_EXISTS="$foundry_exists" python3 tools/environment-params.py build --models environment/models.json --out-dir "$RUNNER_TEMP" $policies > /dev/null
           # The files are checked against the templates that were compiled above, so a setting that no template takes is found before Azure is asked.
           python3 tools/environment-params.py check --params "$RUNNER_TEMP/environment.parameters.json" --template "$RUNNER_TEMP/environment.json" --label environment
-          python3 tools/environment-params.py check --params "$RUNNER_TEMP/logger.parameters.json" --template "$RUNNER_TEMP/logger.json" --label logger
-          python3 tools/environment-params.py check --params "$RUNNER_TEMP/eventhub-loggers.parameters.json" --template "$RUNNER_TEMP/eventhub-loggers.json" --label eventhub-loggers
-          python3 tools/environment-params.py check --params "$RUNNER_TEMP/kit.parameters.json" --template "$RUNNER_TEMP/kit.json" --label kit
           python3 tools/environment-params.py check --params "$RUNNER_TEMP/recording.parameters.json" --template "$RUNNER_TEMP/recording.json" --label recording
           python3 tools/environment-params.py check --params "$RUNNER_TEMP/foundry.parameters.json" --template "$RUNNER_TEMP/foundry.json" --label foundry
-          python3 tools/environment-params.py check --params "$RUNNER_TEMP/contract.parameters.json" --template "$RUNNER_TEMP/contract.json" --label contract
           python3 tools/environment-params.py check --params "$RUNNER_TEMP/cases.parameters.json" --template "$RUNNER_TEMP/cases.json" --label cases
           python3 tools/environment-params.py check --params "$RUNNER_TEMP/operator.parameters.json" --template "$RUNNER_TEMP/operator.json" --label operator
           python3 tools/environment-params.py check --params "$RUNNER_TEMP/planted.parameters.json" --template "$RUNNER_TEMP/planted.json" --label planted
@@ -382,34 +329,20 @@ jobs:
             python3 tools/environment-params.py check --params "$RUNNER_TEMP/aigateway-subnet.parameters.json" --template "$RUNNER_TEMP/aigateway-subnet.json" --label aigateway-subnet
           fi
 
-      - name: What the identity, the model side, the logger, the usage recording and the first cases would change
+      - name: What the model side, the usage recording, the Foundry resource, the first cases, the Operator and the AI Gateway's templates would change
         if: inputs.action == 'what-if'
         env:
-          GATEWAY_SUBSCRIPTION: ${{ steps.params.outputs.gateway_subscription }}
-          GATEWAY_GROUP: ${{ steps.params.outputs.gateway_resource_group }}
           STORAGE_ACCOUNT: ${{ steps.params.outputs.storage_account_name }}
           INSIGHTS_NAME: ${{ steps.params.outputs.appinsights_name }}
           NETWORK_EXISTS: ${{ steps.network.outputs.network_exists }}
           EVENT_HUB_NAMESPACE: ${{ steps.params.outputs.event_hub_namespace }}
           FOUNDRY_ACCOUNT: ${{ steps.params.outputs.foundry_account_name }}
         run: |
-          echo "::group::The gateway identity, in the gateway's resource group"
-          python3 tools/az-deploy.py what-if --subscription "$GATEWAY_SUBSCRIPTION" --resource-group "$GATEWAY_GROUP" \
-            --template environment/gateway/identity.bicep
-          echo "::endgroup::"
-          echo "::group::The model side, in the project's resource group (the gateway identity's role is shown with a placeholder: the identity does not exist yet)"
+          echo "::group::The model side, in the project's resource group"
           python3 tools/az-deploy.py what-if --subscription "$ENV_SUBSCRIPTION_ID" --resource-group "$ENV_RESOURCE_GROUP" \
             --template environment/main.bicep --parameters "$RUNNER_TEMP/environment.parameters.json" --restore-param restoreAccount
           echo "::endgroup::"
-          echo "::group::The Application Insights logger, in the gateway's resource group"
-          python3 tools/az-deploy.py what-if --subscription "$GATEWAY_SUBSCRIPTION" --resource-group "$GATEWAY_GROUP" \
-            --template environment/gateway/logger.bicep --parameters "$RUNNER_TEMP/logger.parameters.json"
-          echo "::endgroup::"
-          echo "::group::The two Event Hub loggers, in the gateway's resource group"
-          python3 tools/az-deploy.py what-if --subscription "$GATEWAY_SUBSCRIPTION" --resource-group "$GATEWAY_GROUP" \
-            --template environment/gateway/eventhub-loggers.bicep --parameters "$RUNNER_TEMP/eventhub-loggers.parameters.json"
-          echo "::endgroup::"
-          echo "::group::The usage recording, in the project's resource group (the gateway identity's role is shown with a placeholder until model-side has run)"
+          echo "::group::The usage recording, in the project's resource group"
           echo "What this changes in the Event Hubs namespace: its public network access goes from Enabled to Disabled, so that its private endpoint is the only way in, and the template no longer gives the deploy identity the role to send to the control hub usage-control (the Operator sends the control event). The list below leaves that old assignment as it is, because an incremental deployment never removes what a template stops declaring: the action recording deletes that one assignment after its deploy, when it is still there."
           python3 tools/az-deploy.py what-if --subscription "$ENV_SUBSCRIPTION_ID" --resource-group "$ENV_RESOURCE_GROUP" \
             --template environment/recording/main.bicep --parameters "$RUNNER_TEMP/recording.parameters.json"
@@ -474,30 +407,6 @@ jobs:
           fi
           echo "::endgroup::"
 
-      - name: Make the gateway identity
-        id: identity
-        if: inputs.action == 'model-side'
-        env:
-          GATEWAY_SUBSCRIPTION: ${{ steps.params.outputs.gateway_subscription }}
-          GATEWAY_GROUP: ${{ steps.params.outputs.gateway_resource_group }}
-        run: |
-          principal=$(python3 tools/az-deploy.py create --subscription "$GATEWAY_SUBSCRIPTION" --resource-group "$GATEWAY_GROUP" \
-            --template environment/gateway/identity.bicep --name "identity-$GITHUB_RUN_ID" --output principalId)
-          if ! printf '%s' "$principal" | grep -Eq '^[0-9a-fA-F-]{36}$'; then
-            echo "::error::The deployment did not return the principal id of the gateway identity."
-            exit 1
-          fi
-          echo "principal=$principal" >> "$GITHUB_OUTPUT"
-
-      - name: Work out the settings with the identity's principal
-        if: inputs.action == 'model-side'
-        env:
-          GATEWAY_PRINCIPAL_ID: ${{ steps.identity.outputs.principal }}
-          ENV_BUDGET_START: ${{ steps.budget.outputs.start }}
-        run: |
-          python3 tools/environment-params.py build --models environment/models.json --out-dir "$RUNNER_TEMP" > /dev/null
-          python3 tools/environment-params.py check --params "$RUNNER_TEMP/environment.parameters.json" --template "$RUNNER_TEMP/environment.json" --label environment
-
       - name: Deploy the network, the model account, its private endpoint and the budget
         if: inputs.action == 'model-side'
         env:
@@ -507,23 +416,22 @@ jobs:
             --template environment/main.bicep --parameters "$RUNNER_TEMP/environment.parameters.json" \
             --name "environment-$GITHUB_RUN_ID" --output endpoint --restore-param restoreAccount)
           if [ "${endpoint%/}" != "$EXPECTED_ENDPOINT" ]; then
-            echo "::error::The deployed account answers on ${endpoint%/}, not on $EXPECTED_ENDPOINT. Nothing was added to the gateway."
+            echo "::error::The deployed account answers on ${endpoint%/}, not on $EXPECTED_ENDPOINT."
             exit 1
           fi
 
       - name: Wait until the landing zone has registered the endpoint's name
-        if: inputs.action == 'model-side' || inputs.action == 'gateway-prepare' || inputs.action == 'gateway'
+        if: inputs.action == 'model-side'
         env:
           PRIVATE_ENDPOINT: ${{ steps.params.outputs.private_endpoint }}
         run: |
           found=$(az network private-endpoint list --resource-group "$ENV_RESOURCE_GROUP" --query "[?name=='$PRIVATE_ENDPOINT'].name | [0]" --output tsv)
           if [ -z "$found" ] || [ "$found" = "None" ]; then
-            echo "::error::The private endpoint $PRIVATE_ENDPOINT is not there. Run model-side first."
+            echo "::error::The private endpoint $PRIVATE_ENDPOINT is not there, although the deploy before this step made it."
             exit 1
           fi
-          # After model-side the policy needs about ten minutes, so it is waited for; for the later actions it must be done.
+          # After model-side the policy needs about ten minutes, so it is waited for.
           attempts=40
-          if [ "$ACTION" != "model-side" ]; then attempts=1; fi
           for attempt in $(seq 1 "$attempts"); do
             zones=$(az network private-endpoint dns-zone-group list --resource-group "$ENV_RESOURCE_GROUP" \
               --endpoint-name "$PRIVATE_ENDPOINT" --query "[].privateDnsZoneConfigs[].privateDnsZoneId" --output tsv || true)
@@ -534,168 +442,8 @@ jobs:
             echo "Not registered yet (check $attempt of $attempts)."
             if [ "$attempt" -lt "$attempts" ]; then sleep 60; fi
           done
-          echo "::error::The landing zone's policy has not registered $PRIVATE_ENDPOINT in the central private DNS zone. Nothing was added to the gateway. Wait, or look at the policy compliance of the endpoint; do not create a private DNS zone."
+          echo "::error::The landing zone's policy has not registered $PRIVATE_ENDPOINT in the central private DNS zone. Wait, or look at the policy compliance of the endpoint; do not create a private DNS zone."
           exit 1
-
-      - name: Find the gateway identity
-        id: found
-        if: inputs.action == 'gateway-prepare' || inputs.action == 'gateway'
-        env:
-          GATEWAY_SUBSCRIPTION: ${{ steps.params.outputs.gateway_subscription }}
-          GATEWAY_GROUP: ${{ steps.params.outputs.gateway_resource_group }}
-          IDENTITY_NAME: ${{ steps.params.outputs.identity_name }}
-        run: |
-          identity=$(az identity list --subscription "$GATEWAY_SUBSCRIPTION" --resource-group "$GATEWAY_GROUP" --query "[?name=='$IDENTITY_NAME'].id | [0]" --output tsv)
-          if [ -z "$identity" ] || [ "$identity" = "None" ]; then
-            echo "::error::The gateway identity $IDENTITY_NAME is not there. Run model-side first: it makes the identity and gives it its role on the model account."
-            exit 1
-          fi
-          echo "identity_id=$identity" >> "$GITHUB_OUTPUT"
-
-      - name: Attach the identity to the gateway, keeping what it has
-        if: inputs.action == 'gateway-prepare'
-        env:
-          IDENTITY_ID: ${{ steps.found.outputs.identity_id }}
-        run: python3 tools/gateway-prep.py attach-identity --apim "$GATEWAY_RESOURCE_ID" --identity "$IDENTITY_ID"
-
-      - name: Add the Application Insights logger that the module expects
-        if: inputs.action == 'gateway-prepare'
-        env:
-          GATEWAY_SUBSCRIPTION: ${{ steps.params.outputs.gateway_subscription }}
-          GATEWAY_GROUP: ${{ steps.params.outputs.gateway_resource_group }}
-        run: |
-          python3 tools/az-deploy.py create --subscription "$GATEWAY_SUBSCRIPTION" --resource-group "$GATEWAY_GROUP" \
-            --template environment/gateway/logger.bicep --parameters "$RUNNER_TEMP/logger.parameters.json" --name "logger-$GITHUB_RUN_ID"
-
-      - name: Add the two Event Hub loggers, when the usage recording's Event Hubs namespace exists
-        if: inputs.action == 'gateway-prepare'
-        env:
-          GATEWAY_SUBSCRIPTION: ${{ steps.params.outputs.gateway_subscription }}
-          GATEWAY_GROUP: ${{ steps.params.outputs.gateway_resource_group }}
-          EVENT_HUB_NAMESPACE: ${{ steps.params.outputs.event_hub_namespace }}
-        run: |
-          # The service refuses a logger whose address does not resolve, so they are made only after the namespace exists. Without
-          # them the module leaves out the two policy fragments that need them (the next action, gateway, reads the instance).
-          found=$(az resource list --resource-group "$ENV_RESOURCE_GROUP" --resource-type Microsoft.EventHub/namespaces --query "[?name=='$EVENT_HUB_NAMESPACE'].name | [0]" --output tsv)
-          if [ -z "$found" ] || [ "$found" = "None" ]; then
-            echo "The usage recording's Event Hubs namespace does not exist yet (the action recording makes it): the two Event Hub loggers are not added."
-            exit 0
-          fi
-          python3 tools/az-deploy.py create --subscription "$GATEWAY_SUBSCRIPTION" --resource-group "$GATEWAY_GROUP" \
-            --template environment/gateway/eventhub-loggers.bicep --parameters "$RUNNER_TEMP/eventhub-loggers.parameters.json" --name "eventhub-loggers-$GITHUB_RUN_ID"
-
-      - name: Wait until the gateway has finished updating
-        if: inputs.action == 'gateway-prepare'
-        run: python3 tools/gateway-prep.py wait --apim "$GATEWAY_RESOURCE_ID"
-
-      - name: The gateway is ready for the Citadel module
-        if: inputs.action == 'gateway'
-        env:
-          IDENTITY_ID: ${{ steps.found.outputs.identity_id }}
-        run: python3 tools/gateway-prep.py prepared --apim "$GATEWAY_RESOURCE_ID" --identity "$IDENTITY_ID"
-
-      - name: What the Citadel module would change in the gateway
-        if: inputs.action == 'what-if' || inputs.action == 'gateway'
-        env:
-          GATEWAY_SUBSCRIPTION: ${{ steps.params.outputs.gateway_subscription }}
-          GATEWAY_GROUP: ${{ steps.params.outputs.gateway_resource_group }}
-          IDENTITY_NAME: ${{ steps.params.outputs.identity_name }}
-        run: |
-          identity=$(az identity list --subscription "$GATEWAY_SUBSCRIPTION" --resource-group "$GATEWAY_GROUP" --query "[?name=='$IDENTITY_NAME'].id | [0]" --output tsv)
-          logger=$(az rest --method get --url "https://management.azure.com${GATEWAY_RESOURCE_ID}/loggers?api-version=2024-05-01" --query "value[?name=='appinsights-logger'].name | [0]" --output tsv)
-          if [ -z "$identity" ] || [ "$identity" = "None" ] || [ -z "$logger" ] || [ "$logger" = "None" ]; then
-            echo "The Citadel module cannot be previewed yet: it looks up the gateway identity and the logger appinsights-logger, and they do not exist before model-side and gateway-prepare have run. Its list is the module's own: two inference APIs, policy fragments, backends and pools, named values, and the service-level logging setting. A what-if after those two shows the exact diff."
-            exit 0
-          fi
-          python3 tools/az-deploy.py what-if --subscription "$GATEWAY_SUBSCRIPTION" --resource-group "$GATEWAY_GROUP" \
-            --template kit/bicep/infra/apim-gateway-upgrade/main.bicep --parameters "$RUNNER_TEMP/kit.parameters.json"
-
-      - name: Add the Citadel module's objects to the gateway
-        if: inputs.action == 'gateway'
-        env:
-          GATEWAY_SUBSCRIPTION: ${{ steps.params.outputs.gateway_subscription }}
-          GATEWAY_GROUP: ${{ steps.params.outputs.gateway_resource_group }}
-        run: |
-          python3 tools/az-deploy.py create --subscription "$GATEWAY_SUBSCRIPTION" --resource-group "$GATEWAY_GROUP" \
-            --template kit/bicep/infra/apim-gateway-upgrade/main.bicep --parameters "$RUNNER_TEMP/kit.parameters.json" --name "gateway-$GITHUB_RUN_ID"
-
-      - name: What the gateway holds now
-        if: inputs.action == 'gateway'
-        run: |
-          az rest --method get --url "https://management.azure.com${GATEWAY_RESOURCE_ID}/apis?api-version=2024-05-01" --query "value[].{name:name, path:properties.path}" --output table
-
-      - name: The two model APIs refuse a call that is not made with a contract's key
-        if: inputs.action == 'gateway'
-        run: |
-          # The rule is in the kit's API policies through environment/kit-patches/contract-required.patch; this reads it back from the instance.
-          for api in universal-llm-api azure-openai-api; do
-            policy=$(az rest --method get --url "https://management.azure.com${GATEWAY_RESOURCE_ID}/apis/${api}/policies/policy?api-version=2024-05-01&format=rawxml" --query properties.value --output tsv)
-            if ! grep -q 'contract_required' <<< "$policy"; then
-              echo "::error::The policy of $api does not hold the rule that refuses a call without a contract's key."
-              exit 1
-            fi
-            echo "$api: a call that is not made with a contract's key is refused."
-          done
-
-      - name: What the first contract would change in the gateway
-        if: inputs.action == 'what-if' || inputs.action == 'contract'
-        env:
-          GATEWAY_SUBSCRIPTION: ${{ steps.params.outputs.gateway_subscription }}
-          GATEWAY_GROUP: ${{ steps.params.outputs.gateway_resource_group }}
-          CONTRACT_APIS: ${{ steps.params.outputs.contract_apis }}
-        run: |
-          # The contract grants the two inference APIs that the Citadel module makes, so it can only be added after "gateway".
-          present=$(az rest --method get --url "https://management.azure.com${GATEWAY_RESOURCE_ID}/apis?api-version=2024-05-01" --query "value[].name" --output tsv)
-          missing=""
-          for api in ${CONTRACT_APIS//,/ }; do
-            if ! grep -Fxq "$api" <<< "$present"; then missing="$missing $api"; fi
-          done
-          if [ -n "$missing" ]; then
-            if [ "$ACTION" = "contract" ]; then
-              echo "::error::The gateway has no API named:$missing. Run gateway first: the contract grants the APIs that the Citadel module makes."
-              exit 1
-            fi
-            echo "The contract cannot be previewed yet: the gateway has no API named:$missing. It is a product that grants those APIs, with a policy and one subscription; a what-if after gateway shows the exact diff."
-            exit 0
-          fi
-          python3 tools/az-deploy.py what-if --subscription "$GATEWAY_SUBSCRIPTION" --resource-group "$GATEWAY_GROUP" \
-            --template environment/gateway/contract.bicep --parameters "$RUNNER_TEMP/contract.parameters.json"
-
-      - name: Add the first contract to the gateway
-        if: inputs.action == 'contract'
-        env:
-          GATEWAY_SUBSCRIPTION: ${{ steps.params.outputs.gateway_subscription }}
-          GATEWAY_GROUP: ${{ steps.params.outputs.gateway_resource_group }}
-        run: |
-          python3 tools/az-deploy.py create --subscription "$GATEWAY_SUBSCRIPTION" --resource-group "$GATEWAY_GROUP" \
-            --template environment/gateway/contract.bicep --parameters "$RUNNER_TEMP/contract.parameters.json" --name "contract-$GITHUB_RUN_ID"
-
-      - name: Test the gateway with the contract's key
-        if: inputs.action == 'contract'
-        env:
-          CONTRACT_SUBSCRIPTION: ${{ steps.params.outputs.contract_subscription }}
-          CHECK_LIMITS: ${{ inputs.check_limits }}
-        run: |
-          # The key is read from the gateway for this test only: it is masked at once, handed to the test through the
-          # environment of that one command, and stored nowhere (not in a secret, an output, the environment file or the summary).
-          gateway_url=$(az rest --method get --url "https://management.azure.com${GATEWAY_RESOURCE_ID}?api-version=2024-05-01" --query properties.gatewayUrl --output tsv)
-          key=$(az rest --method post --url "https://management.azure.com${GATEWAY_RESOURCE_ID}/subscriptions/${CONTRACT_SUBSCRIPTION}/listSecrets?api-version=2024-05-01" --query primaryKey --output tsv)
-          echo "::add-mask::$key"
-          flags=""
-          if [ "$CHECK_LIMITS" = "true" ]; then flags="--limits"; fi
-          set +e
-          GATEWAY_SMOKE_KEY="$key" python3 tools/environment-smoke.py --url "${gateway_url%/}/models/chat/completions" $flags > "$RUNNER_TEMP/smoke.txt" 2>&1
-          status=$?
-          set -e
-          cat "$RUNNER_TEMP/smoke.txt"
-          {
-            echo "### The gateway tested with the contract's key"
-            echo
-            echo '```'
-            cat "$RUNNER_TEMP/smoke.txt"
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
-          exit "$status"
 
       - name: Remove the key-based Logic App version of the usage recording, when it is still there
         if: inputs.action == 'recording'
@@ -2320,7 +2068,6 @@ jobs:
           JOB_STATUS: ${{ job.status }}
           AIGATEWAY_NAME: ${{ steps.params.outputs.aigateway_name }}
           ACCOUNT_NAME: ${{ steps.params.outputs.account_name }}
-          CONTRACT_NAME: ${{ steps.params.outputs.contract_name }}
           FOUNDRY_ACCOUNT: ${{ steps.params.outputs.foundry_account_name }}
           FOUNDRY_PROJECT: ${{ steps.params.outputs.foundry_project_name }}
           FOUNDRY_ENDPOINT: ${{ steps.params.outputs.foundry_project_endpoint }}
@@ -2334,10 +2081,7 @@ jobs:
               echo "**The run did not finish.** The log shows the step that failed; nothing below is promised."
               case "$ACTION" in
                 what-if) echo "A what-if changes nothing." ;;
-                model-side) echo "The gateway identity, the network, the model account and the private endpoint may exist now (the endpoint costs a few euros a month while it does). Running \`model-side\` again is safe and repeats only what is missing. \`what-if\` shows what is there." ;;
-                gateway-prepare) echo "The identity may be attached to the gateway and the logger may exist. Running \`gateway-prepare\` again is safe and repeats only what is missing. The gateway's service-level logging setting before the change is in the first list of this page." ;;
-                gateway) echo "Some of the module's objects may be in the gateway already. Running \`gateway\` again is safe and repeats only what is missing. The gateway's service-level logging setting before the change is in the first list of this page." ;;
-                contract) echo "The contract's product, its policy and its subscription may be in the gateway already, and the test of the gateway with its key may have failed after that. Running \`contract\` again is safe: it repeats only what is missing and runs the test again." ;;
+                model-side) echo "The network, the model account and the private endpoint may exist now (the endpoint costs a few euros a month while it does). Running \`model-side\` again is safe and repeats only what is missing. \`what-if\` shows what is there." ;;
                 recording) echo "Part of the usage recording may exist now: the Log Analytics workspace, the storage account, the Event Hubs namespace, the Cosmos DB account, the private endpoints and the function app with its identity. They cost money while they exist, the private endpoints most (about 5 euros a month each). The key-based Logic App version may be removed already. Once the template has been deployed the Event Hubs namespace takes no public traffic, so this runner can no longer send to it: the Operator does. If the lines above stop at the step that reads the namespace back, Azure did not show the namespace as private and without a key. If they stop at the step that retires the deploy identity's right to send to \`usage-control\`, the deploy is done and that one old assignment may still be there: the lines say whether Azure refused to delete it (a person deletes it, environment/BOOTSTRAP.md) or could not be read. If they stop at the wait for the landing zone's policy, the endpoints are made and the app was not given its code: the lines say which endpoint is not registered yet. If they stop at the step that publishes the code from inside the network, the deploy and the wait are done and the app was not given its code: the lines say that the Operator is not there (run \`operator\`, and then \`recording\` again: on an estate that has none the order is recording, cases, operator, and then recording and cases again) or what the container said. Running \`recording\` again is safe and repeats only what is missing; \`what-if\` shows what is there." ;;
                 recording-check) echo "The control event may have been sent, and the copy jobs may have run and written nothing, or not at all. The Operator sent it and read the telemetry from inside the network, in a container group named \`op-check-$GITHUB_RUN_ID\` that the last step of the run deletes if the tool could not. The lines above say how each job ended, or which warnings and errors the function app logged. A message that the Operator is not there means that \`operator\` has to be run first. A 401 or 403 when the event is sent means that the Operator's role on the control hub is missing (\`operator\` assigns it) or has not applied yet (a role takes up to ten minutes). Running \`recording-check\` again is safe." ;;
                 foundry) echo "Part of the Foundry resource of the agents may exist now: the resource, its guardrail, its model deployments, the project, the connection for traces, the private endpoint and the two roles. The resource costs next to nothing while no agent runs in it (the private endpoint a few euros a month). Running \`foundry\` again is safe and repeats only what is missing; \`what-if\` shows what is there. The cases app was not changed: run \`cases\` only after a run of \`foundry\` that passed." ;;
@@ -2352,16 +2096,13 @@ jobs:
               esac
             else
               case "$ACTION" in
-                what-if) echo "Nothing was changed. Read the lists above: what the next steps would create, and the gateway as it is now." ;;
-                model-side) echo "The model account \`$ACCOUNT_NAME\` is behind a private endpoint in resource group \`$ENV_RESOURCE_GROUP\`, the gateway identity has its role on it, and the landing zone has registered the endpoint's name. The gateway has not been touched." ;;
-                gateway-prepare) echo "The identity is attached to the gateway (its own identity is kept) and the Application Insights logger is there, and so are the two Event Hub loggers if the usage recording's namespace existed (the log of the step says). The Citadel module has not been applied: a what-if now shows its exact diff." ;;
-                gateway) echo "The Citadel module's objects are in the gateway; its two usage-recording fragments are there only if both Event Hub loggers were (the log says). A call to the two model APIs is refused unless it is made with the key of a contract, so nobody can call them (the instance's all-access key included) until the first contract exists." ;;
-                contract) echo "The contract \`$CONTRACT_NAME\` is in the gateway: a product that grants the two inference APIs, its policy (the models and the token limits) and one subscription. The checks above ran against the gateway with that subscription's key, which is stored nowhere." ;;
-                recording) echo "The usage recording is in resource group \`$ENV_RESOURCE_GROUP\`: an Event Hubs namespace (public network access Disabled, no key, one private endpoint that is Approved: read back from Azure), a Cosmos DB account (serverless, no public endpoint, no key), a storage account (no public endpoint, no Shared Key), the function app with its six functions on a Flex Consumption plan, its own system-assigned identity, a workspace and an Application Insights component of its own, and six private endpoints that the landing zone has registered in its central zones: the five of the services, and the function app's own for the app and its deployment site (the sub-resource \`sites\`), which the code is not published before, because a deployment ends with a call to the app's own name. The app stays public in this phase. The code was published from inside the network: a short-lived container group of the Operator signed in as the deploy identity with a token of this run, built the libraries from the hash-locked lock file and published the package through the app's private endpoint (the log shows that both names of the app resolve to private addresses there), and the group is deleted; the runner published nothing. The key-based Logic App version is removed. The app no longer carries the user-assigned identity that it used before, \`id-meternaut-usage\`. This workflow does not remove that identity: a person does, in the order of environment/BOOTSTRAP.md (its grants outside the project's group first, with tools/access-requirements.py retire, and the identity after that). The gateway identity, when it exists, may send to the two usage event hubs (its two roles are made only then; the owner ordered the undo of what Meternaut added to his API Management instance on 2026-11-07, so nothing sends to them from there any more), and the function app may read them. The deploy identity holds no role on the control hub \`usage-control\` any more: the log of the step that retires it says whether the old assignment was deleted now or was not there. This runner can no longer send to the namespace, and the Operator sends the control event. Whether the gateway's two loggers reach the namespace through its private endpoint is not known until a policy of the gateway sends to the two usage hubs: docs/proposals/07-private-by-default.md says how that will show. The copy jobs need two roles for the function app's identity outside the project's group before they can read the gateway's Application Insights (environment/BOOTSTRAP.md). Then \`recording-check\` starts the jobs once and reads what they said." ;;
+                what-if) echo "Nothing was changed. Read the lists above: what the next steps would create or change in the project's resource group." ;;
+                model-side) echo "The model account \`$ACCOUNT_NAME\` is behind a private endpoint in resource group \`$ENV_RESOURCE_GROUP\`, and the landing zone has registered the endpoint's name. Nothing calls that account now, and no role was made on it: the owner decides about the account. Nothing of the owner's API Management instance was touched." ;;
+                recording) echo "The usage recording is in resource group \`$ENV_RESOURCE_GROUP\`: an Event Hubs namespace (public network access Disabled, no key, one private endpoint that is Approved: read back from Azure), a Cosmos DB account (serverless, no public endpoint, no key), a storage account (no public endpoint, no Shared Key), the function app with its six functions on a Flex Consumption plan, its own system-assigned identity, a workspace and an Application Insights component of its own, and six private endpoints that the landing zone has registered in its central zones: the five of the services, and the function app's own for the app and its deployment site (the sub-resource \`sites\`), which the code is not published before, because a deployment ends with a call to the app's own name. The app stays public in this phase. The code was published from inside the network: a short-lived container group of the Operator signed in as the deploy identity with a token of this run, built the libraries from the hash-locked lock file and published the package through the app's private endpoint (the log shows that both names of the app resolve to private addresses there), and the group is deleted; the runner published nothing. The key-based Logic App version is removed. The app no longer carries the user-assigned identity that it used before, \`id-meternaut-usage\`. This workflow does not remove that identity: a person does, in the order of environment/BOOTSTRAP.md (its grants outside the project's group first, with tools/access-requirements.py retire, and the identity after that). No role is made for the gateway on the two usage event hubs any more (the owner ordered the undo of what Meternaut added to his API Management instance on 2026-11-07, so nothing sends to them from there; a person removes the two assignments that the gateway's old identity still holds, together with the identity), and the function app may read them. The deploy identity holds no role on the control hub \`usage-control\` any more: the log of the step that retires it says whether the old assignment was deleted now or was not there. This runner can no longer send to the namespace, and the Operator sends the control event. The usage recording is idle now: nothing sends to its two usage hubs, and it stays until the owner decides about it. The copy jobs need two roles for the function app's identity outside the project's group before they can read the gateway's Application Insights (environment/BOOTSTRAP.md). Then \`recording-check\` starts the jobs once and reads what they said." ;;
                 recording-check) echo "The Operator, from inside the network, sent the control event and read the telemetry, with its own identity and no key; this runner sent nothing to Event Hubs and read no telemetry. The copy jobs ran and the function app wrote what each did to its telemetry; the lines above are that: the window, the rows read, the documents written and the number of documents in the container afterwards. A job writes only what the gateway recorded after its marker, so a first run writes the marker and nothing else." ;;
                 foundry) echo "The Foundry resource of the agents, \`$FOUNDRY_ACCOUNT\`, is in resource group \`$ENV_RESOURCE_GROUP\` and was read back from Azure: public network access and local authentication are off, project management is on, the project \`$FOUNDRY_PROJECT\` has an identity of its own, the two models of environment/models.json are deployed with a guardrail that blocks jailbreaks and indirect attacks, the private endpoint is approved and the landing zone has registered its name, and the project sends its traces to Application Insights with its identity. The system-assigned identity of the cases app holds the Foundry User role on the project and nothing else there. The project endpoint is \`$FOUNDRY_ENDPOINT\`. No key was made, read or printed. The cases app was not changed: the next run of \`cases\` gives it that address." ;;
                 cases) echo "The first cases are in resource group \`$ENV_RESOURCE_GROUP\`: a function app with four functions (a daily timer, a trigger on the control hub, a timer every minute for the loop and the console's web route), its identities (its own system-assigned one, which reads and stores the records and sends the letters, and \`id-meternaut-console-auth\`, which only presents the console's sign-in to Microsoft Entra and holds no role), the control hub in the usage recording's namespace, a year of retention for the traces and the History workbook, and a private endpoint of its own for the console and its deployment site (the sub-resource \`sites\`), which the landing zone has registered in its central zone: the code is not published before that, so that the two apps behave alike and a later probe finds the names. The app stays public in this phase. The code was published from inside the network: a short-lived container group of the Operator signed in as the deploy identity with a token of this run, built the libraries from the hash-locked lock file (the sources went in the request, because the finished package is too big for it) and posted the finished package to the deployment site through the app's private endpoint (the log shows that both names of the app resolve to private addresses there); the runner published nothing, and the check that the app answers is made from inside the network too: a second container group of the Operator asked the app's own health address over its private endpoint (the log shows that the name resolves to a private address there). The console's front door is knocked at from this runner, on the console's host name on the platform's Application Gateway when the repository variable CONSOLE_HOST_NAME is set (the check then also asks that the sign-in's return address names it), and on the app's own name when it is not. The deploy identity holds no role on the control hub \`cases-control\` any more (the log of the step that retires it says whether the old assignment was deleted now or was not there): the Operator sends the control event. The Watch reads the pilot subscription with two roles; this workflow gives none of them, a person gives them on the owner's written word (environment/BOOTSTRAP.md), and until they exist a run ends with an authorization error. The Detective and the Skeptic call the model deployments of the agents' own Foundry project, with the app's own identity and no key: the app reads no key and needs nothing of the owner's API Management instance. Meternaut holds no right to change Azure. When a person approves a plan, the console sends that person to Microsoft Entra to sign in to Azure Resource Manager and runs the one change with that person's own permissions: Azure checks what that person may do, and its Activity Log names that person. The retired identity of the first loop, \`id-meternaut-runner\`, is removed when it is still there and nothing holds it. The app no longer carries the user-assigned identity that it used before, \`id-meternaut-cases\`. This workflow does not remove that identity: a person does, in the order of environment/BOOTSTRAP.md (its grants outside the project's group first, with tools/access-requirements.py retire, and the identity after that). The address of the Foundry project is given to the app only when the project is in Azure at that moment (the action \`foundry\` makes it); without it the investigation is off." ;;
-                cases-run) echo "The Operator, from inside the network, sent the control event and read the telemetry, with its own identity and no key; this runner sent nothing to Event Hubs and read no telemetry. One Watch ran and wrote its History to the cases app's telemetry and its records to the store; the lines above are that: the leads, what each case came to, what the models said and the tokens that were used. The tokens that the lines above count are those of the Detective and the Skeptic, which call the model deployments of the agents' own Foundry project directly, with the app's identity and no key, and so do the agents of the investigation (the first run of this action shows whether the project takes the chat completions of the two older roles: that route was not tried before, and a failure says which route was asked and what it answered). No resource of the estate was changed; with the investigation on, the Watch also created its agents and conversations in its own Foundry project." ;;
+                cases-run) echo "The Operator, from inside the network, sent the control event and read the telemetry, with its own identity and no key; this runner sent nothing to Event Hubs and read no telemetry. One Watch ran and wrote its History to the cases app's telemetry and its records to the store; the lines above are that: the leads, what each case came to, what the models said and the tokens that were used. The tokens that the lines above count are those of the Detective and the Skeptic, which call the model deployments of the agents' own Foundry project directly, with the app's identity and no key, and so do the agents of the investigation (the project takes the chat completions of the two older roles: that route was tried on 2026-11-07 and both models answered, and a failure says which route was asked and what it answered). No resource of the estate was changed; with the investigation on, the Watch also created its agents and conversations in its own Foundry project." ;;
                 plant) echo "Waste of Meternaut's own is in resource group \`$ENV_RESOURCE_GROUP\`: an unattached disk (and, when asked, an unassigned public IP address), tagged meternaut-planted. The next Watch finds it, and the loop takes it from there. Meternaut holds no right to delete it: the person who approves a plan for it needs the right to delete it in this group, because the change runs with that person's own permissions." ;;
                 loop-check) echo "The console's front door is shut: without a sign-in nobody gets a page (the return address of the Azure sign-in included), and a made-up sign-in header is not believed. The address that was knocked at is the console's host name on the platform's Application Gateway when the repository variable CONSOLE_HOST_NAME is set (the sign-in's return address then names it too), and the app's own name when it is not." ;;
                 operator) echo "The Operator is in resource group \`$ENV_RESOURCE_GROUP\`: the identity \`id-meternaut-operator\`, the subnet \`snet-ops\` (delegated to container groups, with the landing zone's route table on it when the landing zone puts one on this network) and three roles for that identity: Reader on the group, and Azure Event Hubs Data Sender on the control hubs \`usage-control\` and \`cases-control\`, one role on each hub, and nothing else. A new role takes up to ten minutes to apply, so wait before \`recording-check\` and \`cases-run\`, which send the control event with it. No container group exists, so nothing is paid until a run uses it. The next steps are \`operator-probe\`, which shows what a container on the subnet can reach, and \`recording-check\` and \`cases-run\`, which run their check tools in the Operator." ;;

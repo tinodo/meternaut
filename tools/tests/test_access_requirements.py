@@ -43,6 +43,12 @@ NEW_CASES, NEW_USAGE = "case-system-principal", "usage-system-principal"
 KEY_READER = "Meternaut gateway key reader"
 KEY_READER_ID = "00000000-0000-0000-0000-0000000000a1"
 USAGE_READER_ID = "00000000-0000-0000-0000-0000000000a2"
+# What the first environment's workflow needed in the gateway's group: the deployment identity's own role. The file no longer has it (it is retired, W8), so the test makes it the way
+# the first environment did.
+DEPLOYER = "Meternaut gateway deployer"
+DEPLOYER_ID = "00000000-0000-0000-0000-0000000000a4"
+DEPLOYER_IDENTITY = "meternaut-deploy-sc-uami"
+DEPLOYER_ACTIONS = ["Microsoft.ApiManagement/service/read", "Microsoft.ApiManagement/service/write", "Microsoft.Resources/deployments/*", "Microsoft.Insights/components/read"]
 # What the first cases of an earlier version needed to read a key of the gateway: the file no longer has this role (it is retired, W7), so the test makes it the way that version did.
 KEY_READER_ACTIONS = ["Microsoft.ApiManagement/service/subscriptions/read", "Microsoft.ApiManagement/service/subscriptions/listSecrets/action"]
 # What the first version of the console left behind: the file no longer has this role, so the test makes it the way that version did.
@@ -74,6 +80,13 @@ def retired_definition(**changes):
 def key_reader_definition(**changes):
     value = {"name": KEY_READER_ID, "roleName": KEY_READER, "assignableScopes": [GATEWAY_GROUP],
              "permissions": [{"actions": list(KEY_READER_ACTIONS), "notActions": [], "dataActions": [], "notDataActions": []}]}
+    value.update(changes)
+    return value
+
+
+def deployer_definition(**changes):
+    value = {"name": DEPLOYER_ID, "roleName": DEPLOYER, "assignableScopes": [GATEWAY_GROUP],
+             "permissions": [{"actions": list(DEPLOYER_ACTIONS), "notActions": [], "dataActions": [], "notDataActions": []}]}
     value.update(changes)
     return value
 
@@ -143,6 +156,18 @@ class FakeAz:
             self.grant(f"deleted-principal-{n + 1}", KEY_READER_ID, PRODUCT)
         for n in range(below):
             self.grant("somebody-with-the-role", KEY_READER_ID, APIM)
+        return self
+
+    def leave_the_deployer(self, orphans=0, below=0):
+        """What the first environment left in the gateway's resource group: the deployment identity's own custom role and its assignment (the identity lives in the
+        bootstrap group, so the project's group does not have it), the assignments of identities that were deleted since (Azure keeps them) and, optionally,
+        assignments on the instance itself, which is below the group too."""
+        self.roles[DEPLOYER] = deployer_definition()
+        self.grant("deploy-principal", DEPLOYER_ID, GATEWAY_GROUP)
+        for n in range(orphans):
+            self.grant(f"deleted-principal-{n + 1}", DEPLOYER_ID, GATEWAY_GROUP)
+        for n in range(below):
+            self.grant("somebody-with-the-role", DEPLOYER_ID, APIM)
         return self
 
     def writes(self):
@@ -369,7 +394,7 @@ class TheFile(unittest.TestCase):
         self.assertIn(MANIFEST["retired"][0]["place"], MANIFEST["places"])
 
     def test_the_grants_of_the_user_assigned_identities_are_retired_each_one_next_to_the_grant_that_replaces_it(self):
-        self.assertEqual([r["id"] for r in MANIFEST["retired"]], ["W1", "W2", "W3", "W5", "W6", "W7"])
+        self.assertEqual([r["id"] for r in MANIFEST["retired"]], ["W1", "W2", "W3", "W5", "W6", "W7", "W8"])
         grants = {g["id"]: g for g in MANIFEST["grants"]}
         names = {"cases": "id-meternaut-cases", "usage": "id-meternaut-usage"}
         replaced = [r for r in MANIFEST["retired"] if "replacedBy" in r]
@@ -381,7 +406,21 @@ class TheFile(unittest.TestCase):
             self.assertTrue(item["why"])
         self.assertEqual([(r["id"], r["replacedBy"]) for r in replaced], [("W2", "R1"), ("W3", "R2"), ("W5", "R4"), ("W6", "R5")],
                          "every grant of the old identities is retired, and none besides")
-        self.assertEqual([r["id"] for r in MANIFEST["retired"] if "replacedBy" not in r], ["W1", "W7"], "the two custom roles that are gone whole")
+        self.assertEqual([r["id"] for r in MANIFEST["retired"] if "replacedBy" not in r], ["W1", "W7", "W8"], "the three custom roles that are gone whole")
+
+    def test_the_deployment_identitys_role_in_the_gateways_group_is_retired_whole_and_is_not_looked_up(self):
+        self.assertNotIn(DEPLOYER, MANIFEST["roles"])
+        self.assertNotIn(DEPLOYER, [g["role"] for g in MANIFEST["grants"]])
+        item = next(r for r in MANIFEST["retired"] if r["id"] == "W8")
+        self.assertEqual((item["role"], item["place"], item["identity"]), (DEPLOYER, "gatewayGroup", {"name": "meternaut-deploy-sc-uami", "lookup": False}))
+        self.assertNotIn("replacedBy", item, "it is retired whole: every assignment of the role, whoever holds it, and then the role")
+        self.assertIn("2026-11-07", item["why"])
+        self.assertIn("it is not looked up", item["why"], "the deployment identity lives in the bootstrap group: a lookup in the project's group would say that it does not exist")
+        self.assertEqual([r["id"] for r in MANIFEST["retired"] if r["identity"].get("lookup") is False], ["W8"], "no other item turns the lookup off")
+
+    def test_whether_an_identity_is_looked_up_is_true_or_false_and_a_grant_that_something_replaces_is_always_looked_up(self):
+        self.assertIn("lookup is true or false", self.broken(lambda d: d["retired"][-1]["identity"].update(lookup="no")))
+        self.assertIn("is not one that a grant replaces", self.broken(lambda d: d["retired"][1]["identity"].update(lookup=False)))
 
     def test_a_retired_item_must_be_complete_and_must_not_be_a_current_grant(self):
         def as_holder(document):
@@ -477,6 +516,7 @@ class TheTable(unittest.TestCase):
         self.assertTrue(rows[3].startswith("| W2 | `id-meternaut-cases` | Reader | "), "a built-in role is not a custom role")
         self.assertTrue(rows[6].startswith("| W6 | `id-meternaut-usage` | Meternaut usage reader (custom role) | "))
         self.assertTrue(rows[7].startswith("| W7 | `id-meternaut-cases` | Meternaut gateway key reader (custom role) | The resource group of the owner's API Management instance"))
+        self.assertTrue(rows[8].startswith(f"| W8 | `{DEPLOYER_IDENTITY}` | {DEPLOYER} (custom role) | The resource group of the owner's API Management instance"))
         self.assertNotIn("| W4 |", "\n".join(rows), "the old grant of the key reader is folded into W7")
         text = self.PROPOSAL.read_text(encoding="utf-8")
         match = re.search(r"<!-- access-retired:start -->\n(.*?)\n<!-- access-retired:end -->", text, re.S)
@@ -1062,7 +1102,7 @@ class Retire(unittest.TestCase):
         self.assertEqual(fake.of_the_role(), [])
         self.assertNotIn(RETIRED_ROLE, fake.roles)
         self.assertIn("Checking again:", out)
-        self.assertTrue(out.rstrip().endswith("6 of 6 gone."))
+        self.assertTrue(out.rstrip().endswith("7 of 7 gone."))
         first = next(i for i, c in enumerate(fake.calls) if c in fake.writes())
         self.assertEqual(fake.calls[0][:2], ["account", "show"])
         self.assertTrue(any(c[:3] == ["role", "definition", "list"] for c in fake.calls[:first]))
@@ -1121,7 +1161,7 @@ class Retire(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn("Nothing to retire.", out)
         self.assertRegex(out, rf"gone +W1  {RETIRED_IDENTITY}")
-        self.assertEqual(len(re.findall(r"^  gone +W\d", out, re.M)), 6)
+        self.assertEqual(len(re.findall(r"^  gone +W\d", out, re.M)), 7)
         self.assertEqual(fake.writes(), [])
 
     def test_an_identity_that_is_still_there_without_any_role_is_reported_and_there_is_nothing_to_retire(self):
@@ -1168,7 +1208,7 @@ class Retire(unittest.TestCase):
         self.assertIn(f"kept the custom role {RETIRED_ROLE}: 1 assignment(s) of it remain", out)
         self.assertEqual([c for c in fake.calls if c[:3] == ["role", "definition", "delete"]], [])
         self.assertIn(RETIRED_ROLE, fake.roles)
-        self.assertTrue(out.rstrip().endswith("5 of 6 gone."))
+        self.assertTrue(out.rstrip().endswith("6 of 7 gone."))
 
     def test_a_failure_to_remove_an_assignment_stops_at_once_and_says_which(self):
         fake = self.left(orphans=2)
@@ -1333,7 +1373,7 @@ class RetireTheOldIdentities(unittest.TestCase):
         self.assertEqual(fake.roles, roles, "the custom role stays")
         self.assertEqual(fake.identities, identities, "an identity is never deleted")
         self.assertIn("Checking again:", out)
-        self.assertTrue(out.rstrip().endswith("6 of 6 gone."))
+        self.assertTrue(out.rstrip().endswith("7 of 7 gone."))
         self.assertIn("id-meternaut-cases still exists in", out)
         self.assertIn("never deletes an identity: a person removes it, with `az identity delete`, after this tool has taken away its grants", out)
         code, out, _, _ = run(["check", *PLACES], fake)
@@ -1368,7 +1408,7 @@ class RetireTheOldIdentities(unittest.TestCase):
         self.assertIn("The 1 assignment(s) of id-meternaut-cases stay until it is, so that the app is not left without access", out)
         self.assertEqual(len(self.deletes(fake)), 3, "the other three are removed")
         self.assertEqual([(a["principal"], a["role_id"]) for a in self.old(fake)], [(OLD_CASES, BUILTIN["Reader"])])
-        self.assertTrue(out.rstrip().endswith("5 of 6 gone."))
+        self.assertTrue(out.rstrip().endswith("6 of 7 gone."))
         code, out, _, _ = run(["grant", *PLACES, "--apply", "--yes"], fake)
         self.assertEqual(code, 0, out)
         code, out, _, _ = run(["retire", *PLACES, "--apply", "--yes"], fake)
@@ -1533,7 +1573,7 @@ class RetireTheKeyReader(unittest.TestCase):
         last = fake.writes()[-1]
         self.assertEqual((last[last.index("--subscription") + 1], last[last.index("--name") + 1]), (GATEWAY_SUB, KEY_READER_ID))
         self.assertIn("Checking again:", out)
-        self.assertTrue(out.rstrip().endswith("6 of 6 gone."))
+        self.assertTrue(out.rstrip().endswith("7 of 7 gone."))
         self.assertEqual({tuple(c[:2]) for c in fake.calls} - {("account", "show"), ("identity", "show"), ("role", "definition"), ("role", "assignment"), ("rest", "--method")}, set())
 
     def test_a_second_run_has_nothing_to_retire(self):
@@ -1583,6 +1623,116 @@ class RetireTheKeyReader(unittest.TestCase):
         code, out, _, _ = run(["retire", *PLACES, "--only", "W7"], fake, env={"GITHUB_ACTIONS": "true"})
         self.assertIn("dry run", out)
         self.assertEqual(fake.writes(), [])
+
+
+class RetireTheDeployer(unittest.TestCase):
+    """The deployment identity's own custom role in the gateway's resource group (W8). The file no longer has the role, and retire removes it whole, as it does the key reader's:
+    every assignment of the role in the group and below it, whoever holds it, and then the role. The identity lives in the bootstrap group, so it is not looked up."""
+
+    ONLY = ["--only", "W8"]
+
+    def left(self, **options):
+        return FakeAz(old=False).leave_the_deployer(**options)
+
+    def test_a_dry_run_lists_every_assignment_by_role_looks_for_no_identity_and_removes_nothing(self):
+        fake = self.left(orphans=1, below=1)
+        code, out, _, _ = run(["retire", *PLACES, *self.ONLY], fake)
+        self.assertEqual(code, 1, "something is left to retire, and a script can tell")
+        self.assertEqual(fake.writes(), [])
+        self.assertRegex(out, rf"still there +W8  {DEPLOYER_IDENTITY}  {DEPLOYER}  at {re.escape(GATEWAY_GROUP)}")
+        self.assertIn(f"the custom role exists ({DEPLOYER_ID}); 3 assignment(s) of it at or below this place", out)
+        self.assertIn("every assignment of the role at this place is removed, whoever holds it", out)
+        self.assertNotIn("Identity not found", out, "no claim about whose the assignments were: the identity was not read")
+        self.assertNotIn(f"{DEPLOYER_IDENTITY} does not exist", out, "the deployment identity is in the bootstrap group: a lookup in the project's group would say that it is gone")
+        self.assertEqual([c for c in fake.calls if c[:2] == ["identity", "show"]], [], "the identity is not looked up")
+        self.assertIn("4 change(s) would be made, and nothing else", out)
+        commands = [line.strip() for line in out.splitlines() if line.strip().startswith("az ")]
+        self.assertEqual(len([c for c in commands if c.startswith("az role assignment delete")]), 3)
+        self.assertEqual(commands[-1].split("   #")[0], f"az role definition delete --subscription {GATEWAY_SUB} --name {DEPLOYER_ID}")
+        urls = [c[c.index("--url") + 1] for c in fake.calls if c[0] == "rest"]
+        self.assertFalse(any("principalId" in url for url in urls), "found by the role and never by an identity")
+        self.assertEqual({c[c.index("--method") + 1] for c in fake.calls if c[0] == "rest"}, {"get"})
+
+    def test_it_needs_only_the_instance_and_no_project_and_no_name_of_an_app(self):
+        fake = self.left()
+        code, out, _, _ = run(["retire", "--gateway", APIM, *self.ONLY], fake)
+        self.assertEqual(code, 1, out)
+        self.assertRegex(out, rf"still there +W8  {DEPLOYER_IDENTITY}  {DEPLOYER}  at {re.escape(GATEWAY_GROUP)}")
+        code, _, err, _ = run(["retire", "--project-subscription", PROJECT, "--project-group", "rg-project", *self.ONLY], self.left())
+        self.assertEqual(code, 1)
+        self.assertIn("--gateway is not set", err)
+
+    def test_apply_removes_every_assignment_of_the_role_whoever_holds_it_then_the_role_and_nothing_else(self):
+        fake = self.left(orphans=2, below=1)
+        others = [dict(a) for a in fake.assignments if a["role_id"] != DEPLOYER_ID]
+        roles = {name: dict(role) for name, role in fake.roles.items() if name != DEPLOYER}
+        code, out, _, _ = run(["retire", *PLACES, *self.ONLY, "--apply", "--yes"], fake)
+        self.assertEqual(code, 0, out)
+        self.assertEqual([c[:3] for c in fake.writes()], [["role", "assignment", "delete"]] * 4 + [["role", "definition", "delete"]])
+        self.assertEqual(fake.of_the_role(DEPLOYER_ID), [])
+        self.assertNotIn(DEPLOYER, fake.roles)
+        self.assertEqual(fake.assignments, others, "every other assignment of every identity is still there")
+        self.assertEqual(fake.roles, roles, "every other role is still there")
+        last = fake.writes()[-1]
+        self.assertEqual((last[last.index("--subscription") + 1], last[last.index("--name") + 1]), (GATEWAY_SUB, DEPLOYER_ID))
+        self.assertIn("Checking again:", out)
+        self.assertTrue(out.rstrip().endswith("1 of 1 gone."))
+        self.assertEqual([c for c in fake.calls if c[:2] == ["identity", "show"] or c[:2] == ["identity", "delete"]], [], "an identity is neither looked up nor deleted")
+
+    def test_it_goes_with_the_key_reader_in_one_run_and_each_role_is_removed_with_its_own_assignments(self):
+        fake = FakeAz(old=False).leave_the_key_reader().leave_the_deployer(orphans=1)
+        others = [dict(a) for a in fake.assignments if a["role_id"] not in (KEY_READER_ID, DEPLOYER_ID)]
+        code, out, _, _ = run(["retire", *PLACES, "--only", "W7,W8", "--apply", "--yes"], fake)
+        self.assertEqual(code, 0, out)
+        self.assertEqual([c[:3] for c in fake.writes()], [["role", "assignment", "delete"]] * 5 + [["role", "definition", "delete"]] * 2)
+        self.assertEqual((fake.of_the_role(KEY_READER_ID), fake.of_the_role(DEPLOYER_ID)), ([], []))
+        self.assertTrue(DEPLOYER not in fake.roles and KEY_READER not in fake.roles)
+        self.assertEqual(fake.assignments, others)
+        self.assertTrue(out.rstrip().endswith("2 of 2 gone."))
+
+    def test_a_second_run_has_nothing_to_retire(self):
+        fake = self.left()
+        run(["retire", *PLACES, *self.ONLY, "--apply", "--yes"], fake)
+        before = len(fake.writes())
+        for argv in (["retire", *PLACES, *self.ONLY, "--apply", "--yes"], ["retire", *PLACES, *self.ONLY], ["retire", *PLACES]):
+            code, out, _, _ = run(argv, fake)
+            self.assertEqual((code, len(fake.writes()), "Nothing to retire." in out), (0, before, True), argv)
+
+    def test_the_role_is_kept_while_an_assignment_of_it_remains(self):
+        fake = self.left(orphans=1)
+        fake.stubborn = {fake.of_the_role(DEPLOYER_ID)[0]["id"]}
+        code, out, _, _ = run(["retire", *PLACES, *self.ONLY, "--apply", "--yes"], fake)
+        self.assertEqual(code, 1)
+        self.assertIn(f"kept the custom role {DEPLOYER}: 1 assignment(s) of it remain", out)
+        self.assertEqual([c for c in fake.calls if c[:3] == ["role", "definition", "delete"]], [])
+        self.assertIn(DEPLOYER, fake.roles)
+
+    def test_a_role_that_can_also_be_assigned_outside_the_gateways_group_is_left_alone(self):
+        fake = self.left()
+        fake.roles[DEPLOYER]["assignableScopes"].append(f"/subscriptions/{GATEWAY_SUB}")
+        for argv in (["retire", *PLACES, *self.ONLY], ["retire", *PLACES, *self.ONLY, "--apply", "--yes"]):
+            code, out, _, _ = run(argv, fake)
+            self.assertEqual(code, 1, argv)
+            self.assertRegex(out, r"left alone +W8")
+            self.assertIn("outside this place", out)
+        self.assertEqual(fake.writes(), [])
+
+    def test_a_pipeline_may_not_apply_and_a_dry_run_is_allowed(self):
+        fake = self.left()
+        code, _, err, _ = run(["retire", *PLACES, *self.ONLY, "--apply", "--yes"], fake, env={"GITHUB_ACTIONS": "true"})
+        self.assertEqual((code, fake.calls), (1, []))
+        self.assertIn("never a pipeline", err)
+        code, out, _, _ = run(["retire", *PLACES, *self.ONLY], fake, env={"GITHUB_ACTIONS": "true"})
+        self.assertIn("dry run", out)
+        self.assertEqual(fake.writes(), [])
+
+    def test_an_item_that_is_looked_up_still_says_whose_assignment_it_is_and_the_note_about_a_missing_identity_stays(self):
+        fake = FakeAz(old=False).leave_the_writer(identity=False, orphans=1)
+        code, out, _, _ = run(["retire", *PLACES, "--only", "W1"], fake)
+        self.assertEqual(code, 1)
+        self.assertIn("Identity not found", out)
+        self.assertIn(f"{RETIRED_IDENTITY} does not exist in", out)
+        self.assertNotIn("every assignment of the role at this place is removed, whoever holds it", out, "that wording is for an identity that is not looked up")
 
 
 if __name__ == "__main__":

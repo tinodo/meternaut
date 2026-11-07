@@ -17,7 +17,7 @@ What it sends, to https://<host>/default/models/openai/v1/chat/completions, the 
 It prints nothing else of any answer: no header, no body, no text that a model wrote. An error body is never printed, so a status says what a refusal was, and a short fixed hint says
 what usually causes the statuses that are not the expected ones. A token is never printed, and a request goes only to a host under .ai.gateway.azure.com, over https, so that the
 token cannot be sent anywhere else. A redirect is an answer like any other and is not followed. The cap of the completion is max_completion_tokens (256 by default), not max_tokens:
-these models reason before they answer, and a cap that is too small is refused with a 400, which environment-smoke.py found out for the gateway of the first environment.
+these models reason before they answer, and a cap that is too small is refused with a 400, which the smoke test of the first environment's gateway found out (that test was deleted on 2026-11-07 with the rest of what touched the owner's API Management instance).
 
 The exit code is 0 when every check passed, 1 when one failed or the tool could not get a token, 2 when the tool refused to run.
 """

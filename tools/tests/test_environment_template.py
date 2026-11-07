@@ -4,9 +4,12 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 
+# The step of the Hub that previews the templates for the action what-if (the gateway templates of the owner's API Management instance were taken out of it, 2026-11-07).
+PREVIEW_STEP = "What the model side, the usage recording, the Foundry resource, the first cases, the Operator and the AI Gateway's templates would change"
+
 # Everything each template may create. AGENTS.md rule 19: in a landing zone no private DNS zone, no link to one and no
 # zone group (a policy registers the endpoint's name), no peering or route by hand (the network manager does it), and
-# no second API Management instance (the gateway objects go into the existing one by the kit's module).
+# no API Management object of the owner's instance (2026-11-07, AGENTS.md rule 15 (c): the owner ordered the undo of what Meternaut had added, and nothing makes an object there any more).
 ALLOWED = {
     "environment/main.bicep": {
         "Microsoft.Network/networkSecurityGroups",
@@ -14,17 +17,6 @@ ALLOWED = {
         "Microsoft.CognitiveServices/accounts",
         "Microsoft.CognitiveServices/accounts/deployments",
         "Microsoft.Network/privateEndpoints",
-        "Microsoft.Authorization/roleAssignments",
-    },
-    "environment/gateway/identity.bicep": {"Microsoft.ManagedIdentity/userAssignedIdentities"},
-    "environment/gateway/logger.bicep": {"Microsoft.ApiManagement/service", "Microsoft.Insights/components", "Microsoft.ApiManagement/service/loggers"},
-    "environment/gateway/eventhub-loggers.bicep": {"Microsoft.ApiManagement/service", "Microsoft.ApiManagement/service/loggers"},
-    "environment/gateway/contract.bicep": {
-        "Microsoft.ApiManagement/service",
-        "Microsoft.ApiManagement/service/products",
-        "Microsoft.ApiManagement/service/products/apis",
-        "Microsoft.ApiManagement/service/products/policies",
-        "Microsoft.ApiManagement/service/subscriptions",
     },
     "infra/budgets/rg-budget.bicep": {"Microsoft.Consumption/budgets"},
     "environment/recording/main.bicep": {
@@ -141,10 +133,9 @@ class Templates(unittest.TestCase):
 
     def test_the_model_side_has_the_resources_and_the_order_that_a_real_deploy_needed(self):
         found = resources(text("environment/main.bicep"))
-        self.assertEqual(set(found), {"nsg", "funcNsg", "webNsg", "vnet", "account", "modelDeployment", "privateEndpoint", "gatewayMayCallTheModels"})
-        # the private endpoint after every model deployment, the role assignment after the private endpoint
+        self.assertEqual(set(found), {"nsg", "funcNsg", "webNsg", "vnet", "account", "modelDeployment", "privateEndpoint"}, "no role assignment: no identity of a gateway is given a role on the account any more")
+        # the private endpoint after every model deployment
         self.assertIn("modelDeployment", depends_on(found["privateEndpoint"][1]))
-        self.assertIn("privateEndpoint", depends_on(found["gatewayMayCallTheModels"][1]))
 
     def test_the_model_side_makes_the_virtual_network_only_while_it_is_not_there_so_that_the_landing_zones_route_tables_stay(self):
         # A virtual network that is made again, with its subnets listed, loses the route tables that the landing zone's network manager put on them (AGENTS.md rule 27).
@@ -176,119 +167,30 @@ class Templates(unittest.TestCase):
         self.assertIn("disableLocalAuth: true", source)
         self.assertIn("versionUpgradeOption: 'NoAutoUpgrade'", source)
 
-    def test_the_gateway_may_run_completions_and_nothing_more_on_the_account(self):
+    def test_the_model_account_is_given_no_role_and_the_template_takes_no_identity_of_a_gateway(self):
         source = text("environment/main.bicep")
-        self.assertIn("var openAiUserRoleId = '5e0bd9bd-7b93-4f28-af87-19fc36ad61bd'", source)
-        self.assertEqual(len(re.findall(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", source)), 1)
-        self.assertIn("principalType: 'ServicePrincipal'", source)
-
-    def test_the_logger_has_the_name_the_module_expects(self):
-        self.assertIn("name: 'appinsights-logger'", text("environment/gateway/logger.bicep"))
-
-    def test_the_logger_template_makes_the_one_logger_of_the_module_and_no_event_hub_logger(self):
-        source = text("environment/gateway/logger.bicep")
-        self.assertEqual(set(resources(source)), {"apim", "appInsights", "logger"})
-        self.assertNotIn("azureEventHub", re.sub(r"//.*", "", source))
-
-    def test_the_kit_patch_makes_the_two_usage_recording_fragments_conditional_and_lets_the_workflow_choose(self):
-        patch = text("environment/kit-patches/no-usage-recording-fragments.patch")
-        self.assertEqual(re.findall(r"(?m)^diff --git a/(\S+) b/(\S+)$", patch), [("bicep/infra/apim-gateway-upgrade/main.bicep",) * 2, ("bicep/infra/modules/apim/policy-fragments.bicep",) * 2])
-        first, second = re.split(r"(?m)^diff --git ", patch)[1:]
-        # the module's own template: one parameter, off unless somebody asks, passed on to the fragments module; nothing removed
-        self.assertEqual([line for line in first.splitlines() if line.startswith("-") and not line.startswith("---")], [])
-        added = [line[1:] for line in first.splitlines() if line.startswith("+") and not line.startswith("+++")]
-        self.assertIn("param deployUsageRecordingFragments bool = false", added)
-        self.assertIn("    deployUsageRecordingFragments: deployUsageRecordingFragments", added)
-        self.assertEqual(len([line for line in added if not line.startswith("//") and line.strip()]), 3, "the parameter with its description, and the argument")
-        # the fragments module: the two resources and their two outputs wait for that parameter
-        added = [line[1:] for line in second.splitlines() if line.startswith("+") and not line.startswith("+++")]
-        removed = [line[1:] for line in second.splitlines() if line.startswith("-") and not line.startswith("---")]
-        self.assertIn("param deployUsageRecordingFragments bool = false", added)  # off unless somebody asks
-        self.assertEqual(sorted(line.split()[1] for line in removed if line.startswith("resource")), ["aiUsagePolicyFragment", "piiStateSavingPolicyFragment"])
-        self.assertEqual(sorted(line.split()[1] for line in removed if line.startswith("output")), ["aiUsagePolicyFragmentName", "piiStateSavingPolicyFragmentName"])
-        self.assertEqual(len(removed), 4, "nothing else of the kit's file is touched")
-        for line in added:
-            if line.startswith("resource"):
-                self.assertIn("deployUsageRecordingFragments", line)
-
-    def test_the_event_hub_loggers_are_the_two_the_fragments_name_and_use_the_identity_not_a_key(self):
-        source = text("environment/gateway/eventhub-loggers.bicep")
         code = re.sub(r"//.*", "", source)
-        self.assertEqual(set(resources(source)), {"apim", "usageLogger", "piiLogger"})
-        self.assertIn("name: 'usage-eventhub-logger'", code)
-        self.assertIn("name: 'pii-usage-eventhub-logger'", code)
-        self.assertEqual(code.count("loggerType: 'azureEventHub'"), 2)
-        self.assertEqual(code.count("identityClientId: identityClientId"), 2)
-        for word in ("connectionString", "sharedAccessKey", "SharedAccessKey", "listKeys", "@secure"):
+        for word in ("roleAssignments", "roleDefinitions", "gatewayPrincipalId", "openAiUserRoleId", "5e0bd9bd-7b93-4f28-af87-19fc36ad61bd", "principalId", "Microsoft.Authorization"):
             self.assertNotIn(word, code, word)
-        self.assertNotIn("Microsoft.EventHub", code)  # it only names the namespace; the recording makes it
+        self.assertEqual(len(re.findall(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", code)), 0)
+        self.assertIn("a deployment does not delete what a template no longer lists", source, "the header says why a person removes the old role")
+        self.assertIn("Nothing of Meternaut calls this account any more", source)
 
-    def test_the_fragments_that_the_loggers_serve_are_the_ones_the_patch_makes_conditional(self):
-        source = text("environment/gateway/eventhub-loggers.bicep")
-        patch = text("environment/kit-patches/no-usage-recording-fragments.patch")
-        self.assertIn("ai-usage", source)
-        self.assertIn("pii-state-saving", source)
-        for name in ("aiUsagePolicyFragment", "piiStateSavingPolicyFragment"):
-            self.assertIn(name, patch)
-
-    def test_no_policy_of_ours_includes_the_fragments_that_the_kit_patch_leaves_out(self):
-        policy = text("environment/gateway/contract-policy.xml")
-        for fragment in ("ai-usage", "pii-state-saving"):
-            self.assertNotIn(f'fragment-id="{fragment}"', policy)
-
-    def test_the_kit_patches_are_these_three_and_no_others(self):
-        found = sorted(p.name for p in (ROOT / "environment" / "kit-patches").glob("*"))
-        self.assertEqual(found, ["contract-required.patch", "llm-log-messages-none.patch", "no-usage-recording-fragments.patch"])
-
-    def test_the_llm_log_patch_leaves_the_messages_out_when_the_setting_is_none_and_touches_nothing_else(self):
-        patch = text("environment/kit-patches/llm-log-messages-none.patch")
-        self.assertEqual(re.findall(r"(?m)^diff --git a/(\S+) b/(\S+)$", patch), [("bicep/infra/modules/apim/inference-api.bicep",) * 2])
-        removed = [line[1:].strip() for line in patch.splitlines() if line.startswith("-") and not line.startswith("---")]
-        added = [line[1:].strip() for line in patch.splitlines() if line.startswith("+") and not line.startswith("+++")]
-        self.assertEqual(removed, ["requests: {", "responses: {"])
-        self.assertEqual(added, [
-            "requests: azureMonitorLogSettings.largeLanguageModel.requests.messages == 'none' ? null : {",
-            "responses: azureMonitorLogSettings.largeLanguageModel.responses.messages == 'none' ? null : {"])
-
-    def test_the_contract_required_patch_adds_one_guard_to_each_of_the_two_inference_api_policies(self):
-        patch = text("environment/kit-patches/contract-required.patch")
-        self.assertEqual(
-            re.findall(r"(?m)^diff --git a/(\S+) b/(\S+)$", patch),
-            [(f"bicep/infra/modules/apim/policies/{name}",) * 2 for name in ("universal-llm-api-policy-v2.xml", "azure-open-ai-api-policy.xml")])
-        self.assertEqual([line for line in patch.splitlines() if line.startswith("-") and not line.startswith("---")], [], "nothing of the kit's policies is removed")
-        hunks = re.split(r"(?m)^diff --git .*$", patch)[1:]
-        self.assertEqual(len(hunks), 2)
-        self.assertEqual(hunks[0].split("@@", 2)[2], hunks[1].split("@@", 2)[2], "the same guard in both policies")
-        guard = hunks[0]
-        for needle in ('condition="@(context.Product == null)"', '<set-status code="403" reason="Forbidden" />', '"code":"contract_required"', "<return-response>"):
-            self.assertIn(needle, guard)
-        added = [line for line in guard.splitlines() if line.startswith("+") and not line.startswith("+++")]
-        self.assertEqual(len([line for line in added if "<set-variable" in line or "<forward-request" in line or "<include-fragment" in line]), 0)
-
-    def test_the_gateway_identity_template_makes_only_the_identity(self):
-        self.assertIn("param identityName string = 'id-meternaut-gateway'", text("environment/gateway/identity.bicep"))
-
-    def test_the_contract_is_a_published_product_that_needs_a_key_and_has_one_subscription(self):
-        source = text("environment/gateway/contract.bicep")
-        for line in ("subscriptionRequired: true", "approvalRequired: true", "subscriptionsLimit: 1", "state: 'published'", "format: 'rawxml'", "scope: product.id"):
-            self.assertIn(line, source)
-        found = resources(source)
-        self.assertEqual(set(found), {"apim", "product", "productApis", "productPolicy", "consumerSubscription"})
-        # the links before the policy, the policy before the subscription: a key never works before its rules are in place
-        self.assertIn("productApis", depends_on(found["productPolicy"][1]))
-        self.assertIn("productPolicy", depends_on(found["consumerSubscription"][1]))
-
-    def test_the_contract_hands_out_no_key_and_deletes_nothing(self):
-        source = re.sub(r"//.*", "", text("environment/gateway/contract.bicep"))
-        self.assertEqual(re.findall(r"^output (\w+)", source, re.M), ["productName", "subscriptionName"])
-        for word in ("listSecrets", "primaryKey", "secondaryKey", "@secure", "Delete", "delete"):
-            self.assertNotIn(word, source, word)
-
-    def test_the_contract_takes_every_rule_from_a_parameter(self):
-        source = text("environment/gateway/contract.bicep")
-        for name in ("apimName", "contractName", "subscriptionName", "contractDescription", "apiNames", "policyXml"):
-            self.assertRegex(source, rf"(?m)^param {name} (string|array)$")
-        self.assertNotIn("loadTextContent", source)
+    def test_nothing_in_the_repository_can_make_an_object_on_the_owners_api_management_instance(self):
+        # The owner ordered the undo of what Meternaut had added to his instance (2026-11-07, AGENTS.md rule 15 (c)): the templates, the kit's patches and the contract that made those objects are gone,
+        # and no template declares an object of an instance (the AI Gateway's own types, Microsoft.ApiManagement/aigateways, are Azure's separate service).
+        for gone in ("environment/gateway", "environment/kit-patches", "environment/contract.json", "tools/gateway-prep.py", "tools/tests/test_gateway_prep.py", "tools/environment-smoke.py"):
+            self.assertFalse((ROOT / gone).exists(), gone)
+        templates = sorted((ROOT / "environment").rglob("*.bicep")) + sorted((ROOT / "infra").rglob("*.bicep"))
+        self.assertGreaterEqual(len(templates), 9)
+        for path in templates:
+            code = re.sub(r"//.*", "", path.read_text(encoding="utf-8"))
+            self.assertNotRegex(code, r"Microsoft\.ApiManagement/(?!aigateways)", path.as_posix())
+            self.assertNotRegex(code, r"(?i)\bapim\b|listSecrets|policyFragments|azureEventHub", path.as_posix())
+        for path in sorted((ROOT / "tools").glob("*.py")):
+            if path.name == "access-requirements.py":
+                continue  # it only reads the instance's resource id, to find the resource group of the retired custom role, and calls nothing on the instance
+            self.assertNotRegex(path.read_text(encoding="utf-8"), r"Microsoft\.ApiManagement/service", path.name)
 
 
 class Recording(unittest.TestCase):
@@ -303,8 +205,8 @@ class Recording(unittest.TestCase):
             self.assertNotIn(word, self.code, word)
 
     def test_nothing_is_public_but_the_function_apps_own_endpoint_and_none_has_a_key(self):
-        # Storage, Cosmos DB and Event Hubs have no public endpoint (docs/proposals/07-private-by-default.md): the function app and the Operator reach the namespace through its private endpoint, and the
-        # gateway's two loggers can only do the same. The function app has the platform's endpoint, which it needs for its deployment and which serves no function (no HTTP trigger). That endpoint is
+        # Storage, Cosmos DB and Event Hubs have no public endpoint (docs/proposals/07-private-by-default.md): the function app and the Operator reach the namespace through its private endpoint. The function
+        # app has the platform's endpoint, which it needs for its deployment and which serves no function (no HTTP trigger). That endpoint is
         # written from the parameter usageAppPublicNetworkAccess (Enabled until the Operator publishes the code), and never left unset: a site without the value has its public access switched off
         # by the first private endpoint that it gets.
         self.assertEqual(self.code.count("publicNetworkAccess: 'Disabled'"), 3)  # storage, cosmos, event hubs
@@ -350,7 +252,6 @@ class Recording(unittest.TestCase):
     def test_the_roles_are_the_ones_that_each_caller_needs_and_nothing_wider(self):
         guids = set(re.findall(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", self.code))
         self.assertEqual(guids, {
-            "2b629674-e913-4c01-ae53-ef4638d8f975",  # Azure Event Hubs Data Sender
             "a638d3c7-ab3a-418d-83e6-5f17a39d4fde",  # Azure Event Hubs Data Receiver
             "b7e6dc6d-f1e8-4753-8033-0f276bb0955b",  # Storage Blob Data Owner
             "974c5e8b-45b9-4653-ba55-5f855dd0fb88",  # Storage Queue Data Contributor
@@ -358,12 +259,11 @@ class Recording(unittest.TestCase):
             "3913510d-42f4-4e42-8a64-420c390055eb",  # Monitoring Metrics Publisher
             "00000000-0000-0000-0000-000000000001",  # Cosmos DB built-in Data Reader
             "00000000-0000-0000-0000-000000000002",  # Cosmos DB built-in Data Contributor
-            "00000000-0000-0000-0000-000000000000",  # the builder's placeholder for a gateway identity that is not known: the two roles of the gateway are not made then
-        })
+        }, "no Azure Event Hubs Data Sender and no placeholder id: no identity of a gateway is given a role here any more")
         found = resources(self.source)
         assignments = {name: body for name, (kind, body) in found.items() if kind == "Microsoft.Authorization/roleAssignments"}
         self.assertEqual(sorted(assignments), ["functionOwnsBlobs", "functionPublishesTelemetry", "functionReceivesControl", "functionReceivesPii", "functionReceivesUsage",
-                                               "functionUsesQueues", "functionUsesTables", "gatewaySendsPii", "gatewaySendsUsage"])
+                                               "functionUsesQueues", "functionUsesTables"])
         for name, body in assignments.items():
             self.assertIn("principalType: 'ServicePrincipal'", body, name)
             # on the one resource, never on the group, the subscription or the whole namespace
@@ -396,24 +296,19 @@ class Recording(unittest.TestCase):
             self.assertNotIn(word, self.code, word)
         self.assertNotIn("tags: union(", self.code)
 
-    def test_the_two_roles_of_the_gateway_identity_are_made_only_for_an_identity_that_is_known(self):
-        # The owner ordered the undo of what Meternaut added to his API Management instance (2026-11-07): the gateway identity may be gone, and a role for a principal that does not exist is
-        # refused. The parameter builder writes an all-zero id while the identity is not known (a preview), and the template reads that as "none".
+    def test_no_role_is_made_for_a_gateway_and_none_that_sends_to_an_event_hub_is_in_the_template(self):
+        # The owner ordered the undo of what Meternaut added to his API Management instance (2026-11-07): no identity of the gateway is given a role here, and the parameter and the placeholder that
+        # stood for "no gateway identity" are gone with the roles. A template never removes an assignment that it stops declaring, so a person removes the two that exist (the header says so).
+        for word in ("gatewayPrincipalId", "noGatewayIdentity", "gatewaySends", "eventHubsDataSenderRoleId", "2b629674-e913-4c01-ae53-ef4638d8f975", "00000000-0000-0000-0000-000000000000"):
+            self.assertNotIn(word, self.code, word)
         found = resources(self.source)
-        self.assertIn("var noGatewayIdentity = '00000000-0000-0000-0000-000000000000'", self.code)
-        for name in ("gatewaySendsUsage", "gatewaySendsPii"):
-            self.assertTrue(found[name][1].startswith("if (gatewayPrincipalId != noGatewayIdentity) {"), f"{name} is made only for a known identity")
         for name in ("functionReceivesUsage", "functionReceivesPii", "functionReceivesControl", "functionOwnsBlobs", "functionUsesQueues", "functionUsesTables", "functionPublishesTelemetry"):
             self.assertNotIn("if (", found[name][1].split("\n", 1)[0], f"{name}: the roles of the app are never conditional")
-        self.assertRegex(self.code, r"(?m)^param gatewayPrincipalId string$", "the parameter stays required: the builder always writes it")
+        for now in ("this template makes no role for the gateway any more", "No gateway holds a role here any more", "a person removes the two Azure Event Hubs Data Sender assignments that the gateway's old identity holds"):
+            self.assertIn(now, self.source.replace("\n// ", " "), now)
 
-    def test_the_gateway_only_sends_and_the_function_app_only_receives_each_on_the_hub_it_uses(self):
+    def test_the_function_app_only_receives_each_on_the_hub_it_uses(self):
         found = resources(self.source)
-        for name, hub, principal in (("gatewaySendsUsage", "usageHub", "gatewayPrincipalId"), ("gatewaySendsPii", "piiHub", "gatewayPrincipalId")):
-            body = found[name][1]
-            self.assertIn("eventHubsDataSenderRoleId", body, name)
-            self.assertIn(f"scope: {hub}", body, name)
-            self.assertIn(f"principalId: {principal}", body, name)
         for name, hub in (("functionReceivesUsage", "usageHub"), ("functionReceivesPii", "piiHub"), ("functionReceivesControl", "controlHub")):
             body = found[name][1]
             self.assertIn("eventHubsDataReceiverRoleId", body, name)
@@ -476,7 +371,7 @@ class Recording(unittest.TestCase):
         self.assertIn("deploymentContainer", depends_on(found["storageEndpoints"][1]))
         self.assertIn("usageContainers", depends_on(found["cosmosEndpoint"][1]))
         self.assertEqual(depends_on(found["eventHubsEndpoint"][1]), {"usageConsumerGroup", "piiConsumerGroup", "controlConsumerGroup"})
-        for name in ("gatewaySendsUsage", "gatewaySendsPii", "functionReceivesUsage", "functionReceivesPii", "functionReceivesControl"):
+        for name in ("functionReceivesUsage", "functionReceivesPii", "functionReceivesControl"):
             self.assertIn("eventHubsEndpoint", depends_on(found[name][1]), name)
         for name in ("functionOwnsBlobs", "functionUsesQueues", "functionUsesTables"):
             self.assertIn("storageEndpoints", depends_on(found[name][1]), name)
@@ -511,11 +406,11 @@ class Recording(unittest.TestCase):
 
     def test_the_header_and_the_comments_no_longer_say_that_the_runner_or_anything_public_reaches_the_namespace(self):
         for old in ("Event Hubs keeps public access on", "keeps public access on", "the deployment workflow sends one control event to it", "so that public access can be switched off later",
-                    "the workflow sends to the control hub", "control events of the deployment workflow"):
+                    "the workflow sends to the control hub", "control events of the deployment workflow", "the gateway's two loggers can use only that endpoint too",
+                    "retired\n//    trusted-service connectivity to Event Hubs on 15 March 2026", "Whether the landing zone's route lets the gateway's network reach the endpoint is not known"):
             self.assertNotIn(old, self.source, old)
         for now in ("storage, Cosmos DB and Event Hubs have public network access off", "no network rule set and no trusted-service\n//    exception", "the Operator (environment/operator/main.bicep, which sends the control events of the",
-                    "retired\n//    trusted-service connectivity to Event Hubs on 15 March 2026", "Whether the landing zone's route lets the gateway's network reach the endpoint is not known",
-                    "The deployment workflow's identity holds no role on any hub", "retired by the action recording, which deletes that one assignment after the\n// deploy when it is still there"):
+                    "The deployment workflow's identity holds\n// no role on any hub", "retired by the action recording, which deletes that one assignment after the\n// deploy when it is still there"):
             self.assertIn(now, self.source, now)
 
     def test_the_workspace_has_a_daily_cap(self):
@@ -576,18 +471,17 @@ class Workflow(unittest.TestCase):
         self.text = text(".github/workflows/deploy-hub.yml")
         self.steps = re.split(r"(?m)^      - ", self.text)[1:]
 
-    def test_the_kit_is_pinned_to_the_same_commit_in_the_deploy_workflow_and_in_the_checks(self):
-        refs = []
+    def test_neither_workflow_checks_out_the_kit_or_applies_a_patch_any_more(self):
+        # The Citadel kit's module and the three patches to it made the objects on the owner's API Management instance (2026-11-07, AGENTS.md rule 15 (c)): both are gone.
         for path in (".github/workflows/deploy-hub.yml", ".github/workflows/checks.yml"):
-            match = re.search(r"repository: Azure-Samples/ai-hub-gateway-solution-accelerator\n\s+ref: ([0-9a-f]{40})\n", text(path))
-            self.assertIsNotNone(match, path)
-            refs.append(match.group(1))
-        self.assertEqual(refs[0], refs[1])
+            source = text(path)
+            for word in ("Azure-Samples/ai-hub-gateway-solution-accelerator", "path: kit", "kit/bicep", "kit-patches", "git -C kit", "kit.json", "kit.parameters.json", "label kit"):
+                self.assertNotIn(word, source, f"{word} in {path}")
 
     def test_every_step_that_writes_to_azure_names_the_actions_it_runs_in_and_never_what_if(self):
         writers = 0
         for block in self.steps:
-            if "az-deploy.py create" in block or "gateway-prep.py attach-identity" in block:
+            if "az-deploy.py create" in block:
                 writers += 1
                 condition = re.search(r"(?m)^        if: (.+)$", block)
                 self.assertIsNotNone(condition, block[:80])
@@ -626,67 +520,37 @@ class Workflow(unittest.TestCase):
                 self.assertIn('az role assignment delete --ids "$ids" --only-show-errors', block)
                 self.assertNotIn('az role assignment delete --scope', block)
 
-    def contract_steps(self):
-        return [block for block in self.steps if "inputs.action == 'contract'" in block]
+    def test_the_actions_that_made_objects_on_the_owners_api_management_instance_are_gone_with_their_steps_and_the_key_they_read(self):
+        # The owner ordered the undo of what Meternaut added to his instance (2026-11-07, AGENTS.md rule 15 (c)): the actions gateway-prepare, gateway and contract, and every step that looked at the
+        # instance, its identity or its loggers, or read the contract's key, are gone. A person removed the objects by hand.
+        offered = re.findall(r"- (\S+)", re.search(r"options:\n((?:          - .+\n)+)", self.text).group(1))
+        for gone in ("gateway-prepare", "gateway", "contract"):
+            self.assertNotIn(gone, offered)
+            self.assertNotIn(f"inputs.action == '{gone}'", self.text)
+        for word in ("listSecrets", "primaryKey", "GATEWAY_SMOKE_KEY", "environment-smoke", "check_limits", "CHECK_LIMITS", "environment/gateway", "contract.json", "contract-policy", "contract_files",
+                     "GATEWAY_RESOURCE_ID", "GATEWAY_PRINCIPAL_ID", "GATEWAY_CLIENT_ID", "RECORDING_FRAGMENTS", "Microsoft.ApiManagement/service", "--apim", "/loggers", "identity list", "CONTRACT_"):
+            self.assertNotIn(word, self.text, word)
+        self.assertNotRegex(self.text, r"(?<!ai)gateway-prep\.py", "the tool that read and changed the instance is gone (tools/aigateway-prep.py is the AI Gateway's own)")
+        names = self.names()
+        for old in ("Read the gateway and its Application Insights", "Make the gateway identity", "Work out the settings with the identity's principal", "Find the gateway identity",
+                    "Attach the identity to the gateway, keeping what it has", "Add the Application Insights logger that the module expects", "Wait until the gateway has finished updating",
+                    "The gateway is ready for the Citadel module", "What the Citadel module would change in the gateway", "Add the Citadel module's objects to the gateway", "What the gateway holds now",
+                    "What the first contract would change in the gateway", "Add the first contract to the gateway", "Test the gateway with the contract's key"):
+            self.assertNotIn(old, names, old)
+        # the only secret of the gateway's side that is still read is the Application Insights component that the usage recording's copy jobs read
+        self.assertIn("GATEWAY_APPINSIGHTS_ID: ${{ secrets.GATEWAY_APPINSIGHTS_ID }}", self.text)
+        self.assertEqual(self.text.count("secrets.GATEWAY_"), 1)
 
-    def test_the_key_of_the_contract_is_read_masked_and_handed_to_one_command_only(self):
-        (block,) = [b for b in self.steps if "listSecrets" in b]
-        self.assertTrue(block.startswith("name: Test the gateway with the contract's key"))
-        self.assertEqual(len(re.findall(r"listSecrets", self.text)), 1)
-        self.assertLess(block.index("listSecrets"), block.index('echo "::add-mask::$key"'))
-        self.assertLess(block.index('echo "::add-mask::$key"'), block.index("tools/environment-smoke.py"))
-        self.assertIn('GATEWAY_SMOKE_KEY="$key" python3 tools/environment-smoke.py', block)
-        # nothing keeps the key: not a secret, an output, the environment file, the summary or a file of the run
-        self.assertNotRegex(block, r"(?m)^\s*export ")
-        for word in ("GITHUB_ENV", "GITHUB_OUTPUT", "gh secret", "--debug", "set -x", "az account get-access-token"):
-            self.assertNotIn(word, block, word)
-        for line in block.splitlines():
-            if "$key" in line and "add-mask" not in line and "GATEWAY_SMOKE_KEY" not in line and "key=$(" not in line:
-                self.fail(f"the key is used somewhere else: {line.strip()}")
-        for other in self.steps:
-            if other is not block:
-                self.assertNotIn("$key", other)
-
-    def test_every_kit_patch_is_checked_and_applied_before_anything_reads_the_kit(self):
-        for path in (".github/workflows/deploy-hub.yml", ".github/workflows/checks.yml"):
-            source = text(path)
-            loop = "for patch in environment/kit-patches/*.patch; do"
-            check = 'git -C kit apply --check "../$patch"'
-            apply_ = 'git -C kit apply "../$patch"'
-            self.assertEqual(source.count(loop), 1, path)
-            self.assertEqual(source.count(apply_), 1, path)
-            self.assertLess(source.index(loop), source.index(check), path)
-            self.assertLess(source.index(check), source.index(apply_), path)
-            self.assertLess(source.index(apply_), source.index("kit/bicep/infra/apim-gateway-upgrade/main.bicep"), path)
-
-    def test_the_two_model_apis_are_read_back_after_the_module_has_been_applied(self):
-        (block,) = [b for b in self.steps if b.startswith("name: The two model APIs refuse a call that is not made with a contract's key")]
-        self.assertIn("if: inputs.action == 'gateway'", block)
-        self.assertIn("--method get", block)
-        self.assertNotRegex(block, r"--method (put|patch|post|delete)")
-        for api in ("universal-llm-api", "azure-openai-api"):
-            self.assertIn(api, block)
-        self.assertIn("contract_required", block)
-        names = [re.match(r"name: (.+)", b).group(1) for b in self.steps]
-        self.assertLess(names.index("Add the Citadel module's objects to the gateway"), names.index("The two model APIs refuse a call that is not made with a contract's key"))
-
-    def test_the_contract_is_added_only_after_the_gateway_has_the_apis_it_grants(self):
-        first = [b for b in self.steps if b.startswith("name: What the first contract would change")]
-        second = [b for b in self.contract_steps() if not b.startswith("name: Read the gateway and its Application Insights")]
-        self.assertEqual(len(first), 1)
-        self.assertIn("inputs.action == 'what-if' || inputs.action == 'contract'", first[0])
-        self.assertIn("run gateway first", first[0].lower().replace("::error::", ""))
-        names = [re.match(r"name: (.+)", b).group(1) for b in second]
-        self.assertEqual(names[:3], ["What the first contract would change in the gateway", "Add the first contract to the gateway", "Test the gateway with the contract's key"])
-        order = [self.text.index(f"- name: {n}") for n in names[:3]]
-        self.assertEqual(order, sorted(order))
-        self.assertLess(self.text.index("- name: Read the gateway and its Application Insights"), order[0], "the gateway is read first, and only for the actions that change it")
-
-    def test_the_limit_check_is_opt_in_and_reaches_the_script_only_through_the_environment(self):
-        self.assertRegex(self.text, r"(?s)check_limits:\n\s+description: .+?\n\s+type: boolean\n\s+required: false\n\s+default: false")
-        (block,) = [b for b in self.steps if "CHECK_LIMITS" in b]
-        self.assertIn("CHECK_LIMITS: ${{ inputs.check_limits }}", block)
-        self.assertNotIn("${{ inputs.check_limits }}", block.split("run:")[1])
+    def test_the_settings_step_looks_for_no_identity_of_a_gateway_and_runs_the_builder_twice_the_first_time_as_a_preview(self):
+        (settings,) = [b for b in self.steps if b.startswith("name: Work out the settings\n")]
+        self.assertEqual(settings.count("--preview"), 1, "the first pass gives the names before the facts of the other steps are known; the final build is a plain one")
+        self.assertIn('policies="--aigateway-policies environment/aigateway/policies.json"', settings)
+        self.assertEqual(settings.count("tools/environment-params.py build"), 2)
+        self.assertNotIn("az identity", settings)
+        for label in ("environment", "recording", "foundry", "cases", "operator", "planted"):
+            self.assertIn(f"--label {label}\n", settings)
+        for label in ("logger", "eventhub-loggers", "kit", "contract"):
+            self.assertNotIn(f"--label {label}", settings)
 
     def names(self):
         return [re.match(r"name: (.+)", b).group(1) for b in self.steps]
@@ -751,11 +615,11 @@ class Workflow(unittest.TestCase):
         self.assertNotIn("--method", block)
         self.assertNotRegex(block, r"az \S+ (create|delete|update|set)\b")
 
-    def test_nothing_in_the_workflow_reads_a_key_but_the_contracts_and_nothing_writes_one(self):
+    def test_nothing_in_the_workflow_reads_or_writes_a_key(self):
         for word in ("listKeys", "listConnectionStrings", "AccountKey", "SharedAccessKey", "primaryMasterKey", "az storage account keys", "--auth-mode key",
                      "az cosmosdb keys", "az eventhubs namespace authorization-rule", "az functionapp keys", "--connection-string", "az webapp deployment list-publishing"):
             self.assertNotIn(word, self.text, word)
-        self.assertEqual(self.text.count("listSecrets"), 1, "the contract's own subscription key, read for one test and masked: AGENTS.md rule 23 names it")
+        self.assertEqual(self.text.count("listSecrets"), 0, "the contract's own subscription key was read for one test of the gateway: the action that did it is gone (AGENTS.md rule 23)")
 
     def test_the_recording_signs_in_again_before_it_publishes_because_the_first_credential_lasts_five_minutes(self):
         names = self.names()
@@ -781,7 +645,7 @@ class Workflow(unittest.TestCase):
         self.assertIsNotNone(pinned, "a full commit, as the lint wants")
         self.assertIn(f"uses: {pinned.group(1)}", text(".github/workflows/checks.yml"), "the very action that the checks use")
         self.assertIn('python-version: "3.13"', block)
-        self.assertLess(names.index(title), names.index("The tools, the templates and the kit's module pass their checks"))
+        self.assertLess(names.index(title), names.index("The tools and the templates pass their checks"))
         self.assertLess(names.index(title), names.index("Pack the usage app's sources for the Operator"))
         self.assertLess(names.index(title), names.index("Pack the cases app's sources for the Operator"), "neither app is built with its libraries on the runner any more, but the runtime is set up before anything of an app is packed")
         self.assertIn("version: '3.13'", text("environment/recording/main.bicep"), "the runtime that the app is made for")
@@ -823,53 +687,16 @@ class Workflow(unittest.TestCase):
             self.assertNotIn("RECORDING_DEPLOYER_ID", text(path), path)
         self.assertNotIn("workflowPrincipalId", text("tools/environment-params.py"))
 
-    def test_the_recording_does_not_need_the_gateway_identity_to_exist_and_only_the_actions_that_make_an_object_of_the_gateway_look_for_it(self):
-        # The owner ordered the undo of what Meternaut added to his API Management instance (2026-11-07): the gateway identity may be gone, so the usage recording makes the two roles
-        # of that identity only when it is known (environment/recording/main.bicep) and no longer stops when it is not there.
-        (block,) = [b for b in self.steps if b.startswith("name: Find the gateway identity")]
-        self.assertIn("if: inputs.action == 'gateway-prepare' || inputs.action == 'gateway'\n", block)
-        self.assertNotIn("'recording'", block)
-        self.assertNotIn("usage recording still gives it", block)
-        self.assertIn("Run model-side first", block)
-        for other in self.steps:
-            if "steps.found.outputs" in other:
-                condition = re.search(r"(?m)^        if: (.+)$", other).group(1)
-                self.assertIn(condition, ("inputs.action == 'gateway-prepare'", "inputs.action == 'gateway'"), "only the two actions that change the instance use what that step found")
-
-    def test_the_step_that_reads_the_gateway_runs_only_for_the_actions_that_change_it_and_the_settings_step_looks_for_its_identity_only_for_four_actions(self):
-        (read,) = [b for b in self.steps if b.startswith("name: Read the gateway and its Application Insights")]
-        self.assertIn("if: inputs.action == 'gateway-prepare' || inputs.action == 'gateway' || inputs.action == 'contract'\n", read)
-        self.assertIn("gateway-prep.py facts", read)
+    def test_the_recording_needs_no_gateway_identity_and_no_step_of_the_workflow_looks_for_one(self):
+        # The owner ordered the undo of what Meternaut added to his API Management instance (2026-11-07): after it the instance has no gateway identity of ours, and the usage recording makes no role
+        # for one (environment/recording/main.bicep), so it neither looks for it nor stops when it is not there: the settings step is the same for every action (test_workflow_scripts.py runs it).
+        for word in ("gateway identity", "usage recording makes no role for the gateway identity", "steps.found.outputs", "steps.identity.outputs"):
+            self.assertNotIn(word, self.text, word)
         (settings,) = [b for b in self.steps if b.startswith("name: Work out the settings\n")]
-        self.assertIn("what-if|gateway-prepare|gateway|recording)\n", settings, "the four actions that look for the gateway identity")
-        self.assertIn("The action $ACTION does not use the gateway identity, so it is not looked for", settings)
-        self.assertIn("The gateway identity does not exist yet; the role assignment is shown with a placeholder.", settings)
-        self.assertEqual(settings.count("az identity list"), 1, "one lookup of the gateway identity, inside that branch")
-        self.assertEqual(settings.count("/loggers?"), 1, "one read of the loggers, for what-if and gateway only")
-        self.assertIn('if [ -z "$principal" ]; then preview="--preview"; fi', settings, "an identity that is not known gives the preview files, and the action goes on with the facts that it read")
-
-    def test_the_event_hub_loggers_are_added_only_by_gateway_prepare_and_only_when_the_namespace_exists(self):
-        names = self.names()
-        title = "Add the two Event Hub loggers, when the usage recording's Event Hubs namespace exists"
-        (block,) = [b for b in self.steps if b.startswith(f"name: {title}")]
-        self.assertIn("if: inputs.action == 'gateway-prepare'", block)
-        self.assertIn("--resource-type Microsoft.EventHub/namespaces", block)
-        self.assertLess(block.index("exit 0"), block.index("az-deploy.py create"), "without the namespace nothing is written")
-        self.assertIn("--template environment/gateway/eventhub-loggers.bicep", block)
-        self.assertIn('--parameters "$RUNNER_TEMP/eventhub-loggers.parameters.json"', block)
-        self.assertLess(names.index("Add the Application Insights logger that the module expects"), names.index(title))
-        self.assertLess(names.index(title), names.index("Wait until the gateway has finished updating"))
-        self.assertEqual(self.text.count("--template environment/gateway/eventhub-loggers.bicep"), 2, "the preview and the deploy, nothing else")
-
-    def test_the_fragments_are_asked_for_only_when_both_loggers_are_in_the_instance(self):
-        (block,) = [b for b in self.steps if b.startswith("name: Work out the settings\n")]
-        self.assertIn("fragments=false", block)
-        self.assertIn("grep -Fxq usage-eventhub-logger", block)
-        self.assertIn("grep -Fxq pii-usage-eventhub-logger", block)
-        self.assertIn('RECORDING_FRAGMENTS="$fragments"', block)
-        self.assertLess(block.index("fragments=false"), block.index('RECORDING_FRAGMENTS="$fragments"'))
-        self.assertIn("--method get", block)
-        self.assertNotRegex(block, r"--method (put|patch|post|delete)")
+        self.assertNotIn("case \"$ACTION\" in\n            what-if|gateway-prepare|gateway|recording)", settings)
+        self.assertNotIn("the role assignment is shown with a placeholder", settings)
+        self.assertNotIn("makes no role for the gateway identity", settings)
+        self.assertNotIn('preview="--preview"', settings, "no fact of the owner's instance can be missing, so no final build is a preview")
 
 
 class Cases(unittest.TestCase):
@@ -1678,7 +1505,7 @@ class CasesWorkflow(unittest.TestCase):
         self.assertNotRegex(self.text, r"(?m)^\s*python3 tools/cases-check\.py run\b", "the runner starts no Watch and sends no event: the Operator runs the tool")
 
     def test_the_preview_of_the_cases_waits_for_the_recording_instead_of_failing(self):
-        block = self.step("What the identity, the model side, the logger, the usage recording and the first cases would change")
+        block = self.step(PREVIEW_STEP)
         self.assertIn("STORAGE_ACCOUNT: ${{ steps.params.outputs.storage_account_name }}", block)
         self.assertLess(block.index("The first cases cannot be previewed yet"), block.index("--template environment/cases/main.bicep"))
 
@@ -2055,7 +1882,7 @@ class FoundryWorkflow(unittest.TestCase):
         self.assertIn('--params "$out/foundry.parameters.json" --template "$out/foundry.json" --label foundry', checks)
 
     def test_the_preview_shows_the_foundry_resource_when_the_component_it_connects_to_is_there_and_says_why_not_otherwise(self):
-        block = self.step("What the identity, the model side, the logger, the usage recording and the first cases would change")
+        block = self.step(PREVIEW_STEP)
         self.assertIn("INSIGHTS_NAME: ${{ steps.params.outputs.appinsights_name }}", block)
         self.assertLess(block.index("The Foundry resource cannot be previewed yet"), block.index("--template environment/foundry/main.bicep"))
         self.assertIn("--restore-param restoreAccount", block[block.index("--template environment/foundry/main.bicep"):])
@@ -2083,7 +1910,7 @@ class FoundryWorkflow(unittest.TestCase):
         self.assertEqual(len(re.findall(r"(?m)^\s+cases\)$", params)), 1)
         self.assertEqual(len(re.findall(r"(?m)^\s+what-if\)$", params)), 1)
         self.assertEqual(len(re.findall(r'(?m)^\s+\*\) echo "The action \$ACTION does not use the Foundry project, so it is not looked for\." ;;$', params)), 1)
-        self.assertEqual(params.count("az identity list"), 1, "only the gateway identity is looked up in the identity list now")
+        self.assertEqual(params.count("az identity list"), 0, "no identity is listed: neither the gateway's nor the user-assigned one that the cases app used before")
         self.assertNotIn("cases_principal=", params.replace("cases_system_principal=", ""))
         self.assertEqual(params.count("cases_system_principal=$(az rest --method get"), 1, "the system-assigned identity is read from the app, once, and not by an action that has nothing to do with the Foundry resource")
         self.assertIn('--url "https://management.azure.com${cases_site}?api-version=2024-04-01" --query identity.principalId --output tsv', params)
@@ -2091,8 +1918,8 @@ class FoundryWorkflow(unittest.TestCase):
         self.assertLess(params.index("cases_system_principal=$(az rest"), re.search(r"(?m)^\s+cases\)$", params).start())
         defaults = params.index("cases_system_principal=\"\"\n            foundry_exists=false")
         self.assertLess(defaults, params.index("cases_system_principal=$(az rest"), "false is the answer for every action that does not look")
-        self.assertLess(defaults, params.index("case \"$ACTION\" in", defaults), "and the defaults are set before the case that looks")
-        self.assertLess(params.index("case \"$ACTION\" in"), defaults, "the case of the gateway identity comes first: it has nothing to do with the Foundry facts, which are read whether or not the identity is there")
+        self.assertLess(defaults, params.index("case \"$ACTION\" in"), "and the defaults are set before the first case that looks")
+        self.assertEqual(params.count("case \"$ACTION\" in"), 2, "the two cases of the Foundry facts: no case for the identity of a gateway of the owner's API Management instance comes before them")
         self.assertIn("Nothing was changed: run cases again.", params)
         self.assertIn('echo "::warning::The preview of the cases app assumes that the Foundry project is not in Azure', params)
         self.assertNotIn("ACTION: ${{", params.split("run: |")[0], "the job's ACTION is used")
@@ -2220,8 +2047,8 @@ class HandSteps(unittest.TestCase):
 
 
 class NoStandingRightToSend(unittest.TestCase):
-    """The deploy identity holds no role on an event hub (private by default, docs/proposals/07-private-by-default.md): the Operator sends the control events, and what the gateway,
-    the function apps and the Operator hold on the hubs is still declared."""
+    """The deploy identity holds no role on an event hub (private by default, docs/proposals/07-private-by-default.md): the Operator sends the control events, and what the function apps and the
+    Operator hold on the hubs is still declared. No identity of a gateway holds a role on a hub any more (2026-11-07)."""
 
     TEMPLATES = ("environment/recording/main.bicep", "environment/cases/main.bicep")
 
@@ -2239,19 +2066,17 @@ class NoStandingRightToSend(unittest.TestCase):
             for name, (kind, body) in found.items():
                 if kind == "Microsoft.Authorization/roleAssignments":
                     principal = re.search(r"(?m)^    principalId: (.+)$", body).group(1)
-                    self.assertIn(principal, ("gatewayPrincipalId", "functionApp.identity.principalId"), f"{path} {name}: the principal of a role is the gateway's or the app's own")
-                    if "eventHubsDataSenderRoleId" in body:
-                        self.assertEqual((path, principal), ("environment/recording/main.bicep", "gatewayPrincipalId"), f"{name}: only the gateway sends here")
+                    self.assertEqual(principal, "functionApp.identity.principalId", f"{path} {name}: the principal of a role is the app's own, and no gateway has a role here any more")
+                    self.assertNotIn("eventHubsDataSenderRoleId", body, f"{name}: nothing sends here by a role of the template: the Operator's own template gives that")
 
     def test_the_cases_template_has_no_sender_role_at_all_because_the_operator_holds_it_on_the_hub(self):
         code = re.sub(r"//.*", "", text("environment/cases/main.bicep"))
         self.assertNotIn("eventHubsDataSenderRoleId", code)
         self.assertNotIn("2b629674-e913-4c01-ae53-ef4638d8f975", code)
 
-    def test_the_roles_of_the_gateway_the_function_apps_and_the_operator_on_the_hubs_are_still_declared(self):
+    def test_the_roles_of_the_function_apps_and_the_operator_on_the_hubs_are_still_declared_and_no_gateway_has_one(self):
         recording = resources(text("environment/recording/main.bicep"))
-        for name, hub, role, principal in (("gatewaySendsUsage", "usageHub", "eventHubsDataSenderRoleId", "gatewayPrincipalId"), ("gatewaySendsPii", "piiHub", "eventHubsDataSenderRoleId", "gatewayPrincipalId"),
-                                           ("functionReceivesUsage", "usageHub", "eventHubsDataReceiverRoleId", "functionApp.identity.principalId"),
+        for name, hub, role, principal in (("functionReceivesUsage", "usageHub", "eventHubsDataReceiverRoleId", "functionApp.identity.principalId"),
                                            ("functionReceivesPii", "piiHub", "eventHubsDataReceiverRoleId", "functionApp.identity.principalId"),
                                            ("functionReceivesControl", "controlHub", "eventHubsDataReceiverRoleId", "functionApp.identity.principalId")):
             self.assertEqual(recording[name][0], "Microsoft.Authorization/roleAssignments", name)
@@ -2259,6 +2084,7 @@ class NoStandingRightToSend(unittest.TestCase):
             self.assertIn(f"  scope: {hub}\n", body, name)
             self.assertIn(f"subscriptionResourceId('Microsoft.Authorization/roleDefinitions', {role})", body, name)
             self.assertIn(f"    principalId: {principal}\n", body, name)
+        self.assertFalse([name for name in recording if name.startswith("gateway")], "no role for a gateway: the owner ordered the undo of what Meternaut had added to his API Management instance")
         cases = resources(text("environment/cases/main.bicep"))["functionReceivesControl"][1]
         self.assertIn("  scope: controlHub\n", cases)
         self.assertIn("eventHubsDataReceiverRoleId", cases)
@@ -2269,7 +2095,7 @@ class NoStandingRightToSend(unittest.TestCase):
             self.assertIn("eventHubsDataSenderRoleId", operator[name][1], name)
             self.assertIn("    principalId: operatorIdentity.properties.principalId\n", operator[name][1], name)
         self.assertIn("var eventHubsDataSenderRoleId = '2b629674-e913-4c01-ae53-ef4638d8f975'", text("environment/operator/main.bicep"))
-        self.assertIn("var eventHubsDataSenderRoleId = '2b629674-e913-4c01-ae53-ef4638d8f975'", text("environment/recording/main.bicep"))
+        self.assertNotIn("eventHubsDataSenderRoleId", text("environment/recording/main.bicep"), "the recording's template gives no role to send: only the Operator sends")
 
     def test_the_parameter_files_that_the_builder_writes_carry_no_principal_for_the_workflow(self):
         builder = text("tools/environment-params.py")
@@ -2408,7 +2234,7 @@ class RetireWorkflow(unittest.TestCase):
         self.assertFalse(self.runs_for("name: x\n        if: inputs.action == 'recording'\n        run: |\n          true\n", "recording-check"))
 
     def test_the_what_if_says_what_changes_for_the_namespace_and_the_two_control_hubs_and_that_the_list_does_not_show_the_retirement(self):
-        block = self.step("What the identity, the model side, the logger, the usage recording and the first cases would change")
+        block = self.step(PREVIEW_STEP)
         for words in ("What this changes in the Event Hubs namespace: its public network access goes from Enabled to Disabled, so that its private endpoint is the only way in, and the template no longer gives the deploy "
                       "identity the role to send to the control hub usage-control (the Operator sends the control event).",
                       "The list below leaves that old assignment as it is, because an incremental deployment never removes what a template stops declaring: the action recording deletes that one assignment after its deploy, when it is still there.",
@@ -2440,8 +2266,11 @@ class RetireWorkflow(unittest.TestCase):
         for words in ("an Event Hubs namespace (public network access Disabled, no key, one private endpoint that is Approved: read back from Azure)",
                       "The deploy identity holds no role on the control hub \\`usage-control\\` any more: the log of the step that retires it says whether the old assignment was deleted now or was not there.",
                       "This runner can no longer send to the namespace, and the Operator sends the control event.",
-                      "Whether the gateway's two loggers reach the namespace through its private endpoint is not known until a policy of the gateway sends to the two usage hubs: docs/proposals/07-private-by-default.md says how that will show."):
+                      "No role is made for the gateway on the two usage event hubs any more (the owner ordered the undo of what Meternaut added to his API Management instance on 2026-11-07, so nothing sends to them from there; "
+                      "a person removes the two assignments that the gateway's old identity still holds, together with the identity), and the function app may read them.",
+                      "The usage recording is idle now: nothing sends to its two usage hubs, and it stays until the owner decides about it."):
             self.assertIn(words, finished, words)
+        self.assertNotIn("Whether the gateway's two loggers reach the namespace through its private endpoint", finished)
         failed, finished = re.findall(r"(?m)^\s+cases\) echo \"(.*?)\" ;;$", block)
         self.assertIn("If the lines above stop at the step that retires the deploy identity's right to send to \\`cases-control\\`, the deploy is done and that one old assignment may still be there", failed)
         self.assertIn("The deploy identity holds no role on the control hub \\`cases-control\\` any more (the log of the step that retires it says whether the old assignment was deleted now or was not there): the Operator sends the control event.",
@@ -2508,7 +2337,7 @@ class OperatorWorkflow(unittest.TestCase):
             self.assertNotIn(word, block, word)
 
     def test_the_preview_waits_for_the_network_and_the_control_hubs_and_the_settings_know_whether_the_subnet_is_there(self):
-        preview = self.step("What the identity, the model side, the logger, the usage recording and the first cases would change")
+        preview = self.step(PREVIEW_STEP)
         self.assertIn("EVENT_HUB_NAMESPACE: ${{ steps.params.outputs.event_hub_namespace }}", preview)
         self.assertIn('hubs=$(az rest --method get --url "https://management.azure.com/subscriptions/$ENV_SUBSCRIPTION_ID/resourceGroups/$ENV_RESOURCE_GROUP/providers/Microsoft.EventHub/namespaces/'
                       '$EVENT_HUB_NAMESPACE/eventhubs?api-version=2024-01-01" --query "value[].name" --output tsv 2> /dev/null || true)', preview, "one read of the hubs that the namespace has, which no failure stops")

@@ -1,13 +1,16 @@
 // The model side of the first environment: a small network (a subnet for private endpoints and a subnet that the usage
 // recording's function app is integrated with), one Foundry account with the first models, reachable only through a
-// private endpoint, and a budget. The gateway (the owner's existing API Management instance) is configured by the
-// workflow separately (environment/gateway).
+// private endpoint, and a budget. Nothing of Meternaut calls this account any more: since 2026-11-07 every model call goes direct to the
+// models of the agents' own Foundry resource (environment/foundry), and Meternaut makes nothing on the owner's API Management instance
+// (the owner ordered the undo of what it had added). The account stays as it is until the owner decides about it. This template makes
+// no role for any caller: a deployment does not delete what a template no longer lists, so a person removes the role that the old gateway
+// identity still holds on the account.
 //
 // Left out on purpose (AGENTS.md rule 19), because the landing zone provides it:
 //  - private DNS zones, virtual network links and the private endpoint's DNS zone group: a policy registers the
 //    endpoint in the central zones about ten minutes after it exists;
 //  - peering and route tables: the network manager joins a new virtual network to the hub and routes it;
-//  - an API Management instance: the owner's existing one is used.
+//  - an API Management instance: Meternaut makes none and touches none.
 //
 // The virtual network is made once (networkExists), and then left alone: the landing zone's network manager puts a route table on each
 // subnet of it, and a virtual network that is made again, with its subnets listed here, loses those tables, and with them the subnets'
@@ -49,13 +52,8 @@ param dnsServers array
 @description('Restore the soft-deleted account of this name instead of creating a new one. The workflow sets it only after the platform reports that such an account exists.')
 param restoreAccount bool = false
 
-@description('The models deployed in the account: name, version, deployment type and capacity in thousands of tokens a minute. The workflow reads them from environment/models.json, which the gateway configuration reads too, so the two cannot differ.')
+@description('The models deployed in the account: name, version, deployment type and capacity in thousands of tokens a minute. The workflow reads them from environment/models.json, which the Foundry resource of the agents (environment/foundry) reads too, so the two lists cannot differ.')
 param models array
-
-@description('Principal id of the user-assigned identity that the gateway uses to call the models. Nobody else is granted access.')
-@minLength(36)
-@maxLength(36)
-param gatewayPrincipalId string
 
 @description('Owner of the resources, as a tag.')
 @minLength(1)
@@ -81,11 +79,6 @@ var tags = {
   owner: owner
   'meternaut-stage': 'first-environment'
 }
-
-// Cognitive Services OpenAI User: the one role that lets a caller run chat completions and nothing else. The gateway needs no
-// other role for this account; the content-safety and language calls (Cognitive Services User) wait until a contract turns
-// them on and a call has shown that they need it.
-var openAiUserRoleId = '5e0bd9bd-7b93-4f28-af87-19fc36ad61bd'
 
 resource nsg 'Microsoft.Network/networkSecurityGroups@2025-05-01' = {
   name: 'nsg-${workload}-pe'
@@ -251,22 +244,6 @@ resource privateEndpoint 'Microsoft.Network/privateEndpoints@2025-05-01' = {
   dependsOn: [
     modelDeployment
     vnet
-  ]
-}
-
-// After the private endpoint, not beside it: the endpoint's connection is written to the account with an If-Match, and a
-// role assignment made on the account at the same moment changed it first (IfMatchPreconditionFailed, seen in an earlier
-// deploy).
-resource gatewayMayCallTheModels 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  scope: account
-  name: guid(account.id, gatewayPrincipalId, openAiUserRoleId)
-  properties: {
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', openAiUserRoleId)
-    principalId: gatewayPrincipalId
-    principalType: 'ServicePrincipal'
-  }
-  dependsOn: [
-    privateEndpoint
   ]
 }
 

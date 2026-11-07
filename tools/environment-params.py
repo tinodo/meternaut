@@ -2,26 +2,22 @@
 """Builds the parameter files of the first environment from the deployment workflow's settings (standard library only).
 
     python tools/environment-params.py build --models environment/models.json --out-dir "$RUNNER_TEMP" [--preview] [--aigateway-policies environment/aigateway/policies.json] >> "$GITHUB_OUTPUT"
-    python tools/environment-params.py check --params "$RUNNER_TEMP/kit.parameters.json" --template kit.json --label kit
+    python tools/environment-params.py check --params "$RUNNER_TEMP/recording.parameters.json" --template recording.json --label recording
 
 The settings are environment variables, filled by the workflow from the repository's secrets and variables, so that no
 address, name or mail address is in the repository:
 
     ENV_SUBSCRIPTION_ID, ENV_RESOURCE_GROUP, ENV_LOCATION, ENV_VNET_PREFIX, ENV_PE_SUBNET_PREFIX,
     ENV_DNS_SERVERS (comma separated), ENV_OWNER, ENV_BUDGET_AMOUNT, ENV_ALERT_EMAILS (comma separated),
-    ENV_BUDGET_START, GATEWAY_RESOURCE_ID, GATEWAY_APPINSIGHTS_ID, GATEWAY_PRINCIPAL_ID, GATEWAY_CLIENT_ID,
-    RECORDING_READER_IDS (comma separated, may be empty), RECORDING_FRAGMENTS (true or false),
+    ENV_BUDGET_START, GATEWAY_APPINSIGHTS_ID,
+    RECORDING_READER_IDS (comma separated, may be empty),
     CASES_SYSTEM_PRINCIPAL_ID (may be empty), ENV_FOUNDRY_PROJECT_EXISTS (true or false), ENV_OPS_SUBNET_EXISTS (true or false)
 
 ENV_BUDGET_START is the first day of the month in which the budget was first made, which the workflow reads from the
 existing budget (a budget keeps its start date) or, for a new budget, takes from the current month.
-GATEWAY_RESOURCE_ID is the resource id of the owner's existing API Management instance; GATEWAY_APPINSIGHTS_ID is the
-resource id of the Application Insights component that the instance already logs to; GATEWAY_PRINCIPAL_ID is the object
-id of the gateway's user-assigned identity, which does not exist before the first deploy (a `--preview`, for a
-what-if, then uses a placeholder, and says so). GATEWAY_CLIENT_ID is that identity's client id, which the Event Hub loggers
-name: without it the file for the loggers is not written (and with `--preview` it holds a placeholder).
-RECORDING_FRAGMENTS is `true` only when both Event Hub loggers exist in the instance: the workflow reads that from the
-instance, and the kit's module then also makes the two policy fragments that use them (default: false).
+GATEWAY_APPINSIGHTS_ID is the resource id of the Application Insights component that the owner's API Management instance logs to. Only the usage recording reads it (the copy jobs of its function app read that
+component), and the recording is idle: it stays until the owner decides about it. Since 2026-11-07 nothing here makes, changes or reads an object on the instance (the owner ordered the undo of what Meternaut had
+added to it): the instance's own resource id is not a setting any more, the gateway's identity is neither made nor looked up, and the contract, the loggers and the kit's module are gone.
 RECORDING_READER_IDS are the object ids of the people who may read the usage store (a Cosmos DB data role; they also need a network path to its private
 endpoint). The identity that the workflow signs in as has no setting here: no template gives it a role on an event hub (the Operator sends the control
 events), and the workflow reads its own object id from its token only to find and retire the assignment that it held on the two control hubs.
@@ -46,26 +42,21 @@ console on the app's own name. With a name, the console's address (the setting C
 passes it as consoleHostName, and the outputs console_host (the name that people open: that name, or the app's own) and console_host_set say what the check of the console's front door knocks at.
 CASES_APP_PUBLIC_NETWORK_ACCESS is refused as Disabled while no name is set.
 
-It writes these ARM parameter files into --out-dir (the contract's with --contract, and the one for the gateway identity's loggers when its client id is known or with --preview):
+It writes these ARM parameter files into --out-dir:
 
     environment.parameters.json       for environment/main.bicep (the model side)
-    logger.parameters.json            for environment/gateway/logger.bicep
-    eventhub-loggers.parameters.json  for environment/gateway/eventhub-loggers.bicep (written when GATEWAY_CLIENT_ID is set, or with --preview)
-    kit.parameters.json               for the Citadel gateway-upgrade module (the kit's bicep/infra/apim-gateway-upgrade/main.bicep)
     recording.parameters.json         for environment/recording/main.bicep (the usage recording: Event Hubs, function app, Cosmos DB)
     foundry.parameters.json           for environment/foundry/main.bicep (the Foundry resource of the agents: project, models, guardrail, private endpoint)
     operator.parameters.json          for environment/operator/main.bicep (the Operator: its identity, the subnet of its container groups, its three roles; it names the Event Hubs namespace
                                       whose two control hubs it reads, which the usage recording and the first cases make)
-    contract.parameters.json          for environment/gateway/contract.bicep, from --contract (environment/contract.json) and
-                                      --contract-policy (environment/gateway/contract-policy.xml)
     aigateway-subnet.parameters.json  for environment/aigateway/subnet.bicep (the AI Gateway's subnet and its network security group: the action aigateway deploys it first, and waits for the
                                       landing zone's route table on the subnet before it deploys the gateway),
     aigateway.parameters.json         for environment/aigateway/main.bicep (the AI Gateway: its models and aliases, and its roles; the subnet has to be there already), and
     aigateway-policies.json           the gateway-wide policies that the action aigateway applies to the gateway's default workspace (a plain list, not a parameter file),
                                       all three from --aigateway-policies (environment/aigateway/policies.json, checked against the models and against the owner's standing limit
                                       of AGENTS.md rule 15 (g)); none is written when the virtual network has no free range for the gateway's subnet (the outputs say so)
-    cases.parameters.json             for environment/cases/main.bicep (the first cases: the function app that finds leads and writes the History). It is always written, and it names no
-                                      contract and no gateway: the Detective and the Skeptic call the model deployments of the agents' own Foundry project, so the file carries the project's
+    cases.parameters.json             for environment/cases/main.bicep (the first cases: the function app that finds leads and writes the History). It is always written, and it names nothing of
+                                      the owner's API Management instance: the Detective and the Skeptic call the model deployments of the agents' own Foundry project, so the file carries the project's
                                       address (when ENV_FOUNDRY_PROJECT_EXISTS says that the project is in Azure). Their two model names are the defaults of the template, which are names of
                                       environment/models.json (a test holds the two together).
 
@@ -89,34 +80,6 @@ table on it before it makes the gateway. A network with no free /27 left is not 
 written, the outputs say so (aigateway_subnet_prefix is empty) and the action aigateway stops with that reason. The gateway's name is aigw-meternaut-<digest>, 23 characters, inside the
 service's limit of 24. It prints
 key=value lines for GitHub to read as step outputs.
-
-The contract names only models that are deployed (environment/models.json) and only the two inference APIs that the
-kit's module makes here, asks for a token rate that the smallest of its model deployments can serve, and its policy is
-the template with the contract's numbers put in and then read back as XML, so a template that lost a rule, that gained
-one (a branch, a second assignment of the models, anything the template does not have, at any depth), or that counted
-the tokens of all consumers together, is refused here.
-
-The settings of the kit's module are chosen here and explained here, not in the workflow, so that a test can hold them:
-  - The personal-data flag stays on, because the module creates the `ai-foundry-compatibility` policy fragment only then,
-    and the inference APIs' policies include that fragment unconditionally. The Language and Content Safety addresses are
-    the model account's own (a named value may not be empty).
-  - No prompt and no answer is logged: the LLM log settings say `none` for both, so only token counts and the model's name
-    are kept. The service refuses the value `none` for the messages, so environment/kit-patches/llm-log-messages-none.patch
-    makes the kit's inference-api.bicep leave the request and response settings out when the parameter says `none`.
-  - The two policy fragments that send usage records to an Event Hub (`ai-usage`, `pii-state-saving`) are created only when
-    both loggers that they need (`usage-eventhub-logger`, `pii-usage-eventhub-logger`) exist in the instance: the service
-    refuses a fragment whose logger is missing, and the module does not make the loggers. The workflow makes the loggers
-    (environment/gateway/eventhub-loggers.bicep) once the usage recording's Event Hubs namespace exists, reads the instance, and
-    sets RECORDING_FRAGMENTS to true when both are there; the patch
-    environment/kit-patches/no-usage-recording-fragments.patch (applied to the kit's checkout) makes the module take that choice.
-  - The Unified AI API is not deployed (its update flag is off), but its enable flag is on: the module creates the
-    `set-response-headers` policy fragment only with that flag, and the policies of both inference APIs include it, so
-    without it the service refuses their policies ("Policy fragment ... could not be found").
-  - A call that is not made with a contract's key is refused on the two inference APIs by
-    environment/kit-patches/contract-required.patch: the key of the instance itself and any key that is not tied to a product
-    never run a contract's policy, so its models and limits would not apply to them.
-  - JWT checking is off (callers use the contract's key) until an app registration exists; the Realtime, Redis, embeddings
-    and release-version parts are off; no second logger and no diagnostic setting is made for Azure Monitor.
 """
 from __future__ import annotations
 
@@ -127,7 +90,6 @@ import json
 import os
 import re
 import sys
-import xml.etree.ElementTree as ET
 from pathlib import Path
 
 SCHEMA = "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#"
@@ -140,7 +102,6 @@ BUDGET_START = re.compile(r"^(?:19|20)\d{2}-(?:0[1-9]|1[0-2])-01$")
 DATE = re.compile(r"^(?:19|20)\d{2}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])$")
 MODEL_NAME = re.compile(r"^[a-z0-9][a-z0-9.-]{0,62}$")
 NAME = r"[A-Za-z0-9._()-]{1,90}"
-GATEWAY_ID = re.compile(rf"^/subscriptions/([0-9a-fA-F-]{{36}})/resourceGroups/({NAME})/providers/Microsoft\.ApiManagement/service/([A-Za-z0-9-]{{1,50}})$", re.I)
 APPINSIGHTS_ID = re.compile(rf"^/subscriptions/([0-9a-fA-F-]{{36}})/resourceGroups/({NAME})/providers/microsoft\.insights/components/([A-Za-z0-9._()-]{{1,260}})$", re.I)
 PRIVATE_SPACE = ipaddress.ip_network("10.0.0.0/8")
 SKUS = ("DataZoneStandard", "GlobalStandard")
@@ -167,7 +128,6 @@ AIGATEWAY_HOST = re.compile(r"^(?=.{4,253}$)[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?\.ai
 # A Flex Consumption deployment ends with a call from the deployment site to the app's own host name, and while the zone has no record of a new endpoint that name does not resolve: the first
 # `recording` after the usage app's endpoint was made failed at the publish for that reason (docs/proposals/07-private-by-default.md, phase 1). So the endpoint of an app is always waited for.
 APP_ENDPOINT_ZONE = "privatelink.azurewebsites.net"
-IDENTITY_NAME = "id-meternaut-gateway"
 FOUNDRY_PROJECT_NAME = "meternaut"
 FOUNDRY_GUARDRAIL_NAME = "meternaut-agents"
 AIGATEWAY_SUBNET_NAME = "snet-aigw"
@@ -193,26 +153,6 @@ AIGATEWAY_COST_ID = re.compile(r"^(?!-)(?!.*-$)[A-Za-z0-9_-]{1,64}$")
 # numbers: while a euro is worth more than a dollar (an assumption, not checked against a rate), an amount in dollars that is at most the figure in euros is under the limit. A test holds
 # these numbers to the rule's text. An hour or a day may not be above the daily figure, a longer period not above the total.
 AIGATEWAY_COST_CEILING_USD = {"hour": 5, "day": 5, "week": 25, "month": 25, "year": 25}
-CONTRACT_NAME = re.compile(r"^[a-z][a-z0-9-]{1,58}[a-z0-9]$")
-CONTRACT_KEYS = {"name", "description", "apis", "allowedModels", "tokensPerMinute", "tokenQuotaPerMonth"}
-CONTRACT_APIS = ("universal-llm-api", "azure-openai-api")
-POLICY_PLACEHOLDERS = ("@@ALLOWED_MODELS@@", "@@TOKENS_PER_MINUTE@@", "@@TOKEN_QUOTA@@")
-POLICY_TAGS = {"policies", "inbound", "backend", "outbound", "on-error", "base", "include-fragment", "set-variable", "llm-token-limit"}
-MAX_QUOTA = 1_000_000_000
-
-AZURE_MONITOR_LOG_SETTINGS = {
-    "frontend": {"request": {"headers": [], "body": {"bytes": 0}}, "response": {"headers": [], "body": {"bytes": 0}}},
-    "backend": {"request": {"headers": [], "body": {"bytes": 0}}, "response": {"headers": [], "body": {"bytes": 0}}},
-    "largeLanguageModel": {
-        "logs": "enabled",
-        "requests": {"messages": "none", "maxSizeInBytes": 0},
-        "responses": {"messages": "none", "maxSizeInBytes": 0},
-    },
-}
-APP_INSIGHTS_LOG_SETTINGS = {
-    "headers": ["Content-type", "User-agent", "x-ms-region", "x-ratelimit-remaining-tokens", "x-ratelimit-remaining-requests"],
-    "body": {"bytes": 0},
-}
 
 
 class Problem(Exception):
@@ -657,104 +597,7 @@ def aigateway_files(env: dict, subscription: str, group: str, location: str, own
     return files, outputs
 
 
-def read_contract(path: Path, models: list[dict]) -> dict:
-    """The contract of environment/contract.json, checked against the models that are deployed."""
-    try:
-        contract = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        raise Problem(f"{path} is not a readable JSON contract")
-    if not isinstance(contract, dict) or set(contract) != CONTRACT_KEYS:
-        raise Problem("the contract has exactly: " + ", ".join(sorted(CONTRACT_KEYS)))
-    name, description, apis = contract["name"], contract["description"], contract["apis"]
-    if not isinstance(name, str) or not CONTRACT_NAME.match(name):
-        raise Problem("the contract's name is 3 to 60 lowercase letters, digits and hyphens, starting with a letter")
-    if not isinstance(description, str) or not 1 <= len(description) <= 400 or any(ord(c) < 32 for c in description):
-        raise Problem("the contract's description is 1 to 400 characters on one line")
-    if not isinstance(apis, list) or not 1 <= len(apis) <= len(CONTRACT_APIS) or len(set(map(str, apis))) != len(apis) or any(a not in CONTRACT_APIS for a in apis):
-        raise Problem(f"the contract's apis are some of {', '.join(CONTRACT_APIS)}, each once")
-    deployed = {m["name"]: m for m in models}
-    allowed = contract["allowedModels"]
-    if (not isinstance(allowed, list) or not 1 <= len(allowed) <= len(deployed) or len(set(map(str, allowed))) != len(allowed)
-            or any(not isinstance(m, str) or m not in deployed for m in allowed)):
-        raise Problem("the contract's allowedModels are models of environment/models.json, each once")
-    rate, quota = contract["tokensPerMinute"], contract["tokenQuotaPerMonth"]
-    for label, value in (("tokensPerMinute", rate), ("tokenQuotaPerMonth", quota)):
-        if not isinstance(value, int) or isinstance(value, bool) or value < 1:
-            raise Problem(f"the contract's {label} is a whole number of at least 1")
-    ceiling = min(deployed[m]["capacity"] for m in allowed) * 1000
-    if rate > ceiling:
-        raise Problem(f"the contract's tokensPerMinute ({rate}) is more than the smallest of its model deployments can serve ({ceiling} a minute)")
-    if not rate <= quota <= MAX_QUOTA:
-        raise Problem(f"the contract's tokenQuotaPerMonth is at least its tokensPerMinute and at most {MAX_QUOTA}")
-    return dict(contract)
-
-
-def contract_policy(template: str, contract: dict) -> str:
-    """The product policy: the template with the contract's numbers in it, read back as XML to see that its rules are all there."""
-    for placeholder in POLICY_PLACEHOLDERS:
-        if template.count(placeholder) != 1:
-            raise Problem(f"the policy template holds {placeholder} exactly once")
-    policy = (template.replace("@@ALLOWED_MODELS@@", ",".join(contract["allowedModels"]))
-              .replace("@@TOKENS_PER_MINUTE@@", str(contract["tokensPerMinute"]))
-              .replace("@@TOKEN_QUOTA@@", str(contract["tokenQuotaPerMonth"])))
-    if "@@" in policy:
-        raise Problem("the policy template holds a placeholder that the contract does not fill")
-    try:
-        root = ET.fromstring(policy)
-    except ET.ParseError as e:
-        raise Problem(f"the contract's policy is not well-formed XML: {e}")
-    # Only the rules of the template may be in the policy, at any depth: a <choose>, a <return-response> or a second
-    # set-variable could undo the models and the limits below, and a contract is only worth what its policy holds.
-    for element in root.iter():
-        if element.tag not in POLICY_TAGS:
-            raise Problem(f"the contract's policy holds <{element.tag}>, a rule that the policy template does not have: only {', '.join(sorted(POLICY_TAGS))} are allowed")
-    inbound = root.find("inbound")
-    if inbound is None:
-        raise Problem("the contract's policy has no inbound section")
-    models = [v for v in inbound.findall("set-variable") if v.get("name") == "allowedModels"]
-    limits = inbound.findall("llm-token-limit")
-    fragments = [f.get("fragment-id") for f in inbound.findall("include-fragment")]
-    if len(models) != 1 or models[0].get("value") != ",".join(contract["allowedModels"]):
-        raise Problem("the contract's policy sets allowedModels once, to the contract's models")
-    if "set-llm-requested-model" not in fragments:
-        raise Problem("the contract's policy includes set-llm-requested-model: the gateway reads the requested model with it")
-    if len(limits) != 1:
-        raise Problem("the contract's policy has exactly one llm-token-limit")
-    expected = {"counter-key": "@(context.Subscription.Id)", "tokens-per-minute": str(contract["tokensPerMinute"]),
-                "token-quota": str(contract["tokenQuotaPerMonth"]), "token-quota-period": "Monthly", "estimate-prompt-tokens": "false"}
-    if {k: limits[0].get(k) for k in expected} != expected:
-        raise Problem("the contract's token limit counts for each subscription, per minute and per month, as the contract says")
-    # The whole shape, as a last check: the four sections in order, nothing but <base /> after the inbound section, and
-    # exactly these rules, with exactly these attributes, in the inbound section.
-    if root.tag != "policies" or [c.tag for c in root] != ["inbound", "backend", "outbound", "on-error"]:
-        raise Problem("the contract's policy has the sections inbound, backend, outbound and on-error, in this order")
-    for section in list(root)[1:]:
-        if [(c.tag, dict(c.attrib), len(c)) for c in section] != [("base", {}, 0)]:
-            raise Problem(f"the contract's policy has nothing but <base /> in its {section.tag} section")
-    rules = [("base", {}), ("include-fragment", {"fragment-id": "set-llm-requested-model"}),
-             ("set-variable", {"name": "allowedModels", "value": ",".join(contract["allowedModels"])}),
-             ("llm-token-limit", expected), ("set-variable", {"name": "enableResponseHeaders", "value": "@(true)"})]
-    if [(c.tag, dict(c.attrib), len(c)) for c in inbound] != [(tag, attributes, 0) for tag, attributes in rules]:
-        raise Problem("the contract's inbound section has exactly the rules of the policy template, in its order: base, set-llm-requested-model, allowedModels, the token limit, enableResponseHeaders")
-    return policy
-
-
-def contract_files(contract: dict, template: str, gateway_name: str) -> tuple[dict, dict[str, str]]:
-    subscription_name = f"{contract['name']}-sub-01"
-    document = parameters({
-        "apimName": gateway_name,
-        "contractName": contract["name"],
-        "subscriptionName": subscription_name,
-        "contractDescription": contract["description"],
-        "apiNames": contract["apis"],
-        "policyXml": contract_policy(template, contract),
-    })
-    outputs = {"contract_name": contract["name"], "contract_subscription": subscription_name, "contract_apis": ",".join(contract["apis"])}
-    return document, outputs
-
-
-def build(env, models: list[dict], preview: bool = False, contract: dict | None = None, policy_template: str | None = None,
-          aigateway_policies: list[dict] | None = None) -> tuple[dict[str, dict | list], dict[str, str]]:
+def build(env, models: list[dict], preview: bool = False, aigateway_policies: list[dict] | None = None) -> tuple[dict[str, dict | list], dict[str, str]]:
     subscription = need(env, "ENV_SUBSCRIPTION_ID")
     group = need(env, "ENV_RESOURCE_GROUP")
     location = need(env, "ENV_LOCATION")
@@ -768,28 +611,9 @@ def build(env, models: list[dict], preview: bool = False, contract: dict | None 
     if not OWNER.match(owner):
         raise Problem("ENV_OWNER is a short label (letters, digits, @ . _ + - and spaces)")
 
-    gateway = GATEWAY_ID.match(need(env, "GATEWAY_RESOURCE_ID"))
-    if not gateway:
-        raise Problem("GATEWAY_RESOURCE_ID is the resource id of the API Management instance")
     insights = APPINSIGHTS_ID.match(need(env, "GATEWAY_APPINSIGHTS_ID"))
     if not insights:
         raise Problem("GATEWAY_APPINSIGHTS_ID is the resource id of an Application Insights component")
-    if insights.group(1).lower() != gateway.group(1).lower():
-        raise Problem("the Application Insights component is in the gateway's subscription")
-    principal = (env.get("GATEWAY_PRINCIPAL_ID") or "").strip()
-    principal_known = bool(principal)
-    if not principal_known:
-        if not preview:
-            raise Problem("GATEWAY_PRINCIPAL_ID is not set: it is the object id of the gateway identity, made by the first deploy (a --preview run may leave it out)")
-        principal = PLACEHOLDER
-    if not GUID.match(principal):
-        raise Problem("GATEWAY_PRINCIPAL_ID is the object id of the gateway's user-assigned identity")
-    client = (env.get("GATEWAY_CLIENT_ID") or "").strip()
-    if client and not GUID.match(client):
-        raise Problem("GATEWAY_CLIENT_ID is the client id of the gateway's user-assigned identity")
-    fragments = (env.get("RECORDING_FRAGMENTS") or "false").strip().lower()
-    if fragments not in ("true", "false"):
-        raise Problem("RECORDING_FRAGMENTS is true or false")
     cases_system_principal = (env.get("CASES_SYSTEM_PRINCIPAL_ID") or "").strip()
     if cases_system_principal and not GUID.match(cases_system_principal):
         raise Problem("CASES_SYSTEM_PRINCIPAL_ID is the object id of the cases app's system-assigned identity")
@@ -851,7 +675,7 @@ def build(env, models: list[dict], preview: bool = False, contract: dict | None 
     endpoint = f"https://{name}.cognitiveservices.azure.com"
     deployed = [{k: m[k] for k in ("name", "version", "sku", "capacity")} for m in models]
     # The Foundry resource of the agents deploys the same models with a capacity of its own: an agent that calls tools reads everything said so far again at every step,
-    # so one run uses many more tokens a minute than the gateway's detective does.
+    # so one run uses many more tokens a minute than a single model call does.
     agent_deployed = [{"name": m["name"], "version": m["version"], "sku": m["sku"], "capacity": m["agentCapacity"]} for m in models]
 
     environment = {
@@ -864,16 +688,10 @@ def build(env, models: list[dict], preview: bool = False, contract: dict | None 
         "webSubnetPrefix": str(web),
         "dnsServers": dns,
         "models": deployed,
-        "gatewayPrincipalId": principal.lower(),
         "owner": owner,
         "budgetAmount": budget,
         "alertEmails": emails,
         "budgetStartDate": start,
-    }
-    logger = {
-        "apimName": gateway.group(3),
-        "appInsightsName": insights.group(3),
-        "appInsightsResourceGroup": insights.group(2),
     }
     recording = {
         "location": location,
@@ -882,62 +700,11 @@ def build(env, models: list[dict], preview: bool = False, contract: dict | None 
         "eventHubNamespaceName": names["event_hub_namespace"],
         "cosmosAccountName": names["cosmos_account_name"],
         "functionAppName": names["function_app_name"],
-        "gatewayPrincipalId": principal.lower(),
         "gatewayAppInsightsSubscriptionId": insights.group(1).lower(),
         "gatewayAppInsightsResourceGroup": insights.group(2),
         "gatewayAppInsightsName": insights.group(3),
         "dataReaderPrincipalIds": list(dict.fromkeys(r.lower() for r in readers)),
         "usageAppPublicNetworkAccess": USAGE_APP_PUBLIC_NETWORK_ACCESS,
-    }
-    backend = {
-        "backendId": name,
-        "backendType": "ai-foundry",
-        "endpoint": endpoint + "/",
-        "authType": "managed-identity",
-        "priority": 1,
-        "weight": 100,
-        "supportedModels": [
-            {
-                "name": m["name"],
-                "sku": m["sku"],
-                "capacity": m["capacity"],
-                "modelFormat": "OpenAI",
-                "modelVersion": m["version"],
-                "retirementDate": m["retirementDate"],
-            }
-            for m in models
-        ],
-    }
-    kit = {
-        "apimServiceName": gateway.group(3),
-        "managedIdentityName": IDENTITY_NAME,
-        "updatePolicyFragments": True,
-        "enablePIIAnonymization": True,
-        "enableAIModelInference": True,
-        "updateNamedValues": True,
-        "aiLanguageServiceUrl": endpoint + "/",
-        "contentSafetyServiceUrl": endpoint + "/",
-        "updateJwtNamedValues": True,
-        "enableJwtAuth": False,
-        "updateLLMBackends": True,
-        "updateLLMBackendPools": True,
-        "updateLLMPolicyFragments": True,
-        "llmBackendConfig": [backend],
-        "updateUniversalLLMApi": True,
-        "updateAzureOpenAIApi": True,
-        "updateUnifiedAiApi": False,
-        "enableUnifiedAiApi": True,
-        "updateReleaseVersionApi": False,
-        "updateOpenAIRealtimeApi": False,
-        "updateRedisCache": False,
-        "enableRedisCache": False,
-        "updateEmbeddingsBackend": False,
-        "enableEmbeddingsBackend": False,
-        "updateAppInsightsDiagnostics": True,
-        "deployAzureMonitorLogger": False,
-        "deployUsageRecordingFragments": fragments == "true",
-        "azureMonitorLogSettings": AZURE_MONITOR_LOG_SETTINGS,
-        "appInsightsLogSettings": APP_INSIGHTS_LOG_SETTINGS,
     }
     outputs = {
         "account_name": name,
@@ -945,11 +712,6 @@ def build(env, models: list[dict], preview: bool = False, contract: dict | None 
         "vnet_name": "vnet-meternaut",
         "nsg_name": "nsg-meternaut-pe",
         "endpoint": endpoint,
-        "gateway_subscription": gateway.group(1).lower(),
-        "gateway_resource_group": gateway.group(2),
-        "gateway_name": gateway.group(3),
-        "identity_name": IDENTITY_NAME,
-        "principal_known": "true" if principal_known else "false",
         "cases_system_principal_known": "true" if cases_system_principal else "false",
         "function_subnet_prefix": str(func_subnet),
         "web_subnet_prefix": str(web),
@@ -984,8 +746,6 @@ def build(env, models: list[dict], preview: bool = False, contract: dict | None 
         foundry_values["aiGatewayModels"] = [{"name": m["name"], "version": m["version"]} for m in models]
     files = {
         "environment.parameters.json": parameters(environment),
-        "logger.parameters.json": parameters(logger),
-        "kit.parameters.json": parameters(kit),
         "recording.parameters.json": parameters(recording),
         "foundry.parameters.json": parameters(foundry_values),
         "planted.parameters.json": parameters(planted_parameters(env, location, owner)),
@@ -996,7 +756,7 @@ def build(env, models: list[dict], preview: bool = False, contract: dict | None 
             "opsSubnetExists": ops_subnet_exists(env),
             "eventHubNamespaceName": names["event_hub_namespace"],
         }),
-        # The first cases need nothing of the gateway and nothing of a contract: the file is written in every build, with the Foundry facts of this one.
+        # The first cases need nothing of the owner's API Management instance: the file is written in every build, with the Foundry facts of this one.
         "cases.parameters.json": parameters({
             "location": location,
             "owner": owner,
@@ -1012,21 +772,6 @@ def build(env, models: list[dict], preview: bool = False, contract: dict | None 
             **routed,
         }),
     }
-    if client or preview:
-        files["eventhub-loggers.parameters.json"] = parameters({
-            "apimName": gateway.group(3),
-            "eventHubHost": f"{names['event_hub_namespace']}.servicebus.windows.net",
-            "usageHubName": "ai-usage",
-            "piiHubName": "pii-usage",
-            "identityClientId": (client or PLACEHOLDER).lower(),
-        })
-    if contract is not None:
-        if policy_template is None:
-            raise Problem("a contract needs its policy template")
-        files["contract.parameters.json"], contract_outputs = contract_files(contract, policy_template, gateway.group(3))
-        outputs.update(contract_outputs)
-        if len(contract["allowedModels"]) < 2:
-            raise Problem("the contract's allowedModels hold at least two models: the Skeptic of the first cases has to be another model than the Detective")
     if aigateway_policies is not None:
         aigateway_written, aigateway_outputs = aigateway_files(env, subscription, group, location, owner, vnet, (subnet, func_subnet, web, ops), foundry, models, aigateway_policies, preview)
         files.update(aigateway_written)
@@ -1076,16 +821,7 @@ def run_check(args) -> int:
 def run_build(args, environ) -> int:
     try:
         models = read_models(Path(args.models))
-        contract = policy_template = None
-        if args.contract or args.contract_policy:
-            if not (args.contract and args.contract_policy):
-                raise Problem("--contract and --contract-policy go together")
-            contract = read_contract(Path(args.contract), models)
-            try:
-                policy_template = Path(args.contract_policy).read_text(encoding="utf-8")
-            except OSError:
-                raise Problem(f"{args.contract_policy} is not a readable policy template")
-        files, outputs = build(environ, models, preview=args.preview, contract=contract, policy_template=policy_template,
+        files, outputs = build(environ, models, preview=args.preview,
                                aigateway_policies=read_aigateway_policies(Path(args.aigateway_policies), models) if args.aigateway_policies else None)
     except Problem as e:
         print(f"error: {e}", file=sys.stderr)
@@ -1105,9 +841,7 @@ def main(argv=None, environ=None) -> int:
     build_parser = commands.add_parser("build", help="write the parameter files from the settings")
     build_parser.add_argument("--models", required=True, help="the JSON list of models (environment/models.json)")
     build_parser.add_argument("--out-dir", required=True, help="where to write the ARM parameter files")
-    build_parser.add_argument("--preview", action="store_true", help="for a what-if: the gateway identity may not exist yet")
-    build_parser.add_argument("--contract", help="the contract (environment/contract.json); also writes contract.parameters.json")
-    build_parser.add_argument("--contract-policy", help="the contract's policy template (environment/gateway/contract-policy.xml)")
+    build_parser.add_argument("--preview", action="store_true", help="for a what-if and for the first pass of the workflow: a fact that is not known yet (the AI Gateway's host name, its project's identity) does not stop the build")
     build_parser.add_argument("--aigateway-policies", help="the AI Gateway's gateway-wide policies (environment/aigateway/policies.json); also writes aigateway-subnet.parameters.json, aigateway.parameters.json and aigateway-policies.json")
     check_parser = commands.add_parser("check", help="check a parameter file against a compiled template (az bicep build --outfile)")
     check_parser.add_argument("--params", required=True)

@@ -24,11 +24,7 @@ FORBIDDEN = {
     "storageConnectionString": r"DefaultEndpointsProtocol",
     "keyAuthMode": r"--auth-mode\s+key|az storage account keys",
 }
-KNOWN = {
-    (".github/workflows/deploy-hub.yml", "listSecrets"): "the subscription key of the contract, read for one test of the gateway and masked by the Hub action contract, which goes with the API Management objects that a later change retires (the owner ordered their undo, 2026-11-07); the way out is token validation with Microsoft Entra (an app registration)",
-    (".github/workflows/deploy-hub.yml", "primaryKey"): "the same read: the field that holds the contract's key",
-    ("environment/gateway/logger.bicep", "instrumentationKey"): "API Management's Application Insights logger takes the instrumentation key of the component; the platform has no identity-based form of it, and the logger is one of the objects that are being removed from the owner's API Management instance",
-}
+KNOWN = {}
 SCANNED = ("environment/**/*.bicep", "infra/**/*.bicep", ".github/workflows/*.yml", "tools/*.py", "tools/*.sh", "operator/*.sh", "src/**/*.py", "src/**/*.json", "src/**/*.txt")
 
 
@@ -63,17 +59,22 @@ class NoKeys(unittest.TestCase):
         self.assertEqual(sorted(found - set(KNOWN)), [], "a key, or the way to a key (AGENTS.md rule 23): use an identity, or say why not in KNOWN")
         self.assertEqual(sorted(set(KNOWN) - found), [], "this is no longer in the code: take it out of KNOWN")
 
-    def test_the_known_ones_are_in_two_files_the_app_reads_no_key_and_each_has_its_way_out_written_down(self):
-        self.assertEqual(sorted({relative for relative, _ in KNOWN}), [".github/workflows/deploy-hub.yml", "environment/gateway/logger.bicep"])
-        for reason in KNOWN.values():
-            self.assertGreater(len(reason), 30)
+    def test_nothing_is_known_any_more_the_app_reads_no_key_and_rule_23_says_which_exception_is_left(self):
+        # The two files that held a known exception (the Hub step that read the contract's key, and the logger template that held the instrumentation key) were deleted with the objects on the
+        # owner's API Management instance that they belonged to (2026-11-07): the list stays, so that a new word has to be excused here, with its reason and its way out.
+        self.assertEqual(KNOWN, {})
+        for gone in ("src/case-functions/cases/gateway.py", "environment/gateway", "environment/contract.json", "environment/kit-patches", "tools/gateway-prep.py", "tools/environment-smoke.py"):
+            self.assertFalse((ROOT / gone).exists(), f"{gone} is gone: it read a key or made an object on the owner's API Management instance")
         rules = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
         self.assertIn("23. **No keys, ever**", rules)
-        self.assertIn("the instrumentation key that API Management's own Application Insights logger holds", rules)
-        self.assertIn("the cases app reads no key", rules)
-        self.assertIn("The contract's key is not one of them any more (2026-11-07)", rules)
+        self.assertIn("**No other exception is left (2026-11-07):**", rules)
+        self.assertIn("the connection string in the metadata of the Foundry project's tracing connection", rules)
+        self.assertIn("The cases app reads no key", rules)
+        self.assertIn("no Hub action reads one", rules)
+        self.assertIn("holds the list of known exceptions empty", rules)
+        self.assertNotIn("today that is the instrumentation key that API Management's own Application Insights logger holds", rules)
+        self.assertNotIn("What remains of that key is the Hub action `contract`", rules)
         self.assertNotIn("the first cases' function app reads that key at the start of each run", rules)
-        self.assertFalse((ROOT / "src" / "case-functions" / "cases" / "gateway.py").exists(), "the module that read the key is gone")
 
     def test_the_scan_reads_what_it_is_meant_to_read(self):
         names = {relative for relative, _ in files()}

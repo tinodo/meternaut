@@ -20,19 +20,6 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Check out the Citadel kit at the commit that the deploy workflow uses
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: Azure-Samples/ai-hub-gateway-solution-accelerator
-          ref: 81599b31dfbaee20ebd3a6d2ba9b07dde3c31814
-          path: kit
-          persist-credentials: false
-      - name: Apply the patches to the kit's module, as the deploy workflow does
-        run: |
-          for patch in environment/kit-patches/*.patch; do
-            git -C kit apply --check "../$patch"
-            git -C kit apply "../$patch"
-          done
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.13"
@@ -87,11 +74,11 @@ jobs:
           RUBY
       - name: The Bicep templates compile and lint
         run: |
-          for template in environment/main.bicep environment/gateway/identity.bicep environment/gateway/logger.bicep environment/gateway/eventhub-loggers.bicep environment/gateway/contract.bicep environment/recording/main.bicep environment/foundry/main.bicep environment/cases/main.bicep environment/operator/main.bicep environment/aigateway/main.bicep environment/aigateway/subnet.bicep infra/budgets/*.bicep; do
+          for template in environment/main.bicep environment/recording/main.bicep environment/foundry/main.bicep environment/cases/main.bicep environment/operator/main.bicep environment/aigateway/main.bicep environment/aigateway/subnet.bicep infra/budgets/*.bicep; do
             az bicep build --file "$template" --stdout > /dev/null
             az bicep lint --file "$template"
           done
-      - name: The parameter files fit the compiled templates, the kit's module included
+      - name: The parameter files fit the compiled templates
         env:
           ENV_SUBSCRIPTION_ID: 11111111-2222-3333-4444-555555555555
           ENV_RESOURCE_GROUP: rg-example
@@ -103,11 +90,7 @@ jobs:
           ENV_BUDGET_AMOUNT: "25"
           ENV_ALERT_EMAILS: owner@example.com
           ENV_BUDGET_START: "2026-11-01"
-          GATEWAY_RESOURCE_ID: /subscriptions/66666666-7777-8888-9999-000000000000/resourceGroups/rg-gateway/providers/Microsoft.ApiManagement/service/example-apim
           GATEWAY_APPINSIGHTS_ID: /subscriptions/66666666-7777-8888-9999-000000000000/resourceGroups/rg-gateway/providers/microsoft.insights/components/example-insights
-          GATEWAY_PRINCIPAL_ID: aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee
-          GATEWAY_CLIENT_ID: bbbbbbbb-1111-2222-3333-cccccccccccc
-          RECORDING_FRAGMENTS: "true"
           RECORDING_READER_IDS: 12345678-1234-1234-1234-123456789012
           CASES_SYSTEM_PRINCIPAL_ID: 12345678-dddd-eeee-ffff-123456789012
           ENV_FOUNDRY_PROJECT_EXISTS: "true"
@@ -115,25 +98,17 @@ jobs:
         run: |
           out="$RUNNER_TEMP/params"
           mkdir -p "$out"
-          python tools/environment-params.py build --models environment/models.json --out-dir "$out" --contract environment/contract.json --contract-policy environment/gateway/contract-policy.xml --aigateway-policies environment/aigateway/policies.json > /dev/null
+          python tools/environment-params.py build --models environment/models.json --out-dir "$out" --aigateway-policies environment/aigateway/policies.json > /dev/null
           az bicep build --file environment/main.bicep --outfile "$out/environment.json"
-          az bicep build --file environment/gateway/logger.bicep --outfile "$out/logger.json"
-          az bicep build --file environment/gateway/eventhub-loggers.bicep --outfile "$out/eventhub-loggers.json"
-          az bicep build --file environment/gateway/contract.bicep --outfile "$out/contract.json"
           az bicep build --file environment/recording/main.bicep --outfile "$out/recording.json"
           az bicep build --file environment/foundry/main.bicep --outfile "$out/foundry.json"
           az bicep build --file environment/cases/main.bicep --outfile "$out/cases.json"
           az bicep build --file environment/operator/main.bicep --outfile "$out/operator.json"
           az bicep build --file environment/aigateway/main.bicep --outfile "$out/aigateway.json"
           az bicep build --file environment/aigateway/subnet.bicep --outfile "$out/aigateway-subnet.json"
-          az bicep build --file kit/bicep/infra/apim-gateway-upgrade/main.bicep --outfile "$out/kit.json"
           python tools/environment-params.py check --params "$out/environment.parameters.json" --template "$out/environment.json" --label environment
-          python tools/environment-params.py check --params "$out/logger.parameters.json" --template "$out/logger.json" --label logger
-          python tools/environment-params.py check --params "$out/eventhub-loggers.parameters.json" --template "$out/eventhub-loggers.json" --label eventhub-loggers
-          python tools/environment-params.py check --params "$out/kit.parameters.json" --template "$out/kit.json" --label kit
           python tools/environment-params.py check --params "$out/recording.parameters.json" --template "$out/recording.json" --label recording
           python tools/environment-params.py check --params "$out/foundry.parameters.json" --template "$out/foundry.json" --label foundry
-          python tools/environment-params.py check --params "$out/contract.parameters.json" --template "$out/contract.json" --label contract
           python tools/environment-params.py check --params "$out/cases.parameters.json" --template "$out/cases.json" --label cases
           python tools/environment-params.py check --params "$out/operator.parameters.json" --template "$out/operator.json" --label operator
           python tools/environment-params.py check --params "$out/aigateway.parameters.json" --template "$out/aigateway.json" --label aigateway

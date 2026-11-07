@@ -1,8 +1,10 @@
-// The usage recording of the Citadel gateway, made for this environment: where the numbers of the gateway's calls are
-// copied to and kept, as Citadel's observability guide describes it.
+// The usage recording that was made for the Citadel gateway of the owner's API Management instance: where the numbers of the gateway's calls are
+// copied to and kept, as Citadel's observability guide describes it. Since 2026-11-07 Meternaut makes nothing on that instance (the owner ordered the undo of what it had
+// added), so nothing sends to the two usage hubs any more and the copy jobs have nothing new to copy: the recording is idle, it stays until the owner decides about it, and
+// this template makes no role for the gateway any more.
 //
 //   Application Insights of the gateway --(copy jobs, a function app, 8 times a day)--> Cosmos DB
-//   gateway --(two Event Hub loggers)--> Event Hubs --(two Event Hub triggers of the same function app)--> Cosmos DB
+//   (the gateway's two Event Hub loggers --> Event Hubs --(two Event Hub triggers)--> Cosmos DB: nothing makes the loggers now, and the two hubs and their triggers wait)
 //
 // What it holds: a Log Analytics workspace and an Application Insights component for the function app itself, a storage
 // account (its host storage and its code package), an Event Hubs namespace with the hubs, a Cosmos DB account (serverless) with
@@ -18,17 +20,14 @@
 // Azure applies a role within about ten minutes.
 //
 // No key of any kind, and no opt-out of a policy (AGENTS.md rule 23):
-//  - every caller uses an identity (Microsoft Entra ID): the function app its managed identity, the gateway its own
-//    identity, the deployment workflow its federated identity;
+//  - every caller uses an identity (Microsoft Entra ID): the function app its managed identity, the deployment workflow its federated identity;
 //  - the storage account has Shared Key access off, the Cosmos DB account has local authentication off, the Event Hubs
 //    namespace has local authentication off, the Application Insights component and the workspace take no
 //    instrumentation key or shared key for ingestion without Entra ID;
 //  - storage, Cosmos DB and Event Hubs have public network access off and are reached through private endpoints; the function app
 //    reaches them from a subnet of its own (virtual network integration). The Event Hubs namespace has no network rule set and no trusted-service
 //    exception, because nothing needs one: the function app and the Operator (environment/operator/main.bicep, which sends the control events of the
-//    two checks) use its private endpoint, and the gateway's two loggers can use only that endpoint too, over the peering, because API Management retired
-//    trusted-service connectivity to Event Hubs on 15 March 2026. Whether the landing zone's route lets the gateway's network reach the endpoint is not known
-//    until a policy of the gateway sends to the two usage hubs (docs/proposals/07-private-by-default.md says how that will show);
+//    two checks) use its private endpoint;
 //  - nothing relies on the tag SecurityControl = Ignore: the tenant's policies change a storage account or a Cosmos DB account
 //    to exactly this state, so there is nothing for them to change.
 //
@@ -43,8 +42,8 @@
 // seen to work. The workflow waits until the landing zone has registered the endpoint's names before it publishes, because a Flex Consumption deployment ends with a call from the deployment
 // site to the app's own host name, which does not resolve before.
 //
-// Made after the kit's bicep/infra/apim-gateway-upgrade/supporting-services.bicep and its services/*.bicep, at the commit that
-// the workflow checks out, with these differences, each on purpose:
+// Made after the kit's bicep/infra/apim-gateway-upgrade/supporting-services.bicep and its services/*.bicep (the Citadel kit; the workflow no longer checks it out), with these
+// differences, each on purpose:
 //  - the kit runs the copy jobs as a Logic App Standard. That needs the account key of its storage (an Azure Files share
 //    mounted with it, which cannot use an identity) and the connection string of Cosmos DB, so it cannot run on a
 //    storage account without Shared Key. The five workflows are rewritten as a Python function app (src/usage-functions)
@@ -88,13 +87,6 @@ param cosmosAccountName string
 @minLength(2)
 @maxLength(60)
 param functionAppName string
-
-@description('Principal id of the gateway identity. It may send to the two usage event hubs, and does nothing else here. The all-zero id that the parameter builder writes while the identity is not known (it does not exist, or no longer exists) means "none": the two roles are then not made.')
-@minLength(36)
-@maxLength(36)
-param gatewayPrincipalId string
-
-var noGatewayIdentity = '00000000-0000-0000-0000-000000000000'
 
 @description('Subscription of the Application Insights component that the gateway writes its token metrics to.')
 @minLength(36)
@@ -152,12 +144,10 @@ var containers = [
   { name: 'streaming-export-config', partitionKey: '/type' }
 ]
 
-// Azure Event Hubs Data Sender: the gateway and the workflow write events and cannot read them. Azure Event Hubs Data
-// Receiver: the function app reads events and cannot write them. Storage Blob Data Owner, Storage Queue Data Contributor and
+// Azure Event Hubs Data Receiver: the function app reads events and cannot write them. Storage Blob Data Owner, Storage Queue Data Contributor and
 // Storage Table Data Contributor: what the Functions host needs on its host storage and on the container of its code package
 // (the documented set for an identity-based host storage). Monitoring Metrics Publisher: the function app's telemetry, with
 // Entra ID instead of the instrumentation key. Each on the one resource, never on the group.
-var eventHubsDataSenderRoleId = '2b629674-e913-4c01-ae53-ef4638d8f975'
 var eventHubsDataReceiverRoleId = 'a638d3c7-ab3a-418d-83e6-5f17a39d4fde'
 var storageBlobDataOwnerRoleId = 'b7e6dc6d-f1e8-4753-8033-0f276bb0955b'
 var storageQueueDataContributorRoleId = '974c5e8b-45b9-4653-ba55-5f855dd0fb88'
@@ -449,37 +439,12 @@ resource eventHubsEndpoint 'Microsoft.Network/privateEndpoints@2025-05-01' = {
   ]
 }
 
-// Each role on the one event hub that the caller uses, not on the namespace: the gateway sends to the two usage hubs and cannot start a
-// copy job; the function app reads each of the three. The deployment workflow's identity holds no role on any hub: the control event is sent by the
-// Operator, which holds Azure Event Hubs Data Sender on the control hub (environment/operator/main.bicep), and the namespace takes no traffic from the
-// workflow's runner. The role that the workflow's identity held here is retired by the action recording, which deletes that one assignment after the
-// deploy when it is still there, because a template never removes an assignment that it stops declaring. The two roles of the gateway identity are made only when that identity is known
-// (the owner ordered the undo of what Meternaut added to his API Management instance on 2026-11-07, so the identity may be gone, and a role for a principal that does not exist is refused).
-resource gatewaySendsUsage 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (gatewayPrincipalId != noGatewayIdentity) {
-  scope: usageHub
-  name: guid(usageHub.id, gatewayPrincipalId, eventHubsDataSenderRoleId)
-  properties: {
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', eventHubsDataSenderRoleId)
-    principalId: gatewayPrincipalId
-    principalType: 'ServicePrincipal'
-  }
-  dependsOn: [
-    eventHubsEndpoint
-  ]
-}
-
-resource gatewaySendsPii 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (gatewayPrincipalId != noGatewayIdentity) {
-  scope: piiHub
-  name: guid(piiHub.id, gatewayPrincipalId, eventHubsDataSenderRoleId)
-  properties: {
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', eventHubsDataSenderRoleId)
-    principalId: gatewayPrincipalId
-    principalType: 'ServicePrincipal'
-  }
-  dependsOn: [
-    eventHubsEndpoint
-  ]
-}
+// Each role on the one event hub that the caller uses, not on the namespace: the function app reads each of the three. No gateway holds a role here any more
+// (the owner ordered the undo of what Meternaut added to his API Management instance on 2026-11-07): a template never removes an assignment that it stops
+// declaring, so a person removes the two Azure Event Hubs Data Sender assignments that the gateway's old identity holds on the two usage hubs. The deployment workflow's identity holds
+// no role on any hub: the control event is sent by the Operator, which holds Azure Event Hubs Data Sender on the control hub (environment/operator/main.bicep), and the namespace takes no
+// traffic from the workflow's runner. The role that the workflow's identity held here is retired by the action recording, which deletes that one assignment after the
+// deploy when it is still there, because a template never removes an assignment that it stops declaring.
 
 // The function app's roles are for its own system-assigned identity. A role assignment's name has to be known when the deployment starts, and the principal id of a
 // system-assigned identity exists only once the app does: so the names are seeded with the app's id (the identity lives and dies with the app, and an app that is deleted
