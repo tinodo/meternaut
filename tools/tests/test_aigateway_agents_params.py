@@ -1,7 +1,9 @@
-"""The switch of the agents' route through the AI Gateway (AGENTS_VIA_AI_GATEWAY in tools/environment-params.py): while it is False nothing differs, and when it is True the three actions get what they need.
+"""The switch of the agents' route through the AI Gateway (AGENTS_VIA_AI_GATEWAY in tools/environment-params.py): True in the repository, so the three actions get what they need; and False, the way back,
+under which nothing differs.
 
 Step 2 of docs/proposals/08-ai-gateway.md. The parameter builder is run in this process with fixed inputs that this file holds itself (no file of the repository is an input of the pins of
-"nothing differs"), so that a change of a model version or of a limit cannot break them. No test calls Azure."""
+"nothing differs"), so that a change of a model version or of a limit cannot break them. build() sets the constant itself (False unless a test says otherwise), so the tests of the way back and of the
+route stay what they are whatever the repository holds; the tests that read the repository's own value say so. No test calls Azure."""
 import hashlib
 import importlib.util
 import io
@@ -109,12 +111,15 @@ def declared(text):
     return {m.group(1): (m.group(2), m.group(3)) for m in re.finditer(r"^param (\w+) (\w+)(?: = (.+))?$", text, re.M)}
 
 
-class TheSwitchIsOffAndNothingDiffers(unittest.TestCase):
-    def test_the_switch_is_a_constant_of_the_builder_and_it_is_false(self):
-        self.assertIs(ep.AGENTS_VIA_AI_GATEWAY, False, "a later change, after the owner's yes and after aigateway and aigateway-check have passed on the real estate, flips this one value")
+class TheWayBackTheSwitchIsFalseAndNothingDiffers(unittest.TestCase):
+    """The constant is True in the repository (the owner ordered the agents' route, 2026-11-07), and False is the way back. These tests set the constant to False themselves (build() does it by
+    default), so that the way back stays what it was: no parameter file, no output and no action differs from what the builder made before step 2."""
+
+    def test_the_switch_is_a_constant_of_the_builder_and_it_is_true(self):
+        self.assertIs(ep.AGENTS_VIA_AI_GATEWAY, True, "the agents' route is on; the way back is this one value set to False, in a change of its own that also changes this pin and the pages that say it is on")
         source = (ROOT / "tools" / "environment-params.py").read_text(encoding="utf-8")
         self.assertEqual(len(re.findall(r"(?m)^AGENTS_VIA_AI_GATEWAY = (True|False)$", source)), 1, "one constant, one line")
-        self.assertIn("AGENTS_VIA_AI_GATEWAY = False\n", source)
+        self.assertIn("AGENTS_VIA_AI_GATEWAY = True\n", source)
 
     def test_every_file_and_the_whole_output_are_what_they_were_byte_for_byte(self):
         code, out, err, files = build(SETTINGS)

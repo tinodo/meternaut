@@ -1,7 +1,8 @@
-"""The records of 2026-11-07 about the AI Gateway: it is deployed and checked, nothing calls through it yet, and step 2 is still off.
+"""The records of 2026-11-07 about the AI Gateway: it is deployed and checked, and the changelog entry of that day says what was true on its day (nothing called through the gateway yet, and step 2 was off).
 
 The owner asked in writing for the gateway ("Create the AI Gateway with public network access and private routing."), the actions `aigateway` and `aigateway-check` ran, and the changelog says what they made,
-proved and found. These tests hold the changelog entry, the switch that is still False and the pages that used to say "not deployed" to one story. They call neither Azure nor GitHub."""
+proved and found. These tests hold the changelog entry (it keeps what was true on its day), the switch (True in the code since the owner ordered the agents' route, 2026-11-07) and the pages that used to say
+"not deployed" to one story. They call neither Azure nor GitHub."""
 import re
 import unittest
 from pathlib import Path
@@ -50,7 +51,7 @@ class TheChangelogEntry(unittest.TestCase):
                       "The meter \"10k AI Gateway Requests\" is 0.00 US dollars in the preview", "nothing was read from Azure or GitHub here"):
             self.assertIn(words, entry, words)
 
-    def test_it_says_that_step_2_and_its_switch_are_still_off_and_that_nothing_calls_through_the_gateway(self):
+    def test_the_entry_says_that_on_its_day_step_2_and_its_switch_were_off_and_that_nothing_called_through_the_gateway(self):
         entry = flat(ENTRY)
         for words in ("Step 2 is still off", "`AGENTS_VIA_AI_GATEWAY` in `tools/environment-params.py` is False", "Nothing calls through the gateway",
                       "the agents and the Detective and the Skeptic call their Foundry deployments direct ([rule 15 (c)](AGENTS.md))", "Step 2 needs the owner's separate yes",
@@ -64,9 +65,9 @@ class TheChangelogEntry(unittest.TestCase):
         self.assertNotRegex(ENTRY, r"aigw-meternaut-[0-9a-f]{6,}|-[0-9a-f]{8}\b", "no real name of a resource")
 
 
-class TheSwitchIsStillFalse(unittest.TestCase):
-    def test_the_constant_is_false_in_the_code(self):
-        self.assertRegex(text("tools/environment-params.py"), r"(?m)^AGENTS_VIA_AI_GATEWAY = False$")
+class TheSwitchIsOnInTheCode(unittest.TestCase):
+    def test_the_constant_is_true_in_the_code(self):
+        self.assertRegex(text("tools/environment-params.py"), r"(?m)^AGENTS_VIA_AI_GATEWAY = True$")
 
 
 class TheRulesAndTheRecordSayTheSame(unittest.TestCase):

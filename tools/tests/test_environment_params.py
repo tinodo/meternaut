@@ -303,7 +303,17 @@ class Preview(unittest.TestCase):
     """The flag --preview is for the facts that are not known yet (the AI Gateway's host name and its project's identity): there is no gateway identity to wait for any more."""
 
     def test_the_flag_changes_no_file_and_no_output_while_the_agents_do_not_go_through_the_ai_gateway(self):
-        self.assertIs(ep.AGENTS_VIA_AI_GATEWAY, False)
+        # The way back (the constant set to False): the constant is True in the repository, so the test sets it.
+        with mock.patch.object(ep, "AGENTS_VIA_AI_GATEWAY", False):
+            plain, preview = run(SETTINGS), run(SETTINGS, "--preview")
+        self.assertEqual((plain[0], plain[2]), (0, ""))
+        self.assertEqual(preview[0:3], plain[0:3])
+        self.assertEqual(preview[3], plain[3])
+
+    def test_the_flag_changes_nothing_with_the_agents_route_on_while_no_action_needs_the_host_or_the_identity(self):
+        # With no ACTION nothing asks for the host or for the project's identity, so a preview and a plain run are the same with the constant True too (the actions that do ask are in
+        # test_aigateway_agents_params.py).
+        self.assertIs(ep.AGENTS_VIA_AI_GATEWAY, True)
         plain, preview = run(SETTINGS), run(SETTINGS, "--preview")
         self.assertEqual((plain[0], plain[2]), (0, ""))
         self.assertEqual(preview[0:3], plain[0:3])
@@ -482,8 +492,15 @@ class FirstCases(unittest.TestCase):
             self.assertEqual((code, err), (0, ""))
             self.assertEqual(values(files["cases.parameters.json"])["aiGatewayHost"], host, extra)
             self.assertNotIn(host, out, "the host name is not printed")
-        for action, extra in (("", ()), ("what-if", ()), ("cases", ("--preview",)), ("foundry", ()), ("recording", ()), ("aigateway", ())):
+        for action, extra in (("", ()), ("what-if", ()), ("cases", ("--preview",)), ("recording", ())):
             code, out, err, files = run({**SETTINGS, "ACTION": action}, *extra)
+            self.assertEqual((code, err), (0, ""), action)
+            self.assertEqual(values(files["cases.parameters.json"])["aiGatewayHost"], ep.PLACEHOLDER_AIGATEWAY_HOST, f"{action!r}: the placeholder, because the gateway is not named")
+        # With the agents' route on, the actions foundry and aigateway are refused without the host and without the project's identity (test_aigateway_agents_params.py); with the constant
+        # False, which is the way back, they go on without them.
+        for action in ("foundry", "aigateway"):
+            with mock.patch.object(ep, "AGENTS_VIA_AI_GATEWAY", False):
+                code, out, err, files = run({**SETTINGS, "ACTION": action})
             self.assertEqual((code, err), (0, ""), action)
             self.assertEqual(values(files["cases.parameters.json"])["aiGatewayHost"], ep.PLACEHOLDER_AIGATEWAY_HOST, f"{action!r}: the placeholder, because the gateway is not named")
         self.assertRegex(ep.PLACEHOLDER_AIGATEWAY_HOST, ep.AIGATEWAY_HOST.pattern, "the placeholder is a valid host name, so that the file fits the template's checks")
@@ -516,11 +533,27 @@ class FirstCases(unittest.TestCase):
         self.assertEqual(values(files["cases.parameters.json"])["aiGatewayHost"], host, "trimmed and in lower case")
 
     def test_the_host_of_the_gateway_reaches_the_cases_file_alone_while_the_agents_switch_is_off(self):
+        # The way back: with the constant False the Foundry file carries no connection (the constant is True in the repository, so the test sets it).
         host = "aigw-meternaut-0123abcd.swedencentral-01.ai.gateway.azure.com"
-        files, _ = self.build(AIGATEWAY_HOST=host, ACTION="foundry")
+        with mock.patch.object(ep, "AGENTS_VIA_AI_GATEWAY", False):
+            files, _ = self.build(AIGATEWAY_HOST=host, ACTION="foundry")
         self.assertFalse({"aiGatewayHost", "aiGatewayModels"} & set(values(files["foundry.parameters.json"])), "no connection of the Foundry project to the gateway while the switch is off")
         for name, document in files.items():
             if name != "cases.parameters.json":
+                self.assertNotIn(host, json.dumps(document), name)
+
+    def test_the_host_of_the_gateway_reaches_the_foundry_file_and_the_cases_file_while_the_agents_switch_is_on(self):
+        host = "aigw-meternaut-0123abcd.swedencentral-01.ai.gateway.azure.com"
+        self.assertIs(ep.AGENTS_VIA_AI_GATEWAY, True)
+        files, _ = self.build(AIGATEWAY_HOST=host, ACTION="foundry")
+        foundry = values(files["foundry.parameters.json"])
+        self.assertEqual(foundry["aiGatewayHost"], host, "the connection of the Foundry project to the gateway is asked for")
+        self.assertEqual([m["name"] for m in foundry["aiGatewayModels"]], [m["name"] for m in json.loads(MODELS.read_text(encoding="utf-8"))])
+        cases = values(files["cases.parameters.json"])
+        self.assertEqual(cases["aiGatewayHost"], host)
+        self.assertEqual((cases["foundryModelInvestigator"], cases["foundryModelSkeptic"]), tuple(f"{ep.AIGATEWAY_CONNECTION_NAME}/{name}" for name in ep.AGENT_MODELS.values()))
+        for name, document in files.items():
+            if name not in ("foundry.parameters.json", "cases.parameters.json"):
                 self.assertNotIn(host, json.dumps(document), name)
 
     def test_the_two_older_roles_are_given_two_different_deployments_of_the_agents_resource_by_the_defaults_of_the_template(self):
@@ -691,8 +724,8 @@ class Foundry(unittest.TestCase):
             self.assertEqual(set(model), {"name", "version", "sku", "capacity"}, "no retirement date and no agentCapacity reaches the template")
 
     def test_the_capacity_of_the_agents_may_differ_from_the_one_of_the_model_side_and_each_side_gets_its_own(self):
-        models = [{"name": "alpha", "version": "2026-09-22", "sku": "DataZoneStandard", "capacity": 20, "agentCapacity": 70, "retirementDate": "2028-03-11"},
-                  {"name": "beta", "version": "2026-09-22", "sku": "DataZoneStandard", "capacity": 30, "agentCapacity": 10, "retirementDate": "2028-03-11"}]
+        models = [{"name": "gpt-6-luna", "version": "2026-09-22", "sku": "DataZoneStandard", "capacity": 20, "agentCapacity": 70, "retirementDate": "2028-03-11"},
+                  {"name": "gpt-6.1-sol", "version": "2026-09-22", "sku": "DataZoneStandard", "capacity": 30, "agentCapacity": 10, "retirementDate": "2028-03-11"}]
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         path = Path(tmp.name) / "models.json"
@@ -878,10 +911,16 @@ class AiGateway(unittest.TestCase):
         return json.loads(self.POLICIES.read_text(encoding="utf-8"))
 
     def test_nothing_of_the_gateway_is_written_or_printed_unless_the_option_asks_for_it(self):
+        # What the option asks for are the three files and the aigateway_* outputs of step 1. The agents' route (the constant True in the repository) prints its own two lines, which are the next test's.
         code, out, err, files = run(SETTINGS)
         self.assertEqual((code, err), (0, ""))
         self.assertFalse([name for name in files if "aigateway" in name], "the other actions are not touched by the gateway")
-        self.assertNotIn("aigateway", out)
+        printed = dict(line.split("=", 1) for line in out.splitlines())
+        self.assertEqual([key for key in printed if "aigateway" in key or "ai_gateway" in key], ["agents_via_ai_gateway", "aigateway_connection_name"], "the two lines of the agents' route and nothing of the gateway's files")
+        with mock.patch.object(ep, "AGENTS_VIA_AI_GATEWAY", False):
+            code, out, err, files = run(SETTINGS)
+        self.assertEqual((code, err), (0, ""))
+        self.assertNotIn("aigateway", out, "with the agents' route off (the way back) nothing of the gateway is printed")
 
     def test_the_three_files_are_written_and_the_outputs_name_what_the_workflow_reads(self):
         files, outputs = self.files()
@@ -892,7 +931,8 @@ class AiGateway(unittest.TestCase):
                           "cases.parameters.json"})
         self.assertEqual({key: value for key, value in outputs.items() if key.startswith("aigateway_")},
                          {"aigateway_name": outputs["aigateway_name"], "aigateway_subnet_name": "snet-aigw", "aigateway_subnet_prefix": "10.53.0.128/26",
-                          "aigateway_aliases": "gpt-6-luna gpt-6.1-sol", "aigateway_files": "true"})
+                          "aigateway_aliases": "gpt-6-luna gpt-6.1-sol", "aigateway_files": "true", "aigateway_connection_name": "aigateway"})
+        self.assertEqual(outputs["agents_via_ai_gateway"], "true", "the agents' route is on in the repository")
         self.assertEqual(files["aigateway-policies.json"], self.policies(), "the policies go to the gateway as they are in the repository")
 
     def test_each_file_fits_its_template_and_every_setting_has_a_value_of_the_right_type(self):
@@ -1009,7 +1049,9 @@ class AiGateway(unittest.TestCase):
         self.assertEqual(values(files["aigateway.parameters.json"])["casesPrincipalId"], "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
         self.assertEqual(values(files["foundry.parameters.json"])["casesSystemPrincipalId"], "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", "the one id serves both files")
         for action in ("aigateway", "what-if", "cases", ""):
-            files, _ = self.files(CASES_SYSTEM_PRINCIPAL_ID="aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", ACTION=action, AIGATEWAY_HOST="aigw-x.swedencentral-01.ai.gateway.azure.com")
+            # with the agents' route on the action aigateway also needs the Foundry project's identity (test_aigateway_agents_params.py)
+            files, _ = self.files(CASES_SYSTEM_PRINCIPAL_ID="aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", ACTION=action, AIGATEWAY_HOST="aigw-x.swedencentral-01.ai.gateway.azure.com",
+                                  FOUNDRY_PROJECT_PRINCIPAL_ID="bbbbbbbb-cccc-dddd-eeee-ffffffffffff")
             self.assertEqual(values(files["aigateway.parameters.json"])["casesPrincipalId"], "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", action)
         for refused in ("not-a-guid", "12345678-1234-1234-1234-12345678901"):
             code, out, err, files = run({**SETTINGS, "CASES_SYSTEM_PRINCIPAL_ID": refused}, "--aigateway-policies", str(self.POLICIES))
@@ -1018,8 +1060,10 @@ class AiGateway(unittest.TestCase):
             self.assertNotIn(refused, err, "a value that is not an object id is not echoed")
 
     def test_two_models_whose_resource_names_would_be_the_same_are_refused_and_so_is_a_name_the_service_cannot_take(self):
+        # The rule of the gateway's names (step 1). With the agents' route on, a list that lacks the two models of the agents is refused first, with a message of its own (test_aigateway_agents_params.py),
+        # so the constant is False here.
         base = json.loads(MODELS.read_text(encoding="utf-8"))
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(ep, "AGENTS_VIA_AI_GATEWAY", False):
             for names, expected in ((("gpt-6.1-sol", "gpt-6-1-sol"), "no two are the same"), (("gpt-6.1-sol", "ab"), "3 to 63")):
                 models = [{**base[0], "name": names[0]}, {**base[1], "name": names[1]}]
                 path = Path(tmp) / "models.json"

@@ -37,11 +37,11 @@ the app reads as AIGATEWAY_HOST): the action cases is refused without it, and a 
 checked, whatever the action. The same host serves the agents' route when the switch below is on.
 CASES_SYSTEM_PRINCIPAL_ID is also the principal of the role AI Gateway Models User on the AI Gateway, which the file of the gateway (casesPrincipalId) gives it: the Detective and the Skeptic call the
 gateway with that identity. Empty means none yet, and the gateway is then made without the role; the next run of the action aigateway gives it.
-AGENTS_VIA_AI_GATEWAY (a constant near the top of this file, False) is the switch of the agents' route through the AI Gateway (docs/proposals/08-ai-gateway.md, step 2). While it is False the
-Foundry file has no connection and the cases file has the plain model names of the agents, and no output is added. When it is True: AIGATEWAY_HOST goes into foundry.parameters.json with the
-aliases (aiGatewayHost, aiGatewayModels), so that the Foundry resource makes the project's connection; the cases file carries the model names `<connection>/<alias>` (foundryModelInvestigator and
-foundryModelSkeptic); and two outputs are added (agents_via_ai_gateway=true and aigateway_connection_name), which the workflow reads. The builder refuses True without the host when ACTION (the job's own setting,
-the name of the action) is foundry, and without FOUNDRY_PROJECT_PRINCIPAL_ID when ACTION is aigateway: a --preview, and every other action, goes on without them.
+AGENTS_VIA_AI_GATEWAY (a constant near the top of this file, True) is the switch of the agents' route through the AI Gateway (docs/proposals/08-ai-gateway.md, step 2). While it is True: AIGATEWAY_HOST goes into
+foundry.parameters.json with the aliases (aiGatewayHost, aiGatewayModels), so that the Foundry resource makes the project's connection; the cases file carries the model names `<connection>/<alias>`
+(foundryModelInvestigator and foundryModelSkeptic); and two outputs are added (agents_via_ai_gateway=true and aigateway_connection_name), which the workflow reads. The builder refuses True without the host
+when ACTION (the job's own setting, the name of the action) is foundry, and without FOUNDRY_PROJECT_PRINCIPAL_ID when ACTION is aigateway: a --preview, and every other action, goes on without them. While it is
+False, which is the way back, the Foundry file has no connection and the cases file has the plain model names of the agents, and no output is added.
 CONSOLE_HOST_NAME (optional) is the host name that the console has on the platform's Application Gateway, which forwards to the cases app (docs/proposals/07-private-by-default.md). Empty: people open the
 console on the app's own name. With a name, the console's address (the setting CONSOLE_HOST, which the letters' links and the return address of the Azure sign-in are built from) is that name, the cases file
 passes it as consoleHostName, and the outputs console_host (the name that people open: that name, or the app's own) and console_host_set say what the check of the console's front door knocks at.
@@ -143,11 +143,12 @@ CASES_SUBNET_NAMES = {"Flex": "snet-func", "Basic": "snet-cases"}
 # above the pilot subscription the identity reads only that one, so the Watch simply reads that one. False: only the subscription of this estate (cases.parameters.json: scopeSubscriptions). The value
 # reaches the app as the setting SCOPE_ALL_SUBSCRIPTIONS; it grants nothing, and what the console may change stays the one resource group of this estate.
 SCOPE_ALL_SUBSCRIPTIONS = True
-# Whether the two agents of the investigation call their models through the AI Gateway (docs/proposals/08-ai-gateway.md, step 2). False: they call the model deployments of their own Foundry resource, as they
-# did before, and no parameter file, no output and no action differs from what it was. One value and a commit turn it on, in a change of its own, after the owner has said yes in plain words and after the actions
-# aigateway and aigateway-check have passed on the real estate. True: the action foundry makes the project's connection to the gateway, the action aigateway gives the project's identity AI Gateway Models User
-# on the gateway, and the action cases passes the model names `<connection>/<alias>` to the app. The way back is the value False and a run of cases (the record says what stays). Nothing here has run.
-AGENTS_VIA_AI_GATEWAY = False
+# Whether the two agents of the investigation call their models through the AI Gateway (docs/proposals/08-ai-gateway.md, step 2). True: the action foundry makes the project's connection to the gateway,
+# the action aigateway gives the project's identity AI Gateway Models User on the gateway, and the action cases passes the model names `<connection>/<alias>` to the app. It is True in code since the change
+# that the owner ordered on 2026-11-07, and the order of the real run follows from it: aigateway, a wait of about ten minutes for the new role, foundry, cases, cases-run. That run has not been made at the time
+# of this change; the record of its outcome comes after it. False is the way back: the agents then call the model deployments of their own Foundry resource, as they did before, and no parameter file, no
+# output and no action differs from what it was (a test holds that, with the constant set to False inside the test). The record says what stays after a way back.
+AGENTS_VIA_AI_GATEWAY = True
 # The name of the project's connection to the gateway (the default of environment/foundry/main.bicep): an agent names its model `<connection>/<alias>`. The two models of the agents are the defaults of
 # environment/cases/main.bicep; a test holds the three together.
 AIGATEWAY_CONNECTION_NAME = "aigateway"
