@@ -536,7 +536,7 @@ class TheDocumentsSayWhatTheActionDoes(unittest.TestCase):
 
     def test_the_record_lists_both_templates_and_the_order_in_the_action(self):
         flat_record = flat(RECORD)
-        for words in ("Step 1 of 2 is built and not deployed: the two templates, the workflow actions, the check tool and the numbers.", "- **The template of the subnet** [`environment/aigateway/subnet.bicep`]",
+        for words in ("Step 1 of 2 is deployed and checked: the two templates, the workflow actions, the check tool and the numbers were used on 2026-11-07", "- **The template of the subnet** [`environment/aigateway/subnet.bicep`]",
                       "- **The template of the gateway** [`environment/aigateway/main.bicep`]", "the template names the subnet and does not make it, so the subnet has to be there when the template is deployed.",
                       "It makes the subnet (when it is not there), waits until the landing zone has put its route table on the subnet and says which one, signs in again, makes the gateway, signs in again, applies the limits",
                       "Inside `aigateway` the subnet comes first, then the wait for the landing zone's route table, then the gateway",
@@ -578,11 +578,11 @@ class TheDocumentsSayWhatTheActionDoes(unittest.TestCase):
         self.assertIn("27. **A template makes a subnet once, and never undoes what the landing zone added to it**", agents)
         self.assertIn("So a template makes a subnet only while it is not there (the workflow reads that from Azure and passes it, as `webSubnetExists` does) and names it by its id afterwards", agents)
 
-    def test_the_changelog_has_the_entry_on_top_and_says_what_it_must(self):
+    def test_the_changelog_has_the_entry_below_the_one_of_the_deployment_and_says_what_it_must(self):
         headings = re.findall(r"(?m)^## (.*)$", CHANGELOG)
-        self.assertEqual(headings[2], ENTRY)
-        self.assertTrue(headings[3].startswith("An AI Gateway for the agents' model calls, step 2 of 2"), "the entries of the two steps follow")
-        entry = CHANGELOG.split("\n## ")[3]
+        self.assertEqual(headings[3], ENTRY)
+        self.assertTrue(headings[4].startswith("An AI Gateway for the agents' model calls, step 2 of 2"), "the entries of the two steps follow")
+        entry = CHANGELOG.split("\n## ")[4]
         leads = ["**What was found.**", "**What changed.**", "**What was checked.**", "**Not checked.**", "**Who decides, and what a person does.**"]
         positions = [entry.index(lead) for lead in leads]
         self.assertEqual(positions, sorted(positions))
@@ -601,7 +601,7 @@ class TheDocumentsSayWhatTheActionDoes(unittest.TestCase):
         self.assertRegex(flat_entry.split("**What was checked.**")[1].split("**Not checked.**")[0], r"\d,\d{3} tests", "and it says how many tests passed")
 
     def test_nothing_of_the_owners_environment_is_in_what_this_change_wrote(self):
-        entry = CHANGELOG.split("\n## ")[3]
+        entry = CHANGELOG.split("\n## ")[4]
         for label, part in (("the template of the subnet", SUBNET), ("the section of the record", self.record_section()), ("the entry", entry)):
             self.assertNotRegex(part, r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}", f"{label}: no id")
         for label, part in (("the section of the record", self.record_section()), ("the entry", entry)):

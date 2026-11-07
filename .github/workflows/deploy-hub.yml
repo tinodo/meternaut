@@ -2,8 +2,8 @@ name: Hub
 
 # The only way anything of Meternaut reaches Azure (AGENTS.md rule 18). It began as the workflow of the Citadel governance hub: the owner's existing API Management instance with Microsoft's
 # Citadel rules, and the private model account behind it. Since 2026-11-07 Meternaut makes, changes and reads nothing on that instance (the owner ordered the undo of what it added): the actions
-# that made objects on it are gone, and every model call goes direct to the Foundry project of the agents. The AI Gateway (Azure's separate service) is not deployed either, because its front
-# door is public only: the action aigateway stops at its first step unless the input public_ai_gateway_requested is set, which only the owner's written request for a public AI Gateway allows.
+# that made objects on it are gone, and every model call goes direct to the Foundry project of the agents. The AI Gateway (Azure's separate service) was deployed on 2026-11-07, at the owner's written
+# request, and nothing calls through it yet (its step 2 is off). Its front door is public only: the action aigateway stops at its first step unless the input public_ai_gateway_requested is set, which only the owner's written request for a public AI Gateway allows.
 # Nothing starts this workflow but a click on "Run workflow" in the Actions tab. It signs
 # in to Azure with OpenID Connect and a credential that exists only for the main branch, so a copy of this file on any
 # other branch cannot sign in. "what-if" reads and changes nothing.
@@ -91,7 +91,7 @@ jobs:
           # The AI Gateway's front door is public and cannot be made private (docs/proposals/08-ai-gateway.md), and the owner's rule is that nothing public is made unless he specifically asks for it
           # (AGENTS.md rule 15 (c)). So this action stops here, as the first step of the job, before anything is checked out, read or signed in to, unless the input says that he asked in writing.
           if [ "$PUBLIC_AI_GATEWAY_REQUESTED" != true ]; then
-            echo "::error::The AI Gateway is not deployed: its front door is public and cannot be made private, and nothing public is made unless the owner has asked for it in writing. Set the input public_ai_gateway_requested only when he has. Nothing was changed."
+            echo "::error::This run does not deploy the AI Gateway: its front door is public and cannot be made private, and nothing public is made unless the owner has asked for it in writing. Set the input public_ai_gateway_requested only when he has. Nothing was changed."
             exit 1
           fi
           echo "The input public_ai_gateway_requested is set: the owner has asked in writing for a public AI Gateway."

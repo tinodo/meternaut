@@ -38,11 +38,12 @@ def section_of_bootstrap():
 class TheDecisionRecord(unittest.TestCase):
     def test_it_says_plainly_that_the_frontend_is_public_only_and_that_the_owner_decides_before_anything_is_deployed(self):
         for words in ("The owner believed that the gateway can be made private. It cannot, today.", "The service has no private endpoint.",
-                      "He decides whether to accept it before anything is deployed.", "If he does not, the gateway is not made, and nothing is lost: the agents keep calling their own resource",
+                      "He decides whether to accept it before anything is deployed, and he did, in writing, on 2026-11-07", "Create the AI Gateway with public network access and private routing.",
+                      "Had he not, the gateway would not have been made, and nothing would have been lost: the agents keep calling their own resource",
                       "AIGatewayPrivateEndpointsNotEnabled", "Reported with this change; not read again here", "Only the way from the gateway to the Foundry resource can be private",
                       "That breaks the rule of [private by default]"):
             self.assertIn(words, PROPOSAL, words)
-        self.assertRegex(PROPOSAL, r"\*\*Status: .*built and not deployed.*Nothing was made in Azure, and the agents were not touched\.", "the status at the top says what is true")
+        self.assertRegex(PROPOSAL, r"\*\*Status: .*Step 1 of 2 is deployed and checked.*Step 2 of 2 is built and not deployed.*Nothing calls through the gateway, and the agents were not touched\.", "the status at the top says what is true")
 
     def test_it_lists_what_protects_the_public_endpoint_and_what_is_not_done_and_why(self):
         for words in ("1. **Microsoft Entra ID, and a role.**", "2. **No API key resource.**", "3. **Limits at the gateway.**", "4. **Content safety at the gateway,**",
@@ -109,7 +110,8 @@ class TheOtherDocuments(unittest.TestCase):
         top = BOOTSTRAP.split("\n## ")[0] + BOOTSTRAP.split("\n## ")[1]
         self.assertRegex(top, r"one of nine roles")
         self.assertIn("A tenth, *AI Gateway Models User*", top)
-        self.assertIn("except the nine above (and the tenth, [for the AI Gateway](#added-on-2026-11-07-for-the-ai-gateway), once its hand step is done)", BOOTSTRAP)
+        self.assertIn("was added by hand on 2026-11-07", top)
+        self.assertIn("except the nine above (and the tenth, [for the AI Gateway](#added-on-2026-11-07-for-the-ai-gateway), whose hand step was done on 2026-11-07)", BOOTSTRAP)
         self.assertIn("lists eight roles and Reader is not one of them", BOOTSTRAP, "the sentence of 2026-11-06 about the Operator is a record, and it is left as it was")
 
     def test_the_bootstrap_page_names_the_two_actions_after_the_order_of_the_others(self):
@@ -117,14 +119,15 @@ class TheOtherDocuments(unittest.TestCase):
         self.assertIn("The AI Gateway has two actions, `aigateway` and `aigateway-check`, and they are not on that list either", after)
         self.assertLess(after.index("The console behind the platform's Application Gateway is not on that list"), after.index("The AI Gateway has two actions"))
 
-    def test_rule_15_c_ends_the_governance_hub_route_says_that_every_model_call_goes_direct_and_that_the_ai_gateway_is_not_used(self):
+    def test_rule_15_c_ends_the_governance_hub_route_says_that_every_model_call_goes_direct_and_that_the_ai_gateway_is_deployed_and_nothing_calls_through_it(self):
         (rule,) = [line for line in AGENTS.splitlines() if line.lstrip().startswith("- **(c) Every model call of Meternaut goes direct, privately and with no key, to the model deployments of its own Foundry project**")]
         for words in ("(2026-11-07, the owner, in capitals: \"UNDO CHANGES TO API MANAGEMENT\")", "**This ends the \"governance hub\" route**",
-                      "The AI Gateway (Azure's separate service, [the decision record](docs/proposals/08-ai-gateway.md)) is not used either: it has no private front door, and nothing public is added for it.",
-                      "Its two steps stay built, not deployed and off (`AGENTS_VIA_AI_GATEWAY` is False) until a later change retires them.",
+                      "The AI Gateway (Azure's separate service, [the decision record](docs/proposals/08-ai-gateway.md)) has been deployed since 2026-11-07, because the owner asked for it in writing "
+                      "(\"Create the AI Gateway with public network access and private routing.\"), and **nothing calls through it**:",
+                      "is built and off (`AGENTS_VIA_AI_GATEWAY` is False) and needs the owner's separate yes, so until it is switched on every model call goes direct, as this rule says.",
                       "the app reads no key", "it was tried on the service on 2026-11-07: both models answered in a `cases-run`", "is not a model call"):
             self.assertIn(words, rule, words)
-        for old in ("Planned end, 2026-11-07", "The older Detective and Skeptic roles keep using the gateway.", "**Exception, 2026-11-06", "with no direct path"):
+        for old in ("Planned end, 2026-11-07", "The older Detective and Skeptic roles keep using the gateway.", "**Exception, 2026-11-06", "with no direct path", "is not used either", "the AI Gateway is not deployed"):
             self.assertNotIn(old, rule, old)
 
     def test_the_routes_table_of_the_foundry_agents_has_the_new_row_last_and_every_old_row_is_still_there(self):
@@ -133,7 +136,7 @@ class TheOtherDocuments(unittest.TestCase):
         old = ["**Agents call their own resource (built)**", "**Foundry's API Management connection, with Microsoft Entra authentication**", "**Foundry's generic model-gateway connection**", "**Move the gateway to Standard v2**"]
         for row in old:
             self.assertIn(row, firsts, "a row of the table is not deleted")
-        self.assertEqual(firsts[-1], "**AI Gateway, Azure's separate service (built, not deployed; the switch is False)**")
+        self.assertEqual(firsts[-1], "**AI Gateway, Azure's separate service (deployed; step 2 is built and off, the switch is False)**")
         self.assertEqual([first for first in firsts if first in old], old, "the old rows keep their order")
         last = flat(table[-1])
         for words in ("`Microsoft.ApiManagement/aigateways`", "not an API Management instance", "no key", "not known, and step 2", "I LEAN STRONG TOWARDS YOU CREATING AN AI GATEWAY",
@@ -142,9 +145,9 @@ class TheOtherDocuments(unittest.TestCase):
 
     def test_the_changelog_has_the_entry_of_step_1_above_the_console_entry_and_says_what_it_must(self):
         headings = re.findall(r"(?m)^## (.*)$", CHANGELOG)
-        self.assertEqual(headings[4], "An AI Gateway for the agents' model calls, step 1 of 2: built, not deployed — 2026-11-07")
-        self.assertTrue(headings[5].startswith("The console behind the platform's Application Gateway"), "the entry of the console change follows, as the owner's coordinator asked")
-        entry = flat(CHANGELOG.split("\n## ")[5])
+        self.assertEqual(headings[5], "An AI Gateway for the agents' model calls, step 1 of 2: built, not deployed — 2026-11-07")
+        self.assertTrue(headings[6].startswith("The console behind the platform's Application Gateway"), "the entry of the console change follows, as the owner's coordinator asked")
+        entry = flat(CHANGELOG.split("\n## ")[6])
         for words in ("**What the owner said.**", "I LEAN STRONG TOWARDS YOU CREATING AN AI GATEWAY", "You should NOT create a DDOS PLAN.", "**What the owner has to know first: the frontend is public, and he decides whether to accept that.**",
                       "**What is built.**", "Nothing is deployed: no Azure change, no Hub run and no workflow run was made", "**What was checked.**", "**Not checked.**", "**What a person has to do, in order.**",
                       "That is an exception to the rule of [private by default]", "Microsoft publishes no address range and no service tag for the Foundry Agent Service"):
@@ -156,7 +159,8 @@ class TheOtherDocuments(unittest.TestCase):
         rows = [line for line in README.splitlines() if line.startswith("| **[An AI Gateway for the agents](docs/proposals/08-ai-gateway.md)**")]
         self.assertEqual(len(rows), 1)
         self.assertIn("built and not deployed", rows[0])
-        bullets = [line for line in README.splitlines() if line.startswith("- **An AI Gateway for the agents' model calls (the owner leans to it; both steps are built and not deployed)**")]
+        self.assertIn("is deployed and checked since 2026-11-07", rows[0])
+        bullets = [line for line in README.splitlines() if line.startswith("- **An AI Gateway for the agents' model calls (deployed on 2026-11-07, and nothing calls through it yet; step 2 is built and off)**")]
         self.assertEqual(len(bullets), 1)
         self.assertIn("The owner believed that the gateway can be private. It cannot", bullets[0])
         self.assertLess(README.index("| **[Private by default](docs/proposals/07-private-by-default.md)**"), README.index(rows[0]), "the new row follows the row of the record before it")

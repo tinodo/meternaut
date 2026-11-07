@@ -94,7 +94,7 @@ class TheGuardStep(unittest.TestCase):
 
     def test_the_error_says_in_plain_words_what_happened_why_and_who_may_lift_it(self):
         script = guard().split("        run: |\n")[1]
-        for words in ("::error::The AI Gateway is not deployed: its front door is public and cannot be made private, and nothing public is made unless the owner has asked for it in writing.",
+        for words in ("::error::This run does not deploy the AI Gateway: its front door is public and cannot be made private, and nothing public is made unless the owner has asked for it in writing.",
                       "Set the input public_ai_gateway_requested only when he has.", "Nothing was changed."):
             self.assertIn(words, script, words)
 
@@ -134,7 +134,8 @@ class TheGuardRuns(unittest.TestCase):
                 done, calls = self.run_guard(value)
                 self.assertEqual(done.returncode, 1, (value, done.stdout, done.stderr))
                 said = done.stdout + done.stderr
-                self.assertIn("::error::The AI Gateway is not deployed: its front door is public and cannot be made private", said)
+                self.assertIn("::error::This run does not deploy the AI Gateway: its front door is public and cannot be made private", said)
+                self.assertNotIn("The AI Gateway is not deployed", said, "the gateway was deployed on 2026-11-07: the error says what this run does, not what exists")
                 self.assertIn("Set the input public_ai_gateway_requested only when he has. Nothing was changed.", said)
                 self.assertNotIn("The input public_ai_gateway_requested is set", said, "it does not say that the owner asked")
                 self.assertEqual(calls, [], "nothing is called: no Azure, no GitHub, no download")
