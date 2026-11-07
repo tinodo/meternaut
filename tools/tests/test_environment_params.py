@@ -1048,6 +1048,257 @@ class Operator(unittest.TestCase):
         self.assertIn("var opsSubnetName = 'snet-ops'", self.OPERATOR)
 
 
+class AiGateway(unittest.TestCase):
+    """The parameter file and the policy file of the AI Gateway (environment/aigateway/main.bicep, environment/aigateway/policies.json): written only when --aigateway-policies asks for them.
+
+    The subnet is the last free /26 (a /27 when no /26 is free), made once like the Operator's, and the policies are held to the models and to the owner's standing limit."""
+
+    TEMPLATE = (ROOT / "environment" / "aigateway" / "main.bicep").read_text(encoding="utf-8")
+    POLICIES = ROOT / "environment" / "aigateway" / "policies.json"
+    AGENTS = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
+
+    def files(self, **changes):
+        code, out, err, files = run({**SETTINGS, **changes}, "--aigateway-policies", str(self.POLICIES))
+        self.assertEqual((code, err), (0, ""))
+        return files, dict(line.split("=", 1) for line in out.splitlines())
+
+    def with_policies(self, document, **changes):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "policies.json"
+            path.write_text(document if isinstance(document, str) else json.dumps(document), encoding="utf-8")
+            return run({**SETTINGS, **changes}, "--aigateway-policies", str(path))
+
+    def policies(self):
+        return json.loads(self.POLICIES.read_text(encoding="utf-8"))
+
+    def test_nothing_of_the_gateway_is_written_or_printed_unless_the_option_asks_for_it(self):
+        code, out, err, files = run(SETTINGS)
+        self.assertEqual((code, err), (0, ""))
+        self.assertFalse([name for name in files if "aigateway" in name], "the other actions are not touched by the gateway")
+        self.assertNotIn("aigateway", out)
+
+    def test_the_two_files_are_written_and_the_outputs_name_what_the_workflow_reads(self):
+        files, outputs = self.files()
+        self.assertTrue({"aigateway.parameters.json", "aigateway-policies.json"} <= set(files))
+        self.assertEqual(set(files) - {"aigateway.parameters.json", "aigateway-policies.json"},
+                         {"environment.parameters.json", "logger.parameters.json", "kit.parameters.json", "recording.parameters.json", "foundry.parameters.json", "operator.parameters.json", "planted.parameters.json"})
+        self.assertEqual({key: value for key, value in outputs.items() if key.startswith("aigateway_")},
+                         {"aigateway_name": outputs["aigateway_name"], "aigateway_subnet_name": "snet-aigw", "aigateway_subnet_prefix": "10.53.0.128/26",
+                          "aigateway_aliases": "gpt-6-luna gpt-6.1-sol", "aigateway_files": "true"})
+        self.assertEqual(files["aigateway-policies.json"], self.policies(), "the policies go to the gateway as they are in the repository")
+
+    def test_the_file_fits_the_template_and_every_setting_has_a_value_of_the_right_type(self):
+        files, _ = self.files()
+        declared = bicep_params(self.TEMPLATE)
+        given = files["aigateway.parameters.json"]["parameters"]
+        self.assertTrue(set(given) <= set(declared), set(given) - set(declared))
+        required = {name for name, (_, has_default) in declared.items() if not has_default}
+        self.assertTrue(required <= set(given), required - set(given))
+        types = {"string": str, "int": int, "array": list, "bool": bool}
+        for name, wrapped in given.items():
+            self.assertIsInstance(wrapped["value"], types[declared[name][0]], name)
+        gateway = values(files["aigateway.parameters.json"])
+        self.assertEqual(set(gateway), {"location", "owner", "gatewayName", "aigwSubnetPrefix", "aigwSubnetExists", "foundryAccountName", "models", "foundryProjectPrincipalId"},
+                         "names, ranges, flags and the models: nothing secret, and the telemetry stays at the template's default, which is off")
+        self.assertEqual(bicep_params(self.TEMPLATE)["telemetryEnabled"], ("bool", True))
+        self.assertIn("param telemetryEnabled bool = false", self.TEMPLATE)
+        self.assertEqual(bicep_params(self.TEMPLATE)["foundryProjectPrincipalId"], ("string", True))
+
+    def test_the_name_is_stable_inside_the_services_limit_and_made_from_the_digest(self):
+        names = {values(self.files()[0]["aigateway.parameters.json"])["gatewayName"] for _ in range(3)}
+        self.assertEqual(len(names), 1)
+        name = names.pop()
+        self.assertRegex(name, r"^aigw-meternaut-[0-9a-f]{8}$")
+        self.assertLessEqual(len(name), 24, "the service's limit")
+        self.assertRegex(name, ep.AIGATEWAY_NAME.pattern)
+        self.assertEqual(name, ep.aigateway_name(SETTINGS["ENV_SUBSCRIPTION_ID"], SETTINGS["ENV_RESOURCE_GROUP"]))
+        self.assertEqual(name.rsplit("-", 1)[1], ep.digest(SETTINGS["ENV_SUBSCRIPTION_ID"], SETTINGS["ENV_RESOURCE_GROUP"]), "the same digest as every other name of the environment")
+        self.assertNotEqual(name, ep.aigateway_name(SETTINGS["ENV_SUBSCRIPTION_ID"], "rg-other"))
+
+    def test_the_model_account_is_the_one_the_foundry_file_makes_and_the_models_are_the_deployed_ones(self):
+        files, outputs = self.files()
+        gateway = values(files["aigateway.parameters.json"])
+        foundry = values(files["foundry.parameters.json"])
+        self.assertEqual(gateway["foundryAccountName"], foundry["accountName"], "the gateway calls the Foundry resource of the agents, not the model account of the gateway")
+        self.assertEqual(gateway["foundryAccountName"], outputs["foundry_account_name"])
+        self.assertEqual(gateway["models"], [{"name": m["name"], "version": m["version"]} for m in foundry["models"]], "the agents' deployments, in their order")
+        self.assertEqual(outputs["aigateway_aliases"].split(), [m["name"] for m in gateway["models"]], "the alias is the name of the deployment, as the check and the agents send it")
+        self.assertEqual((gateway["location"], gateway["owner"]), ("swedencentral", "owner@example.com"))
+
+    def test_the_subnet_is_the_last_free_26_and_overlaps_none_of_the_other_four(self):
+        files, outputs = self.files()
+        env, operator, gateway = values(files["environment.parameters.json"]), values(files["operator.parameters.json"]), values(files["aigateway.parameters.json"])
+        self.assertEqual(gateway["aigwSubnetPrefix"], "10.53.0.128/26")
+        self.assertEqual(outputs["aigateway_subnet_prefix"], "10.53.0.128/26")
+        mine = ipaddress.ip_network(gateway["aigwSubnetPrefix"])
+        taken = [ipaddress.ip_network(env[name]) for name in ("peSubnetPrefix", "funcSubnetPrefix", "webSubnetPrefix")] + [ipaddress.ip_network(operator["opsSubnetPrefix"])]
+        self.assertFalse(any(mine.overlaps(other) for other in taken))
+        self.assertTrue(mine.subnet_of(ipaddress.ip_network(env["vnetAddressPrefix"])))
+        self.assertGreaterEqual(mine.num_addresses, 32, "the service wants a /27 at least")
+        # none of the other subnets moves: the picks of the four earlier subnets are the ones that they had before the gateway
+        self.assertEqual((env["peSubnetPrefix"], env["funcSubnetPrefix"], env["webSubnetPrefix"], operator["opsSubnetPrefix"]),
+                         ("10.53.0.0/27", "10.53.0.32/27", "10.53.0.224/27", "10.53.0.192/27"))
+
+    def test_the_picker_prefers_a_26_takes_the_last_free_block_and_falls_back_to_a_27_and_to_none(self):
+        net = ipaddress.ip_network
+        four = tuple(net(prefix) for prefix in ("10.53.0.0/27", "10.53.0.32/27", "10.53.0.224/27", "10.53.0.192/27"))
+        self.assertEqual(ep.aigw_subnet(net("10.53.0.0/24"), four), net("10.53.0.128/26"))
+        self.assertEqual(ep.aigw_subnet(net("10.53.0.0/24"), four + (net("10.53.0.128/26"),)), net("10.53.0.64/26"), "the last free /26 that is left")
+        self.assertEqual(ep.aigw_subnet(net("10.53.0.0/23"), four), net("10.53.1.192/26"), "the last /26 of a larger network, not the first")
+        # no /26 free, a /27 free: the last one
+        self.assertEqual(ep.aigw_subnet(net("10.53.0.0/24"), four + (net("10.53.0.64/26"), net("10.53.0.128/27"))), net("10.53.0.160/27"))
+        # nothing free: no range, and no error, because the gateway is an optional service
+        self.assertIsNone(ep.aigw_subnet(net("10.53.0.0/24"), four + (net("10.53.0.64/26"), net("10.53.0.128/26"))))
+        self.assertIsNone(ep.aigw_subnet(net("10.53.0.0/27"), (net("10.53.0.0/28"),)))
+        self.assertEqual(ep.AIGATEWAY_SUBNET_LENGTHS, (26, 27), "a /26 when the network can spare one, never smaller than a /27")
+
+    def test_a_network_without_a_free_range_gets_no_file_and_no_error_and_the_other_files_stay_as_they_are(self):
+        # a /25 holds four /27, and the four earlier subnets take them
+        code, out, err, files = run({**SETTINGS, "ENV_VNET_PREFIX": "10.53.0.0/25"}, "--aigateway-policies", str(self.POLICIES))
+        self.assertEqual((code, err), (0, ""))
+        outputs = dict(line.split("=", 1) for line in out.splitlines())
+        self.assertEqual((outputs["aigateway_files"], outputs["aigateway_subnet_prefix"]), ("false", ""))
+        self.assertFalse([name for name in files if "aigateway" in name])
+        without = run({**SETTINGS, "ENV_VNET_PREFIX": "10.53.0.0/25"})[3]
+        self.assertEqual(files, without, "every other file is the same with and without the gateway")
+
+    def test_the_file_says_whether_the_subnet_is_there_already_and_says_no_when_nobody_has_looked(self):
+        # the subnet is made once: a template that makes it again takes away the route table that the landing zone's network manager put on it
+        self.assertIs(values(self.files()[0]["aigateway.parameters.json"])["aigwSubnetExists"], False)
+        for given, expected in (("", False), ("false", False), ("FALSE", False), ("true", True), (" True ", True)):
+            files, _ = self.files(ENV_AIGW_SUBNET_EXISTS=given)
+            self.assertIs(values(files["aigateway.parameters.json"])["aigwSubnetExists"], expected, given)
+        for refused in ("yes", "1", "exists"):
+            code, out, err, files = run({**SETTINGS, "ENV_AIGW_SUBNET_EXISTS": refused}, "--aigateway-policies", str(self.POLICIES))
+            self.assertEqual((code, out, files), (2, "", {}), refused)
+            self.assertIn("ENV_AIGW_SUBNET_EXISTS is true or false", err)
+        self.assertIn("param aigwSubnetExists bool = false", self.TEMPLATE)
+
+    def test_the_principal_of_the_foundry_project_is_empty_until_step_two_gives_it_and_is_checked_as_an_object_id(self):
+        self.assertEqual(values(self.files()[0]["aigateway.parameters.json"])["foundryProjectPrincipalId"], "", "the template works without it")
+        files, _ = self.files(FOUNDRY_PROJECT_PRINCIPAL_ID="AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE")
+        self.assertEqual(values(files["aigateway.parameters.json"])["foundryProjectPrincipalId"], "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
+        for refused in ("not-a-guid", "12345678-1234-1234-1234-12345678901", "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee,aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"):
+            code, out, err, files = run({**SETTINGS, "FOUNDRY_PROJECT_PRINCIPAL_ID": refused}, "--aigateway-policies", str(self.POLICIES))
+            self.assertEqual((code, out, files), (2, "", {}), refused)
+            self.assertIn("FOUNDRY_PROJECT_PRINCIPAL_ID", err)
+            self.assertNotIn(refused, err, "a value that is not an object id is not echoed")
+
+    def test_two_models_whose_resource_names_would_be_the_same_are_refused_and_so_is_a_name_the_service_cannot_take(self):
+        base = json.loads(MODELS.read_text(encoding="utf-8"))
+        with tempfile.TemporaryDirectory() as tmp:
+            for names, expected in ((("gpt-6.1-sol", "gpt-6-1-sol"), "no two are the same"), (("gpt-6.1-sol", "ab"), "3 to 63")):
+                models = [{**base[0], "name": names[0]}, {**base[1], "name": names[1]}]
+                path = Path(tmp) / "models.json"
+                path.write_text(json.dumps(models), encoding="utf-8")
+                code, out, err, files = run(SETTINGS, "--aigateway-policies", str(self.POLICIES), models=path)
+                self.assertEqual((code, out, files), (2, "", {}), names)
+                self.assertIn(expected, err)
+
+    def test_the_policy_file_of_the_repository_holds_the_three_kinds_with_the_numbers_of_the_plan(self):
+        policies = self.policies()
+        by_kind = {}
+        for policy in policies:
+            by_kind.setdefault(policy["type"], []).append(policy)
+        self.assertEqual(sorted(by_kind), ["costLimit", "requestRateLimit", "tokenLimit"], "no ipFilter or cors policy: the file has no values for them, and the Foundry Agent Service has no address range to allow")
+        for policy in policies:
+            self.assertEqual((policy["counterKey"], policy["scope"]), (["identity"], "workspace"), "each caller has its own counter, across all models")
+        (token,) = by_kind["tokenLimit"]
+        agent_rates = [m["agentCapacity"] * 1000 for m in json.loads(MODELS.read_text(encoding="utf-8"))]
+        self.assertEqual((token["period"], token["count"]), ("minute", max(agent_rates)), "a minute's tokens of the deployment that the Investigator uses, the largest of the agents'")
+        self.assertEqual({(c["period"], c["amount"]) for c in by_kind["costLimit"]}, {("day", 5), ("month", 25)}, "the owner's standing limit: 5 a day and 25 in total")
+        self.assertEqual(len({c["id"] for c in by_kind["costLimit"]}), 2, "each cost limit keeps its own stable id")
+
+    def test_the_numbers_of_the_standing_limit_in_the_builder_are_the_ones_of_agents_md(self):
+        rule = re.search(r"\*\*\(g\) Standing limits\*\*.*", self.AGENTS).group(0)
+        total, daily = re.search(r"at most (\d+) EUR in total and (\d+) EUR a day", rule).groups()
+        self.assertEqual(ep.AIGATEWAY_COST_CEILING_USD, {"hour": int(daily), "day": int(daily), "week": int(total), "month": int(total), "year": int(total)})
+
+    def test_a_policy_file_that_breaks_the_plan_is_refused_by_name_and_nothing_is_written(self):
+        good = self.policies()
+
+        def changed(index, **changes):
+            document = json.loads(json.dumps(good))
+            document[index].update(changes)
+            return document
+
+        def without(key, index):
+            document = json.loads(json.dumps(good))
+            del document[index][key]
+            return document
+
+        cases = {
+            "an ipFilter policy, which has no values here": ([*good, {"type": "ipFilter", "action": "Allow", "cidrRanges": ["10.0.0.0/8"]}], "a gateway-wide policy is one of"),
+            "a key that nothing here has seen": (changed(0, payloadCapture=False), "a tokenLimit policy has exactly"),
+            "a missing key": (without("scope", 1), "a requestRateLimit policy has exactly"),
+            "a counter for all callers together": (changed(0, counterKey=[]), 'counterKey of a tokenLimit policy is ["identity"]'),
+            "a counter for the address": (changed(1, counterKey=["ipAddress"]), 'counterKey of a requestRateLimit policy is ["identity"]'),
+            "a scope that is one model": (changed(2, scope="resource"), "scope of a costLimit policy is workspace"),
+            "a token period that is not offered": (changed(0, period="week"), "period of the token limit is one of"),
+            "a token limit above the deployments' rate": (changed(0, count=50001), "count of the token limit is a whole number from 1 to 50000"),
+            "a token limit of nothing": (changed(0, count=0), "count of the token limit"),
+            "a token count that is a text": (changed(0, count="50000"), "count of the token limit"),
+            "a token count that is a switch": (changed(0, count=True), "count of the token limit"),
+            "a rate of nothing": (changed(1, callsPerPeriod=0), "request rate limit is callsPerPeriod from 1 to 1000"),
+            "a rate window of a day": (changed(1, periodSeconds=86400), "request rate limit is callsPerPeriod from 1 to 1000"),
+            "a daily cost above the daily limit": (changed(2, amount=5.01), "cost limit for a day is a number above 0 and at most 5"),
+            "a monthly cost above the total": (changed(3, amount=26), "cost limit for a month is a number above 0 and at most 25"),
+            "a cost of nothing": (changed(3, amount=0), "above 0"),
+            "a cost that is a text": (changed(3, amount="25"), "above 0"),
+            "a cost that is a switch": (changed(3, amount=True), "above 0"),
+            "a cost period that is not offered": (changed(3, period="fortnight"), "own period"),
+            "two cost limits of the same period": (changed(3, period="day", amount=4), "own period"),
+            "two cost limits with the same id": (changed(3, id="meternaut-day"), "own stable id"),
+            "an id that starts with a hyphen": (changed(3, id="-month"), "own stable id"),
+            "an id that ends with a hyphen": (changed(3, id="month-"), "own stable id"),
+            "an id with a space": (changed(3, id="the month"), "own stable id"),
+            "a second token limit": ([*good, changed(0, count=1000)[0]], "one tokenLimit policy at most"),
+            "no cost limit at all": (good[:2], "costLimit is missing"),
+            "no token limit": (good[1:], "tokenLimit is missing"),
+            "no request rate limit": ([good[0], *good[2:]], "requestRateLimit is missing"),
+            "an empty list": ([], "a list of 1 to 8 policies"),
+            "an object and not a list": ({"type": "tokenLimit"}, "a list of 1 to 8 policies"),
+            "text that is not JSON": ("[", "not a readable JSON list"),
+            "a policy that is a text": (["tokenLimit"], "a gateway-wide policy is one of"),
+        }
+        for what, (document, expected) in cases.items():
+            code, out, err, files = self.with_policies(document)
+            self.assertEqual((code, out, files), (2, "", {}), what)
+            self.assertIn(expected, err, what)
+
+    def test_a_policy_file_that_is_not_there_is_refused_and_a_larger_agent_capacity_raises_the_ceiling_of_the_token_limit(self):
+        code, out, err, files = run(SETTINGS, "--aigateway-policies", str(ROOT / "environment" / "aigateway" / "no-such-file.json"))
+        self.assertEqual((code, out, files), (2, "", {}))
+        self.assertIn("not a readable JSON list of policies", err)
+        base = json.loads(MODELS.read_text(encoding="utf-8"))
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "models.json"
+            path.write_text(json.dumps([{**base[0]}, {**base[1], "agentCapacity": 80}]), encoding="utf-8")
+            policies = self.policies()
+            policies[0]["count"] = 80000
+            policy_path = Path(tmp) / "policies.json"
+            policy_path.write_text(json.dumps(policies), encoding="utf-8")
+            code, out, err, files = run(SETTINGS, "--aigateway-policies", str(policy_path), models=path)
+            self.assertEqual((code, err), (0, ""), "the ceiling follows models.json")
+            self.assertEqual(files["aigateway-policies.json"][0]["count"], 80000)
+
+    def test_nothing_secret_is_in_either_file(self):
+        files, _ = self.files(FOUNDRY_PROJECT_PRINCIPAL_ID="aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
+        text = json.dumps([files["aigateway.parameters.json"], files["aigateway-policies.json"]]).lower()
+        for word in ("secret", "password", "connectionstring", "apikey", "api-key", "instrumentationkey", "bearer"):
+            self.assertNotIn(word, text, word)
+
+    def test_the_names_the_workflow_reads_are_the_ones_the_template_makes(self):
+        _, outputs = self.files()
+        self.assertEqual(outputs["aigateway_subnet_name"], "snet-aigw")
+        self.assertIn("var aigwSubnetName = 'snet-aigw'", self.TEMPLATE)
+        self.assertIn("param workload string = 'meternaut'", self.TEMPLATE)
+        self.assertIn("var operatorIdentityName = 'id-${workload}-operator'", self.TEMPLATE)
+        self.assertIn("name: 'id-${workload}-operator'", Operator.OPERATOR, "the identity that the gateway's template reads is the one that the Operator's makes")
+        self.assertIn("var virtualNetworkName = 'vnet-${workload}'", self.TEMPLATE)
+        self.assertIn("name: 'vnet-${workload}'", BICEP, "the virtual network that the model side makes")
+
+
 class PublicNetworkAccessOfTheApps(unittest.TestCase):
     """What each function app takes from the public internet is one value each (docs/proposals/07-private-by-default.md, phase 1): written to its parameter file every time, so that the property is never
     left unset, which would let the first private endpoint switch public access off by itself."""

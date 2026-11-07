@@ -90,6 +90,21 @@ ALLOWED = {
         "Microsoft.EventHub/namespaces/eventhubs",
         "Microsoft.Authorization/roleAssignments",
     },
+    "environment/aigateway/main.bicep": {
+        "Microsoft.Network/networkSecurityGroups",
+        "Microsoft.Network/virtualNetworks",
+        "Microsoft.Network/virtualNetworks/subnets",
+        "Microsoft.CognitiveServices/accounts",
+        "Microsoft.ManagedIdentity/userAssignedIdentities",
+        "Microsoft.Insights/components",
+        "Microsoft.ApiManagement/aigateways",
+        "Microsoft.ApiManagement/aigateways/workspaces",
+        "Microsoft.ApiManagement/aigateways/workspaces/modelProviders",
+        "Microsoft.ApiManagement/aigateways/workspaces/modelProviders/models",
+        "Microsoft.ApiManagement/aigateways/workspaces/aliases",
+        "Microsoft.ApiManagement/aigateways/workspaces/telemetryExporters",
+        "Microsoft.Authorization/roleAssignments",
+    },
 }
 
 
@@ -581,9 +596,11 @@ class Workflow(unittest.TestCase):
     def test_the_roles_that_the_workflow_removes_are_the_one_on_the_container_that_the_flex_version_left_behind_and_the_old_right_to_send_to_each_control_hub(self):
         # The incremental deployment never removes a role assignment, and the identity's condition lets it delete the roles that the templates give.
         users = [re.match(r"name: (.+)", b).group(1) for b in self.steps if "az role assignment" in b]
+        # The last one only reads: it looks at the condition of the deploy identity's right to assign roles before the AI Gateway is made (test_aigateway_workflow.py pins that it only lists).
         self.assertEqual(users, ["Retire the deploy identity's right to send to the control hub usage-control, when it is still there",
                                  "Remove what the Flex Consumption version left in the storage account, when it is still there",
-                                 "Retire the deploy identity's right to send to the control hub cases-control, when it is still there"])
+                                 "Retire the deploy identity's right to send to the control hub cases-control, when it is still there",
+                                 "The network, the Foundry resource of the agents and the Operator are there, the service is offered here, and the deploy identity may give the roles of the AI Gateway"])
         container = [b for b in self.steps if b.startswith("name: Remove what the Flex Consumption version left")][0]
         self.assertEqual(re.findall(r"az role assignment (\w+)", container), ["list", "delete"], "it lists what is assigned on the container and deletes that, and does nothing else with a role")
         self.assertIn('--scope "$container"', container)
@@ -667,7 +684,7 @@ class Workflow(unittest.TestCase):
                 self.assertIsNotNone(condition, block[:80])
                 self.assertNotIn("what-if", condition.group(1))
                 self.assertNotIn("always()", condition.group(1))
-        self.assertEqual(found, 5, "two publishes and three job starts, all in the Operator's container: the publish of the usage app and of the cases app, the check tools that send the control event, and the health check of the cases app")
+        self.assertEqual(found, 6, "two publishes and four job starts, all in the Operator's container: the publish of the usage app and of the cases app, the check tools that send the control event, the health check of the cases app, and the check of the AI Gateway")
         for block in self.steps:
             for word in ("az functionapp deployment source config-zip", "/api/zipdeploy", "az webapp deploy", "az webapp deployment"):
                 self.assertNotIn(word, block, f"no step publishes from the runner any more: {word} is in {block[:80]!r}")
@@ -730,7 +747,7 @@ class Workflow(unittest.TestCase):
         block = self.steps[names.index(again)]
         self.assertIn("if: inputs.action == 'recording'", block)
         self.assertIn("uses: azure/login@", block)
-        self.assertEqual(self.text.count("uses: azure/login@"), 7, "the first sign-in, one more before each publish (the usage recording's and the cases'), one more before the health check of the cases app in the Operator and one more after it, one more before the read-back of the Foundry resource, which follows a wait of up to 40 minutes, and one more before the list of the usage functions, which follows a publish in the Operator that can take a quarter of an hour")
+        self.assertEqual(self.text.count("uses: azure/login@"), 8, "the first sign-in, one more before each publish (the usage recording's and the cases'), one more before the health check of the cases app in the Operator and one more after it, one more before the read-back of the Foundry resource, which follows a wait of up to 40 minutes, one more before the list of the usage functions, which follows a publish in the Operator that can take a quarter of an hour, and one more before the limits, the built-in key and the read-back of the AI Gateway, which follow a wait of up to 20 minutes for the landing zone's route table")
         self.assertLess(names.index("Deploy the usage recording"), names.index(again))
         self.assertLess(names.index(again), names.index("Publish the usage functions to the function app from inside the network, in the Operator"))
         later = "Sign in to Azure again for the list of the functions, because the publish in the Operator can take a quarter of an hour and a credential lasts five minutes"
@@ -784,7 +801,7 @@ class Workflow(unittest.TestCase):
                       "Retire the deploy identity's right to send to the control hub cases-control, when it is still there"):
             self.assertLess(names.index("Read the object id of the signed-in identity"), names.index(title))
             self.assertIn("DEPLOYER_ID: ${{ steps.me.outputs.oid }}", self.steps[names.index(title)], "the object id is used only to find the identity's own assignment on the hub")
-        self.assertEqual(self.text.count("steps.me.outputs.oid"), 2, "the only users of the identity's object id are the two steps that retire its old right")
+        self.assertEqual(self.text.count("steps.me.outputs.oid"), 3, "the users of the identity's object id are the two steps that retire its old right and the step that reads the condition of its right to assign roles before the AI Gateway is made")
         # no template gives the identity a role any more, so the parameter builder takes no setting for it
         for path in (".github/workflows/deploy-hub.yml", ".github/workflows/checks.yml", "tools/environment-params.py"):
             self.assertNotIn("RECORDING_DEPLOYER_ID", text(path), path)
@@ -2569,7 +2586,7 @@ class OperatorWorkflow(unittest.TestCase):
         digest = re.search(r"OPERATOR_IMAGE: (mcr\.microsoft\.com/azure-cli@sha256:[0-9a-f]{64})", self.text).group(1)
         self.assertIn(digest, text("docs/proposals/07-private-by-default.md"))
         self.assertEqual(len(re.findall(r"OPERATOR_IMAGE: ", self.text)), 1, "the pin is made once")
-        self.assertEqual(len(re.findall(r'--image "\$OPERATOR_IMAGE"', self.text)), 6, "and used by the probe, by the two checks, by the health check of the cases app and by the two publishes")
+        self.assertEqual(len(re.findall(r'--image "\$OPERATOR_IMAGE"', self.text)), 7, "and used by the probe, by the two checks, by the health check of the cases app, by the check of the AI Gateway and by the two publishes")
         self.assertNotIn("az container", self.text, "the tool makes, reads and deletes the group")
 
     def test_the_cleanup_deletes_only_groups_of_the_probe_through_the_tool_and_a_failure_is_a_warning(self):
@@ -2652,7 +2669,7 @@ class OperatorChecksWorkflow(unittest.TestCase):
         self.assertEqual(sorted(re.findall(r"python3 tools/cases-check\.py (\w+)", code)), ["functions", "functions"])
         for word in ("eventhubs.azure.net", "servicebus.windows.net/", "/messages?"):
             self.assertNotIn(word, code, f"{word}: the runner takes no token for Event Hubs and posts nothing to it")
-        self.assertEqual(self.text.count("uses: azure/login@"), 7, "the check actions added no sign-in: the runner makes the container group with the credential of the first one (the seven are the first, those of recording and cases before their publish, the two of cases around the health check in the Operator, the Foundry read-back's and the one of recording before its list of the functions)")
+        self.assertEqual(self.text.count("uses: azure/login@"), 8, "the check actions added no sign-in: the runner makes the container group with the credential of the first one (the eight are the first, those of recording and cases before their publish, the two of cases around the health check in the Operator, the Foundry read-back's, the one of recording before its list of the functions and the one of aigateway before its limits, which follow a wait for the route table: aigateway-check has none)")
 
     def test_each_check_runs_the_generic_script_with_its_tool_and_the_arguments_that_the_runner_used_before_and_the_times_are_ordered(self):
         expected = {self.RECORDING: {"tool": "recording-check", "files": ["recording-check.py"], "args": "run --namespace $EVENT_HUB_NAMESPACE --insights $insights --job all --minutes 20", "seconds": 1500, "minutes": 35},

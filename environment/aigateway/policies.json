@@ -1,0 +1,32 @@
+[
+  {
+    "type": "tokenLimit",
+    "count": 50000,
+    "period": "minute",
+    "counterKey": ["identity"],
+    "scope": "workspace"
+  },
+  {
+    "type": "requestRateLimit",
+    "callsPerPeriod": 60,
+    "periodSeconds": 60,
+    "counterKey": ["identity"],
+    "scope": "workspace"
+  },
+  {
+    "type": "costLimit",
+    "id": "meternaut-day",
+    "amount": 5,
+    "period": "day",
+    "counterKey": ["identity"],
+    "scope": "workspace"
+  },
+  {
+    "type": "costLimit",
+    "id": "meternaut-month",
+    "amount": 25,
+    "period": "month",
+    "counterKey": ["identity"],
+    "scope": "workspace"
+  }
+]

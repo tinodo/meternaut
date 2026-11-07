@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Builds the parameter files of the first environment from the deployment workflow's settings (standard library only).
 
-    python tools/environment-params.py build --models environment/models.json --out-dir "$RUNNER_TEMP" [--preview] >> "$GITHUB_OUTPUT"
+    python tools/environment-params.py build --models environment/models.json --out-dir "$RUNNER_TEMP" [--preview] [--aigateway-policies environment/aigateway/policies.json] >> "$GITHUB_OUTPUT"
     python tools/environment-params.py check --params "$RUNNER_TEMP/kit.parameters.json" --template kit.json --label kit
 
 The settings are environment variables, filled by the workflow from the repository's secrets and variables, so that no
@@ -32,6 +32,9 @@ is checked as a GUID and never printed when it is not one. CASES_PRINCIPAL_ID, t
 system-assigned one replaced, is no longer read: the workflow does not look for the two retired identities, and a person removes them (environment/BOOTSTRAP.md).
 ENV_FOUNDRY_PROJECT_EXISTS is true when the workflow found the Foundry
 project in Azure: only then does the cases file carry the project's endpoint (an empty endpoint switches the investigation off).
+ENV_AIGW_SUBNET_EXISTS is true when the workflow found the AI Gateway's subnet (snet-aigw) in Azure: the template then leaves it alone (AGENTS.md rule 27).
+FOUNDRY_PROJECT_PRINCIPAL_ID (may be empty) is the object id of the Foundry project's system-assigned identity: the AI Gateway template gives it AI Gateway Models User on the
+gateway. Nothing sets it before the step that connects the project to the gateway; empty means none yet. It is checked as a GUID.
 CONSOLE_HOST_NAME (optional) is the host name that the console has on the platform's Application Gateway, which forwards to the cases app (docs/proposals/07-private-by-default.md). Empty: people open the
 console on the app's own name. With a name, the console's address (the setting CONSOLE_HOST, which the letters' links and the return address of the Azure sign-in are built from) is that name, the cases file
 passes it as consoleHostName, and the outputs console_host (the name that people open: that name, or the app's own) and console_host_set say what the check of the console's front door knocks at.
@@ -49,6 +52,10 @@ It writes five ARM parameter files into --out-dir (seven, with --contract: the c
                                       whose two control hubs it reads, which the usage recording and the first cases make)
     contract.parameters.json          for environment/gateway/contract.bicep, from --contract (environment/contract.json) and
                                       --contract-policy (environment/gateway/contract-policy.xml)
+    aigateway.parameters.json         for environment/aigateway/main.bicep (the AI Gateway: its subnet, models and aliases, and its roles), and
+    aigateway-policies.json           the gateway-wide policies that the action aigateway applies to the gateway's default workspace (a plain list, not a parameter file),
+                                      both from --aigateway-policies (environment/aigateway/policies.json, checked against the models and against the owner's standing limit
+                                      of AGENTS.md rule 15 (g)); neither is written when the virtual network has no free range for the gateway's subnet (the outputs say so)
     cases.parameters.json             for environment/cases/main.bicep (the first cases: the function app that finds leads and writes the
                                       History); written together with the contract, because it names the contract's subscription whose
                                       key the app reads at the start of a run
@@ -66,7 +73,11 @@ Foundry resource of the agents (aif-meternaut-agents-<digest>, also a host name,
 function app's subnet is the first /27 of the virtual network that does not overlap the private endpoint subnet, and the
 subnet of the first cases' Basic plan is the first /27 that overlaps neither of those two. The Operator's subnet (container groups of Azure Container
 Instances) is the last /27 that overlaps none of the three; Microsoft Learn recommends a /24 for container groups, which a small virtual network cannot
-spare, and it is passed as a flag when it is in Azure already (ENV_OPS_SUBNET_EXISTS). It prints
+spare, and it is passed as a flag when it is in Azure already (ENV_OPS_SUBNET_EXISTS). The AI Gateway's subnet (snet-aigw, delegated to Microsoft.App/environments, for the gateway's own
+use) is the last /26 that overlaps none of those four, and the last /27 when the network has no free /26: the service wants at least a /27, and a /26 leaves room to scale. It is passed as a
+flag too when it is in Azure already (ENV_AIGW_SUBNET_EXISTS). A network with no free /27 left is not refused here: the AI Gateway is an optional preview service, so its files are not
+written, the outputs say so (aigateway_subnet_prefix is empty) and the action aigateway stops with that reason. The gateway's name is aigw-meternaut-<digest>, 23 characters, inside the
+service's limit of 24. It prints
 key=value lines for GitHub to read as step outputs.
 
 The contract names only models that are deployed (environment/models.json) and only the two inference APIs that the
@@ -138,6 +149,29 @@ APP_ENDPOINT_ZONE = "privatelink.azurewebsites.net"
 IDENTITY_NAME = "id-meternaut-gateway"
 FOUNDRY_PROJECT_NAME = "meternaut"
 FOUNDRY_GUARDRAIL_NAME = "meternaut-agents"
+AIGATEWAY_SUBNET_NAME = "snet-aigw"
+# A /26 if the network can spare it, never smaller than a /27 (the service's minimum for the gateway's subnet).
+AIGATEWAY_SUBNET_LENGTHS = (26, 27)
+# The service's own patterns (Learn and the REST specification of Microsoft.ApiManagement/aigateways, read 2026-11-07): the gateway's name, the name of a model resource, which has
+# no dots (the deployment's name with its dots replaced by hyphens), and the name of an alias, which is the name that a caller sends and may keep its dots.
+AIGATEWAY_NAME = re.compile(r"^[a-z0-9][a-z0-9-]{1,22}[a-z0-9]$")
+AIGATEWAY_MODEL_RESOURCE = re.compile(r"^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$")
+AIGATEWAY_ALIAS = re.compile(r"^[A-Za-z0-9_.-]{1,128}$")
+# What the gateway-wide policies may hold (environment/aigateway/policies.json): a token limit and a request rate limit, each once, and cost limits with a stable id each, one for each period.
+# Every one counts for each caller identity and across the whole workspace (all models), which is how the service's own baseline writes them.
+AIGATEWAY_POLICY_KEYS = {
+    "tokenLimit": {"type", "count", "period", "counterKey", "scope"},
+    "requestRateLimit": {"type", "callsPerPeriod", "periodSeconds", "counterKey", "scope"},
+    "costLimit": {"type", "id", "amount", "period", "counterKey", "scope"},
+}
+AIGATEWAY_TOKEN_PERIODS = {"minute": 1, "hour": 60, "day": 1440}
+AIGATEWAY_COST_PERIODS = ("hour", "day", "week", "month", "year")
+# The id pattern of the portal's cost limit form: letters, digits, underscore and hyphen, and no hyphen at either end.
+AIGATEWAY_COST_ID = re.compile(r"^(?!-)(?!.*-$)[A-Za-z0-9_-]{1,64}$")
+# The owner's standing limit, AGENTS.md rule 15 (g): at most 25 EUR of model calls in total and 5 EUR a day. A cost limit of the gateway is in US dollars, so its amount is held to the same
+# numbers: while a euro is worth more than a dollar (an assumption, not checked against a rate), an amount in dollars that is at most the figure in euros is under the limit. A test holds
+# these numbers to the rule's text. An hour or a day may not be above the daily figure, a longer period not above the total.
+AIGATEWAY_COST_CEILING_USD = {"hour": 5, "day": 5, "week": 25, "month": 25, "year": 25}
 CONTRACT_NAME = re.compile(r"^[a-z][a-z0-9-]{1,58}[a-z0-9]$")
 CONTRACT_KEYS = {"name", "description", "apis", "allowedModels", "tokensPerMinute", "tokenQuotaPerMonth"}
 CONTRACT_APIS = ("universal-llm-api", "azure-openai-api")
@@ -378,6 +412,36 @@ def ops_subnet_exists(env: dict) -> bool:
     return exists_flag(env, "ENV_OPS_SUBNET_EXISTS")
 
 
+def aigateway_name(subscription: str, group: str) -> str:
+    """The name of the AI Gateway (environment/aigateway/main.bicep): aigw-meternaut-<digest>, 23 characters, one less than the service's limit of 24.
+
+    It is the first label of the gateway's host name, which the service reports and which nothing here constructs."""
+    name = f"aigw-meternaut-{digest(subscription, group)}"
+    if not AIGATEWAY_NAME.match(name):
+        raise Problem(f"the AI Gateway's name {name} does not fit the service's pattern: 3 to 24 lower-case letters, digits and hyphens")
+    return name
+
+
+def aigw_subnet(vnet: ipaddress.IPv4Network, taken: tuple[ipaddress.IPv4Network, ...]) -> ipaddress.IPv4Network | None:
+    """The subnet that the AI Gateway reaches its backends through (environment/aigateway/main.bicep): the last free /26, and the last free /27 when the network has no free /26.
+
+    The service wants a /27 at least, delegated to Microsoft.App/environments and empty, and it takes the subnet when the gateway is made (the portal says that it cannot be changed
+    afterwards). A /26 leaves room to scale, and the virtual network of a small environment (a /24) can spare one. Like the Basic plan's and the Operator's, it is the last free block,
+    so that no earlier range moves (docs/proposals/07-private-by-default.md). A network with no free /27 gets None: the AI Gateway is an optional preview service, so that is not an
+    error of the other actions, and the action aigateway stops with that reason."""
+    for length in AIGATEWAY_SUBNET_LENGTHS:
+        if vnet.prefixlen <= length:
+            for candidate in reversed(list(vnet.subnets(new_prefix=length))):
+                if not any(candidate.overlaps(other) for other in taken):
+                    return candidate
+    return None
+
+
+def aigw_subnet_exists(env: dict) -> bool:
+    """Whether the AI Gateway's subnet is in Azure already: the template then leaves it alone (AGENTS.md rule 27)."""
+    return exists_flag(env, "ENV_AIGW_SUBNET_EXISTS")
+
+
 def recording_endpoints(names: dict[str, str]) -> list[tuple[str, str]]:
     """The private endpoints of the usage recording and the central private DNS zone that the landing zone registers each in: the three of the storage account, the Cosmos DB account's, the
     Event Hubs namespace's and the function app's own. The workflow waits for every one of them before it publishes the code. The app's own is in the list because the deployment of a package ends
@@ -428,6 +492,108 @@ def read_models(path: Path) -> list[dict]:
 
 def parameters(values: dict) -> dict:
     return {"$schema": SCHEMA, "contentVersion": "1.0.0.0", "parameters": {k: {"value": v} for k, v in values.items()}}
+
+
+def read_aigateway_policies(path: Path, models: list[dict]) -> list[dict]:
+    """The gateway-wide policies of environment/aigateway/policies.json, checked against the models and against the owner's standing limit (AGENTS.md rule 15 (g)).
+
+    Only the three types of the plan are allowed, each with exactly its keys, so that a policy cannot carry a setting that nothing here has seen: an ipFilter or a cors policy
+    belongs to the plan only with values, and the file has none. The file holds a token limit, a request rate limit and at least one cost limit, so that a commit that drops one
+    is refused. The token limit is held to the largest token rate of the agents' deployments (models.json, agentCapacity), because a limit above it would limit nothing."""
+    try:
+        policies = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        raise Problem(f"{path} is not a readable JSON list of policies")
+    if not isinstance(policies, list) or not 1 <= len(policies) <= 8:
+        raise Problem("the gateway-wide policies are a list of 1 to 8 policies")
+
+    def whole(value, low: int, high: int) -> bool:
+        return isinstance(value, int) and not isinstance(value, bool) and low <= value <= high
+
+    per_minute = max(m["agentCapacity"] for m in models) * 1000
+    kinds: list[str] = []
+    cost_ids: set[str] = set()
+    cost_periods: set[str] = set()
+    checked = []
+    for policy in policies:
+        kind = policy.get("type") if isinstance(policy, dict) else None
+        if kind not in AIGATEWAY_POLICY_KEYS:
+            raise Problem(f"a gateway-wide policy is one of: {', '.join(AIGATEWAY_POLICY_KEYS)}")
+        if set(policy) != AIGATEWAY_POLICY_KEYS[kind]:
+            raise Problem(f"a {kind} policy has exactly: {', '.join(sorted(AIGATEWAY_POLICY_KEYS[kind]))}")
+        if policy["counterKey"] != ["identity"]:
+            raise Problem(f'the counterKey of a {kind} policy is ["identity"]: each caller has a counter of its own')
+        if policy["scope"] != "workspace":
+            raise Problem(f"the scope of a {kind} policy is workspace: it counts across all models")
+        if kind == "tokenLimit":
+            if policy["period"] not in AIGATEWAY_TOKEN_PERIODS:
+                raise Problem(f"the period of the token limit is one of {', '.join(AIGATEWAY_TOKEN_PERIODS)}")
+            ceiling = per_minute * AIGATEWAY_TOKEN_PERIODS[policy["period"]]
+            if not whole(policy["count"], 1, ceiling):
+                raise Problem(f"the count of the token limit is a whole number from 1 to {ceiling}: the largest agentCapacity of environment/models.json for that period")
+        elif kind == "requestRateLimit":
+            if not whole(policy["callsPerPeriod"], 1, 1000) or not whole(policy["periodSeconds"], 1, 3600):
+                raise Problem("the request rate limit is callsPerPeriod from 1 to 1000 and periodSeconds from 1 to 3600")
+        else:
+            if not isinstance(policy["id"], str) or not AIGATEWAY_COST_ID.match(policy["id"]) or policy["id"] in cost_ids:
+                raise Problem("each cost limit has its own stable id: letters, digits, _ and -, with no - at either end")
+            if policy["period"] not in AIGATEWAY_COST_PERIODS or policy["period"] in cost_periods:
+                raise Problem(f"each cost limit has its own period, one of {', '.join(AIGATEWAY_COST_PERIODS)}")
+            ceiling = AIGATEWAY_COST_CEILING_USD[policy["period"]]
+            amount = policy["amount"]
+            if isinstance(amount, bool) or not isinstance(amount, (int, float)) or not 0 < amount <= ceiling:
+                raise Problem(f"the amount of the cost limit for a {policy['period']} is a number above 0 and at most {ceiling} (US dollars): the owner's standing limit, AGENTS.md rule 15 (g)")
+            cost_ids.add(policy["id"])
+            cost_periods.add(policy["period"])
+        if kind in kinds and kind != "costLimit":
+            raise Problem(f"the file holds one {kind} policy at most")
+        kinds.append(kind)
+        checked.append(dict(policy))
+    missing = [kind for kind in AIGATEWAY_POLICY_KEYS if kind not in kinds]
+    if missing:
+        raise Problem(f"the gateway-wide policies hold a token limit, a request rate limit and a cost limit: {', '.join(missing)} is missing")
+    return checked
+
+
+def aigateway_files(env: dict, subscription: str, group: str, location: str, owner: str, vnet: ipaddress.IPv4Network, taken: tuple[ipaddress.IPv4Network, ...],
+                    foundry: dict[str, str], models: list[dict], policies: list[dict]) -> tuple[dict, dict[str, str]]:
+    """The AI Gateway's parameter file and policy file, and its outputs (environment/aigateway/main.bicep; the action aigateway applies the policies).
+
+    A network with no free range for the gateway's subnet gets no file: aigateway_files is false, aigateway_subnet_prefix is empty, and the action says why it stops.
+    A model's resource in the gateway has the deployment's name with its dots replaced by hyphens (the service's pattern allows none); its alias keeps the name."""
+    resources = [m["name"].replace(".", "-") for m in models]
+    if len(set(resources)) != len(resources) or not all(AIGATEWAY_MODEL_RESOURCE.match(r) for r in resources):
+        raise Problem("the model names make the names of the gateway's model resources (the dots become hyphens): each is 3 to 63 lower-case letters, digits and hyphens, and no two are the same")
+    if not all(AIGATEWAY_ALIAS.match(m["name"]) for m in models):
+        raise Problem("the model names are the gateway's aliases: letters, digits, _ . and - only")
+    project_principal = (env.get("FOUNDRY_PROJECT_PRINCIPAL_ID") or "").strip()
+    if project_principal and not GUID.match(project_principal):
+        raise Problem("FOUNDRY_PROJECT_PRINCIPAL_ID is the object id of the Foundry project's system-assigned identity, or empty")
+    name = aigateway_name(subscription, group)
+    prefix = aigw_subnet(vnet, taken)
+    outputs = {
+        "aigateway_name": name,
+        "aigateway_subnet_name": AIGATEWAY_SUBNET_NAME,
+        "aigateway_subnet_prefix": str(prefix) if prefix else "",
+        "aigateway_aliases": " ".join(m["name"] for m in models),
+        "aigateway_files": "true" if prefix else "false",
+    }
+    if prefix is None:
+        return {}, outputs
+    files = {
+        "aigateway.parameters.json": parameters({
+            "location": location,
+            "owner": owner,
+            "gatewayName": name,
+            "aigwSubnetPrefix": str(prefix),
+            "aigwSubnetExists": aigw_subnet_exists(env),
+            "foundryAccountName": foundry["foundry_account_name"],
+            "models": [{"name": m["name"], "version": m["version"]} for m in models],
+            "foundryProjectPrincipalId": project_principal.lower(),
+        }),
+        "aigateway-policies.json": policies,
+    }
+    return files, outputs
 
 
 def read_contract(path: Path, models: list[dict]) -> dict:
@@ -526,7 +692,8 @@ def contract_files(contract: dict, template: str, gateway_name: str) -> tuple[di
     return document, outputs
 
 
-def build(env, models: list[dict], preview: bool = False, contract: dict | None = None, policy_template: str | None = None) -> tuple[dict[str, dict], dict[str, str]]:
+def build(env, models: list[dict], preview: bool = False, contract: dict | None = None, policy_template: str | None = None,
+          aigateway_policies: list[dict] | None = None) -> tuple[dict[str, dict | list], dict[str, str]]:
     subscription = need(env, "ENV_SUBSCRIPTION_ID")
     group = need(env, "ENV_RESOURCE_GROUP")
     location = need(env, "ENV_LOCATION")
@@ -793,6 +960,10 @@ def build(env, models: list[dict], preview: bool = False, contract: dict | None 
             "casesAppPublicNetworkAccess": CASES_APP_PUBLIC_NETWORK_ACCESS,
             **console_parameters(env),
         })
+    if aigateway_policies is not None:
+        aigateway_written, aigateway_outputs = aigateway_files(env, subscription, group, location, owner, vnet, (subnet, func_subnet, web, ops), foundry, models, aigateway_policies)
+        files.update(aigateway_written)
+        outputs.update(aigateway_outputs)
     return files, outputs
 
 
@@ -845,7 +1016,8 @@ def run_build(args, environ) -> int:
                 policy_template = Path(args.contract_policy).read_text(encoding="utf-8")
             except OSError:
                 raise Problem(f"{args.contract_policy} is not a readable policy template")
-        files, outputs = build(environ, models, preview=args.preview, contract=contract, policy_template=policy_template)
+        files, outputs = build(environ, models, preview=args.preview, contract=contract, policy_template=policy_template,
+                               aigateway_policies=read_aigateway_policies(Path(args.aigateway_policies), models) if args.aigateway_policies else None)
     except Problem as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
@@ -867,6 +1039,7 @@ def main(argv=None, environ=None) -> int:
     build_parser.add_argument("--preview", action="store_true", help="for a what-if: the gateway identity may not exist yet")
     build_parser.add_argument("--contract", help="the contract (environment/contract.json); also writes contract.parameters.json")
     build_parser.add_argument("--contract-policy", help="the contract's policy template (environment/gateway/contract-policy.xml)")
+    build_parser.add_argument("--aigateway-policies", help="the AI Gateway's gateway-wide policies (environment/aigateway/policies.json); also writes aigateway.parameters.json and aigateway-policies.json")
     check_parser = commands.add_parser("check", help="check a parameter file against a compiled template (az bicep build --outfile)")
     check_parser.add_argument("--params", required=True)
     check_parser.add_argument("--template", required=True)

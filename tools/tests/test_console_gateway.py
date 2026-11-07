@@ -763,9 +763,9 @@ class TheDocumentsOfTheConsoleBehindTheGateway(unittest.TestCase):
         self.assertIn("The console behind the platform's Application Gateway is not on that list: each object on the gateway, the DNS record and the return addresses need their own plain-word yes, and it is built and not deployed", after)
         self.assertLess(after.index("One yes to the whole list"), after.index("The console behind the platform's Application Gateway is not on that list"))
 
-    def test_the_changelog_entry_is_the_newest_and_says_what_was_said_built_checked_and_left_open_and_the_older_entry_is_as_it_was(self):
+    def test_the_changelog_entry_follows_the_one_of_the_ai_gateway_and_says_what_was_said_built_checked_and_left_open_and_the_older_entry_is_as_it_was(self):
         headings = re.findall(r"(?m)^## .+$", self.changelog)
-        self.assertEqual(headings[:2], [self.CHANGELOG_HEADING, self.OLDER_HEADING], "the new entry is at the top and the entry below it is untouched")
+        self.assertEqual(headings[1:3], [self.CHANGELOG_HEADING, self.OLDER_HEADING], "the entry of the AI Gateway (test_aigateway_docs.py) is above this one, and the entry below it is untouched")
         positions = [self.entry.index(lead) for lead in ("**What the owner said.**", "**What is built.**", "**Where Learn says something other than the plan assumed.**", "**What was checked.**", "**Not checked.**",
                                                          "**What a person has to do, in order.**")]
         self.assertEqual(positions, sorted(positions))

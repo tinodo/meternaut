@@ -11,7 +11,7 @@ on:
   workflow_dispatch:
     inputs:
       action:
-        description: "what-if: show what the next steps would change and change nothing. model-side: the gateway's identity, then the network, the model account with its private endpoint and the budget. gateway-prepare: attach the identity to the gateway and add the Application Insights logger, and the two Event Hub loggers when the usage recording's namespace exists. gateway: add the Citadel module's objects to the gateway (with the two fragments that use the Event Hub loggers when both loggers exist, without them otherwise). contract: add the first contract (a product, its policy and its key) and test the gateway with that key. recording: the usage recording of the gateway's calls, which is a Log Analytics workspace, an Event Hubs namespace, a Cosmos DB account, a storage account and a function app with its own system-assigned identity, with private endpoints and without any key; the Event Hubs namespace takes no public traffic (its public network access is Disabled and its private endpoint is the only way in, so from then on only the Operator can send to it from outside the apps), and after its deploy the action reads that back from Azure and retires the deploy identity's old right to send to the control hub usage-control, when that is still there; on an estate where the namespace is still public, run it only after recording-check and cases-run have passed through the Operator; it first removes the key-based Logic App version of it, when that is still there. It publishes the usage app's code from inside the network, in a container group of the Operator that signs in as the deploy identity with a token of the run and goes through the app's private endpoint, so on an estate that has no Operator yet it deploys and stops at the publish: the order is then recording, cases, operator, and then recording and cases again. recording-check: start the copy jobs once through the control hub and read what they say from the function app's telemetry, both by the Operator from inside the network (the check tool runs in a short-lived container group of the Operator): it needs operator first. cases: the first cases, which is a second function app on the usage recording's network, storage and namespace, with its own system-assigned identity and one user-assigned identity for the console's sign-in, a control hub, a longer retention of the traces and the History workbook; its Watch changes no resource of the estate (with the investigation on it also creates agents and conversations in its own Foundry project), after its deploy it retires the deploy identity's old right to send to the control hub cases-control, when that is still there, and it needs the usage recording and the contract first. It publishes the app's code from inside the network, in the Operator, as recording does.         cases-run: start one Watch through the control hub and read its History from the telemetry, both by the Operator from inside the network: it needs operator first. plant: make waste of Meternaut's own (an unattached disk, and with plant_public_ip an unassigned public IP address) in the project's resource group,         tagged for the loop, so that the whole loop can be shown on something that belongs to nobody else. loop-check: knock at the console's front door without a sign-in and pass only when nobody gets a page. foundry: the Foundry resource of the agents (the model account cannot hold projects, so this is a second resource): a project, the same models, a guardrail, one private endpoint and the connection that sends the agents' traces, with no key; it needs recording and cases to have run once, and it is run before the next cases, which is then given the project's address. operator: the Operator, the executor that works inside the virtual network for what the workflow cannot do from outside it once the services are private (docs/proposals/07-private-by-default.md): its identity, the subnet of its container groups and three roles (Reader on the project's group, and Azure Event Hubs Data Sender on the two control hubs, which the actions recording and cases make, so it runs after them); it waits until the landing zone has put its route table on that subnet, and it starts nothing, so nothing is paid until a run uses it. The actions recording and cases publish their code through it, as the deploy identity. operator-probe: run operator/probe.sh once in a short-lived container group of the Operator and print what it finds (does the identity sign in, do the names of private endpoints resolve to private addresses, which addresses can a group reach, and how does a package get in); the group is deleted at the end whatever happens, and it costs cents. It needs operator first."
+        description: "what-if: show what the next steps would change and change nothing. model-side: the gateway's identity, then the network, the model account with its private endpoint and the budget. gateway-prepare: attach the identity to the gateway and add the Application Insights logger, and the two Event Hub loggers when the usage recording's namespace exists. gateway: add the Citadel module's objects to the gateway (with the two fragments that use the Event Hub loggers when both loggers exist, without them otherwise). contract: add the first contract (a product, its policy and its key) and test the gateway with that key. recording: the usage recording of the gateway's calls, which is a Log Analytics workspace, an Event Hubs namespace, a Cosmos DB account, a storage account and a function app with its own system-assigned identity, with private endpoints and without any key; the Event Hubs namespace takes no public traffic (its public network access is Disabled and its private endpoint is the only way in, so from then on only the Operator can send to it from outside the apps), and after its deploy the action reads that back from Azure and retires the deploy identity's old right to send to the control hub usage-control, when that is still there; on an estate where the namespace is still public, run it only after recording-check and cases-run have passed through the Operator; it first removes the key-based Logic App version of it, when that is still there. It publishes the usage app's code from inside the network, in a container group of the Operator that signs in as the deploy identity with a token of the run and goes through the app's private endpoint, so on an estate that has no Operator yet it deploys and stops at the publish: the order is then recording, cases, operator, and then recording and cases again. recording-check: start the copy jobs once through the control hub and read what they say from the function app's telemetry, both by the Operator from inside the network (the check tool runs in a short-lived container group of the Operator): it needs operator first. cases: the first cases, which is a second function app on the usage recording's network, storage and namespace, with its own system-assigned identity and one user-assigned identity for the console's sign-in, a control hub, a longer retention of the traces and the History workbook; its Watch changes no resource of the estate (with the investigation on it also creates agents and conversations in its own Foundry project), after its deploy it retires the deploy identity's old right to send to the control hub cases-control, when that is still there, and it needs the usage recording and the contract first. It publishes the app's code from inside the network, in the Operator, as recording does.         cases-run: start one Watch through the control hub and read its History from the telemetry, both by the Operator from inside the network: it needs operator first. plant: make waste of Meternaut's own (an unattached disk, and with plant_public_ip an unassigned public IP address) in the project's resource group,         tagged for the loop, so that the whole loop can be shown on something that belongs to nobody else. loop-check: knock at the console's front door without a sign-in and pass only when nobody gets a page. foundry: the Foundry resource of the agents (the model account cannot hold projects, so this is a second resource): a project, the same models, a guardrail, one private endpoint and the connection that sends the agents' traces, with no key; it needs recording and cases to have run once, and it is run before the next cases, which is then given the project's address. operator: the Operator, the executor that works inside the virtual network for what the workflow cannot do from outside it once the services are private (docs/proposals/07-private-by-default.md): its identity, the subnet of its container groups and three roles (Reader on the project's group, and Azure Event Hubs Data Sender on the two control hubs, which the actions recording and cases make, so it runs after them); it waits until the landing zone has put its route table on that subnet, and it starts nothing, so nothing is paid until a run uses it. The actions recording and cases publish their code through it, as the deploy identity. operator-probe: run operator/probe.sh once in a short-lived container group of the Operator and print what it finds (does the identity sign in, do the names of private endpoints resolve to private addresses, which addresses can a group reach, and how does a package get in); the group is deleted at the end whatever happens, and it costs cents. It needs operator first. aigateway: the AI Gateway of the agents' model calls (Azure's AI Gateway, a preview service that is not API Management): a subnet that is delegated to it, the gateway with a system-assigned identity, a model and an alias for each model of the agents' Foundry resource, the gateway-wide token, request and cost limits, content safety on each model, and AI Gateway Models User for the Operator's identity, with no key; it needs foundry and operator first. Its frontend is public whatever is asked, because the service has no private frontend, so access is by Microsoft Entra ID and role assignments only. After the deploy the action waits for the landing zone's route table on the subnet, applies the limits, deletes the built-in key master when the service lets it be deleted, and reads everything back; it changes nothing of the agents, which keep calling their model deployments. aigateway-check: call each alias of the AI Gateway once with the Operator's token, and once without a token and once with a wrong alias, by the Operator from inside the network (the check tool runs in a short-lived container group of the Operator): it needs aigateway and operator first, and about ten minutes after aigateway, because a new role takes up to ten minutes to apply."
         type: choice
         required: true
         default: what-if
@@ -30,6 +30,8 @@ on:
           - loop-check
           - operator
           - operator-probe
+          - aigateway
+          - aigateway-check
       check_limits:
         description: "Only with contract: also prove the token limit, with one request larger than a minute's allowance and then a refusal by the gateway. It uses about a minute of the contract's tokens and blocks the key for up to a minute."
         type: boolean
@@ -115,7 +117,7 @@ jobs:
           python3 -m unittest discover -s src/usage-functions/tests
           python3 -m unittest discover -s src/case-functions/tests
           python3 tools/workflow-lint.py
-          for template in environment/main.bicep environment/gateway/identity.bicep environment/gateway/logger.bicep environment/gateway/eventhub-loggers.bicep environment/gateway/contract.bicep environment/recording/main.bicep environment/foundry/main.bicep environment/cases/main.bicep environment/cases/planted.bicep environment/operator/main.bicep; do
+          for template in environment/main.bicep environment/gateway/identity.bicep environment/gateway/logger.bicep environment/gateway/eventhub-loggers.bicep environment/gateway/contract.bicep environment/recording/main.bicep environment/foundry/main.bicep environment/cases/main.bicep environment/cases/planted.bicep environment/operator/main.bicep environment/aigateway/main.bicep; do
             az bicep build --file "$template" --stdout > /dev/null
             az bicep lint --file "$template"
           done
@@ -128,6 +130,7 @@ jobs:
           az bicep build --file environment/cases/main.bicep --outfile "$RUNNER_TEMP/cases.json"
           az bicep build --file environment/cases/planted.bicep --outfile "$RUNNER_TEMP/planted.json"
           az bicep build --file environment/operator/main.bicep --outfile "$RUNNER_TEMP/operator.json"
+          az bicep build --file environment/aigateway/main.bicep --outfile "$RUNNER_TEMP/aigateway.json"
           az bicep build --file kit/bicep/infra/apim-gateway-upgrade/main.bicep --outfile "$RUNNER_TEMP/kit.json"
 
       - name: Sign in to Azure
@@ -194,6 +197,10 @@ jobs:
           echo "network_exists=$network" >> "$GITHUB_OUTPUT"
           echo "web_subnet_exists=$subnet" >> "$GITHUB_OUTPUT"
           echo "ops_subnet_exists=$ops" >> "$GITHUB_OUTPUT"
+          # The AI Gateway's subnet is made once too (AGENTS.md rule 27): the service takes the subnet when the gateway is made and treats it as read-only afterwards.
+          if [ "$network" = true ]; then aigw=$(exists "$vnet/subnets/snet-aigw"); else aigw=false; fi
+          echo "The subnet snet-aigw is there: $aigw."
+          echo "aigw_subnet_exists=$aigw" >> "$GITHUB_OUTPUT"
 
       - name: Work out the settings
         id: params
@@ -202,9 +209,11 @@ jobs:
           ENV_NETWORK_EXISTS: ${{ steps.network.outputs.network_exists }}
           ENV_WEB_SUBNET_EXISTS: ${{ steps.network.outputs.web_subnet_exists }}
           ENV_OPS_SUBNET_EXISTS: ${{ steps.network.outputs.ops_subnet_exists }}
+          ENV_AIGW_SUBNET_EXISTS: ${{ steps.network.outputs.aigw_subnet_exists }}
         run: |
           # The gateway identity does not exist before model-side has run, so this first pass is a preview: it gives the names.
-          contract_files="--contract environment/contract.json --contract-policy environment/gateway/contract-policy.xml"
+          # The AI Gateway's policy file goes in too: it is checked against the models and against the owner's standing limit, and its files are written only when the virtual network has a free range for the gateway's subnet.
+          contract_files="--contract environment/contract.json --contract-policy environment/gateway/contract-policy.xml --aigateway-policies environment/aigateway/policies.json"
           exists() {
             local found level="${3:-error}"
             if found=$(az rest --method get --url "https://management.azure.com${1}?api-version=${2}" --query name --output tsv 2>&1); then
@@ -288,6 +297,10 @@ jobs:
           python3 tools/environment-params.py check --params "$RUNNER_TEMP/cases.parameters.json" --template "$RUNNER_TEMP/cases.json" --label cases
           python3 tools/environment-params.py check --params "$RUNNER_TEMP/operator.parameters.json" --template "$RUNNER_TEMP/operator.json" --label operator
           python3 tools/environment-params.py check --params "$RUNNER_TEMP/planted.parameters.json" --template "$RUNNER_TEMP/planted.json" --label planted
+          # The AI Gateway's file is there only when the virtual network has a free range for its subnet; the action aigateway says so and stops when it is not.
+          if [ -f "$RUNNER_TEMP/aigateway.parameters.json" ]; then
+            python3 tools/environment-params.py check --params "$RUNNER_TEMP/aigateway.parameters.json" --template "$RUNNER_TEMP/aigateway.json" --label aigateway
+          fi
 
       - name: What the identity, the model side, the logger, the usage recording and the first cases would change
         if: inputs.action == 'what-if'
@@ -298,6 +311,7 @@ jobs:
           INSIGHTS_NAME: ${{ steps.params.outputs.appinsights_name }}
           NETWORK_EXISTS: ${{ steps.network.outputs.network_exists }}
           EVENT_HUB_NAMESPACE: ${{ steps.params.outputs.event_hub_namespace }}
+          FOUNDRY_ACCOUNT: ${{ steps.params.outputs.foundry_account_name }}
         run: |
           echo "::group::The gateway identity, in the gateway's resource group"
           python3 tools/az-deploy.py what-if --subscription "$GATEWAY_SUBSCRIPTION" --resource-group "$GATEWAY_GROUP" \
@@ -349,6 +363,23 @@ jobs:
           else
             python3 tools/az-deploy.py what-if --subscription "$ENV_SUBSCRIPTION_ID" --resource-group "$ENV_RESOURCE_GROUP" \
               --template environment/operator/main.bicep --parameters "$RUNNER_TEMP/operator.parameters.json"
+          fi
+          echo "::endgroup::"
+          echo "::group::The AI Gateway, in the project's resource group (its subnet, the gateway, its models and aliases and its roles; the policies and the built-in key are not in the template)"
+          # It reads the Foundry resource of the agents (the gateway's identity gets a role on it) and the Operator's identity (it gets a role on the gateway), and its subnet goes into the virtual network.
+          if [ ! -f "$RUNNER_TEMP/aigateway.parameters.json" ]; then
+            echo "The AI Gateway cannot be previewed: the virtual network has no free range for its subnet (a /26, or a /27 at the least)."
+          elif [ "$NETWORK_EXISTS" != true ]; then
+            echo "The AI Gateway cannot be previewed yet: its subnet goes into the virtual network, and the action model-side makes the network."
+          else
+            foundry_found=$(az resource list --resource-group "$ENV_RESOURCE_GROUP" --resource-type Microsoft.CognitiveServices/accounts --query "[?name=='$FOUNDRY_ACCOUNT'].name | [0]" --output tsv)
+            operator_found=$(az resource list --resource-group "$ENV_RESOURCE_GROUP" --name id-meternaut-operator --query "[0].name" --output tsv)
+            if [ -z "$foundry_found" ] || [ "$foundry_found" = "None" ] || [ -z "$operator_found" ] || [ "$operator_found" = "None" ]; then
+              echo "The AI Gateway cannot be previewed yet: it reads the Foundry resource of the agents and the Operator's identity, and the actions foundry and operator make them."
+            else
+              python3 tools/az-deploy.py what-if --subscription "$ENV_SUBSCRIPTION_ID" --resource-group "$ENV_RESOURCE_GROUP" \
+                --template environment/aigateway/main.bicep --parameters "$RUNNER_TEMP/aigateway.parameters.json"
+            fi
           fi
           echo "::endgroup::"
 
@@ -1864,10 +1895,280 @@ jobs:
           python3 tools/operator-run.py cleanup --resource-group "$ENV_RESOURCE_GROUP" --prefix op-probe- --older-than-minutes 0 \
             || echo "::warning::A container group whose name starts with op-probe- may be left in resource group $ENV_RESOURCE_GROUP. A person deletes it; it costs cents an hour."
 
+      - name: The network, the Foundry resource of the agents and the Operator are there, the service is offered here, and the deploy identity may give the roles of the AI Gateway
+        if: inputs.action == 'aigateway'
+        env:
+          NETWORK_EXISTS: ${{ steps.network.outputs.network_exists }}
+          FOUNDRY_ACCOUNT: ${{ steps.params.outputs.foundry_account_name }}
+          DEPLOYER_ID: ${{ steps.me.outputs.oid }}
+        run: |
+          # Everything that can be known before anything is changed is read here, so that a gateway is not made and then left without a role. This step only reads. The AI Gateway builds on the virtual network (its
+          # subnet goes into it), on the Foundry resource of the agents (the gateway's identity gets a role on it, and the template reads it) and on the Operator (its identity gets a role on the gateway, and the
+          # template reads it): the order is foundry and cases, operator, then aigateway.
+          if [ ! -f "$RUNNER_TEMP/aigateway.parameters.json" ]; then
+            echo "::error::The virtual network has no free range for the gateway's subnet: it needs a /26, or a /27 at the least, that none of the other subnets uses. Nothing was changed. A person frees or adds a range (docs/proposals/08-ai-gateway.md)."
+            exit 1
+          fi
+          if [ "$NETWORK_EXISTS" != true ]; then
+            echo "::error::The virtual network is not there. Run model-side first: the gateway's subnet goes into it. Nothing was changed."
+            exit 1
+          fi
+          found=$(az resource list --resource-group "$ENV_RESOURCE_GROUP" --resource-type Microsoft.CognitiveServices/accounts --query "[?name=='$FOUNDRY_ACCOUNT'].name | [0]" --output tsv)
+          if [ -z "$found" ] || [ "$found" = "None" ]; then
+            echo "::error::The Foundry resource $FOUNDRY_ACCOUNT of the agents is not in $ENV_RESOURCE_GROUP. Run foundry first (the order is foundry and cases, then operator, then aigateway). Nothing was changed."
+            exit 1
+          fi
+          found=$(az resource list --resource-group "$ENV_RESOURCE_GROUP" --name id-meternaut-operator --query "[0].name" --output tsv)
+          if [ -z "$found" ] || [ "$found" = "None" ]; then
+            echo "::error::The identity id-meternaut-operator is not there. Run operator first: it gets AI Gateway Models User on the gateway and runs the check. Nothing was changed."
+            exit 1
+          fi
+          echo "The virtual network, the Foundry resource $FOUNDRY_ACCOUNT and the Operator's identity are there."
+          # The service is a preview and is offered in a few regions. A list that cannot be read is said and does not stop the run: the deploy then says what is wrong.
+          region=$(tr '[:upper:]' '[:lower:]' <<< "$ENV_LOCATION" | tr -d ' ')
+          if ! offered=$(az provider show --namespace Microsoft.ApiManagement --query "resourceTypes[?resourceType=='aigateways'].locations[]" --output tsv 2>&1); then
+            echo "::warning::The regions of the AI Gateway could not be read ($offered). If the service is not offered in $ENV_LOCATION, the deploy says so."
+          elif [ -z "$offered" ]; then
+            echo "::error::The resource provider Microsoft.ApiManagement does not list the resource type aigateways in this subscription. The AI Gateway is a preview service and has to be offered to the subscription first (docs/proposals/08-ai-gateway.md). Nothing was changed."
+            exit 1
+          elif ! tr '[:upper:]' '[:lower:]' <<< "$offered" | tr -d ' ' | grep -Fxq "$region"; then
+            echo "::error::The AI Gateway is not offered in $ENV_LOCATION; the provider lists: $(paste -sd, - <<< "$offered"). The preview is offered in a few regions only. Nothing was changed."
+            exit 1
+          else
+            echo "The resource type aigateways is offered in $ENV_LOCATION."
+          fi
+          # The deploy identity may give a role to a service principal only for the roles that the condition of its right to assign roles lists (environment/BOOTSTRAP.md). The template gives Foundry User (to the
+          # gateway's identity, on the Foundry resource) and AI Gateway Models User (to the Operator's identity, on the gateway). Azure would refuse the second after the gateway was made, so it is looked for here.
+          foundry_user=53ca6127-db72-4b80-b1b0-d745d6d5456d
+          models_user=a6b68e3d-a1f0-4c60-8678-237c050cf4ea
+          administrator=f58310d9-a9f6-439a-9e8d-f62e7b41a168
+          group="/subscriptions/$ENV_SUBSCRIPTION_ID/resourceGroups/$ENV_RESOURCE_GROUP"
+          if ! grep -Eq '^[0-9a-fA-F-]{36}$' <<< "$DEPLOYER_ID"; then
+            echo "::error::The object id of the deploy identity was not read from its token, so its right to assign roles cannot be looked at. Nothing was changed."
+            exit 1
+          fi
+          deployer="${DEPLOYER_ID,,}"
+          if ! listed=$(az role assignment list --assignee-object-id "$deployer" --scope "$group" --fill-principal-name false --fill-role-definition-name false \
+            --query "[].[scope, roleDefinitionId, condition]" --output tsv --only-show-errors 2>&1); then
+            echo "::error::The role assignments of the deploy identity on the group could not be read: $listed. Nothing was changed."
+            exit 1
+          fi
+          held=no
+          condition=""
+          while IFS=$'\t' read -r scope definition rule; do
+            if [ "${scope,,}" = "${group,,}" ] && [[ "${definition,,}" == */"$administrator" ]]; then held=yes; condition="$rule"; fi
+          done <<< "$listed"
+          if [ "$held" != yes ]; then
+            echo "::error::The deploy identity holds no assignment of Role Based Access Control Administrator on the group, so the roles of the AI Gateway cannot be given. Nothing was changed."
+            exit 1
+          fi
+          if [ -z "$condition" ] || [ "$condition" = "None" ]; then
+            echo "The deploy identity's right to assign roles has no condition: it may give any role."
+            exit 0
+          fi
+          lists=$(grep -Eio 'GuidEquals *\{[^}]*\}' <<< "$condition" || true)
+          total=$(grep -c . <<< "$lists" || true)
+          for entry in "$foundry_user:Foundry User" "$models_user:AI Gateway Models User"; do
+            id="${entry%%:*}"
+            name="${entry#*:}"
+            holding=$(grep -ic "$id" <<< "$lists" || true)
+            if [ "$total" -lt 1 ] || [ "$holding" -ne "$total" ]; then
+              echo "::error::The condition of the deploy identity's right to assign roles does not list $name ($id) for a write and for a delete. The template of the AI Gateway gives that role, and Azure would refuse it after the gateway was made. A person adds the id once, with their own sign-in, on the owner's written word (environment/BOOTSTRAP.md, the section on the AI Gateway). Nothing was changed."
+              exit 1
+            fi
+          done
+          echo "The condition of the deploy identity's right to assign roles lists Foundry User and AI Gateway Models User, for a write and for a delete."
+
+      - name: Deploy the AI Gateway, its subnet, its models and aliases, and its roles
+        id: aigateway
+        if: inputs.action == 'aigateway'
+        env:
+          EXPECTED_NAME: ${{ steps.params.outputs.aigateway_name }}
+        run: |
+          # Step 1 of 2 (docs/proposals/08-ai-gateway.md): the gateway and what it holds, and nothing of the agents. The subnet snet-aigw (delegated to Microsoft.App/environments, with a network security group of its own,
+          # and made only while it is not there: AGENTS.md rule 27), the gateway with a system-assigned identity and that subnet as its backend subnet, the Foundry User role for its identity on the Foundry resource,
+          # one provider, a model and an alias for each model of environment/models.json with content safety at Medium, and AI Gateway Models User for the Operator's identity (environment/aigateway/main.bicep).
+          # The frontend of the service is public and no template can change that; no API key and no private DNS object is made. The limits and the built-in key are handled by the steps below.
+          name=$(python3 tools/az-deploy.py create --subscription "$ENV_SUBSCRIPTION_ID" --resource-group "$ENV_RESOURCE_GROUP" \
+            --template environment/aigateway/main.bicep --parameters "$RUNNER_TEMP/aigateway.parameters.json" \
+            --name "aigateway-$GITHUB_RUN_ID" --output gatewayName)
+          if [ "$name" != "$EXPECTED_NAME" ]; then
+            echo "::error::The deployment made the AI Gateway $name, not $EXPECTED_NAME, which is the name that the later steps read back. Nothing else was changed."
+            exit 1
+          fi
+          echo "The AI Gateway $name is in resource group $ENV_RESOURCE_GROUP."
+
+      - name: Wait until the landing zone has put its route table on the AI Gateway's subnet
+        if: inputs.action == 'aigateway'
+        timeout-minutes: 25
+        run: |
+          # The landing zone's network manager puts a route table on a new subnet some minutes after the subnet is made (70 seconds the first time, five minutes the second: CHANGELOG.md, 2026-11-05), and the gateway reaches
+          # the Foundry resource, and the landing zone's DNS, through its subnet. The endpoint subnet is the yardstick: when it carries no table, the landing zone puts none on this network and there is nothing to wait for.
+          # The table that it added is said by its name. This step needs no credential that it has not used already, so the sign-in of the first step is enough.
+          vnet="/subscriptions/$ENV_SUBSCRIPTION_ID/resourceGroups/$ENV_RESOURCE_GROUP/providers/Microsoft.Network/virtualNetworks/vnet-meternaut"
+          table_of() {
+            az rest --method get --url "https://management.azure.com${vnet}/subnets/${1}?api-version=2025-05-01" --query properties.routeTable.id --output tsv || true
+          }
+          reference=$(table_of snet-pe)
+          if [ -z "$reference" ] || [ "$reference" = "None" ]; then
+            echo "The endpoint subnet carries no route table, so the landing zone puts none on this network: there is nothing to wait for."
+            exit 0
+          fi
+          attempts=40
+          for attempt in $(seq 1 "$attempts"); do
+            table=$(table_of snet-aigw)
+            if [ -n "$table" ] && [ "$table" != "None" ]; then
+              echo "The landing zone added the route table ${table##*/} to the subnet snet-aigw."
+              exit 0
+            fi
+            echo "snet-aigw carries no route table yet (check $attempt of $attempts)."
+            if [ "$attempt" -lt "$attempts" ]; then sleep 30; fi
+          done
+          echo "::error::The landing zone's network manager has put a route table on snet-pe and has not put one on snet-aigw in 20 minutes. The gateway may have no way out and no DNS. Nothing else was changed: run aigateway again later, which repeats only what is missing."
+          exit 1
+
+      - name: Sign in to Azure again for the limits, the built-in key and the read-back of the AI Gateway, because the first sign-in's credential lasts five minutes
+        if: inputs.action == 'aigateway'
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Apply the gateway-wide limits to the AI Gateway
+        if: inputs.action == 'aigateway'
+        env:
+          GATEWAY_NAME: ${{ steps.params.outputs.aigateway_name }}
+        run: |
+          # A token limit, a request rate limit and a cost limit for the day and one for the month, for each caller and across all models (environment/aigateway/policies.json, held by the builder to the models and to
+          # the owner's standing limit, AGENTS.md rule 15 (g)). They live in the policies of the gateway's default workspace, which only a PATCH changes, and a PATCH replaces the whole array: the tool reads the array,
+          # merges the file into it, writes it only when it differs, and reads it again (tools/aigateway-prep.py).
+          python3 tools/aigateway-prep.py policies --subscription "$ENV_SUBSCRIPTION_ID" --resource-group "$ENV_RESOURCE_GROUP" --gateway "$GATEWAY_NAME" \
+            --file "$RUNNER_TEMP/aigateway-policies.json" --summary "$GITHUB_STEP_SUMMARY"
+
+      - name: Delete the built-in key of the AI Gateway when the service lets it be deleted
+        if: inputs.action == 'aigateway'
+        env:
+          GATEWAY_NAME: ${{ steps.params.outputs.aigateway_name }}
+        run: |
+          # The service makes a key named master on every gateway and has no switch to refuse key authentication. Nothing of this project uses a key (AGENTS.md rule 23), so the key is read, deleted when it is there and
+          # read again, by its name alone: no value is read or printed. When the service refuses, the lines say so plainly as a finding that is recorded, and the run goes on: the key then exists and is unused.
+          python3 tools/aigateway-prep.py remove-key --subscription "$ENV_SUBSCRIPTION_ID" --resource-group "$ENV_RESOURCE_GROUP" --gateway "$GATEWAY_NAME" --summary "$GITHUB_STEP_SUMMARY"
+
+      - name: Read the AI Gateway back
+        if: inputs.action == 'aigateway'
+        # Each read of Azure waits two minutes at the most (the tool's --timeout); this limit holds the whole step even when many pages are slow.
+        timeout-minutes: 20
+        env:
+          GATEWAY_NAME: ${{ steps.params.outputs.aigateway_name }}
+          FOUNDRY_ACCOUNT: ${{ steps.params.outputs.foundry_account_name }}
+          VNET_NAME: ${{ steps.params.outputs.vnet_name }}
+          SUBNET_NAME: ${{ steps.params.outputs.aigateway_subnet_name }}
+          OPERATOR_IDENTITY: ${{ steps.params.outputs.operator_identity_name }}
+        run: |
+          # A deployment that says Succeeded does not say that the gateway came out as the template wrote it. The run fails unless the gateway is Succeeded, its backend subnet is the one of the template and is delegated,
+          # it has a system-assigned identity, the provider, every model (with content safety at Medium), every alias and every limit are as written, the Operator's identity holds AI Gateway Models User on the gateway,
+          # the gateway's identity holds Foundry User on the Foundry resource, and no API key but the built-in one exists. publicNetworkAccess is printed as the service reports it and is not judged: the frontend is
+          # public, because the service has no private one. Only GET requests; the names of the API keys are read, never a value.
+          python3 tools/aigateway-prep.py read-back --subscription "$ENV_SUBSCRIPTION_ID" --resource-group "$ENV_RESOURCE_GROUP" --gateway "$GATEWAY_NAME" --vnet "$VNET_NAME" --subnet "$SUBNET_NAME" \
+            --foundry-account "$FOUNDRY_ACCOUNT" --operator-identity "$OPERATOR_IDENTITY" --models environment/models.json --policies "$RUNNER_TEMP/aigateway-policies.json" --summary "$GITHUB_STEP_SUMMARY"
+
+      - name: Find the Operator, which runs the AI Gateway check from inside the network
+        id: aigw_operator
+        if: inputs.action == 'aigateway-check'
+        run: |
+          # The check calls the gateway with the Operator's own token, from inside the network, as the identity that holds AI Gateway Models User on the gateway (the template gives it that role). So the Operator has to be there
+          # first, and the gateway after it. It is found by its name, as the other checks find it, and nothing is changed here.
+          subnet_id="/subscriptions/$ENV_SUBSCRIPTION_ID/resourceGroups/$ENV_RESOURCE_GROUP/providers/Microsoft.Network/virtualNetworks/vnet-meternaut/subnets/snet-ops"
+          identity_id=$(az resource list --resource-group "$ENV_RESOURCE_GROUP" --name id-meternaut-operator --query "[0].id" --output tsv || true)
+          client=""
+          if grep -Eq '^/subscriptions/' <<< "$identity_id"; then
+            client=$(az rest --method get --url "https://management.azure.com${identity_id}?api-version=2023-01-31" --query properties.clientId --output tsv || true)
+          fi
+          if ! grep -Eq '^[0-9a-fA-F-]{36}$' <<< "$client"; then
+            echo "::error::The identity id-meternaut-operator is not there. The action $ACTION runs its check in the Operator, so run operator first (the order is foundry and cases, operator, aigateway). Nothing was changed."
+            exit 1
+          fi
+          if found=$(az rest --method get --url "https://management.azure.com${subnet_id}?api-version=2025-05-01" --query name --output tsv 2>&1); then
+            :
+          elif grep -Eqi 'NotFound|\b404\b' <<< "$found"; then
+            echo "::error::The subnet snet-ops is not there. The action $ACTION runs its check in the Operator, so run operator first (the order is foundry and cases, operator, aigateway). Nothing was changed."
+            exit 1
+          else
+            echo "::error::The subnet snet-ops could not be read: $found"
+            exit 1
+          fi
+          echo "The Operator's identity and its subnet are there."
+          {
+            echo "identity_id=$identity_id"
+            echo "client_id=$client"
+            echo "subnet_id=$subnet_id"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Read the host name of the AI Gateway from the service
+        id: aigw_host
+        if: inputs.action == 'aigateway-check'
+        env:
+          GATEWAY_NAME: ${{ steps.params.outputs.aigateway_name }}
+        run: |
+          # The host name is read from the service (properties.frontend.defaultHostname) and never made up: the check sends a token to it, and the tool refuses a host that is not under .ai.gateway.azure.com.
+          gateway="/subscriptions/$ENV_SUBSCRIPTION_ID/resourceGroups/$ENV_RESOURCE_GROUP/providers/Microsoft.ApiManagement/aigateways/$GATEWAY_NAME"
+          if ! host=$(az rest --method get --url "https://management.azure.com${gateway}?api-version=2025-09-01-preview" --query properties.frontend.defaultHostname --output tsv 2>&1); then
+            if grep -Eqi 'NotFound|\b404\b' <<< "$host"; then
+              echo "::error::The AI Gateway $GATEWAY_NAME is not there. Run aigateway first (after foundry and operator). Nothing was changed."
+            else
+              echo "::error::The AI Gateway $GATEWAY_NAME could not be read: $host"
+            fi
+            exit 1
+          fi
+          if ! grep -Eq '^[a-z0-9]([a-z0-9.-]*[a-z0-9])?\.ai\.gateway\.azure\.com$' <<< "$host"; then
+            echo "::error::The service did not report a host name under .ai.gateway.azure.com for the gateway $GATEWAY_NAME (it may be still starting). Nothing was changed."
+            exit 1
+          fi
+          echo "The service reports the host name of the gateway $GATEWAY_NAME."
+          echo "host=$host" >> "$GITHUB_OUTPUT"
+
+      - name: Run the AI Gateway check in the Operator
+        id: aigw_check
+        if: inputs.action == 'aigateway-check'
+        # The check makes a handful of requests and the group is given 15 minutes (900 seconds); the tool deletes the group at the end of every run, and the limit of the step is a second line behind that.
+        timeout-minutes: 25
+        env:
+          ALIASES: ${{ steps.params.outputs.aigateway_aliases }}
+          GATEWAY_HOST: ${{ steps.aigw_host.outputs.host }}
+          OPERATOR_IDENTITY_ID: ${{ steps.aigw_operator.outputs.identity_id }}
+          OPERATOR_CLIENT_ID: ${{ steps.aigw_operator.outputs.client_id }}
+          OPERATOR_SUBNET_ID: ${{ steps.aigw_operator.outputs.subnet_id }}
+        run: |
+          # tools/aigateway-check.py runs inside the network, in a container group of the Operator. The container gets the tool in its secret volume, signs in with the Operator's own identity (no key: it holds AI Gateway
+          # Models User on the gateway), asks for a token for the gateway, and sends one small chat completion to each alias, then one request with no token and one with an alias that does not exist. It prints
+          # statuses and usage numbers only. operator/run-tool.sh runs the tool and gives its exit code, and the container is told that it is in a GitHub Actions run, which it is (tools/operator-run.py refuses anywhere
+          # else). A role that was given a few minutes ago may not have applied yet (up to ten minutes): the tool then says so.
+          args="run --host $GATEWAY_HOST"
+          for alias in $ALIASES; do args="$args --alias $alias"; done
+          # A container group does not take the DNS servers of the virtual network, so it is given the landing zone's.
+          dns=()
+          for server in ${ENV_DNS_SERVERS//,/ }; do dns+=(--dns-server "$server"); done
+          python3 tools/operator-run.py run --resource-group "$ENV_RESOURCE_GROUP" --name "op-aigw-$GITHUB_RUN_ID" \
+            --subnet-id "$OPERATOR_SUBNET_ID" --identity-id "$OPERATOR_IDENTITY_ID" --image "$OPERATOR_IMAGE" --script operator/run-tool.sh \
+            --secret-file "aigateway-check.py=tools/aigateway-check.py" \
+            --env "GITHUB_ACTIONS=true" --env "OPERATOR_CLIENT_ID=$OPERATOR_CLIENT_ID" --env "OPERATOR_SUBSCRIPTION=$ENV_SUBSCRIPTION_ID" \
+            --env "TOOL_NAME=aigateway-check" --env "TOOL_ARGS=$args" \
+            "${dns[@]}" --timeout-seconds 900 --summary "$GITHUB_STEP_SUMMARY"
+
+      - name: Delete any container group of the AI Gateway check that is left
+        if: always() && inputs.action == 'aigateway-check' && steps.aigw_check.outcome != 'skipped'
+        run: |
+          # The tool deletes its group at the end of every run. A step that was cancelled or killed cannot do that, so this is the second line, and it runs whenever the check step started: every group that starts with
+          # op-aigw- and carries the tool's tag is deleted. Runs of this workflow never overlap (the concurrency group), so none of them is a group in use. Nothing else is touched.
+          python3 tools/operator-run.py cleanup --resource-group "$ENV_RESOURCE_GROUP" --prefix op-aigw- --older-than-minutes 0 \
+            || echo "::warning::A container group whose name starts with op-aigw- may be left in resource group $ENV_RESOURCE_GROUP. A person deletes it; it costs cents an hour."
+
       - name: What was done
         if: always()
         env:
           JOB_STATUS: ${{ job.status }}
+          AIGATEWAY_NAME: ${{ steps.params.outputs.aigateway_name }}
           ACCOUNT_NAME: ${{ steps.params.outputs.account_name }}
           CONTRACT_NAME: ${{ steps.params.outputs.contract_name }}
           FOUNDRY_ACCOUNT: ${{ steps.params.outputs.foundry_account_name }}
@@ -1894,6 +2195,8 @@ jobs:
                 loop-check) echo "The front door was not shut as it should be: a request without a sign-in got something other than a sign-in or the app's refusal, or, with a console host name set, the sign-in's return address did not name it, or there was no address to knock at (the cases app takes no public traffic and no console host name is set). Nothing was changed. Do not hand the address to anybody until this passes." ;;
                 operator) echo "Part of the Operator may exist now: its identity \`id-meternaut-operator\`, the network security group, the subnet \`snet-ops\`, the Reader role on resource group \`$ENV_RESOURCE_GROUP\` and the Azure Event Hubs Data Sender roles on the two control hubs. If the lines above say that a control hub is not there, nothing was changed: run \`recording\` and \`cases\` first. If the deploy was refused at the Reader role, the condition of the deploy identity's role-assignment right does not list Reader yet (environment/BOOTSTRAP.md, the section on the Operator) and nothing else was changed; Data Sender is listed already. None of it costs anything while no container group runs. Running \`operator\` again is safe and repeats only what is missing." ;;
                 operator-probe) echo "A container group named \`op-probe-$GITHUB_RUN_ID\` may have been made, and the last step of the run deletes it if the tool could not. The lines above say how far the probe came: an image that could not be pulled is the likely reason (the tool prints the group's events then), and a subnet with no way out looks the same. A run costs cents. Running \`operator-probe\` again is safe." ;;
+                aigateway) echo "Part of the AI Gateway may exist now: the subnet \`snet-aigw\` with its network security group, the gateway \`$AIGATEWAY_NAME\` with its own identity, its provider, its models and aliases, and two roles. It is a preview service that is free while the preview lasts (the proposal gives the meter and the date), and a subnet costs nothing. The step that failed says why. If the lines stop before the deploy, nothing was changed: they say which of the virtual network, the Foundry resource of the agents (run \`foundry\` first), the Operator (run \`operator\` first), the region or the condition of the deploy identity's right to assign roles is missing, and for the condition a person adds AI Gateway Models User once (environment/BOOTSTRAP.md, the section on the AI Gateway). If the deploy was refused at a role, the condition does not list that role. If the lines stop at the wait for the landing zone's route table, the gateway is made and nothing else was done. If they stop at the limits, the key or the read-back, the gateway is made and the lines say which thing differs: nothing is repaired from here, and the subnet cannot be changed once the gateway is made (the way back is to delete the gateway and make another). The frontend of the gateway is public and cannot be made private. The agents were not changed: they keep calling their model deployments. Running \`aigateway\` again is safe and repeats only what is missing." ;;
+                aigateway-check) echo "A container group named \`op-aigw-$GITHUB_RUN_ID\` may have been made, and the last step of the run deletes it if the tool could not. Nothing of the gateway was changed. The lines above say which request got which status. A message that the Operator is not there means that \`operator\` has to be run first, and one that the gateway is not there means that \`aigateway\` has to be run first. A 401 or 403 for the request with the Operator's token means that its role on the gateway has not applied yet (a role takes up to ten minutes) or is missing (\`aigateway\` gives it), or that the service principal of Microsoft's AI Gateway data plane is not in the tenant: the tool says which of them it looks like, and a person creates the service principal once (environment/BOOTSTRAP.md, the section on the AI Gateway). Running \`aigateway-check\` again is safe." ;;
               esac
             else
               case "$ACTION" in
@@ -1911,6 +2214,8 @@ jobs:
                 loop-check) echo "The console's front door is shut: without a sign-in nobody gets a page (the return address of the Azure sign-in included), and a made-up sign-in header is not believed. The address that was knocked at is the console's host name on the platform's Application Gateway when the repository variable CONSOLE_HOST_NAME is set (the sign-in's return address then names it too), and the app's own name when it is not." ;;
                 operator) echo "The Operator is in resource group \`$ENV_RESOURCE_GROUP\`: the identity \`id-meternaut-operator\`, the subnet \`snet-ops\` (delegated to container groups, with the landing zone's route table on it when the landing zone puts one on this network) and three roles for that identity: Reader on the group, and Azure Event Hubs Data Sender on the control hubs \`usage-control\` and \`cases-control\`, one role on each hub, and nothing else. A new role takes up to ten minutes to apply, so wait before \`recording-check\` and \`cases-run\`, which send the control event with it. No container group exists, so nothing is paid until a run uses it. The next steps are \`operator-probe\`, which shows what a container on the subnet can reach, and \`recording-check\` and \`cases-run\`, which run their check tools in the Operator." ;;
                 operator-probe) echo "The probe ran in a container group on \`snet-ops\` as the Operator's identity, and the group is deleted. The page above has one line for each check: \`ok\` and \`FAIL\` are facts about the landing zone and the network, not errors of the run. It also signed in as the deploy identity with a token of this run (which only the container group saw, as a secure value), built the usage app's libraries in the container from the lock file, and asked the two apps' deployment sites for the status of a GET. docs/proposals/07-private-by-default.md says what each answer decides." ;;
+                aigateway) echo "The AI Gateway \`$AIGATEWAY_NAME\` is in resource group \`$ENV_RESOURCE_GROUP\` and was read back from Azure: it is Succeeded, its backend subnet is \`snet-aigw\` (delegated to Microsoft.App/environments, with the landing zone's route table on it when the landing zone puts one on this network), and it has a system-assigned identity that holds Foundry User on the Foundry resource of the agents. It has one provider, a model and an alias for each model of environment/models.json with content safety at Medium, and the gateway-wide limits of environment/aigateway/policies.json: a token limit, a request rate limit, and a cost limit for the day and one for the month, each counted for every caller alone. The Operator's identity holds AI Gateway Models User on the gateway. No API key was made: the service makes one named master, and the lines above say whether the service let it be deleted (a refusal is a recorded finding and not an error). THE FRONTEND OF THE GATEWAY IS PUBLIC. The service has no private frontend, and its own setting for one has no effect. A request needs a Microsoft Entra token and a role on the gateway, and there is no filter on the address (docs/proposals/08-ai-gateway.md). The agents were not changed: they keep calling their model deployments, and nothing calls the gateway yet. A new role takes up to ten minutes to apply, and then \`aigateway-check\` calls each alias from inside the network." ;;
+                aigateway-check) echo "The Operator, from inside the network, asked for a token for the AI Gateway with its own identity and no key, and sent one small chat completion to each alias. The lines above give each answer's status and the tokens that it used. The gateway also refused a request with no token and a request with an alias that does not exist, as it should. This runner did not call the gateway: the Operator did. The agents were not changed." ;;
               esac
             fi
           } >> "$GITHUB_STEP_SUMMARY"
