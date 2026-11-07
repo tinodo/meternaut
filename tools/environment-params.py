@@ -48,6 +48,10 @@ passes it as consoleHostName, and the outputs console_host (the name that people
 CASES_APP_PUBLIC_NETWORK_ACCESS may be Disabled with no name set: that is how the owner closes the web page and reaches it on the private network, and nothing is refused. The output door_in_operator says
 where the check of the front door runs. False: from the runner, at the name that people open. True (only for Disabled and no name): inside the network, in the Operator, at the app's own name, because a closed app
 answers nobody outside the network (docs/proposals/07-private-by-default.md).
+CASES_APP_PLAN (a constant near the top of this file, "Flex") is the plan that the cases app, which serves the web page, runs on: "Flex" (Flex Consumption: it scales to zero and bills per execution) or "Basic" (B1, always
+on: the way back). It goes into cases.parameters.json as casesAppPlan, and seven outputs tell the workflow what to do with it: cases_app_plan, cases_plan_name and cases_plan_tier (the plan that the template makes), cases_other_plan_name
+and cases_other_plan_tier (the plan of the other kind, which the action cases removes by that exact name and only while it is of that tier, with its app, when the kind has changed), cases_subnet_name (snet-func for Flex, snet-cases for
+Basic) and function_subnet_name (snet-func). The builder refuses any other value. A test builds the files for both values (docs/proposals/07-private-by-default.md, "The web page on Flex Consumption").
 
 It writes these ARM parameter files into --out-dir:
 
@@ -125,7 +129,7 @@ CASES_APP_PUBLIC_NETWORK_ACCESS = "Enabled"
 # The plan that the cases app, which serves the web page, runs on: "Flex" (Flex Consumption: it scales to zero and bills per execution, so an idle web page costs nothing; the app uses the function subnet
 # snet-func) or "Basic" (B1, always on, about 13 US dollars a month; the app uses its own subnet snet-cases). It is Flex since the owner ordered it on 2026-11-07, and Basic is the way back: the first cases ran on
 # Flex and moved to Basic on 2026-11-05 because the platform's front end held requests to the web page for 15 to 60 seconds, and whether that still happens is measured with the action page-latency
-# (docs/proposals/07-private-by-default.md, "The web page on Flex Consumption"). One value and a commit change it, and the action cases then removes the app of the other kind and its plan, and makes the new ones.
+# (docs/proposals/07-private-by-default.md, "The web page on Flex Consumption"). One value and a commit change it, and the action cases then removes the app of the other kind, its plan and its private endpoint, and makes the new ones.
 CASES_APP_PLAN = "Flex"
 CASES_APP_PLANS = ("Flex", "Basic")
 # The plan of each kind, by its exact name (environment/cases/main.bicep makes them: a test holds the names together) and the tier that Azure reports for it. The action cases removes the other kind's app and plan
