@@ -74,20 +74,21 @@ LIMITS = [
 HOST = "aigw-meternaut-0123abcd.swedencentral.ai.gateway.azure.com"
 PROJECT_PRINCIPAL = SETTINGS["FOUNDRY_PROJECT_PRINCIPAL_ID"]
 
-# What the builder wrote for exactly these inputs on main before this change (the files, byte for byte, and what it printed). While the switch is False the hashes are what they were.
+# What the builder wrote for exactly these inputs on main before this change (the files byte for byte, and what it printed). While the switch is False the hashes are what they were.
+# The hashes of the files are of their LF form: the builder writes with the platform's line ending (CRLF on Windows, LF on the runner), and build() below reads the files with LF.
 GOLDEN = {
-    "aigateway-policies.json": "63f9450818872c098a00ffaa279e7331682045efa4db89180f7817de44f8ca97",
-    "aigateway.parameters.json": "1e9888f2e56f7ba9c635879b0fad0ce4d1512b008c529b1f323e4b470b0aee48",
-    "cases.parameters.json": "9c30bf400ea88807b92a0ac58e5782d8d54f128f9e67d4bfcdac1a39ca275af7",
-    "contract.parameters.json": "2c56542e98443f3728a8ed36852f43f19da48f92481407afbca8364e1dbf2d7a",
-    "environment.parameters.json": "b6044223a5eabd4d3d4ababfd16d104d289afb0306cb69319408779cd8e10c15",
-    "eventhub-loggers.parameters.json": "18b700857442fdfefe6069aceb67feaf2c92db42fd2a4ee112a87d792e69193f",
-    "foundry.parameters.json": "34d714f0f251a6f7b2c5fe9acf5810a29c89c10078968184dd962dab6810f887",
-    "kit.parameters.json": "7748b0b946af3930b9f1e56caebfc3306ae71fe0832cc9b2271a11466521be07",
-    "logger.parameters.json": "42d3f564b6c6b904955508c2d1cca66d4b425e343531eb4557e1b7d2fd488a73",
-    "operator.parameters.json": "b200316308e03963b19864f9fa5bc6e3eee5859daa08d49f24034a1682f5aa18",
-    "planted.parameters.json": "c70a359d9b663d379bc888b81c812f0a37315a52125211ab3dc41689194e6edf",
-    "recording.parameters.json": "114000955b9fa18d6513fcd0eace0402199557f5713fc9fdc54bbd8a8b4f75f3",
+    "aigateway-policies.json": "e6d99d1633ab16afc3410e50dbdcb7e290f0e125f4283b4b19f63a8eebb8395c",
+    "aigateway.parameters.json": "4ad7f2e6d320bd040d3038501b7cda818c35fa3e4e557dc571bcb47fc0fba0c4",
+    "cases.parameters.json": "035e3af64fe8d3f1af3f7ab2570fa82e59781229dabab1787b8cfc6396fe3cda",
+    "contract.parameters.json": "fac642ef8d4e8df00202bc6fa0a612dac23f6f4aa976a1e90c99230f872a5b34",
+    "environment.parameters.json": "b3518aceb6b97b21d7facb4704d1321b7830db54acc76e44e566f02c6c711a30",
+    "eventhub-loggers.parameters.json": "bfbbf7eca0ec37809376167054e45b66fea66b813f700fb274fa378c9a3cd918",
+    "foundry.parameters.json": "ed5e8a14727de3595a0ab4bc5b0fcc4979c7d35b088536fce62f80651e59e99d",
+    "kit.parameters.json": "06caf0bfdc71fa354484739384af1051b4d6905ddb0ef0c7116f54f779436206",
+    "logger.parameters.json": "c927ceeb63d035fcd792dfad822f47ac8dcd01a11fec4cc48adc068a1a234d03",
+    "operator.parameters.json": "78972401f11e209ef6bbdbba2c7cab95921b372e1dc570765d953aa01b2b2f90",
+    "planted.parameters.json": "62ecf7282a7bf4c968db91a3943ba20a99dc7ac04fcabb7816aadf6f68f9759c",
+    "recording.parameters.json": "eb65c2e5146f0154ec93c838266d4ecbe6b125549ecde970a884082630aa2cbb",
 }
 GOLDEN_OUTPUT = "6ac0ce8490b25dd35c4c2bb3bd93479ab494cf565ab59afafbbce79a2f727488"
 
@@ -108,7 +109,8 @@ def build(env, models=None, preview=False, switch=False, full=True):
         out, err = io.StringIO(), io.StringIO()
         with mock.patch.object(ep, "AGENTS_VIA_AI_GATEWAY", switch), redirect_stdout(out), redirect_stderr(err):
             code = ep.main(arguments, environ=env)
-        files = {p.name: p.read_bytes() for p in sorted((tmp / "out").glob("*.json"))} if (tmp / "out").exists() else {}
+        # The builder writes the files with the platform's line ending (CRLF on Windows, LF on the runner): they are read with LF, so that the hashes are the same everywhere.
+        files = {p.name: p.read_bytes().replace(b"\r\n", b"\n") for p in sorted((tmp / "out").glob("*.json"))} if (tmp / "out").exists() else {}
     return code, out.getvalue(), err.getvalue(), files
 
 
