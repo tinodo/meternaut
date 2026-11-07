@@ -1,7 +1,8 @@
 """The AI Gateway's template (environment/aigateway/main.bicep): what it makes, what it leaves out, and what its comments say about the public frontend.
 
-The resource types of the template are pinned with the other templates' in test_environment_template.py (AGENTS.md rule 19). The parameter and policy files that the builder makes for it are
-tested in test_environment_params.py, the check tool in test_aigateway_check.py, and the workflow actions in test_aigateway_workflow.py."""
+The resource types of the template are pinned with the other templates' in test_environment_template.py (AGENTS.md rule 19). The subnet that the gateway needs is not made here: its template
+(environment/aigateway/subnet.bicep), and the order of the steps of the action that deploys the two, are tested in test_aigateway_subnet_first.py. The parameter and policy files that the builder
+makes for them are tested in test_environment_params.py, the check tool in test_aigateway_check.py, and the other steps of the workflow action in test_aigateway_workflow.py."""
 import json
 import re
 import shutil
@@ -45,11 +46,8 @@ class Template(unittest.TestCase):
 
     def test_it_makes_and_reads_exactly_these_resources(self):
         self.assertEqual({name: kind for name, (kind, _) in self.found.items()}, {
-            "vnet": "Microsoft.Network/virtualNetworks",
             "account": "Microsoft.CognitiveServices/accounts",
             "operatorIdentity": "Microsoft.ManagedIdentity/userAssignedIdentities",
-            "aigwNsg": "Microsoft.Network/networkSecurityGroups",
-            "aigwSubnet": "Microsoft.Network/virtualNetworks/subnets",
             "gateway": "Microsoft.ApiManagement/aigateways",
             "workspace": "Microsoft.ApiManagement/aigateways/workspaces",
             "gatewayCallsFoundry": "Microsoft.Authorization/roleAssignments",
@@ -61,7 +59,7 @@ class Template(unittest.TestCase):
             "insights": "Microsoft.Insights/components",
             "telemetryExporter": "Microsoft.ApiManagement/aigateways/workspaces/telemetryExporters",
         })
-        for name in ("vnet", "account", "operatorIdentity", "workspace", "insights"):
+        for name in ("account", "operatorIdentity", "workspace", "insights"):
             self.assertRegex(SOURCE, rf"(?m)^resource {name} '[^']+' existing = \{{$", f"{name} is only read: another template or the service makes it")
 
     def test_the_frontend_is_public_the_header_says_so_and_nothing_asks_for_a_private_one(self):
@@ -73,16 +71,17 @@ class Template(unittest.TestCase):
         for word in ("privateEndpoints", "privateLinkServiceConnections", "privateDnsZone", "virtualNetworkLinks", "ddos", "ipFilter", "apiKeys", "listKeys", "firewall", "routeTable"):
             self.assertNotIn(word.lower(), CODE.lower(), f"{word}: no private endpoint, no DNS object (rule 19), no DDoS plan, no IP filter without values, no key resource (rule 23)")
 
-    def test_the_subnet_is_made_once_is_delegated_and_the_security_group_has_no_rule_of_its_own(self):
-        subnet = self.found["aigwSubnet"][1]
-        self.assertIn("if (!aigwSubnetExists)", subnet, "made only while it is not there (rule 27)")
-        for word in ("serviceName: 'Microsoft.App/environments'", "networkSecurityGroup:", "id: aigwNsg.id", "defaultOutboundAccess: false", "addressPrefix: aigwSubnetPrefix"):
-            self.assertIn(word, subnet, word)
-        self.assertEqual(re.findall(r"serviceName: '([^']+)'", subnet), ["Microsoft.App/environments"], "one delegation, and nothing else lives in the subnet")
-        self.assertIn("securityRules: []", self.found["aigwNsg"][1])
-        self.assertRegex(CODE, r"(?m)^@minLength\(9\)\n@maxLength\(18\)\nparam aigwSubnetPrefix string$", "no default: the builder chooses the range")
-        self.assertRegex(CODE, r"(?m)^param aigwSubnetExists bool = false$")
-        self.assertEqual(CODE.count("Microsoft.Network/virtualNetworks@"), 1, "the network is read, never made, here")
+    def test_it_makes_no_network_resource_takes_no_setting_of_the_subnet_and_says_in_its_header_where_the_subnet_comes_from(self):
+        for word in ("Microsoft.Network/virtualNetworks@", "Microsoft.Network/networkSecurityGroups@", "Microsoft.Network/virtualNetworks/subnets@", "networkSecurityGroup:", "delegations:", "addressPrefix"):
+            self.assertNotIn(word, CODE, f"{word}: the subnet is made by environment/aigateway/subnet.bicep, before this template is deployed")
+        self.assertNotRegex(CODE, r"(?m)^param aigwSubnet\w+ ", "no range and no flag of the subnet: the subnet's template takes them")
+        self.assertNotIn("aigwSubnetExists", CODE)
+        header = re.sub(r"\s*\n//\s*", " ", SOURCE.split("targetScope", 1)[0])
+        for words in ("THE SUBNET IS NOT MADE HERE: it has to be there when this template is deployed.", "The template environment/aigateway/subnet.bicep makes it",
+                      "the action aigateway deploys that one first, waits until the landing zone's network manager has put its route table on the subnet, and only then deploys this one",
+                      "so that the gateway is made on the subnet as the landing zone leaves it"):
+            self.assertIn(words, header, words)
+        self.assertEqual(CODE.count("subnets"), 2, "the subnet is only named by its id: in the gateway's backend and in the output")
 
     def test_the_gateway_has_a_system_identity_and_its_backend_subnet_and_no_sku_no_key_and_no_policy(self):
         gateway = self.found["gateway"][1]
@@ -90,7 +89,7 @@ class Template(unittest.TestCase):
             self.assertIn(word, gateway, word)
         for word in ("sku", "policies", "apiKey", "ipFilter"):
             self.assertNotIn(word, gateway, word)
-        self.assertEqual(depends_on(gateway), {"aigwSubnet"})
+        self.assertEqual(depends_on(gateway), set(), "the subnet is not in this template: it is in Azure before the template is deployed, and the workflow waits for it")
         self.assertIn("@minLength(3)\n@maxLength(24)\nparam gatewayName string", CODE, "the service's limit")
         self.assertIn("var aigwSubnetName = 'snet-aigw'", CODE)
 
@@ -184,7 +183,7 @@ class Template(unittest.TestCase):
         compiled = json.loads(done.stdout)
         resources = compiled["resources"].values() if isinstance(compiled["resources"], dict) else compiled["resources"]
         self.assertEqual({r["type"] for r in resources}, {
-            "Microsoft.Network/networkSecurityGroups", "Microsoft.Network/virtualNetworks/subnets", "Microsoft.ApiManagement/aigateways",
+            "Microsoft.ApiManagement/aigateways",
             "Microsoft.ApiManagement/aigateways/workspaces/modelProviders", "Microsoft.ApiManagement/aigateways/workspaces/modelProviders/models",
             "Microsoft.ApiManagement/aigateways/workspaces/aliases", "Microsoft.ApiManagement/aigateways/workspaces/telemetryExporters", "Microsoft.Authorization/roleAssignments"})
         self.assertEqual(set(compiled["outputs"]), {"gatewayName", "gatewayHost", "subnetId"})

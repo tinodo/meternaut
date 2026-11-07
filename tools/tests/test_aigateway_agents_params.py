@@ -76,9 +76,12 @@ PROJECT_PRINCIPAL = SETTINGS["FOUNDRY_PROJECT_PRINCIPAL_ID"]
 
 # What the builder wrote for exactly these inputs on main before this change (the files byte for byte, and what it printed). While the switch is False the hashes are what they were.
 # The hashes of the files are of their LF form: the builder writes with the platform's line ending (CRLF on Windows, LF on the runner), and build() below reads the files with LF.
+# Two entries were re-recorded on purpose, by the change that makes the AI Gateway's subnet first and the gateway after the landing zone's route table (docs/proposals/08-ai-gateway.md): aigateway.parameters.json
+# lost the two parameters of the subnet (aigwSubnetPrefix and aigwSubnetExists), and aigateway-subnet.parameters.json is the new file that holds them. Every other file and the output are what they were.
 GOLDEN = {
     "aigateway-policies.json": "e6d99d1633ab16afc3410e50dbdcb7e290f0e125f4283b4b19f63a8eebb8395c",
-    "aigateway.parameters.json": "4ad7f2e6d320bd040d3038501b7cda818c35fa3e4e557dc571bcb47fc0fba0c4",
+    "aigateway-subnet.parameters.json": "a2a16b02fd7a1d54d8949ad89796d4ea89d6bf1907db1f5b621205699a5a0196",
+    "aigateway.parameters.json": "77593485df872804654eae54c91724ac5fd0a50b4afd33a625bf59d3a542d0a5",
     "cases.parameters.json": "035e3af64fe8d3f1af3f7ab2570fa82e59781229dabab1787b8cfc6396fe3cda",
     "contract.parameters.json": "fac642ef8d4e8df00202bc6fa0a612dac23f6f4aa976a1e90c99230f872a5b34",
     "environment.parameters.json": "b3518aceb6b97b21d7facb4704d1321b7830db54acc76e44e566f02c6c711a30",

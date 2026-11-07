@@ -1049,11 +1049,14 @@ class Operator(unittest.TestCase):
 
 
 class AiGateway(unittest.TestCase):
-    """The parameter file and the policy file of the AI Gateway (environment/aigateway/main.bicep, environment/aigateway/policies.json): written only when --aigateway-policies asks for them.
+    """The parameter files and the policy file of the AI Gateway (environment/aigateway/subnet.bicep, environment/aigateway/main.bicep, environment/aigateway/policies.json): written only when --aigateway-policies
+    asks for them.
 
-    The subnet is the last free /26 (a /27 when no /26 is free), made once like the Operator's, and the policies are held to the models and to the owner's standing limit."""
+    The subnet is the last free /26 (a /27 when no /26 is free), made once like the Operator's, in a template and a file of its own because the action makes it first and waits for the landing zone's route table
+    on it before it makes the gateway (test_aigateway_subnet_first.py), and the policies are held to the models and to the owner's standing limit."""
 
     TEMPLATE = (ROOT / "environment" / "aigateway" / "main.bicep").read_text(encoding="utf-8")
+    SUBNET_TEMPLATE = (ROOT / "environment" / "aigateway" / "subnet.bicep").read_text(encoding="utf-8")
     POLICIES = ROOT / "environment" / "aigateway" / "policies.json"
     AGENTS = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
 
@@ -1077,32 +1080,40 @@ class AiGateway(unittest.TestCase):
         self.assertFalse([name for name in files if "aigateway" in name], "the other actions are not touched by the gateway")
         self.assertNotIn("aigateway", out)
 
-    def test_the_two_files_are_written_and_the_outputs_name_what_the_workflow_reads(self):
+    def test_the_three_files_are_written_and_the_outputs_name_what_the_workflow_reads(self):
         files, outputs = self.files()
-        self.assertTrue({"aigateway.parameters.json", "aigateway-policies.json"} <= set(files))
-        self.assertEqual(set(files) - {"aigateway.parameters.json", "aigateway-policies.json"},
+        mine = {"aigateway-subnet.parameters.json", "aigateway.parameters.json", "aigateway-policies.json"}
+        self.assertTrue(mine <= set(files))
+        self.assertEqual(set(files) - mine,
                          {"environment.parameters.json", "logger.parameters.json", "kit.parameters.json", "recording.parameters.json", "foundry.parameters.json", "operator.parameters.json", "planted.parameters.json"})
         self.assertEqual({key: value for key, value in outputs.items() if key.startswith("aigateway_")},
                          {"aigateway_name": outputs["aigateway_name"], "aigateway_subnet_name": "snet-aigw", "aigateway_subnet_prefix": "10.53.0.128/26",
                           "aigateway_aliases": "gpt-6-luna gpt-6.1-sol", "aigateway_files": "true"})
         self.assertEqual(files["aigateway-policies.json"], self.policies(), "the policies go to the gateway as they are in the repository")
 
-    def test_the_file_fits_the_template_and_every_setting_has_a_value_of_the_right_type(self):
+    def test_each_file_fits_its_template_and_every_setting_has_a_value_of_the_right_type(self):
         files, _ = self.files()
-        declared = bicep_params(self.TEMPLATE)
-        given = files["aigateway.parameters.json"]["parameters"]
-        self.assertTrue(set(given) <= set(declared), set(given) - set(declared))
-        required = {name for name, (_, has_default) in declared.items() if not has_default}
-        self.assertTrue(required <= set(given), required - set(given))
         types = {"string": str, "int": int, "array": list, "bool": bool}
-        for name, wrapped in given.items():
-            self.assertIsInstance(wrapped["value"], types[declared[name][0]], name)
+        for name, template in (("aigateway.parameters.json", self.TEMPLATE), ("aigateway-subnet.parameters.json", self.SUBNET_TEMPLATE)):
+            declared = bicep_params(template)
+            given = files[name]["parameters"]
+            self.assertTrue(set(given) <= set(declared), (name, set(given) - set(declared)))
+            required = {setting for setting, (_, has_default) in declared.items() if not has_default}
+            self.assertTrue(required <= set(given), (name, required - set(given)))
+            for setting, wrapped in given.items():
+                self.assertIsInstance(wrapped["value"], types[declared[setting][0]], (name, setting))
         gateway = values(files["aigateway.parameters.json"])
-        self.assertEqual(set(gateway), {"location", "owner", "gatewayName", "aigwSubnetPrefix", "aigwSubnetExists", "foundryAccountName", "models", "foundryProjectPrincipalId"},
-                         "names, ranges, flags and the models: nothing secret, and the telemetry stays at the template's default, which is off")
+        self.assertEqual(set(gateway), {"location", "owner", "gatewayName", "foundryAccountName", "models", "foundryProjectPrincipalId"},
+                         "names, a flag and the models: nothing secret, nothing of the subnet, and the telemetry stays at the template's default, which is off")
+        subnet = values(files["aigateway-subnet.parameters.json"])
+        self.assertEqual(set(subnet), {"location", "owner", "aigwSubnetPrefix", "aigwSubnetExists"},
+                         "the range and whether it is there already; the workload is left to the template's default, as the file of the gateway leaves it")
+        self.assertEqual((subnet["location"], subnet["owner"]), (gateway["location"], gateway["owner"]), "the subnet is in the gateway's region and has the gateway's owner")
         self.assertEqual(bicep_params(self.TEMPLATE)["telemetryEnabled"], ("bool", True))
         self.assertIn("param telemetryEnabled bool = false", self.TEMPLATE)
         self.assertEqual(bicep_params(self.TEMPLATE)["foundryProjectPrincipalId"], ("string", True))
+        for moved in ("aigwSubnetPrefix", "aigwSubnetExists"):
+            self.assertNotIn(moved, bicep_params(self.TEMPLATE), "the gateway's template no longer takes the subnet's settings")
 
     def test_the_name_is_stable_inside_the_services_limit_and_made_from_the_digest(self):
         names = {values(self.files()[0]["aigateway.parameters.json"])["gatewayName"] for _ in range(3)}
@@ -1127,7 +1138,7 @@ class AiGateway(unittest.TestCase):
 
     def test_the_subnet_is_the_last_free_26_and_overlaps_none_of_the_other_four(self):
         files, outputs = self.files()
-        env, operator, gateway = values(files["environment.parameters.json"]), values(files["operator.parameters.json"]), values(files["aigateway.parameters.json"])
+        env, operator, gateway = values(files["environment.parameters.json"]), values(files["operator.parameters.json"]), values(files["aigateway-subnet.parameters.json"])
         self.assertEqual(gateway["aigwSubnetPrefix"], "10.53.0.128/26")
         self.assertEqual(outputs["aigateway_subnet_prefix"], "10.53.0.128/26")
         mine = ipaddress.ip_network(gateway["aigwSubnetPrefix"])
@@ -1164,15 +1175,16 @@ class AiGateway(unittest.TestCase):
 
     def test_the_file_says_whether_the_subnet_is_there_already_and_says_no_when_nobody_has_looked(self):
         # the subnet is made once: a template that makes it again takes away the route table that the landing zone's network manager put on it
-        self.assertIs(values(self.files()[0]["aigateway.parameters.json"])["aigwSubnetExists"], False)
+        self.assertIs(values(self.files()[0]["aigateway-subnet.parameters.json"])["aigwSubnetExists"], False)
         for given, expected in (("", False), ("false", False), ("FALSE", False), ("true", True), (" True ", True)):
             files, _ = self.files(ENV_AIGW_SUBNET_EXISTS=given)
-            self.assertIs(values(files["aigateway.parameters.json"])["aigwSubnetExists"], expected, given)
+            self.assertIs(values(files["aigateway-subnet.parameters.json"])["aigwSubnetExists"], expected, given)
+            self.assertNotIn("aigwSubnetExists", values(files["aigateway.parameters.json"]), "the gateway's file does not carry it: the subnet is made, or left alone, before the gateway's template runs")
         for refused in ("yes", "1", "exists"):
             code, out, err, files = run({**SETTINGS, "ENV_AIGW_SUBNET_EXISTS": refused}, "--aigateway-policies", str(self.POLICIES))
             self.assertEqual((code, out, files), (2, "", {}), refused)
             self.assertIn("ENV_AIGW_SUBNET_EXISTS is true or false", err)
-        self.assertIn("param aigwSubnetExists bool = false", self.TEMPLATE)
+        self.assertIn("param aigwSubnetExists bool = false", self.SUBNET_TEMPLATE)
 
     def test_the_principal_of_the_foundry_project_is_empty_until_step_two_gives_it_and_is_checked_as_an_object_id(self):
         self.assertEqual(values(self.files()[0]["aigateway.parameters.json"])["foundryProjectPrincipalId"], "", "the template works without it")
@@ -1282,20 +1294,21 @@ class AiGateway(unittest.TestCase):
             self.assertEqual((code, err), (0, ""), "the ceiling follows models.json")
             self.assertEqual(files["aigateway-policies.json"][0]["count"], 80000)
 
-    def test_nothing_secret_is_in_either_file(self):
+    def test_nothing_secret_is_in_any_of_the_three_files(self):
         files, _ = self.files(FOUNDRY_PROJECT_PRINCIPAL_ID="aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
-        text = json.dumps([files["aigateway.parameters.json"], files["aigateway-policies.json"]]).lower()
+        text = json.dumps([files["aigateway-subnet.parameters.json"], files["aigateway.parameters.json"], files["aigateway-policies.json"]]).lower()
         for word in ("secret", "password", "connectionstring", "apikey", "api-key", "instrumentationkey", "bearer"):
             self.assertNotIn(word, text, word)
 
     def test_the_names_the_workflow_reads_are_the_ones_the_template_makes(self):
         _, outputs = self.files()
         self.assertEqual(outputs["aigateway_subnet_name"], "snet-aigw")
-        self.assertIn("var aigwSubnetName = 'snet-aigw'", self.TEMPLATE)
-        self.assertIn("param workload string = 'meternaut'", self.TEMPLATE)
+        for template in (self.TEMPLATE, self.SUBNET_TEMPLATE):
+            self.assertIn("var aigwSubnetName = 'snet-aigw'", template, "the subnet's template makes it, and the gateway's names it")
+            self.assertIn("param workload string = 'meternaut'", template)
+            self.assertIn("var virtualNetworkName = 'vnet-${workload}'", template)
         self.assertIn("var operatorIdentityName = 'id-${workload}-operator'", self.TEMPLATE)
         self.assertIn("name: 'id-${workload}-operator'", Operator.OPERATOR, "the identity that the gateway's template reads is the one that the Operator's makes")
-        self.assertIn("var virtualNetworkName = 'vnet-${workload}'", self.TEMPLATE)
         self.assertIn("name: 'vnet-${workload}'", BICEP, "the virtual network that the model side makes")
 
 

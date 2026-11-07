@@ -90,10 +90,12 @@ ALLOWED = {
         "Microsoft.EventHub/namespaces/eventhubs",
         "Microsoft.Authorization/roleAssignments",
     },
-    "environment/aigateway/main.bicep": {
+    "environment/aigateway/subnet.bicep": {
         "Microsoft.Network/networkSecurityGroups",
         "Microsoft.Network/virtualNetworks",
         "Microsoft.Network/virtualNetworks/subnets",
+    },
+    "environment/aigateway/main.bicep": {
         "Microsoft.CognitiveServices/accounts",
         "Microsoft.ManagedIdentity/userAssignedIdentities",
         "Microsoft.Insights/components",
@@ -747,7 +749,7 @@ class Workflow(unittest.TestCase):
         block = self.steps[names.index(again)]
         self.assertIn("if: inputs.action == 'recording'", block)
         self.assertIn("uses: azure/login@", block)
-        self.assertEqual(self.text.count("uses: azure/login@"), 8, "the first sign-in, one more before each publish (the usage recording's and the cases'), one more before the health check of the cases app in the Operator and one more after it, one more before the read-back of the Foundry resource, which follows a wait of up to 40 minutes, one more before the list of the usage functions, which follows a publish in the Operator that can take a quarter of an hour, and one more before the limits, the built-in key and the read-back of the AI Gateway, which follow a wait of up to 20 minutes for the landing zone's route table")
+        self.assertEqual(self.text.count("uses: azure/login@"), 9, "the first sign-in, one more before each publish (the usage recording's and the cases'), one more before the health check of the cases app in the Operator and one more after it, one more before the read-back of the Foundry resource, which follows a wait of up to 40 minutes, one more before the list of the usage functions, which follows a publish in the Operator that can take a quarter of an hour, one more before the deploy of the AI Gateway, which follows the deploy of its subnet and a wait of up to 20 minutes for the landing zone's route table, and one more before the limits, the built-in key and the read-back of the AI Gateway")
         self.assertLess(names.index("Deploy the usage recording"), names.index(again))
         self.assertLess(names.index(again), names.index("Publish the usage functions to the function app from inside the network, in the Operator"))
         later = "Sign in to Azure again for the list of the functions, because the publish in the Operator can take a quarter of an hour and a credential lasts five minutes"
@@ -2672,7 +2674,7 @@ class OperatorChecksWorkflow(unittest.TestCase):
         self.assertEqual(sorted(re.findall(r"python3 tools/cases-check\.py (\w+)", code)), ["functions", "functions"])
         for word in ("eventhubs.azure.net", "servicebus.windows.net/", "/messages?"):
             self.assertNotIn(word, code, f"{word}: the runner takes no token for Event Hubs and posts nothing to it")
-        self.assertEqual(self.text.count("uses: azure/login@"), 8, "the check actions added no sign-in: the runner makes the container group with the credential of the first one (the eight are the first, those of recording and cases before their publish, the two of cases around the health check in the Operator, the Foundry read-back's, the one of recording before its list of the functions and the one of aigateway before its limits, which follow a wait for the route table: aigateway-check has none)")
+        self.assertEqual(self.text.count("uses: azure/login@"), 9, "the check actions added no sign-in: the runner makes the container group with the credential of the first one (the nine are the first, those of recording and cases before their publish, the two of cases around the health check in the Operator, the Foundry read-back's, the one of recording before its list of the functions and the two of aigateway, one before the gateway's deploy and one before its limits, which follow the subnet's deploy and a wait for the route table: aigateway-check has none)")
 
     def test_each_check_runs_the_generic_script_with_its_tool_and_the_arguments_that_the_runner_used_before_and_the_times_are_ordered(self):
         expected = {self.RECORDING: {"tool": "recording-check", "files": ["recording-check.py"], "args": "run --namespace $EVENT_HUB_NAMESPACE --insights $insights --job all --minutes 20", "seconds": 1500, "minutes": 35},

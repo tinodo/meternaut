@@ -1,13 +1,13 @@
 // The AI Gateway of the agents' model calls: Azure's AI Gateway (preview), the separate service Microsoft.ApiManagement/aigateways, which is not a classic
-// API Management instance (docs/proposals/08-ai-gateway.md). This template is step 1 of 2: the gateway, its subnet, its models and aliases, and its roles.
+// API Management instance (docs/proposals/08-ai-gateway.md). This template is step 1 of 2: the gateway, its models and aliases, and its roles.
 // Step 2 (a later change) connects the Foundry project to it and moves the model names of the cases app. Nothing here touches the agents, which keep calling
 // their model deployments as they do now.
 //
 // What it holds:
-//  - the subnet snet-aigw and its network security group, which has no rule of its own. The gateway reaches its backends through that subnet, so the call to
-//    the private Foundry resource of the agents never leaves the virtual network. It is delegated to Microsoft.App/environments, holds nothing else, and is
-//    made once and then left alone: see aigwSubnetExists, and AGENTS.md rule 27.
-//  - the gateway aigw-<workload>-<suffix>, with a system-assigned identity and that subnet as its backend subnet.
+//  - the gateway aigw-<workload>-<suffix>, with a system-assigned identity and the subnet snet-aigw as its backend subnet. The gateway reaches its backends through that subnet, so the call
+//    to the private Foundry resource of the agents never leaves the virtual network. THE SUBNET IS NOT MADE HERE: it has to be there when this template is deployed. The template
+//    environment/aigateway/subnet.bicep makes it (delegated to Microsoft.App/environments, once, AGENTS.md rule 27), and the action aigateway deploys that one first, waits until the
+//    landing zone's network manager has put its route table on the subnet, and only then deploys this one, so that the gateway is made on the subnet as the landing zone leaves it.
 //  - Foundry User for the gateway's identity on the Foundry resource of the agents, so that it can call the model deployments without a key.
 //  - one model provider of kind Foundry, and for each model of environment/models.json one model and one alias. The alias is the name that a caller sends in the
 //    `model` field of a request. It is the deployment's name, as the portal makes it for a Foundry import, and the model resource has that name with its dots
@@ -29,7 +29,7 @@
 //    the service's samples only ever read, because a PUT replaces the whole workspace. The action aigateway applies environment/aigateway/policies.json to it with a merge,
 //    as the samples' own script does (tools/aigateway-prep.py policies).
 //  - an API key, a private DNS zone, a link to one and a zone group (AGENTS.md rules 19 and 23): the landing zone's DNS resolves the Foundry resource's name to its private
-//    address, and the gateway reaches it through the subnet below.
+//    address, and the gateway reaches it through its subnet.
 //
 // API versions: 2025-09-01-preview for every aigateways resource. It is the one that the portal and every Microsoft sample use. The service accepts newer ones for the
 // gateway itself, and the children only up to 2026-09-01-preview when this was probed. Bicep has no type definitions for any of them yet, so the BCP081 warning is suppressed
@@ -52,14 +52,6 @@ param owner string
 @minLength(3)
 @maxLength(24)
 param gatewayName string
-
-@description('Address range of the subnet that the gateway reaches its backends through, inside the virtual network and apart from the other subnets, for example 10.53.0.128/26. At least a /27, in the gateway\'s region and subscription. It is delegated to Microsoft.App/environments and belongs to the gateway alone. The service takes the subnet when the gateway is made, and treats it as read-only afterwards.')
-@minLength(9)
-@maxLength(18)
-param aigwSubnetPrefix string
-
-@description('True when the gateway\'s subnet is in Azure already. The template then leaves it alone: a template that makes the subnet again takes away the route table that the landing zone\'s network manager put on it. The deployment workflow reads this from Azure.')
-param aigwSubnetExists bool = false
 
 @description('Name of the Foundry resource of the agents (environment/foundry/main.bicep makes it). The template only reads it: the gateway calls its model deployments.')
 @minLength(2)
@@ -106,10 +98,6 @@ var foundryUserRoleId = '53ca6127-db72-4b80-b1b0-d745d6d5456d'
 // AI Gateway Models User: its data actions list and invoke the models of the gateway, and nothing else (not the tools). Given on the gateway, never on the group.
 var aiGatewayModelsUserRoleId = 'a6b68e3d-a1f0-4c60-8678-237c050cf4ea'
 
-resource vnet 'Microsoft.Network/virtualNetworks@2025-05-01' existing = {
-  name: virtualNetworkName
-}
-
 // Only read, so an API version that has types serves, the one of environment/main.bicep: the endpoint and the id are all that this template takes from the resource.
 resource account 'Microsoft.CognitiveServices/accounts@2025-06-01' existing = {
   name: foundryAccountName
@@ -119,41 +107,9 @@ resource operatorIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023
   name: operatorIdentityName
 }
 
-// No rule of its own, like the other subnets': the default rules let the gateway reach the virtual network and the internet (the landing zone's firewall decides
-// there), and nothing is let in. The portal says that no network security group rules are required for an AI Gateway subnet (the in-product documentation of
-// https://ai.gateway.azure.com, read 2026-11-07); the rules that the service's sample page lists (outbound 443 to Storage and AzureKeyVault) belong to the older API Management gateway.
-resource aigwNsg 'Microsoft.Network/networkSecurityGroups@2025-05-01' = {
-  name: 'nsg-${workload}-aigw'
-  location: location
-  tags: tags
-  properties: {
-    securityRules: []
-  }
-}
-
-// Delegated to Microsoft.App/environments, as the function app's subnet is, and it holds nothing else. Made only while it is not there: see aigwSubnetExists, and the header.
-resource aigwSubnet 'Microsoft.Network/virtualNetworks/subnets@2025-05-01' = if (!aigwSubnetExists) {
-  parent: vnet
-  name: aigwSubnetName
-  properties: {
-    addressPrefix: aigwSubnetPrefix
-    networkSecurityGroup: {
-      id: aigwNsg.id
-    }
-    delegations: [
-      {
-        name: 'ai-gateway'
-        properties: {
-          serviceName: 'Microsoft.App/environments'
-        }
-      }
-    ]
-    defaultOutboundAccess: false
-  }
-}
-
 // A system-assigned identity, and no sku: the service owns it (the portal sends none). publicNetworkAccess Enabled is what the portal sends; it is the only value that
-// has an effect (see the header). The subnet is named by its id, which is the same on every run, so a second deploy sends the value that the first one did.
+// has an effect (see the header). The subnet is named by its id, which is the same on every run, so a second deploy sends the value that the first one did. It is not
+// made here: it is in Azure already, with the landing zone's route table on it when the landing zone puts one on this network (the workflow waits for that; see the header).
 #disable-next-line BCP081
 resource gateway 'Microsoft.ApiManagement/aigateways@2025-09-01-preview' = {
   name: gatewayName
@@ -170,9 +126,6 @@ resource gateway 'Microsoft.ApiManagement/aigateways@2025-09-01-preview' = {
       }
     }
   }
-  dependsOn: [
-    aigwSubnet
-  ]
 }
 
 // Exists on its own with the gateway, and is only read here: the parent of the provider, the aliases and the exporter.
