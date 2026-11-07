@@ -580,9 +580,9 @@ class TheDocumentsSayWhatTheActionDoes(unittest.TestCase):
 
     def test_the_changelog_has_the_entry_below_the_one_of_the_deployment_and_says_what_it_must(self):
         headings = re.findall(r"(?m)^## (.*)$", CHANGELOG)
-        self.assertEqual(headings[5], ENTRY)
-        self.assertTrue(headings[6].startswith("An AI Gateway for the agents' model calls, step 2 of 2"), "the entries of the two steps follow")
-        entry = CHANGELOG.split("\n## ")[6]
+        self.assertEqual(headings[6], ENTRY)
+        self.assertTrue(headings[7].startswith("An AI Gateway for the agents' model calls, step 2 of 2"), "the entries of the two steps follow")
+        entry = CHANGELOG.split("\n## ")[7]
         leads = ["**What was found.**", "**What changed.**", "**What was checked.**", "**Not checked.**", "**Who decides, and what a person does.**"]
         positions = [entry.index(lead) for lead in leads]
         self.assertEqual(positions, sorted(positions))
@@ -601,7 +601,7 @@ class TheDocumentsSayWhatTheActionDoes(unittest.TestCase):
         self.assertRegex(flat_entry.split("**What was checked.**")[1].split("**Not checked.**")[0], r"\d,\d{3} tests", "and it says how many tests passed")
 
     def test_nothing_of_the_owners_environment_is_in_what_this_change_wrote(self):
-        entry = CHANGELOG.split("\n## ")[6]
+        entry = CHANGELOG.split("\n## ")[7]
         for label, part in (("the template of the subnet", SUBNET), ("the section of the record", self.record_section()), ("the entry", entry)):
             self.assertNotRegex(part, r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}", f"{label}: no id")
         for label, part in (("the section of the record", self.record_section()), ("the entry", entry)):

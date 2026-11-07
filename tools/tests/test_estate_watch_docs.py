@@ -24,7 +24,7 @@ def flat(source):
 
 
 CHANGELOG = text("CHANGELOG.md")
-ENTRY = CHANGELOG.split("\n## ")[2]
+ENTRY = CHANGELOG.split("\n## ")[3]
 BOOTSTRAP = text("environment/BOOTSTRAP.md")
 RECORD = text("docs/proposals/03-access-and-onboarding.md")
 FIRST_CASES = text("docs/proposals/02-first-cases.md")
@@ -36,8 +36,8 @@ def section(source, heading):
 
 
 class TheChangelogEntry(unittest.TestCase):
-    def test_it_is_the_second_entry_and_is_short(self):
-        self.assertEqual(re.findall(r"(?m)^## (.*)$", CHANGELOG)[1], TITLE, "the newest entry is the one of the web page (test_console_gateway.py)")
+    def test_it_is_the_third_entry_and_is_short(self):
+        self.assertEqual(re.findall(r"(?m)^## (.*)$", CHANGELOG)[2], TITLE, "the entry of the whole-estate Watch that is deployed (test_estate_watch_deployed.py) and the one of the web page (test_console_gateway.py) are above it")
         self.assertTrue(ENTRY.startswith(TITLE))
         self.assertLessEqual(len(ENTRY.strip().splitlines()), 15, "the owner reads nothing long")
 
@@ -82,7 +82,7 @@ class TheRulesAndThePages(unittest.TestCase):
                       "Until the grant exists the identity reads only the subscription that it holds the roles on", "Neither the template nor the Hub grants anything there",
                       "A change to Azure is still made only in the one resource group of `CHANGE_RESOURCE_GROUP` in `CHANGE_SUBSCRIPTION_ID`", "The limits of rule 15 (g) are as they were",
                       "60%, and a subscription that was started inside it may finish within 10% more", "HTTP 429", "the first five ids (eight characters each), never all of them",
-                      "no real throttling, and no grant at a management group"):
+                      "Not checked: the scheduled daily run on the whole estate, unattended; Advisor, which is still read for each subscription; throttling on a much larger estate"):
             self.assertIn(words, page, words)
         calls = flat(RECORD).split("**Which call needs which grant.**")[1].split("**The calls are checked against the file.**")[0]
         self.assertIn("ten kinds of call", calls)
