@@ -134,8 +134,8 @@ class TheTemplatesReadNothingOutsideTheirOwnGroup(unittest.TestCase):
 
     def test_the_templates_are_the_ones_that_the_hub_and_the_checks_know(self):
         names = [str(p.relative_to(ROOT)).replace("\\", "/") for p in TEMPLATES]
-        self.assertEqual(names, ["environment/aigateway/main.bicep", "environment/aigateway/subnet.bicep", "environment/base/main.bicep", "environment/cases/main.bicep", "environment/cases/planted.bicep",
-                                 "environment/foundry/main.bicep", "environment/main.bicep", "environment/operator/main.bicep",
+        self.assertEqual(names, ["environment/aigateway/main.bicep", "environment/aigateway/subnet.bicep", "environment/aigateway/telemetry.bicep", "environment/base/main.bicep", "environment/cases/main.bicep",
+                                 "environment/cases/planted.bicep", "environment/foundry/main.bicep", "environment/governance/main.bicep", "environment/main.bicep", "environment/operator/main.bicep",
                                  "infra/budgets/rg-budget.bicep"], "a new template is added to this list on purpose, after it was looked at for what it reads")
         for name in (n for n in names if n.startswith("environment/")):
             self.assertIn(name, WORKFLOW + CHECKS, f"{name}: a template that no workflow compiles")

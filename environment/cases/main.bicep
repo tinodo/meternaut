@@ -163,6 +163,14 @@ param consoleHostName string = ''
 @maxValue(336)
 param planTtlHours int = 72
 
+@description('The git commit that the deploy of this run was made from (the workflow passes the commit of the run). The app gets it as the setting BUILD_COMMIT, which the app itself may read. The tag that a reader of the resource group sees (meternaut-build-commit, which tools/drift-check.py compares with the commit of main) is not written here: the workflow writes it after the code has been published and the app answers, so that a publish that fails leaves no tag that says otherwise. Empty: no setting is written, and nothing is different from before. A value, not a secret.')
+@maxLength(64)
+param buildCommit string = ''
+
+@description('The digest of the cases app\'s own files at that commit (tools/source-digest.py: the files that the build puts in the package; the libraries are pinned by hash in requirements.txt, one of them). The app gets it as the setting PACKAGE_SHA256, and the in-app check compares it with the digest of the files that it runs from. The tag meternaut-package-sha256 is written by the workflow after the publish, as the commit\'s is. Empty: no setting is written. A value, not a secret.')
+@maxLength(64)
+param packageSha256 string = ''
+
 @description('Endpoint of the Microsoft Foundry project whose agents investigate the estate, https://<resource>.services.ai.azure.com/api/projects/<project>. Empty: the investigation is off. The deployment workflow passes it only when the project is in Azure (the action foundry makes it, and gives the app its role there).')
 param foundryProjectEndpoint string = ''
 
@@ -189,6 +197,14 @@ var tags = {
   owner: owner
   'meternaut-stage': 'first-cases'
 }
+
+// The same two values as settings of the app, which the app itself may read (the in-app check of the agent harness compares the digest of the files that it runs from with the second); only the ones that are given.
+// They are the release that this deploy asks for. The tags that a reader of the resource group sees say which release has been published, and the workflow writes them after the publish.
+var buildSettings = concat(empty(buildCommit) ? [] : [
+  { name: 'BUILD_COMMIT', value: buildCommit }
+], empty(packageSha256) ? [] : [
+  { name: 'PACKAGE_SHA256', value: packageSha256 }
+])
 
 var virtualNetworkName = 'vnet-${workload}'
 var webSubnetName = 'snet-cases'
@@ -526,7 +542,7 @@ resource functionApp 'Microsoft.Web/sites@2024-04-01' = {
         // The client id of the identity whose token is the client assertion: the platform's sign-in reads it, and so does the console when it redeems the code of the
         // Azure Resource Manager sign-in (the app registration's federated credential trusts that identity).
         { name: 'OVERRIDE_USE_MI_FIC_ASSERTION_CLIENTID', value: signInIsSetUp ? authIdentity.properties.clientId : '' }
-      ])
+      ], buildSettings)
     }
   }
   dependsOn: [

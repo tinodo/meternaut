@@ -1,0 +1,8 @@
+// The trip lines of the agent harness: when a limit, a check or a guard of the harness stops an agent run, the cases app logs one line that starts with `harness.trip`, then a space, then one
+// JSON object that holds a reason code and hashes and no text of the estate (docs/proposals/10-ai-security-and-governance.md says the format). The Functions host sends the app's logs to
+// Application Insights, and the app has no telemetry library, so the line is read from the traces table by its prefix. The second form is the History's own wrapper (`meternaut_event ` and a JSON
+// object that has the same name as its type); both are accepted so that the rule does not depend on which of them the app writes. One row for each trip, and nothing of the line.
+AppTraces
+| where Message startswith 'harness.trip'
+    or (Message startswith 'meternaut_event ' and Message contains '"type":"harness.trip"')
+| project TimeGenerated, SeverityLevel

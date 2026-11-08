@@ -1,0 +1,232 @@
+{
+  "version": "Notebook/1.0",
+  "items": [
+    {
+      "type": 1,
+      "content": {
+        "json": "## Meternaut AI security\n\nWhat guards Meternaut's models and agents, and what it saw. Four parts: **who called the AI Gateway** and what it refused (the gateway's own telemetry), **the harness** around the agents and **the app's own daily drift check** (lines that the cases app logs), and **what Azure Policy says** about the project's resource group. Nothing on this page changes Azure, and nothing on it holds a prompt or an answer: the gateway sends metadata only.\n\nThe gateway's part stays empty until the gateway's telemetry is on (the Hub action `gateway-telemetry`). The independent drift check, which reads Azure itself and does not depend on the app, runs in GitHub Actions (`tools/drift-check.py`) and shows its result on the page of its run.\n\nIf a table says \"Query failed\" or \"could not connect to server\": the portal reads this data from your browser, and a network that resolves the Azure Monitor query addresses to a private IP address cannot reach it. That is the network, not the query."
+      },
+      "name": "intro"
+    },
+    {
+      "type": 9,
+      "content": {
+        "version": "KqlParameterItem/1.0",
+        "parameters": [
+          {
+            "id": "4d9a7c21-8e3b-4c15-a6f0-2b7e5d1c9a31",
+            "version": "KqlParameterItem/1.0",
+            "name": "TimeRange",
+            "label": "Time range",
+            "type": 4,
+            "isRequired": true,
+            "value": {
+              "durationMs": 604800000
+            },
+            "typeSettings": {
+              "selectableValues": [
+                { "durationMs": 3600000 },
+                { "durationMs": 86400000 },
+                { "durationMs": 604800000 },
+                { "durationMs": 2592000000 }
+              ],
+              "allowCustom": true
+            }
+          }
+        ],
+        "style": "pills",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces"
+      },
+      "name": "time range"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "title": "The AI Gateway in the time range: calls, blocked prompts, errors",
+        "query": "OTelSpans\n| where Kind =~ 'Server' and tostring(Attributes['http.route']) contains '/models/'\n| extend Status = coalesce(toint(Attributes['http.response.status_code']), toint(Attributes['http.status_code']), toint(ResultCode))\n| summarize ['Calls in the range'] = count(), Answered = countif(Status between (200 .. 299)), ['Blocked or limited (403, 429)'] = countif(Status in (403, 429)), ['Other client errors'] = countif(Status in (400, 401, 404)), ['Server errors'] = countif(Status >= 500), Callers = dcount(tolower(tostring(Attributes['azure.ai_gateway.identity.claims.oid'])))",
+        "size": 4,
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "crossComponentResources": [
+          "__WORKSPACE_ID__"
+        ],
+        "visualization": "table"
+      },
+      "name": "totals"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "title": "Each caller and the alias it asked for: calls, refusals, errors and latency",
+        "query": "let callers = datatable(Oid: string, Caller: string) [ __CALLERS__ ];\nOTelSpans\n| where Kind =~ 'Server' and tostring(Attributes['http.route']) contains '/models/'\n| extend Oid = tolower(tostring(Attributes['azure.ai_gateway.identity.claims.oid'])), Alias = tostring(Attributes['gen_ai.request.model']), Status = coalesce(toint(Attributes['http.response.status_code']), toint(Attributes['http.status_code']), toint(ResultCode))\n| lookup kind=leftouter callers on Oid\n| extend Caller = iff(isempty(Caller), iff(isempty(Oid), 'no identity in the telemetry', strcat('not on the access list, ', substring(Oid, 0, 8))), Caller)\n| summarize Calls = count(), Answered = countif(Status between (200 .. 299)), Refused = countif(Status in (403, 429)), ['Client errors'] = countif(Status in (400, 401, 404)), ['Server errors'] = countif(Status >= 500), ['Median ms'] = round(percentile(DurationMs, 50), 0), ['95th percentile ms'] = round(percentile(DurationMs, 95), 0) by Caller, Alias\n| order by Caller asc, Alias asc",
+        "size": 0,
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "crossComponentResources": [
+          "__WORKSPACE_ID__"
+        ],
+        "visualization": "table",
+        "gridSettings": {
+          "filter": true
+        }
+      },
+      "name": "callers"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "title": "Tokens that the model service reported, for each caller and hour",
+        "query": "let callers = datatable(Oid: string, Caller: string) [ __CALLERS__ ];\nOTelLogs\n| extend Oid = tolower(tostring(Attributes['azure.ai_gateway.identity.claims.oid'])), Prompt = coalesce(tolong(Attributes['azure.ai_gateway.client.usage.prompt_tokens']), tolong(Attributes['azure.ai_gateway.client.usage.input_tokens'])), Completion = coalesce(tolong(Attributes['azure.ai_gateway.client.usage.completion_tokens']), tolong(Attributes['azure.ai_gateway.client.usage.output_tokens']))\n| where isnotnull(Prompt) or isnotnull(Completion)\n| lookup kind=leftouter callers on Oid\n| extend Caller = iff(isempty(Caller), iff(isempty(Oid), 'no identity in the telemetry', strcat('not on the access list, ', substring(Oid, 0, 8))), Caller)\n| summarize Tokens = sum(coalesce(Prompt, long(0)) + coalesce(Completion, long(0))) by Caller, Hour = bin(TimeGenerated, 1h)\n| order by Hour asc",
+        "size": 1,
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "crossComponentResources": [
+          "__WORKSPACE_ID__"
+        ],
+        "visualization": "barchart"
+      },
+      "name": "tokens"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "title": "Which gateway policy ran on the requests that ended in a refusal (a policy span and a 4xx on the same trace)",
+        "query": "let requests = OTelSpans\n| where Kind =~ 'Server' and tostring(Attributes['http.route']) contains '/models/'\n| project TraceId, Status = coalesce(toint(Attributes['http.response.status_code']), toint(Attributes['http.status_code']), toint(ResultCode));\nOTelSpans\n| extend PolicyType = tostring(Attributes['azure.apim.policy.type']), ErrorType = tostring(Attributes['error.type'])\n| where isnotempty(PolicyType)\n| where PolicyType !in ('forward-request', 'set-backend-service', 'llm-emit-token-metric', 'llm-emit-cost-metric')\n| join kind=inner requests on TraceId\n| summarize Requests = dcount(TraceId), ['Ending in 403 or 429'] = dcountif(TraceId, Status in (403, 429)), ['Ending in another 4xx'] = dcountif(TraceId, Status between (400 .. 499) and Status !in (403, 429)), ['Error types'] = make_set_if(ErrorType, isnotempty(ErrorType), 5), ['Last ran'] = max(TimeGenerated) by ['Policy that ran'] = PolicyType\n| order by ['Ending in 403 or 429'] desc",
+        "size": 0,
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "crossComponentResources": [
+          "__WORKSPACE_ID__"
+        ],
+        "visualization": "table",
+        "gridSettings": {
+          "filter": true
+        }
+      },
+      "name": "policies"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "title": "Minutes in which a caller used at least __NEAR_PERCENT__ percent of the token limit or of the request limit",
+        "query": "let callers = datatable(Oid: string, Caller: string) [ __CALLERS__ ];\nlet tokenLimit = __TOKEN_LIMIT__;\nlet requestLimit = __REQUEST_LIMIT__;\nlet near = __NEAR_PERCENT__ / 100.0;\nOTelLogs\n| extend Oid = tolower(tostring(Attributes['azure.ai_gateway.identity.claims.oid'])), Prompt = coalesce(tolong(Attributes['azure.ai_gateway.client.usage.prompt_tokens']), tolong(Attributes['azure.ai_gateway.client.usage.input_tokens'])), Completion = coalesce(tolong(Attributes['azure.ai_gateway.client.usage.completion_tokens']), tolong(Attributes['azure.ai_gateway.client.usage.output_tokens']))\n| where isnotnull(Prompt) or isnotnull(Completion)\n| summarize TokensPerMinute = sum(coalesce(Prompt, long(0)) + coalesce(Completion, long(0))), RequestsPerMinute = count() by Oid, Minute = bin(TimeGenerated, 1m)\n| where TokensPerMinute >= near * tokenLimit or RequestsPerMinute >= near * requestLimit\n| lookup kind=leftouter callers on Oid\n| extend Caller = iff(isempty(Caller), strcat('not on the access list, ', substring(Oid, 0, 8)), Caller)\n| project Minute, Caller, TokensPerMinute, RequestsPerMinute, ['Token limit'] = tokenLimit, ['Request limit'] = requestLimit\n| order by Minute desc",
+        "size": 0,
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "crossComponentResources": [
+          "__WORKSPACE_ID__"
+        ],
+        "visualization": "table",
+        "gridSettings": {
+          "filter": true
+        }
+      },
+      "name": "near limit"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "title": "Trips of the agent harness (a limit, a check or a guard stopped an agent run; the line holds a reason code and hashes, no text of the estate)",
+        "query": "AppTraces\n| where Message startswith 'harness.trip' or (Message startswith 'meternaut_event ' and Message contains '\"type\":\"harness.trip\"')\n| project When = TimeGenerated, Line = substring(Message, 0, 300)\n| order by When desc\n| take 100",
+        "size": 0,
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "crossComponentResources": [
+          "__WORKSPACE_ID__"
+        ],
+        "visualization": "table",
+        "gridSettings": {
+          "filter": true
+        }
+      },
+      "name": "trips"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "title": "The last result of each control of the app's own daily drift check",
+        "query": "AppTraces\n| where TimeGenerated > ago(30d)\n| where Message startswith 'drift.pass' or Message startswith 'drift.fail' or Message startswith 'drift.unknown'\n| extend Payload = parse_json(substring(Message, indexof(Message, ' ') + 1))\n| extend Control = tostring(Payload.control), Layer = tostring(Payload.layer), State = tostring(Payload.state), Detail = tostring(Payload.detail), ReadAt = todatetime(Payload.readAt)\n| where isnotempty(Control)\n| summarize arg_max(TimeGenerated, Layer, State, Detail, ReadAt) by Control\n| project Control, Layer, State, Detail, ['Read at'] = ReadAt, Logged = TimeGenerated\n| order by State asc, Control asc",
+        "size": 0,
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "crossComponentResources": [
+          "__WORKSPACE_ID__"
+        ],
+        "visualization": "table",
+        "gridSettings": {
+          "filter": true
+        }
+      },
+      "name": "drift"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "title": "Is the app's own drift check running? (an alert rule fires when no pass or fail line has been seen for __HEARTBEAT_HOURS__ hours)",
+        "query": "AppTraces\n| where TimeGenerated > ago(30d)\n| where Message startswith 'drift.pass' or Message startswith 'drift.fail' or (Message startswith 'meternaut_event ' and (Message contains '\"type\":\"drift.pass\"' or Message contains '\"type\":\"drift.fail\"'))\n| summarize ['Last pass or fail line'] = max(TimeGenerated)\n| extend ['Hours since'] = round(datetime_diff('minute', now(), ['Last pass or fail line']) / 60.0, 1)\n| extend Verdict = case(isnull(['Last pass or fail line']), 'no pass or fail line in 30 days: the check has not reported yet, or it stopped', ['Hours since'] <= __HEARTBEAT_HOURS__, 'the check is running', 'the check is silent: more than __HEARTBEAT_HOURS__ hours')",
+        "size": 4,
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "crossComponentResources": [
+          "__WORKSPACE_ID__"
+        ],
+        "visualization": "table"
+      },
+      "name": "heartbeat"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "title": "Azure Policy on this resource group: resources by compliance state and effect (the view that the Foundry portal's Compliance page reads)",
+        "query": "policyresources\n| where type =~ 'microsoft.policyinsights/policystates'\n| where resourceGroup =~ '__RESOURCE_GROUP__'\n| extend State = tostring(properties.complianceState), Effect = tostring(properties.policyDefinitionAction), Assignment = tostring(properties.policyAssignmentName), Resource = tostring(properties.resourceId)\n| summarize Resources = dcount(Resource), Policies = dcount(strcat(Assignment, '/', tostring(properties.policyDefinitionReferenceId))) by State, Effect\n| order by State asc, Effect asc",
+        "size": 0,
+        "queryType": 1,
+        "resourceType": "microsoft.resourcegraph/resources",
+        "crossComponentResources": [
+          "__SUBSCRIPTION_RESOURCE__"
+        ],
+        "visualization": "table",
+        "gridSettings": {
+          "filter": true
+        }
+      },
+      "name": "compliance"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "title": "The alert rules of this resource group and whether they are on",
+        "query": "resources\n| where type =~ 'microsoft.insights/scheduledqueryrules'\n| where resourceGroup =~ '__RESOURCE_GROUP__'\n| project Rule = name, Enabled = tostring(properties.enabled), Severity = tostring(properties.severity), Every = tostring(properties.evaluationFrequency), Window = tostring(properties.windowSize)\n| order by Rule asc",
+        "size": 0,
+        "queryType": 1,
+        "resourceType": "microsoft.resourcegraph/resources",
+        "crossComponentResources": [
+          "__SUBSCRIPTION_RESOURCE__"
+        ],
+        "visualization": "table"
+      },
+      "name": "alert rules"
+    }
+  ],
+  "fallbackResourceIds": [
+    "__WORKSPACE_ID__"
+  ],
+  "$schema": "https://github.com/Microsoft/Application-Insights-Workbooks/blob/master/schema/workbook.json"
+}

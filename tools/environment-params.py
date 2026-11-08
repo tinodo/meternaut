@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Builds the parameter files of the first environment from the deployment workflow's settings (standard library only).
 
-    python tools/environment-params.py build --models environment/models.json --out-dir "$RUNNER_TEMP" [--preview] [--aigateway-policies environment/aigateway/policies.json] >> "$GITHUB_OUTPUT"
+    python tools/environment-params.py build --models environment/models.json --out-dir "$RUNNER_TEMP" [--preview] [--aigateway-policies environment/aigateway/policies.json [--governance environment/aigateway/contracts.json]] >> "$GITHUB_OUTPUT"
     python tools/environment-params.py check --params "$RUNNER_TEMP/base.parameters.json" --template base.json --label base
 
 The settings are environment variables, filled by the workflow from the repository's secrets and variables, so that no
@@ -50,6 +50,16 @@ owner's word uses it). It goes into cases.parameters.json as casesAppPlan, and s
 and cases_other_plan_tier (the plan of the other kind, which the action cases removes by that exact name and only while it is of that tier, with its app, when the kind has changed), cases_subnet_name (snet-func for Flex, snet-cases for
 Basic) and function_subnet_name (snet-func). The builder refuses any other value. A test builds the files for both values (docs/proposals/07-private-by-default.md, "The web page on Flex Consumption").
 
+The AI security (docs/proposals/10-ai-security-and-governance.md) adds three things, each of which leaves every file and every output as it was unless its constant or its setting is on.
+GATEWAY_TELEMETRY (a constant, True) puts otlpIngestion into base.parameters.json, which turns on the OpenTelemetry ingestion of the Application Insights component that the AI Gateway's telemetry exporter
+(environment/aigateway/telemetry.bicep, the action gateway-telemetry) sends to, and adds the output gateway_telemetry=true, so that the action base reads first that the resource provider Microsoft.Monitor is registered.
+BUILD_COMMIT (the git commit) and PACKAGE_SHA256 (the digest of the cases app's own files at that commit, tools/source-digest.py) go into cases.parameters.json as buildCommit and packageSha256 when they are set: the cases app
+gets them as the app settings BUILD_COMMIT and PACKAGE_SHA256, and the action cases writes them as tags of the app after the publish (tools/drift-check.py reads the tags and compares the commit with main). --governance (with --aigateway-policies) reads the access list of the gateway
+(environment/aigateway/contracts.json), checks it against the models and the policies, and writes governance.parameters.json (environment/governance/main.bicep) and gateway-telemetry.parameters.json. The settings
+that it reads are OPERATOR_PRINCIPAL_ID (the object id of the Operator's identity; the other two identities of the access list are CASES_SYSTEM_PRINCIPAL_ID and FOUNDRY_PROJECT_PRINCIPAL_ID), ENV_FOUNDRY_DIAGNOSTICS_EXIST
+(true when a diagnostic setting of the Foundry resource sends to a workspace already: the landing zone's policy makes one) and GUARDRAIL_INITIATIVE_AVAILABLE (true when the tenant offers the preview initiative); the
+constants APPROVED_MODELS_EFFECT and MODEL_ELIGIBILITY_EFFECT (Audit, and Deny after a clean run) set the effect of the two policies of the project's group.
+
 It writes these ARM parameter files into --out-dir:
 
     environment.parameters.json       for environment/main.bicep (the action model-side: the virtual network with its subnets, and the budget)
@@ -63,6 +73,8 @@ It writes these ARM parameter files into --out-dir:
     aigateway-policies.json           the gateway-wide policies that the action aigateway applies to the gateway's default workspace (a plain list, not a parameter file),
                                       all three from --aigateway-policies (environment/aigateway/policies.json, checked against the models and against the owner's standing limit
                                       of AGENTS.md rule 15 (g)); none is written when the virtual network has no free range for the gateway's subnet (the outputs say so)
+    governance.parameters.json        for environment/governance/main.bicep (the policies of the project's group, the alert rules, the workbook), and
+    gateway-telemetry.parameters.json for environment/aigateway/telemetry.bicep (the gateway's telemetry exporter); both only with --governance (environment/aigateway/contracts.json)
     cases.parameters.json             for environment/cases/main.bicep (the first cases: the function app that finds leads and writes the History). It is always written, and it names nothing of
                                       the owner's API Management instance: the Detective and the Skeptic call the AI Gateway, so the file carries the gateway's host name (aiGatewayHost, from
                                       AIGATEWAY_HOST, or the placeholder for a preview and a what-if), and the project's address (when ENV_FOUNDRY_PROJECT_EXISTS says that the project is in Azure). Their two
@@ -186,6 +198,36 @@ AIGATEWAY_COST_ID = re.compile(r"^(?!-)(?!.*-$)[A-Za-z0-9_-]{1,64}$")
 # numbers: while a euro is worth more than a dollar (an assumption, not checked against a rate), an amount in dollars that is at most the figure in euros is under the limit. A test holds
 # these numbers to the rule's text. An hour or a day may not be above the daily figure, a longer period not above the total.
 AIGATEWAY_COST_CEILING_USD = {"hour": 5, "day": 5, "week": 25, "month": 25, "year": 25}
+
+# The AI security (docs/proposals/10-ai-security-and-governance.md). Each constant is a switch or a setting that one line changes, in a change of its own.
+# Whether the Application Insights component has its OpenTelemetry ingestion on. The AI Gateway's telemetry exporter (environment/aigateway/telemetry.bicep, made by the action gateway-telemetry) sends to the
+# endpoints that this makes, so the action base carries it (otlpIngestion in base.parameters.json) and reads, before it deploys, that the resource provider Microsoft.Monitor is registered. False is the way back:
+# the property is then not written, which is what the template did before.
+GATEWAY_TELEMETRY = True
+# The effect of the policies that the action governance assigns to the project's resource group: "Audit" shows a model deployment that is not approved, "Deny" refuses it. They start at Audit and go to Deny
+# when a run of the action governance and a run of the action drift-check have shown every deployment compliant, which is a change of one line here.
+APPROVED_MODELS_EFFECT = "Audit"
+MODEL_ELIGIBILITY_EFFECT = "Audit"
+POLICY_EFFECTS = ("Audit", "Deny")
+# The preview initiative "Guardrail for Cognitive Services Deployments" (it can only audit) is assigned while this is True and the tenant offers it (the workflow reads that: GUARDRAIL_INITIATIVE_AVAILABLE).
+# The generally available fallback is the guardrail meternaut-agents on every deployment, whose filters the drift check reads one by one, so False loses no control.
+GUARDRAIL_INITIATIVE_PREVIEW = True
+# The customer-managed key policy (audit) is assigned while this is True, with the kinds that it leaves out by default emptied so that the Foundry resource is judged. It is False: the owner has not decided on
+# customer-managed keys, which need a key vault with purge protection, and a Foundry resource with Microsoft-managed keys would show as non-compliant for ever.
+AUDIT_CUSTOMER_MANAGED_KEYS = False
+# The asset id of a model of the Azure OpenAI catalog, as the approved-models policy matches it: a prefix, and a slash at the end limits it to that model (every version of it) and no other whose name begins alike.
+MODEL_ASSET_PREFIX = "azureml://registries/azure-openai/models/"
+# The role that lets an identity list and call the gateway's models and nothing else, and the settings that carry the object ids of the three identities that hold it (environment/aigateway/contracts.json).
+GATEWAY_MODELS_USER_ROLE = "a6b68e3d-a1f0-4c60-8678-237c050cf4ea"
+CONTRACT_IDENTITIES = {"cases": "CASES_SYSTEM_PRINCIPAL_ID", "foundry-project": "FOUNDRY_PROJECT_PRINCIPAL_ID", "operator": "OPERATOR_PRINCIPAL_ID"}
+# What has to be run first when an identity of the access list is not there: the cases app's identity is made with the app, the project's with the Foundry resource, the Operator's by the action operator.
+CONTRACT_IDENTITY_MAKERS = {"cases": "cases", "foundry-project": "foundry", "operator": "operator"}
+# A caller's name goes into a Kusto string and a workbook's JSON: letters, digits, spaces and a few marks, and no quote of either kind.
+CALLER_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 ().,-]{0,62}$")
+CONTRACT_KEYS = {"id", "caller", "roles", "identity", "aliases", "purpose", "owner", "dataClass", "limits", "reviewTrigger"}
+# A git commit (40 hex digits, or 64 for a repository that uses SHA-256) and the SHA-256 digest of the cases app's own files, as the deploy of the cases app records them (BUILD_COMMIT and PACKAGE_SHA256).
+GIT_COMMIT = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
+SHA256 = re.compile(r"^[0-9a-f]{64}$")
 
 
 class Problem(Exception):
@@ -606,7 +648,147 @@ def aigateway_files(env: dict, subscription: str, group: str, location: str, own
     return files, outputs
 
 
-def build(env, models: list[dict], preview: bool = False, aigateway_policies: list[dict] | None = None) -> tuple[dict[str, dict | list], dict[str, str]]:
+def read_contracts(path: Path, models: list[dict], policies: list[dict]) -> dict:
+    """The access list of the AI Gateway (environment/aigateway/contracts.json), checked against the models and the gateway-wide policies.
+
+    The list says, for each caller identity, which aliases it is meant to call, what for, who owns that, what data it may send, which limits apply and which event makes a person look at the entry again.
+    The gateway cannot enforce the aliases (the role covers every model), so what is checked here is that the list is honest: every alias is a model of environment/models.json, every limit named is a
+    policy of environment/aigateway/policies.json and every policy of that file is named (the limits count for each caller identity alone, so each caller is under all of them), one entry for each
+    identity, and a review that comes from an event and not from a date (AGENTS.md rule 16)."""
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        raise Problem(f"{path} is not a readable JSON document")
+    if not isinstance(document, dict) or set(document) != {"version", "about", "gatewayRole", "identities", "contracts"}:
+        raise Problem("the access list has exactly: version, about, gatewayRole, identities, contracts")
+    if document["version"] != 1 or not isinstance(document["about"], str) or not 1 <= len(document["about"]) <= 4000:
+        raise Problem("the access list is version 1 and says in `about` what it is")
+    role = document["gatewayRole"]
+    if not isinstance(role, dict) or set(role) != {"name", "id"} or role["id"] != GATEWAY_MODELS_USER_ROLE or not isinstance(role["name"], str):
+        raise Problem(f"the role of the access list is AI Gateway Models User, id {GATEWAY_MODELS_USER_ROLE}, which environment/aigateway/main.bicep gives to each caller")
+    identities = document["identities"]
+    if not isinstance(identities, dict) or set(identities) != set(CONTRACT_IDENTITIES) or not all(isinstance(v, str) and v for v in identities.values()):
+        raise Problem(f"the identities of the access list are {', '.join(CONTRACT_IDENTITIES)}, each with a line that says which identity it is")
+    entries = document["contracts"]
+    if not isinstance(entries, list) or not 1 <= len(entries) <= len(CONTRACT_IDENTITIES):
+        raise Problem(f"the access list holds one entry for each identity, {len(CONTRACT_IDENTITIES)} at most")
+    deployed = {m["name"] for m in models}
+    wanted = {(p["type"], p.get("id", "")) for p in policies}
+    ids: set[str] = set()
+    callers: set[str] = set()
+    used: set[str] = set()
+    for entry in entries:
+        if not isinstance(entry, dict) or set(entry) != CONTRACT_KEYS:
+            raise Problem(f"each entry of the access list has exactly: {', '.join(sorted(CONTRACT_KEYS))}")
+        label = entry.get("id")
+        if not isinstance(label, str) or not re.fullmatch(r"AC[0-9]{1,2}", label) or label in ids:
+            raise Problem("each entry has its own id, AC1, AC2 and so on")
+        ids.add(label)
+        if not isinstance(entry["caller"], str) or not CALLER_NAME.match(entry["caller"]) or entry["caller"] in callers:
+            raise Problem(f"{label}: the caller has its own short name of letters, digits, spaces and . , ( ) -, because the alert rules and the workbook print it")
+        callers.add(entry["caller"])
+        if entry["identity"] not in CONTRACT_IDENTITIES or entry["identity"] in used:
+            raise Problem(f"{label}: the identity is one of {', '.join(CONTRACT_IDENTITIES)} and no two entries share one, so that a call is told to a caller by the identity alone")
+        used.add(entry["identity"])
+        roles = entry["roles"]
+        if not isinstance(roles, list) or not 1 <= len(roles) <= 6 or not all(isinstance(r, str) and CALLER_NAME.match(r) for r in roles):
+            raise Problem(f"{label}: roles is a list of 1 to 6 role names, the parts of the app that call the gateway with this identity")
+        aliases = entry["aliases"]
+        if not isinstance(aliases, list) or not aliases or len(set(aliases)) != len(aliases) or not all(isinstance(a, str) for a in aliases):
+            raise Problem(f"{label}: aliases is a list of the aliases that the caller may call, each once")
+        unknown = [a for a in aliases if a not in deployed]
+        if unknown:
+            raise Problem(f"{label}: {', '.join(unknown)} is not a model of environment/models.json, so it is not an alias of the gateway")
+        for field in ("purpose", "owner", "dataClass", "reviewTrigger"):
+            if not isinstance(entry[field], str) or not 10 <= len(entry[field]) <= 800:
+                raise Problem(f"{label}: {field} is a sentence or two, from 10 to 800 characters")
+        if re.search(r"\b(?:19|20)\d{2}-\d{2}-\d{2}\b|\b(?:daily|weekly|monthly|quarterly|annual(?:ly)?|yearly)\b|\bevery \d+ (?:days?|weeks?|months?|years?)\b", entry["reviewTrigger"], re.I):
+            raise Problem(f"{label}: the review comes from an event, never from a date or a period (AGENTS.md rule 16)")
+        limits = entry["limits"]
+        named = []
+        for limit in limits if isinstance(limits, list) else []:
+            if not isinstance(limit, dict) or limit.get("type") not in AIGATEWAY_POLICY_KEYS or set(limit) - {"type", "id"}:
+                raise Problem(f"{label}: a limit is {{type}} or, for a cost limit, {{type, id}}, with a type of environment/aigateway/policies.json")
+            named.append((limit["type"], limit.get("id", "")))
+        if not named or len(set(named)) != len(named) or set(named) != wanted:
+            raise Problem(f"{label}: the limits of the entry are the policies of environment/aigateway/policies.json, each once, and no other: they count for every caller")
+    if used != set(CONTRACT_IDENTITIES):
+        raise Problem(f"the access list has an entry for each identity that holds the gateway's role: {', '.join(CONTRACT_IDENTITIES)}")
+    return document
+
+
+def per_minute_limits(policies: list[dict]) -> tuple[int, int]:
+    """The token limit and the request limit of one minute, which the near-limit rule reads a minute of use against (environment/governance/alerts/near-limit.kql)."""
+    token = next(p for p in policies if p["type"] == "tokenLimit")
+    request = next(p for p in policies if p["type"] == "requestRateLimit")
+    if token["period"] != "minute":
+        raise Problem("the token limit of environment/aigateway/policies.json is per minute: the near-limit rule reads a minute of use. Change the period back, or change the rule")
+    if request["periodSeconds"] != 60:
+        raise Problem("the request rate limit of environment/aigateway/policies.json is per 60 seconds: the near-limit rule reads a minute of use. Change the period back, or change the rule")
+    return token["count"], request["callsPerPeriod"]
+
+
+def governance_files(env: dict, subscription: str, group: str, location: str, owner: str, emails: list[str], foundry: dict[str, str], models: list[dict], policies: list[dict],
+                     contracts: dict, preview: bool = False) -> tuple[dict, dict[str, str]]:
+    """The parameter files of the AI security (docs/proposals/10-ai-security-and-governance.md): governance.parameters.json for environment/governance/main.bicep (the policies of the project's group, the
+    alert rules, the workbook and the table retention) and gateway-telemetry.parameters.json for environment/aigateway/telemetry.bicep (the AI Gateway's telemetry exporter), and their outputs.
+
+    The access list's three identities are given by the settings CASES_SYSTEM_PRINCIPAL_ID, FOUNDRY_PROJECT_PRINCIPAL_ID and OPERATOR_PRINCIPAL_ID, which the workflow reads from Azure and which are
+    checked as GUIDs and never printed when they are not. The rule that watches for a call from outside the access list needs all of them: the action governance (ACTION) is refused when one is missing,
+    and the message names the action that makes it. A --preview, and every other action, goes on with the identities that are known, and the rule is left out when none is."""
+    for switch, name in ((APPROVED_MODELS_EFFECT, "APPROVED_MODELS_EFFECT"), (MODEL_ELIGIBILITY_EFFECT, "MODEL_ELIGIBILITY_EFFECT")):
+        if switch not in POLICY_EFFECTS:
+            raise Problem(f"{name} (in tools/environment-params.py) is Audit or Deny, not {switch!r}")
+    for switch, name in ((GUARDRAIL_INITIATIVE_PREVIEW, "GUARDRAIL_INITIATIVE_PREVIEW"), (AUDIT_CUSTOMER_MANAGED_KEYS, "AUDIT_CUSTOMER_MANAGED_KEYS"), (GATEWAY_TELEMETRY, "GATEWAY_TELEMETRY")):
+        if not isinstance(switch, bool):
+            raise Problem(f"{name} (in tools/environment-params.py) is True or False")
+    token_limit, request_limit = per_minute_limits(policies)
+    callers = []
+    missing = []
+    for entry in contracts["contracts"]:
+        setting = CONTRACT_IDENTITIES[entry["identity"]]
+        principal = (env.get(setting) or "").strip()
+        if principal and not GUID.match(principal):
+            raise Problem(f"{setting} is the object id of the {contracts['identities'][entry['identity']]}, or empty")
+        if principal:
+            callers.append({"name": entry["caller"], "objectId": principal.lower(), "aliases": list(entry["aliases"])})
+        else:
+            missing.append(entry["identity"])
+    if missing and not preview and (env.get("ACTION") or "").strip() == "governance":
+        makers = ", ".join(f"{CONTRACT_IDENTITY_MAKERS[name]} (the {contracts['identities'][name]})" for name in missing)
+        raise Problem("the rule that watches the gateway for a call from outside the access list needs the object id of every identity on it, and these are not there yet. Run the action that makes each, then this one: "
+                      + makers)
+    guardrail_available = exists_flag(env, "GUARDRAIL_INITIATIVE_AVAILABLE")
+    files = {
+        "governance.parameters.json": parameters({
+            "location": location,
+            "owner": owner,
+            "alertEmails": emails,
+            "foundryAccountName": foundry["foundry_account_name"],
+            "approvedModelAssetIds": [f"{MODEL_ASSET_PREFIX}{m['name']}/" for m in models],
+            "approvedModelsEffect": APPROVED_MODELS_EFFECT,
+            "modelEligibilityEffect": MODEL_ELIGIBILITY_EFFECT,
+            "guardrailInitiative": GUARDRAIL_INITIATIVE_PREVIEW and guardrail_available,
+            "auditCustomerManagedKeys": AUDIT_CUSTOMER_MANAGED_KEYS,
+            "landingZoneDiagnostics": exists_flag(env, "ENV_FOUNDRY_DIAGNOSTICS_EXIST"),
+            "callers": callers,
+            "tokenLimitPerMinute": token_limit,
+            "requestLimitPerMinute": request_limit,
+        }),
+        "gateway-telemetry.parameters.json": parameters({"gatewayName": aigateway_name(subscription, group)}),
+    }
+    outputs = {
+        "governance_files": "true",
+        "governance_approved_models_effect": APPROVED_MODELS_EFFECT,
+        "governance_model_eligibility_effect": MODEL_ELIGIBILITY_EFFECT,
+        "governance_guardrail_initiative": "true" if GUARDRAIL_INITIATIVE_PREVIEW and guardrail_available else "false",
+        "governance_callers": str(len(callers)),
+        "governance_callers_missing": ",".join(missing),
+    }
+    return files, outputs
+
+
+def build(env, models: list[dict], preview: bool = False, aigateway_policies: list[dict] | None = None, contracts: dict | None = None) -> tuple[dict[str, dict | list], dict[str, str]]:
     subscription = need(env, "ENV_SUBSCRIPTION_ID")
     group = need(env, "ENV_RESOURCE_GROUP")
     location = need(env, "ENV_LOCATION")
@@ -695,6 +877,21 @@ def build(env, models: list[dict], preview: bool = False, aigateway_policies: li
         "owner": owner,
         "storageAccountName": names["storage_account_name"],
     }
+    # The OpenTelemetry ingestion of the Application Insights component is what the AI Gateway's exporter sends to (environment/aigateway/telemetry.bicep): written only while the switch is on, so that
+    # the file is what it was with the switch off, and the output says that it is on so that the action base reads, first, that the resource provider Microsoft.Monitor is registered.
+    if not isinstance(GATEWAY_TELEMETRY, bool):
+        raise Problem("GATEWAY_TELEMETRY (in tools/environment-params.py) is True or False")
+    if GATEWAY_TELEMETRY:
+        base["otlpIngestion"] = True
+    # The release that the cases app is deployed for, recorded by the action cases: the git commit and the digest of the app's own files at that commit (the app's settings BUILD_COMMIT and
+    # PACKAGE_SHA256; the tags that tools/drift-check.py compares with main are written by the workflow after the publish). Written only when the workflow sets them, so that no other file changes.
+    build_commit = (env.get("BUILD_COMMIT") or "").strip().lower()
+    if build_commit and not GIT_COMMIT.match(build_commit):
+        raise Problem("BUILD_COMMIT is a git commit id: 40 hexadecimal digits")
+    package_sha256 = (env.get("PACKAGE_SHA256") or "").strip().lower()
+    if package_sha256 and not SHA256.match(package_sha256):
+        raise Problem("PACKAGE_SHA256 is a SHA-256 digest: 64 hexadecimal digits")
+    release = {**({"buildCommit": build_commit} if build_commit else {}), **({"packageSha256": package_sha256} if package_sha256 else {})}
     outputs = {
         "vnet_name": "vnet-meternaut",
         "nsg_name": "nsg-meternaut-pe",
@@ -766,6 +963,7 @@ def build(env, models: list[dict], preview: bool = False, aigateway_policies: li
             "casesAppPublicNetworkAccess": CASES_APP_PUBLIC_NETWORK_ACCESS,
             **console_parameters(env),
             **routed,
+            **release,
         }),
     }
     if aigateway_policies is not None:
@@ -773,6 +971,14 @@ def build(env, models: list[dict], preview: bool = False, aigateway_policies: li
                                                                cases_system_principal, preview)
         files.update(aigateway_written)
         outputs.update(aigateway_outputs)
+    if contracts is not None:
+        if aigateway_policies is None:
+            raise Problem("the files of the AI security are checked against the gateway-wide policies: --governance goes with --aigateway-policies")
+        governance_written, governance_outputs = governance_files(env, subscription, group, location, owner, emails, foundry, models, aigateway_policies, contracts, preview)
+        files.update(governance_written)
+        outputs.update(governance_outputs)
+    if GATEWAY_TELEMETRY:
+        outputs["gateway_telemetry"] = "true"
     if AGENTS_VIA_AI_GATEWAY:
         outputs.update({"agents_via_ai_gateway": "true", "aigateway_connection_name": AIGATEWAY_CONNECTION_NAME})
     return files, outputs
@@ -817,9 +1023,12 @@ def run_check(args) -> int:
 
 def run_build(args, environ) -> int:
     try:
+        if args.governance and not args.aigateway_policies:
+            raise Problem("the files of the AI security are checked against the gateway-wide policies: --governance goes with --aigateway-policies")
         models = read_models(Path(args.models))
-        files, outputs = build(environ, models, preview=args.preview,
-                               aigateway_policies=read_aigateway_policies(Path(args.aigateway_policies), models) if args.aigateway_policies else None)
+        policies = read_aigateway_policies(Path(args.aigateway_policies), models) if args.aigateway_policies else None
+        contracts = read_contracts(Path(args.governance), models, policies) if args.governance else None
+        files, outputs = build(environ, models, preview=args.preview, aigateway_policies=policies, contracts=contracts)
     except Problem as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
@@ -840,6 +1049,7 @@ def main(argv=None, environ=None) -> int:
     build_parser.add_argument("--out-dir", required=True, help="where to write the ARM parameter files")
     build_parser.add_argument("--preview", action="store_true", help="for a what-if and for the first pass of the workflow: a fact that is not known yet (the AI Gateway's host name, its project's identity) does not stop the build")
     build_parser.add_argument("--aigateway-policies", help="the AI Gateway's gateway-wide policies (environment/aigateway/policies.json); also writes aigateway-subnet.parameters.json, aigateway.parameters.json and aigateway-policies.json")
+    build_parser.add_argument("--governance", help="the AI Gateway's access list (environment/aigateway/contracts.json), checked against the models and the policies; also writes governance.parameters.json and gateway-telemetry.parameters.json. Needs --aigateway-policies")
     check_parser = commands.add_parser("check", help="check a parameter file against a compiled template (az bicep build --outfile)")
     check_parser.add_argument("--params", required=True)
     check_parser.add_argument("--template", required=True)

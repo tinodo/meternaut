@@ -145,7 +145,7 @@ class TheTemplateOfTheSubnet(unittest.TestCase):
             self.assertNotIn(word, GATEWAY_CODE, f"{word}: it is in the subnet's template now")
         self.assertEqual(depends_on_of_the_gateway(), set(), "no dependsOn: the subnet is in Azure before this template is deployed")
         for word in ("@batchSize(1)\n#disable-next-line BCP081\nresource modelOfProvider ", "@batchSize(1)\n#disable-next-line BCP081\nresource aliasOfModel ", "resource gatewayCallsFoundry ", "resource operatorCallsTheModels ",
-                     "resource projectCallsTheModels ", "resource telemetryExporter ", "output gatewayName string = gateway.name", "output gatewayHost string = gateway.properties.frontend.defaultHostname"):
+                     "resource projectCallsTheModels ", "output gatewayName string = gateway.name", "output gatewayHost string = gateway.properties.frontend.defaultHostname"):
             self.assertIn(word, GATEWAY_CODE, word)
 
     def test_the_two_templates_compile_and_the_parameters_are_where_they_should_be(self):

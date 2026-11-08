@@ -1,0 +1,66 @@
+{
+  "version": 1,
+  "about": "Who may call the AI Gateway, and for what: one entry for each caller identity (the access list of the Citadel pattern, written by hand because the separate AI Gateway service has no object for it). Each caller holds one role on the gateway, AI Gateway Models User, which lets it list and call the gateway's models and nothing else. The role covers every alias, so the aliases below are what the caller is meant to call and not something that Azure enforces: the workbook and the alert rule of environment/governance/main.bicep read the gateway's telemetry against this list, and tools/drift-check.py compares who holds a role on the live gateway with it. The limits that apply are those of environment/aigateway/policies.json, which count for each caller identity alone across all models; a test holds every limit named here to that file and every identity to the role assignments of environment/aigateway/main.bicep. A caller that is not listed has no role. No entry holds a key or a connection string: every caller presents a Microsoft Entra token (AGENTS.md rule 23). A review comes from an event, never from a date (AGENTS.md rule 16).",
+  "gatewayRole": {
+    "name": "AI Gateway Models User",
+    "id": "a6b68e3d-a1f0-4c60-8678-237c050cf4ea"
+  },
+  "identities": {
+    "cases": "the system-assigned identity of the cases app",
+    "foundry-project": "the system-assigned identity of the Foundry project of the agents",
+    "operator": "the user-assigned identity id-meternaut-operator"
+  },
+  "contracts": [
+    {
+      "id": "AC1",
+      "caller": "Judges of the cases app",
+      "roles": ["Detective", "Skeptic judge"],
+      "identity": "cases",
+      "aliases": ["gpt-6-luna", "gpt-6.1-sol"],
+      "purpose": "Each case that the Watch takes up is judged twice, by a model that proposes and by another model that objects: one chat completion each, with no tools.",
+      "owner": "platform owner",
+      "dataClass": "Typed facts of one case: figures that code computed from the cost lines, kinds and handles. No name, tag or other text that somebody wrote in the estate, and no personal data (AGENTS.md rule 26 (d)).",
+      "limits": [
+        { "type": "tokenLimit" },
+        { "type": "requestRateLimit" },
+        { "type": "costLimit", "id": "meternaut-day" },
+        { "type": "costLimit", "id": "meternaut-month" }
+      ],
+      "reviewTrigger": "A model of environment/models.json is added, retired or re-pinned; the app's identity is made again; a refusal alert or a limit alert fires for this caller; the judges' code changes what a prompt holds."
+    },
+    {
+      "id": "AC2",
+      "caller": "Agents in Foundry",
+      "roles": ["Investigator", "Skeptic agent"],
+      "identity": "foundry-project",
+      "aliases": ["gpt-5.5", "gpt-6.1-sol"],
+      "purpose": "The Investigator looks for waste with read-only tools that the cases app runs for it, and the Skeptic agent, which has no tools, objects to what the Investigator found. The Foundry Agent Service calls the gateway through the connection of the project, with the project's own identity.",
+      "owner": "platform owner",
+      "dataClass": "Typed tool results and the agents' own instructions: values and handles only. No text from the estate reaches a prompt (AGENTS.md rules 26 (d) and 30 (b)).",
+      "limits": [
+        { "type": "tokenLimit" },
+        { "type": "requestRateLimit" },
+        { "type": "costLimit", "id": "meternaut-day" },
+        { "type": "costLimit", "id": "meternaut-month" }
+      ],
+      "reviewTrigger": "An agent gets a new tool or a new model, the connection of the project to the gateway changes, the project's identity is made again, a harness trip or a refusal alert fires for this caller."
+    },
+    {
+      "id": "AC3",
+      "caller": "The check of the Operator",
+      "roles": ["Operator check"],
+      "identity": "operator",
+      "aliases": ["gpt-6-luna", "gpt-6.1-sol", "gpt-5.5"],
+      "purpose": "The check of the gateway (tools/aigateway-check.py) sends one small test sentence to each alias from inside the network, to show that the gateway answers, and sends one request with no token and one with a wrong alias, to show that they are refused.",
+      "owner": "platform owner",
+      "dataClass": "One fixed test sentence that holds no data of the estate.",
+      "limits": [
+        { "type": "tokenLimit" },
+        { "type": "requestRateLimit" },
+        { "type": "costLimit", "id": "meternaut-day" },
+        { "type": "costLimit", "id": "meternaut-month" }
+      ],
+      "reviewTrigger": "A model of environment/models.json is added or retired, the Operator's identity is made again, or the check is changed to send anything but its test sentence."
+    }
+  ]
+}

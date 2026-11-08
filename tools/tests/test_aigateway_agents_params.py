@@ -97,8 +97,11 @@ CASES_CONFIG = (ROOT / "src" / "case-functions" / "cases" / "config.py").read_te
 AGENTS_PY = (ROOT / "src" / "case-functions" / "cases" / "agents.py").read_text(encoding="utf-8").replace("\r\n", "\n")
 
 
-def build(env, models=None, preview=False, switch=False, full=True):
-    """Runs the builder like the workflow does, with the AI Gateway's limits (full), and returns the exit code, what it printed, what it said and the files as bytes."""
+def build(env, models=None, preview=False, switch=False, full=True, telemetry=False):
+    """Runs the builder like the workflow does, with the AI Gateway's limits (full), and returns the exit code, what it printed, what it said and the files as bytes.
+
+    The two switches are set here (both False unless a test says otherwise): the agents' route (AGENTS_VIA_AI_GATEWAY) and the gateway's telemetry (GATEWAY_TELEMETRY, docs/proposals/10-ai-security-and-governance.md),
+    so that the pins of "nothing differs" stay what they were whatever the repository holds."""
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)
         for name, content in (("models.json", json.dumps(MODELS if models is None else models)), ("limits.json", json.dumps(LIMITS))):
@@ -107,7 +110,7 @@ def build(env, models=None, preview=False, switch=False, full=True):
         if full:
             arguments += ["--aigateway-policies", str(tmp / "limits.json")]
         out, err = io.StringIO(), io.StringIO()
-        with mock.patch.object(ep, "AGENTS_VIA_AI_GATEWAY", switch), redirect_stdout(out), redirect_stderr(err):
+        with mock.patch.object(ep, "AGENTS_VIA_AI_GATEWAY", switch), mock.patch.object(ep, "GATEWAY_TELEMETRY", telemetry), redirect_stdout(out), redirect_stderr(err):
             code = ep.main(arguments, environ=env)
         # The builder writes the files with the platform's line ending (CRLF on Windows, LF on the runner): they are read with LF, so that the hashes are the same everywhere.
         files = {p.name: p.read_bytes().replace(b"\r\n", b"\n") for p in sorted((tmp / "out").glob("*.json"))} if (tmp / "out").exists() else {}

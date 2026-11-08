@@ -9,11 +9,14 @@ The rules, each of which a workflow file can break by accident and a reviewer ca
   2. Every `actions/checkout` sets `persist-credentials: false`.
   3. No `${{ ... }}` expression inside a `run:` script: a value (an input, a title, a name) would become
      part of the script. A value reaches a script through `env:` and is read as a shell variable.
-  4. Each workflow sets `permissions:`; nothing is granted `write` except `id-token` in deploy-hub.yml.
+  4. Each workflow sets `permissions:`; nothing is granted `write` except `id-token` in deploy-hub.yml and drift.yml.
   5. No workflow runs on `pull_request_target`, `workflow_run` or `issue_comment`.
-  6. Only deploy-hub.yml signs in to Azure (`azure/login`, `az login`), and it runs on `workflow_dispatch` alone, with
-     exactly one job whose `if:` is exactly the owner-and-main guard, a `concurrency` group and no
-     `continue-on-error: true`.
+  6. Only deploy-hub.yml and drift.yml sign in to Azure (`azure/login`, `az login`). deploy-hub.yml runs on `workflow_dispatch`
+     alone, with exactly one job whose `if:` is exactly the owner-and-main guard, a `concurrency` group and no
+     `continue-on-error: true`. drift.yml, the check that can only read (docs/proposals/10-ai-security-and-governance.md),
+     runs on `workflow_dispatch` and may also run on a timer (`schedule`); it has exactly one job whose `if:` is exactly
+     the main-and-(owner-or-timer) guard, a `concurrency` group, no `continue-on-error: true`, and it never signs in
+     with the deploy identity: the read-only identity is another one, with a role that cannot change anything.
 
   7. No quoted value, and no list or map in brackets, goes on over several lines, and no character that some readers
      take for a line break: this tool reads one line at a time, so a line inside such a value could pass for a setting
@@ -32,11 +35,18 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 DEPLOY = "deploy-hub.yml"
+DRIFT = "drift.yml"
 PINNED = re.compile(r"^[\w.-]+/[\w./-]+@[0-9a-f]{40}$")
 STEP_START = re.compile(r"^(\s*)- (?:name|uses|run|id|if|env|with|shell|working-directory|continue-on-error|timeout-minutes):")
 FORBIDDEN_EVENTS = {"pull_request_target", "workflow_run", "issue_comment"}
-ALLOWED_WRITES = {DEPLOY: {"id-token"}}
+ALLOWED_WRITES = {DEPLOY: {"id-token"}, DRIFT: {"id-token"}}
 OWNER_GUARD = "github.actor == 'tinodo' && github.ref == 'refs/heads/main'"
+# The check that can only read may run on a timer, and a timer has no person behind it: the guard asks for main, and then for the owner or the timer. The identity that it signs in with has a federated
+# credential for the main branch alone and a role that cannot change anything, so a run elsewhere could not sign in, and a run that does sign in could change nothing.
+DRIFT_GUARD = "github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.actor == 'tinodo')"
+GUARDS = {DEPLOY: OWNER_GUARD, DRIFT: DRIFT_GUARD}
+# The deploy identity's secret: the read-only check never names it.
+DEPLOY_IDENTITY = "secrets.AZURE_CLIENT_ID"
 # Control characters, and the line breaks that Python splits on and YAML readers do not all agree about.
 ODD_CHARACTERS = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f\x7f\x85\u2028\u2029]")
 BLOCK_HEADER = re.compile(r"[|>](?:[+-]\d?|\d[+-]?)?(?:\s+#.*)?")
@@ -49,7 +59,9 @@ def indent(line: str) -> int:
 
 
 def code(line: str) -> str:
-    """The line without a trailing comment (a # that follows a space)."""
+    """The line without a trailing comment (a # that follows a space), and nothing at all for a line that is only a comment."""
+    if line.lstrip().startswith("#"):
+        return ""
     return re.split(r"\s#", line, maxsplit=1)[0].rstrip()
 
 
@@ -266,12 +278,15 @@ def lint_file(path: Path) -> list[str]:
         add(1, f"runs on `{event}`, which runs repository code with more trust than a pull request should have")
 
     azure_login = [i + 1 for i, line in enumerate(lines) if re.search(r"azure/login@|\baz login\b", line)]
-    if name != DEPLOY:
+    if name not in GUARDS:
         for number in azure_login:
-            add(number, f"signs in to Azure; only {DEPLOY} may")
+            add(number, f"signs in to Azure; only {DEPLOY} and {DRIFT} may")
     else:
-        if triggers != {"workflow_dispatch"}:
+        guard = GUARDS[name]
+        if name == DEPLOY and triggers != {"workflow_dispatch"}:
             add(1, f"must run on `workflow_dispatch` alone, not on {sorted(triggers) or 'nothing'}")
+        if name == DRIFT and not ({"workflow_dispatch"} <= triggers <= {"workflow_dispatch", "schedule"}):
+            add(1, f"must run on `workflow_dispatch`, and may run on a timer (`schedule`), and on nothing else, not on {sorted(triggers) or 'nothing'}")
         text = "\n".join(lines)
         jobs, odd = jobs_of(lines)
         for number in odd:
@@ -279,13 +294,16 @@ def lint_file(path: Path) -> list[str]:
         if len(jobs) != 1:
             add(1, f"must have exactly one job, not {len(jobs)}: the guard below is checked on that job, so a second one would go unchecked")
         for job, body in jobs.items():
-            if job_conditions(body) != [OWNER_GUARD]:
-                add(1, f"job `{job}` must run only for the owner and only on main: its `if:` is exactly `{OWNER_GUARD}`")
+            if job_conditions(body) != [guard]:
+                who = "only for the owner and only on main" if name == DEPLOY else "only on main, started by the owner or by its timer"
+                add(1, f"job `{job}` must run {who}: its `if:` is exactly `{guard}`")
         if not re.search(r"^concurrency:", text, re.M):
-            add(1, "no `concurrency:` group: two runs could change the same resources at once")
+            add(1, "no `concurrency:` group: two runs could change the same resources at once" if name == DEPLOY else "no `concurrency:` group: two runs of the check could overlap")
         for i, line in enumerate(lines):
             if re.match(r"^\s*continue-on-error:\s*true\b", code(line)):
                 add(i + 1, "`continue-on-error: true` would let a failed step pass")
+            if name == DRIFT and DEPLOY_IDENTITY in code(line):
+                add(i + 1, f"`{DEPLOY_IDENTITY}` is the deploy identity, which can change Azure: the read-only check signs in with an identity of its own, whose role cannot change anything (environment/BOOTSTRAP.md, step G4)")
         if not azure_login:
             add(1, "does not sign in to Azure")
     return problems

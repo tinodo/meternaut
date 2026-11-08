@@ -76,14 +76,31 @@ ALLOWED = {
     "environment/aigateway/main.bicep": {
         "Microsoft.CognitiveServices/accounts",
         "Microsoft.ManagedIdentity/userAssignedIdentities",
-        "Microsoft.Insights/components",
         "Microsoft.ApiManagement/aigateways",
         "Microsoft.ApiManagement/aigateways/workspaces",
         "Microsoft.ApiManagement/aigateways/workspaces/modelProviders",
         "Microsoft.ApiManagement/aigateways/workspaces/modelProviders/models",
         "Microsoft.ApiManagement/aigateways/workspaces/aliases",
-        "Microsoft.ApiManagement/aigateways/workspaces/telemetryExporters",
         "Microsoft.Authorization/roleAssignments",
+    },
+    # The gateway's telemetry exporter (the action gateway-telemetry): one exporter on the gateway's default workspace, and the project's own component, which it only reads.
+    "environment/aigateway/telemetry.bicep": {
+        "Microsoft.ApiManagement/aigateways",
+        "Microsoft.ApiManagement/aigateways/workspaces",
+        "Microsoft.ApiManagement/aigateways/workspaces/telemetryExporters",
+        "Microsoft.Insights/components",
+    },
+    # The AI security (docs/proposals/10-ai-security-and-governance.md, the action governance): Azure Policy at the group (Audit or Deny, no exemption), the alert rules and their action group, the workbook, the
+    # retention of two tables, and a diagnostic setting only where the landing zone has not made one. The workspace, the Foundry resource and the component are only read.
+    "environment/governance/main.bicep": {
+        "Microsoft.OperationalInsights/workspaces",
+        "Microsoft.CognitiveServices/accounts",
+        "Microsoft.Authorization/policyAssignments",
+        "Microsoft.Insights/diagnosticSettings",
+        "Microsoft.OperationalInsights/workspaces/tables",
+        "Microsoft.Insights/actionGroups",
+        "Microsoft.Insights/scheduledQueryRules",
+        "Microsoft.Insights/workbooks",
     },
 }
 
@@ -462,7 +479,7 @@ class Workflow(unittest.TestCase):
         title = "The network, the Foundry resource of the agents and the Operator are there, the service is offered here, and the deploy identity may give the roles of the AI Gateway"
         self.assertLess(names.index("Read the object id of the signed-in identity"), names.index(title))
         self.assertIn("DEPLOYER_ID: ${{ steps.me.outputs.oid }}", self.steps[names.index(title)], "the object id is used to look at the condition of the identity's right to assign roles")
-        self.assertEqual(self.text.count("steps.me.outputs.oid"), 1, "the one user of the identity's object id is the step that reads the condition of its right to assign roles before the AI Gateway is made: the step that retired its old right on the control hub is gone with the hub")
+        self.assertEqual(self.text.count("steps.me.outputs.oid"), 2, "the users of the identity's object id are the step that reads the condition of its right to assign roles before the AI Gateway is made, and the step that reads, before the AI security is made, that the identity holds a role that can write a policy assignment: the step that retired its old right on the control hub is gone with the hub")
         # no template gives the identity a role any more, so the parameter builder takes no setting for it
         for path in (".github/workflows/deploy-hub.yml", ".github/workflows/checks.yml", "tools/environment-params.py"):
             self.assertNotIn("RECORDING_DEPLOYER_ID", text(path), path)

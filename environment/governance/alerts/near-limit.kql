@@ -1,0 +1,15 @@
+// A caller that came near the limits of the gateway (environment/aigateway/policies.json): in one minute it used at least __NEAR_PERCENT__ percent of the token limit or of the request limit.
+// The limits count for each caller identity alone, so the minutes are counted for each oid. The tokens are the ones that the model service reported for each answered call (prompt and completion);
+// a call without a reported count adds none. Rows are (caller, minute) pairs; the alert's e-mail carries a count and a link, not the caller.
+// The cost limits are not read here: the gateway keeps its spend in a metric of a managed Azure Monitor workspace that this project cannot write an alert rule to. When a cost limit or a token limit is
+// reached the gateway refuses with 403 or 429, which the refusals rule counts, and the project's budget warns at 80 percent of its month (infra/budgets/rg-budget.bicep).
+let tokenLimit = __TOKEN_LIMIT__;
+let requestLimit = __REQUEST_LIMIT__;
+let near = __NEAR_PERCENT__ / 100.0;
+OTelLogs
+| extend Oid = tolower(tostring(Attributes['azure.ai_gateway.identity.claims.oid'])),
+         Prompt = coalesce(tolong(Attributes['azure.ai_gateway.client.usage.prompt_tokens']), tolong(Attributes['azure.ai_gateway.client.usage.input_tokens'])),
+         Completion = coalesce(tolong(Attributes['azure.ai_gateway.client.usage.completion_tokens']), tolong(Attributes['azure.ai_gateway.client.usage.output_tokens']))
+| where isnotnull(Prompt) or isnotnull(Completion)
+| summarize TokensPerMinute = sum(coalesce(Prompt, long(0)) + coalesce(Completion, long(0))), RequestsPerMinute = count() by Oid, Minute = bin(TimeGenerated, 1m)
+| where TokensPerMinute >= near * tokenLimit or RequestsPerMinute >= near * requestLimit
