@@ -396,6 +396,9 @@ class TheSaving(unittest.TestCase):
         self.assertEqual((none.monthly, none.level, none.why_none), (None, "", "No cost line of the last 30 days was read for this resource."))
         free = brief_of(make_case(cost_usd_30d=0.0), make_plan(saving_usd_month=0)).saving
         self.assertEqual(free.why_none, "The resource had no cost in the last 30 days.")
+        costly = brief_of(make_case(cost_usd_30d=848.75, saving_usd_month=None), make_plan(saving_usd_month=None)).saving
+        self.assertEqual((costly.monthly, costly.why_none), (None, "The resource cost 848.75 US dollars in the last 30 days. What a change would save was not worked out."))
+        self.assertNotIn("No cost line", costly.why_none, "a cost that is known is never said to be missing")
         for bad in (-5.0, math.nan, math.inf, True, "7"):
             with self.subTest(figure=bad):
                 self.assertIsNone(brief_of(make_case(), make_plan(saving_usd_month=bad)).saving.monthly)
@@ -416,8 +419,24 @@ class TheOwner(unittest.TestCase):
     def test_who_the_resource_probably_belongs_to_is_said_as_plain_facts(self):
         owner = owner_of(make_case(owner={"tagOwner": "alice@example.com", "tagName": "owner", "createdBy": "bob@example.com", "createdAt": "2026-03-01T08:00:00Z",
                                          "changedBy": "carol@example.com", "changedAt": "2026-10-01", "lookedUp": True}))
-        self.assertEqual((owner.known, owner.text), (True, "Tag owner: alice@example.com (tag owner). Created by bob@example.com on 2026-03-01. "
+        self.assertEqual((owner.known, owner.text), (True, "Tag owner: alice@example.com. Created by bob@example.com on 2026-03-01. "
                                                           "Last changed by carol@example.com on 2026-10-01."))
+
+    def test_the_tag_is_named_once_and_by_its_own_name(self):
+        self.assertEqual(owner_of(make_case(owner={"tagOwner": "platform", "tagName": "team", "lookedUp": True})).text, "Tag team: platform.")
+        self.assertEqual(owner_of(make_case(owner={"tagOwner": "platform", "lookedUp": True})).text, "Tag owner: platform.")
+
+    def test_an_identity_that_is_only_an_id_is_said_to_be_an_identity_and_not_taken_for_a_name(self):
+        guid = "3F2A9C1E-5B7D-4E8A-9C3B-1D2E3F4A5B6C"
+        said = f"an application or service identity (id {guid.lower()})"
+        self.assertEqual(brief.who_text(guid), said)
+        self.assertEqual(brief.who_text("bob@example.com"), "bob@example.com")
+        self.assertEqual(brief.who_text("3f2a9c1e-5b7d-4e8a-9c3b-1d2e3f4a5b6c0"), "3f2a9c1e-5b7d-4e8a-9c3b-1d2e3f4a5b6c0", "more than an id is not an id")
+        self.assertEqual(brief.who_text(None), "")
+        text = owner_of(make_case(owner={"createdBy": guid, "changedBy": guid, "changedAt": "2026-10-01", "lookedUp": True})).text
+        self.assertEqual(text, f"Created by {said}. Last changed by {said} on 2026-10-01.")
+        row = [r for r in facts_of(make_case(owner={"changedBy": guid, "changedAt": "2026-10-01T08:00:00Z", "lookedUp": True})) if r.label == "Last change"]
+        self.assertEqual([r.value for r in row], [f"2026-10-01 by {said}"])
 
     def test_a_missing_owner_is_said_and_so_is_a_lookup_that_was_not_made(self):
         self.assertEqual(owner_of(make_case()), brief.OwnerLine(False, "Meternaut has not looked up who owns this resource yet."))

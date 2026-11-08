@@ -307,6 +307,16 @@ def days_text(days: object) -> str:
     return ""
 
 
+GUID = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
+
+
+def who_text(value: object, limit: int = 80) -> str:
+    """Who made or changed a resource, as the Activity Log names the caller. A person is a sign-in name. An application, a managed identity or a service principal is only an
+    id (a GUID), which names nobody: it is said to be an identity, with its id for a lookup in Azure."""
+    text = text_of(value, limit)
+    return f"an application or service identity (id {text.lower()})" if GUID.fullmatch(text) else text
+
+
 def kind_words(resource_type: str) -> tuple[str, str]:
     """What a resource is: the label of its kind ("Managed disk") and the noun of a sentence ("disk"). A type that has no words is shown as Azure names it, and a sentence
     says "resource"."""
@@ -514,7 +524,12 @@ def _saving(case: CaseRecord | None, plan: PlanRecord | None, action: ActionReco
         return Saving(round(before, 2), "Verified", "the cost lines after the change show no cost for this resource", None, "")
     if figure is None or figure <= 0:
         cost = _figure(case.cost_usd_30d) if case is not None else None
-        why = ("The resource had no cost in the last 30 days." if cost is not None and cost <= 0 else "No cost line of the last 30 days was read for this resource.")
+        if cost is None:
+            why = "No cost line of the last 30 days was read for this resource."
+        elif cost <= 0:
+            why = "The resource had no cost in the last 30 days."
+        else:
+            why = f"The resource cost {usd_text(cost)} in the last 30 days. What a change would save was not worked out."
         return Saving(None, "", "", None, why)
     if waiting is None:
         waiting = round(figure / 30, 2)
@@ -615,7 +630,7 @@ def facts_of(case: CaseRecord | None) -> tuple[Fact, ...]:
     typed = _typed_facts(case)
     tail: list[Fact] = []
     owner = case.owner if isinstance(case.owner, dict) else {}
-    changed, changed_by = _date(owner.get("changedAt")), text_of(owner.get("changedBy"), 60)
+    changed, changed_by = _date(owner.get("changedAt")), who_text(owner.get("changedBy"), 60)
     if changed:
         tail.append(Fact("Last change", changed + (f" by {changed_by}" if changed_by else ""), "Azure Activity Log"))
     if not guards and case.status != "error":
@@ -629,12 +644,12 @@ def owner_of(case: CaseRecord | None) -> OwnerLine:
     parts: list[str] = []
     tag = text_of(owner.get("tagOwner"), 80)
     if tag:
-        named = text_of(owner.get("tagName"), 30)
-        parts.append(f"Tag owner: {tag}" + (f" (tag {named})" if named else "") + ".")
-    made_by, made_at = text_of(owner.get("createdBy"), 80), _date(owner.get("createdAt"))
+        named = text_of(owner.get("tagName"), 30) or "owner"
+        parts.append(f"Tag {named}: {tag}.")
+    made_by, made_at = who_text(owner.get("createdBy"), 80), _date(owner.get("createdAt"))
     if made_by or made_at:
         parts.append("Created" + (f" by {made_by}" if made_by else "") + (f" on {made_at}" if made_at else "") + ".")
-    last_by, last_at = text_of(owner.get("changedBy"), 80), _date(owner.get("changedAt"))
+    last_by, last_at = who_text(owner.get("changedBy"), 80), _date(owner.get("changedAt"))
     if last_by or last_at:
         parts.append("Last changed" + (f" by {last_by}" if last_by else "") + (f" on {last_at}" if last_at else "") + ".")
     if parts:
