@@ -48,6 +48,21 @@ ALLOWED = {
         "Microsoft.Web/sites/config",
     },
     "environment/cases/planted.bicep": {"Microsoft.Compute/disks", "Microsoft.Network/publicIPAddresses"},
+    # The Teams bot (docs/proposals/13-teams-and-outlook.md): its own identity, plan and function app, the Azure Bot resource with its Teams channel, and the roles on the shared storage account.
+    # It makes no storage account, no subnet, no endpoint and no DNS object.
+    "environment/teams/main.bicep": {
+        "Microsoft.ManagedIdentity/userAssignedIdentities",
+        "Microsoft.Insights/components",
+        "Microsoft.Storage/storageAccounts",
+        "Microsoft.Storage/storageAccounts/blobServices",
+        "Microsoft.Storage/storageAccounts/blobServices/containers",
+        "Microsoft.Authorization/roleAssignments",
+        "Microsoft.Web/serverfarms",
+        "Microsoft.Web/sites",
+        "Microsoft.Web/sites/basicPublishingCredentialsPolicies",
+        "Microsoft.BotService/botServices",
+        "Microsoft.BotService/botServices/channels",
+    },
     "environment/foundry/main.bicep": {
         "Microsoft.CognitiveServices/accounts",
         "Microsoft.CognitiveServices/accounts/raiPolicies",

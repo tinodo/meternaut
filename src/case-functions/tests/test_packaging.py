@@ -20,8 +20,9 @@ KEY_WORDS = ("listSecrets", "primaryKey")
 # (DELETE of a disk or a public IP address, on its own list of calls, and only with the token that a person's sign-in to Azure gave it: no identity of the app
 # holds a right to change Azure); the Foundry client deletes the conversations that it made itself, in Meternaut's own Foundry project and nowhere else (the test
 # of its calls below holds the list, and the one DELETE of http.py's list of calls is that conversation). Everything else asks questions: a GET, or a POST that asks for
-# a query result, a completion or a token.
-WRITERS = {"store.py": {"PUT", "DELETE"}, "runner.py": {"DELETE"}, "foundry.py": {"DELETE"}, "http.py": {"DELETE"}}
+# a query result, a completion or a token. The references of the Teams bot are a table of the same kind as the store's: one entity written and deleted in the table `mnteams` of the
+# loop's storage account, on a list of calls of its own (references.py), and the bot's POSTs to the Bot Connector (connector.py) send a card or start a conversation and change nothing in Azure.
+WRITERS = {"store.py": {"PUT", "DELETE"}, "references.py": {"PUT", "DELETE"}, "runner.py": {"DELETE"}, "foundry.py": {"DELETE"}, "http.py": {"DELETE"}}
 WRITE_WORDS = ('"PUT"', '"DELETE"', '"PATCH"', "/delete", "/write", "/deallocate", "/resize", "/restart", "regeneratePrimaryKey")
 
 

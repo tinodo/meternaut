@@ -5,6 +5,9 @@ loop goes on. A letter goes to a person on the list of people and to nobody else
 that was held or failed is offered again by the timer (every call of a hook sends a letter only when it is due): after 15 minutes, at most 12 times. Exchange
 can take up to two hours to apply a new right to send, so the first letters of a new mailbox are tried more than once. A finding that only asks a person whether it
 is worth acting on (an advise plan) gets no letter of its own: it waits on the page and in the weekly summary, which is sent only when something waits.
+
+A person who chose Teams (the setting `channel`) gets the card first (the bot app sends it: cases/offers.py) and the letter follows only when no card was sent in the first twenty minutes, so
+that a person whose app is not installed, or whose card could not be sent, still hears about a request. A card and a letter for one request never both go: each looks at the other's record.
 """
 from __future__ import annotations
 
@@ -26,6 +29,7 @@ LOG = logging.getLogger("meternaut.notify")
 EPOCH = "2000-01-01T00:00:00Z"
 RETRY_MINUTES = 15  # a letter that was not sent is offered again after this long
 MAX_TRIES = 12  # and given up after this many tries: the record of each try says why, and the console shows the plan whatever happened to the letter
+TEAMS_FIRST_MINUTES = 20  # the card of a person who chose Teams has this long to go before the letter does
 
 
 def build_mailer(settings: LoopSettings, store: Store, people: People, token: Callable[[str], str], redact: Callable[[str], str], *, transport, sleep,
@@ -57,6 +61,19 @@ def hooks(env: Mapping[str, str], settings: LoopSettings, store: Store, people: 
         except Exception as error:  # noqa: BLE001 (a letter never stops the loop)
             LOG.error(redact(f"{what} could not be sent: {type(error).__name__}: {error}"))
 
+    def card_goes_first(person: Person, card_kind: str, since: str, plan_id: str | None = None) -> bool:
+        """True while the card of a person who chose Teams has the first go: a card of this kind was sent (the letter is not needed), or it is less than TEAMS_FIRST_MINUTES since the
+        request was made. Anything that cannot be read, and any other channel, is False: the letter is the fallback."""
+        try:
+            if store.settings_get(person.oid).channel != "teams":
+                return False
+            if any(m.kind == card_kind and m.status == "sent" and (plan_id is None or m.plan_id == plan_id) for m in store.mails_since(person.oid, EPOCH)):
+                return True
+            return clock() - parse(since) < dt.timedelta(minutes=TEAMS_FIRST_MINUTES)
+        except Exception as error:  # noqa: BLE001 (the letter is the fallback)
+            LOG.error(redact(f"the channel of a person could not be read: {type(error).__name__}"))
+            return False
+
     def contacts() -> tuple[str, ...]:
         """The people to talk to, for the last line of a letter: those with the role owner or ops (or everybody listed, when none has one), each as a name with the address, in
         plain text. A letter names the first of them who is not the person who reads it."""
@@ -72,9 +89,9 @@ def hooks(env: Mapping[str, str], settings: LoopSettings, store: Store, people: 
                 person = people.by_oid(oid)
                 if person is None or not person.mail:
                     continue
-                if due(person, "first_contact"):
+                if due(person, "first_contact") and not card_goes_first(person, "first-contact-card", plan.created_at):
                     mailer.send(person, letters.first_contact_letter(person, base, now, contacts(), plan.plan_id), "first_contact")
-                if due(person, "approval", plan.plan_id):
+                if due(person, "approval", plan.plan_id) and not card_goes_first(person, "approval-card", plan.created_at, plan.plan_id):
                     mailer.send(person, letters.approval_letter(plan, case, person, base, now, contacts()), "approval", plan.plan_id)
         safely("the letter about a plan", work)
 
@@ -84,12 +101,13 @@ def hooks(env: Mapping[str, str], settings: LoopSettings, store: Store, people: 
                 return
             kinds = ("notice", "verified") if action.state == "verified" else ("notice",)
             now = clock()
+            since = action.finished_at or action.queued_at
             for oid in plan.approvers:
                 person = people.by_oid(oid)
                 if person is None or not person.mail:
                     continue
                 for kind in kinds:
-                    if due(person, kind, plan.plan_id):
+                    if due(person, kind, plan.plan_id) and not card_goes_first(person, f"{kind}-card", since, plan.plan_id):
                         mailer.send(person, letters.done_letter(plan, action, case, person, base, now, contacts()), kind, plan.plan_id)
         safely("the letter about a change", work)
 
