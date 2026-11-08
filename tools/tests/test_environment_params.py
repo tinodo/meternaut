@@ -1244,8 +1244,8 @@ class PublicNetworkAccessOfTheApps(unittest.TestCase):
 
 
 class ThePlanOfTheCasesApp(unittest.TestCase):
-    """The web page's app runs on a Basic plan or on Flex Consumption, from one constant (docs/proposals/07-private-by-default.md, "The web page on Flex Consumption"): both values build valid files, the
-    two differ in nothing but the plan, and a later try of Flex is the one value."""
+    """The web page's app runs on Flex Consumption or on a Basic plan, from one constant (docs/proposals/07-private-by-default.md, "The web page on Flex Consumption"): both values build valid files, the
+    two differ in nothing but the plan, and the way back to Basic is the one value, on the owner's word."""
 
     CASES_TEMPLATE = (ROOT / "environment" / "cases" / "main.bicep").read_text(encoding="utf-8")
 
@@ -1255,12 +1255,12 @@ class ThePlanOfTheCasesApp(unittest.TestCase):
         with mock.patch.object(ep, "CASES_APP_PLAN", plan):
             return run({**SETTINGS, **changes})
 
-    def test_the_constant_is_basic_and_is_one_line_among_the_constants_near_the_top_of_the_builder(self):
-        self.assertEqual(ep.CASES_APP_PLAN, "Basic", "the measurement of 2026-11-08 found the platform's hold on Flex Consumption (docs/proposals/07-private-by-default.md): Flex waits for a later try, and the one value and the one test to change then")
+    def test_the_constant_is_flex_and_is_one_line_among_the_constants_near_the_top_of_the_builder(self):
+        self.assertEqual(ep.CASES_APP_PLAN, "Flex", "the owner ordered Flex Consumption on 2026-11-07 and again on 2026-11-08, after the measurement of the platform's hold (docs/proposals/07-private-by-default.md): the constant goes back to Basic only on his word, and then this is the one value and the one test to change")
         self.assertEqual(ep.CASES_APP_PLANS, ("Flex", "Basic"))
         source = TOOL.read_text(encoding="utf-8")
-        self.assertEqual(re.findall(r'(?m)^CASES_APP_PLAN = "(Flex|Basic)"$', source), ["Basic"], "one constant, one line")
-        self.assertLess(source.index('\nCASES_APP_PLAN = "Basic"\n'), source.index("\ndef "), "near the top, with the other constants")
+        self.assertEqual(re.findall(r'(?m)^CASES_APP_PLAN = "(Flex|Basic)"$', source), ["Flex"], "one constant, one line")
+        self.assertLess(source.index('\nCASES_APP_PLAN = "Flex"\n'), source.index("\ndef "), "near the top, with the other constants")
 
     def test_both_values_build_valid_parameter_files_that_the_template_takes(self):
         declared = bicep_params(self.CASES_TEMPLATE)
@@ -1273,7 +1273,7 @@ class ThePlanOfTheCasesApp(unittest.TestCase):
                 self.assertFalse(set(given) - set(declared), f"{plan}: a setting that the template does not take")
                 self.assertFalse({name for name, (_, has_default) in declared.items() if not has_default} - set(given), f"{plan}: a setting that the template needs and the file does not give")
                 self.assertEqual(declared["casesAppPlan"], ("string", True))
-        self.assertIn("param casesAppPlan string = 'Basic'\n", self.CASES_TEMPLATE, "the template's default is the constant's")
+        self.assertIn("param casesAppPlan string = 'Flex'\n", self.CASES_TEMPLATE, "the template's default is the constant's")
         self.assertRegex(self.CASES_TEMPLATE, r"@allowed\(\[\n  'Flex'\n  'Basic'\n\]\)\nparam casesAppPlan")
 
     def test_the_two_values_differ_in_the_plan_alone_and_nothing_else_changes_when_the_plan_changes(self):

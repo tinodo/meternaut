@@ -602,9 +602,9 @@ class Cases(unittest.TestCase):
         spec = importlib.util.spec_from_file_location("environment_params", ROOT / "tools" / "environment-params.py")
         params = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(params)
-        self.assertRegex(self.code, r"(?m)^@allowed\(\[\n  'Flex'\n  'Basic'\n\]\)\nparam casesAppPlan string = 'Basic'$")
+        self.assertRegex(self.code, r"(?m)^@allowed\(\[\n  'Flex'\n  'Basic'\n\]\)\nparam casesAppPlan string = 'Flex'$")
         self.assertEqual(params.CASES_APP_PLANS, ("Flex", "Basic"))
-        self.assertEqual(params.CASES_APP_PLAN, "Basic", "the web page is on a Basic plan since the measurement of 2026-11-08 found the platform's hold on Flex Consumption (docs/proposals/07-private-by-default.md): Flex waits for a later try that meets the rule twice")
+        self.assertEqual(params.CASES_APP_PLAN, "Flex", "the web page is on Flex Consumption because the owner ordered it, on 2026-11-07 and again on 2026-11-08 after the measurement of the platform's hold (docs/proposals/07-private-by-default.md): it goes back to Basic only on his word")
         plan = self.found["plan"][1]
         self.assertIn("var isFlex = casesAppPlan == 'Flex'", self.code)
         self.assertIn("name: isFlex ? 'plan-${workload}-cases' : 'plan-${workload}-cases-basic'", plan)
@@ -1705,7 +1705,7 @@ class PageLatencyWorkflow(unittest.TestCase):
         self.assertIn("sed -n -E 's/^\\| (latency: [0-9]+ requests, p50.*|after the quiet gap: .*|verdict: .*)$/\\1/p' \"$RUNNER_TEMP/latency.log\"", script)
         self.assertIn('echo "### How fast the web page answers: $MINUTES minutes, from inside the network"', script)
         self.assertIn('exit "$status"', script)
-        self.assertIn("set CASES_APP_PLAN to Basic in tools/environment-params.py and run cases", script)
+        self.assertIn("goes to Basic only on his word, and then cases is run", script)
         tool = text("tools/console-check.py")
         for line in ("latency: {len(seconds)} requests, p50", "after the quiet gap: {len(cold)} requests", "verdict: "):
             self.assertIn(line, tool, "the lines that the step's sed picks out are the ones that the tool prints")
@@ -1721,7 +1721,7 @@ class PageLatencyWorkflow(unittest.TestCase):
         block = self.step("What was done")
         failed, finished = re.findall(r"(?m)^\s+page-latency\) echo \"(.*?)\" ;;$", block)
         for words in ("Nothing was changed: the measurement only reads.", "that the Operator is not there (run \\`operator\\` first)", "that the cases app is not there (run \\`cases\\` first)",
-                      "set CASES_APP_PLAN to Basic in tools/environment-params.py and run \\`cases\\`", "Running \\`page-latency\\` again is safe."):
+                      "goes to Basic only on his word, and then \\`cases\\` is run", "Running \\`page-latency\\` again is safe."):
             self.assertIn(words, failed, words)
         for words in ("asked the web page's \\`/healthz\\` over the app's private endpoint with no credential", "this runner asked nothing",
                       "The decision needs two such measurements of 20 minutes each. Nothing was changed."):
