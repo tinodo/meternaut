@@ -1,7 +1,9 @@
-"""The switch of the agents' route through the AI Gateway (AGENTS_VIA_AI_GATEWAY in tools/environment-params.py): while it is False nothing differs, and when it is True the three actions get what they need.
+"""The switch of the agents' route through the AI Gateway (AGENTS_VIA_AI_GATEWAY in tools/environment-params.py): True in the repository, so the three actions get what they need; and False, the way back,
+under which nothing differs.
 
 Step 2 of docs/proposals/08-ai-gateway.md. The parameter builder is run in this process with fixed inputs that this file holds itself (no file of the repository is an input of the pins of
-"nothing differs"), so that a change of a model version or of a limit cannot break them. No test calls Azure."""
+"nothing differs"), so that a change of a model version or of a limit cannot break them. build() sets the constant itself (False unless a test says otherwise), so the tests of the way back and of the
+route stay what they are whatever the repository holds; the tests that read the repository's own value say so. No test calls Azure."""
 import hashlib
 import importlib.util
 import io
@@ -63,19 +65,22 @@ PROJECT_PRINCIPAL = SETTINGS["FOUNDRY_PROJECT_PRINCIPAL_ID"]
 # Seventh change (the removal of the usage recording and of the old model account, 2026-11-07, re-recorded on purpose): environment.parameters.json lost the old model account's accountName and its
 # models; recording.parameters.json became base.parameters.json (the action recording is the action base) and holds only the two names, the region and the owner; and the output lost nine lines (account_name,
 # private_endpoint and endpoint of the old model account, cosmos_account_name and function_app_name of the usage recording, and its four legacy_ lines) and recording_endpoints became base_endpoints.
-# The files of the AI Gateway, the cases app, the Foundry resource, the Operator and the planted waste are byte for byte what they were.
+# Eighth change (the control message goes through a Storage queue and the Event Hubs namespace is gone, re-recorded on purpose): base.parameters.json and cases.parameters.json lost eventHubNamespaceName;
+# operator.parameters.json lost eventHubNamespaceName and gained storageAccountName (the Operator is given its role on the queue that the base's storage account holds); and the output lost the lines
+# event_hub_namespace and cases_hub_name, gained cases_queue_name, and base_endpoints lost the endpoint of the namespace, so that it lists the three of the storage account.
+# The files of the AI Gateway, the Foundry resource and the planted waste are byte for byte what they were.
 GOLDEN = {
     "aigateway-policies.json": "e6d99d1633ab16afc3410e50dbdcb7e290f0e125f4283b4b19f63a8eebb8395c",
     "aigateway-subnet.parameters.json": "a2a16b02fd7a1d54d8949ad89796d4ea89d6bf1907db1f5b621205699a5a0196",
     "aigateway.parameters.json": "936fc16a2a06d5aa3a029f319eab1dcd23c547800eaee01e5183539e746393d2",
-    "base.parameters.json": "d3b8ca457d4eb56acb5640bbd9390682a13b0919de5d497489a79fa772c06d55",
-    "cases.parameters.json": "143771250a37fe14b8d97e4ea1e7532272733149437c24a53e095d2a87fb1539",
+    "base.parameters.json": "942cff3133e4f0acba426335edcd41e177473802258db4fe2750d72610d692b9",
+    "cases.parameters.json": "ac128bf1263b9e05e69b4b5f1711fb536cdddf413cd6e79e6bc0270ebedf8964",
     "environment.parameters.json": "5a722678f859d67fd7ff7895b0150b048b97def6b094c723d70d5849d078a7f3",
     "foundry.parameters.json": "ed5e8a14727de3595a0ab4bc5b0fcc4979c7d35b088536fce62f80651e59e99d",
-    "operator.parameters.json": "78972401f11e209ef6bbdbba2c7cab95921b372e1dc570765d953aa01b2b2f90",
+    "operator.parameters.json": "77f010f57ffcef1d1ab84dea95de7eea61e4ed5c5d2135faf4593c14b6a5b5a4",
     "planted.parameters.json": "62ecf7282a7bf4c968db91a3943ba20a99dc7ac04fcabb7816aadf6f68f9759c",
 }
-GOLDEN_OUTPUT = "0f68a70e1991d20185665c2841fb211e1cc049e99b11cf9f11ffa508f932d67e"
+GOLDEN_OUTPUT = "5847c25b271fed0b9cb118811c5b628d64d312da183467431b9845948156a913"
 
 FOUNDRY = (ROOT / "environment" / "foundry" / "main.bicep").read_text(encoding="utf-8")
 CASES = (ROOT / "environment" / "cases" / "main.bicep").read_text(encoding="utf-8")
@@ -111,12 +116,15 @@ def declared(text):
     return {m.group(1): (m.group(2), m.group(3)) for m in re.finditer(r"^param (\w+) (\w+)(?: = (.+))?$", text, re.M)}
 
 
-class TheSwitchIsOffAndNothingDiffers(unittest.TestCase):
-    def test_the_switch_is_a_constant_of_the_builder_and_it_is_false(self):
-        self.assertIs(ep.AGENTS_VIA_AI_GATEWAY, False, "a later change, after the owner's yes and after aigateway and aigateway-check have passed on the real estate, flips this one value")
+class TheWayBackTheSwitchIsFalseAndNothingDiffers(unittest.TestCase):
+    """The constant is True in the repository (the owner ordered the agents' route, 2026-11-07), and False is the way back. These tests set the constant to False themselves (build() does it by
+    default), so that the way back stays what it was: no parameter file, no output and no action differs from what the builder made before step 2."""
+
+    def test_the_switch_is_a_constant_of_the_builder_and_it_is_true(self):
+        self.assertIs(ep.AGENTS_VIA_AI_GATEWAY, True, "the agents' route is on; the way back is this one value set to False, in a change of its own that also changes this pin and the pages that say it is on")
         source = (ROOT / "tools" / "environment-params.py").read_text(encoding="utf-8")
         self.assertEqual(len(re.findall(r"(?m)^AGENTS_VIA_AI_GATEWAY = (True|False)$", source)), 1, "one constant, one line")
-        self.assertIn("AGENTS_VIA_AI_GATEWAY = False\n", source)
+        self.assertIn("AGENTS_VIA_AI_GATEWAY = True\n", source)
 
     def test_every_file_and_the_whole_output_are_what_they_were_byte_for_byte(self):
         code, out, err, files = build(SETTINGS)
@@ -158,7 +166,8 @@ class TheSwitchIsOffAndNothingDiffers(unittest.TestCase):
     def test_no_output_is_added_while_it_is_off(self):
         _, out, _, _ = build(SETTINGS)
         self.assertFalse([key for key in outputs(out) if "ai_gateway" in key or key == "aigateway_connection_name"])
-        self.assertEqual(len(out.splitlines()), 36, "the 45 lines that there were, minus the nine of what was removed on 2026-11-07 (the old model account and the usage recording): no line of the switch is among them")
+        self.assertEqual(len(out.splitlines()), 35, "the 45 lines that there were, minus the nine of what was removed on 2026-11-07 (the old model account and the usage recording) and the two of the Event Hubs namespace (event_hub_namespace "
+                                                    "and cases_hub_name), plus the queue's name (cases_queue_name): no line of the switch is among them")
 
     def test_a_switch_that_is_not_true_or_false_is_refused_by_name(self):
         for bad in ("False", "no", 0, 1, None, "true"):
@@ -327,6 +336,35 @@ class TheThreeNamesAreOneName(unittest.TestCase):
         for host in ("evil.example.com", ".ai.gateway.azure.com", "Aigw.ai.gateway.azure.com", f"{HOST}/default"):
             self.assertFalse(ep.AIGATEWAY_HOST.match(host), host)
             self.assertFalse(re.match(shell, host), host)
+
+
+class TheRepositoryAsItIs(unittest.TestCase):
+    """The constant as the repository has it (True): the pieces that read the builder's answer pretend what it says, and the checks of CI give it a gateway host."""
+
+    def test_the_two_lines_that_the_workflow_tests_pretend_the_builder_prints_are_the_ones_that_it_prints(self):
+        source = (ROOT / "tools" / "tests" / "test_aigateway_agents_workflow.py").read_text(encoding="utf-8")
+        (pretended,) = re.findall(r'(?m)^BUILD_ON = BUILD_OFF \+ "((?:\\n[a-z_]+=[a-z]+)+)"', source)
+        lines = [line for line in pretended.split("\\n") if line]
+        self.assertEqual(lines, ["agents_via_ai_gateway=true", "aigateway_connection_name=aigateway"])
+        code, out, err, _ = build(SETTINGS, switch=ep.AGENTS_VIA_AI_GATEWAY)
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(out.splitlines()[-2:], lines, "the last two lines of the real builder with the constant as the repository has it")
+        workflow = (ROOT / ".github" / "workflows" / "deploy-hub.yml").read_text(encoding="utf-8")
+        for name in ("agents_via_ai_gateway", "aigateway_connection_name"):
+            self.assertIn(f"steps.params.outputs.{name}", workflow, f"the workflow reads {name}")
+
+    def test_the_checks_of_ci_give_the_builder_a_gateway_host_so_that_the_connections_parameters_are_checked_against_the_compiled_template(self):
+        checks = (ROOT / ".github" / "workflows" / "checks.yml").read_text(encoding="utf-8").replace("\r\n", "\n")
+        step = checks.split("- name: The parameter files fit the compiled templates")[1]
+        match = re.search(r"(?m)^          AIGATEWAY_HOST: (\S+)$", step)
+        self.assertTrue(match and ep.AIGATEWAY_HOST.match(match.group(1)), "a placeholder host that fits the builder's pattern, and no real gateway")
+        self.assertIn("FOUNDRY_PROJECT_PRINCIPAL_ID:", step)
+        code, out, err, files = build({**SETTINGS, "AIGATEWAY_HOST": match.group(1)}, switch=ep.AGENTS_VIA_AI_GATEWAY)
+        self.assertEqual((code, err), (0, ""))
+        given = values(files, "foundry.parameters.json")
+        self.assertEqual(given["aiGatewayHost"], match.group(1), "the connection is asked for, so that CI checks its parameters against the compiled template")
+        self.assertTrue({"aiGatewayHost", "aiGatewayModels"} <= set(declared(FOUNDRY)))
+        self.assertTrue({"foundryModelInvestigator", "foundryModelSkeptic"} <= set(declared(CASES)))
 
 
 if __name__ == "__main__":

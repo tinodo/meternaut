@@ -1,7 +1,8 @@
-"""The records of 2026-11-07 about the AI Gateway: it is deployed and checked, nothing calls through it yet, and step 2 is still off.
+"""The records of 2026-11-07 about the AI Gateway: it is deployed and checked, and the changelog entry of that day says what was true on its day (nothing called through the gateway yet, and step 2 was off).
 
 The owner asked in writing for the gateway ("Create the AI Gateway with public network access and private routing."), the actions `aigateway` and `aigateway-check` ran, and the changelog says what they made,
-proved and found. These tests hold the changelog entry, the switch that is still False and the pages that used to say "not deployed" to one story. They call neither Azure nor GitHub."""
+proved and found. These tests hold the changelog entry (it keeps what was true on its day), the switch (True in the code since the owner ordered the agents' route, 2026-11-07) and the pages that used to say
+"not deployed" to one story. They call neither Azure nor GitHub."""
 import re
 import unittest
 from pathlib import Path
@@ -50,7 +51,7 @@ class TheChangelogEntry(unittest.TestCase):
                       "The meter \"10k AI Gateway Requests\" is 0.00 US dollars in the preview", "nothing was read from Azure or GitHub here"):
             self.assertIn(words, entry, words)
 
-    def test_it_says_that_step_2_and_its_switch_are_still_off_and_that_nothing_calls_through_the_gateway(self):
+    def test_the_entry_says_that_on_its_day_step_2_and_its_switch_were_off_and_that_nothing_called_through_the_gateway(self):
         entry = flat(ENTRY)
         for words in ("Step 2 is still off", "`AGENTS_VIA_AI_GATEWAY` in `tools/environment-params.py` is False", "Nothing calls through the gateway",
                       "the agents and the Detective and the Skeptic call their Foundry deployments direct ([rule 15 (c)](AGENTS.md))", "Step 2 needs the owner's separate yes",
@@ -64,24 +65,26 @@ class TheChangelogEntry(unittest.TestCase):
         self.assertNotRegex(ENTRY, r"aigw-meternaut-[0-9a-f]{6,}|-[0-9a-f]{8}\b", "no real name of a resource")
 
 
-class TheSwitchIsStillFalse(unittest.TestCase):
-    def test_the_constant_is_false_in_the_code(self):
-        self.assertRegex(text("tools/environment-params.py"), r"(?m)^AGENTS_VIA_AI_GATEWAY = False$")
+class TheSwitchIsOnInTheCode(unittest.TestCase):
+    def test_the_constant_is_true_in_the_code(self):
+        self.assertRegex(text("tools/environment-params.py"), r"(?m)^AGENTS_VIA_AI_GATEWAY = True$")
 
 
 class TheRulesAndTheRecordSayTheSame(unittest.TestCase):
-    def test_rule_15_c_says_that_every_model_call_goes_through_the_ai_gateway_and_that_the_agents_are_the_one_gap_until_step_2_is_switched_on(self):
+    def test_rule_15_c_says_that_every_model_call_goes_through_the_ai_gateway_and_that_the_agents_route_is_on_in_code_and_has_not_run(self):
         (rule,) = [line for line in text("AGENTS.md").splitlines()
                    if line.lstrip().startswith("- **(c) Every model call of Meternaut goes through the AI Gateway, the governance hub of the Citadel design, with no direct path, not even for a test, unless the owner makes a written exception**")]
-        for words in ("**One gap is left, and it is a part of the build that is not done, not an exception that the owner made:**", "False today), after the judges are proved on the real estate.",
+        for words in ("**The agents' route through the gateway is on in code and has not run in Azure**", "(`AGENTS_VIA_AI_GATEWAY` in `tools/environment-params.py`, True)",
                       "so a new deployment of it needs his written request again", "The owner's own, existing AI Gateway in another subscription is not touched"):
             self.assertIn(words, rule, words)
+        self.assertNotIn("False today", rule)
 
-    def test_the_record_marks_steps_1_to_4_done_and_step_5_not_done(self):
+    def test_the_record_marks_steps_1_to_4_done_and_step_5_half_done(self):
         section = RECORD.split("## What a person does")[1].split("## Telemetry is off")[0]
-        for words in ("Steps 1 to 4 were done on 2026-11-07. Step 5 was not, and it needs the owner's separate yes.", f'"{REQUEST}"', "**Not needed on 2026-11-07, for the Operator's identity:**",
+        for words in ("Steps 1 to 4 were done on 2026-11-07. Step 5 is half done: the owner ordered it and the switch is on in code, and the real run has not been made.", f'"{REQUEST}"',
+                      "**Not needed on 2026-11-07, for the Operator's identity:**",
                       "Whether the Foundry Agent Service needs it in step 2 is not known.", "from inside the network in the Operator, passed 4 of 4", "the service never returns `apiFormat` for a model",
-                      "**Not done:** the switch is False, and the agents call their own deployments."):
+                      "**Done:** the owner ordered it (2026-11-07), and the switch is True. **Not done:** the real run, so the deployed agents still call their own deployments."):
             self.assertIn(words, section, words)
 
     def test_no_live_page_says_any_more_that_the_gateway_is_not_deployed_or_not_used(self):

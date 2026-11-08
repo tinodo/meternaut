@@ -56,15 +56,21 @@ def causes_of_the_app():
 
 
 class TheRecordOfStep2(unittest.TestCase):
-    def test_the_status_says_that_step_1_is_deployed_step_2_is_built_and_not_deployed_the_switch_is_false_and_the_question_is_open(self):
+    def test_the_status_says_that_step_1_is_deployed_step_2_is_on_in_code_and_has_not_run_the_switch_is_true_and_the_question_is_open(self):
         status = re.search(r"\*\*Status: .*?\*\* This page records", PROPOSAL).group(0)
-        for words in ("Step 1 of 2 is deployed and checked", "Step 2 of 2 is built and not deployed", "`AGENTS_VIA_AI_GATEWAY` in `tools/environment-params.py`, that is False",
-                      "so that nothing changes until the owner flips it", "The Detective and the Skeptic of the cases app call the gateway since the last change of this page", "and the agents were not touched.",
+        for words in ("Step 1 of 2 is deployed and checked", "Step 2 of 2 is built and on in code, and it has not run in Azure", "`AGENTS_VIA_AI_GATEWAY` in `tools/environment-params.py`, that is True since the owner's order of 2026-11-07",
+                      "The Detective and the Skeptic of the cases app call the gateway since an earlier change of this page", "and the agents go through it by step 2, which has not run either.",
                       "Whether the connection can call the gateway with the project's own managed identity and no key is not known, and it was not tried"):
             self.assertIn(words, status, words)
         self.assertNotIn("is not built", status)
-        for old in ("Step 1 of 2 is built and not deployed", "not deployed too", "Nothing was made in Azure"):
+        for old in ("Step 1 of 2 is built and not deployed", "not deployed too", "Nothing was made in Azure", "Step 2 of 2 is built and not deployed", "that is False", "so that nothing changes until the owner flips it",
+                    "the agents were not touched"):
             self.assertNotIn(old, status, old)
+        update = PROPOSAL.split("**Update: the agents' route is on in code, and has not run in Azure.**")[1].split("**Update, 2026-11-07, before that:")[0]
+        for words in ("\"Route [the agents] to the AI gateway ... IT NEEDS TO ADHERE TO THE CITADEL DESIGN PRINCIPLES\"", "the switch `AGENTS_VIA_AI_GATEWAY` in `tools/environment-params.py` is True",
+                      "Nothing of it has run in Azure, and whether the Agent Service can call the gateway through the connection is not known.",
+                      "The order of the real run is `aigateway`, about ten minutes, `foundry`, `cases`, `cases-run`", "what came of it is recorded afterwards", "The way back is the switch set to False"):
+            self.assertIn(words, update, words)
 
     def test_the_section_of_step_2_has_its_parts_in_order(self):
         headings = re.findall(r"(?m)^(##+ .*)$", PROPOSAL_TEXT)
@@ -75,15 +81,17 @@ class TheRecordOfStep2(unittest.TestCase):
         self.assertLess(headings.index("## Step 2 and what is not known about it"), positions[0])
         self.assertLess(positions[-1], headings.index("## The way back"), "the section of step 2 comes before the way back of the gateway")
 
-    def test_it_says_that_nothing_changes_until_the_switch_is_flipped_and_what_the_switch_does_in_each_action(self):
+    def test_it_says_what_the_switch_is_and_that_the_hub_changes_nothing_until_an_action_is_run_and_what_the_switch_does_in_each_action(self):
         section = flat(step_2_of_the_record())
-        for words in ("**Nothing changes until the owner flips one constant.**", "`AGENTS_VIA_AI_GATEWAY = False`", "next to `CASES_APP_PUBLIC_NETWORK_ACCESS`",
-                      "after the owner's yes and after `aigateway` and `aigateway-check` have passed on the real estate",
-                      "the parameter files, the templates and every action are what they were", "the same byte for byte, and that the new parameters are empty or false",
+        for words in ("**The Hub changes what Azure holds only when an action is run, and the real run follows the order below.**", "`AGENTS_VIA_AI_GATEWAY = True`", "next to `CASES_APP_PUBLIC_NETWORK_ACCESS`",
+                      "after the owner's order of 2026-11-07 and after `aigateway` and `aigateway-check` had passed on the real estate", "The way back is the same line set to False.",
+                      "the parameter files, the templates and every action are what they were before step 2", "the same byte for byte, and that the new parameters are empty or false",
                       "**`foundry` makes the connection `aigateway`**", "reads it back with GET only", "no credential held",
                       "**`aigateway` gives the Foundry project's identity *AI Gateway Models User***", "**`cases` gives the app the model names `aigateway/gpt-6.1-sol` and `aigateway/gpt-6-luna`,**",
                       "exactly `<name>` or `<name>/<name>`", "The builder refuses True when it cannot name the gateway."):
             self.assertIn(words, section, words)
+        for old in ("Nothing changes until the owner flips one constant", "`AGENTS_VIA_AI_GATEWAY = False`", "Nothing of step 2 is deployed"):
+            self.assertNotIn(old, section, old)
 
     def test_it_says_what_the_connection_is_and_that_its_shape_is_not_tried_and_that_no_key_path_is_built(self):
         section = flat(step_2_of_the_record())
@@ -127,8 +135,11 @@ class TheRecordOfStep2(unittest.TestCase):
             if names:
                 on_the_page.append(names[0])
         self.assertEqual(on_the_page, in_the_record, "the actions come in the same order on the page")
-        self.assertIn("the owner's yes and the change of one line that sets the switch to True", sentence)
+        self.assertIn("the owner's order and the change of one line that sets the switch to True (made)", sentence)
         self.assertIn("about ten minutes", sentence)
+        self.assertIn("The last five are the real run. It has not been made, and what came of it is recorded afterwards.", flat(step_2_of_the_record()))
+        self.assertIn("On an estate that has neither the Foundry project nor the gateway, `foundry` and `aigateway` each ask for the other while the switch is True, so they are made with the switch False first.",
+                      flat(step_2_of_the_record()))
 
     def test_every_cause_that_the_app_says_is_in_the_table_of_what_each_failure_means(self):
         causes = causes_of_the_app()
@@ -144,8 +155,9 @@ class TheRecordOfStep2(unittest.TestCase):
 
     def test_the_way_back_says_exactly_what_stays(self):
         part = flat(PROPOSAL_TEXT.split("### The way back from step 2")[1].split("\n### ")[0])
-        for words in ("Set the switch back to False", "run `cases`", "**What stays:** the connection `aigateway` in the project, the role of the project's identity on the gateway, and the gateway.",
-                      "The deployment is incremental", "does not delete the connection, and no action deletes the role", "A person deletes the connection by hand"):
+        for words in ("Set the switch back to False", "run `foundry` and `cases`", "**What stays:** the connection `aigateway` in the project, the role of the project's identity on the gateway, and the gateway.",
+                      "The deployment is incremental", "does not delete the connection, and no action deletes the role", "A person deletes the connection by hand",
+                      "which [rule 15 (c)](../../AGENTS.md) allows only on the owner's written exception"):
             self.assertIn(words, part, words)
 
     def test_the_table_of_what_is_known_has_the_rows_of_step_2_and_marks_the_connection_as_not_tried(self):
@@ -169,11 +181,18 @@ class TheRecordOfStep2(unittest.TestCase):
 class TheOtherDocumentsOfStep2(unittest.TestCase):
     def test_the_bootstrap_section_has_the_order_what_is_not_known_and_the_way_back(self):
         section = flat(section_of_bootstrap())
-        for words in ("**Built, not deployed, and not tried.**", "Step 2 adds no action and no hand step.", "`AGENTS_VIA_AI_GATEWAY = False` in [`tools/environment-params.py`](../tools/environment-params.py)",
-                      "No Azure change was made and no Hub run was made for step 2.", "**What the constant does when it is True.**", "No key is used and none is built: if the connection needs one, the owner decides ([rule 23](../AGENTS.md)).",
+        for words in ("**Built, on in code, and not run in Azure.**", "Step 2 adds no action and no hand step.",
+                      "`AGENTS_VIA_AI_GATEWAY` in [`tools/environment-params.py`](../tools/environment-params.py), which is `True` since the owner's order of 2026-11-07",
+                      "No Azure change was made and no Hub run was made for step 2 when this page was written.", "**What the constant does when it is True.**",
+                      "No key is used and none is built: if the connection needs one, the owner decides ([rule 23](../AGENTS.md)).",
                       "**What is not known.**", "**The order.**", "**Going back.**", "**What stays:** the connection `aigateway` in the Foundry project",
-                      "the deployment is incremental, so a later `foundry` run does not delete it", "no action does it"):
+                      "a later `foundry` run does not delete it", "because the deployment is incremental", "no action does it",
+                      "which [rule 15 (c)](../AGENTS.md) allows only on the owner's written exception",
+                      "Items 1 to 3 are done. Items 4 to 7 are the real run of step 2: `aigateway`, about ten minutes, `foundry`, `cases`, `cases-run`.",
+                      "On an estate that has neither the Foundry project nor the gateway, `foundry` and `aigateway` each ask for the other while the constant is `True`: make them with the constant `False` first, and set it to `True` afterwards."):
             self.assertIn(words, section, words)
+        for old in ("Built, not deployed, and not tried", "`AGENTS_VIA_AI_GATEWAY = False`", "If the owner says no to the connection, the constant stays False and nothing is lost."):
+            self.assertNotIn(old, section, old)
         self.assertLess(section.index("**What is not known.**"), section.index("**The order.**"))
         self.assertLess(section.index("**The order.**"), section.index("**Going back.**"))
         self.assertEqual(len(re.findall(r"```", section_of_bootstrap())), 0, "no hand step and so no block of commands")
@@ -182,53 +201,64 @@ class TheOtherDocumentsOfStep2(unittest.TestCase):
         items = {number: flat(item) for number, item in re.findall(r"(?m)^(\d+)\. (.*)$", section_of_bootstrap())}
         self.assertIn("Read: the gateway, its subnet, its models and aliases, the limits, and who holds the role (the Operator only).", items["1"])
         self.assertIn("every alias answered with HTTP 200 and usage numbers, the call with no token answered 401, and the call with a wrong alias refused", items["2"])
-        self.assertIn("A change of one line sets `AGENTS_VIA_AI_GATEWAY = True`, and it is reviewed and merged like any other change.", items["3"])
+        self.assertIn("The owner ordered the route in plain words on 2026-11-07, and a change of one line sets `AGENTS_VIA_AI_GATEWAY = True`; it is reviewed and merged like any other change.", items["3"])
         self.assertIn("\"The switch of the agents' route is on\"", items["4"])
         self.assertIn("If Azure refuses the connection, or the read-back differs, stop.", items["5"])
         self.assertIn("the audience `https://azure-api.net/aigateway`", items["5"])
         self.assertIn("the action checks first, and stops before it deploys when it has not", items["6"])
         self.assertIn("`investigation.started` names the models `aigateway/gpt-6.1-sol` and `aigateway/gpt-6-luna`", items["7"])
         self.assertIn("A run of the Investigator that gives an answer is the proof that the route works.", items["7"])
-        self.assertIn("decides whether to strike the exception of [rule 15 (c)](../AGENTS.md)", items["8"])
+        self.assertIn("the sentence of [rule 15 (c)](../AGENTS.md) about the agents is struck", items["8"])
 
     def test_the_end_of_the_list_of_actions_points_to_the_section_of_step_2(self):
         after = BOOTSTRAP.split("\n## After it\n")[1].split("\n## ")[0]
-        self.assertIn("Its step 2, which sends the agents through it, is a constant that is False, and its order is in [its own section](#added-on-2026-11-07-for-the-agents-route-through-the-ai-gateway-step-2).", after)
+        self.assertIn("Its step 2, which sends the agents through it, is a constant that is True (the owner ordered the route on 2026-11-07, and it has not run in Azure), "
+                      "and its order is in [its own section](#added-on-2026-11-07-for-the-agents-route-through-the-ai-gateway-step-2).", after)
         self.assertLess(BOOTSTRAP.index("## Added on 2026-11-07 for the AI Gateway"), BOOTSTRAP.index(SECTION))
         self.assertLess(BOOTSTRAP.index(SECTION), BOOTSTRAP.index("\n## After it\n"))
 
-    def test_rule_15_c_says_that_step_2_is_the_one_gap_built_and_off_with_the_switch_false_and_that_the_judges_go_through_the_ai_gateway(self):
+    def test_rule_15_c_says_that_the_agents_route_is_on_in_code_and_has_not_run_with_the_switch_true_and_that_the_judges_go_through_the_ai_gateway(self):
         (rule,) = [line for line in AGENTS.splitlines()
                    if line.lstrip().startswith("- **(c) Every model call of Meternaut goes through the AI Gateway, the governance hub of the Citadel design, with no direct path, not even for a test, unless the owner makes a written exception**")]
-        self.assertIn("**One gap is left, and it is a part of the build that is not done, not an exception that the owner made:** the two agents of the investigation (rule 30) still call the model deployments "
-                      "of their own Foundry resource until step 2, the connection of the Foundry project to the gateway, is switched on with one line (`AGENTS_VIA_AI_GATEWAY` in `tools/environment-params.py`, "
-                      "False today), after the judges are proved on the real estate.", rule)
+        self.assertIn("**The agents' route through the gateway is on in code and has not run in Azure** (2026-11-07, the owner: \"Route [the agents] to the AI gateway ... IT NEEDS TO ADHERE TO THE CITADEL DESIGN PRINCIPLES\"): "
+                      "the two agents of the investigation (rule 30) go through the gateway by step 2, the connection of the Foundry project to the gateway, which one line switches on "
+                      "(`AGENTS_VIA_AI_GATEWAY` in `tools/environment-params.py`, True). The order of the real run is `aigateway`, about ten minutes, `foundry`, `cases`, `cases-run`. "
+                      "Until that run has been made, the agents that are deployed still call the model deployments of their own Foundry resource: that is a part of the build that is not done, "
+                      "not an exception that the owner made.", rule)
+        self.assertIn("The way back is the line set to False and a run of `foundry` and `cases`; it is a direct route, so it needs the owner's written exception.", rule)
         self.assertIn("The Detective and the Skeptic call it with the cases app's own identity", rule)
+        self.assertNotIn("One gap is left", rule)
+        self.assertNotIn("False today", rule)
         self.assertNotIn("is not built", rule)
         self.assertNotIn("is not used either", rule)
         self.assertNotIn("the AI Gateway is not deployed", rule)
         self.assertEqual(rule.count("Planned end, 2026-11-07"), 0, "the planned end of the exception is gone with the exception: the governance-hub route ended on 2026-11-07")
 
-    def test_the_routes_row_says_that_the_gateway_is_deployed_and_step_2_is_built_and_off_with_the_switch(self):
+    def test_the_routes_row_says_that_the_gateway_is_deployed_and_step_2_is_on_in_code_and_has_not_run_with_the_switch(self):
         rows = [line for line in FOUNDRY_AGENTS.splitlines() if line.startswith("| **AI Gateway, Azure's separate service")]
         self.assertEqual(len(rows), 1)
         row = flat(rows[0])
-        for words in ("(deployed; step 2 is built and off, the switch is False)", "step 2 builds it behind one switch, `AGENTS_VIA_AI_GATEWAY` in `tools/environment-params.py`, which is False",
-                      "The gateway is deployed (2026-11-07); the connection is built, not deployed and not tried", "the three outcomes of step 2 and the order of its real run",
-                      "Until step 2 has run, the agents call their own resource, as in the first row", "**Deployed on 2026-11-07 at the owner's written request; the Detective and the Skeptic of the cases app call it (built, not yet run in Azure) and the agents do not yet:** step 2 is a separate one-line change"):
+        for words in ("(deployed; step 2 is on in code, the switch is True, and has not run in Azure)",
+                      "step 2 builds it behind one switch, `AGENTS_VIA_AI_GATEWAY` in `tools/environment-params.py`, which is True since the owner's order of 2026-11-07",
+                      "The gateway is deployed (2026-11-07); the connection is built, not made in Azure and not tried", "the three outcomes of step 2 and the order of its real run",
+                      "Until the real run of step 2 has been made, the deployed agents call their own resource, as in the first row",
+                      "**Deployed on 2026-11-07 at the owner's written request; the Detective and the Skeptic of the cases app call it (built, not yet run in Azure), and the agents go through it once the real run "
+                      "of step 2 has been made:** the one line that switches step 2 on is made"):
             self.assertIn(words, row, words)
         self.assertNotIn("Not used since 2026-11-07", row)
         self.assertIn("`modelInvestigator` and `modelSkeptic` read `<connection>/<alias>`, for example `aigateway/gpt-6.1-sol`", FOUNDRY_AGENTS)
 
-    def test_the_readme_says_that_step_1_is_deployed_and_step_2_is_built_and_not_deployed(self):
+    def test_the_readme_says_that_step_1_is_deployed_and_step_2_is_on_in_code_and_has_not_run(self):
         rows = [line for line in README.splitlines() if line.startswith("| **[An AI Gateway for the agents](docs/proposals/08-ai-gateway.md)**")]
         (row,) = rows
-        self.assertIn("step 2, the Foundry connection and a switch for the agents' model names, is built and not deployed, and the switch is False, so the agents do not call through the gateway yet", row)
+        self.assertIn("step 2, the Foundry connection and a switch for the agents' model names, is on in code (the switch is True) and has not run in Azure, so the deployed agents do not call through the gateway yet", row)
         (bullet,) = [line for line in README.splitlines() if line.startswith("- **An AI Gateway for every model call")]
-        self.assertIn("step 2 for the agents is built and off", bullet)
+        self.assertIn("step 2 for the agents is on in code and has not run in Azure", bullet)
         self.assertNotIn("both steps are built and not deployed", bullet)
-        self.assertIn("`AGENTS_VIA_AI_GATEWAY` in [`tools/environment-params.py`](tools/environment-params.py), that is False, so that nothing changes until the owner flips it", bullet)
+        self.assertIn("`AGENTS_VIA_AI_GATEWAY` in [`tools/environment-params.py`](tools/environment-params.py), that is True since the owner's order of 2026-11-07", bullet)
+        self.assertIn("The order of the real run is `aigateway`, about ten minutes, `foundry`, `cases`, `cases-run`; until it has been made, the deployed agents keep calling their model deployments.", bullet)
         self.assertNotIn("Not built: step 2", bullet)
+        self.assertNotIn("that is False, so that nothing changes until the owner flips it", bullet)
 
     def test_the_changelog_has_the_entry_of_step_2_above_the_one_of_step_1_and_below_the_one_of_the_subnet_and_says_what_it_must(self):
         headings = re.findall(r"(?m)^## (.*)$", CHANGELOG)

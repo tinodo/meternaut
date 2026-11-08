@@ -1951,8 +1951,9 @@ class FoundryWorkflow(unittest.TestCase):
         comment = " ".join(line.strip()[2:] for line in block.splitlines() if line.strip().startswith("# "))
         for words in ("The Watch changes no resource of the estate: it reads Azure and calls the AI Gateway with its own identity and no key",
                       "With the investigation on (the cases app has the address of the Foundry project",
-                      "it also creates its agents and conversations in its own Foundry project, and those agents call the models of that resource directly "
-                      "(the one gap of that rule, until step 2 is switched on)."):
+                      "it also creates its agents and conversations in its own Foundry project, and those agents call their models through the project's connection and the AI Gateway while the switch "
+                      "AGENTS_VIA_AI_GATEWAY (tools/environment-params.py, True since the owner's order of 2026-11-07) is on",
+                      "With the switch set to False, the way back, they call the models of that resource directly, which AGENTS.md rule 15 (c) allows only as the owner's written exception."):
             self.assertIn(words, comment)
         self.assertNotIn("calls the model deployments of its own Foundry project directly, with its own identity", comment)
         for old in ("only reads Azure", "it only reads", "went through the gateway", "Nothing in Azure was changed"):

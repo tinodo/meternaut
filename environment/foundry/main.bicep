@@ -11,10 +11,10 @@
 // setting cannot be changed after the account exists (Create a project for Microsoft Foundry), so that account could never hold a project or an
 // agent. Nothing called it, so it was removed on 2026-11-07 (the action retire-old); this resource serves the agents and the Detective and the Skeptic.
 //
-// The agents call the deployments below directly, not through the gateway, until the connection to the AI Gateway is asked for (the switch AGENTS_VIA_AI_GATEWAY in
-// tools/environment-params.py, which is False). That is a temporary exception to AGENTS.md rule 15 (c), whose
-// record lists the routes that end it. A route through the gateway needs one new API on the owner's API Management instance, which the owner
-// has to approve (rule 15 (b)); the first reason given here, the gateway's tier, was wrong (CHANGELOG.md).
+// The agents call their models through the connection to the AI Gateway (AGENTS.md rule 15 (c)) while the switch AGENTS_VIA_AI_GATEWAY in tools/environment-params.py is True, which it is since the owner's
+// order of 2026-11-07: the workflow then passes the gateway's host name (aiGatewayHost) and this template makes the connection. With the switch False, which is the way back, no connection is made and the agents
+// call the deployments below directly, which rule 15 (c) allows only as the owner's written exception. Whether the service takes the connection is shown by the first run of the action foundry with the switch on
+// (docs/proposals/08-ai-gateway.md, step 2).
 //
 // No key, and nothing public (AGENTS.md rule 23):
 //  - the resource has local authentication off (disableLocalAuth) and public network access off; it is reached through one private endpoint;
