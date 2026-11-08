@@ -34,6 +34,7 @@ from .guards import Guards
 from .http import HttpError
 from .memory_store import parse, stamp
 from .models import CaseRecord, StoreError
+from .ownership import NOT_COMPLETE, NOT_IN_WINDOW, NOT_VISIBLE, UNAVAILABLE, OwnerReader, owner_hints
 from .roles import DetectiveAnswer, RoleError, SkepticAnswer, clean_text
 from .toolbox import SUBSCRIPTION_SECONDS, Resource, Toolbox
 
@@ -126,6 +127,7 @@ class Investigation:
     dropped_findings: int = 0
     guarded: int = 0
     unmeasured: int = 0
+    owners: object = None  # the OwnerReader of the run: one for all its cases, so that the reads of the Activity Log share one budget
 
     @property
     def state(self) -> str:
@@ -737,6 +739,29 @@ def _skeptic_step_of(shared: dict | None, finding: Finding, item: Item) -> dict 
     return dict(shared)
 
 
+def _owner_of(s: "Services", out: Investigation, lead: Lead) -> dict:
+    """What the brief says about whose a resource is: a tag that conventionally names an owner, and who made and last changed it (ownership.py). It is shown to people and
+    never goes to a model. A word that says why a read gave nothing (not visible, not in the window) is not a person: it is left out, so that the page says only what it knows."""
+    reader = out.owners
+    try:
+        if reader is None:
+            reader = out.owners = OwnerReader(s.arm, s.clock())
+        hint = reader.hints(lead.resource_id, lead.tags)
+        looked_up = True
+    except Exception as error:  # noqa: BLE001 (the owner line is a convenience: a lookup that fails never costs a case)
+        LOG.warning("investigate: the owner of a resource could not be looked up (%s)", type(error).__name__)
+        hint, looked_up = owner_hints(lead.tags, None, False, lead.resource_id, UNAVAILABLE), False
+    sentinels = {NOT_COMPLETE, NOT_IN_WINDOW, NOT_VISIBLE, UNAVAILABLE}
+
+    def real(value: object) -> str:
+        return value if isinstance(value, str) and value not in sentinels else ""
+
+    tags = hint.get("tags") if isinstance(hint.get("tags"), dict) else {}
+    name = next((tag for tag in ("owner", "contact", "team", "manager", "createdby") if tags.get(tag)), "")
+    return {"tagOwner": tags.get(name, ""), "tagName": name, "createdBy": real(hint.get("createdBy")), "createdAt": real(hint.get("createdAt")),
+            "changedBy": real(hint.get("lastChangedBy")), "changedAt": real(hint.get("lastChangedAt")), "lookedUp": looked_up}
+
+
 def _open_case(s: "Services", out: Investigation, finding: Finding, item: Item, models: dict, steps: tuple[dict, ...], case_id: str) -> None:
     """The case of one resource: decide.py gives it its status, the History gets its result, and the store keeps it when there is a store. The verdict of the Skeptic
     counts only for a resource that it was shown, and the case is never proposed without a measurement that code confirmed."""
@@ -771,7 +796,7 @@ def _open_case(s: "Services", out: Investigation, finding: Finding, item: Item, 
             recommendation=outcome.recommendation, confidence=outcome.confidence, saving_usd_month=_figure(outcome.monthly_saving_usd), cost_usd_30d=lead.cost_usd_30d,
             summary=clean_text(outcome.summary, 600), objections=tuple(clean_text(o, 300) for o in outcome.objections), guards=tuple(outcome.guards),
             models=dict(models), steps=steps, facts=lead.facts, first_seen_at=old.first_seen_at if old and old.first_seen_at else now, updated_at=now,
-            runs_seen=(old.runs_seen + 1) if old else 1)
+            runs_seen=(old.runs_seen + 1) if old else 1, owner=_owner_of(s, out, lead))
         ex.store.case_put(record)
         if outcome.status in ("proposed", "needs_human"):
             plan = ex.approvals.plan_for(record, lead, ex.approvers())  # a plan of a change is made for none of these cases: the advise plan asks a person whether it is worth acting on
