@@ -3,8 +3,6 @@
   "senderName": "Meternaut (AI)",
   "requestId": "r_Ts5Bk2",
   "pageUrl": "https://meternaut.contoso.example/ok/r_Ts5Bk2",
-  "challengeExample": "For example: these containers hold records we must keep",
-  "teachExample": "For example: this storage account is read every day by a report",
   "headline": "Three dev containers were moved to a cooler storage tier",
   "planCode": "P2WX-5HNC",
   "permission": "I send this card only because your organisation chose the optional standing-permission mode. Your FinOps lead and platform owner granted it, with your organisation's own role, to an identity of its own choosing: storage tier changes in dev subscriptions, up to about €500 a month in Expected saving per change at the rates on your bill (a ceiling, not a forecast), until 12 March. I told you about it on 3 February, before its first run, and the conditions were checked before the change. I hold no right to change Azure.",
@@ -15,5 +13,6 @@
   "undoWindow": "You can undo this change on the page, as far as Azure allows it for a storage tier: you sign in to Azure and the change is made with your own rights. Undo also pauses this standing permission until a person has reviewed it. Pause changes here stops this standing permission for these resources without undoing anything; it does not stop my suggestions.",
   "_scenario": "E6 run",
   "notificationText": "Three dev containers were moved to a cooler storage tier",
-  "whyYouGetThis": "a standing permission that your organisation chose covers this kind of change in your development subscription."
+  "whyYouGetThis": "a standing permission that your organisation chose covers this kind of change in your development subscription.",
+  "contact": "Maya Okafor (maya.okafor@example.com)"
 }

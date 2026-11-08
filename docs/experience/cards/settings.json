@@ -245,17 +245,40 @@
       "type": "ActionSet",
       "actions": [
         {
-          "type": "Action.Execute",
-          "title": "Explain",
-          "verb": "explain",
-          "data": {
-            "requestId": "${requestId}"
-          },
-          "associatedInputs": "none",
-          "fallback": {
-            "type": "Action.OpenUrl",
-            "title": "Open on the page",
-            "url": "${pageUrl}"
+          "type": "Action.ShowCard",
+          "title": "Ask or tell",
+          "card": {
+            "type": "AdaptiveCard",
+            "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+            "version": "1.5",
+            "body": [
+              {
+                "type": "Input.Text",
+                "id": "message",
+                "label": "Ask or tell",
+                "isMultiline": true,
+                "maxLength": 300,
+                "isRequired": true,
+                "errorMessage": "Write a few words first.",
+                "placeholder": "A question, or something I should know. This approves nothing."
+              }
+            ],
+            "actions": [
+              {
+                "type": "Action.Execute",
+                "title": "Send",
+                "verb": "ask",
+                "data": {
+                  "requestId": "${requestId}"
+                },
+                "associatedInputs": "auto",
+                "fallback": {
+                  "type": "Action.OpenUrl",
+                  "title": "Open on the page",
+                  "url": "${pageUrl}"
+                }
+              }
+            ]
           }
         }
       ],
@@ -263,42 +286,12 @@
     },
     {
       "type": "TextBlock",
-      "text": "Why you are getting this: ${whyYouGetThis}",
-      "wrap": true,
-      "id": "why-you-get-this",
-      "isSubtle": true,
-      "size": "Small",
-      "separator": true,
-      "spacing": "Medium"
-    },
-    {
-      "type": "ActionSet",
-      "actions": [
-        {
-          "type": "Action.Execute",
-          "title": "Talk to a person",
-          "verb": "human",
-          "data": {
-            "requestId": "${requestId}"
-          },
-          "associatedInputs": "none",
-          "fallback": {
-            "type": "Action.OpenUrl",
-            "title": "Open on the page",
-            "url": "${pageUrl}"
-          }
-        }
-      ],
-      "id": "talk-to-a-person"
-    },
-    {
-      "type": "TextBlock",
-      "text": "Written by an AI. Figures are computed by tools, not guessed by the AI. Estimates can still be wrong.",
+      "text": "Written by an AI; a person approves every change. You got this because ${whyYouGetThis} Talk to a person: ${contact}.",
       "wrap": true,
       "id": "ai-footer",
       "isSubtle": true,
       "size": "Small",
-      "separator": false,
+      "separator": true,
       "spacing": "Medium"
     }
   ]

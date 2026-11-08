@@ -58,12 +58,33 @@ The items, in order:
 
 At the end it prints the client id of the app registration: that is the repository variable CONSOLE_APP_CLIENT_ID, which the template reads (a client id is
 an identifier, not a secret). The Azure CLI is `az`, or the command in the variable AZ (for example "C:\\path\\python.exe" -IBm azure.cli).
+
+The Teams channel (docs/proposals/13-teams-and-outlook.md) needs no app registration: its bot IS a user-assigned managed identity (the Azure Bot's app type
+UserAssignedMSI), so there is no secret, no certificate and no federated credential to make here. What is left in Microsoft Entra and Microsoft Teams is read, and
+one thing is made, with the signed-in person's own token and in the same pattern (reads first, a dry run unless --apply, never in a pipeline, nothing removed):
+
+    python tools/entra-setup.py teams-check --tenant-id <id> --bot-id <client id of the bot's identity> [--teams-app-id <guid>] [--assign <object id>]...
+    python tools/entra-setup.py teams-apply --tenant-id <id> --bot-id <client id of the bot's identity> [--teams-app-id <guid>] [--assign <object id>]... [--apply] [--yes]
+
+  1  The bot's identity is in this tenant and is a managed identity (servicePrincipals, found by its client id).
+  2  The Teams app is in the organization's app catalog (appCatalogs/teamsApps with distributionMethod organization; the manifest's id is the catalog's externalId). The tool never
+     uploads and never updates it: a Teams administrator uploads the zip that tools/teams-package.py builds, in the Teams admin center. A new upload can take a day to show in this
+     list (Microsoft Graph documentation: 24-48 hours).
+  3  For each --assign object id: the app is installed in the person's personal scope (users/<id>/teamwork/installedApps).
+  teams-apply with --apply installs the app (POST users/<id>/teamwork/installedApps) for each person who lacks it, only when the app is in the catalog and the person's installs could be
+  read. The default --teams-app-id is the one that tools/teams-package.py makes for the bot, so both tools always agree.
+
+Which Microsoft Graph permissions the Azure CLI's token carries for Teams is NOT proven (nothing was run against a tenant): an answer of 401 or 403 is shown in plain words (UNREADABLE, or
+"could not install") and the rest goes on. The permission TeamsAppInstallation.ReadWriteForUser reads "for the signed-in user", so with a person's own token the tool can install for that
+person; for other people a Teams administrator installs the app with an app setup policy in the Teams admin center (docs/proposals/13-teams-and-outlook.md has the steps).
+Sources, read on 2026-11-08: https://learn.microsoft.com/graph/api/userteamwork-post-installedapps and https://learn.microsoft.com/graph/api/appcatalogs-list-teamsapps.
 """
 from __future__ import annotations
 
 import argparse
 import copy
 import http.client
+import importlib.util
 import json
 import os
 import re
@@ -76,6 +97,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Callable, Mapping
 
 GRAPH = "https://graph.microsoft.com"
@@ -110,6 +132,8 @@ CALLS = (
     ("GET", re.compile(r"servicePrincipals")), ("POST", re.compile(r"servicePrincipals")), ("PATCH", re.compile(rf"servicePrincipals/{OBJECT}")),
     ("GET", re.compile(rf"servicePrincipals/{OBJECT}/appRoleAssignedTo")), ("POST", re.compile(rf"servicePrincipals/{OBJECT}/appRoleAssignedTo")),
     ("GET", re.compile(r"oauth2PermissionGrants")), ("POST", re.compile(r"oauth2PermissionGrants")),
+    ("GET", re.compile(r"appCatalogs/teamsApps")),
+    ("GET", re.compile(rf"users/{OBJECT}/teamwork/installedApps")), ("POST", re.compile(rf"users/{OBJECT}/teamwork/installedApps")),
 )
 NOT_READY = re.compile(r"valid application object|does not exist|not found|replicat", re.I)
 TOKEN_SHAPES = (re.compile(r"eyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{3,}"), re.compile(r"(?i)bearer\s+[A-Za-z0-9._~+/=-]{8,}"))
@@ -304,6 +328,18 @@ def consent_address(tenant: str, client_id: str) -> str:
     return f"https://login.microsoftonline.com/{tenant}/adminconsent?client_id={client_id}"
 
 
+def parse_people(values: list[str] | None) -> list[str]:
+    """The object ids of --assign: each given twice or separated with commas, in lower case, each once."""
+    people: list[str] = []
+    for value in values or []:
+        for one in (x.strip() for x in value.split(",") if x.strip()):
+            if not GUID.fullmatch(one):
+                raise Problem(f"--assign {one} is not an object id (a GUID)")
+            if one.lower() not in people:
+                people.append(one.lower())
+    return people
+
+
 def read_config(args: argparse.Namespace) -> Config:
     tenant = args.tenant_id
     if not tenant or not GUID.fullmatch(tenant):
@@ -314,14 +350,7 @@ def read_config(args: argparse.Namespace) -> Config:
     principal = args.identity_principal_id
     if not principal or not GUID.fullmatch(principal):
         raise Problem("--identity-principal-id is required: the object (principal) id of the identity of the sign-in (a GUID)")
-    people: list[str] = []
-    for value in args.assign or []:
-        for one in (x.strip() for x in value.split(",") if x.strip()):
-            if not GUID.fullmatch(one):
-                raise Problem(f"--assign {one} is not an object id (a GUID)")
-            if one.lower() not in people:
-                people.append(one.lower())
-    return Config(tenant.lower(), host, principal.lower(), tuple(people))
+    return Config(tenant.lower(), host, principal.lower(), tuple(parse_people(args.assign)))
 
 
 # ---- reading what is there -----------------------------------------------------------------------------------------------------------------------
@@ -748,6 +777,172 @@ def command_apply(args: argparse.Namespace, graph: Graph, cfg: Config, out: Call
     return 0 if report(items, state, cfg, out) else 1
 
 
+# ---- the Teams app -------------------------------------------------------------------------------------------------------------------------------
+
+REFUSED = (401, 403)
+
+
+@dataclass(frozen=True)
+class TeamsConfig:
+    tenant: str
+    bot_id: str
+    app_id: str
+    people: tuple[str, ...]
+
+
+@dataclass
+class TeamsState:
+    catalog_id: str | None = None  # the id that the catalog gave the app: it is not the id of the manifest
+    installed: dict[str, str] = field(default_factory=dict)  # per person: present, missing or unreadable
+
+
+def teams_app_id_of(bot_id: str) -> str:
+    """The id of the Teams app that tools/teams-package.py makes for this bot: that tool's own function, so that the two never disagree."""
+    path = Path(__file__).with_name("teams-package.py")
+    spec = importlib.util.spec_from_file_location("teams_package_of_entra_setup", path)
+    if spec is None or spec.loader is None:
+        raise Problem(f"{path} cannot be read: give --teams-app-id")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.app_id_of(bot_id)
+
+
+def read_teams_config(args: argparse.Namespace) -> TeamsConfig:
+    tenant = args.tenant_id
+    if not tenant or not GUID.fullmatch(tenant):
+        raise Problem("--tenant-id is required: the id of the tenant (a GUID)")
+    bot = args.bot_id
+    if not bot or not GUID.fullmatch(bot):
+        raise Problem("--bot-id is required: the client id of the user-assigned identity that IS the bot (the output botClientId of the action teams; a GUID)")
+    if args.teams_app_id is not None and not GUID.fullmatch(args.teams_app_id):
+        raise Problem("--teams-app-id is the id of the Teams app in its manifest (a GUID)")
+    people = parse_people(args.assign)
+    return TeamsConfig(tenant.lower(), bot.lower(), (args.teams_app_id or teams_app_id_of(bot)).lower(), tuple(people))
+
+
+def code_of(failure: Failed) -> str:
+    return re.sub(r"[^A-Za-z0-9_.-]", "", failure.code)[:60]
+
+
+def teams_examine(graph: Graph, cfg: TeamsConfig) -> tuple[list[Item], TeamsState]:
+    """Reads, in this order: the bot's identity, the app in the catalog, and for each person whether the app is installed. A refusal of Microsoft Graph is a line, never the end."""
+    state, items = TeamsState(), []
+    label = f"The bot's identity (client id {cfg.bot_id}) is a managed identity of this tenant"
+    found = graph.pages(lookup("servicePrincipals", "appId", cfg.bot_id, "id,appId,servicePrincipalType"))
+    if not found:
+        items.append(Item(label, "missing", "no identity with this client id is in this tenant: it is the client id of the user-assigned identity that IS the bot (the output botClientId of the action teams)"))
+    elif found[0].get("servicePrincipalType") != "ManagedIdentity":
+        items.append(Item(label, "differs", f"it is of the type {found[0].get('servicePrincipalType') or 'unknown'}, not a managed identity: the bot of environment/teams/main.bicep is a user-assigned identity"))
+    else:
+        items.append(Item(label, "present"))
+    label = f"The Teams app {cfg.app_id} is in the organization's app catalog"
+    try:
+        catalog = graph.pages("appCatalogs/teamsApps?$filter=" + urllib.parse.quote("distributionMethod eq 'organization'", safe=""))
+    except Failed as e:
+        if e.status not in REFUSED:
+            raise
+        items.append(Item(label, "unreadable", f"this sign-in may not read the catalog (Microsoft Graph answered {e.status} {code_of(e)}): look under Teams apps, Manage apps in the Teams admin center"))
+    else:
+        app = next((a for a in catalog if str(a.get("externalId", "")).lower() == cfg.app_id), None)
+        state.catalog_id = str(app["id"]) if app and app.get("id") else None
+        if state.catalog_id:
+            items.append(Item(label, "present", f"the catalog's own id for it is {state.catalog_id}"))
+        else:
+            items.append(Item(label, "missing", "a Teams administrator uploads the zip that `python tools/teams-package.py build` makes: Teams admin center, Teams apps, Manage apps, Upload new app. "
+                                                "A new upload can take a day to show here (Microsoft Graph documentation: 24-48 hours)"))
+    for person in cfg.people:
+        label = f"The Teams app is installed in the personal scope of {person}"
+        try:
+            installs = graph.pages(f"users/{person}/teamwork/installedApps?$expand=teamsApp")
+        except Failed as e:
+            if e.status not in (*REFUSED, 404):
+                raise
+            state.installed[person] = "unreadable"
+            why = ("Microsoft Graph does not know this person (404): check the object id" if e.status == 404 else
+                   f"this sign-in may not read this person's installs (Microsoft Graph answered {e.status} {code_of(e)}): with a signed-in person's token Microsoft allows a person's own installs only, "
+                   "so a Teams administrator installs the app for others with an app setup policy in the Teams admin center")
+            items.append(Item(label, "unreadable", why))
+            continue
+        apps = [i["teamsApp"] for i in installs if isinstance(i.get("teamsApp"), dict)]
+        there = any(str(a.get("externalId", "")).lower() == cfg.app_id or (state.catalog_id is not None and a.get("id") == state.catalog_id) for a in apps)
+        state.installed[person] = "present" if there else "missing"
+        items.append(Item(label, state.installed[person]))
+    return items, state
+
+
+def teams_report(items: list[Item], out: Callable[[str], None]) -> bool:
+    for item in items:
+        out(describe(item))
+    done = sum(1 for i in items if i.state == "present")
+    out(f"{done} of {len(items)} in order.")
+    return done == len(items)
+
+
+def teams_plan(state: TeamsState, cfg: TeamsConfig) -> list[str]:
+    """An install is made only for a person whose installs could be read and who lacks the app, and only when the catalog has the app."""
+    if state.catalog_id is None:
+        return []
+    return [f"POST users/{person}/teamwork/installedApps: install the Teams app (catalog id {state.catalog_id}) in the personal scope of {person}"
+            for person in cfg.people if state.installed.get(person) == "missing"]
+
+
+def teams_apply_steps(graph: Graph, cfg: TeamsConfig, state: TeamsState, out: Callable[[str], None]) -> None:
+    body = {"teamsApp@odata.bind": f"{GRAPH}/v1.0/appCatalogs/teamsApps/{state.catalog_id}"}
+    for person in cfg.people:
+        if state.installed.get(person) != "missing":
+            continue
+        try:
+            graph.send("POST", f"users/{person}/teamwork/installedApps", body)
+        except Failed as e:
+            if e.status == 409:
+                out(f"  the app was installed for {person} already")
+                continue
+            if e.status not in REFUSED:
+                raise
+            out(f"  could not install the app for {person}: Microsoft Graph answered {e.status} {code_of(e)}. With a signed-in person's token Microsoft allows a person's own installs only: "
+                "a Teams administrator installs the app for others with an app setup policy in the Teams admin center.")
+            continue
+        out(f"  installed the app for {person}")
+
+
+def command_teams_check(graph: Graph, cfg: TeamsConfig, out: Callable[[str], None]) -> int:
+    out(f"The Teams app of Meternaut, in tenant {cfg.tenant}:")
+    items, _ = teams_examine(graph, cfg)
+    return 0 if teams_report(items, out) else 1
+
+
+def command_teams_apply(args: argparse.Namespace, graph: Graph, cfg: TeamsConfig, out: Callable[[str], None], ask: Callable[[str], "str | None"], env: Mapping[str, str]) -> int:
+    if args.apply and env.get("GITHUB_ACTIONS") == "true":
+        raise Problem("a person who may administer Microsoft Teams runs this, never a pipeline: the workflow's identity must not hold that right (AGENTS.md rules 18 and 24)")
+    out(f"The Teams app of Meternaut, in tenant {cfg.tenant}:")
+    items, state = teams_examine(graph, cfg)
+    for item in items:
+        out(describe(item))
+    steps = teams_plan(state, cfg)
+    if not steps:
+        if all(i.state == "present" for i in items):
+            out("Nothing to make.")
+            return 0
+        out("Nothing that this tool can make is missing: what lacks above is for a person who may upload or approve the app, or its installs could not be read.")
+        return 1
+    out(f"{len(steps)} change(s) would be made, and nothing else:")
+    for step in steps:
+        out(f"  {step}")
+    if not args.apply:
+        out("This was a dry run. Run again with --apply to make them.")
+        return 1
+    if not args.yes:
+        answer = ask(f"Make these {len(steps)} change(s) in tenant {cfg.tenant}? Type yes: ")
+        if answer is None:
+            raise Problem("--apply needs --yes when there is no terminal to ask in")
+        if answer.strip().lower() != "yes":
+            raise Problem("nothing was changed")
+    teams_apply_steps(graph, cfg, state, out)
+    out("Checking again:")
+    items, state = teams_examine(graph, cfg)
+    return 0 if teams_report(items, out) else 1
+
+
 def main(argv: list[str] | None = None, runner: Callable[[list[str]], tuple[int, str, str]] = run_az, transport: Http = default_http,
          sleep: Callable[[float], None] = time.sleep, out: Callable[[str], None] = print, ask: Callable[[str], "str | None"] | None = None,
          env: Mapping[str, str] | None = None) -> int:
@@ -764,9 +959,24 @@ def main(argv: list[str] | None = None, runner: Callable[[list[str]], tuple[int,
         if name == "apply":
             sub.add_argument("--apply", action="store_true", help="make the changes (the default is a dry run)")
             sub.add_argument("--yes", action="store_true", help="do not ask first")
+    for name, text in (("teams-check", "read only: the Teams app in the catalog, and who has it"), ("teams-apply", "dry run; with --apply, install the Teams app for the people who lack it")):
+        sub = commands.add_parser(name, help=text)
+        sub.add_argument("--tenant-id")
+        sub.add_argument("--bot-id", help="the client id of the user-assigned identity that IS the bot (the output botClientId of the action teams)")
+        sub.add_argument("--teams-app-id", help="the id of the Teams app in its manifest; the default is the one that tools/teams-package.py makes for the bot")
+        sub.add_argument("--assign", action="append", help="the object id of a person who gets the app; repeat it or separate with commas")
+        if name == "teams-apply":
+            sub.add_argument("--apply", action="store_true", help="make the changes (the default is a dry run)")
+            sub.add_argument("--yes", action="store_true", help="do not ask first")
     args = parser.parse_args(argv)
     hide = Hider()
     try:
+        if args.command in ("teams-check", "teams-apply"):
+            teams = read_teams_config(args)
+            teams_graph = Graph(Tokens(runner, teams.tenant, hide), transport, sleep)
+            if args.command == "teams-check":
+                return command_teams_check(teams_graph, teams, out)
+            return command_teams_apply(args, teams_graph, teams, out, ask, env)
         cfg = read_config(args)
         graph = Graph(Tokens(runner, cfg.tenant, hide), transport, sleep)
         if args.command == "check":

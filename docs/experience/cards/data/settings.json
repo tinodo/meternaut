@@ -3,8 +3,6 @@
   "senderName": "Meternaut (AI)",
   "requestId": "r_Se7Ud2",
   "pageUrl": "https://meternaut.contoso.example/ok/r_Se7Ud2",
-  "challengeExample": "For example: the job on the last Tuesday is real",
-  "teachExample": "For example: this is our disaster-recovery environment",
   "headline": "Your settings",
   "timeZones": [
     {
@@ -87,5 +85,6 @@
   ],
   "_scenario": "settings",
   "notificationText": "Your settings",
-  "whyYouGetThis": "you asked to see your settings."
+  "whyYouGetThis": "you asked to see your settings.",
+  "contact": "Maya Okafor (maya.okafor@example.com)"
 }

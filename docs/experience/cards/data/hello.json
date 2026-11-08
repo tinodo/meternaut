@@ -3,8 +3,6 @@
   "senderName": "Meternaut (AI)",
   "requestId": "r_Hi3Lq8",
   "pageUrl": "https://meternaut.contoso.example/ok/r_Hi3Lq8",
-  "challengeExample": "For example: the job on the last Tuesday is real",
-  "teachExample": "For example: this is our disaster-recovery environment",
   "headline": "I am an AI that helps your team spend less on Azure",
   "timeZones": [
     {
@@ -64,5 +62,7 @@
   "whatIKeep": "I keep your answers, your settings and your notes against your directory ID, not your name. You can see, export or delete them on the settings page. Your platform team sees counts, never a list of who did not answer.",
   "control": "You can pause my messages, ask for fewer, see what I know about your resources, or reach a person at any time.",
   "_scenario": "first contact",
-  "notificationText": "I am an AI that helps your team spend less on Azure"
+  "notificationText": "I am an AI that helps your team spend less on Azure",
+  "whyYouGetThis": "you are on my list of people.",
+  "contact": "Maya Okafor (maya.okafor@example.com)"
 }

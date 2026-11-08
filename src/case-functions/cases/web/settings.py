@@ -20,7 +20,7 @@ from .layout import (JSON, block, button, choices, details, error_summary, field
 NOT_APPLIED = "Quiet hours are saved and not applied yet: a letter can arrive at any time."
 CHANNEL_HINT = "With only the weekly summary, no other letter is sent. A request that waits for your answer is on the Decisions page whatever you choose."
 WEEKLY_BUDGET_HINT = "How many other letters a week. 0 means only the weekly summary. A request that waits for your answer and the first letter to you are never counted."
-CHANNEL_WORDS = (("email", "E-mail"), ("teams", "Teams (not built yet, so e-mail is used)"), ("desk", "Only the weekly summary"))
+CHANNEL_WORDS = (("email", "E-mail"), ("teams", "Teams (a card first; a letter only if no card was sent within 20 minutes)"), ("desk", "Only the weekly summary"))
 HOURS = re.compile(r"(?:[01]\d|2[0-3]):[0-5]\d")
 DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
 MUTE = re.compile(r"[a-z0-9][a-z0-9-]{0,23}")

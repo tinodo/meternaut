@@ -3,8 +3,6 @@
   "senderName": "Meternaut (AI)",
   "requestId": "r_9vK2xQ",
   "pageUrl": "https://meternaut.contoso.example/ok/r_9vK2xQ",
-  "challengeExample": "For example: the job on the last Tuesday is real",
-  "teachExample": "For example: this is our disaster-recovery environment",
   "headline": "Does anything run in rg-webshop-qa at night on the last Tuesday?",
   "scopeLine": "14 resources, about €1,100 a month at the rates on your bill. You are listed as an owner.",
   "question": "Activity shows at 02:10 to 02:50 on the last Tuesday of each month, while the environment is otherwise idle at night. Is that a job you need?",
@@ -13,5 +11,6 @@
   "noLabel": "No, nothing runs",
   "_scenario": "E1",
   "notificationText": "Does anything run in rg-webshop-qa at night on the last Tuesday?",
-  "whyYouGetThis": "the directory lists you as the owner of 3 of the 14 resources in rg-webshop-qa, and you created the other 11."
+  "whyYouGetThis": "the directory lists you as the owner of 3 of the 14 resources in rg-webshop-qa, and you created the other 11.",
+  "contact": "Maya Okafor (maya.okafor@example.com)"
 }

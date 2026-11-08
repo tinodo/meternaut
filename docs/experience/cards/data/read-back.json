@@ -3,8 +3,6 @@
   "senderName": "Meternaut (AI)",
   "requestId": "r_Rb4Yt6",
   "pageUrl": "https://meternaut.contoso.example/ok/r_Rb4Yt6",
-  "challengeExample": "For example: the job on the last Tuesday is real",
-  "teachExample": "For example: this is our disaster-recovery environment",
   "headline": "Please check what I understood",
   "understood": "rg-orders-dr is a standby environment. I will not suggest shutting it down or resizing it.",
   "scopes": [
@@ -20,5 +18,6 @@
   "expiry": "12 January",
   "_scenario": "a note about a standby environment",
   "notificationText": "Please check what I understood",
-  "whyYouGetThis": "you told me this, and I read back what I understood before I keep it."
+  "whyYouGetThis": "you told me this, and I read back what I understood before I keep it.",
+  "contact": "Maya Okafor (maya.okafor@example.com)"
 }

@@ -3,8 +3,6 @@
   "senderName": "Meternaut (AI)",
   "requestId": "r_Wk2Mn8",
   "pageUrl": "https://meternaut.contoso.example/ok/r_Wk2Mn8",
-  "challengeExample": "For example: the job on the last Tuesday is real",
-  "teachExample": "For example: this is our disaster-recovery environment",
   "headline": "2 decisions and 1 question, about 10 minutes",
   "total": "Together about €215 a month. Expected, at the rates on your bill.",
   "items": [
@@ -26,5 +24,6 @@
   ],
   "_scenario": "weekly desk",
   "notificationText": "2 decisions and 1 question, about 10 minutes",
-  "whyYouGetThis": "this is your weekly summary, sent on the day you chose."
+  "whyYouGetThis": "this is your weekly summary, sent on the day you chose.",
+  "contact": "Maya Okafor (maya.okafor@example.com)"
 }

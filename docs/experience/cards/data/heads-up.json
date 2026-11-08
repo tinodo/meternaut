@@ -3,8 +3,6 @@
   "senderName": "Meternaut (AI)",
   "requestId": "r_Hu6Fs3",
   "pageUrl": "https://meternaut.contoso.example/ok/r_Hu6Fs3",
-  "challengeExample": "For example: the extra use is a planned load test",
-  "teachExample": "For example: this assistant is in a pilot until Friday",
   "headline": "Your team's AI assistant used six times its normal tokens in three hours",
   "value": "About €180 more today",
   "valueNote": "If the rate continues until 18:00",
@@ -15,5 +13,6 @@
   "told": "If I hear nothing in two hours, I will use the on-call route your platform team set up for spend spikes. I will tell you before I do.",
   "_scenario": "E5",
   "notificationText": "Your team's AI assistant used six times its normal tokens in three hours",
-  "whyYouGetThis": "you are the owner of record for the subscription where the assistant runs."
+  "whyYouGetThis": "you are the owner of record for the subscription where the assistant runs.",
+  "contact": "Maya Okafor (maya.okafor@example.com)"
 }

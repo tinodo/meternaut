@@ -3,8 +3,6 @@
   "senderName": "Meternaut (AI)",
   "requestId": "r_Hn4c7T",
   "pageUrl": "https://meternaut.contoso.example/ok/r_Hn4c7T",
-  "challengeExample": "For example: we move part of this workload to another service in March",
-  "teachExample": "For example: finance only allows one-year terms",
   "headline": "Buy a one-year compute savings plan for the order platform",
   "classLabel": "Two people",
   "classLine": "This needs two people, each on their own. You are one of them, and you will not see the other answer until you have given yours.",
@@ -17,5 +15,6 @@
   "planCode": "K4M8-R6TW",
   "_scenario": "E4",
   "notificationText": "Buy a one-year compute savings plan for the order platform",
-  "whyYouGetThis": "you are the budget holder for the order platform, and a purchase needs two people."
+  "whyYouGetThis": "you are the budget holder for the order platform, and a purchase needs two people.",
+  "contact": "Maya Okafor (maya.okafor@example.com)"
 }
