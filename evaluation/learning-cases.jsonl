@@ -1,0 +1,78 @@
+{"id": "disks-01", "type": "microsoft.compute/disks", "family": "advise", "stated": 0.91, "answer": "approve", "reason": "", "opened": 2, "closed": 4, "note": "Stable and mostly right: the AI is sure and people approve nine times in ten."}
+{"id": "pips-01", "type": "microsoft.network/publicipaddresses", "family": "advise", "stated": 0.83, "answer": "expired", "reason": "", "opened": 4, "closed": 18, "note": "Most requests end with nobody deciding, or with an answer that says nothing about the finding: too few labelled outcomes to learn from."}
+{"id": "farms-01", "type": "microsoft.web/serverfarms", "family": "advise", "stated": 0.90, "answer": "approve", "reason": "", "opened": 5, "closed": 8, "note": "Sure and mostly wrong: people decline about two of three requests, however sure the AI is."}
+{"id": "snaps-01", "type": "microsoft.compute/snapshots", "family": "advise", "stated": 0.90, "answer": "approve", "reason": "", "opened": 7, "closed": 9, "note": "Right most of the time, with an unlucky start: two declines among the first five answers."}
+{"id": "dbs-01", "type": "microsoft.sql/servers/databases", "family": "advise", "stated": 0.75, "answer": "decline", "reason": "still-needed", "opened": 10, "closed": 15, "note": "The bands tell apart: right when the AI states 0.9 or more, mostly wrong when it states about 0.75."}
+{"id": "stor-01", "type": "microsoft.storage/storageaccounts", "family": "advise", "stated": 0.88, "answer": "decline", "reason": "still-needed", "opened": 11, "closed": 16, "note": "People changed their minds: declines at first, approvals from about day 100. What was learned is not forgotten, so a hold lifts slowly."}
+{"id": "disks-02", "type": "microsoft.compute/disks", "family": "advise", "stated": 0.88, "answer": "approve", "reason": "", "opened": 12, "closed": 14}
+{"id": "redis-01", "type": "microsoft.cache/redis", "family": "advise", "stated": 0.80, "answer": "approve", "reason": "", "opened": 14, "closed": 17, "note": "Too few answers to learn anything: three of six requests are answered in a way that says whether the finding was right."}
+{"id": "farms-02", "type": "microsoft.web/serverfarms", "family": "advise", "stated": 0.92, "answer": "decline", "reason": "still-needed", "opened": 18, "closed": 23}
+{"id": "pips-02", "type": "microsoft.network/publicipaddresses", "family": "advise", "stated": 0.80, "answer": "not_mine", "reason": "", "opened": 19, "closed": 22}
+{"id": "dbs-02", "type": "microsoft.sql/servers/databases", "family": "advise", "stated": 0.90, "answer": "approve", "reason": "", "opened": 21, "closed": 23}
+{"id": "disks-03", "type": "microsoft.compute/disks", "family": "advise", "stated": 0.93, "answer": "approve", "reason": "", "opened": 22, "closed": 24}
+{"id": "snaps-02", "type": "microsoft.compute/snapshots", "family": "advise", "stated": 0.88, "answer": "decline", "reason": "still-needed", "opened": 23, "closed": 27}
+{"id": "stor-02", "type": "microsoft.storage/storageaccounts", "family": "advise", "stated": 0.90, "answer": "decline", "reason": "still-needed", "opened": 27, "closed": 32}
+{"id": "disks-04", "type": "microsoft.compute/disks", "family": "advise", "stated": 0.62, "answer": "approve", "reason": "", "opened": 31, "closed": 34}
+{"id": "farms-03", "type": "microsoft.web/serverfarms", "family": "advise", "stated": 0.88, "answer": "decline", "reason": "figure-wrong", "opened": 31, "closed": 36}
+{"id": "dbs-03", "type": "microsoft.sql/servers/databases", "family": "advise", "stated": 0.76, "answer": "decline", "reason": "figure-wrong", "opened": 32, "closed": 38}
+{"id": "pips-03", "type": "microsoft.network/publicipaddresses", "family": "advise", "stated": 0.84, "answer": "approve", "reason": "", "opened": 34, "closed": 36}
+{"id": "snaps-03", "type": "microsoft.compute/snapshots", "family": "advise", "stated": 0.91, "answer": "approve", "reason": "", "opened": 39, "closed": 41}
+{"id": "redis-02", "type": "microsoft.cache/redis", "family": "advise", "stated": 0.82, "answer": "decline", "reason": "still-needed", "opened": 41, "closed": 46}
+{"id": "disks-05", "type": "microsoft.compute/disks", "family": "advise", "stated": 0.90, "answer": "approve", "reason": "", "opened": 42, "closed": 44}
+{"id": "dbs-04", "type": "microsoft.sql/servers/databases", "family": "advise", "stated": 0.74, "answer": "approve", "reason": "", "opened": 43, "closed": 45}
+{"id": "stor-03", "type": "microsoft.storage/storageaccounts", "family": "advise", "stated": 0.89, "answer": "decline", "reason": "figure-wrong", "opened": 43, "closed": 48}
+{"id": "farms-04", "type": "microsoft.web/serverfarms", "family": "advise", "stated": 0.91, "answer": "approve", "reason": "", "opened": 44, "closed": 47}
+{"id": "pips-04", "type": "microsoft.network/publicipaddresses", "family": "advise", "stated": 0.82, "answer": "decline", "reason": "handled", "opened": 49, "closed": 53}
+{"id": "disks-06", "type": "microsoft.compute/disks", "family": "advise", "stated": 0.89, "answer": "decline", "reason": "still-needed", "opened": 52, "closed": 57}
+{"id": "dbs-05", "type": "microsoft.sql/servers/databases", "family": "advise", "stated": 0.91, "answer": "approve", "reason": "", "opened": 54, "closed": 56}
+{"id": "snaps-04", "type": "microsoft.compute/snapshots", "family": "advise", "stated": 0.86, "answer": "decline", "reason": "figure-wrong", "opened": 55, "closed": 59}
+{"id": "farms-05", "type": "microsoft.web/serverfarms", "family": "advise", "stated": 0.90, "answer": "decline", "reason": "still-needed", "opened": 57, "closed": 62}
+{"id": "stor-04", "type": "microsoft.storage/storageaccounts", "family": "advise", "stated": 0.91, "answer": "approve", "reason": "", "opened": 59, "closed": 61}
+{"id": "disks-07", "type": "microsoft.compute/disks", "family": "advise", "stated": 0.92, "answer": "approve", "reason": "", "opened": 62, "closed": 63}
+{"id": "pips-05", "type": "microsoft.network/publicipaddresses", "family": "advise", "stated": 0.81, "answer": "expired", "reason": "", "opened": 64, "closed": 78}
+{"id": "dbs-06", "type": "microsoft.sql/servers/databases", "family": "advise", "stated": 0.75, "answer": "decline", "reason": "still-needed", "opened": 65, "closed": 70}
+{"id": "redis-03", "type": "microsoft.cache/redis", "family": "advise", "stated": 0.78, "answer": "expired", "reason": "", "opened": 68, "closed": 82}
+{"id": "farms-06", "type": "microsoft.web/serverfarms", "family": "advise", "stated": 0.93, "answer": "decline", "reason": "still-needed", "opened": 70, "closed": 75}
+{"id": "snaps-05", "type": "microsoft.compute/snapshots", "family": "advise", "stated": 0.89, "answer": "approve", "reason": "", "opened": 71, "closed": 72}
+{"id": "disks-08", "type": "microsoft.compute/disks", "family": "advise", "stated": 0.87, "answer": "approve", "reason": "", "opened": 72, "closed": 75}
+{"id": "stor-05", "type": "microsoft.storage/storageaccounts", "family": "advise", "stated": 0.88, "answer": "decline", "reason": "still-needed", "opened": 75, "closed": 80}
+{"id": "dbs-07", "type": "microsoft.sql/servers/databases", "family": "advise", "stated": 0.77, "answer": "decline", "reason": "still-needed", "opened": 76, "closed": 81}
+{"id": "pips-06", "type": "microsoft.network/publicipaddresses", "family": "advise", "stated": 0.83, "answer": "decline", "reason": "other", "opened": 79, "closed": 82}
+{"id": "disks-09", "type": "microsoft.compute/disks", "family": "advise", "stated": 0.94, "answer": "approve", "reason": "", "opened": 82, "closed": 83}
+{"id": "farms-07", "type": "microsoft.web/serverfarms", "family": "advise", "stated": 0.89, "answer": "expired", "reason": "", "opened": 83, "closed": 97}
+{"id": "dbs-08", "type": "microsoft.sql/servers/databases", "family": "advise", "stated": 0.90, "answer": "approve", "reason": "", "opened": 87, "closed": 89}
+{"id": "snaps-06", "type": "microsoft.compute/snapshots", "family": "advise", "stated": 0.92, "answer": "approve", "reason": "", "opened": 87, "closed": 89}
+{"id": "stor-06", "type": "microsoft.storage/storageaccounts", "family": "advise", "stated": 0.90, "answer": "decline", "reason": "still-needed", "opened": 91, "closed": 96}
+{"id": "disks-10", "type": "microsoft.compute/disks", "family": "advise", "stated": 0.90, "answer": "approve", "reason": "", "opened": 92, "closed": 95}
+{"id": "pips-07", "type": "microsoft.network/publicipaddresses", "family": "advise", "stated": 0.80, "answer": "approve", "reason": "", "opened": 94, "closed": 96}
+{"id": "redis-04", "type": "microsoft.cache/redis", "family": "advise", "stated": 0.81, "answer": "not_mine", "reason": "", "opened": 95, "closed": 98}
+{"id": "farms-08", "type": "microsoft.web/serverfarms", "family": "advise", "stated": 0.91, "answer": "decline", "reason": "still-needed", "opened": 96, "closed": 101}
+{"id": "dbs-09", "type": "microsoft.sql/servers/databases", "family": "advise", "stated": 0.75, "answer": "decline", "reason": "figure-wrong", "opened": 98, "closed": 104}
+{"id": "disks-11", "type": "microsoft.compute/disks", "family": "advise", "stated": 0.86, "answer": "approve", "reason": "", "opened": 102, "closed": 104}
+{"id": "snaps-07", "type": "microsoft.compute/snapshots", "family": "advise", "stated": 0.90, "answer": "approve", "reason": "", "opened": 103, "closed": 105}
+{"id": "stor-07", "type": "microsoft.storage/storageaccounts", "family": "advise", "stated": 0.89, "answer": "approve", "reason": "", "opened": 107, "closed": 109}
+{"id": "dbs-10", "type": "microsoft.sql/servers/databases", "family": "advise", "stated": 0.92, "answer": "approve", "reason": "", "opened": 109, "closed": 110}
+{"id": "farms-09", "type": "microsoft.web/serverfarms", "family": "advise", "stated": 0.87, "answer": "approve", "reason": "", "opened": 109, "closed": 112}
+{"id": "pips-08", "type": "microsoft.network/publicipaddresses", "family": "advise", "stated": 0.82, "answer": "expired", "reason": "", "opened": 109, "closed": 123}
+{"id": "disks-12", "type": "microsoft.compute/disks", "family": "advise", "stated": 0.74, "answer": "decline", "reason": "figure-wrong", "opened": 112, "closed": 118}
+{"id": "snaps-08", "type": "microsoft.compute/snapshots", "family": "advise", "stated": 0.87, "answer": "approve", "reason": "", "opened": 119, "closed": 121}
+{"id": "dbs-11", "type": "microsoft.sql/servers/databases", "family": "advise", "stated": 0.74, "answer": "approve", "reason": "", "opened": 120, "closed": 123}
+{"id": "disks-13", "type": "microsoft.compute/disks", "family": "advise", "stated": 0.91, "answer": "approve", "reason": "", "opened": 122, "closed": 124}
+{"id": "farms-10", "type": "microsoft.web/serverfarms", "family": "advise", "stated": 0.92, "answer": "decline", "reason": "figure-wrong", "opened": 122, "closed": 127}
+{"id": "redis-05", "type": "microsoft.cache/redis", "family": "advise", "stated": 0.80, "answer": "approve", "reason": "", "opened": 122, "closed": 125}
+{"id": "stor-08", "type": "microsoft.storage/storageaccounts", "family": "advise", "stated": 0.92, "answer": "approve", "reason": "", "opened": 123, "closed": 125}
+{"id": "pips-09", "type": "microsoft.network/publicipaddresses", "family": "advise", "stated": 0.84, "answer": "decline", "reason": "still-needed", "opened": 124, "closed": 129}
+{"id": "dbs-12", "type": "microsoft.sql/servers/databases", "family": "advise", "stated": 0.76, "answer": "decline", "reason": "still-needed", "opened": 131, "closed": 137}
+{"id": "disks-14", "type": "microsoft.compute/disks", "family": "advise", "stated": 0.93, "answer": "approve", "reason": "", "opened": 132, "closed": 133}
+{"id": "farms-11", "type": "microsoft.web/serverfarms", "family": "advise", "stated": 0.90, "answer": "decline", "reason": "still-needed", "opened": 135, "closed": 140}
+{"id": "snaps-09", "type": "microsoft.compute/snapshots", "family": "advise", "stated": 0.90, "answer": "approve", "reason": "", "opened": 135, "closed": 137}
+{"id": "pips-10", "type": "microsoft.network/publicipaddresses", "family": "advise", "stated": 0.80, "answer": "not_mine", "reason": "", "opened": 139, "closed": 142}
+{"id": "stor-09", "type": "microsoft.storage/storageaccounts", "family": "advise", "stated": 0.90, "answer": "approve", "reason": "", "opened": 139, "closed": 141}
+{"id": "dbs-13", "type": "microsoft.sql/servers/databases", "family": "advise", "stated": 0.91, "answer": "approve", "reason": "", "opened": 142, "closed": 144}
+{"id": "disks-15", "type": "microsoft.compute/disks", "family": "advise", "stated": 0.88, "answer": "approve", "reason": "", "opened": 142, "closed": 145}
+{"id": "farms-12", "type": "microsoft.web/serverfarms", "family": "advise", "stated": 0.88, "answer": "approve", "reason": "", "opened": 148, "closed": 151}
+{"id": "redis-06", "type": "microsoft.cache/redis", "family": "advise", "stated": 0.79, "answer": "ask", "reason": "", "opened": 149, "closed": 163}
+{"id": "snaps-10", "type": "microsoft.compute/snapshots", "family": "advise", "stated": 0.93, "answer": "approve", "reason": "", "opened": 151, "closed": 152}
+{"id": "disks-16", "type": "microsoft.compute/disks", "family": "advise", "stated": 0.60, "answer": "decline", "reason": "handled", "opened": 152, "closed": 156}
+{"id": "dbs-14", "type": "microsoft.sql/servers/databases", "family": "advise", "stated": 0.75, "answer": "decline", "reason": "still-needed", "opened": 153, "closed": 158}
+{"id": "stor-10", "type": "microsoft.storage/storageaccounts", "family": "advise", "stated": 0.88, "answer": "approve", "reason": "", "opened": 155, "closed": 157}

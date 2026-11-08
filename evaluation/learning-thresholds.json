@@ -10,7 +10,7 @@
   },
   "ifMissed": "learning is withdrawn: the tool prints it and exits 1, docs/proposals/15-learning.md and the README say that the claim of learning is withdrawn, and the numbers stay in the proposal as they came out",
   "notMeasured": [
-    "real closed requests: the replay set is invented, with the patterns that the mechanism is built for, so a pass says that the mechanism does what it is made to do, and nothing about how often real findings are over-confident",
+    "real closed requests: the replay set is invented, with the patterns that the mechanism is built for and some that strain it (a type whose people change their minds, an unlucky start), so a result says how the mechanism behaves on these patterns, and nothing about how often real findings are over-confident",
     "money: no saving, predicted or measured, enters the check",
     "the Investigator's use of recall_lessons, recall_knowledge and recall_open_questions: that is behaviour of a model, which this check does not call",
     "the claims of the Study: they reach no decision of code, only the Investigator through a tool",
