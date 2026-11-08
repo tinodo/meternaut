@@ -121,6 +121,8 @@ class Settings:
     investigate_max_tokens: int = LIMIT_INVESTIGATE_TOKENS
     # True: `subscriptions` is only the fallback, and the list that a run reads is made at its start (scope.py). The run then works with a copy whose `subscriptions` is that list.
     all_subscriptions: bool = False
+    # The quota ids of the subscriptions of the run, as the one list of subscriptions of the run gave them (scope.py): not a setting of the environment, the run fills them in its copy.
+    quota_ids: tuple[str, ...] = ()
     # The Study (cases/study.py). Off unless STUDY is on; the limits are the ceilings of the Scholar's run.
     study: bool = False
     study_max_types: int = DEFAULT_STUDY_TYPES

@@ -663,6 +663,10 @@ class TheCallsOfTheApp(unittest.TestCase):
         "disk-read": lambda m, p: m == "GET" and "Microsoft.Compute/disks" in p,
         "public-ip-read": lambda m, p: m == "GET" and "Microsoft.Network/publicIPAddresses" in p,
         "subscriptions-list": lambda m, p: m == "GET" and p.endswith("/subscriptions"),
+        "price-sheet-read": lambda m, p: m == "GET" and p.endswith("/providers/Microsoft.Consumption/pricesheets/default"),
+        "billing-accounts-read": lambda m, p: m == "GET" and p.endswith("/providers/Microsoft.Billing/billingAccounts"),
+        "reservation-orders-read": lambda m, p: m == "GET" and p.endswith("/providers/Microsoft.Capacity/reservationOrders"),
+        "savings-plan-orders-read": lambda m, p: m == "GET" and p.endswith("/providers/Microsoft.BillingBenefits/savingsPlanOrders"),
     }
     # Every model call goes to the AI Gateway, with the app's identity: the AI Gateway Models User role that the gateway's template assigns inside the project's own group, no line of this file.
     NO_AZURE_ROLE: set = set()
@@ -693,7 +697,10 @@ class TheCallsOfTheApp(unittest.TestCase):
 
     @staticmethod
     def listed(*ids):
-        return {c for g in MANIFEST["grants"] if not ids or g["id"] in ids for c in g.get("calls", [])}
+        found = {c for g in MANIFEST["grants"] if not ids or g["id"] in ids for c in g.get("calls", [])}
+        if not ids:
+            found |= {c for item in MANIFEST.get("tenantReads", []) for c in item["calls"]}  # the reads at the tenant or a billing scope, which a person gives (T1 to T3)
+        return found
 
     def test_every_call_that_the_app_may_make_is_a_requirement_or_needs_no_azure_role(self):
         names = self.names_of(self.watch_calls(), "the Watch")

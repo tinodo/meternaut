@@ -259,7 +259,7 @@ def execute(s: Services, trigger: str) -> Summary:
     except scope_mod.ScopeError as error:
         scope, refusal = scope_mod.Scope((), "none"), clean_text(s.redact(error), 300)
     notes.extend(scope.notes)
-    st = replace(st, subscriptions=scope.subscriptions)
+    st = replace(st, subscriptions=scope.subscriptions, quota_ids=scope.quotas)
     s = replace(s, settings=st)
     # With many subscriptions the line carries their count and the first few ids, not all of them.
     h.emit("run.started", trigger=trigger, subscriptions=len(scope.subscriptions), scopes=[x[:8] for x in scope.subscriptions[:SCOPES_SHOWN]], scopeFrom=scope.source,

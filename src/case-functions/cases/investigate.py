@@ -25,7 +25,7 @@ import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Callable, Mapping
 
-from . import agents, decide, guards, learning, roles, wiring
+from . import agents, capability, decide, guards, learning, roles, wiring
 from .approvals import is_fixture
 from .arm import scopes_of
 from .detectors import Context, Lead
@@ -129,6 +129,7 @@ class Investigation:
     guarded: int = 0
     unmeasured: int = 0
     owners: object = None  # the OwnerReader of the run: one for all its cases, so that the reads of the Activity Log share one budget
+    profile: object = None  # the CapabilityRecord of the run (cases/capability.py): what the identity can see of the agreement and of the commitments
     # True when the harness did not let the agents run (a pulled switch, a lock that does not hold, a stored definition that differs) or stopped a run: the run of the Watch then opens no new
     # case from the investigation, and the planted waste, the approvals and the messages go on (cases/harness.py).
     held: bool = False
@@ -556,9 +557,10 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
     budget = max(1.0, float(st.investigate_max_seconds))
     deadline = began + budget
     s.client.deadline = deadline
+    built_here = toolbox is None
     if toolbox is None:
         toolbox = Toolbox(s.arm, st.subscriptions, s.clock(), [])
-        toolbox.memory = s.extras.store if s.extras is not None else None  # what the two tools that recall read: the lessons and the claims of the store of the loop
+        toolbox.memory = s.extras.store if s.extras is not None else None  # what the tools that recall read: the lessons, the claims and the open questions of the store of the loop
         # One call may take at most an eighth of the investigation's time, or the default, for reading the subscriptions, so that a call over a large estate cannot use the time that the
         # Investigator needs for its answer and the Skeptic for its verdicts.
         toolbox.read_seconds = min(SUBSCRIPTION_SECONDS, max(5.0, budget / 8))
@@ -578,6 +580,12 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
         out.held = isinstance(error, HarnessRefused)
         out.note = f"the agents could not be made ready ({_why(s, error)})"
         return out
+    if built_here:
+        # What the identity can see of the agreement and the commitments: read once for the run, only when the agents will run, kept for the run, and shown by `commitments` and by the brief
+        # of a finding about a commitment.
+        toolbox.profile = capability.keep(s.extras.store if s.extras is not None else None,
+                                          capability.probe(s.arm, st.subscriptions, st.quota_ids, contexts, h.run_id, s.clock()))
+    out.profile = getattr(toolbox, "profile", None)
     h.emit("investigation.started", investigator=investigator_ref, skeptic=skeptic_ref, modelInvestigator=st.foundry_model_investigator,
            modelSkeptic=st.foundry_model_skeptic, maxCalls=st.investigate_max_calls, maxSeconds=int(budget))
 
@@ -826,6 +834,9 @@ def _open_case(s: "Services", out: Investigation, finding: Finding, item: Item, 
     # What past requests like this showed may hold a proposal back for a person, and never makes a finding stronger (cases/learning.py). The case is always an advise plan's: no change is made for it.
     outcome, held = learning.hold(s.extras.store if s.extras is not None else None, learning.type_word(lead.resource_type), ADVISE, detective.confidence, outcome)
     learned = {"skeptic": judged.verdict if judged is not None else "none", **({"held": "history"} if held else {})}
+    access = capability.access_code(out.profile, finding.basis)
+    if access:
+        learned["access"] = access  # what the identity cannot see of the commitments, as the one sentence that the brief of a finding about a commitment carries
     if not item.metrics:
         out.unmeasured += 1
     h.emit("case.result", caseId=case_id, leadId=lead.lead_id, detector=DETECTOR, resourceName=clean_text(lead.name, 120), resourceType=clean_text(lead.resource_type, 120),

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The access that Meternaut needs outside its own resource group, and the installer that reads it (standard library only).
 
-    python tools/access-requirements.py markdown [--retired]
+    python tools/access-requirements.py markdown [--retired | --tenant]
     python tools/access-requirements.py check [places] [--only R1,R4]
     python tools/access-requirements.py grant [places] [--only R1,R4] [--apply] [--yes]
     python tools/access-requirements.py retire [places] [--only W1,W2] [--apply] [--yes]
@@ -19,7 +19,8 @@ a user-assigned identity to its system-assigned one, the user-assigned identity 
 is checked and receives every grant of its identity, so that the app is never without access. An app that does not exist yet, or has no
 system-assigned identity yet, is reported like an identity that does not exist yet: "cannot yet".
 
-markdown  Prints the table of the requirements, as docs/proposals/03-access-and-onboarding.md shows it; with --retired, the table of the retired grants.
+markdown  Prints the table of the requirements, as docs/proposals/03-access-and-onboarding.md shows it; with --retired, the table of the retired grants; with --tenant, the table of the
+          reads at the tenant or at a billing scope (the file's "tenantReads", which a person gives and this tool does not check), as docs/proposals/15-learning.md shows it.
           Reads no Azure.
 check     Read only. For each requirement and each holder: present, missing, or why it cannot be present yet (the identity or the app does not exist, the
           app has no system-assigned identity, the custom role does not exist or differs from the file). Exit 0 when every requirement is present. A
@@ -198,6 +199,15 @@ def load_manifest(path: Path = MANIFEST) -> dict:
         used = set(ids)
         current = set(user_assigned)
         grants = {g["id"]: g for g in manifest["grants"]}
+        assert isinstance(manifest.get("tenantReads", []), list), "tenantReads is a list"
+        tenant_ids: set[str] = set()
+        for item in manifest.get("tenantReads", []):
+            assert item["id"] not in used and item["id"] not in tenant_ids, f"{item['id']}: an id is used once"
+            tenant_ids.add(item["id"])
+            assert item["identity"] in manifest["identities"] and item["read"] and item["why"], item["id"]
+            assert isinstance(item["calls"], list) and item["calls"] and all(isinstance(c, str) and c for c in item["calls"]), f"{item['id']}: calls is a list of names"
+            assert isinstance(item["roles"], list) and item["roles"] and all(isinstance(r, str) and r for r in item["roles"]), f"{item['id']}: roles is a list of texts"
+        used |= tenant_ids
         for item in manifest.get("retired", []):
             assert item["id"] not in used, f"{item['id']}: the id of a retired item is not the id of a grant, and is used once"
             used.add(item["id"])
@@ -254,6 +264,15 @@ def markdown(manifest: dict) -> str:
         identity = manifest["identities"][g["identity"]]
         holders = " and ".join(holder_text(identity, h) for h in identity["holders"])
         rows.append(f"| {g['id']} | {holders[0].upper() + holders[1:]} | {g['role']}{custom} | {manifest['places'][g['place']]} | {g['why']} |")
+    return "\n".join(rows)
+
+
+def markdown_tenant(manifest: dict) -> str:
+    """The table of the reads that no Azure role at a subscription or a management group gives: they are at the tenant or at a billing scope, which a person gives in the Billing area of the
+    portal or at the tenant scope of Reservations and of Savings plans, for the proposal. This tool neither checks nor gives them."""
+    rows = ["| # | Read | Who can give it | What it is for |", "|---|---|---|---|"]
+    for item in manifest.get("tenantReads", []):
+        rows.append(f"| {item['id']} | {item['read']} | {' '.join(item['roles'])} | {item['why']} |")
     return "\n".join(rows)
 
 
@@ -914,6 +933,7 @@ def main(argv=None, az: Az | None = None, env=None, out=print, sleep=time.sleep,
     commands = parser.add_subparsers(dest="command", required=True)
     table = commands.add_parser("markdown", help="print the table of the requirements")
     table.add_argument("--retired", action="store_true", help="print the table of the retired grants instead")
+    table.add_argument("--tenant", action="store_true", help="print the table of the reads at the tenant or a billing scope instead (a person gives them; this tool does not check them)")
     for name, text in (("check", "read only: which requirements are present"), ("grant", "dry run; with --apply, make what is missing"),
                        ("retire", "dry run; with --apply, remove what an earlier version granted (the list retired)")):
         sub = commands.add_parser(name, help=text)
@@ -933,7 +953,7 @@ def main(argv=None, az: Az | None = None, env=None, out=print, sleep=time.sleep,
     try:
         manifest = load_manifest()
         if args.command == "markdown":
-            out(markdown_retired(manifest) if args.retired else markdown(manifest))
+            out(markdown_retired(manifest) if args.retired else markdown_tenant(manifest) if args.tenant else markdown(manifest))
             return 0
         az = az or Az()
         places = read_places(args, env)

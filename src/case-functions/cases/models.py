@@ -302,9 +302,9 @@ class CapabilityRecord(Record):
     at: str
     subscriptions: int = 0
     cost: str = "unknown"  # visible, not visible with this access, unavailable or unknown
-    billing: str = "unknown"  # the billing accounts of the identity
-    agreement: str = "unknown"  # what the billing accounts say: enterprise, customer, pay-as-you-go, partner, other, or unknown
-    hint: str = "unknown"  # what the quota ids of the subscriptions suggest, when the billing accounts say nothing: pay-as-you-go, enterprise-or-customer, partner, other, unknown
+    billing: str = "unknown"  # the billing accounts of the identity: the same four words
+    agreement: str = "unknown"  # what the billing accounts say: enterprise, customer, pay-as-you-go, partner, other, mixed (they differ) or unknown
+    hint: str = "unknown"  # what the quota ids of the subscriptions suggest, when the billing accounts say nothing: pay-as-you-go, enterprise-or-customer, partner, other, mixed or unknown
     reservations: str = "unknown"
     savings_plans: str = "unknown"
     price_sheet: str = "unknown"

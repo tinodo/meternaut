@@ -145,6 +145,12 @@ def allowed_calls(foundry_endpoint: str | None = None, ai_gateway_host: str | No
         ("GET", re.compile(arm + WORKSPACE + r"/providers/Microsoft\.SecurityInsights/alertRules", re.I)),
         ("GET", re.compile(arm + AI_ACCOUNT + "/deployments", re.I)),
         ("POST", re.compile(re.escape(f"https://{LOG_ANALYTICS_HOST}/v1/workspaces/") + GUID + "/query", re.I)),
+        # What the capability profile reads (cases/capability.py): the first page of the lists of billing accounts, reservation orders and savings plan orders that the identity may see, and
+        # one line of the price sheet of a subscription. Each address is the list itself, never one account or one order.
+        ("GET", re.compile(arm + r"/providers/Microsoft\.Billing/billingAccounts", re.I)),
+        ("GET", re.compile(arm + r"/providers/Microsoft\.Capacity/reservationOrders", re.I)),
+        ("GET", re.compile(arm + r"/providers/Microsoft\.BillingBenefits/savingsPlanOrders", re.I)),
+        ("GET", re.compile(arm + rf"/subscriptions/{GUID}/providers/Microsoft\.Consumption/pricesheets/default", re.I)),
         ("GET", re.compile(arm + r"/subscriptions", re.I)),
     )
     if foundry_endpoint is not None:

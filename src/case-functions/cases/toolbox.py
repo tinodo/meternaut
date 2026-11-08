@@ -60,13 +60,13 @@ from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass, field
 from typing import Callable, Iterable, TypeVar
 
-from . import deeper, learning, library
+from . import capability, deeper, learning, library
 from .arm import SCOPE_ID, Arm, CostLine, MetricPoint
 from .detectors import some
 from .foundry import FunctionTool
 from .http import HttpError, Refused
 from .identity import IdentityError
-from .models import StoreError
+from .models import CapabilityRecord, StoreError
 
 MAX_RESULT_CHARS = 6000
 MAX_CALLS = 40  # calls of one Toolbox; the next ones answer "limit"
@@ -700,8 +700,9 @@ TOOLS = {tool.name: tool for tool in (
           Param("limit", "integer", "How many values to return, 1 to 20. Null for 10.", low=1, high=MAX_SPLIT))),
     Tool("commitments",
          "Shows, for each subscription, how the cost of the last 30 days was paid for, amortized, as lines of pricing model and kind of charge with their amounts in US dollars, "
-         "and the purchase recommendations that the platform itself makes for savings plans and for reservations, as typed values. A part that this run's access cannot read "
-         "says 'not visible with this access' and is never counted as none. It takes no arguments."),
+         "and the purchase recommendations that the platform itself makes for savings plans and for reservations, as typed values. access says, in words, what this run's identity can "
+         "see of existing reservations and savings plans, of the price sheet and of the agreement. A part that this run's access cannot read says 'not visible with this access' and "
+         "is never counted as none. It takes no arguments."),
     Tool("cost_history",
          "Shows the cost of one resource (handle) or of all resources of one type (type) for each day of the last 7 to 90 days, as the actual or the amortized cost in US "
          "dollars: the daily numbers, oldest first, their total, the days that have a cost, and for a type the dearest resources with their totals. Give a handle or a type, "
@@ -819,7 +820,8 @@ class Toolbox:
 
     def __init__(self, arm: Arm, subscriptions: tuple[str, ...], now: dt.datetime, notes: list[str]) -> None:
         self.arm, self.subscriptions, self.now, self.notes = arm, subscriptions, now, notes
-        self.memory: object | None = None  # the store of the loop, which the two tools that recall read; the investigation sets it, and a run that keeps no memory has none
+        self.memory: object | None = None  # the store of the loop, which the tools that recall read; the investigation sets it, and a run that keeps no memory has none
+        self.profile: object | None = None  # what the identity can see (cases/capability.py): the investigation sets it, and `commitments` shows its four words
         self.handles: dict[str, Resource] = {}  # every resource that an answer has shown, by handle
         self.evidence: dict[str, dict] = {}  # handle -> what the answers showed about it so far (metric aggregates, cost lines, typed properties)
         self.log: list[dict] = []  # one dict per call: name, arguments, ok, chars
@@ -2085,6 +2087,8 @@ class Toolbox:
             if isinstance(kept, dict):
                 blocks.append({"subscription": self._label(sub), **{name: list(value) if isinstance(value, list) else value for name, value in kept.items()}})
         answer: dict = {"window_days": MAX_DAYS, "basis": "amortized", "subscriptions": blocks, **self._unread()}
+        if isinstance(self.profile, CapabilityRecord):
+            answer["access"] = capability.words_of(self.profile)
         if len(blocks) > MAX_BLOCKS:
             blocks.sort(key=lambda block: (-sum(len(value) for value in block.values() if isinstance(value, list)), len(block["subscription"]), block["subscription"]))
             answer["subscriptions_not_shown"] = len(blocks) - MAX_BLOCKS
