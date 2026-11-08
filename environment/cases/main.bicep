@@ -431,9 +431,11 @@ var basicOnlyAppSettings = isFlex ? [] : [
 
 // No Azure Files content share, no storage connection string, no deployment password. Basic: the workflow pushes the code with its own identity's token to the app's deployment endpoint, which keeps it
 // on the plan's own storage and runs the app from that package. Flex: the code is a package in the container app-package-cases, which the app reads with its system-assigned identity, and which the
-// Operator replaces with `az functionapp deployment source config-zip`, as it did for the usage app. One instance at the most: a run is one function execution that waits for
-// models, a timer must not run twice at once, a control message starts one run and the host gives the app one message at a time (host.json), and one person uses the web page (the limit is per group of functions: with four, the group of the web page scaled out
-// to four instances for one request every four seconds, and every fourth request waited 40 to 46 seconds). No always-ready instance: the app scales to zero and bills nothing while it is idle.
+// Operator replaces with `az functionapp deployment source config-zip`, as it did for the usage app. One instance at the most (the limit is per group of functions): a run is one function execution that waits for
+// models, a timer must not run twice at once, a control message starts one run and the host gives the app one message at a time (host.json), and one person uses the web page. The web page's HTTP concurrency is
+// set to 50, because the default of a Python app on Flex Consumption is one request at a time per instance (Learn, "HTTP trigger concurrency"): with one instance at the most and a concurrency of one, the platform let
+// one request reach the app a minute (the host log of 2026-11-08 has no two requests less than 60 seconds apart; the others waited for that time, and some were answered with a 503), and with more instances allowed the group of
+// the web page scaled out to four for one request every four seconds, and every fourth request waited 40 to 46 seconds. No always-ready instance: the app scales to zero and bills nothing while it is idle.
 resource functionApp 'Microsoft.Web/sites@2024-04-01' = {
   name: functionAppName
   location: location
@@ -465,6 +467,11 @@ resource functionApp 'Microsoft.Web/sites@2024-04-01' = {
       scaleAndConcurrency: {
         maximumInstanceCount: 1
         instanceMemoryMB: 2048
+        triggers: {
+          http: {
+            perInstanceConcurrency: 50
+          }
+        }
       }
       runtime: {
         name: 'python'
