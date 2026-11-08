@@ -43,7 +43,7 @@ class TheDecisionRecord(unittest.TestCase):
                       "AIGatewayPrivateEndpointsNotEnabled", "Reported with this change; not read again here", "Only the way from the gateway to the Foundry resource can be private",
                       "That breaks the rule of [private by default]"):
             self.assertIn(words, PROPOSAL, words)
-        self.assertRegex(PROPOSAL, r"\*\*Status: .*Step 1 of 2 is deployed and checked.*Step 2 of 2 is built and on in code, and it has not run in Azure.*The Detective and the Skeptic of the cases app call the gateway since an earlier change of this page.*the agents go through it by step 2, which has not run either\.",
+        self.assertRegex(PROPOSAL, r"\*\*Status: .*Step 1 of 2 is deployed and checked.*Step 2 of 2 is built and on in code, and it ran once in Azure on 2026-11-08.*the fix, the effort `none` in the Investigator's definition, has not been run.*The Detective and the Skeptic of the cases app call the gateway, and ran through it in that run",
                          "the status at the top says what is true")
 
     def test_it_lists_what_protects_the_public_endpoint_and_what_is_not_done_and_why(self):
@@ -128,7 +128,7 @@ class TheOtherDocuments(unittest.TestCase):
                       "it has been deployed since 2026-11-07, because the owner asked for it in writing (\"Create the AI Gateway with public network access and private routing.\")",
                       "The Detective and the Skeptic call it with the cases app's own identity and a Microsoft Entra token for its audience, and no key, and the app's list of allowed calls holds no chat completion to the Foundry resource or to its project.",
                       "*History:* through API Management until the owner ordered its removal on 2026-11-07, then direct to the Foundry project for a few hours the same day, now through the AI Gateway.",
-                      "**The agents' route through the gateway is on in code and has not run in Azure** (2026-11-07, the owner: \"Route [the agents] to the AI gateway ... IT NEEDS TO ADHERE TO THE CITADEL DESIGN PRINCIPLES\"): "
+                      "**The agents' route through the gateway is on in code and ran once in Azure** (2026-11-07, the owner: \"Route [the agents] to the AI gateway ... IT NEEDS TO ADHERE TO THE CITADEL DESIGN PRINCIPLES\"): "
                       "the two agents of the investigation (rule 30) go through the gateway by step 2",
                       "(`AGENTS_VIA_AI_GATEWAY` in `tools/environment-params.py`, True)", "A request that carries no prompt, or that the model service refuses before it runs a model, is not a model call"):
             self.assertIn(words, rule, words)
@@ -141,11 +141,11 @@ class TheOtherDocuments(unittest.TestCase):
         old = ["**Agents call their own resource (built)**", "**Foundry's API Management connection, with Microsoft Entra authentication**", "**Foundry's generic model-gateway connection**", "**Move the gateway to Standard v2**"]
         for row in old:
             self.assertIn(row, firsts, "a row of the table is not deleted")
-        self.assertEqual(firsts[-1], "**AI Gateway, Azure's separate service (deployed; step 2 is on in code, the switch is True, and has not run in Azure)**")
+        self.assertEqual(firsts[-1], "**AI Gateway, Azure's separate service (deployed; step 2 is on in code, the switch is True, and ran once in Azure)**")
         self.assertEqual([first for first in firsts if first in old], old, "the old rows keep their order")
         last = flat(table[-1])
         for words in ("`Microsoft.ApiManagement/aigateways`", "not an API Management instance", "no key", "not known, and step 2", "I LEAN STRONG TOWARDS YOU CREATING AN AI GATEWAY",
-                      "Its frontend is public only", "`10k AI Gateway Requests`", "no service level", "(08-ai-gateway.md)", "Until the real run of step 2 has been made, the deployed agents call their own resource, as in the first row"):
+                      "Its frontend is public only", "`10k AI Gateway Requests`", "no service level", "(08-ai-gateway.md)", "The real run of step 2 was made on 2026-11-08 and stopped at the Investigator's first call"):
             self.assertIn(words, last, words)
 
     def test_the_changelog_has_the_entry_of_step_1_above_the_console_entry_and_says_what_it_must(self):
@@ -163,9 +163,9 @@ class TheOtherDocuments(unittest.TestCase):
     def test_the_readme_lists_the_record_in_its_table_and_in_its_status(self):
         rows = [line for line in README.splitlines() if line.startswith("| **[An AI Gateway for the agents](docs/proposals/08-ai-gateway.md)**")]
         self.assertEqual(len(rows), 1)
-        self.assertIn("is on in code (the switch is True) and has not run in Azure", rows[0])
+        self.assertIn("is on in code (the switch is True) and ran once in Azure on 2026-11-08", rows[0])
         self.assertIn("is deployed and checked since 2026-11-07", rows[0])
-        bullets = [line for line in README.splitlines() if line.startswith("- **An AI Gateway for every model call (deployed on 2026-11-07; the Detective and the Skeptic call it, built and not yet run in Azure; step 2 for the agents is on in code and has not run in Azure)**")]
+        bullets = [line for line in README.splitlines() if line.startswith("- **An AI Gateway for every model call (deployed on 2026-11-07; the Detective and the Skeptic call it and ran through it on 2026-11-08; step 2 for the agents is on in code and ran once, and its fix has not been run)**")]
         self.assertEqual(len(bullets), 1)
         self.assertIn("The owner believed that the gateway can be private. It cannot", bullets[0])
         self.assertLess(README.index("| **[Private by default](docs/proposals/07-private-by-default.md)**"), README.index(rows[0]), "the new row follows the row of the record before it")

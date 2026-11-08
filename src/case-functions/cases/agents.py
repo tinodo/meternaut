@@ -27,6 +27,11 @@ MAX_EXAMINED_TEXT = 100
 # The shape of the Skeptic's answer.
 MAX_VERDICT_SUMMARY = 200
 
+# The Investigator reasons with the effort "none" (the word, not Python's None, which would leave the effort out). Its model refuses function tools together with a
+# reasoning effort on the route that a model of the project is called on: the first real run (2026-11-08) was refused so, and the answer said that the effort none lets
+# them work. The Skeptic has no tools and keeps the default. A change of this value makes a new version of the Investigator in the project.
+INVESTIGATOR_REASONING_EFFORT = "none"
+
 INVESTIGATOR_DESCRIPTION = "Finds where an Azure estate pays for something that it does not use or need, with read-only tools, and reports what it found."
 SKEPTIC_DESCRIPTION = "Tries to break each finding of the investigator: what would make the resources legitimate, and is the evidence enough."
 
@@ -101,7 +106,7 @@ SKEPTIC_INSTRUCTIONS = (
 
 def investigator(settings: Settings, tools: tuple[FunctionTool, ...]) -> AgentSpec:
     return AgentSpec(name=INVESTIGATOR_NAME, description=INVESTIGATOR_DESCRIPTION, model=settings.foundry_model_investigator,
-                     instructions=INVESTIGATOR_INSTRUCTIONS, tools=tuple(tools))
+                     instructions=INVESTIGATOR_INSTRUCTIONS, tools=tuple(tools), reasoning_effort=INVESTIGATOR_REASONING_EFFORT)
 
 
 def skeptic(settings: Settings) -> AgentSpec:

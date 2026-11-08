@@ -243,7 +243,8 @@ class Interface(unittest.TestCase):
                           ("user_input", "POSITIONAL_OR_KEYWORD", inspect.Parameter.empty), ("handler", "POSITIONAL_OR_KEYWORD", None),
                           ("max_calls", "KEYWORD_ONLY", 20), ("max_seconds", "KEYWORD_ONLY", None)])
         self.assertEqual([f.name for f in dataclasses.fields(FunctionTool)], ["name", "description", "parameters"])
-        self.assertEqual([f.name for f in dataclasses.fields(AgentSpec)], ["name", "description", "model", "instructions", "tools"])
+        self.assertEqual([f.name for f in dataclasses.fields(AgentSpec)], ["name", "description", "model", "instructions", "tools", "reasoning_effort"])
+        self.assertIsNone(AgentSpec("n", "d", "m", "i").reasoning_effort, "the effort is left out unless a spec asks for one")
         self.assertEqual([f.name for f in dataclasses.fields(AgentRun)], ["text", "calls", "input_tokens", "output_tokens", "responses", "out_of_time"])
         for frozen, cls in ((True, FunctionTool), (True, AgentSpec), (False, AgentRun)):
             self.assertEqual(cls.__dataclass_params__.frozen, frozen, cls.__name__)
@@ -335,6 +336,7 @@ class EnsureAgent(unittest.TestCase):
             "tool schema": {"tools": (FunctionTool(other_tool.name, other_tool.description, {"type": "object", "properties": {}}),)},
             "tool name": {"tools": (FunctionTool("show_resource", other_tool.description, other_tool.parameters),)},
             "one more tool": {"tools": (other_tool, FunctionTool("list_things", "Lists.", {"type": "object", "properties": {}}))},
+            "a reasoning effort": {"reasoning_effort": "none"},
         }
         for what, change in changes.items():
             with self.subTest(what):
@@ -388,6 +390,31 @@ class EnsureAgent(unittest.TestCase):
         expected = hashlib.sha256(b'{"definition":{"instructions":"You find waste.","kind":"prompt","model":"gpt-6.1-sol","tools":[{"description":"d","name":"t",'
                                   b'"parameters":{"type":"object"},"strict":false,"type":"function"}]},"description":"Finds waste."}').hexdigest()
         self.assertEqual(rig.service.agents[NAME][0]["metadata"][fo.HASH_KEY], expected)
+        rig = Rig()
+        rig.foundry.ensure_agent(spec(tools=(), description="", reasoning_effort="none"))
+        expected = hashlib.sha256(b'{"definition":{"instructions":"You find waste.","kind":"prompt","model":"gpt-6.1-sol","reasoning":{"effort":"none"}}}').hexdigest()
+        self.assertEqual(rig.service.agents[NAME][0]["metadata"][fo.HASH_KEY], expected, "an agent that has an effort is another version than one that has none")
+
+    def test_a_reasoning_effort_is_sent_as_reasoning_effort_of_the_definition_and_only_when_the_spec_has_one(self):
+        rig = Rig()
+        rig.foundry.ensure_agent(spec(reasoning_effort="none"))
+        definition = rig.service.calls[1]["body"]["definition"]
+        self.assertEqual(definition["reasoning"], {"effort": "none"})
+        self.assertEqual(set(definition), {"kind", "model", "instructions", "tools", "reasoning"})
+        rig = Rig()
+        rig.foundry.ensure_agent(spec())
+        self.assertNotIn("reasoning", rig.service.calls[1]["body"]["definition"], "the default is that the effort is not sent")
+
+    def test_an_agent_that_had_no_effort_gets_a_new_version_when_a_spec_asks_for_one_and_costs_one_read_after_that(self):
+        rig = Rig()
+        self.assertEqual(rig.foundry.ensure_agent(spec()), f"{NAME}:1")
+        rig.service.calls.clear()
+        self.assertEqual(rig.foundry.ensure_agent(spec(reasoning_effort="none")), f"{NAME}:2")
+        self.assertEqual(rig.service.routes(), ["GET agent", "POST versions"])
+        self.assertEqual(rig.service.calls[1]["body"]["definition"]["reasoning"], {"effort": "none"})
+        rig.service.calls.clear()
+        self.assertEqual(rig.foundry.ensure_agent(spec(reasoning_effort="none")), f"{NAME}:2")
+        self.assertEqual(rig.service.routes(), ["GET agent"])
 
     def test_no_tools_and_no_description_are_left_out_of_what_is_sent(self):
         rig = Rig()
@@ -409,6 +436,8 @@ class EnsureAgent(unittest.TestCase):
             "the same tool twice": spec(tools=(tool, tool)), "a tool description that is not text": spec(tools=(FunctionTool("t", None, {}),)),
             "parameters that are not an object": spec(tools=(FunctionTool("t", "d", "x"),)),
             "a schema that cannot be JSON": spec(tools=(FunctionTool("t", "d", {"x": object()}),)), "a schema with NaN": spec(tools=(FunctionTool("t", "d", {"x": float("nan")}),)),
+            "an empty effort": spec(reasoning_effort=""), "an effort in capitals": spec(reasoning_effort="None"), "an effort that is not text": spec(reasoning_effort=5),
+            "an effort of two words": spec(reasoning_effort="very high"), "an effort that is True": spec(reasoning_effort=True), "an effort of 17 letters": spec(reasoning_effort="a" * 17),
         }
         for what, each in bad.items():
             with self.subTest(what):
@@ -422,6 +451,11 @@ class EnsureAgent(unittest.TestCase):
         rig.foundry.ensure_agent(spec(name="a" * 63, description="x" * 512, tools=tuple(FunctionTool(f"t{i}", "d", {}) for i in range(128))))
         rig = Rig()
         rig.foundry.ensure_agent(spec(name="a", tools=(FunctionTool("a" * 64, "d", {}), FunctionTool("A_b-9", "d", {}))))
+        for effort in ("none", "minimal", "low", "medium", "high", "xhigh", "max"):
+            with self.subTest(effort=effort):
+                rig = Rig()
+                rig.foundry.ensure_agent(spec(reasoning_effort=effort))
+                self.assertEqual(rig.service.calls[1]["body"]["definition"]["reasoning"], {"effort": effort})
 
     def test_an_answer_that_is_not_an_agent_is_an_error_and_is_not_acted_on(self):
         shapes = {"no versions": {"name": NAME}, "versions that are not an object": {"versions": []}, "no latest": {"versions": {}}, "latest that is not an object": {"versions": {"latest": 1}},
@@ -1529,12 +1563,25 @@ class Repeats(unittest.TestCase):
 
 class TheKeyOfTheAgent(unittest.TestCase):
     """The REST reference writes the key of the agent reference as agent_reference and the article on function calling as agent. The first response that the service
-    answers, if it answers it with any HTTP 400, is made again once with the other key, and the key that worked is kept."""
+    answers, if it answers it with an HTTP 400 that is not about the model, is made again once with the other key, and the key that worked is kept. An answer about the
+    model is raised as it is. The first real run (2026-11-08) showed that agent_reference is the key: the service called agent deprecated."""
 
     REFUSED = {"code": "unknown_parameter", "message": "Unknown parameter: 'agent_reference'."}
     NOTE = "Foundry response: the key agent_reference was refused (unknown_parameter: Unknown parameter: 'agent_reference'.); agent is used from now on"
     UNRELATED = {"code": "invalid_request_error", "message": "Missing required parameter: 'model'."}
-    # A 400, whatever it says, and the reason that the note gives for it: the words of the service, or that there are none.
+    # The two answers of the first real run, as the app read them. The first message goes on with the id of the request, which is left out here.
+    MODEL_ERROR = {"code": "model_error", "message": "Function tools with reasoning_effort are not supported for gpt-6.1-sol in /v1/chat/completions. "
+                                                      "To use function tools, use /v1/responses or set reasoning_effort to 'none'."}
+    MODEL_ERROR_WORDS = ("model_error: Function tools with reasoning_effort are not supported for gpt-6.1-sol in /v1/chat/completions. "
+                         "To use function tools, use /v1/responses or set reasoning_effort to 'none'.")
+    DEPRECATED = {"code": "invalid_payload", "message": "The 'agent' property is deprecated. Use 'agent_reference' instead"}
+    # An HTTP 400 about the model, its reasoning effort or its function tools: the other key cannot mend it, so it is raised as it is.
+    ABOUT_THE_MODEL = (
+        MODEL_ERROR, {"code": "model_error"}, {"code": "MODEL_ERROR", "message": "The model failed."}, {"code": "invalid_request_error", "message": "Unsupported model: it does not support function tools."},
+        {"message": "Unsupported model: it does not support function tools."}, {"message": "The reasoning effort 'high' is not supported."},
+        {"code": "invalid_request_error", "message": "reasoning_effort: unknown value"}, {"message": "Function tool calls need the Responses route."},
+    )
+    # A 400 that is not about the model, and the reason that the note gives for it: the words of the service, or that there are none.
     BODIES = (
         ({"error": {"code": "unknown_parameter", "message": "Unknown parameter: 'agent_reference'."}}, "unknown_parameter: Unknown parameter: 'agent_reference'."),
         ({"error": {"message": "Unrecognized request argument supplied: agent_reference"}}, "Unrecognized request argument supplied: agent_reference"),
@@ -1547,9 +1594,9 @@ class TheKeyOfTheAgent(unittest.TestCase):
          "invalid_request_error: The model deployment 'gpt-6.1-sol' does not exist."),
         ({"error": {"message": "Agent 'meternaut-investigator' version '3' was not found."}}, "Agent 'meternaut-investigator' version '3' was not found."),
         ({"error": {"code": "BadRequest", "message": "Invalid model deployment."}}, "BadRequest: Invalid model deployment."),
+        ({"error": {"code": "model_not_found", "message": "The model 'x' was not found."}}, "model_not_found: The model 'x' was not found."),
         ({"error": {"message": "Invalid value for 'instructions'."}}, "Invalid value for 'instructions'."),
         ({"error": {"code": "content_filter", "message": "The prompt was filtered."}}, "content_filter: The prompt was filtered."),
-        ({"error": {"message": "Unsupported model: it does not support function tools."}}, "Unsupported model: it does not support function tools."),
         ({"error": {"code": "x"}}, "x"), ({"error": {}}, "no reason given"), ({"error": "text"}, "no reason given"), ({"message": "top level words"}, "no reason given"),
         ([], "no reason given"), (b"<html>unknown parameter 'agent_reference'</html>", "no reason given"), (b"", "no reason given"), ("plain text", "no reason given"),
     )
@@ -1594,7 +1641,7 @@ class TheKeyOfTheAgent(unittest.TestCase):
         self.assertEqual(self.keys(rig), ["agent_reference", "agent_reference"], "the key was settled by the first answer")
         self.assertEqual(str(raised.exception), "Foundry response failed: HTTP 400; unknown_parameter: Unknown parameter: 'agent_reference'.")
 
-    def test_any_400_on_the_first_call_is_made_again_once_with_the_other_key_whatever_it_says(self):
+    def test_any_400_on_the_first_call_that_is_not_about_the_model_is_made_again_once_with_the_other_key_whatever_else_it_says(self):
         for body, reason in self.BODIES:
             with self.subTest(body=body):
                 rig = Rig()
@@ -1605,6 +1652,72 @@ class TheKeyOfTheAgent(unittest.TestCase):
                 self.assertEqual(self.keys(rig), ["agent_reference", "agent"])
                 self.assertEqual(rig.service.routes(), ["POST conversations", "POST responses", "POST responses", "DELETE conversation"])
                 self.assertEqual(rig.foundry.notes, [f"Foundry response: the key agent_reference was refused ({reason}); agent is used from now on"])
+
+    def test_a_400_about_the_model_is_raised_as_it_is_and_is_not_made_again_with_the_other_key(self):
+        # The service would take the other key here: it is not asked. The first real run was refused by the model, and the call with the other key only hid that answer.
+        for body in self.ABOUT_THE_MODEL:
+            for status in (400, 422):
+                with self.subTest(body=body, status=status):
+                    rig = Rig()
+                    rig.service.accepts = "agent"
+                    rig.service.failures["POST responses"] = [(status, {"error": body}), PASS]
+                    with self.assertRaises(FoundryError) as raised:
+                        rig.run(reply([message("never")]))
+                    self.assertEqual((self.keys(rig), raised.exception.status, rig.foundry.notes), (["agent_reference"], status, []))
+                    self.assertEqual(rig.service.routes(), ["POST conversations", "POST responses", "DELETE conversation"])
+                    self.assertEqual((raised.exception.partial.responses, rig.service.conversations), (0, {}))
+                    rig.service.accepts = "agent_reference"
+                    rig.service.replies = [reply([message("ok")])]
+                    self.assertEqual(rig.foundry.run(AGENT, "Again.").text, "ok")
+                    self.assertEqual(self.keys(rig), ["agent_reference", "agent_reference"], "the first answer settled the key")
+
+    def test_the_first_answer_of_the_real_run_is_raised_with_its_code_and_its_words_and_nothing_is_made_again(self):
+        rig = Rig()
+        rig.service.failures["POST responses"] = (400, {"error": self.MODEL_ERROR})
+        with self.assertRaises(FoundryError) as raised:
+            rig.run()
+        self.assertEqual(str(raised.exception), f"Foundry response failed: HTTP 400; {self.MODEL_ERROR_WORDS}")
+        self.assertEqual((raised.exception.status, raised.exception.code, raised.exception.words), (400, "model_error", self.MODEL_ERROR_WORDS))
+        self.assertEqual((self.keys(rig), rig.foundry.notes), (["agent_reference"], []))
+
+    def test_when_the_service_calls_the_other_key_deprecated_the_first_key_was_right_and_the_first_answer_is_raised(self):
+        # The second answer of the real run says nothing of why the first call failed: the first answer is the real one, and agent_reference stays.
+        for body, reason in self.BODIES:
+            with self.subTest(body=body):
+                rig = Rig()
+                rig.service.failures["POST responses"] = [(400, body), (400, {"error": self.DEPRECATED})]
+                with self.assertRaises(FoundryError) as raised:
+                    rig.run()
+                self.assertEqual((self.keys(rig), raised.exception.status), (["agent_reference", "agent"], 400), "the other key was tried once")
+                self.assertNotIn("deprecated", str(raised.exception))
+                self.assertEqual(rig.foundry.notes, ["Foundry response: the service says that the key agent is deprecated, so agent_reference stays, "
+                                                     f"and the first answer is the real one ({reason})"])
+                self.assertEqual((raised.exception.partial.responses, rig.service.conversations), (0, {}))
+
+    def test_the_first_answer_that_is_raised_after_a_deprecated_key_keeps_its_words_and_agent_reference_is_used_by_the_next_run(self):
+        first = {"code": "invalid_request_error", "message": "The request is invalid."}
+        rig = Rig()
+        rig.service.failures["POST responses"] = [(400, {"error": first}), (400, {"error": self.DEPRECATED})]
+        with self.assertRaises(FoundryError) as raised:
+            rig.run()
+        self.assertEqual(str(raised.exception), "Foundry response failed: HTTP 400; invalid_request_error: The request is invalid.")
+        self.assertEqual((raised.exception.code, raised.exception.words), ("invalid_request_error", "invalid_request_error: The request is invalid."))
+        rig.service.failures.clear()
+        rig.service.accepts = "agent_reference"
+        rig.service.replies = [reply([message("ok")])]
+        self.assertEqual(rig.foundry.run(AGENT, "Again.").text, "ok")
+        self.assertEqual(self.keys(rig), ["agent_reference", "agent", "agent_reference"], "the key that the service wants is the first one, and the next run starts with it")
+        self.assertEqual(len(rig.foundry.notes), 1, "said once")
+
+    def test_a_second_answer_that_is_not_about_a_deprecated_key_is_raised_as_before(self):
+        for words in ("Unknown parameter: 'agent'.", "The 'agent' property is not allowed.", "deprecated", "The model is deprecated."):
+            with self.subTest(words=words):
+                rig = Rig()
+                rig.service.failures["POST responses"] = [(400, {"error": self.REFUSED}), (400, {"error": {"message": words}})]
+                with self.assertRaises(FoundryError) as raised:
+                    rig.run()
+                self.assertEqual(str(raised.exception), f"Foundry response failed: HTTP 400; {words}")
+                self.assertEqual(rig.foundry.notes, ["Foundry response: the key agent_reference was refused (unknown_parameter: Unknown parameter: 'agent_reference'.), and agent failed too"])
 
     def test_the_other_key_is_sent_with_the_same_body_when_the_400_is_about_something_else(self):
         rig = Rig()
@@ -1814,7 +1927,8 @@ class TheKeyOfTheAgent(unittest.TestCase):
 
 
 class KeyWords(unittest.TestCase):
-    """The words of an HTTP 400 decide nothing: the first call is made again with the other key whatever its message says, and no later call ever is."""
+    """The words of an HTTP 400 decide only whether it is about the model, its reasoning effort or its function tools: the first call is made again with the other key
+    unless it is, whatever else its message says, and no later call ever is."""
 
     WORDS = (
         # words that name a key or a parameter
@@ -1825,15 +1939,21 @@ class KeyWords(unittest.TestCase):
         "Invalid value for parameter 'conversation'", "invalid_request_error: Unknown parameter: 'agent'.", 'Unknown argument "agent"', "unknown `agent` key",
         # words that are about something else, or about nothing
         "The model deployment 'gpt-6.1-sol' does not exist.", "Agent 'meternaut-investigator' was not found.", "Agent version '3' of 'meternaut-investigator' does not exist.",
-        "Invalid model deployment.", "Invalid value for 'instructions'.", "Unsupported model: this model does not support function tools.",
+        "Invalid model deployment.", "Invalid value for 'instructions'.",
         "invalid_request_error: The request is invalid.", "invalid_request_error: The 'model' parameter is required", "Conversation 'conv_1' not found.",
         "The input is too long.", "", "Rate limit exceeded", "Invalid API version", "Unknown model", "Required parameter 'input' is missing.",
         "Missing required parameter. The model is invalid.", "invalid_request_error", "BadRequest: The request body could not be parsed",
         "The agent is not available in this region", "Agent: meternaut-investigator not found", "agents are not enabled", "reference_agent is fine",
         "The value of agent_reference_version was not found", "Value x_agent_reference was not found",
     )
+    # Words about the model, its reasoning effort or its function tools: the other key cannot mend them.
+    ABOUT_THE_MODEL = (
+        "Unsupported model: this model does not support function tools.", "Function tools with reasoning_effort are not supported for gpt-6.1-sol in /v1/chat/completions.",
+        "The reasoning effort 'high' is not supported by this model.", "reasoning_effort: unknown value", "Function tool calls need the Responses route.",
+        "REASONING EFFORT is not allowed here", "Unsupported model: it does not support function tools.",
+    )
 
-    def test_a_400_on_the_first_call_is_made_again_with_the_other_key_whatever_its_message_says(self):
+    def test_a_400_on_the_first_call_is_made_again_with_the_other_key_whatever_its_message_says_unless_it_is_about_the_model(self):
         for words in self.WORDS:
             with self.subTest(words=words):
                 rig = Rig()
@@ -1842,8 +1962,18 @@ class KeyWords(unittest.TestCase):
                 self.assertEqual(rig.run(reply([message("ok")])).text, "ok")
                 self.assertEqual(TheKeyOfTheAgent.keys(rig), ["agent_reference", "agent"])
 
+    def test_a_400_on_the_first_call_whose_message_is_about_the_model_is_raised_and_never_made_again(self):
+        for words in self.ABOUT_THE_MODEL:
+            with self.subTest(words=words):
+                rig = Rig()
+                rig.service.accepts = "agent"
+                rig.service.failures["POST responses"] = [(400, {"error": {"message": words}}), PASS]
+                with self.assertRaises(FoundryError) as raised:
+                    rig.run(reply([message("never")]))
+                self.assertEqual((TheKeyOfTheAgent.keys(rig), raised.exception.status, rig.foundry.notes), (["agent_reference"], 400, []))
+
     def test_the_same_words_on_a_call_that_is_not_the_first_are_never_made_again(self):
-        for words in self.WORDS:
+        for words in self.WORDS + self.ABOUT_THE_MODEL:
             with self.subTest(words=words):
                 rig = Rig()
                 rig.service.replies = [reply([call("t", {}, "c1")]), (400, {"error": {"message": words}})]
