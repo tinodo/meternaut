@@ -5,7 +5,7 @@ from test_web_support import ACTS_ON, MAYA, NOW, OPS, OWNER, STRANGER, TINO, Con
 from cases.models import StoreError, SwitchRecord
 
 APPROVE = "Approve and sign in to Azure"
-BUTTONS = ["Pause everything", "Pause changes", "Pause all messages"]
+BUTTONS = ["Pause everything", "Pause changes", "Pause all messages", "Pause the investigation"]
 
 
 class StandingPermissions(unittest.TestCase):
@@ -47,13 +47,13 @@ class TheKillSwitchPage(unittest.TestCase):
         self.console = Console()
         self.page = self.console.get("/ops/pause")
 
-    def test_three_levels_each_with_what_it_stops_and_a_button(self):
+    def test_four_levels_each_with_what_it_stops_and_a_button(self):
         self.assertEqual(self.page.status, 200)
         self.assertEqual(self.page.headings(1), ["The kill switch"])
-        self.assertEqual(self.page.headings(2), ["Everything", "Changes", "All messages"])
+        self.assertEqual(self.page.headings(2), ["Everything", "Changes", "All messages", "The investigation"])
         self.assertEqual([b[2] for f in self.page.forms() for b in f.buttons], BUTTONS)
         for sentence in ("No approval is accepted, no change is made in Azure and no message is sent.", "No approval is accepted and no change is made in Azure.",
-                         "No message is sent to anybody."):
+                         "No message is sent to anybody.", "The AI agents do not run and open no new case. Waste that Meternaut planted itself, approvals, changes and messages go on."):
             self.assertIn(f"What it stops: {sentence}", self.page.content)
         self.assertIn("A change that was already sent to Azure is not recalled.", self.page.content)
         self.assertIn("Only the last change of each switch is kept, with the person, the time and the reason. Earlier changes are not kept.", self.page.content)
@@ -61,7 +61,7 @@ class TheKillSwitchPage(unittest.TestCase):
         for overclaim in ("Every pull and resume is kept", "Other work goes on", "nothing else runs by itself", "The last change of each switch is kept"):
             self.assertNotIn(overclaim, self.page.content)
         self.assertIn("A switch that cannot be read counts as pulled.", self.page.content)
-        self.assertEqual(self.page.content.count("State: Running."), 3)
+        self.assertEqual(self.page.content.count("State: Running."), 4)
 
     def test_only_the_role_ops_may_open_it_and_pull_a_switch(self):
         for who in (MAYA, OWNER):
@@ -89,13 +89,15 @@ class TheKillSwitchPage(unittest.TestCase):
         self.assertEqual((record.name, record.paused, record.by, record.at, record.reason), ("changes", True, "Tino", "2026-11-05T09:00:00Z", "drill of the quarter"))
         self.assertEqual(self.console.store.switch_get("all"), SwitchRecord("all"))
         self.assertEqual(self.console.store.switch_get("messages"), SwitchRecord("messages"))
+        self.assertEqual(self.console.store.switch_get("investigation"), SwitchRecord("investigation"))
         self.assertIn("Paused", [p.text() for p in reply.root.find_all("p", class_="notice-title")])
         self.assertIn("Changes: paused by Tino.", reply.content)
         self.assertIn("State: Paused by Tino on Thu 5 Nov 2026 09:00 UTC (10:00 CET). Reason: drill of the quarter", reply.content)
-        self.assertEqual([b[2] for f in reply.forms() for b in f.buttons], ["Pause everything", "Resume changes", "Pause all messages"])
+        self.assertEqual([b[2] for f in reply.forms() for b in f.buttons], ["Pause everything", "Resume changes", "Pause all messages", "Pause the investigation"])
 
     def test_every_level_can_be_pulled_and_resumed(self):
-        for name, pull, resume in (("all", "Pause everything", "Resume everything"), ("changes", "Pause changes", "Resume changes"), ("messages", "Pause all messages", "Resume all messages")):
+        for name, pull, resume in (("all", "Pause everything", "Resume everything"), ("changes", "Pause changes", "Resume changes"), ("messages", "Pause all messages", "Resume all messages"),
+                                   ("investigation", "Pause the investigation", "Resume the investigation")):
             with self.subTest(name=name):
                 reply = self.console.submit(self.console.get("/ops/pause").form("/ops/pause", has_button=pull))
                 self.assertTrue(self.console.store.switch_get(name).paused)
@@ -127,7 +129,7 @@ class TheKillSwitchPage(unittest.TestCase):
         self.assertEqual(reply.root.find("input", id="reason-changes").attrs["value"], "x" * 201)
         self.assertEqual(reply.root.find("input", id="reason-all").attrs["value"], "", "the text is kept in the form that it was typed in")
 
-    def test_a_name_or_an_action_that_is_not_one_of_the_three_and_the_two_is_refused(self):
+    def test_a_name_or_an_action_that_is_not_one_of_the_four_and_the_two_is_refused(self):
         form = self.page.form("/ops/pause", has_button="Pause changes")
         before = snapshot(self.console.store)
         for name, action in (("everything", "pause"), ("", "pause"), ("changes", "stop"), ("changes", ""), ("changes", "PAUSE"), ("changes,all", "pause"), ("switches", "resume")):
@@ -135,7 +137,7 @@ class TheKillSwitchPage(unittest.TestCase):
                 tokens = self.console.get("/ops/pause").form("/ops/pause", has_button="Pause changes").fields["nonce"]
                 reply = self.console.post("/ops/pause", {"name": name, "action": action, "nonce": tokens})
                 self.assertEqual(reply.status, 400)
-                self.assertIn("The form did not name one of the three switches and one of the two actions.", reply.content)
+                self.assertIn("The form did not name one of the four switches and one of the two actions.", reply.content)
         self.assertEqual(snapshot(self.console.store), before)
 
     def test_the_name_in_the_record_is_the_signed_in_persons_and_nothing_that_was_posted(self):
@@ -150,7 +152,7 @@ class TheKillSwitchPage(unittest.TestCase):
         console = Console(store=FailingStore(fail={"switch_get"}, clock=lambda: NOW))
         reply = console.get("/ops/pause")
         self.assertEqual(reply.status, 200)
-        self.assertEqual(reply.content.count("State: Cannot be read: treated as pulled."), 3)
+        self.assertEqual(reply.content.count("State: Cannot be read: treated as pulled."), 4)
         self.assertEqual([b[2] for f in reply.forms() for b in f.buttons], BUTTONS, "there is no resume while a switch cannot be read")
         console.submit(reply.form("/ops/pause", has_button="Pause changes"))
         self.assertTrue(console.store.switch_records["changes"].paused, "a pull is written")

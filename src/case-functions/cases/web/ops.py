@@ -1,4 +1,4 @@
-"""The two pages for the platform team: the standing permissions (none exist, read-only) and the kill switch (three levels)."""
+"""The two pages for the platform team: the standing permissions (none exist, read-only) and the kill switch (four switches)."""
 from __future__ import annotations
 
 from ..models import SWITCH_NAMES, SwitchRecord
@@ -9,7 +9,7 @@ from .home import switch_text
 from .layout import block, button, error_summary, field, form, hidden, message_page, notice, page, paragraph
 
 PERMISSIONS_WHY = "Your role lets you see how Meternaut is allowed to act."
-PAUSE_WHY = "Your role ops lets you stop work at three levels."
+PAUSE_WHY = "Your role ops lets you stop work at four levels."
 
 
 def permissions(ctx: Ctx) -> Response:
@@ -65,7 +65,7 @@ def pause_save(ctx: Ctx) -> Response:
                             "Open the page again and use the form there.", back=("/ops/pause", "Back to the kill switch"))
     name, action, reason = form_data.get("name", ""), form_data.get("action", ""), form_data.get("reason", "")
     if name not in SWITCH_NAMES or action not in ("pause", "resume"):
-        return message_page(ctx, 400, "Nothing was changed", "The form did not name one of the three switches and one of the two actions.", back=("/ops/pause", "Back to the kill switch"))
+        return message_page(ctx, 400, "Nothing was changed", "The form did not name one of the four switches and one of the two actions.", back=("/ops/pause", "Back to the kill switch"))
     if len(reason) > MAX_REASON:
         return pause_page(ctx, errors={f"reason-{name}": f"The reason has {len(reason)} characters. The most is {MAX_REASON}."}, values=dict(form_data), status=400)
     try:

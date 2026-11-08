@@ -97,6 +97,7 @@ SWITCH = {
     "all": ("Everything", "No approval is accepted, no change is made in Azure and no message is sent.", "everything"),
     "changes": ("Changes", "No approval is accepted and no change is made in Azure.", "changes"),
     "messages": ("All messages", "No message is sent to anybody.", "all messages"),
+    "investigation": ("The investigation", "The AI agents do not run and open no new case. Waste that Meternaut planted itself, approvals, changes and messages go on.", "the investigation"),
 }
 
 

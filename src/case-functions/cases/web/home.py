@@ -1,4 +1,4 @@
-"""The start page: what needs your OK, what Meternaut did lately, the state of the three switches and what Meternaut can change in Azure."""
+"""The start page: what needs your OK, what Meternaut did lately, the state of the four switches and what Meternaut can change in Azure."""
 from __future__ import annotations
 
 from . import words
@@ -54,7 +54,7 @@ def home(ctx: Ctx) -> Response:
         Safe("<h2>What Meternaut can change in Azure</h2>"),
         paragraph(fmt("On its own, nothing: Meternaut holds no right to change Azure. When you approve a change, you sign in to Azure and Meternaut makes that one change "
                       "with your own permissions. The code makes only this change: {acts_on}.", acts_on=ctx.services.acts_on)),
-        Safe("<h2>The three switches</h2>"), switches_table(ctx),
+        Safe("<h2>The four switches</h2>"), switches_table(ctx),
     ]
     if ctx.principal.has("ops"):  # type: ignore[union-attr]
         parts.append(paragraph(link(ctx.url("/ops/pause"), "Open the kill switch")))

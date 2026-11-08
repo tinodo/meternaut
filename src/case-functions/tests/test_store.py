@@ -242,7 +242,7 @@ class StoreContract:
         self.assertFalse(self.store.action_claim(queued))
 
     def test_switches_start_released_and_keep_what_was_set(self):
-        self.assertEqual([s.paused for s in self.store.switches()], [False, False, False])
+        self.assertEqual([s.paused for s in self.store.switches()], [False, False, False, False])
         self.store.switch_put(SwitchRecord(name="changes", paused=True, by=OID, at="2026-11-05T09:00:00Z", reason="drill"))
         self.assertTrue(self.store.switch_get("changes").paused)
         self.assertFalse(self.store.switch_get("all").paused)

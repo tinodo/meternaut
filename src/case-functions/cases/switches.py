@@ -1,4 +1,4 @@
-"""The switches: three levels at which a person stops work, and the one rule for reading them."""
+"""The switches: the levels at which a person stops work (the switch `investigation` is the one that the agent harness and the drift check may also pull, and a person releases it), and the one rule for reading them."""
 from __future__ import annotations
 
 from .models import Store

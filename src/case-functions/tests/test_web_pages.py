@@ -62,25 +62,26 @@ class TheStartPage(unittest.TestCase):
                 console.store.plan_put(make_plan(**changes))
                 self.assertIn("Nothing needs your OK now.", console.get("/").content)
 
-    def test_the_state_of_the_three_switches_is_in_words(self):
+    def test_the_state_of_the_four_switches_is_in_words(self):
         console = seeded()
         reply = console.get("/")
-        self.assertEqual([r["State"] for r in reply.table("switches").rows], ["Running.", "Running.", "Running."])
-        self.assertEqual([r["Switch"] for r in reply.table("switches").rows], ["Everything", "Changes", "All messages"])
+        self.assertEqual([r["State"] for r in reply.table("switches").rows], ["Running.", "Running.", "Running.", "Running."])
+        self.assertEqual([r["Switch"] for r in reply.table("switches").rows], ["Everything", "Changes", "All messages", "The investigation"])
         console.store.switch_put(SwitchRecord("changes", True, "Otto", at(minutes=-5), "drill"))
         console.store.switch_put(SwitchRecord("messages", True, "", "", ""))
         rows = console.get("/").table("switches").rows
         self.assertEqual(rows[1]["State"], "Paused by Otto on Thu 5 Nov 2026 08:55 UTC (09:55 CET). Reason: drill")
         self.assertEqual(rows[2]["State"], "Paused on a time that is not recorded. No reason is recorded.")
         self.assertEqual([r["What it stops"] for r in rows], ["No approval is accepted, no change is made in Azure and no message is sent.",
-                                                              "No approval is accepted and no change is made in Azure.", "No message is sent to anybody."])
+                                                              "No approval is accepted and no change is made in Azure.", "No message is sent to anybody.",
+                                                              "The AI agents do not run and open no new case. Waste that Meternaut planted itself, approvals, changes and messages go on."])
 
     def test_a_switch_that_cannot_be_read_is_shown_as_pulled(self):
         console = Console(store=FailingStore(fail={"switch_get"}, clock=lambda: NOW))
         console.seed()
         reply = console.get("/")
         self.assertEqual(reply.status, 200)
-        self.assertEqual([r["State"] for r in reply.table("switches").rows], ["Cannot be read: treated as pulled."] * 3)
+        self.assertEqual([r["State"] for r in reply.table("switches").rows], ["Cannot be read: treated as pulled."] * 4)
 
     def test_what_meternaut_can_change_in_azure_is_said_in_the_services_words_and_nothing_is_said_of_a_right_of_its_own(self):
         reply = seeded().get("/")
