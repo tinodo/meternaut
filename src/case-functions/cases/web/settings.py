@@ -27,6 +27,7 @@ MUTE = re.compile(r"[a-z0-9][a-z0-9-]{0,23}")
 MAX_MUTES = 10
 MAX_BUDGET = 10
 MAX_PAUSE_DAYS = 366
+OFFERED = ("channel", "quiet_from", "quiet_to", "weekly_budget", "paused_until")  # the fields that the page offers; a problem with another one links to the first field
 
 
 def _values(record: SettingsRecord, now: dt.datetime) -> dict[str, str]:
@@ -146,7 +147,7 @@ def settings_page(ctx: Ctx, *, values: dict[str, str] | None = None, errors: dic
     if not ok:
         parts.append(notice("warning", "Your settings cannot be read", "The values below are the starting values, not what you saved."))
     if errors:
-        parts.append(error_summary(list(errors.items())))
+        parts.append(error_summary([(key if key in OFFERED else "channel", message) for key, message in errors.items()]))
     parts += [fmt('<div class="notice info" id="not-applied"><p>{text}</p></div>', text=NOT_APPLIED), _form(ctx, values, errors), _your_data(ctx)]
     return page(ctx, "Settings", join(block(p) for p in parts), current="/me/settings", status=status, why="these are the settings that belong to you")
 

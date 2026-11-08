@@ -1,16 +1,21 @@
 import re
 import unittest
 
-from test_web_support import (MAYA, NOW, STRANGER, TINO, Console, FailingStore, ScriptedDecider, ScriptedDelegate, at, make_action, make_case, make_decision, make_plan,
-                              make_run)
+from test_web_support import (MAYA, NOW, STRANGER, TINO, Console, FailingStore, ScriptedDecider, ScriptedDelegate, at, make_action, make_advice, make_advice_case, make_case,
+                              make_decision, make_plan, make_run)
 
 from cases.models import Begun, DecideResult, NoteRecord, SwitchRecord
 from cases.web import approval, layout
 
 APPROVE = "Approve and sign in to Azure"
-KINDS = ("declined", "asked", "not_mine", "ran", "ran_unconfirmed", "stopped", "azure_refused", "failed", "signin_failed", "step_up_failed", "refused_code", "refused_state",
-         "refused_role", "refused_paused", "expired", "duplicate", "error")
-SUCCESSES = ("declined", "asked", "not_mine", "ran", "ran_unconfirmed")
+KINDS = ("declined", "asked", "later", "acknowledged", "not_mine", "ran", "ran_unconfirmed", "stopped", "azure_refused", "failed", "signin_failed", "step_up_failed",
+         "refused_code", "refused_state", "refused_role", "refused_paused", "expired", "duplicate", "error")
+SUCCESSES = ("declined", "asked", "later", "acknowledged", "not_mine", "ran", "ran_unconfirmed")
+# The pages that show text that an AI wrote, or a list of requests: their footer says that an AI wrote them. The others (the settings, the notes, Operations, the permissions and the
+# kill switch) hold no AI text and their footer has no such sentence.
+NOT_AI = ("GET /me/settings", "GET /me/notes", "GET /ops", "GET /ops/permissions", "GET /ops/pause", "settings with problems", "settings saved", "notes with problems",
+          "kill switch paused", "pause degraded", "ops degraded", "store down case", "store down plan", "GET wrong role", "no such note", "no token", "413", "415", "405",
+          "GET /nothing", "denied")
 # What each step says in practice, for the kinds whose page shows the message of the result.
 MESSAGES = {
     "ran": "Deleted. Azure no longer lists the resource.",
@@ -75,8 +80,10 @@ def gallery() -> dict:
     console.store.note_put(NoteRecord("n1", TINO, "note", "A note", f"/subscriptions/{'1' * 8}-1111-1111-1111-{'1' * 12}/resourceGroups/g/providers/p.q/t/n", "x", "you", at(days=-1), at(days=9), 1))
     console.store.case_put(make_case(case_id="case0002", status="error", summary="a reason", models={}, run_id="run00001"))
     console.store.run_put(make_run(run_id="run00002", ok=False, reason="a reason", finished_at=None))
-    for path in ("/", "/ok/plan0001", "/why/case0001", "/why/case0002", "/history", "/history?run=run00001", "/history?run=%3C", "/me/decisions", "/me/activity", "/me/settings",
-                 "/me/notes", "/ops/permissions", "/ops/pause", "/nothing", "/ok/nothing", "/why/nothing"):
+    console.store.case_put(make_advice_case(case_id="case0005", plan_id="plan0005"))
+    console.store.plan_put(make_advice(plan_id="plan0005", case_id="case0005"))
+    for path in ("/", "/ok/plan0001", "/ok/plan0005", "/why/case0001", "/why/case0002", "/why/case0005", "/history", "/me/decisions", "/me/activity", "/me/settings",
+                 "/me/notes", "/ops", "/ops/runs", "/ops/runs?run=run00001", "/ops/runs?run=%3C", "/ops/permissions", "/ops/pause", "/nothing", "/ok/nothing", "/why/nothing"):
         pages[f"GET {path}"] = console.get(path)
     pages["GET refused"] = console.get("/ok/plan0001", oid=MAYA)
     pages["GET wrong role"] = console.get("/ops/pause", oid=MAYA)
@@ -95,16 +102,28 @@ def gallery() -> dict:
         pages[f"answer {kind}"] = console.submit(main, "Decline")
         pages[f"begin {kind}"] = console.submit(main, APPROVE)
         pages[f"return {kind}"] = console.get("/arm/return", query=RETURN)
-    form = console.get("/ok/plan0001").form("/ok/plan0001/ask")
-    pages["ask too long"] = console.submit(form, note="x" * 400)
+    form = console.get("/ok/plan0001").form("/ok/plan0001")
+    pages["ask too long"] = console.submit(form, "Ask or tell", note="x" * 400)
+    pages["ask empty"] = console.submit(form, "Ask or tell", note="")
+    form = console.get("/ok/plan0005").form("/ok/plan0005")
+    pages["advice ask too long"] = console.submit(form, "Ask or tell", note="x" * 400)
     form = console.get("/me/settings").form("/me/settings", has_button="Save settings")
-    pages["settings with problems"] = console.post("/me/settings", {**form.fields, "channel": "x", "mutes": "Bad!"})
+    pages["settings with problems"] = console.post("/me/settings", {**form.fields, "channel": "x", "weekly_budget": "99"})
     pages["settings saved"] = console.post("/me/settings", console.get("/me/settings").form("/me/settings", has_button="Save settings").fields)
     form = console.get("/me/notes").form("/me/notes", has_button="Save")
     pages["notes with problems"] = console.post("/me/notes", {**form.fields, "kind": "x"})
     console.store.switch_put(SwitchRecord("changes", True, "Otto", at(minutes=-5), "drill"))
     pages["paused plan"] = console.get("/ok/plan0001")
     pages["kill switch paused"] = console.get("/ops/pause")
+    console.store.switch_put(SwitchRecord("all", True, "Otto", at(minutes=-5), "drill"))
+    pages["paused advice"] = console.get("/ok/plan0005")
+    console.store.switch_put(SwitchRecord("all"))
+    console.store.plan_put(make_advice(plan_id="plan0005", case_id="case0005", state="consumed"))
+    pages["answered advice"] = console.get("/ok/plan0005")
+    console.store.plan_put(make_advice(plan_id="plan0005", case_id="case0005", state="declined"))
+    pages["declined advice"] = console.get("/ok/plan0005")
+    console.store.plan_put(make_advice(plan_id="plan0005", case_id="case0005", expires_at=at(minutes=-1)))
+    pages["expired advice"] = console.get("/ok/plan0005")
     console.store.plan_put(make_plan(state="approved"))
     pages["approved plan"] = console.get("/ok/plan0001")
     console.store.plan_put(make_plan(expires_at=at(minutes=-1)))
@@ -122,6 +141,8 @@ def gallery() -> dict:
     degraded = Console(store=FailingStore(fail={"plans_open", "runs_recent", "cases_recent", "switch_get"}, clock=lambda: NOW))
     pages["home degraded"] = degraded.get("/")
     pages["history degraded"] = degraded.get("/history")
+    pages["ops degraded"] = degraded.get("/ops")
+    pages["runs degraded"] = degraded.get("/ops/runs")
     pages["pause degraded"] = degraded.get("/ops/pause")
     return pages
 
@@ -326,8 +347,9 @@ class TheWords(unittest.TestCase):
                 self.assertNotIn("?", reply.root.find("main").text())
 
     def test_nothing_is_called_saved_where_money_is_in_question_and_money_is_in_us_dollars(self):
-        names = ["GET /", "GET /ok/plan0001", "GET /why/case0001", "GET /history", "GET /me/decisions", "GET /me/activity", "paused plan", "approved plan", "expired plan",
-                 "consumed plan", "failed plan"] + [name for name in self.pages if name.startswith(("answer ", "begin ", "return "))]
+        names = ["GET /", "GET /ok/plan0001", "GET /ok/plan0005", "GET /why/case0001", "GET /why/case0005", "GET /history", "GET /me/decisions", "GET /me/activity", "paused plan",
+                 "paused advice", "approved plan", "expired plan", "consumed plan", "failed plan", "answered advice"] + [name for name in self.pages
+                                                                                                                           if name.startswith(("answer ", "begin ", "return "))]
         for name in names:
             with self.subTest(page=name):
                 content = self.pages[name].content
@@ -350,25 +372,28 @@ class TheWords(unittest.TestCase):
                     self.assertNotIn(word, text)
                 self.assertNotIn("/withdraw", reply.text)
 
-    def test_a_person_to_talk_to_is_in_the_same_place_of_every_page_that_has_a_footer(self):
+    def test_the_footer_is_one_line_with_a_person_to_talk_to_as_plain_text_on_every_page_that_has_a_footer(self):
         for name, reply in self.pages.items():
             with self.subTest(page=name):
-                paragraphs = reply.root.find("footer").find_all("p")
-                self.assertTrue(paragraphs[-2].text().startswith("Talk to a person. Write to Tino, Olga, Otto."), paragraphs[-2].text())
-                self.assertTrue(paragraphs[-3].text().startswith("Why you are seeing this."), paragraphs[-3].text())
+                footer = reply.root.find("footer")
+                paragraphs = footer.find_all("p")
+                self.assertEqual(len(paragraphs), 1, "the footer is one line")
+                self.assertEqual(paragraphs[0].attrs["class"], "footer-line")
+                text = paragraphs[0].text()
+                self.assertIn("You see this because ", text)
+                self.assertRegex(text, r"Talk to a person: [A-Z][a-z]+ \([a-z]+@example\.com\)\.$")
+                self.assertEqual(footer.find_all("a"), [], "no link in the footer")
 
-    def test_the_pages_that_show_ai_text_carry_the_ai_line_and_the_others_still_say_that_a_person_approves(self):
-        line = "Written by AI (models: model-detective-x, model-skeptic-y). A person approves every change."
+    def test_the_pages_that_show_ai_text_carry_the_ai_line_and_the_others_do_not(self):
+        line = "Written by an AI (models: model-detective-x, model-skeptic-y); a person approves every change. You see this because "
         for name, reply in self.pages.items():
             with self.subTest(page=name):
-                last = reply.root.find("footer").find_all("p")[-1].text()
-                if name in ("GET /", "GET /why/case0001", "GET /why/case0002", "GET /history", "GET /history?run=run00001") or name.startswith(("answer ", "begin ", "return ", "GET /ok",
-                                                                                                                                              "paused plan", "approved plan",
-                                                                                                                                              "expired plan", "consumed plan",
-                                                                                                                                              "failed plan")):
-                    self.assertEqual(last, line)
+                text = reply.root.find("footer").find_all("p")[0].text()
+                if name in NOT_AI:
+                    self.assertTrue(text.startswith("You see this because "), text)
+                    self.assertNotIn("Written by an AI", text)
                 else:
-                    self.assertIn(last, (line, "A person approves every change."))
+                    self.assertTrue(text.startswith(line), text)
 
     def test_a_page_that_refuses_says_that_nothing_changed(self):
         refusing = ("refused_code", "refused_state", "refused_paused", "expired", "duplicate", "stopped", "azure_refused", "signin_failed", "step_up_failed")
@@ -378,10 +403,12 @@ class TheWords(unittest.TestCase):
                 content = self.pages[name].content.lower()
                 self.assertTrue(any(phrase in content for phrase in ("nothing has changed", "nothing was changed", "nothing was sent", "nothing is approved")), content[:300])
 
-    def test_the_pages_with_no_ai_text_say_only_that_a_person_approves_every_change(self):
-        for name in ("GET /me/settings", "GET /me/notes", "GET /me/decisions", "GET /me/activity", "GET /ops/pause", "GET /ops/permissions"):
-            footer = self.pages[name].root.find("footer").find_all("p")[-1].text()
-            self.assertEqual(footer, "A person approves every change.", name)
+    def test_a_request_of_advice_says_that_nothing_changes_in_azure_and_never_talks_of_signing_in(self):
+        page = self.pages["GET /ok/plan0005"]
+        self.assertIn("Nothing changes in Azure.", page.content)
+        for gone in ("sign in to Azure", "Approve and sign in"):
+            self.assertNotIn(gone, page.main.text())
+        self.assertEqual([b[2] for f in page.forms() for b in f.buttons], ["Worth acting on", "Not worth it", "This is not mine", "Ask or tell", "Decide later"])
 
 
 if __name__ == "__main__":

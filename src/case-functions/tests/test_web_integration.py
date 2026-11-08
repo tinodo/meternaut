@@ -143,14 +143,16 @@ class WithTheRealLoop(unittest.TestCase):
     def test_the_page_shows_the_plan_that_the_loop_made(self):
         reply = self.console.get(self.path)
         self.assertEqual(reply.status, 200)
-        self.assertEqual(reply.headings(1), [self.plan.title])
-        found = reply.summary(0)
-        self.assertEqual(found["What changes"], self.plan.what_changes)
-        self.assertEqual(found["Estimated saving a month"], "About 7.17 US dollars. This is an estimate from cost lines of the last 30 days.")
-        self.assertIn("A deleted disk cannot be restored and its data is lost.", found["How to undo it"])
-        self.assertIn("This change cannot be undone.", found["How to undo it"])
-        self.assertIn(f"code {self.plan.code}", reply.content)
+        self.assertEqual(reply.headings(1), ["Delete the unattached disk planted-disk-1 in group meternaut-test-rg"])
+        self.assertIn("Expected saving: about 7.17 US dollars a month", reply.main.find("p", class_="lead").text())
+        found = reply.summary(1)
+        self.assertEqual(found["What changes"], "Deletes the disk planted-disk-1 in resource group meternaut-test-rg. Nothing else changes.")
+        self.assertEqual(found["Undo"], "This cannot be undone.")
+        self.assertIn("Meternaut holds no right of its own to change anything.", found["Who does it"])
+        (form,) = reply.forms()
+        self.assertEqual(form.fields["code"], self.plan.code)
         self.assertEqual(self.console.store.case_get("k1").status, "awaiting_ok")
+        self.assertEqual(self.plan.family, "delete-disk")
 
     def test_an_approval_goes_through_the_sign_in_and_the_change_is_made_with_the_token_of_the_person(self):
         redirect = self.sign_in(note="Go on")
@@ -167,7 +169,7 @@ class WithTheRealLoop(unittest.TestCase):
         plan, answers, action = self.open_requests()
         self.assertEqual((plan.state, answers, action), ("open", [], None), "nothing is recorded before the person is back")
         self.assertEqual((self.azure.calls, self.entra.asked, self.azure.exists), ([], [], True))
-        self.assertEqual(len(self.console.get(self.path).forms()), 3, "the request is open until the person is back")
+        self.assertEqual(len(self.console.get(self.path).forms()), 1, "the request is open until the person is back")
         self.entra.nonce = query["nonce"]
         returned = self.come_back({"code": CODE, "state": query["state"], "session_state": "a-session"})
         self.assertEqual((returned.status, returned.headings(1)), (200, ["The change was made"]))
@@ -184,23 +186,21 @@ class WithTheRealLoop(unittest.TestCase):
         redirect, returned = self.approve(note="Go on")
         _, query = self.sign_in_address(redirect)
         plan_page = self.console.get(self.path)
-        self.assertIn("Used", [p.text() for p in plan_page.main.find_all("p", class_="notice-title")])
-        self.assertIn("What happened to the change", plan_page.headings(2))
+        self.assertEqual([p.text() for p in plan_page.main.find_all("p", class_="notice-title")], ["Done"])
+        self.assertIn("Approved by Tino, and made with their own Azure rights.", plan_page.content)
         self.assertEqual(plan_page.forms(), [])
         self.assertEqual(rows(plan_page)["State"], "Done.")
         self.assertEqual(rows(plan_page)["Result"], "Deleted. Azure no longer lists the resource.")
-        decisions = self.console.get("/me/decisions")
-        row = decisions.table("decisions").rows[0]
-        self.assertEqual(row["Your answer"], "Your OK Your note: Go on")
-        for fragment in ("Done.", "Deleted. Azure no longer lists the resource.", "A deletion cannot be undone."):
-            self.assertIn(fragment, row["What came of it"])
-        activity = self.console.get("/me/activity")
-        self.assertEqual(rows(activity)["State"], "Done.")
-        self.assertEqual(activity.forms(), [])
+        history = self.console.get("/history")
+        lines = [li.text() for li in history.main.find_all("li")]
+        self.assertIn(f"Tino approved: Delete the unattached disk planted-disk-1 in group {GROUP}.", lines)
+        self.assertIn(f"Change made: Delete the unattached disk planted-disk-1 in group {GROUP}. Deleted. Azure no longer lists the resource.", lines)
+        for old in ("/me/decisions", "/me/activity"):
+            self.assertEqual([li.text() for li in self.console.get(old).main.find_all("li")], lines, "the old addresses answer with the same page")
         notebook = self.console.get("/why/k1")
-        self.assertEqual(notebook.summary(3)["State of the plan"], "Used. The change was made with the approver's own permissions, and a plan runs once.")
-        self.assertIn("Nothing needs your OK now.", self.console.get("/").content)
-        for page in (returned, plan_page, decisions, activity, notebook):
+        self.assertEqual(rows(notebook)["State of the plan"], "Used. The change was made with the approver's own permissions, and a plan runs once.")
+        self.assertIn("Nothing waits for you.", self.console.get("/").content)
+        for page in (returned, plan_page, history, notebook):
             for secret in (ACCESS, CODE, query["state"], query["nonce"], query["code_challenge"]):
                 self.assertNotIn(secret, page.text)
 
@@ -212,7 +212,7 @@ class WithTheRealLoop(unittest.TestCase):
         self.assertNotIn(ACCESS, returned.text)
         self.assertTrue(self.azure.exists)
         page = self.console.get(self.path)
-        self.assertIn("Failed", [p.text() for p in page.main.find_all("p", class_="notice-title")])
+        self.assertEqual([p.text() for p in page.main.find_all("p", class_="notice-title")], ["Not made"])
         self.assertEqual(rows(page)["State"], "Failed.")
         self.assertEqual(page.forms(), [])
 
@@ -223,7 +223,7 @@ class WithTheRealLoop(unittest.TestCase):
         plan, answers, action = self.open_requests()
         self.assertEqual((plan.state, answers, action), ("open", [], None))
         self.assertEqual((self.azure.calls, self.entra.asked), ([], []))
-        self.assertEqual(len(self.console.get(self.path).forms()), 3)
+        self.assertEqual(len(self.console.get(self.path).forms()), 1)
 
     def test_a_sign_in_with_another_account_is_refused_and_nothing_is_approved(self):
         _, query = self.sign_in_address(self.sign_in())
@@ -315,18 +315,22 @@ class WithTheRealLoop(unittest.TestCase):
         self.assertEqual((self.entra.asked, self.azure.calls), ([], []))
 
     def test_a_question_then_an_approval_leaves_one_answer(self):
-        ask = self.console.get(self.path).form(self.path + "/ask")
-        self.assertEqual(self.console.submit(ask, note="Is it the standby?").headings(1), ["Your question is recorded"])
+        ask = self.console.get(self.path).form(self.path)
+        self.assertEqual(self.console.submit(ask, "Ask or tell", note="Is it the standby?").headings(1), ["Recorded: your words"])
+        self.assertEqual([d.decision for d in self.console.store.decisions_of_plan(self.plan.plan_id)], ["ask"])
         self.assertEqual(self.approve()[1].headings(1), ["The change was made"])
         answers = self.console.store.decisions_of_plan(self.plan.plan_id)
         self.assertEqual([d.decision for d in answers], ["approve"])
 
     def test_a_decline_closes_the_request_and_the_case(self):
-        declined = self.console.submit(self.form(button="Decline"), "Decline", note="Not now")
+        declined = self.console.submit(self.form(button="Decline"), "Decline", note="Not now", reason="handled")
         self.assertEqual(declined.headings(1), ["Declined"])
         self.assertEqual(self.console.store.plan_get(self.plan.plan_id).state, "declined")
         self.assertEqual(self.console.store.case_get("k1").status, "declined")
-        self.assertEqual(self.console.get("/me/decisions").table("decisions").rows[0]["Your answer"], "No, leave it as it is Your note: Not now")
+        (record,) = self.console.store.decisions_of_plan(self.plan.plan_id)
+        self.assertEqual((record.decision, record.note, record.reason), ("decline", "Not now", "handled"))
+        lines = [li.text() for li in self.console.get("/history").main.find_all("li")]
+        self.assertIn(f"Tino declined: Delete the unattached disk planted-disk-1 in group {GROUP}. Reason: it is already handled.", lines)
 
     def test_a_person_who_is_not_named_is_refused_by_the_page_before_the_loop(self):
         self.assertEqual(self.console.get(self.path, oid=MAYA).status, 403)

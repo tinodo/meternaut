@@ -88,7 +88,10 @@ def runs_page(ctx: Ctx) -> Response:
         cases = [case for case in cases if case.run_id == selected]
     parts: list[object] = [
         Safe("<h1>Runs and cases</h1>"),
-        paragraph("Every run of the search and every case that the runs looked at, newest first. Money is in US dollars. An estimated saving is an estimate from cost lines of the last 30 days.", "lead"),
+        paragraph("Every run of the search and every case that the runs looked at, newest first. This page shows what was found and what happened to it. It is not a cost report.", "lead"),
+        paragraph("A case is a resource in the subscription that the search found and that may be unused or too big. Meternaut only reads it and does not use it. "
+                  "Nothing is changed until a person approves a plan."),
+        paragraph("Money is in US dollars. An estimated saving is an estimate from cost lines of the last 30 days."),
         Safe("<h2>Runs</h2>"),
     ]
     if not runs_ok:
