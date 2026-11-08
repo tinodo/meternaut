@@ -295,6 +295,11 @@ var driftHeartbeatQuery = replace(loadTextContent('alerts/drift-heartbeat.kql'),
 
 // One rule for each signal, evaluated every 15 minutes or less often (the cheapest kind of log alert rule). The window is as long as the interval, so that a row is counted once; the heartbeat looks back two days
 // and counts a window of its own inside the query. Severity 1 is for what is a breach or a stopped control, 2 for what is a warning.
+// A rule that counts events does not close itself (autoMitigate false: every window that holds an event is told to the owner). The heartbeat is a state and not an event, a silence that goes on for days, so it is
+// the one rule that does close itself: it tells the owner once when the app's check falls silent and once when it is heard again, and not every hour in between.
+var statefulRules = [
+  'drift-heartbeat'
+]
 var rules = [
   {
     name: 'refusals'
@@ -426,7 +431,7 @@ resource alertRules 'Microsoft.Insights/scheduledQueryRules@2023-12-01' = [for r
         }
       ]
     }
-    autoMitigate: false
+    autoMitigate: contains(statefulRules, rule.name)
     actions: {
       actionGroups: [
         actionGroup.id

@@ -81,10 +81,13 @@ class TheActionsAreInTheHub(unittest.TestCase):
         for word in ("environment/governance/main.bicep", "environment/aigateway/telemetry.bicep", "cannot be previewed yet", "OTLPLogsEndpoint", "the action base turns the ingestion on"):
             self.assertIn(word, block, word)
 
-    def test_the_checks_step_compiles_and_lints_both_templates_and_runs_the_selftest_of_the_drift_tool(self):
-        block = step(HUB, "The tools and the templates pass their checks")
-        for word in ("environment/aigateway/telemetry.bicep", "environment/governance/main.bicep", '--outfile "$RUNNER_TEMP/governance.json"', '--outfile "$RUNNER_TEMP/gateway-telemetry.json"', "python3 tools/drift-check.py --selftest"):
+    def test_the_templates_step_compiles_both_templates_for_the_check_of_their_files_and_repeats_no_test_nor_lint(self):
+        block = step(HUB, "The templates compile, for the check of their parameter files")
+        for word in ("environment/aigateway/telemetry.bicep", "environment/governance/main.bicep", '--outfile "$RUNNER_TEMP/governance.json"', '--outfile "$RUNNER_TEMP/gateway-telemetry.json"'):
             self.assertIn(word, block, word)
+        script = "\n".join(line for line in block.split("run:")[1].splitlines() if not line.strip().startswith("#"))
+        for word in ("unittest", "workflow-lint", "bicep lint", "--selftest", "--stdout"):
+            self.assertNotIn(word, script, f"{word}: CI ran it for exactly this commit, and the first steps of the job read that it did")
 
     def test_no_step_of_the_ai_security_changes_anything_but_what_it_says(self):
         for name in ("Work out the settings of the AI security", "Read the AI security back from Azure", "Read the telemetry exporter back from Azure", "Check for drift from the control plane, with reads only",

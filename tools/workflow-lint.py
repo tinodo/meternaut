@@ -14,9 +14,11 @@ The rules, each of which a workflow file can break by accident and a reviewer ca
   6. Only deploy-hub.yml and drift.yml sign in to Azure (`azure/login`, `az login`). deploy-hub.yml runs on `workflow_dispatch`
      alone, with exactly one job whose `if:` is exactly the owner-and-main guard, a `concurrency` group and no
      `continue-on-error: true`. drift.yml, the check that can only read (docs/proposals/10-ai-security-and-governance.md),
-     runs on `workflow_dispatch` and may also run on a timer (`schedule`); it has exactly one job whose `if:` is exactly
-     the main-and-(owner-or-timer) guard, a `concurrency` group, no `continue-on-error: true`, and it never signs in
-     with the deploy identity: the read-only identity is another one, with a role that cannot change anything.
+     runs on `workflow_dispatch` alone for now, and may run on a timer (`schedule`) once the constant DRIFT_ON_A_TIMER is
+     set to True, which is done in the change that adds the timer after the read-only identity exists (environment/BOOTSTRAP.md,
+     step G4): until then a `schedule:` is refused. It has exactly one job whose `if:` is exactly the main-and-(owner-or-timer)
+     guard, a `concurrency` group, no `continue-on-error: true`, and it never signs in with the deploy identity: the
+     read-only identity is another one, with a role that cannot change anything.
 
   7. No quoted value, and no list or map in brackets, goes on over several lines, and no character that some readers
      take for a line break: this tool reads one line at a time, so a line inside such a value could pass for a setting
@@ -44,6 +46,9 @@ OWNER_GUARD = "github.actor == 'tinodo' && github.ref == 'refs/heads/main'"
 # The check that can only read may run on a timer, and a timer has no person behind it: the guard asks for main, and then for the owner or the timer. The identity that it signs in with has a federated
 # credential for the main branch alone and a role that cannot change anything, so a run elsewhere could not sign in, and a run that does sign in could change nothing.
 DRIFT_GUARD = "github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.actor == 'tinodo')"
+# False until the owner has made the read-only identity (environment/BOOTSTRAP.md, step G4): a timer would start a run, spend minutes of GitHub Actions that are limited (AGENTS.md rule 35) and sign in with an
+# identity that does not exist. The change that adds `schedule:` to drift.yml sets this to True, and nothing else lets a timer through.
+DRIFT_ON_A_TIMER = False
 GUARDS = {DEPLOY: OWNER_GUARD, DRIFT: DRIFT_GUARD}
 # The deploy identity's secret: the read-only check never names it.
 DEPLOY_IDENTITY = "secrets.AZURE_CLIENT_ID"
@@ -285,8 +290,12 @@ def lint_file(path: Path) -> list[str]:
         guard = GUARDS[name]
         if name == DEPLOY and triggers != {"workflow_dispatch"}:
             add(1, f"must run on `workflow_dispatch` alone, not on {sorted(triggers) or 'nothing'}")
-        if name == DRIFT and not ({"workflow_dispatch"} <= triggers <= {"workflow_dispatch", "schedule"}):
-            add(1, f"must run on `workflow_dispatch`, and may run on a timer (`schedule`), and on nothing else, not on {sorted(triggers) or 'nothing'}")
+        if name == DRIFT and not ({"workflow_dispatch"} <= triggers <= ({"workflow_dispatch", "schedule"} if DRIFT_ON_A_TIMER else {"workflow_dispatch"})):
+            if DRIFT_ON_A_TIMER:
+                add(1, f"must run on `workflow_dispatch`, and may run on a timer (`schedule`), and on nothing else, not on {sorted(triggers) or 'nothing'}")
+            else:
+                add(1, f"must run on `workflow_dispatch` alone, not on {sorted(triggers) or 'nothing'}: a timer is added only after the read-only identity exists (environment/BOOTSTRAP.md, step G4), "
+                       "in the change that sets DRIFT_ON_A_TIMER in this tool")
         text = "\n".join(lines)
         jobs, odd = jobs_of(lines)
         for number in odd:

@@ -124,11 +124,12 @@ class TheAlertRules(unittest.TestCase):
         self.assertNotIn("customProperties", CODE)
         self.assertNotIn("emailSubject", CODE)
 
-    def test_a_rule_is_one_log_alert_on_the_workspace_that_does_not_close_itself_and_tells_the_action_group(self):
+    def test_a_rule_is_one_log_alert_on_the_workspace_that_tells_the_action_group_and_only_the_heartbeat_closes_itself(self):
         rule = re.search(r"(?ms)^resource alertRules .*?^\}\]", CODE).group(0)
-        for word in ("kind: 'LogAlert'", "autoMitigate: false", "timeAggregation: 'Count'", "scopes: [\n      workspace.id\n    ]", "actionGroups: [\n        actionGroup.id\n      ]", "enabled: true",
+        for word in ("kind: 'LogAlert'", "autoMitigate: contains(statefulRules, rule.name)", "timeAggregation: 'Count'", "scopes: [\n      workspace.id\n    ]", "actionGroups: [\n        actionGroup.id\n      ]", "enabled: true",
                      "minFailingPeriodsToAlert: 1"):
             self.assertIn(word, rule, word)
+        self.assertIn("var statefulRules = [\n  'drift-heartbeat'\n]", CODE, "a silence that goes on is told once when it begins and once when it ends; an event is told every time")
         self.assertIn("if (rule.create)", rule)
         self.assertIn("create: !empty(callers)", CODE, "the rule that watches for a call outside the access list needs the identities that the workflow reads")
 

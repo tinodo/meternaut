@@ -303,7 +303,7 @@ class TheReleaseThatTheActionCasesRecords(unittest.TestCase):
         self.assertRegex(CASES, r"(?m)^@maxLength\(64\)\nparam packageSha256 string = ''$")
         for word in ("BUILD_COMMIT", "PACKAGE_SHA256", "buildSettings", "concat(empty(buildCommit) ? [] : [", "empty(packageSha256) ? [] : ["):
             self.assertIn(word, CASES, word)
-        code = re.sub(r"(?m)^\s*//.*$", "", CASES)
+        code = re.sub(r"(?m)^\s*//.*$|^@description\(.*\)\s*$", "", CASES)
         self.assertNotIn("meternaut-build-commit", code, "the tags say which release has been published, and the workflow writes them after the publish: a deploy that is followed by a publish that fails must not say otherwise")
         self.assertNotIn("buildTags", code)
 

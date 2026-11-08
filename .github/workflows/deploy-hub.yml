@@ -10,6 +10,8 @@ name: Hub
 # Nothing starts this workflow but a click on "Run workflow" in the Actions tab. It signs
 # in to Azure with OpenID Connect and a credential that exists only for the main branch, so a copy of this file on any
 # other branch cannot sign in. "what-if" reads and changes nothing.
+# It does not run the tests again (the owner's quota of GitHub Actions minutes is limited: AGENTS.md rule 35). The unit tests, the workflow lint, the Bicep lint and the selftest of the drift tool run once, in CI
+# (checks.yml), when a commit is pushed to main, and the first step of every run here asks GitHub, read only, whether CI passed for exactly this commit and stops the run, whatever its action, when it did not.
 # What it does, and what to set up once before the first run: environment/BOOTSTRAP.md.
 
 on:
@@ -57,6 +59,8 @@ on:
 
 permissions:
   contents: read
+  # Only to read whether the checks of CI passed for this commit (the step "The checks of CI have passed for this commit"): the list of the runs of one workflow. Nothing here writes to the repository or to Actions.
+  actions: read
   id-token: write
 
 concurrency:
@@ -111,6 +115,28 @@ jobs:
           fi
           echo "The input public_ai_gateway_requested is set: the owner has asked in writing for a public AI Gateway."
 
+      - name: The checks of CI have passed for this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # This run does not repeat the tests. The unit tests of the tools and of the app, the workflow lint, the Bicep lint and the selftest of the drift tool run once, in CI (checks.yml), when a commit is pushed
+          # to main: about five of the eight minutes that a run of this workflow took on average were those tests, and the owner's minutes of GitHub Actions are limited (AGENTS.md rule 35). What is asked here instead takes seconds,
+          # and it is asked of every action, the ones that only read as well: has the workflow checks.yml a completed, successful run for exactly this commit, started by a push to main? A run for a pull request, for another
+          # commit, one that is still going and one that failed do not count, and nothing else of GitHub is looked at. It is a read of the list of runs with the run's own token (the permission actions: read); nothing is started or changed.
+          if ! grep -Eq '^[0-9a-f]{40}$' <<< "$GITHUB_SHA"; then
+            echo "::error::The commit of this run is not a git commit id, so the checks of CI cannot be looked up. Nothing was changed."
+            exit 1
+          fi
+          if ! passed=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/checks.yml/runs?head_sha=$GITHUB_SHA&event=push&branch=main&status=success&per_page=1" --jq '.total_count' 2>&1); then
+            echo "::error::GitHub did not say whether the checks of CI passed for commit $GITHUB_SHA ($(head -n 1 <<< "$passed")). Nothing was changed. Run the Hub again in a minute; if this stops it again, the workflow needs the permission actions: read."
+            exit 1
+          fi
+          if ! grep -Eq '^[0-9]+$' <<< "$passed" || [ "$passed" -lt 1 ]; then
+            echo "::error::The checks have not passed for this commit: push it and let CI finish, then run the Hub again. What was looked for is a completed, successful run of the workflow checks.yml for commit $GITHUB_SHA that a push to main started; this run does not repeat the tests (AGENTS.md rule 35). Nothing was changed."
+            exit 1
+          fi
+          echo "The checks of CI (checks.yml) have passed for commit $GITHUB_SHA, so this run does not repeat them."
+
       - name: Check out the repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -121,16 +147,10 @@ jobs:
         with:
           python-version: "3.13"
 
-      - name: The tools and the templates pass their checks
+      - name: The templates compile, for the check of their parameter files
         run: |
-          python3 -m unittest discover -s tools/tests
-          python3 -m unittest discover -s src/case-functions/tests
-          python3 tools/workflow-lint.py
-          python3 tools/drift-check.py --selftest
-          for template in environment/main.bicep environment/base/main.bicep environment/foundry/main.bicep environment/cases/main.bicep environment/cases/planted.bicep environment/operator/main.bicep environment/aigateway/main.bicep environment/aigateway/subnet.bicep environment/aigateway/telemetry.bicep environment/governance/main.bicep; do
-            az bicep build --file "$template" --stdout > /dev/null
-            az bicep lint --file "$template"
-          done
+          # Only what this run needs from Bicep: each template compiled, because the builder of the parameter files checks every file against the template that it is for (tools/environment-params.py check). The unit tests,
+          # the workflow lint, the Bicep lint and the selftest of the drift tool are not run here: CI ran them for exactly this commit, which the second step of the job has just read.
           az bicep build --file environment/main.bicep --outfile "$RUNNER_TEMP/environment.json"
           az bicep build --file environment/base/main.bicep --outfile "$RUNNER_TEMP/base.json"
           az bicep build --file environment/foundry/main.bicep --outfile "$RUNNER_TEMP/foundry.json"
@@ -394,7 +414,7 @@ jobs:
         run: |
           # The files of the governance template (the policy at the group, the alert rules, the workbook) and of the telemetry exporter, from the access list of the gateway (environment/aigateway/contracts.json), which the builder
           # checks against the models, the gateway's limits and the template's roles. They are built in a folder of their own, so that the files of the other actions are what they were. What the files need from Azure is read here and
-          # nothing is changed: the object ids of the three identities of the access list (the cases app's, the Foundry project's and the Operator's: the alert rule that watches the gateway for a call from outside the list is made
+          # nothing is changed: the object ids of the identities of the access list (the cases app's, the Foundry project's and the Operator's: the alert rule that watches the gateway for a call from outside the list is made
           # from them, and the action governance is refused, by name, while one is missing), whether a diagnostic setting of the Foundry resource that sends to a workspace is there already (the landing zone's policy makes one, and a
           # template never makes a second: AGENTS.md rule 19), and whether the tenant offers the preview initiative that the template may assign.
           group="/subscriptions/$ENV_SUBSCRIPTION_ID/resourceGroups/$ENV_RESOURCE_GROUP"
@@ -2126,7 +2146,7 @@ jobs:
               exit 1
             fi
             if [ "$state" != "Registered" ]; then
-              echo "::error::The resource provider $provider is ${state:-not registered} in the subscription, and the AI security needs it. A person who may register a resource provider in the subscription (Contributor or Owner there) registers it once, with their own sign-in: environment/BOOTSTRAP.md, the section on the AI security, step G2 (az provider register --namespace $provider). The deploy identity holds no right on the subscription, so it cannot. Nothing was changed."
+              echo "::error::The resource provider $provider is ${state:-not registered} in the subscription, and the AI security needs it. A person who may register a resource provider in the subscription (Contributor or Owner there) registers it once, with their own sign-in: environment/BOOTSTRAP.md, the section on the AI security,                             step G2 (az provider register --namespace $provider). The deploy identity holds no right on the subscription, so it cannot. Nothing was changed."
               exit 1
             fi
           done

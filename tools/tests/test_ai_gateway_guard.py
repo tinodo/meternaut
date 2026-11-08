@@ -72,7 +72,7 @@ class TheGuardStep(unittest.TestCase):
     def test_it_is_the_first_step_of_the_job_so_that_nothing_is_checked_out_read_or_signed_in_to_before_it(self):
         names = [name for name, _ in steps()]
         self.assertEqual(names[0], GUARD)
-        self.assertEqual(names.index("Check out the repository"), 1)
+        self.assertEqual(names.index("Check out the repository"), 2, "after the refusal of the public gateway and the read of the checks of CI, which need no checkout")
         self.assertLess(names.index(GUARD), names.index("Sign in to Azure"))
         self.assertNotIn("uses:", guard(), "it runs a shell and nothing else: no action is downloaded for it")
 

@@ -45,7 +45,7 @@ class TheReportHasTheSharedShape(unittest.TestCase):
         results, closed, _, ctx = world()
         for control_id, result in results.items():
             self.assertEqual(set(result), {"control", "layer", "state", "detail", "readAt"}, control_id)
-            self.assertRegex(control_id, r"^I-[a-z-]+$", "the ids of this half begin with I-, as the agent harness' begin with A-")
+            self.assertRegex(control_id, r"^I-[a-z0-9-]+$", "the ids of this half begin with I-, as the agent harness' begin with A-")
             self.assertIn(result["layer"], ("L1", "L2", "L3", "L4"))
             self.assertIn(result["state"], ("PASS", "FAIL", "UNKNOWN"))
             self.assertGreater(len(result["detail"]), 20, "a control says what it read")
@@ -118,6 +118,31 @@ class EveryBreakageIsFoundByTheControlThatWatchesIt(unittest.TestCase):
         self.failing("I-gateway-models", lambda e: e[f"{workspace}/modelProviders"]["value"].append({"name": "other", "properties": {}}), ("another model provider",))
         self.failing("I-gateway-models", lambda e: e[f"{workspace}/modelProviders/foundry/models"]["value"][0]["properties"]["policies"][0].update(hateSeverity="High"), ("content safety",))
         self.failing("I-gateway-models", lambda e: e[f"{workspace}/modelProviders/foundry/models"]["value"].pop(), ("is not on the gateway",))
+
+    def test_agent_365_logging_that_was_switched_off_is_a_finding_and_what_the_tenant_decides_is_never_one(self):
+        self.failing("I-agent-365", lambda e: e[ACCOUNT]["properties"].update(a365LoggingEnabled=False), ("a365LoggingEnabled is false", "outside the workflow"), closed=False)
+        results, closed, az, _ = world()
+        self.assertEqual(results["I-agent-365"]["state"], "PASS")
+        self.assertIn("portal only", results["I-agent-365"]["detail"])
+        self.assertIn("Microsoft 365 admin center", results["I-agent-365"]["detail"])
+        self.assertEqual([call for call in az.calls if "a365" in " ".join(call)], [], "nothing is asked of Azure by that name: the flag is a property of the Foundry resource that is read")
+        for what, change in (("no setting", lambda e: [e[ACCOUNT]["properties"].pop(k) for k in ("a365LoggingEnabled", "a365Status")]), ("a status that is not Enabled", lambda e: e[ACCOUNT]["properties"].update(a365Status="Pending"))):
+            with self.subTest(what=what):
+                results, closed, _, _ = world(change)
+                self.assertEqual(results["I-agent-365"]["state"], "UNKNOWN", results["I-agent-365"]["detail"])
+                self.assertEqual(closed, set())
+
+    def test_agent_365_is_read_at_the_generally_available_version_and_nothing_is_written_to_the_resource(self):
+        self.assertRegex(SOURCE, r'FOUNDRY_API = "20\d\d-\d\d-\d\d"\n', "a version without the word preview")
+        block = SOURCE.split('@control("I-agent-365", "L3")')[1].split("@control(")[0]
+        self.assertIn("FOUNDRY_API", block)
+        self.assertNotIn("preview", block.lower().replace("preview initiative", ""), "no preview API version in the control")
+        for word in ("patch", "put", "post(", "send("):
+            self.assertNotIn(word, block)
+
+    def test_the_flag_of_agent_365_is_read_by_the_drift_check_and_set_by_no_template_here(self):
+        for name in ("environment/foundry/main.bicep", "environment/governance/main.bicep", "environment/aigateway/telemetry.bicep"):
+            self.assertNotIn("a365LoggingEnabled", (ROOT / name).read_text(encoding="utf-8").split("targetScope")[-1], f"{name}: the flag is read by the drift check and set by nobody here")
 
     def test_a_principal_on_the_gateway_that_the_access_list_does_not_name_or_a_wider_role(self):
         path = f"{GATEWAY}/providers/Microsoft.Authorization/roleAssignments"
@@ -447,9 +472,9 @@ class TheCommandLine(unittest.TestCase):
     def test_a_clean_run_exits_0_prints_the_table_and_writes_the_json_and_the_summary(self):
         code, out, err, report, summary = self.run_main()
         self.assertEqual((code, err), (0, ""))
-        self.assertIn("### Drift check, control plane: 18 PASS, 0 FAIL, 3 UNKNOWN", out)
+        self.assertIn("### Drift check, control plane: 19 PASS, 0 FAIL, 3 UNKNOWN", out)
         self.assertEqual(summary, out.rstrip("\n") + "\n" if not out.endswith("\n\n") else out[:-1])
-        self.assertEqual(report["summary"], {"PASS": 18, "FAIL": 0, "UNKNOWN": 3})
+        self.assertEqual(report["summary"], {"PASS": 19, "FAIL": 0, "UNKNOWN": 3})
         self.assertEqual(report["failClosed"], [])
         self.assertEqual(len(report["controls"]), len(dc.CONTROLS))
 

@@ -13,8 +13,9 @@ how to undo it; this tool is the same steps with a read first.
   G3  The AI Gateway's own identity holds Monitoring Metrics Publisher on the component's data collection rule, so that the telemetry exporter can send. The rule is in a resource group that the platform
       manages, behind a deny assignment: no template and no Hub action can give the role. It needs the action base (which turns the ingestion on) to have run, and the endpoints a few minutes after it.
   G4  The read-only identity of the independent drift check (the workflow drift.yml): a user-assigned managed identity, with a federated credential for the main branch of this repository, copied from the deploy
-      identity's own, and the role Reader on the project's resource group, which covers the Foundry resource and the AI Gateway in it, and no other role. It lives next to the deploy identity (--identity-group),
-      not in the project's group, where the deploy identity could change it. The repository variable DRIFT_CLIENT_ID is then set to its client id (the last line says how).
+      identity's own, and the role Reader on the project's resource group, which reaches the Foundry resource and the AI Gateway in it (read again at each of them, and given on the resource itself where the
+      group's role does not reach), and no other role. It lives next to the deploy identity (--identity-group), not in the project's group, where the deploy identity could change it, and it is not the deploy
+      identity. The repository variable DRIFT_CLIENT_ID is then set to its client id (the last line says how).
 
 `check` only reads. `grant` is a dry run unless it is given --apply, then makes only what is missing, each step once, reads again and says what it found. It adds and never deletes or changes. It refuses to run in a
 pipeline (GITHUB_ACTIONS=true): a hand step is the one thing that does not go through a workflow. With --apply and no terminal it needs --yes. Nothing secret is read or printed: ids and states only.
@@ -103,6 +104,7 @@ class Setup:
         self.deploy_principal, self.identity_group, self.deploy_identity, self.sleep = deploy_principal.lower(), identity_group, deploy_identity, sleep
         params = load_params()
         self.gateway = params.aigateway_name(subscription, group)
+        self.account = params.foundry_names(subscription, group)["foundry_account_name"]
 
     @property
     def group_id(self) -> str:
@@ -137,6 +139,11 @@ class Setup:
         return ["identity", "federated-credential", "create", "--identity-name", DRIFT_IDENTITY, "--resource-group", self.identity_group, "--name", CREDENTIAL_NAME, "--issuer", ISSUER,
                 "--subject", subject, "--audiences", AUDIENCE, "--output", "none"]
 
+    def covers(self, scope: str, target: str) -> bool:
+        """Whether a role assignment at `scope` reaches `target`: it is the target itself, a scope above it, the root, or a management group (which sits above every subscription)."""
+        above = scope.lower().rstrip("/")
+        return above == target.lower() or target.lower().startswith(above + "/") or scope == "/" or above.startswith("/providers/microsoft.management/managementgroups/")
+
     # G1
     def policy_role(self) -> Item:
         if not self.deploy_principal:
@@ -145,13 +152,7 @@ class Setup:
             held = self.roles_of(self.deploy_principal, self.group_id, inherited=True)
         except Problem as e:
             return Item("G1", UNREADABLE, f"The roles of the deploy identity on the group could not be read: {e}")
-        group = self.group_id.lower()
-
-        def applies(scope: str) -> bool:
-            above = scope.lower().rstrip("/")
-            return above == group or group.startswith(above + "/") or scope == "/" or above.startswith("/providers/microsoft.management/managementgroups/")
-
-        good = any(role in (RESOURCE_POLICY_CONTRIBUTOR, OWNER_ROLE) and applies(scope) for scope, role in held)
+        good = any(role in (RESOURCE_POLICY_CONTRIBUTOR, OWNER_ROLE) and self.covers(scope, self.group_id) for scope, role in held)
         if good:
             return Item("G1", PRESENT, "The deploy identity holds a role on the group that can write a policy assignment (Resource Policy Contributor, or Owner).")
         return Item("G1", MISSING, "The deploy identity holds no role that can write a policy assignment on the group. It would be given Resource Policy Contributor on the group.",
@@ -213,7 +214,7 @@ class Setup:
             items.append(Item("G4", MISSING, f"The identity {DRIFT_IDENTITY} is not there. It would be made in {self.identity_group}.",
                               ["identity", "create", "--name", DRIFT_IDENTITY, "--resource-group", self.identity_group, "--location", location, "--output", "none"]))
             items.append(Item("G4", MISSING, f"It would get a federated credential {CREDENTIAL_NAME} with the subject of the deploy identity's own (the main branch of this repository).", self.credential(subject)))
-            items.append(Item("G4", MISSING, "It would get the role Reader on the project's resource group, which covers the Foundry resource and the AI Gateway in it, and no other role.", None, "reader"))
+            items.append(Item("G4", MISSING, "It would get the role Reader on the project's resource group, which holds the Foundry resource of the agents and the AI Gateway, so it reaches both (read again at each of them afterwards), and no other role.", None, "reader"))
             return items
         items.append(Item("G4", PRESENT, f"The identity {DRIFT_IDENTITY} is there."))
         try:
@@ -240,6 +241,19 @@ class Setup:
             items.append(Item("G4", PRESENT, "It holds the role Reader on the project's resource group."))
         else:
             items.append(Item("G4", MISSING, "It does not hold the role Reader on the project's resource group. It would be given.", self.assignment(principal, READER_ROLE, self.group_id)))
+        # The two things that the check reads most are the Foundry resource of the agents and the AI Gateway. Both are in the project's group, so the role of the group reaches them: that is read here, at each
+        # of them, and a place where it does not reach (a resource that an estate keeps in another group) gets the role on the resource itself.
+        for what, resource in ((f"the Foundry resource {self.account}", f"{self.group_id}/providers/Microsoft.CognitiveServices/accounts/{self.account}"),
+                               (f"the AI Gateway {self.gateway}", f"{self.group_id}/providers/Microsoft.ApiManagement/aigateways/{self.gateway}")):
+            try:
+                reach = any(role == READER_ROLE and self.covers(scope, resource) for scope, role in self.roles_of(principal, resource, inherited=True))
+            except Problem as e:
+                items.append(Item("G4", UNREADABLE, f"The roles of {DRIFT_IDENTITY} on {what} could not be read: {e}"))
+                continue
+            if reach:
+                items.append(Item("G4", PRESENT, f"The role Reader reaches {what}."))
+            else:
+                items.append(Item("G4", MISSING, f"The role Reader does not reach {what}. It would be given on the resource itself.", self.assignment(principal, READER_ROLE, resource)))
         items.append(Item("G4", PRESENT, f"Its client id is {client}: set the repository variable DRIFT_CLIENT_ID to it (gh variable set DRIFT_CLIENT_ID --body {client})."))
         return items
 

@@ -6,6 +6,7 @@ import textwrap
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
+from unittest import mock
 
 try:
     import yaml
@@ -168,6 +169,13 @@ class Lint(unittest.TestCase):
         self.assertFinding(self.lint(GOOD_CHECKS.replace("contents: read", "id-token: write")), "id-token: write")
         self.assertFinding(self.lint(GOOD_DEPLOY.replace("id-token: write", "contents: write"), "deploy-hub.yml"), "contents: write")
 
+    def test_the_hub_may_read_the_runs_of_actions_to_see_that_ci_passed_and_may_not_write_them(self):
+        reading = GOOD_DEPLOY.replace("  contents: read\n", "  contents: read\n  actions: read\n")
+        self.assertIn("  actions: read\n", reading)
+        self.assertEqual(self.lint(reading, "deploy-hub.yml"), [])
+        self.assertFinding(self.lint(GOOD_DEPLOY.replace("  contents: read\n", "  contents: read\n  actions: write\n"), "deploy-hub.yml"), "actions: write")
+        self.assertFinding(self.lint(GOOD_DEPLOY.replace("  contents: read\n", "  contents: read\n  actions: write\n"), "drift.yml"), "actions: write")
+
     def test_risky_triggers_are_refused(self):
         for event in ("pull_request_target", "workflow_run", "issue_comment"):
             self.assertFinding(self.lint(GOOD_CHECKS.replace("  pull_request:\n", f"  {event}:\n")), event)
@@ -178,16 +186,24 @@ class Lint(unittest.TestCase):
         self.assertFinding(self.lint(GOOD_CHECKS + "      - run: az login --service-principal\n"), "only deploy-hub.yml and drift.yml may")
         self.assertFinding(self.lint(GOOD_DEPLOY, "other.yml"), "only deploy-hub.yml and drift.yml may")
 
-    def test_the_read_only_drift_workflow_passes_and_may_run_on_a_timer_as_well_as_by_hand(self):
+    def test_the_read_only_drift_workflow_passes_by_hand_and_a_timer_is_refused_until_the_constant_lets_one_through(self):
         self.assertEqual(self.lint(GOOD_DRIFT, "drift.yml"), [])
         timer = GOOD_DRIFT.replace("on:\n  workflow_dispatch:\n", "on:\n  workflow_dispatch:\n  schedule:\n    - cron: '17 3 * * *'\n")
         self.assertIn("schedule:", timer)
-        self.assertEqual(self.lint(timer, "drift.yml"), [])
+        self.assertFinding(self.lint(timer, "drift.yml"), "must run on `workflow_dispatch` alone")
+        self.assertFinding(self.lint(timer, "drift.yml"), "read-only identity exists")
+        self.assertFalse(wl.DRIFT_ON_A_TIMER, "no timer until the owner has made the read-only identity: the change that adds `schedule:` to drift.yml sets the constant in the same commit")
+        with mock.patch.object(wl, "DRIFT_ON_A_TIMER", True):
+            self.assertEqual(self.lint(timer, "drift.yml"), [])
+            self.assertEqual(self.lint(GOOD_DRIFT, "drift.yml"), [])
 
-    def test_the_read_only_drift_workflow_starts_by_hand_or_by_timer_and_by_nothing_else(self):
+    def test_the_read_only_drift_workflow_starts_by_hand_and_by_nothing_else_and_by_a_timer_only_when_the_constant_says_so(self):
         for trigger in ("on:\n  push:\n    branches: [main]\n", "on:\n  workflow_dispatch:\n  push:\n", "on:\n  schedule:\n    - cron: '17 3 * * *'\n", "on: pull_request\n"):
-            problems = self.lint(GOOD_DRIFT.replace("on:\n  workflow_dispatch:\n", trigger), "drift.yml")
-            self.assertFinding(problems, "must run on `workflow_dispatch`, and may run on a timer")
+            with self.subTest(trigger=trigger):
+                problems = self.lint(GOOD_DRIFT.replace("on:\n  workflow_dispatch:\n", trigger), "drift.yml")
+                self.assertFinding(problems, "must run on `workflow_dispatch` alone")
+                with mock.patch.object(wl, "DRIFT_ON_A_TIMER", True):
+                    self.assertFinding(self.lint(GOOD_DRIFT.replace("on:\n  workflow_dispatch:\n", trigger), "drift.yml"), "must run on `workflow_dispatch`, and may run on a timer")
         self.assertFinding(self.lint(GOOD_DRIFT.replace("on:\n  workflow_dispatch:\n", "on:\n  workflow_dispatch:\n  workflow_run:\n"), "drift.yml"), "workflow_run")
 
     def test_the_read_only_drift_workflow_is_guarded_for_what_the_guard_says(self):

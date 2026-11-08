@@ -237,6 +237,36 @@ class Check(unittest.TestCase):
         self.assertIn("G4  UNREADABLE", run.text)
         self.assertIn("--identity-group", run.text)
 
+    def test_the_role_reader_is_read_at_the_foundry_resource_and_at_the_ai_gateway_and_reaches_both_through_the_group(self):
+        azure = Azure()
+        azure.identity = {"principalId": NEW_OBJECT, "clientId": NEW_CLIENT}
+        azure.credentials = [SUBJECT]
+        azure.roles = [(NEW_OBJECT, GROUP_ID, setup.READER_ROLE)]
+        run = Run(azure)
+        self.assertEqual(run("check", *ALL, "--step", "G4"), 0, run.text)
+        account = params.foundry_names(SUB, GROUP)["foundry_account_name"]
+        self.assertIn(f"The role Reader reaches the Foundry resource {account}.", run.text)
+        self.assertIn(f"The role Reader reaches the AI Gateway {GATEWAY}.", run.text)
+        scopes = [option(call, "--scope") for call in azure.calls if call[:3] == ["role", "assignment", "list"] and "--include-inherited" in call]
+        self.assertIn(f"{GROUP_ID}/providers/Microsoft.CognitiveServices/accounts/{account}", scopes)
+        self.assertIn(f"{GROUP_ID}/providers/Microsoft.ApiManagement/aigateways/{GATEWAY}", scopes)
+        self.assertEqual(azure.writes(), [])
+
+    def test_a_resource_that_the_role_of_the_group_does_not_reach_gets_the_role_on_the_resource_itself_and_never_a_write_role(self):
+        azure = Azure()
+        azure.identity = {"principalId": NEW_OBJECT, "clientId": NEW_CLIENT}
+        azure.credentials = [SUBJECT]
+        azure.roles = [(NEW_OBJECT, f"/subscriptions/{SUB}/resourceGroups/rg-elsewhere", setup.READER_ROLE)]
+        run = Run(azure)
+        self.assertEqual(run("check", *ALL, "--step", "G4"), 1)
+        self.assertIn("G4  MISSING    It does not hold the role Reader on the project's resource group.", run.text)
+        self.assertIn("The role Reader does not reach the Foundry resource", run.text)
+        self.assertIn("The role Reader does not reach the AI Gateway", run.text)
+        self.assertEqual(run("grant", *ALL, "--step", "G4", "--apply", "--yes"), 0, run.text)
+        mine = {role for principal, _, role in azure.roles if principal == NEW_OBJECT}
+        self.assertEqual(mine, {setup.READER_ROLE}, "the read-only identity holds Reader and nothing that can write")
+        self.assertTrue(azure.have(NEW_OBJECT, GROUP_ID, setup.READER_ROLE))
+
 
 class Grant(unittest.TestCase):
     def test_a_dry_run_makes_nothing_and_says_what_it_would_run(self):

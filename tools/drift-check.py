@@ -936,6 +936,26 @@ def entra_agents(ctx: Context) -> Outcome:
     return passed(f"Every one of the {len(identities)} agent identities has an owner or a sponsor.")
 
 
+@control("I-agent-365", "L3")
+def agent365(ctx: Context) -> Outcome:
+    """Microsoft Agent 365 registers and logs the prompt agents of a Foundry resource by itself while the resource's logging flag is on (docs/proposals/10-ai-security-and-governance.md). The flag and its status
+    are read at the generally available API version, on 2026-11-08, from the real resource: it was true and Enabled with nothing in the template that sets it, so the platform's default is what is read here, and nothing
+    is written. What no API shows (the licence, the one-time consent of a Global Administrator, the registry's list of agents in the Microsoft 365 admin center) is for a person to look at."""
+    properties = ctx.read(f"The Foundry resource {ctx.account}", ctx.account_path, FOUNDRY_API).get("properties") or {}
+    logging_on, status = properties.get("a365LoggingEnabled"), properties.get("a365Status")
+    if logging_on is None and status is None:
+        return unknown("The Foundry resource reports no Agent 365 setting (a365LoggingEnabled and a365Status are not in its properties), so it is not known whether its agents are registered and logged. "
+                       "The registry itself is in the Microsoft 365 admin center, and no API of this check shows it: a person looks.")
+    if logging_on is False:
+        return failed("Agent 365 logging is off on the Foundry resource (a365LoggingEnabled is false): its agents are neither registered nor logged by Agent 365. Nothing in the repository switches it off, so it was "
+                      "changed outside the workflow.", closed=False)
+    if logging_on is True and status == "Enabled":
+        return passed("Agent 365 logging is on for the Foundry resource (a365LoggingEnabled true) and the platform reports its status Enabled. That the tenant holds the licence, that the one-time consent of a "
+                      "Global Administrator was given and that the registry lists the two agents is read in the Microsoft 365 admin center: portal only, a person checks.")
+    return unknown(f"Agent 365 logging is {'on' if logging_on is True else 'not reported'} and the platform reports the status {plain(status) or 'nothing'}, not Enabled: that depends on the tenant (the licence, "
+                   "the one-time consent of a Global Administrator), which this check cannot read.")
+
+
 @control("I-release", "L4")
 def release(ctx: Context) -> Outcome:
     tags = ctx.read("The cases app", ctx.site_path, WEB_API).get("tags") or {}
@@ -1204,7 +1224,8 @@ def fake_estate(models: list[dict], policies: list[dict], names: dict[str, str])
     connection_models = json.dumps([{"name": m["name"], "properties": {"model": {"name": m["name"], "version": m["version"], "format": "OpenAI"}}} for m in models])
     estate: dict[str, object] = {
         account_path: {"kind": "AIServices", "identity": {"principalId": SELFTEST_IDS["account"]},
-                       "properties": {"publicNetworkAccess": "Disabled", "disableLocalAuth": True, "allowProjectManagement": True, "networkAcls": {"defaultAction": "Deny", "ipRules": [], "virtualNetworkRules": []}}},
+                       "properties": {"publicNetworkAccess": "Disabled", "disableLocalAuth": True, "allowProjectManagement": True, "networkAcls": {"defaultAction": "Deny", "ipRules": [], "virtualNetworkRules": []},
+                                      "a365LoggingEnabled": True, "a365Status": "Enabled"}},
         f"{account_path}/deployments": {"value": [{"name": m["name"], "sku": {"name": m["sku"], "capacity": m.get("agentCapacity", m["capacity"])},
                                                   "properties": {"model": {"name": m["name"], "version": m["version"]}, "raiPolicyName": guardrail, "versionUpgradeOption": "NoAutoUpgrade"}} for m in models]},
         f"{account_path}/raiPolicies/{guardrail}": {"properties": {"mode": "Blocking", "basePolicyName": "Microsoft.DefaultV2",
@@ -1360,10 +1381,15 @@ def selftest() -> int:
         ("I-release", lambda e: e[f"{base}/providers/Microsoft.Web/sites/{names['cases_app']}"]["tags"].update({"meternaut-build-commit": "c" * 40, "meternaut-package-sha256": "d" * 64})),
         ("I-alerts", lambda e: e[f"{base}/providers/Microsoft.Insights/scheduledQueryRules"]["value"].pop()),
         ("I-diagnostics", lambda e: e[f"{account_path}/providers/Microsoft.Insights/diagnosticSettings"]["value"].clear()),
+        ("I-agent-365", lambda e: e[account_path]["properties"].update(a365LoggingEnabled=False)),
     ]
     for control_id, change in cases:
         if world(change).get(control_id) != FAIL:
             broken.append(f"{control_id} did not say FAIL when its thing was broken")
+    for what, change in (("reports no Agent 365 setting", lambda e: [e[account_path]["properties"].pop(k) for k in ("a365LoggingEnabled", "a365Status")]),
+                         ("reports the status Pending", lambda e: e[account_path]["properties"].update(a365Status="Pending"))):
+        if world(change).get("I-agent-365") != UNKNOWN:
+            broken.append(f"I-agent-365 did not say UNKNOWN when the Foundry resource {what}")
     new_deny = [{"Effect": "deny", "Assignment": "Some-Policy", "Reference": "ref", "Type": "microsoft.storage/storageaccounts", "Resources": 1}]
     if world(graph_rows=new_deny).get("I-policy-compliance") != FAIL:
         broken.append("I-policy-compliance did not say FAIL for a Deny policy that was not accepted")
