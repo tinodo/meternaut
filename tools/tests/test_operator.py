@@ -2167,7 +2167,7 @@ class PublishingPhaseOneRecord(unittest.TestCase):
     def test_it_says_how_the_usage_package_is_built_which_flag_is_tried_second_and_why_that_is_safe(self):
         for words in ("Neither package rides in the request", "the usage app's package is 7.0 MB zipped, and the cases app's is 614,068 bytes zipped", "this record first said about 2 MB for it, which was an estimate and was wrong",
                       "So each is built inside the container from the hash-locked lock file of its app",
-                      "hash-locked [`src/usage-functions/requirements.txt`](../../src/usage-functions/requirements.txt)", "[`tools/build-function-app.sh`](../../tools/build-function-app.sh)",
+                      "The probe builds the usage app's libraries from the hash-locked `src/usage-functions/requirements.txt` (since 2026-11-07 the probe builds the cases app's libraries from `src/case-functions/requirements.txt`)", "[`tools/build-function-app.sh`](../../tools/build-function-app.sh)",
                       "`--only-binary=:all: --require-hashes`", "Only the lock file rides in the request of the probe", "the image has Python 3.12", "Whether the build works from 3.12 was the main unknown of this phase, and the probe of 2026-11-06 answered it: it works, and without the flag",
                       "(inferred from pip 25.0.1, and the probe confirmed it)",
                       "pip is told `--python-version 3.13`", "so the probe tries that first", "`--ignore-requires-python`", "The flag is safe only because every version is pinned and every file is checked against its hash",
