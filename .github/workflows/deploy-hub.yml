@@ -229,12 +229,13 @@ jobs:
 
       - name: Work out which release the cases app is given, the commit and the digest of its own files
         id: release
-        if: inputs.action == 'cases'
+        if: inputs.action == 'cases' || inputs.action == 'what-if'
         run: |
           # The release that this run deploys (docs/proposals/10-ai-security-and-governance.md, "The release that runs"): the git commit that the run was made from, and the digest of the app's own files at that commit
           # (tools/source-digest.py: the files that the build puts in the package; the libraries are pinned by hash in requirements.txt, which is one of them, and a zip file would change with every run). The template
           # gives them to the app as the settings BUILD_COMMIT and PACKAGE_SHA256, and a later step writes them as tags of the app once the code has been published and the app answers, which is what a reader of the
-          # resource group (and tools/drift-check.py) sees. Values, not secrets: nothing here is read from Azure.
+          # resource group (and tools/drift-check.py) sees. Values, not secrets: nothing here is read from Azure. The preview (what-if) works it out too, so that it shows the two settings of the app changing to this
+          # commit and not going away (a template that is given no value writes no setting, and a preview without one would say that the app loses them).
           commit="$GITHUB_SHA"
           if ! grep -Eq '^[0-9a-f]{40}$' <<< "$commit"; then
             echo "::error::The commit of this run is not a git commit id, so the release cannot be recorded. Nothing was changed."
@@ -558,6 +559,7 @@ jobs:
         env:
           FOUNDRY_ACCOUNT: ${{ steps.params.outputs.foundry_account_name }}
           GATEWAY_NAME: ${{ steps.params.outputs.aigateway_name }}
+          INSIGHTS_NAME: ${{ steps.params.outputs.appinsights_name }}
         run: |
           # The two templates of the AI security (docs/proposals/10-ai-security-and-governance.md). Each reads what another action makes, so each is previewed only when that is there, and the lines say what is missing.
           echo "::group::The policy, the alert rules, the workbook and the table retention of the AI security, in the project's resource group (the action governance)"
@@ -572,8 +574,9 @@ jobs:
           echo "::endgroup::"
           echo "::group::The telemetry exporter of the AI Gateway, in the project's resource group (the action gateway-telemetry)"
           group="/subscriptions/$ENV_SUBSCRIPTION_ID/resourceGroups/$ENV_RESOURCE_GROUP"
+          component="$group/providers/Microsoft.Insights/components/$INSIGHTS_NAME"
           gateway_found=$(az rest --method get --url "https://management.azure.com${group}/providers/Microsoft.ApiManagement/aigateways/${GATEWAY_NAME}?api-version=2025-09-01-preview" --query name --output tsv 2> /dev/null || true)
-          endpoint=$(az rest --method get --url "https://management.azure.com${group}/providers/Microsoft.Insights/components/appi-meternaut?api-version=2020-02-02" --query properties.OTLPLogsEndpoint --output tsv 2> /dev/null || true)
+          endpoint=$(az rest --method get --url "https://management.azure.com${component}?api-version=2020-02-02" --query properties.OTLPLogsEndpoint --output tsv 2> /dev/null || true)
           if [ "$gateway_found" != "$GATEWAY_NAME" ]; then
             echo "The telemetry exporter cannot be previewed yet: it is a child of the AI Gateway, and the action aigateway makes the gateway."
           elif [ -z "$endpoint" ] || [ "$endpoint" = "None" ]; then
@@ -1293,6 +1296,7 @@ jobs:
             echo "- Commit: \`$BUILD_COMMIT\`"
             echo "- Digest of the app's own files: \`$PACKAGE_SHA256\` (the setting \`PACKAGE_SHA256\` and the tag \`meternaut-package-sha256\`; \`python3 tools/source-digest.py src/case-functions\` works it out for any commit, and it is what \`tools/drift-check.py\` compares with main)"
             echo "- SHA-256 of the sources archive that this run sent to the Operator, which built the package from it and the hash-locked libraries inside it: \`$ZIP_SHA256\` (an archive holds the time of each file, so this one differs from run to run: it says what this run sent)"
+            echo "- SHA-256 of the exact package that the Operator built and published: the line \`the cases package that is published has the SHA-256 ...\` of the publish step, above in this summary (it is the hash of the bytes that went to the app, and it differs from run to run too)"
             echo "- Read back from Azure: the tags \`meternaut-build-commit\` and \`meternaut-package-sha256\` of the function app are these two values."
           } >> "$GITHUB_STEP_SUMMARY"
           echo "The release is recorded: commit $BUILD_COMMIT, digest of the app's files $PACKAGE_SHA256."
@@ -2332,6 +2336,9 @@ jobs:
           # The run fails when a control fails, and the summary says which of them are fail-closed (the agents run outside what was designed): then a person switches the investigation off until the cause is fixed.
           # The policy exemptions and the non-compliant Deny policies are judged against what the owner accepted (the repository variables DRIFT_ACCEPTED_EXEMPTIONS and DRIFT_ACCEPTED_DENY): unset, those lines say UNKNOWN and
           # print what they found, so that he can accept it. The release that the cases app runs is compared with this commit of main, by its tags and by the digest of the app's own files.
+          # HOOK, the in-network half: the live agents of the Foundry project (their definitions, tools and instructions against environment/agents.lock.json) can only be read from inside the network, because the project's
+          # data plane is private. The change of the agent harness brings tools/agents-drift.py for that, and adds one step for this action right after this one, run by the Operator the way the check actions are
+          # (operator/run-tool.sh). It writes the same report shape ({control, layer, state, detail, readAt}, ids with the prefix A-) and nothing here waits for it.
           flags=()
           if [ -n "${DRIFT_ACCEPTED_EXEMPTIONS:-}" ]; then flags+=(--accepted-exemptions "$DRIFT_ACCEPTED_EXEMPTIONS"); fi
           if [ -n "${DRIFT_ACCEPTED_DENY:-}" ]; then flags+=(--accepted-deny "$DRIFT_ACCEPTED_DENY"); fi

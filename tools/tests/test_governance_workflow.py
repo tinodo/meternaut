@@ -190,7 +190,8 @@ if [ "$1" = "tools/source-digest.py" ]; then printf '%s\\n' "$FAKE_DIGEST"; fi
         block = step(HUB, "Work out the settings")
         self.assertIn("BUILD_COMMIT: ${{ steps.release.outputs.build_commit }}", block)
         self.assertIn("PACKAGE_SHA256: ${{ steps.release.outputs.package_sha256 }}", block)
-        self.assertIn("if: inputs.action == 'cases'", step(HUB, "Work out which release the cases app is given, the commit and the digest of its own files"))
+        self.assertIn("if: inputs.action == 'cases' || inputs.action == 'what-if'", step(HUB, "Work out which release the cases app is given, the commit and the digest of its own files"),
+                      "the preview works the release out too: a template that is given no value writes no setting, and a preview without one would say that the app loses them")
 
     AZ = """#!/bin/bash
 echo "az $*" >> "$FAKE_LOG"

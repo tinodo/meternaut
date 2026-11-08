@@ -5,7 +5,8 @@ name: Drift
 # of this repository, and the role Reader on the project's resource group (and nothing that writes: the check makes GET requests and two queries, and the tool refuses every other call). It is not the deploy
 # identity, which can change Azure: the Hub action drift-check runs the same tool with that one, and this workflow exists so that the check can also run on a timer without a right to change anything.
 # The identity is made once by a person (environment/BOOTSTRAP.md, step G4), and the repository variable DRIFT_CLIENT_ID names it; until then the first step stops the run and says so.
-# Started by hand for now. A `schedule:` line is added only after the identity exists: the lint (tools/workflow-lint.py) and the guard tests already accept a timer for this workflow and for no other.
+# Started by hand for now. A `schedule:` line is added only after the identity exists, in a change of its own: the lint (tools/workflow-lint.py) refuses one until that change sets its constant DRIFT_ON_A_TIMER to True, and
+# then accepts a timer for this workflow and for no other (the minutes of GitHub Actions are limited: AGENTS.md rule 35).
 # The run fails when a control fails, and the summary says which of them are fail-closed.
 
 on:

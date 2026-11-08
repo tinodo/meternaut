@@ -374,6 +374,7 @@ class PublishScript(unittest.TestCase):
             "ok: python3 -m ensurepip makes pip 25.0.1 in the work folder",
             f"ok: the sources are unpacked: {len(CASES_SOURCE_FILES)} files",
             f"ok: the cases package is built: {len(CASES_SOURCE_FILES) + 3} files, 1.0 MB zipped, N s, hashes ok",
+            f"ok: the cases package that is published has the SHA-256 {hashlib.sha256(ran.posted).hexdigest()}",
             "ok: the deployment site took the package (HTTP 200, attempt 1 of 5)",
             "publish-done: exit code 0",
         ])
@@ -395,7 +396,7 @@ class PublishScript(unittest.TestCase):
         ran = self.run_publish({"PUBLISH_PLAN": "Flex"}, kind="cases")
         self.assertEqual((ran.done.returncode, ran.done.stderr), (0, ""), ran.done.stdout)
         size = len(source_zip(CASES_SOURCE_FILES))
-        self.assertEqual([re.sub(r", \d+ s, hashes ok$", ", N s, hashes ok", line) for line in ran.lines], [
+        self.assertEqual([re.sub(r" [0-9a-f]{64}$", " HASH", re.sub(r", \d+ s, hashes ok$", ", N s, hashes ok", line)) for line in ran.lines], [
             "ok: python3 3.12.7",
             f"ok: cases-source.zip is {size} bytes, as sent",
             "ok: az login as the deploy identity with the OpenID Connect token",
@@ -407,6 +408,7 @@ class PublishScript(unittest.TestCase):
             "ok: python3 -m ensurepip makes pip 25.0.1 in the work folder",
             f"ok: the sources are unpacked: {len(CASES_SOURCE_FILES)} files",
             f"ok: the cases package is built: {len(CASES_SOURCE_FILES) + 3} files, 1.0 MB zipped, N s, hashes ok",
+            "ok: the cases package that is published has the SHA-256 HASH",
             f"ok: the cases package is published to {CASES_APP} (attempt 1 of 3)",
             "publish-done: exit code 0",
         ])
@@ -640,7 +642,7 @@ class PublishScript(unittest.TestCase):
         self.assertEqual(ran.done.returncode, 0, ran.done.stdout)
         self.assertEqual(len(ran.calls_of("az functionapp deployment")), 3)
         self.assertEqual(ran.calls_of("sleep"), ["sleep 60", "sleep 60", "sleep 20"])
-        self.assertEqual([line for line in ran.lines if "publish" in line and not line.startswith("  ")],
+        self.assertEqual([line for line in ran.lines if "publish" in line and not line.startswith("  ") and "SHA-256" not in line],
                          ["FAIL: the publish did not go through (attempt 1 of 3)", "FAIL: the publish did not go through (attempt 2 of 3)", f"ok: the cases package is published to {APP} (attempt 3 of 3)",
                           "publish-done: exit code 0"])
         self.assertIn("  ERROR: Zip deployment failed. Deployment was successful but Reset all workers endpoint responded with Name or service not known ", ran.lines)
