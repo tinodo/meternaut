@@ -167,15 +167,13 @@ class TheConsoleHostNameInTheParameterBuilder(unittest.TestCase):
             self.assertEqual((lines["cases_public_network_access"], lines["console_host_set"], lines["door_in_operator"]), (access, "true" if given.strip() else "false", inside), (access, given))
             self.assertEqual(values(files["cases.parameters.json"])["casesAppPublicNetworkAccess"], access, (access, given))
 
-    def test_every_combination_of_the_two_apps_builds_with_a_name_and_without_one_and_a_bad_name_is_still_refused_when_the_app_is_closed(self):
-        for usage in ("Disabled", "Enabled"):
-            for cases in ("Enabled", "Disabled"):
-                for given in ("", "console.example.com"):
-                    with mock.patch.object(ep, "USAGE_APP_PUBLIC_NETWORK_ACCESS", usage), mock.patch.object(ep, "CASES_APP_PUBLIC_NETWORK_ACCESS", cases):
-                        code, _, err, files = build(CONSOLE_HOST_NAME=given)
-                    self.assertEqual((code, err), (0, ""), (usage, cases, given))
-                    self.assertEqual(values(files["recording.parameters.json"])["usageAppPublicNetworkAccess"], usage)
-                    self.assertEqual(values(files["cases.parameters.json"])["casesAppPublicNetworkAccess"], cases)
+    def test_every_value_of_the_cases_app_builds_with_a_name_and_without_one_and_a_bad_name_is_still_refused_when_the_app_is_closed(self):
+        for cases in ("Enabled", "Disabled"):
+            for given in ("", "console.example.com"):
+                with mock.patch.object(ep, "CASES_APP_PUBLIC_NETWORK_ACCESS", cases):
+                    code, _, err, files = build(CONSOLE_HOST_NAME=given)
+                self.assertEqual((code, err), (0, ""), (cases, given))
+                self.assertEqual(values(files["cases.parameters.json"])["casesAppPublicNetworkAccess"], cases)
         with mock.patch.object(ep, "CASES_APP_PUBLIC_NETWORK_ACCESS", "Disabled"):
             for bad in ("https://console.example.com", "func-x.azurewebsites.net"):
                 code, out, err, files = build(CONSOLE_HOST_NAME=bad)
@@ -678,7 +676,7 @@ class TheFrontDoorOfAClosedAppIsKnockedAtInsideTheNetwork(unittest.TestCase):
             done, calls, other = self.run_step(identity=identity, client=client)
             self.assertEqual(done.returncode, 1, (identity, client))
             self.assertIn("::error::The identity id-meternaut-operator is not there. The action loop-check asks the web page's front door from inside the network, in the Operator, because the cases app "
-                          "takes no public traffic and no host name is set, so run operator first (the order is recording, cases, operator), and then loop-check again. The front door was not checked.",
+                          "takes no public traffic and no host name is set, so run operator first (the order is base, cases, operator), and then loop-check again. The front door was not checked.",
                           done.stdout, (identity, client))
             self.assertEqual(calls, [], "no container group is made")
 
@@ -686,7 +684,7 @@ class TheFrontDoorOfAClosedAppIsKnockedAtInsideTheNetwork(unittest.TestCase):
         done, calls, _ = self.run_step(subnet="absent")
         self.assertEqual((done.returncode, calls), (1, []))
         self.assertIn("::error::The subnet snet-ops is not there. The action loop-check asks the web page's front door from inside the network, in the Operator, because the cases app takes no public "
-                      "traffic and no host name is set, so run operator first (the order is recording, cases, operator), and then loop-check again. The front door was not checked.", done.stdout)
+                      "traffic and no host name is set, so run operator first (the order is base, cases, operator), and then loop-check again. The front door was not checked.", done.stdout)
         done, calls, _ = self.run_step(subnet="throttled")
         self.assertEqual((done.returncode, calls), (1, []))
         self.assertIn("::error::The subnet snet-ops could not be read: ERROR: (TooManyRequests) Too many requests for d0404e2a-5b6c-4d7e-8f90-a1b2c3d4e5f6, try again later.", done.stdout,
@@ -732,7 +730,7 @@ class TheFrontDoorOfAClosedAppIsKnockedAtInsideTheNetwork(unittest.TestCase):
 
     def test_the_step_runs_for_loop_check_and_cases_only_when_the_check_is_made_inside_the_network_and_the_runners_step_runs_in_every_other_case(self):
         runner, operator = step_condition("Knock at the console's front door"), step_condition(self.TITLE)
-        for action in ("what-if", "model-side", "recording", "recording-check", "foundry", "cases", "cases-run", "plant", "loop-check", "operator", "operator-probe", "aigateway", "aigateway-check"):
+        for action in ("what-if", "model-side", "base", "retire-old", "foundry", "cases", "cases-run", "plant", "loop-check", "operator", "operator-probe", "aigateway", "aigateway-check"):
             for inside in ("true", "false"):
                 on_runner, in_operator = evaluates(runner, action, inside), evaluates(operator, action, inside)
                 if action in ("loop-check", "cases"):
@@ -750,7 +748,7 @@ class TheFrontDoorOfAClosedAppIsKnockedAtInsideTheNetwork(unittest.TestCase):
             self.assertTrue(evaluates(condition, action, "true", "failure"), "it runs after a failed or cancelled step: that is what it is for")
             self.assertTrue(evaluates(condition, action, "true", "success"))
             self.assertFalse(evaluates(condition, action, "false", "skipped"), "no group was made, so there is nothing to delete")
-        self.assertFalse(evaluates(condition, "recording", "true", "failure"))
+        self.assertFalse(evaluates(condition, "base", "true", "failure"))
         done, lines, _ = run_step_script(self.CLEANUP, {"python3": PYTHON3}, {"ENV_RESOURCE_GROUP": self.GROUP})
         self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
         calls, _ = called(lines)
@@ -769,7 +767,7 @@ class TheFrontDoorOfAClosedAppIsKnockedAtInsideTheNetwork(unittest.TestCase):
 
     def test_the_steps_sit_in_this_order_after_the_runners_door_and_before_the_steps_of_the_operator_and_the_summary(self):
         names = re.findall(r"(?m)^      - name: (.+)$", WORKFLOW)
-        order = ["Knock at the console's front door", self.TITLE, self.CLEANUP, "The control hubs that the Operator is given a role on are there", "What was done"]
+        order = ["Knock at the console's front door", self.TITLE, self.CLEANUP, "The control hub that the Operator is given a role on is there", "What was done"]
         positions = [names.index(name) for name in order]
         self.assertEqual(positions, sorted(positions))
         self.assertEqual(positions[1], positions[0] + 1)
@@ -778,7 +776,7 @@ class TheFrontDoorOfAClosedAppIsKnockedAtInsideTheNetwork(unittest.TestCase):
             self.assertEqual(names.count(name), 1, name)
         self.assertLess(names.index("Sign in to Azure a fourth time for the check of the cases, because the third sign-in's credential lasts five minutes too"), names.index(self.TITLE),
                         "a fresh credential: the check follows the fourth sign-in of the action cases by a few quick steps, and the first sign-in of the action loop-check by a few as well")
-        self.assertEqual(WORKFLOW.count("uses: azure/login@"), 9, "no sign-in was added: the runner makes the container group with the credential of the sign-in before it")
+        self.assertEqual(WORKFLOW.count("uses: azure/login@"), 8, "no sign-in was added for the front door: the runner makes the container group with the credential of the sign-in before it")
 
     def test_the_names_in_the_new_steps_say_web_page_and_the_old_word_is_in_no_new_text(self):
         for name in (self.TITLE, self.CLEANUP):
@@ -1270,7 +1268,8 @@ class TheWorkflowTellsTheSameStory(unittest.TestCase):
         self.assertIn("knock at the web page's front door without a sign-in and pass only when nobody gets a page: from this runner, at the name that people open, and, when the cases app takes no public "
                       "traffic and no host name of a gateway is set, from inside the network, in a short-lived container group of the Operator, at the app's own name (it then needs operator first).", loop)
         cases = description.split(" cases: ")[1].split(" cases-run: ")[0]
-        self.assertIn("It publishes the app's code from inside the network, in the Operator, as recording does. It then checks the web page's front door as loop-check does.", cases)
+        self.assertIn("It publishes the app's code from inside the network, in a container group of the Operator", cases)
+        self.assertIn("It then checks the web page's front door as loop-check does.", cases)
         self.assertNotIn("NOT CHECKED", description)
 
 
