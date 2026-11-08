@@ -574,7 +574,7 @@ class WaitForTheEndpointsOfTheBaseAndTheCasesApp(unittest.TestCase):
                                   ("a zone whose name only ends like the zone of the namespace", self.registered(others) + [f"{self.namespace_endpoint}=other-privatelink.servicebus.windows.net"])):
             done, lines, _ = self.run_wait(self.BASE, "BASE_ENDPOINTS", self.base, registered, two_checks=True)
             self.assertEqual(done.returncode, 1, label)
-            self.assertEqual((len(self.checks(lines)), len(self.sleeps(lines))), (8, 1), f"{label}: two checks of four endpoints")
+            self.assertEqual((len(self.checks(lines)), len(self.sleeps(lines))), (8, 2), f"{label}: two checks of four endpoints")
             self.assertIn(f"Not registered yet: {self.namespace_endpoint} (check 2 of 40).", done.stdout, label)
             self.assertIn(f"::error::The landing zone's policy has not registered these private endpoints in their central zones: {self.namespace_endpoint}. "
                           "An app that starts now could not reach its storage or its namespace by their private names.", done.stdout, label)
@@ -940,29 +940,29 @@ def assignment_row(scope, principal, role, name):
     return (f"{scope}/providers/Microsoft.Authorization/roleAssignments/{name}", scope, principal, f"/subscriptions/{RETIRE_SUBSCRIPTION}/providers/Microsoft.Authorization/roleDefinitions/{role}")
 
 
-OLD_ASSIGNMENTS = {"usage-control": assignment_row(namespace_scope("usage-control"), DEPLOY_IDENTITY, DATA_SENDER, "d1d1d1d1-0000-4000-8000-000000000001"),
-                   "cases-control": assignment_row(namespace_scope("cases-control"), DEPLOY_IDENTITY, DATA_SENDER, "d2d2d2d2-0000-4000-8000-000000000002")}
+OLD_ASSIGNMENTS = {"cases-control": assignment_row(namespace_scope("cases-control"), DEPLOY_IDENTITY, DATA_SENDER, "d2d2d2d2-0000-4000-8000-000000000002")}
+# What an estate that was never cleaned up still holds on a hub of the old usage recording: the step of the cases leaves it alone (the action retire-old deletes the hub, and the assignments go with it).
+USAGE_HUB_ASSIGNMENT = assignment_row(namespace_scope("usage-control"), DEPLOY_IDENTITY, DATA_SENDER, "d1d1d1d1-0000-4000-8000-000000000001")
 
 
 def estate():
-    """What an estate holds on its event hubs after the usage recording and the first cases, the Operator and the gateway: the old assignments of the deploy identity among the ones that must stay."""
+    """What an estate holds on its event hubs after the first cases, the Operator and the gateway (and, on one that was never cleaned up, the old usage hubs): the old assignment of the deploy identity among the ones that must stay."""
     return [assignment_row(namespace_scope("ai-usage"), GATEWAY_IDENTITY, DATA_SENDER, "a1a1a1a1-0000-4000-8000-000000000011"),
             assignment_row(namespace_scope("pii-usage"), GATEWAY_IDENTITY, DATA_SENDER, "a2a2a2a2-0000-4000-8000-000000000012"),
             assignment_row(namespace_scope("usage-control"), USAGE_APP_IDENTITY, DATA_RECEIVER, "b1b1b1b1-0000-4000-8000-000000000021"),
             assignment_row(namespace_scope("cases-control"), CASES_APP_IDENTITY, DATA_RECEIVER, "b2b2b2b2-0000-4000-8000-000000000022"),
             assignment_row(namespace_scope("usage-control"), OPERATOR_PRINCIPAL, DATA_SENDER, "c1c1c1c1-0000-4000-8000-000000000031"),
             assignment_row(namespace_scope("cases-control"), OPERATOR_PRINCIPAL, DATA_SENDER, "c2c2c2c2-0000-4000-8000-000000000032"),
-            OLD_ASSIGNMENTS["usage-control"], OLD_ASSIGNMENTS["cases-control"],
+            USAGE_HUB_ASSIGNMENT, OLD_ASSIGNMENTS["cases-control"],
             assignment_row(namespace_scope("usage-control"), DEPLOY_IDENTITY, DATA_RECEIVER, "e1e1e1e1-0000-4000-8000-000000000041"),
             assignment_row(namespace_scope(), DEPLOY_IDENTITY, DATA_SENDER, "e2e2e2e2-0000-4000-8000-000000000042")]
 
 
 @unittest.skipIf(BASH is None, "no bash on this machine")
 class RetireTheDeployIdentitysRightToSend(unittest.TestCase):
-    """The step of the actions recording and cases that deletes the one assignment that the deploy identity held on a control hub, run with bash against a stand-in for az that keeps the estate's assignments."""
+    """The step of the action cases that deletes the one assignment that the deploy identity held on the control hub cases-control, run with bash against a stand-in for az that keeps the estate's assignments."""
 
-    STEPS = (("Retire the deploy identity's right to send to the control hub usage-control, when it is still there", "usage-control"),
-             ("Retire the deploy identity's right to send to the control hub cases-control, when it is still there", "cases-control"))
+    STEPS = (("Retire the deploy identity's right to send to the control hub cases-control, when it is still there", "cases-control"),)
     SKIP = "sleep() { :; }\n"
 
     def run_step(self, title, hub, rows=None, deployer=DEPLOY_IDENTITY, **knobs):
@@ -980,10 +980,6 @@ class RetireTheDeployIdentitysRightToSend(unittest.TestCase):
 
     def delete_call(self, assignment_id):
         return f"az role assignment delete --ids {assignment_id} --only-show-errors"
-
-    def test_each_step_has_the_same_script_and_only_the_hub_differs(self):
-        scripts = [step_script(title) for title, _ in self.STEPS]
-        self.assertEqual(scripts[0], scripts[1], "the hub's name reaches the script through CONTROL_HUB, so that the two steps cannot drift apart")
 
     def test_the_old_assignment_is_read_deleted_by_its_id_and_read_back_and_nothing_else_is_deleted(self):
         for title, hub in self.STEPS:
@@ -1021,7 +1017,7 @@ class RetireTheDeployIdentitysRightToSend(unittest.TestCase):
     def test_the_lists_filter_does_not_matter_only_the_scope_the_principal_and_the_role_of_a_line_do(self):
         # whatever a list returns, the step deletes only the line that is the deploy identity's Data Sender assignment at the scope of this hub
         for title, hub in self.STEPS:
-            other = "cases-control" if hub == "usage-control" else "usage-control"
+            other = "usage-control"
             rows = [assignment_row(namespace_scope(other), DEPLOY_IDENTITY, DATA_SENDER, "f1f1f1f1-0000-4000-8000-000000000051"),
                     assignment_row(namespace_scope(), DEPLOY_IDENTITY, DATA_SENDER, "f2f2f2f2-0000-4000-8000-000000000052"),
                     assignment_row(namespace_scope(hub), OPERATOR_PRINCIPAL, DATA_SENDER, "f3f3f3f3-0000-4000-8000-000000000053"),
@@ -1137,7 +1133,7 @@ esac
 
 @unittest.skipIf(BASH is None, "no bash on this machine")
 class ReadTheEventHubsNamespaceBack(unittest.TestCase):
-    """The step of the action recording that reads the namespace back from Azure after the deploy and fails the run unless it is private, has no key and has an approved private endpoint."""
+    """The step of the action base that reads the namespace back from Azure after the deploy and fails the run unless it is private, has no key and has an approved private endpoint."""
 
     TITLE = "Read the Event Hubs namespace back from Azure, which has no public network access and no key"
 
@@ -1268,8 +1264,8 @@ class TheProbeStepAsksForTheTokenOfTheDeployIdentity(unittest.TestCase):
 
     def run_probe_step(self, curl="ok", request=True, exit_code=0, **changes):
         env = {"ENV_SUBSCRIPTION_ID": self.SUBSCRIPTION, "ENV_RESOURCE_GROUP": self.GROUP, "ENV_DNS_SERVERS": "10.20.0.4,10.20.0.5", "GITHUB_RUN_ID": "1234567890", "OPERATOR_IMAGE": self.IMAGE,
-               "EVENT_HUB_NAMESPACE": "evhns-meternaut-0a1b2c3d", "STORAGE_ACCOUNT": "stmeternaut0a1b2c3d", "COSMOS_ACCOUNT": "cosmos-meternaut-0a1b2c3d", "MODEL_ACCOUNT": "aoai-meternaut-0a1b2c3d",
-               "FOUNDRY_ACCOUNT": "aif-meternaut-agents-0a1b2c3d", "USAGE_APP": "func-meternaut-usage-0a1b2c3d", "CASES_APP": "func-meternaut-cases-0a1b2c3d",
+               "EVENT_HUB_NAMESPACE": "evhns-meternaut-0a1b2c3d", "STORAGE_ACCOUNT": "stmeternaut0a1b2c3d",
+               "FOUNDRY_ACCOUNT": "aif-meternaut-agents-0a1b2c3d", "CASES_APP": "func-meternaut-cases-0a1b2c3d",
                "DEPLOY_CLIENT_ID": self.DEPLOY_CLIENT, "DEPLOY_TENANT_ID": self.DEPLOY_TENANT, "FAKE_IDENTITY_ID": self.IDENTITY, "FAKE_CLIENT": OPERATOR_CLIENT, "FAKE_CURL": curl,
                "FAKE_TOKEN": self.TOKEN, "FAKE_EXIT": str(exit_code), "ACTIONS_ID_TOKEN_REQUEST_URL": self.URL if request else "",
                "ACTIONS_ID_TOKEN_REQUEST_TOKEN": self.BEARER if request else "", **changes}
@@ -1310,23 +1306,22 @@ class TheProbeStepAsksForTheTokenOfTheDeployIdentity(unittest.TestCase):
         done, calls, other = self.run_probe_step()
         self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
         (argv,) = calls
-        usage, cases = "func-meternaut-usage-0a1b2c3d", "func-meternaut-cases-0a1b2c3d"
-        scm = f"{usage}.scm.azurewebsites.net {cases}.scm.azurewebsites.net"
+        cases = "func-meternaut-cases-0a1b2c3d"
+        scm = f"{cases}.scm.azurewebsites.net"
         env = self.environment_of(argv)
         self.assertEqual(env["PROBE_SCM_HOSTS"], scm)
-        self.assertEqual(env["PROBE_NAMES"].split()[-2:], [f"{usage}.azurewebsites.net", f"{cases}.azurewebsites.net"])
-        self.assertEqual(env["PROBE_PRIVATE_NAMES"], f"{env['PROBE_NAMES']} {scm}", "the apps and their sites must resolve to private addresses: the apps have a private endpoint each")
+        self.assertEqual(env["PROBE_NAMES"].split()[-1:], [f"{cases}.azurewebsites.net"])
+        self.assertEqual(env["PROBE_PRIVATE_NAMES"], f"{env['PROBE_NAMES']} {scm}", "the app and its site must resolve to private addresses: the app has a private endpoint")
         self.assertIn(f"https://{cases}.azurewebsites.net/healthz", env["PROBE_URLS"].split())
-        self.assertIn(f"https://{usage}.azurewebsites.net/", env["PROBE_URLS"].split())
         self.assertEqual((env["PROBE_DEPLOY_CLIENT_ID"], env["PROBE_DEPLOY_TENANT_ID"]), (self.DEPLOY_CLIENT, self.DEPLOY_TENANT))
         self.assertEqual((env["OPERATOR_CLIENT_ID"], env["OPERATOR_GROUP"], env["OPERATOR_SUBSCRIPTION"]), (OPERATOR_CLIENT, self.GROUP, self.SUBSCRIPTION))
-        lock = ROOT / "src" / "usage-functions" / "requirements.txt"
+        lock = ROOT / "src" / "case-functions" / "requirements.txt"
         content = lock.read_bytes()
         self.assertEqual(env["PROBE_LOCK_BYTES"], str(len(content)), "the size that the probe compares the file in its volume with")
         files = {line.split()[1]: line.split()[2:] for line in other if line.startswith("file ")}
-        self.assertEqual(files["usage-requirements.txt"], [str(len(content)), hashlib.sha256(content).hexdigest()], "the lock is sent whole, byte for byte")
+        self.assertEqual(files["cases-requirements.txt"], [str(len(content)), hashlib.sha256(content).hexdigest()], "the lock is sent whole, byte for byte")
         self.assertEqual(files["size-test"][0], env["PROBE_SIZE_BYTES"], "400,000 bytes, as the first probe sent")
-        self.assertIn("usage-requirements.txt=src/usage-functions/requirements.txt", argv)
+        self.assertIn("cases-requirements.txt=src/case-functions/requirements.txt", argv)
         self.assertEqual(argv[argv.index("--timeout-seconds") + 1], "1200")
         self.assertEqual(argv[argv.index("--name") + 1], "op-probe-1234567890")
 
@@ -1389,9 +1384,9 @@ class TheProbeStepAsksForTheTokenOfTheDeployIdentity(unittest.TestCase):
             args.secret_file = [f"size-test={size_file}" if pair.startswith("size-test=") else pair for pair in args.secret_file]
             with contextlib.chdir(ROOT):
                 files = tool.read_files(args)
-        self.assertEqual(sorted(files), ["probe.sh", "size-test", "usage-requirements.txt"])
-        self.assertEqual(files["usage-requirements.txt"], (ROOT / "src" / "usage-functions" / "requirements.txt").read_bytes())
-        self.assertEqual(len(files["usage-requirements.txt"]), int(dict(plain)["PROBE_LOCK_BYTES"]))
+        self.assertEqual(sorted(files), ["cases-requirements.txt", "probe.sh", "size-test"])
+        self.assertEqual(files["cases-requirements.txt"], (ROOT / "src" / "case-functions" / "requirements.txt").read_bytes())
+        self.assertEqual(len(files["cases-requirements.txt"]), int(dict(plain)["PROBE_LOCK_BYTES"]))
         self.assertLess(sum(len(content) for content in files.values()), tool.MAX_FILE_BYTES)
         document = tool.group_document(args, files, plain, secure, servers, "2026-11-06T07:00:00Z")
         variables = document["properties"]["containers"][0]["properties"]["environmentVariables"]
@@ -1425,7 +1420,7 @@ head -c "${FAKE_PACKAGE_BYTES-1000}" /dev/zero > "$5"
 
 @unittest.skipIf(BASH is None, "no bash on this machine")
 class ThePublishStepsFindTheOperatorAskForTheTokenAndStartTheContainerGroup(unittest.TestCase):
-    """The two steps that publish the code of an app from inside the network (docs/proposals/07-private-by-default.md, phase 2), run with bash against stand-ins for az, curl and python3: the Operator is
+    """The step that publishes the code of the cases app from inside the network (docs/proposals/07-private-by-default.md, phase 2), run with bash against stand-ins for az, curl and python3: the Operator is
     found by its name and nothing is changed; the token of the deploy identity is asked for with the bearer on standard input, masked and given to the one call of the tool through its environment and
     nowhere else; without a token nothing is published; and the call that is built is the one that the tool itself accepts."""
 
@@ -1441,8 +1436,6 @@ class ThePublishStepsFindTheOperatorAskForTheTokenAndStartTheContainerGroup(unit
     URL = TheProbeStepAsksForTheTokenOfTheDeployIdentity.URL
     NO_REQUEST = TheProbeStepAsksForTheTokenOfTheDeployIdentity.NO_REQUEST
     PUBLISHES = {
-        "usage": {"title": "Publish the usage functions to the function app from inside the network, in the Operator", "app": "func-meternaut-usage-0a1b2c3d", "action": "recording",
-                  "file": "usage-source.zip", "seconds": "2400"},
         "cases": {"title": "Publish the cases to the function app from inside the network, in the Operator", "app": "func-meternaut-cases-0a1b2c3d", "action": "cases",
                   "file": "cases-source.zip", "seconds": "1200"},
     }
@@ -1463,8 +1456,8 @@ class ThePublishStepsFindTheOperatorAskForTheTokenAndStartTheContainerGroup(unit
     def expected(self, kind, temp, size, dns=("10.20.0.4", "10.20.0.5"), plan="Flex"):
         want = self.PUBLISHES[kind]
         files = [f"{want['file']}={temp.as_posix()}/{want['file']}", "build-function-app.sh=tools/build-function-app.sh"]
-        # the web page's app is told the plan kind that it runs on; the usage app is always Flex Consumption and says nothing
-        kinds = ["--env", f"PUBLISH_KIND={kind}"] + (["--env", f"PUBLISH_PLAN={plan}"] if kind == "cases" else [])
+        # the app is told the plan kind that it runs on, which decides how the container publishes
+        kinds = ["--env", f"PUBLISH_KIND={kind}", "--env", f"PUBLISH_PLAN={plan}"]
         return (["tools/operator-run.py", "run", "--resource-group", self.GROUP, "--name", "op-publish-1234567890", "--subnet-id", self.SUBNET, "--identity-id", self.IDENTITY, "--image", self.IMAGE,
                  "--script", "operator/publish.sh"]
                 + [word for pair in files for word in ("--secret-file", pair)]
@@ -1484,7 +1477,7 @@ class ThePublishStepsFindTheOperatorAskForTheTokenAndStartTheContainerGroup(unit
             self.assertEqual(argv, self.expected(kind, temp, 4321), kind)
             files = {line.split()[1]: line.split()[2] for line in other if line.startswith("file ")}
             self.assertEqual(files, {self.PUBLISHES[kind]["file"]: "4321", "build-function-app.sh": str((ROOT / "tools" / "build-function-app.sh").stat().st_size)},
-                             f"{kind}: the sources and the build script go whole, and no package: both apps are built in the container")
+                             f"{kind}: the sources and the build script go whole, and no package: the app is built in the container")
             self.assertEqual([line for line in other if line.startswith("az ")], [
                 "az resource list --resource-group rg-of-the-project --name id-meternaut-operator --query [0].id --output tsv",
                 f"az rest --method get --url https://management.azure.com{self.SUBNET}?api-version=2025-05-01 --query name --output tsv"],
@@ -1493,7 +1486,7 @@ class ThePublishStepsFindTheOperatorAskForTheTokenAndStartTheContainerGroup(unit
 
     def test_the_call_is_accepted_by_the_tool_and_the_group_holds_the_token_once_as_a_secure_value_and_the_files_stay_within_its_cap(self):
         tool = load_operator_tool()
-        for kind, size in (("usage", 40_000), ("cases", 210_000)):
+        for kind, size in (("cases", 210_000),):
             done, calls, other, temp = self.run_publish(kind, size=size)
             self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
             (argv,) = calls
@@ -1502,8 +1495,8 @@ class ThePublishStepsFindTheOperatorAskForTheTokenAndStartTheContainerGroup(unit
                 plain, secure, servers = tool.check_options(args)
             self.assertEqual(secure, [("AZURE_FEDERATED_TOKEN", self.TOKEN)])
             self.assertEqual(servers, ["10.20.0.4", "10.20.0.5"])
-            self.assertEqual(sorted(name for name, _ in plain), sorted(["PUBLISH_KIND", "PUBLISH_APP", "PUBLISH_RESOURCE_GROUP", "PUBLISH_SUBSCRIPTION", "PUBLISH_CLIENT_ID", "PUBLISH_TENANT_ID",
-                                                                       "PUBLISH_FILE_BYTES"] + (["PUBLISH_PLAN"] if kind == "cases" else [])))
+            self.assertEqual(sorted(name for name, _ in plain), sorted(["PUBLISH_KIND", "PUBLISH_PLAN", "PUBLISH_APP", "PUBLISH_RESOURCE_GROUP", "PUBLISH_SUBSCRIPTION", "PUBLISH_CLIENT_ID", "PUBLISH_TENANT_ID",
+                                                                       "PUBLISH_FILE_BYTES"]))
             with contextlib.chdir(ROOT):
                 files = tool.read_files(args)
             zip_name = self.PUBLISHES[kind]["file"]
@@ -1583,7 +1576,7 @@ class ThePublishStepsFindTheOperatorAskForTheTokenAndStartTheContainerGroup(unit
 
     def test_an_operator_that_is_not_there_says_to_run_operator_first_and_the_order_stops_before_a_token_is_asked_for(self):
         for kind, want in self.PUBLISHES.items():
-            first_run = ("so run operator first, and then " + want["action"] + " again (the order on an estate that has none yet is recording, cases, operator, and then recording and cases again). "
+            first_run = ("so run operator first, and then " + want["action"] + " again (the order on an estate that has none yet is base, cases, operator, and then cases again). "
                          "The template was deployed, and the app was not given its code.")
             for answer in ("", "None", "FAIL", "id-meternaut-operator", "/not/a/subscription"):
                 done, calls, other, _ = self.run_publish(kind, identity=answer)
@@ -1628,7 +1621,7 @@ class ThePublishStepsFindTheOperatorAskForTheTokenAndStartTheContainerGroup(unit
 
     def test_the_cleanup_asks_the_tool_for_the_groups_of_the_publishes_and_a_failure_is_only_a_warning(self):
         tool = load_operator_tool()
-        for title in ("Delete any container group of the publish of the usage functions that is left", "Delete any container group of the publish of the cases that is left"):
+        for title in ("Delete any container group of the publish of the cases that is left",):
             env = {"ENV_RESOURCE_GROUP": self.GROUP}
             done, lines, _ = run_step_script(title, {"python3": OPERATOR_RUN_PYTHON3}, env)
             self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
@@ -1641,17 +1634,16 @@ class ThePublishStepsFindTheOperatorAskForTheTokenAndStartTheContainerGroup(unit
             with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
                 with mock.patch.dict(os.environ, {"GITHUB_ACTIONS": "true"}):
                     self.assertEqual(tool.cleanup_command(args, lambda arguments: (0, "[]", "")), 0, "the prefix is one that the tool accepts")
-        done, calls, other, _ = self.run_publish("usage")
+        done, calls, other, _ = self.run_publish("cases")
         self.assertTrue(calls[0][calls[0].index("--name") + 1].startswith("op-publish-"), "the prefix of the cleanup is the start of the name that the publish gives its group")
 
 
 @unittest.skipIf(BASH is None, "no bash on this machine")
 class TheSourcesAreCheckedAgainstTheCapOfTheToolBeforeTheOperatorIsLookedFor(unittest.TestCase):
-    """The two steps that pack an app's sources for the Operator (docs/proposals/07-private-by-default.md, phase 2), run with bash against a stand-in for bash that makes the zip: everything that the request
+    """The step that packs the cases app's sources for the Operator (docs/proposals/07-private-by-default.md, phase 2), run with bash against a stand-in for bash that makes the zip: everything that the request
     carries, the sources, the build script and the container script, is counted on the runner against the cap of tools/operator-run.py, with a message that names the cap and its evidence."""
 
-    STEPS = {"usage": {"title": "Pack the usage app's sources for the Operator", "arguments": "usage-functions usage", "stem": "usage-source", "label": "the usage app's sources"},
-             "cases": {"title": "Pack the cases app's sources for the Operator", "arguments": "case-functions cases", "stem": "cases-source", "label": "the cases app's sources"}}
+    STEPS = {"cases": {"title": "Pack the cases app's sources for the Operator", "arguments": "case-functions cases", "stem": "cases-source", "label": "the cases app's sources"}}
 
     def run_pack(self, kind, zip_bytes):
         want = self.STEPS[kind]
@@ -2080,7 +2072,7 @@ class WhatWasDone(unittest.TestCase):
             summary.write_text("", encoding="utf-8")
             script = tmp / "all.sh"
             script.write_text("summary_of() {\n" + step_script("What was done") + "\n}\nfor ACTION in " + " ".join(actions) + "; do\n  export ACTION\n  summary_of\ndone\n", encoding="utf-8", newline="\n")
-            env = {**os.environ, "JOB_STATUS": status, "ACCOUNT_NAME": "aif-meternaut-abc", "FOUNDRY_ACCOUNT": "aif-meternaut-agents-abc", "FOUNDRY_PROJECT": "meternaut",
+            env = {**os.environ, "JOB_STATUS": status, "FOUNDRY_ACCOUNT": "aif-meternaut-agents-abc", "FOUNDRY_PROJECT": "meternaut",
                    "FOUNDRY_ENDPOINT": "https://aif-meternaut-agents-abc.services.ai.azure.com/api/projects/meternaut", "ENV_RESOURCE_GROUP": "rg-of-the-project",
                    "GITHUB_STEP_SUMMARY": summary.as_posix()}
             done = subprocess.run([BASH, "-e", "-o", "pipefail", script.as_posix()], capture_output=True, text=True, env=env, cwd=ROOT)
@@ -2148,7 +2140,7 @@ echo "python3 $*" >> "$FAKE_LOG"
 class BuildTheFunctionPackage(unittest.TestCase):
     """tools/build-function-app.sh against a stand-in for python3: what it refuses, and the exact install that it asks for."""
 
-    def run_script(self, python_version, arguments=("usage-functions", "usage")):
+    def run_script(self, python_version, arguments=("case-functions", "cases")):
         with tempfile.TemporaryDirectory() as tmp:
             tmp = Path(tmp)
             bin_dir = tmp / "bin"
@@ -2176,24 +2168,17 @@ class BuildTheFunctionPackage(unittest.TestCase):
     def test_python_3_13_installs_only_wheels_of_the_lock_for_linux_and_checks_their_hashes(self):
         done, calls, copied = self.run_script("3.13.0")
         self.assertEqual(done.returncode, 0, done.stderr)
-        self.assertEqual(copied, ["function_app.py", "host.json", "requirements.txt", "usage"], "the app's files; the stand-in pip makes no target directory")
+        self.assertEqual(copied, ["cases", "function_app.py", "host.json", "requirements.txt"], "the app's files; the stand-in pip makes no target directory")
         (install,) = calls
         for flag in ("-m pip install", "--require-hashes", "--only-binary=:all:", "--platform manylinux2014_x86_64", "--platform manylinux_2_28_x86_64",
-                     "--implementation cp", "--python-version 3.13", "--no-compile", "/.python_packages/lib/site-packages", "src/usage-functions/requirements.txt"):
+                     "--implementation cp", "--python-version 3.13", "--no-compile", "/.python_packages/lib/site-packages", "src/case-functions/requirements.txt"):
             self.assertIn(flag, install)
         for word in ("--index-url", "--extra-index-url", "--trusted-host", "--no-deps"):
             self.assertNotIn(word, install, word)
-
-    def test_the_cases_app_is_built_from_its_own_lock(self):
-        done, calls, copied = self.run_script("3.13.0", arguments=("case-functions", "cases"))
-        self.assertEqual(done.returncode, 0, done.stderr)
-        self.assertEqual(copied, ["cases", "function_app.py", "host.json", "requirements.txt"])
-        (install,) = calls
-        self.assertIn("src/case-functions/requirements.txt", install)
-        self.assertNotIn("usage-functions", install)
+        self.assertNotIn("usage-functions", install, "the app is built from its own lock")
 
     def test_names_that_leave_the_src_folder_or_the_plain_form_are_refused_before_anything_is_built(self):
-        for arguments in (("../tools", "usage"), ("usage-functions", "usage/../x"), ("Usage-Functions", "usage"), ("usage-functions", "Usage"), ("", "usage")):
+        for arguments in (("../tools", "cases"), ("case-functions", "cases/../x"), ("Case-Functions", "cases"), ("case-functions", "Cases"), ("", "cases")):
             done, calls, copied = self.run_script("3.13.0", arguments=arguments)
             self.assertNotEqual(done.returncode, 0, arguments)
             self.assertEqual((calls, copied), ([], []), arguments)
