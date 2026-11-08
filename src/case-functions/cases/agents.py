@@ -27,9 +27,10 @@ MAX_EXAMINED_TEXT = 100
 # The shape of the Skeptic's answer.
 MAX_VERDICT_SUMMARY = 200
 
-# The Investigator reasons with the effort "none" (the word, not Python's None, which would leave the effort out). Its model refuses function tools together with a
-# reasoning effort on the route that a model of the project is called on: the first real run (2026-11-08) was refused so, and the answer said that the effort none lets
-# them work. The Skeptic has no tools and keeps the default. A change of this value makes a new version of the Investigator in the project.
+# The Investigator reasons with the effort "none" (the word, not Python's None, which would leave the effort out). It has function tools, and on the one route that the Agent Service
+# has for a model of the project they work only with a model that takes the effort none: the first real runs (2026-11-08) showed that gpt-6.1-sol refuses them with an effort that it
+# takes and does not take none, so the Investigator is gpt-6-luna (see AGENT_MODELS in tools/environment-params.py, where a test pins the pair). The Skeptic has no tools, sends no
+# effort and is the other model. A change of this value makes a new version of the Investigator in the project.
 INVESTIGATOR_REASONING_EFFORT = "none"
 
 INVESTIGATOR_DESCRIPTION = "Finds where an Azure estate pays for something that it does not use or need, with read-only tools, and reports what it found."
