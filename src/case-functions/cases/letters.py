@@ -1,63 +1,41 @@
 """The letters: what Meternaut writes to a person, as pure functions of the data they are given.
 
-A letter is a subject, an HTML body (what Graph's sendMail sends) and a plain-text copy of the same words (kept for the record and for the tests).
-Nothing here reads a clock, a store or the network: the caller passes the records, the address of the console and the time.
+A letter is a subject, an HTML body (what Graph's sendMail sends) and a plain-text copy of the same words (kept for the record and for the tests). Nothing here reads a
+clock, a store or the network: the caller passes the records, the address of the web page and the time.
 
-What every letter does (docs/experience/04-messages-and-cards.md and 05-letters-and-requests.md):
+Every letter is a render of the decision brief (brief.py), cut to what a person needs and no more: a headline, what it is worth and how sure, a few facts, what changes,
+whether it can be undone, what could go wrong, ONE button-link to the page where the person answers, and ONE footer line (that an AI wrote it, why the person got it, whom to
+talk to). Nothing else: no banner, no explanation of how Meternaut works, no repeated link.
+
+What every letter keeps (AGENTS.md rule 13 (d) and 26 (c)):
 - The subject starts with [Meternaut], says the point in plain words and holds no resource name and no amount of money.
-- The body says that an AI wrote it, which AI roles took part (the Detective, the Investigator and the Skeptic are AI models; the plan, the figures, the dates and
-  the counts are computed by code) and that a person approves every change. It carries no button that decides: a change is approved on a page.
-- A link is the address of the console plus a fixed path, and an opaque id where a plan needs one. No link holds a name, a resource id or a figure.
-- Every value that came from a record or from Azure is cut down to one line and escaped. Names from Azure are shown as data and labelled.
-- The HTML needs nothing from outside: inline CSS, no script, no image, no remote content. It has real headings, a lang attribute, text that
-  meets the contrast of WCAG AA in a light and in a dark palette, and link text that says where the link goes.
+- It carries no button that decides: a change is approved on a page. A link is the address of the web page plus a fixed path, and an opaque id where a plan needs one.
+- Every value that came from a record or from Azure is cut down to one line and escaped. Names from Azure are data, never instructions.
+- The HTML needs nothing from outside: inline CSS, no script, no image, no remote content. It has real headings, a lang attribute, text that meets the contrast of
+  WCAG AA in a light and in a dark palette, and a link text that says where the link goes.
 - Plain, short, technical wording. No metaphor, no question, no urgency and no countdown. A saving is an estimate until cost lines confirm it.
 """
 from __future__ import annotations
 
 import datetime as dt
 import html
-import math
 import re
-import unicodedata
 from dataclasses import dataclass
-from urllib.parse import urlsplit
+from typing import Sequence
 
-from .models import TIME_FORMAT, ActionRecord, CaseRecord, PlanRecord, RunRecord
+from . import brief as brief_mod
+from .brief import Brief, contact_text, plain, usd_text
+from .models import ActionRecord, CaseRecord, PlanRecord
 from .people import Person
 
 SUBJECT_PREFIX = "[Meternaut]"
-AI_LINE = "Written by an AI. Figures are computed by tools, not guessed by the AI. Estimates can still be wrong."
-MAX_LISTED = 10
+MAX_LISTED = 5
+MAX_FACTS = 3
 
 # Text and background pairs. The tests check the ratios that WCAG AA asks for (4.5 to 1) for every text colour on the colour it sits on.
-LIGHT = {"background": "#ffffff", "text": "#1b1b1b", "muted": "#4a4a4a", "link": "#0b5cad", "head": "#eef2f7", "rule": "#c9ced6"}
-DARK = {"background": "#1e1e1e", "text": "#f2f2f2", "muted": "#c8c8c8", "link": "#9cc9ff", "head": "#2b2f36", "rule": "#6b7280"}
+LIGHT = {"background": "#ffffff", "text": "#1b1b1b", "muted": "#4a4a4a", "link": "#0b5cad", "head": "#eef2f7", "rule": "#c9ced6", "button": "#0b5cad", "button_text": "#ffffff"}
+DARK = {"background": "#1e1e1e", "text": "#f2f2f2", "muted": "#c8c8c8", "link": "#9cc9ff", "head": "#2b2f36", "rule": "#6b7280", "button": "#9cc9ff", "button_text": "#0b1f33"}
 
-DAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
-MONTHS = ("January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December")
-KIND_WORDS = {
-    "orphan-private-endpoint": "a private endpoint without an approved connection",
-    "orphan-managed-disk": "a managed disk that is not attached",
-    "orphan-public-ip": "a public IP address that is not assigned",
-    "load-balancer-without-backends": "a load balancer without backends",
-    "empty-app-service-plan": "an App Service plan without apps",
-    "stopped-vm": "a virtual machine that is stopped",
-    "advisor-cost": "a cost recommendation of Azure Advisor",
-    "investigation": "a resource that the Watch's own investigation found",
-}
-# What the investigation found a resource to be, by the basis of its finding (cases/agents.py BASES).
-BASIS_WORDS = {
-    "no-usage": "a resource that the investigation found with no recorded usage",
-    "low-usage": "a resource that the investigation found with little recorded usage",
-    "oversized": "a resource that the investigation found larger than its use needs",
-    "duplicate": "a resource that the investigation found duplicated",
-    "unused-feature": "a paid feature that the investigation found unused",
-    "commitment-misfit": "a commitment that the investigation found does not fit the use",
-}
-PLAN_STATE_WORDS = {"open": "open", "approved": "approved, its change is being made", "consumed": "closed because it ran", "declined": "declined",
-                    "expired": "expired", "withdrawn": "withdrawn", "failed": "closed because the change failed"}
-ACTION_STATE_WORDS = {"queued": "queued", "running": "running", "done": "done", "failed": "failed", "unknown": "not known", "verified": "done and checked"}
 DONE_SUBJECTS = {"done": "A change to Azure has run", "verified": "A change to Azure has run", "failed": "A change to Azure did not run",
                  "unknown": "The result of a change to Azure is not known"}
 BASE = re.compile(r"(?:https://[A-Za-z0-9.-]+(?::[0-9]{1,5})?|http://(?:localhost|127\.0\.0\.1)(?::[0-9]{1,5})?)(?:/(?!\.+(?:/|$))[A-Za-z0-9._~-]+)*")
@@ -74,37 +52,8 @@ class Letter:
 # ---- the values -----------------------------------------------------------------------------------------------------------------------------------
 
 def _data(value: object, limit: int = 300) -> str:
-    """A value from a record or from Azure as one plain line: no control or format character, white space folded, at most `limit` characters."""
-    text = "" if value is None else str(value)
-    kept = "".join(" " if ch in "\r\n\t" else ("" if unicodedata.category(ch) in ("Cc", "Cf", "Cs", "Co", "Cn") else ch) for ch in text)
-    kept = " ".join(kept.split())
-    return kept if len(kept) <= limit else kept[: limit - 3].rstrip() + "..."
-
-
-def _usd(value: object) -> str | None:
-    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
-        return None
-    return f"USD {value:,.2f}"
-
-
-def _utc(moment: dt.datetime) -> dt.datetime:
-    return moment.replace(tzinfo=dt.timezone.utc) if moment.tzinfo is None else moment.astimezone(dt.timezone.utc)
-
-
-def _parse(text: object) -> dt.datetime | None:
-    try:
-        return dt.datetime.strptime(str(text), TIME_FORMAT).replace(tzinfo=dt.timezone.utc)
-    except ValueError:
-        return None
-
-
-def _when(moment: dt.datetime) -> str:
-    return f"{DAYS[moment.weekday()]} {moment.day} {MONTHS[moment.month - 1]} {moment.year}, {moment.hour:02d}:{moment.minute:02d} UTC"
-
-
-def _stamp(text: object) -> str:
-    parsed = _parse(text)
-    return _when(parsed) if parsed else (_data(text, 40) or "not recorded")
+    """A value from a record or from Azure as one plain line (brief.plain): no hidden or direction character, no line break, no link, at most `limit` characters."""
+    return plain(value, limit)
 
 
 def _base(base_url: str) -> str:
@@ -120,33 +69,15 @@ def _plan_url(base: str, plan_id: str) -> str:
     return f"{base}/ok/{plan_id}"
 
 
-def _host(base: str) -> str:
-    return urlsplit(base).netloc
-
-
 def _roles(person: Person) -> str:
     return ", ".join(sorted(_data(role, 20) for role in person.roles)) or "none"
 
 
-def _cannot_be_undone(plan: PlanRecord) -> bool:
-    return plan.family.startswith("delete")
-
-
-def _kind(case: CaseRecord) -> str:
-    if case.detector == "investigation" and isinstance(case.facts, dict) and case.facts.get("basis") in BASIS_WORDS:
-        return BASIS_WORDS[case.facts["basis"]]
-    return KIND_WORDS.get(case.detector) or f"a resource of type {_data(case.resource_type, 80) or 'unknown'}"
-
-
-def _models(case: CaseRecord) -> str | None:
-    models = case.models if isinstance(case.models, dict) else {}
-    detective, skeptic = _data(models.get("detective"), 60), _data(models.get("skeptic"), 60)
-    investigator = _data(models.get("investigator"), 60)
-    if not detective and not skeptic and not investigator:
-        return None
-    parts = [f"the Detective ran on {detective}" if detective else "", f"the Investigator ran on {investigator}" if investigator else "",
-             f"the Skeptic ran on {skeptic}" if skeptic else ""]
-    return "For this case " + " and ".join(p for p in parts if p) + "."
+def _names(contacts: Sequence[str], person: Person | None = None) -> tuple[str, ...]:
+    """The one person to talk to, as plain text: the first of the contacts who is not the person who reads the letter (the first of all when nobody else is listed)."""
+    cleaned = [c for c in (_data(c, 150) for c in contacts) if c]
+    own = contact_text(person.name, person.mail) if person is not None else ""
+    return tuple(([c for c in cleaned if c != own] or cleaned)[:1])
 
 
 # ---- the document ---------------------------------------------------------------------------------------------------------------------------------
@@ -154,7 +85,6 @@ def _models(case: CaseRecord) -> str | None:
 @dataclass(frozen=True)
 class _Heading:
     text: str
-    level: int
 
 
 @dataclass(frozen=True)
@@ -174,7 +104,7 @@ class _Items:
 
 
 @dataclass(frozen=True)
-class _Link:
+class _Button:
     text: str
     url: str
 
@@ -185,38 +115,26 @@ class _Doc:
 
     def __init__(self, point: str) -> None:
         self.subject = f"{SUBJECT_PREFIX} {point}"
-        self.blocks: list[object] = [_Heading(point, 1)]
+        self.blocks: list[object] = [_Heading(point)]
 
-    def heading(self, text: str, level: int = 2) -> None:
-        self.blocks.append(_Heading(text, level))
+    def heading(self, text: str) -> None:
+        self.blocks[0] = _Heading(text)
 
     def paragraph(self, text: str, muted: bool = False) -> None:
         self.blocks.append(_Paragraph(text, muted))
 
     def facts(self, *rows: tuple[str, str]) -> None:
-        self.blocks.append(_Facts(tuple(rows)))
+        if rows:
+            self.blocks.append(_Facts(tuple(rows)))
 
     def items(self, *items: str) -> None:
         self.blocks.append(_Items(tuple(items)))
 
-    def link(self, text: str, url: str) -> None:
-        self.blocks.append(_Link(text, url))
+    def button(self, text: str, url: str) -> None:
+        self.blocks.append(_Button(text, url))
 
-    def how_made(self, models: str | None = None) -> None:
-        self.heading("How this letter was made")
-        self.paragraph(AI_LINE)
-        self.paragraph("AI model roles take part in the work behind it. The Detective judges whether a resource looks unused. The Investigator looks through the "
-                       "estate with read-only tools and reports what looks wasted. The Skeptic argues against that judgement or that finding. No role can change "
-                       "anything. The plan, the figures, the dates and the counts in this letter were computed by "
-                       "code, not by a model. A person approves every change, on a page, after signing in.")
-        if models:
-            self.paragraph(models)
-
-    def closing(self, why: str | None, now: dt.datetime) -> None:
-        if why:
-            self.paragraph(why, muted=True)
-        self.paragraph(f"Written on {_when(now)}. Replies to this letter are not read, and nothing is approved by e-mail. "
-                       "To reach a person, ask whoever put you on my list of people.", muted=True)
+    def footer(self, models: Sequence[str], why: str, contacts: Sequence[str], person: Person | None = None) -> None:
+        self.paragraph(brief_mod.footer_line(models, why, _names(contacts, person)), muted=True)
 
     def build(self) -> Letter:
         return Letter(self.subject, _page(self.subject, self.blocks), _plain(self.blocks))
@@ -226,14 +144,14 @@ def _plain(blocks: list[object]) -> str:
     lines: list[str] = []
     for block in blocks:
         if isinstance(block, _Heading):
-            lines += [block.text, ("=" if block.level == 1 else "-" if block.level == 2 else "~") * min(len(block.text), 72), ""]
+            lines += [block.text, "=" * min(len(block.text), 72), ""]
         elif isinstance(block, _Paragraph):
             lines += [block.text, ""]
         elif isinstance(block, _Facts):
             lines += [f"{label}: {value}" for label, value in block.rows] + [""]
         elif isinstance(block, _Items):
             lines += [f"- {item}" for item in block.items] + [""]
-        elif isinstance(block, _Link):
+        elif isinstance(block, _Button):
             lines += [f"{block.text}: {block.url}", ""]
     return "\n".join(lines).rstrip() + "\n"
 
@@ -245,12 +163,11 @@ def _e(value: object) -> str:
 def _block_html(block: object) -> str:
     light = LIGHT
     if isinstance(block, _Heading):
-        size, margin = {1: ("22px", "0 0 12px 0"), 2: ("17px", "24px 0 8px 0")}.get(block.level, ("15px", "16px 0 6px 0"))
-        return (f'<h{block.level} class="mn-fg" style="margin:{margin};font-size:{size};line-height:1.3;font-weight:700;color:{light["text"]};">'
-                f"{_e(block.text)}</h{block.level}>")
+        return (f'<h1 class="mn-fg" style="margin:0 0 12px 0;font-size:20px;line-height:1.3;font-weight:700;color:{light["text"]};">{_e(block.text)}</h1>')
     if isinstance(block, _Paragraph):
         name, color = ("mn-muted", light["muted"]) if block.muted else ("mn-fg", light["text"])
-        return f'<p class="{name}" style="margin:0 0 12px 0;color:{color};">{_e(block.text)}</p>'
+        size = "14px" if block.muted else "16px"
+        return f'<p class="{name}" style="margin:0 0 12px 0;font-size:{size};color:{color};">{_e(block.text)}</p>'
     if isinstance(block, _Facts):
         border = f'1px solid {light["rule"]}'
         rows = "".join(
@@ -262,9 +179,9 @@ def _block_html(block: object) -> str:
     if isinstance(block, _Items):
         items = "".join(f'<li class="mn-fg" style="margin:0 0 6px 0;color:{light["text"]};">{_e(item)}</li>' for item in block.items)
         return f'<ul style="margin:0 0 12px 0;padding-left:22px;">{items}</ul>'
-    if isinstance(block, _Link):
-        return (f'<p style="margin:0 0 12px 0;"><a class="mn-link" href="{_e(block.url)}" '
-                f'style="color:{light["link"]};text-decoration:underline;font-weight:600;">{_e(block.text)}</a></p>')
+    if isinstance(block, _Button):
+        return (f'<p style="margin:4px 0 16px 0;"><a class="mn-button" href="{_e(block.url)}" style="display:inline-block;padding:10px 22px;'
+                f'background-color:{light["button"]};color:{light["button_text"]};border-radius:4px;font-weight:700;text-decoration:none;">{_e(block.text)}</a></p>')
     raise TypeError("unknown block")
 
 
@@ -284,6 +201,7 @@ def _page(subject: str, blocks: list[object]) -> str:
         f"  .mn-link {{ color: {dark['link']} !important; }}\n"
         f"  .mn-head {{ background-color: {dark['head']} !important; }}\n"
         f"  .mn-rule {{ border-color: {dark['rule']} !important; }}\n"
+        f"  .mn-button {{ background-color: {dark['button']} !important; color: {dark['button_text']} !important; }}\n"
         "}\n</style>\n</head>\n"
         f'<body class="mn-bg mn-fg" style="margin:0;padding:0;background-color:{light["background"]};color:{light["text"]};'
         'font-family:Segoe UI,Arial,sans-serif;font-size:16px;line-height:1.5;">\n'
@@ -295,225 +213,117 @@ def _page(subject: str, blocks: list[object]) -> str:
     )
 
 
-# ---- the four letters -----------------------------------------------------------------------------------------------------------------------------
+# ---- what the letters say -------------------------------------------------------------------------------------------------------------------------
 
-def first_contact_letter(person: Person, base_url: str, now: dt.datetime) -> Letter:
-    """The first letter to a person: who writes, why this person, what happens, what does not, and the page of their settings."""
-    base, now = _base(base_url), _utc(now)
+def saving_line(saving: brief_mod.Saving) -> str:
+    """What it is worth, with its level and, when the level does not say it, its basis; or why there is no figure. An expected saving is computed from the cost lines of the
+    last 30 days, so a letter does not repeat that."""
+    if saving.monthly is None:
+        return f"No figure: {saving.why_none[0].lower()}{saving.why_none[1:]}" if saving.why_none else "No figure."
+    basis = "" if saving.level == "Expected" else f" ({saving.basis})"
+    return f"{saving.level} saving: about {usd_text(saving.monthly)} a month{basis}."
+
+
+def _fact_rows(brief: Brief) -> tuple[tuple[str, str], ...]:
+    return tuple((_data(f.label, 60), _data(f.value, 120)) for f in brief.facts[:MAX_FACTS])
+
+
+def _decision_rows(brief: Brief) -> tuple[tuple[str, str], ...]:
+    """Whose resource it is, what changes (who does it, with whose rights), whether it can be undone and what could go wrong: one line each."""
+    acts = " It runs with your own permissions, after you sign in to Azure." if brief.kind == "change" else ""
+    return (("Owner", _data(brief.owner.text, 160)),
+            ("If you approve" if brief.kind == "change" else "If you answer", _data(brief.change, 200) + acts),
+            ("Undo", "This cannot be undone." if not brief.undo.reversible else _data(brief.undo.how, 160)),
+            (f"Risk, {brief.risk.level}", _data(brief.risk.text, 200)))
+
+
+def first_contact_letter(person: Person, base_url: str, now: dt.datetime, contacts: Sequence[str] = (), plan_id: str | None = None) -> Letter:
+    """The first letter to a person, in three sentences: who writes and what for, what I do and do not do, and where to pause or stop the letters. Its one link is the page
+    of the first request that waits for the person (the start page when it is not sent for one)."""
+    base = _base(base_url)
     doc = _Doc("An AI assistant for Azure costs will write to you")
-    doc.paragraph(f"Hello {_data(person.name, 80)}.")
-    doc.paragraph("I am Meternaut, an AI assistant that looks for Azure resources that cost money and are not in use. This is my first letter to you.")
-    doc.heading("Why you got this")
-    doc.paragraph(f"You are on my list of people who may receive letters, with the roles: {_roles(person)}. A person who is not on the list receives nothing from me.")
-    doc.heading("What I do today")
-    doc.items(
-        "I read the resources and the cost lines of the Azure subscriptions that I was given. The part of me that looks can only read.",
-        "I look for waste in two ways. Fixed checks list leads, for example a disk that is not attached to anything. An Investigator, an AI agent with read-only tools, "
-        "also looks through the estate by itself for resources that cost money and are not used or needed.",
-        "AI roles judge what I find. The Detective proposes what to do with a lead, the Investigator reports its findings, and the Skeptic argues against both. "
-        "All three are AI models, and none of them can change anything.",
-        "When a change is proposed, code builds the plan: what changes, the estimated saving and when the request expires. No model writes the plan.",
-        "A person approves every change, on a page, after signing in. Then the person signs in to Azure, and I make the one approved change with that person's own "
-        "permissions, after I have read the resource again right before I act. I hold no right of my own to change Azure.",
-    )
-    doc.heading("What I do not do")
-    doc.items(
-        "I make no change without a person's OK on a page.",
-        "I approve nothing by e-mail. No letter from me has a button that decides, and replies to my letters are not read.",
-        "I do not ask for sign-in details or a code by e-mail. A message that asks for them is not from me.",
-        "I do not track whether you open a letter. My letters have no images.",
-    )
-    doc.heading("What I keep")
-    doc.paragraph("I keep a record that a letter was sent to you (its kind, its subject and the time), and what you answer on a page. I do not keep the text of a letter.")
-    doc.heading("Your settings")
-    doc.paragraph("On the settings page you can pause my letters and choose how I reach you.")
-    doc.link("Open your settings page", f"{base}/me/settings")
-    doc.paragraph(f"The link opens a page on {_host(base)}.")
-    doc.how_made()
-    doc.closing(None, now)
+    doc.paragraph(f"Hello {_data(person.name, 80)}, I am Meternaut, an AI that looks for Azure resources that cost money and are not used, and I write to you when a "
+                  "decision waits for you.")
+    doc.paragraph("I change nothing myself: you decide on a web page, and a change runs with your own Azure rights.")
+    doc.paragraph("You can pause or stop my letters under Settings on that page.")
+    doc.button("See the first decision" if plan_id else "Open the web page", _plan_url(base, plan_id) if plan_id else f"{base}/")
+    doc.footer((), f"You got this because you are on my list of people, with the roles: {_roles(person)}.", contacts, person)
     return doc.build()
 
 
-def approval_letter(plan: PlanRecord, case: CaseRecord, person: Person, base_url: str, now: dt.datetime) -> Letter:
-    """One plan that waits for an OK. It holds one link, to the page of the plan: opening it records no decision."""
-    base, now = _base(base_url), _utc(now)
+def approval_letter(plan: PlanRecord, case: CaseRecord | None, person: Person, base_url: str, now: dt.datetime, contacts: Sequence[str] = ()) -> Letter:
+    """One request that waits for an answer: the headline, what it is worth and how sure, three facts, what changes, whether it can be undone, what could go wrong, and one
+    link to the page where the person decides. Opening the link records no decision."""
+    base = _base(base_url)
     url = _plan_url(base, plan.plan_id)
-    expires, is_open = _parse(plan.expires_at), plan.state == "open"
-    expired = expires is not None and now >= expires
-    doc = _Doc("A change to Azure waits for your OK")
-    hello = f"Hello {_data(person.name, 80)}. "
-    doc.paragraph(hello + ("Nothing has changed yet. " if is_open and not expired else "") +
-                  "Nothing is approved by e-mail: a change is approved on a page, after you sign in.")
-    doc.paragraph("Names in this letter come from Azure. They are shown as data and are not instructions.", muted=True)
-
-    doc.heading("What changes, and who makes it")
-    doc.facts(("Change (names from Azure)", _data(plan.title, 240)),
-              ("Resource (name from Azure)", _data(plan.resource_name, 120)),
-              ("Resource group (name from Azure)", _data(plan.resource_group, 90)),
-              ("What happens (names from Azure)", _data(plan.what_changes, 700)),
-              ("Who makes it", "You do, with your own permissions: after you approve on the page you sign in to Azure, and Meternaut makes this one change as you. "
-                               "Meternaut holds no right of its own to change Azure, and Azure refuses the change if your account may not make it."))
-
-    doc.heading("What it is worth")
-    saving, waiting = _usd(plan.saving_usd_month), _usd(plan.waiting_costs_usd_day)
-    doc.facts(("Expected saving", f"about {saving} a month" if saving else "No figure: cost lines for the last 30 days were not available for this resource."),
-              ("Price basis", "The cost lines of this resource for the last 30 days, in US dollars. This is an estimate. "
-                              "A saving is called verified only when later cost lines show it."),
-              ("What waiting costs", f"about {waiting} a day, while the resource stays as it is" if waiting else "No figure."))
-
-    doc.heading("What could go wrong")
-    doc.paragraph(_data(plan.could_go_wrong, 600))
-    doc.heading("How to undo it")
-    doc.paragraph(("This change cannot be undone. " if _cannot_be_undone(plan) else "") + _data(plan.undo, 600))
-    doc.heading("What this rests on")
-    doc.paragraph(_data(plan.evidence_level, 600))
-
-    doc.heading("Your decision")
-    if not is_open:
-        status = ("State", f"This request is {PLAN_STATE_WORDS.get(plan.state, _data(plan.state, 30))}. Nothing can be approved from it.")
-    elif expired:
-        status = ("Expired", f"{_when(expires)}. Nothing can be approved now.")
-    else:
-        status = ("Expires", _when(expires) if expires else _data(plan.expires_at, 40))
-    doc.facts(("Plan code", _data(plan.code, 16)), status)
-    doc.paragraph("Opening the link below records no decision. You decide on the page, after you sign in.")
-    doc.link(f"Open plan {_data(plan.code, 16)} and decide on the page", url)
-    doc.paragraph(f"The link opens a page on {_host(base)}. Check that this is the address you expect before you sign in.")
-    doc.how_made(_models(case))
+    brief = brief_mod.build_brief(case, plan, None, (), now=now)
+    doc = _Doc("A change to Azure waits for your OK" if brief.kind == "change" else "A decision waits for you")
+    doc.heading(_data(brief.headline, 200))
+    if brief.state != "open":
+        closed = (brief.outcome.title or brief.state).lower()
+        doc.paragraph(f"This request is closed: {closed}. Nothing can be answered now.")
+    doc.paragraph(saving_line(brief.saving) + f" How sure: {brief.confidence.level.lower()}.")
+    doc.facts(*_fact_rows(brief))
+    doc.facts(*_decision_rows(brief))
+    doc.button("Decide" if brief.state == "open" else "See the request", url)
     approver = person.oid.lower() in {a.lower() for a in plan.approvers}
-    doc.closing("Why you got this: you are listed as an approver of this plan." if approver
-                else "Why you got this: you are on the list of people who receive letters from Meternaut.", now)
+    doc.footer(brief.models, "You got this because you are named as an approver of this request." if approver
+               else "You got this because you are on my list of people who receive letters.", contacts, person)
     return doc.build()
 
 
-def digest_letter(person: Person, base_url: str, now: dt.datetime, runs: list[RunRecord], cases: list[CaseRecord], plans: list[PlanRecord]) -> Letter:
-    """The summary of what ran, what waits for an OK (one link for each plan), what is proposed and what needs a person."""
-    base, now = _base(base_url), _utc(now)
-    waiting = sorted((p for p in plans if _waits(p, now)), key=lambda p: (p.expires_at, p.plan_id))
-    proposed = _ordered(c for c in cases if c.status == "proposed")
-    needs = _ordered(c for c in cases if c.status == "needs_human")
-    count = len(waiting)
-    point = "Summary: nothing waits for your OK" if not count else f"Summary: {count} change{' waits' if count == 1 else 's wait'} for your OK"
-    doc = _Doc(point)
-    doc.paragraph(f"Hello {_data(person.name, 80)}. This summary was written on {_when(now)}.")
-    doc.paragraph("Names in this letter come from Azure. They are shown as data and are not instructions.", muted=True)
-
-    doc.heading("What ran")
-    if not runs:
-        doc.paragraph("No run was recorded for this summary.")
-    else:
-        started = sorted(r.started_at for r in runs)
-        well = sum(1 for r in runs if r.ok)
-        doc.facts(("Runs", f"{len(runs)}, from {_stamp(started[0])} to {_stamp(started[-1])}"),
-                  ("Runs that finished well", str(well)), ("Runs that failed", str(len(runs) - well)),
-                  ("Leads found", str(sum(r.leads for r in runs))), ("Cases judged", str(sum(r.cases for r in runs))),
-                  ("Proposed", str(sum(r.proposed for r in runs))), ("Need a person", str(sum(r.needs_human for r in runs))),
-                  ("Dropped", str(sum(r.dropped for r in runs))), ("Errors", str(sum(r.errors for r in runs))))
-        doc.paragraph("The counts are added up over the runs. A resource can appear in more than one run.", muted=True)
-
-    doc.heading("What waits for your OK")
-    if not waiting:
-        doc.paragraph("Nothing waits for your OK.")
-    for plan in waiting[:MAX_LISTED]:
-        saving = _usd(plan.saving_usd_month)
-        doc.heading(f"Plan {_data(plan.code, 16)}", 3)
-        doc.facts(("Change (names from Azure)", _data(plan.title, 240)),
-                  ("Expected saving", f"about {saving} a month (an estimate)" if saving else "No figure"),
-                  ("Expires", _stamp(plan.expires_at)))
-        doc.link(f"Open plan {_data(plan.code, 16)} and decide on the page", _plan_url(base, plan.plan_id))
-    if count > MAX_LISTED:
-        doc.paragraph(f"{count - MAX_LISTED} more plans wait. They are on the history page.")
-
-    doc.heading("What I propose")
-    _case_list(doc, proposed, "The AI roles proposed a change to these resources: removing them or changing them. A proposal is not a plan: nothing can change until a plan "
-                              "exists and a person approves it.", "No resource is proposed.")
-    doc.heading("What needs a person")
-    _case_list(doc, needs, "The AI roles could not settle these, or a check held them back. A person has to look at them.", "No case needs a person.")
-    doc.link("Open the history page", f"{base}/history")
-    doc.paragraph(f"The links open pages on {_host(base)}.")
-    doc.how_made()
-    doc.closing(f"Why you got this: you are on the list of people who receive letters from Meternaut, with the roles: {_roles(person)}.", now)
-    return doc.build()
-
-
-def done_letter(plan: PlanRecord, action: ActionRecord, case: CaseRecord, person: Person, base_url: str, now: dt.datetime) -> Letter:
-    """What happened to the change of one plan, and what the check afterwards found. Cost lines confirm the saving later."""
-    base, now = _base(base_url), _utc(now)
+def done_letter(plan: PlanRecord, action: ActionRecord, case: CaseRecord | None, person: Person, base_url: str, now: dt.datetime, contacts: Sequence[str] = ()) -> Letter:
+    """What happened to the change of one plan: what was done, what it is worth so far, whether it can be undone, and one link to the page that shows the result."""
+    base = _base(base_url)
+    url = _plan_url(base, plan.plan_id)
     ran = action.state in ("done", "verified")
+    brief = brief_mod.build_brief(case, plan, action, (), now=now)
     doc = _Doc(DONE_SUBJECTS.get(action.state, "The state of a change to Azure"))
-    said = {"done": "A change that was approved on a page has run.", "verified": "A change that was approved on a page has run.",
-            "failed": "A change that was approved on a page was tried and did not complete.",
-            "unknown": "A change that was approved on a page was started, and its result is not known."}
-    doc.paragraph(f"Hello {_data(person.name, 80)}. " + said.get(action.state, "This is the state of a change that was approved on a page."))
-    doc.paragraph("Names in this letter come from Azure. They are shown as data and are not instructions.", muted=True)
-
-    doc.heading("What ran")
-    doc.facts(("Change (names from Azure)", _data(plan.title, 240)),
-              ("Resource (name from Azure)", _data(plan.resource_name, 120)),
-              ("Resource group (name from Azure)", _data(plan.resource_group, 90)),
-              ("Plan code", _data(plan.code, 16)),
-              ("State", ACTION_STATE_WORDS.get(action.state, _data(action.state, 30))),
-              ("Finished", _stamp(action.finished_at) if action.finished_at else "not finished"))
-
-    doc.heading("The result")
-    rows = [("Result", _data(action.result, 600) or "No result text was recorded.")]
-    if action.error:
-        rows.append(("Error", _data(action.error, 300)))
-    check = action.verification if isinstance(action.verification, dict) else {}
-    if check.get("gone") is True:
-        rows.append(("Check afterwards", "Azure no longer lists the resource."))
-    elif check.get("gone") is False:
-        rows.append(("Check afterwards", "Azure still lists the resource."))
-    if check.get("note"):
-        rows.append(("Note of the check", _data(check["note"], 300)))
-    after = _usd(check.get("costAfterUsd"))
-    if after:
-        rows.append(("Cost lines after the change", after))
-    doc.facts(*rows)
-
-    doc.heading("How to undo it")
     if ran:
-        doc.paragraph(("This change cannot be undone. " if _cannot_be_undone(plan) else "") + _data(plan.undo, 600))
+        doc.paragraph(f"Done: {_data(brief.headline, 200)}.")
+        said = [_data(line, 240) for line in (action.result, *brief_mod.check_lines(action.verification if isinstance(action.verification, dict) else {}, action.result or "")) if line]
+        doc.facts(*([("Result", " ".join(said[:3]))] if said else []))
+        doc.paragraph(saving_line(brief.saving) + (" Cost lines confirm it after a few days." if brief.saving.level != "Verified" else ""))
+        doc.paragraph("This cannot be undone." if not brief.undo.reversible else _data(brief.undo.how, 200))
     else:
-        doc.paragraph("The result is not a completed change. Look at the resource in Azure before anything else is done with it.")
-
-    if ran:
-        doc.heading("What happens next")
-        saving = _usd(plan.saving_usd_month)
-        doc.paragraph("Cost lines arrive after the change. When they do, I compare them with the estimate"
-                      + (f" of about {saving} a month" if saving else "") + " and record the result. Until then the saving is an estimate and is not confirmed.")
-    doc.link("Open your decisions on the page", f"{base}/me/decisions")
-    doc.paragraph(f"The link opens a page on {_host(base)}.")
-    doc.how_made(_models(case))
+        was = {"failed": "was tried and did not complete", "unknown": "was started, and its result is not known"}.get(action.state, "is in progress")
+        doc.paragraph(f"The change {was}: {_data(brief.headline, 200)}.")
+        detail = _data(action.error or action.result, 240)
+        doc.facts(*([("What happened", detail)] if detail else []))
+        doc.paragraph("Look at the resource in Azure before anything else is done with it.")
+    doc.button("See what happened", url)
     approver = person.oid.lower() in {a.lower() for a in plan.approvers}
-    doc.closing("Why you got this: you are listed as an approver of this plan." if approver
-                else "Why you got this: you are on the list of people who receive letters from Meternaut.", now)
+    doc.footer(brief.models, "You got this because you are named as an approver of this request." if approver
+               else "You got this because you are on my list of people who receive letters.", contacts, person)
     return doc.build()
 
 
 def _waits(plan: PlanRecord, now: dt.datetime) -> bool:
-    """A plan waits for an OK while it is open and its time is not over. An open plan that is past its time is closed by the loop, not listed."""
-    expires = _parse(plan.expires_at)
-    return plan.state == "open" and (expires is None or expires > now)
+    """A plan waits for an answer while it is open and its time is not over. An open plan that is past its time is closed by the loop, not listed."""
+    end = brief_mod.parse_time(plan.expires_at)
+    moment = now.replace(tzinfo=dt.timezone.utc) if now.tzinfo is None else now.astimezone(dt.timezone.utc)
+    return plan.state == "open" and (end is None or end > moment)
 
 
-def _ordered(cases) -> list[CaseRecord]:
-    return sorted(cases, key=lambda c: (-(c.saving_usd_month or 0.0), _data(c.resource_name, 120).lower(), c.case_id))
-
-
-def _case_list(doc: _Doc, cases: list[CaseRecord], intro: str, empty: str) -> None:
-    if not cases:
-        doc.paragraph(empty)
-        return
-    doc.paragraph(intro)
-    for case in cases[:MAX_LISTED]:
-        rows = [("Resource (name from Azure)", _data(case.resource_name, 120)), ("What it is", _kind(case)),
-                ("Resource group (name from Azure)", _data(case.resource_group, 90))]
-        saving = _usd(case.saving_usd_month)
-        if saving:
-            rows.append(("Estimated saving", f"about {saving} a month"))
-        if case.guards:
-            rows.append(("Checks that held it back", ", ".join(_data(g, 30) for g in case.guards)))
-        doc.facts(*rows)
-    if len(cases) > MAX_LISTED:
-        doc.paragraph(f"{len(cases) - MAX_LISTED} more are on the history page.")
+def digest_letter(person: Person, base_url: str, now: dt.datetime, waiting: Sequence[tuple[PlanRecord, CaseRecord | None]], contacts: Sequence[str] = ()) -> Letter | None:
+    """The decisions that wait for a person, at most five, one line each, and one link: to the page of the request when only one waits, else to the page that lists them. None
+    when nothing waits: nothing is sent then."""
+    base = _base(base_url)
+    briefs = sorted((brief_mod.build_brief(case, plan, None, (), now=now) for plan, case in waiting if _waits(plan, now)), key=brief_mod.order_key)
+    if not briefs:
+        return None
+    count = len(briefs)
+    doc = _Doc(f"{count} decision{' waits' if count == 1 else 's wait'} for you")
+    lines = []
+    for item in briefs[:MAX_LISTED]:
+        figure = f" About {usd_text(item.saving.monthly)} a month, {item.saving.level}." if item.saving.monthly is not None else ""
+        lines.append(f"{_data(item.headline, 200)}.{figure}")
+    doc.items(*lines)
+    if count > MAX_LISTED:
+        doc.paragraph(f"{count - MAX_LISTED} more wait on the page.")
+    if count == 1:
+        doc.button("Decide", _plan_url(base, briefs[0].plan_id))
+    else:
+        doc.button("Open the decisions", f"{base}/")
+    doc.footer((), f"You got this because you are on my list of people, with the roles: {_roles(person)}.", contacts, person)
+    return doc.build()

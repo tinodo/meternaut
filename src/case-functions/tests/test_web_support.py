@@ -97,6 +97,36 @@ def make_decision(**changes) -> DecisionRecord:
     return DecisionRecord(**base)
 
 
+# A finding about a resource that Meternaut may not change (all invented): a virtual machine that is larger than its use needs. It has no plan of a change, so a person is asked
+# whether it is worth acting on (the family advise).
+VM = f"/subscriptions/{SUB}/resourceGroups/team-apps-rg/providers/Microsoft.Compute/virtualMachines/oversized-vm-1"
+
+
+def make_advice_case(**changes) -> CaseRecord:
+    base = dict(case_id="case0002", resource_id=VM, resource_name="oversized-vm-1", resource_type="microsoft.compute/virtualmachines", resource_group="team-apps-rg",
+                detector="investigation", status="needs_human", recommendation="change", confidence=0.8, saving_usd_month=120.0, cost_usd_30d=240.0,
+                summary="The machine used under 5 percent of its CPU in the last 30 days.", objections=("A monthly job may need the headroom.",), guards=(),
+                models={"investigator": "model-detective-x", "skeptic": "model-skeptic-y"},
+                steps=({"step": "investigator", "model": "model-detective-x", "promptTokens": 900, "completionTokens": 250, "ms": 1400, "ok": True, "note": None},
+                       {"step": "skeptic", "model": "model-skeptic-y", "promptTokens": 950, "completionTokens": 200, "ms": 1300, "ok": True, "note": None}),
+                facts={"basis": "oversized", "vcpu": 8, "sizeFamily": "D", "metrics": {"Percentage CPU": 3.2}, "metricUnits": {"Percentage CPU": "Percent"},
+                       "metricDays": {"Percentage CPU": 30}, "citedMetrics": 1},
+                plan_id="plan0002", first_seen_at=at(days=-3), updated_at=at(hours=-2), runs_seen=2)
+    base.update(changes)
+    return make_case(**base)
+
+
+def make_advice(**changes) -> PlanRecord:
+    base = dict(plan_id="plan0002", case_id="case0002", family="advise", resource_id=VM, resource_name="oversized-vm-1", resource_group="team-apps-rg", code="B4N8X2KM",
+                title="Consider changing the virtual machine oversized-vm-1 in group team-apps-rg",
+                what_changes="Nothing changes in Azure. Your answer is recorded with your name.", saving_usd_month=120.0, waiting_costs_usd_day=4.0,
+                could_go_wrong="If the finding is wrong, time goes to a resource that is needed. Nothing changes in Azure when you answer.",
+                undo="Nothing is changed, so there is nothing to undo.", evidence_level="Judged: the AI reviewers did not settle it.", approval_class="R1",
+                preconditions={"family": "advise", "caseStatus": "needs_human"})
+    base.update(changes)
+    return make_plan(**base)
+
+
 def snapshot(store: MemoryStore) -> dict:
     """Everything that a store holds, except the one-time tokens: a page that only shows something may mint tokens and may change nothing else."""
     return copy.deepcopy({"runs": store.runs, "cases": store.cases, "plans": store.plans, "decisions": store.decisions, "actions": store.actions,
@@ -106,14 +136,15 @@ def snapshot(store: MemoryStore) -> dict:
 # -- deciders ------------------------------------------------------------------------------------------------------------------------------------
 
 class ScriptedDecider:
-    """Answers what a test says and keeps what it was asked. It decides declines, questions and "not mine"; an approval goes through the delegate."""
+    """Answers what a test says and keeps what it was asked. It decides declines, questions, "not mine", "later" and the answer of an advise plan; an approval of a change goes
+    through the delegate."""
 
     def __init__(self, result: DecideResult | None = None) -> None:
         self.result = result or DecideResult(True, "declined", "Declined.")
         self.calls: list[dict] = []
 
-    def decide(self, principal, plan_id, decision, code, nonce, note=""):
-        self.calls.append(dict(oid=principal.oid, plan_id=plan_id, decision=decision, code=code, nonce=nonce, note=note))
+    def decide(self, principal, plan_id, decision, code, nonce, note="", reason=""):
+        self.calls.append(dict(oid=principal.oid, plan_id=plan_id, decision=decision, code=code, nonce=nonce, note=note, reason=reason))
         if isinstance(self.result, Exception):
             raise self.result
         return self.result
@@ -148,7 +179,7 @@ class LoopDecider:
         self.store, self.clock = store, clock
         self.calls = 0
 
-    def decide(self, principal, plan_id, decision, code, nonce, note=""):
+    def decide(self, principal, plan_id, decision, code, nonce, note="", reason=""):
         self.calls += 1
         plan = self.store.plan_get(plan_id)
         if plan is None:
@@ -157,11 +188,11 @@ class LoopDecider:
             return DecideResult(False, "refused_code", "the code is not the code of the plan", plan)
         if not self.store.nonce_use(nonce, principal.oid, plan_id):
             return DecideResult(False, "error", "This form is no longer valid.", plan)
-        if not self.store.decision_put(DecisionRecord(plan_id, principal.oid, principal.name, decision, stamp(self.clock()), plan.code, note)):
+        if not self.store.decision_put(DecisionRecord(plan_id, principal.oid, principal.name, decision, stamp(self.clock()), plan.code, note, reason if decision == "decline" else "")):
             return DecideResult(False, "duplicate", "answered already", plan)
-        kind = {"decline": "declined", "ask": "asked", "not_mine": "not_mine"}[decision]
-        if decision in ("decline", "not_mine"):
-            plan = _replace(self.store, plan, state="declined" if decision == "decline" else "withdrawn")
+        kind = {"decline": "declined", "ask": "asked", "not_mine": "not_mine", "later": "later", "approve": "acknowledged"}[decision]
+        if decision in ("decline", "not_mine", "approve"):
+            plan = _replace(self.store, plan, state={"decline": "declined", "not_mine": "withdrawn", "approve": "consumed"}[decision])
         return DecideResult(True, kind, kind, plan)
 
 

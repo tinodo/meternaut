@@ -1,29 +1,33 @@
-"""The approval page and what happens when a person answers it.
+"""The page of a request and what happens when a person answers it.
 
-The page shows the plan from the stored plan record and never the models' prose. An answer is a POST with the plan code and a one-time token. Declining, asking
-and "not mine" are recorded by the decider. Approving sends the person to the sign-in to Azure (Microsoft Entra), and the page that the person comes back to
-(`/arm/return`) shows what came of it: the change is made right there, with the person's own token. When Azure asks for an extra sign-in check, that page is a redirect to
-the sign-in once more, and the page that the person comes back to then shows what came of it. Each kind of result has a plain page of its own.
+The page is the decision brief (brief_page.py), built from the stored records and never from a model's prose. An answer is a POST of the one form of the page, with the plan
+code and a one-time token. Declining, asking, "not mine", "later" and the answer "worth acting on" of an advise plan (which changes nothing in Azure) are recorded by the
+decider. Approving a change sends the person to the sign-in to Azure (Microsoft Entra), and the page that the person comes back to (`/arm/return`) shows what came of it:
+the change is made right there, with the person's own token. When Azure asks for an extra sign-in check, that page is a redirect to the sign-in once more, and the page that
+the person comes back to then shows what came of it. Each kind of result has a plain page of its own.
 """
 from __future__ import annotations
 
 import re
 
-from ..models import MAX_SIGNIN_PATH, DecideResult, PlanRecord
-from . import words
-from .common import action_block, effective_state, may_answer, pulled, read
-from .core import MAX_NOTE, Ctx, Response, Safe, clean_line, fmt, join, link_part, parse_time, usd
-from .layout import SIGNIN_ORIGIN, block, button, code, error_summary, form, hidden, link, message_page, notice, page, paragraph, summary, textarea
+from ..brief import PAUSED_ADVICE
+from ..models import ADVISE, DECLINE_REASONS, MAX_SIGNIN_PATH, DecideResult, PlanRecord
+from . import brief_page
+from .common import brief_of, may_answer, read
+from .core import MAX_NOTE, Ctx, Response, Safe, clean_line, fmt, link_part
+from .layout import SIGNIN_ORIGIN, link, message_page, paragraph
 
 REFUSED_ROLE = "I cannot take your OK on this request."
-PAUSED = "Changes are paused here. Nothing has changed, and your OK cannot be recorded now."
+PAUSED = brief_page.PAUSED
 CHANGED = "This plan changed. Nothing is approved. A new message will bring the new plan and code."
 # The only address that an approval may send a person to: the sign-in of Microsoft Entra, with a query that holds nothing but escaped characters. The same check holds for the
 # first sign-in (`begin`) and for the second one that Azure's claims challenge asks for (the result of `finish`).
 SIGNIN_ADDRESS = re.compile(re.escape(SIGNIN_ORIGIN) + rf"/[A-Za-z0-9._~%/+=&?-]{{1,{MAX_SIGNIN_PATH}}}")
-STATUS = {"declined": 200, "asked": 200, "not_mine": 200, "ran": 200, "ran_unconfirmed": 200, "stopped": 409, "azure_refused": 403, "failed": 502, "signin_failed": 400,
-          "step_up_failed": 400, "refused_code": 409, "refused_state": 409, "refused_role": 403, "refused_paused": 409, "expired": 410, "duplicate": 409, "error": 500}
-WHY = "You answered a request on this console."
+STATUS = {"declined": 200, "asked": 200, "not_mine": 200, "later": 200, "acknowledged": 200, "ran": 200, "ran_unconfirmed": 200, "stopped": 409, "azure_refused": 403,
+          "failed": 502, "signin_failed": 400, "step_up_failed": 400, "refused_code": 409, "refused_state": 409, "refused_role": 403, "refused_paused": 409, "expired": 410,
+          "duplicate": 409, "error": 500}
+WHY = "you answered a request on this page"
+ANSWERS = ("approve", "decline", "ask", "not_mine", "later")
 
 
 def _base(ctx: Ctx, plan_id: str) -> str:
@@ -31,152 +35,41 @@ def _base(ctx: Ctx, plan_id: str) -> str:
 
 
 def _refused_role(ctx: Ctx) -> Response:
-    return message_page(ctx, 403, REFUSED_ROLE, "Nothing is approved. If this request should be yours, use Talk to a person below.", back=("/", "Back to the start page"),
-                        ai=True, why="You opened a request that is not yours to answer.")
+    return message_page(ctx, 403, REFUSED_ROLE, "Nothing is approved. If this request should be yours, use Talk to a person below.", back=("/", "Back to the decisions"),
+                        ai=True, why="you opened a request that is not yours to answer")
 
 
 def _not_found(ctx: Ctx) -> Response:
-    return message_page(ctx, 404, "I cannot find this request", "No request has this address. Nothing has changed.", back=("/", "Back to the start page"), ai=True,
-                        why="You opened an address that holds no request.")
+    return message_page(ctx, 404, "I cannot find this request", "No request has this address. Nothing has changed.", back=("/", "Back to the decisions"), ai=True,
+                        why="you opened an address that holds no request")
 
 
 def _gate(ctx: Ctx, plan_id: str) -> tuple[PlanRecord | None, Response | None]:
-    """Who may see and answer a plan: a person with the role approver who is named in the plan. Nobody else sees its details."""
-    if not ctx.principal.has("approver"):  # type: ignore[union-attr]
+    """Who may see and answer a plan: a person named in it, with the role approver (for advice, the owner too). Nobody else sees its details, and a person who may not approve
+    a change learns nothing about which ids exist."""
+    principal = ctx.principal
+    if not (principal.has("approver") or principal.has("owner")):  # type: ignore[union-attr]
         return None, _refused_role(ctx)
     plan = ctx.store.plan_get(plan_id)
     if plan is None:
-        return None, _not_found(ctx)
-    if not may_answer(ctx.principal, plan):  # type: ignore[arg-type]
+        return None, (_not_found(ctx) if principal.has("approver") else _refused_role(ctx))  # type: ignore[union-attr]
+    if not may_answer(principal, plan):  # type: ignore[arg-type]
         return None, _refused_role(ctx)
     return plan, None
 
 
 # -- the page ------------------------------------------------------------------------------------------------------------------------------------
 
-def _what_you_approve(plan: PlanRecord) -> Safe:
-    if plan.family in words.FAMILY:
-        change, noun = words.FAMILY[plan.family]
-        return fmt('{change}: the {noun} named "{name}" in resource group "{group}".', change=change, noun=noun, name=plan.resource_name, group=plan.resource_group)
-    return fmt("{title}", title=plan.title)
-
-
-def _cannot_be_undone(plan: PlanRecord) -> bool:
-    return plan.family.startswith("delete") or not plan.undo.strip()
-
-
-def _warning() -> Safe:
-    return Safe('<p class="warning-text"><span class="sign" aria-hidden="true">!</span><strong><span class="visually-hidden">Warning: </span>'
-                "This change cannot be undone.</strong></p>")
-
-
-def _details(ctx: Ctx, plan: PlanRecord) -> Safe:
-    undo = join([_warning() if _cannot_be_undone(plan) else Safe(""), paragraph(plan.undo or "No way to undo this change is recorded.")])
-    return summary([
-        ("What changes", plan.what_changes),
-        ("Resource", fmt('{name}, in resource group {group}<br><span class="muted">Resource id: {rid}</span>', name=plan.resource_name, group=plan.resource_group,
-                          rid=code(plan.resource_id))),
-        ("Who makes the change", fmt("You do, with your own permissions. When you approve, you sign in to Azure and Meternaut makes this one change as you: it may only "
-                                     "{acts_on}. Azure refuses the change if your account may not make it. Meternaut holds no right of its own to change Azure.",
-                                     acts_on=ctx.services.acts_on)),
-        ("Estimated saving a month", paragraph(fmt("About {amount}. This is an estimate from cost lines of the last 30 days.", amount=usd(plan.saving_usd_month)))
-         if plan.saving_usd_month is not None else paragraph("No figure. No cost lines of the last 30 days back an estimate.")),
-        ("What waiting costs a day", paragraph(fmt("About {amount} for each day that the resource stays as it is. This is an estimate.", amount=usd(plan.waiting_costs_usd_day)))
-         if plan.waiting_costs_usd_day is not None else paragraph("No figure.")),
-        ("What could go wrong", plan.could_go_wrong),
-        ("How to undo it", undo),
-        ("Evidence", join([paragraph(plan.evidence_level), paragraph(link(ctx.url(f"/why/{link_part(plan.case_id)}"), "Open the notebook for this case"))])),
-    ])
-
-
-def _check(ctx: Ctx, plan: PlanRecord) -> Safe:
-    """The decision restated in three lines."""
-    lines = [
-        fmt("You approve: {what}", what=_what_you_approve(plan)),
-        fmt("Undo: {undo}", undo="It cannot be undone." if _cannot_be_undone(plan) else plan.undo),
-        "Next you sign in to Azure. The change is made right after, with your own permissions, and it cannot be cancelled.",
-        fmt("Your OK covers this plan only: code {code}. Answer by {when}.", code=plan.code, when=ctx.when(plan.expires_at)),
-    ]
-    return fmt('<section class="check" aria-labelledby="check-title"><h2 id="check-title">Check before you approve</h2><ol>{lines}</ol></section>',
-               lines=join(fmt("<li>{line}</li>", line=line) for line in lines))
-
-
-def _forms(ctx: Ctx, plan: PlanRecord, paused: bool, values: dict[str, str], errors: dict[str, str]) -> Safe:
-    base = _base(ctx, plan.plan_id)
-    end = parse_time(plan.expires_at)
-    seconds = int((end - ctx.now).total_seconds()) if end else 0
-    ttl = max(900, min(86400, seconds))
-    approve = Safe("") if paused else button("Approve and sign in to Azure", name="decision", value="approve", kind="primary")
-    answer = form(base, hidden("code", plan.code), hidden("nonce", ctx.nonce(plan.plan_id, ttl)),
-                  textarea("note", "note", "Note (optional)", values.get("note", ""), hint=f"Up to {MAX_NOTE} characters. It is kept with your answer.", error=errors.get("note", ""),
-                           maxlength=MAX_NOTE),
-                  fmt('<div class="actions">{approve}{decline}</div>', approve=approve, decline=button("Decline", name="decision", value="decline", kind="secondary")))
-    ask = form(f"{base}/ask", hidden("code", plan.code), hidden("nonce", ctx.nonce(plan.plan_id, ttl)),
-               textarea("ask-note", "note", "Your question, or another way to do it", values.get("ask-note", ""),
-                        hint=f"Up to {MAX_NOTE} characters. This approves nothing. It is kept as text and never as an instruction.", error=errors.get("ask-note", ""),
-                        maxlength=MAX_NOTE),
-               fmt('<div class="actions">{b}</div>', b=button("Send the question or suggestion", kind="secondary")))
-    mine = form(f"{base}/not-mine", hidden("code", plan.code), hidden("nonce", ctx.nonce(plan.plan_id, ttl)),
-                fmt('<div class="actions">{b}</div>', b=button("This is not mine", kind="secondary")))
-    return join([
-        fmt("<h2>Your answer</h2>{note}{answer}", note=paragraph("Approving takes you to Microsoft Entra to sign in to Azure. The change is made right after, with your own "
-                                                                  "permissions, and it cannot be cancelled. Declining closes the request and nothing changes.") if not paused else
-            notice("warning", "Changes are paused", PAUSED, "You can still decline, ask a question, or say that this is not yours."), answer=answer),
-        fmt("<h2>Ask or suggest</h2>{ask}", ask=ask),
-        fmt("<h2>Not mine</h2>{p}{mine}", p=paragraph("Nothing is approved. The request goes back to finding the right owner."), mine=mine),
-    ])
-
-
-def _state_notice(ctx: Ctx, plan: PlanRecord, state: str, mine: list, action) -> Safe:
-    if state == "open":
-        return Safe("")
-    when = ctx.when(plan.expires_at)
-    if state == "expired":
-        return notice("warning", "Expired", paragraph(fmt("This request expired on {when}. Nothing has changed.", when=when)))
-    if state == "approved":
-        recorded = next((d for d in mine if d.decision == "approve"), None)
-        said = words.WAITING_FOR_THE_CHECK if action is not None and action.state == "queued" and action.step_up else "The change is being made now."
-        sentence = (paragraph(fmt("Your OK is recorded since {at}. {said} Open this page again in a moment.", at=ctx.when(recorded.at), said=said)) if recorded
-                    else paragraph(fmt("This plan is approved. {said}", said=said)))
-        return notice("info", "Approved", sentence)
-    if state == "declined":
-        return notice("info", "Declined", "This request was declined. Nothing has changed.")
-    if state == "withdrawn":
-        return notice("info", "Withdrawn", "This request was withdrawn. Nothing has changed.")
-    if state == "consumed":
-        return notice("info", "Used", "The change was made, with the permissions of the person who approved it. A plan runs once. What happened is below.")
-    if state == "failed":
-        return notice("error", "Failed", "The change could not be finished. What happened is below.")
-    return notice("info", words.PLAN_STATE.get(state, state))
-
-
 def render_plan(ctx: Ctx, plan: PlanRecord, *, values: dict[str, str] | None = None, errors: dict[str, str] | None = None, status: int = 200) -> Response:
-    """The approval page. Forms appear only while the plan is open; the approve button is left out while changes are paused."""
+    """The page of a request, for a person who may answer it. The form appears only while the request is open; the approve button is left out while changes are paused."""
     values, errors = values or {}, errors or {}
-    state = effective_state(ctx, plan)
+    case, _ = read(lambda: ctx.store.case_get(plan.case_id), None)
     decisions, _ = read(lambda: ctx.store.decisions_of_plan(plan.plan_id), [])
-    mine = [d for d in decisions if d.approver_oid.lower() == ctx.principal.oid]  # type: ignore[union-attr]
     action, _ = read(lambda: ctx.store.action_get(plan.plan_id), None)
-    asked = next((d for d in mine if d.decision == "ask" and d.note), None)
-    parts: list[object] = [
-        fmt("<h1>{title}</h1>", title=plan.title),
-        paragraph("This change needs two people, each on their own." if plan.approval_class == "R3" else "This change needs your OK on this page.", "lead"),
-    ]
-    if errors:
-        parts.append(error_summary(list(errors.items())))
-    parts += [_state_notice(ctx, plan, state, mine, action), _details(ctx, plan)]
-    if asked is not None:
-        parts.append(fmt("<h2>Your earlier question or suggestion</h2>{quote}", quote=fmt('<blockquote class="quote">{note}</blockquote>', note=asked.note)))
-    if action is not None and state != "open":
-        parts += [Safe("<h2>What happened to the change</h2>"), action_block(ctx, action)]
-    if state == "open":
-        parts += [_check(ctx, plan), _forms(ctx, plan, pulled(ctx, "all", "changes"), values, errors)]
-    extra = join([
-        fmt("<p><strong>Plan code {code}.</strong> It is a reference, not proof that this page is genuine.</p>", code=plan.code),
-        fmt("<p>This request expires on {when}.</p>", when=ctx.when(plan.expires_at)),
-        fmt("<p>This page is served from {host}.</p>", host=ctx.services.host) if ctx.services.host else Safe(""),
-    ])
-    return page(ctx, plan.title, join(block(p) for p in parts), status=status, ai=True, extra=extra, why="You are named as an approver of this plan, and you have the role approver.")
+    brief = brief_of(ctx, plan, case, action=action, decisions=decisions, answerable=True)
+    answer = brief_page.answer_form(ctx, plan, brief, values, errors) if brief.answers else None
+    return brief_page.render(ctx, brief, case=case, plan=plan, action=action, decisions=decisions, answer=answer, errors=errors, status=status,
+                             why="you are named as an approver of this request, and you have the role approver")
 
 
 def approval_page(ctx: Ctx, plan_id: str) -> Response:
@@ -187,7 +80,7 @@ def approval_page(ctx: Ctx, plan_id: str) -> Response:
 # -- the answers ---------------------------------------------------------------------------------------------------------------------------------
 
 def _back(ctx: Ctx, plan_id: str | None) -> tuple[str, str]:
-    return (f"/ok/{link_part(plan_id)}", "Back to the request") if plan_id else ("/", "Back to the start page")
+    return (f"/ok/{link_part(plan_id)}", "Back to the request") if plan_id else ("/", "Back to the decisions")
 
 
 def _no_token(ctx: Ctx, plan_id: str) -> Response:
@@ -215,10 +108,11 @@ def outcome(ctx: Ctx, result: DecideResult, plan_id: str | None) -> Response:
     back = _back(ctx, plan_id)
     show = lambda title, *lines, back_to=back: message_page(ctx, status, title, *lines, back=back_to, ai=True, why=WHY)  # noqa: E731
     text = clean_line(result.message)[:400]
+    history = paragraph(link(ctx.url("/history"), "See the history"))
     if kind == "ran":
         return show("The change was made", text or "Done.",
                     "It was made with your own permissions: Azure's Activity Log shows your name as the person who made it. Meternaut holds no right of its own to change Azure.",
-                    paragraph(link(ctx.url("/me/decisions"), "See my decisions")))
+                    history)
     if kind == "ran_unconfirmed":
         return show("The delete was accepted", text or "Azure accepted the delete.", "Meternaut looks again in a few minutes and records what it finds. It was made with your own permissions.")
     if kind == "stopped":
@@ -234,13 +128,20 @@ def outcome(ctx: Ctx, result: DecideResult, plan_id: str | None) -> Response:
         return show("The extra sign-in check was not completed", text or "The extra sign-in check that Azure asked for was not completed. The change was not made.",
                     "Nothing was changed. The request is closed.")
     if kind == "declined":
-        return show("Declined", "Declined. Nothing has changed. The request is closed.", paragraph(link(ctx.url("/me/decisions"), "See my decisions")))
+        plan = _plan_of(ctx, result, plan_id)
+        if plan is not None and plan.family == ADVISE:
+            return show("Recorded: not worth it", "Recorded. Nothing was changed. The request is closed.", history)
+        return show("Declined", "Declined. Nothing has changed. The request is closed.", history)
+    if kind == "acknowledged":
+        return show("Recorded: worth acting on", "Recorded. Nothing was changed in Azure.", history)
     if kind == "asked":
         plan = _plan_of(ctx, result, plan_id)
         until = paragraph(fmt("The request stays open until {when}.", when=ctx.when(plan.expires_at))) if plan is not None else Safe("")
-        return show("Your question is recorded", "Recorded. Your question or suggestion approves nothing.", until)
+        return show("Recorded: your words", "Recorded with your name. It approves nothing, and Meternaut does not answer yet.", until)
+    if kind == "later":
+        return show("Noted", "Noted. Nothing is approved and nothing has changed. The request stays in your list.", back_to=("/", "Back to the decisions"))
     if kind == "not_mine":
-        return show("Recorded: not yours", "Recorded. Nothing is approved. The request goes back to finding the right owner.", back_to=("/", "Back to the start page"))
+        return show("Recorded: not yours", "Recorded. Nothing is approved. The request goes back to finding the right owner.", back_to=("/", "Back to the decisions"))
     if kind == "refused_code":
         return show("This plan changed", CHANGED)
     if kind == "refused_state":
@@ -248,6 +149,9 @@ def outcome(ctx: Ctx, result: DecideResult, plan_id: str | None) -> Response:
     if kind == "refused_role":
         return _refused_role(ctx)
     if kind == "refused_paused":
+        plan = _plan_of(ctx, result, plan_id)
+        if plan is not None and plan.family == ADVISE:
+            return show("Meternaut is paused", PAUSED_ADVICE)
         return show("Changes are paused", PAUSED)
     if kind == "expired":
         plan = _plan_of(ctx, result, plan_id)
@@ -291,19 +195,30 @@ def _begin(ctx: Ctx, plan_id: str, nonce: str) -> Response:
     return _to_sign_in(ctx, begun.location, plan_id)
 
 
+def _answer(ctx: Ctx, plan: PlanRecord, nonce: str, decision: str) -> Response:
+    """One answer of the form, after the checks that every answer shares. A change is approved at the sign-in to Azure; every other answer is the decider's."""
+    plan_id = plan.plan_id
+    form_data = ctx.request.form
+    note, reason = form_data.get("note", ""), form_data.get("reason", "")
+    if len(note) > MAX_NOTE:
+        return render_plan(ctx, plan, values={"note": note, "reason": reason}, errors={"note": f"The note has {len(note)} characters. The most is {MAX_NOTE}."}, status=400)
+    if decision == "ask" and not note:
+        return render_plan(ctx, plan, values={"note": note, "reason": reason}, errors={"note": "Write your question, your objection or what to remember."}, status=400)
+    if reason and reason not in DECLINE_REASONS:
+        return render_plan(ctx, plan, values={"note": note}, errors={"reason": "Choose one of the reasons in the list."}, status=400)
+    if decision == "approve" and plan.family != ADVISE:
+        return _begin(ctx, plan_id, nonce)
+    return outcome(ctx, _call(lambda: ctx.services.decider.decide(ctx.principal, plan_id, decision, form_data.get("code", ""), nonce, note, reason)), plan_id)  # type: ignore[arg-type]
+
+
 def approval_decide(ctx: Ctx, plan_id: str) -> Response:
     plan, nonce, refused = _post(ctx, plan_id)
     if refused is not None:
         return refused
-    form_data = ctx.request.form
-    decision, note = form_data.get("decision", ""), form_data.get("note", "")
-    if decision not in ("approve", "decline"):
-        return message_page(ctx, 400, "Choose an answer", "The form did not say Approve or Decline. Nothing was recorded.", back=_back(ctx, plan_id), ai=True, why=WHY)
-    if len(note) > MAX_NOTE:
-        return render_plan(ctx, plan, values={"note": note}, errors={"note": f"The note has {len(note)} characters. The most is {MAX_NOTE}."}, status=400)  # type: ignore[arg-type]
-    if decision == "approve":
-        return _begin(ctx, plan_id, nonce)
-    return outcome(ctx, _call(lambda: ctx.services.decider.decide(ctx.principal, plan_id, decision, form_data.get("code", ""), nonce, note)), plan_id)  # type: ignore[arg-type]
+    decision = ctx.request.form.get("decision", "")
+    if decision not in ANSWERS:
+        return message_page(ctx, 400, "Choose an answer", "The form did not say which answer you chose. Nothing was recorded.", back=_back(ctx, plan_id), ai=True, why=WHY)
+    return _answer(ctx, plan, nonce, decision)  # type: ignore[arg-type]
 
 
 def arm_return(ctx: Ctx) -> Response:
@@ -321,18 +236,12 @@ def arm_return(ctx: Ctx) -> Response:
 
 
 def approval_ask(ctx: Ctx, plan_id: str) -> Response:
+    """The older address of the question: the same answer as the button of the form."""
     plan, nonce, refused = _post(ctx, plan_id)
-    if refused is not None:
-        return refused
-    note = ctx.request.form.get("note", "")
-    problem = "Write your question or suggestion." if not note else (f"The text has {len(note)} characters. The most is {MAX_NOTE}." if len(note) > MAX_NOTE else "")
-    if problem:
-        return render_plan(ctx, plan, values={"ask-note": note}, errors={"ask-note": problem}, status=400)  # type: ignore[arg-type]
-    return outcome(ctx, _call(lambda: ctx.services.decider.decide(ctx.principal, plan_id, "ask", ctx.request.form.get("code", ""), nonce, note)), plan_id)  # type: ignore[arg-type]
+    return refused if refused is not None else _answer(ctx, plan, nonce, "ask")  # type: ignore[arg-type]
 
 
 def approval_not_mine(ctx: Ctx, plan_id: str) -> Response:
-    _, nonce, refused = _post(ctx, plan_id)
-    if refused is not None:
-        return refused
-    return outcome(ctx, _call(lambda: ctx.services.decider.decide(ctx.principal, plan_id, "not_mine", ctx.request.form.get("code", ""), nonce, "")), plan_id)  # type: ignore[arg-type]
+    """The older address of "not mine": the same answer as the button of the form."""
+    plan, nonce, refused = _post(ctx, plan_id)
+    return refused if refused is not None else _answer(ctx, plan, nonce, "not_mine")  # type: ignore[arg-type]

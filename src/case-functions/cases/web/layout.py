@@ -6,8 +6,8 @@ Every part returns `Safe` text, and every value that goes into it is escaped by 
 from __future__ import annotations
 
 from typing import Iterable, Mapping, Sequence
-from urllib.parse import quote as percent
 
+from ..brief import contact_text, written_by
 from .core import Ctx, Response, Safe, esc, fmt, join
 
 HTML = "text/html; charset=utf-8"
@@ -75,7 +75,7 @@ nav ul{display:flex;flex-wrap:wrap;gap:0 .25rem;margin:0;padding:0;list-style:no
 nav a{display:inline-block;min-height:2.75rem;padding:.65rem .75rem;border-bottom:3px solid transparent;color:var(--colorNeutralForeground1);text-decoration:none}
 nav a:hover{background:var(--colorNeutralBackground3)}
 nav a[aria-current="page"]{border-bottom-color:var(--colorBrandStroke1);font-weight:var(--fontWeightSemibold)}
-main{max-width:64rem;margin:0 auto;padding:1.25rem}
+main{max-width:46rem;margin:0 auto;padding:1.25rem}
 h1{margin:.5rem 0 .75rem;font-size:var(--fontSizeHero700);line-height:1.25}
 h2{margin:1.75rem 0 .5rem;font-size:var(--fontSizeBase500)}
 h3{margin:1.25rem 0 .25rem;font-size:1.0625rem}
@@ -95,11 +95,18 @@ dl.summary>div{display:contents}
 dl.summary dt,dl.summary dd{margin:0;padding:.6rem .75rem .6rem 0;border-bottom:var(--strokeWidthThin) solid var(--colorNeutralStroke1)}
 dl.summary dt{font-weight:var(--fontWeightSemibold)}
 dl.summary dd{overflow-wrap:anywhere}
-.check{margin:1.5rem 0;padding:1rem 1.25rem;border:var(--strokeWidthThick) solid var(--colorBrandStroke1);background:var(--colorNeutralBackground2)}
-.check h2{margin-top:0}
-.check ol{margin:.5rem 0 0;padding-left:1.25rem}
-.warning-text{display:flex;gap:.75rem;align-items:center;margin:.5rem 0}
-.sign{display:inline-flex;flex:none;align-items:center;justify-content:center;width:2rem;height:2rem;border:3px solid currentColor;border-radius:50%;font-weight:700}
+.rows{margin:1rem 0;padding:0;list-style:none}
+.rows>li{padding:.9rem 0;border-top:var(--strokeWidthThin) solid var(--colorNeutralStroke1)}
+.rows>li:last-child{border-bottom:var(--strokeWidthThin) solid var(--colorNeutralStroke1)}
+.row-title{margin:0;font-weight:var(--fontWeightSemibold);overflow-wrap:anywhere}
+.row-meta{margin:.2rem 0 .6rem;color:var(--colorNeutralForeground2)}
+.feed{margin:.25rem 0 1rem;padding-left:1.1rem}
+.feed li{margin:.35rem 0;overflow-wrap:anywhere}
+.strong-line{font-weight:var(--fontWeightSemibold)}
+details.more{margin:2rem 0 0;border:var(--strokeWidthThin) solid var(--colorNeutralStroke1);border-radius:var(--borderRadiusMedium);background:var(--colorNeutralBackground2)}
+details.more>summary{display:flex;align-items:center;min-height:2.75rem;padding:.5rem 1rem;font-weight:var(--fontWeightSemibold);cursor:pointer}
+details.more[open]>summary{border-bottom:var(--strokeWidthThin) solid var(--colorNeutralStroke1)}
+details.more>div{padding:0 1rem 1rem}
 .actions{display:flex;flex-wrap:wrap;gap:.75rem;margin:1rem 0}
 .actions>*{flex:1 1 14rem;max-width:22rem}
 .btn,button{display:inline-flex;align-items:center;justify-content:center;min-height:2.75rem;min-width:11rem;padding:.5rem 1.25rem;border:var(--strokeWidthThick) solid var(--colorNeutralStrokeAccessible);border-radius:var(--borderRadiusMedium);background:var(--colorNeutralBackground1);color:var(--colorNeutralForeground1);font:inherit;font-weight:var(--fontWeightSemibold);text-align:center;text-decoration:none;cursor:pointer}
@@ -128,7 +135,8 @@ td form{margin:0}
 td .btn,td button{min-width:0;min-height:2.5rem;padding:.25rem .75rem}
 blockquote.quote{margin:.5rem 0;padding:.5rem 1rem;border-left:.375rem solid var(--colorNeutralStrokeAccessible);background:var(--colorNeutralBackground3);overflow-wrap:anywhere}
 .quote-label{margin:.75rem 0 0;color:var(--colorNeutralForeground2);font-size:var(--fontSizeBase200);font-weight:var(--fontWeightSemibold)}
-footer{max-width:64rem;margin:2rem auto 0;padding:1rem 1.25rem 2rem;border-top:var(--strokeWidthThin) solid var(--colorNeutralStroke1);color:var(--colorNeutralForeground2);font-size:var(--fontSizeBase200)}
+footer{max-width:46rem;margin:2rem auto 0;padding:1rem 1.25rem 2rem;border-top:var(--strokeWidthThin) solid var(--colorNeutralStroke1);color:var(--colorNeutralForeground2);font-size:var(--fontSizeBase200)}
+footer p{margin:0}
 @media (max-width:40em){
 main{padding:1rem}
 dl.summary{grid-template-columns:1fr}
@@ -142,21 +150,17 @@ td .btn,td button{width:auto}
 a{color:LinkText}
 .btn,button{border:2px solid ButtonText;background:ButtonFace;color:ButtonText}
 .btn.primary,button.primary{border-color:Highlight}
-.notice,.check,blockquote.quote,.table-wrap,th,td{border-color:CanvasText}
+.notice,blockquote.quote,.table-wrap,th,td,details.more{border-color:CanvasText}
 nav a[aria-current="page"]{border-bottom-color:Highlight}
 :focus-visible{outline:3px solid Highlight;box-shadow:none}
 }
 """
 
 NAV = (
-    ("/", "Home", ()),
-    ("/history", "What Meternaut did", ()),
-    ("/me/decisions", "My decisions", ()),
-    ("/me/activity", "What I did here", ()),
-    ("/me/notes", "What I know about your resources", ()),
+    ("/", "Decisions", ()),
+    ("/history", "History", ()),
     ("/me/settings", "Settings", ()),
-    ("/ops/permissions", "Standing permissions", ("ops", "owner")),
-    ("/ops/pause", "The kill switch", ("ops",)),
+    ("/ops", "Operations", ("ops",)),
 )
 
 
@@ -216,6 +220,11 @@ def summary(rows: Sequence[tuple[str, object]]) -> Safe:
 def quoted(label: str, text: object) -> Safe:
     """Text from outside (an estate, a model, a person) as a labelled quote: escaped, never a link or a control."""
     return fmt('<p class="quote-label">{label}</p><blockquote class="quote">{text}</blockquote>', label=label, text=text)
+
+
+def details(label: str, *content: object) -> Safe:
+    """One collapsed disclosure: the label, and what only a person who wants the whole record needs."""
+    return fmt('<details class="more"><summary>{label}</summary><div>{content}</div></details>', label=label, content=join(block(c) for c in content))
 
 
 def table(table_id: str, caption: str, headers: Sequence[str], rows: Sequence[Sequence[object]], *, row_header: bool = False) -> Safe:
@@ -312,16 +321,21 @@ def error_summary(problems: Sequence[tuple[str, str]]) -> Safe:
 
 # -- the page --------------------------------------------------------------------------------------------------------------------------------------
 
-def ai_line(models: Sequence[str]) -> str:
-    return f"Written by AI (models: {', '.join(models) if models else 'none named'}). A person approves every change."
-
-
-def talk_to_a_person(ctx: Ctx) -> Safe:
-    """The same words in the same place on every page: who to write to. The people are the ones with a role of owner or ops (or everybody listed)."""
+def talk_to_a_person(ctx: Ctx) -> str:
+    """The one person to write to, as plain text with the address and no link: the first with the role owner or ops (everybody listed, when none has one) who is not the person
+    who reads the page, or that person when nobody else is listed. Empty when nobody is listed."""
     people = ctx.services.people.persons
-    chosen = ([p for p in people if "ops" in p.roles or "owner" in p.roles] or list(people))[:3]
-    names = join((fmt('<a href="mailto:{mail}">{name}</a>', mail=percent(p.mail, safe="@"), name=p.name) if p.mail else esc(p.name) for p in chosen), ", ")
-    return fmt('<p class="help"><strong>Talk to a person.</strong> Write to {names}.</p>', names=names) if chosen else Safe("")
+    chosen = [p for p in people if "ops" in p.roles or "owner" in p.roles] or list(people)
+    me = ctx.principal.oid.lower() if ctx.principal else ""
+    return ", ".join(contact_text(p.name, p.mail) for p in ([p for p in chosen if p.oid.lower() != me] or chosen)[:1])
+
+
+def footer_line(ctx: Ctx, ai: bool, why: str, models: Sequence[str] | None = None) -> Safe:
+    """The one line at the foot of every page: that an AI wrote what is on it (and which models), why this person sees it, and whom to talk to."""
+    written = fmt("{line} ", line=written_by(tuple(ctx.services.models if models is None else models))) if ai else Safe("")
+    people = talk_to_a_person(ctx)
+    talk = fmt(" Talk to a person: {people}.", people=people) if people else Safe("")
+    return fmt('<p class="footer-line">{written}You see this because {why}.{talk}</p>', written=written, why=why or "you are listed as a person who may use this page", talk=talk)
 
 
 def _nav(ctx: Ctx, current: str) -> Safe:
@@ -331,16 +345,11 @@ def _nav(ctx: Ctx, current: str) -> Safe:
                 for path, name in shown)
 
 
-def page(ctx: Ctx, title: str, body: Safe, *, status: int = 200, current: str = "", ai: bool = False, why: str = "", extra: Safe = Safe(""),
+def page(ctx: Ctx, title: str, body: Safe, *, status: int = 200, current: str = "", ai: bool = False, why: str = "", models: Sequence[str] | None = None,
          headers: dict[str, str] | None = None) -> Response:
-    """A whole page for a signed-in person: the landmarks, the title, the footer. `extra` goes first in the footer."""
+    """A whole page for a signed-in person: the landmarks, the title, the footer. `why` finishes the sentence "You see this because ..." of the one footer line."""
     principal = ctx.principal
-    footer = join((
-        extra,
-        fmt("<p><strong>Why you are seeing this.</strong> {why}</p>", why=why or "You are signed in and listed as a person who may use this console."),
-        talk_to_a_person(ctx),
-        fmt('<p class="ai">{line}</p>', line=ai_line(ctx.services.models) if ai else "A person approves every change."),
-    ))
+    footer = footer_line(ctx, ai, why, models)
     document = fmt(
         '<!DOCTYPE html>\n<html lang="en" dir="ltr">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1">\n'
         '<meta name="color-scheme" content="light dark">\n<meta name="robots" content="noindex, nofollow">\n<title>{title} - Meternaut</title>\n'
@@ -352,12 +361,11 @@ def page(ctx: Ctx, title: str, body: Safe, *, status: int = 200, current: str = 
     return respond(status, document, headers=headers)
 
 
-def message_page(ctx: Ctx, status: int, title: str, *lines: object, back: tuple[str, str] | None = None, ai: bool = False, why: str = "",
-                 current: str = "", extra: Safe = Safe("")) -> Response:
+def message_page(ctx: Ctx, status: int, title: str, *lines: object, back: tuple[str, str] | None = None, ai: bool = False, why: str = "", current: str = "") -> Response:
     """A short page: a title, a few lines, and a link back."""
     back_link = paragraph(link(ctx.url(back[0]), back[1])) if back else Safe("")
     body = fmt("<h1>{title}</h1>{lines}{back}", title=title, lines=join(block(line) for line in lines), back=back_link)
-    return page(ctx, title, body, status=status, ai=ai, why=why, current=current, extra=extra)
+    return page(ctx, title, body, status=status, ai=ai, why=why, current=current)
 
 
 def denied() -> Response:

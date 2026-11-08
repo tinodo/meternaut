@@ -107,15 +107,16 @@ class WhatTheLoopKeeps(unittest.TestCase):
             case = json.loads(prompt)["case"]
             self.assertEqual((case["facts"]["ageDays"], "planted" in case["facts"], case["flags"]["tooNew"]), (0, False, True))
 
-    def test_the_same_disk_without_the_tag_is_held_back_and_gets_no_plan(self):
+    def test_the_same_disk_without_the_tag_is_held_back_and_gets_no_change_only_advice(self):
         estate = estate_with(planted_disk=False)
         row = disk_row("young-disk", GROUP, timeCreated=stamp(NOW))
         estate.graph["orphan-managed-disk"] = [row]
         estate.graph["recent-creations"] = [{"targetId": row["id"].lower()}]
         watch(estate, self.extras, self.clock)
         (case,) = self.store.cases_recent()
-        self.assertEqual((case.status, case.guards, case.plan_id), ("needs_human", ("too-new",), None))
-        self.assertEqual(self.store.plans_open(), [])
+        (plan,) = self.store.plans_open()
+        self.assertEqual((case.status, case.guards, case.plan_id), ("needs_human", ("too-new",), plan.plan_id))
+        self.assertEqual((plan.family, plan.state), ("advise", "open"), "a person can answer it, and nothing can be changed by it")
 
     def test_a_planted_disk_in_another_group_is_not_a_fixture(self):
         estate = FakeEstate()
@@ -126,11 +127,12 @@ class WhatTheLoopKeeps(unittest.TestCase):
         (case,) = self.store.cases_recent()
         self.assertEqual((case.status, case.guards), ("needs_human", ("too-new",)))
 
-    def test_a_proposed_case_that_may_not_be_changed_has_no_plan_and_says_so_in_the_store(self):
+    def test_a_proposed_case_that_may_not_be_changed_gets_advice_and_not_a_plan_of_a_change(self):
         watch(estate_with(planted_disk=False, endpoints=1), self.extras, self.clock)
         (case,) = self.store.cases_recent()
-        self.assertEqual((case.status, case.recommendation, case.plan_id), ("proposed", "delete", None))
-        self.assertEqual(self.store.plans_open(), [])
+        (plan,) = self.store.plans_open()
+        self.assertEqual((case.status, case.recommendation, case.plan_id), ("proposed", "delete", plan.plan_id))
+        self.assertEqual((plan.family, plan.case_id), ("advise", case.case_id))
 
     def test_a_lock_still_stops_a_planted_disk(self):
         estate = estate_with()
@@ -139,7 +141,7 @@ class WhatTheLoopKeeps(unittest.TestCase):
         watch(estate, self.extras, self.clock)
         (case,) = self.store.cases_recent()
         self.assertEqual((case.status, case.guards), ("needs_human", ("locked",)))
-        self.assertEqual(self.store.plans_open(), [])
+        self.assertEqual([p.family for p in self.store.plans_open()], ["advise"], "no change can be made for it: a person can only say whether it is worth acting on")
 
     def test_a_skeptic_that_disagrees_stops_a_planted_disk_too(self):
         estate = estate_with()
@@ -147,7 +149,7 @@ class WhatTheLoopKeeps(unittest.TestCase):
         watch(estate, self.extras, self.clock)
         (case,) = self.store.cases_recent()
         self.assertEqual((case.status, case.objections), ("needs_human", ("it may be a backup",)))
-        self.assertEqual(self.store.plans_open(), [])
+        self.assertEqual([p.family for p in self.store.plans_open()], ["advise"])
 
     def test_the_plan_event_and_the_hook_say_that_a_plan_was_made(self):
         made = []

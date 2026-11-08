@@ -1,64 +1,93 @@
-"""What Meternaut did: every run, and the cases that the runs looked at. It replaces a workbook, so it is complete. It is not a cost report."""
+"""History, "What happened": a plain feed of the last 30 days, a line for each thing that happened, newest day first.
+
+Three kinds of line: what people decided (with their reason, for a decline), the changes that were made and checked, and, for each day, how many new findings there were. A
+person sees the decisions and the changes of the requests that they are named in, and the number of findings; the run tables and the cases are on the pages of the platform
+team (ops.py). The old addresses of "My decisions" and "What I did here" answer with this page.
+"""
 from __future__ import annotations
 
-import re
+import datetime as dt
 
-from .common import CASE_HEADERS, case_rows, count, legend, read, run_result
-from .core import ID, Ctx, Response, Safe, fmt, join, link_part
-from .layout import block, items, notice, page, paragraph, table
+from ..brief import REASON_WORDS, plan_headline
+from ..models import ActionRecord, DecisionRecord, PlanRecord
+from .common import effective_state, may_answer, read
+from .core import Ctx, Response, Safe, fmt, join, link_part, stamp
+from .layout import block, link, notice, page, paragraph
 
-RUN_HEADERS = ["Started", "Trigger", "Result", "Leads", "Cases", "Proposed", "Needs a person", "Dropped", "Errors", "Tokens", "Seconds", "Notes", "Cases of the run"]
-RUNS_SHOWN = 20
-CASES_SHOWN = 100
-CASES_SEARCHED = 1000
+DAYS = 30
+PLANS_READ = 40
+MAX_DECISION_AGE = 15  # a request is answered within days of its making; an older plan has nothing to say in the last 30 days
+COUNTED = ("proposed", "needs_human", "awaiting_ok", "approved", "running", "done", "failed", "declined", "expired", "verified", "acknowledged")
 
 
-def _runs_table(ctx: Ctx, runs: list, selected: str) -> Safe:
-    rows = []
-    for run in runs:
-        mark = Safe('<strong>Selected.</strong> ') if run.run_id == selected else ""
-        rows.append([
-            fmt("{mark}{when}", mark=mark, when=ctx.when(run.started_at)), run.trigger, run_result(run), count(run.leads), count(run.cases), count(run.proposed),
-            count(run.needs_human), count(run.dropped), count(run.errors), count(run.tokens), count(run.seconds),
-            items(run.notes) if run.notes else "none",
-            fmt('<a href="{href}">Show them<span class="visually-hidden"> for run {run}</span></a>', href=ctx.url(f"/history?run={link_part(run.run_id)}"), run=run.run_id),
-        ])
-    return table("runs", f"The latest {RUNS_SHOWN} runs, newest first", RUN_HEADERS, rows)
+def _headline(ctx: Ctx, plan: PlanRecord) -> Safe:
+    return link(ctx.url(f"/ok/{link_part(plan.plan_id)}"), plan_headline(plan))
+
+
+def _decision_line(ctx: Ctx, plan: PlanRecord, decision: DecisionRecord) -> tuple[str, Safe] | None:
+    advice = plan.family == "advise"
+    who = decision.approver_name or "A person"
+    reason = REASON_WORDS.get(decision.reason, "")
+    if decision.decision == "decline":
+        said = "said it is not worth acting on" if advice else "declined"
+        return decision.at, fmt("{who} {said}: {headline}.{reason}", who=who, said=said, headline=_headline(ctx, plan), reason=f" Reason: {reason}." if reason else "")
+    if decision.decision == "not_mine":
+        return decision.at, fmt("{who} said that this is not theirs: {headline}.", who=who, headline=_headline(ctx, plan))
+    if decision.decision == "approve":
+        said = "said it is worth acting on" if advice else "approved"
+        return decision.at, fmt("{who} {said}: {headline}.", who=who, said=said, headline=_headline(ctx, plan))
+    return None
+
+
+def _action_lines(ctx: Ctx, plan: PlanRecord, action: ActionRecord) -> list[tuple[str, Safe]]:
+    lines: list[tuple[str, Safe]] = []
+    if action.finished_at and action.state in ("done", "verified", "unknown"):
+        lines.append((action.finished_at, fmt("Change made: {headline}. {result}", headline=_headline(ctx, plan), result=action.result)))
+    elif action.finished_at and action.state == "failed":
+        lines.append((action.finished_at, fmt("Change not made: {headline}. {result}", headline=_headline(ctx, plan), result=action.error or action.result)))
+    if action.verified_at:
+        note = action.verification.get("note", "") if isinstance(action.verification, dict) else ""
+        lines.append((action.verified_at, fmt("Change checked: {headline}. {note}", headline=_headline(ctx, plan), note=note or "Cost lines confirm it.")))
+    return lines
+
+
+def _events(ctx: Ctx, since: str) -> tuple[list[tuple[str, Safe]], bool]:
+    """The lines of the feed, each with its time: the decisions and the changes of the requests that the person is named in, then the findings of each day."""
+    plans, ok = read(lambda: ctx.store.plans_recent(100), [])
+    old = stamp(ctx.now - dt.timedelta(days=DAYS + MAX_DECISION_AGE))
+    mine = [p for p in plans if may_answer(ctx.principal, p) and p.created_at >= old][:PLANS_READ]  # type: ignore[arg-type]
+    actions = {a.plan_id: a for a in read(lambda: ctx.store.actions_recent(100), [])[0]}
+    lines: list[tuple[str, Safe]] = []
+    for plan in mine:
+        for decision in read(lambda plan=plan: ctx.store.decisions_of_plan(plan.plan_id), [])[0]:
+            line = _decision_line(ctx, plan, decision)
+            if line is not None:
+                lines.append(line)
+        if plan.family != "advise" and plan.plan_id in actions:
+            lines += _action_lines(ctx, plan, actions[plan.plan_id])
+        if effective_state(ctx, plan) == "expired":
+            lines.append((plan.expires_at, fmt("Nobody answered in time: {headline}.", headline=_headline(ctx, plan))))
+    cases = read(lambda: ctx.store.cases_recent(1000), [])[0]
+    per_day: dict[str, list[str]] = {}
+    for case in cases:
+        if case.status in COUNTED and case.first_seen_at >= since:
+            per_day.setdefault(ctx.day_key(case.first_seen_at), []).append(case.first_seen_at)
+    for found in per_day.values():
+        lines.append((max(found), fmt("{n} new finding{s}.", n=len(found), s="" if len(found) == 1 else "s")))
+    return [(at, line) for at, line in lines if at >= since], ok
 
 
 def history(ctx: Ctx) -> Response:
-    raw = ctx.request.query.get("run", "")
-    selected = raw if raw and re.fullmatch(ID, raw) else ""
-    runs, runs_ok = read(lambda: ctx.store.runs_recent(RUNS_SHOWN), [])
-    cases, cases_ok = read(lambda: ctx.store.cases_recent(CASES_SEARCHED if selected else CASES_SHOWN), [])
-    if selected:
-        cases = [case for case in cases if case.run_id == selected]
-    parts: list[object] = [
-        Safe("<h1>What Meternaut did</h1>"),
-        paragraph("Every run of the search and every case that the runs looked at, newest first. This page shows what was found and what happened to it. It is not a cost report.", "lead"),
-        paragraph("A case is a resource in the subscription that the search found and that may be unused or too big. Meternaut only reads it and does not use it. Nothing is changed until a person approves a plan."),
-        paragraph("Money is in US dollars. An estimated saving is an estimate from cost lines of the last 30 days."),
-        Safe("<h2>Runs</h2>"),
-    ]
-    if not runs_ok:
-        parts.append(notice("error", "The runs cannot be read", "I cannot read the runs now. Nothing has changed."))
-    elif not runs:
-        parts.append(paragraph("No run is recorded yet."))
-    else:
-        parts.append(_runs_table(ctx, runs, selected))
-    parts.append(Safe("<h2>Cases</h2>"))
-    if raw and not selected:
-        parts.append(notice("warning", "That run id is not valid", "A run id has letters, digits, dots, hyphens and underscores only. All cases are shown."))
-    if selected:
-        parts.append(paragraph(fmt('Cases of the run {run}. <a href="{href}">Show all cases</a>.', run=selected, href=ctx.url("/history"))))
-    else:
-        parts.append(paragraph(f"The latest {CASES_SHOWN} cases, most recently updated first."))
-    if not cases_ok:
-        parts.append(notice("error", "The cases cannot be read", "I cannot read the cases now. Nothing has changed."))
-    elif not cases:
-        parts.append(paragraph("No case is recorded for this run." if selected else "No case is recorded yet."))
-    else:
-        parts.append(table("cases", "Cases with their status, recommendation and estimated saving", CASE_HEADERS, case_rows(ctx, cases)))
-    parts += [Safe("<h2>What the status words mean</h2>"), legend()]
-    return page(ctx, "What Meternaut did", join(block(p) for p in parts), current="/history", ai=True,
-                why="You opened the record of the runs and the cases of Meternaut.")
+    since = stamp(ctx.now - dt.timedelta(days=DAYS))
+    lines, ok = _events(ctx, since)
+    parts: list[object] = [Safe("<h1>What happened</h1>"), paragraph(f"The last {DAYS} days: what was decided, what was changed and checked, and how many new findings there were each day.", "lead")]
+    if not ok:
+        parts.append(notice("error", "The history cannot be read", "I cannot read the requests now. Nothing has changed."))
+    if not lines:
+        parts.append(paragraph(f"Nothing has happened in the last {DAYS} days."))
+    days: dict[str, list[tuple[str, Safe]]] = {}
+    for at, line in sorted(lines, key=lambda item: item[0], reverse=True):
+        days.setdefault(ctx.day_key(at), []).append((at, line))
+    for key in sorted(days, reverse=True):
+        parts += [fmt("<h2>{day}</h2>", day=ctx.day(days[key][0][0])), fmt('<ul class="feed">{rows}</ul>', rows=join(fmt("<li>{row}</li>", row=line) for _, line in days[key]))]
+    return page(ctx, "What happened", join(block(p) for p in parts), current="/history", ai=True, why="you are signed in and listed as a person who may use this page")

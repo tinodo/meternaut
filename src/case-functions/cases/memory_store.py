@@ -72,7 +72,7 @@ class MemoryStore:
     def decision_put(self, decision: DecisionRecord) -> bool:
         key = (decision.plan_id, decision.approver_oid)
         existing = self.decisions.get(key)
-        if existing is not None and existing.decision != "ask":
+        if existing is not None and existing.decision not in ("ask", "later"):
             return False
         self.decisions[key] = decision
         return True

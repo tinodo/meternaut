@@ -15,6 +15,7 @@ from functools import lru_cache
 from typing import Callable, Iterable, Mapping
 from urllib.parse import parse_qsl, quote, urlsplit
 
+from ..brief import visible
 from ..models import TIME_FORMAT, Decider, Delegate, Principal, Store
 from ..people import People
 
@@ -25,6 +26,8 @@ MAX_REASON = 200
 FORM_TYPE = "application/x-www-form-urlencoded"
 FORM_SECONDS = 6 * 3600
 ID = r"[A-Za-z0-9_.-]{1,80}"
+# When the Watch looks every day, in UTC (hour and minute): the daily timer of function_app.py, "0 30 5 * * *". A test holds the two together.
+WATCH_AT = (5, 30)
 
 DAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
 MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
@@ -84,10 +87,11 @@ class Safe(str):
 
 
 def esc(value: object) -> Safe:
-    """The value as escaped HTML text (and attribute text). `Safe` text passes through; everything else is escaped."""
+    """The value as escaped HTML text (and attribute text). `Safe` text passes through; everything else is stripped of the characters that hide text or change its order
+    (brief.visible) and escaped: the one place where every page puts text of the estate, of a person or of a model."""
     if isinstance(value, Safe):
         return value
-    return Safe(html.escape("" if value is None else str(value), quote=True))
+    return Safe(html.escape(visible(value), quote=True))
 
 
 def fmt(template: str, **values: object) -> Safe:
@@ -259,6 +263,35 @@ class Ctx:
         if moment is None:
             return esc(clean_line(value) or empty)
         return fmt('<time datetime="{iso}">{text}</time>', iso=stamp(moment), text=time_text(moment, self.zone()))
+
+    def day(self, value: object, empty: str = "not set") -> Safe:
+        """A day as `<time>` text in the person's own time zone, where it is known (else in UTC): `Thu 5 Nov`."""
+        moment = parse_time(value)
+        if moment is None:
+            return esc(clean_line(value) or empty)
+        zone = self.zone()
+        shown = moment.astimezone(zone) if zone is not None else moment
+        return fmt('<time datetime="{iso}">{text}</time>', iso=stamp(moment), text=f"{DAYS[shown.weekday()][:3]} {shown.day} {MONTHS[shown.month - 1]}")
+
+    def day_key(self, value: object) -> str:
+        """The calendar day of a time in the person's own time zone, as YYYY-MM-DD, for grouping a list by day. Empty for a time that cannot be read."""
+        moment = parse_time(value)
+        if moment is None:
+            return ""
+        zone = self.zone()
+        return (moment.astimezone(zone) if zone is not None else moment).date().isoformat()
+
+    def next_search(self) -> str:
+        """When the Watch looks next, as a person reads it: `at 06:30` in the person's own time zone, `tomorrow at 06:30` when that is the next day there."""
+        now = utc(self.now)
+        at = now.replace(hour=WATCH_AT[0], minute=WATCH_AT[1], second=0, microsecond=0)
+        if at <= now:
+            at += dt.timedelta(days=1)
+        zone = self.zone()
+        if zone is None or zone is dt.timezone.utc:
+            return f"at {at:%H:%M} UTC" if at.date() == now.date() else f"tomorrow at {at:%H:%M} UTC"
+        local = at.astimezone(zone)
+        return f"at {local:%H:%M}" if local.date() == now.astimezone(zone).date() else f"tomorrow at {local:%H:%M}"
 
     def nonce(self, purpose: str, seconds: int = FORM_SECONDS) -> str:
         """A one-time token for a form: for this person and this purpose only."""

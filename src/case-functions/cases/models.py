@@ -13,12 +13,15 @@ from typing import Protocol
 
 TIME_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
 
-CASE_STATUSES = ("proposed", "needs_human", "dropped", "error", "awaiting_ok", "approved", "running", "done", "failed", "declined", "expired", "verified")
+CASE_STATUSES = ("proposed", "needs_human", "dropped", "error", "awaiting_ok", "approved", "running", "done", "failed", "declined", "expired", "verified", "acknowledged")
 # What a case is while a person has still to answer, and what it is once the loop has finished with it.
 CASE_OPEN = ("awaiting_ok", "approved", "running")
-CASE_CLOSED = ("done", "failed", "declined", "expired", "verified")
+CASE_CLOSED = ("done", "failed", "declined", "expired", "verified", "acknowledged")
 PLAN_STATES = ("open", "approved", "consumed", "declined", "expired", "withdrawn", "failed")
-DECISIONS = ("approve", "decline", "ask", "not_mine")
+# `later` is a person's "not now": it records nothing but that the person has seen the request, leaves the plan open, and a later answer replaces it (like `ask`).
+DECISIONS = ("approve", "decline", "ask", "not_mine", "later")
+# Why a person declined, from a short list (the form of a decline offers exactly these; an empty reason is allowed).
+DECLINE_REASONS = ("still-needed", "figure-wrong", "handled", "other")
 ACTION_STATES = ("queued", "running", "done", "failed", "unknown", "verified", "withdrawn")
 SWITCH_NAMES = ("all", "changes", "messages")
 NOTE_KINDS = ("note", "do_not_touch")
@@ -33,6 +36,9 @@ FAMILIES = {
     "delete-disk": "microsoft.compute/disks",
     "delete-public-ip": "microsoft.network/publicipaddresses",
 }
+# The family of a plan that asks a person whether a finding is worth acting on. It changes nothing in Azure and has no call in the runner's list: the answer is recorded and
+# nothing else happens. A finding about a resource that Meternaut may not change gets such a plan, so that the person can answer it.
+ADVISE = "advise"
 
 
 def _thaw(cls: type, data: dict) -> dict:
@@ -106,6 +112,11 @@ class CaseRecord(Record):
     first_seen_at: str = ""
     updated_at: str = ""
     runs_seen: int = 1
+    # Who the resource probably belongs to, as plain facts that code read from the estate (the tags and the Activity Log), for a person to read and never for a model:
+    # {"tagOwner": the value of an owner tag, "tagName": the name of that tag, "createdBy": who made the resource, "createdAt": when (a time or a date),
+    #  "changedBy": who changed it last, "changedAt": when, "lookedUp": True once the tags and the Activity Log were read, even when they held nothing}.
+    # A key that is not known is left out. The text is from the estate: pages and letters show it escaped, and nothing trusts it. An empty dict means "not looked up".
+    owner: dict = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -144,6 +155,7 @@ class DecisionRecord(Record):
     at: str
     plan_code: str
     note: str = ""
+    reason: str = ""  # one of DECLINE_REASONS, or empty: only a decline has one
 
 
 @dataclass(frozen=True)
@@ -235,7 +247,8 @@ class Principal:
 @dataclass(frozen=True)
 class DecideResult:
     ok: bool
-    # Answers: declined, asked, not_mine. What a sign-in to Azure led to: ran, ran_unconfirmed, stopped, azure_refused, failed, signin_failed, and step_up_failed (the extra
+    # Answers: declined, asked, not_mine, later, and acknowledged (an advise plan answered with "worth acting on": nothing changes in Azure). What a sign-in to Azure led to:
+    # ran, ran_unconfirmed, stopped, azure_refused, failed, signin_failed, and step_up_failed (the extra
     # sign-in check that Azure asked for was not completed: the request is closed). step_up: Azure asked for an extra sign-in check, and `location` is where the person goes.
     # Refusals: refused_code, refused_state, refused_role, refused_paused, expired, duplicate, error.
     kind: str
@@ -267,9 +280,9 @@ class Store(Protocol):
     def decisions_of_plan(self, plan_id: str) -> list[DecisionRecord]: ...
     def decisions_by(self, oid: str, limit: int = 100) -> list[DecisionRecord]: ...
     def decision_put(self, decision: DecisionRecord) -> bool:
-        """Keeps one decision per approver and plan. Returns False, and changes nothing, when this approver has a decision of another kind than a question already.
+        """Keeps one decision per approver and plan. Returns False, and changes nothing, when this approver has a decision of another kind than a question or a "later" already.
 
-        A question ("ask") is not a decision: a later answer of the same approver replaces it."""
+        A question ("ask") and a "later" are not decisions: a later answer of the same approver replaces them."""
         ...
     def action_get(self, plan_id: str) -> ActionRecord | None: ...
     def action_put(self, action: ActionRecord) -> None: ...
@@ -310,10 +323,11 @@ class Store(Protocol):
 
 
 class Decider(Protocol):
-    """The approval loop as the pages see it, for the answers that change nothing in Azure: decline, ask a question, not mine. It checks the person, the plan
-    code, the one-time token, the plan's state, the switches and the expiry. An approval is not decided here: it is made at the person's sign-in to Azure."""
+    """The approval loop as the pages see it, for the answers that change nothing in Azure: decline, ask a question, not mine, later, and the answer of an advise plan
+    ("worth acting on", sent as approve). It checks the person, the plan code, the one-time token, the plan's state, the switches and the expiry. The approval of a change is
+    not decided here: it is made at the person's sign-in to Azure."""
 
-    def decide(self, principal: Principal, plan_id: str, decision: str, code: str, nonce: str, note: str = "") -> DecideResult: ...
+    def decide(self, principal: Principal, plan_id: str, decision: str, code: str, nonce: str, note: str = "", reason: str = "") -> DecideResult: ...
 
 
 class Delegate(Protocol):

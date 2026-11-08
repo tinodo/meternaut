@@ -96,6 +96,18 @@ class AboutAPlan(unittest.TestCase):
         self.assertEqual(self.f.graph.to(), ["ops@example.com", "ops@example.com"])
         self.assertEqual(self.f.records(TINO), [])
 
+    def test_a_plan_that_only_asks_whether_a_finding_is_worth_acting_on_gets_no_letter_of_its_own(self):
+        self.f.on_plan(plan(plan_id="adv1", family="advise", approval_class="R1"), make_case(status="needs_human"))
+        self.assertEqual(self.f.graph.sent, [])
+        self.assertEqual(self.f.records(), [])
+
+    def test_the_first_contact_links_to_the_first_request_and_names_one_person_to_talk_to(self):
+        self.f.on_plan(plan(), make_case())
+        first = next(m for _, m in self.f.graph.sent if m["subject"].endswith("will write to you"))
+        self.assertIn('href="https://func.example.net/ok/p1a2b3c4d5"', first["body"]["content"])
+        self.assertIn("Talk to a person: Ops (ops@example.com).", first["body"]["content"])
+        self.assertNotIn("mailto:", first["body"]["content"])
+
     def test_the_subject_holds_no_resource_name_and_the_link_is_the_console(self):
         made = plan()
         self.f.on_plan(made, make_case())
@@ -192,6 +204,8 @@ class AboutAChange(unittest.TestCase):
 class AboutTheWeeklyDesk(unittest.TestCase):
     def setUp(self):
         self.f = Fixture()
+        self.f.store.case_put(make_case(status="proposed"))
+        self.f.store.plan_put(plan(expires_at="2026-12-01T09:30:00Z"))  # one request waits for the owner
 
     def digests(self, oid=TINO):
         return [r for r in self.f.records(oid) if r[0] == "digest"]
@@ -223,13 +237,46 @@ class AboutTheWeeklyDesk(unittest.TestCase):
         self.f.on_run(make_run())
         self.assertEqual(len(self.digests()), 1)
 
-    def test_the_desk_says_what_waits_and_what_was_found_this_week(self):
-        self.f.store.run_put(make_run(run_id="r1", started_at="2026-11-02T06:00:00Z"))
-        self.f.store.case_put(make_case(case_id="c9", status="proposed", updated_at="2026-11-02T06:05:00Z"))
-        self.f.store.plan_put(plan(plan_id="open1", approvers=(TINO,)))
+    def test_the_desk_says_what_waits_with_one_link_and_names_no_resource_in_its_subject(self):
         self.f.on_run(make_run())
         (subject,) = self.f.graph.subjects()
-        self.assertTrue(subject.startswith("[Meternaut]"))
+        self.assertEqual(subject, "[Meternaut] 1 decision waits for you")
+        (_, message) = self.f.graph.sent[0]
+        self.assertIn("https://func.example.net/ok/p1a2b3c4d5", message["body"]["content"])
+        self.assertEqual(message["body"]["content"].count("https://"), 1)
+
+    def test_nothing_is_written_when_nothing_waits_for_the_person(self):
+        quiet = Fixture()
+        quiet.on_run(make_run())
+        self.assertEqual(quiet.graph.sent, [])
+        self.assertEqual(quiet.records(), [], "no record either: the desk was not due, it had nothing to say")
+
+    def test_a_request_that_waits_for_somebody_else_is_not_in_the_desk_of_this_person(self):
+        other = Fixture()
+        other.store.case_put(make_case(status="proposed"))
+        other.store.plan_put(plan(approvers=(OPS,), expires_at="2026-12-01T09:30:00Z"))
+        other.on_run(make_run())
+        self.assertEqual(other.graph.sent, [])
+
+    def test_a_request_that_is_answered_or_out_of_time_does_not_wait(self):
+        for changes in ({"state": "declined"}, {"expires_at": "2026-11-03T09:00:00Z"}):
+            with self.subTest(changes=changes):
+                closed = Fixture()
+                closed.store.case_put(make_case(status="proposed"))
+                closed.store.plan_put(plan(**changes))
+                closed.on_run(make_run())
+                self.assertEqual(closed.graph.sent, [])
+
+    def test_a_request_that_only_asks_whether_it_is_worth_acting_on_has_no_letter_of_its_own_and_is_in_the_desk(self):
+        advice = plan(plan_id="adv1", case_id="c2", family="advise", approval_class="R1", resource_name="disk-two", expires_at="2026-12-01T09:30:00Z")
+        self.f.store.case_put(make_case(case_id="c2", status="needs_human", resource_name="disk-two"))
+        self.f.store.plan_put(advice)
+        self.f.on_plan(advice, make_case(case_id="c2", status="needs_human", resource_name="disk-two"))
+        self.assertEqual(self.f.graph.sent, [], "advice is not urgent: no letter, and no first contact either")
+        self.f.on_run(make_run())
+        (subject,) = self.f.graph.subjects()
+        self.assertEqual(subject, "[Meternaut] 2 decisions wait for you")
+        self.assertIn("disk-two", self.f.graph.sent[0][1]["body"]["content"])
 
 
 class WhenSomethingFails(unittest.TestCase):

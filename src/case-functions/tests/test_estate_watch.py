@@ -830,7 +830,7 @@ class ThrottlingDoesNotFailTheRun(unittest.TestCase):
 
 
 class WatchingMoreDoesNotWidenWhatMayBeChanged(unittest.TestCase):
-    def test_a_planted_disk_of_the_name_of_the_change_group_in_another_subscription_gets_no_plan_and_is_not_a_fixture(self):
+    def test_a_planted_disk_of_the_name_of_the_change_group_in_another_subscription_gets_no_change_plan_and_is_not_a_fixture(self):
         clock = Moving()
         extras = loop_for(clock)
         other = sub_id(5)
@@ -840,9 +840,10 @@ class WatchingMoreDoesNotWidenWhatMayBeChanged(unittest.TestCase):
         summary, events, _ = watch(tenant, clock=clock, extras=extras)
         self.assertEqual((summary.ok, summary.cases), (True, 1))
         (case,) = extras.store.cases_recent()
-        self.assertEqual((case.subscription_id, case.status, case.plan_id), (other, "proposed", None), "a case is made and a person reads it, and no plan is made for it")
-        self.assertEqual(extras.store.plans_open(), [])
-        self.assertEqual(of_type(events, "plan.created"), [])
+        (plan,) = extras.store.plans_open()
+        self.assertEqual((case.subscription_id, case.status, case.plan_id), (other, "proposed", plan.plan_id))
+        self.assertEqual((plan.family, plan.subscription_id), ("advise", other), "a person reads it and can say whether it is worth acting on; nothing can be changed for it")
+        self.assertEqual([e["family"] for e in of_type(events, "plan.created")], ["advise"])
 
     def test_the_planted_disk_of_the_loop_still_gets_its_plan_when_the_watch_reads_the_whole_estate(self):
         clock = Moving()
@@ -865,16 +866,17 @@ class TheHistoryAndItsPages(unittest.TestCase):
         history.emit("run.started", trigger="timer", subscriptions=1000, scopes=[sub_id(n)[:8] for n in range(5)], scopeFrom="estate", detectors=list(detectors.DETECTOR_NAMES))
         self.assertLess(len(lines[0]), 600)
 
-    def test_a_run_of_many_subscriptions_is_kept_and_the_history_page_still_renders_with_its_notes(self):
+    def test_a_run_of_many_subscriptions_is_kept_and_the_page_of_the_runs_still_renders_with_its_notes(self):
         clock = Moving()
         extras = loop_for(clock)
         tenant, subs = tenant_of(60)
         tenant.failures = {"costs": 400}
         watch(tenant, clock=clock, extras=extras)
-        reply = Console(store=extras.store).get("/history")
+        reply = Console(store=extras.store).get("/ops/runs")
         self.assertEqual((reply.status, reply.problems), (200, []))
         self.assertIn("cost lines could not be read in 60 subscriptions", reply.content)
         self.assertEqual(len(reply.table("runs").rows), 1)
+        self.assertEqual(Console(store=extras.store).get("/history").status, 200, "the History carries no run table, and it renders whatever the estate")
 
     def test_the_notebook_page_of_a_case_from_a_subscription_of_a_big_estate_renders(self):
         clock = Moving()

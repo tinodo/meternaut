@@ -4,6 +4,8 @@ A word that is not listed here is shown as it is stored (escaped). Plain, short 
 """
 from __future__ import annotations
 
+from ..brief import GUARD_WORDS, TYPE_WORDS, WAITING_FOR_THE_CHECK as WAITING_TEXT
+
 # state -> (short word, what it means)
 CASE_STATUS = {
     "proposed": ("Proposed", "A change is suggested. The first model recommended it, the second model agreed, and no guard stopped it."),
@@ -18,6 +20,7 @@ CASE_STATUS = {
     "declined": ("Declined", "A person said no. Nothing changed."),
     "expired": ("Expired", "Nobody answered in time. Nothing changed."),
     "verified": ("Done and verified", "The change was made and a later check confirmed it."),
+    "acknowledged": ("Worth acting on", "A person said that this is worth acting on. Meternaut changed nothing in Azure."),
 }
 
 PLAN_STATE = {
@@ -32,7 +35,7 @@ PLAN_STATE = {
 
 WITHDRAWN_ACTION = "Withdrawn before it started. Nothing changed."
 # What the page of an approved plan says while its change waits in the queue: Azure asked the approver for an extra sign-in check, and the check is not completed yet.
-WAITING_FOR_THE_CHECK = "Azure asked for an extra sign-in check before it would make the change. The change waits until the check is completed. Nothing was changed yet."
+WAITING_FOR_THE_CHECK = WAITING_TEXT
 ACTION_STATE = {
     "queued": "Queued. It has not started.",
     "running": "Running.",
@@ -41,21 +44,6 @@ ACTION_STATE = {
     "unknown": "The result is not known yet.",
     "verified": "Done and verified.",
     "withdrawn": WITHDRAWN_ACTION,
-}
-
-# family -> the change in words, and what the resource is called in a sentence
-FAMILY = {
-    "delete-disk": ("Delete an unattached managed disk", "disk"),
-    "delete-public-ip": ("Delete an unassigned public IP address", "public IP address"),
-}
-
-RESOURCE_TYPE = {
-    "microsoft.compute/disks": "Managed disk",
-    "microsoft.network/publicipaddresses": "Public IP address",
-    "microsoft.network/privateendpoints": "Private endpoint",
-    "microsoft.network/loadbalancers": "Load balancer",
-    "microsoft.web/serverfarms": "App Service plan",
-    "microsoft.compute/virtualmachines": "Virtual machine",
 }
 
 DETECTOR = {
@@ -77,20 +65,24 @@ RECOMMENDATION = {
     "investigate": ("Investigate", "A person has to look into it first, because the evidence does not decide."),
 }
 
-GUARD = {
-    "locked": "A management lock covers the resource.",
-    "keep-tag": "A tag asks to keep the resource.",
-    "too-new": "The resource is less than 7 days old.",
-    "managed-group": "A platform manages the resource group.",
-    "unverified": "A guard could not be read, so it counts as on.",
-}
+GUARD = GUARD_WORDS
 
-DECISION = {
-    "approve": "Your OK",
-    "decline": "No, leave it as it is",
-    "ask": "A question or suggestion",
-    "not_mine": "Not mine",
+# The answers of the form, by what each is called on the button, for each kind of request (a change in Azure, or advice that changes nothing).
+ANSWER_LABEL = {
+    "change": {"approve": "Approve and sign in to Azure", "decline": "Decline", "not_mine": "This is not mine", "ask": "Ask or tell", "later": "Decide later"},
+    "advice": {"approve": "Worth acting on", "decline": "Not worth it", "not_mine": "This is not mine", "ask": "Ask or tell", "later": "Decide later"},
 }
+# What each answer is called when it is listed afterwards.
+DECISION = {
+    "approve": "Approved",
+    "decline": "Declined",
+    "ask": "Asked or told something",
+    "not_mine": "Said it is not theirs",
+    "later": "Decided to decide later",
+}
+# The reasons that a decline may give, as the form offers them (the first has no value: no reason).
+DECLINE_REASON = (("", "No reason"), ("still-needed", "It is still needed"), ("figure-wrong", "The figure is wrong"), ("handled", "It is already handled"),
+                  ("other", "Another reason (say it in the note)"))
 
 # level -> (what the level is called, what it stops, the word for the button)
 SWITCH = {
@@ -115,9 +107,5 @@ def recommendation_meaning(recommendation: str | None) -> str:
     return RECOMMENDATION.get(recommendation or "", ("", ""))[1]
 
 
-def family_words(family: str) -> str:
-    return FAMILY.get(family, (family, ""))[0]
-
-
 def resource_type_words(resource_type: str) -> str:
-    return RESOURCE_TYPE.get((resource_type or "").lower(), "")
+    return TYPE_WORDS.get((resource_type or "").lower(), ("", ""))[0]
