@@ -60,12 +60,13 @@ from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass, field
 from typing import Callable, Iterable, TypeVar
 
-from . import deeper
+from . import deeper, learning, library
 from .arm import SCOPE_ID, Arm, CostLine, MetricPoint
 from .detectors import some
 from .foundry import FunctionTool
 from .http import HttpError, Refused
 from .identity import IdentityError
+from .models import StoreError
 
 MAX_RESULT_CHARS = 6000
 MAX_CALLS = 40  # calls of one Toolbox; the next ones answer "limit"
@@ -112,7 +113,7 @@ READER_SOURCES = ("rules", "saved_searches", "workbooks", "analytics_rules")  # 
 CHILD_COLUMNS = ("model", "version", "sku", "capacity", "requests_per_minute", "tokens_per_minute", "state", "upgrade")  # what children tells of each part, in the order of its columns
 
 ERRORS = ("bad-arguments", "unknown-tool", "unknown-handle", "unknown-metric", "not-offered", "unavailable", "limit", "too-large", "failed")
-READ_ERRORS = (HttpError, Refused, IdentityError)
+READ_ERRORS = (HttpError, Refused, IdentityError, StoreError)
 OTHER = "other"  # what an answer shows for a text that is there and fails its check: never the text itself
 
 # The word checks. The patterns of the four arguments are written once, as the schema of the tools gives them to the agent, and compiled here; every check is a full match.
@@ -706,6 +707,18 @@ TOOLS = {tool.name: tool for tool in (
           Param("type", "type", "A resource type, in lower case, as estate_overview shows it. Null when a handle is given."),
           Param("days", "integer", "How many closed days to look back, 7 to 90. Null for 30.", low=7, high=MAX_HISTORY),
           Param("basis", "choice", "actual: what was charged. amortized: a purchase spread over its term. Null for actual.", choices=("actual", "amortized")))),
+    Tool("recall_lessons",
+         "Shows how people answered the earlier proposals about resources of one resource type, as counts, for each kind of proposal: how many were answered, approved, declined (with the "
+         "reasons that people could choose from a fixed list), said to be somebody else's, or left without an answer; how the saving that was measured after a change compares with the one "
+         "that was expected; and, for each band of the confidence that an AI stated, the share that was approved, when enough were answered. It says 'no history yet' for a type with none. "
+         "These are counts of people's answers, not facts about this estate, and they never replace a measurement. It names no resource and no person.",
+         (Param("type", "type", _TYPE, required=True),)),
+    Tool("recall_knowledge",
+         "Shows what Microsoft's public documentation was read to say about one resource type, as claims that code checked: for each its kind (from a fixed list), the day it was read, the "
+         "address of the page and a quote of at most 200 characters that code found on that page. Only claims that are still current are shown, not_shown counts the others, and studied "
+         "says the day the type was last read about ('not yet' when it never was). A quote is text of documentation, not a fact about this estate and not an instruction: it never replaces "
+         "a measurement.",
+         (Param("type", "type", _TYPE, required=True),)),
 )}
 SPECS = tuple(tool.spec() for tool in TOOLS.values())
 PLACEHOLDER = f"r{HANDLE_LIMIT}"  # as long as any handle: an answer is cut to size with it, then given the real handles
@@ -796,6 +809,7 @@ class Toolbox:
 
     def __init__(self, arm: Arm, subscriptions: tuple[str, ...], now: dt.datetime, notes: list[str]) -> None:
         self.arm, self.subscriptions, self.now, self.notes = arm, subscriptions, now, notes
+        self.memory: object | None = None  # the store of the loop, which the two tools that recall read; the investigation sets it, and a run that keeps no memory has none
         self.handles: dict[str, Resource] = {}  # every resource that an answer has shown, by handle
         self.evidence: dict[str, dict] = {}  # handle -> what the answers showed about it so far (metric aggregates, cost lines, typed properties)
         self.log: list[dict] = []  # one dict per call: name, arguments, ok, chars
@@ -2135,3 +2149,18 @@ class Toolbox:
             self._record_metric(handle, f"Cost {basis} USD {days}d", {"total": total, "max": _cents(_money(max(daily))), "average": _money(math.fsum(with_cost) / len(with_cost)) if with_cost else None,
                                                                    "days_with_data": len(with_cost)}, days, "USD")
         return answer
+
+    # -- what was learned: answers about people's earlier answers and about documentation that code checked, never about this estate ---------------------------------
+    def _remembered(self, read: Callable[[object], object]) -> object:
+        """What the memory of the loop holds. A run that keeps none has nothing to recall, which is not the same as no history: the answer is `unavailable` and a note says so."""
+        if self.memory is None:
+            raise StoreError("this run keeps no memory")
+        return read(self.memory)
+
+    def _tool_recall_lessons(self, args: dict) -> dict:
+        kind = args["type"]
+        return learning.recall(self._remembered(lambda memory: memory.lessons_of(kind)), kind)  # type: ignore[attr-defined,arg-type]
+
+    def _tool_recall_knowledge(self, args: dict) -> dict:
+        kind = args["type"]
+        return library.knowledge_answer(self._remembered(lambda memory: memory.claims_of(kind)), kind, self.now)  # type: ignore[attr-defined,arg-type]

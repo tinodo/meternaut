@@ -862,7 +862,7 @@ class TheBuild(unittest.TestCase):
     def test_the_lock_of_the_repository_is_the_default_and_a_harness_without_a_store_refuses_because_the_switches_cannot_be_read(self):
         harness = self.build()
         self.assertIsNotNone(harness.lock)
-        self.assertEqual(sorted(harness.lock.agents), [INVESTIGATOR, SKEPTIC])
+        self.assertEqual(sorted(harness.lock.agents), [INVESTIGATOR, agents.SCHOLAR_NAME, SKEPTIC], "the three agents of the project since the Study")
         with self.assertRaises(HarnessRefused) as raised:
             harness.ensure(specs()[0])
         self.assertEqual(raised.exception.reason, "no-store")

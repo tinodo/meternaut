@@ -1,7 +1,7 @@
 """Entry point of the function app (Python v2 programming model). Wiring only: the logic is in the cases package."""
 import azure.functions as func
 
-from cases import console, control, drift, harness, loop, run
+from cases import console, control, drift, harness, loop, run, study
 
 app = func.FunctionApp()
 harness.announce()  # one line of the telemetry when the app starts: which files run and which commit they were built from
@@ -10,6 +10,9 @@ harness.announce()  # one line of the telemetry when the app starts: which files
 TIMER_SCHEDULE = "0 30 5 * * *"
 # Every day at 05:10 UTC, twenty minutes before the Watch: the drift check reads what the agents are, and a failure that guards them holds the investigation of the Watch that follows.
 DRIFT_SCHEDULE = "0 10 5 * * *"
+# Every Monday at 04:30 UTC, before the drift check and the Watch of that day: the Study reads the documentation of the kinds of resource that the estate has and files what it says (it does
+# nothing unless the setting STUDY is on, and nothing while the switch `all` or the switch `investigation` is pulled).
+STUDY_SCHEDULE = "0 30 4 * * 1"
 # Every minute: the plans whose time is over, the changes whose start time has come, the changes to check.
 TICK_SCHEDULE = "0 * * * * *"
 # The control queue is in the app's host storage account, so the trigger uses the host's own connection: the platform reads AzureWebJobsStorage__credential and
@@ -27,6 +30,12 @@ def watch_daily(timer: func.TimerRequest) -> None:
 @app.timer_trigger(arg_name="timer", schedule=DRIFT_SCHEDULE, run_on_startup=False)
 def drift_daily(timer: func.TimerRequest) -> None:
     drift.run_check("timer")
+
+
+@app.function_name(name="study-weekly")
+@app.timer_trigger(arg_name="timer", schedule=STUDY_SCHEDULE, run_on_startup=False)
+def study_weekly(timer: func.TimerRequest) -> None:
+    study.run_study("timer", None)
 
 
 @app.function_name(name="cases-control")

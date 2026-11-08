@@ -42,7 +42,7 @@ _spec.loader.exec_module(rc)
 Problem = rc.Problem
 Azure = rc.Azure
 
-FUNCTIONS = ("watch-daily", "cases-control", "runner-tick", "console", "drift-daily")
+FUNCTIONS = ("watch-daily", "cases-control", "runner-tick", "console", "drift-daily", "study-weekly")
 CONTROL_QUEUE = "cases-control"
 EVENT_PREFIX = "meternaut_event "
 ENDS = ("run.finished", "run.failed")

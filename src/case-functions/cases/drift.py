@@ -164,9 +164,9 @@ def prepare(env: Mapping[str, str], redact: Callable[[str], str], *, transport, 
 def check_lock(context: Context) -> rules.Finding:
     if context.lock is None or context.settings is None:
         return rules.judge_lock([], context.lock_problem, context.settings_problem if context.lock is not None else "", 0, 0)
-    from . import toolbox
+    from . import library, toolbox
 
-    specs = (agents.investigator(context.settings, toolbox.SPECS), agents.skeptic(context.settings))
+    specs = (agents.investigator(context.settings, toolbox.SPECS), agents.skeptic(context.settings), agents.scholar(context.settings, (library.FETCH_DOC,)))
     definitions = {spec.name: definition_of(spec) for spec in specs}
     implementations, module = harness.code_digests()
     problems = lockfile.stale(context.lock, definitions, implementations, module)
@@ -182,6 +182,9 @@ def probes(endpoint: str, gateway_host: str) -> list[tuple[str, tuple, str, str,
     """(what, the list of calls, method, address, whether the list must let it through). The first lists are what the Watch holds, the last is the drift check's own."""
     watch = http.allowed_calls(endpoint, gateway_host or None)
     own = drift_calls(endpoint)
+    docs = http.docs_calls()
+    page_host, prefix = next(iter(http.DOCS_PAGES.items()))
+    page = f"https://{page_host}{prefix}probe/page"
     delete, put, patch = CHANGING
     other = "https://other-account.services.ai.azure.com/api/projects/other"
     agent = f"{endpoint}/agents/meternaut-investigator"
@@ -215,6 +218,15 @@ def probes(endpoint: str, gateway_host: str) -> list[tuple[str, tuple, str, str,
         ("replacing an agent by the check", own, put, agent, False),
         ("another project by the check", own, "GET", f"{other}/agents", False),
         ("the estate by the check", own, "GET", f"{ARM}/subscriptions", False),
+        # The Study's own list (http.docs_calls): public documentation pages and the price list, read with GET and no token, and nothing else.
+        ("a documentation page by the study", docs, "GET", page, True),
+        ("the price list by the study", docs, "GET", f"https://{http.PRICES_HOST}{http.PRICES_PATH}", True),
+        ("a post to a documentation page", docs, "POST", page, False),
+        ("a page in another language", docs, "GET", f"https://{page_host}/de-de/probe/page", False),
+        ("a page outside the English folder", docs, "GET", f"https://{page_host}{prefix}../probe", False),
+        ("another host by the study", docs, "GET", "https://example.invalid/en-us/probe", False),
+        ("the estate by the study", docs, "GET", f"{ARM}/subscriptions", False),
+        ("a documentation page by the watch", watch, "GET", page, False),
     ]
     if gateway_host:
         route = f"https://{gateway_host}/default/models/openai/v1"

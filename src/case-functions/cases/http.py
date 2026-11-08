@@ -4,7 +4,8 @@ A call is made only to a fixed list of addresses with a fixed method, every one 
 anything else is refused before it leaves the app, so a mistake in the code cannot become a write to Azure. Timeouts are set, and a failure that may pass is
 retried a bounded number of times. Two exceptions: the Foundry project of the app, where the app makes and reads its own agents and makes and deletes its own conversations
 (foundry_calls), and the AI Gateway, which every model call goes through and which has the one POST of a chat completion (ai_gateway_calls). No chat completion goes to the Foundry
-resource or its project: there is no direct path to a model (AGENTS.md rule 15 (c)).
+resource or its project: there is no direct path to a model (AGENTS.md rule 15 (c)). The Study (cases/study.py) has one list more, of public documentation pages that it reads with no
+token (docs_calls), on a client of its own.
 """
 from __future__ import annotations
 
@@ -100,6 +101,22 @@ def ai_gateway_calls(host: str) -> tuple[tuple[str, "re.Pattern[str]"], ...]:
     if not AI_GATEWAY_HOST.fullmatch(host) or len(host) > 253:
         raise ValueError("the host of the AI Gateway is a host name under .ai.gateway.azure.com, in lower case, without a scheme, a port or a path")
     return (("POST", re.compile(re.escape(f"https://{host}{AI_GATEWAY_CHAT_PATH}"))),)
+
+
+# The public pages of Microsoft's documentation that the Study reads (cases/library.py), and nothing else of the internet: two hosts of pages, whose paths begin with the English folder
+# (an address of another language or of no language is answered by a redirect, which the client does not follow), and the Azure Retail Prices API. GET only, no token of any kind, and a
+# list of its own: the Watch's list (allowed_calls) holds none of them.
+DOCS_PAGES = {"learn.microsoft.com": "/en-us/", "azure.microsoft.com": "/en-us/"}
+PRICES_HOST = "prices.azure.com"
+PRICES_PATH = "/api/retail/prices"
+DOC_PATH = r"(?:(?!\.+(?:/|$))[A-Za-z0-9._~-]{1,100}/?){1,16}"
+
+
+def docs_calls() -> tuple[tuple[str, "re.Pattern[str]"], ...]:
+    """The calls of the Study to public documentation: a GET of a page under /en-us/ of the two hosts, and a GET of the price list. A path is plain words between slashes (no encoded
+    character, no folder that is only dots), and the query is checked by cases/library.py, which makes the call: this list sees the address without its query."""
+    pages = tuple(("GET", re.compile(re.escape(f"https://{host}{prefix}") + DOC_PATH)) for host, prefix in DOCS_PAGES.items())
+    return pages + (("GET", re.compile(re.escape(f"https://{PRICES_HOST}{PRICES_PATH}"))),)
 
 
 def allowed_calls(foundry_endpoint: str | None = None, ai_gateway_host: str | None = None) -> tuple[tuple[str, "re.Pattern[str]"], ...]:

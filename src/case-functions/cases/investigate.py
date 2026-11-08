@@ -552,6 +552,7 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
     s.client.deadline = deadline
     if toolbox is None:
         toolbox = Toolbox(s.arm, st.subscriptions, s.clock(), [])
+        toolbox.memory = s.extras.store if s.extras is not None else None  # what the two tools that recall read: the lessons and the claims of the store of the loop
         # One call may take at most an eighth of the investigation's time, or the default, for reading the subscriptions, so that a call over a large estate cannot use the time that the
         # Investigator needs for its answer and the Skeptic for its verdicts.
         toolbox.read_seconds = min(SUBSCRIPTION_SECONDS, max(5.0, budget / 8))

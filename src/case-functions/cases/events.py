@@ -20,6 +20,8 @@ LOOP_KINDS = ("plan.created", "signin.started", "signin.stepup", "signin.failed"
               "tick.result")
 # The lines of the investigation (cases\investigate.py): its start, one line for each finding and its end. The cases that it opens end in `case.result`, as every case does.
 INVESTIGATION_KINDS = ("investigation.started", "investigation.finding", "investigation.finished")
+# The lines of the Study (cases\study.py): its start, a note, one line for each claim that code kept and its end.
+STUDY_KINDS = ("study.started", "study.note", "study.claim", "study.finished")
 
 LOGGER = logging.getLogger("meternaut.history")
 
@@ -59,7 +61,7 @@ class History:
         self.counts: Counter[str] = Counter()  # the lines written so far, by kind
 
     def emit(self, kind: str, **fields: object) -> dict:
-        if kind not in KINDS + LOOP_KINDS + INVESTIGATION_KINDS:
+        if kind not in KINDS + LOOP_KINDS + INVESTIGATION_KINDS + STUDY_KINDS:
             raise ValueError(f"{kind} is not a kind of History line")
         event = {"v": VERSION, "ts": self.clock().strftime("%Y-%m-%dT%H:%M:%SZ"), "runId": self.run_id, "requestId": self.request_id, "type": kind, **fields}
         self.logger.info(self.redact(_fit(event)))

@@ -378,7 +378,7 @@ class TheReads(unittest.TestCase):
         world, service, fetch, tokens = self.world()
         report = self.run_with(world, service, fetch)
         self.assertEqual({call["method"] for call in service.calls}, {"GET"})
-        self.assertEqual(service.routes(), ["GET agents", "GET agent", "GET agent", "GET connections"])
+        self.assertEqual(service.routes(), ["GET agents", "GET agent", "GET agent", "GET agent", "GET connections"], "one read of each of the three agents that the lock names")
         self.assertEqual({state for state in report.states().values()}, {rules.PASS}, {c: s for c, s in report.states().items() if s != rules.PASS})
         self.assertTrue(all("resource=https%3A%2F%2Fai.azure.com" in url for url in tokens))
 
