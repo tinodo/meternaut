@@ -826,7 +826,7 @@ The role assignments that were scoped to the hub alone (the cases app's *Azure E
 4. The Hub action `cases-run`: the Operator puts one message in the queue, one Watch runs, and the History is read from the telemetry. This is the proof. A 401 or 403 when the message is put in the queue means that the role has not applied yet. A 404 means that the queue is not there.
 5. Only then the Hub action `retire-event-hubs`.
 
-`what-if` and the checks of each action before its deploy read no namespace, so they pass before the namespace is gone and after it, and on an estate that never had one. The action `base` does not have to run for this change.
+`what-if` shows what `retire-event-hubs` would delete, by reading the three items by name, and says that each is not there once they are gone, or on an estate that never had them. No other step of any action reads the namespace, so `what-if` and the checks before each deploy pass before the namespace is gone, after it, and on an estate that never had one. The action `base` does not have to run for this change.
 
 **Not checked.** Nothing of this ran in Azure when it was written.
 

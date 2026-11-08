@@ -55,7 +55,6 @@ POLL_SECONDS = 15
 HOST_NAME_SECONDS = 90
 # The built-in roles that the template gives the app, for the lines of the log only; any other role is shown by its id.
 ROLE_NAMES = {
-    "a638d3c7-ab3a-418d-83e6-5f17a39d4fde": "Azure Event Hubs Data Receiver",
     "b7e6dc6d-f1e8-4753-8033-0f276bb0955b": "Storage Blob Data Owner",
     "974c5e8b-45b9-4653-ba55-5f855dd0fb88": "Storage Queue Data Contributor",
     "0a9a7e1f-b9d0-4cc4-a60d-0319b160aaa3": "Storage Table Data Contributor",

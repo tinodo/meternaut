@@ -88,7 +88,8 @@ class TheOrderOfTheRealRun(unittest.TestCase):
         self.assertIn("it refuses to delete anything while the queue `cases-control` is not there", SECTION)
 
     def test_what_if_and_the_prechecks_work_before_and_after_the_namespace_is_gone(self):
-        self.assertIn("`what-if` and the checks of each action before its deploy read no namespace, so they pass before the namespace is gone and after it, and on an estate that never had one.", SECTION)
+        self.assertIn("No other step of any action reads the namespace, so `what-if` and the checks before each deploy pass before the namespace is gone, after it, and on an estate that never had one.", SECTION)
+        self.assertIn("`what-if` shows what `retire-event-hubs` would delete, by reading the three items by name", SECTION)
         self.assertNotIn("evhns", WORKFLOW, "no step of the workflow names the namespace: the retirement builds its names in tools/retire-old.py")
         self.assertNotIn("EVENT_HUB_NAMESPACE", WORKFLOW)
         self.assertNotIn("event_hub_namespace", WORKFLOW)
