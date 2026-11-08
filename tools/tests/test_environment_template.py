@@ -617,7 +617,7 @@ class Cases(unittest.TestCase):
         self.assertIn("var webSubnetName = 'snet-cases'", self.code)
         self.assertIn("var functionSubnetName = 'snet-func'", self.code)
 
-    def test_a_flex_app_has_its_own_package_container_one_instance_and_no_always_ready_instance(self):
+    def test_a_flex_app_has_its_own_package_container_one_instance_a_web_concurrency_of_fifty_and_no_always_ready_instance(self):
         body = self.found["functionApp"][1]
         self.assertIn("functionAppConfig: isFlex ? {", body)
         flex = body[body.index("functionAppConfig: isFlex ? {"):body.index("    } : null\n")]
@@ -625,7 +625,9 @@ class Cases(unittest.TestCase):
         self.assertIn("type: 'blobContainer'", flex)
         self.assertRegex(flex, r"authentication: \{\n\s+type: 'SystemAssignedIdentity'\n\s+\}", "the package is read with the app's own identity: no key, no connection string")
         self.assertNotIn("userAssignedIdentityResourceId", flex)
-        self.assertIn("maximumInstanceCount: 1", flex, "a run waits for models, a timer must not run twice at once, and with more instances the platform sent requests to instances that were not ready")
+        self.assertIn("maximumInstanceCount: 1", flex, "a run waits for models, a timer must not run twice at once, and a control message starts one run")
+        self.assertRegex(flex, r"triggers: \{\n\s+http: \{\n\s+perInstanceConcurrency: 50\n\s+\}\n\s+\}",
+                         "a Python app on Flex Consumption has an HTTP concurrency of one by default (Learn), and with one instance at the most the platform let one request reach the app a minute: the host log of 2026-11-08 has no two requests less than 60 seconds apart")
         self.assertIn("instanceMemoryMB: 2048", flex)
         self.assertNotIn("alwaysReady", self.code, "no always-ready instance: the app scales to zero and bills nothing while it is idle")
         self.assertRegex(flex, r"runtime: \{\n\s+name: 'python'\n\s+version: '3.13'\n\s+\}")
