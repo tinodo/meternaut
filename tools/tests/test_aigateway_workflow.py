@@ -458,7 +458,7 @@ class TheStepsAreWrittenAsTheRulesSay(unittest.TestCase):
         gateway = description.split(" aigateway: ")[1].split(" aigateway-check: ")[0]
         for word in ("not API Management", "system-assigned identity", "with no key", "it needs foundry and operator first", "public whatever is asked", "the service has no private frontend",
                      "Microsoft Entra ID and role assignments only", "waits for the landing zone's route table", "deletes the built-in key master when the service lets it be deleted",
-                     "changes nothing of the agents"):
+                     "changes nothing of the model names of the agents"):
             self.assertIn(word, gateway, word)
         checking = description.split(" aigateway-check: ")[1]
         for word in ("once without a token and once with a wrong alias", "from inside the network", "it needs aigateway and operator first", "up to ten minutes"):

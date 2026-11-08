@@ -2131,13 +2131,15 @@ class WhatWasDone(unittest.TestCase):
         self.assertEqual(done.returncode, 0, done.stderr)
         self.assertIn("The retired identity of the first loop, `id-meternaut-runner`, is removed when it is still there and nothing holds it.", sections["cases"])
 
-    def test_the_watch_changes_no_resource_of_the_estate_and_its_two_older_roles_call_the_ai_gateway_while_the_agents_call_their_own_deployments(self):
+    def test_the_watch_changes_no_resource_of_the_estate_and_its_two_older_roles_call_the_ai_gateway_while_the_agents_follow_the_switch_of_step_2(self):
         _, _, finished = self.run_all("success")
         _, _, failed = self.run_all("failure")
         self.assertIn("No resource of the estate was changed; with the investigation on, the Watch also created its agents and conversations in its own Foundry project.", finished["cases-run"])
         self.assertIn("The tokens that the lines above count are those of the Detective and the Skeptic, which call the AI Gateway with the app's identity and no key", finished["cases-run"])
         self.assertIn("a 403 says that the app's identity does not hold AI Gateway Models User yet: the action aigateway gives it, and a new role takes up to ten minutes to apply", finished["cases-run"])
-        self.assertIn("while the agents of the investigation call the model deployments of their own Foundry project directly until the switch of step 2 is on.", finished["cases-run"])
+        self.assertIn("while the agents of the investigation call their models through the project's connection and the AI Gateway when the switch of step 2 (AGENTS_VIA_AI_GATEWAY in tools/environment-params.py) "
+                      "is on, and straight to the model deployments of their own Foundry project when it is off, which is the way back.", finished["cases-run"])
+        self.assertNotIn("until the switch of step 2 is on", finished["cases-run"])
         self.assertNotIn("not tried before", finished["cases-run"])
         self.assertNotIn("that route was tried on 2026-11-07", finished["cases-run"], "the route of the project's chat completions is gone")
         self.assertIn("It changes no resource of the estate; with the investigation on it may also have created agents and conversations in its own Foundry project before it stopped.", failed["cases-run"])

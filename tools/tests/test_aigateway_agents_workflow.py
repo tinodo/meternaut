@@ -481,7 +481,8 @@ class TheSummaryAddsWhatTheSwitchChangesAndNothingWhileItIsOff(unittest.TestCase
         self.assertIn("The way back is the switch set to False in tools/environment-params.py, and a run of `cases`.", said[("cases", "success")])
         self.assertIn("run `aigateway` and then `foundry` first", said[("cases", "failure")])
         self.assertIn("the History says so in words", said[("cases-run", "failure")])
-        self.assertIn("is not true for this run", said[("cases-run", "success")])
+        self.assertIn("the agents' model calls of this run go through the project's connection and the AI Gateway", said[("cases-run", "success")])
+        self.assertNotIn("Nothing of this has run before", said[("cases", "success")], "a line that is true for the first run only does not stay in a summary that every run prints")
 
     def test_an_action_that_the_switch_does_not_change_gets_no_line_of_it(self):
         for action in ("what-if", "recording", "operator", "aigateway-check", "plant"):
@@ -499,23 +500,28 @@ class TheTextsAreWrittenAsTheRulesSay(unittest.TestCase):
     def test_the_three_actions_are_described_with_the_switch_in_plain_words_and_the_description_stays_one_line(self):
         description = re.search(r'(?m)^        description: "(what-if: .+)"$', WORKFLOW).group(1)
         self.assertEqual(len(re.findall(r'(?m)^        description: "what-if: ', WORKFLOW)), 1)
-        foundry = description.split(" foundry: ")[1].split(" cases: ")[0]
-        self.assertIn("With the switch AGENTS_VIA_AI_GATEWAY in tools/environment-params.py on (it is off), it also makes the project's connection to the AI Gateway, with the project's own identity "
-                      "and no key, and reads it back: it then needs aigateway first.", foundry)
+        foundry = description.split(" foundry: ")[1].split(" operator: ")[0]
+        self.assertIn("The switch AGENTS_VIA_AI_GATEWAY in tools/environment-params.py is on, so it also makes the project's connection to the AI Gateway, with the project's own identity "
+                      "and no key, and reads it back: it needs aigateway first. With the switch set to False, which is the way back, it makes no connection and leaves an existing one alone.", foundry)
         gateway = description.split(" aigateway: ")[1].split(" aigateway-check: ")[0]
-        self.assertIn("With the switch AGENTS_VIA_AI_GATEWAY on (it is off), it also gives the Foundry project's identity AI Gateway Models User on the gateway, and needs foundry to have run.", gateway)
+        self.assertIn("it changes nothing of the model names of the agents: they keep calling their model deployments until foundry and cases have run. The switch AGENTS_VIA_AI_GATEWAY is on, "
+                      "so it also gives the Foundry project's identity AI Gateway Models User on the gateway, and needs foundry to have run. "
+                      "The order of the real run is aigateway, about ten minutes, foundry, cases, cases-run.", gateway)
         cases = description.split(" cases: ")[1].split(" cases-run: ")[0]
-        self.assertIn("With the switch AGENTS_VIA_AI_GATEWAY on (it is off), it gives the app the model names `aigateway/<alias>` for the agents, which name the project's connection to the AI Gateway, "
-                      "and needs that connection first.", cases)
+        self.assertIn("The switch AGENTS_VIA_AI_GATEWAY in tools/environment-params.py is on, so it gives the app the model names `aigateway/<alias>` for the agents, which name the project's connection "
+                      "to the AI Gateway, and needs that connection first. With the switch set to False, which is the way back, it gives the plain model names.", cases)
+        self.assertNotIn("(it is off)", description, "the switch is on: no text says that it is off")
 
-    def test_the_comments_of_the_changed_steps_say_that_the_switch_is_false_until_the_owner_says_yes_and_that_nothing_has_run(self):
+    def test_the_comments_of_the_changed_steps_say_that_the_switch_is_true_since_the_owners_order_and_that_the_connection_is_not_known_to_work_until_it_runs(self):
         for name in (SETTINGS, PRECHECK, "Deploy the Foundry resource of the agents", FOUNDRY_READ_BACK, AIGATEWAY_READ_BACK, "Deploy the AI Gateway, its models and aliases, and its roles", SUMMARY):
             comment = re.sub(r"\s*\n\s*#\s*", " ", step(name))
             self.assertIn("AGENTS_VIA_AI_GATEWAY", comment, name)
-            self.assertIn("False until the owner has said yes", comment, name)
+            self.assertIn("True since the owner's order of 2026-11-07", comment, name)
+            self.assertNotIn("False until the owner has said yes", comment, name)
         deploy = re.sub(r"\s*\n\s*#\s*", " ", step("Deploy the Foundry resource of the agents"))
         self.assertIn("whether the service takes that connection is not known until this runs (docs/proposals/08-ai-gateway.md, step 2)", deploy)
         self.assertIn("If it is refused, the deploy says so and the run stops there: the resource is as it was, and the owner decides. The way back is the switch set to False.", deploy)
+        self.assertNotIn("False until the owner has said yes", WORKFLOW, "no text of the workflow says that the owner has not said yes")
 
     def test_the_settings_step_reads_the_service_with_the_version_of_the_check_and_the_environment_variables_of_the_builder_are_the_ones_it_documents(self):
         code = script_of(SETTINGS)
