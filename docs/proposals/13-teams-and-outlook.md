@@ -1,6 +1,6 @@
 # Teams and Outlook: a card in Teams, a letter in Outlook — a decision record
 
-**Status: built, not deployed, and not run in Teams or in Azure. The Hub action `teams` is in the workflow ([`deploy-hub.yml`](../../.github/workflows/deploy-hub.yml)); it refuses to start unless the owner has asked in writing for a public endpoint (the input `public_teams_bot_requested`) and the repository variable `TEAMS_BOT_ENABLED` is True (False until he says so). Whether a card reaches a person is not proven until the first card arrives. Microsoft facts below name their page and status, read on 2026-11-08.**
+**Status: built, not deployed, and not run in Teams or in Azure. The Hub action `teams` is in the workflow ([`deploy-hub.yml`](../../.github/workflows/deploy-hub.yml)); it refuses to start unless the owner has asked in writing for a public endpoint (the input `public_teams_bot_requested`) and the line `TEAMS_BOT_ENABLED=True` is in `local/hub-local.env` (absent until he says so). Whether a card reaches a person is not proven until the first card arrives. Microsoft facts below name their page and status, read on 2026-11-08.**
 
 ## What a person sees
 
@@ -50,8 +50,8 @@ The Azure Bot resource is the free tier (F0); the app is on Flex Consumption and
 The owner:
 1. Asks in writing for a public Teams bot ([AGENTS.md rule 15 (c)](../../AGENTS.md)).
 2. Registers the resource provider once, because the workflow's identity cannot: `az provider register --namespace Microsoft.BotService`.
-3. Sets the repository variable `TEAMS_BOT_ENABLED` to `True`.
-4. Runs the Hub actions `model-side`, `base` and `cases` if they have not run, then `teams` with `public_teams_bot_requested` ticked. It deploys, builds, publishes, reads everything back and knocks at the public door with no token ([`tools/teams-check.py`](../../tools/teams-check.py)); it prints the bot's client id.
+3. Adds the line `TEAMS_BOT_ENABLED=True` to `local/hub-local.env`.
+4. Runs the Hub actions `model-side`, `base` and `cases` if they have not run, then `python tools/hub-local.py teams --public-teams-bot-requested --yes`. It deploys, builds, publishes, reads everything back and knocks at the public door with no token ([`tools/teams-check.py`](../../tools/teams-check.py)); it prints the bot's client id.
 5. Opens the Azure Bot resource in the Azure portal, Channels, Microsoft Teams, and accepts the terms of the channel if it asks (the template makes the channel with only its name).
 6. Builds and checks the package: `python tools/teams-package.py build --bot-id <client id> --site https://<host of the web page> --out teams-app.zip`, then `python tools/teams-package.py check teams-app.zip`.
 

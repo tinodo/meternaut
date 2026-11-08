@@ -96,8 +96,8 @@ def tearDownModule():
 
 
 def make_args(action="what-if", **flags):
-    args = argparse.Namespace(action=action, minutes=None, public_ai_gateway_requested=False, plant_public_ip=False, evals_command=None, evals_judge=None, redteam_mode=None, yes=False,
-                              allow_dirty=False, dry_run=False, workflow=None, init=False, from_github=False)
+    args = argparse.Namespace(action=action, minutes=None, public_ai_gateway_requested=False, public_teams_bot_requested=False, plant_public_ip=False, evals_command=None, evals_judge=None,
+                              redteam_mode=None, yes=False, allow_dirty=False, dry_run=False, workflow=None, init=False, from_github=False)
     args.__dict__.update(flags)
     return args
 
@@ -110,6 +110,12 @@ def plan_for(workflow, action, values=None, **flags):
                       github={"run_number": 288, "run_id": 1, "actor": hub.LOCAL_ACTOR, "ref": hub.LOCAL_REF, "ref_name": "main", "sha": "a" * 40, "event_name": "workflow_dispatch",
                               "run_attempt": 1, "workspace": "C:/x"})
     return hub.build_plan(workflow, ctx, [], []), ctx
+
+
+def plan_of(workflow, action):
+    """The plan of an action with everything that it needs to plan: the two flags that the owner's written request allows, and for teams the variable that only its guard step reads."""
+    values = dict(FAKE_VALUES, TEAMS_BOT_ENABLED="True") if action == hub.TEAMS_ACTION else FAKE_VALUES
+    return plan_for(workflow, action, values=values, public_ai_gateway_requested=True, public_teams_bot_requested=True)
 
 
 def kinds(plan):
@@ -142,7 +148,7 @@ class TheRealWorkflowIsPlanned(unittest.TestCase):
     def test_every_action_has_a_plan_that_resolves_without_an_unknown_expression(self):
         for action in REAL_WORKFLOW.actions:
             with self.subTest(action=action):
-                plan, _ = plan_for(REAL_WORKFLOW, action, public_ai_gateway_requested=True)
+                plan, _ = plan_of(REAL_WORKFLOW, action)
                 self.assertEqual(plan.problems, [])
                 running = [entry for entry in plan.entries if entry.verdict is not False]
                 self.assertGreaterEqual(len(running), 6, "the common steps and the steps of the action")
@@ -151,7 +157,7 @@ class TheRealWorkflowIsPlanned(unittest.TestCase):
     def test_every_step_runs_for_some_action_so_the_expressions_of_all_of_them_were_checked(self):
         seen = set()
         for action in REAL_WORKFLOW.actions:
-            plan, _ = plan_for(REAL_WORKFLOW, action, public_ai_gateway_requested=True)
+            plan, _ = plan_of(REAL_WORKFLOW, action)
             seen |= {entry.step.index for entry in plan.entries if entry.verdict is not False}
         self.assertEqual(sorted(set(range(len(REAL_WORKFLOW.steps))) - seen), [], "a step that no action runs is never checked")
 
@@ -177,7 +183,7 @@ class TheRealWorkflowIsPlanned(unittest.TestCase):
         plan, _ = plan_for(REAL_WORKFLOW, "cases")
         self.assertEqual([k for k in kinds(plan) if k.startswith("cases")], ["cases-pack", "cases-publish", "cases-publish-cleanup"])
         for action in REAL_WORKFLOW.actions:
-            plan, _ = plan_for(REAL_WORKFLOW, action, public_ai_gateway_requested=True)
+            plan, _ = plan_of(REAL_WORKFLOW, action)
             self.assertEqual(plan.problems, [], action)
             for entry in plan.entries:
                 if entry.verdict is not False and entry.step.run and any(marker in entry.step.run for marker in hub.OIDC_MARKERS):
@@ -203,7 +209,7 @@ class TheRealWorkflowIsPlanned(unittest.TestCase):
                 self.assertEqual(replacement.kind, "ci-checks", step.name)
                 self.assertFalse(replacement.env_used, "its env is never read: the GitHub token is not an expression that this tool evaluates")
         for action in REAL_WORKFLOW.actions:
-            plan, _ = plan_for(REAL_WORKFLOW, action, public_ai_gateway_requested=True)
+            plan, _ = plan_of(REAL_WORKFLOW, action)
             self.assertEqual(plan.problems, [], action)
             for entry in plan.entries:
                 if entry.verdict is not False and not (entry.replacement and entry.replacement.kind == "ci-checks"):
@@ -212,7 +218,7 @@ class TheRealWorkflowIsPlanned(unittest.TestCase):
 
     def test_the_check_of_ci_runs_for_every_action_and_is_replaced(self):
         for action in REAL_WORKFLOW.actions:
-            plan, _ = plan_for(REAL_WORKFLOW, action, public_ai_gateway_requested=True)
+            plan, _ = plan_of(REAL_WORKFLOW, action)
             ci = [entry for entry in plan.entries if entry.replacement and entry.replacement.kind == "ci-checks"]
             self.assertEqual(len(ci), 1, f"{action}: the step that asks GitHub whether CI passed is there once")
             self.assertIs(ci[0].verdict, True, f"{action}: it is asked of every action, the ones that only read as well")
@@ -256,6 +262,36 @@ class TheRealWorkflowIsPlanned(unittest.TestCase):
         for flag, value, name in (("evals_command", "rule", "inputs.evals_command"), ("evals_judge", "auto", "inputs.evals_judge"), ("redteam_mode", "dataset", "inputs.redteam_mode")):
             _, ctx = plan_for(REAL_WORKFLOW, "foundry-evals", **{flag: value})
             self.assertEqual(hub.evaluate(hub.parse_expression(name), ctx), value)
+
+    def test_the_teams_bot_reads_its_flag_and_its_switch_and_no_other_action_reads_the_switch(self):
+        self.assertIn("public_teams_bot_requested", REAL_WORKFLOW.inputs)
+        self.assertIs(REAL_WORKFLOW.inputs["public_teams_bot_requested"].default, False)
+        self.assertEqual(hub.TEAMS_ACTION, "teams")
+        self.assertIn(hub.TEAMS_ACTION, REAL_WORKFLOW.actions)
+        with_switch = dict(FAKE_VALUES, TEAMS_BOT_ENABLED="True")
+        for given in (False, True):
+            plan, ctx = plan_for(REAL_WORKFLOW, "teams", values=with_switch, public_teams_bot_requested=given)
+            self.assertEqual(plan.problems, [], given)
+            self.assertIs(hub.evaluate(hub.parse_expression("inputs.public_teams_bot_requested"), ctx), given)
+            self.assertEqual(hub.evaluate(hub.parse_expression("vars.TEAMS_BOT_ENABLED"), ctx), "True")
+        plan, _ = plan_for(REAL_WORKFLOW, "teams", public_teams_bot_requested=True)
+        self.assertEqual(len(plan.problems), 1, plan.problems)
+        self.assertIn("vars.TEAMS_BOT_ENABLED is not defined in hub-local.env", plan.problems[0])
+        self.assertIn("add the line TEAMS_BOT_ENABLED=True when the owner has asked for the Teams bot in writing", plan.problems[0])
+        for action in REAL_WORKFLOW.actions:
+            if action != hub.TEAMS_ACTION:
+                plan, ctx = plan_for(REAL_WORKFLOW, action, public_ai_gateway_requested=True)
+                self.assertEqual(plan.problems, [], f"{action} does not read TEAMS_BOT_ENABLED, and its guard step is skipped")
+                self.assertNotIn("TEAMS_BOT_ENABLED", ctx.variable_names)
+
+    def test_the_switch_of_the_teams_bot_is_not_made_by_init_and_the_hint_is_for_variables_only(self):
+        self.assertNotIn("TEAMS_BOT_ENABLED", hub.TEMPLATE_NAMES)
+        self.assertNotIn("TEAMS_BOT_ENABLED", hub.OPTIONAL_NAMES)
+        ctx = plan_for(REAL_WORKFLOW, "what-if")[1]
+        with self.assertRaises(hub.ExprError) as caught:
+            ctx.lookup(("secrets", "TEAMS_BOT_ENABLED"))
+        self.assertIn("write the name with an empty value if empty is right", str(caught.exception))
+        self.assertNotIn("add the line", str(caught.exception))
 
     def test_every_step_of_the_harness_and_of_the_ai_security_is_one_that_this_tool_runs(self):
         for action in ("governance", "gateway-telemetry", "drift-check", "agents-drift", "foundry-evals", "foundry-redteam", "agent365-check"):
@@ -790,6 +826,11 @@ class RunnerCase(unittest.TestCase):
     def state(self):
         return json.loads((self.local / hub.STATE_NAME).read_text(encoding="utf-8"))["lastRun"]
 
+    def never_az(self):
+        def refuse():
+            raise AssertionError("az must not be asked for")
+        return self.deps(az=refuse, bash=refuse)
+
 
 @unittest.skipIf(BASH is None, "no Git bash on this machine")
 class TheRuns(RunnerCase):
@@ -1101,6 +1142,88 @@ class TheInputsOfTheHarnessAreFlags(RunnerCase):
         self.assertIn("--evals-command was given, and the workflow has no input evals_command", text)
 
 
+# The small workflow with the Teams bot's action and input, and a guard step that reads the input and the repository variable as the real workflow's guard step does.
+TEAMS_HEAD = MINI_HEAD.replace("          - aigateway\n", "          - aigateway\n          - teams\n", 1).replace(
+    "      plant_public_ip:\n        type: boolean\n        default: false\ndefaults:",
+    "      plant_public_ip:\n        type: boolean\n        default: false\n      public_teams_bot_requested:\n        type: boolean\n        default: false\ndefaults:", 1)
+
+
+@unittest.skipIf(BASH is None, "no Git bash on this machine")
+class TheTeamsBotNeedsTheOwnersWrittenRequest(RunnerCase):
+    GUARD = block("Refuse the Teams bot unless the owner asked", 'echo "guard: requested=$PUBLIC_TEAMS_BOT_REQUESTED enabled=$TEAMS_BOT_ENABLED"', cond="inputs.action == 'teams'",
+                  env={"PUBLIC_TEAMS_BOT_REQUESTED": "${{ inputs.public_teams_bot_requested }}", "TEAMS_BOT_ENABLED": "${{ vars.TEAMS_BOT_ENABLED }}"})
+    DEPLOY = block("Deploy the Teams bot", 'echo "the bot is deployed"', cond="inputs.action == 'teams'")
+
+    def setUp(self):
+        super().setUp()
+        self.write_workflow(TEAMS_HEAD + CHECKOUT + LOGIN + self.GUARD + self.DEPLOY + HELLO + ALWAYS)
+        self.set_config(CONFIG_TEXT + "TEAMS_BOT_ENABLED=True\n")
+
+    def set_config(self, text):
+        (self.local / hub.CONFIG_NAME).write_text(text, encoding="utf-8")
+
+    def test_the_action_needs_yes_and_the_flag_as_the_ai_gateway_does_and_a_dry_run_says_so(self):
+        code, text = self.go("teams", "--yes", deps=self.never_az())
+        self.assertEqual(code, 2, text)
+        self.assertIn("the Teams bot's messaging endpoint is public by necessity: the action teams needs --public-teams-bot-requested, which only the owner's written request allows", text)
+        self.assertEqual((self.state(), self.records()), (287, []))
+        code, text = self.go("teams", "--public-teams-bot-requested", deps=self.never_az())
+        self.assertEqual(code, 2, text)
+        self.assertIn("the action teams changes Azure: it needs --yes", text)
+        self.assertNotIn("needs --public-teams-bot-requested", text)
+        code, text = self.go("teams", "--yes", "--dry-run", deps=self.never_az())
+        self.assertEqual(code, 0, text)
+        self.assertIn("a real run would be refused", text)
+        code, text = self.go("teams", "--yes", "--public-teams-bot-requested", "--dry-run", deps=self.never_az())
+        self.assertEqual(code, 0, text)
+        self.assertNotIn("a real run would be refused", text)
+
+    def test_the_plan_prints_the_input_and_says_when_it_is_the_workflows_default(self):
+        code, text = self.go("teams", "--dry-run", deps=self.never_az())
+        self.assertEqual(code, 0, text)
+        self.assertIn("  inputs         public_teams_bot_requested=false (the workflow's default)", text)
+        code, text = self.go("teams", "--dry-run", "--public-teams-bot-requested", deps=self.never_az())
+        self.assertIn("  inputs         public_teams_bot_requested=true\n", text)
+
+    def test_the_guard_step_reads_the_flag_and_the_switch_from_the_configuration_and_the_run_takes_a_number(self):
+        code, text = self.go("teams", "--yes", "--public-teams-bot-requested")
+        self.assertEqual(code, 0, text)
+        self.assertIn("guard: requested=true enabled=True", text)
+        self.assertIn("the bot is deployed", text)
+        self.assertEqual(self.state(), 288)
+        record = self.records()[0].read_text(encoding="utf-8")
+        self.assertIn("inputs: minutes 20, public_ai_gateway_requested false, plant_public_ip false, public_teams_bot_requested true", record)
+
+    def test_the_switch_is_needed_for_teams_only_and_the_message_says_what_to_write(self):
+        self.set_config(CONFIG_TEXT)
+        for action in ("what-if", "plant", "aigateway"):
+            code, text = self.go(action, "--dry-run", "--yes", deps=self.never_az())
+            self.assertEqual(code, 0, f"{action}: {text}")
+            self.assertNotIn("TEAMS_BOT_ENABLED", text)
+        code, text = self.go("what-if")
+        self.assertEqual(code, 0, text)
+        self.assertIn("hello from a step", text)
+        code, text = self.go("teams", "--yes", "--public-teams-bot-requested", deps=self.never_az())
+        self.assertEqual(code, 2, text)
+        self.assertIn("vars.TEAMS_BOT_ENABLED is not defined in hub-local.env (only the action teams reads it: add the line TEAMS_BOT_ENABLED=True "
+                      "when the owner has asked for the Teams bot in writing)", text)
+        self.assertEqual(self.state(), 287, "nothing of the teams run was done")
+        self.assertEqual(len(self.records(".log")), 1, "only the run of what-if left a record")
+
+    def test_the_flag_for_another_action_is_said_in_the_plan_and_ignored(self):
+        code, text = self.go("plant", "--public-teams-bot-requested", "--dry-run", deps=self.never_az())
+        self.assertEqual(code, 0, text)
+        self.assertIn("Note: --public-teams-bot-requested is only for teams: the action plant ignores it", text)
+        code, text = self.go("teams", "--public-teams-bot-requested", "--dry-run", deps=self.never_az())
+        self.assertNotIn("Note: --public-teams-bot-requested", text)
+
+    def test_a_workflow_without_the_input_ignores_the_flag_and_says_so(self):
+        self.write_workflow(mini(CHECKOUT, LOGIN, HELLO))
+        code, text = self.go("what-if", "--public-teams-bot-requested", "--dry-run", deps=self.never_az())
+        self.assertEqual(code, 0, text)
+        self.assertIn("Note: --public-teams-bot-requested is only for teams: the action what-if ignores it", text)
+
+
 @unittest.skipIf(BASH is None, "no Git bash on this machine")
 class TheCheckOfCiIsNotAskedOfGitHub(RunnerCase):
     """The first step of the Hub asks GitHub, with the run's own token, whether CI passed for this commit. Here the person ran the checks on this machine: nothing is asked, and no token exists."""
@@ -1168,12 +1291,109 @@ class TheCheckOfCiIsNotAskedOfGitHub(RunnerCase):
             self.assertIsNone(hub.GITHUB_CALL.search(script), script)
 
 
-class TheGuards(RunnerCase):
-    def never_az(self):
-        def refuse():
-            raise AssertionError("az must not be asked for")
-        return self.deps(az=refuse, bash=refuse)
+@unittest.skipIf(BASH is None, "no Git bash on this machine")
+class TheProofOfARunOfTheHub(RunnerCase):
+    """Every step of a run holds the proof that the tools which change Azure ask for (tools/hubguard.py): a token in a file of the run's own folder, its digest in the lock, and nothing of it left
+    when the run is over. GITHUB_ACTIONS=true is still given to the steps, and it proves nothing."""
 
+    def setUp(self):
+        super().setUp()
+        self.keep = self.base / "kept"
+        self.keep.mkdir()
+        self.at = hub.posix(self.keep)
+        self.helper = hub.posix(ROOT / "tools" / "hubguard.py")
+
+    def keeping(self):
+        return block("Keep what a step sees of the proof", f"""
+            echo "$METERNAUT_HUB_PROOF" > "{self.at}/path.txt"
+            cat "$METERNAUT_HUB_PROOF" > "{self.at}/token.txt"
+            cat "{hub.posix(self.local / hub.LOCK_NAME)}" > "{self.at}/lock.json"
+            echo "the token is [$(cat "$METERNAUT_HUB_PROOF")]"
+            oidc_name="ACTIONS_ID_TOKEN_REQUEST_""URL"
+            echo "repository=[${{GITHUB_REPOSITORY-unset}}] token request=[${{!oidc_name-unset}}]"
+            """)
+
+    def test_a_step_gets_the_proof_and_the_token_is_in_that_file_alone_and_masked_in_everything_that_is_printed(self):
+        self.write_workflow(mini(CHECKOUT, LOGIN, self.keeping(), ALWAYS))
+        code, text = self.go("what-if", environ={"GITHUB_REPOSITORY": "someone/else", "ACTIONS_ID_TOKEN_REQUEST_URL": "https://example.invalid/token"})
+        self.assertEqual(code, 0, text)
+        token = (self.keep / "token.txt").read_text(encoding="utf-8")
+        self.assertRegex(token, r"^[0-9a-f]{64}$")
+        proof = Path((self.keep / "path.txt").read_text(encoding="utf-8").strip())
+        self.assertEqual((proof.parent.parent.name, proof.name), (hub.TEMP_NAME, "hub-proof"))
+        self.assertEqual(proof.parent.parent.parent.resolve(), self.local.resolve(), "the proof is in the rt folder of the local folder")
+        held = json.loads((self.keep / "lock.json").read_text(encoding="utf-8"))
+        self.assertEqual((held["pid"], held["run"], held["proof"]), (os.getpid(), proof.parent.name, hashlib.sha256(token.encode("utf-8")).hexdigest()))
+        self.assertNotIn(token, json.dumps(held), "the lock holds the digest of the token and not the token")
+        self.assertIn("the token is [***]", text)
+        self.assertIn("repository=[unset] token request=[unset]", text, "what a GitHub runner has and a local run must not: nothing here looks like one")
+        for place in (text, self.records()[0].read_text(encoding="utf-8"), self.records(".log")[0].read_text(encoding="utf-8")):
+            self.assertNotIn(token, place)
+
+    def test_the_helper_lets_a_step_through_and_refuses_a_process_that_only_says_that_github_actions_is_true(self):
+        self.write_workflow(mini(CHECKOUT, LOGIN, block("Ask the helper", f"""
+            python3 "{self.helper}" || echo "exit=$?"
+            echo "---"
+            METERNAUT_HUB_PROOF= python3 "{self.helper}" || echo "exit=$?"
+            echo "GITHUB_ACTIONS is $GITHUB_ACTIONS in this step"
+            """), ALWAYS))
+        code, text = self.go("what-if")
+        self.assertEqual(code, 0, text)
+        before, after = text.split("---")
+        self.assertIn("yes: a run of the Hub started this process", before)
+        self.assertNotIn("exit=", before)
+        self.assertIn("no: GITHUB_ACTIONS=true alone is no proof: this is no GitHub runner (GITHUB_REPOSITORY, ACTIONS_ID_TOKEN_REQUEST_URL not set)", after)
+        self.assertIn("METERNAUT_HUB_PROOF is not set", after)
+        self.assertIn("exit=2", after)
+        self.assertIn("GITHUB_ACTIONS is true in this step", after)
+
+    def test_the_proof_is_deleted_at_the_end_of_a_run_that_passed_failed_or_was_interrupted_and_counts_for_nothing_after_it(self):
+        keep = block("Keep the path", f'echo "$METERNAUT_HUB_PROOF" > "{self.at}/path.txt"')
+        scenarios = {"passed": mini(CHECKOUT, LOGIN, keep, ALWAYS), "failed": mini(CHECKOUT, LOGIN, keep, block("Fails", "exit 3"), ALWAYS),
+                     "interrupted": mini(CHECKOUT, LOGIN, keep, block("Slow", "# slow-step-marker\nsleep 60"), ALWAYS)}
+        real = hub.run_process
+
+        def interrupted(argv, env, cwd, console, timeout):
+            if "slow-step-marker" in Path(argv[-1]).read_text(encoding="utf-8"):
+                raise KeyboardInterrupt
+            return real(argv, env, cwd, console, timeout)
+        for name, workflow in scenarios.items():
+            with self.subTest(name), mock.patch.object(hub, "remove_tree", lambda path: True), mock.patch.object(hub, "run_process", interrupted):
+                (self.keep / "path.txt").unlink(missing_ok=True)
+                self.write_workflow(workflow)
+                code, text = self.go("what-if")
+                self.assertEqual(code, {"passed": 0, "failed": 1, "interrupted": 1}[name], text)
+                proof = Path((self.keep / "path.txt").read_text(encoding="utf-8").strip())
+                self.assertTrue(proof.parent.is_dir(), "the folder of the run was not deleted here (remove_tree is stubbed): so it is the proof that the run deleted itself")
+                self.assertFalse(proof.exists(), name)
+                self.assertIn("names no file that is there", hub.guard.what_is_missing({"GITHUB_ACTIONS": "true", hub.guard.PROOF_VARIABLE: str(proof)}))
+
+    def test_a_proof_that_a_killed_run_left_behind_counts_for_nothing_and_the_next_run_deletes_it(self):
+        folder = self.local / hub.TEMP_NAME / "1700000000"
+        folder.mkdir(parents=True)
+        stale = folder / "hub-proof"
+        stale.write_text("the-token-of-a-run-that-was-killed", encoding="utf-8")
+        gone = subprocess.Popen([sys.executable, "-c", "pass"])
+        gone.wait()
+        (self.local / hub.LOCK_NAME).write_text(json.dumps({"pid": gone.pid, "action": "base", "started": "2026-11-08T10:00:00Z", "run": "1700000000",
+                                                           "proof": hashlib.sha256(b"the-token-of-a-run-that-was-killed").hexdigest()}), encoding="utf-8")
+        self.assertIn("is not alive: this proof is stale", hub.guard.what_is_missing({hub.guard.PROOF_VARIABLE: str(stale)}))
+        code, text = self.go("what-if")
+        self.assertEqual(code, 0, text)
+        self.assertIn("an earlier run", text)
+        self.assertFalse(stale.exists(), "the run that takes over the lock deletes the proof that the dead one left")
+
+    def test_a_run_that_is_refused_before_its_first_step_makes_no_proof(self):
+        self.az.user_type = "servicePrincipal"
+        code, text = self.go("what-if")
+        self.assertEqual(code, 2, text)
+        self.assertFalse((self.local / hub.TEMP_NAME).exists())
+        code, text = self.go("what-if", "--dry-run")
+        self.assertEqual(code, 0, text)
+        self.assertFalse((self.local / hub.TEMP_NAME).exists())
+
+
+class TheGuards(RunnerCase):
     def test_an_action_that_changes_azure_needs_yes_and_without_it_the_plan_is_printed_and_nothing_runs(self):
         code, text = self.go("plant", deps=self.never_az())
         self.assertEqual(code, 2, text)
@@ -2117,11 +2337,14 @@ class NothingReachesGitHubButTheOptionalInitRead(unittest.TestCase):
         used = set(re.findall(r'self\.az\.run\(\["([a-z-]+)", "([a-z-]+)"', self.code))
         self.assertEqual(used, {("account", "show"), ("account", "set"), ("rest", "--method")})
 
-    def test_the_header_says_plainly_that_the_local_hub_is_the_hub(self):
+    def test_the_header_says_plainly_that_the_local_hub_is_the_hub_and_what_its_proof_is_and_is_not(self):
         header = " ".join(SOURCE.split('"""')[1].split())
         self.assertIn("THE HUB IS THIS TOOL NOW", header)
+        self.assertIn("GITHUB_ACTIONS=true alone is not enough", header)
+        self.assertIn("METERNAUT_HUB_PROOF in the environment of every step", header)
+        self.assertIn("deleted when the run ends, after a failure and after Ctrl+C too", header)
+        self.assertIn("It does not stop a process that holds the owner's az session", header)
         self.assertIn("GITHUB_ACTIONS=true and METERNAUT_HUB_LOCAL=1", header)
-        self.assertIn("not a way round a guard", header)
         self.assertIn("MAIN working tree", header)
         self.assertIn("METERNAUT_LOCAL", header)
 
@@ -2129,6 +2352,7 @@ class NothingReachesGitHubButTheOptionalInitRead(unittest.TestCase):
         done = subprocess.run([sys.executable, str(ROOT / "tools" / "hub-local.py"), "--help"], capture_output=True, text=True)
         self.assertEqual(done.returncode, 0, done.stderr)
         self.assertIn("--public-ai-gateway-requested", done.stdout)
+        self.assertIn("--public-teams-bot-requested", done.stdout)
         for pattern in (r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", r"\.onmicrosoft\.com", r"\b10\.\d+\.\d+\.\d+\b"):
             self.assertIsNone(re.search(pattern, SOURCE), pattern)
 
