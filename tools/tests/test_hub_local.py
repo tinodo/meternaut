@@ -1631,6 +1631,36 @@ class ThePackageThatTheBuildScriptMakesCarriesTheDigestOfTheApp(unittest.TestCas
         unpacked, _ = self.build(copy, "changed")
         self.assertNotEqual(SOURCE_DIGEST.digest(unpacked), SOURCE_DIGEST.digest(self.SOURCES))
 
+    def test_only_the_files_that_the_digest_covers_are_unpacked_and_the_libraries_are_not(self):
+        files = {"function_app.py": b"import cases\r\n", "host.json": b"{}\r\n", "requirements.txt": b"x\r\n", "cases/__init__.py": b"X = 1\r\n", "cases/lock.json": b"{}\r\n",
+                 ".python_packages/lib/site-packages/lib/__init__.py": b"Y = 1\r\n"}
+        package = self.base / "small.zip"
+        with zipfile.ZipFile(package, "w") as archive:
+            for name, data in files.items():
+                archive.writestr(name, data)
+        for name, data in files.items():
+            path = self.base / "small-folder" / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(data)
+        run = hub.Hub(make_args(), {}, hub.Deps(root=ROOT), io.StringIO())
+        run.rt = self.base / "rt-small"
+        run.rt.mkdir()
+        self.assertTrue(run.package_has_digest(package, SOURCE_DIGEST.digest(self.base / "small-folder")))
+        unpacked = sorted(path.relative_to(run.rt / "cases-verify").as_posix() for path in (run.rt / "cases-verify").rglob("*") if path.is_file())
+        self.assertEqual(unpacked, ["cases/__init__.py", "cases/lock.json", "function_app.py"])
+
+    def test_a_package_without_the_package_folder_is_refused_with_the_tools_own_words(self):
+        package = self.base / "empty.zip"
+        with zipfile.ZipFile(package, "w") as archive:
+            archive.writestr("function_app.py", b"import cases\n")
+        out = io.StringIO()
+        run = hub.Hub(make_args(), {}, hub.Deps(root=ROOT), out)
+        run.rt = self.base / "rt-empty"
+        run.rt.mkdir()
+        self.assertFalse(run.package_has_digest(package, "0" * 64))
+        self.assertIn("are not the files whose digest the deploy wrote as PACKAGE_SHA256", out.getvalue())
+        self.assertIn("it is not the folder of the app", out.getvalue())
+
     def test_the_runner_holds_the_package_against_the_digest_and_refuses_another_one(self):
         want = SOURCE_DIGEST.digest(self.SOURCES)
         self.build()

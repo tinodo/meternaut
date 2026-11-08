@@ -2164,13 +2164,16 @@ class Hub:
         return ""
 
     def package_has_digest(self, package: Path, expected: str) -> bool:
-        """The files in the zip file, unpacked, give the expected digest, by tools/package-digest.py, which loads the app's own cases/release.py: the check that the app will make of the files that it
-        runs. A Windows checkout has CRLF line ends, and the digest reads them as LF, so this holds for it too. When it does not, nothing is published."""
+        """The files in the zip file give the expected digest, by tools/package-digest.py, which loads the app's own cases/release.py: the check that the app will make of the files that it runs.
+        Only the files that the digest covers are unpacked (function_app.py and cases/: the libraries are many, and it does not cover them). A Windows checkout has CRLF line ends, and the
+        digest reads them as LF, so this holds for it too. When it does not, nothing is published."""
         folder = self.rt / "cases-verify"
         tool = self.root / "tools" / "package-digest.py"
         try:
             with zipfile.ZipFile(package) as archive:
-                archive.extractall(folder)
+                for member in archive.infolist():
+                    if member.filename == "function_app.py" or member.filename.startswith("cases/"):
+                        archive.extract(member, folder)
             done = subprocess.run([sys.executable, str(tool), str(folder), "--check", expected], capture_output=True, text=True, encoding="utf-8", errors="replace",
                                   stdin=subprocess.DEVNULL, timeout=300)
         except (OSError, zipfile.BadZipFile, subprocess.TimeoutExpired) as error:
