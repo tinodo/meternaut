@@ -31,18 +31,12 @@ jobs:
         run: python tools/cost-model.py --check docs/design/10-cost-and-finops.md
       - name: Unit tests of the tools
         run: python -m unittest discover -s tools/tests
-      - name: Unit tests of the usage functions, with the libraries that they run with
-        run: |
-          python -m pip install --quiet --disable-pip-version-check --require-hashes --requirement src/usage-functions/requirements.txt
-          python -m unittest discover -s src/usage-functions/tests -v
       - name: Unit tests of the case functions, with the libraries that they run with
         run: |
           python -m pip install --quiet --disable-pip-version-check --require-hashes --requirement src/case-functions/requirements.txt
           python -m unittest discover -s src/case-functions/tests -v
-      - name: The function apps' packages build for their runtime, and each app loads from its package with its functions
+      - name: The function app's package builds for its runtime, and the app loads from its package with its functions
         run: |
-          bash tools/build-function-app.sh usage-functions usage "$RUNNER_TEMP/usage-functions" "$RUNNER_TEMP/usage-functions.zip"
-          (cd "$RUNNER_TEMP/usage-functions" && PYTHONPATH=.python_packages/lib/site-packages python -c "import function_app; print(sorted(f.get_function_name() for f in function_app.app.get_functions()))")
           bash tools/build-function-app.sh case-functions cases "$RUNNER_TEMP/case-functions" "$RUNNER_TEMP/case-functions.zip"
           (cd "$RUNNER_TEMP/case-functions" && PYTHONPATH=.python_packages/lib/site-packages python -c "import function_app; print(sorted(f.get_function_name() for f in function_app.app.get_functions()))")
       - name: The workflows follow the rules, and are valid YAML
@@ -74,7 +68,7 @@ jobs:
           RUBY
       - name: The Bicep templates compile and lint
         run: |
-          for template in environment/main.bicep environment/recording/main.bicep environment/foundry/main.bicep environment/cases/main.bicep environment/operator/main.bicep environment/aigateway/main.bicep environment/aigateway/subnet.bicep infra/budgets/*.bicep; do
+          for template in environment/main.bicep environment/base/main.bicep environment/foundry/main.bicep environment/cases/main.bicep environment/operator/main.bicep environment/aigateway/main.bicep environment/aigateway/subnet.bicep infra/budgets/*.bicep; do
             az bicep build --file "$template" --stdout > /dev/null
             az bicep lint --file "$template"
           done
@@ -90,8 +84,6 @@ jobs:
           ENV_BUDGET_AMOUNT: "25"
           ENV_ALERT_EMAILS: owner@example.com
           ENV_BUDGET_START: "2026-11-01"
-          GATEWAY_APPINSIGHTS_ID: /subscriptions/66666666-7777-8888-9999-000000000000/resourceGroups/rg-gateway/providers/microsoft.insights/components/example-insights
-          RECORDING_READER_IDS: 12345678-1234-1234-1234-123456789012
           CASES_SYSTEM_PRINCIPAL_ID: 12345678-dddd-eeee-ffff-123456789012
           ENV_FOUNDRY_PROJECT_EXISTS: "true"
           FOUNDRY_PROJECT_PRINCIPAL_ID: 12345678-eeee-ffff-1111-123456789012
@@ -100,14 +92,14 @@ jobs:
           mkdir -p "$out"
           python tools/environment-params.py build --models environment/models.json --out-dir "$out" --aigateway-policies environment/aigateway/policies.json > /dev/null
           az bicep build --file environment/main.bicep --outfile "$out/environment.json"
-          az bicep build --file environment/recording/main.bicep --outfile "$out/recording.json"
+          az bicep build --file environment/base/main.bicep --outfile "$out/base.json"
           az bicep build --file environment/foundry/main.bicep --outfile "$out/foundry.json"
           az bicep build --file environment/cases/main.bicep --outfile "$out/cases.json"
           az bicep build --file environment/operator/main.bicep --outfile "$out/operator.json"
           az bicep build --file environment/aigateway/main.bicep --outfile "$out/aigateway.json"
           az bicep build --file environment/aigateway/subnet.bicep --outfile "$out/aigateway-subnet.json"
           python tools/environment-params.py check --params "$out/environment.parameters.json" --template "$out/environment.json" --label environment
-          python tools/environment-params.py check --params "$out/recording.parameters.json" --template "$out/recording.json" --label recording
+          python tools/environment-params.py check --params "$out/base.parameters.json" --template "$out/base.json" --label base
           python tools/environment-params.py check --params "$out/foundry.parameters.json" --template "$out/foundry.json" --label foundry
           python tools/environment-params.py check --params "$out/cases.parameters.json" --template "$out/cases.json" --label cases
           python tools/environment-params.py check --params "$out/operator.parameters.json" --template "$out/operator.json" --label operator

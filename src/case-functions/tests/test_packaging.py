@@ -60,13 +60,6 @@ class FilesOfTheAppTests(unittest.TestCase):
         name, version = (APP_ROOT / "requirements.in").read_text(encoding="utf-8").strip().split("==")
         self.assertEqual(entries[name]["version"], version)
 
-    def test_the_lock_is_a_subset_of_the_usage_apps_lock_for_the_same_pin(self):
-        usage = (REPO_ROOT / "src" / "usage-functions" / "requirements.txt").read_text(encoding="utf-8")
-        ours = (APP_ROOT / "requirements.txt").read_text(encoding="utf-8")
-        for name in ("azure-functions", "markupsafe", "werkzeug"):
-            block = re.search(rf"(?m)^{name}==.*?(?=^\S|\Z)", ours, re.S).group(0).split("    # via")[0]
-            self.assertIn(block.strip(), usage, f"{name} has the same version and hashes as in the lock of the usage functions")
-
     def test_the_build_installs_only_what_the_lock_holds_and_only_when_the_hashes_match(self):
         script = (REPO_ROOT / "tools" / "build-function-app.sh").read_text(encoding="utf-8")
         self.assertIn("--require-hashes", script)
@@ -89,8 +82,6 @@ class FilesOfTheAppTests(unittest.TestCase):
             "sampling is off, so that no line of the History is dropped, and the host's own chatter is off: with the token requests of the Application Insights sign-in "
             "logged, every instance wrote about one line a second; the console's pages are at the root, with no /api in front",
         )
-        usage = json.loads((REPO_ROOT / "src" / "usage-functions" / "host.json").read_text(encoding="utf-8"))
-        self.assertEqual({k: v for k, v in host.items() if k != "extensions"}, usage)
 
     def test_funcignore_leaves_out_the_tests_and_compiled_files_but_not_the_libraries(self):
         lines = (APP_ROOT / ".funcignore").read_text(encoding="utf-8").splitlines()

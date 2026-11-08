@@ -1,24 +1,24 @@
 #!/bin/bash
-# Publishes the code of one of the two function apps from inside the network, as the deploy identity (docs/proposals/07-private-by-default.md, phase 2).
+# Publishes the code of the cases function app (the web page and the Watch) from inside the network, as the deploy identity (docs/proposals/07-private-by-default.md, phase 2).
 #
-# Once the function apps have no public endpoint, the workflow's runner can no longer reach their deployment sites (<app>.scm.azurewebsites.net). So the code is published from a
-# short-lived container group in the project's virtual network, through the apps' private endpoints. tools/operator-run.py makes the group, puts this script and the files below into the
-# secret volume at /mnt/op, and reads the log. The container signs in as the DEPLOY IDENTITY, the one that the workflow signs in as and that holds the right to write to the apps, with the
+# Once the function app has no public endpoint, the workflow's runner can no longer reach its deployment site (<app>.scm.azurewebsites.net). So the code is published from a
+# short-lived container group in the project's virtual network, through the app's private endpoint. tools/operator-run.py makes the group, puts this script and the files below into the
+# secret volume at /mnt/op, and reads the log. The container signs in as the DEPLOY IDENTITY, the one that the workflow signs in as and that holds the right to write to the app, with the
 # OpenID Connect token that GitHub issued to the run: a federated credential, so that no key, no password and no publish profile exists (AGENTS.md rule 23). It does not sign in as the
 # Operator: the Operator's own identity holds no right that writes (rule 29), and the publish needs none.
 #
 # The image is mcr.microsoft.com/azure-cli (bash, az, python3 3.12, curl, getent and the coreutils). It has no pip, no zip, no unzip and no find that anything may rely on, so pip is made by
 # ensurepip in a work folder, and Python opens and makes the zip files. A container group's request takes only a few hundred kilobytes of files (tools/operator-run.py, MAX_FILE_BYTES, has the
-# evidence), and neither app's package is that small (the usage app's is 7.0 MB zipped, the cases app's 614,068 bytes), so no package travels in it. The workflow sends the app's sources
-# (usage-source.zip or cases-source.zip, made by tools/build-function-app.sh with FUNCTION_APP_SOURCES_ONLY=1) and that same script (build-function-app.sh), and the libraries are built here from
-# the hash-locked requirements.txt in the sources, with the one pip command of that script (FUNCTION_APP_BUILD_IN_OPERATOR=1): the same build for both apps. The two kinds of publish:
-#   usage   the Flex Consumption app: `az functionapp deployment source config-zip` of the built package, as the runner ran it before
-#   cases   the web page's app, which runs on the plan that PUBLISH_PLAN names: on Flex Consumption it is published as the usage app is (`az functionapp deployment source config-zip`), and on a Basic plan the
-#           built package is posted to the deployment site's zip deployment, with curl, as the runner did
+# evidence), and the app's package is not that small (614,068 bytes), so no package travels in it. The workflow sends the app's sources (cases-source.zip, made by tools/build-function-app.sh with
+# FUNCTION_APP_SOURCES_ONLY=1) and that same script (build-function-app.sh), and the libraries are built here from the hash-locked requirements.txt in the sources, with the one pip command of
+# that script (FUNCTION_APP_BUILD_IN_OPERATOR=1). The app runs on the plan that PUBLISH_PLAN names, and the package is published the way that plan needs:
+#   Flex    the Flex Consumption app: `az functionapp deployment source config-zip` of the built package, as the runner ran it before the publish moved into the network
+#   Basic   the built package is posted to the deployment site's zip deployment, with curl, as the runner did
+# (The usage app, which was the other app published here, was removed on 2026-11-07 with the usage recording; the action retire-old deletes what is left of it.)
 #
 # What it reads, all from the environment (none of it is a secret, except the one that says so):
-#   PUBLISH_KIND            usage or cases
-#   PUBLISH_PLAN            Flex or Basic: the plan that the app runs on (the workflow passes CASES_APP_PLAN of tools/environment-params.py). Optional: empty is Flex for usage and Basic for cases. The usage app is always Flex Consumption.
+#   PUBLISH_KIND            cases (the only app that is published here now)
+#   PUBLISH_PLAN            Flex or Basic: the plan that the app runs on (the workflow passes CASES_APP_PLAN of tools/environment-params.py). Optional: empty is Basic.
 #   PUBLISH_APP             the name of the function app
 #   PUBLISH_RESOURCE_GROUP  the app's resource group
 #   PUBLISH_SUBSCRIPTION    the subscription of that group
@@ -27,7 +27,7 @@
 #   AZURE_FEDERATED_TOKEN   THE ONE SECRET: the OpenID Connect token that GitHub issued to the run (audience api://AzureADTokenExchange, valid for five minutes), sent as a secure environment
 #                           variable. It is read once at the start and taken out of the environment, so that nothing that runs below inherits it, and it is never printed: it is handed to the
 #                           az login of the deploy identity and to nothing else
-#   PUBLISH_FILE_BYTES      the size that the main file of the secret volume (usage-source.zip, or cases-source.zip) was sent with: a file that arrived short is never published
+#   PUBLISH_FILE_BYTES      the size that the main file of the secret volume (cases-source.zip) was sent with: a file that arrived short is never published
 #   PUBLISH_HOLD_SECONDS    optional, 0 to 60, default 20: how long the container stays after the work, so that the tool that reads the log through Azure Resource Manager can read the whole of it
 #   PUBLISH_VOLUME          where the secret volume is mounted (default /mnt/op); PUBLISH_TMP where the work folder is made (default /tmp): both only for the tests
 #
@@ -113,20 +113,17 @@ looks_like_a_token() {
 
 kind=${PUBLISH_KIND:-}
 case "$kind" in
-  usage | cases) ;;
-  *) refuse "PUBLISH_KIND is usage or cases" ;;
+  cases) ;;
+  *) refuse "PUBLISH_KIND is cases" ;;
 esac
 plan=${PUBLISH_PLAN:-}
 if [ -z "$plan" ]; then
-  if [ "$kind" = usage ]; then plan=Flex; else plan=Basic; fi
+  plan=Basic
 fi
 case "$plan" in
   Flex | Basic) ;;
   *) refuse "PUBLISH_PLAN is Flex or Basic" ;;
 esac
-if [ "$kind" = usage ] && [ "$plan" != Flex ]; then
-  refuse "the usage app runs on Flex Consumption: PUBLISH_PLAN is Flex for it"
-fi
 app=${PUBLISH_APP:-}
 [[ $app =~ $app_name ]] || refuse "PUBLISH_APP is not the name of a function app"
 group=${PUBLISH_RESOURCE_GROUP:-}
@@ -142,11 +139,7 @@ sent_bytes=${PUBLISH_FILE_BYTES:-}
 [[ $sent_bytes =~ $number ]] || refuse "PUBLISH_FILE_BYTES is not the size of the file that was sent"
 hold=${PUBLISH_HOLD_SECONDS:-20}
 [[ $hold =~ $seconds ]] && [ "$hold" -le 60 ] || refuse "PUBLISH_HOLD_SECONDS is a number from 0 to 60"
-if [ "$kind" = usage ]; then
-  main_file="$volume/usage-source.zip"
-else
-  main_file="$volume/cases-source.zip"
-fi
+main_file="$volume/cases-source.zip"
 [ -f "$volume/build-function-app.sh" ] || refuse "build-function-app.sh is not in the secret volume"
 [ -f "$main_file" ] || refuse "${main_file##*/} is not in the secret volume"
 
@@ -293,7 +286,7 @@ megabytes() {
 }
 
 # The sources that came in the secret volume are unpacked, and the package is built from them by the script of the repository in the Operator's mode: one pip command and one layout for both apps
-# (tools/build-function-app.sh). $1 is the app's directory under src, $2 the name of its code package, $3 what the package is called here (usage or cases). The built zip is $package_zip. A build is
+# (tools/build-function-app.sh). $1 is the app's directory under src, $2 the name of its code package, $3 what the package is called here (cases). The built zip is $package_zip. A build is
 # tried twice, because the first minute of a group can be noisy and what it fetches comes from the network; a lock that does not match its hashes fails twice, and says so.
 build_package() {
   local app_directory=$1 package_name=$2 label=$3 attempt built=0 zip_bytes
@@ -336,12 +329,8 @@ with zipfile.ZipFile(sys.argv[1]) as archive:
   rm -rf "$work/pip-cache" "$work/build" "$work/source"
 }
 
-publish_usage() {
-  publish_flex usage-functions usage usage
-}
-
-# The Flex Consumption app, whichever it is: the package is built here ($1 is the app's directory under src, $2 the name of its code package, $3 what the package is called here) and published with the
-# command that the runner ran for the usage app before, with the same flags and the same attempts. The web page's app is published this way while it runs on Flex Consumption.
+# The Flex Consumption app: the package is built here ($1 is the app's directory under src, $2 the name of its code package, $3 what the package is called here) and published with the
+# command that the runner ran before the publish moved into the network, with the same flags and the same attempts. The web page's app is published this way while it runs on Flex Consumption.
 publish_flex() {
   local app_directory=$1 package_name=$2 label=$3 attempt
   # The version of the CLI that does the publish is said, because what `config-zip` does for a Flex Consumption app depends on it (the image is pinned by its digest).
@@ -386,10 +375,7 @@ publish_cases() {
   return 1
 }
 
-if [ "$kind" = usage ]; then
-  publish_usage
-  code=$?
-elif [ "$plan" = Flex ]; then
+if [ "$plan" = Flex ]; then
   publish_flex case-functions cases cases
   code=$?
 else

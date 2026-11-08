@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
 """Checks the first cases: that the cases app lists its two functions, and that one run of the Watch ends and says what it found (standard library only).
 
+    python tools/cases-check.py whoami
     python tools/cases-check.py functions --site <resource id of the cases app> [--minutes 15]
     python tools/cases-check.py run --namespace <Event Hubs namespace> --insights <resource id of the cases app's Application Insights>
                                     [--minutes 30] [--summary <file>] [--query-via arm|data-plane]
 
-It uses the helpers of tools/recording-check.py: the same Azure CLI, which the workflow has signed in, and tokens that are used and never printed.
+It uses the helpers of tools/check-helpers.py, which it loads from its own folder: the same Azure CLI, which the workflow has signed in, and tokens that are used and never printed.
 
-functions  Read only. Waits until the cases app lists its two functions (the app has to be started and has to have read its package) and
+whoami     Read only. Prints the object id of the identity that the CLI is signed in as, read from the claims of its own token (the workflow's identity may not read the directory).
+           The Hub workflow uses it to find the deploy identity's own role assignment on the control hub cases-control, which the action cases retires.
+functions  Read only. Waits until the cases app lists its four functions (the app has to be started and has to have read its package) and
            prints their names.
 run        Sends one event to the control hub of the cases (cases-control) with the identity that the CLI is signed in as: in the Hub workflow that is the
            Operator's identity, which holds Azure Event Hubs Data Sender on that hub, and the tool runs inside the network, because the namespace takes no
@@ -20,7 +23,7 @@ run        Sends one event to the control hub of the cases (cases-control) with 
 
 --query-via (run) How the History is read from the telemetry: arm (the default, through Azure Resource Manager, which needs a component that accepts queries
            from public networks) or data-plane (through https://api.applicationinsights.io with a Microsoft Entra token, for a component that is private; run it
-           from inside the network). The same option and the same rules as in tools/recording-check.py, which has the details.
+           from inside the network). The same option and the same rules as in tools/check-helpers.py, which has the details.
 """
 from __future__ import annotations
 
@@ -32,7 +35,7 @@ import sys
 import uuid
 from pathlib import Path
 
-_spec = importlib.util.spec_from_file_location("recording_check", Path(__file__).with_name("recording-check.py"))
+_spec = importlib.util.spec_from_file_location("check_helpers", Path(__file__).with_name("check-helpers.py"))
 rc = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(rc)
 
@@ -303,7 +306,8 @@ def command_run(args, azure: Azure) -> int:
 def main(argv=None, azure: Azure | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     commands = parser.add_subparsers(dest="command", required=True)
-    functions = commands.add_parser("functions", help="wait for the cases app's two functions and list them")
+    commands.add_parser("whoami", help="print the object id of the signed-in identity")
+    functions = commands.add_parser("functions", help="wait for the cases app's four functions and list them")
     functions.add_argument("--site", required=True)
     functions.add_argument("--minutes", type=float, default=15)
     run = commands.add_parser("run", help="send one control event and read the History of the run from the telemetry")
@@ -315,7 +319,7 @@ def main(argv=None, azure: Azure | None = None) -> int:
     args = parser.parse_args(argv)
     azure = azure or Azure()
     try:
-        return {"functions": command_functions, "run": command_run}[args.command](args, azure)
+        return {"whoami": rc.command_whoami, "functions": command_functions, "run": command_run}[args.command](args, azure)
     except Problem as e:
         print(f"error: {e}", file=sys.stderr)
         return 1

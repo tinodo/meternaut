@@ -94,20 +94,20 @@ class TheWorkflowTouchesOnlyTheProjectsGroup(unittest.TestCase):
             self.assertTrue(ok, f"line {number}: {url}")
             self.assertNotRegex(url, r"/tenants/|/providers/Microsoft\.(?:Management|ApiManagement/service|Insights/components)/|managementGroups", f"line {number}")
 
-    def test_the_only_variable_of_the_job_that_names_something_outside_the_project_is_read_by_the_builder_alone(self):
-        lines = [line for n, line in code_lines(WORKFLOW) if "GATEWAY_APPINSIGHTS_ID" in line]
-        self.assertEqual(lines, ["      GATEWAY_APPINSIGHTS_ID: ${{ secrets.GATEWAY_APPINSIGHTS_ID }}"], "the job's environment: no step of the workflow names it, only the builder reads it")
-        self.assertIn("      GATEWAY_APPINSIGHTS_ID: ${{ secrets.GATEWAY_APPINSIGHTS_ID }}\n", WORKFLOW)
-        for name in ("GATEWAY_RESOURCE_ID", "GATEWAY_PRINCIPAL_ID", "GATEWAY_CLIENT_ID", "RECORDING_FRAGMENTS", "GATEWAY_URL", "GATEWAY_PRODUCT_SUBSCRIPTION_ID"):
+    def test_no_variable_of_the_job_names_something_outside_the_project_any_more(self):
+        # The last one was the secret GATEWAY_APPINSIGHTS_ID, which the builder read for the usage recording's copy jobs (they read the old gateway's Application Insights). The recording was removed on
+        # 2026-11-07, nothing reads the secret, and the owner deletes it in his repository settings.
+        for name in ("GATEWAY_APPINSIGHTS_ID", "GATEWAY_RESOURCE_ID", "GATEWAY_PRINCIPAL_ID", "GATEWAY_CLIENT_ID", "RECORDING_FRAGMENTS", "RECORDING_READER_IDS", "GATEWAY_URL", "GATEWAY_PRODUCT_SUBSCRIPTION_ID"):
             self.assertNotIn(name, WORKFLOW)
             self.assertNotIn(name, CHECKS)
-        self.assertNotIn("GATEWAY_RESOURCE_ID", CHECKS)
+        builder = text("tools/environment-params.py")
+        for name in ("GATEWAY_APPINSIGHTS_ID", "GATEWAY_RESOURCE_ID", "RECORDING_READER_IDS"):
+            self.assertNotIn(f'"{name}"', builder, f"{name}: the builder reads no setting of the old gateway's side")
 
-    def test_the_builder_only_parses_that_id_and_calls_nothing(self):
+    def test_the_builder_calls_nothing(self):
         builder = text("tools/environment-params.py")
         for word in ("import subprocess", "os.system", "urllib", "http.client", "import socket", "import requests", "os.popen"):
             self.assertNotIn(word, builder, word)
-        self.assertRegex(builder, r"APPINSIGHTS_ID\.match\(need\(env, \"GATEWAY_APPINSIGHTS_ID\"\)\)")
 
     def test_no_step_reads_the_instance_its_identity_its_loggers_or_a_contract(self):
         for word in ("Microsoft.ApiManagement/service", "apim-gateway-upgrade", "listSecrets", "loggers", "az identity list", "Meternaut gateway deployer"):
@@ -134,8 +134,8 @@ class TheTemplatesReadNothingOutsideTheirOwnGroup(unittest.TestCase):
 
     def test_the_templates_are_the_ones_that_the_hub_and_the_checks_know(self):
         names = [str(p.relative_to(ROOT)).replace("\\", "/") for p in TEMPLATES]
-        self.assertEqual(names, ["environment/aigateway/main.bicep", "environment/aigateway/subnet.bicep", "environment/cases/main.bicep", "environment/cases/planted.bicep",
-                                 "environment/foundry/main.bicep", "environment/main.bicep", "environment/operator/main.bicep", "environment/recording/main.bicep",
+        self.assertEqual(names, ["environment/aigateway/main.bicep", "environment/aigateway/subnet.bicep", "environment/base/main.bicep", "environment/cases/main.bicep", "environment/cases/planted.bicep",
+                                 "environment/foundry/main.bicep", "environment/main.bicep", "environment/operator/main.bicep",
                                  "infra/budgets/rg-budget.bicep"], "a new template is added to this list on purpose, after it was looked at for what it reads")
         for name in (n for n in names if n.startswith("environment/")):
             self.assertIn(name, WORKFLOW + CHECKS, f"{name}: a template that no workflow compiles")
@@ -164,16 +164,12 @@ class TheTemplatesReadNothingOutsideTheirOwnGroup(unittest.TestCase):
             for match in re.finditer(r"subscriptionResourceId\(\s*([^,)]+)", original):
                 self.assertEqual(match.group(1).strip(), "'Microsoft.Authorization/roleDefinitions'", f"{path.name}: {match.group(0)}")
 
-    def test_the_gateways_telemetry_is_named_in_one_place_as_a_string_for_the_usage_app_to_read_with_its_own_identity(self):
-        source = text("environment/recording/main.bicep")
-        names = ("gatewayAppInsightsSubscriptionId", "gatewayAppInsightsResourceGroup", "gatewayAppInsightsName")
-        for name in names:
-            self.assertEqual(len(re.findall(rf"\bparam {name} string\b", source)), 1, name)
-            self.assertEqual(len(re.findall(rf"\b{name}\b", source)), 2, f"{name}: the declaration and one use")
-        self.assertIn("{ name: 'GATEWAY_APPINSIGHTS_ID', value: resourceId(gatewayAppInsightsSubscriptionId, gatewayAppInsightsResourceGroup, 'Microsoft.Insights/components', gatewayAppInsightsName) }", source)
-        for other in TEMPLATES:
-            if other.name != "main.bicep" or other.parent.name != "recording":
-                self.assertNotIn("gatewayAppInsights", other.read_text(encoding="utf-8"), str(other))
+    def test_the_old_gateways_telemetry_is_named_by_no_template(self):
+        # The usage recording's template read the old gateway's Application Insights component in the owner's lab subscription, by three parameters; it was removed on 2026-11-07.
+        for template in TEMPLATES:
+            source = template.read_text(encoding="utf-8")
+            self.assertNotIn("gatewayAppInsights", source, str(template))
+            self.assertNotIn("GATEWAY_APPINSIGHTS_ID", source, str(template))
 
 
 class TheRoleIsRetired(unittest.TestCase):

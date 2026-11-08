@@ -40,8 +40,7 @@ def posix(path):
     return result
 
 
-APP = "func-meternaut-usage-0a1b2c3d"
-CASES_APP = "func-meternaut-cases-0a1b2c3d"
+APP = CASES_APP = "func-meternaut-cases-0a1b2c3d"
 GROUP = "rg-of-the-project"
 SUBSCRIPTION = "11111111-2222-3333-4444-555555555555"
 DEPLOY_CLIENT = "aaaaaaaa-1111-2222-3333-444444444444"
@@ -227,8 +226,6 @@ echo "unexpected python3 call: $*" >&2
 exit 9
 """
 
-USAGE_SOURCE_FILES = {"function_app.py": b"# the app\n", "host.json": b"{}\n", "requirements.txt": b"azure-core==1.41.0 \\\n    --hash=sha256:" + b"ab" * 32 + b"\n",
-                      "usage/__init__.py": b"", "usage/jobs.py": b"# jobs\n"}
 CASES_SOURCE_FILES = {"function_app.py": b"# the cases app\n", "host.json": b"{}\n", "requirements.txt": b"azure-functions==2.3.0 \\\n    --hash=sha256:" + b"cd" * 32 + b"\n",
                       "cases/__init__.py": b"", "cases/loop.py": b"# loop\n", "cases/web/__init__.py": b"", "cases/web/home.py": b"# home\n"}
 
@@ -237,7 +234,7 @@ def source_zip(files=None):
     """The zip of the sources, as tools/build-function-app.sh makes it with FUNCTION_APP_SOURCES_ONLY=1: the files at its root."""
     path = Path(tempfile.mkdtemp()) / "sources.zip"
     with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as archive:
-        for name, content in (files or USAGE_SOURCE_FILES).items():
+        for name, content in (files or CASES_SOURCE_FILES).items():
             archive.writestr(name, content)
     data = path.read_bytes()
     shutil.rmtree(path.parent)
@@ -259,14 +256,18 @@ class Ran:
 class PublishScript(unittest.TestCase):
     """operator/publish.sh against stand-ins for az, python3, curl, getent, timeout and sleep: what it refuses, what it runs and in what order, what it prints, and that the exit code says how it went."""
 
-    def good_env(self, kind="usage"):
-        """Everything that the script is given on the real estate, with stand-ins that answer well. The image has no pip (FAKE_PIP=missing), and both names of the app are private."""
-        return {"PUBLISH_KIND": kind, "PUBLISH_APP": APP if kind == "usage" else CASES_APP, "PUBLISH_RESOURCE_GROUP": GROUP, "PUBLISH_SUBSCRIPTION": SUBSCRIPTION, "PUBLISH_CLIENT_ID": DEPLOY_CLIENT,
-                "PUBLISH_TENANT_ID": DEPLOY_TENANT, "AZURE_FEDERATED_TOKEN": FEDERATED_TOKEN, "FAKE_ARM_TOKEN": ARM_TOKEN, "FAKE_PIP": "missing",
-                "FAKE_DNS": " ".join(f"{app}{suffix}=10.53.0.21" for app in (APP, CASES_APP) for suffix in (".scm.azurewebsites.net", ".azurewebsites.net"))}
+    def good_env(self, kind="flex"):
+        """Everything that the script is given on the real estate, with stand-ins that answer well. The kind is the plan that the cases app runs on: "flex" (Flex Consumption: the package is published with
+        config-zip) or "cases" (a Basic plan, which is the plan when none is given: the package is posted to the deployment site). The image has no pip (FAKE_PIP=missing), and both names of the app are private."""
+        env = {"PUBLISH_KIND": "cases", "PUBLISH_APP": CASES_APP, "PUBLISH_RESOURCE_GROUP": GROUP, "PUBLISH_SUBSCRIPTION": SUBSCRIPTION, "PUBLISH_CLIENT_ID": DEPLOY_CLIENT,
+               "PUBLISH_TENANT_ID": DEPLOY_TENANT, "AZURE_FEDERATED_TOKEN": FEDERATED_TOKEN, "FAKE_ARM_TOKEN": ARM_TOKEN, "FAKE_PIP": "missing",
+               "FAKE_DNS": " ".join(f"{CASES_APP}{suffix}=10.53.0.21" for suffix in (".scm.azurewebsites.net", ".azurewebsites.net"))}
+        if kind == "flex":
+            env["PUBLISH_PLAN"] = "Flex"
+        return env
 
-    def run_publish(self, env=None, kind="usage", package=None, files=None, stubs=None, sent=None):
-        """Runs the script. `package` is the main file that the secret volume carries (None: the usual one for the kind), `files` the other files, `sent` the size that the workflow sent it with."""
+    def run_publish(self, env=None, kind="flex", package=None, files=None, stubs=None, sent=None):
+        """Runs the script. `package` is the main file that the secret volume carries (None: the usual one), `files` the other files, `sent` the size that the workflow sent it with."""
         with tempfile.TemporaryDirectory() as tmp:
             tmp = Path(tmp)
             bin_dir = tmp / "bin"
@@ -276,8 +277,8 @@ class PublishScript(unittest.TestCase):
                 (bin_dir / name).chmod(0o755)  # on Linux a file that is not executable is skipped in the search of the path, and the real program would answer
             volume = tmp / "op"
             volume.mkdir()
-            main_name = "usage-source.zip" if kind == "usage" else "cases-source.zip"
-            content = package if package is not None else source_zip(CASES_SOURCE_FILES if kind == "cases" else None)
+            main_name = "cases-source.zip"
+            content = package if package is not None else source_zip(CASES_SOURCE_FILES)
             if content is not False:
                 (volume / main_name).write_bytes(content)
             (volume / "build-function-app.sh").write_text(text("tools/build-function-app.sh"), encoding="utf-8", newline="\n")
@@ -304,36 +305,7 @@ class PublishScript(unittest.TestCase):
 
     # --- a good run ---------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
-    def test_a_good_usage_run_signs_in_first_checks_the_names_builds_the_libraries_here_and_publishes_with_the_command_that_the_runner_ran(self):
-        ran = self.run_publish()
-        self.assertEqual((ran.done.returncode, ran.done.stderr), (0, ""), ran.done.stdout)
-        size = len(source_zip())
-        self.assertEqual([re.sub(r", \d+ s, hashes ok$", ", N s, hashes ok", line) for line in ran.lines], [
-            "ok: python3 3.12.7",
-            f"ok: usage-source.zip is {size} bytes, as sent",
-            "ok: az login as the deploy identity with the OpenID Connect token",
-            "ok: az account set",
-            "ok: az token for the App Service resource, fetched while the OpenID Connect token is fresh",
-            f"ok: {APP}.scm.azurewebsites.net resolves to a private address",
-            f"ok: {APP}.azurewebsites.net resolves to a private address",
-            "ok: az 2.92.0",
-            "ok: python3 -m ensurepip makes pip 25.0.1 in the work folder",
-            f"ok: the sources are unpacked: {len(USAGE_SOURCE_FILES)} files",
-            f"ok: the usage package is built: {len(USAGE_SOURCE_FILES) + 3} files, 1.0 MB zipped, N s, hashes ok",
-            f"ok: the usage package is published to {APP} (attempt 1 of 3)",
-            "publish-done: exit code 0",
-        ])
-        az_calls = ran.calls_of("az ")
-        self.assertTrue(az_calls[0].startswith("az login --service-principal"), "the sign-in comes before any other call of az")
-        self.assertRegex(az_calls[0], rf"^az login --service-principal --username {DEPLOY_CLIENT} --tenant {DEPLOY_TENANT} --federated-token {FEDERATED_TOKEN} --allow-no-subscriptions --output none "
-                                      r"\[config=/.+/publish-[^/]+/azure\]$")
-        self.assertRegex(ran.calls_of("az account")[0], rf"^az account set --subscription {SUBSCRIPTION} \[config=/.+/publish-[^/]+/azure\]$")
-        (deploy,) = ran.calls_of("az functionapp deployment")
-        self.assertRegex(deploy, rf"^az functionapp deployment source config-zip --resource-group {GROUP} --name {APP} --src /.+/publish-[^/]+/usage\.zip --build-remote false --only-show-errors --output none ")
-        self.assertEqual(ran.leftover, [], "the work folder, with the CLI's state of the deploy identity and what was built, is gone")
-        self.assertEqual(ran.calls[-1], "sleep 20", "the container stays after the work so that the log can be read whole")
-
-    def test_the_token_for_the_app_service_resource_is_fetched_right_after_the_sign_in_while_the_assertion_is_fresh_and_only_for_the_usage_app(self):
+    def test_the_token_for_the_app_service_resource_is_fetched_right_after_the_sign_in_while_the_assertion_is_fresh_and_only_on_flex_consumption(self):
         # A Flex Consumption app's config-zip asks Microsoft Entra for a token for the App Service resource, the Azure CLI gets every new token with the sign-in's assertion, and that is valid for five
         # minutes (the Hub signs in again before each publish for the same reason): the token is fetched at once, and the CLI finds it in its cache.
         ran = self.run_publish()
@@ -355,7 +327,7 @@ class PublishScript(unittest.TestCase):
         self.assertIn("(the publish goes on)", said[0])
         self.assertLessEqual(len(said[0]), 166)
         self.assertNotIn(FEDERATED_TOKEN, ran.done.stdout + ran.done.stderr)
-        self.assertIn(f"ok: the usage package is published to {APP} (attempt 1 of 3)", ran.lines, "the publish says what it needs")
+        self.assertIn(f"ok: the cases package is published to {APP} (attempt 1 of 3)", ran.lines, "the publish says what it needs")
 
     def test_the_build_is_the_script_of_the_repository_run_in_the_operator_with_the_pip_that_ensurepip_made_and_the_same_flags_as_on_the_runner(self):
         ran = self.run_publish()
@@ -419,7 +391,7 @@ class PublishScript(unittest.TestCase):
         self.assertEqual(ran.leftover, [])
         self.assertEqual(ran.calls[-1], "sleep 20")
 
-    def test_a_good_cases_run_on_flex_consumption_is_published_with_config_zip_as_the_usage_app_is_and_curl_is_never_called(self):
+    def test_a_good_cases_run_on_flex_consumption_is_published_with_config_zip_and_curl_is_never_called(self):
         ran = self.run_publish({"PUBLISH_PLAN": "Flex"}, kind="cases")
         self.assertEqual((ran.done.returncode, ran.done.stderr), (0, ""), ran.done.stdout)
         size = len(source_zip(CASES_SOURCE_FILES))
@@ -438,15 +410,21 @@ class PublishScript(unittest.TestCase):
             f"ok: the cases package is published to {CASES_APP} (attempt 1 of 3)",
             "publish-done: exit code 0",
         ])
+        az_calls = ran.calls_of("az ")
+        self.assertTrue(az_calls[0].startswith("az login --service-principal"), "the sign-in comes before any other call of az")
+        self.assertRegex(az_calls[0], rf"^az login --service-principal --username {DEPLOY_CLIENT} --tenant {DEPLOY_TENANT} --federated-token {FEDERATED_TOKEN} --allow-no-subscriptions --output none "
+                                      r"\[config=/.+/publish-[^/]+/azure\]$")
+        self.assertRegex(ran.calls_of("az account")[0], rf"^az account set --subscription {SUBSCRIPTION} \[config=/.+/publish-[^/]+/azure\]$")
         (publish,) = ran.calls_of("az functionapp")
         self.assertRegex(publish, rf"^az functionapp deployment source config-zip --resource-group {GROUP} --name {CASES_APP} --src /.+/publish-[^/]+/cases\.zip --build-remote false --only-show-errors --output none ")
-        self.assertEqual(ran.calls_of("curl"), [], "a Flex Consumption app has no zip deployment that curl posts to: it is published as the usage app is")
+        self.assertEqual(ran.calls_of("curl"), [], "a Flex Consumption app has no zip deployment that curl posts to: it is published with the Azure CLI's zip deployment command")
         (token,) = ran.calls_of("az account get-access-token")
         self.assertIn("--resource https://appservice.azure.com", token, "the token that config-zip asks Microsoft Entra for, fetched while the OpenID Connect token is fresh")
         self.assertEqual(self.members_of_bytes(ran.posted), sorted(list(CASES_SOURCE_FILES) + self.FAKE_LIBRARIES), "the sources that came in the volume, and the libraries that were built here")
-        self.assertEqual(ran.leftover, [])
+        self.assertEqual(ran.leftover, [], "the work folder, with the CLI's state of the deploy identity and what was built, is gone")
+        self.assertEqual(ran.calls[-1], "sleep 20", "the container stays after the work so that the log can be read whole")
 
-    def test_a_cases_run_with_no_plan_is_a_basic_run_and_a_plan_that_is_not_flex_or_basic_is_refused_and_the_usage_app_is_flex_only(self):
+    def test_a_cases_run_with_no_plan_is_a_basic_run_and_a_plan_that_is_not_flex_or_basic_is_refused(self):
         ran = self.run_publish({"PUBLISH_PLAN": None}, kind="cases")
         self.assertEqual(ran.done.returncode, 0, ran.done.stdout)
         self.assertEqual(len(ran.calls_of("curl ")), 1, "no plan: Basic, as it was before the plan was a setting")
@@ -456,33 +434,32 @@ class PublishScript(unittest.TestCase):
         for value in ("flex", "basic", "Basic ", " Flex", "Premium", "FlexConsumption", "Flex; touch canary", "$(touch canary)", "Flex\nBasic"):
             self.refused({"PUBLISH_PLAN": value}, kind="cases")
         self.assertIn("PUBLISH_PLAN", self.refused({"PUBLISH_PLAN": "nope"}, kind="cases").lines[0])
-        self.assertIn("PUBLISH_PLAN", self.refused({"PUBLISH_PLAN": "Basic"}).lines[0], "the usage app runs on Flex Consumption only")
         ran = self.run_publish({"PUBLISH_PLAN": "Flex"})
         self.assertEqual(ran.done.returncode, 0, ran.done.stdout)
         self.assertEqual(len(ran.calls_of("az functionapp")), 1)
 
-    def test_the_package_that_az_publishes_for_the_usage_app_is_the_one_that_was_built_here_from_the_sources_in_the_volume(self):
+    def test_the_package_that_az_publishes_is_the_one_that_was_built_here_from_the_sources_in_the_volume(self):
         ran = self.run_publish()
         self.assertEqual(ran.done.returncode, 0, ran.done.stdout)
-        self.assertEqual(self.members_of_bytes(ran.posted), sorted(list(USAGE_SOURCE_FILES) + self.FAKE_LIBRARIES))
+        self.assertEqual(self.members_of_bytes(ran.posted), sorted(list(CASES_SOURCE_FILES) + self.FAKE_LIBRARIES))
 
-    def test_the_two_kinds_are_built_by_the_same_command_with_the_same_flags_and_differ_only_in_the_app_that_is_built(self):
+    def test_the_two_plan_kinds_are_built_by_the_same_command_with_the_same_flags_and_differ_only_in_the_way_that_the_package_is_published(self):
         installs = {}
-        for kind in ("usage", "cases"):
+        for kind in ("flex", "cases"):
             ran = self.run_publish(kind=kind)
             (install,) = [call for call in ran.calls if call.startswith("python3 -m pip install")]
             installs[kind] = re.sub(r"/[^ ]*/publish-[^/ ]+/", "<work>/", install)
-        self.assertEqual(installs["usage"], installs["cases"], "one pip command, one layout")
+        self.assertEqual(installs["flex"], installs["cases"], "one pip command, one layout")
         source = re.sub(r"(?m)^\s*#.*$", "", text("operator/publish.sh"))
-        self.assertIn('publish_flex usage-functions usage usage', source)
-        self.assertIn('publish_flex case-functions cases cases', source, "the web page's app on Flex Consumption is built and published as the usage app is")
+        self.assertNotIn("usage", source, "the usage app was removed on 2026-11-07: the script publishes the cases app only")
+        self.assertIn('publish_flex case-functions cases cases', source, "the web page's app on Flex Consumption is built and published with the Azure CLI's zip deployment command")
         self.assertIn('build_package case-functions cases cases || return 3', source, "and on a Basic plan it is built here too, and posted")
-        self.assertEqual(source.count('timeout 300 bash "$volume/build-function-app.sh"'), 1, "the build is run in one place, for both kinds")
+        self.assertEqual(source.count('timeout 300 bash "$volume/build-function-app.sh"'), 1, "the build is run in one place, for both plan kinds")
         self.assertEqual(source.count("python3 -m pip install"), 0, "and pip is run by the build script alone")
 
     # --- the input is refused before anything runs --------------------------------------------------------------------------------------------------------------------------------------
 
-    def refused(self, env, kind="usage", **kwargs):
+    def refused(self, env, kind="flex", **kwargs):
         ran = self.run_publish(env, kind=kind, **kwargs)
         self.assertEqual(ran.done.returncode, 2, (env, ran.lines))
         self.assertEqual(len(ran.lines), 2, ran.lines)
@@ -496,8 +473,8 @@ class PublishScript(unittest.TestCase):
                 self.assertNotIn(value, ran.done.stdout + ran.done.stderr, "a value is never printed back: it may be anything")
         return ran
 
-    def test_a_kind_that_is_not_usage_or_cases_is_refused(self):
-        for value in (None, "", "Usage", "usage ", "usage; touch canary", "$(touch canary)", "both"):
+    def test_a_kind_that_is_not_cases_is_refused_and_the_usage_app_is_not_a_kind_any_more(self):
+        for value in (None, "", "Cases", "cases ", "cases; touch canary", "$(touch canary)", "usage", "both"):
             self.refused({"PUBLISH_KIND": value})
         self.assertIn("PUBLISH_KIND", self.refused({"PUBLISH_KIND": "nope"}).lines[0])
 
@@ -527,17 +504,17 @@ class PublishScript(unittest.TestCase):
             self.refused({"PUBLISH_HOLD_SECONDS": value})
 
     def test_a_volume_without_the_file_that_carries_the_code_or_without_the_build_script_is_refused(self):
-        for kind, name in (("usage", "usage-source.zip"), ("cases", "cases-source.zip")):
+        for kind in ("flex", "cases"):
             ran = self.refused(None, kind=kind, package=False)
-            self.assertIn(f"{name} is not in the secret volume", ran.lines[0], kind)
+            self.assertIn("cases-source.zip is not in the secret volume", ran.lines[0], kind)
             ran = self.refused(None, kind=kind, files={"build-function-app.sh": None})
-            self.assertIn("build-function-app.sh is not in the secret volume", ran.lines[0], f"{kind}: both apps are built here, from sources")
+            self.assertIn("build-function-app.sh is not in the secret volume", ran.lines[0], f"{kind}: the app is built here, from sources")
             self.assertEqual(self.run_publish(None, kind=kind).done.returncode, 0, kind)
 
     # --- the token --------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
     def test_the_federated_token_is_on_the_command_line_of_the_one_sign_in_and_in_no_environment_and_no_line_of_the_log(self):
-        for kind in ("usage", "cases"):
+        for kind in ("flex", "cases"):
             ran = self.run_publish(kind=kind)
             self.assertEqual(ran.done.returncode, 0, ran.done.stdout)
             self.assertNotIn(FEDERATED_TOKEN, ran.done.stdout + ran.done.stderr)
@@ -573,10 +550,10 @@ class PublishScript(unittest.TestCase):
     # --- the sign-in, the size and the names ------------------------------------------------------------------------------------------------------------------------------------------
 
     def test_a_package_that_arrived_short_is_never_published_and_nothing_is_called(self):
-        for kind in ("usage", "cases"):
+        for kind in ("flex", "cases"):
             ran = self.run_publish(kind=kind, sent=99999)
             self.assertEqual(ran.done.returncode, 3)
-            self.assertRegex(ran.lines[1], r"^FAIL: (usage|cases)-source\.zip is \d+ bytes, 99999 were sent$")
+            self.assertRegex(ran.lines[1], r"^FAIL: cases-source\.zip is \d+ bytes, 99999 were sent$")
             self.assertEqual(ran.lines[-1], "publish-done: exit code 3")
             self.assertEqual(ran.calls, [], "not even a sign-in: the file is checked first")
             self.assertEqual(ran.leftover, [])
@@ -611,14 +588,14 @@ class PublishScript(unittest.TestCase):
             self.assertEqual(ran.leftover, [])
 
     def test_a_name_that_the_landing_zone_registers_at_the_second_try_is_waited_for_ten_seconds(self):
-        ran = self.run_publish({"FAKE_DNS": f"{APP}.azurewebsites.net=10.53.0.21", "FAKE_DNS_LATE": f"{APP}.scm.azurewebsites.net=10.53.0.21"}, kind="usage")
+        ran = self.run_publish({"FAKE_DNS": f"{APP}.azurewebsites.net=10.53.0.21", "FAKE_DNS_LATE": f"{APP}.scm.azurewebsites.net=10.53.0.21"})
         self.assertEqual(ran.done.returncode, 0, ran.done.stdout)
         self.assertEqual(ran.calls_of("sleep"), ["sleep 10", "sleep 20"], "ten seconds for the name, and the hold at the end")
         self.assertIn(f"ok: {APP}.scm.azurewebsites.net resolves to a private address", ran.lines)
 
-    # --- the usage app ----------------------------------------------------------------------------------------------------------------------------------------------------------------
+    # --- a Flex Consumption app: published with the Azure CLI ---------------------------------------------------------------------------------------------------------------------------
 
-    def test_without_a_working_ensurepip_the_usage_app_is_not_built_and_not_published(self):
+    def test_without_a_working_ensurepip_the_app_is_not_built_and_not_published(self):
         ran = self.run_publish({"FAKE_ENSUREPIP": "disabled"})
         self.assertEqual(ran.done.returncode, 3)
         self.assertTrue([line for line in ran.lines if line.startswith("FAIL: python3 -m ensurepip: ERROR: ensurepip is disabled in this Python: install the python3-pip")], ran.lines)
@@ -664,7 +641,7 @@ class PublishScript(unittest.TestCase):
         self.assertEqual(len(ran.calls_of("az functionapp deployment")), 3)
         self.assertEqual(ran.calls_of("sleep"), ["sleep 60", "sleep 60", "sleep 20"])
         self.assertEqual([line for line in ran.lines if "publish" in line and not line.startswith("  ")],
-                         ["FAIL: the publish did not go through (attempt 1 of 3)", "FAIL: the publish did not go through (attempt 2 of 3)", f"ok: the usage package is published to {APP} (attempt 3 of 3)",
+                         ["FAIL: the publish did not go through (attempt 1 of 3)", "FAIL: the publish did not go through (attempt 2 of 3)", f"ok: the cases package is published to {APP} (attempt 3 of 3)",
                           "publish-done: exit code 0"])
         self.assertIn("  ERROR: Zip deployment failed. Deployment was successful but Reset all workers endpoint responded with Name or service not known ", ran.lines)
 
@@ -695,7 +672,7 @@ class PublishScript(unittest.TestCase):
         self.assertLess(max(i for i, call in enumerate(calls) if call.startswith("getent")), min(i for i, call in enumerate(calls) if call.startswith("python3 -m")), "the names come before the build")
         self.assertLess(max(i for i, call in enumerate(calls) if call.startswith("python3 -m pip install")), min(i for i, call in enumerate(calls) if call.startswith("curl ")), "the package is built before it is posted")
 
-    def test_the_cases_app_is_built_like_the_usage_app_and_nothing_is_posted_when_the_build_does_not_work(self):
+    def test_the_cases_app_on_a_basic_plan_is_built_here_and_nothing_is_posted_when_the_build_does_not_work(self):
         for env, package, said in (({"FAKE_ENSUREPIP": "disabled"}, None, "FAIL: python3 -m ensurepip: ERROR: ensurepip is disabled"),
                                    ({"FAKE_PIP": "hash"}, None, "FAIL: the build of the libraries failed (attempt 2 of 2)"),
                                    ({"FAKE_PIP": "network"}, None, "FAIL: the build of the libraries failed (attempt 2 of 2)"),
@@ -708,7 +685,7 @@ class PublishScript(unittest.TestCase):
             self.assertEqual(ran.leftover, [])
         ran = self.run_publish({"FAKE_PIP": "first-fails"}, kind="cases")
         self.assertEqual(ran.done.returncode, 0, ran.done.stdout)
-        self.assertEqual(len(ran.calls_of("python3 -m pip install")), 2, "a build that fails once is tried once more, as for the usage app")
+        self.assertEqual(len(ran.calls_of("python3 -m pip install")), 2, "a build that fails once is tried once more")
         self.assertIn("FAIL: the build of the libraries failed (attempt 1 of 2)", ran.lines)
         self.assertEqual(len(ran.calls_of("curl ")), 1)
 
@@ -798,7 +775,7 @@ class TheBuildScriptInTheOperator(unittest.TestCase):
     """tools/build-function-app.sh in its three modes against a stand-in for pip (the real Python does the rest): the sources that go to the Operator, the build there with the switches for the Operator,
     and the build on the runner; the pip command is one and the layout is one."""
 
-    def run_build(self, arguments=("usage-functions", "usage"), env=None, python="3.13.0", source=None, zip_name="out.zip", prior=None):
+    def run_build(self, arguments=("case-functions", "cases"), env=None, python="3.13.0", source=None, zip_name="out.zip", prior=None):
         """Runs the script in a folder of its own. Returns the process, the calls that the stand-in logged, the members of the zip (or None), and the names that the build folder holds."""
         with tempfile.TemporaryDirectory() as tmp:
             tmp = Path(tmp)
@@ -822,7 +799,7 @@ class TheBuildScriptInTheOperator(unittest.TestCase):
             self.last_zip = zip_file.read_bytes() if zip_file.exists() else None
             return done, calls, members, sorted(path.name for path in build.iterdir()) if build.exists() else []
 
-    APPS = {"usage": ("usage-functions", "usage"), "cases": ("case-functions", "cases")}
+    APPS = {"cases": ("case-functions", "cases")}
     EXPECTED_LIBRARIES = [".python_packages/lib/site-packages/azure/core/__init__.py", ".python_packages/lib/site-packages/cffi/_rust.abi3.so",
                           ".python_packages/lib/site-packages/markupsafe/_speedups.cpython-313-x86_64-linux-gnu.so"]
 
@@ -854,7 +831,7 @@ class TheBuildScriptInTheOperator(unittest.TestCase):
             self.assertIn(said, done.stderr)
             self.assertEqual((calls, folder), ([], []), "nothing is copied and nothing is installed")
         with tempfile.TemporaryDirectory() as tmp:
-            done = subprocess.run([BASH, "-e", "-o", "pipefail", posix(ROOT / "tools" / "build-function-app.sh"), "usage-functions", "usage", posix(Path(tmp) / "b")], capture_output=True, text=True,
+            done = subprocess.run([BASH, "-e", "-o", "pipefail", posix(ROOT / "tools" / "build-function-app.sh"), "case-functions", "cases", posix(Path(tmp) / "b")], capture_output=True, text=True,
                                   env={**os.environ, "FUNCTION_APP_SOURCES_ONLY": "1"}, cwd=ROOT)
         self.assertEqual(done.returncode, 1)
         self.assertIn("the fourth argument is the zip file", done.stderr)
@@ -883,8 +860,8 @@ class TheBuildScriptInTheOperator(unittest.TestCase):
             for name in ("function_app.py", "host.json", "requirements.txt"):
                 (folder / name).parent.mkdir(parents=True, exist_ok=True)
                 (folder / name).write_bytes(b"azure-core==1.41.0\n" if name == "requirements.txt" else b"x\n")
-            (folder / "usage").mkdir()
-            (folder / "usage" / "__init__.py").write_bytes(b"")
+            (folder / "cases").mkdir()
+            (folder / "cases" / "__init__.py").write_bytes(b"")
             return folder
         done, calls, members, folder = self.run_build(env={"FUNCTION_APP_BUILD_IN_OPERATOR": "1", "FAKE_PIP": "ok"}, python="3.12.7", prior=sources)
         self.assertEqual(done.returncode, 1)
@@ -898,7 +875,7 @@ class TheBuildScriptInTheOperator(unittest.TestCase):
         self.assertIn("_cffi_backend.cpython-312-x86_64-linux-gnu.so", done.stderr)
         self.assertIsNone(members, "no zip is made of a package that would not load")
 
-    def test_the_build_on_the_runner_and_the_build_in_the_operator_use_the_same_pip_command_and_make_the_same_package_for_each_app(self):
+    def test_the_build_on_the_runner_and_the_build_in_the_operator_use_the_same_pip_command_and_make_the_same_package(self):
         def words_of(calls):
             (install,) = [call for call in calls if call.startswith("python3 -m pip install")]
             words = install.split(" [PYTHONPATH")[0].split()
@@ -929,7 +906,6 @@ class TheBuildScriptInTheOperator(unittest.TestCase):
                 self.assertIn(flag, all_words[kind])
             self.assertIn("3.13", all_words[kind])
             self.assertNotIn("--ignore-requires-python", all_words[kind])
-        self.assertEqual(all_words["usage"], all_words["cases"], "the same command for both apps")
 
     @staticmethod
     def parse_lock(path):
@@ -946,16 +922,11 @@ class TheBuildScriptInTheOperator(unittest.TestCase):
                 markers.append(line)
         return {name: (version, sorted(hashes)) for name, (version, hashes) in packages.items()}, markers
 
-    def test_the_lock_of_the_cases_app_holds_only_what_the_lock_of_the_usage_app_holds_which_is_what_the_operator_has_built_under_python_3_12(self):
-        # The probe of the Operator (2026-11-06) and the first publish of the usage app built the usage lock in the image's Python 3.12, with the pip command of the build script and without
-        # --ignore-requires-python. Nothing built the cases lock there yet. Every package of it, at its version and with the same hashes, is in the usage lock, so it is a part of what was built.
-        # If the cases app gets a library that the usage lock does not hold, this test fails: show that it builds in the Operator (an action of its own, or the first `cases` run), then change it.
-        usage, usage_markers = self.parse_lock("src/usage-functions/requirements.txt")
+    def test_the_lock_of_the_cases_app_has_three_libraries_each_with_hashes_and_no_environment_marker_which_is_what_the_operator_has_built_under_python_3_12(self):
+        # The first publish of the usage app (since removed) built a lock of these libraries in the image's Python 3.12, with the pip command of the build script and without
+        # --ignore-requires-python, and the probe of the Operator builds the cases lock the same way: pip evaluates an environment marker for the interpreter that runs it, which is 3.12 in the Operator and
+        # 3.13 on the runner, so the lock has none.
         cases, cases_markers = self.parse_lock("src/case-functions/requirements.txt")
         self.assertEqual(sorted(cases), ["azure-functions", "markupsafe", "werkzeug"])
-        for name, (version, hashes) in cases.items():
-            self.assertIn(name, usage, f"{name}: a library of the cases app that the usage lock does not hold has not been built in the Operator")
-            self.assertEqual(usage[name], (version, hashes), f"{name}: the same version and the same files as the lock that was built in the Operator")
-        for markers in (usage_markers, cases_markers):
-            self.assertEqual(markers, [], "no environment marker in a lock: pip evaluates it for the interpreter that runs it, which is 3.12 in the Operator and 3.13 on the runner")
+        self.assertEqual(cases_markers, [], "no environment marker in a lock: pip evaluates it for the interpreter that runs it, which is 3.12 in the Operator and 3.13 on the runner")
         self.assertTrue(all(hashes for _, hashes in cases.values()), "every library of the lock is checked against hashes")

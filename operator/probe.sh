@@ -22,7 +22,7 @@
 #                          secure environment variable. It is read once at the start and taken out of the environment, so that nothing that runs below inherits it, and it is
 #                          never printed: it is handed to the az login of the deploy identity and to nothing else
 #   PROBE_TOKEN_NOTE       optional: why the workflow could not get that token, in a few words; the FAIL line of the deploy identity's sign-in says it
-#   PROBE_LOCK_BYTES       the size that /mnt/op/usage-requirements.txt, the lock file of the usage app's libraries, was sent with
+#   PROBE_LOCK_BYTES       the size that /mnt/op/cases-requirements.txt, the lock file of the cases app's libraries, was sent with
 #   PROBE_VOLUME           where the secret volume is mounted (default /mnt/op); PROBE_RESOLV_CONF the resolver file (default /etc/resolv.conf); PROBE_TMP where the work folder
 #                          of the probe is made (default /tmp): all three only for the tests
 LC_ALL=C
@@ -393,20 +393,20 @@ for host in ${PROBE_SCM_HOSTS:-}; do
   fi
 done
 
-# The usage app's libraries, built here from the lock file that came in the secret volume: the pip command of tools/build-function-app.sh (the same flags in the same order) for the
+# The cases app's libraries, built here from the lock file that came in the secret volume: the pip command of tools/build-function-app.sh (the same flags in the same order) for the
 # app's runtime, Python 3.13 on Linux, although the Python of this image is another one. It is tried as the script runs it first. pip checks the Requires-Python of a library
 # against the version that it is told to build for, and whether that is enough is what the first attempt shows. If it fails for a reason that --ignore-requires-python can change, the
 # second attempt adds that flag, which is safe only because every version is pinned and every file is checked against its hash (--require-hashes). A failure of the network, of the
 # certificate or of a hash is not tried again. What is built is counted and then removed: the work folder goes at the end in any case.
-lock="$volume/usage-requirements.txt"
-build_dir="$work/usage/.python_packages/lib/site-packages"
+lock="$volume/cases-requirements.txt"
+build_dir="$work/cases/.python_packages/lib/site-packages"
 build_output=""
 build_status=0
 build_seconds=0
 
 # One run of the command, with $1 an extra flag or nothing. The target does not exist before, as in the script.
 build_once() {
-  rm -rf "$work/usage"
+  rm -rf "$work/cases"
   SECONDS=0
   build_output=$(PIP_CACHE_DIR="$work/pip-cache" timeout 240 env ${pip_python_path:+"PYTHONPATH=$pip_python_path"} python3 -m pip install --quiet --disable-pip-version-check \
     --no-compile --only-binary=:all: --require-hashes \
@@ -429,42 +429,42 @@ build_reason() {
 if [ "$full" = 1 ]; then
   : # the output is full: nothing more can be said, so nothing more is built
 elif [ ! -e "$lock" ]; then
-  say FAIL "no usage-requirements.txt in the secret volume"
+  say FAIL "no cases-requirements.txt in the secret volume"
 else
   lock_bytes=$(wc -c < "$lock" | tr -d ' ')
   if [ -z "${PROBE_LOCK_BYTES:-}" ]; then
-    say ok "usage lock file is $lock_bytes bytes"
+    say ok "cases lock file is $lock_bytes bytes"
   elif [ "$lock_bytes" = "$PROBE_LOCK_BYTES" ]; then
-    say ok "usage lock file is $lock_bytes bytes, as sent"
+    say ok "cases lock file is $lock_bytes bytes, as sent"
   else
-    say FAIL "usage lock file is $lock_bytes bytes, $PROBE_LOCK_BYTES were sent"
+    say FAIL "cases lock file is $lock_bytes bytes, $PROBE_LOCK_BYTES were sent"
   fi
   if [ "$pip_ok" != 1 ]; then
-    say FAIL "usage build skipped: there is no pip"
+    say FAIL "cases build skipped: there is no pip"
   elif [ -z "$work" ]; then
-    say FAIL "usage build skipped: no work folder"
+    say FAIL "cases build skipped: no work folder"
   else
     build_once ""
     if [ "$build_status" = 0 ]; then
-      say ok "usage build needs no --ignore-requires-python: $(stats "$work/usage"), $build_seconds s, hashes ok"
+      say ok "cases build needs no --ignore-requires-python: $(stats "$work/cases"), $build_seconds s, hashes ok"
     else
       reason=$(build_reason)
       case "$reason" in
         "a hash does not"* | "pip does not trust"* | "a name was not"* | "the connection failed" | "timed out"*)
-          say FAIL "usage build: $reason"
+          say FAIL "cases build: $reason"
           ;;
         *)
-          say FAIL "usage build without --ignore-requires-python: $reason"
+          say FAIL "cases build without --ignore-requires-python: $reason"
           build_once "--ignore-requires-python"
           if [ "$build_status" = 0 ]; then
-            say ok "usage build only with --ignore-requires-python: $(stats "$work/usage"), $build_seconds s, hashes ok"
+            say ok "cases build only with --ignore-requires-python: $(stats "$work/cases"), $build_seconds s, hashes ok"
           else
-            say FAIL "usage build with --ignore-requires-python too: $(build_reason)"
+            say FAIL "cases build with --ignore-requires-python too: $(build_reason)"
           fi
           ;;
       esac
     fi
-    rm -rf "$work/usage" "$work/pip-cache"
+    rm -rf "$work/cases" "$work/pip-cache"
   fi
 fi
 

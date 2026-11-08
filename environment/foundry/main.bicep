@@ -1,15 +1,15 @@
 // The Foundry resource of the agents: the place where Meternaut's agents (Microsoft Foundry Agent Service, prompt agents) live and are run.
 //
-// What it holds: a Foundry resource (kind AIServices) that can hold projects, one project (meternaut) with the agents in it, the same two
-// model deployments as the model account, one guardrail (a content safety policy with Prompt Shields) that the deployments use and the agents
+// What it holds: a Foundry resource (kind AIServices) that can hold projects, one project (meternaut) with the agents in it, the model
+// deployments of environment/models.json, one guardrail (a content safety policy with Prompt Shields) that the deployments use and the agents
 // inherit from them, a connection of the project to the Application Insights component of the first environment for the agents' traces, one
 // private endpoint, and the roles that connect them. Only when the host name of the AI Gateway is given (aiGatewayHost), also a second connection of the project:
 // to that gateway, with the project's own managed identity and no key, so that the agents can name their models `<connection>/<alias>`
 // (docs/proposals/08-ai-gateway.md, step 2). Empty, which is the default, none of it is made and the template is as it was.
 //
-// Why a new resource: the model account (environment/main.bicep) was made with allowProjectManagement false, and Microsoft Learn says that
-// setting cannot be changed after the account exists (Create a project for Microsoft Foundry), so that account can never hold a project or an
-// agent. It stays as it is and keeps serving the gateway.
+// Why a resource of its own: the first model account was made with allowProjectManagement false, and Microsoft Learn says that
+// setting cannot be changed after the account exists (Create a project for Microsoft Foundry), so that account could never hold a project or an
+// agent. Nothing called it, so it was removed on 2026-11-07 (the action retire-old); this resource serves the agents and the Detective and the Skeptic.
 //
 // The agents call the deployments below directly, not through the gateway, until the connection to the AI Gateway is asked for (the switch AGENTS_VIA_AI_GATEWAY in
 // tools/environment-params.py, which is False). That is a temporary exception to AGENTS.md rule 15 (c), whose
@@ -21,7 +21,7 @@
 //  - the cases app signs in with its system-assigned managed identity (a Microsoft Entra token for https://ai.azure.com) and holds the Foundry User role on the
 //    project, which lets it create agents and run them there, and nothing else here;
 //  - the project's own managed identity sends the agents' traces to the Application Insights component with Microsoft Entra ID: it holds
-//    Monitoring Metrics Publisher on the component, whose local authentication is off (environment/recording/main.bicep).
+//    Monitoring Metrics Publisher on the component, whose local authentication is off (environment/base/main.bicep).
 //
 // Left out on purpose (AGENTS.md rule 19), because the landing zone provides it: private DNS zones, virtual network links and the private
 // endpoint's DNS zone group. The landing zone's policy registers the endpoint in the central zones. The project endpoint's host name
@@ -31,7 +31,7 @@
 //
 // The order is on purpose. The resource accepts one write of its deployments at a time (batchSize 1), the project is made after the last
 // deployment, and the private endpoint after every other write to the resource: a write to the resource while its private endpoint
-// connection is written made an earlier deploy of the model account fail with IfMatchPreconditionFailed, and Microsoft's own template for a
+// connection is written made an earlier deploy of the first model account fail with IfMatchPreconditionFailed, and Microsoft's own template for a
 // private Foundry resource makes the project first because a private endpoint bound before the resource has settled fails with
 // AccountProvisioningStateInvalid. The connection to the AI Gateway is one more such write: it comes after the connection for traces (one write at a
 // time) and before the private endpoint. The roles come after the private endpoint.
@@ -66,7 +66,7 @@ param guardrailName string = 'meternaut-agents'
 @description('Restore the soft-deleted resource of this name instead of creating a new one. The workflow sets it only after the platform reports that such a resource exists.')
 param restoreAccount bool = false
 
-@description('The models deployed in the resource: name, version, deployment type and capacity in thousands of tokens a minute. The workflow reads them from environment/models.json: the names, versions and deployment types are the ones of the model account and the gateway configuration, the capacity is the agentCapacity of the model, because an agent reads everything said so far again at every step and needs more tokens a minute than the gateway.')
+@description('The models deployed in the resource: name, version, deployment type and capacity in thousands of tokens a minute. The workflow reads them from environment/models.json: the names, versions and deployment types are the ones that the AI Gateway reads too, the capacity is the agentCapacity of the model, because an agent reads everything said so far again at every step and needs more tokens a minute than the gateway.')
 param models array
 
 @description('Principal id of the system-assigned identity of the cases app. It gets the Foundry User role on the project: it may create agents and run them there, and nothing else here. The workflow reads it from the app, and refuses to deploy this resource while the app has no such identity.')
@@ -155,7 +155,7 @@ resource guardrail 'Microsoft.CognitiveServices/accounts/raiPolicies@2026-09-01'
   }
 }
 
-// One at a time: the resource accepts one deployment write at once. The same names, versions and types as the model account's, and the capacity that models.json gives the agents.
+// One at a time: the resource accepts one deployment write at once. The names, versions and types of environment/models.json, and the capacity that models.json gives the agents.
 @batchSize(1)
 resource modelDeployment 'Microsoft.CognitiveServices/accounts/deployments@2026-09-01' = [for model in models: {
   parent: account

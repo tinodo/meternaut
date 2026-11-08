@@ -8,13 +8,13 @@
 
 Meternaut holds no write right: every grant in the file only reads, and a change to Azure is made with the token of the person who approved it
 (docs/proposals/03-access-and-onboarding.md). The deployment workflow's identity may change only the project's own resource group and must not get a
-right anywhere else (AGENTS.md rule 18). The two function apps that the workflow makes (the usage recording and the first cases) run as identities that
-still need reads in other places: the subscriptions that the Watch reads, the gateway, the central workspace. Only a person who may assign roles there can
+right anywhere else (AGENTS.md rule 18). The function app that the workflow makes (the first cases) runs as an identity that
+still needs reads in other places: the subscriptions that the Watch reads. Only a person who may assign roles there can
 give them. The file environment/access-requirements.json says which role of which identity at which place, and which grants an earlier version made and
 must now be removed. This tool reads that file and the signed-in person's view of Azure.
 
 An identity of the file is what a function app runs as, and its grants are held by its holders: the system-assigned identity of the app, which the tool
-finds by reading the app in the project's resource group (--cases-site and --usage-site give the names of the two apps), and, while an app is moved from
+finds by reading the app in the project's resource group (--cases-site gives the name of the app), and, while an app is moved from
 a user-assigned identity to its system-assigned one, the user-assigned identity too, which the tool finds by its name in the project's group. Every holder
 is checked and receives every grant of its identity, so that the app is never without access. An app that does not exist yet, or has no
 system-assigned identity yet, is reported like an identity that does not exist yet: "cannot yet".
@@ -28,27 +28,32 @@ grant     A dry run: prints what is missing and the exact commands that would ma
           who is signed in to the Azure CLI, and checks again. It grants only what the file lists, never changes a custom role that already exists
           (it reports the difference) and refuses to run in GitHub Actions: no pipeline may hold these rights.
 retire    Removes what the file lists under "retired". It reads first: for each retired item it looks for (a) the identity, by name, in the project's
-          group (it is reported and never deleted: a person removes the old identities of the two apps after this tool has taken away their grants, and the
+          group (it is reported and never deleted: a person removes the old user-assigned identities after this tool has taken away their grants, and the
           deployment workflow or the owner removes the retired runner identity; the deployment identity's own retired role, W8, names an identity that
           is in the bootstrap group and says "lookup": false, so it is not looked for), (b) the assignments of the retired custom
           role at that place and below it, whoever holds them (an identity that was deleted leaves its assignment, which the portal shows as "Identity
           not found"), and (c) the custom role itself. A dry run prints the exact commands. With --apply it runs them, with the rights of the person
           who is signed in to the Azure CLI: the assignments of that role at that place first, then the role, and only when no assignment of it
-          remains. A role that can also be assigned outside the place is left alone. It changes nothing else, a second run finds nothing to retire,
+          remains. A role that can also be assigned outside the place (outside the resource group where it was defined) is left alone. For the custom role of the usage app (W10) the place is the
+          central workspace and the role was defined in the resource group that holds it, so the assignments are listed in that group and below it: Azure refuses to delete a role while any assignment of it
+          remains. It changes nothing else, a second run finds nothing to retire,
           and it refuses --apply in GitHub Actions like grant. Exit 0 when nothing is left to retire, 1 when something is (also after a dry run).
           An item with replacedBy is the grant of an identity that an app no longer runs as. Its role is still wanted by the grant that replaces it, so
           only the assignments that this one identity holds at that place and below it are looked for and removed, never another holder's and never the
           role. They are removed only while the replacing grant is present for every holder of its identity (read like check does, so the option that
           names the app is needed); until then the line says 'kept', so that the app is never left without access. An assignment of the identity above the
-          place is reported as 'left alone'. The tool finds the assignments by the object id of the identity, so it must run while the identity exists:
-          Azure keeps the assignments of a deleted identity, shows them as "Identity not found", and the tool cannot tell whose they were.
+          place is reported as 'left alone'. An item with roleStays (W9) is the grant of a built-in role that nothing needs any more: the same, with nothing that replaces it,
+          for the user-assigned identity that the item names and, when it has alsoHeldBy, for the system-assigned identity of the app that --usage-site names (read from the app, and never changed).
+          The tool finds the assignments by the object id of the identity, so it must run while the identity exists:
+          Azure keeps the assignments of a deleted identity, shows them as "Identity not found", and the tool cannot tell whose they were. So run it for W9 before the Hub action retire-old deletes the usage app.
 
 The places come from options or from the settings that the workflow uses: --project-subscription (ENV_SUBSCRIPTION_ID) and --project-group
-(ENV_RESOURCE_GROUP), where the identities and the two apps are; --cases-site (ACCESS_CASES_SITE) and --usage-site (ACCESS_USAGE_SITE), the names of the
-cases app and of the usage app in that group (func-meternaut-cases-* and func-meternaut-usage-*; each is needed only by the requirements of the app that it
-names); --gateway (GATEWAY_RESOURCE_ID), the API Management instance, whose resource group is where the retired custom roles were defined (the items W7 and W8);
---gateway-insights (GATEWAY_APPINSIGHTS_ID); --estate (ACCESS_ESTATE_SCOPES, comma
-separated; default: the project subscription), what the Watch reads: a subscription, or a management group such as the tenant root management group above the subscriptions to watch (the app then reads every subscription that its identity can read; a grant at the group counts for everything below it); --workspace (ACCESS_WORKSPACE_ID; default: the workspace of the gateway's component).
+(ENV_RESOURCE_GROUP), where the identities and the apps are; --cases-site (ACCESS_CASES_SITE), the name of the cases app in that group (func-meternaut-cases-*;
+it is needed only by the requirements of that app), and --usage-site (ACCESS_USAGE_SITE), the name of the usage app that the Hub action retire-old deletes (func-meternaut-usage-*;
+it is needed only by the retired item W9, which names the app's system-assigned identity); --gateway (ACCESS_GATEWAY_ID), the API Management instance, whose resource group is where the retired
+custom roles were defined (the items W7 and W8); --gateway-insights (ACCESS_GATEWAY_INSIGHTS_ID), the old gateway's Application Insights component (the items W9 and W10); --estate (ACCESS_ESTATE_SCOPES, comma
+separated; default: the project subscription), what the Watch reads: a subscription, or a management group such as the tenant root management group above the subscriptions to watch (the app then reads every subscription that its identity can read; a grant at the group counts for everything below it); --workspace (ACCESS_WORKSPACE_ID; default: the workspace of the gateway's component), whose resource group is where the retired custom role of the usage app was defined (the item W10).
+These settings are the ones of the person's own session: they are not the repository secrets of the deployment workflow, which reads none of them.
 The Azure CLI is `az`, or the command in the variable AZ (for example "C:\\path\\python.exe" -IBm azure.cli).
 """
 from __future__ import annotations
@@ -202,11 +207,21 @@ def load_manifest(path: Path = MANIFEST) -> dict:
             assert item["place"] in manifest["places"] and item["why"], item["id"]
             if "replacedBy" in item:
                 assert looked_up(item), f"{item['id']}: the grant of an identity that is not looked up is not one that a grant replaces"
+                assert "roleStays" not in item and "alsoHeldBy" not in item, f"{item['id']}: replacedBy and roleStays are two kinds of item"
                 replacing = grants.get(item["replacedBy"])
                 assert replacing, f"{item['id']}: replacedBy is the id of a grant of the file"
                 assert (item["role"], item["place"]) == (replacing["role"], replacing["place"]), (
                     f"{item['id']}: the role and the place of a retired grant are those of the grant that replaces it, {item['replacedBy']}")
+            elif "roleStays" in item:
+                assert item["roleStays"] is True and looked_up(item), f"{item['id']}: roleStays is true, and its identity is looked up"
+                spec = manifest["roles"].get(item["role"])
+                assert spec and spec["kind"] == "builtin", f"{item['id']}: roleStays is for a built-in role of the file, which stays"
+                also = item.get("alsoHeldBy")
+                if also is not None:
+                    assert isinstance(also, dict) and also.get("app") and also.get("appName") and also.get("siteOption") in SITE_OPTIONS, (
+                        f"{item['id']}: alsoHeldBy names the app, its name and the option that gives its name ({', '.join(SITE_OPTIONS)})")
             else:
+                assert "alsoHeldBy" not in item, f"{item['id']}: alsoHeldBy belongs to an item with roleStays"
                 assert item["role"] and item["role"] not in manifest["roles"], f"{item['id']}: a retired role is not a role of the file"
     except (OSError, ValueError, KeyError, AssertionError, TypeError) as e:
         raise Problem(f"{path} is not a valid list of access requirements ({e})") from e
@@ -247,7 +262,9 @@ def markdown_retired(manifest: dict) -> str:
     rows = ["| # | Identity | Role | Where | Why it is retired |", "|---|---|---|---|---|"]
     for r in manifest.get("retired", []):
         custom = "" if r["role"] in manifest["roles"] and manifest["roles"][r["role"]]["kind"] == "builtin" else " (custom role)"
-        rows.append(f"| {r['id']} | `{r['identity']['name']}` | {r['role']}{custom} | {manifest['places'][r['place']]} | {r['why']} |")
+        also = r.get("alsoHeldBy")
+        who = f"`{r['identity']['name']}`" + (f" and the system-assigned identity of {also['app']} (`{also['appName']}`)" if also else "")
+        rows.append(f"| {r['id']} | {who} | {r['role']}{custom} | {manifest['places'][r['place']]} | {r['why']} |")
     return "\n".join(rows)
 
 
@@ -273,8 +290,8 @@ def read_places(args, env) -> Places:
         project_subscription=checked(pick("project_subscription", "ENV_SUBSCRIPTION_ID"), GUID_ONLY, "--project-subscription", "a subscription id"),
         project_group=checked(pick("project_group", "ENV_RESOURCE_GROUP"), re.compile(rf"^{NAME}$"), "--project-group", "a resource group name"),
         estate=estate,
-        gateway=checked(pick("gateway", "GATEWAY_RESOURCE_ID"), APIM, "--gateway", "the resource id of the API Management instance"),
-        gateway_insights=checked(pick("gateway_insights", "GATEWAY_APPINSIGHTS_ID"), INSIGHTS, "--gateway-insights",
+        gateway=checked(pick("gateway", "ACCESS_GATEWAY_ID"), APIM, "--gateway", "the resource id of the API Management instance"),
+        gateway_insights=checked(pick("gateway_insights", "ACCESS_GATEWAY_INSIGHTS_ID"), INSIGHTS, "--gateway-insights",
                                  "the resource id of the gateway's Application Insights component"),
         workspace=checked(pick("workspace", "ACCESS_WORKSPACE_ID"), WORKSPACE, "--workspace", "the resource id of the central Log Analytics workspace"),
         sites={option: checked(pick(option[2:].replace("-", "_"), setting), SITE_NAME, option, "the name of a function app: letters, digits and hyphens")
@@ -564,10 +581,13 @@ STILL_ASSIGNED = re.compile(r"RoleDefinitionHasAssignments|existing role assignm
 
 
 class Left:
-    """One retired item at one scope, and what is still there of it."""
+    """One retired item at one scope, and what is still there of it. holder says whose assignments these are, for an item that names an identity ('' means the identity of the item);
+    listed_at is where the assignments of a custom role were listed, when that is not the place itself (the resource group where the role was defined)."""
 
-    def __init__(self, item: dict, scope: str, state: str, role_id: str | None = None, assigned: list[dict] | None = None, detail: str = "") -> None:
+    def __init__(self, item: dict, scope: str, state: str, role_id: str | None = None, assigned: list[dict] | None = None, detail: str = "",
+                 holder: str = "", listed_at: str = "") -> None:
         self.item, self.scope, self.state, self.role_id, self.assigned, self.detail = item, scope, state, role_id, assigned or [], detail
+        self.holder, self.listed_at = holder, listed_at
 
 
 class Removal:
@@ -596,9 +616,15 @@ def inside(scope: str, place: str) -> bool:
 
 
 def of_one_identity(item: dict) -> bool:
-    """A retired item with replacedBy is a grant of an identity that an app no longer runs as. Its role is still wanted, by the grant that replaces it, so only
-    the assignments that this one identity holds are removed: never another holder's, and never the role."""
-    return "replacedBy" in item
+    """A retired item with replacedBy is a grant of an identity that an app no longer runs as; one with roleStays is a grant of a built-in role that nothing needs any more.
+    The role is kept in both: by the grant that replaces it, or because it is built in. So only the assignments that the identities of the item hold are removed:
+    never another holder's, and never the role."""
+    return "replacedBy" in item or bool(item.get("roleStays"))
+
+
+def defined_in(place: str, scope: str) -> str:
+    """Where a retired custom role of this place was made assignable: the place itself, or, for the central workspace, the resource group that holds it."""
+    return WORKSPACE.match(scope).group(1) if place == "centralWorkspace" and WORKSPACE.match(scope) else scope
 
 
 def recognised(assignment: dict, scope: str, role_id: str) -> dict:
@@ -635,23 +661,37 @@ def replacement_problems(az: Az, manifest: dict, places: Places, item: dict, sco
     return problems
 
 
-def find_held(az: Az, manifest: dict, places: Places, item: dict, scope: str, principal: str | None) -> Left:
+def find_held(az: Az, manifest: dict, places: Places, item: dict, scope: str, principal: str | None, holder: str = "") -> Left:
     """What a retired identity still holds of one grant at one place: its own assignments of the role and nobody else's. Reads only."""
-    name = item["identity"]["name"]
+    name = holder or item["identity"]["name"]
     role_id, _, _ = role_state(az, item["role"], manifest["roles"][item["role"]], places)
     if role_id is None or principal is None:
-        return Left(item, scope, "gone")
+        return Left(item, scope, "gone", holder=holder)
     held = [a for a in assignments(az, principal, scope) if role_of(a) == role_id.lower()]
     here = [a for a in held if inside(scope_of(a), scope)]
     outside = sorted({scope_of(a) for a in held if not inside(scope_of(a), scope)})
     note = f"{name} also holds it at {', '.join(outside)}, outside this place: nothing is removed there" if outside else ""
     if not here:
-        return Left(item, scope, "left-alone" if outside else "gone", role_id, detail=note)
-    problems = replacement_problems(az, manifest, places, item, scope)
+        return Left(item, scope, "left-alone" if outside else "gone", role_id, detail=note, holder=holder)
+    problems = replacement_problems(az, manifest, places, item, scope) if "replacedBy" in item else []
     if problems:
         why = "; ".join(problems) + f". The {len(here)} assignment(s) of {name} stay until it is, so that the app is not left without access"
-        return Left(item, scope, "kept", role_id, here, why + (f". {note}" if note else ""))
-    return Left(item, scope, "there", role_id, [recognised(a, scope, role_id) for a in here], note)
+        return Left(item, scope, "kept", role_id, here, why + (f". {note}" if note else ""), holder=holder)
+    return Left(item, scope, "there", role_id, [recognised(a, scope, role_id) for a in here], note, holder=holder)
+
+
+def find_held_by_the_app(az: Az, manifest: dict, places: Places, item: dict, scope: str) -> Left:
+    """The same for the system-assigned identity of the app that the item names (alsoHeldBy): the app is read in the project's group and never changed."""
+    also = item["alsoHeldBy"]
+    option = also["siteOption"]
+    site = need(places.sites.get(option), option, f"the name of {also['app']} ({also['appName']}), whose system-assigned identity also holds this grant")
+    principal, why = system_principal_of(az, project_group_scope(places), site)
+    holder = f"{site} (system-assigned)"
+    left = find_held(az, manifest, places, item, scope, principal, holder)
+    if principal is None:
+        left.detail = (f"{site} {why}, so nothing can be traced to its identity by name: Azure keeps the assignments of a deleted identity, shows them as 'Identity not found', "
+                       "and this tool cannot tell whose they were. It removes the grants of an identity while the identity exists")
+    return left
 
 
 def find_retired(az: Az, manifest: dict, places: Places, only: str | None = None) -> tuple[list[Left], dict[str, str | None]]:
@@ -666,6 +706,8 @@ def find_retired(az: Az, manifest: dict, places: Places, only: str | None = None
         for scope in scopes_for(item["place"], places, az):
             if of_one_identity(item):
                 left.append(find_held(az, manifest, places, item, scope, identities[name]))
+                if "alsoHeldBy" in item:
+                    left.append(find_held_by_the_app(az, manifest, places, item, scope))
                 continue
             key = (subscription_of(scope), item["role"])
             if key not in named:
@@ -676,18 +718,19 @@ def find_retired(az: Az, manifest: dict, places: Places, only: str | None = None
             if len(named[key]) > 1:
                 raise Problem(f"two custom roles are called {item['role']}")
             role = named[key][0]
-            outside = [s for s in role.get("assignableScopes") or [] if not inside(s, scope)]
+            home = defined_in(item["place"], scope)
+            outside = [s for s in role.get("assignableScopes") or [] if not inside(s, home)]
             if outside:
                 left.append(Left(item, scope, "left-alone", role["name"],
                                  detail=f"the custom role can also be assigned at {', '.join(outside)}, outside this place: it is not what was granted here, so nothing of it is touched"))
                 continue
-            left.append(Left(item, scope, "there", role["name"], assignments_of_role(az, scope, role["name"])))
+            left.append(Left(item, scope, "there", role["name"], assignments_of_role(az, home, role["name"]), listed_at=home if home != scope else ""))
     return left, identities
 
 
 def describe_left(left: Left, identities: dict[str, str | None]) -> str:
     item = left.item
-    name = item["identity"]["name"]
+    name = left.holder or item["identity"]["name"]
     lines = [f"  {LEFT_STATES[left.state]:<13}{item['id']}  {name}  {item['role']}  at {left.scope}"]
     if left.detail:
         lines.append(f"               {left.detail}")
@@ -696,7 +739,8 @@ def describe_left(left: Left, identities: dict[str, str | None]) -> str:
         for assignment in left.assigned:
             lines.append(f"                 {assignment['id']}")
     elif left.state == "there":
-        lines.append(f"               the custom role exists ({left.role_id}); {len(left.assigned)} assignment(s) of it at or below this place" + (":" if left.assigned else ""))
+        where = f"at or below {left.listed_at} (the resource group where the role was defined)" if left.listed_at else "at or below this place"
+        lines.append(f"               the custom role exists ({left.role_id}); {len(left.assigned)} assignment(s) of it {where}" + (":" if left.assigned else ""))
         for assignment in left.assigned:
             holder = str((assignment.get("properties") or {}).get("principalId", ""))
             if not looked_up(item):
@@ -708,12 +752,13 @@ def describe_left(left: Left, identities: dict[str, str | None]) -> str:
     return "\n".join(lines)
 
 
-def identity_notes(identities: dict[str, str | None], places: Places, of_one: frozenset[str] = frozenset()) -> list[str]:
+def identity_notes(identities: dict[str, str | None], places: Places, of_one: dict[str, str] | None = None) -> list[str]:
+    """What to say about each user-assigned identity that an item names. of_one maps the name of an identity whose grant stays with the role to who removes the identity."""
+    of_one = of_one or {}
     notes = []
     for name, principal in identities.items():
         if principal:
-            remover = ("a person removes it, with `az identity delete`, after this tool has taken away its grants (environment/BOOTSTRAP.md)" if name in of_one
-                       else "the deployment workflow or the owner removes it")
+            remover = of_one[name] if name in of_one else "the deployment workflow or the owner removes it"
             notes.append(f"  note         {name} still exists in {project_group_scope(places)} (object id {principal}). This tool never deletes an identity: "
                          f"{remover}.")
         else:
@@ -758,7 +803,8 @@ def apply_retirement(az: Az, found: list[Left], out, sleep=time.sleep) -> None:
         if left.state != "there" or of_one_identity(left.item) or left.role_id in handled:
             continue
         handled.add(left.role_id)
-        remaining = [a for other in found if other.state == "there" and other.role_id == left.role_id for a in assignments_of_role(az, other.scope, left.role_id)]
+        remaining = [a for other in found if other.state == "there" and other.role_id == left.role_id
+                     for a in assignments_of_role(az, other.listed_at or other.scope, left.role_id)]
         if remaining:
             out(f"  kept the custom role {left.item['role']}: {len(remaining)} assignment(s) of it remain")
             continue
@@ -779,7 +825,10 @@ def apply_retirement(az: Az, found: list[Left], out, sleep=time.sleep) -> None:
 def show_retired(found: list[Left], identities: dict[str, str | None], places: Places, out) -> None:
     for left in found:
         out(describe_left(left, identities))
-    for note in identity_notes(identities, places, frozenset(left.item["identity"]["name"] for left in found if of_one_identity(left.item))):
+    after = "after this tool has taken away its grants (environment/BOOTSTRAP.md)"
+    removers = {left.item["identity"]["name"]: (f"{left.item['identityRemovedBy']} removes it, {after}" if left.item.get("identityRemovedBy") else f"a person removes it, with `az identity delete`, {after}")
+                for left in found if of_one_identity(left.item)}
+    for note in identity_notes(identities, places, removers):
         out(note)
 
 

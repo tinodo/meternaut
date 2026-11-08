@@ -29,8 +29,6 @@ SETTINGS = {
     "ENV_BUDGET_AMOUNT": "25",
     "ENV_ALERT_EMAILS": "owner@example.com",
     "ENV_BUDGET_START": "2026-11-01",
-    "GATEWAY_APPINSIGHTS_ID": "/subscriptions/66666666-7777-8888-9999-000000000000/resourceGroups/rg-gateway/providers/microsoft.insights/components/example-insights",
-    "RECORDING_READER_IDS": "12345678-1234-1234-1234-123456789012",
     "CASES_SYSTEM_PRINCIPAL_ID": "12345678-dddd-eeee-ffff-123456789012",
     "ENV_FOUNDRY_PROJECT_EXISTS": "true",
     "FOUNDRY_PROJECT_PRINCIPAL_ID": "12345678-eeee-ffff-1111-123456789012",
@@ -62,18 +60,22 @@ PROJECT_PRINCIPAL = SETTINGS["FOUNDRY_PROJECT_PRINCIPAL_ID"]
 # casesPrincipalId (the object id of the cases app's identity, CASES_SYSTEM_PRINCIPAL_ID, which these inputs carry: the gateway gives it AI Gateway Models User); every other file and the output
 # are what they were. Sixth change (the web page runs on Flex Consumption or on a Basic plan, 2026-11-07): cases.parameters.json gained casesAppPlan ("Flex"), and the output gained seven lines about the
 # plan kind (cases_app_plan, cases_plan_name, cases_plan_tier, cases_other_plan_name, cases_other_plan_tier, cases_subnet_name and function_subnet_name); every other file is what it was.
+# Seventh change (the removal of the usage recording and of the old model account, 2026-11-07, re-recorded on purpose): environment.parameters.json lost the old model account's accountName and its
+# models; recording.parameters.json became base.parameters.json (the action recording is the action base) and holds only the two names, the region and the owner; and the output lost nine lines (account_name,
+# private_endpoint and endpoint of the old model account, cosmos_account_name and function_app_name of the usage recording, and its four legacy_ lines) and recording_endpoints became base_endpoints.
+# The files of the AI Gateway, the cases app, the Foundry resource, the Operator and the planted waste are byte for byte what they were.
 GOLDEN = {
     "aigateway-policies.json": "e6d99d1633ab16afc3410e50dbdcb7e290f0e125f4283b4b19f63a8eebb8395c",
     "aigateway-subnet.parameters.json": "a2a16b02fd7a1d54d8949ad89796d4ea89d6bf1907db1f5b621205699a5a0196",
     "aigateway.parameters.json": "936fc16a2a06d5aa3a029f319eab1dcd23c547800eaee01e5183539e746393d2",
+    "base.parameters.json": "d3b8ca457d4eb56acb5640bbd9390682a13b0919de5d497489a79fa772c06d55",
     "cases.parameters.json": "143771250a37fe14b8d97e4ea1e7532272733149437c24a53e095d2a87fb1539",
-    "environment.parameters.json": "f96d09a1eab2372a668e50d5a1ecee07faf2d7b70cacd3986ac4868b45379bed",
+    "environment.parameters.json": "5a722678f859d67fd7ff7895b0150b048b97def6b094c723d70d5849d078a7f3",
     "foundry.parameters.json": "ed5e8a14727de3595a0ab4bc5b0fcc4979c7d35b088536fce62f80651e59e99d",
     "operator.parameters.json": "78972401f11e209ef6bbdbba2c7cab95921b372e1dc570765d953aa01b2b2f90",
     "planted.parameters.json": "62ecf7282a7bf4c968db91a3943ba20a99dc7ac04fcabb7816aadf6f68f9759c",
-    "recording.parameters.json": "1151a3f2462d5cd97d2f2d7be9839c8fdd4a9f6c84a7fd38c0b356cb35cc2064",
 }
-GOLDEN_OUTPUT = "ef59c2656e70ad6b6774061a4924d21ea53030e51b2f3ceb225fa9de1a369b90"
+GOLDEN_OUTPUT = "0f68a70e1991d20185665c2841fb211e1cc049e99b11cf9f11ffa508f932d67e"
 
 FOUNDRY = (ROOT / "environment" / "foundry" / "main.bicep").read_text(encoding="utf-8")
 CASES = (ROOT / "environment" / "cases" / "main.bicep").read_text(encoding="utf-8")
@@ -156,7 +158,7 @@ class TheSwitchIsOffAndNothingDiffers(unittest.TestCase):
     def test_no_output_is_added_while_it_is_off(self):
         _, out, _, _ = build(SETTINGS)
         self.assertFalse([key for key in outputs(out) if "ai_gateway" in key or key == "aigateway_connection_name"])
-        self.assertEqual(len(out.splitlines()), 45, "the 37 lines that there were, door_in_operator (the web page, 2026-11-07) and the seven lines of the plan kind of the web page's app, which are not about the AI Gateway: no line of the switch is among them")
+        self.assertEqual(len(out.splitlines()), 36, "the 45 lines that there were, minus the nine of what was removed on 2026-11-07 (the old model account and the usage recording): no line of the switch is among them")
 
     def test_a_switch_that_is_not_true_or_false_is_refused_by_name(self):
         for bad in ("False", "no", 0, 1, None, "true"):
@@ -239,7 +241,7 @@ class TheSwitchIsOn(unittest.TestCase):
         self.assertEqual(values(files, "aigateway.parameters.json")["foundryProjectPrincipalId"], PROJECT_PRINCIPAL.lower(), "the template gives it AI Gateway Models User on the gateway")
 
     def test_a_preview_and_every_action_that_needs_neither_go_on_without_them(self):
-        for action, preview in (("foundry", True), ("aigateway", True), ("cases", True), ("what-if", False), ("recording", False), ("operator", False), ("model-side", False), ("", False)):
+        for action, preview in (("foundry", True), ("aigateway", True), ("cases", True), ("what-if", False), ("base", False), ("operator", False), ("model-side", False), ("", False)):
             with self.subTest(action=action, preview=preview):
                 env = {**SETTINGS, "ACTION": action}
                 env.pop("FOUNDRY_PROJECT_PRINCIPAL_ID")

@@ -563,7 +563,7 @@ class TheStepsAreWrittenAsTheRulesSay(unittest.TestCase):
         self.assertIn("--aigateway-policies environment/aigateway/policies.json", CHECKS)
 
     def test_the_preview_reads_the_foundry_resource_and_the_operator_first_and_says_why_it_waits(self):
-        preview = step("What the model side, the usage recording, the Foundry resource, the first cases, the Operator and the AI Gateway's templates would change")
+        preview = step("What the model side, the base, the Foundry resource, the first cases, the Operator and the AI Gateway's templates would change")
         self.assertIn("FOUNDRY_ACCOUNT: ${{ steps.params.outputs.foundry_account_name }}", preview)
         block = preview.split("The AI Gateway, in the project's resource group")[1]
         for word in ("The AI Gateway cannot be previewed: the virtual network has no free range for its subnet",
@@ -582,7 +582,7 @@ class TheStepsAreWrittenAsTheRulesSay(unittest.TestCase):
 
     def test_the_condition_is_looked_at_by_the_object_id_that_the_run_read_from_its_own_token(self):
         self.assertIn("DEPLOYER_ID: ${{ steps.me.outputs.oid }}", step(READY))
-        self.assertEqual(WORKFLOW.count("steps.me.outputs.oid"), 3, "the two steps that retire an old right, and the look at the condition of the right to assign roles")
+        self.assertEqual(WORKFLOW.count("steps.me.outputs.oid"), 2, "the step that retires an old right, and the look at the condition of the right to assign roles")
         code = code_of(READY)
         for word in (f"foundry_user={FOUNDRY_USER}", f"models_user={MODELS_USER}", f"administrator={ADMINISTRATOR}", "--fill-principal-name false --fill-role-definition-name false"):
             self.assertIn(word, code, word)

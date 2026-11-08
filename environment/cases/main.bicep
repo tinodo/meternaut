@@ -6,7 +6,7 @@
 //
 // What it holds: one user-assigned identity (the console's sign-in), a plan with the function app, which has a system-assigned identity of its own (the plan is of the kind that
 // casesAppPlan names: Flex Consumption, or Basic, which is B1, Linux, always on), the subnet that the app is integrated with, one more event hub (the control hub) in the namespace of the
-// usage recording, the roles that connect them, a longer retention for the traces table of the workspace, and the History workbook.
+// base, the roles that connect them, a longer retention for the traces table of the workspace, and the History workbook.
 //
 // Identities, and no right to change Azure. The app's own system-assigned identity reads the subscriptions that it was given the read-only roles for, and their cost lines, stores the
 // records, holds Foundry User on its own Foundry project (a role that environment/foundry/main.bicep gives, inside the project's group: it lets the app make and run its agents),
@@ -31,11 +31,11 @@
 // (docs/proposals/07-private-by-default.md, "The web page on Flex Consumption").
 //
 // It makes no storage account and no namespace: the app shares the storage account (blob, queue and table private
-// endpoints) and the Event Hubs namespace (private endpoint) of environment/recording/main.bicep, so nothing new is billed except the
+// endpoints) and the Event Hubs namespace (private endpoint) of environment/base/main.bicep, so nothing new is billed except the
 // plan, tokens and the app's own private endpoint (below). A Flex app makes no subnet: it uses the function subnet snet-func, which the model side made and delegated to Microsoft.App/environments
 // (the owner's network is small), and it keeps its code package in one container of that storage account. A Basic app makes its own integration subnet (snet-func is delegated to Flex
 // Consumption and cannot serve a Basic plan) and that subnet's network security group. Either one makes one endpoint, which goes into the endpoint subnet that the model side made.
-// The recording has to exist first.
+// The base has to exist first.
 //
 // The app has a private endpoint of its own, for the console's name and for the deployment site (the group `sites`, in the endpoint subnet; no private DNS zone group: the landing zone's
 // policy adds it, rule 19). The Operator uses it to publish the code since phase 2 of docs/proposals/07-private-by-default.md (the action cases runs operator/publish.sh in a container group of the
@@ -45,8 +45,8 @@
 // access until the owner closes it, which the parameter casesAppPublicNetworkAccess says, so that closing it is one value (the parameter builder takes that value with a console host name and without one:
 // with none, the check of the front door runs in the Operator). The value
 // is written to the app every time and is never left empty: Learn says that for a site whose value is not set, a private endpoint switches public access off by itself, and
-// the people who approve a change reach the console from outside the network. The workflow waits until the landing zone has registered the endpoint's names before it publishes, so that the
-// two apps behave alike: the usage app's deployment ends with a call to the app's own host name, which does not resolve before.
+// the people who approve a change reach the console from outside the network. The workflow waits until the landing zone has registered the endpoint's names before it publishes, because a
+// deployment ends with a call to the app's own host name, which does not resolve before.
 //
 // A Basic app's subnet is made once and then left alone (webSubnetExists): the landing zone's network manager puts a route table on a new subnet
 // about a minute after it is made, and a template that makes the subnet again takes that table away, and with it the subnet's way to
@@ -84,12 +84,12 @@ param workload string = 'meternaut'
 @minLength(1)
 param owner string
 
-@description('Name of the storage account of the usage recording. It already exists.')
+@description('Name of the storage account of the base. It already exists.')
 @minLength(3)
 @maxLength(24)
 param storageAccountName string
 
-@description('Name of the Event Hubs namespace of the usage recording. It already exists.')
+@description('Name of the Event Hubs namespace of the base. It already exists.')
 @minLength(6)
 @maxLength(50)
 param eventHubNamespaceName string
@@ -242,7 +242,7 @@ resource webNsg 'Microsoft.Network/networkSecurityGroups@2025-05-01' = {
 }
 
 // The same subnet is in environment/main.bicep, so that a later run of the model-side action does not take it away from the plan. Delegated to
-// Microsoft.Web/serverFarms, which is what a Basic plan's regional virtual network integration needs (the usage recording's subnet is delegated
+// Microsoft.Web/serverFarms, which is what a Basic plan's regional virtual network integration needs (the subnet snet-func is delegated
 // to Microsoft.App/environments, for Flex Consumption, and a subnet has one delegation). It holds nothing else. It is made only while it is not
 // there: see webSubnetExists, and the header. A Flex app does not use it, and the template then leaves it as it is: it stays for the way back to Basic.
 resource webSubnet 'Microsoft.Network/virtualNetworks/subnets@2025-05-01' = if (!isFlex && !webSubnetExists) {
@@ -296,8 +296,7 @@ resource authIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-
 }
 
 // The two containers and the checkpoints that every Functions host of the account shares: host locks, host secrets and the Event Hubs
-// checkpoints. They exist already (the usage recording's host made them). The usage recording's package container is not among them, so the
-// code of the recording cannot be read or replaced with the identity of this app. This app's own code is not in the account at all: the
+// checkpoints. The base makes them (environment/base/main.bicep). This app's own code is not in the account at all: the
 // deployment workflow pushes it to the app, which keeps it on the plan's own storage.
 var sharedHostContainerNames = [
   'azure-webjobs-hosts'
@@ -310,7 +309,7 @@ resource sharedHostContainers 'Microsoft.Storage/storageAccounts/blobServices/co
   name: name
 }]
 
-// A Flex Consumption app keeps its code package in a container of its own in the shared storage account, as the usage recording's app does in another one, and reads it with its
+// A Flex Consumption app keeps its code package in a container of its own in the shared storage account, as the usage app (removed on 2026-11-07) did in another one, and reads it with its
 // system-assigned identity. Only a Flex app has it: a Basic app runs from a package on its plan's own storage. The action cases removes the container, and the role on it, when the
 // app goes back to Basic.
 resource deploymentContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-05-01' = if (isFlex) {
@@ -456,7 +455,7 @@ var basicOnlyAppSettings = isFlex ? [] : [
 
 // No Azure Files content share, no storage connection string, no deployment password. Basic: the workflow pushes the code with its own identity's token to the app's deployment endpoint, which keeps it
 // on the plan's own storage and runs the app from that package. Flex: the code is a package in the container app-package-cases, which the app reads with its system-assigned identity, and which the
-// Operator replaces with `az functionapp deployment source config-zip` as it does for the usage recording's app. One instance at the most: a run is one function execution that waits for
+// Operator replaces with `az functionapp deployment source config-zip`, as it did for the usage app. One instance at the most: a run is one function execution that waits for
 // models, a timer must not run twice at once, the control hub has one partition and one person uses the web page (the limit is per group of functions: with four, the group of the web page scaled out
 // to four instances for one request every four seconds, and every fourth request waited 40 to 46 seconds). No always-ready instance: the app scales to zero and bills nothing while it is idle.
 resource functionApp 'Microsoft.Web/sites@2024-04-01' = {
@@ -646,7 +645,7 @@ resource consoleSignIn 'Microsoft.Web/sites/config@2024-04-01' = if (!empty(cons
 
 // The private endpoint of the app itself, in the endpoint subnet that the model side made and in the same form as the other endpoints of the project (no DNS zone group: the landing
 // zone's policy adds it, see the header). One endpoint serves the console's name and the deployment site, `<app>.scm.azurewebsites.net`. It comes after every other write to the app, as an
-// endpoint does on every service of the usage recording: the connection is written to the app with an If-Match, and a change of the app at the same time would fail it.
+// endpoint does on every service of the base: the connection is written to the app with an If-Match, and a change of the app at the same time would fail it.
 resource functionAppEndpoint 'Microsoft.Network/privateEndpoints@2025-05-01' = {
   name: 'pe-${functionAppName}'
   location: location

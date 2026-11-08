@@ -35,7 +35,7 @@ CONNECTION_URL = (f"az rest --method get --url https://management.azure.com/subs
                   f"/projects/{PROJECT}/connections/aigateway?api-version=2026-09-01 --query name --output tsv")
 
 SETTINGS = "Work out the settings"
-PRECHECK = "The usage recording is there, which the first cases build on"
+PRECHECK = "The base is there, which the first cases build on"
 FOUNDRY_READ_BACK = "Read the Foundry resource back"
 AIGATEWAY_READ_BACK = "Read the AI Gateway back"
 SUMMARY = "What was done"
@@ -139,7 +139,7 @@ class TheSettingsStepReadsWhatTheSwitchNeedsAndNothingWhileItIsOff(unittest.Test
     def test_while_the_switch_is_off_the_actions_that_have_nothing_to_do_with_the_gateway_read_nothing_of_it_and_the_builder_gets_it_empty(self):
         # The action foundry reads the host name only while the switch is on, and aigateway reads the project's identity only then; the other actions read neither. (cases and what-if read the host
         # whatever the switch says: they are in the next tests.)
-        for action in ("foundry", "aigateway", "recording", "operator", "plant", "model-side", "cases-run", "aigateway-check"):
+        for action in ("foundry", "aigateway", "base", "operator", "plant", "model-side", "cases-run", "aigateway-check"):
             with self.subTest(action=action):
                 done, lines, out, _ = self.settings(action, build=BUILD_OFF)
                 self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
@@ -215,7 +215,7 @@ class TheSettingsStepReadsWhatTheSwitchNeedsAndNothingWhileItIsOff(unittest.Test
                     self.assertEqual(done.returncode, 0, "an app with no identity yet is no error")
                     self.assertIn("cases_app_principal=\n", out)
                     self.assertIn("the Foundry file holds a placeholder and the AI Gateway file gives no role to the app.", done.stdout)
-            for action in ("cases", "recording", "operator", "plant", "model-side", "cases-run"):
+            for action in ("cases", "base", "operator", "plant", "model-side", "cases-run"):
                 with self.subTest(switch="on" if build == BUILD_ON else "off", action=action, reads="no"):
                     done, lines, out, _ = self.settings(action, build=build)
                     self.assertEqual([line for line in lines if "/providers/Microsoft.Web/sites/" in line], [], "the action does not look for the app's identity")
@@ -245,7 +245,7 @@ class TheSettingsStepReadsWhatTheSwitchNeedsAndNothingWhileItIsOff(unittest.Test
         done, lines, out, _ = self.settings("what-if")
         self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
         self.assertEqual(self.builds(lines)[1], f"build preview=no host=[{HOST}] project=[{PROJECT_PRINCIPAL}]")
-        for action in ("cases-run", "recording", "recording-check", "operator", "operator-probe", "plant", "loop-check", "model-side", "aigateway-check"):
+        for action in ("cases-run", "base", "retire-old", "operator", "operator-probe", "plant", "loop-check", "model-side", "aigateway-check"):
             with self.subTest(action=action):
                 done, lines, out, _ = self.settings(action, FAKE_HOST_ERROR=HOSTILE, FAKE_PROJECT_ERROR=HOSTILE)
                 self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
@@ -338,14 +338,14 @@ esac
     def check(self, **changes):
         return run_step(PRECHECK, {"az": self.AZ}, {**self.ENV, **changes})
 
-    def test_the_step_needs_the_recordings_storage_account_and_namespace_and_nothing_of_the_gateway_or_the_contract(self):
+    def test_the_step_needs_the_bases_storage_account_and_namespace_and_nothing_of_the_gateway_or_the_contract(self):
         done, lines, _, _ = self.check()
         self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
         self.assertEqual([line for line in lines if line.startswith("az ")], [line for line in lines if line.startswith("az resource list ")])
         self.assertEqual(len(lines), 2, "one read for the storage account and one for the namespace")
         for word in ("ApiManagement", "gatewayUrl", "listSecrets", "/subscriptions/66666666", "subscriptions?"):
             self.assertFalse([line for line in lines if word in line], word)
-        self.assertIn("The usage recording's storage account and namespace are there.", done.stdout)
+        self.assertIn("The base's storage account and namespace are there.", done.stdout)
         self.assertNotIn("contract", done.stdout.lower())
         code = "\n".join(line for line in script_of(PRECHECK).splitlines() if not line.strip().startswith("#"))
         for word in ("GATEWAY_RESOURCE_ID", "CONTRACT_SUBSCRIPTION", "EXPECTED_GATEWAY_URL", "primaryKey", "gatewayUrl"):
@@ -353,10 +353,10 @@ esac
         self.assertNotIn("CONTRACT_SUBSCRIPTION", step(PRECHECK))
         self.assertNotIn("steps.params.outputs.gateway_url", step(PRECHECK))
 
-    def test_a_missing_storage_account_or_namespace_stops_the_step_and_says_to_run_recording_first(self):
+    def test_a_missing_storage_account_or_namespace_stops_the_step_and_says_to_run_base_first(self):
         done, _, _, _ = run_step(PRECHECK, {"az": self.AZ.replace("""printf '%s' "found" """, "printf ''")}, dict(self.ENV))
         self.assertEqual(done.returncode, 1)
-        self.assertIn("Run recording first: the first cases use its storage account and namespace.", done.stdout)
+        self.assertIn("Run base first: the first cases use its storage account and namespace.", done.stdout)
 
     def test_while_the_switch_is_off_the_step_is_what_it_was_and_does_not_look_for_the_connection(self):
         for off in ({}, {"AGENTS_VIA_AI_GATEWAY": ""}, {"AGENTS_VIA_AI_GATEWAY": "false"}):
@@ -484,7 +484,7 @@ class TheSummaryAddsWhatTheSwitchChangesAndNothingWhileItIsOff(unittest.TestCase
         self.assertIn("is not true for this run", said[("cases-run", "success")])
 
     def test_an_action_that_the_switch_does_not_change_gets_no_line_of_it(self):
-        for action in ("what-if", "recording", "operator", "aigateway-check", "plant"):
+        for action in ("what-if", "base", "operator", "aigateway-check", "plant"):
             for status in ("success", "failure"):
                 self.assertNotIn("The switch of the agents' route", self.summary(action, status), (action, status))
 
