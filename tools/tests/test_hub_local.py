@@ -97,7 +97,8 @@ def tearDownModule():
 
 def make_args(action="what-if", **flags):
     args = argparse.Namespace(action=action, minutes=None, public_ai_gateway_requested=False, public_teams_bot_requested=False, plant_public_ip=False, plant_vm=False, evals_command=None,
-                              evals_judge=None, redteam_mode=None, yes=False, allow_dirty=False, dry_run=False, workflow=None, init=False, from_github=False)    args.__dict__.update(flags)
+                              evals_judge=None, redteam_mode=None, yes=False, allow_dirty=False, dry_run=False, workflow=None, init=False, from_github=False)
+    args.__dict__.update(flags)
     return args
 
 

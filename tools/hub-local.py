@@ -1584,7 +1584,8 @@ def changes_azure(action: str, inputs: dict) -> bool:
 def given_flags(args) -> dict:
     """Which input flags the person gave."""
     return {"minutes": args.minutes is not None, "plant_public_ip": bool(args.plant_public_ip), "plant_vm": bool(getattr(args, "plant_vm", False)),
-            "public_ai_gateway_requested": bool(args.public_ai_gateway_requested), "public_teams_bot_requested": bool(args.public_teams_bot_requested),            "evals_command": getattr(args, "evals_command", None) is not None, "evals_judge": getattr(args, "evals_judge", None) is not None,
+            "public_ai_gateway_requested": bool(args.public_ai_gateway_requested), "public_teams_bot_requested": bool(args.public_teams_bot_requested),
+            "evals_command": getattr(args, "evals_command", None) is not None, "evals_judge": getattr(args, "evals_judge", None) is not None,
             "redteam_mode": getattr(args, "redteam_mode", None) is not None}
 
 
@@ -2290,7 +2291,8 @@ class Hub:
             return text.replace("|", "/").replace("\n", " ")
         every_input = ", ".join(f"{name} {to_text(value)}" for name, value in self.ctx.inputs.items() if name != "action")
         lines = [f"# Hub (local): {action}", "", f"**{verdict}**", "",
-                 f"- action: {action} ({'changes Azure' if writes else 'reads only'}); inputs: {every_input}",                 f"- head commit: {self.head}; working tree: {'clean' if not self.dirty else 'NOT clean (' + str(len(self.dirty)) + ' paths)'}",
+                 f"- action: {action} ({'changes Azure' if writes else 'reads only'}); inputs: {every_input}",
+                 f"- head commit: {self.head}; working tree: {'clean' if not self.dirty else 'NOT clean (' + str(len(self.dirty)) + ' paths)'}",
                  f"- started {iso(started)}, ended {iso(ended)}" + ("; interrupted by Ctrl+C" if interrupted else ""),
                  f"- run number {run_number}{'' if writes else ' (not used up: a read-only action)'}, run id {run_id}",
                  f"- az session: {self.session_user or 'none'}",
