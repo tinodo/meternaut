@@ -1,8 +1,8 @@
 // The AI Gateway of Meternaut's model calls: Azure's AI Gateway (preview), the separate service Microsoft.ApiManagement/aigateways, which is not a classic
 // API Management instance (docs/proposals/08-ai-gateway.md). It is the governance hub of the Citadel design: every model call of Meternaut goes through it, with no direct path
 // (AGENTS.md rule 15 (c)). This template is step 1 of 2: the gateway, its models and aliases, and its roles, which serve the Detective and the Skeptic of the cases app.
-// Step 2 (built, and off behind a switch) connects the Foundry project to it so that the agents call through it too, and moves their model names. Nothing here touches the agents,
-// which keep calling their model deployments until step 2 is switched on.
+// Step 2 (on in code, behind the switch AGENTS_VIA_AI_GATEWAY in tools/environment-params.py, which is True) connects the Foundry project to it so that the agents call through it too, and moves their model names.
+// This template only gives the Foundry project's identity its role (below); the connection and the model names are made by the actions foundry and cases (docs/proposals/08-ai-gateway.md).
 //
 // What it holds:
 //  - the gateway aigw-<workload>-<suffix>, with a system-assigned identity and the subnet snet-aigw as its backend subnet. The gateway reaches its backends through that subnet, so the call
@@ -17,7 +17,7 @@
 //    call that the gateway makes to the deployment: a request has to pass each of the two. The gateway has no Prompt Shields; the guardrail has.
 //  - AI Gateway Models User on the gateway for the Operator's identity (the Operator, environment/operator/main.bicep, runs the check, tools/aigateway-check.py),
 //    for the cases app's identity when its principal id is given (its Detective and Skeptic call the gateway with it), and for the Foundry project's identity when its principal id is given.
-//    Step 2 gives the project's, and an empty value means none yet.
+//    Step 2 gives the project's (the workflow passes its object id while the switch of step 2 is on), and an empty value means none yet.
 //  - optionally, the OpenTelemetry exporter to the shared Application Insights component. It is off, and what is missing for turning it on is in the proposal.
 //
 // THE FRONTEND IS PUBLIC, AND NO TEMPLATE CAN CHANGE THAT. The service offers no private endpoint, and the setting publicNetworkAccess Disabled has no effect (Learn,
@@ -247,7 +247,7 @@ resource operatorCallsTheModels 'Microsoft.Authorization/roleAssignments@2022-04
   }
 }
 
-// The Foundry project calls the models through a connection (step 2). Empty until then.
+// The Foundry project calls the models through a connection (step 2): the workflow passes the object id of the project's identity while the switch of step 2 is on. Empty means none yet.
 resource projectCallsTheModels 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!empty(foundryProjectPrincipalId)) {
   scope: gateway
   name: guid(gateway.id, foundryProjectPrincipalId, aiGatewayModelsUserRoleId)

@@ -170,10 +170,10 @@ param planTtlHours int = 72
 @description('Endpoint of the Microsoft Foundry project whose agents investigate the estate, https://<resource>.services.ai.azure.com/api/projects/<project>. Empty: the investigation is off. The deployment workflow passes it only when the project is in Azure (the action foundry makes it, and gives the app its role there).')
 param foundryProjectEndpoint string = ''
 
-@description('Model deployment of the Investigator agent, in the Foundry resource of the agents (environment/foundry/main.bicep deploys the models of environment/models.json).')
+@description('Model of the Investigator agent. By default a deployment in the Foundry resource of the agents (environment/foundry/main.bicep deploys the models of environment/models.json). While the switch AGENTS_VIA_AI_GATEWAY in tools/environment-params.py is on, the workflow passes `<connection>/<alias>` instead: the name of the Foundry project\'s connection to the AI Gateway and the gateway\'s alias for the model.')
 param foundryModelInvestigator string = 'gpt-6.1-sol'
 
-@description('Model deployment of the Skeptic agent, in the same resource. It has to be another model than the Investigator, so that the Skeptic is more independent.')
+@description('Model of the Skeptic agent, as for the Investigator: a deployment in the same resource by default, `<connection>/<alias>` while the switch is on. It has to be another model than the Investigator, so that the Skeptic is more independent.')
 param foundryModelSkeptic string = 'gpt-6-luna'
 
 @description('Most tool calls and model answers that one investigation may take in all. The code accepts no more than 40 (LIMIT_INVESTIGATE_CALLS in src/case-functions/cases/config.py).')

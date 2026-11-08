@@ -1,7 +1,9 @@
-"""The switch of the agents' route through the AI Gateway (AGENTS_VIA_AI_GATEWAY in tools/environment-params.py): while it is False nothing differs, and when it is True the three actions get what they need.
+"""The switch of the agents' route through the AI Gateway (AGENTS_VIA_AI_GATEWAY in tools/environment-params.py): True in the repository, so the three actions get what they need; and False, the way back,
+under which nothing differs.
 
 Step 2 of docs/proposals/08-ai-gateway.md. The parameter builder is run in this process with fixed inputs that this file holds itself (no file of the repository is an input of the pins of
-"nothing differs"), so that a change of a model version or of a limit cannot break them. No test calls Azure."""
+"nothing differs"), so that a change of a model version or of a limit cannot break them. build() sets the constant itself (False unless a test says otherwise), so the tests of the way back and of the
+route stay what they are whatever the repository holds; the tests that read the repository's own value say so. No test calls Azure."""
 import hashlib
 import importlib.util
 import io
@@ -111,12 +113,15 @@ def declared(text):
     return {m.group(1): (m.group(2), m.group(3)) for m in re.finditer(r"^param (\w+) (\w+)(?: = (.+))?$", text, re.M)}
 
 
-class TheSwitchIsOffAndNothingDiffers(unittest.TestCase):
-    def test_the_switch_is_a_constant_of_the_builder_and_it_is_false(self):
-        self.assertIs(ep.AGENTS_VIA_AI_GATEWAY, False, "a later change, after the owner's yes and after aigateway and aigateway-check have passed on the real estate, flips this one value")
+class TheWayBackTheSwitchIsFalseAndNothingDiffers(unittest.TestCase):
+    """The constant is True in the repository (the owner ordered the agents' route, 2026-11-07), and False is the way back. These tests set the constant to False themselves (build() does it by
+    default), so that the way back stays what it was: no parameter file, no output and no action differs from what the builder made before step 2."""
+
+    def test_the_switch_is_a_constant_of_the_builder_and_it_is_true(self):
+        self.assertIs(ep.AGENTS_VIA_AI_GATEWAY, True, "the agents' route is on; the way back is this one value set to False, in a change of its own that also changes this pin and the pages that say it is on")
         source = (ROOT / "tools" / "environment-params.py").read_text(encoding="utf-8")
         self.assertEqual(len(re.findall(r"(?m)^AGENTS_VIA_AI_GATEWAY = (True|False)$", source)), 1, "one constant, one line")
-        self.assertIn("AGENTS_VIA_AI_GATEWAY = False\n", source)
+        self.assertIn("AGENTS_VIA_AI_GATEWAY = True\n", source)
 
     def test_every_file_and_the_whole_output_are_what_they_were_byte_for_byte(self):
         code, out, err, files = build(SETTINGS)
@@ -327,6 +332,35 @@ class TheThreeNamesAreOneName(unittest.TestCase):
         for host in ("evil.example.com", ".ai.gateway.azure.com", "Aigw.ai.gateway.azure.com", f"{HOST}/default"):
             self.assertFalse(ep.AIGATEWAY_HOST.match(host), host)
             self.assertFalse(re.match(shell, host), host)
+
+
+class TheRepositoryAsItIs(unittest.TestCase):
+    """The constant as the repository has it (True): the pieces that read the builder's answer pretend what it says, and the checks of CI give it a gateway host."""
+
+    def test_the_two_lines_that_the_workflow_tests_pretend_the_builder_prints_are_the_ones_that_it_prints(self):
+        source = (ROOT / "tools" / "tests" / "test_aigateway_agents_workflow.py").read_text(encoding="utf-8")
+        (pretended,) = re.findall(r'(?m)^BUILD_ON = BUILD_OFF \+ "((?:\\n[a-z_]+=[a-z]+)+)"', source)
+        lines = [line for line in pretended.split("\\n") if line]
+        self.assertEqual(lines, ["agents_via_ai_gateway=true", "aigateway_connection_name=aigateway"])
+        code, out, err, _ = build(SETTINGS, switch=ep.AGENTS_VIA_AI_GATEWAY)
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(out.splitlines()[-2:], lines, "the last two lines of the real builder with the constant as the repository has it")
+        workflow = (ROOT / ".github" / "workflows" / "deploy-hub.yml").read_text(encoding="utf-8")
+        for name in ("agents_via_ai_gateway", "aigateway_connection_name"):
+            self.assertIn(f"steps.params.outputs.{name}", workflow, f"the workflow reads {name}")
+
+    def test_the_checks_of_ci_give_the_builder_a_gateway_host_so_that_the_connections_parameters_are_checked_against_the_compiled_template(self):
+        checks = (ROOT / ".github" / "workflows" / "checks.yml").read_text(encoding="utf-8").replace("\r\n", "\n")
+        step = checks.split("- name: The parameter files fit the compiled templates")[1]
+        match = re.search(r"(?m)^          AIGATEWAY_HOST: (\S+)$", step)
+        self.assertTrue(match and ep.AIGATEWAY_HOST.match(match.group(1)), "a placeholder host that fits the builder's pattern, and no real gateway")
+        self.assertIn("FOUNDRY_PROJECT_PRINCIPAL_ID:", step)
+        code, out, err, files = build({**SETTINGS, "AIGATEWAY_HOST": match.group(1)}, switch=ep.AGENTS_VIA_AI_GATEWAY)
+        self.assertEqual((code, err), (0, ""))
+        given = values(files, "foundry.parameters.json")
+        self.assertEqual(given["aiGatewayHost"], match.group(1), "the connection is asked for, so that CI checks its parameters against the compiled template")
+        self.assertTrue({"aiGatewayHost", "aiGatewayModels"} <= set(declared(FOUNDRY)))
+        self.assertTrue({"foundryModelInvestigator", "foundryModelSkeptic"} <= set(declared(CASES)))
 
 
 if __name__ == "__main__":

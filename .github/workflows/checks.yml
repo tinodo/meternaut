@@ -87,6 +87,7 @@ jobs:
           CASES_SYSTEM_PRINCIPAL_ID: 12345678-dddd-eeee-ffff-123456789012
           ENV_FOUNDRY_PROJECT_EXISTS: "true"
           FOUNDRY_PROJECT_PRINCIPAL_ID: 12345678-eeee-ffff-1111-123456789012
+          AIGATEWAY_HOST: aigw-meternaut-0123abcd.swedencentral.ai.gateway.azure.com
         run: |
           out="$RUNNER_TEMP/params"
           mkdir -p "$out"
