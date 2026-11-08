@@ -1,6 +1,6 @@
 # The Hub on the owner's machine — a decision record
 
-**Status: ordered by the owner on 2026-11-08; built the same day.** Every deploy runs from the owner's machine, with his own `az` session, by [`tools/hub-local.py`](../../tools/hub-local.py), which runs the steps of the Hub workflow; the workflow stays the one description of every deploy. No GitHub workflow changes Azure any more.
+**Status: ordered by the owner on 2026-11-08.** Every deploy runs from the owner's machine, with his own `az` session, by [`tools/hub-local.py`](../../tools/hub-local.py), which runs the steps of the Hub workflow; the workflow stays the one description of every deploy. No GitHub workflow changes Azure any more.
 
 ## Why
 
@@ -14,43 +14,43 @@ The owner's GitHub Actions quota was used up, and the Hub workflow was the only 
 | `hub-local.env`, the run counter, the lock, the records | The git-ignored `local/` folder of the main working tree (the parent of `git rev-parse --git-common-dir`), so every worktree finds the same files; `METERNAUT_LOCAL` overrides it |
 | `deploy-hub.yml` | GitHub, unchanged, run by a click only |
 
-The tool reads the workflow with a reader written for its layout, decides each `if:` with a small evaluator (workflow text never reaches the interpreter) and runs each step's script. The tools of `tools/` accept only a run of the Hub, so the steps get `GITHUB_ACTIONS=true` and `METERNAUT_HUB_LOCAL=1`: the local Hub is the Hub.
+The tool reads the workflow with its own reader, decides each `if:` with a small evaluator and runs each step's script. The tools of `tools/` accept only a run of the Hub, so the steps get `GITHUB_ACTIONS=true` and `METERNAUT_HUB_LOCAL=1`: the local Hub is the Hub.
 
 ## The guards
 
-The tool refuses; it does not warn. Git's bash is found (not the WSL launcher). The `az` session is a person's, in the configured tenant. The action is one of the workflow's options. Every action except `what-if`, `aigateway-check`, `page-latency`, `loop-check` and `operator-probe` needs `--yes`; without it the plan is printed and nothing runs. `aigateway` also needs `--public-ai-gateway-requested`. An action that changes Azure needs a clean working tree (`--allow-dirty` overrides). One run at a time: a lock file, taken over when its run is gone. The configuration is ignored by git and not tracked. Every expression of the plan resolves, or nothing runs.
+A guard refuses and does not warn. The `az` session is a person's, in the configured tenant. The action and every input are options of the workflow. An action that only reads needs no `--yes`: `what-if`, `aigateway-check`, `page-latency`, `loop-check`, `operator-probe`, `drift-check`, `agents-drift`, `agent365-check`, and `foundry-evals` with `probe` or `rule`. Every other action, and any that the tool does not know, needs it; without it the plan is printed and nothing runs. `aigateway` also needs `--public-ai-gateway-requested`. A change of Azure needs a clean working tree (`--allow-dirty` overrides). One run at a time: a lock file, taken over when its run is gone. The configuration is ignored by git and not tracked. Every expression resolves, or nothing runs: a step that needs a GitHub token or calls `gh` stops the plan.
 
 ## What a person sees
 
-`--dry-run` prints the plan (each step that would run, what its condition said, what is replaced) and needs no `az` session. A run prints the steps live, writes `local/records/hub-local-<action>-<time>.md` (commit, clean or not, each step's outcome and seconds, the summary, what was restored) and a `.log`, and ends with `Hub (local) <action>: PASSED in N minutes` or `FAILED`.
+`--dry-run` prints the plan (each step that would run, what is replaced, each input's value) and needs no `az` session. The inputs are flags (`--minutes`, `--plant-public-ip`, `--evals-command`, `--evals-judge`, `--redteam-mode`); the workflow's default is used and printed when one is missing. A run prints the steps live, writes `local/records/hub-local-<action>-<time>.md` (commit, tree state, each step's outcome and seconds, what was restored) and a `.log`, and ends with `Hub (local) <action>: PASSED in N minutes` or `FAILED`.
 
 ## What changed from a run on GitHub
 
-- **No unit tests in the run.** The person who starts it has run them here; the commit and the tree's state are recorded.
-- **The identity is the owner's own session, with his rights.** Azure no longer limits a run to the deploy identity's roles; the steps (every command names the project's resource group; a test pins that) and the guards above do. A step that reads the deploy identity's role assignments reads the signed-in person's: the `aigateway` check wants Role Based Access Control Administrator on the group itself, which Owner is not, so it stops there.
-- **The CLI's default subscription** is set to the pilot's for the run and put back at the end, after a failure or Ctrl+C too, and by the next run if this one was killed ([rule 15 (b)](../../AGENTS.md)). Another `az` session on the machine sees the pilot's meanwhile.
-- **The cases code is built here and published from this machine** through the app's public deployment site (`az functionapp deployment source config-zip`). It needs the app's public network access to be Enabled; the tool reads that first and stops when it is Disabled.
-- **The run number** is a counter in `hub-local.state.json`; only an action that changes Azure uses up a number (planted waste is named with it).
+- **No unit tests and no look at CI.** The step that asks GitHub whether CI passed is not run: no GitHub call is made and no token exists here. The person ran the checks on this machine; the record names the commit and says whether the tree was clean.
+- **The identity is the owner's own session, with his rights.** The steps (every command names the project's resource group; a test pins that) and the guards limit a run, not the deploy identity's roles. The role checks of `aigateway` and `governance` count Owner and User Access Administrator on the group or above it.
+- **The CLI's default subscription** is set to the pilot's for the run and put back at the end, after a failure or Ctrl+C too, and by the next run if this one was killed ([rule 15 (b)](../../AGENTS.md)).
+- **The cases code is built here and published from this machine** through the app's public deployment site (`az functionapp deployment source config-zip`), which needs the app's public network access to be Enabled. First the files in the zip are held against the digest of the app's own files that the deploy wrote as `PACKAGE_SHA256` (`tools/package-digest.py`; CRLF is read as LF), so the app's release check finds the same; a package that differs is not published.
+- **`DRIFT_ACCEPTED_EXEMPTIONS` and `DRIFT_ACCEPTED_DENY` are optional:** absent or empty is empty, as on GitHub. Every other name has to be in the file.
+- **The run number** is a counter in `hub-local.state.json`; only a change of Azure uses up a number.
 
 ## What the Operator steps need
 
-The checks in the Operator (`cases-run`, `page-latency`, `loop-check`, `aigateway-check`, the health wait of `cases`) create a container group with the owner's own rights: Container Instances registered in the subscription, and the right to create the group, join the Operator's subnet and use its identity. Azure refuses otherwise, and the step says so.
+The checks that run in the Operator (the health wait of `cases`, `cases-run`, `page-latency`, `loop-check` and the checks of the gateway and of the agents) make a container group with the owner's own rights: Container Instances registered, and the right to create the group, join the Operator's subnet and use its identity. Azure refuses otherwise.
 
 ## Not supported
 
-Anything that needs a GitHub OpenID Connect token: the publish of the cases through the Operator, which is why the tool publishes from the machine, and the probe's check that the deploy identity signs in inside the Operator (`operator-probe` goes on without it and says so). A step of another kind than `run`, `actions/checkout`, `actions/setup-python` and `azure/login` stops the plan. It is tested on Windows with Git's bash.
+Anything that needs a GitHub OpenID Connect token: the publish of the cases through the Operator, and the probe's check that the deploy identity signs in inside the Operator (`operator-probe` goes on without it and says so). A step of another kind than `run`, `actions/checkout`, `actions/setup-python` and `azure/login` stops the plan. Tested on Windows with Git's bash.
 
 ## What Git's bash on Windows breaks
 
 | What breaks | What the tool does |
 |---|---|
-| CRLF line ends in the checkout, which bash cannot run | The workflow is read as LF and every script is written with LF |
-| Bash rewrites an argument that looks like a path (`/subscriptions/...` becomes a path under Git's folder) | `MSYS_NO_PATHCONV=1` and `MSYS2_ARG_CONV_EXCL=*`; the build of the function app, the one script that needs the conversion, gets it back |
-| `python3` is the Store alias, and a native Python cannot start a bare `az` | A `python3` shim runs the tool's Python; the CLI runs through its own `python.exe`, by a shim in bash and a `sitecustomize` hook for the tools |
-| `az.cmd` goes through cmd.exe, which takes an `&` or a quote inside an argument for its own | The same shim: no step goes through cmd.exe. It refuses `az login`, `logout`, `account set` and `config set` |
-| `taskkill /T` cannot find what Git's bash started, so a `sleep` or an `az` outlived a timeout | Every step runs in a Windows job object that ends all of it |
-| The system's text encoding, and block-buffered pipes | UTF-8 and unbuffered output |
+| CRLF line ends of the checkout | The workflow is read as LF and every script is written with LF |
+| Bash rewrites an argument that looks like a path (`/subscriptions/...`) | `MSYS_NO_PATHCONV=1`, `MSYS2_ARG_CONV_EXCL=*`; the steps that build the function app's package get the conversion back: their script wants a path that starts with a slash |
+| `python3` is the Store alias; a native Python cannot start `az`; `az.cmd` mangles `&` and quotes (cmd.exe) | A `python3` shim; the CLI runs through its own `python.exe` (a shim in bash, a `sitecustomize` hook for the tools), and `az login`, `logout`, `account set` and `config set` are refused |
+| `taskkill /T` misses what Git's bash started | Every step runs in a Windows job object that ends all of it |
+| The system's text encoding, block-buffered pipes | UTF-8 and unbuffered output |
 
 ## The way back
 
-A click on the workflow is the same deploy as before, once the quota is there. The tool stays for a person who wants a plan first.
+A click on the workflow is the same deploy as before, once the quota is there.

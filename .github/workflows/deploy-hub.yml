@@ -1926,27 +1926,41 @@ jobs:
           fi
           # The deploy identity may give a role to a service principal only for the roles that the condition of its right to assign roles lists (environment/BOOTSTRAP.md). The template gives Foundry User (to the
           # gateway's identity, on the Foundry resource) and AI Gateway Models User (to the Operator's identity, on the gateway). Azure would refuse the second after the gateway was made, so it is looked for here.
+          # A run from the owner's own machine (tools/hub-local.py) is signed in as a person, who holds Owner or User Access Administrator on the group or above it (the tenant's root group too), with no condition:
+          # such a person may give any role, and the look at the condition below is not needed. An assignment of Owner or User Access Administrator that carries a condition is not counted.
           foundry_user=53ca6127-db72-4b80-b1b0-d745d6d5456d
           models_user=a6b68e3d-a1f0-4c60-8678-237c050cf4ea
           administrator=f58310d9-a9f6-439a-9e8d-f62e7b41a168
+          owner=8e3af657-a8ff-443c-a75c-2fe8c4bcb635
+          user_access_administrator=18d7d88d-d35e-4fb5-a5c3-7773c20a72d9
           group="/subscriptions/$ENV_SUBSCRIPTION_ID/resourceGroups/$ENV_RESOURCE_GROUP"
           if ! grep -Eq '^[0-9a-fA-F-]{36}$' <<< "$DEPLOYER_ID"; then
             echo "::error::The object id of the deploy identity was not read from its token, so its right to assign roles cannot be looked at. Nothing was changed."
             exit 1
           fi
           deployer="${DEPLOYER_ID,,}"
-          if ! listed=$(az role assignment list --assignee-object-id "$deployer" --scope "$group" --fill-principal-name false --fill-role-definition-name false \
+          if ! listed=$(az role assignment list --assignee-object-id "$deployer" --scope "$group" --include-inherited --fill-principal-name false --fill-role-definition-name false \
             --query "[].[scope, roleDefinitionId, condition]" --output tsv --only-show-errors 2>&1); then
             echo "::error::The role assignments of the deploy identity on the group could not be read: $listed. Nothing was changed."
             exit 1
           fi
           held=no
           condition=""
+          unrestricted=no
           while IFS=$'\t' read -r scope definition rule; do
+            if [ -z "$scope" ]; then continue; fi
             if [ "${scope,,}" = "${group,,}" ] && [[ "${definition,,}" == */"$administrator" ]]; then held=yes; condition="$rule"; fi
+            if [[ "${definition,,}" == */"$owner" || "${definition,,}" == */"$user_access_administrator" ]] && { [ -z "$rule" ] || [ "$rule" = None ]; } \
+              && { [ "${scope,,}" = "${group,,}" ] || [[ "${group,,}" == "${scope,,}"/* ]] || [ "$scope" = "/" ] || [[ "${scope,,}" == /providers/microsoft.management/managementgroups/* ]]; }; then
+              unrestricted=yes
+            fi
           done <<< "$listed"
+          if [ "$unrestricted" = yes ]; then
+            echo "The identity holds Owner or User Access Administrator on the group or above it, with no condition: it may give any role."
+            exit 0
+          fi
           if [ "$held" != yes ]; then
-            echo "::error::The deploy identity holds no assignment of Role Based Access Control Administrator on the group, so the roles of the AI Gateway cannot be given. Nothing was changed."
+            echo "::error::The deploy identity holds no assignment of Role Based Access Control Administrator on the group, and none of Owner or User Access Administrator on the group or above it, so the roles of the AI Gateway cannot be given. Nothing was changed."
             exit 1
           fi
           if [ -z "$condition" ] || [ "$condition" = "None" ]; then
