@@ -38,7 +38,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Mapping
 
-from . import alerts, lockfile, release, switches
+from . import alerts, drift_rules, lockfile, release, switches
 from .foundry import NO_TEXT, AgentRun, AgentSpec, FoundryError, ToolHandler, definition_of
 from .memory_store import stamp
 from .models import SwitchRecord
@@ -47,6 +47,7 @@ LOGGER = logging.getLogger("meternaut.harness")
 RUN = "harness.run"
 TRIP = "harness.trip"
 DRIFT_PREFIXES = {"PASS": "drift.pass", "FAIL": "drift.fail", "UNKNOWN": "drift.unknown"}
+PACKAGE_SETTING = "PACKAGE_SHA256"  # the app setting that the deployment sets to the digest of the files that it ships (tools/package-digest.py)
 SWITCH = "investigation"
 STOPPING = ("all", SWITCH)
 BY = "the agent harness"
@@ -111,12 +112,16 @@ def build_of(env: Mapping[str, str] | None) -> str:
 
 
 def announce(env: Mapping[str, str] | None = None, redact: Callable[[str], str] = str) -> dict:
-    """Says once, when the app starts, which package is running: the digest of its files and the commit that it was built from (BUILD_COMMIT, an app setting that the deployment sets; the
-    environment of the process when no environment is given). It never raises."""
+    """Says once, when the app starts, which package is running: the digest of its files, the commit that it was built from (BUILD_COMMIT, an app setting that the deployment sets; the
+    environment of the process when no environment is given) and whether the digest is the released one: `release` is PASS when it equals PACKAGE_SHA256, FAIL when it differs (a warning) and
+    UNKNOWN when the setting is not there (the same judgement as the drift control A-RELEASE, which holds it every day). It never raises."""
     try:
         digest, count = package_digest()
-        payload = {"event": "startup", "package": digest[:12] or "unknown", "files": count, "build": build_of(os.environ if env is None else env)}
-        trace(RUN, payload, redact)
+        environment = os.environ if env is None else env
+        build = build_of(environment)
+        released = drift_rules.judge_release(digest, count, environment.get(PACKAGE_SETTING, ""), build).state
+        payload = {"event": "startup", "package": digest[:12] or "unknown", "files": count, "build": build, "release": released}
+        trace(RUN, payload, redact, level=logging.WARNING if released == drift_rules.FAIL else logging.INFO)
         return payload
     except Exception:  # noqa: BLE001 (a line of the telemetry never stops the app)
         return {}

@@ -782,17 +782,33 @@ class TheStartup(unittest.TestCase):
                 self.assertEqual(hn.build_of({"BUILD_COMMIT": value} if value is not None else {}), "unknown")
         self.assertEqual(hn.build_of(None), "unknown")
 
-    def test_the_start_of_the_app_says_which_package_runs_and_which_commit_built_it_and_the_line_holds_nothing_else(self):
+    def test_the_start_of_the_app_says_which_package_runs_and_which_commit_built_it_and_whether_it_is_the_released_one_and_the_line_holds_nothing_else(self):
         with LogCapture() as capture:
             payload = hn.announce({"BUILD_COMMIT": "abcdef1234567890"})
         (line,) = lines(capture, "harness.run")
         self.assertEqual(line, payload)
-        self.assertEqual(sorted(line), ["build", "event", "files", "package"])
-        self.assertEqual((line["event"], line["build"]), ("startup", "abcdef123456"))
+        self.assertEqual(sorted(line), ["build", "event", "files", "package", "release"])
+        self.assertEqual((line["event"], line["build"], line["release"]), ("startup", "abcdef123456", "UNKNOWN"), "the setting is not there, so the files cannot be held against the release")
         self.assertRegex(line["package"], r"^[0-9a-f]{12}$")
         self.assertGreater(line["files"], 30)
         digest, count = hn.package_digest()
         self.assertEqual((line["package"], line["files"]), (digest[:12], count))
+
+    def test_the_digest_of_the_files_is_held_against_the_setting_pass_when_it_equals_fail_when_it_differs_and_unknown_when_it_is_not_there(self):
+        digest, _ = hn.package_digest()
+        cases = (({"PACKAGE_SHA256": digest}, "PASS", logging.INFO), ({"PACKAGE_SHA256": digest.upper()}, "PASS", logging.INFO), ({"PACKAGE_SHA256": "cd" * 32}, "FAIL", logging.WARNING),
+                 ({}, "UNKNOWN", logging.INFO), ({"PACKAGE_SHA256": "not a digest"}, "UNKNOWN", logging.INFO), ({"PACKAGE_SHA256": ""}, "UNKNOWN", logging.INFO))
+        for env, state, level in cases:
+            with self.subTest(env=env), LogCapture() as capture:
+                payload = hn.announce(env)
+                record = next(r for r in capture.records if r.getMessage().startswith("harness.run "))
+            self.assertEqual((payload["release"], record.levelno), (state, level))
+            self.assertEqual(payload["package"], digest[:12], "the same digest is logged whatever the setting says")
+
+    def test_the_setting_that_is_held_against_the_digest_is_the_one_that_the_drift_check_reads(self):
+        from cases import drift
+
+        self.assertEqual((hn.PACKAGE_SETTING, drift.PACKAGE_SETTING), ("PACKAGE_SHA256", "PACKAGE_SHA256"))
 
     def test_the_digest_is_the_one_that_tools_package_digest_makes_of_the_same_folder(self):
         from cases import release

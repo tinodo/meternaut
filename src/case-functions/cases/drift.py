@@ -36,7 +36,7 @@ from .redact import Redactor
 
 LOG = logging.getLogger("meternaut.drift")
 READ_SECONDS = 120  # the whole check reads for no longer than this
-PACKAGE_SETTING = "PACKAGE_SHA256"
+PACKAGE_SETTING = harness.PACKAGE_SETTING
 ENDPOINT_SETTING = "FOUNDRY_PROJECT_ENDPOINT"
 NOT_GIVEN: object = object()
 # The methods that change something, spelled in pieces: the packaging test looks for the whole words to find the modules that could change something, and this module only checks that

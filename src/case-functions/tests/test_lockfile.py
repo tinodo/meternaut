@@ -340,5 +340,43 @@ class TheRepositoryHoldsTheRuleThatTheCodeAndTheLockChangeTogether(unittest.Test
         self.assertTrue(lockfile.stale(lockfile.validate(document), definitions, implementations, module))
 
 
+class TheLockTheInstructionsAndTheHarnessNameNoKindOfWaste(unittest.TestCase):
+    """AGENTS.md rule 30 (a): nothing tells an agent what to find, and no file of the AI security is a place where an answer could be written down. The scan of the toolbox (test_toolbox.py) holds the
+    tools; this one holds the lock, the instructions of both agents, the copy of the instructions that the red team makes its copy from, and the sources of the harness and of the drift check."""
+
+    KINDS = ("private endpoint", "privateendpoint", "storage account", "key vault", "cosmos", "redis", "kubernetes", "load balancer", "virtual machine", "managed disk", "public ip", "app service",
+             "log analytics", "vpn gateway", "defender", "orphan", "unattach", "deallocat", "zero traffic", "no traffic")
+    STATES = ("idle", "unused", "stopped", "threshold", "waste", "deleted", "bytes", "percentage")
+    SOURCES = ("harness.py", "lockfile.py", "drift.py", "drift_rules.py", "alerts.py", "release.py", "plaintext.py")
+
+    def test_the_lock_names_no_kind_of_resource_no_state_of_waste_no_metric_and_no_resource_type(self):
+        text = (APP_ROOT / "cases" / "agents.lock.json").read_text(encoding="utf-8").lower()
+        for word in self.KINDS + self.STATES:
+            self.assertNotIn(word, text, word)
+        self.assertEqual(re.findall(r"microsoft\.[a-z]+/[a-z]+", text), [])
+
+    def test_the_instructions_of_both_agents_and_the_copy_of_the_red_team_name_no_kind_of_resource_and_no_resource_type(self):
+        text = (REPO_ROOT / "evaluation" / "investigator-instructions.txt").read_text(encoding="utf-8")
+        self.assertEqual(text, agents.INVESTIGATOR_INSTRUCTIONS, "the red team's copy is the instructions of the code")
+        for what in (agents.INVESTIGATOR_INSTRUCTIONS, agents.SKEPTIC_INSTRUCTIONS, agents.INVESTIGATOR_DESCRIPTION, agents.SKEPTIC_DESCRIPTION, text):
+            lower = what.lower()
+            for word in self.KINDS:
+                self.assertNotIn(word, lower, word)
+            self.assertEqual(re.findall(r"microsoft\.[a-z]+/[a-z]+", lower), [])
+
+    def test_the_sources_of_the_harness_and_of_the_drift_check_name_no_state_of_waste_and_no_resource_type_of_an_estate(self):
+        for name in self.SOURCES:
+            source = (APP_ROOT / "cases" / name).read_text(encoding="utf-8").lower()
+            with self.subTest(source=name):
+                for word in ("orphan", "unattach", "deallocat", "zero traffic", "no traffic", "unused"):
+                    self.assertNotIn(word, source, word)
+                self.assertEqual(re.findall(r"microsoft\.(?!authorization|compute|cognitiveservices|resourcegraph)[a-z]+/[a-z]+", source), [], "a resource type of an estate is named only by the probes of the lists of calls")
+
+    def test_the_scan_finds_what_it_is_for(self):
+        for sample in ("an orphan disk", "the unattached ones", "zero traffic means idle", "microsoft.network/privateendpoints", "the defender plans"):
+            lower = sample.lower()
+            self.assertTrue(any(word in lower for word in self.KINDS + self.STATES) or re.search(r"microsoft\.[a-z]+/[a-z]+", lower), sample)
+
+
 if __name__ == "__main__":
     unittest.main()
