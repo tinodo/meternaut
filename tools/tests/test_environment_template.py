@@ -393,7 +393,7 @@ class Workflow(unittest.TestCase):
 
     def test_the_deletes_of_the_workflow_are_few_and_everything_of_the_usage_recording_the_old_model_account_and_the_event_hubs_namespace_goes_through_the_one_tool_of_retire_old(self):
         self.assertEqual(self.text.count("az resource delete"), 0, "the Logic App version of the usage recording was removed by four of them: the actions retire-old and retire-event-hubs delete what is left, with a tool that is tested")
-        self.assertEqual(len(re.findall(r"(?m)^.*\baz (?:\S+ )*?(?:--method )?delete\b.*$", self.text)), 9, "no other delete, of any kind: four of the cases app of the other plan kind (the app, its plan, its private endpoint, and each role assignment of its old identity in the group, by its id), two of what the Flex version left in the storage account when the app goes back to Basic (the role on its container, then the container), one that takes the app's integration with an earlier subnet away, one that removes that subnet, and one that removes the retired runner identity of the first loop")
+        self.assertEqual(len(re.findall(r"(?m)^.*\baz (?:\S+ )*?(?:--method )?delete\b.*$", self.text)), 5, "no other delete, of any kind, in the workflow's own steps (the app of the other plan kind, its plan, its private endpoint and the role assignments that are in the way of the deploy are deleted by the tool of the step before the deploy of the cases, which is tested against a model of Azure): two of what the Flex version left in the storage account when the app goes back to Basic (the role on its container, then the container), one that takes the app's integration with an earlier subnet away, one that removes that subnet, and one that removes the retired runner identity of the first loop")
         (block,) = [b for b in self.steps if b.startswith("name: Delete what Meternaut does not use any more, in the project's resource group")]
         self.assertEqual(re.findall(r"python3 tools/(\S+) (\w+)", block), [("retire-old.py", "run")], "the tool is the only thing that deletes in that step")
         self.assertNotRegex(re.sub(r"(?m)^\s*#.*$", "", block), r"\baz\s")
@@ -1117,7 +1117,7 @@ class CasesWorkflow(unittest.TestCase):
     def test_the_cases_are_made_ready_deployed_published_and_listed_in_that_order_and_for_their_action_only(self):
         order = ["The base is there, which the first cases build on",
                  "The function subnet is free for the cases app, which runs on Flex Consumption",
-                 "Remove the cases app of the other plan kind and its plan, when the kind has changed and they are still there",
+                 "Clear what is in the way of the deploy of the cases app (an app and a plan of the other kind, a private endpoint that is Disconnected, role assignments of an identity that is gone)",
                  "Remove what the Flex Consumption version left in the storage account, when it is still there",
                  "Let the cases app go from an integration subnet that is not the one of the template", "Deploy the first cases",
                  "Wait until the landing zone has registered the cases app's private endpoint in the central zone",
@@ -1143,7 +1143,7 @@ class CasesWorkflow(unittest.TestCase):
         self.assertIn("--template environment/cases/main.bicep", deploy)
         self.assertIn('--parameters "$RUNNER_TEMP/cases.parameters.json"', deploy)
         self.assertIn("--output functionAppId", deploy)
-        self.assertEqual(self.text.count("--template environment/cases/main.bicep"), 2, "the preview and the deploy, nothing else")
+        self.assertEqual(self.text.count("--template environment/cases/main.bicep"), 3, "the preview, the step before the deploy (which asks for a preview of the deploy, to read the role assignments that it would write) and the deploy, nothing else")
 
     def test_the_cases_are_published_in_the_operator_with_the_deploy_identity_and_no_password_from_sources_that_the_container_builds(self):
         pack, publish = self.step("Pack the cases app's sources for the Operator"), self.step("Publish the cases to the function app from inside the network, in the Operator")
@@ -1158,73 +1158,6 @@ class CasesWorkflow(unittest.TestCase):
         self.assertIn("this run has none", publish, "no token: nothing is published, and the step says why")
         for word in ("az webapp deploy", "publishing-credentials", "--user", "--password", "config-zip", "kit/", "environment/", "zipdeploy", "--data-binary", "get-access-token", "package.zip", "case-functions.zip"):
             self.assertNotIn(word, publish + pack, word)
-
-    def test_the_app_of_the_other_plan_kind_is_removed_by_its_name_only_while_its_plan_is_of_that_kind_before_the_deploy_each_thing_read_before_and_after(self):
-        title = "Remove the cases app of the other plan kind and its plan, when the kind has changed and they are still there"
-        block = self.step(title)
-        self.assertIn("if: inputs.action == 'cases'", block)
-        for line in ("FUNCTION_APP: ${{ steps.params.outputs.cases_function_app_name }}", "WANTED_KIND: ${{ steps.params.outputs.cases_app_plan }}", "WANTED_TIER: ${{ steps.params.outputs.cases_plan_tier }}",
-                     "OTHER_PLAN: ${{ steps.params.outputs.cases_other_plan_name }}", "OTHER_TIER: ${{ steps.params.outputs.cases_other_plan_tier }}"):
-            self.assertIn(line, block, line)
-        script = "\n".join(line for line in block.split("run:")[1].splitlines() if not line.strip().startswith("#"))
-        self.assertIn('site="$group/providers/Microsoft.Web/sites/$FUNCTION_APP"', script, "the app is named exactly")
-        self.assertIn('if [ "$tier" = "$WANTED_TIER" ]; then', script, "an app that is already on the plan kind that is asked for is left alone")
-        self.assertIn('if [ "$tier" != "$OTHER_TIER" ] || [ "${plan_name,,}" != "${OTHER_PLAN,,}" ]; then', script, "only the other kind's plan, by its exact name and while it is of that tier: any other plan stops the run")
-        self.assertIn("a plan that this workflow does not know is never deleted", script)
-        self.assertEqual(re.findall(r'az rest --method delete --url "https://management\.azure\.com\$\{(\w+)\}\?api-version=(\S+)"', script), [("site", "2024-04-01"), ("plan", "2024-04-01"), ("endpoint", "2025-05-01"), ("id", "2022-04-01")],
-                         "the app, then its plan, then its private endpoint, then each assignment of the removed identity, by its id, and nothing else")
-        for first, second in (("site", "plan"), ("plan", "endpoint"), ("endpoint", "id")):
-            self.assertLess(script.index(f'--method delete --url "https://management.azure.com${{{first}}}'), script.index(f'--method delete --url "https://management.azure.com${{{second}}}'), f"{first} before {second}")
-        self.assertIn("--query sku.tier", script)
-        for thing, reads in (("site", 3), ("plan", 2), ("endpoint", 3)):
-            self.assertEqual(len(re.findall(rf'gone "\${thing}"', script)), reads, f"the {thing} is read before it is removed (the plan is read for its tier) and read again after")
-        self.assertIn("Read back: the cases app is gone.", script)
-        self.assertIn("Read back: the plan $plan_name is gone.", script)
-        self.assertIn('grep -Eqi \'NotFound|\\b404\\b\' <<< "$found"', script, "only 'not found' is taken for not there: any other failure of a read stops the run")
-        for word in ("az resource delete", "--yes", "usage", "LEGACY", "az role assignment delete"):
-            self.assertNotIn(word, script, word)
-        self.assertLess(self.names.index(title), self.names.index("Deploy the first cases"))
-        self.assertLess(self.names.index("The function subnet is free for the cases app, which runs on Flex Consumption"), self.names.index(title),
-                        "a refusal of the subnet leaves the web page where it was")
-
-    def test_the_removed_apps_role_assignments_in_the_group_are_deleted_because_the_template_names_them_after_the_app_and_gives_them_to_a_new_identity(self):
-        # An app that is made again has a new system-assigned identity; the template names its assignments after the app's id, and Azure refuses to change the identity of an assignment that exists.
-        block = self.step("Remove the cases app of the other plan kind and its plan, when the kind has changed and they are still there")
-        script = "\n".join(line for line in block.split("run:")[1].splitlines() if not line.strip().startswith("#"))
-        self.assertIn("--query identity.principalId", script, "the identity is read before the app is deleted: it cannot be read afterwards")
-        self.assertLess(script.index("--query identity.principalId"), script.index('--method delete --url "https://management.azure.com${site}'))
-        self.assertIn("roleAssignments?api-version=2022-04-01&\\$filter=principalId%20eq%20%27${principal}%27", script, "the assignments of that principal at, above and below the group")
-        self.assertIn('case "${scope,,}/" in\n                  "${group,,}/"*)', script, "only those at or below the project's group count")
-        template = text("environment/cases/main.bicep")
-        for role in re.findall(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", " ".join(re.findall(r'named_after_the_app="([^"]+)"', script))):
-            self.assertIn(role, template, "every role that the step expects to be made again under the same name is one of the template's")
-        self.assertEqual(sorted(re.findall(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", " ".join(re.findall(r'named_after_the_app="([^"]+)"', script)))),
-                         sorted(re.findall(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.sub(r"//.*", "", template))), "the five roles that the template names after the app, no more and no fewer")
-        self.assertIn("Read back: the assignments that the template makes again are gone.", script)
-        self.assertIn('echo "::error::These assignments of the removed app\'s identity are still listed after the delete', script, "one that the deploy would be refused for stops the run, and says what a person does")
-        self.assertIn("sleep 90", script, "the host name is let go a little after the app")
-        self.assertIn('echo "### The cases app was made again on the $WANTED_KIND plan"', script)
-        self.assertIn("**The new app has a new system-assigned identity**", script, "the summary says what a person gives it again")
-        self.assertIn("Reader and Cost Management Reader", script)
-        self.assertIn("tools/exchange-setup.py", script)
-        self.assertIn("Run `foundry` after this run", script.replace("\\`", "`"))
-        self.assertIn("`aigateway` (on the owner's written word, as for its first run), which gives it AI Gateway Models User on the gateway", script.replace("\\`", "`"), "the gateway's role is keyed by the app's principal id, so a new identity has none until aigateway is run again")
-
-    def test_the_private_endpoint_of_the_removed_app_goes_too_by_its_exact_name_because_a_disconnected_one_does_not_reach_a_new_app(self):
-        block = self.step("Remove the cases app of the other plan kind and its plan, when the kind has changed and they are still there")
-        script = "\n".join(line for line in block.split("run:")[1].splitlines() if not line.strip().startswith("#"))
-        template = text("environment/cases/main.bicep")
-        made = re.search(r"resource functionAppEndpoint 'Microsoft\.Network/privateEndpoints@(\S+)' = \{\s+name: 'pe-\$\{functionAppName\}'", template)
-        self.assertIsNotNone(made, "the template's endpoint is named after the app")
-        self.assertIn(f'if gone "$endpoint" {made.group(1)}; then', script, "read with the api-version that the template writes it with")
-        self.assertIn(f'--method delete --url "https://management.azure.com${{endpoint}}?api-version={made.group(1)}"', script)
-        self.assertIn('endpoint="$group/providers/Microsoft.Network/privateEndpoints/pe-$FUNCTION_APP"', script, "the endpoint of the template, by its exact name, and no other")
-        self.assertLess(script.index("Read back: the plan $plan_name is gone."), script.index('endpoint="$group/'), "the endpoint is not taken from under an app that is still there")
-        self.assertIn("Read back: the private endpoint pe-$FUNCTION_APP is gone.", script)
-        self.assertIn("The app's private endpoint pe-$FUNCTION_APP is not there: nothing to remove.", script)
-        self.assertNotIn("az network private-endpoint", script, "the generic command is not used: the endpoint is read and deleted through the same call as everything else in the step")
-        wait = self.step("Wait until the landing zone has registered the cases app's private endpoint in the central zone")
-        self.assertIn("dns-zone-group list", wait, "the wait that follows the deploy is for the zone group of the new endpoint, which an endpoint that was kept would already have")
 
     def test_the_function_subnet_is_read_before_anything_is_removed_and_a_plan_that_still_holds_it_is_named_with_what_to_do(self):
         title = "The function subnet is free for the cases app, which runs on Flex Consumption"
@@ -1275,7 +1208,7 @@ class CasesWorkflow(unittest.TestCase):
         script = "\n".join(line for line in block.split("run:")[1].splitlines() if not line.strip().startswith("#"))
         for word in ("app-package-usage", "azure-webjobs", "az storage", "--account-key", "--yes", "az resource delete", "--all"):
             self.assertNotIn(word, script, word)
-        self.assertLess(self.names.index("Remove the cases app of the other plan kind and its plan, when the kind has changed and they are still there"), self.names.index(title))
+        self.assertLess(self.names.index("Clear what is in the way of the deploy of the cases app (an app and a plan of the other kind, a private endpoint that is Disconnected, role assignments of an identity that is gone)"), self.names.index(title))
         self.assertLess(self.names.index(title), self.names.index("Deploy the first cases"))
         self.assertIn("if: inputs.action == 'cases' && steps.params.outputs.cases_app_plan == 'Basic'", block, "a Flex app keeps its package in that container: the step runs only for a Basic app")
 

@@ -120,7 +120,7 @@ CASES_APP_PUBLIC_NETWORK_ACCESS = "Enabled"
 # The plan that the cases app, which serves the web page, runs on: "Flex" (Flex Consumption: it scales to zero and bills per execution, so an idle web page costs nothing; the app uses the function subnet
 # snet-func) or "Basic" (B1, always on, about 13 US dollars a month; the app uses its own subnet snet-cases). It is Flex since the owner ordered it on 2026-11-07, and Basic is the way back: the first cases ran on
 # Flex and moved to Basic on 2026-11-05 because the platform's front end held requests to the web page for 15 to 60 seconds, and whether that still happens is measured with the action page-latency
-# (docs/proposals/07-private-by-default.md, "The web page on Flex Consumption"). One value and a commit change it, and the action cases then removes the app of the other kind, its plan and its private endpoint, and makes the new ones.
+# (docs/proposals/07-private-by-default.md, "The web page on Flex Consumption"). One value and a commit change it, and the action cases then clears the app of the other kind, its plan and its private endpoint (tools/cases-move.py) and makes the new ones.
 CASES_APP_PLAN = "Flex"
 CASES_APP_PLANS = ("Flex", "Basic")
 # The plan of each kind, by its exact name (environment/cases/main.bicep makes them: a test holds the names together) and the tier that Azure reports for it. The action cases removes the other kind's app and plan
