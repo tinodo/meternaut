@@ -2069,7 +2069,7 @@ class EventHubsPrivateOnlyRecord(unittest.TestCase):
         self.assertLess(self.bootstrap.index("## Changed on 2026-11-06: the Operator"), self.bootstrap.index("## Changed on 2026-11-06: the Event Hubs namespace is private"))
         self.assertLess(self.bootstrap.index("## Changed on 2026-11-06: the Event Hubs namespace is private"), self.bootstrap.index("\n## After it"))
         self.assertIn("holds none since [the namespace was made private](#changed-on-2026-11-06-the-event-hubs-namespace-is-private)", self.bootstrap.split("\n## ")[1])
-        self.assertIn("The order of those four is `recording`, `cases`, `operator`, and then, about ten minutes after `operator` (a new role takes that long to apply), `recording-check` and `cases-run`. Once both checks have passed through the Operator while the namespace is still public, `recording` makes the Event Hubs namespace private",
+        self.assertIn("The order of those three is `base`, `cases`, `operator`, and then, about ten minutes after `operator` (a new role takes that long to apply), `cases-run`. On 2026-11-06 the list held one more action, `recording-check`, and `base` was called `recording`: once both checks had passed through the Operator while the namespace was still public, `recording` made the Event Hubs namespace private",
                       self.bootstrap.split("\n## After it")[1])
         self.assertIn("On the real estate the Event Hubs steps of this list ran on 2026-11-06 and every run of them passed.", self.bootstrap.split("\n## After it")[1])
 
@@ -2083,7 +2083,7 @@ class EventHubsPrivateOnlyRecord(unittest.TestCase):
         self.assertIn("the namespace has been private-only since 2026-11-06, deployed and proven; the code of both function apps is published from inside the network, and the usage app takes no public traffic, deployed and proven; "
                       "the cases app, Application Insights and the workspace are still public", readme)
         self.assertIn("the template sets public network access to Disabled, the deploy identity no longer holds a role on the control hubs and the two deploy actions retired the one that it held", readme)
-        self.assertIn("The Operator and its probe are built and ran on the real estate, the Event Hubs namespace and the usage app have been private-only there since 2026-11-06 (deployed and proven), and the code of both function apps is published "
+        self.assertIn("The Operator and its probe are built and ran on the real estate, the Event Hubs namespace and the usage app were private-only there from 2026-11-06 (deployed and proven; the usage app was removed on 2026-11-07), and the code of the function apps is published "
                       "from inside the network; the cases app, Application Insights and the workspace are still public", readme)
         bootstrap_first = self.bootstrap.split("\n## ")[1]
         self.assertNotIn("the gateway's identity and the workflow's identity may send to event hubs", bootstrap_first)
@@ -2294,7 +2294,8 @@ class PublishingPhaseOneRecord(unittest.TestCase):
             self.assertIn(words, paragraph, words)
         self.assertNotIn("about ten minutes of waiting for the landing zone's policy", paragraph)
         after = page.split("\n## After it")[1].split("\n## ")[0]
-        self.assertIn("Since phase 1 of publishing code from inside the network, the actions `recording` and `cases` also make the two apps' private endpoints and wait until the landing zone's policy has registered them; after that, "
+        self.assertIn("Since phase 1 of publishing code from inside the network, the action `cases` also makes the cases app's private endpoint and waits until the landing zone's policy has registered it "
+                      "(`recording` did the same for the usage app's until 2026-11-07); after that, "
                       "`operator-probe` is run once more and its lines are read ([the section](#changed-on-2026-11-06-publishing-code-from-inside-the-network-phase-1)). "
                       "On the real estate the endpoints were made and the probe ran on 2026-11-06, and every check of the probe passed.", after)
         self.assertNotIn("about ten minutes after those runs", after, "the actions wait for the names now, so a person does not")
@@ -2577,11 +2578,11 @@ class PublishingPhaseTwoRecord(unittest.TestCase):
                       "One thing a person sees after `cases`: the redeploy ends a signed-in session of the console, so the first page afterwards shows Microsoft's account picker once, and a click completes the sign-in."):
             self.assertIn(words, paragraph, words)
         after = page.split("\n## After it")[1].split("\n## ")[0]
-        self.assertIn("On the real estate both ran on 2026-11-06 and published, and since then the usage app takes no public traffic. One yes to the whole list", after)
-        self.assertIn("Since phase 2, `recording` and `cases` publish their code in the Operator, as the deploy identity, so they come after `operator` on an estate that has none: they deploy and stop at the publish, "
-                      "and the order is `recording`, `cases`, `operator`, and then `recording` and `cases` again", after)
-        self.assertLess(after.index("Since phase 1 of publishing code"), after.index("Since phase 2, `recording` and `cases` publish"))
-        self.assertLess(after.index("Since phase 2, `recording` and `cases` publish"), after.index("One yes to the whole list"))
+        self.assertIn("On the real estate both ran on 2026-11-06 and published, and the usage app took no public traffic from then until the action `retire-old` deleted it. One yes to the whole list", after)
+        self.assertIn("Since phase 2, `cases` publishes its code in the Operator, as the deploy identity, so it comes after `operator` on an estate that has none: it deploys and stops at the publish, "
+                      "and the order is `base`, `cases`, `operator`, and then `cases` again", after)
+        self.assertLess(after.index("Since phase 1 of publishing code"), after.index("Since phase 2, `cases` publishes"))
+        self.assertLess(after.index("Since phase 2, `cases` publishes"), after.index("One yes to the whole list"))
         self.assertLess(page.index("## Changed on 2026-11-06: publishing code from inside the network, phase 1"), page.index(heading))
         self.assertLess(page.index(heading), page.index("\n## After it"))
         self.assertNotRegex(paragraph, r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}", "no id of the tenant, the subscription or an object")
@@ -2925,8 +2926,8 @@ class BootstrapOperatorSection(unittest.TestCase):
         self.assertLess(self.section.index("1. Run `operator` again."), self.section.index("2. Wait about ten minutes"))
         self.assertLess(self.section.index("2. Wait about ten minutes"), self.section.index("3. Run `recording-check` and `cases-run`."))
         after = self.page.split("\n## After it")[1].split("\n## ")[0]
-        self.assertIn("The order of those four is `recording`, `cases`, `operator`, and then, about ten minutes after `operator`", after)
-        self.assertIn("both from inside the network by the Operator, so it comes after `operator`", after)
+        self.assertIn("The order of those three is `base`, `cases`, `operator`, and then, about ten minutes after `operator`", after)
+        self.assertIn("The usage recording had two actions of its own, `recording` and `recording-check`: both are gone, and the action `retire-old` deletes what they made", after)
         self.assertIn("both by the Operator, so it comes after `operator` too", after)
 
     def test_it_says_what_a_check_costs_and_that_the_probe_passed_without_a_fallback(self):
