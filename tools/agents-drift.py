@@ -6,7 +6,7 @@
 
 The cases app runs the same check every day at 05:10 UTC with its own identity (cases/drift.py). This tool reads the Foundry project with ANOTHER identity and judges what it reads by the
 same rules (cases/drift_rules.py, loaded from its own folder or from the repository), so that an app that reports nothing, or reports a lie, is noticed by a second reader. It makes GET calls
-only: the list of the agents, each agent that the lock names, and the list of the connections. It judges nine of the controls of the app's check, the ones that are about the project:
+only: the list of the agents, each agent that the lock names, and the list of the connections. It judges eight of the thirteen controls of the app's check, the ones that are about the project:
 
   A-AGENTS-LISTED  A-DEF-MODEL  A-DEF-INSTRUCTIONS  A-DEF-TOOLS  A-DEF-OPTIONS  A-CONNECTIONS  A-NO-DIRECT-MODEL  A-TRACING
 

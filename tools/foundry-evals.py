@@ -9,7 +9,8 @@
 run     Replays the Investigator on the invented fixtures of evaluation/cases.jsonl: the conversation is the agent's own (a user input with the budget of tool calls), and its tools are answered
         by this tool from the fixture, so that no estate is read. Every answer is graded by CODE (the schema, that every handle and every number is one that a tool returned, that no decoy is
         proposed, that no hostile text is obeyed), and the interactions are sent to Foundry as an evaluation run (Build > Evaluations in the portal) with the evaluators of
-        evaluation/thresholds.json. The exit code follows the thresholds of that file, which were written before the first measurement (AGENTS.md rule 14 (c)).
+        evaluation/thresholds.json. The exit code follows the thresholds of that file, which were written before the first measurement (AGENTS.md rule 14 (c)). What Foundry does not offer or
+        does not finish is printed UNKNOWN, never PASS: it is not proved, and it fails nothing by itself, because the code graders decide.
         --judge none        only evaluators that need no judge model of ours (the GA fallback); the code graders always run.
         --judge connection  also the quality evaluators, with the judge model reached through the AI Gateway connection of the lock (`<connection>/<alias>`): no direct deployment is a judge.
         --judge auto        connection first, and none when the service refuses the evaluators that need a judge.
@@ -26,7 +27,6 @@ no public network access, cloud evaluations may need the evaluation-only network
 from __future__ import annotations
 
 import argparse
-import datetime as dt
 import importlib.util
 import json
 import sys
@@ -42,11 +42,14 @@ if helpers is None:  # a test has loaded it already; a tool run on its own loads
 Problem, SpendCap = helpers.Problem, helpers.SpendCap
 
 API = "api-version=v1"
+PREVIEW = {"Foundry-Features": "Evaluations=V1Preview"}  # the header that the evaluation rules of the preview need
 INVESTIGATOR = "meternaut-investigator"
-ROUTES = ("/openai/v1/evals", "/openai/evals?api-version=2025-11-15-preview")  # the SDK's base, and the route of the REST reference of the preview
+ROUTES = helpers.ROUTES  # the SDK's base, and the route of the REST reference of the preview
 MAX_ROUNDS = 12
 TOOL_BUDGET = 20
-ITEM_SCHEMA = {"type": "object", "properties": {"query": {"type": "array"}, "response": {"type": "array"}, "tool_definitions": {"type": "array"}}, "required": ["query", "response"]}
+ITEM_SCHEMA = helpers.ITEM_SCHEMA
+parse_answer = helpers.parse_answer
+criteria = helpers.criteria
 
 
 # -- the fixtures ----------------------------------------------------------------------------------------------------------------------------------
@@ -84,24 +87,6 @@ def handler_of(row: dict):
         return json.dumps(answers.get(name, {"error": "unknown-tool"}), separators=(",", ":"))
 
     return handle, answers
-
-
-def parse_answer(text: object) -> dict | None:
-    """The first JSON object in a text that holds `findings` (a prose around it and a code fence do not matter), or None."""
-    body = text if isinstance(text, str) else ""
-    decoder, position = json.JSONDecoder(), body.find("{")
-    for _ in range(50):
-        if position < 0:
-            return None
-        try:
-            value, end = decoder.raw_decode(body, position)
-        except ValueError:
-            position = body.find("{", position + 1)
-            continue
-        if isinstance(value, dict) and isinstance(value.get("findings"), list):
-            return value
-        position = body.find("{", end)
-    return None
 
 
 def grade(row: dict, text: object) -> dict:
@@ -189,66 +174,28 @@ def replay(client, spend, reference: dict, row: dict) -> tuple[str, list[dict], 
 
 
 def dataset_item(row: dict, text: str, trace: list[dict], definitions: list[dict]) -> dict:
-    """An interaction in the shape that the evaluators of agents read: query, response (tool calls, tool results and the answer) and tool_definitions."""
+    """An interaction in the shape that the evaluators of agents read: query, response (tool calls, tool results and the answer), the two together as messages (the two agent safety evaluators read
+    that) and tool_definitions."""
     response: list[dict] = []
     for step in trace:
         response.append({"role": "assistant", "content": [{"type": "tool_call", "tool_call_id": step["call_id"], "name": step["name"], "arguments": step["arguments"]}]})
         response.append({"role": "tool", "tool_call_id": step["call_id"], "content": [{"type": "tool_result", "tool_result": step["result"]}]})
     response.append({"role": "assistant", "content": [{"type": "text", "text": text}]})
-    return {"query": [{"role": "user", "content": [{"type": "text", "text": json.dumps({"budget": {"toolCalls": TOOL_BUDGET}})}]}], "response": response, "tool_definitions": definitions}
+    query = [{"role": "user", "content": [{"type": "text", "text": json.dumps({"budget": {"toolCalls": TOOL_BUDGET}})}]}]
+    return {"query": query, "response": response, "messages": query + response, "tool_definitions": definitions}
 
 
-def criteria(evaluators: list[str], judge_model: str | None, mapped: bool = True) -> list[dict]:
-    mapping = {"query": "{{item.query}}", "response": "{{item.response}}", "tool_definitions": "{{item.tool_definitions}}"}
-    found = []
-    for name in evaluators:
-        item = {"type": "azure_ai_evaluator", "name": name.split(".")[-1], "evaluator_name": name, **({"data_mapping": mapping} if mapped else {})}
-        if judge_model:
-            item["initialization_parameters"] = {"model": judge_model}
-        found.append(item)
-    return found
-
-
-def evaluate_in_foundry(client, spend, items: list[dict], thresholds: dict, judge: str, judge_model: str, wait: float, sleep=time.sleep, clock=time.monotonic) -> list[tuple[str, bool, str]]:
-    """The evaluation run in the project. Returns plain lines (name, passed, words); a run that cannot be made or does not finish says so and fails nothing by itself."""
+def evaluate_in_foundry(client, spend, items: list[dict], thresholds: dict, judge: str, judge_model: str, wait: float, sleep=time.sleep, clock=time.monotonic) -> list[tuple[str, str, str]]:
+    """The evaluation runs in the project, one for the evaluators that need no judge and, with a judge, one for the quality evaluators (helpers.submit_evaluation). Returns plain lines
+    (label, PASS, FAIL or UNKNOWN, words): what the project did not offer or did not finish is UNKNOWN and fails nothing by itself, and a judge that was demanded and is refused fails."""
     safety = thresholds["foundryEvaluators"]["safety"]
     quality = thresholds["foundryEvaluators"]["quality"]
-    plan = [("safety", safety["evaluators"], None)]
+    plan = [("safety", safety["evaluators"], None, 1.0 - safety["maxFlaggedRate"])]
     if judge in ("connection", "auto"):
-        plan.append(("quality", quality["evaluators"], judge_model))
-    results: list[tuple[str, bool, str]] = []
-    for label, evaluators, model in plan:
-        if model:
-            spend.take(model_calls=len(items) * len(evaluators))
-        body = {"name": f"meternaut-investigator-{label}-{dt.datetime.now(dt.timezone.utc):%Y%m%d-%H%M}", "data_source_config": {"type": "custom", "item_schema": ITEM_SCHEMA, "include_sample_schema": False},
-                "testing_criteria": criteria(evaluators, model)}
-        base, created = None, None
-        for route in ROUTES:
-            status, document = client.request("POST", route, body)
-            if status in (200, 201) and isinstance(document, dict) and isinstance(document.get("id"), str):
-                base, created = route.split("?")[0], document["id"]
-                query = "?" + route.split("?", 1)[1] if "?" in route else ""
-                break
-        if created is None:
-            results.append((label, judge != "connection" or label == "safety", f"{label}: the project did not accept the evaluation ({status} {helpers.error_words(document)})" + (" (the judge is refused: the code graders decide)" if model else "")))
-            continue
-        status, document = client.request("POST", f"{base}/{created}/runs{query}", {"name": f"replay-{len(items)}-rows", "data_source": {"type": "jsonl", "source": {"type": "file_content", "content": [{"item": item} for item in items]}}})
-        run_id = document.get("id") if isinstance(document, dict) else None
-        if status not in (200, 201) or not isinstance(run_id, str):
-            results.append((label, False, f"{label}: the run was not accepted ({status} {helpers.error_words(document)})"))
-            continue
-        last, done = helpers.poll(lambda: client.request("GET", f"{base}/{created}/runs/{run_id}{query}")[1], lambda doc: isinstance(doc, dict) and doc.get("status") in ("completed", "failed", "canceled"), wait, 10.0, sleep=sleep, clock=clock)
-        state = last.get("status") if isinstance(last, dict) else None
-        if not done or state != "completed":
-            results.append((label, True, f"{label}: the run is {state or 'not answered'} after {int(wait)} seconds (a Foundry without public network access may need the evaluation networking: see the proposal); look at it in the portal, Build, Evaluations"))
-            continue
-        counts = last.get("result_counts") if isinstance(last.get("result_counts"), dict) else {}
-        passed, failed = int(counts.get("passed") or 0), int(counts.get("failed") or 0)
-        total = passed + failed
-        rate = passed / total if total else 0.0
-        floor = quality["minPassRate"] if label == "quality" else 1.0 - safety["maxFlaggedRate"]
-        results.append((label, rate >= floor, f"{label}: {passed} of {total} results passed ({rate:.2f}, at least {floor:.2f}); the run is in the portal under Build, Evaluations"))
-    return results
+        plan.append(("quality", quality["evaluators"], judge_model, quality["minPassRate"]))
+    return [helpers.submit_evaluation(client, spend, name=f"meternaut-investigator-{label}", run_name=f"replay-{len(items)}-rows", label=label, evaluators=evaluators, model=model, items=items,
+                                      item_schema=ITEM_SCHEMA, floor=floor, wait=wait, demanded=judge == "connection" and model is not None, sleep=sleep, clock=clock)
+            for label, evaluators, model, floor in plan]
 
 
 # -- the commands ----------------------------------------------------------------------------------------------------------------------------------
@@ -314,20 +261,24 @@ def command_run(args, client, spend, sleep=time.sleep, clock=time.monotonic) -> 
     if judge != "none" and not model:
         judge = "none"
         helpers.say("run: the lock names no connection to the AI Gateway, so no judge model is used")
-    foundry_lines: list[tuple[str, bool, str]] = []
+    foundry_lines: list[tuple[str, str, str]] = []
     if items and not stopped:
         try:
             foundry_lines = evaluate_in_foundry(client, spend, items, thresholds, judge, model, args.wait_seconds, sleep, clock)
         except SpendCap as error:
             stopped = str(error)
-    for name, passed, words in [*lines, *foundry_lines]:
-        helpers.say(f"{'PASS' if passed else 'FAIL'} {words}")
+    results = [("PASS" if passed else "FAIL", words) for _, passed, words in lines] + [(state, words) for _, state, words in foundry_lines]
+    for state, words in results:
+        helpers.say(f"{state} {words}")
+    unknown = sum(1 for state, _ in results if state == "UNKNOWN")
+    if unknown:
+        helpers.say(f"run: {unknown} of the evaluations in Foundry could not be measured (UNKNOWN): that part is not proved, and the code graders above are what decided")
     if stopped:
         helpers.say(f"STOPPED {stopped}")
     helpers.say(f"run: {len(graded)} of {len(rows)} fixtures replayed against version {reference['version']} of the Investigator; judge {judge}")
     helpers.say(spend.line())
     helpers.say(f"run: {len(client.calls)} calls to the project in all")
-    return 0 if not stopped and all(p for _, p, _ in [*lines, *foundry_lines]) else 1
+    return 0 if not stopped and all(state != "FAIL" for state, _ in results) else 1
 
 
 def command_rule(args, client) -> int:
@@ -349,10 +300,14 @@ def command_rule(args, client) -> int:
             break
     else:
         raise Problem(f"the project did not accept the evaluation ({status} {helpers.error_words(document)})")
-    status, document = client.request("PUT", f"/evaluationrules/meternaut-investigator-continuous?{API}", plan, headers={"Foundry-Features": "Evaluations=V1Preview"})
+    status, document = client.request("PUT", f"/evaluationrules/meternaut-investigator-continuous?{API}", plan, headers=PREVIEW)
     if status not in (200, 201):
         raise Problem(f"the rule was not accepted ({status} {helpers.error_words(document)})")
-    helpers.say("rule: made; the project's identity needs the role Foundry User for it to run (a hand step: docs/proposals/11-agent-harness-and-evaluation.md)")
+    status, document = client.request("GET", f"/evaluationrules/meternaut-investigator-continuous?{API}", headers=PREVIEW)
+    if status != 200 or not isinstance(document, dict) or document.get("enabled") is not True:
+        raise Problem(f"the rule was made and could not be read back as enabled ({status} {helpers.error_words(document)}): look at it in the portal, Build, Agents, {INVESTIGATOR}, Monitor")
+    helpers.say("rule: made and read back as enabled; its results show in the portal under Build, Agents, the Investigator, Monitor, after the next real Watch")
+    helpers.say("rule: the project's identity needs the role Foundry User for it to run (a hand step: docs/proposals/11-agent-harness-and-evaluation.md)")
     return 0
 
 

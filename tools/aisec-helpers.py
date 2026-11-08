@@ -8,6 +8,7 @@ drift_rules.py: one comparison logic, the app's own) is loaded from the same fol
 """
 from __future__ import annotations
 
+import datetime as dt
 import http.client
 import importlib
 import json
@@ -176,14 +177,23 @@ def poll(fetch: Callable[[], object], finished: Callable[[object], bool], second
 
 class Spend:
     """What a run may spend, written in evaluation/limits.json before anything was measured (AGENTS.md rule 14 (c)): the rows, the calls of a model through the AI Gateway, the tokens and the
-    seconds. `take` refuses what would go beyond a cap, and the tool prints how many calls it made, so that the orchestrator can hold the number against the gateway's own telemetry."""
+    seconds. `take` refuses what would go beyond a cap (the seconds are counted from the moment that the cap was made, which is the start of the run), `left` says how many seconds remain for a
+    wait, and the tool prints how many calls it made, so that the orchestrator can hold the number against the gateway's own telemetry."""
 
     KEYS = ("maxRows", "maxModelCalls", "maxTokens", "maxSeconds")
 
-    def __init__(self, limits: dict) -> None:
+    def __init__(self, limits: dict, *, clock: Callable[[], float] = time.monotonic) -> None:
         if not isinstance(limits, dict) or any(not isinstance(limits.get(key), int) or isinstance(limits.get(key), bool) or limits[key] < 0 for key in self.KEYS):
             raise Problem(f"{SPEND_FILE} does not give {', '.join(self.KEYS)} as whole numbers", 2)
         self.limits, self.rows, self.model_calls, self.tokens = limits, 0, 0, 0
+        self.clock, self.began = clock, clock()
+
+    def seconds(self) -> float:
+        return max(0.0, self.clock() - self.began)
+
+    def left(self) -> float:
+        """The seconds that the cap leaves: a wait for a run of the service is cut to this."""
+        return max(0.0, self.limits["maxSeconds"] - self.seconds())
 
     @classmethod
     def load(cls, folder: Path | None = None) -> "Spend":
@@ -195,16 +205,22 @@ class Spend:
                     raise Problem(f"{SPEND_FILE} is not JSON", 2) from None
         raise Problem(f"{SPEND_FILE} is neither next to the tool nor in evaluation/: the spend cap has to be written before a run", 2)
 
-    def take(self, *, rows: int = 0, model_calls: int = 0, tokens: int = 0) -> None:
+    def check(self, *, rows: int = 0, model_calls: int = 0, tokens: int = 0) -> None:
+        """Refuses what would go beyond a cap, and counts nothing: a run that is only estimated is checked first and counted when it is accepted."""
         for what, add, cap in (("rows", rows, "maxRows"), ("model calls", model_calls, "maxModelCalls"), ("tokens", tokens, "maxTokens")):
             have = {"rows": self.rows, "model calls": self.model_calls, "tokens": self.tokens}[what]
             if have + add > self.limits[cap]:
                 raise SpendCap(f"the spend cap holds: {have + add} {what} would be more than the {self.limits[cap]} that evaluation/{SPEND_FILE} allows ({cap})")
+        if self.seconds() > self.limits["maxSeconds"]:
+            raise SpendCap(f"the spend cap holds: {int(self.seconds())} seconds have passed, more than the {self.limits['maxSeconds']} that evaluation/{SPEND_FILE} allows (maxSeconds)")
+
+    def take(self, *, rows: int = 0, model_calls: int = 0, tokens: int = 0) -> None:
+        self.check(rows=rows, model_calls=model_calls, tokens=tokens)
         self.rows, self.model_calls, self.tokens = self.rows + rows, self.model_calls + model_calls, self.tokens + tokens
 
     def line(self) -> str:
         return (f"spend: {self.model_calls} calls of a model through the AI Gateway (cap {self.limits['maxModelCalls']}), {self.tokens} tokens (cap {self.limits['maxTokens']}), "
-                f"{self.rows} rows (cap {self.limits['maxRows']})")
+                f"{self.rows} rows (cap {self.limits['maxRows']}), {int(self.seconds())} seconds (cap {self.limits['maxSeconds']})")
 
 
 def read_jsonl(path: Path, limit: int) -> list[dict]:
@@ -222,3 +238,87 @@ def read_jsonl(path: Path, limit: int) -> list[dict]:
     if len(rows) > limit:
         raise SpendCap(f"{path.name} has {len(rows)} rows and the cap is {limit} (maxRows)")
     return rows
+
+
+def parse_answer(text: object) -> dict | None:
+    """The first JSON object in a text that holds `findings` (a prose around it and a code fence do not matter), or None."""
+    body = text if isinstance(text, str) else ""
+    decoder, position = json.JSONDecoder(), body.find("{")
+    for _ in range(50):
+        if position < 0:
+            return None
+        try:
+            value, end = decoder.raw_decode(body, position)
+        except ValueError:
+            position = body.find("{", position + 1)
+            continue
+        if isinstance(value, dict) and isinstance(value.get("findings"), list):
+            return value
+        position = body.find("{", end)
+    return None
+
+
+# -- the evaluation run in the project --------------------------------------------------------------------------------------------------------------
+
+ROUTES = ("/openai/v1/evals", "/openai/evals?api-version=2025-11-15-preview")  # the SDK's base, and the route of the REST reference of the preview
+FINAL = ("completed", "failed", "canceled")
+ITEM_SCHEMA = {"type": "object", "properties": {"query": {"type": "array"}, "response": {"type": "array"}, "messages": {"type": "array"}, "tool_definitions": {"type": "array"}},
+               "required": ["query", "response"]}
+TEXT_SCHEMA = {"type": "object", "properties": {"query": {"type": "string"}, "response": {"type": "string"}}, "required": ["query", "response"]}
+TEXT_MAPPING = {"query": "{{item.query}}", "response": "{{item.response}}"}
+# These two evaluators take the whole interaction as `messages` instead of separate fields (Learn, Risk and Safety Evaluators, read 2026-11-08); the others take query, response and the tool definitions.
+AGENT_SAFETY = frozenset({"builtin.prohibited_actions", "builtin.sensitive_data_leakage"})
+
+
+def criteria(evaluators: list[str], judge_model: str | None, mapped: bool = True, mapping: dict | None = None) -> list[dict]:
+    """The testing criteria of an evaluation: built-in evaluators, each with the mapping of its inputs to the fields of an item (the continuous rule gives none: the service maps a response itself),
+    and a judge model only for an evaluator that needs one."""
+    found = []
+    for name in evaluators:
+        item = {"type": "azure_ai_evaluator", "name": name.split(".")[-1], "evaluator_name": name}
+        if mapped:
+            item["data_mapping"] = dict(mapping) if mapping else ({"messages": "{{item.messages}}"} if name in AGENT_SAFETY else
+                                                                {"query": "{{item.query}}", "response": "{{item.response}}", "tool_definitions": "{{item.tool_definitions}}"})
+        if judge_model:
+            item["initialization_parameters"] = {"model": judge_model}
+        found.append(item)
+    return found
+
+
+def submit_evaluation(client, spend: "Spend", *, name: str, run_name: str, label: str, evaluators: list[str], model: str | None, items: list[dict], item_schema: dict, floor: float,
+                      wait: float, mapping: dict | None = None, demanded: bool = False, sleep=time.sleep, clock=time.monotonic) -> tuple[str, str, str]:
+    """One evaluation run in the project (the portal shows it under Build, Evaluations). Returns (label, state, plain words), the state being PASS, FAIL or UNKNOWN.
+
+    UNKNOWN is for what could not be measured: the project did not offer the evaluation (a preview), or the run did not finish in the time that is left. It is never a pass and it fails nothing.
+    A judge model is the connection of the lock to the AI Gateway (`model`), its calls are counted before they are made, and a judge that was `demanded` and is refused is a FAIL."""
+    if model:
+        spend.take(model_calls=len(items) * len(evaluators))
+    body = {"name": f"{name}-{dt.datetime.now(dt.timezone.utc):%Y%m%d-%H%M}", "data_source_config": {"type": "custom", "item_schema": item_schema, "include_sample_schema": False},
+            "testing_criteria": criteria(evaluators, model, mapping=mapping)}
+    base, created, query = "", None, ""
+    status, document = 0, None
+    for route in ROUTES:
+        status, document = client.request("POST", route, body)
+        if status in (200, 201) and isinstance(document, dict) and isinstance(document.get("id"), str):
+            base, created, query = route.split("?")[0], document["id"], ("?" + route.split("?", 1)[1]) if "?" in route else ""
+            break
+    if created is None:
+        return label, "FAIL" if demanded else "UNKNOWN", (f"{label}: the project did not accept the evaluation ({status} {error_words(document)})" + (" (the judge is refused: the code graders decide)" if model else ""))
+    status, document = client.request("POST", f"{base}/{created}/runs{query}", {"name": run_name, "data_source": {"type": "jsonl", "source": {"type": "file_content", "content": [{"item": item} for item in items]}}})
+    run_id = document.get("id") if isinstance(document, dict) else None
+    if status not in (200, 201) or not isinstance(run_id, str):
+        return label, "FAIL", f"{label}: the run was not accepted ({status} {error_words(document)})"
+    seconds = min(wait, spend.left())
+    last, done = poll(lambda: client.request("GET", f"{base}/{created}/runs/{run_id}{query}")[1], lambda doc: isinstance(doc, dict) and doc.get("status") in FINAL, seconds, 10.0, sleep=sleep, clock=clock)
+    state = last.get("status") if isinstance(last, dict) else None
+    if not done or state != "completed":
+        ended = f"ended {state}" if done and state else f"is {state or 'not answered'} after {int(seconds)} seconds"
+        return label, "UNKNOWN", (f"{label}: the run {ended} and could not be measured (a Foundry without public network access may need the evaluation networking: see the proposal); "
+                                  "look at it in the portal, Build, Evaluations")
+    counts = last.get("result_counts") if isinstance(last.get("result_counts"), dict) else {}
+    passed, failed = int(counts.get("passed") or 0), int(counts.get("failed") or 0)
+    total = passed + failed
+    if not total:
+        return label, "UNKNOWN", f"{label}: the run completed with no result to count: look at it in the portal, Build, Evaluations"
+    rate = passed / total
+    return label, "PASS" if rate >= floor else "FAIL", f"{label}: {passed} of {total} results passed ({rate:.2f}, at least {floor:.2f}); the run is in the portal under Build, Evaluations"
