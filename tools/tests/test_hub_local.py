@@ -2171,7 +2171,7 @@ class TheShims(unittest.TestCase):
     def test_the_azure_cli_is_found_as_its_own_python_and_not_as_az_cmd(self):
         argv = hub.AzCli.find().argv
         self.assertTrue(argv[0].lower().endswith("python.exe"))
-        self.assertEqual(argv[1:], ["-IBm", "azure.cli"])
+        self.assertEqual(argv[1:], ["-X", "utf8", "-IBm", "azure.cli"], "-I ignores PYTHONUTF8, so the CLI is told to write UTF-8 on the command line")
 
 
 class TheSmallParts(unittest.TestCase):

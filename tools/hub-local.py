@@ -1197,7 +1197,8 @@ class AzCli:
                     candidates.append(Path(environ[variable]) / "Microsoft SDKs" / "Azure" / "CLI2" / "python.exe")
             for python in candidates:
                 if python.is_file():
-                    return cls([str(python), "-IBm", "azure.cli"])
+                    # -I ignores PYTHONUTF8 and PYTHONIOENCODING, so the CLI would write the Windows code page into a pipe (an em dash is the byte 0x97): -X utf8 is a command line option and holds under -I.
+                    return cls([str(python), "-X", "utf8", "-IBm", "azure.cli"])
             raise HubLocalError("the Azure CLI was not found. This tool needs the Windows (MSI) install: it runs the CLI's own python.exe, because az.cmd goes through cmd.exe, which mangles the arguments")
         exe = shutil.which("az")
         if not exe:
