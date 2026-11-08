@@ -149,10 +149,9 @@ class SendingTheEvent(unittest.TestCase):
         self.assertEqual(url, f"https://{NAMESPACE}.servicebus.windows.net/cases-control/messages?timeout=60&api-version=2014-01")
         self.assertEqual(json.loads(body), {"job": "watch", "requestId": ID})
 
-    def test_the_usage_checker_still_sends_to_its_own_hub_by_default(self):
-        posts = []
-        rc.send_control_event(azure(lambda args: (0, SECRET + "\n", ""), lambda url, headers, body: posts.append(url) or (201, b"")), NAMESPACE, "all", ID)
-        self.assertIn("/usage-control/messages", posts[0])
+    def test_the_helper_has_no_default_hub_so_that_a_check_sends_only_to_the_hub_that_it_names(self):
+        with self.assertRaises(TypeError):
+            rc.send_control_event(azure(lambda args: (0, SECRET + "\n", ""), lambda url, headers, body: (201, b"")), NAMESPACE, "watch", ID)
 
 
 class Parsing(unittest.TestCase):
@@ -440,7 +439,7 @@ class Run(unittest.TestCase):
         self.assertIn("0 lines of the run arrived", out)
 
     def test_lines_that_are_not_events_are_ignored(self):
-        noise = ["meternaut_event not json", "usage_job_result {}", cc.EVENT_PREFIX + json.dumps({"type": 5})]
+        noise = ["meternaut_event not json", "another_line_of_the_log {}", cc.EVENT_PREFIX + json.dumps({"type": 5})]
         code, out, _, _ = self.go([telemetry([*noise, *a_good_run()])])
         self.assertEqual(code, 0)
 
@@ -642,7 +641,7 @@ class TheCheckerAsksForNoKeyAndCallsNothingElse(unittest.TestCase):
         for word in ("listKeys", "listSecrets", "primaryKey", "SharedAccessSignature", "AccountKey", "api-key", "az login"):
             self.assertNotIn(word, code, word)
         self.assertNotRegex(code, r"https://[a-z0-9.-]+\.(azure-api|documents\.azure|blob\.core\.windows)\.", "it reads only the telemetry and sends one event")
-        self.assertNotRegex(code, r"\.token\(", "it asks for no token of its own: the helpers of tools/recording-check.py do, for the three resources that its own test pins")
+        self.assertNotRegex(code, r"\.token\(", "it asks for no token of its own: the helpers of tools/check-helpers.py do, for the three resources that its own test pins")
         self.assertNotIn("api.applicationinsights.io", code, "the host of the data plane is in the helpers, and in one place")
 
 

@@ -2,14 +2,14 @@
 # Builds the package of a function app of this repository (src/<app>) for the apps' runtime: Linux, x86-64, Python 3.13.
 #
 #   bash tools/build-function-app.sh <app directory under src> <name of its code package> <build directory> [<zip file>]
-#   bash tools/build-function-app.sh usage-functions usage "$RUNNER_TEMP/usage-functions" "$RUNNER_TEMP/usage-functions.zip"
+#   bash tools/build-function-app.sh case-functions cases "$RUNNER_TEMP/case-functions" "$RUNNER_TEMP/case-functions.zip"
 #
 # The libraries are downloaded as wheels for that platform (not for the machine that runs this), so the result is the
 # same on every machine. The app's own platform does not build anything: that build would have to reach a public package
 # index from inside the app's network. Tests are left out; so are compiled caches.
 #
-# Both apps are built a second way too, because their packages are too big for the request that makes the Operator's container group (the usage app's is 7.0 MB zipped and the cases app's 614,068 bytes,
-# and a request takes at most 480,000 bytes of files: tools/operator-run.py has the evidence), and their code is published from inside the network (docs/proposals/07-private-by-default.md,
+# The app is built a second way too, because its package is too big for the request that makes the Operator's container group (the cases app's is 614,068 bytes zipped,
+# and a request takes at most 480,000 bytes of files: tools/operator-run.py has the evidence), and its code is published from inside the network (docs/proposals/07-private-by-default.md,
 # phase 2): the workflow sends the sources, and operator/publish.sh builds the libraries in the container. It is still this one script, with three switches, each set only by the caller that needs it,
 # so that there is one build command and one layout:
 #   FUNCTION_APP_SOURCES_ONLY=1       the app's own files and no libraries, zipped: the sources that the workflow sends to the Operator (nothing is installed, so no interpreter is checked)

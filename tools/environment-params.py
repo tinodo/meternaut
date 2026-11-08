@@ -2,25 +2,22 @@
 """Builds the parameter files of the first environment from the deployment workflow's settings (standard library only).
 
     python tools/environment-params.py build --models environment/models.json --out-dir "$RUNNER_TEMP" [--preview] [--aigateway-policies environment/aigateway/policies.json] >> "$GITHUB_OUTPUT"
-    python tools/environment-params.py check --params "$RUNNER_TEMP/recording.parameters.json" --template recording.json --label recording
+    python tools/environment-params.py check --params "$RUNNER_TEMP/base.parameters.json" --template base.json --label base
 
 The settings are environment variables, filled by the workflow from the repository's secrets and variables, so that no
 address, name or mail address is in the repository:
 
     ENV_SUBSCRIPTION_ID, ENV_RESOURCE_GROUP, ENV_LOCATION, ENV_VNET_PREFIX, ENV_PE_SUBNET_PREFIX,
     ENV_DNS_SERVERS (comma separated), ENV_OWNER, ENV_BUDGET_AMOUNT, ENV_ALERT_EMAILS (comma separated),
-    ENV_BUDGET_START, GATEWAY_APPINSIGHTS_ID,
-    RECORDING_READER_IDS (comma separated, may be empty),
+    ENV_BUDGET_START,
     CASES_SYSTEM_PRINCIPAL_ID (may be empty), ENV_FOUNDRY_PROJECT_EXISTS (true or false), ENV_OPS_SUBNET_EXISTS (true or false)
 
 ENV_BUDGET_START is the first day of the month in which the budget was first made, which the workflow reads from the
 existing budget (a budget keeps its start date) or, for a new budget, takes from the current month.
-GATEWAY_APPINSIGHTS_ID is the resource id of the Application Insights component that the owner's API Management instance logs to. Only the usage recording reads it (the copy jobs of its function app read that
-component), and the recording is idle: it stays until the owner decides about it. Since 2026-11-07 nothing here makes, changes or reads an object on the instance (the owner ordered the undo of what Meternaut had
-added to it): the instance's own resource id is not a setting any more, the gateway's identity is neither made nor looked up, and the contract, the loggers and the kit's module are gone.
-RECORDING_READER_IDS are the object ids of the people who may read the usage store (a Cosmos DB data role; they also need a network path to its private
-endpoint). The identity that the workflow signs in as has no setting here: no template gives it a role on an event hub (the Operator sends the control
-events), and the workflow reads its own object id from its token only to find and retire the assignment that it held on the two control hubs.
+Nothing here reads, makes or names anything of the owner's API Management instance, of the usage recording or of the first model account: they were removed on 2026-11-07 (the usage recording
+copied the calls of that instance, and nothing called the model account any more), and the action retire-old (tools/retire-old.py) deletes what is left of them in the project's resource group.
+The identity that the workflow signs in as has no setting here: no template gives it a role on an event hub (the Operator sends the control
+events), and the workflow reads its own object id from its token only to find and retire the assignment that it held on the control hub of the cases.
 CASES_SYSTEM_PRINCIPAL_ID is the object id of the cases app's system-assigned identity, which the workflow reads from the app: the Foundry resource of
 the agents gives it the Foundry User role on its project. The app has no such identity before the action `cases` has run once; without it the Foundry
 file holds a placeholder, says cases_system_principal_known=false, and the workflow refuses to deploy the Foundry resource. Like the other object ids it
@@ -55,11 +52,11 @@ Basic) and function_subnet_name (snet-func). The builder refuses any other value
 
 It writes these ARM parameter files into --out-dir:
 
-    environment.parameters.json       for environment/main.bicep (the model side)
-    recording.parameters.json         for environment/recording/main.bicep (the usage recording: Event Hubs, function app, Cosmos DB)
+    environment.parameters.json       for environment/main.bicep (the action model-side: the virtual network with its subnets, and the budget)
+    base.parameters.json              for environment/base/main.bicep (the action base: the Log Analytics workspace, Application Insights, the storage account and the Event Hubs namespace)
     foundry.parameters.json           for environment/foundry/main.bicep (the Foundry resource of the agents: project, models, guardrail, private endpoint)
-    operator.parameters.json          for environment/operator/main.bicep (the Operator: its identity, the subnet of its container groups, its three roles; it names the Event Hubs namespace
-                                      whose two control hubs it reads, which the usage recording and the first cases make)
+    operator.parameters.json          for environment/operator/main.bicep (the Operator: its identity, the subnet of its container groups, its two roles; it names the Event Hubs namespace
+                                      whose control hub it reads, which the first cases make in the namespace of the base)
     aigateway-subnet.parameters.json  for environment/aigateway/subnet.bicep (the AI Gateway's subnet and its network security group: the action aigateway deploys it first, and waits for the
                                       landing zone's route table on the subnet before it deploys the gateway),
     aigateway.parameters.json         for environment/aigateway/main.bicep (the AI Gateway: its models and aliases, and its roles; the subnet has to be there already), and
@@ -73,17 +70,15 @@ It writes these ARM parameter files into --out-dir:
                                       It also says what the Watch reads: scopeSubscriptions (this estate's subscription, the fallback) and
                                       scopeAllSubscriptions, the constant SCOPE_ALL_SUBSCRIPTIONS near the top of this file (True: every subscription that the app's identity can read).
 
-                                      What each function app takes from the public internet is not a setting of the workflow: USAGE_APP_PUBLIC_NETWORK_ACCESS (Disabled) and CASES_APP_PUBLIC_NETWORK_ACCESS (Enabled until the
-                                      owner closes the web page, which he reaches on the private network), near the top of this file, go into recording.parameters.json and cases.parameters.json (usageAppPublicNetworkAccess,
-                                      casesAppPublicNetworkAccess). Closing an app is one value and a commit, and
+                                      What the cases app takes from the public internet is not a setting of the workflow: CASES_APP_PUBLIC_NETWORK_ACCESS (Enabled until the
+                                      owner closes the web page, which he reaches on the private network), near the top of this file, goes into cases.parameters.json
+                                      (casesAppPublicNetworkAccess). Closing an app is one value and a commit, and
                                       the property is always written: an app whose value is not set has its public access switched off by the first private endpoint (docs/proposals/07-private-by-default.md).
 
-                                      Every value is checked before anything is deployed. The name of the model account is worked out here, from the
-subscription and the resource group, so it is the same on every run (a run after a removal finds, and the workflow
-restores, the soft-deleted account of that name instead of leaving a second one behind); so are the names of the usage
-recording's storage account, Event Hubs namespace, Cosmos DB account and function app, which are host names too, and the name of the
-Foundry resource of the agents (aif-meternaut-agents-<digest>, also a host name, which is not the model account's). The
-function app's subnet is the first /27 of the virtual network that does not overlap the private endpoint subnet, and the
+                                      Every value is checked before anything is deployed. The names of the base's storage account and Event Hubs namespace, which are host names too, and of the
+cases app, are worked out here, from the subscription and the resource group, so they are the same on every run; so is the name of the
+Foundry resource of the agents (aif-meternaut-agents-<digest>, also a host name). The
+function subnet (snet-func, for a Flex Consumption app) is the first /27 of the virtual network that does not overlap the private endpoint subnet, and the
 subnet of the first cases' Basic plan is the first /27 that overlaps neither of those two. The Operator's subnet (container groups of Azure Container
 Instances) is the last /27 that overlaps none of the three; Microsoft Learn recommends a /24 for container groups, which a small virtual network cannot
 spare, and it is passed as a flag when it is in Azure already (ENV_OPS_SUBNET_EXISTS). The AI Gateway's subnet (snet-aigw, delegated to Microsoft.App/environments, for the gateway's own
@@ -115,16 +110,13 @@ BUDGET_START = re.compile(r"^(?:19|20)\d{2}-(?:0[1-9]|1[0-2])-01$")
 DATE = re.compile(r"^(?:19|20)\d{2}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])$")
 MODEL_NAME = re.compile(r"^[a-z0-9][a-z0-9.-]{0,62}$")
 NAME = r"[A-Za-z0-9._()-]{1,90}"
-APPINSIGHTS_ID = re.compile(rf"^/subscriptions/([0-9a-fA-F-]{{36}})/resourceGroups/({NAME})/providers/microsoft\.insights/components/([A-Za-z0-9._()-]{{1,260}})$", re.I)
 PRIVATE_SPACE = ipaddress.ip_network("10.0.0.0/8")
 SKUS = ("DataZoneStandard", "GlobalStandard")
 PLACEHOLDER = "00000000-0000-0000-0000-000000000000"
-# What each function app takes from the public internet. The usage app is closed (Disabled): it has no page for people, and its code is published from inside the network, in the Operator, through its
-# private endpoint (docs/proposals/07-private-by-default.md, phases 2 and 3). The cases app stays Enabled until the owner closes it: one value, and a commit, and he then reaches the web page on the private
-# network (the build takes Disabled with a host name on a gateway and without one: with none, the check of the front door runs in the Operator, door_in_operator). They go into every parameter file, so that
+# What the cases app takes from the public internet. It stays Enabled until the owner closes it: one value, and a commit, and he then reaches the web page on the private
+# network (the build takes Disabled with a host name on a gateway and without one: with none, the check of the front door runs in the Operator, door_in_operator). It goes into the parameter file, so that
 # the property is never left unset: for an app whose value is not set, the first private endpoint switches public access off by itself (Learn, App Service access restrictions).
 PUBLIC_NETWORK_ACCESS = ("Enabled", "Disabled")
-USAGE_APP_PUBLIC_NETWORK_ACCESS = "Disabled"
 CASES_APP_PUBLIC_NETWORK_ACCESS = "Enabled"
 # The plan that the cases app, which serves the web page, runs on: "Flex" (Flex Consumption: it scales to zero and bills per execution, so an idle web page costs nothing; the app uses the function subnet
 # snet-func) or "Basic" (B1, always on, about 13 US dollars a month; the app uses its own subnet snet-cases). It is Flex since the owner ordered it on 2026-11-07, and Basic is the way back: the first cases ran on
@@ -160,7 +152,7 @@ AIGATEWAY_HOST = re.compile(r"^(?=.{4,253}$)[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?\.ai
 PLACEHOLDER_AIGATEWAY_HOST = "placeholder-gateway.ai.gateway.azure.com"
 # The central private DNS zone in which the landing zone's policy registers the names of an App Service app (the app's own and its deployment site's) for the endpoint of the sub-resource `sites`.
 # A Flex Consumption deployment ends with a call from the deployment site to the app's own host name, and while the zone has no record of a new endpoint that name does not resolve: the first
-# `recording` after the usage app's endpoint was made failed at the publish for that reason (docs/proposals/07-private-by-default.md, phase 1). So the endpoint of an app is always waited for.
+# publish after the first Flex Consumption app's endpoint was made failed for that reason (docs/proposals/07-private-by-default.md, phase 1). So the endpoint of an app is always waited for.
 APP_ENDPOINT_ZONE = "privatelink.azurewebsites.net"
 FOUNDRY_PROJECT_NAME = "meternaut"
 FOUNDRY_GUARDRAIL_NAME = "meternaut-agents"
@@ -217,36 +209,17 @@ def items(value: str, name: str, limit: int) -> list[str]:
     return parts
 
 
-def account_name(subscription: str, group: str) -> str:
-    return f"aif-meternaut-{digest(subscription, group)}"
-
-
 def digest(subscription: str, group: str) -> str:
     """Eight hex characters that depend on the subscription and the group only, so that every name made from them is stable."""
     return hashlib.sha256(f"{subscription}/{group}".lower().encode("utf-8")).hexdigest()[:8]
 
 
-def recording_names(subscription: str, group: str) -> dict[str, str]:
-    """The names of the usage recording's services that are host names, so unique worldwide, each inside its own length limit."""
+def base_names(subscription: str, group: str) -> dict[str, str]:
+    """The names of the base's services that are host names, so unique worldwide, each inside its own length limit."""
     token = digest(subscription, group)
     return {
         "storage_account_name": f"stmeternautfn{token}",
         "event_hub_namespace": f"evhns-meternaut-{token}",
-        "cosmos_account_name": f"cosmos-meternaut-{token}",
-        "function_app_name": f"func-meternaut-usage-{token}",
-    }
-
-
-def legacy_names(subscription: str, group: str) -> dict[str, str]:
-    """The key-based usage recording that the keyless one replaced: a Logic App, its plan, its connection and its storage account.
-
-    The workflow removes exactly these four, by these names, before it deploys the keyless one, and nothing else."""
-    token = digest(subscription, group)
-    return {
-        "legacy_logic_app_name": f"logic-meternaut-usage-{token}",
-        "legacy_plan_name": "asp-meternaut-usage",
-        "legacy_connection_name": "azuremonitorlogs",
-        "legacy_storage_account_name": f"stmeternaut{token}",
     }
 
 
@@ -258,8 +231,7 @@ def cases_names(subscription: str, group: str) -> dict[str, str]:
 def foundry_names(subscription: str, group: str) -> dict[str, str]:
     """The names of the Foundry resource of the agents (environment/foundry/main.bicep).
 
-    The resource's name is a host name too, so it carries the digest, and it is not the model account's (aif-meternaut-<digest>): that account can never hold a
-    project. The project's name is part of the project endpoint, which is built here from the two names, so that the workflow, the template and the cases app
+    The resource's name is a host name too, so it carries the digest. The project's name is part of the project endpoint, which is built here from the two names, so that the workflow, the template and the cases app
     cannot disagree about it."""
     account = f"aif-meternaut-agents-{digest(subscription, group)}"
     return {
@@ -469,22 +441,19 @@ def agent_models(models: list[dict]) -> dict[str, str]:
     return {parameter: f"{AIGATEWAY_CONNECTION_NAME}/{name}" for parameter, name in AGENT_MODELS.items()}
 
 
-def recording_endpoints(names: dict[str, str]) -> list[tuple[str, str]]:
-    """The private endpoints of the usage recording and the central private DNS zone that the landing zone registers each in: the three of the storage account, the Cosmos DB account's, the
-    Event Hubs namespace's and the function app's own. The workflow waits for every one of them before it publishes the code. The app's own is in the list because the deployment of a package ends
-    with a call from the deployment site to the app's own host name, which does not resolve until the zone has the record (docs/proposals/07-private-by-default.md, phase 1)."""
+def base_endpoints(names: dict[str, str]) -> list[tuple[str, str]]:
+    """The private endpoints of the base and the central private DNS zone that the landing zone registers each in: the three of the storage account and the Event Hubs namespace's.
+    The workflow waits for every one of them, so that an app that starts after the base is deployed finds the names of its storage and its namespace private."""
     storage = names["storage_account_name"]
     return [
         *[(f"pe-{storage}-{service}", f"privatelink.{service}.core.windows.net") for service in ("blob", "queue", "table")],
-        (f"pe-{names['cosmos_account_name']}", "privatelink.documents.azure.com"),
         (f"pe-{names['event_hub_namespace']}", "privatelink.servicebus.windows.net"),
-        (f"pe-{names['function_app_name']}", APP_ENDPOINT_ZONE),
     ]
 
 
 def cases_endpoints(names: dict[str, str]) -> list[tuple[str, str]]:
     """The private endpoint of the cases app (the console's name and its deployment site) and the central private DNS zone that the landing zone registers it in. The action `cases` waits for it
-    before it publishes the code, as `recording` waits for the usage app's: the two apps behave alike, and a later probe from the Operator finds the names."""
+    before it publishes the code, and a later probe from the Operator finds the names."""
     return [(f"pe-{names['cases_function_app_name']}", APP_ENDPOINT_ZONE)]
 
 
@@ -650,27 +619,19 @@ def build(env, models: list[dict], preview: bool = False, aigateway_policies: li
     if not OWNER.match(owner):
         raise Problem("ENV_OWNER is a short label (letters, digits, @ . _ + - and spaces)")
 
-    insights = APPINSIGHTS_ID.match(need(env, "GATEWAY_APPINSIGHTS_ID"))
-    if not insights:
-        raise Problem("GATEWAY_APPINSIGHTS_ID is the resource id of an Application Insights component")
     cases_system_principal = (env.get("CASES_SYSTEM_PRINCIPAL_ID") or "").strip()
     if cases_system_principal and not GUID.match(cases_system_principal):
         raise Problem("CASES_SYSTEM_PRINCIPAL_ID is the object id of the cases app's system-assigned identity")
     foundry_exists = exists_flag(env, "ENV_FOUNDRY_PROJECT_EXISTS")
-    raw_readers = (env.get("RECORDING_READER_IDS") or "").strip()
-    readers = [r.strip() for r in raw_readers.split(",")] if raw_readers else []
-    if len(readers) > 5 or len(set(r.lower() for r in readers)) != len(readers) or not all(GUID.match(r) for r in readers):
-        raise Problem("RECORDING_READER_IDS is a comma-separated list of up to 5 object ids, each once, or empty")
 
     vnet = network(need(env, "ENV_VNET_PREFIX"), "ENV_VNET_PREFIX")
     subnet = network(need(env, "ENV_PE_SUBNET_PREFIX"), "ENV_PE_SUBNET_PREFIX")
     if not vnet.subnet_of(PRIVATE_SPACE) or not 16 <= vnet.prefixlen <= 28:
         raise Problem("ENV_VNET_PREFIX is inside 10.0.0.0/8 and between /16 and /28")
     if not subnet.subnet_of(vnet) or subnet.prefixlen > 28:
-        raise Problem("ENV_PE_SUBNET_PREFIX lies inside the virtual network and is at least a /28: the usage recording has five private endpoints, the model account one, the Foundry resource one and each of the two function apps one, and Azure keeps five addresses of every subnet")
-    for setting, value in (("USAGE_APP_PUBLIC_NETWORK_ACCESS", USAGE_APP_PUBLIC_NETWORK_ACCESS), ("CASES_APP_PUBLIC_NETWORK_ACCESS", CASES_APP_PUBLIC_NETWORK_ACCESS)):
-        if value not in PUBLIC_NETWORK_ACCESS:
-            raise Problem(f"{setting} (in tools/environment-params.py) is Enabled or Disabled, so that the template always writes the property")
+        raise Problem("ENV_PE_SUBNET_PREFIX lies inside the virtual network and is at least a /28: the base has four private endpoints (the storage account's three and the namespace's), the Foundry resource one and the cases app one, and Azure keeps five addresses of every subnet")
+    if CASES_APP_PUBLIC_NETWORK_ACCESS not in PUBLIC_NETWORK_ACCESS:
+        raise Problem("CASES_APP_PUBLIC_NETWORK_ACCESS (in tools/environment-params.py) is Enabled or Disabled, so that the template always writes the property")
     if not isinstance(AGENTS_VIA_AI_GATEWAY, bool):
         raise Problem("AGENTS_VIA_AI_GATEWAY (in tools/environment-params.py) is True or False")
     if CASES_APP_PLAN not in CASES_APP_PLANS:
@@ -705,60 +666,45 @@ def build(env, models: list[dict], preview: bool = False, aigateway_policies: li
     if not BUDGET_START.match(start):
         raise Problem("ENV_BUDGET_START is the first day of a month, as YYYY-MM-01")
 
-    name = account_name(subscription, group)
-    names = recording_names(subscription, group)
+    names = base_names(subscription, group)
     foundry = foundry_names(subscription, group)
     other_cases_plan = next(kind for kind in CASES_APP_PLANS if kind != CASES_APP_PLAN)
     func_subnet = function_subnet(vnet, subnet)
     web = web_subnet(vnet, subnet, func_subnet)
     ops = ops_subnet(vnet, subnet, func_subnet, web)
-    endpoint = f"https://{name}.cognitiveservices.azure.com"
-    deployed = [{k: m[k] for k in ("name", "version", "sku", "capacity")} for m in models]
-    # The Foundry resource of the agents deploys the same models with a capacity of its own: an agent that calls tools reads everything said so far again at every step,
+    # The Foundry resource of the agents deploys the models of environment/models.json with a capacity of its own: an agent that calls tools reads everything said so far again at every step,
     # so one run uses many more tokens a minute than a single model call does.
     agent_deployed = [{"name": m["name"], "version": m["version"], "sku": m["sku"], "capacity": m["agentCapacity"]} for m in models]
 
     environment = {
         "location": location,
-        "accountName": name,
         "vnetAddressPrefix": str(vnet),
         "networkExists": exists_flag(env, "ENV_NETWORK_EXISTS"),
         "peSubnetPrefix": str(subnet),
         "funcSubnetPrefix": str(func_subnet),
         "webSubnetPrefix": str(web),
         "dnsServers": dns,
-        "models": deployed,
         "owner": owner,
         "budgetAmount": budget,
         "alertEmails": emails,
         "budgetStartDate": start,
     }
-    recording = {
+    base = {
         "location": location,
         "owner": owner,
         "storageAccountName": names["storage_account_name"],
         "eventHubNamespaceName": names["event_hub_namespace"],
-        "cosmosAccountName": names["cosmos_account_name"],
-        "functionAppName": names["function_app_name"],
-        "gatewayAppInsightsSubscriptionId": insights.group(1).lower(),
-        "gatewayAppInsightsResourceGroup": insights.group(2),
-        "gatewayAppInsightsName": insights.group(3),
-        "dataReaderPrincipalIds": list(dict.fromkeys(r.lower() for r in readers)),
-        "usageAppPublicNetworkAccess": USAGE_APP_PUBLIC_NETWORK_ACCESS,
     }
     outputs = {
-        "account_name": name,
-        "private_endpoint": f"pe-{name}",
         "vnet_name": "vnet-meternaut",
         "nsg_name": "nsg-meternaut-pe",
-        "endpoint": endpoint,
         "cases_system_principal_known": "true" if cases_system_principal else "false",
         "function_subnet_prefix": str(func_subnet),
         "web_subnet_prefix": str(web),
         "ops_subnet_prefix": str(ops),
         "operator_identity_name": "id-meternaut-operator",
         "operator_subnet_name": "snet-ops",
-        "recording_endpoints": ",".join(f"{endpoint_name}:{zone}" for endpoint_name, zone in recording_endpoints(names)),
+        "base_endpoints": ",".join(f"{endpoint_name}:{zone}" for endpoint_name, zone in base_endpoints(names)),
         "cases_endpoints": ",".join(f"{endpoint_name}:{zone}" for endpoint_name, zone in cases_endpoints(cases_names(subscription, group))),
         "appinsights_name": "appi-meternaut",
         "cases_hub_name": "cases-control",
@@ -776,7 +722,6 @@ def build(env, models: list[dict], preview: bool = False, aigateway_policies: li
         **names,
         **cases_names(subscription, group),
         **foundry,
-        **legacy_names(subscription, group),
     }
     # The connection to the AI Gateway is asked for only while the switch is on and the host is known: the parameters are left out otherwise, so that the file is what it was (the template's defaults are empty).
     foundry_values = {
@@ -794,7 +739,7 @@ def build(env, models: list[dict], preview: bool = False, aigateway_policies: li
         foundry_values["aiGatewayModels"] = [{"name": m["name"], "version": m["version"]} for m in models]
     files = {
         "environment.parameters.json": parameters(environment),
-        "recording.parameters.json": parameters(recording),
+        "base.parameters.json": parameters(base),
         "foundry.parameters.json": parameters(foundry_values),
         "planted.parameters.json": parameters(planted_parameters(env, location, owner)),
         "operator.parameters.json": parameters({

@@ -71,7 +71,7 @@ NOT_FOUND = re.compile(r"ResourceNotFound|ContainerGroupNotFound|NotFound|\b404\
 MIN_SECRET_LENGTH = 8
 # The most bytes of files (the script and every --secret-file, before base64) that one container group's request may carry. It is a measured limit and not a documented one: Learn names no limit for a
 # secret volume or for the request, and an assumption of 3,000,000 bytes, which this constant held first, was wrong. What was seen, on 2026-11-06 (UTC, from the Hub runs):
-#   FILES_TAKEN_BYTES    466,104 bytes of files were taken: the probe of the Operator (a file of 400,000 bytes, the usage app's lock of 44,967 and the probe's own script of 21,137)
+#   FILES_TAKEN_BYTES    466,104 bytes of files were taken: the probe of the Operator (a file of 400,000 bytes, a lock file of 44,967 and the probe's own script of 21,137)
 #   FILES_REFUSED_BYTES  632,656 bytes of files were refused, twice, with "(InternalServerError) Encountered an internal server error" when the group was made: the finished package of the cases app (614,068
 #                        bytes zipped) and the script of the container (18,588)
 # The real limit lies between the two and is not known. The cap is a round number just above the largest total that is known to work, so that the probe still runs, and no request is ever sent that

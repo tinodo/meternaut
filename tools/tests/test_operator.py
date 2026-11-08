@@ -279,7 +279,7 @@ class Arguments(unittest.TestCase):
         # error. The 3,000,000 bytes that this constant held first were an assumption: Learn names no limit, and the first cases publish through the Operator found a real one.
         self.assertEqual(op.MAX_FILE_BYTES, 480_000)
         self.assertEqual((op.FILES_TAKEN_BYTES, op.FILES_REFUSED_BYTES), (466_104, 632_656))
-        self.assertEqual(op.FILES_TAKEN_BYTES, 400_000 + 44_967 + 21_137, "the file of the size test, the usage app's lock and the probe's script")
+        self.assertEqual(op.FILES_TAKEN_BYTES, 400_000 + 44_967 + 21_137, "the file of the size test, a lock file and the probe's script")
         self.assertEqual(op.FILES_REFUSED_BYTES, 614_068 + 18_588, "the finished package of the cases app and the container script")
         self.assertLessEqual(op.FILES_TAKEN_BYTES, op.MAX_FILE_BYTES, "what is known to work is within the cap, so the probe is not refused")
         self.assertLess(op.MAX_FILE_BYTES, op.FILES_REFUSED_BYTES, "what was refused is above it")
@@ -640,11 +640,11 @@ class TheTokenOfTheDeployIdentity(unittest.TestCase):
     TOKEN = ".".join(["eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9", "eyJzdWIiOiJyZXBvOm" + "dpdGh1Yi1leGFtcGxlLzEyMzQ1" * 30, "c2ln" + "bmF0dXJlLTEyMzQ1" * 20])
 
     def run_probe_in_the_tool(self, az):
-        files = {"size-test": b"x" * 1000, "usage-requirements.txt": USAGE_LOCK}
+        files = {"size-test": b"x" * 1000, "cases-requirements.txt": CASES_LOCK}
         with tempfile.TemporaryDirectory() as tmp:
             summary = Path(tmp) / "summary.md"
             code, out, err, work = run_tool("--secure-env", "AZURE_FEDERATED_TOKEN", "--env", f"PROBE_DEPLOY_CLIENT_ID={DEPLOY_CLIENT}", "--env", f"PROBE_DEPLOY_TENANT_ID={DEPLOY_TENANT}",
-                                            "--env", f"PROBE_LOCK_BYTES={len(USAGE_LOCK)}", "--summary", str(summary), az=az, env={"AZURE_FEDERATED_TOKEN": self.TOKEN},
+                                            "--env", f"PROBE_LOCK_BYTES={len(CASES_LOCK)}", "--summary", str(summary), az=az, env={"AZURE_FEDERATED_TOKEN": self.TOKEN},
                                             script_text=text("operator/probe.sh"), files=files)
             written = summary.read_text(encoding="utf-8") if summary.exists() else ""
             leftovers = [path for path in Path(work).rglob("*") if path.is_file() and self.TOKEN.encode() in path.read_bytes()]
@@ -658,8 +658,8 @@ class TheTokenOfTheDeployIdentity(unittest.TestCase):
         variables = az.document["properties"]["containers"][0]["properties"]["environmentVariables"]
         self.assertEqual([variable for variable in variables if self.TOKEN in json.dumps(variable)], [{"name": "AZURE_FEDERATED_TOKEN", "secureValue": self.TOKEN}])
         self.assertEqual(json.dumps(az.document).count(self.TOKEN), 1, "once in the request, and as a secure value, which Azure does not show again")
-        self.assertEqual(sorted(az.document["properties"]["volumes"][0]["secret"]), ["probe.sh", "size-test", "usage-requirements.txt"])
-        self.assertEqual(base64.b64decode(az.document["properties"]["volumes"][0]["secret"]["usage-requirements.txt"]), USAGE_LOCK, "the lock file is sent whole")
+        self.assertEqual(sorted(az.document["properties"]["volumes"][0]["secret"]), ["cases-requirements.txt", "probe.sh", "size-test"])
+        self.assertEqual(base64.b64decode(az.document["properties"]["volumes"][0]["secret"]["cases-requirements.txt"]), CASES_LOCK, "the lock file is sent whole")
         for stream in (out, err, written):
             for form in (self.TOKEN, base64.b64encode(self.TOKEN.encode()).decode(), json.dumps(self.TOKEN)[1:-1]):
                 self.assertNotIn(form, stream)
@@ -809,11 +809,11 @@ class OperatorTemplate(unittest.TestCase):
     def declared(self):
         return {match.group(1): match.group(2) for match in re.finditer(r"(?m)^resource (\w+) '([^'@]+)@[^']+'", self.code)}
 
-    def test_it_declares_the_identity_the_group_s_network_pieces_the_three_roles_and_reads_the_namespace_and_its_two_hubs(self):
+    def test_it_declares_the_identity_the_group_s_network_pieces_the_two_roles_and_reads_the_namespace_and_its_control_hub(self):
         types = sorted(self.declared().values())
-        self.assertEqual(types, ["Microsoft.Authorization/roleAssignments"] * 3 + ["Microsoft.EventHub/namespaces", "Microsoft.EventHub/namespaces/eventhubs", "Microsoft.EventHub/namespaces/eventhubs",
-                                                                                "Microsoft.ManagedIdentity/userAssignedIdentities", "Microsoft.Network/networkSecurityGroups",
-                                                                                "Microsoft.Network/virtualNetworks", "Microsoft.Network/virtualNetworks/subnets"])
+        self.assertEqual(types, ["Microsoft.Authorization/roleAssignments"] * 2 + ["Microsoft.EventHub/namespaces", "Microsoft.EventHub/namespaces/eventhubs",
+                                                                                 "Microsoft.ManagedIdentity/userAssignedIdentities", "Microsoft.Network/networkSecurityGroups",
+                                                                                 "Microsoft.Network/virtualNetworks", "Microsoft.Network/virtualNetworks/subnets"])
 
     def test_the_virtual_network_is_never_declared_again_and_the_subnet_is_made_only_while_it_is_not_there(self):
         # AGENTS.md rule 27: a template that makes the subnet again takes away the route table that the landing zone's network manager put on it.
@@ -841,15 +841,14 @@ class OperatorTemplate(unittest.TestCase):
     def test_the_identity_is_user_assigned_and_named_for_the_operator(self):
         self.assertRegex(self.code, r"resource operatorIdentity 'Microsoft\.ManagedIdentity/userAssignedIdentities@[^']+' = \{\n  name: 'id-\$\{workload\}-operator'")
 
-    def test_the_roles_are_reader_on_the_group_and_data_sender_on_each_of_the_two_control_hubs_for_the_identity_only(self):
+    def test_the_roles_are_reader_on_the_group_and_data_sender_on_the_control_hub_for_the_identity_only(self):
         self.assertIn("var readerRoleId = 'acdd72a7-3385-48ef-bd42-f606fba81ae7'", self.code)
         self.assertIn("var eventHubsDataSenderRoleId = '2b629674-e913-4c01-ae53-ef4638d8f975'", self.code)
         self.assertEqual(len(re.findall(r"RoleId = '", self.code)), 2, "two roles, Reader and Data Sender, and no third")
         self.assertEqual(len(re.findall(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", self.code)), 2)
         blocks = dict(re.findall(r"(?ms)^resource (\w+) 'Microsoft\.Authorization/roleAssignments@[^']+' = \{\n(.*?)^\}", self.code))
-        self.assertEqual(sorted(blocks), ["operatorReadsTheGroup", "operatorSendsCasesControl", "operatorSendsUsageControl"])
+        self.assertEqual(sorted(blocks), ["operatorReadsTheGroup", "operatorSendsCasesControl"], "the Operator holds no role on the control hub of the old usage recording any more: that hub was removed on 2026-11-07")
         expected = {"operatorReadsTheGroup": ("resourceGroup()", "guid(resourceGroup().id, operatorIdentity.id, readerRoleId)", "readerRoleId"),
-                    "operatorSendsUsageControl": ("usageControlHub", "guid(usageControlHub.id, operatorIdentity.id, eventHubsDataSenderRoleId)", "eventHubsDataSenderRoleId"),
                     "operatorSendsCasesControl": ("casesControlHub", "guid(casesControlHub.id, operatorIdentity.id, eventHubsDataSenderRoleId)", "eventHubsDataSenderRoleId")}
         for name, (scope, assignment_name, role) in expected.items():
             block = blocks[name]
@@ -858,25 +857,22 @@ class OperatorTemplate(unittest.TestCase):
             self.assertIn(f"roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', {role})", block, name)
             self.assertIn("principalId: operatorIdentity.properties.principalId", block, name)
             self.assertIn("principalType: 'ServicePrincipal'", block, name)
-        for wider in ("scope: eventHubs", "scope: subscription", "scope: tenant", "scope: managementGroup", "scope: usageHub", "scope: piiHub"):
-            self.assertNotIn(wider, self.code, f"{wider}: the Operator may send to the two control hubs and nowhere else")
+        for wider in ("scope: eventHubs", "scope: subscription", "scope: tenant", "scope: managementGroup", "scope: usageHub", "scope: piiHub", "usageControlHub"):
+            self.assertNotIn(wider, self.code, f"{wider}: the Operator may send to the control hub of the cases and nowhere else")
 
-    def test_the_namespace_and_the_two_control_hubs_are_only_read_here_because_the_usage_recording_and_the_cases_make_them(self):
-        self.assertEqual(len(re.findall(r"Microsoft\.EventHub", self.code)), 3)
+    def test_the_namespace_and_the_control_hub_are_only_read_here_because_the_base_and_the_cases_make_them(self):
+        self.assertEqual(len(re.findall(r"Microsoft\.EventHub", self.code)), 2)
         self.assertRegex(self.code, r"(?m)^resource eventHubs 'Microsoft\.EventHub/namespaces@[^']+' existing = \{\n  name: eventHubNamespaceName\n\}$")
-        for symbol, name in (("usageControlHub", "usageControlHubName"), ("casesControlHub", "casesControlHubName")):
+        for symbol, name in (("casesControlHub", "casesControlHubName"),):
             self.assertRegex(self.code, rf"(?m)^resource {symbol} 'Microsoft\.EventHub/namespaces/eventhubs@[^']+' existing = \{{\n  parent: eventHubs\n  name: {name}\n\}}$")
         for word in ("consumergroups", "authorizationRules", "publicNetworkAccess", "disableLocalAuth", "eventHubs.properties", "ControlHub.properties"):
-            self.assertNotIn(word, self.code, f"{word}: nothing of the namespace or the hubs is written or read here")
+            self.assertNotIn(word, self.code, f"{word}: nothing of the namespace or the hub is written or read here")
 
-    def test_the_names_of_the_hubs_are_the_ones_that_the_usage_recording_and_the_first_cases_give_them(self):
+    def test_the_name_of_the_hub_is_the_one_that_the_first_cases_give_it(self):
         # A hub that is renamed in the template that makes it must be renamed here too: the role of the Operator is on the hub by its name, and a template that reads a hub that is not there fails.
-        self.assertIn("var usageControlHubName = 'usage-control'", self.code)
         self.assertIn("var casesControlHubName = 'cases-control'", self.code)
-        self.assertIn("var controlHubName = 'usage-control'", text("environment/recording/main.bicep"))
         self.assertIn("var controlHubName = 'cases-control'", text("environment/cases/main.bicep"))
-        self.assertEqual(sorted(re.findall(r"CONTROL_HUB = \"([a-z-]+)\"", text("tools/recording-check.py") + text("tools/cases-check.py"))), ["cases-control", "usage-control"],
-                         "and the tools send to the hubs of the same names")
+        self.assertEqual(sorted(re.findall(r"CONTROL_HUB = \"([a-z-]+)\"", text("tools/cases-check.py"))), ["cases-control"], "and the tool sends to the hub of the same name")
 
     def test_it_outputs_the_ids_that_the_workflow_and_the_container_need_and_nothing_secret(self):
         outputs = re.findall(r"(?m)^output (\w+) string = (.+)$", self.code)
@@ -888,7 +884,7 @@ class OperatorTemplate(unittest.TestCase):
         for name in ("owner", "opsSubnetPrefix", "eventHubNamespaceName"):
             self.assertRegex(self.code, rf"(?m)^@minLength\(\d+\)\n(?:@maxLength\(\d+\)\n)?param {name} string$")
         self.assertRegex(self.code, r"(?m)^@minLength\(9\)\n@maxLength\(18\)\nparam opsSubnetPrefix string$")
-        self.assertRegex(self.code, r"(?m)^@minLength\(6\)\n@maxLength\(50\)\nparam eventHubNamespaceName string$", "the limits of an Event Hubs namespace's name, as in the usage recording's template")
+        self.assertRegex(self.code, r"(?m)^@minLength\(6\)\n@maxLength\(50\)\nparam eventHubNamespaceName string$", "the limits of an Event Hubs namespace's name, as in the base's template")
 
     def test_there_is_no_key_in_it(self):
         for word in ("listKeys", "listSecrets", "AccountKey", "SharedAccessKey", "primaryKey", "instrumentationKey", "allowSharedKeyAccess: true", "disableLocalAuth: false"):
@@ -1076,9 +1072,8 @@ FEDERATED_TOKEN = "fake-oidc-token-Q9x7LmN2pR5tV8wY"
 SHORT_FEDERATED_TOKEN = "fake-oidc-7Qz"
 DEPLOY_CLIENT = "aaaaaaaa-1111-2222-3333-444444444444"
 DEPLOY_TENANT = "bbbbbbbb-5555-6666-7777-888888888888"
-SCM_USAGE = "func-meternaut-usage-0a1b2c3d.scm.azurewebsites.net"
 SCM_CASES = "func-meternaut-cases-0a1b2c3d.scm.azurewebsites.net"
-USAGE_LOCK = b"azure-core==1.41.0 \\\n    --hash=sha256:" + b"ab" * 32 + b"\n"
+CASES_LOCK = b"azure-core==1.41.0 \\\n    --hash=sha256:" + b"ab" * 32 + b"\n"
 
 
 @unittest.skipIf(BASH is None, "no bash on this machine")
@@ -1099,7 +1094,7 @@ class ProbeScript(unittest.TestCase):
             if size is not None:
                 (volume / "size-test").write_bytes(b"x" * size)
             if lock is not None:
-                (volume / "usage-requirements.txt").write_bytes(lock)
+                (volume / "cases-requirements.txt").write_bytes(lock)
             work_root = tmp / "work"
             work_root.mkdir()
             log = tmp / "log.txt"
@@ -1119,16 +1114,16 @@ class ProbeScript(unittest.TestCase):
         return done, done.stdout.splitlines()
 
     def good_env(self):
-        """Everything that the probe is given on the real estate, with stand-ins that answer well. The deploy identity has a token, the two deployment sites are private, and the lock file has arrived whole."""
-        return {"PROBE_NAMES": "evhns-example.servicebus.windows.net github.com", "PROBE_PRIVATE_NAMES": f"evhns-example.servicebus.windows.net {SCM_USAGE} {SCM_CASES}",
-                "FAKE_DNS": f"evhns-example.servicebus.windows.net=10.53.0.20 github.com=140.82.121.4 {SCM_USAGE}=10.53.0.21 {SCM_CASES}=10.53.0.21",
+        """Everything that the probe is given on the real estate, with stand-ins that answer well. The deploy identity has a token, the deployment site is private, and the lock file has arrived whole."""
+        return {"PROBE_NAMES": "evhns-example.servicebus.windows.net github.com", "PROBE_PRIVATE_NAMES": f"evhns-example.servicebus.windows.net {SCM_CASES}",
+                "FAKE_DNS": f"evhns-example.servicebus.windows.net=10.53.0.20 github.com=140.82.121.4 {SCM_CASES}=10.53.0.21",
                 "PROBE_URLS": "https://mcr.microsoft.com/v2/ https://api.github.com/ https://github.com/x/y https://slow.example.net/",
-                "FAKE_CURL": f"mcr.microsoft.com=200:0 api.github.com=200:0 github.com=302:0:release-assets.githubusercontent.com slow.example.net=302:47 {SCM_USAGE}=401:0 {SCM_CASES}=401:0",
+                "FAKE_CURL": f"mcr.microsoft.com=200:0 api.github.com=200:0 github.com=302:0:release-assets.githubusercontent.com slow.example.net=302:47 {SCM_CASES}=401:0",
                 "PROBE_SIZE_BYTES": "4000", "AZURE_FEDERATED_TOKEN": FEDERATED_TOKEN, "PROBE_DEPLOY_CLIENT_ID": DEPLOY_CLIENT, "PROBE_DEPLOY_TENANT_ID": DEPLOY_TENANT,
-                "PROBE_SCM_HOSTS": f"{SCM_USAGE} {SCM_CASES}", "PROBE_LOCK_BYTES": str(len(USAGE_LOCK))}
+                "PROBE_SCM_HOSTS": SCM_CASES, "PROBE_LOCK_BYTES": str(len(CASES_LOCK))}
 
     def good_run(self, **changes):
-        return self.run_probe({**self.good_env(), **changes}, size=4000, lock=USAGE_LOCK)
+        return self.run_probe({**self.good_env(), **changes}, size=4000, lock=CASES_LOCK)
 
     @staticmethod
     def without_seconds(lines):
@@ -1155,10 +1150,9 @@ class ProbeScript(unittest.TestCase):
             "ok: https github.com 302 -> release-assets.githubusercontent.com",
             "ok: https slow.example.net answers, with more than 2 redirects",
             "ok: secret volume file is 4000 bytes, as sent",
-            "ok: scm func-meternaut-usage-0a1b2c3d: private address, GET / gives 401",
             "ok: scm func-meternaut-cases-0a1b2c3d: private address, GET / gives 401",
-            f"ok: usage lock file is {len(USAGE_LOCK)} bytes, as sent",
-            "ok: usage build needs no --ignore-requires-python: 3 files, 1.5 MB, N s, hashes ok",
+            f"ok: cases lock file is {len(CASES_LOCK)} bytes, as sent",
+            "ok: cases build needs no --ignore-requires-python: 3 files, 1.5 MB, N s, hashes ok",
             "probe-done",
         ])
         self.assertEqual(self.leftover, [], "the work folder, with the CLI's state of the deploy identity and what was built, is gone")
@@ -1232,7 +1226,7 @@ class ProbeScript(unittest.TestCase):
 
     def test_no_secret_of_the_environment_and_no_token_of_a_command_ever_reaches_the_output(self):
         for scenario in (self.good_env(), {**self.good_env(), "FAKE_AZ_LOGIN": "fail"}):
-            done, lines = self.run_probe(scenario, size=4000, lock=USAGE_LOCK)
+            done, lines = self.run_probe(scenario, size=4000, lock=CASES_LOCK)
             self.assertNotIn(TOKEN_OF_THE_RUN, done.stdout + done.stderr)
             self.assertNotIn(FEDERATED_TOKEN, done.stdout + done.stderr)
             for line in lines:
@@ -1245,7 +1239,7 @@ class ProbeScript(unittest.TestCase):
         self.assertEqual((done.returncode, done.stderr), (0, ""))
         self.assertIn("FAIL: az login: OPERATOR_CLIENT_ID is not set", lines)
         self.assertIn("FAIL: deploy identity sign-in: no token (the workflow sent none)", lines)
-        self.assertIn("FAIL: no usage-requirements.txt in the secret volume", lines)
+        self.assertIn("FAIL: no cases-requirements.txt in the secret volume", lines)
         self.assertFalse([line for line in lines if line.startswith(("ok: scm", "FAIL: scm"))], "no deployment site asked for, no line")
         self.assertEqual([call for call in self.calls if "scm.azurewebsites.net" in call], [])
         self.assertEqual(lines[-1], "probe-done")
@@ -1283,7 +1277,7 @@ class ProbeScript(unittest.TestCase):
         self.assertEqual(self.leftover, [])
 
     def test_the_token_is_on_the_command_line_of_the_one_sign_in_and_in_the_environment_of_no_program(self):
-        self.good_run(PROBE_SCM_HOSTS=f"{SCM_USAGE}")
+        self.good_run(PROBE_SCM_HOSTS=SCM_CASES)
         self.assertEqual([call for call in self.calls if FEDERATED_TOKEN in call], [next(call for call in self.calls if "--service-principal" in call)])
         self.assertIn(f"--federated-token {FEDERATED_TOKEN} ", self.calls[[FEDERATED_TOKEN in call for call in self.calls].index(True)])
         self.assertEqual([call for call in self.calls if "SAW THE TOKEN" in call], [],
@@ -1309,9 +1303,9 @@ class ProbeScript(unittest.TestCase):
         self.assertEqual([call for call in self.calls if "--service-principal" in call], [], "nothing is tried without a token")
         self.assertEqual(len([line for line in lines if "deploy identity" in line]), 1, "no group is read with an identity that did not sign in")
         for expected in ("ok: az login --identity", "ok: az group show of the project group: the Reader role works", "ok: secret volume file is 4000 bytes, as sent",
-                         "ok: scm func-meternaut-usage-0a1b2c3d: private address, GET / gives 401"):
+                         "ok: scm func-meternaut-cases-0a1b2c3d: private address, GET / gives 401"):
             self.assertIn(expected, lines)
-        self.assertEqual(self.without_seconds(lines)[-2], "ok: usage build needs no --ignore-requires-python: 3 files, 1.5 MB, N s, hashes ok")
+        self.assertEqual(self.without_seconds(lines)[-2], "ok: cases build needs no --ignore-requires-python: 3 files, 1.5 MB, N s, hashes ok")
         self.assertEqual(lines[-1], "probe-done")
         done, lines = self.good_run(AZURE_FEDERATED_TOKEN="", PROBE_TOKEN_NOTE=None)
         self.assertIn("FAIL: deploy identity sign-in: no token (the workflow sent none)", lines)
@@ -1337,11 +1331,11 @@ class ProbeScript(unittest.TestCase):
         self.assertIn("FAIL: az group show as the deploy identity: ERROR: (AuthorizationFailed) The deploy identity doe", lines, "what the CLI said, cut to a few words")
         self.assertIn("ok: az group show of the project group: the Reader role works", lines, "the Operator's read is another one and still works")
 
-    # --- pip and the build of the usage app's libraries ---------------------------------------------------------------------------------------------------------------------------------
+    # --- pip and the build of the cases app's libraries ---------------------------------------------------------------------------------------------------------------------------------
 
     def build_run(self, **changes):
         """A run with nothing but the build test to do: a lock that arrived and a pip that behaves as FAKE_PIP says."""
-        done, lines = self.run_probe({"PROBE_LOCK_BYTES": str(len(USAGE_LOCK)), **changes}, lock=USAGE_LOCK)
+        done, lines = self.run_probe({"PROBE_LOCK_BYTES": str(len(CASES_LOCK)), **changes}, lock=CASES_LOCK)
         self.assertEqual(done.returncode, 0)
         self.assertEqual(lines[-1], "probe-done")
         self.assertEqual(self.leftover, [], "the folder of the build is deleted whatever came of it")
@@ -1349,9 +1343,9 @@ class ProbeScript(unittest.TestCase):
 
     def test_the_build_runs_the_pip_command_of_the_build_script_for_python_3_13_into_a_folder_of_the_work_folder_and_the_lock_of_the_volume(self):
         lines, installs = self.build_run()
-        self.assertEqual(lines[-3:], [f"ok: usage lock file is {len(USAGE_LOCK)} bytes, as sent", "ok: usage build needs no --ignore-requires-python: 3 files, 1.5 MB, N s, hashes ok", "probe-done"])
+        self.assertEqual(lines[-3:], [f"ok: cases lock file is {len(CASES_LOCK)} bytes, as sent", "ok: cases build needs no --ignore-requires-python: 3 files, 1.5 MB, N s, hashes ok", "probe-done"])
         (install,) = installs
-        self.assertRegex(install, r"--target /.+/probe-[^/]+/usage/\.python_packages/lib/site-packages --requirement /.+/op/usage-requirements\.txt \[PYTHONPATH=none\]$")
+        self.assertRegex(install, r"--target /.+/probe-[^/]+/cases/\.python_packages/lib/site-packages --requirement /.+/op/cases-requirements\.txt \[PYTHONPATH=none\]$")
         self.assertNotIn("--ignore-requires-python", install)
         self.assertIn("--python-version 3.13", install)
 
@@ -1382,8 +1376,8 @@ class ProbeScript(unittest.TestCase):
 
     def test_when_the_first_attempt_fails_because_of_requires_python_the_second_adds_the_flag_and_the_probe_says_which_one_worked(self):
         lines, installs = self.build_run(FAKE_PIP="strict-fails")
-        self.assertEqual(lines[-3:], ["FAIL: usage build without --ignore-requires-python: Requires-Python does not fit the interpreter",
-                                      "ok: usage build only with --ignore-requires-python: 3 files, 1.5 MB, N s, hashes ok", "probe-done"])
+        self.assertEqual(lines[-3:], ["FAIL: cases build without --ignore-requires-python: Requires-Python does not fit the interpreter",
+                                      "ok: cases build only with --ignore-requires-python: 3 files, 1.5 MB, N s, hashes ok", "probe-done"])
         self.assertEqual(len(installs), 2)
         first, second = installs
         self.assertNotIn("--ignore-requires-python", first)
@@ -1392,22 +1386,22 @@ class ProbeScript(unittest.TestCase):
     def test_a_hash_a_name_or_a_timeout_is_not_tried_again_because_the_flag_would_not_change_it(self):
         for mode, said in (("hash", "a hash does not match the lock"), ("network", "a name was not resolved"), ("timeout", "timed out after 240 s")):
             lines, installs = self.build_run(FAKE_PIP=mode)
-            self.assertEqual(lines[-2:], [f"FAIL: usage build: {said}", "probe-done"], mode)
+            self.assertEqual(lines[-2:], [f"FAIL: cases build: {said}", "probe-done"], mode)
             self.assertEqual(len(installs), 1, mode)
 
     def test_an_error_nobody_planned_for_is_tried_again_with_the_flag_and_both_failures_are_said_in_a_few_words(self):
         lines, installs = self.build_run(FAKE_PIP="other")
-        failures = [line for line in lines if line.startswith("FAIL: usage build")]
+        failures = [line for line in lines if line.startswith("FAIL: cases build")]
         self.assertEqual(len(failures), 2, failures)
-        self.assertTrue(failures[0].startswith("FAIL: usage build without --ignore-requires-python: ERROR: something that nobody planned for"), failures[0])
-        self.assertTrue(failures[1].startswith("FAIL: usage build with --ignore-requires-python too: ERROR: something that nobody planned for"), failures[1])
+        self.assertTrue(failures[0].startswith("FAIL: cases build without --ignore-requires-python: ERROR: something that nobody planned for"), failures[0])
+        self.assertTrue(failures[1].startswith("FAIL: cases build with --ignore-requires-python too: ERROR: something that nobody planned for"), failures[1])
         self.assertEqual(len(installs), 2)
 
     def test_without_pip_ensurepip_is_tried_into_the_work_folder_and_the_build_goes_on_with_the_pip_that_it_made(self):
         lines, installs = self.build_run(FAKE_PIP="missing")
         self.assertIn("FAIL: python3 -m pip is not there: /usr/bin/python3: No module named pip", lines)
         self.assertIn("ok: python3 -m ensurepip makes pip 24.0 in the work folder", lines)
-        self.assertEqual(lines[-2], "ok: usage build needs no --ignore-requires-python: 3 files, 1.5 MB, N s, hashes ok")
+        self.assertEqual(lines[-2], "ok: cases build needs no --ignore-requires-python: 3 files, 1.5 MB, N s, hashes ok")
         (ensure,) = [call for call in self.calls if call.startswith("python3 -m ensurepip")]
         self.assertRegex(ensure, r"^python3 -m ensurepip --root /.+/probe-[^/]+/ensurepip \[PYTHONPATH=none\]$", "into the work folder, not into the system's Python")
         (install,) = installs
@@ -1417,22 +1411,22 @@ class ProbeScript(unittest.TestCase):
         lines, installs = self.build_run(FAKE_PIP="missing", FAKE_ENSUREPIP="disabled")
         self.assertIn("FAIL: python3 -m pip is not there: /usr/bin/python3: No module named pip", lines)
         self.assertIn("FAIL: python3 -m ensurepip: ERROR: ensurepip is disabled in this Python: install the python3-pip", lines)
-        self.assertEqual(lines[-2], "FAIL: usage build skipped: there is no pip")
+        self.assertEqual(lines[-2], "FAIL: cases build skipped: there is no pip")
         self.assertEqual(installs, [])
 
     def test_a_lock_file_that_is_missing_or_not_the_size_that_was_sent_is_said_and_the_size_of_one_that_nobody_measured_is_only_reported(self):
-        done, lines = self.run_probe({"PROBE_LOCK_BYTES": "99"}, lock=USAGE_LOCK)
-        self.assertIn(f"FAIL: usage lock file is {len(USAGE_LOCK)} bytes, 99 were sent", lines)
-        self.assertTrue([line for line in lines if line.startswith("ok: usage build")], "a lock that differs is said, and the build is tried all the same")
-        done, lines = self.run_probe({}, lock=USAGE_LOCK)
-        self.assertIn(f"ok: usage lock file is {len(USAGE_LOCK)} bytes", lines)
+        done, lines = self.run_probe({"PROBE_LOCK_BYTES": "99"}, lock=CASES_LOCK)
+        self.assertIn(f"FAIL: cases lock file is {len(CASES_LOCK)} bytes, 99 were sent", lines)
+        self.assertTrue([line for line in lines if line.startswith("ok: cases build")], "a lock that differs is said, and the build is tried all the same")
+        done, lines = self.run_probe({}, lock=CASES_LOCK)
+        self.assertIn(f"ok: cases lock file is {len(CASES_LOCK)} bytes", lines)
         done, lines = self.run_probe({"PROBE_LOCK_BYTES": "99"})
-        self.assertIn("FAIL: no usage-requirements.txt in the secret volume", lines)
+        self.assertIn("FAIL: no cases-requirements.txt in the secret volume", lines)
         self.assertEqual([call for call in self.calls if call.startswith("python3 -m pip install")], [], "nothing is built without a lock")
 
     def test_nothing_is_built_when_the_output_is_already_full(self):
         env = {**self.good_env(), "PROBE_URLS": " ".join(f"ftp://host{i}.example.net/" for i in range(200))}
-        done, lines = self.run_probe(env, size=4000, lock=USAGE_LOCK)
+        done, lines = self.run_probe(env, size=4000, lock=CASES_LOCK)
         self.assertEqual(lines[-2], "FAIL: more checks than 120 lines hold; the rest was left out")
         self.assertEqual([call for call in self.calls if call.startswith("python3 -m pip install")], [], "a build that nobody could be told about is not made")
 
@@ -1545,7 +1539,7 @@ class Ran:
 class ScriptRunner:
     """Runs operator/run-tool.sh with bash, with the stand-ins first on the path of the script, and says what it did."""
 
-    def run_tool(self, env=None, stubs=None, tool="recording-check", files=None, contents=None):
+    def run_tool(self, env=None, stubs=None, tool="cases-check", files=None, contents=None):
         with tempfile.TemporaryDirectory() as tmp:
             tmp = Path(tmp)
             bin_dir = tmp / "bin"
@@ -1576,9 +1570,9 @@ class RunToolScript(ScriptRunner, unittest.TestCase):
     def test_a_good_run_signs_in_runs_the_tool_with_its_arguments_as_separate_words_and_ends_with_the_exit_code(self):
         ran = self.run_tool()
         self.assertEqual((ran.done.returncode, ran.done.stderr), (0, ""))
-        self.assertEqual(ran.lines, ["ok: python3 3.12.7", "ok: az login --identity", "ok: running recording-check.py run", "tool output", "run-tool-done: exit code 0"])
+        self.assertEqual(ran.lines, ["ok: python3 3.12.7", "ok: az login --identity", "ok: running cases-check.py run", "tool output", "run-tool-done: exit code 0"])
         self.assertEqual(ran.calls, [f"az login --identity --client-id {CLIENT_ID} --allow-no-subscriptions --output none",
-                                     f"tool-argv: [{ran.volume}/recording-check.py] [run] [--namespace] [evhns-example] [--job] [all] [--minutes] [20]",
+                                     f"tool-argv: [{ran.volume}/cases-check.py] [run] [--namespace] [evhns-example] [--job] [all] [--minutes] [20]",
                                      "sleep 20"], "the sign-in, the tool, and the hold that lets the log be read whole")
 
     def test_the_exit_code_of_the_tool_is_the_exit_code_of_the_container_and_the_log_is_still_held_open(self):
@@ -1613,7 +1607,7 @@ class RunToolScript(ScriptRunner, unittest.TestCase):
 
     def test_a_tool_that_prints_nothing_gives_the_own_lines_only_and_a_long_line_passes_whole(self):
         ran = self.run_tool({"FAKE_TOOL_OUTPUT": "NOTHING"})
-        self.assertEqual(ran.lines, ["ok: python3 3.12.7", "ok: az login --identity", "ok: running recording-check.py run", "run-tool-done: exit code 0"])
+        self.assertEqual(ran.lines, ["ok: python3 3.12.7", "ok: az login --identity", "ok: running cases-check.py run", "run-tool-done: exit code 0"])
         long_line = "result " + "x" * 3000
         self.assertEqual(self.run_tool({"FAKE_TOOL_OUTPUT": long_line + "\\n"}).lines[3], long_line)
 
@@ -1653,8 +1647,8 @@ class RunToolScript(ScriptRunner, unittest.TestCase):
         self.assertEqual(ran.tool_calls, [])
 
     def test_the_tool_that_is_named_is_the_tool_that_runs(self):
-        for name in ("recording-check", "cases-check"):
-            ran = self.run_tool(tool=name, files=["cases-check.py", "recording-check.py"], env={"TOOL_NAME": name})
+        for name in ("cases-check", "some-other-tool"):
+            ran = self.run_tool(tool=name, files=["cases-check.py", "some-other-tool.py"], env={"TOOL_NAME": name})
             self.assertEqual(ran.tool_calls[0].split(" ")[1], f"[{ran.volume}/{name}.py]")
             self.assertIn(f"ok: running {name}.py run", ran.lines)
 
@@ -1680,12 +1674,12 @@ class RunToolScript(ScriptRunner, unittest.TestCase):
         self.assertEqual(self.run_tool({"OPERATOR_SUBSCRIPTION": ""}).done.returncode, 0)
 
     def test_a_tool_name_that_is_not_a_plain_name_or_not_in_the_volume_is_refused(self):
-        for value in (None, "", "../recording-check", "recording-check.py", "Recording-check", "recording check", "recording-check;touch canary", "recording_check", "1recording", "-recording",
-                      "a" * 41, "recording-check\n", "$(touch canary)", "recording-check/x", "/etc/passwd"):
-            self.refused({"TOOL_NAME": value}, files=["recording-check.py"])
-        ran = self.refused({"TOOL_NAME": "cases-check"}, files=["recording-check.py"])
-        self.assertIn("cases-check.py is not in the secret volume", ran.lines[0])
-        self.refused({"TOOL_NAME": "recording-check"}, files=[])
+        for value in (None, "", "../cases-check", "cases-check.py", "Cases-check", "cases check", "cases-check;touch canary", "cases_check", "1cases", "-cases",
+                      "a" * 41, "cases-check\n", "$(touch canary)", "cases-check/x", "/etc/passwd"):
+            self.refused({"TOOL_NAME": value}, files=["cases-check.py"])
+        ran = self.refused({"TOOL_NAME": "some-other-tool"}, files=["cases-check.py"])
+        self.assertIn("some-other-tool.py is not in the secret volume", ran.lines[0])
+        self.refused({"TOOL_NAME": "cases-check"}, files=[])
 
     def test_arguments_that_are_empty_too_long_or_hold_anything_but_plain_characters_are_refused_without_being_printed_back(self):
         for value in (None, "", "   ", "r" * 601, "run " + "a" * 600):
@@ -1714,10 +1708,10 @@ class RunToolScript(ScriptRunner, unittest.TestCase):
         ran = self.run_tool({"TOOL_ARGS": value})
         self.assertEqual(ran.done.returncode, 0)
         words = " ".join(f"[{word}]" for word in value.split())
-        self.assertEqual(ran.tool_calls, [f"tool-argv: [{ran.volume}/recording-check.py] {words}"])
+        self.assertEqual(ran.tool_calls, [f"tool-argv: [{ran.volume}/cases-check.py] {words}"])
         # extra spaces between words, and at the ends, are not words
         ran = self.run_tool({"TOOL_ARGS": "  run   --job  all "})
-        self.assertEqual(ran.tool_calls, [f"tool-argv: [{ran.volume}/recording-check.py] [run] [--job] [all]"])
+        self.assertEqual(ran.tool_calls, [f"tool-argv: [{ran.volume}/cases-check.py] [run] [--job] [all]"])
 
     def test_a_python_that_does_not_run_stops_the_run_with_3_and_the_tool_is_not_called(self):
         ran = self.run_tool({"FAKE_PYTHON_VERSION": "broken"})
@@ -1795,10 +1789,10 @@ class RunToolWithTheRealTools(ScriptRunner, unittest.TestCase):
                              contents=contents)
 
     def test_the_real_tool_runs_from_the_volume_with_the_real_python_and_its_exit_code_and_error_line_come_out(self):
-        ran = self.run_real("recording-check", "functions --site not-an-id", ["recording-check.py"])
+        ran = self.run_real("cases-check", "functions --site not-an-id", ["cases-check.py", "check-helpers.py"])
         self.assertEqual(ran.done.returncode, 1, ran.done.stdout)
         version = "%d.%d.%d" % sys.version_info[:3]
-        self.assertEqual(ran.lines, [f"ok: python3 {version}", "ok: az login --identity", "ok: running recording-check.py functions", self.SITE_ERROR, "run-tool-done: exit code 1"])
+        self.assertEqual(ran.lines, [f"ok: python3 {version}", "ok: az login --identity", "ok: running cases-check.py functions", self.SITE_ERROR, "run-tool-done: exit code 1"])
         self.assertEqual(ran.calls, [f"az login --identity --client-id {CLIENT_ID} --allow-no-subscriptions --output none", "sleep 20"], "the sign-in, nothing asked of Azure, and the hold")
 
     def test_the_console_check_runs_from_the_volume_on_its_own_with_the_arguments_of_the_workflow_and_its_door_refuses_a_name_that_is_none_before_it_asks_anything(self):
@@ -1809,20 +1803,17 @@ class RunToolWithTheRealTools(ScriptRunner, unittest.TestCase):
         self.assertEqual(ran.lines, [f"ok: python3 {version}", "ok: az login --identity", "ok: running console-check.py door", "console-check: --host is a host name", "run-tool-done: exit code 2"])
         self.assertEqual(ran.calls, [f"az login --identity --client-id {CLIENT_ID} --allow-no-subscriptions --output none", "sleep 20"], "the sign-in, nothing asked of Azure, and the hold")
 
-    def test_the_cases_check_finds_the_recording_check_in_the_same_folder_and_needs_it(self):
-        ran = self.run_real("cases-check", "functions --site not-an-id", ["cases-check.py", "recording-check.py"])
-        self.assertEqual(ran.done.returncode, 1)
-        self.assertEqual(ran.lines[3:], [self.SITE_ERROR, "run-tool-done: exit code 1"], "the cases check ran, loaded the recording check and refused the site")
+    def test_the_cases_check_needs_the_shared_helpers_in_the_same_folder(self):
         ran = self.run_real("cases-check", "functions --site not-an-id", ["cases-check.py"])
         self.assertEqual(ran.done.returncode, 1)
-        self.assertIn("recording-check.py", "\n".join(ran.lines), "without the recording check beside it the cases check stops at its import, and the log says which file is missing")
+        self.assertIn("check-helpers.py", "\n".join(ran.lines), "without the helpers beside it the cases check stops at its import, and the log says which file is missing")
         self.assertEqual(ran.lines[-1], "run-tool-done: exit code 1")
         self.assertNotIn(self.SITE_ERROR, ran.lines)
 
     def test_a_tool_that_would_start_a_job_refuses_until_the_container_is_told_that_it_is_in_a_github_actions_run(self):
         insights = f"/subscriptions/{SUBSCRIPTION}/resourceGroups/{GROUP}/providers/Microsoft.Insights/components/appi-example"
-        args = f"run --namespace evhns-example --insights {insights} --job all --minutes 1"
-        for tool, files, arguments in (("recording-check", ["recording-check.py"], args), ("cases-check", ["cases-check.py", "recording-check.py"], args.replace(" --job all", ""))):
+        args = f"run --namespace evhns-example --insights {insights} --minutes 1"
+        for tool, files, arguments in (("cases-check", ["cases-check.py", "check-helpers.py"], args),):
             ran = self.run_real(tool, arguments, files, GITHUB_ACTIONS=None)
             self.assertEqual(ran.done.returncode, 1, tool)
             self.assertIn("error: this command starts a job that writes to Azure, and only a GitHub Actions run may do that (AGENTS.md rule 18)", ran.lines, tool)
@@ -1832,12 +1823,13 @@ class RunToolWithTheRealTools(ScriptRunner, unittest.TestCase):
 class TheToolsInTheContainer(unittest.TestCase):
     """The tools that the Operator runs are the very files of tools/, and they run in the image's Python 3.12 and from a folder that holds only the files that are sent."""
 
-    TOOLS = ("recording-check.py", "cases-check.py")
+    TOOLS = ("cases-check.py",)
+    HELPERS = ("check-helpers.py",)
     # The check of the web page's front door runs in the Operator too (a closed app answers nobody outside the network): it sends no event and loads no other tool, so it needs none of the checks below that
-    # belong to the two tools that send one, and tools/tests/test_console_check.py runs it from a folder of its own.
-    ALL_TOOLS = TOOLS + ("console-check.py",)
+    # belong to the tool that sends one, and tools/tests/test_console_check.py runs it from a folder of its own.
+    ALL_TOOLS = TOOLS + HELPERS + ("console-check.py",)
 
-    def test_both_parse_as_python_3_12_and_import_the_standard_library_only(self):
+    def test_all_parse_as_python_3_12_and_import_the_standard_library_only(self):
         # CI and the function app use Python 3.13, the image of the Operator has 3.12: a syntax of 3.13 would pass every test here and fail in the container.
         import ast
         for name in self.ALL_TOOLS:
@@ -1846,25 +1838,25 @@ class TheToolsInTheContainer(unittest.TestCase):
             imported |= {node.module.split(".")[0] for node in ast.walk(tree) if isinstance(node, ast.ImportFrom) and node.module}
             self.assertLessEqual(imported, set(sys.stdlib_module_names), f"{name}: {sorted(imported - set(sys.stdlib_module_names))}")
 
-    def test_the_tools_run_from_a_folder_that_holds_only_them_like_the_secret_volume_and_the_cases_check_needs_the_recording_check_beside_it(self):
+    def test_the_tool_runs_from_a_folder_that_holds_only_it_and_its_helpers_like_the_secret_volume_and_the_cases_check_needs_the_helpers_beside_it(self):
         with tempfile.TemporaryDirectory() as tmp:
             volume = Path(tmp)
-            for name in self.TOOLS:
+            for name in self.TOOLS + self.HELPERS:
                 (volume / name).write_bytes((ROOT / "tools" / name).read_bytes())
             for name in self.TOOLS:
                 done = subprocess.run([sys.executable, "-B", str(volume / name), "run", "--help"], capture_output=True, text=True, cwd=volume)
                 self.assertEqual((done.returncode, done.stderr), (0, ""), name)
                 self.assertIn("--namespace", done.stdout, name)
-            self.assertEqual(sorted(path.name for path in volume.iterdir()), sorted(self.TOOLS), "nothing was written to the folder: no bytecode, no cache")
-            (volume / "recording-check.py").unlink()
+            self.assertEqual(sorted(path.name for path in volume.iterdir()), sorted(self.TOOLS + self.HELPERS), "nothing was written to the folder: no bytecode, no cache")
+            (volume / "check-helpers.py").unlink()
             done = subprocess.run([sys.executable, "-B", str(volume / "cases-check.py"), "run", "--help"], capture_output=True, text=True, cwd=volume)
-            self.assertNotEqual(done.returncode, 0, "cases-check.py loads recording-check.py from its own folder, so both are sent")
-            self.assertIn("recording-check.py", done.stderr)
+            self.assertNotEqual(done.returncode, 0, "cases-check.py loads check-helpers.py from its own folder, so both are sent")
+            self.assertIn("check-helpers.py", done.stderr)
 
-    def test_the_tools_refuse_to_send_outside_a_github_actions_run_which_the_container_is_told_it_is_in(self):
+    def test_the_tool_refuses_to_send_outside_a_github_actions_run_which_the_container_is_told_it_is_in(self):
         # The Operator's group is made only by a run of the Hub workflow (operator-run.py refuses anywhere else), so the workflow tells the container so with GITHUB_ACTIONS=true.
         with tempfile.TemporaryDirectory() as tmp:
-            for name in self.TOOLS:
+            for name in self.TOOLS + self.HELPERS:
                 (Path(tmp) / name).write_bytes((ROOT / "tools" / name).read_bytes())
             insights = f"/subscriptions/{SUBSCRIPTION}/resourceGroups/{GROUP}/providers/Microsoft.Insights/components/appi-example"
             for name in self.TOOLS:
@@ -2175,7 +2167,7 @@ class PublishingPhaseOneRecord(unittest.TestCase):
     def test_it_says_how_the_usage_package_is_built_which_flag_is_tried_second_and_why_that_is_safe(self):
         for words in ("Neither package rides in the request", "the usage app's package is 7.0 MB zipped, and the cases app's is 614,068 bytes zipped", "this record first said about 2 MB for it, which was an estimate and was wrong",
                       "So each is built inside the container from the hash-locked lock file of its app",
-                      "hash-locked [`src/usage-functions/requirements.txt`](../../src/usage-functions/requirements.txt)", "[`tools/build-function-app.sh`](../../tools/build-function-app.sh)",
+                      "The probe builds the usage app's libraries from the hash-locked `src/usage-functions/requirements.txt` (since 2026-11-07 the probe builds the cases app's libraries from `src/case-functions/requirements.txt`)", "[`tools/build-function-app.sh`](../../tools/build-function-app.sh)",
                       "`--only-binary=:all: --require-hashes`", "Only the lock file rides in the request of the probe", "the image has Python 3.12", "Whether the build works from 3.12 was the main unknown of this phase, and the probe of 2026-11-06 answered it: it works, and without the flag",
                       "(inferred from pip 25.0.1, and the probe confirmed it)",
                       "pip is told `--python-version 3.13`", "so the probe tries that first", "`--ignore-requires-python`", "The flag is safe only because every version is pinned and every file is checked against its hash",
