@@ -71,10 +71,10 @@ class TheSwitchIsOnInTheCode(unittest.TestCase):
 
 
 class TheRulesAndTheRecordSayTheSame(unittest.TestCase):
-    def test_rule_15_c_says_that_every_model_call_goes_through_the_ai_gateway_and_that_the_agents_route_is_on_in_code_and_has_not_run(self):
+    def test_rule_15_c_says_that_every_model_call_goes_through_the_ai_gateway_and_that_the_agents_route_is_on_in_code_and_ran_once(self):
         (rule,) = [line for line in text("AGENTS.md").splitlines()
                    if line.lstrip().startswith("- **(c) Every model call of Meternaut goes through the AI Gateway, the governance hub of the Citadel design, with no direct path, not even for a test, unless the owner makes a written exception**")]
-        for words in ("**The agents' route through the gateway is on in code and has not run in Azure**", "(`AGENTS_VIA_AI_GATEWAY` in `tools/environment-params.py`, True)",
+        for words in ("**The agents' route through the gateway is on in code and ran once in Azure**", "(`AGENTS_VIA_AI_GATEWAY` in `tools/environment-params.py`, True)",
                       "so a new deployment of it needs his written request again", "The owner's own, existing AI Gateway in another subscription is not touched"):
             self.assertIn(words, rule, words)
         self.assertNotIn("False today", rule)
