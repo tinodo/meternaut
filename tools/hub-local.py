@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Runs the Hub workflow's own steps for one action on the owner's machine, with the owner's own az session (standard library only).
 
-    python tools/hub-local.py <action> [--minutes N] [--public-ai-gateway-requested] [--plant-public-ip] [--yes] [--allow-dirty] [--dry-run] [--workflow PATH]
+    python tools/hub-local.py <action> [--minutes N] [--public-ai-gateway-requested] [--plant-public-ip] [--evals-command C] [--evals-judge J] [--redteam-mode M]
+                                       [--yes] [--allow-dirty] [--dry-run] [--workflow PATH]
     python tools/hub-local.py --init [--from-github]
 
 Why this exists: since 2026-11-08 every change to Azure is made from the owner's machine, with his own az session, by a tool of this repository, after a what-if and with a record (AGENTS.md
@@ -20,11 +21,23 @@ configuration, run counter, lock and records; the environment variable METERNAUT
 What it replaces, and never fakes:
   * actions/checkout and actions/setup-python: skipped with a note (setup-python checks the Python version);
   * azure/login: the owner's own az session is checked instead. The CLI's default subscription is set to the pilot's for the run and always put back at the end (AGENTS.md rule 15 (b));
-  * the unit tests of the first step: not repeated (they were run on this machine by the person who starts the run); the commit and the state of the working tree are printed and recorded;
+  * the step that asks GitHub whether the checks of CI passed for this commit: not asked (no GitHub call is made from this machine, and no GitHub token is ever given to a step). The person who
+    starts the run ran the checks on this machine (AGENTS.md rule 35); the record names the commit and says whether the working tree is clean. An action that changes Azure needs a clean tree;
+  * the unit tests of a first step that still runs them: not repeated, with the same note;
   * for the action cases, the publish through the Operator (it needs a GitHub OpenID Connect token): the package is built here by tools/build-function-app.sh and published from this machine
-    through the app's public deployment site, which needs the app's public network access to be Enabled.
-A step that needs a GitHub OpenID Connect token and has no replacement stops the run before anything is changed. Not supported: that token, so the check of the deploy identity inside the
-Operator (the probe goes on without it, and says so).
+    through the app's public deployment site, which needs the app's public network access to be Enabled. Before it is published, the files in the zip file are held against the digest of the
+    app's own files that the deploy wrote as the app's setting PACKAGE_SHA256 (tools/package-digest.py, which runs the app's own cases/release.py), so that the app's check of its release
+    finds the same; a package whose files differ is never published.
+A step that needs a GitHub OpenID Connect token or a GitHub token, or calls GitHub with gh, and has no replacement stops the run before anything is changed. Not supported: that token, so the check
+of the deploy identity inside the Operator (the probe goes on without it, and says so).
+
+The configuration names every variable and secret that the workflow reads. Two repository variables are optional, DRIFT_ACCEPTED_EXEMPTIONS and DRIFT_ACCEPTED_DENY (what the owner accepted of the
+policy state): GitHub reads one that is not set as empty, and so does this tool. A run says so in its plan. Any other name that is missing from the file stops the plan.
+
+The inputs of the workflow are flags: --minutes (page-latency), --plant-public-ip (plant), --public-ai-gateway-requested (aigateway), --evals-command and --evals-judge (foundry-evals) and
+--redteam-mode (foundry-redteam). A flag that is not given has the workflow's own default, and the plan prints the value that each input has. An action that only reads needs no --yes:
+what-if, aigateway-check, page-latency, loop-check, operator-probe, drift-check, agents-drift, agent365-check, and foundry-evals with the command probe or rule. Every other action changes
+Azure, and so does an action that this tool does not know.
 
 On Windows the steps run in Git's bash. What that breaks, and what this tool does about it, is listed in docs/proposals/16-the-hub-on-the-owners-machine.md. In short: CRLF line ends of the workflow
 are made LF; the path conversion of Git's bash is switched off, so that `az ... /subscriptions/...` is not rewritten; python3 is a shim (the Windows Store alias of that name opens the Store); the
@@ -37,6 +50,7 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import datetime as dt
+import hashlib
 import json
 import math
 import os
@@ -48,14 +62,23 @@ import subprocess
 import sys
 import threading
 import time
+import zipfile
 from pathlib import Path
 from typing import Any, Callable, Optional
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_WORKFLOW = ROOT / ".github" / "workflows" / "deploy-hub.yml"
 
-# The actions that only read and preview (or make a short-lived container group that they delete again): they need no --yes. Every other action changes Azure.
-READ_ONLY_ACTIONS = ("what-if", "aigateway-check", "page-latency", "loop-check", "operator-probe")
+# The actions that only read and preview (or make a short-lived container group that they delete again): they need no --yes. Every other action changes Azure, and so does an action that
+# this list does not know: a new action is a change until somebody says that it only reads.
+READ_ONLY_ACTIONS = ("what-if", "aigateway-check", "page-latency", "loop-check", "operator-probe", "drift-check", "agents-drift", "agent365-check")
+# An action that reads for some values of an input and changes Azure for the others: foundry-evals reads with probe and rule, and makes evaluation runs and the rule with run and rule-apply.
+READ_ONLY_INPUT_VALUES = {"foundry-evals": ("evals_command", ("probe", "rule"))}
+# The inputs that only some actions read (the workflow says "Every other action ignores it"): a flag for another action is said in the plan, and never guessed.
+INPUT_ACTIONS = {"minutes": ("page-latency",), "plant_public_ip": ("plant",), "public_ai_gateway_requested": ("aigateway",), "evals_command": ("foundry-evals",),
+                 "evals_judge": ("foundry-evals",), "redteam_mode": ("foundry-redteam",)}
+INPUT_FLAGS = {"minutes": "--minutes", "plant_public_ip": "--plant-public-ip", "public_ai_gateway_requested": "--public-ai-gateway-requested", "evals_command": "--evals-command",
+               "evals_judge": "--evals-judge", "redteam_mode": "--redteam-mode"}
 PUBLIC_GATEWAY_ACTION = "aigateway"
 # The workflow's job guard is `github.actor == 'tinodo' && github.ref == 'refs/heads/main'` (tools/workflow-lint.py enforces it). A local run is the owner's, on the code of this checkout.
 LOCAL_ACTOR = "tinodo"
@@ -72,7 +95,11 @@ LOCAL_OVERRIDE = "METERNAUT_LOCAL"
 VARIABLE_NAMES = ("ENV_RESOURCE_GROUP", "ENV_LOCATION", "ENV_VNET_PREFIX", "ENV_PE_SUBNET_PREFIX", "ENV_DNS_SERVERS", "ENV_OWNER", "ENV_BUDGET_AMOUNT", "ENV_ALERT_EMAILS",
                   "CONSOLE_APP_CLIENT_ID", "CONSOLE_PEOPLE", "CONSOLE_HOST_NAME", "MAIL_SENDER")
 SECRET_NAMES = ("AZURE_SUBSCRIPTION_ID", "AZURE_TENANT_ID", "AZURE_CLIENT_ID")
-TEMPLATE_NAMES = ("ENV_SUBSCRIPTION_ID",) + VARIABLE_NAMES + SECRET_NAMES
+# Repository variables that the workflow reads and that may be left out: what the owner has accepted of the policy state (tools/drift-check.py). Unset, GitHub reads them as empty, and the controls
+# that they feed say UNKNOWN and print what they found. Absent or empty is empty here too, and a run says which of them it read as empty. Every other name has to be in the file: write NAME= for
+# an empty value, so that a name that is missing (a new variable of the workflow, a typo) is found before a run starts.
+OPTIONAL_NAMES = ("DRIFT_ACCEPTED_EXEMPTIONS", "DRIFT_ACCEPTED_DENY")
+TEMPLATE_NAMES = ("ENV_SUBSCRIPTION_ID",) + VARIABLE_NAMES + SECRET_NAMES + OPTIONAL_NAMES
 REQUIRED_NAMES = ("ENV_SUBSCRIPTION_ID", "AZURE_SUBSCRIPTION_ID", "AZURE_TENANT_ID", "ENV_RESOURCE_GROUP", "ENV_LOCATION")
 FIRST_RUN_NUMBER = 1000
 MIN_MASK_LENGTH = 3
@@ -445,6 +472,8 @@ class _Unknown:
 
 
 UNKNOWN = _Unknown()
+NO_GITHUB_TOKEN = ("{0}: no GitHub token exists on this machine, and none is ever given to a step: a step that needs GitHub cannot run here, "
+                   "and only a step that this tool replaces may name it")
 MAX_EXPRESSION_LENGTH = 2000
 MAX_DEPTH = 40
 TOKEN = re.compile(r"(?P<string>'(?:[^']|'')*')|(?P<number>\d+(?:\.\d+)?)|(?P<op>&&|\|\||==|!=|!|\(|\)|,)|(?P<name>[A-Za-z_][A-Za-z0-9_-]*(?:\.[A-Za-z_][A-Za-z0-9_-]*)*)")
@@ -700,6 +729,7 @@ class Context:
         self.current_index = 0
         self.secret_names: set = set()
         self.variable_names: set = set()
+        self.optional_unset: set = set()
 
     def check_call(self, name: str, args) -> None:
         if name not in STATUS_FUNCTIONS:
@@ -725,11 +755,18 @@ class Context:
                 raise ExprError(f"{dotted}: the workflow has no such input")
             return self.inputs[rest[0]]
         if root in ("vars", "secrets") and len(rest) == 1:
+            if root == "secrets" and rest[0].upper() == "GITHUB_TOKEN":
+                raise ExprError(NO_GITHUB_TOKEN.format(dotted))
             table = self.variables if root == "vars" else self.secrets
             if rest[0] not in table:
+                if root == "vars" and rest[0] in OPTIONAL_NAMES:
+                    self.optional_unset.add(rest[0])
+                    return ""
                 raise ExprError(f"{dotted} is not defined in {CONFIG_NAME} (write the name with an empty value if empty is right)")
             (self.variable_names if root == "vars" else self.secret_names).add(rest[0])
             return table[rest[0]]
+        if root == "github" and rest == ("token",):
+            raise ExprError(NO_GITHUB_TOKEN.format(dotted))
         if root == "github" and len(rest) == 1 and rest[0] in self.GITHUB_NAMES:
             if rest[0] not in self.github:
                 raise ExprError(f"{dotted} has no value on this machine")
@@ -1436,8 +1473,14 @@ def remove_tree(path: Path) -> bool:
 class Replacement:
     kind: str
     note: str
+    # False: the step is not run and its env is not read (it names things that do not exist here, such as a GitHub token).
+    env_used: bool = True
+    # True: the step runs as written, but with Git's path conversion on and its temp folder as /c/... (see POSIX_PATH_NOTE).
+    posix_paths: bool = False
 
 
+POSIX_PATH_NOTE = ("runs as written, with Git's path conversion on and the temp folder as /c/...: the build script of the function app takes only a path that starts with a slash. "
+                   "What it makes is not sent anywhere: the package is built by the publish step that follows")
 USES_REPLACEMENTS = (
     ("actions/checkout@", Replacement("checkout", "the repository is this checkout")),
     ("actions/setup-python@", Replacement("python", "python3 is the Python that runs this tool; it has to be the version that the step asks for")),
@@ -1446,11 +1489,14 @@ USES_REPLACEMENTS = (
 # Found by what the script does and not by the name of the step, so that a step that is renamed is still found. A step that carries a token request and is not here stops the run.
 RUN_REPLACEMENTS = (
     ("--script operator/publish.sh", Replacement("cases-publish", "built here and published from this machine through the app's public deployment site; the Operator's route needs a GitHub OpenID Connect token")),
-    ("FUNCTION_APP_SOURCES_ONLY=1", Replacement("cases-pack", "not needed: the publish step that follows builds the package")),
+    ("FUNCTION_APP_SOURCES_ONLY=1", Replacement("cases-pack", POSIX_PATH_NOTE, posix_paths=True)),
     ("--prefix op-publish-", Replacement("cases-publish-cleanup", "not needed: the publish made no container group")),
     ("PROBE_TOKEN_NOTE", Replacement("no-token", "no GitHub OpenID Connect token exists on this machine: the step goes on without the check of the deploy identity, and says so itself")),
+    ("actions/workflows/checks.yml/runs", Replacement("ci-checks", "the checks of CI are not asked of GitHub: the person who starts the run ran them on this machine (no GitHub call is made from here)", env_used=False)),
 )
 OIDC_MARKERS = ("ACTIONS_ID_TOKEN_REQUEST_URL", "ACTIONS_ID_TOKEN_REQUEST_TOKEN")
+# A call of the GitHub command line: the owner's own stored sign-in would answer it, and no GitHub call is made from here but the one read of `--init --from-github`.
+GITHUB_CALL = re.compile(r"(?m)(?:^[ \t]*(?:(?:if|then|do|else|elif|while|until)\b[ \t]*)*|[;&|(`!{]|\$\()[ \t]*gh[ \t]+[a-z]")
 UNIT_TEST_LINE = re.compile(r"(?m)^[ \t]*python3?[ \t]+-m[ \t]+unittest\b.*$")
 APP_NAME = re.compile(r"[A-Za-z0-9-]{2,60}")
 
@@ -1472,6 +1518,8 @@ def classify(step: Step) -> tuple:
             return replacement, None
     if any(marker in script for marker in OIDC_MARKERS):
         return None, "it asks GitHub for an OpenID Connect token, which does not exist on this machine, and no replacement is known for it"
+    if GITHUB_CALL.search(script):
+        return None, "it calls GitHub with gh, and no GitHub call is made from this machine; no replacement is known for it"
     return None, None
 
 
@@ -1498,7 +1546,49 @@ def input_values(workflow: Workflow, args) -> dict:
         values["public_ai_gateway_requested"] = bool(args.public_ai_gateway_requested)
     if "plant_public_ip" in values:
         values["plant_public_ip"] = bool(args.plant_public_ip)
+    for name in ("evals_command", "evals_judge", "redteam_mode"):
+        given = getattr(args, name, None)
+        if given is None:
+            continue
+        if name not in workflow.inputs:
+            raise HubLocalError(f"{INPUT_FLAGS[name]} was given, and the workflow has no input {name}")
+        options = workflow.inputs[name].options
+        if options and given not in options:
+            raise HubLocalError(f"{INPUT_FLAGS[name]} {given!r} is not one of the options of the input {name}: {', '.join(options)}")
+        values[name] = given
     return values
+
+
+def changes_azure(action: str, inputs: dict) -> bool:
+    """False for an action that only reads (or makes a container group that it deletes): it needs no --yes and takes no run number. Every other action, and any that is not known, changes Azure."""
+    if action in READ_ONLY_ACTIONS:
+        return False
+    rule = READ_ONLY_INPUT_VALUES.get(action)
+    return not (rule and inputs.get(rule[0]) in rule[1])
+
+
+def given_flags(args) -> dict:
+    """Which input flags the person gave."""
+    return {"minutes": args.minutes is not None, "plant_public_ip": bool(args.plant_public_ip), "public_ai_gateway_requested": bool(args.public_ai_gateway_requested),
+            "evals_command": getattr(args, "evals_command", None) is not None, "evals_judge": getattr(args, "evals_judge", None) is not None,
+            "redteam_mode": getattr(args, "redteam_mode", None) is not None}
+
+
+def ignored_flags(args) -> list:
+    """The flags that the person gave and that the action does not read: the workflow ignores such an input, and the plan says so."""
+    return [f"{INPUT_FLAGS[name]} is only for {' and '.join(INPUT_ACTIONS[name])}: the action {args.action} ignores it" for name, was_given in given_flags(args).items()
+            if was_given and args.action not in INPUT_ACTIONS[name]]
+
+
+def inputs_line(workflow: Workflow, args) -> str:
+    """The inputs that the action reads, with the value that each has: the plan never leaves one to be guessed."""
+    values, given = input_values(workflow, args), given_flags(args)
+    shown = []
+    for name, actions in INPUT_ACTIONS.items():
+        if args.action in actions and name in values:
+            value = str(values[name]).lower() if isinstance(values[name], bool) else values[name]
+            shown.append(f"{name}={value}" + ("" if given[name] else " (the workflow's default)"))
+    return ", ".join(shown)
 
 
 def job_environment(workflow: Workflow, ctx: Context, problems: Optional[list]) -> dict:
@@ -1529,11 +1619,12 @@ def build_plan(workflow: Workflow, ctx: Context, problems: list, notes: list) ->
         except ExprError as error:
             problems.append(f"{where}: its condition: {error}")
         if entry.verdict is not False:
-            for key, text in list(step.env.items()) + list(step.with_.items()):
-                interpolate(text, ctx, problems, f"{where}: {key}")
             entry.replacement, reason = classify(step)
             if reason:
                 problems.append(f"{where}: {reason}")
+            if entry.replacement is None or entry.replacement.env_used:
+                for key, text in list(step.env.items()) + list(step.with_.items()):
+                    interpolate(text, ctx, problems, f"{where}: {key}")
         if step.id:
             if entry.verdict is True:
                 ctx.steps[step.id] = StepState("success", UNKNOWN)
@@ -1661,7 +1752,8 @@ class Hub:
         action = args.action
         if action not in workflow.actions:
             raise HubLocalError(f"{action!r} is not an action of the workflow. It has: {', '.join(workflow.actions)}")
-        writes = action not in READ_ONLY_ACTIONS
+        inputs = input_values(workflow, args)
+        writes = changes_azure(action, inputs)
         local = resolve_local_dir(self.environ, self.root, deps.git)
         values, notes, problems = load_config(local, deps.git)
         state = load_state(local)
@@ -1669,11 +1761,13 @@ class Hub:
         run_id = int(deps.clock().timestamp())
         head, dirty = self.git_state()
         rt = local / TEMP_NAME / str(run_id)
-        ctx = Context(inputs=input_values(workflow, args), variables=values, secrets=values, runner_temp=posix(rt), planning=True,
+        ctx = Context(inputs=inputs, variables=values, secrets=values, runner_temp=posix(rt), planning=True,
                       step_ids={step.id: step.index for step in workflow.steps if step.id},
                       github={"run_number": run_number, "run_id": run_id, "actor": LOCAL_ACTOR, "ref": LOCAL_REF, "ref_name": "main", "sha": head, "event_name": "workflow_dispatch",
                               "run_attempt": 1, "workspace": posix(self.root)})
-        plan = build_plan(workflow, ctx, problems, notes)
+        plan = build_plan(workflow, ctx, problems, notes + ignored_flags(args))
+        for name in sorted(ctx.optional_unset):
+            plan.notes.append(f"{name} is not in {CONFIG_NAME}: it is optional, and it is read as empty, as GitHub reads a variable that is not set")
         refusals = []
         if writes and not args.yes:
             refusals.append(f"the action {action} changes Azure: it needs --yes")
@@ -1703,10 +1797,13 @@ class Hub:
 
     def print_plan(self, console: Console, workflow: Workflow, plan: Plan, local: Path, values: dict, head: str, dirty: list, run_number: int, writes: bool, state: dict) -> None:
         action = self.args.action
-        empty = sorted(name for name, value in values.items() if value == "")
+        empty = sorted(name + (" (optional)" if name in OPTIONAL_NAMES else "") for name, value in values.items() if value == "")
         console.emit(f"Hub (local) {action}: the plan" + (" (a dry run: nothing is run, nothing is changed, no az session is needed)" if self.args.dry_run else ""))
         console.emit(f"  workflow       {workflow.path.name}: {len(workflow.steps)} steps, {len(workflow.actions)} actions")
         console.emit(f"  action         {action} ({'changes Azure' if writes else 'reads only'})")
+        inputs = inputs_line(workflow, self.args)
+        if inputs:
+            console.emit(f"  inputs         {inputs}")
         console.emit(f"  commit         {head[:12]}, working tree {'clean' if not dirty else f'NOT clean ({len(dirty)} paths)'}")
         console.emit(f"  local folder   {local}")
         console.emit(f"  configuration  {len(values)} names, {len(empty)} empty" + (f" ({', '.join(empty)})" if empty else ""))
@@ -1908,12 +2005,18 @@ class Hub:
         replacement, reason = classify(step)
         if reason:
             raise HubLocalError(reason)
+        if replacement and replacement.kind == "ci-checks":
+            note = (f"the checks of CI are not asked of GitHub: the person who starts the run ran them on this machine, for commit {self.head[:12]}, "
+                    f"with the working tree {'clean' if not self.dirty else 'NOT clean'}")
+            self.say(f"    replaced: {note}")
+            self.used.append(note)
+            return "success", f"replaced: {replacement.note}", {}
         step_env = {key: interpolate(text, self.ctx) for key, text in step.env.items()}
         files = {name: self.rt / "files" / f"step-{step.index + 1:02d}.{name}" for name in ("output", "env", "summary")}
         for path in files.values():
             path.write_text("", encoding="utf-8")
         kind = replacement.kind if replacement else ""
-        if kind in ("checkout", "cases-pack", "cases-publish-cleanup"):
+        if kind in ("checkout", "cases-publish-cleanup"):
             self.say(f"    replaced: {replacement.note}")
             self.used.append(replacement.note)
             return ("success" if kind == "checkout" else "skipped"), f"replaced: {replacement.note}", {}
@@ -1931,10 +2034,17 @@ class Hub:
         if kind == "no-token":
             self.say(f"    NOTE: {replacement.note}")
             self.used.append(replacement.note)
+        if kind == "cases-pack":
+            self.say(f"    NOTE: {replacement.note}")
+            self.used.append("the archive of the app's sources is made here and is not sent to the Operator")
         script = self.script_text(step)
         path = self.rt / "steps" / f"step-{step.index + 1:02d}.sh"
         path.write_bytes(script.encode("utf-8"))
         env = self.step_environment(step_env, files)
+        if replacement and replacement.posix_paths:
+            env["RUNNER_TEMP"] = posix_absolute(self.rt)
+            for name in ("MSYS_NO_PATHCONV", "MSYS2_ARG_CONV_EXCL"):
+                env.pop(name, None)
         code, timed_out = run_process([self.bash, "--noprofile", "--norc", "-eo", "pipefail", posix(path)], env, self.root, self.console, self.step_limit_seconds(step))
         outputs = self.read_files(step, files)
         if timed_out:
@@ -2017,19 +2127,62 @@ class Hub:
         if code != 0 or not package.is_file():
             self.say("ERROR: the package could not be built (see above). Nothing was published")
             return False
+        expected = self.release_digest()
+        if expected:
+            if not self.package_has_digest(package, expected):
+                return False
+        else:
+            self.say("    NOTE: no step of this workflow gave the digest of the app's own files (the output package_sha256), so the package is not held against one")
+        package_sha256 = hashlib.sha256(package.read_bytes()).hexdigest()
         command = [*self.az.argv, "functionapp", "deployment", "source", "config-zip", "--subscription", subscription, "--resource-group", group, "--name", app, "--src", posix(package),
                    "--build-remote", "false", "--only-show-errors", "--output", "none"]
         for attempt in (1, 2, 3):
             code, timed_out = run_process(command, self.az.environment(), self.root, self.console, 10 * 60)
             if code == 0:
                 self.say(f"    the package is published to {app} (attempt {attempt} of 3), from this machine, through the app's public deployment site")
-                self.summary.append(f"The cases package was built on this machine and published to `{app}` through the app's public deployment site (attempt {attempt} of 3), with the owner's own session.")
+                self.summary.append(f"The cases package was built on this machine and published to `{app}` through the app's public deployment site (attempt {attempt} of 3), with the owner's own session. "
+                                    "Nothing went to the Operator in this run (its route needs a GitHub OpenID Connect token): a line below that says that the Operator received or published the code "
+                                    "describes a run on GitHub, not this one.")
+                self.summary.append(f"the cases package that is published has the SHA-256 {package_sha256}")
+                if expected:
+                    self.summary.append(f"Its own files (function_app.py and cases/) have the digest `{expected}`, which the deploy wrote as the app's setting PACKAGE_SHA256: they were held against it before "
+                                        "the package was published, so the app's check of its release finds the same.")
                 return True
             self.say(f"ERROR: the publish did not go through (attempt {attempt} of 3)" + (" (it timed out)" if timed_out else ""))
             if attempt < 3:
                 self.deps.sleep(60)
         self.say(f"ERROR: the code could not be published to {app}")
         return False
+
+    def release_digest(self) -> str:
+        """The digest of the app's own files that an earlier step gave (the output package_sha256): what the deploy wrote as the app's setting PACKAGE_SHA256, and what the app's own check
+        of its release holds its running files against."""
+        for state in self.ctx.steps.values():
+            outputs = state.outputs if isinstance(state.outputs, dict) else {}
+            if re.fullmatch(r"[0-9a-f]{64}", outputs.get("package_sha256", "")):
+                return outputs["package_sha256"]
+        return ""
+
+    def package_has_digest(self, package: Path, expected: str) -> bool:
+        """The files in the zip file, unpacked, give the expected digest, by tools/package-digest.py, which loads the app's own cases/release.py: the check that the app will make of the files that it
+        runs. A Windows checkout has CRLF line ends, and the digest reads them as LF, so this holds for it too. When it does not, nothing is published."""
+        folder = self.rt / "cases-verify"
+        tool = self.root / "tools" / "package-digest.py"
+        try:
+            with zipfile.ZipFile(package) as archive:
+                archive.extractall(folder)
+            done = subprocess.run([sys.executable, str(tool), str(folder), "--check", expected], capture_output=True, text=True, encoding="utf-8", errors="replace",
+                                  stdin=subprocess.DEVNULL, timeout=300)
+        except (OSError, zipfile.BadZipFile, subprocess.TimeoutExpired) as error:
+            self.say(f"ERROR: the files of the package could not be held against the digest of the app's own files: {error!r}. Nothing was published")
+            return False
+        if done.returncode != 0:
+            said = (done.stdout.strip() or done.stderr.strip()).splitlines()
+            self.say(f"ERROR: the files in the package are not the files whose digest the deploy wrote as PACKAGE_SHA256 ({said[0] if said else 'no answer'}): the app's check of its release would fail. "
+                     "Did a file of src/case-functions change after the step that works out the release? Nothing was published")
+            return False
+        self.say("    the files of the package (function_app.py and cases/) have the digest that the deploy wrote as PACKAGE_SHA256: the app's check of its release will find the same")
+        return True
 
     # ---- the end of a run ----------------------------------------------------------------------------------------------------------------------------------------------------------------
     def finish(self, action: str, passed: bool, interrupted: bool, started: dt.datetime, ended: dt.datetime, seconds: float, run_number: int, run_id: int, rt: Path,
@@ -2108,6 +2261,7 @@ TEMPLATE_HEAD = """# The values that GitHub held as variables and secrets for th
 # This file stays on this machine: git ignores it (AGENTS.md rule 17). One NAME=VALUE per line; a line that starts with # is a comment. Never commit it.
 # ENV_SUBSCRIPTION_ID and AZURE_SUBSCRIPTION_ID are the same subscription. AZURE_CLIENT_ID is the deploy identity's client id: a run here does not use it, and it may stay empty.
 # GitHub shows the value of a variable but never of a secret, so the secrets are filled in by hand even with --from-github.
+# DRIFT_ACCEPTED_EXEMPTIONS and DRIFT_ACCEPTED_DENY are optional: what the owner has accepted of the policy state (tools/drift-check.py). Empty, or no line, accepts nothing.
 """
 
 
@@ -2150,8 +2304,9 @@ def do_init(args, environ, deps: Deps, out) -> int:
     else:
         require_ignored([config, local / RECORDS_NAME / "hub-local-record.md"], deps.git)
         config.write_text(template_text(known), encoding="utf-8", newline="\n")
-        empty = [name for name in TEMPLATE_NAMES if not known.get(name)]
-        say(f"made: {config} with {len(TEMPLATE_NAMES)} names" + (f", {len(TEMPLATE_NAMES) - len(empty)} of them filled in from GitHub" if known else ", all empty"))
+        empty = [name for name in TEMPLATE_NAMES if name not in OPTIONAL_NAMES and not known.get(name)]
+        filled = len([name for name in TEMPLATE_NAMES if known.get(name)])
+        say(f"made: {config} with {len(TEMPLATE_NAMES)} names" + (f", {filled} of them filled in from GitHub" if known else ", all empty"))
         say(f"fill in: {', '.join(empty)}")
     if state.exists():
         say(f"kept: {state} exists and is not changed")
@@ -2168,6 +2323,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--minutes", help="only with page-latency: how many minutes (the workflow's input minutes; its default when not given)")
     parser.add_argument("--public-ai-gateway-requested", action="store_true", help="only with aigateway: the owner has asked in writing for a public AI Gateway")
     parser.add_argument("--plant-public-ip", action="store_true", help="only with plant: also plant an unassigned public IP address")
+    parser.add_argument("--evals-command", help="only with foundry-evals: the workflow's input evals_command (probe, run, rule or rule-apply; the workflow's default when not given). "
+                        "probe and rule only read; run and rule-apply need --yes")
+    parser.add_argument("--evals-judge", help="only with foundry-evals and --evals-command run: the workflow's input evals_judge (none, connection or auto; the workflow's default when not given)")
+    parser.add_argument("--redteam-mode", help="only with foundry-redteam: the workflow's input redteam_mode (auto, cloud or dataset; the workflow's default when not given)")
     parser.add_argument("--yes", action="store_true", help="run an action that changes Azure (without it the plan is printed and nothing runs)")
     parser.add_argument("--allow-dirty", action="store_true", help="run an action that changes Azure from a working tree that has uncommitted changes")
     parser.add_argument("--dry-run", action="store_true", help="print the plan and run nothing: no az session is needed")
