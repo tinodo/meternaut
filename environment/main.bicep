@@ -77,7 +77,7 @@ resource nsg 'Microsoft.Network/networkSecurityGroups@2025-05-01' = {
 }
 
 // No rule of its own: the default rules let the function app reach the virtual network and the internet (the landing zone's
-// firewall decides there), and nothing is let in. The subnet of a Flex Consumption function app (the cases app uses it only while it runs on Flex Consumption: it runs on a Basic plan since 2026-11-08).
+// firewall decides there), and nothing is let in. The subnet of a Flex Consumption function app (the cases app uses it: it runs on Flex Consumption again since the owner's order of 2026-11-08).
 resource funcNsg 'Microsoft.Network/networkSecurityGroups@2025-05-01' = {
   name: 'nsg-${workload}-func'
   location: location

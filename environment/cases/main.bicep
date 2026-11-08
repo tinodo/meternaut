@@ -27,8 +27,9 @@
 // Which plan, and why. The first cases ran on Flex Consumption. On 2026-11-05 its front end held some requests to the console for 15 to 60 seconds and answered some with "The service is
 // unavailable" (CHANGELOG.md), and the app moved to a Basic plan, which has no such front end and no cold start, for about 13 US dollars a month. On 2026-11-07 the owner ordered it back
 // onto Flex Consumption, which scales to zero and bills per execution: a tool that finds waste must not carry an idle plan. On 2026-11-08 the platform's front end held the web page's requests
-// again (50 to 60 seconds for most of them, and a 503 after exactly 60 seconds for some, while the app's own time was 0 seconds), so the plan is Basic. The Flex definition stays here for a
-// later try: one value, CASES_APP_PLAN in tools/environment-params.py, and the action cases (docs/proposals/07-private-by-default.md, "The web page on Flex Consumption").
+// again (50 to 60 seconds for most of them, and a 503 after exactly 60 seconds for some, while the app's own time was 0 seconds), the plan went to Basic, and the owner ordered Flex again the same
+// morning, so the plan is Flex. The measurements are reported to him, and Basic is the way back on his word: one value, CASES_APP_PLAN in tools/environment-params.py, and the action cases
+// (docs/proposals/07-private-by-default.md, "The web page on Flex Consumption").
 //
 // It makes no storage account: the app shares the storage account of environment/base/main.bicep (blob, queue and table private endpoints), and its control queue is in it, so
 // nothing new is billed except the
@@ -94,12 +95,12 @@ param storageAccountName string
 @maxLength(60)
 param functionAppName string
 
-@description('Which plan the web page and the app run on: Basic (B1, Linux, always on, about 13 US dollars a month, with the subnet snet-cases below) or Flex (Flex Consumption, scales to zero, billed per execution: the app takes the function subnet snet-func that the model side made, which is delegated to Microsoft.App/environments; a later try, see the header). tools/environment-params.py sets it from the constant CASES_APP_PLAN. Moving the app between the two needs a new app: the action cases removes the app of the other kind and its plan first.')
+@description('Which plan the web page and the app run on: Flex (Flex Consumption, scales to zero, billed per execution: the app takes the function subnet snet-func that the model side made, which is delegated to Microsoft.App/environments) or Basic (B1, Linux, always on, about 13 US dollars a month, with the subnet snet-cases below: the way back, on the owner\'s word). tools/environment-params.py sets it from the constant CASES_APP_PLAN. Moving the app between the two needs a new app: the action cases removes the app of the other kind and its plan first.')
 @allowed([
   'Flex'
   'Basic'
 ])
-param casesAppPlan string = 'Basic'
+param casesAppPlan string = 'Flex'
 
 @description('Address range of the subnet that the app\'s Basic plan is integrated with, inside the virtual network and apart from the other two subnets, for example 10.53.0.224/27. It is delegated to Microsoft.Web/serverFarms and holds nothing else. Only a Basic app uses it: a Flex app uses snet-func.')
 param webSubnetPrefix string

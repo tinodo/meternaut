@@ -75,19 +75,21 @@ PROJECT_PRINCIPAL = SETTINGS["FOUNDRY_PROJECT_PRINCIPAL_ID"]
 # Tenth change (a third model, gpt-5.5, for the Investigator, and the capacities of the agents' deployments moved with the roles, 2026-11-08, re-recorded on purpose): the list of models of these inputs has three
 # models, so aigateway.parameters.json holds a third model and alias, foundry.parameters.json a third deployment (gpt-5.5, 50) and gpt-6.1-sol has 20 where it had 50, and the output line aigateway_aliases
 # names three aliases. A build of the old list and of the new one was compared on purpose: no other file and no other line differs.
+# Eleventh change (the owner ordered Flex Consumption again, 2026-11-08 at 09:39, re-recorded on purpose): cases.parameters.json holds casesAppPlan "Flex" again, which makes it the file that it was before the ninth
+# change (the same hash), and the output holds the Flex values for the same six lines about the plan kind; every other file is what it was.
 # The files of the planted waste and the others are byte for byte what they were.
 GOLDEN = {
     "aigateway-policies.json": "e6d99d1633ab16afc3410e50dbdcb7e290f0e125f4283b4b19f63a8eebb8395c",
     "aigateway-subnet.parameters.json": "a2a16b02fd7a1d54d8949ad89796d4ea89d6bf1907db1f5b621205699a5a0196",
     "aigateway.parameters.json": "5b4cf2135e25e92773937b758578a844cacf4b40443b44d896ae3186b8b391f8",
     "base.parameters.json": "942cff3133e4f0acba426335edcd41e177473802258db4fe2750d72610d692b9",
-    "cases.parameters.json": "2ddab00c7dd4c5f7a616fa757aa5cf1fe1d9d9e77a6299d9cece02b0b2fbad6b",
+    "cases.parameters.json": "ac128bf1263b9e05e69b4b5f1711fb536cdddf413cd6e79e6bc0270ebedf8964",
     "environment.parameters.json": "5a722678f859d67fd7ff7895b0150b048b97def6b094c723d70d5849d078a7f3",
     "foundry.parameters.json": "c9fad0683873d351abbc281322cb3e7bcb6d24bd56f378fade0333801e1e2503",
     "operator.parameters.json": "77f010f57ffcef1d1ab84dea95de7eea61e4ed5c5d2135faf4593c14b6a5b5a4",
     "planted.parameters.json": "62ecf7282a7bf4c968db91a3943ba20a99dc7ac04fcabb7816aadf6f68f9759c",
 }
-GOLDEN_OUTPUT = "c316c830f933cf23380dbd933d28e418a8e8afc97914d3ca50412ad2b99b180e"
+GOLDEN_OUTPUT = "0136157da075a0dee3703f74b5993c77d3068e55e6375f6aec8a581ec5854f8b"
 
 FOUNDRY = (ROOT / "environment" / "foundry" / "main.bicep").read_text(encoding="utf-8")
 CASES = (ROOT / "environment" / "cases" / "main.bicep").read_text(encoding="utf-8")
