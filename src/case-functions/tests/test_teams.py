@@ -23,7 +23,7 @@ PEOPLE = [{"oid": ts.MAYA, "name": "Maya", "roles": ["owner", "approver", "ops"]
 
 
 def env(**changes) -> dict:
-    values = {"TEAMS_BOT_APP_ID": ts.APP_ID, "TEAMS_TENANT_ID": ts.TENANT, "STORE_ACCOUNT_NAME": ACCOUNT, "CHANGE_RESOURCE_GROUP": ts.GROUP, "CHANGE_SUBSCRIPTION_ID": ts.SUBSCRIPTION,
+    values = {"TEAMS_BOT_APP_ID": ts.APP_ID, "TEAMS_TENANT_ID": ts.TENANT, "STORE_ACCOUNT_NAME": ACCOUNT, "CHANGE_SCOPES": f"{ts.SUBSCRIPTION}/{ts.GROUP}",
               "CONSOLE_HOST": "meternaut.example", "CONSOLE_PEOPLE": json.dumps(PEOPLE), "IDENTITY_ENDPOINT": "http://127.0.0.1:8081/msi/token", "IDENTITY_HEADER": "header-value",
               "AZURE_CLIENT_ID": "99999999-8888-7777-6666-555555555555"}
     values.update(changes)
@@ -62,7 +62,7 @@ class TheSettings(unittest.TestCase):
 
     def test_a_half_set_up_bot_says_what_is_missing(self):
         for changes, words in (({"TEAMS_TENANT_ID": None}, "TEAMS_TENANT_ID"), ({"TEAMS_BOT_APP_ID": None}, "TEAMS_BOT_APP_ID"), ({"TEAMS_BOT_APP_ID": "not-a-guid"}, "TEAMS_BOT_APP_ID"),
-                               ({"STORE_ACCOUNT_NAME": None}, "the loop is not configured"), ({"CHANGE_SUBSCRIPTION_ID": "x"}, "CHANGE_SUBSCRIPTION_ID")):
+                               ({"STORE_ACCOUNT_NAME": None}, "the loop is not configured"), ({"CHANGE_SCOPES": "x"}, "CHANGE_SCOPES")):
             with self.assertRaises(teams.TeamsConfigError, msg=changes) as caught:
                 teams.load(env(**changes))
             self.assertIn(words, str(caught.exception))
@@ -94,7 +94,7 @@ class TheServices(unittest.TestCase):
         built = teams.build_services(env(), transport=tables.transport, fetch=lambda url, headers, timeout: (200, b'{"access_token":"t0ken-for-the-test-0123456789","expires_on":"9999999999"}'),
                                      keys_fetch=ba.Documents(), clock=ts.Moving(), sleep=lambda seconds: None)
         self.assertEqual(built.store.account, ACCOUNT)
-        self.assertEqual(built.approvals.settings.change_group, ts.GROUP)
+        self.assertEqual(tuple((s.subscription, s.group) for s in built.approvals.settings.change_scopes), ((ts.SUBSCRIPTION, ts.GROUP),))
         built.references.reference_get(ts.MAYA)
         built.store.plan_get("x")
         self.assertEqual({method for method, url in tables.calls}, {"GET"})

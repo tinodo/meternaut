@@ -7,6 +7,10 @@ Migration note (the decision brief). A record is read by `_thaw`: a key that the
 record that was written before a field existed still reads, and a record that a newer version wrote still reads in an older one. The decision brief added only things of that kind:
 the case status `acknowledged`, the answer `later`, the family `advise`, `CaseRecord.owner` (empty: not looked up) and `DecisionRecord.reason` (empty: no reason). Nothing was
 renamed or removed, so no stored record has to be rewritten, and the tables keep their keys.
+
+The families of change added the same kind of thing: `PlanRecord.target` and `PlanRecord.digest` (a plan of before has no digest, so it cannot be approved: the Watch makes a new one),
+`DecisionRecord.plan_digest`, `ActionRecord.plan_digest` and `ActionRecord.operation`. The constant FAMILIES is gone: the families are in cases/families (their registry is
+cases/families/registry.py).
 """
 from __future__ import annotations
 
@@ -36,11 +40,8 @@ ROLES = ("owner", "approver", "ops")
 # longer one, and the code that makes the address keeps to it.
 MAX_SIGNIN_PATH = 2000
 
-# What a change may be: one family is one kind of change on one kind of resource.
-FAMILIES = {
-    "delete-disk": "microsoft.compute/disks",
-    "delete-public-ip": "microsoft.network/publicipaddresses",
-}
+# What a change may be: one family is one kind of change. The families themselves are in cases/families (the registry): each has its own plan text, its own re-check right before it
+# acts, its own call to Azure and its own test (AGENTS.md rule 26 (a)). `family` in a plan is the name of one of them, or ADVISE.
 # The family of a plan that asks a person whether a finding is worth acting on. It changes nothing in Azure and has no call in the runner's list: the answer is recorded and
 # nothing else happens. A finding about a resource that Meternaut may not change gets such a plan, so that the person can answer it.
 ADVISE = "advise"
@@ -130,12 +131,12 @@ class PlanRecord(Record):
 
     plan_id: str
     case_id: str
-    family: str  # one of FAMILIES
+    family: str  # the name of a family of cases/families, or ADVISE
     resource_id: str
     resource_name: str
     resource_group: str
     subscription_id: str
-    code: str  # eight characters of the plan's hash: a reference, not a proof
+    code: str  # the first eight characters of the digest: a reference, not a proof
     title: str  # a verb, an object and a place
     what_changes: str
     saving_usd_month: float | None
@@ -149,6 +150,10 @@ class PlanRecord(Record):
     state: str = "open"
     approval_class: str = "R2"
     preconditions: dict = field(default_factory=dict)  # what the re-check right before the change looks at, e.g. {"diskState": "Unattached", "tag": "meternaut-planted"}
+    target: dict = field(default_factory=dict)  # the typed parameters of the change as the plan states them, e.g. {"vmSize": "Standard_B1s", "fromVmSize": "Standard_B2s"}; empty for a delete
+    # SHA-256 over every other field of the plan but state and code (cases/families/digest.py), 64 hexadecimal characters. The sign-in binds it and the runner compares it before it acts:
+    # empty only in a plan that was made before the digest existed, which cannot be approved.
+    digest: str = ""
 
 
 @dataclass(frozen=True)
@@ -161,6 +166,7 @@ class DecisionRecord(Record):
     plan_code: str
     note: str = ""
     reason: str = ""  # one of DECLINE_REASONS, or empty: only a decline has one
+    plan_digest: str = ""  # the digest of the plan that an approval was made for (an approval of a change records it; the other answers leave it empty)
 
 
 @dataclass(frozen=True)
@@ -179,9 +185,13 @@ class ActionRecord(Record):
     result: str = ""
     correlation_id: str = ""
     verified_at: str | None = None
-    verification: dict = field(default_factory=dict)  # {"gone": bool, "costAfterUsd": float or None, "note": text}
+    verification: dict = field(default_factory=dict)  # {"gone": bool, "costAfterUsd": float or None, "note": text}, and for a change that is not a delete {"now": what a read showed}
     error: str | None = None
     step_up: bool = False  # Azure asked for an extra sign-in check: the action waits in the queue for it, and a second ask is final
+    plan_digest: str = ""  # the digest of the plan that this action carries out (empty in an action of before the digest existed)
+    # A write that Azure accepted and is still carrying out (the state is then `running`): {"pending": True, "acceptedAt": time, "via": the header that gave its address, or "none"}. The timer
+    # reads the resource later and settles it. Empty for every other action.
+    operation: dict = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -253,8 +263,8 @@ class Principal:
 class DecideResult:
     ok: bool
     # Answers: declined, asked, not_mine, later, and acknowledged (an advise plan answered with "worth acting on": nothing changes in Azure). What a sign-in to Azure led to:
-    # ran, ran_unconfirmed, stopped, azure_refused, failed, signin_failed, and step_up_failed (the extra
-    # sign-in check that Azure asked for was not completed: the request is closed). step_up: Azure asked for an extra sign-in check, and `location` is where the person goes.
+    # ran, ran_unconfirmed, running (Azure accepted the change and is still making it: the timer reads the resource later), stopped, azure_refused, failed, signin_failed, and step_up_failed
+    # (the extra sign-in check that Azure asked for was not completed: the request is closed). step_up: Azure asked for an extra sign-in check, and `location` is where the person goes.
     # Refusals: refused_code, refused_state, refused_role, refused_paused, expired, duplicate, error.
     kind: str
     message: str

@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Runs the Hub workflow's own steps for one action on the owner's machine, with the owner's own az session (standard library only).
 
-    python tools/hub-local.py <action> [--minutes N] [--public-ai-gateway-requested] [--public-teams-bot-requested] [--plant-public-ip] [--evals-command C] [--evals-judge J] [--redteam-mode M]
+    python tools/hub-local.py <action> [--minutes N] [--public-ai-gateway-requested] [--public-teams-bot-requested] [--plant-public-ip] [--plant-vm] [--evals-command C] [--evals-judge J]
+                                       [--redteam-mode M]
                                        [--yes] [--allow-dirty] [--dry-run] [--workflow PATH]
     python tools/hub-local.py --init [--from-github]
 
@@ -38,10 +39,10 @@ of the deploy identity inside the Operator (the probe goes on without it, and sa
 The configuration names every variable and secret that the workflow reads. Two repository variables are optional, DRIFT_ACCEPTED_EXEMPTIONS and DRIFT_ACCEPTED_DENY (what the owner accepted of the
 policy state): GitHub reads one that is not set as empty, and so does this tool. A run says so in its plan. Any other name that is missing from the file stops the plan.
 
-The inputs of the workflow are flags: --minutes (page-latency), --plant-public-ip (plant), --public-ai-gateway-requested (aigateway), --public-teams-bot-requested (teams), --evals-command and
---evals-judge (foundry-evals) and --redteam-mode (foundry-redteam). A flag that is not given has the workflow's own default, and the plan prints the value that each input has. The action teams
-also reads one repository variable that no other action reads, TEAMS_BOT_ENABLED: the owner adds the line TEAMS_BOT_ENABLED=True to the configuration file, after his written request for the
-Teams bot; the other actions never read it, so they need no such line. An action that only reads needs no --yes:
+The inputs of the workflow are flags: --minutes (page-latency), --plant-public-ip and --plant-vm (plant), --public-ai-gateway-requested (aigateway), --public-teams-bot-requested (teams),
+--evals-command and --evals-judge (foundry-evals) and --redteam-mode (foundry-redteam). A flag that is not given has the workflow's own default, and the plan prints the value that each input has.
+The action teams also reads one repository variable that no other action reads, TEAMS_BOT_ENABLED: the owner adds the line TEAMS_BOT_ENABLED=True to the configuration file, after his written
+request for the Teams bot; the other actions never read it, so they need no such line. An action that only reads needs no --yes:
 what-if, aigateway-check, page-latency, loop-check, operator-probe, drift-check, agents-drift, agent365-check, and foundry-evals with the command probe or rule. Every other action changes
 Azure, and so does an action that this tool does not know.
 
@@ -91,9 +92,9 @@ READ_ONLY_ACTIONS = ("what-if", "aigateway-check", "page-latency", "loop-check",
 # An action that reads for some values of an input and changes Azure for the others: foundry-evals reads with probe and rule, and makes evaluation runs and the rule with run and rule-apply.
 READ_ONLY_INPUT_VALUES = {"foundry-evals": ("evals_command", ("probe", "rule"))}
 # The inputs that only some actions read (the workflow says "Every other action ignores it"): a flag for another action is said in the plan, and never guessed.
-INPUT_ACTIONS = {"minutes": ("page-latency",), "plant_public_ip": ("plant",), "public_ai_gateway_requested": ("aigateway",), "public_teams_bot_requested": ("teams",),
+INPUT_ACTIONS = {"minutes": ("page-latency",), "plant_public_ip": ("plant",), "plant_vm": ("plant",), "public_ai_gateway_requested": ("aigateway",), "public_teams_bot_requested": ("teams",),
                  "evals_command": ("foundry-evals",), "evals_judge": ("foundry-evals",), "redteam_mode": ("foundry-redteam",)}
-INPUT_FLAGS = {"minutes": "--minutes", "plant_public_ip": "--plant-public-ip", "public_ai_gateway_requested": "--public-ai-gateway-requested",
+INPUT_FLAGS = {"minutes": "--minutes", "plant_public_ip": "--plant-public-ip", "plant_vm": "--plant-vm", "public_ai_gateway_requested": "--public-ai-gateway-requested",
                "public_teams_bot_requested": "--public-teams-bot-requested", "evals_command": "--evals-command", "evals_judge": "--evals-judge", "redteam_mode": "--redteam-mode"}
 PUBLIC_GATEWAY_ACTION = "aigateway"
 TEAMS_ACTION = "teams"
@@ -1557,6 +1558,8 @@ def input_values(workflow: Workflow, args) -> dict:
         values["public_teams_bot_requested"] = bool(args.public_teams_bot_requested)
     if "plant_public_ip" in values:
         values["plant_public_ip"] = bool(args.plant_public_ip)
+    if "plant_vm" in values:
+        values["plant_vm"] = bool(getattr(args, "plant_vm", False))
     for name in ("evals_command", "evals_judge", "redteam_mode"):
         given = getattr(args, name, None)
         if given is None:
@@ -1580,9 +1583,8 @@ def changes_azure(action: str, inputs: dict) -> bool:
 
 def given_flags(args) -> dict:
     """Which input flags the person gave."""
-    return {"minutes": args.minutes is not None, "plant_public_ip": bool(args.plant_public_ip), "public_ai_gateway_requested": bool(args.public_ai_gateway_requested),
-            "public_teams_bot_requested": bool(args.public_teams_bot_requested),
-            "evals_command": getattr(args, "evals_command", None) is not None, "evals_judge": getattr(args, "evals_judge", None) is not None,
+    return {"minutes": args.minutes is not None, "plant_public_ip": bool(args.plant_public_ip), "plant_vm": bool(getattr(args, "plant_vm", False)),
+            "public_ai_gateway_requested": bool(args.public_ai_gateway_requested), "public_teams_bot_requested": bool(args.public_teams_bot_requested),            "evals_command": getattr(args, "evals_command", None) is not None, "evals_judge": getattr(args, "evals_judge", None) is not None,
             "redteam_mode": getattr(args, "redteam_mode", None) is not None}
 
 
@@ -2288,8 +2290,7 @@ class Hub:
             return text.replace("|", "/").replace("\n", " ")
         every_input = ", ".join(f"{name} {to_text(value)}" for name, value in self.ctx.inputs.items() if name != "action")
         lines = [f"# Hub (local): {action}", "", f"**{verdict}**", "",
-                 f"- action: {action} ({'changes Azure' if writes else 'reads only'}); inputs: {every_input}",
-                 f"- head commit: {self.head}; working tree: {'clean' if not self.dirty else 'NOT clean (' + str(len(self.dirty)) + ' paths)'}",
+                 f"- action: {action} ({'changes Azure' if writes else 'reads only'}); inputs: {every_input}",                 f"- head commit: {self.head}; working tree: {'clean' if not self.dirty else 'NOT clean (' + str(len(self.dirty)) + ' paths)'}",
                  f"- started {iso(started)}, ended {iso(ended)}" + ("; interrupted by Ctrl+C" if interrupted else ""),
                  f"- run number {run_number}{'' if writes else ' (not used up: a read-only action)'}, run id {run_id}",
                  f"- az session: {self.session_user or 'none'}",
@@ -2374,6 +2375,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--public-ai-gateway-requested", action="store_true", help="only with aigateway: the owner has asked in writing for a public AI Gateway")
     parser.add_argument("--public-teams-bot-requested", action="store_true", help="only with teams: the owner has asked in writing for a public Teams bot")
     parser.add_argument("--plant-public-ip", action="store_true", help="only with plant: also plant an unassigned public IP address")
+    parser.add_argument("--plant-vm", action="store_true", help="only with plant: also plant a virtual machine that nothing uses, with its network interface and its OS disk (about 0.04 US dollars an hour while it runs)")
     parser.add_argument("--evals-command", help="only with foundry-evals: the workflow's input evals_command (probe, run, rule or rule-apply; the workflow's default when not given). "
                         "probe and rule only read; run and rule-apply need --yes")
     parser.add_argument("--evals-judge", help="only with foundry-evals and --evals-command run: the workflow's input evals_judge (none, connection or auto; the workflow's default when not given)")

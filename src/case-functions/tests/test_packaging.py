@@ -16,13 +16,13 @@ FORBIDDEN = (
     "listKeys", "listConnectionStrings", "secondaryKey", "master_key", "sas_token", "client_secret", "password",
 )
 KEY_WORDS = ("listSecrets", "primaryKey")
-# The only modules that write. The store writes records to its own tables (PUT, DELETE of one entity); the runner is the one component that changes Azure
-# (DELETE of a disk or a public IP address, on its own list of calls, and only with the token that a person's sign-in to Azure gave it: no identity of the app
-# holds a right to change Azure); the Foundry client deletes the conversations that it made itself, in Meternaut's own Foundry project and nowhere else (the test
-# of its calls below holds the list, and the one DELETE of http.py's list of calls is that conversation). Everything else asks questions: a GET, or a POST that asks for
+# The only modules that write. The store writes records to its own tables (PUT, DELETE of one entity). The families name every call that changes Azure in one module, families/calls.py (a DELETE,
+# a PATCH and the deallocate of a machine, each on its own kind of resource, listed there and pinned below); the runner makes one of them, and only with the token that a person's sign-in
+# to Azure gave it: no identity of the app holds a right to change Azure. The Foundry client deletes the conversations that it made itself, in Meternaut's own Foundry project and nowhere
+# else (the test of its calls below holds the list, and the one DELETE of http.py's list of calls is that conversation). Everything else asks questions: a GET, or a POST that asks for
 # a query result, a completion or a token. The references of the Teams bot are a table of the same kind as the store's: one entity written and deleted in the table `mnteams` of the
 # loop's storage account, on a list of calls of its own (references.py), and the bot's POSTs to the Bot Connector (connector.py) send a card or start a conversation and change nothing in Azure.
-WRITERS = {"store.py": {"PUT", "DELETE"}, "references.py": {"PUT", "DELETE"}, "runner.py": {"DELETE"}, "foundry.py": {"DELETE"}, "http.py": {"DELETE"}}
+WRITERS = {"store.py": {"PUT", "DELETE"}, "references.py": {"PUT", "DELETE"}, "calls.py": {"DELETE", "PATCH", "/deallocate"}, "foundry.py": {"DELETE"}, "http.py": {"DELETE"}}
 WRITE_WORDS = ('"PUT"', '"DELETE"', '"PATCH"', "/delete", "/write", "/deallocate", "/resize", "/restart", "regeneratePrimaryKey")
 
 
@@ -161,9 +161,17 @@ class WhatTheAppIs(unittest.TestCase):
         self.assertNotIn("table.core.windows.net", runner)
         self.assertNotIn("storage.azure.com", runner)
 
-    def test_the_runner_deletes_two_kinds_of_resource_and_nothing_else(self):
+    def test_the_families_name_ten_writes_in_one_module_and_each_is_on_its_own_kind_of_resource(self):
+        sys.path.insert(0, str(APP_ROOT))
+        try:
+            from cases.families import calls
+        finally:
+            sys.path.remove(str(APP_ROOT))
+        self.assertEqual([(call.method, call.kind.collection, call.suffix) for call in calls.WRITES], [
+            ("DELETE", "disks", ""), ("DELETE", "publicIPAddresses", ""), ("POST", "virtualMachines", "/deallocate"), ("PATCH", "virtualMachines", ""), ("PATCH", "disks", ""),
+            ("DELETE", "snapshots", ""), ("DELETE", "networkInterfaces", ""), ("DELETE", "natGateways", ""), ("DELETE", "loadBalancers", ""), ("DELETE", "privateEndpoints", "")])
         runner = (APP_ROOT / "cases" / "runner.py").read_text(encoding="utf-8")
-        self.assertEqual(sorted(set(re.findall(r'\("DELETE", (\w+)\)', runner))), ["addresses", "disks"])
+        self.assertEqual(re.findall(r'"(?:DELETE|PATCH|PUT)"', runner), [], "the runner names no method of a write: the calls are the families'")
 
     def test_the_foundry_client_makes_and_deletes_only_what_is_its_own_in_its_own_project(self):
         # foundry.py is the one module that POSTs to a Foundry project and, after the store and the runner, the one that deletes. Every call goes through Foundry._call, whose
@@ -213,7 +221,8 @@ class WhatTheAppIs(unittest.TestCase):
             "import cases, cases.config, cases.http, cases.identity, cases.arm, cases.detectors, cases.evidence, cases.guards, cases.roles, cases.decide, "
             "cases.modelcalls, cases.foundry, cases.events, cases.run, cases.control, cases.redact, cases.models, cases.memory_store, cases.store, cases.approvals, cases.claims, "
             "cases.runner, cases.people, cases.switches, cases.wiring, cases.loop_config, cases.delegated, cases.console, cases.loop, cases.web, cases.mail, cases.letters, "
-            "cases.agents, cases.investigate, cases.plaintext, cases.lockfile, cases.release, cases.alerts, cases.harness, cases.drift_rules, cases.drift; "            "print(sorted(name for name in sys.modules if name == 'azure' or name.startswith('azure.')))"
+            "cases.agents, cases.investigate, cases.plaintext, cases.lockfile, cases.release, cases.alerts, cases.harness, cases.drift_rules, cases.drift, cases.families.registry, "
+            "cases.families.words; "            "print(sorted(name for name in sys.modules if name == 'azure' or name.startswith('azure.')))"
         )
         done = subprocess.run([sys.executable, "-c", code, str(APP_ROOT)], capture_output=True, text=True, check=True)
         self.assertEqual(done.stdout.strip(), "[]")

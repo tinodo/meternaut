@@ -7,10 +7,12 @@ from typing import Callable, Mapping
 
 from . import loop_config, people as people_mod
 from .approvals import Approvals, ApprovalSettings
+from .families.azure import Azure
 from .http import Client
 from .loop_config import LoopSettings
 from .memory_store import utc_now
 from .models import ActionRecord, CaseRecord, PlanRecord, RunRecord, Store
+from .runner import read_calls
 from .store import TableStore, table_calls
 
 
@@ -34,8 +36,7 @@ class Extras:
 
 
 def approval_settings(settings: LoopSettings) -> ApprovalSettings:
-    return ApprovalSettings(change_group=settings.change_group, planted_tag=settings.planted_tag, ttl_hours=settings.plan_ttl_hours,
-                            change_subscription=settings.change_subscription)
+    return ApprovalSettings(change_scopes=settings.change_scopes, planted_tag=settings.planted_tag, ttl_hours=settings.plan_ttl_hours)
 
 
 def build_store(settings: LoopSettings, token: Callable[[str], str], redact: Callable[[str], str], *, transport, sleep, monotonic,
@@ -52,7 +53,10 @@ def build_extras(env: Mapping[str, str], token: Callable[[str], str], redact: Ca
         return None
     people = people_mod.load(env)
     store = build_store(settings, token, redact, transport=transport, sleep=sleep, monotonic=monotonic, clock=clock)
-    extras = Extras(settings, store, people, Approvals(store, approval_settings(settings), clock))
+    # The reader of the plans: the Watch's own token and a list of calls that holds reads only, and only in the resource groups of the change scopes. A family reads the machine, the sizes
+    # or the disk that its plan is about with it, never anything else.
+    reader = Azure(Client(read_calls(settings.change_scopes), redact, transport=transport, sleep=sleep, monotonic=monotonic), token)
+    extras = Extras(settings, store, people, Approvals(store, approval_settings(settings), clock, reader=reader))
     if settings.mail_sender:
         from .notify import alert_hook, hooks  # imported only when a sender is set
         extras.on_plan, extras.on_action, extras.on_run = hooks(env, settings, store, people, token, redact, transport=transport, sleep=sleep,

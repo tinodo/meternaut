@@ -74,14 +74,15 @@ class TheWorkflowTouchesOnlyTheProjectsGroup(unittest.TestCase):
                     head = " ".join(words[:3]) if words[1] == "private-endpoint" and words[2] == "list" else " ".join(words[:4])
                 heads.setdefault(head, []).append(number)
         allowed = {"bicep build", "bicep lint", "rest", "resource list", "resource delete", "group show", "provider show", "role assignment",
-                   "network private-endpoint list", "network private-endpoint dns-zone-group", "functionapp deployment"}  # functionapp deployment: the Teams bot's publish, the one app that is public
+                   "network private-endpoint list", "network private-endpoint dns-zone-group", "functionapp deployment",  # functionapp deployment: the Teams bot's publish, the one app that is public
+                   "vm show"}  # vm show: the read-back of the machine that the action plant makes when plant_vm is set, by its name, in the project's group
         self.assertEqual({head for head in heads if head not in allowed}, set(),
                          "a new kind of az call (for example az identity, az apim, az monitor or az ad): say which resource group it reads and why the deployment identity may, and add it here")
 
     def test_every_az_call_that_lists_or_shows_names_the_project_group(self):
         for number, command in commands(WORKFLOW):
             for pattern, required in ((r"\baz resource list\b", r'--resource-group "\$ENV_RESOURCE_GROUP"'), (r"\baz network private-endpoint (?:dns-zone-group )?list\b", r'--resource-group "\$ENV_RESOURCE_GROUP"'),
-                                      (r"\baz group show\b", r'--name "\$ENV_RESOURCE_GROUP"')):
+                                      (r"\baz group show\b", r'--name "\$ENV_RESOURCE_GROUP"'), (r"\baz vm show\b", r'--resource-group "\$ENV_RESOURCE_GROUP" --name "planted-vm-\$PLANTED_ID"')):
                 if re.search(pattern, command) and not command.lstrip().startswith("echo"):
                     self.assertRegex(command, required, f"line {number}: {command[:160]}")
 

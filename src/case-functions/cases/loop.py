@@ -56,10 +56,10 @@ def tick(env: Mapping[str, str] | None = None, *, transport=default_transport, s
         extras = wiring.build_extras(env, reader.token, redact, transport=transport, sleep=sleep, monotonic=monotonic, clock=clock)
         if extras is None:
             return None
-        check_client = Client(read_calls(settings.change_subscription, settings.change_group), redact, transport=transport, sleep=sleep, monotonic=monotonic)
+        check_client = Client(read_calls(settings.change_scopes), redact, transport=transport, sleep=sleep, monotonic=monotonic)
         reader_client = Client(allowed_calls(), redact, transport=transport, sleep=sleep, monotonic=monotonic)
         history = History(uuid.uuid4().hex, None, clock, redact)
-        services = RunnerServices(extras.store, check_client, reader.token, wiring.approval_settings(settings), settings.change_subscription,
+        services = RunnerServices(extras.store, check_client, reader.token, wiring.approval_settings(settings),
                                   arm=Arm(reader_client, reader.token), clock=clock, sleep=sleep, emit=history.emit)
         result = runner.tick(services)
         _remind(extras, clock, redact)

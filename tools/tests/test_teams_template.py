@@ -133,14 +133,14 @@ class TheApp(unittest.TestCase):
 
     def test_the_settings_are_the_ones_that_the_bot_reads(self):
         settings = app_settings()
-        for name in (teams.APP_ID, teams.TENANT_ID, "STORE_ACCOUNT_NAME", "CHANGE_RESOURCE_GROUP", "CHANGE_SUBSCRIPTION_ID", "CONSOLE_HOST", "CONSOLE_PEOPLE", "PLAN_TTL_HOURS"):
+        for name in (teams.APP_ID, teams.TENANT_ID, "STORE_ACCOUNT_NAME", "CHANGE_SCOPES", "CONSOLE_HOST", "CONSOLE_PEOPLE", "PLAN_TTL_HOURS"):
             self.assertIn(name, settings, name)
         self.assertEqual(settings[teams.APP_ID], "botIdentity.properties.clientId", "the app id of the bot is the client id of its identity: the audience of every token that Teams sends")
         self.assertEqual(settings[teams.TENANT_ID], "tenant().tenantId")
         self.assertEqual(settings["CONSOLE_HOST"], "consoleHost")
         # With real values in the place of the expressions the bot's own loader takes them, which is the whole of what the app is told.
         env = {teams.APP_ID: "0f6a4c2e-7b1d-4e35-9a58-3c2d1b0e9f47", teams.TENANT_ID: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee", "STORE_ACCOUNT_NAME": "stexample",
-               "CHANGE_RESOURCE_GROUP": "rg-example", "CHANGE_SUBSCRIPTION_ID": "11111111-2222-3333-4444-555555555555", "CONSOLE_HOST": "meternaut.example.com", "PLAN_TTL_HOURS": "72"}
+               "CHANGE_SCOPES": "11111111-2222-3333-4444-555555555555/rg-example", "CONSOLE_HOST": "meternaut.example.com", "PLAN_TTL_HOURS": "72"}
         loaded = teams.load(env)
         self.assertIsNotNone(loaded)
         self.assertEqual(loaded.loop.console_host, "meternaut.example.com")

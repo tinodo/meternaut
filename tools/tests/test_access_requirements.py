@@ -662,6 +662,15 @@ class TheCallsOfTheApp(unittest.TestCase):
         "reservation-recommendations-read": lambda m, p: m == "GET" and p.endswith("/providers/Microsoft.Consumption/reservationRecommendations"),
         "disk-read": lambda m, p: m == "GET" and "Microsoft.Compute/disks" in p,
         "public-ip-read": lambda m, p: m == "GET" and "Microsoft.Network/publicIPAddresses" in p,
+        # The reads that the families of change make (cases/families/calls.py): the resource that a plan is about, in the project's own group, and the sizes and the quota of a machine.
+        "vm-read": lambda m, p: m == "GET" and "Microsoft.Compute/virtualMachines/" in p and not p.endswith("/vmSizes"),
+        "vm-sizes-read": lambda m, p: m == "GET" and "Microsoft.Compute/virtualMachines/" in p and p.endswith("/vmSizes"),
+        "snapshot-read": lambda m, p: m == "GET" and "Microsoft.Compute/snapshots" in p,
+        "network-interface-read": lambda m, p: m == "GET" and "Microsoft.Network/networkInterfaces" in p,
+        "nat-gateway-read": lambda m, p: m == "GET" and "Microsoft.Network/natGateways" in p,
+        "load-balancer-read": lambda m, p: m == "GET" and "Microsoft.Network/loadBalancers" in p,
+        "private-endpoint-read": lambda m, p: m == "GET" and "Microsoft.Network/privateEndpoints" in p,
+        "compute-usage-read": lambda m, p: m == "GET" and "Microsoft.Compute/locations/" in p and p.endswith("/usages"),
         "subscriptions-list": lambda m, p: m == "GET" and p.endswith("/subscriptions"),
     }
     # Every model call goes to the AI Gateway, with the app's identity: the AI Gateway Models User role that the gateway's template assigns inside the project's own group, no line of this file.
@@ -677,9 +686,10 @@ class TheCallsOfTheApp(unittest.TestCase):
         sys.path.insert(0, app)
         try:
             from cases import runner
+            from cases.families.gates import ChangeScope
         finally:
             sys.path.remove(app)
-        return runner.read_calls(PROJECT, "rg-project")
+        return runner.read_calls((ChangeScope(PROJECT, "rg-project"),))
 
     def names_of(self, calls, whose):
         names = []
@@ -707,7 +717,8 @@ class TheCallsOfTheApp(unittest.TestCase):
         r1 = next(g for g in MANIFEST["grants"] if g["id"] == "R1")
         self.assertEqual((r1["identity"], r1["role"]), ("cases", "Reader"), "the timer reads with the Watch's reader, and Reader holds every read")
         self.assertLessEqual(set(names), set(r1["calls"]), "the timer makes a read that R1 does not list")
-        self.assertLessEqual({"disk-read", "public-ip-read"}, set(r1["calls"]))
+        self.assertLessEqual({"disk-read", "public-ip-read", "vm-read", "vm-sizes-read", "snapshot-read", "network-interface-read", "nat-gateway-read", "load-balancer-read",
+                              "private-endpoint-read", "compute-usage-read"}, set(r1["calls"]))
 
     def test_the_calls_in_the_file_are_the_calls_of_the_watch_and_of_the_timer_and_no_other(self):
         names = set(self.names_of(self.watch_calls(), "the Watch")) | set(self.names_of(self.timer_calls(), "the timer"))

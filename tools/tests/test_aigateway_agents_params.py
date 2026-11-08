@@ -77,6 +77,8 @@ PROJECT_PRINCIPAL = SETTINGS["FOUNDRY_PROJECT_PRINCIPAL_ID"]
 # names three aliases. A build of the old list and of the new one was compared on purpose: no other file and no other line differs.
 # Eleventh change (the owner ordered Flex Consumption again, 2026-11-08 at 09:39, re-recorded on purpose): cases.parameters.json holds casesAppPlan "Flex" again, which makes it the file that it was before the ninth
 # change (the same hash), and the output holds the Flex values for the same six lines about the plan kind; every other file is what it was.
+# Twelfth change (the families of change, 2026-11-08, re-recorded on purpose): planted.parameters.json gained plantVm (false) and plantedVmSize (Standard_B2s: the action plant can plant a machine
+# when plant_vm is set); every other file and the output are what they were.
 # The files of the planted waste and the others are byte for byte what they were.
 GOLDEN = {
     "aigateway-policies.json": "e6d99d1633ab16afc3410e50dbdcb7e290f0e125f4283b4b19f63a8eebb8395c",
@@ -87,7 +89,7 @@ GOLDEN = {
     "environment.parameters.json": "5a722678f859d67fd7ff7895b0150b048b97def6b094c723d70d5849d078a7f3",
     "foundry.parameters.json": "c9fad0683873d351abbc281322cb3e7bcb6d24bd56f378fade0333801e1e2503",
     "operator.parameters.json": "77f010f57ffcef1d1ab84dea95de7eea61e4ed5c5d2135faf4593c14b6a5b5a4",
-    "planted.parameters.json": "62ecf7282a7bf4c968db91a3943ba20a99dc7ac04fcabb7816aadf6f68f9759c",
+    "planted.parameters.json": "035d4cc0122c1dcbf581fccb96efd0c6f3144a953880bcf881b7e11ccbd892e3",
 }
 GOLDEN_OUTPUT = "0136157da075a0dee3703f74b5993c77d3068e55e6375f6aec8a581ec5854f8b"
 

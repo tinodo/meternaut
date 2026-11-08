@@ -12,20 +12,25 @@ from dataclasses import replace
 from support import APP_ROOT  # noqa: F401
 
 from cases import brief
-from cases.approvals import ADVICE_QUIET_DAYS, ANSWERS, FAMILY_OF, WORDS, Approvals, ApprovalSettings
+from cases.approvals import ADVICE_QUIET_DAYS, ANSWERS, Approvals, ApprovalSettings
 from cases.delegated import Delegation, SigninSettings
 from cases.detectors import Lead
+from cases.families import registry
+from cases.families.calls import KINDS
+from cases.families.gates import ChangeScope
+from cases.families.words import SHOWN
 from cases.http import Client
 from cases.memory_store import MemoryStore, parse, stamp
-from cases.models import (ADVISE, CASE_CLOSED, CASE_STATUSES, DECISIONS, DECLINE_REASONS, FAMILIES, ActionRecord, CaseRecord, DecisionRecord, NoteRecord, Principal,
+from cases.models import (ADVISE, CASE_CLOSED, CASE_STATUSES, DECISIONS, DECLINE_REASONS, ActionRecord, CaseRecord, DecisionRecord, NoteRecord, Principal,
                           SwitchRecord)
-from cases.runner import KINDS, RunnerServices, change_calls, execute, tick
+from cases.runner import RunnerServices, change_calls, execute, tick
 from cases.web import words
 from test_runner import FakeAzure
 from test_web_support import (MAYA, NOW, OPS, OWNER, STRANGER, SUB, TINO, VM, Console, FailingStore, make_advice_case, make_run)
 
 CHANGE_GROUP = "meternaut-sc-rg"
-SETTINGS = ApprovalSettings(change_group=CHANGE_GROUP, ttl_hours=72)
+SCOPES = (ChangeScope(SUB, CHANGE_GROUP),)
+SETTINGS = ApprovalSettings(change_scopes=SCOPES, ttl_hours=72)
 SIGNIN = SigninSettings("cccccccc-1111-4222-8333-444444444444", "dddddddd-1111-4222-8333-444444444444", "eeeeeeee-1111-4222-8333-444444444444", "console.example.test")
 BOTH = Principal(TINO, "Tino", ("owner", "approver", "ops"))
 APPROVER = Principal(MAYA, "Maya", ("approver",))
@@ -119,8 +124,9 @@ class TheVocabulary(unittest.TestCase):
         self.assertEqual(set(brief.REASON_WORDS), set(DECLINE_REASONS))
 
     def test_advise_is_not_a_family_of_a_change(self):
-        for known in (FAMILIES, set(FAMILY_OF.values()), WORDS, KINDS):
+        for known in (set(registry.names()), set(SHOWN), {kind.collection for kind in KINDS}, {kind.type for kind in KINDS}):
             self.assertNotIn(ADVISE, known)
+        self.assertIsNone(registry.get(ADVISE))
 
     def test_every_answer_has_a_name_on_the_page_and_in_the_history(self):
         for decision in DECISIONS:
@@ -520,8 +526,8 @@ class AdviceNeverReachesAzure(Base):
         raise AssertionError("an advise plan never asks Microsoft Entra for a token")
 
     def services(self):
-        client = Client(change_calls(SUB, CHANGE_GROUP), lambda t: t, transport=self.azure.transport, sleep=lambda s: None, monotonic=lambda: 0.0)
-        return RunnerServices(self.store, client, lambda resource: "token-of-the-person", SETTINGS, SUB, clock=self.clock, sleep=lambda s: None)
+        client = Client(change_calls(SCOPES), lambda t: t, transport=self.azure.transport, sleep=lambda s: None, monotonic=lambda: 0.0)
+        return RunnerServices(self.store, client, lambda resource: "token-of-the-person", SETTINGS, clock=self.clock, sleep=lambda s: None)
 
     def delegation(self):
         return Delegation(self.store, self.approvals, SIGNIN, self.redeem, lambda token: self.services())
@@ -556,7 +562,7 @@ class AdviceNeverReachesAzure(Base):
     def test_an_action_that_somebody_made_for_an_advise_plan_is_not_executed(self):
         action = ActionRecord(plan_id=self.plan.plan_id, case_id=self.plan.case_id, family=ADVISE, resource_id=VM, state="queued", queued_at=stamp(NOW))
         self.store.action_put(action)
-        done = execute(self.services(), action)
+        done = execute(self.services(), action, approved_digest=self.plan.digest)
         self.assertEqual((done.kind, done.action.state), ("failed", "failed"))
         self.assertIn("does not make", done.action.result)
         self.assertEqual(self.azure.calls, [])
@@ -568,11 +574,13 @@ class AdviceNeverReachesAzure(Base):
         self.assertEqual([p.plan_id for p in result.expired], [self.plan.plan_id])
         self.assertEqual((result.finished, result.verified, self.azure.calls), ([], [], []))
 
-    def test_the_list_of_calls_of_a_change_holds_nothing_for_a_virtual_machine(self):
+    def test_the_list_of_calls_of_a_change_holds_no_way_to_delete_or_to_replace_a_virtual_machine_and_no_family_of_advice(self):
         url = f"https://management.azure.com/subscriptions/{SUB}/resourceGroups/{CHANGE_GROUP}/providers/Microsoft.Compute/virtualMachines/oversized-vm-1"
-        for method, pattern in change_calls(SUB, CHANGE_GROUP):
-            self.assertIsNone(pattern.match(url), (method, pattern.pattern))
-        self.assertNotIn(ADVISE, KINDS)
+        for method, pattern in change_calls(SCOPES):
+            if method in ("DELETE", "PUT"):
+                self.assertIsNone(pattern.match(url), (method, pattern.pattern))
+        self.assertNotIn(ADVISE, {kind.collection for kind in KINDS})
+        self.assertIsNone(registry.get(ADVISE), "nothing of a change is made for an advise plan: the registry has no family of that name")
 
     def test_the_modules_that_make_a_change_do_not_know_the_family(self):
         for name in ("delegated.py", "runner.py"):
@@ -596,8 +604,8 @@ class TheWholeWay(unittest.TestCase):
             raise AssertionError("an advise plan never asks Microsoft Entra for a token")
 
         def run(token):
-            client = Client(change_calls(SUB, CHANGE_GROUP), lambda t: t, transport=self.azure.transport, sleep=lambda s: None, monotonic=lambda: 0.0)
-            return RunnerServices(self.store, client, lambda resource: token, SETTINGS, SUB, clock=self.clock, sleep=lambda s: None)
+            client = Client(change_calls(SCOPES), lambda t: t, transport=self.azure.transport, sleep=lambda s: None, monotonic=lambda: 0.0)
+            return RunnerServices(self.store, client, lambda resource: token, SETTINGS, clock=self.clock, sleep=lambda s: None)
 
         self.console.use(self.approvals)
         self.console.use_delegate(Delegation(self.store, self.approvals, SIGNIN, redeem, run))

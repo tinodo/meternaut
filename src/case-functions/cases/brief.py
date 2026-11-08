@@ -17,9 +17,9 @@ import unicodedata
 from dataclasses import dataclass
 from typing import Mapping, Sequence
 
-from .models import ADVISE, FAMILIES, TIME_FORMAT, ActionRecord, CaseRecord, DecisionRecord, PlanRecord
+from .families.words import called_of, shown, type_of, words_of  # called_of is also read by the pages, which know the brief and the records and nothing else
+from .models import ADVISE, TIME_FORMAT, ActionRecord, CaseRecord, DecisionRecord, PlanRecord
 
-CHANGE_FAMILIES = ("delete-disk", "delete-public-ip")
 MAX_FACTS = 5
 MAX_REASON = 240  # the most characters of what an AI wrote that a brief shows
 MAX_NAME = 120
@@ -36,7 +36,10 @@ CHECKED = "Azure, checked by code"
 # resource type -> (what the resource is, in a sentence of a person)
 TYPE_WORDS = {
     "microsoft.compute/disks": ("Managed disk", "disk"),
+    "microsoft.compute/snapshots": ("Snapshot", "snapshot"),
     "microsoft.network/publicipaddresses": ("Public IP address", "public IP address"),
+    "microsoft.network/networkinterfaces": ("Network interface", "network interface"),
+    "microsoft.network/natgateways": ("NAT gateway", "NAT gateway"),
     "microsoft.network/privateendpoints": ("Private endpoint", "private endpoint"),
     "microsoft.network/loadbalancers": ("Load balancer", "load balancer"),
     "microsoft.network/applicationgateways": ("Application gateway", "application gateway"),
@@ -80,31 +83,20 @@ BASIS_WORDS = {"no-usage": "No recorded usage", "low-usage": "Little recorded us
 DISK_TYPES = {"standard_lrs": "Standard HDD (LRS)", "standardssd_lrs": "Standard SSD (LRS)", "premium_lrs": "Premium SSD (LRS)", "ultrassd_lrs": "Ultra Disk",
               "premiumv2_lrs": "Premium SSD v2", "standardssd_zrs": "Standard SSD (ZRS)", "premium_zrs": "Premium SSD (ZRS)"}
 
-# The words of each family: what changes, who does it, what is read again, what could go wrong, and whether it can be undone. `noun` is the resource in a sentence.
-FAMILY = {
-    "delete-disk": {
-        "verb": "Delete the unattached disk", "noun": "disk", "state": "unattached",
-        "change": "Deletes the disk {name} in resource group {group}. Nothing else changes.",
-        "risk": "If something still uses the disk, that use stops, and the data on it is lost for good.", "level": "medium",
-        "undo": "A deleted disk cannot be restored. A new, empty disk can be made.",
-    },
-    "delete-public-ip": {
-        "verb": "Delete the unassigned public IP address", "noun": "public IP address", "state": "unassigned",
-        "change": "Deletes the public IP address {name} in resource group {group}. Nothing else changes.",
-        "risk": "If something still points at the address, that traffic stops, and the same address may not be given again.", "level": "medium",
-        "undo": "A deleted public IP address cannot be restored. The address is released, and a new one can be made.",
-    },
-}
+# The words of each family (what changes, what is read again, what could go wrong, and whether it can be undone) are the family's own, in cases/families/words.py, which holds no way to
+# reach Azure: the families feed this brief, so that a page, a letter and a card show a new family without a line of its own here. Who acts is the same for every family.
 WHO_ACTS = ("You do, with your own Azure sign-in: you approve, you sign in to Azure, Azure checks your rights, and the change is made right then. "
             "Meternaut holds no right of its own to change anything.")
 TWO_PEOPLE = "Two people approve this, each on their own."
 ADVICE_CHANGE = "Nothing changes in Azure. Your answer is recorded with your name."
-ADVICE_WHO = "Nobody changes anything. If you act on it, you do it in Azure with your own rights."
+ADVICE_WHO = "Meternaut may not change this resource. If you act on it, you do it in Azure with your own rights."
 ADVICE_RISK = "If the finding is wrong, time goes to a resource that is needed. Nothing changes in Azure when you answer."
 ADVICE_UNDO = "Nothing is changed, so there is nothing to undo."
 NO_CHANGE = "No request is open for this case. Nothing changes in Azure."
 # What a plan says while its change waits in the queue: Azure asked the approver for an extra sign-in check, and the check is not completed yet.
 WAITING_FOR_THE_CHECK = "Azure asked for an extra sign-in check before it would make the change. The change waits until the check is completed. Nothing was changed yet."
+# What a plan says while Azure carries out a change that it accepted and has not finished (a machine takes minutes to stop or resize): the runner records its own words in the action.
+RUNNING_IN_AZURE = "Azure accepted the change and is still making it. Meternaut reads the resource again in a few minutes."
 # What a person is told while a switch holds the answer that approves: all of them hold a change, and only the full stop holds advice (nothing changes in Azure for it).
 PAUSED_CHANGES = "Changes are paused here. Nothing has changed, and your OK cannot be recorded now."
 PAUSED_ADVICE = "Meternaut is paused here. Nothing has changed, and your answer cannot be recorded now."
@@ -377,19 +369,20 @@ def _subject(case: CaseRecord | None, plan: PlanRecord | None) -> tuple[str, str
     """The name, the resource group, the subscription, the id and the type of the resource, from the plan or else from the case."""
     if plan is not None:
         rtype = case.resource_type if case is not None else ""
-        return plan.resource_name, plan.resource_group, plan.subscription_id, plan.resource_id, rtype or FAMILIES.get(plan.family, "")  # a plan of a change knows what it changes
+        return plan.resource_name, plan.resource_group, plan.subscription_id, plan.resource_id, rtype or type_of(plan.family, plan.preconditions)  # a plan of a change knows what it changes
     if case is not None:
         return case.resource_name, case.resource_group, case.subscription_id, case.resource_id, case.resource_type
     return "", "", "", "", ""
 
 
-def headline_of(family: str, name: str, group: str, rtype: str, recommendation: str | None, plan_title: str = "") -> str:
+def headline_of(family: str, name: str, group: str, rtype: str, recommendation: str | None, plan_title: str = "", plan: PlanRecord | None = None) -> str:
     """The request in one line: a verb, the thing and the place. Written by code from the kind of change, never by a model."""
     place = f" in group {text_of(group, 90)}" if group else ""
     label = text_of(name, MAX_NAME) or "this resource"
-    if family in FAMILY:
-        return f"{FAMILY[family]['verb']} {label}{place}"
-    if family and family != ADVISE and plan_title:
+    said = words_of(family, plan, rtype, text_of(name, MAX_NAME), text_of(group, 90))
+    if said is not None:
+        return said.headline
+    if shown(family) is None and family and family != ADVISE and plan_title:
         return text_of(plan_title, 160)
     noun = kind_words(rtype)[1]
     verb = {"delete": "Consider deleting", "change": "Consider changing", "keep": "Keep"}.get(recommendation or "", "Look at")
@@ -400,12 +393,12 @@ def plan_headline(plan: PlanRecord) -> str:
     """The headline of a request from the plan alone (a list of decided requests needs no case): the stored title of an advise plan, the words of the family otherwise."""
     if plan.family == ADVISE:
         return text_of(plan.title, 160) or headline_of(ADVISE, plan.resource_name, plan.resource_group, "", None)
-    return headline_of(plan.family, plan.resource_name, plan.resource_group, FAMILIES.get(plan.family, ""), None, plan.title)
+    return headline_of(plan.family, plan.resource_name, plan.resource_group, type_of(plan.family, plan.preconditions), None, plan.title, plan)
 
 
 def _agreed(case: CaseRecord | None, plan: PlanRecord | None) -> bool | None:
     """Whether the second AI agreed, as far as the records show: True, False, or None when the status moved on and no longer says."""
-    if plan is not None and plan.family in CHANGE_FAMILIES:
+    if plan is not None and shown(plan.family) is not None:
         return True
     if case is None:
         return None
@@ -520,8 +513,12 @@ def _saving(case: CaseRecord | None, plan: PlanRecord | None, action: ActionReco
     waiting = _figure(plan.waiting_costs_usd_day) if plan is not None else None
     check = action.verification if action is not None and isinstance(action.verification, dict) else {}
     before, after = _figure(check.get("costBeforeUsd30d")), _figure(check.get("costAfterUsd"))
+    fam = shown(plan.family) if plan is not None else None
     if action is not None and action.state == "verified" and before is not None and after == 0 and before > 0:
         return Saving(round(before, 2), "Verified", "the cost lines after the change show no cost for this resource", None, "")
+    saved = _figure(check.get("savedUsdMonth"))
+    if action is not None and action.state == "verified" and saved is not None and saved > 0:
+        return Saving(round(saved, 2), "Verified", "the cost lines after the change are lower than the 30 days before it", None, "")
     if figure is None or figure <= 0:
         cost = _figure(case.cost_usd_30d) if case is not None else None
         if cost is None:
@@ -530,9 +527,13 @@ def _saving(case: CaseRecord | None, plan: PlanRecord | None, action: ActionReco
             why = "The resource had no cost in the last 30 days."
         else:
             why = f"The resource cost {usd_text(cost)} in the last 30 days. What a change would save was not worked out."
+        if fam is not None and fam.no_figure:
+            why = fam.no_figure
         return Saving(None, "", "", None, why)
     if waiting is None:
         waiting = round(figure / 30, 2)
+    if fam is not None and fam.saving_basis:
+        return Saving(round(figure, 2), fam.saving_level, fam.saving_basis, waiting, "")
     advisor = case is not None and (case.detector == "advisor-cost" or (case.detector == "investigation" and case.recommendation == "change"))
     if advisor:
         return Saving(round(figure, 2), "Scenario", "Azure Advisor's own estimate: no cost line of this resource backs it", waiting, "")
@@ -684,6 +685,8 @@ def check_lines(check: Mapping, said: str = "") -> list[str]:
     lines: list[str] = []
     if "gone" in check:
         lines.append("Azure no longer lists the resource." if check["gone"] else "Azure still lists the resource.")
+    if check.get("now"):
+        lines.append(text_of(check["now"], 200))
     after = _figure(check.get("costAfterUsd"))
     if after is not None and check.get("currency") in (None, "", "USD"):
         lines.append(f"Cost lines since the change: {usd_text(after)}.")
@@ -727,6 +730,9 @@ def _outcome(plan: PlanRecord | None, state: str, action: ActionRecord | None, d
     if action.state == "verified":
         return Outcome("verified", "Done and checked", (f"Approved by {who}, and made with their own Azure rights.", *(check_lines(check) or [text_of(action.result, 300)])),
                        "Done and checked", who, action.finished_at or at)
+    if action.state == "running":
+        return Outcome("running", "Running in Azure", (f"Approved by {who}, and sent to Azure with their own Azure rights.", text_of(action.result, 300) or RUNNING_IN_AZURE),
+                       "Running in Azure", who, at)
     if action.state in ("done", "unknown") and state == "consumed":
         lines = [f"Approved by {who}, and made with their own Azure rights.", text_of(action.result, 300), *check_lines(check, action.result or "")]
         return Outcome("done", "Done", tuple(line for line in lines if line), "Done" if action.state == "done" else "Done, not confirmed yet", who, action.finished_at or at)
@@ -747,12 +753,10 @@ def build_brief(case: CaseRecord | None, plan: PlanRecord | None, action: Action
     end = parse_time(plan.expires_at) if plan is not None else None
     state = "none" if plan is None else ("expired" if plan.state == "open" and (end is None or now >= end) else plan.state)
     recommendation = case.recommendation if case is not None else None
-    spec = FAMILY.get(family)
-    if spec:
-        change = spec["change"].format(name=text_of(name, MAX_NAME) or "this resource", group=text_of(group, 90) or "this group")
-        who, rechecked = WHO_ACTS, ("Right before it acts, Meternaut reads the " + spec["noun"] + f" again. It stops unless the {spec['noun']} is still {spec['state']}, still tagged as "
-                                    "planted by Meternaut, still in this resource group and not locked.")
-        undo, risk = Undo(False, spec["undo"]), Risk(spec["level"], spec["risk"])
+    said = words_of(family, plan, rtype, text_of(name, MAX_NAME), text_of(group, 90)) if kind == "change" and plan is not None else None
+    if said is not None:
+        change, who, rechecked = said.change, WHO_ACTS, said.rechecked
+        undo, risk = Undo(said.reversible, said.undo), Risk(said.level, said.risk)
     elif kind == "change":
         change, who, rechecked = text_of(plan.what_changes, 300) or "The change is described in the request.", WHO_ACTS, ""
         irreversible = family.startswith("delete") or not plan.undo.strip()
@@ -767,7 +771,7 @@ def build_brief(case: CaseRecord | None, plan: PlanRecord | None, action: Action
     return Brief(
         case_id=plain(case.case_id if case is not None else (plan.case_id if plan is not None else ""), 64), plan_id=plain(plan.plan_id if plan is not None else "", 64),
         plan_code=plain(plan.code if plan is not None else "", 16), kind=kind, family=plain(family, 40), state=plain(state, 20),
-        headline=headline_of(family, name, group, rtype, recommendation, plan.title if plan is not None else ""),
+        headline=headline_of(family, name, group, rtype, recommendation, plan.title if plan is not None else "", plan),
         saving=_saving(case, plan, action, state), confidence=confidence_of(case, plan), facts=facts_of(case), reasoning=reasoning_of(case), doubt=doubt_of(case, plan),
         change=change, who_acts=who, rechecked=rechecked, undo=undo, risk=risk, owner=owner_of(case), where=_where(name, group, subscription, resource_id, rtype),
         answers=_answers(kind, state, may_answer, changes_paused), found_at=plain(found_at, 30), age_days=age, expires_at=plain(plan.expires_at if plan is not None else "", 30),

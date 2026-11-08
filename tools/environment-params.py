@@ -155,6 +155,10 @@ SCOPE_ALL_SUBSCRIPTIONS = True
 # and its record is in docs/proposals/08-ai-gateway.md (what the first real runs showed). False is the way back: the agents then call the model deployments of their own Foundry resource, as they did before, and no parameter file, no
 # output and no action differs from what it was (a test holds that, with the constant set to False inside the test). The record says what stays after a way back.
 AGENTS_VIA_AI_GATEWAY = True
+# The size of the virtual machine that the action plant makes when plant_vm is set (environment/cases/planted.bicep). A burstable size that has a smaller one in its series, so that the family resize-vm
+# has a step to take (Standard_B2s to Standard_B1s): the cheapest burstable size, Standard_B1ls, has none. At the price list of Sweden Central (public Retail Prices API, read on 2026-11-08) it costs
+# 0.0432 US dollars an hour while it runs (Linux), nothing for compute once it is stopped and released, and 0.0108 after the resize. One value and a commit change it.
+PLANTED_VM_SIZE = "Standard_B2s"
 # The name of the project's connection to the gateway (the default of environment/foundry/main.bicep): an agent names its model `<connection>/<alias>`. The two models of the agents are the defaults of
 # environment/cases/main.bicep; a test holds the three together.
 AIGATEWAY_CONNECTION_NAME = "aigateway"
@@ -290,14 +294,18 @@ def foundry_names(subscription: str, group: str) -> dict[str, str]:
 
 
 def planted_parameters(env, location: str, owner: str) -> dict:
-    """The waste that the action `plant` makes: a short word for this planting (the tag value and part of the names) and whether a public IP address is planted too."""
+    """The waste that the action `plant` makes: a short word for this planting (the tag value and part of the names), whether a public IP address is planted too, and whether a virtual machine
+    that nothing uses is planted too (with the size that PLANTED_VM_SIZE names)."""
     planted_id = (env.get("PLANTED_ID") or "demo").strip().lower()
     if not re.fullmatch(r"[a-z0-9]{1,12}", planted_id):
         raise Problem("PLANTED_ID is one to twelve lower-case letters or digits")
     public_ip = (env.get("PLANT_PUBLIC_IP") or "false").strip().lower()
     if public_ip not in ("true", "false"):
         raise Problem("PLANT_PUBLIC_IP is true or false")
-    return {"location": location, "owner": owner, "plantedId": planted_id, "plantPublicIp": public_ip == "true"}
+    machine = (env.get("PLANT_VM") or "false").strip().lower()
+    if machine not in ("true", "false"):
+        raise Problem("PLANT_VM is true or false")
+    return {"location": location, "owner": owner, "plantedId": planted_id, "plantPublicIp": public_ip == "true", "plantVm": machine == "true", "plantedVmSize": PLANTED_VM_SIZE}
 
 
 ROLES_OF_PEOPLE = ("owner", "approver", "ops")

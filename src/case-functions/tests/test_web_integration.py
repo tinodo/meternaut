@@ -2,6 +2,7 @@
 after the sign-in is what the change recorded. Only what is outside the app is made up: Microsoft Entra (who signed in, and the token that it gives) and Azure Resource Manager."""
 import json
 import unittest
+from dataclasses import replace
 from urllib.parse import parse_qs, urlsplit
 
 from test_web_support import GROUP, HOST, MAYA, NOW, OPS, SUB, TINO, Console, snapshot
@@ -9,6 +10,8 @@ from test_web_support import GROUP, HOST, MAYA, NOW, OPS, SUB, TINO, Console, sn
 from cases.approvals import Approvals, ApprovalSettings
 from cases.delegated import Delegation, SigninSettings, Tokens
 from cases.detectors import Lead
+from cases.families import digest as plan_digest
+from cases.families.gates import ChangeScope
 from cases.http import Client
 from cases.memory_store import stamp
 from cases.models import CaseRecord, SwitchRecord
@@ -94,12 +97,12 @@ class Azure:
 class WithTheRealLoop(unittest.TestCase):
     def setUp(self):
         self.console = Console()
-        self.settings = ApprovalSettings(change_group=GROUP)
+        self.settings = ApprovalSettings(change_scopes=(ChangeScope(SUB, GROUP),))
         self.loop = Approvals(self.console.store, self.settings, lambda: self.console.now)
         item = lead()
         self.entra = Entra()
         self.azure = Azure(item.resource_id)
-        self.client = Client(change_calls(SUB, GROUP), lambda text: text, transport=self.azure.transport, sleep=lambda seconds: None, monotonic=lambda: 0.0)
+        self.client = Client(change_calls(self.settings.change_scopes), lambda text: text, transport=self.azure.transport, sleep=lambda seconds: None, monotonic=lambda: 0.0)
         self.delegation = Delegation(self.console.store, self.loop, SigninSettings(TENANT, CLIENT, ASSERTION_CLIENT, HOST), self.entra.redeem, self.runner_for)
         self.console.use(self.loop)
         self.console.use_delegate(self.delegation)
@@ -113,7 +116,12 @@ class WithTheRealLoop(unittest.TestCase):
 
     def runner_for(self, token: str) -> RunnerServices:
         """What the change is made with: the token of the person, for the one request."""
-        return RunnerServices(self.console.store, self.client, lambda resource: token, self.settings, SUB, clock=lambda: self.console.now, sleep=lambda seconds: None)
+        return RunnerServices(self.console.store, self.client, lambda resource: token, self.settings, clock=lambda: self.console.now, sleep=lambda seconds: None)
+
+    def reseal(self, **changes):
+        """Changes a field of the plan as a new plan would have it: its digest and its code are made again, as they are for every plan."""
+        self.plan = plan_digest.sealed(replace(self.plan, **changes))
+        self.console.store.plan_put(self.plan)
 
     def form(self, who=TINO, action=None, button=None):
         return self.console.get(self.path, oid=who).form(action or self.path, has_button=button)
@@ -267,7 +275,7 @@ class WithTheRealLoop(unittest.TestCase):
         self.assertEqual((self.entra.asked, self.azure.calls), ([], []))
 
     def test_a_plan_that_runs_out_of_time_between_the_redirect_and_the_return_is_not_approved(self):
-        self.console.store.plan_put(type(self.plan)(**{**vars(self.plan), "expires_at": "2026-11-05T09:05:00Z"}))
+        self.reseal(expires_at="2026-11-05T09:05:00Z")
         _, query = self.sign_in_address(self.sign_in())
         self.entra.nonce = query["nonce"]
         self.console.now = self.console.now.replace(minute=6)
@@ -280,7 +288,8 @@ class WithTheRealLoop(unittest.TestCase):
         main = self.form(button=APPROVE)
         reply = self.console.submit(main, APPROVE, code="WRONG")
         self.assertEqual((reply.status, reply.headings(1)), (409, ["This plan changed"]))
-        self.console.store.plan_put(type(self.plan)(**{**vars(self.plan), "approvers": (TINO, MAYA)}))
+        self.reseal(approvers=(TINO, MAYA))
+        main = self.form(button=APPROVE)
         reply = self.console.submit(main, APPROVE, oid=MAYA)
         self.assertEqual((reply.status, reply.headings(1)), (500, ["I could not take your answer"]))
         self.assertIn("This form is no longer valid.", reply.content)

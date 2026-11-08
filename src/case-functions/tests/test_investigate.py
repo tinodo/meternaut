@@ -17,6 +17,7 @@ from cases import agents, config as cfg, decide, investigate, loop_config, peopl
 from cases.approvals import Approvals
 from cases.detectors import Context
 from cases.events import History
+from cases.families.gates import ChangeScope
 from cases.foundry import SOFT_TIME_SHARE, AgentRun, AgentSpec, FoundryError, FunctionTool
 from cases.http import HttpError
 from cases.memory_store import MemoryStore, stamp
@@ -163,7 +164,7 @@ class FakeArm:
 def loop_for(clock, store=None, *, recheck_days=7):
     """The parts of the loop that a Watch run uses, with a store in memory."""
     store = store or MemoryStore(clock=clock)
-    settings = loop_config.LoopSettings(store_account="stexample", change_group=GROUP, change_subscription=SUBSCRIPTION, console_host="func.example.net",
+    settings = loop_config.LoopSettings(store_account="stexample", change_scopes=(ChangeScope(SUBSCRIPTION, GROUP),), console_host="func.example.net",
                                         mail_sender=None, planted_tag="meternaut-planted", plan_ttl_hours=72, recheck_days=recheck_days)
     people = people_mod.People((people_mod.Person(OID, "Tino", ("owner", "approver", "ops"), "tino@example.com"),))
     return wiring.Extras(settings, store, people, Approvals(store, wiring.approval_settings(settings), clock))
@@ -1702,11 +1703,11 @@ class WhatTheGuardsHold(unittest.TestCase):
 
     def test_a_resource_that_meternaut_planted_is_not_held_back_for_being_new_and_any_other_guard_still_holds(self):
         planted = {"meternaut-planted": "demo"}
-        place = lambda number, group=GROUP, **more: resource(number, resource_id=f"{RG}/{group}/providers/Microsoft.Example/things/thing-{number}", resource_group=group,
-                                                             tags=planted, **more)
+        place = lambda number, group=GROUP, **more: resource(number, resource_id=f"{RG}/{group}/providers/Microsoft.Compute/disks/planted-disk-{number}",
+                                                             resource_type="microsoft.compute/disks", name=f"planted-disk-{number}", resource_group=group, tags=planted, **more)
         new = Context(locks=[], recent={place(1).resource_id.lower(), place(2, "rg-elsewhere").resource_id.lower()}, managed_groups=set(), costs={}, currency="USD")
         h = self.run_with(resources=[place(1), place(2, "rg-elsewhere")], context=new, with_store=True)
-        self.assertEqual([r["resourceName"] for r in h.of("case.result")], ["thing-1"], "in the change group it is a fixture; elsewhere it is too new")
+        self.assertEqual([r["resourceName"] for r in h.of("case.result")], ["planted-disk-1"], "in the change group it is a fixture; elsewhere it is too new")
         locked = Context(locks=[place(1).resource_id.lower()], recent=set(), managed_groups=set(), costs={}, currency="USD")
         self.assertEqual(self.run_with(resources=[place(1), place(2)], context=locked, with_store=True).result.guarded, 1)
         both_new = Context(locks=[], recent={place(1).resource_id.lower(), place(2).resource_id.lower()}, managed_groups=set(), costs={}, currency="USD")
@@ -1764,15 +1765,16 @@ class WhatIsKept(unittest.TestCase):
         case = self.store.case_get(key_of(resource(1)))
         self.assertEqual(CaseRecord.from_json(case.to_json()), case)
 
-    def test_only_an_advise_plan_is_made_for_a_case_of_the_investigation_not_even_for_a_resource_that_meternaut_planted(self):
-        planted = resource(1, resource_id=f"{RG}/{GROUP}/providers/Microsoft.Example/things/thing-1", resource_group=GROUP, tags={"meternaut-planted": "demo"})
+    def test_only_an_advise_plan_is_made_for_a_case_of_the_investigation_when_the_plan_of_its_family_needs_a_read_that_this_run_cannot_make(self):
+        planted = resource(1, resource_id=f"{RG}/{GROUP}/providers/Microsoft.Compute/disks/planted-disk-1", resource_type="microsoft.compute/disks", name="planted-disk-1",
+                           resource_group=GROUP, tags={"meternaut-planted": "demo"})
         h = Harness(FakeFoundry(answer(finding(handles=["r1"]))), FakeToolbox([planted], {"r1": metrics(MetricA=0)}), with_store=True)
         h.contexts = {SUBSCRIPTION: Context(locks=[], recent={planted.resource_id.lower()}, managed_groups=set(), costs={}, currency="USD")}
         h.go()
         (case,) = h.store.cases_recent()
         (plan,) = h.store.plans_open()
         self.assertEqual((case.status, case.recommendation, case.plan_id), ("proposed", "delete", plan.plan_id))
-        self.assertEqual((plan.family, plan.state), ("advise", "open"), "no change is made for a finding: the plan asks whether it is worth acting on")
+        self.assertEqual((plan.family, plan.state), ("advise", "open"), "without a reader the plan of a change cannot be written: the plan asks whether it is worth acting on")
         self.assertEqual([(e["family"], e["caseKey"]) for e in h.of("plan.created")], [("advise", case.case_id)])
 
     def test_approvals_decide_whether_a_plan_is_made_and_are_asked_for_each_proposed_case_only(self):
