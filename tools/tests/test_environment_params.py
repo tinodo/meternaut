@@ -28,17 +28,19 @@ SETTINGS = {
     "ENV_BUDGET_AMOUNT": "25",
     "ENV_ALERT_EMAILS": "owner@example.com",
     "ENV_BUDGET_START": "2026-11-01",
-    "GATEWAY_APPINSIGHTS_ID": "/subscriptions/66666666-7777-8888-9999-000000000000/resourceGroups/rg-gateway/providers/microsoft.insights/components/example-insights",
 }
-# The settings of the retired actions that touched the owner's API Management instance (the owner ordered the undo of what Meternaut had added to it, 2026-11-07): nothing reads them any more.
+READER = "12345678-1234-1234-1234-123456789012"
+# The settings of the retired actions that touched the owner's API Management instance (the owner ordered the undo of what Meternaut had added to it, 2026-11-07), and of the usage recording that
+# copied the calls through it (removed the same day, with the old model account): nothing reads them any more.
 RETIRED_SETTINGS = {
     "GATEWAY_RESOURCE_ID": "/subscriptions/66666666-7777-8888-9999-000000000000/resourceGroups/rg-gateway/providers/Microsoft.ApiManagement/service/example-apim",
+    "GATEWAY_APPINSIGHTS_ID": "/subscriptions/66666666-7777-8888-9999-000000000000/resourceGroups/rg-gateway/providers/microsoft.insights/components/example-insights",
     "GATEWAY_PRINCIPAL_ID": "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE",
     "GATEWAY_CLIENT_ID": "BBBBBBBB-1111-2222-3333-CCCCCCCCCCCC",
     "RECORDING_FRAGMENTS": "true",
+    "RECORDING_READER_IDS": READER,
 }
-READER = "12345678-1234-1234-1234-123456789012"
-RECORDING = (ROOT / "environment" / "recording" / "main.bicep").read_text(encoding="utf-8")
+BASE = (ROOT / "environment" / "base" / "main.bicep").read_text(encoding="utf-8")
 
 
 def run(env, *extra, models=MODELS):
@@ -62,10 +64,10 @@ def bicep_params(text):
 
 
 class Build(unittest.TestCase):
-    def test_good_settings_give_four_files_and_the_outputs(self):
+    def test_good_settings_give_six_files_and_the_outputs(self):
         code, out, err, files = run(SETTINGS)
         self.assertEqual((code, err), (0, ""))
-        self.assertEqual(set(files), {"environment.parameters.json", "recording.parameters.json", "foundry.parameters.json", "operator.parameters.json", "planted.parameters.json",
+        self.assertEqual(set(files), {"environment.parameters.json", "base.parameters.json", "foundry.parameters.json", "operator.parameters.json", "planted.parameters.json",
                                       "cases.parameters.json"})
         env = values(files["environment.parameters.json"])
         self.assertEqual(env["vnetAddressPrefix"], "10.53.0.0/24")
@@ -73,25 +75,19 @@ class Build(unittest.TestCase):
         self.assertEqual(env["dnsServers"], ["10.20.0.4"])
         self.assertNotIn("gatewayPrincipalId", env, "the model side makes no role for any gateway identity")
         self.assertEqual(env["budgetStartDate"], "2026-11-01")
-        self.assertEqual([m["name"] for m in env["models"]], [m["name"] for m in json.loads(MODELS.read_text())])
+        self.assertFalse({"models", "accountName"} & set(env), "the model side makes the network and the budget: the old model account was removed on 2026-11-07, and the models are those of the Foundry resource")
+        self.assertEqual(set(env), {"location", "vnetAddressPrefix", "networkExists", "peSubnetPrefix", "funcSubnetPrefix", "webSubnetPrefix", "dnsServers", "owner", "budgetAmount", "alertEmails",
+                                    "budgetStartDate"})
         lines = dict(line.split("=", 1) for line in out.splitlines())
-        self.assertEqual(lines["account_name"], env["accountName"])
-        self.assertEqual(lines["private_endpoint"], "pe-" + env["accountName"])
-        self.assertEqual(lines["endpoint"], f"https://{env['accountName']}.cognitiveservices.azure.com")
-        for retired in ("gateway_name", "gateway_subscription", "gateway_resource_group", "identity_name", "principal_known"):
+        for retired in ("account_name", "private_endpoint", "endpoint", "gateway_name", "gateway_subscription", "gateway_resource_group", "identity_name", "principal_known"):
             self.assertNotIn(retired, lines, retired)
 
-    def test_the_account_name_is_a_valid_host_name_and_the_same_on_every_run(self):
-        names = {values(run(SETTINGS)[3]["environment.parameters.json"])["accountName"] for _ in range(3)}
-        self.assertEqual(len(names), 1)
-        name = names.pop()
-        self.assertRegex(name, r"^aif-meternaut-[0-9a-f]{8}$")
-
-    def test_the_name_differs_per_subscription_and_group_and_ignores_case(self):
-        base = ep.account_name(SETTINGS["ENV_SUBSCRIPTION_ID"], "rg-a")
-        self.assertNotEqual(base, ep.account_name(SETTINGS["ENV_SUBSCRIPTION_ID"], "rg-b"))
-        self.assertNotEqual(base, ep.account_name("99999999-2222-3333-4444-555555555555", "rg-a"))
-        self.assertEqual(base, ep.account_name(SETTINGS["ENV_SUBSCRIPTION_ID"].upper(), "RG-A"))
+    def test_the_old_model_account_has_no_name_in_the_builder_and_the_foundry_resource_is_another_account(self):
+        # tools/retire-old.py names the old account by the same digest, to delete it (a test there holds the two together); nothing in the builder makes or names it.
+        text = TOOL.read_text(encoding="utf-8")
+        self.assertNotIn("def account_name", text)
+        self.assertNotIn("aif-meternaut-{", text.replace("aif-meternaut-agents-{", ""))
+        self.assertNotIn("restoreAccount", text)
 
     def test_the_environment_file_matches_the_parameters_of_the_template(self):
         declared = bicep_params(BICEP)
@@ -102,8 +98,8 @@ class Build(unittest.TestCase):
         types = {"string": str, "int": int, "array": list, "bool": bool}
         for name, wrapped in given.items():
             self.assertIsInstance(wrapped["value"], types[declared[name][0]], name)
-        self.assertEqual(bicep_params(BICEP)["restoreAccount"], ("bool", True))
-        self.assertNotIn("restoreAccount", given)
+        for retired in ("restoreAccount", "models", "accountName", "gatewayPrincipalId"):
+            self.assertNotIn(retired, declared, f"{retired}: it served the old model account, which the template does not make any more")
 
     def test_nothing_of_the_owners_api_management_instance_reaches_a_file_or_an_output(self):
         # The owner ordered the undo of what Meternaut had added to his instance (2026-11-07): the builder makes no file for it, names no object of it and reads no setting that names it.
@@ -128,7 +124,7 @@ class Build(unittest.TestCase):
 
     def test_the_names_the_workflow_removes_are_the_ones_the_template_gives(self):
         lines = dict(line.split("=", 1) for line in run(SETTINGS)[1].splitlines())
-        self.assertIn("name: 'pe-${accountName}'", BICEP)
+        self.assertNotIn("pe-${accountName}", BICEP, "the old model account's private endpoint is not made any more: the action retire-old deletes what is left of it")
         self.assertIn("param workload string = 'meternaut'", BICEP)
         self.assertIn("name: 'vnet-${workload}'", BICEP)
         self.assertIn("name: 'nsg-${workload}-pe'", BICEP)
@@ -141,8 +137,8 @@ class Build(unittest.TestCase):
         self.assertEqual(values(again)["budgetStartDate"], "2027-02-01")
 
 
-class Recording(unittest.TestCase):
-    """The parameter file of the usage recording, and the names that it gives to services whose names are host names."""
+class Base(unittest.TestCase):
+    """The parameter file of the base (environment/base/main.bicep: the workspace, Application Insights, the storage account and the Event Hubs namespace), and the names that it gives to services whose names are host names."""
 
     def files(self, **changes):
         code, out, err, files = run({**SETTINGS, **changes})
@@ -150,9 +146,9 @@ class Recording(unittest.TestCase):
         return files, dict(line.split("=", 1) for line in out.splitlines())
 
     def test_the_file_matches_the_parameters_of_the_template(self):
-        declared = bicep_params(RECORDING)
-        files, _ = self.files(RECORDING_READER_IDS=READER)
-        given = files["recording.parameters.json"]["parameters"]
+        declared = bicep_params(BASE)
+        files, _ = self.files()
+        given = files["base.parameters.json"]["parameters"]
         self.assertTrue(set(given) <= set(declared), set(given) - set(declared))
         required = {name for name, (_, has_default) in declared.items() if not has_default}
         self.assertTrue(required <= set(given), required - set(given))
@@ -160,54 +156,54 @@ class Recording(unittest.TestCase):
         for name, wrapped in given.items():
             self.assertIsInstance(wrapped["value"], types[declared[name][0]], name)
 
-    def test_the_readers_reach_the_template_and_the_workflow_and_the_gateway_do_not(self):
-        files, outputs = self.files(RECORDING_READER_IDS=f"{READER.upper()}")
-        recording = values(files["recording.parameters.json"])
-        self.assertNotIn("gatewayPrincipalId", recording, "no role is made for a gateway identity any more: nothing sends to the two usage hubs from the owner's instance")
-        self.assertEqual(recording["gatewayAppInsightsSubscriptionId"], "66666666-7777-8888-9999-000000000000")
-        self.assertEqual((recording["gatewayAppInsightsResourceGroup"], recording["gatewayAppInsightsName"]), ("rg-gateway", "example-insights"))
-        self.assertNotIn("workflowPrincipalId", recording, "no template gives the workflow's identity a role on an event hub: the Operator sends the control events")
-        self.assertEqual(recording["dataReaderPrincipalIds"], [READER])
-        self.assertEqual(recording["functionAppName"], outputs["function_app_name"])
-        for old in ("logicAppName", "dataContributorPrincipalIds"):
-            self.assertNotIn(old, recording)
-        self.assertEqual((recording["location"], recording["owner"]), ("swedencentral", "owner@example.com"))
+    def test_the_file_holds_the_two_names_the_region_and_the_owner_and_nothing_of_the_usage_recording(self):
+        files, outputs = self.files()
+        base = values(files["base.parameters.json"])
+        self.assertEqual(set(base), {"location", "owner", "storageAccountName", "eventHubNamespaceName"})
+        self.assertEqual((base["location"], base["owner"]), ("swedencentral", "owner@example.com"))
+        self.assertEqual((base["storageAccountName"], base["eventHubNamespaceName"]), (outputs["storage_account_name"], outputs["event_hub_namespace"]))
+        for old in ("functionAppName", "cosmosAccountName", "dataReaderPrincipalIds", "gatewayAppInsightsName", "gatewayAppInsightsResourceGroup", "gatewayAppInsightsSubscriptionId",
+                    "usageAppPublicNetworkAccess", "gatewayPrincipalId", "workflowPrincipalId", "logicAppName", "dataContributorPrincipalIds"):
+            self.assertNotIn(old, base, old)
+            self.assertNotIn(old, bicep_params(BASE), f"{old}: the template does not take it")
+        self.assertFalse({"cosmos_account_name", "function_app_name", "recording_endpoints"} & set(outputs), "no output names the Cosmos DB account or the usage app")
 
-    def test_no_reader_is_a_valid_choice_and_the_workflow_is_never_one(self):
-        files, _ = self.files()
-        self.assertEqual(values(files["recording.parameters.json"])["dataReaderPrincipalIds"], [])
-        files, _ = self.files(RECORDING_READER_IDS="  ")
-        self.assertEqual(values(files["recording.parameters.json"])["dataReaderPrincipalIds"], [])
+    def test_a_leftover_setting_of_the_usage_recording_is_not_read_and_not_checked(self):
+        # RECORDING_READER_IDS named the people who read the usage store; GATEWAY_APPINSIGHTS_ID the old gateway's Application Insights, which the copy jobs read. Nothing reads them any more.
+        plain = run(SETTINGS)
+        for leftover in ({"RECORDING_READER_IDS": READER}, {"RECORDING_READER_IDS": "not-an-id"}, {"GATEWAY_APPINSIGHTS_ID": RETIRED_SETTINGS["GATEWAY_APPINSIGHTS_ID"]},
+                         {"GATEWAY_APPINSIGHTS_ID": "not-an-id"}):
+            code, out, err, files = run({**SETTINGS, **leftover})
+            self.assertEqual((code, err), (0, ""), leftover)
+            self.assertEqual((out, files), (plain[1], plain[3]), f"{leftover}: nothing changes")
+        text = TOOL.read_text(encoding="utf-8")
+        for name in ("RECORDING_READER_IDS", "GATEWAY_APPINSIGHTS_ID", "GATEWAY_RESOURCE_ID"):
+            self.assertNotIn(f'"{name}"', text, f"{name} is not a setting of the builder any more")
 
     def test_the_names_are_host_names_inside_their_limits_and_the_same_on_every_run(self):
         _, first = self.files()
         _, second = self.files()
         for key, pattern, longest in (("storage_account_name", r"^[a-z0-9]{3,24}$", 24), ("event_hub_namespace", r"^[A-Za-z][A-Za-z0-9-]{4,49}$", 50),
-                                      ("cosmos_account_name", r"^[a-z0-9][a-z0-9-]{2,43}$", 44), ("function_app_name", r"^[A-Za-z0-9][A-Za-z0-9-]{1,59}$", 60)):
+                                      ("cases_function_app_name", r"^[A-Za-z0-9][A-Za-z0-9-]{1,59}$", 60)):
             self.assertRegex(first[key], pattern, key)
             self.assertLessEqual(len(first[key]), longest, key)
             self.assertEqual(first[key], second[key], key)
-        self.assertEqual(len({first[k] for k in ("storage_account_name", "event_hub_namespace", "cosmos_account_name", "function_app_name")}), 4)
+        self.assertEqual(len({first[k] for k in ("storage_account_name", "event_hub_namespace", "cases_function_app_name")}), 3)
         self.assertNotIn("logic_app_name", first)
 
     def test_the_names_differ_per_subscription_and_group_and_ignore_case(self):
-        base = ep.recording_names(SETTINGS["ENV_SUBSCRIPTION_ID"], "rg-a")
-        self.assertNotEqual(base, ep.recording_names(SETTINGS["ENV_SUBSCRIPTION_ID"], "rg-b"))
-        self.assertNotEqual(base, ep.recording_names("99999999-2222-3333-4444-555555555555", "rg-a"))
-        self.assertEqual(base, ep.recording_names(SETTINGS["ENV_SUBSCRIPTION_ID"].upper(), "RG-A"))
-        self.assertTrue(ep.account_name(SETTINGS["ENV_SUBSCRIPTION_ID"], "rg-a").endswith(base["function_app_name"][-8:]))
+        base = ep.base_names(SETTINGS["ENV_SUBSCRIPTION_ID"], "rg-a")
+        self.assertNotEqual(base, ep.base_names(SETTINGS["ENV_SUBSCRIPTION_ID"], "rg-b"))
+        self.assertNotEqual(base, ep.base_names("99999999-2222-3333-4444-555555555555", "rg-a"))
+        self.assertEqual(base, ep.base_names(SETTINGS["ENV_SUBSCRIPTION_ID"].upper(), "RG-A"))
+        self.assertTrue(base["event_hub_namespace"].endswith(ep.digest(SETTINGS["ENV_SUBSCRIPTION_ID"], "rg-a")))
 
-    def test_the_key_based_version_is_removed_by_the_four_names_it_had_and_by_no_other(self):
+    def test_the_old_key_based_version_and_its_four_names_are_gone_from_the_builder(self):
         _, outputs = self.files()
-        token = ep.digest(SETTINGS["ENV_SUBSCRIPTION_ID"], SETTINGS["ENV_RESOURCE_GROUP"])
-        legacy = {key: value for key, value in outputs.items() if key.startswith("legacy_")}
-        # The names that the first version was deployed with (they are in the changelog): the first storage account is not the new one.
-        self.assertEqual(legacy, {"legacy_logic_app_name": f"logic-meternaut-usage-{token}", "legacy_plan_name": "asp-meternaut-usage",
-                                  "legacy_connection_name": "azuremonitorlogs", "legacy_storage_account_name": f"stmeternaut{token}"})
-        self.assertNotEqual(legacy["legacy_storage_account_name"], outputs["storage_account_name"])
-        self.assertNotIn(legacy["legacy_logic_app_name"], RECORDING)
-        self.assertNotIn(legacy["legacy_plan_name"], RECORDING)
-        self.assertNotIn("azuremonitorlogs", RECORDING)
+        self.assertEqual([key for key in outputs if key.startswith("legacy_")], [], "the workflow removed the key-based Logic App version by its four names until 2026-11-07; the action retire-old does not need them")
+        text = TOOL.read_text(encoding="utf-8")
+        for old in ("logic-meternaut-usage", "asp-meternaut-usage", "azuremonitorlogs"):
+            self.assertNotIn(old, text, old)
 
     def test_the_function_app_has_a_subnet_of_its_own_beside_the_endpoint_subnet(self):
         files, outputs = self.files()
@@ -251,38 +247,29 @@ class Recording(unittest.TestCase):
         self.assertEqual((code, out, files), (2, "", {}))
         self.assertIn("Basic plan", err)
 
-    def test_the_endpoint_subnet_holds_the_nine_private_endpoints(self):
-        # nine endpoints (the usage recording's five, the model account's, the Foundry resource's and one for each of the two function apps) and the five addresses that Azure keeps: a /29 has
-        # eight addresses and cannot hold them, and a /28 has sixteen
+    def test_the_endpoint_subnet_holds_the_six_private_endpoints(self):
+        # six endpoints (the base's four, the Foundry resource's and the cases app's) and the five addresses that Azure keeps: a /29 has eight addresses and cannot hold them, and a /28 has sixteen
         code, out, err, files = run({**SETTINGS, "ENV_PE_SUBNET_PREFIX": "10.53.0.0/29"})
         self.assertEqual((code, out, files), (2, "", {}))
         self.assertIn("ENV_PE_SUBNET_PREFIX", err)
         self.assertIn("at least a /28", err)
-        self.assertIn("each of the two function apps one", err)
+        self.assertIn("the base has four private endpoints", err)
+        self.assertIn("the Foundry resource one and the cases app one", err)
         self.assertEqual(run({**SETTINGS, "ENV_PE_SUBNET_PREFIX": "10.53.0.0/28"})[0], 0)
 
     def test_the_private_endpoints_and_their_zones_are_the_ones_the_template_makes(self):
         _, outputs = self.files()
-        pairs = [pair.split(":") for pair in outputs["recording_endpoints"].split(",")]
-        self.assertEqual(len(pairs), 6)
-        storage, cosmos, hubs, app = outputs["storage_account_name"], outputs["cosmos_account_name"], outputs["event_hub_namespace"], outputs["function_app_name"]
+        pairs = [pair.split(":") for pair in outputs["base_endpoints"].split(",")]
+        self.assertEqual(len(pairs), 4)
+        storage, hubs = outputs["storage_account_name"], outputs["event_hub_namespace"]
         self.assertEqual(pairs, [[f"pe-{storage}-blob", "privatelink.blob.core.windows.net"], [f"pe-{storage}-queue", "privatelink.queue.core.windows.net"],
-                                 [f"pe-{storage}-table", "privatelink.table.core.windows.net"], [f"pe-{cosmos}", "privatelink.documents.azure.com"],
-                                 [f"pe-{hubs}", "privatelink.servicebus.windows.net"], [f"pe-{app}", "privatelink.azurewebsites.net"]])
-        for line in ("name: 'pe-${storageAccountName}-${service}'", "name: 'pe-${cosmosAccountName}'", "name: 'pe-${eventHubNamespaceName}'", "name: 'pe-${functionAppName}'"):
-            self.assertIn(line, RECORDING)
+                                 [f"pe-{storage}-table", "privatelink.table.core.windows.net"], [f"pe-{hubs}", "privatelink.servicebus.windows.net"]])
+        for line in ("name: 'pe-${storageAccountName}-${service}'", "name: 'pe-${eventHubNamespaceName}'"):
+            self.assertIn(line, BASE)
         self.assertEqual(outputs["appinsights_name"], "appi-meternaut")
-        self.assertNotIn("usage_identity_name", outputs, "the usage app's own system-assigned identity has no name, and the workflow does not look for the user-assigned one that it replaced")
-        self.assertNotIn("id-${workload}-usage", RECORDING, "the template no longer makes the identity that the app's own system-assigned one replaced")
-        self.assertIn("name: 'appi-${workload}'", RECORDING)
-
-    def test_the_readers_must_be_object_ids(self):
-        for changes in ({"RECORDING_READER_IDS": "not-an-id"}, {"RECORDING_READER_IDS": f"{READER},"},
-                        {"RECORDING_READER_IDS": f"{READER},{READER.upper()}"}, {"RECORDING_READER_IDS": ",".join([READER[:-1] + str(i) for i in range(6)])}):
-            code, out, err, files = run({**SETTINGS, **changes})
-            self.assertEqual((code, out, files), (2, "", {}), changes)
-            self.assertIn("RECORDING_", err)
-            self.assertNotIn("not-an-id", err)
+        for gone in ("pe-${cosmosAccountName}", "pe-${functionAppName}", "id-${workload}-usage"):
+            self.assertNotIn(gone, BASE, f"{gone}: the usage recording's pieces are not made any more")
+        self.assertIn("name: 'appi-${workload}'", BASE)
 
     def test_the_identity_of_the_workflow_is_no_setting_of_the_builder_and_no_file_carries_it(self):
         # It used to get the right to send to the control hub of each of the two apps (the parameter workflowPrincipalId of both templates); the Operator sends the control events now, and the workflow
@@ -309,14 +296,14 @@ class Preview(unittest.TestCase):
         self.assertEqual(preview[0:3], plain[0:3])
         self.assertEqual(preview[3], plain[3])
 
-    def test_no_gateway_identity_is_needed_by_any_run_and_the_usage_recording_makes_no_role_for_one(self):
+    def test_no_gateway_identity_is_needed_by_any_run_and_the_base_makes_no_role_for_one(self):
         code, out, err, files = run(SETTINGS)
         self.assertEqual((code, err), (0, ""), "no setting names a gateway identity, and a run needs none")
-        recording = (TOOL.parents[1] / "environment" / "recording" / "main.bicep").read_text(encoding="utf-8")
-        self.assertNotIn("gatewayPrincipalId", recording)
-        self.assertNotIn("noGatewayIdentity", recording)
-        self.assertNotIn("gatewaySends", recording)
-        self.assertNotIn("eventHubsDataSenderRoleId", recording, "the recording's template gives no role to send to an event hub")
+        base = (TOOL.parents[1] / "environment" / "base" / "main.bicep").read_text(encoding="utf-8")
+        self.assertNotIn("gatewayPrincipalId", base)
+        self.assertNotIn("noGatewayIdentity", base)
+        self.assertNotIn("gatewaySends", base)
+        self.assertNotIn("eventHubsDataSenderRoleId", base, "the base's template gives no role to send to an event hub")
         self.assertEqual(ep.PLACEHOLDER, "00000000-0000-0000-0000-000000000000", "the all-zero id is still what the Foundry file holds until the cases app has an identity")
 
 
@@ -345,11 +332,12 @@ class Refusals(unittest.TestCase):
         for bad in ('o"wner', "o<wner", "a" * 65, "o;wner", "o\nwner"):
             self.refused(ENV_OWNER=bad)
 
-    def test_the_application_insights_id_must_have_the_shape_of_the_right_resource(self):
-        # The only id of the gateway's side that the builder still reads: the usage recording's copy jobs read that component. The instance's own id is not a setting any more.
-        for bad in ("", "/subscriptions/x", RETIRED_SETTINGS["GATEWAY_RESOURCE_ID"], SETTINGS["GATEWAY_APPINSIGHTS_ID"] + "/x",
-                    SETTINGS["GATEWAY_APPINSIGHTS_ID"].replace("components/example-insights", "components/")):
-            self.refused(GATEWAY_APPINSIGHTS_ID=bad)
+    def test_a_leftover_application_insights_id_of_the_old_gateway_is_not_read_even_when_it_is_malformed(self):
+        # It was the only id of the gateway's side that the builder read: the usage recording's copy jobs read that component. The recording was removed on 2026-11-07, and the setting went with it.
+        plain = run(SETTINGS)
+        for bad in ("", "/subscriptions/x", RETIRED_SETTINGS["GATEWAY_RESOURCE_ID"], RETIRED_SETTINGS["GATEWAY_APPINSIGHTS_ID"] + "/x"):
+            code, out, err, files = run({**SETTINGS, "GATEWAY_APPINSIGHTS_ID": bad})
+            self.assertEqual((code, err, out, files), (0, "", plain[1], plain[3]), bad)
 
     def test_address_ranges_must_be_private_ipv4_and_nested(self):
         for bad in ("10.53.0.1/24", "10.53.0.0", "192.168.0.0/24", "8.8.8.0/24", "10.53.0.0/29", "10.53.0.0/8", "fd00::/64", "10.53.0.0/33", "x"):
@@ -412,7 +400,7 @@ class Models(unittest.TestCase):
 
 
 class FirstCases(unittest.TestCase):
-    """The parameter file of the first cases app (environment/cases/main.bicep): it names what the usage recording made, and nothing of the owner's API Management instance."""
+    """The parameter file of the first cases app (environment/cases/main.bicep): it names what the base made, and nothing of the owner's API Management instance."""
 
     CASES = (ROOT / "environment" / "cases" / "main.bicep").read_text(encoding="utf-8")
 
@@ -432,17 +420,16 @@ class FirstCases(unittest.TestCase):
         for name, wrapped in given.items():
             self.assertIsInstance(wrapped["value"], types[declared[name][0]], name)
 
-    def test_it_names_the_storage_and_the_namespace_that_the_recording_has_and_no_workflow_principal(self):
+    def test_it_names_the_storage_and_the_namespace_that_the_base_has_and_no_workflow_principal(self):
         files, lines = self.build()
-        cases, recording = values(files["cases.parameters.json"]), values(files["recording.parameters.json"])
-        self.assertEqual(cases["storageAccountName"], recording["storageAccountName"])
-        self.assertEqual(cases["eventHubNamespaceName"], recording["eventHubNamespaceName"])
+        cases, base = values(files["cases.parameters.json"]), values(files["base.parameters.json"])
+        self.assertEqual(cases["storageAccountName"], base["storageAccountName"])
+        self.assertEqual(cases["eventHubNamespaceName"], base["eventHubNamespaceName"])
         self.assertNotIn("workflowPrincipalId", cases)
-        self.assertNotIn("workflowPrincipalId", recording)
-        self.assertEqual(cases["location"], recording["location"])
+        self.assertNotIn("workflowPrincipalId", base)
+        self.assertEqual(cases["location"], base["location"])
         self.assertRegex(cases["functionAppName"], r"^func-meternaut-cases-[0-9a-f]{8}$")
         self.assertEqual(lines["cases_function_app_name"], cases["functionAppName"])
-        self.assertNotEqual(cases["functionAppName"], recording["functionAppName"])
         self.assertLessEqual(len(cases["functionAppName"]), 60)
 
     def test_the_plans_subnet_is_the_same_in_the_cases_file_and_in_the_model_side_file(self):
@@ -450,7 +437,7 @@ class FirstCases(unittest.TestCase):
         cases, environment = values(files["cases.parameters.json"]), values(files["environment.parameters.json"])
         self.assertEqual(cases["webSubnetPrefix"], environment["webSubnetPrefix"])
         self.assertEqual(lines["web_subnet_prefix"], cases["webSubnetPrefix"])
-        self.assertNotEqual(cases["webSubnetPrefix"], environment["funcSubnetPrefix"], "the usage recording's subnet is delegated to Flex Consumption")
+        self.assertNotEqual(cases["webSubnetPrefix"], environment["funcSubnetPrefix"], "the function subnet is delegated to Flex Consumption: the Basic plan has a subnet of its own")
 
     def test_the_file_says_whether_the_integration_subnet_is_there_already_and_says_no_when_nobody_has_looked(self):
         # the subnet is made once: a template that makes it again takes away the route table that the landing zone's network manager put on it
@@ -482,7 +469,7 @@ class FirstCases(unittest.TestCase):
             self.assertEqual((code, err), (0, ""))
             self.assertEqual(values(files["cases.parameters.json"])["aiGatewayHost"], host, extra)
             self.assertNotIn(host, out, "the host name is not printed")
-        for action, extra in (("", ()), ("what-if", ()), ("cases", ("--preview",)), ("foundry", ()), ("recording", ()), ("aigateway", ())):
+        for action, extra in (("", ()), ("what-if", ()), ("cases", ("--preview",)), ("foundry", ()), ("base", ()), ("aigateway", ())):
             code, out, err, files = run({**SETTINGS, "ACTION": action}, *extra)
             self.assertEqual((code, err), (0, ""), action)
             self.assertEqual(values(files["cases.parameters.json"])["aiGatewayHost"], ep.PLACEHOLDER_AIGATEWAY_HOST, f"{action!r}: the placeholder, because the gateway is not named")
@@ -605,7 +592,7 @@ class FirstCases(unittest.TestCase):
         files, _ = self.build(PLANTED_ID="r42", PLANT_PUBLIC_IP="TRUE")
         planted = values(files["planted.parameters.json"])
         self.assertEqual((planted["plantedId"], planted["plantPublicIp"]), ("r42", True))
-        self.assertEqual(planted["location"], values(files["recording.parameters.json"])["location"])
+        self.assertEqual(planted["location"], values(files["base.parameters.json"])["location"])
         for bad in ({"PLANTED_ID": "Has Space"}, {"PLANTED_ID": "x" * 13}, {"PLANT_PUBLIC_IP": "maybe"}):
             with self.subTest(bad):
                 self.assertEqual(run({**SETTINGS, **bad})[0], 2)
@@ -646,7 +633,7 @@ class Foundry(unittest.TestCase):
             self.assertIsInstance(wrapped["value"], types[declared[name][0]], name)
         self.assertNotIn("restoreAccount", given, "the deploy sets it only after the platform says that a soft-deleted resource of the name is there")
 
-    def test_the_names_are_a_host_name_inside_its_limit_the_same_on_every_run_and_not_the_model_accounts(self):
+    def test_the_names_are_a_host_name_inside_its_limit_the_same_on_every_run_and_not_the_old_model_account(self):
         files, outputs = self.files()
         again = self.files()[1]
         token = ep.digest(SETTINGS["ENV_SUBSCRIPTION_ID"], SETTINGS["ENV_RESOURCE_GROUP"])
@@ -654,8 +641,8 @@ class Foundry(unittest.TestCase):
         self.assertEqual(account, f"aif-meternaut-agents-{token}")
         self.assertRegex(account, r"^[A-Za-z0-9][A-Za-z0-9-]{1,63}$")
         self.assertEqual({k: v for k, v in outputs.items() if k.startswith("foundry_")}, {k: v for k, v in again.items() if k.startswith("foundry_")})
-        self.assertNotEqual(account, outputs["account_name"], "the model account was made with allowProjectManagement false and can never hold a project")
-        self.assertNotIn(outputs["account_name"], account)
+        self.assertNotEqual(account, f"aif-meternaut-{token}", "the old model account was made with allowProjectManagement false and could never hold a project: the action retire-old deletes it")
+        self.assertNotIn("account_name", outputs, "the builder names no model account but this one")
         self.assertEqual((outputs["foundry_project_name"], outputs["foundry_guardrail_name"]), ("meternaut", "meternaut-agents"))
         self.assertEqual(outputs["foundry_private_endpoint"], f"pe-{account}")
         self.assertEqual(outputs["foundry_project_endpoint"], f"https://{account}.services.ai.azure.com/api/projects/meternaut")
@@ -684,13 +671,11 @@ class Foundry(unittest.TestCase):
         listed = json.loads(MODELS.read_text(encoding="utf-8"))
         wanted = [{"name": m["name"], "version": m["version"], "sku": m["sku"], "capacity": m["agentCapacity"]} for m in listed]
         self.assertEqual(deployed, wanted)
-        self.assertEqual([m["name"] for m in values(files["environment.parameters.json"])["models"]], [m["name"] for m in deployed], "the same models as the model side")
-        self.assertEqual(values(files["environment.parameters.json"])["models"], [{k: m[k] for k in ("name", "version", "sku", "capacity")} for m in listed],
-                         "the model side keeps its own capacity")
+        self.assertNotIn("models", values(files["environment.parameters.json"]), "the model side makes no model deployments: the old model account was removed on 2026-11-07")
         for model in deployed:
             self.assertEqual(set(model), {"name", "version", "sku", "capacity"}, "no retirement date and no agentCapacity reaches the template")
 
-    def test_the_capacity_of_the_agents_may_differ_from_the_one_of_the_model_side_and_each_side_gets_its_own(self):
+    def test_the_capacity_of_the_agents_is_the_one_that_the_foundry_file_gets(self):
         models = [{"name": "alpha", "version": "2026-09-22", "sku": "DataZoneStandard", "capacity": 20, "agentCapacity": 70, "retirementDate": "2028-03-11"},
                   {"name": "beta", "version": "2026-09-22", "sku": "DataZoneStandard", "capacity": 30, "agentCapacity": 10, "retirementDate": "2028-03-11"}]
         tmp = tempfile.TemporaryDirectory()
@@ -700,7 +685,6 @@ class Foundry(unittest.TestCase):
         code, _, _, files = run(SETTINGS, models=path)
         self.assertEqual(code, 0)
         self.assertEqual([m["capacity"] for m in values(files["foundry.parameters.json"])["models"]], [70, 10])
-        self.assertEqual([m["capacity"] for m in values(files["environment.parameters.json"])["models"]], [20, 30])
 
     SYSTEM_PRINCIPAL = "12345678-DDDD-EEEE-FFFF-123456789012"
 
@@ -793,10 +777,10 @@ class Operator(unittest.TestCase):
                          "a range, a flag, the name of a namespace and two tags: nothing else, and nothing secret")
         self.assertEqual((operator["location"], operator["owner"]), ("swedencentral", "owner@example.com"))
 
-    def test_the_namespace_is_the_one_that_the_usage_recording_and_the_first_cases_use(self):
+    def test_the_namespace_is_the_one_that_the_base_and_the_first_cases_use(self):
         files, outputs = self.files()
         operator = values(files["operator.parameters.json"])["eventHubNamespaceName"]
-        self.assertEqual(operator, values(files["recording.parameters.json"])["eventHubNamespaceName"], "the Operator reads the namespace that the usage recording makes")
+        self.assertEqual(operator, values(files["base.parameters.json"])["eventHubNamespaceName"], "the Operator reads the namespace that the base makes")
         self.assertEqual(operator, outputs["event_hub_namespace"])
         self.assertRegex(operator, r"^evhns-meternaut-[0-9a-f]{8}$")
         self.assertIn("param eventHubNamespaceName string", self.OPERATOR)
@@ -888,7 +872,7 @@ class AiGateway(unittest.TestCase):
         mine = {"aigateway-subnet.parameters.json", "aigateway.parameters.json", "aigateway-policies.json"}
         self.assertTrue(mine <= set(files))
         self.assertEqual(set(files) - mine,
-                         {"environment.parameters.json", "recording.parameters.json", "foundry.parameters.json", "operator.parameters.json", "planted.parameters.json",
+                         {"environment.parameters.json", "base.parameters.json", "foundry.parameters.json", "operator.parameters.json", "planted.parameters.json",
                           "cases.parameters.json"})
         self.assertEqual({key: value for key, value in outputs.items() if key.startswith("aigateway_")},
                          {"aigateway_name": outputs["aigateway_name"], "aigateway_subnet_name": "snet-aigw", "aigateway_subnet_prefix": "10.53.0.128/26",
@@ -1134,71 +1118,63 @@ class AiGateway(unittest.TestCase):
 
 
 class PublicNetworkAccessOfTheApps(unittest.TestCase):
-    """What each function app takes from the public internet is one value each (docs/proposals/07-private-by-default.md, phase 1): written to its parameter file every time, so that the property is never
-    left unset, which would let the first private endpoint switch public access off by itself."""
+    """What the cases app takes from the public internet is one value (docs/proposals/07-private-by-default.md, phase 1): written to its parameter file every time, so that the property is never
+    left unset, which would let the first private endpoint switch public access off by itself. (The usage app, which had a value of its own and was closed, was removed on 2026-11-07.)"""
 
-    RECORDING_TEMPLATE = (ROOT / "environment" / "recording" / "main.bicep").read_text(encoding="utf-8")
     CASES_TEMPLATE = (ROOT / "environment" / "cases" / "main.bicep").read_text(encoding="utf-8")
 
     def build(self, **changes):
         return run({**SETTINGS, **changes})
 
-    def test_the_usage_app_is_closed_and_the_cases_app_is_open_until_the_people_have_a_path_and_the_values_reach_their_parameter_files(self):
+    def test_the_cases_app_is_open_until_the_people_have_a_path_and_the_value_reaches_its_parameter_file_only(self):
         code, out, err, files = self.build()
         self.assertEqual((code, err), (0, ""))
-        self.assertEqual((ep.USAGE_APP_PUBLIC_NETWORK_ACCESS, ep.CASES_APP_PUBLIC_NETWORK_ACCESS), ("Disabled", "Enabled"),
-                         "the usage app has no page for people and its code is published through its private endpoint, so it is closed; the cases app serves the web page and stays open until the owner closes it "
-                         "(he reaches the private network, and flips this one value himself, in a change of its own, when he can reach the private address): that is the one value and the one test to change then")
-        self.assertEqual(values(files["recording.parameters.json"])["usageAppPublicNetworkAccess"], "Disabled")
+        self.assertEqual(ep.CASES_APP_PUBLIC_NETWORK_ACCESS, "Enabled",
+                         "the cases app serves the web page and stays open until the owner closes it (he reaches the private network, and flips this one value himself, in a change of its own, when he can "
+                         "reach the private address): that is the one value and the one test to change then")
+        self.assertFalse(hasattr(ep, "USAGE_APP_PUBLIC_NETWORK_ACCESS"), "the usage app was removed on 2026-11-07, and its constant with it")
         self.assertEqual(values(files["cases.parameters.json"])["casesAppPublicNetworkAccess"], "Enabled")
         for name, document in files.items():
-            if name not in ("recording.parameters.json", "cases.parameters.json"):
+            if name != "cases.parameters.json":
                 self.assertFalse({"usageAppPublicNetworkAccess", "casesAppPublicNetworkAccess"} & set(document["parameters"]), f"{name}: the value reaches the file of its own app only")
 
-    def test_closing_an_app_is_one_value_and_it_reaches_only_that_app(self):
+    def test_closing_the_app_is_one_value_and_it_reaches_only_that_app(self):
         # A closed cases app builds with a host name on the platform's Application Gateway and, since the owner decided against the gateway (2026-11-07), without one: then the check of its front door runs
         # in the Operator (tools/tests/test_console_gateway.py has the output and the steps).
-        for usage, cases in (("Disabled", "Enabled"), ("Enabled", "Disabled"), ("Disabled", "Disabled"), ("Enabled", "Enabled")):
+        for cases in ("Disabled", "Enabled"):
             for named in ("", "console.example.com"):
-                with mock.patch.object(ep, "USAGE_APP_PUBLIC_NETWORK_ACCESS", usage), mock.patch.object(ep, "CASES_APP_PUBLIC_NETWORK_ACCESS", cases):
+                with mock.patch.object(ep, "CASES_APP_PUBLIC_NETWORK_ACCESS", cases):
                     code, _, err, files = self.build(CONSOLE_HOST_NAME=named)
-                self.assertEqual((code, err), (0, ""), (usage, cases, named))
-                self.assertEqual(values(files["recording.parameters.json"])["usageAppPublicNetworkAccess"], usage, (usage, cases, named))
-                self.assertEqual(values(files["cases.parameters.json"])["casesAppPublicNetworkAccess"], cases, (usage, cases, named))
+                self.assertEqual((code, err), (0, ""), (cases, named))
+                self.assertEqual(values(files["cases.parameters.json"])["casesAppPublicNetworkAccess"], cases, (cases, named))
 
     def test_a_value_that_is_not_enabled_or_disabled_is_refused_by_name_because_the_property_must_always_be_written(self):
-        for constant in ("USAGE_APP_PUBLIC_NETWORK_ACCESS", "CASES_APP_PUBLIC_NETWORK_ACCESS"):
+        for constant in ("CASES_APP_PUBLIC_NETWORK_ACCESS",):
             for bad in ("", "enabled", "Allow", "SecuredByPerimeter"):
                 with mock.patch.object(ep, constant, bad):
                     code, out, err, files = self.build()
                 self.assertEqual((code, out, files), (2, "", {}), (constant, bad))
                 self.assertIn(f"{constant} (in tools/environment-params.py) is Enabled or Disabled", err)
 
-    def test_each_template_takes_the_value_with_the_same_two_choices_and_the_default_that_the_files_carry(self):
-        for source, name in ((self.RECORDING_TEMPLATE, "usageAppPublicNetworkAccess"), (self.CASES_TEMPLATE, "casesAppPublicNetworkAccess")):
+    def test_the_template_takes_the_value_with_the_same_two_choices_and_the_default_that_the_file_carries(self):
+        for source, name in ((self.CASES_TEMPLATE, "casesAppPublicNetworkAccess"),):
             self.assertRegex(source, rf"(?m)^@allowed\(\[\n  'Enabled'\n  'Disabled'\n\]\)\nparam {name} string = 'Enabled'$", name)
             self.assertEqual(bicep_params(source)[name], ("string", True), "it has a default: a file that leaves it out still gives the property a value")
             self.assertIn(f"    publicNetworkAccess: {name}\n", source, "the app takes the parameter, and nothing else gives the property a value")
         self.assertEqual(ep.PUBLIC_NETWORK_ACCESS, ("Enabled", "Disabled"))
 
-    def test_the_endpoint_of_each_app_is_in_the_list_that_its_action_waits_for_with_the_zone_of_app_service_and_the_name_that_its_template_gives_it(self):
-        # The first `recording` after the usage app's endpoint was made failed at the publish: a Flex Consumption deployment ends with a call from the deployment site to the app's own host name,
-        # and while the central zone had no record of the new endpoint that name did not resolve ("Reset all workers endpoint responded with Name or service not known"). A list without the
-        # app's endpoint lets the workflow publish too early, so it is pinned here for both apps.
+    def test_the_endpoint_of_the_app_is_in_the_list_that_its_action_waits_for_with_the_zone_of_app_service_and_the_name_that_its_template_gives_it(self):
+        # The first publish after an app's endpoint was made failed: a deployment ends with a call from the deployment site to the app's own host name, and while the central zone had no record of
+        # the new endpoint that name did not resolve ("Reset all workers endpoint responded with Name or service not known"). A list without the app's endpoint lets the workflow publish too early.
         code, out, err, files = self.build()
         self.assertEqual((code, err), (0, ""))
         lines = dict(line.split("=", 1) for line in out.splitlines())
-        usage, cases = values(files["recording.parameters.json"])["functionAppName"], values(files["cases.parameters.json"])["functionAppName"]
-        waited = lines["recording_endpoints"].split(",")
-        self.assertEqual(len(waited), 6, "the five endpoints of the services and the usage app's own")
-        self.assertIn(f"pe-{usage}:privatelink.azurewebsites.net", waited)
+        cases = values(files["cases.parameters.json"])["functionAppName"]
         self.assertEqual(lines["cases_endpoints"], f"pe-{cases}:privatelink.azurewebsites.net", "the cases app has one endpoint, and its action waits for it")
         self.assertEqual(ep.APP_ENDPOINT_ZONE, "privatelink.azurewebsites.net", "the central zone of App Service: the names of the app and of its deployment site")
-        self.assertNotIn(cases, lines["recording_endpoints"], "each action waits for the endpoints that it makes")
-        self.assertNotIn(usage, lines["cases_endpoints"])
-        for name, source in ((usage, self.RECORDING_TEMPLATE), (cases, self.CASES_TEMPLATE)):
-            self.assertIn("name: 'pe-${functionAppName}'", source, "the name that the workflow looks for is the name that the template gives the endpoint")
-            self.assertIn("'sites'", source)
+        self.assertNotIn(cases, lines["base_endpoints"], "each action waits for the endpoints that it makes: the base makes none of an app's")
+        self.assertIn("name: 'pe-${functionAppName}'", self.CASES_TEMPLATE, "the name that the workflow looks for is the name that the template gives the endpoint")
+        self.assertIn("'sites'", self.CASES_TEMPLATE)
     TEMPLATE = {"parameters": {"a": {"type": "string"}, "b": {"type": "int", "defaultValue": 1}, "c": {"type": "array", "defaultValue": []}, "d": {"type": "bool", "defaultValue": True}}}
 
     def doc(self, **given):
