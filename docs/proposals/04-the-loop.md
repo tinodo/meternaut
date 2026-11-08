@@ -12,7 +12,7 @@ Until now Meternaut found leads, two AI roles judged them and the History record
 4. right after the person presses "Approve and sign in to Azure", the console makes the change **as that person**, with that person's own rights, after it has read the resource again;
 5. later the result is checked against Azure and against the cost lines, and the person is told.
 
-Only a resource that Meternaut planted itself, in its own resource group, can reach step 4. Everything else is still reported and never changed: no other project's resource is a target ([rule 26 of AGENTS.md](../../AGENTS.md)). That is a choice and not a need of the design ([run as the approver](05-run-as-the-approver.md)), and relaxing it is a later decision of the owner: the pilot keeps the guard so that the first real approvals touch only resources that nobody else owns.
+Only a resource that Meternaut planted itself, in its own resource group, can reach step 4. Everything else is still reported and never changed; when it needs a person, the person is asked whether it is worth acting on, and the answer is recorded and changes nothing in Azure ([the decision brief](09-the-decision-brief.md)): no other project's resource is a target ([rule 26 of AGENTS.md](../../AGENTS.md)). That is a choice and not a need of the design ([run as the approver](05-run-as-the-approver.md)), and relaxing it is a later decision of the owner: the pilot keeps the guard so that the first real approvals touch only resources that nobody else owns.
 
 ## The path of one case
 
@@ -28,7 +28,7 @@ Only a resource that Meternaut planted itself, in its own resource group, can re
 | 8. Tell again | A letter says what ran and what the outcome was | The mailer |
 | 9. Check | Two days later the timer reads the resource again (it must still be gone) and the cost lines of the resource's cost scope, with an identity that only reads; the case becomes `verified`, and a last letter says so | The timer |
 
-The plan's words (title, what changes, what could go wrong, how to undo it, the evidence level) are written by code from the lead's typed facts. A model contributes only the objections that the Skeptic raised, shown in the notebook, and never a sentence of the plan. The plan's code is the first 8 characters of the SHA-256 of the plan id, the family, the resource id and the expiry time: a changed plan has a new code, so an old approval cannot be reused for it.
+The plan's words (title, what changes, what could go wrong, how to undo it, the evidence level) are written by code from the lead's typed facts. A model contributes only the objections that the Skeptic raised, shown on the page in a labelled box, and never a sentence of the plan. The plan's code is the first 8 characters of the SHA-256 of the plan id, the family, the resource id and the expiry time: a changed plan has a new code, so an old approval cannot be reused for it.
 
 ## What is built
 
@@ -49,7 +49,7 @@ The plan's words (title, what changes, what could go wrong, how to undo it, the 
 - A person is known only by the object id that the platform's sign-in puts in a header after it has signed the person in. A form field, a link or a cookie never says who someone is. The app trusts the header only because it refuses to serve anything when the platform's sign-in is off.
 - **owner**, **approver** and **ops** are the roles. An approval needs the role *approver* and the person's object id in the plan's list of approvers, which the code takes from the list of people when the plan is made. The change itself needs one more thing that no list gives: the person's own right in Azure to make it. Azure checks that, and Meternaut cannot supply it. The pause page needs *ops*; the permissions page needs *ops* or *owner*. Every person on the list can read the History and manage their own settings, notes and decisions.
 - A person cannot approve for somebody else, and cannot approve a plan that is not open, has expired, or has a changed code. A person who signs in to Azure with another account than the one signed in to the console is refused.
-- A person can say "not mine": the plan is closed and the case goes back to the people who decide by hand. A person can ask a question: it is recorded, the plan stays open and nothing is approved.
+- A person can say "not mine": the plan is closed and the case goes back to the people who decide by hand. A person can ask or tell something: it is recorded, the plan stays open and nothing is approved. An answer to advice (a request that changes nothing in Azure) needs the role *owner* or *approver* and the person's name on the plan ([the decision brief](09-the-decision-brief.md)).
 
 ## Safety
 

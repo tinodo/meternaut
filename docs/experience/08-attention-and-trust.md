@@ -115,7 +115,7 @@ Learn documents the label and thumbs per message, not for card messages; the cli
 - **Chips:** beside every saving figure, in words: the price basis and the saving word (how sure it is). Other money figures state their basis in the sentence. (Invented.) Without cost access, E3 reads "At list prices. I cannot see your rates."; under a partner agreement the chip reads "At retail rates. Your partner's rates are not visible."
 - **What I do not know:** the limit of this Recommendation. (An invented example.) E3: "I cannot tell whether anyone keeps these two disks for a restore."
 - **Receipt:** every tap gets a visible reply, such as "Received. Nothing has changed yet."
-- **History:** My decisions and What I did here ([06](06-web-pages.md)).
+- **History:** the one page of decisions and changes ([06](06-web-pages.md)).
 
 ### Controls a person always has
 

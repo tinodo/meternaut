@@ -35,6 +35,7 @@ from __future__ import annotations
 import datetime as dt
 import logging
 import re
+import unicodedata
 from dataclasses import dataclass
 from typing import Callable
 
@@ -85,6 +86,11 @@ def _short(text: object, limit: int = MAX_DETAIL) -> str:
     return one if len(one) <= limit else one[: limit - 3].rstrip() + "..."
 
 
+def _one_line(text: object) -> bool:
+    """Whether a subject is one line of visible text: not empty, and without a control, a format (direction mark, zero-width) or a line or paragraph separator character."""
+    return isinstance(text, str) and bool(text.strip()) and not any(unicodedata.category(ch) in ("Cc", "Cf", "Zl", "Zp") for ch in text)
+
+
 class Mailer:
     def __init__(self, sender: str, client: Client, token: Callable[[str], str], people: People, store: Store, clock: Callable[[], dt.datetime],
                  redact: Callable[[str], str], ids: Callable[[], str]) -> None:
@@ -116,8 +122,7 @@ class Mailer:
             return MailResult("refused", "This person is not the person that the list holds for this address.")
         if not isinstance(kind, str) or not KIND.fullmatch(kind):
             return MailResult("refused", "The kind of letter is not valid.")
-        subject = letter.subject if isinstance(letter.subject, str) else ""
-        if not subject.strip() or any(ord(ch) < 32 or ord(ch) == 127 for ch in subject):
+        if not _one_line(letter.subject):
             return MailResult("refused", "The subject is empty or is not one line.")
         return None
 

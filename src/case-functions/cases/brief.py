@@ -215,10 +215,10 @@ AUTOLINK = re.compile(r"(?i)\b([a-z][a-z0-9+.-]*):(?=//)")
 
 def visible(value: object) -> str:
     """The text of a value without the characters that hide it or change its order on a screen: control characters (a line break and a tab stay), format characters such as
-    the direction overrides and the zero-width ones, and characters that are unassigned or private. The one rule that every page, letter and card applies to text that did not
-    come from code."""
+    the direction overrides and the zero-width ones, and characters that are unassigned or private. The Unicode line and paragraph separators become the line break that they
+    are. The one rule that every page, letter and card applies to text that did not come from code."""
     raw = "" if value is None else str(value)
-    return "".join(ch for ch in raw if ch in "\n\t" or unicodedata.category(ch) not in HIDDEN)
+    return "".join("\n" if unicodedata.category(ch) in ("Zl", "Zp") else ch for ch in raw if ch in "\n\t" or unicodedata.category(ch) not in HIDDEN)
 
 
 def plain(value: object, limit: int = MAX_NAME) -> str:
@@ -333,7 +333,7 @@ def ago_text(now: dt.datetime, found_at: str) -> tuple[int | None, str]:
 
 def portal_url(resource_id: str) -> str:
     """The address of the resource in the Azure portal, for the id of one resource and for nothing else: an id of the estate is text, and this is a link."""
-    if re.fullmatch(r"/subscriptions/[0-9A-Fa-f-]{36}/resourceGroups/[A-Za-z0-9._()-]{1,90}/providers/[A-Za-z0-9.]{1,80}(?:/[A-Za-z0-9._()~-]{1,100}){2,16}", resource_id or ""):
+    if isinstance(resource_id, str) and re.fullmatch(r"/subscriptions/[0-9A-Fa-f-]{36}/resourceGroups/[A-Za-z0-9._()-]{1,90}/providers/[A-Za-z0-9.]{1,80}(?:/[A-Za-z0-9._()~-]{1,100}){2,16}", resource_id):
         return f"https://portal.azure.com/#resource{resource_id}"
     return ""
 
@@ -750,13 +750,13 @@ def build_brief(case: CaseRecord | None, plan: PlanRecord | None, action: Action
     found_at = (case.first_seen_at if case is not None and case.first_seen_at else (plan.created_at if plan is not None else ""))
     age, _ = ago_text(now, found_at)
     return Brief(
-        case_id=case.case_id if case is not None else (plan.case_id if plan is not None else ""), plan_id=plan.plan_id if plan is not None else "",
-        plan_code=plan.code if plan is not None else "", kind=kind, family=family, state=state,
+        case_id=plain(case.case_id if case is not None else (plan.case_id if plan is not None else ""), 64), plan_id=plain(plan.plan_id if plan is not None else "", 64),
+        plan_code=plain(plan.code if plan is not None else "", 16), kind=kind, family=plain(family, 40), state=plain(state, 20),
         headline=headline_of(family, name, group, rtype, recommendation, plan.title if plan is not None else ""),
         saving=_saving(case, plan, action, state), confidence=confidence_of(case, plan), facts=facts_of(case), reasoning=reasoning_of(case), doubt=doubt_of(case, plan),
         change=change, who_acts=who, rechecked=rechecked, undo=undo, risk=risk, owner=owner_of(case), where=_where(name, group, subscription, resource_id, rtype),
-        answers=_answers(kind, state, may_answer, changes_paused), found_at=found_at, age_days=age, expires_at=plan.expires_at if plan is not None else "", models=models_of(case),
-        outcome=_outcome(plan, state, action, decisions), two_people=plan is not None and plan.approval_class == "R3")
+        answers=_answers(kind, state, may_answer, changes_paused), found_at=plain(found_at, 30), age_days=age, expires_at=plain(plan.expires_at if plan is not None else "", 30),
+        models=models_of(case), outcome=_outcome(plan, state, action, decisions), two_people=plan is not None and plan.approval_class == "R3")
 
 
 def order_key(brief: Brief) -> tuple:

@@ -2,6 +2,7 @@ import datetime as dt
 import json
 import re
 import unittest
+from dataclasses import replace
 from urllib.parse import parse_qs, unquote, urlsplit
 
 from support import APP_ROOT  # noqa: F401  (puts the app on the path)
@@ -215,6 +216,31 @@ class StoreContract:
         self.assertEqual([d.decision for d in self.store.decisions_of_plan("p1")], ["approve", "decline"])
         self.assertEqual([d.approver_oid for d in self.store.decisions_by(OID)], [OID])
         self.assertEqual(self.store.decisions_by(OID)[0].decision, "approve")
+
+    def test_a_later_is_replaced_by_the_next_answer_and_a_decline_keeps_its_reason(self):
+        later = DecisionRecord(plan_id="p1", approver_oid=OID, approver_name="A", decision="later", at="2026-11-05T08:55:00Z", plan_code="ABCD1234")
+        decline = DecisionRecord(plan_id="p1", approver_oid=OID, approver_name="A", decision="decline", at="2026-11-05T09:00:00Z", plan_code="ABCD1234", reason="handled")
+        approve = replace(decline, decision="approve", reason="", at="2026-11-05T09:05:00Z")
+        self.assertTrue(self.store.decision_put(later))
+        self.assertTrue(self.store.decision_put(decline), "a later is replaced by the next answer of the same person")
+        self.assertFalse(self.store.decision_put(approve), "and a final answer is not")
+        (kept,) = self.store.decisions_of_plan("p1")
+        self.assertEqual((kept.decision, kept.reason, kept.at), ("decline", "handled", "2026-11-05T09:00:00Z"))
+
+    def test_a_case_keeps_the_owner_lines_that_were_looked_up_and_the_status_acknowledged(self):
+        owner = {"tagOwner": "Team Apps", "createdBy": "someone@example.com", "createdAt": "2026-09-30T08:00:00Z", "lookedUp": True}
+        self.store.case_put(case("k7", "acknowledged", owner=owner))
+        self.store.case_put(case("k8", "proposed"))
+        got = self.store.case_get("k7")
+        self.assertEqual((got.status, got.owner), ("acknowledged", owner))
+        self.assertEqual(self.store.case_get("k8").owner, {}, "a case that nobody looked up has no owner lines")
+        self.assertEqual([c.case_id for c in self.store.cases_recent(status="acknowledged")], ["k7"])
+
+    def test_an_advise_plan_is_kept_and_listed_like_any_other_plan(self):
+        advice = replace(plan("p5"), family="advise", approval_class="R1", preconditions={"family": "advise", "caseStatus": "needs_human"})
+        self.store.plan_put(advice)
+        self.assertEqual(self.store.plan_get("p5"), advice)
+        self.assertEqual([p.plan_id for p in self.store.plans_open()], ["p5"])
 
     def test_an_action_per_plan(self):
         self.assertIsNone(self.store.action_get("p1"))

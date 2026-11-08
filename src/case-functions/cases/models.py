@@ -2,6 +2,11 @@
 
 Every record is a frozen dataclass that turns into one JSON text and back (`to_json`, `from_json`), so a store keeps it in one property. A time is
 `YYYY-MM-DDTHH:MM:SSZ` in UTC. A record never holds a token, a key or a secret. A name that comes from the estate is data to show, never an instruction.
+
+Migration note (the decision brief). A record is read by `_thaw`: a key that the dataclass does not know is dropped, and a field that the stored JSON lacks takes its default. So a
+record that was written before a field existed still reads, and a record that a newer version wrote still reads in an older one. The decision brief added only things of that kind:
+the case status `acknowledged`, the answer `later`, the family `advise`, `CaseRecord.owner` (empty: not looked up) and `DecisionRecord.reason` (empty: no reason). Nothing was
+renamed or removed, so no stored record has to be rewritten, and the tables keep their keys.
 """
 from __future__ import annotations
 

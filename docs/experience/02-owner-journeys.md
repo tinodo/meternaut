@@ -44,7 +44,7 @@
 | If | Then |
 |---|---|
 | "No, leave it as it is" or "Not mine" | "No, leave it as it is" closes the ask with no reminder; it returns only if the evidence changes materially or a Note expires, saying why. "Not mine" hands it to cover |
-| Later she wants the schedule off | My decisions offers "Switch the schedule off", a new plan, approved the same way |
+| Later she wants the schedule off | History links to "Switch the schedule off", a new plan, approved the same way |
 | (Invented.) A change needing her OK on a page (page-class), E2: the orders database one size down, EUR 380–520 a month at the rates on your bill, Expected; month-end peak 70–90 % CPU | Your OK on a page (C5) opens the approval page. If CPU then stays above 85 % for 10 minutes, the safety check stops and asks Maya whether to restore the old size; restoring is a new approval on the page. If nobody answers, the change stays as it is: the check asks once more, then uses the on-call route only if the scope set up the [emergency lane](08-attention-and-trust.md), otherwise it waits at the top of the weekly desk |
 | (Invented.) No cost access, E3: two disks unattached for 94 days, about EUR 38 a month | The chip reads "At list prices. I cannot see your rates."; the word is Scenario only; no Result follows, and Done says "I cannot measure this here" |
 | She approves every plan in seconds | Nothing is reported; Azure still checks her own rights on every change. The FinOps lead and the platform owner review a confidential monthly sample of executed changes to tune the recipes; it never judges a person |
@@ -177,7 +177,7 @@ stateDiagram-v2
 
 ## J7 "What does it know about me?"
 
-**Trigger and who.** Maya asks why a message reached her and wants to see or limit what is held; a team lead wants to see where decisions wait. **Surfaces.** The pages What I know about your resources, My decisions (History), What I did here and Settings ([web pages](06-web-pages.md)).
+**Trigger and who.** Maya asks why a message reached her and wants to see or limit what is held; a team lead wants to see where decisions wait. **Surfaces.** The pages What I know about your resources, History and Settings ([web pages](06-web-pages.md)).
 
 | Step | Person | System |
 |---|---|---|

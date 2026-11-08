@@ -4,16 +4,16 @@
 
 ## The pages at a glance
 
-Eight pages share one address: six for owners and team leads, two for the platform team. The send step builds every link from that address and an opaque id, so no name, resource or figure travels in a link. A card carries one link: the page of its request, which records no decision when opened. A letter may carry several, a page per item. Each page filters on the server by the signed-in person's scope.
+Every page is a render of the decision brief, which lets a stranger answer eight questions in a minute ([the decision brief](../proposals/09-the-decision-brief.md)); what is not needed to decide sits under one Details, or on a page for the platform team. The send step builds every link from one address and an opaque id, so no name, resource or figure travels in a link. A card and a letter each carry one link: the page of the request, which records no decision when opened. Each page filters on the server by the signed-in person's scope.
 
 | Page and route | For | What it is for | What a card hands over |
 |---|---|---|---|
-| **Approval** `/ok/<requestId>` | The card's recipient | For a decision, the exact plan and the decision; for any other card, its words and answers (Settings opens the Settings page) | The request id; a "Your OK on a page" card also shows the plan code |
-| **Notebook** `/why/<id>` | The message's recipient | The full reasoning: receipts, tool outputs, objections | An opaque id, from the Evidence row of the Approval page |
-| **My decisions** `/me/decisions` | Each person; team leads for their scope | What I decided, what ran, the outcome, Undo | Nothing: the person signs in and sees their own |
+| **Decisions** `/` | Each person | What waits for the person, the larger saving first, and what was decided lately | Nothing: the person signs in and sees their own |
+| **A decision** `/ok/<requestId>` (also `/why/<id>`) | The card's recipient | Headline, saving, facts, the AI's reasoning and doubt, change, undo, risk, owner and the answers; the rest in one Details | The request id |
+| **History** `/history` (also `/me/decisions`, `/me/activity`) | Each person | The last 30 days: what was decided, what ran and was checked, how many new findings | Nothing |
 | **What I know about your resources** `/me/notes` | Owners | Read, edit, expire and delete notes; do-not-touch marks | Nothing |
-| **What I did here** `/me/activity` | Owners | Every change made, or tried, for a plan that names the person as approver | Nothing |
-| **Settings** `/me/settings` | Each person | Channel, language, hours, budget, delegates, mutes, "Pause messages", export, delete | Nothing |
+| **Settings** `/me/settings` | Each person | Channel, quiet hours, the most messages a week, "Pause messages"; export and delete | Nothing |
+| **Operations** `/ops`, `/ops/runs` | The platform team | The switches, the runs and the cases | Never: no message links here |
 | **Standing permissions** `/ops/permissions` | The platform owner and FinOps lead | What Meternaut can change in Azure: on its own, nothing. Read-only | Never: no message links here |
 | **The kill switch** `/ops/pause` | Platform owner, FinOps lead, security reviewers | Stop work at three levels | Never: no message links here |
 
@@ -26,20 +26,17 @@ Eight pages share one address: six for owners and team leads, two for the platfo
 - **Cold start.** The page starts with zero always-ready instances, so hosting cost follows executions ([Learn](https://learn.microsoft.com/azure/azure-functions/flex-consumption-plan#billing)). The platform team adds always-ready instances only if the 95th-percentile first load takes over 5 seconds (a starting value).
 - **When the page is down,** the organisation's own front door, where it publishes the page that way, serves a static page; an availability alert reaches the platform team either way. A page on a private endpoint opens only from the organisation's network, which the approval-waiting e-mail names; elsewhere the link fails and the request expires unapproved ([security](../design/06-security-and-governance.md)).
 
-## The approval page
+## A decision
 
-The page shows the exact plan, from the stored plan record and never the AI's prose, and takes the decision. It serves two of the design's [approval classes](../design/06-security-and-governance.md#approval-classes), R2 ("your OK on a page") and R3 ("two people"), and is where an R1 card's button leads.
+The page of one request is its decision brief (`/ok/<requestId>`; `/why/<id>` shows the same page). It is built from the stored plan record and the typed facts, never from the AI's prose, and it takes the answer. It serves two of the design's [approval classes](../design/06-security-and-governance.md#approval-classes), R2 ("your OK on a page") and R3 ("two people"), and is where an R1 card's button leads. The [wireframe](../img/experience-approval-page.svg) of a purchase shows an older layout.
 
-![Wireframe of the approval page for a one-year compute savings plan, with eleven numbered parts from the address to the footer.](../img/experience-approval-page.svg)
+- **Headline and saving.** A verb, an object and a place; under it one sentence of saving, its level (Verified, Expected or Scenario) and what waiting forgoes each day. The main button names the action, "Approve and sign in to Azure", never a bare OK.
+- **Evidence and doubt.** At most five facts with unit, source and period; how sure the system is, derived by code; and two labelled boxes, the first AI's reason and the second AI's strongest objection, marked as not checked by code.
+- **What happens.** What changes, who makes it (the approver, signed in to Azure, so Azure checks their rights), what is read again just before, whether it can be undone, what could go wrong (always visible for R2 and R3), and whose resource it is.
+- **One answer form.** One text box ("A question, an objection or something to remember"), a reason for a decline, and a button for each answer that exists now: Approve, Decline, This is not mine, Ask or tell, Decide later. Decline matches Approve in size; on a narrow screen the buttons stack. Without script, the form posts the plan code (a reference, not proof of authenticity) and the anti-forgery token.
+- **Details and footer.** Steps, models, tokens, guards and ids sit in one collapsed `details` element. The footer is one line: an AI wrote the page and which models, why the person sees it, and a person to talk to, as a name and an address in plain text.
 
-(An invented example.) Lars, the finance approver, sees a one-year compute savings plan for the management group "Order platform" (three production subscriptions today): USD 25.00 an hour, USD 219,000 in total and about EUR 205,860 at 0.94 euro to the dollar, all at the price checked on Thursday 09:12 CEST, paid monthly (about EUR 17,155 a month as invoiced, [which follows the exchange rate](https://learn.microsoft.com/azure/cost-management-billing/savings-plan/savings-plan-overview)). The saving is about EUR 4,300 a month (range 3,700 to 4,900), amortised, at your agreement's rates, Expected. It cannot be cancelled, refunded or exchanged. Tomasz, the budget holder, is the other approver.
-
-- **Title and class sentence.** The title is a verb, an object and a place; a sentence under it says "needs your OK on this page" or "needs two people, each on their own". The main button names the action, "Approve and sign in to Azure", never a bare OK.
-- **Before the buttons:** what changes and who makes it, what it saves, what waiting forgoes each day and from when, what could go wrong, how to undo it, and an Evidence row linking to the notebook page `/why/<id>` (an HTML `details` element may wrap it, with no script). For R2 and R3, "what could go wrong" is always visible: the strongest objection and the guard metric.
-- **"Check before you approve"** restates the decision in three lines.
-- **Decline matches Approve in size and height;** on a narrow screen the actions stack.
-- **Without script,** each action is a form POST with the plan code and the anti-forgery token; Decline and "Ask or suggest" open a second page with a text area.
-- **The footer** holds the plan code (eight characters from the plan's hash: a reference, not proof of authenticity), the expiry with its time zone, "Why you are seeing this", "Talk to a person" and the AI line.
+A finding that Meternaut may not change gets a request of the same shape, with the answers Worth acting on, Not worth it, This is not mine, Ask or tell and Decide later. Nothing changes in Azure ([the decision brief](../proposals/09-the-decision-brief.md#a-finding-that-meternaut-may-not-change)).
 
 ### Friction in proportion
 
@@ -61,8 +58,9 @@ Each submit is tied to one plan, one person and one time, as [OWASP advises](htt
 
 Both approvers are asked at once, see the same plan and evidence, and answer on their own. Neither sees the other's answer or note until both have decided; then each sees both.
 
-- **Decline** takes one tap and closes the request; an optional reason follows.
-- **Ask or suggest** takes a question or another way to do it. It is length-capped and screened, reaches the system as an excerpt (quoted data) and never as an instruction, and approves nothing. The other approver's page never shows it.
+- **Decline** takes one tap and closes the request; an optional reason from a short list goes with it.
+- **Ask or tell** takes a question, an objection or something to remember. It is length-capped and screened, reaches the system as an excerpt (quoted data) and never as an instruction, and approves nothing. The other approver's page never shows it.
+- **Decide later** leaves the request open and only changes the order of the person's list.
 - **Not mine** says the resource is not the person's. Nothing is approved; the request goes back to finding the right owner.
 - **After the OK** the page sends the approver to sign in to Azure. The change runs right after the last approver's sign-in, as that person (for two approvers, not designed yet), and cannot be cancelled. The first of two approvers reads "Recorded. Nothing has changed yet."; the second reads "Submitted. A purchase cannot be cancelled." If Azure asks for an extra sign-in check before it makes the change, nothing has changed yet: the page sends the approver to Microsoft Entra once more, and the change is made after that second check, once. A check that is cancelled, refused or not completed closes the request, and the page says "The extra sign-in check was not completed. Nothing was changed. The request is closed."
 
@@ -84,11 +82,9 @@ Both approvers are asked at once, see the same plan and evidence, and answer on 
 
 ## What an owner can read and correct
 
-**The notebook** is the full record behind a message: the reasoning, receipts a person can re-run, the tools' numbers with their as-of time, the evidence level in words and the system's own objections to its finding. Text quoted from outside is escaped and set in a labelled quote, never as a link or control.
+**The Details** of a decision (`/why/<id>` opens the same page) are the full record behind a message: the reasoning, receipts a person can re-run, the tools' numbers with their as-of time, the evidence level in words and the system's objections. Quoted text is escaped and set in a labelled quote, never as a link or control.
 
-**My decisions** is the person's History. It lists each decision, "No, leave it as it is" included, with when, what ran, the outcome in one of the three saving words with its price basis, and Undo where Azure offers one. It also lists each approval made in the person's name, so one they did not make is seen, and the Done card's "I did not approve this" reports it. A team lead sees the same page for their scope as counts, never a list of people, with small groups suppressed ([attention and trust](08-attention-and-trust.md)).
-
-**What I did here** lists every change made, or tried, for a plan that names the person as approver: what changed, where, when, the result and what the check afterwards found. Each was made with that person's own rights. A run under a standing permission (optional mode, not built) would be listed too. "Pause changes here" would stop it there, not suggestions.
+**History** (`/history`; `/me/decisions` and `/me/activity` answer with it) is a plain feed of the last 30 days, newest day first: what people decided, with the reason of a decline; each change made or tried for a plan that names the person as approver, with its result and what the check afterwards found; and one line a day with the number of new findings. An approval made in the person's name is listed, so one they did not make is seen, and the Done card's "I did not approve this" reports it.
 
 **The notes page** shows everything the system has kept about the owner's resources.
 
@@ -102,7 +98,7 @@ Both approvers are asked at once, see the same plan and evidence, and answer on 
 
 ## Settings
 
-The Settings card (C14) carries the first three rows; the page carries all of them.
+The Settings card (C14) carries the first three rows. The page offers channel, quiet hours, the weekly budget and "Pause messages", with export and delete under one disclosure; the other rows are the design and not offered yet.
 
 | Setting | What the person chooses | Starting value |
 |---|---|---|
@@ -129,13 +125,13 @@ The kill switch cannot recall a purchase already submitted.
 
 ## Borrowed patterns and accessibility basics
 
-The pages borrow five patterns from the GOV.UK Design System, whose code is MIT-licensed and whose content is under the Open Government Licence v3.0: [check your answers](https://design-system.service.gov.uk/patterns/check-answers/) for "Check before you approve"; the [confirmation page](https://design-system.service.gov.uk/patterns/confirmation-pages/) after the OK; the [error summary](https://design-system.service.gov.uk/components/error-summary/), a focused list at the top of a refused page; the [summary list](https://design-system.service.gov.uk/components/summary-list/) for "What changes"; and [warning text](https://design-system.service.gov.uk/components/warning-text/) for "This cannot be undone", in words and a sign. The design copies neither styling nor wording.
+The pages borrow four patterns from the GOV.UK Design System, whose code is MIT-licensed and whose content is under the Open Government Licence v3.0: the [confirmation page](https://design-system.service.gov.uk/patterns/confirmation-pages/) after the OK; the [error summary](https://design-system.service.gov.uk/components/error-summary/), a focused list at the top of a refused page; the [summary list](https://design-system.service.gov.uk/components/summary-list/) for "What changes"; and [warning text](https://design-system.service.gov.uk/components/warning-text/) for "This cannot be undone", in words and a sign. The design copies neither styling nor wording.
 
 The bar is [WCAG 2.2](https://www.w3.org/TR/WCAG22/) level AA; [access, language and inclusion](11-access-language-inclusion.md) has the full rules. These shape the pages most:
 
 - **Target size (2.5.8):** controls are at least 24 by 24 CSS pixels.
 - **Focus not obscured (2.4.11):** no sticky bar covers the focused control.
-- **Consistent help (3.2.6):** "Talk to a person" sits in the same place on every page.
+- **Consistent help (3.2.6):** "Talk to a person" (a name and an address in the footer line) sits in the same place on every page.
 - **Redundant entry (3.3.7):** nothing the directory knows is asked again.
 - **Accessible authentication (3.3.8):** no CAPTCHA or puzzle; a security key or passkey is an allowed way in.
 

@@ -1,7 +1,9 @@
 import datetime as dt
+import re
 import unittest
 from unittest import mock
 
+from support import APP_ROOT
 from test_web_support import (MAYA, NOW, OPS, OWNER, TINO, Console, FailingStore, at, make_action, make_advice, make_advice_case, make_case, make_decision, make_plan, snapshot)
 
 from cases.models import SettingsRecord
@@ -90,7 +92,9 @@ class TheDecisionsPage(unittest.TestCase):
         self.assertIn("Nothing was decided yet.", console.get("/").content)
 
     def test_the_time_of_the_next_search_is_the_one_of_the_daily_timer(self):
-        self.assertEqual(core.WATCH_AT, (5, 30))
+        source = (APP_ROOT / "function_app.py").read_text(encoding="utf-8")
+        second, minute, hour, *_ = re.search(r'TIMER_SCHEDULE = "([^"]+)"', source).group(1).split()
+        self.assertEqual((second, core.WATCH_AT), ("0", (int(hour), int(minute))), "the page says when the timer of function_app.py runs, in UTC")
 
     def test_ten_rows_are_shown_and_all_of_them_on_request(self):
         console = seeded()
