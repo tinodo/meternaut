@@ -13,10 +13,14 @@
 // rule 27: a subnet is made once and then left alone).
 //
 // Why a separate app, and a public one. The platform's sign-in (Easy Auth) of the cases app refuses every anonymous request, and Teams cannot sign in, so the messaging endpoint cannot live there.
-// Microsoft publishes no service tag or address range for the Bot Connector of Teams (Learn, "Authentication with the Bot Connector API", and the Bot Framework documentation, read 2026-11-08), so
-// the endpoint cannot be closed to it by address: it is open to the internet and refuses everything but a request with a valid token of the Connector (cases/botauth.py). The separate app keeps
-// that public surface to two functions: the messaging endpoint (the route api/messages) and the timer that offers the cards. The cases app, with the web page and the right to read the estate, can
-// stay private. The bot app's code is the package `cases` with its own entry (src/case-functions/teams_function_app.py): none of the cases app's routes, timers or rights is in it.
+// The Bot Framework Connector that calls the endpoint is on the public internet, and nothing documented closes the endpoint to it for Teams: Microsoft's Bot Framework security FAQ says that
+// allow-listing inbound addresses is not supported, a Microsoft support blog names the service tag AzureBotService for the Direct Line channel only, and for a bot in Teams it points at the
+// Microsoft 365 address ranges (Learn, "Bot Framework Security and Privacy Frequently Asked Questions", the Azure service tags overview and the Bot Service network isolation page, read 2026-11-08).
+// So the endpoint is open to the internet and refuses everything but a request with a valid token of the Connector (cases/botauth.py). The parameter restrictInboundToBotService below is the one
+// further narrowing that the vendor's pages point at: off by default, because it is not proved for Teams, and a person turns it on only after a tap on a card has shown that Teams still gets
+// through. The separate app keeps the public surface to two functions: the messaging endpoint (the route api/messages) and the timer that offers the cards. The cases app, with the web page and the
+// right to read the estate, can stay private. The bot app's code is the package `cases` with its own entry (src/case-functions/teams_function_app.py): none of the cases app's routes, timers or
+// rights is in it.
 //
 // Identities. The system-assigned identity of the app reads and writes the loop's tables (Storage Table Data Contributor on the account, as the cases app) and holds the host's own roles on the
 // shared storage account; it holds no right to read the estate and none to change it. The user-assigned identity holds no role at all: its token is for one audience, https://api.botframework.com,
@@ -84,6 +88,9 @@ param instanceMemoryMB int = 512
 @minValue(0)
 @maxValue(2)
 param alwaysReadyInstances int = 0
+
+@description('True: the messaging endpoint takes calls only from the service tag AzureBotService (an access restriction, the unmatched action is Deny), on top of the check of the token that the app makes on every call. False (the default): the endpoint is open to the internet and the check of the token is its protection. Microsoft names the tag for the Direct Line channel and not for Teams, and its security FAQ says that allow-listing inbound addresses is not supported, so a true value is not proved for Teams: turn it on only with a card at hand, and turn it off again when a tap on the card no longer reaches the app (the Connector then gets 403 from the platform, and the app\'s own log shows no call). The deployment endpoint (scm) is left open to the workflow, because the code is published through it.')
+param restrictInboundToBotService bool = false
 
 var tags = {
   workload: workload
@@ -209,6 +216,19 @@ resource botApp 'Microsoft.Web/sites@2024-04-01' = {
     }
     siteConfig: {
       minTlsVersion: '1.2'
+      ipSecurityRestrictionsDefaultAction: restrictInboundToBotService ? 'Deny' : 'Allow'
+      ipSecurityRestrictions: restrictInboundToBotService ? [
+        {
+          name: 'azure-bot-service'
+          description: 'The Bot Framework Connector, by the service tag AzureBotService'
+          action: 'Allow'
+          priority: 100
+          tag: 'ServiceTag'
+          ipAddress: 'AzureBotService'
+        }
+      ] : []
+      scmIpSecurityRestrictionsUseMain: false
+      scmIpSecurityRestrictionsDefaultAction: 'Allow'
       appSettings: [
         // No client id in the host's connections and no AZURE_CLIENT_ID: a connection without one uses the app's system-assigned identity, which the roles below are for. The bot's own identity is
         // named by TEAMS_BOT_APP_ID and used for the token of the Bot Connector alone (cases/teams.py).

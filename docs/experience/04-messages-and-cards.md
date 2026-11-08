@@ -12,15 +12,15 @@ Look at the message in the middle: every layer leads out of it and back.
 flowchart LR
     M("The message<br/>layer 0")
     D["Details<br/>layer 1, inside the card"]
-    E["Explain, Challenge, Teach<br/>layer 2, asked in the card"]
+    E["Ask or tell<br/>layer 2, asked in the card"]
     N["The notebook page<br/>layer 3"]
     P["A person<br/>layer 4"]
-    L["A new Note, or another round of challenge"]
+    L["A new Note, or another look at the finding"]
     M <-->|"Details toggle"| D
-    M <-->|"three buttons"| E
+    M <-->|"one button"| E
     M <-->|"Evidence row"| N
-    M <-->|"Talk to a person"| P
-    E -->|"Challenge or Teach"| L
+    M <-->|"name and address in the footer"| P
+    E -->|"a question or a note"| L
     L -->|"a changed Recommendation"| M
 ```
 
@@ -28,9 +28,9 @@ flowchart LR
 |---|---|
 | 0. The message | The card as sent |
 | 1. Details | Other options and the rest of the [ten-part Recommendation](../design/03-agents-and-workflows.md#6-what-a-person-receives) |
-| 2. Explain | The reasoning in simple, technical or finance terms, asked in the card, answered in the thread; Challenge and Teach live here too |
+| 2. Ask or tell | A question, or something the AI should know, typed in the card and answered in the thread; it approves nothing |
 | 3. The notebook page | Full reasoning and receipts, from the Evidence row of the approval page ([web pages](06-web-pages.md)) |
-| 4. A person | "Talk to a person" |
+| 4. A person | A person's name and address, in the footer line |
 
 ## What every message carries
 
@@ -39,15 +39,15 @@ flowchart LR
 | Where | What |
 |---|---|
 | Sender name | "Meternaut (AI)"; the adopting organisation may rename the product, never the suffix |
-| Footer line | "Written by an AI. Figures are computed by tools, not guessed by the AI. Estimates can still be wrong." |
+| Footer line | One line: "Written by an AI; a person approves every change.", why this person got the card, whom to talk to |
 | Teams label | The AI-generated entity (`addAiGenerated()`) makes Teams show its "AI Generated" label; documented per message, so the device test checks it on a card ([Learn](https://learn.microsoft.com/microsoftteams/platform/agents-in-teams/integrate-ai/ai-content-labels)) |
 | Machine-readable mark | The same entity in the message; in e-mail, the header `x-ai-generated: true` |
 
-**Talking back.** "Talk to a person" is the last button in the footer of every card, always visible. Cards that make a claim or ask for a decision about spend (C3 to C9, C13, C16 and C17) also offer Explain, Challenge and Teach; cards that only ask for a fact, confirm a note or report housekeeping (C1, C2, C10, C11, C12, C14 and C15) offer Explain only.
+**Talking back.** Every card has one way to ask or tell something: "Ask or tell", a text box and a button. What a person writes is recorded with their name and approves nothing.
 
-**Explain** gives the reasoning in plain steps, with receipts and an evidence level, for each claim. **Challenge** gives the system's recorded objections to its own finding and what was done about each; new information earns another round. **Teach** reads the person's own words back with a proposed scope (this resource, this team or everywhere), never wider than the person owns; a wider scope is a request (C11) to whoever owns it.
+**Ask or tell** is answered in the thread. A question gets the reasoning in plain steps, with receipts and an evidence level; an objection gets the recorded objections and what was done about each, and new information earns another round. Something the AI should know is read back with a proposed scope (this resource, this team or everywhere), never wider than the person owns; a wider scope is a request (C11) to whoever owns it.
 
-**Why you are getting this.** Every card but Hello (whose introduction says why) carries a subtle footer line, above "Talk to a person" and the AI line, naming the evidence that made this person the one to ask.
+**One footer line.** Every card ends with one subtle line: that an AI wrote it and a person approves every change, why this person got the card, and whom to talk to, as the name and address of a person at the adopting organisation, never a button or a link.
 
 **Whose prices, and how sure.** Every saving figure carries two chips, in words, never colour alone: the price basis, for example "At the rates on your bill", and the saving word: **Scenario saving** (priced without your rates or a bill line to confirm it), **Expected saving** (a bill line confirms the meter) or **Verified saving** (measured after the change and compared with the prediction). A range sits under every saving a person may act on; a list that only points at decisions, such as the weekly desk, shows "about" and the saving word, with the range one tap away. Any other money figure in a sentence carries its basis there, as in "as invoiced". A **price check** is the system's own stored price computation, with the time it was made and the time it expires.
 
@@ -66,11 +66,11 @@ flowchart LR
 | 3. Value tile | A range, never a single figure; the price-basis chip; the saving word; what keeping things as they are forgoes, stated once |
 | 4. Why I think so, What I checked | The evidence in a line or two and why I prefer this option to one that saves more; the strongest objection and what was done about it, side by side |
 | 5. Decisions | Review the plan, "No, leave it as it is", Not mine: one tap each |
-| 6. Talk back | The Details toggle, and Explain, Challenge and Teach, each opening a small input |
+| 6. Talk back | The Details toggle, and "Ask or tell", which opens a small input |
 | 7. Details | The hidden part the toggle opens, see below |
-| 8. Footer | "Why you are getting this", "Talk to a person", then the AI line |
+| 8. Footer | The one footer line |
 
-Eight controls are visible: three decisions, four toggles and "Talk to a person". Details, part 7, opens on request.
+Five controls are visible: three decisions and two toggles.
 
 **The ten parts.** The numbers above mark places on the screen. The Recommendation itself has ten parts ([design](../design/03-agents-and-workflows.md#6-what-a-person-receives)): what it proposes; why, and how to check; options; consequences; what was tested; what would change my mind; effort; reversibility; what happens on yes; how everyone will know. The face shows the first three, plus short forms of consequences and what was tested. **Inside Details** are at most two other options, each with its own button, range, saving word and price basis, then the other seven parts and "Fewer like this".
 
@@ -206,19 +206,21 @@ Agents draft and workflows send ([data and integrations](../design/05-data-and-i
 
 ### What a button sends
 
-A button sends an opaque request id, a verb and, when it decides something, the plan code; at most an option key, a scope or a reason chip joins them. A decision carries no prose: only Challenge, Teach and the text boxes send words, which are bounded, screened and quoted as untrusted data, and free text never approves. (An invented example.) "Cancel" sends the verb `cancel`, the request id `r_9vK2xQ` and the plan code `7F3K-92QD`.
+A button sends an opaque request id, a verb and, when it decides something, the plan code and a one-time token that was made for that person; at most an option key, a scope or a reason chip joins them. A decision carries no prose: only "Ask or tell" and the text boxes send words, which are bounded, screened and quoted as untrusted data, and free text never approves. (An invented example.) "Cancel" sends the verb `cancel`, the request id `r_9vK2xQ` and the plan code `7F3K-92QD`.
 
-[`cards/manifest.json`](cards/manifest.json) lists, for each verb of each card, the input ids it accepts (the service ignores any other id), whether it needs the plan code, and what the tap returns: a `receipt`, an `answer`, a `handoff` or a named `card`; a button that only opens the page is listed under `openUrl`. One `contract` covers every verb: who may tap (the card's addressee; for a decision, the designated approver or a named delegate, by directory object id), what a repeated tap does (nothing: the service answers "already recorded"), when a verb is refused (the request is expired, changed, answered or paused; "I did not approve this" and "Talk to a person" stay open) and what a tap returns (one immediate response, then the outcome by updating the same message).
+[`cards/manifest.json`](cards/manifest.json) lists, for each verb of each card, the input ids it accepts (the service ignores any other id), whether it needs the plan code, and what the tap returns: a `receipt`, an `answer`, a `handoff` or a named `card`; a button that only opens the page is listed under `openUrl`. One `contract` covers every verb: who may tap (the card's addressee; for a decision, the designated approver or a named delegate, by directory object id), what a repeated tap does (nothing: the service answers "already recorded"), when a verb is refused (the request is expired, changed, answered or paused; "I did not approve this" stays open) and what a tap returns (one immediate response, then the outcome by updating the same message).
 
-A tap reaches the bot as an `adaptiveCard/action` request. A decision goes to the Approval service with the person's own token, obtained through single sign-on, and the bot answers with a replacement card ([Learn](https://learn.microsoft.com/adaptive-cards/authoring-cards/universal-action-model)). Every tap gets a visible reply as fast as the host allows (the goal is one second): the card the manifest names for the verb, or a receipt such as "Received. Nothing has changed yet." The bot finishes asynchronously, because a bot that takes longer than 10 to 15 seconds times out ([Learn](https://learn.microsoft.com/azure/bot-service/bot-builder-howto-long-operations-guidance)); it stores the activity id and updates that message with the outcome.
+A tap reaches the bot as an `adaptiveCard/action` request. The bot checks the Connector's signed token, knows the person by the directory object id in the request, records an answer that changes nothing in Azure (a decline, a question, "not mine", "later", or "worth acting on" for a finding that only asks that) through the same Approval service as the web page, and answers with a replacement card ([Learn](https://learn.microsoft.com/adaptive-cards/authoring-cards/universal-action-model)).
+
+An approval of a change is never taken on a card: its one link opens the page, where the person signs in to Azure and Azure checks that person's own rights. Every tap gets a visible reply within about a second, the card the manifest names for the verb or a receipt, because a bot that takes longer than 10 to 15 seconds times out ([Learn](https://learn.microsoft.com/azure/bot-service/bot-builder-howto-long-operations-guidance)).
 
 ### The fallback and the inputs
 
 Cards use schema 1.5 ([cards reference](https://learn.microsoft.com/microsoftteams/platform/task-modules-and-cards/cards/cards-reference#adaptive-card), [agent design](https://learn.microsoft.com/agents/design-guidelines/adaptive-cards-for-agent-design#schema-and-host-compatibility)), and the [client matrix](12-testing-the-experience.md#the-client-matrix-layer-5) lists the clients that meet it. A client below 1.5 shows only `fallbackText`, which ends with the page link, the same single link as the card, and "Written by an AI."
 
-Every `Action.Execute` still carries an `Action.OpenUrl` fallback to the page, on purpose not the `Action.Submit` that Teams advises for backward compatibility: a bot cannot answer a Submit with a new card ([Learn](https://learn.microsoft.com/adaptive-cards/authoring-cards/universal-action-model)), and the person's own sign-in travels by the token exchange documented for `Action.Execute` ([Learn](https://learn.microsoft.com/microsoftteams/platform/task-modules-and-cards/cards/universal-actions-for-adaptive-cards/enable-sso-for-your-adaptive-cards-universal-action)).
+Every `Action.Execute` still carries an `Action.OpenUrl` fallback to the page, on purpose not the `Action.Submit` that Teams advises for backward compatibility: a bot cannot answer a Submit with a new card ([Learn](https://learn.microsoft.com/adaptive-cards/authoring-cards/universal-action-model)).
 
-The inputs of Explain, Challenge and Teach sit inside `Action.ShowCard` cards, never on the face of the card, because an `Action.Execute` sends the inputs of its own card and, inside a ShowCard, of every parent card ([Learn](https://learn.microsoft.com/adaptive-cards/schema-explorer/action-execute)). Only Read-back and Settings have face inputs, because their buttons exist to send them; an action inside a ShowCard would carry them along, so there Explain is one plain tap in simple words that says how to ask for more, and on Read-back "Not quite" also carries the chosen scope. Every action that takes no input sets `associatedInputs` to `none`, so a face input travels only with a verb that lists it.
+The input of "Ask or tell" sits inside an `Action.ShowCard` card, never on the face, because an `Action.Execute` sends the inputs of its own card and, inside a ShowCard, of every parent card ([Learn](https://learn.microsoft.com/adaptive-cards/schema-explorer/action-execute)). Only Read-back and Settings have face inputs, because their buttons exist to send them; there the manifest lists them for the verb `ask` too, and on Read-back "Not quite" also carries the chosen scope. Every action that takes no input sets `associatedInputs` to `none`, so a face input travels only with a verb that lists it.
 
 ### Limits
 
@@ -235,7 +237,7 @@ Look at the loops: a conversation, a reminder and a reopened item all lead back 
 ```mermaid
 stateDiagram-v2
     [*] --> Sent : the Recommendation arrives
-    Sent --> Talking : Explain, Challenge or Teach
+    Sent --> Talking : Ask or tell
     Talking --> Sent : the answer arrives in the same thread
     Sent --> PlanShown : Review the plan
     PlanShown --> Closed : approved on the page or the plan expires

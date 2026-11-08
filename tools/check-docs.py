@@ -21,9 +21,10 @@ Checks
      commissioned the project, and project history (versions, withdrawals) - none of it belongs in
      a document written for strangers (AGENTS.md rule 11 (c), (j), (k)).
  10. Card templates (docs/experience/cards/, tools/cardlint.py): Adaptive Card schema and size rules,
-     the elements and actions Teams renders, labelled inputs, the AI label and footer, the three
-     conversation verbs, a price basis and a saving word beside every money figure, one link only
-     (the approval page), no urgency wording, invented sample data (AGENTS.md rule 13).
+     the elements and actions Teams renders, labelled inputs, the AI label and the one footer line
+     (why the person got the card and whom to talk to, as plain text), the one "Ask or tell", a price
+     basis and a saving word beside every money figure, one link only (the page of the request), no
+     urgency wording, invented sample data (AGENTS.md rule 13).
 
 Limits (a guard is a safety net, not a substitute for judgement): AGENTS.md, CHANGELOG.md and
 docs/reviews/ describe the rules and the review record, so the pattern guards skip them; paraphrase

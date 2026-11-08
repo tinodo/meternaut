@@ -24,7 +24,8 @@ PLAN_ID = "p1a2b3c4d5"
 NONCE = "N0nce-0123456789abcdefghijklmnop"
 CONTACTS = ("Maya (maya@example.com)", "Ops (ops@example.com)")
 URL = f"{BASE}/ok/{PLAN_ID}"
-HOSTILE = "[click](https://evil.example/x) **bold** _italic_ `code` # head > quote - item 1. one \u202e\u200bhidden\x00\nsecond line <at>Maya</at> www.evil.example"
+HOSTILE = ("[click](https://evil.example/x) **bold** _italic_ `code` # head > quote - item 1. one \u202e\u200bhidden\x00\nsecond line <at>Maya</at> www.evil.example "
+           "{{DATE(2000-01-01T00:00:00Z,LONG)}} {{{TIME(2000-01-01T00:00:00Z)}}}")
 
 
 def make_plan(**changes) -> PlanRecord:
@@ -107,12 +108,13 @@ class TheDecisionCardOfAChange(unittest.TestCase):
 
     def test_it_holds_what_a_person_needs_to_decide_and_nothing_else(self):
         self.assertEqual([n["id"] for n in self.card["body"] if "id" in n],
-                         ["header", "headline", "when", "value-tile", "confidence", "facts", "change", "undo", "risk", "owner", "decisions", "message", "ask", "ai-footer"])
+                         ["header", "headline", "value-tile", "confidence", "facts", "change", "undo", "risk", "owner", "decisions", "message", "ask", "ai-footer"])
         self.assertEqual(self.ids["headline"]["text"], "Delete the unattached disk disk-zq7-name in group rg-zq7-group")
         self.assertEqual(self.ids["value"]["text"], "About 41.20 US dollars a month")
         self.assertEqual(self.ids["saving-word"]["text"], "Expected saving")
         self.assertIn("the cost lines of the last 30 days", self.ids["price-basis"]["text"], "every figure carries its basis")
-        self.assertIn("Waiting costs about 1.37 US dollars a day.", self.ids["waiting"]["text"])
+        self.assertNotIn("waiting", self.ids, "what waiting costs is on the page: it does not help a person decide, and it pushes")
+        self.assertNotIn("when", self.ids, "how long ago it was found and until when it is open are on the page")
         self.assertTrue(self.ids["confidence"]["text"].startswith("**How sure: "))
         self.assertLessEqual(len(self.ids["facts"]["facts"]), 3)
         self.assertTrue(self.ids["change"]["text"].startswith("**If you approve:** "))
@@ -121,8 +123,6 @@ class TheDecisionCardOfAChange(unittest.TestCase):
         self.assertEqual(self.ids["undo"]["weight"], "Bolder", "an irreversible change is one bold line")
         self.assertTrue(self.ids["risk"]["text"].startswith("**Risk, medium:** "))
         self.assertIn("alice@example.com", self.ids["owner"]["text"])
-        self.assertIn("Found ", self.ids["when"]["text"])
-        self.assertIn("Open until 08 Nov 2026 09:30 UTC.", self.ids["when"]["text"])
 
     def test_the_only_link_is_the_page_of_the_request_and_the_approval_is_made_there(self):
         self.assertEqual({a["url"] for a in actions_of(self.card) if "url" in a}, {URL})
@@ -331,6 +331,7 @@ class WhatComesFromTheEstateIsData(unittest.TestCase):
         for text in texts(card):
             self.assertFalse(any(unicodedata.category(c) in ("Cc", "Cf", "Cs", "Co", "Cn") for c in text), repr(text))
             self.assertNotIn("](", text, "no Markdown link can be made")
+            self.assertNotIn("{{", text, "the text features of an Adaptive Card ({{DATE(...)}}) are not given to the estate")
             self.assertNotRegex(text.replace(URL, ""), r"(?i)\b[a-z][a-z0-9+.-]*://", "no scheme is followed by two slashes, so that nothing is made a link")
             bare = re.sub(r"\*\*[A-Za-z ,.:]{1,40}\*\*", "", text)  # the bold labels of the card's own
             self.assertNotRegex(bare, r"(?<!\\)[*_`\[\]<]", f"an unescaped Markdown character in {text!r}")
@@ -358,6 +359,9 @@ class WhatComesFromTheEstateIsData(unittest.TestCase):
         self.assertEqual(cards.md("1. item"), "1\\. item", "a list marker at the start is not one")
         self.assertEqual(cards.md("1) item"), "1\\) item")
         self.assertEqual(cards.md("a - b 2. c"), "a - b 2. c", "a dash or a number in the middle of a line is not a list")
+        self.assertEqual(cards.md("{{DATE(2026-01-01T00:00:00Z,LONG)}}"), "{ {DATE\\(2026-01-01T00:00:00Z,LONG\\)}}", "the date function of a TextBlock is not run on text of the estate")
+        self.assertEqual(cards.md("{{{x}}}"), "{ { {x}}}")
+        self.assertEqual(cards.gentle("{{TIME(2026-01-01T00:00:00Z)}}"), "{ {TIME(2026-01-01T00:00:00Z)}}")
         self.assertEqual(cards.md("disk-name_01"), "disk-name\\_01")
         self.assertEqual(cards.md("a\u202eb\u200bc\x00d\ne"), "abcd e")
         self.assertEqual(cards.md("x" * 500, 40), "x" * 37 + "...")

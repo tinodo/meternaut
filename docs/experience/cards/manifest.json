@@ -11,9 +11,9 @@
   "contract": {
     "who": "The card's addressee; a decision verb (cancel, not-me) also needs the designated approver or a named delegate, checked by directory object id, never by name. A card never approves and never changes Azure: its link opens the page, where the approver signs in to Azure and the change is made with that person's own rights.",
     "repeat": "A repeated tap changes nothing: the service answers that it is already recorded.",
-    "refused": "A verb is refused when its request is expired, changed, answered or paused, and the refusal says why; \"I did not approve this\" and \"Talk to a person\" stay open.",
+    "refused": "A verb is refused when its request is expired, changed, answered or paused, and the refusal says why; \"I did not approve this\" stays open. Whom to talk to is plain text in the footer of every card, so it needs no verb.",
     "response": "One immediate response per tap, as listed under returns; the outcome follows by updating the same message.",
-    "words": "Only Challenge, Teach and the text boxes send words: bounded, screened and quoted as untrusted data. Free text never approves."
+    "words": "Only Ask or tell and the text boxes send words: bounded, screened and quoted as untrusted data. Free text never approves."
   },
   "cards": {
     "C1": {
@@ -57,17 +57,12 @@
           "plan": false,
           "returns": "receipt"
         },
-        "explain": {
+        "ask": {
           "inputs": [
-            "level"
+            "message"
           ],
           "plan": false,
-          "returns": "answer"
-        },
-        "human": {
-          "inputs": [],
-          "plan": false,
-          "returns": "handoff"
+          "returns": "receipt"
         }
       }
     },
@@ -77,8 +72,7 @@
       "conversation": "light",
       "requires": [
         "question",
-        "why-i-ask",
-        "why-you-get-this"
+        "why-i-ask"
       ],
       "displayTitle": "Question",
       "verbs": {
@@ -109,17 +103,12 @@
           "plan": false,
           "returns": "receipt"
         },
-        "explain": {
+        "ask": {
           "inputs": [
-            "level"
+            "message"
           ],
           "plan": false,
-          "returns": "answer"
-        },
-        "human": {
-          "inputs": [],
-          "plan": false,
-          "returns": "handoff"
+          "returns": "receipt"
         }
       }
     },
@@ -134,8 +123,7 @@
         "checked",
         "waiting",
         "details",
-        "decisions",
-        "why-you-get-this"
+        "decisions"
       ],
       "displayTitle": "Recommendation",
       "verbs": {
@@ -155,36 +143,17 @@
           "plan": false,
           "returns": "receipt"
         },
-        "explain": {
+        "ask": {
           "inputs": [
-            "level"
+            "message"
           ],
           "plan": false,
-          "returns": "answer"
-        },
-        "challenge": {
-          "inputs": [
-            "challenge"
-          ],
-          "plan": false,
-          "returns": "answer"
-        },
-        "teach": {
-          "inputs": [
-            "teach"
-          ],
-          "plan": false,
-          "returns": "answer"
+          "returns": "receipt"
         },
         "fewer": {
           "inputs": [],
           "plan": false,
           "returns": "receipt"
-        },
-        "human": {
-          "inputs": [],
-          "plan": false,
-          "returns": "handoff"
         }
       }
     },
@@ -200,8 +169,7 @@
         "undo",
         "plan-code",
         "could-go-wrong",
-        "page-button",
-        "why-you-get-this"
+        "page-button"
       ],
       "displayTitle": "Your OK",
       "verbs": {
@@ -216,31 +184,12 @@
           "returns": "card",
           "card": "C3"
         },
-        "explain": {
+        "ask": {
           "inputs": [
-            "level"
+            "message"
           ],
           "plan": false,
-          "returns": "answer"
-        },
-        "challenge": {
-          "inputs": [
-            "challenge"
-          ],
-          "plan": false,
-          "returns": "answer"
-        },
-        "teach": {
-          "inputs": [
-            "teach"
-          ],
-          "plan": false,
-          "returns": "answer"
-        },
-        "human": {
-          "inputs": [],
-          "plan": false,
-          "returns": "handoff"
+          "returns": "receipt"
         }
       },
       "openUrl": [
@@ -257,8 +206,7 @@
         "class-line",
         "plan-code",
         "browser-note",
-        "page-button",
-        "why-you-get-this"
+        "page-button"
       ],
       "displayTitle": "${classLabel}",
       "verbs": {
@@ -272,31 +220,12 @@
           "plan": false,
           "returns": "receipt"
         },
-        "explain": {
+        "ask": {
           "inputs": [
-            "level"
+            "message"
           ],
           "plan": false,
-          "returns": "answer"
-        },
-        "challenge": {
-          "inputs": [
-            "challenge"
-          ],
-          "plan": false,
-          "returns": "answer"
-        },
-        "teach": {
-          "inputs": [
-            "teach"
-          ],
-          "plan": false,
-          "returns": "answer"
-        },
-        "human": {
-          "inputs": [],
-          "plan": false,
-          "returns": "handoff"
+          "returns": "receipt"
         }
       },
       "openUrl": [
@@ -310,8 +239,7 @@
       "requires": [
         "headline",
         "undo-window",
-        "page-button",
-        "why-you-get-this"
+        "page-button"
       ],
       "displayTitle": "Done",
       "verbs": {
@@ -320,31 +248,12 @@
           "plan": true,
           "returns": "receipt"
         },
-        "explain": {
+        "ask": {
           "inputs": [
-            "level"
+            "message"
           ],
           "plan": false,
-          "returns": "answer"
-        },
-        "challenge": {
-          "inputs": [
-            "challenge"
-          ],
-          "plan": false,
-          "returns": "answer"
-        },
-        "teach": {
-          "inputs": [
-            "teach"
-          ],
-          "plan": false,
-          "returns": "answer"
-        },
-        "human": {
-          "inputs": [],
-          "plan": false,
-          "returns": "handoff"
+          "returns": "receipt"
         }
       },
       "openUrl": [
@@ -358,8 +267,7 @@
       "money": true,
       "requires": [
         "headline",
-        "predicted",
-        "why-you-get-this"
+        "predicted"
       ],
       "displayTitle": "Result",
       "verbs": {
@@ -375,31 +283,12 @@
           "plan": false,
           "returns": "receipt"
         },
-        "explain": {
+        "ask": {
           "inputs": [
-            "level"
+            "message"
           ],
           "plan": false,
-          "returns": "answer"
-        },
-        "challenge": {
-          "inputs": [
-            "challenge"
-          ],
-          "plan": false,
-          "returns": "answer"
-        },
-        "teach": {
-          "inputs": [
-            "teach"
-          ],
-          "plan": false,
-          "returns": "answer"
-        },
-        "human": {
-          "inputs": [],
-          "plan": false,
-          "returns": "handoff"
+          "returns": "receipt"
         }
       }
     },
@@ -412,8 +301,7 @@
         "headline",
         "permission",
         "undo-window",
-        "page-button",
-        "why-you-get-this"
+        "page-button"
       ],
       "displayTitle": "Done under a standing permission",
       "verbs": {
@@ -422,31 +310,12 @@
           "plan": false,
           "returns": "receipt"
         },
-        "explain": {
+        "ask": {
           "inputs": [
-            "level"
+            "message"
           ],
           "plan": false,
-          "returns": "answer"
-        },
-        "challenge": {
-          "inputs": [
-            "challenge"
-          ],
-          "plan": false,
-          "returns": "answer"
-        },
-        "teach": {
-          "inputs": [
-            "teach"
-          ],
-          "plan": false,
-          "returns": "answer"
-        },
-        "human": {
-          "inputs": [],
-          "plan": false,
-          "returns": "handoff"
+          "returns": "receipt"
         }
       },
       "openUrl": [
@@ -461,8 +330,7 @@
       "requires": [
         "headline",
         "next-step",
-        "waiting",
-        "why-you-get-this"
+        "waiting"
       ],
       "displayTitle": "Reminder",
       "verbs": {
@@ -482,31 +350,12 @@
           "plan": false,
           "returns": "receipt"
         },
-        "explain": {
+        "ask": {
           "inputs": [
-            "level"
+            "message"
           ],
           "plan": false,
-          "returns": "answer"
-        },
-        "challenge": {
-          "inputs": [
-            "challenge"
-          ],
-          "plan": false,
-          "returns": "answer"
-        },
-        "teach": {
-          "inputs": [
-            "teach"
-          ],
-          "plan": false,
-          "returns": "answer"
-        },
-        "human": {
-          "inputs": [],
-          "plan": false,
-          "returns": "handoff"
+          "returns": "receipt"
         }
       }
     },
@@ -517,8 +366,7 @@
       "rootInputs": true,
       "requires": [
         "understood",
-        "scope",
-        "why-you-get-this"
+        "scope"
       ],
       "displayTitle": "Read-back",
       "verbs": {
@@ -547,15 +395,13 @@
           "plan": false,
           "returns": "receipt"
         },
-        "explain": {
-          "inputs": [],
+        "ask": {
+          "inputs": [
+            "message",
+            "scope"
+          ],
           "plan": false,
-          "returns": "answer"
-        },
-        "human": {
-          "inputs": [],
-          "plan": false,
-          "returns": "handoff"
+          "returns": "receipt"
         }
       }
     },
@@ -566,8 +412,7 @@
       "requires": [
         "headline",
         "evidence",
-        "affected",
-        "why-you-get-this"
+        "affected"
       ],
       "displayTitle": "A request about a note",
       "verbs": {
@@ -581,17 +426,12 @@
           "plan": false,
           "returns": "receipt"
         },
-        "explain": {
+        "ask": {
           "inputs": [
-            "level"
+            "message"
           ],
           "plan": false,
-          "returns": "answer"
-        },
-        "human": {
-          "inputs": [],
-          "plan": false,
-          "returns": "handoff"
+          "returns": "receipt"
         }
       },
       "openUrl": [
@@ -604,8 +444,7 @@
       "conversation": "light",
       "requires": [
         "headline",
-        "total",
-        "why-you-get-this"
+        "total"
       ],
       "displayTitle": "Your weekly desk",
       "verbs": {
@@ -615,17 +454,12 @@
           "returns": "card",
           "card": "C2 or C3"
         },
-        "explain": {
+        "ask": {
           "inputs": [
-            "level"
+            "message"
           ],
           "plan": false,
-          "returns": "answer"
-        },
-        "human": {
-          "inputs": [],
-          "plan": false,
-          "returns": "handoff"
+          "returns": "receipt"
         }
       }
     },
@@ -636,8 +470,7 @@
       "money": true,
       "requires": [
         "headline",
-        "what-i-did",
-        "why-you-get-this"
+        "what-i-did"
       ],
       "displayTitle": "Heads-up",
       "verbs": {
@@ -658,31 +491,12 @@
           "plan": false,
           "returns": "receipt"
         },
-        "explain": {
+        "ask": {
           "inputs": [
-            "level"
+            "message"
           ],
           "plan": false,
-          "returns": "answer"
-        },
-        "challenge": {
-          "inputs": [
-            "challenge"
-          ],
-          "plan": false,
-          "returns": "answer"
-        },
-        "teach": {
-          "inputs": [
-            "teach"
-          ],
-          "plan": false,
-          "returns": "answer"
-        },
-        "human": {
-          "inputs": [],
-          "plan": false,
-          "returns": "handoff"
+          "returns": "receipt"
         }
       }
     },
@@ -692,8 +506,7 @@
       "conversation": "light",
       "rootInputs": true,
       "requires": [
-        "headline",
-        "why-you-get-this"
+        "headline"
       ],
       "displayTitle": "Settings",
       "verbs": {
@@ -710,15 +523,19 @@
           "plan": false,
           "returns": "receipt"
         },
-        "explain": {
-          "inputs": [],
+        "ask": {
+          "inputs": [
+            "message",
+            "channel",
+            "language",
+            "days",
+            "time-zone",
+            "budget",
+            "desk-day",
+            "quiet"
+          ],
           "plan": false,
-          "returns": "answer"
-        },
-        "human": {
-          "inputs": [],
-          "plan": false,
-          "returns": "handoff"
+          "returns": "receipt"
         }
       },
       "openUrl": [
@@ -732,8 +549,7 @@
       "requires": [
         "headline",
         "what-happened",
-        "what-now",
-        "why-you-get-this"
+        "what-now"
       ],
       "displayTitle": "I could not do that",
       "verbs": {
@@ -742,17 +558,12 @@
           "plan": false,
           "returns": "receipt"
         },
-        "explain": {
+        "ask": {
           "inputs": [
-            "level"
+            "message"
           ],
           "plan": false,
-          "returns": "answer"
-        },
-        "human": {
-          "inputs": [],
-          "plan": false,
-          "returns": "handoff"
+          "returns": "receipt"
         }
       }
     },
@@ -765,36 +576,16 @@
         "what-happened",
         "state",
         "paused",
-        "who-updates",
-        "why-you-get-this"
+        "who-updates"
       ],
       "displayTitle": "Our mistake",
       "verbs": {
-        "explain": {
+        "ask": {
           "inputs": [
-            "level"
+            "message"
           ],
           "plan": false,
-          "returns": "answer"
-        },
-        "challenge": {
-          "inputs": [
-            "challenge"
-          ],
-          "plan": false,
-          "returns": "answer"
-        },
-        "teach": {
-          "inputs": [
-            "teach"
-          ],
-          "plan": false,
-          "returns": "answer"
-        },
-        "human": {
-          "inputs": [],
-          "plan": false,
-          "returns": "handoff"
+          "returns": "receipt"
         }
       },
       "openUrl": [
@@ -808,8 +599,7 @@
       "requires": [
         "headline",
         "permission",
-        "how",
-        "why-you-get-this"
+        "how"
       ],
       "displayTitle": "A standing permission starts",
       "verbs": {
@@ -823,31 +613,12 @@
           "plan": false,
           "returns": "receipt"
         },
-        "explain": {
+        "ask": {
           "inputs": [
-            "level"
+            "message"
           ],
           "plan": false,
-          "returns": "answer"
-        },
-        "challenge": {
-          "inputs": [
-            "challenge"
-          ],
-          "plan": false,
-          "returns": "answer"
-        },
-        "teach": {
-          "inputs": [
-            "teach"
-          ],
-          "plan": false,
-          "returns": "answer"
-        },
-        "human": {
-          "inputs": [],
-          "plan": false,
-          "returns": "handoff"
+          "returns": "receipt"
         }
       }
     }

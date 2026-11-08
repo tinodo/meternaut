@@ -3,8 +3,6 @@
   "senderName": "Meternaut (AI)",
   "requestId": "r_9vK2xQ",
   "pageUrl": "https://meternaut.contoso.example/ok/r_9vK2xQ",
-  "challengeExample": "For example: the job on the last Tuesday is real",
-  "teachExample": "For example: this is our disaster-recovery environment",
   "headline": "Result: the QA shutdown saved about €670 a month",
   "value": "€670 a month",
   "valueNote": "Measured over four weeks",
@@ -15,5 +13,6 @@
   "how": "Measured against two comparable environments that did not change, after taking usage into account.",
   "_scenario": "E1",
   "notificationText": "Result: the QA shutdown saved about €670 a month",
-  "whyYouGetThis": "you gave your OK to this change, and I check the result once the bill closes."
+  "whyYouGetThis": "you gave your OK to this change, and I check the result once the bill closes.",
+  "contact": "Maya Okafor (maya.okafor@example.com)"
 }

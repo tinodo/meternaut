@@ -23,7 +23,7 @@ from dataclasses import dataclass
 from typing import Sequence
 
 from . import cardcheck
-from .brief import PAUSED_ADVICE, PAUSED_CHANGES, TWO_PEOPLE, Brief, footer_line, parse_time, plain, usd_text
+from .brief import PAUSED_ADVICE, PAUSED_CHANGES, TWO_PEOPLE, Brief, footer_line, plain, usd_text
 
 SENDER = "Meternaut (AI)"
 CONTENT_TYPE = "application/vnd.microsoft.card.adaptive"
@@ -47,6 +47,7 @@ MARKDOWN = re.compile(r"([\\`*_\[\]()#<>])")
 GENTLE = re.compile(r"([\\`*_\[\]#<>])")
 LIST_DASH = re.compile(r"^[-+](?=\s)")
 LIST_NUMBER = re.compile(r"^(\d+)\.(?=\s)")
+TEXT_FEATURE = re.compile(r"\{(?=\{)")
 WHY_APPROVER = "You got this because you are named as an approver of this request."
 
 
@@ -75,15 +76,20 @@ def page_url(base_url: str, plan_id: str) -> str:
     return f"{base}/ok/{plan_id}"
 
 
+def _text(value: object, limit: int) -> str:
+    """brief.plain, and no two curly brackets in a row: a TextBlock turns {{DATE(...)}} and {{TIME(...)}} into a date or a time, and no text of the estate may make it do that."""
+    return TEXT_FEATURE.sub("{ ", plain(value, limit))
+
+
 def md(value: object, limit: int = 200) -> str:
     """Text from the estate or from a model, for a TextBlock: one safe line (brief.plain) with every character that Markdown reads escaped, so that it shows as it is written."""
-    escaped = MARKDOWN.sub(r"\\\1", plain(value, limit))
+    escaped = MARKDOWN.sub(r"\\\1", _text(value, limit))
     return LIST_NUMBER.sub(r"\1\\.", LIST_DASH.sub(lambda found: "\\" + found.group(0), escaped))
 
 
 def gentle(value: object, limit: int = 200) -> str:
     """The same for text that people and code wrote (the models of the footer, a name and an address): the characters that start emphasis, code or a link, and not the round brackets."""
-    return GENTLE.sub(r"\\\1", plain(value, limit))
+    return GENTLE.sub(r"\\\1", _text(value, limit))
 
 
 # -- the pieces ----------------------------------------------------------------------------------------------------------------------------------
@@ -99,28 +105,9 @@ def _header(kind: str) -> dict:
     ]}
 
 
-def _ago(days: int | None) -> str:
-    if days is None:
-        return ""
-    if days == 0:
-        return "today"
-    if days == 1:
-        return "yesterday"
-    if days < 14:
-        return f"{days} days ago"
-    return f"{days // 7} weeks ago" if days < 60 else f"{days // 30} months ago"
-
-
-def _when_line(brief: Brief) -> str:
-    """How long ago it was found and until when it is open, as plain facts and never as a countdown."""
-    found = f"Found {_ago(brief.age_days)}." if _ago(brief.age_days) else ""
-    end = parse_time(brief.expires_at)
-    until = f" Open until {end.strftime('%d %b %Y %H:%M')} UTC." if brief.state == "open" and end is not None else ""
-    return (found + until).strip()
-
-
 def _saving(brief: Brief) -> dict:
-    """What it is worth, as a tile: the figure, its level word and its basis (AGENTS.md rule 13 (c)); without a figure, why there is none."""
+    """What it is worth, as a tile: the figure, its level word and its basis (AGENTS.md rule 13 (c)); without a figure, why there is none. How long the request has waited and what
+    waiting costs are on the page and not on the card: neither helps a person decide, and the second one pushes."""
     saving = brief.saving
     if saving.monthly is None:
         items = [_block("value", "No figure", size="Large", weight="Bolder"), _block("saving-word", "No saving is shown", weight="Bolder"),
@@ -128,8 +115,6 @@ def _saving(brief: Brief) -> dict:
     else:
         items = [_block("value", f"About {md(usd_text(saving.monthly))} a month", size="Large", weight="Bolder"), _block("saving-word", f"{md(saving.level, 20)} saving", weight="Bolder"),
                  _block("price-basis", f"Basis: {md(saving.basis, 200)}", isSubtle=True)]
-        if saving.waiting_per_day:
-            items.append(_block("waiting", f"Waiting costs about {md(usd_text(saving.waiting_per_day))} a day.", isSubtle=True, size="Small"))
     return {"type": "Container", "id": "value-tile", "style": "emphasis", "items": items}
 
 
@@ -233,9 +218,6 @@ def decision_card(brief: Brief, ctx: CardContext, notice: str = "") -> dict:
     body: list[dict] = []
     if notice:
         body.append(_block("notice", md(notice, 240), weight="Bolder"))
-    when = _when_line(brief)
-    if when:
-        body.append(_block("when", when, isSubtle=True, spacing="None"))
     body += [_saving(brief), _block("confidence", f"**How sure: {md(brief.confidence.level, 12)}.** {md(brief.confidence.because, 240)}"), *_facts(brief), *_decision_lines(brief),
              *_answer_parts(brief, ctx)]
     return _card(brief, ctx, brief.kind, body, "A decision waits for you.")

@@ -4,11 +4,12 @@
 Cards live in docs/experience/cards/<name>.json, with sample data in cards/data/<name>.json and a
 manifest, cards/manifest.json, that says per card which elements must exist and, for every verb, which input ids it accepts,
 whether it needs the plan code and what a tap returns. The checks encode the rules of the experience design
-(docs/experience/04-messages-and-cards.md): a card says that an AI wrote it, says why the person got it, ends with a way to reach
-a person ("Talk to a person", the last button, in the same place on every card) and offers Explain, Challenge and Teach (a claim or a
-decision about spend) or Explain alone (the rest); every saving figure carries its price basis; the only link is the owner page
-(${pageUrl}); a button sends an opaque id and a verb, never prose; an action that takes no input says associatedInputs none; no urgency
-theatre; no en dash or middot between figures; text wraps; images have alternative text; inputs have labels.
+(docs/experience/04-messages-and-cards.md) and of the decision brief that every page, letter and card renders: a card says that an AI
+wrote it, and ends with ONE footer line that says that, why the person got the card and whom to talk to as plain text (a name and an
+address: never a button, never a link); it offers ONE way to ask or tell something ("Ask or tell": a text box and a button), in place of
+the three buttons that explained, challenged and taught; every saving figure carries its price basis; the only link is the page of the
+request (${pageUrl}); a button sends an opaque id and a verb, never prose; an action that takes no input says associatedInputs none; no
+urgency theatre; no en dash or middot between figures; text wraps; images have alternative text; inputs have labels.
 
 Run by tools/check-docs.py (and alone: python tools/cardlint.py [--self-test]).
 """
@@ -31,10 +32,15 @@ ELEMENTS = {
 }
 ACTIONS = {"Action.Execute", "Action.OpenUrl", "Action.ToggleVisibility", "Action.ShowCard"}
 DATA_KEYS = {"verb", "requestId", "option", "scope", "reason", "planCode"}
-BASE_VERBS = ("explain", "challenge", "teach")
+ASK_VERB = "ask"
+ASK_TITLE = "Ask or tell"
+BASE_VERBS = (ASK_VERB,)  # the one verb that every card has: a question, or something the AI should know. It approves nothing
 RETURNS = {"receipt", "card", "answer", "handoff"}
 DECISION_VERBS = {"ok", "cancel", "undo", "not-me"}
-FOOTER_START = "Written by an AI."
+FOOTER_START = "Written by an AI"
+FOOTER_PARTS = ("${whyYouGetThis}", "Talk to a person", "${contact}")  # the footer says why the person got the card and whom to talk to, as plain text
+GONE_IDS = ("talk-to-a-person", "why-you-get-this")  # they were a button and a line of their own: both are in the one footer line now
+TEXT_ONLY_KEYS = ("contact",)  # sample data that holds a name and an address as plain text: no link, but an address is what it is for
 PAGE_URL = "${pageUrl}"
 PAGE_URLS = (PAGE_URL, "${$root.pageUrl}")  # the second form is for use inside a $data loop
 FIGURE_RANGE = re.compile(r"\d\s*[\u2013\u2014-]\s*\d")  # a dash between two numbers: a screen reader may drop it and merge them
@@ -46,6 +52,7 @@ DARK_PATTERNS = re.compile(
 LINK = re.compile(r"https?://", re.I)
 MD_LINK = re.compile(r"\]\(")
 EMAIL = re.compile(r"[\w.+-]+@[\w-]+\.[\w.]+")
+CONTACT = re.compile(r"[^()@\n]{1,60} \([\w.+-]+@[\w-]+\.[\w.]+\)")
 DEFAULTS = {"max_schema_version": "1.5", "max_bytes": 20000, "max_title_chars": 24, "max_top_actions": 6,
             "max_visible_actions": 8, "max_hidden_actions": 4, "max_options": 2}
 
@@ -274,8 +281,21 @@ def check_card(name: str, card: dict, spec: dict, limits: dict, data: dict | Non
         if "(AI)" not in text and "${senderName}" not in text:
             add("ai-label must say '(AI)' or bind ${senderName}")
     footer = ids.get("ai-footer")
-    if footer is not None and not str(footer.get("text", "")).startswith(FOOTER_START):
+    footer_text = str(footer.get("text", "")) if footer is not None else ""
+    if footer is not None and not footer_text.startswith(FOOTER_START):
         add(f"ai-footer must start with {FOOTER_START!r}")
+    for gone in GONE_IDS:
+        if gone in ids:
+            add(f"element id {gone!r} is not used: the one footer line says why the person got the card and whom to talk to, as plain text")
+    if footer is not None:
+        if "\n" in footer_text:
+            add("the ai-footer is one line: no line break")
+        for part in FOOTER_PARTS:
+            if part not in footer_text:
+                add(f"ai-footer must say {part!r}: why the person got the card, and whom to talk to as a name and an address in plain text")
+        body = card.get("body", [])
+        if not body or body[-1].get("id") != "ai-footer":
+            add("the ai-footer is the last element of the card, in the same place on every card")
     kind = spec.get("conversation", "full")
     if kind not in ("full", "light"):
         add(f"manifest conversation must be 'full' or 'light', not {kind!r}")
@@ -283,9 +303,14 @@ def check_card(name: str, card: dict, spec: dict, limits: dict, data: dict | Non
     if not isinstance(contract, dict):
         add("manifest verbs must be an object: verb -> {inputs, plan, returns}")
         contract = {}
-    for verb in (("explain",) if kind == "light" else BASE_VERBS) + ("human",):
+    for verb in BASE_VERBS:
         if verb not in verbs:
-            add(f"a button with verb {verb!r} is required")
+            add(f"a button with verb {verb!r} is required: one {ASK_TITLE!r} on every card, in place of Explain, Challenge, Teach and Talk to a person")
+    if ASK_VERB in verbs and not any(str(n.get("title", "")) == ASK_TITLE for n in list(_nodes(card.get("body", []))) + list(_nodes(top_actions)) if n.get("type") in ACTIONS):
+        add(f"the button of the verb {ASK_VERB!r} (or the card that holds it) is called {ASK_TITLE!r}")
+    for verb in ("explain", "challenge", "human"):
+        if verb in verbs:
+            add(f"verb {verb!r} is not used: {ASK_TITLE!r} replaces Explain and Challenge, and whom to talk to is plain text in the footer")
     for verb in sorted(verbs - set(contract)):
         add(f"verb {verb!r} is on the card but not in the manifest")
     for verb in sorted(set(contract) - verbs):
@@ -311,13 +336,6 @@ def check_card(name: str, card: dict, spec: dict, limits: dict, data: dict | Non
                 add(f"Action.Execute {title!r}: sends {missing} but the manifest does not list them for verb {act.get('verb')!r}")
         if isinstance(entry, dict) and entry and bool(entry.get("plan")) != bool(isinstance(act.get("data"), dict) and act["data"].get("planCode")):
             add(f"Action.Execute {title!r}: manifest plan flag for verb {act.get('verb')!r} does not match planCode in the action")
-    talk = ids.get("talk-to-a-person")
-    body = card.get("body", [])
-    if talk is None or talk.get("type") != "ActionSet" or not any(
-            a.get("verb") == "human" and a.get("title") == "Talk to a person" for a in talk.get("actions", [])):
-        add("the footer needs an ActionSet with id 'talk-to-a-person' holding the button 'Talk to a person' (verb human)")
-    elif len(body) < 2 or body[-1].get("id") != "ai-footer" or body[-2] is not talk:
-        add("'Talk to a person' must be the last button: its ActionSet sits directly above the ai-footer, in the same place on every card")
     shown = ids.get("kind")
     if shown is not None and spec.get("displayTitle") and shown.get("text") != spec["displayTitle"]:
         add(f"manifest displayTitle {spec['displayTitle']!r} must equal the title shown on the card ({shown.get('text')!r})")
@@ -347,11 +365,14 @@ def check_card(name: str, card: dict, spec: dict, limits: dict, data: dict | Non
             add("sample data needs notificationText: the one-sentence notification line of the message")
         elif len(note) > NOTIFICATION_MAX:
             add(f"sample data notificationText is {len(note)} characters, at most {NOTIFICATION_MAX}")
+        contact = data.get("contact")
+        if not isinstance(contact, str) or not CONTACT.fullmatch(contact):
+            add("sample data needs contact: whom to talk to, as plain text, a name and an address in brackets like 'Maya Okafor (maya.okafor@example.com)'")
         for key, value in data.items():
             if key == "pageUrl":
                 continue
             for s in _strings(value):
-                if EMAIL.search(s):
+                if EMAIL.search(s) and key not in TEXT_ONLY_KEYS:
                     add(f"sample data holds an e-mail address: {s[:40]!r}")
                 if LINK.search(s) or MD_LINK.search(s):
                     add(f"sample data holds a link or markdown link: {s[:40]!r} (bound values are stripped of both)")
@@ -447,7 +468,7 @@ def check(cards_dir: Path = CARDS) -> list[tuple[Path, str]]:
     return out
 
 
-def _button(verb, title="Explain", inputs=False, **extra):
+def _button(verb, title="Send", inputs=False, **extra):
     data = {"requestId": "${requestId}"}
     data.update(extra)
     return {"type": "Action.Execute", "title": title, "verb": verb, "data": data,
@@ -466,18 +487,16 @@ def _sample() -> tuple[dict, dict, dict, dict]:
             {"type": "TextBlock", "id": "value", "text": "${value}", "wrap": True},
             {"type": "TextBlock", "id": "price-basis", "text": "${priceBasis}", "wrap": True},
             {"type": "TextBlock", "id": "saving-word", "text": "${savingWord}", "wrap": True},
-            {"type": "ActionSet", "id": "conversation", "actions": [btn("explain"), btn("challenge", "Challenge"), btn("teach", "Teach")]},
-            {"type": "TextBlock", "id": "why-you-get-this", "text": "Why you are getting this: ${whyYouGetThis}", "wrap": True},
-            {"type": "ActionSet", "id": "talk-to-a-person", "actions": [btn("human", "Talk to a person")]},
-            {"type": "TextBlock", "id": "ai-footer", "text": "Written by an AI. Figures are computed by tools, not guessed by the AI.", "wrap": True},
+            {"type": "ActionSet", "id": "conversation", "actions": [btn(ASK_VERB, ASK_TITLE)]},
+            {"type": "TextBlock", "id": "ai-footer", "wrap": True,
+             "text": "Written by an AI; a person approves every change. You got this because ${whyYouGetThis} Talk to a person: ${contact}."},
         ],
     }
-    contract = {"explain": {"inputs": [], "plan": False, "returns": "answer"}, "challenge": {"inputs": [], "plan": False, "returns": "answer"},
-                "teach": {"inputs": [], "plan": False, "returns": "answer"}, "human": {"inputs": [], "plan": False, "returns": "handoff"}}
-    spec = {"file": "x.json", "money": True, "requires": ["headline", "why-you-get-this"], "verbs": contract}
+    contract = {ASK_VERB: {"inputs": [], "plan": False, "returns": "receipt"}}
+    spec = {"file": "x.json", "money": True, "requires": ["headline"], "verbs": contract}
     limits = dict(DEFAULTS)
     data = {"_invented": True, "senderName": "Meternaut (AI)", "pageUrl": "https://meternaut.example/ok/abc",
-            "notificationText": "Switch off the QA environment at night?"}
+            "notificationText": "Switch off the QA environment at night?", "contact": "Maya Okafor (maya.okafor@example.com)"}
     return card, spec, limits, data
 
 
@@ -511,15 +530,26 @@ def self_test() -> int:
     broken(lambda c, d, s: c["body"].append({"type": "ActionSet", "actions": [button("ok", "OK")]}), "must carry planCode")
     broken(lambda c, d, s: c["body"].append({"type": "ActionSet", "actions": [
         {"type": "Action.ToggleVisibility", "title": "Details", "targetElements": ["x"]}]}), "tooltip is required")
-    broken(lambda c, d, s: c["body"].append({"type": "ActionSet", "actions": [button("explain", "B%d" % i) for i in range(6)]}), "visible buttons")
+    broken(lambda c, d, s: c["body"].append({"type": "ActionSet", "actions": [button("fewer", "B%d" % i) for i in range(8)]}), "visible buttons")
     broken(lambda c, d, s: (c["body"].append({"type": "Container", "isVisible": False, "items": [
         {"type": "ActionSet", "actions": [button("fewer", "F%d" % i) for i in range(5)]}]})), "behind a toggle")
-    broken(lambda c, d, s: c["body"][5]["actions"].pop(2), "verb 'teach' is required")
-    broken(lambda c, d, s: c["body"][7]["actions"].pop(), "verb 'human' is required")
-    broken(lambda c, d, s: c["body"].pop(7), "'talk-to-a-person'")
-    broken(lambda c, d, s: c["body"].insert(8, {"type": "ActionSet", "actions": [button("explain", "Again")]}), "must be the last button")
-    broken(lambda c, d, s: (s.update({"conversation": "light"}), c["body"][5]["actions"].pop(0)), "verb 'explain' is required")
-    broken(lambda c, d, s: c["body"].pop(6), "'why-you-get-this'")
+
+    # One "Ask or tell" on every card, in place of Explain, Challenge and Teach, and whom to talk to is plain text in the one footer line.
+    broken(lambda c, d, s: c["body"][5]["actions"].pop(0), "verb 'ask' is required")
+    broken(lambda c, d, s: (s.update({"conversation": "light"}), c["body"][5]["actions"].pop(0)), "verb 'ask' is required")
+    broken(lambda c, d, s: c["body"][5]["actions"][0].update({"title": "Explain"}), "is called 'Ask or tell'")
+    broken(lambda c, d, s: c["body"][5]["actions"].append(button("explain", "Explain")), "verb 'explain' is not used")
+    broken(lambda c, d, s: c["body"][5]["actions"].append(button("challenge", "Challenge")), "verb 'challenge' is not used")
+    broken(lambda c, d, s: c["body"].insert(6, {"type": "ActionSet", "id": "talk-to-a-person", "actions": [button("human", "Talk to a person")]}), "'talk-to-a-person' is not used")
+    broken(lambda c, d, s: c["body"].insert(6, {"type": "ActionSet", "actions": [button("human", "Talk to a person")]}), "verb 'human' is not used")
+    broken(lambda c, d, s: c["body"].insert(6, {"type": "TextBlock", "id": "why-you-get-this", "text": "Why you are getting this", "wrap": True}), "'why-you-get-this' is not used")
+    broken(lambda c, d, s: c["body"].append({"type": "TextBlock", "text": "after the footer", "wrap": True}), "last element of the card")
+    broken(lambda c, d, s: c["body"][-1].update({"text": "Written by an AI; a person approves every change. Talk to a person: ${contact}."}), "ai-footer must say '${whyYouGetThis}'")
+    broken(lambda c, d, s: c["body"][-1].update({"text": "Written by an AI; a person approves every change. You got this because ${whyYouGetThis}"}), "ai-footer must say 'Talk to a person'")
+    broken(lambda c, d, s: c["body"][-1].update({"text": "Written by an AI. You got this because ${whyYouGetThis} Talk to a person: ${contact}.\nMore."}), "one line")
+    broken(lambda c, d, s: d.pop("contact"), "needs contact")
+    broken(lambda c, d, s: d.update({"contact": "maya@example.com"}), "needs contact")
+    broken(lambda c, d, s: d.update({"contact": "Maya (https://x.example)"}), "needs contact")
     broken(lambda c, d, s: c["body"][5]["actions"][0]["data"].update({"text": "free prose"}), "data may hold only")
     broken(lambda c, d, s: c["body"][1].update({"text": "ACT NOW, hurry"}), "urgency")
     broken(lambda c, d, s: c["body"][1].update({"text": "see https://x.example"}), "a link in the text")
@@ -532,8 +562,8 @@ def self_test() -> int:
     broken(lambda c, d, s: c.update({"fallbackText": "A recommendation."}), "fallbackText must carry")
     broken(lambda c, d, s: c["body"].append({"type": "Carousel"}), "not in the allowed set")
     broken(lambda c, d, s: c["body"].append({"type": "ActionSet", "actions": [
-        {"type": "Action.Execute", "title": f"B{i}", "verb": "explain", "data": {"requestId": "x"}} for i in range(7)]}), "at most 6")
-    broken(lambda c, d, s: c["body"].append({"type": "ActionSet", "actions": [button("explain", "A title that is too long for Teams")]}), "title is longer")
+        {"type": "Action.Execute", "title": f"B{i}", "verb": "fewer", "data": {"requestId": "x"}} for i in range(7)]}), "at most 6")
+    broken(lambda c, d, s: c["body"].append({"type": "ActionSet", "actions": [button("fewer", "A title that is too long for Teams")]}), "title is longer")
     broken(lambda c, d, s: c.update({"msteams": {"entities": []}}), "msteams may set only width")
     broken(lambda c, d, s: d.update({"_invented": False}), "_invented")
     broken(lambda c, d, s: d.update({"senderName": "Meternaut"}), "senderName must end")
@@ -568,8 +598,8 @@ def self_test() -> int:
     broken(lambda c, d, s: c["body"][5]["actions"][0].update({"associatedInputs": "auto"}), "nothing to send")
     broken(lambda c, d, s: c["body"][5]["actions"].append(button("zzz", "Other")), "not in the manifest")
     broken(lambda c, d, s: s["verbs"].update({"zzz": {"inputs": [], "plan": False, "returns": "receipt"}}), "no button on the card carries")
-    broken(lambda c, d, s: s["verbs"]["explain"].update({"returns": "nothing"}), "needs inputs")
-    broken(lambda c, d, s: s["verbs"]["explain"].update({"plan": True}), "plan flag")
+    broken(lambda c, d, s: s["verbs"][ASK_VERB].update({"returns": "nothing"}), "needs inputs")
+    broken(lambda c, d, s: s["verbs"][ASK_VERB].update({"plan": True}), "plan flag")
     broken(lambda c, d, s: (c["body"].insert(0, {"type": "Input.Text", "id": "free", "label": "Free"}), s.update({"rootInputs": True}),
                             c["body"][6]["actions"][0].update({"associatedInputs": "auto"})), "sends ['free'] but the manifest does not list")
     broken(lambda c, d, s: (c["body"].insert(0, {"type": "TextBlock", "id": "kind", "text": "Hello", "wrap": True}), s.update({"displayTitle": "Recommendation"})), "displayTitle")
@@ -579,15 +609,15 @@ def self_test() -> int:
     def under_a_show_card(c, d, s):
         c["body"].insert(0, {"type": "Input.Text", "id": "free", "label": "Free"})
         s["rootInputs"] = True
-        c["body"][6]["actions"][0] = {"type": "Action.ShowCard", "title": "Explain", "card": {
-            "type": "AdaptiveCard", "body": [{"type": "Input.Text", "id": "level", "label": "Level"}],
-            "actions": [button("explain", "Send", inputs=True)]}}
-        s["verbs"]["explain"]["inputs"] = ["level"]
+        c["body"][6]["actions"][0] = {"type": "Action.ShowCard", "title": ASK_TITLE, "card": {
+            "type": "AdaptiveCard", "body": [{"type": "Input.Text", "id": "message", "label": ASK_TITLE}],
+            "actions": [button(ASK_VERB, "Send", inputs=True)]}}
+        s["verbs"][ASK_VERB]["inputs"] = ["message"]
     broken(under_a_show_card, "sends ['free'] but the manifest does not list")
     listed = copy.deepcopy(card)
     listed_spec = copy.deepcopy(spec)
     under_a_show_card(listed, data, listed_spec)
-    listed_spec["verbs"]["explain"]["inputs"] = ["level", "free"]
+    listed_spec["verbs"][ASK_VERB]["inputs"] = ["message", "free"]
     assert check_card("t", listed, listed_spec, limits, data) == [], check_card("t", listed, listed_spec, limits, data)
 
     # One example, one request id; unrelated examples never share one.
