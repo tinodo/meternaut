@@ -362,7 +362,7 @@ class Approval(unittest.TestCase):
 
     def test_the_owner_is_said_in_the_words_of_the_facts_that_code_read(self):
         case = make_case(owner={"tagOwner": "alice@example.com", "tagName": "owner", "createdBy": "bob@example.com", "createdAt": "2026-03-01T08:00:00Z", "lookedUp": True})
-        self.assertIn("Owner: Tag owner: alice@example.com (tag owner). Created by bob@example.com on 2026-03-01.", self.letter(case=case).text)
+        self.assertIn("Owner: Tag owner: alice@example.com. Created by bob@example.com on 2026-03-01.", self.letter(case=case).text)
         self.assertIn("Owner: No owner is recorded on the resource.", self.letter(case=make_case(owner={"lookedUp": True})).text)
 
     def test_opening_the_link_records_nothing_and_the_letter_has_no_button_that_decides(self):
