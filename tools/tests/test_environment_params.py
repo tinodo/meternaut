@@ -1243,8 +1243,8 @@ class PublicNetworkAccessOfTheApps(unittest.TestCase):
 
 
 class ThePlanOfTheCasesApp(unittest.TestCase):
-    """The web page's app runs on Flex Consumption or on a Basic plan, from one constant (docs/proposals/07-private-by-default.md, "The web page on Flex Consumption"): both values build valid files, the
-    two differ in nothing but the plan, and the way back is the one value."""
+    """The web page's app runs on a Basic plan or on Flex Consumption, from one constant (docs/proposals/07-private-by-default.md, "The web page on Flex Consumption"): both values build valid files, the
+    two differ in nothing but the plan, and a later try of Flex is the one value."""
 
     CASES_TEMPLATE = (ROOT / "environment" / "cases" / "main.bicep").read_text(encoding="utf-8")
 
@@ -1254,12 +1254,12 @@ class ThePlanOfTheCasesApp(unittest.TestCase):
         with mock.patch.object(ep, "CASES_APP_PLAN", plan):
             return run({**SETTINGS, **changes})
 
-    def test_the_constant_is_flex_and_is_one_line_among_the_constants_near_the_top_of_the_builder(self):
-        self.assertEqual(ep.CASES_APP_PLAN, "Flex", "the owner ordered that the web page scales to zero; Basic is the way back, and the one value and the one test to change then")
+    def test_the_constant_is_basic_and_is_one_line_among_the_constants_near_the_top_of_the_builder(self):
+        self.assertEqual(ep.CASES_APP_PLAN, "Basic", "the measurement of 2026-11-08 found the platform's hold on Flex Consumption (docs/proposals/07-private-by-default.md): Flex waits for a later try, and the one value and the one test to change then")
         self.assertEqual(ep.CASES_APP_PLANS, ("Flex", "Basic"))
         source = TOOL.read_text(encoding="utf-8")
-        self.assertEqual(re.findall(r'(?m)^CASES_APP_PLAN = "(Flex|Basic)"$', source), ["Flex"], "one constant, one line")
-        self.assertLess(source.index('\nCASES_APP_PLAN = "Flex"\n'), source.index("\ndef "), "near the top, with the other constants")
+        self.assertEqual(re.findall(r'(?m)^CASES_APP_PLAN = "(Flex|Basic)"$', source), ["Basic"], "one constant, one line")
+        self.assertLess(source.index('\nCASES_APP_PLAN = "Basic"\n'), source.index("\ndef "), "near the top, with the other constants")
 
     def test_both_values_build_valid_parameter_files_that_the_template_takes(self):
         declared = bicep_params(self.CASES_TEMPLATE)
@@ -1272,10 +1272,10 @@ class ThePlanOfTheCasesApp(unittest.TestCase):
                 self.assertFalse(set(given) - set(declared), f"{plan}: a setting that the template does not take")
                 self.assertFalse({name for name, (_, has_default) in declared.items() if not has_default} - set(given), f"{plan}: a setting that the template needs and the file does not give")
                 self.assertEqual(declared["casesAppPlan"], ("string", True))
-        self.assertIn("param casesAppPlan string = 'Flex'\n", self.CASES_TEMPLATE, "the template's default is the constant's")
+        self.assertIn("param casesAppPlan string = 'Basic'\n", self.CASES_TEMPLATE, "the template's default is the constant's")
         self.assertRegex(self.CASES_TEMPLATE, r"@allowed\(\[\n  'Flex'\n  'Basic'\n\]\)\nparam casesAppPlan")
 
-    def test_the_two_values_differ_in_the_plan_alone_and_nothing_else_changes_for_the_way_back(self):
+    def test_the_two_values_differ_in_the_plan_alone_and_nothing_else_changes_when_the_plan_changes(self):
         results = {plan: self.build(plan) for plan in ("Flex", "Basic")}
         for plan, (code, out, err, files) in results.items():
             self.assertEqual((code, err), (0, ""), plan)
@@ -1287,7 +1287,7 @@ class ThePlanOfTheCasesApp(unittest.TestCase):
         flex, basic = values(flex_files["cases.parameters.json"]), values(basic_files["cases.parameters.json"])
         self.assertEqual({k: v for k, v in flex.items() if k != "casesAppPlan"}, {k: v for k, v in basic.items() if k != "casesAppPlan"},
                          "the subnet's range, the identities, the settings, the people and the public access are the same: the app moves and nothing else does")
-        self.assertEqual(flex["webSubnetPrefix"], basic["webSubnetPrefix"], "the Basic plan's subnet range is always given, so that the way back needs nothing else")
+        self.assertEqual(flex["webSubnetPrefix"], basic["webSubnetPrefix"], "the Basic plan's subnet range is always given, whichever plan the app is on, so that a move between the two needs nothing else")
         lines = {plan: dict(line.split("=", 1) for line in results[plan][1].splitlines()) for plan in results}
         plan_keys = {"cases_app_plan", "cases_plan_name", "cases_plan_tier", "cases_other_plan_name", "cases_other_plan_tier", "cases_subnet_name"}
         for key in set(lines["Flex"]) - plan_keys:

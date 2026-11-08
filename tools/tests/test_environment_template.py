@@ -142,7 +142,7 @@ class Templates(unittest.TestCase):
         self.assertIn("the action retire-old deletes it", flat)
         for subnet in ("snet-pe", "snet-func", "snet-cases"):
             self.assertIn(f"name: '{subnet}'", code, f"{subnet} stays: the apps and the private endpoints use it")
-        self.assertIn("serviceName: 'Microsoft.App/environments'", code, "snet-func stays delegated to Flex Consumption, which the cases app moves to")
+        self.assertIn("serviceName: 'Microsoft.App/environments'", code, "snet-func stays delegated to Flex Consumption, which a later try of the cases app on Flex uses")
     def test_nothing_in_the_repository_can_make_an_object_on_the_owners_api_management_instance(self):
         # The owner ordered the undo of what Meternaut had added to his instance (2026-11-07, AGENTS.md rule 15 (c)): the templates, the kit's patches and the contract that made those objects are gone,
         # and no template declares an object of an instance (the AI Gateway's own types, Microsoft.ApiManagement/aigateways, are Azure's separate service).
@@ -602,9 +602,9 @@ class Cases(unittest.TestCase):
         spec = importlib.util.spec_from_file_location("environment_params", ROOT / "tools" / "environment-params.py")
         params = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(params)
-        self.assertRegex(self.code, r"(?m)^@allowed\(\[\n  'Flex'\n  'Basic'\n\]\)\nparam casesAppPlan string = 'Flex'$")
+        self.assertRegex(self.code, r"(?m)^@allowed\(\[\n  'Flex'\n  'Basic'\n\]\)\nparam casesAppPlan string = 'Basic'$")
         self.assertEqual(params.CASES_APP_PLANS, ("Flex", "Basic"))
-        self.assertEqual(params.CASES_APP_PLAN, "Flex", "the web page is on Flex Consumption, which scales to zero, unless the measurement says that the stall is back")
+        self.assertEqual(params.CASES_APP_PLAN, "Basic", "the web page is on a Basic plan since the measurement of 2026-11-08 found the platform's hold on Flex Consumption (docs/proposals/07-private-by-default.md): Flex waits for a later try that meets the rule twice")
         plan = self.found["plan"][1]
         self.assertIn("var isFlex = casesAppPlan == 'Flex'", self.code)
         self.assertIn("name: isFlex ? 'plan-${workload}-cases' : 'plan-${workload}-cases-basic'", plan)
@@ -639,7 +639,7 @@ class Cases(unittest.TestCase):
             self.assertEqual(self.code.count(f"name: '{setting}'"), 1, setting)
         self.assertIn("appSettings: concat(basicOnlyAppSettings, [", body)
 
-    def test_a_basic_app_is_the_way_back_with_the_plan_always_on_an_identity_for_everything_and_no_password_for_its_deployment(self):
+    def test_a_basic_app_is_the_plan_of_the_web_page_with_the_plan_always_on_an_identity_for_everything_and_no_password_for_its_deployment(self):
         plan = self.found["plan"][1]
         self.assertIn("name: 'B1'", plan)
         self.assertIn("tier: 'Basic'", plan)
