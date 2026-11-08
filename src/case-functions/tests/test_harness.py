@@ -923,6 +923,10 @@ class StoredFoundry(ti.FakeFoundry):
         return self.stored.get(name)
 
     def run(self, agent, user_input, handler=None, *, max_calls=20, max_seconds=None, stop=None):
+        if stop is not None:
+            why = stop(foundry.AgentRun(text=""))  # the brake before a request, as the real client asks it before the first one too
+            if why:
+                raise foundry.FoundryError(f"Foundry run stopped by the harness: {why}")
         return super().run(agent, user_input, handler, max_calls=max_calls, max_seconds=max_seconds)
 
 
@@ -955,6 +959,16 @@ class TheInvestigationUnderTheHarness(unittest.TestCase):
         rig = UnderTheHarness()
         rig.store.switch_put(SwitchRecord(name="all", paused=True, by="Tino", at="2026-11-04T11:00:00Z"))
         self.assertEqual(rig.go().state, "held")
+
+    def test_a_switch_pulled_after_the_investigator_ran_holds_the_investigation_and_opens_no_case(self):
+        rig = UnderTheHarness()
+        pull = SwitchRecord(name="investigation", paused=True, by="Tino", at="2026-11-04T11:00:00Z", reason="drill")
+        rig.foundry.after_run = lambda agent: rig.store.switch_put(pull) if agent.startswith(INVESTIGATOR) else None
+        result = rig.go()
+        self.assertEqual((result.state, result.ran, result.held, result.cases, result.proposed), ("held", False, True, 0, 0))
+        self.assertIn("the Skeptic was not let run", result.note)
+        self.assertEqual([run["agent"].partition(":")[0] for run in rig.foundry.runs], [INVESTIGATOR], "the Skeptic never ran")
+        self.assertEqual((rig.store.cases_recent(10), rig.store.plans_open()), ([], []), "findings that nobody judged opened nothing")
 
     def test_the_other_switches_do_not_hold_it(self):
         rig = UnderTheHarness()

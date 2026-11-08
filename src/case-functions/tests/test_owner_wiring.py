@@ -2,9 +2,10 @@
 Every name, id and address in it is INVENTED."""
 import datetime as dt
 import unittest
+from types import SimpleNamespace
 
 import support  # noqa: F401  (it puts the app on the path)
-from cases import investigate, ownership as ow
+from cases import brief, investigate, ownership as ow
 from cases.detectors import Lead
 from cases.http import HttpError
 
@@ -18,8 +19,11 @@ def lead(tags):
     return Lead("investigation", VM, "microsoft.compute/virtualmachines", "vm-demo", "rg-demo", SUB, "swedencentral", tags, "", {})
 
 
-def event(when, operation, caller):
-    return {"eventTimestamp": when, "operationName": {"value": operation, "localizedValue": operation}, "status": {"value": "Succeeded"}, "caller": caller}
+def event(when, operation, caller, substatus=None):
+    found = {"eventTimestamp": when, "operationName": {"value": operation, "localizedValue": operation}, "status": {"value": "Succeeded"}, "caller": caller}
+    if substatus is not None:
+        found["subStatus"] = {"value": substatus}
+    return found
 
 
 class Arm:
@@ -43,7 +47,7 @@ class Services:
 
 class TheOwnerLineOfACase(unittest.TestCase):
     def test_the_tag_and_the_activity_log_make_the_owner_of_the_brief(self):
-        arm = Arm(([event("2026-11-06T08:00:00Z", WRITE, "maya@example.invalid"), event("2026-10-01T08:00:00Z", WRITE, "li@example.invalid")], True))
+        arm = Arm(([event("2026-11-06T08:00:00Z", WRITE, "maya@example.invalid", "OK"), event("2026-10-01T08:00:00Z", WRITE, "li@example.invalid", "Created")], True))
         owner = investigate._owner_of(Services(arm), investigate.Investigation(), lead({"Team": "platform", "note": "x"}))
         self.assertEqual(owner, {"tagOwner": "platform", "tagName": "team", "createdBy": "li@example.invalid", "createdAt": "2026-10-01T08:00:00Z",
                                  "changedBy": "maya@example.invalid", "changedAt": "2026-11-06T08:00:00Z", "lookedUp": True})
@@ -60,6 +64,18 @@ class TheOwnerLineOfACase(unittest.TestCase):
             self.assertFalse(sentinels & set(owner.values()))
         quiet = investigate._owner_of(Services(Arm(([], True))), investigate.Investigation(), lead({}))
         self.assertEqual((quiet["changedBy"], quiet["lookedUp"]), ("", True))
+
+    def test_a_lookup_that_was_refused_failed_or_not_made_is_not_a_lookup_and_the_page_does_not_say_that_nobody_owns_the_resource(self):
+        for error in (HttpError(403, "no"), HttpError(500, "boom")):
+            owner = investigate._owner_of(Services(Arm(error=error)), investigate.Investigation(), lead({}))
+            self.assertIs(owner["lookedUp"], False, error)
+        out = investigate.Investigation()
+        out.owners = ow.OwnerReader(Arm(([], True)), NOW, max_reads=0)  # the reads of the run are used up
+        spent = investigate._owner_of(Services(Arm(([], True))), out, lead({}))
+        self.assertIs(spent["lookedUp"], False)
+        self.assertEqual(brief.owner_of(SimpleNamespace(owner=spent)).text, "Meternaut has not looked up who owns this resource yet.")
+        quiet = investigate._owner_of(Services(Arm(([], True))), investigate.Investigation(), lead({}))
+        self.assertEqual(brief.owner_of(SimpleNamespace(owner=quiet)).text, "No owner is recorded on the resource.", "a read that answered with nothing is a lookup")
 
     def test_a_lookup_that_breaks_never_costs_the_case_and_still_gives_the_tag(self):
         class Broken:

@@ -429,6 +429,7 @@ class Resource:
     tags: dict[str, str]
     managed_by: str
     cost_usd_30d: float | None = None
+    part_of: str | None = None  # the key of the resource that keeps it inside itself: a part is billed with that resource and has no cost of its own, which is not a cost of nil
 
 
 class BadArguments(Exception):
@@ -1963,7 +1964,7 @@ class Toolbox:
             row = deeper.deployment_row(item, account)
             child = self._ingest(row, entry.sub) if row else None
             if child is not None:
-                child.part_of = entry.key
+                child.part_of = child.resource.part_of = entry.key
                 built.append((child, deeper.deployment_facts(item)))
         built.sort(key=lambda item: (-(item[1].get("capacity") or 0), item[1].get("model") or "", item[0].key))
         return built
@@ -2076,6 +2077,8 @@ class Toolbox:
         amortized = basis == "amortized"
         if handle is not None:
             entry = self._entry(handle)
+            if entry.part_of is not None:
+                raise NotOffered(handle)  # a part of a resource is billed with the resource, and no cost line is its own
             subs, where, scope = [entry.sub], ("ResourceId", (entry.resource.resource_id,)), entry.key
         else:
             self._load_type(kind)

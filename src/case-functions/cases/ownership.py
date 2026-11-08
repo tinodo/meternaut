@@ -4,8 +4,9 @@ Two sources, and neither is a text that a model reads: the tags of the resource,
 cleaned), and the Activity Log (Learn, "Activity Logs - List", `Microsoft.Insights/eventtypes/management/values`: the last 90 days, newest first), which says who made the last change.
 
 What a hint does NOT say, and the caller of the Activity Log is personal data (an e-mail address or the object id of an application): keep it with the case, and out of logs and prompts.
-* `createdBy` and `createdAt` are the caller and the time of the oldest successful write of the resource itself that the window shows. They are the creator only when the resource was
-  created inside the window (the log keeps 90 days); a resource that is older has no creation in it, and its oldest write is a change. A window that was not read to its end names none.
+* `createdBy` and `createdAt` are the caller and the time of the newest event that says that the resource itself was created: a write of the resource whose status code is 201 (Created), inside
+  the window (the log keeps 90 days). A resource that is older has no creation in it, and a later update (status code 200) is a change and never a creation; so a resource that was made before
+  the window names no creator, however often it was changed since. A window that was not read to its end names none either, unless it shows a creation.
 * `lastChangedBy` and `lastChangedAt` are the newest successful write or delete that the log shows for the resource or for a part of it. A start or a stop is not one.
 * A tag is a claim of whoever set it: it may be wrong or old.
 
@@ -90,18 +91,33 @@ def own_type(resource_id: str) -> str | None:
     return "/".join([parts[0], *parts[1::2]]).lower() if len(parts) >= 3 and len(parts) % 2 == 1 else None
 
 
-def changes(events: list[dict], resource_id: str) -> list[tuple[dt.datetime, str, bool]]:
-    """The successful writes and deletes in a list of events of the Activity Log: the time, the caller (cleaned) and whether it is a write of the resource itself, the newest first. A start,
-    a stop, a read of keys and an event with no caller or no time are not changes."""
+def changes(events: list[dict]) -> list[tuple[dt.datetime, str]]:
+    """The successful writes and deletes in a list of events of the Activity Log, for the resource or a part of it: the time and the caller (cleaned), the newest first. A start, a stop, a
+    read of keys and an event with no caller or no time are not changes."""
+    found = []
+    for event in events:
+        verb = _value(event, "operationName").lower().rpartition("/")[2]
+        when, caller = moment(event.get("eventTimestamp")), clean(event.get("caller"), MAX_CALLER)
+        if _value(event, "status").lower() != "succeeded" or verb not in CHANGES or when is None or caller is None:
+            continue
+        found.append((when, caller))
+    found.sort(key=lambda item: item[0], reverse=True)
+    return found
+
+
+def creations(events: list[dict], resource_id: str) -> list[tuple[dt.datetime, str]]:
+    """The events that say that the resource itself was created: a write of the resource that Azure accepted or that succeeded and whose status code is 201 (Created), with a caller and a
+    time, the oldest first. A write that updated it (200) is not one: the log keeps 90 days, so the oldest write that it shows is the creation only when the log says so."""
     own = own_type(resource_id)
     found = []
     for event in events:
         prefix, _, verb = _value(event, "operationName").lower().rpartition("/")
         when, caller = moment(event.get("eventTimestamp")), clean(event.get("caller"), MAX_CALLER)
-        if _value(event, "status").lower() != "succeeded" or verb not in CHANGES or when is None or caller is None:
+        if (verb != "write" or prefix != own or _value(event, "status").lower() not in ("accepted", "succeeded") or not _value(event, "subStatus").lower().startswith("created")
+                or when is None or caller is None):
             continue
-        found.append((when, caller, verb == "write" and prefix == own))
-    found.sort(key=lambda item: item[0], reverse=True)
+        found.append((when, caller))
+    found.sort(key=lambda item: item[0])
     return found
 
 
@@ -113,14 +129,14 @@ def owner_hints(tags: Mapping | None, events: list[dict] | None, complete: bool,
         for key in ("createdBy", "createdAt", "lastChangedBy", "lastChangedAt"):
             hint[key] = word or UNAVAILABLE
         return hint
-    found = changes(events, resource_id)
+    found = changes(events)
     if found:
         hint["lastChangedAt"], hint["lastChangedBy"] = _stamp(found[0][0]), found[0][1]
     else:
         hint["lastChangedAt"] = hint["lastChangedBy"] = NOT_IN_WINDOW
-    own = [item for item in found if item[2]]
-    if own and complete:
-        hint["createdAt"], hint["createdBy"] = _stamp(own[-1][0]), own[-1][1]
+    made = creations(events, resource_id)
+    if made:
+        hint["createdAt"], hint["createdBy"] = _stamp(made[-1][0]), made[-1][1]  # the newest: a resource that was removed and made again was made by the last one
     else:
         hint["createdAt"] = hint["createdBy"] = NOT_IN_WINDOW if complete else NOT_COMPLETE
     return hint
