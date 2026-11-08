@@ -542,7 +542,7 @@ class ReadBack(unittest.TestCase):
             "the provider is not of kind Foundry": (lambda a: provider(a).update(kind="OpenAI"), "The provider foundry differs from its template (kind OpenAI"),
             "the provider does not use the managed identity": (lambda a: provider(a)["foundry"]["authentication"].update(kind="ApiKey"), "authentication ApiKey"),
             "the provider points to another resource": (lambda a: provider(a)["foundry"].update(resourceIds=[ACCOUNT_ID.replace(ACCOUNT, "aif-other")]), "not among them"),
-            "a model is missing": (models(lambda m: m.pop()), "The model gpt-6-1-sol is not there"),
+            "a model is missing": (models(lambda m: m.pop()), "The model gpt-5-5 is not there"),
             "a model has another version": (models(lambda m: m[0]["properties"]["deployment"].update(modelVersion="2000-01-01")), "The model gpt-6-luna differs from its template: the model and its version"),
             "a model points to another deployment": (models(lambda m: m[0]["properties"]["deployment"].update(resourceId=ACCOUNT_ID + "/deployments/other")), "the deployment that it points to"),
             "a model has another API format": (models(lambda m: m[1]["properties"].update(apiFormat="OpenAIResponses")), "the API format"),
@@ -685,12 +685,13 @@ class ReadBack(unittest.TestCase):
     def test_a_list_is_read_to_its_end_and_only_at_addresses_of_azure_resource_manager(self):
         azure = Azure()
         first = {"value": [azure.doc(f"{WORKSPACE}/aliases")["value"][0]], "nextLink": prep.ARM + "/page-two"}
-        second = {"value": [azure.doc(f"{WORKSPACE}/aliases")["value"][1]]}
+        second = {"value": azure.doc(f"{WORKSPACE}/aliases")["value"][1:]}
         azure.documents[f"{WORKSPACE}/aliases".lower()] = first
         azure.documents["/page-two"] = second
         code, out, _ = self.command(azure)
         self.assertEqual(code, 0, out)
         self.assertIn("ok: The alias gpt-6.1-sol points to the model gpt-6-1-sol", out)
+        self.assertIn("ok: The alias gpt-5.5 points to the model gpt-5-5", out)
         azure = Azure()
         azure.doc(f"{WORKSPACE}/aliases")["nextLink"] = "https://example.invalid/page-two"
         code, out, _ = self.command(azure)

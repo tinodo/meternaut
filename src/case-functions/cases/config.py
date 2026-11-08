@@ -46,8 +46,8 @@ INVESTIGATE = "INVESTIGATE"
 INVESTIGATE_MAX_CALLS = "INVESTIGATE_MAX_CALLS"
 INVESTIGATE_MAX_SECONDS = "INVESTIGATE_MAX_SECONDS"
 
-# The Investigator is gpt-6-luna with the effort none and the Skeptic gpt-6.1-sol: see AGENT_MODELS in tools/environment-params.py for why, and a test holds the two files together.
-DEFAULT_MODEL_INVESTIGATOR = "gpt-6-luna"
+# The Investigator is gpt-5.5 (no effort sent: see INVESTIGATOR_REASONING_EFFORT in agents.py) and the Skeptic gpt-6.1-sol: see AGENT_MODELS in tools/environment-params.py for why, and a test holds the files together.
+DEFAULT_MODEL_INVESTIGATOR = "gpt-5.5"
 DEFAULT_MODEL_SKEPTIC = "gpt-6.1-sol"
 DEFAULT_INVESTIGATE_CALLS = 40
 LIMIT_INVESTIGATE_CALLS = 40

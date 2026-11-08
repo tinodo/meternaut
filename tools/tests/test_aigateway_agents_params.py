@@ -38,7 +38,8 @@ SETTINGS = {
 }
 MODELS = [
     {"name": "gpt-6-luna", "version": "2026-09-22", "sku": "DataZoneStandard", "capacity": 20, "agentCapacity": 20, "retirementDate": "2028-03-11"},
-    {"name": "gpt-6.1-sol", "version": "2026-09-29", "sku": "DataZoneStandard", "capacity": 20, "agentCapacity": 50, "retirementDate": "2028-03-11"},
+    {"name": "gpt-6.1-sol", "version": "2026-09-29", "sku": "DataZoneStandard", "capacity": 20, "agentCapacity": 20, "retirementDate": "2028-03-11"},
+    {"name": "gpt-5.5", "version": "2026-04-24", "sku": "DataZoneStandard", "capacity": 20, "agentCapacity": 50, "retirementDate": "2027-10-26"},
 ]
 LIMITS = [
     {"type": "tokenLimit", "count": 50000, "period": "minute", "counterKey": ["identity"], "scope": "workspace"},
@@ -71,19 +72,22 @@ PROJECT_PRINCIPAL = SETTINGS["FOUNDRY_PROJECT_PRINCIPAL_ID"]
 # Ninth change (the web page is on a Basic plan, after the measurement of 2026-11-08, re-recorded on purpose): cases.parameters.json holds casesAppPlan "Basic" in place of "Flex", and the output holds the
 # Basic values for the lines about the plan kind (cases_app_plan, cases_plan_name, cases_plan_tier, cases_other_plan_name, cases_other_plan_tier and cases_subnet_name); function_subnet_name is still
 # snet-func, and every other file is what it was.
-# The files of the AI Gateway, the Foundry resource and the planted waste are byte for byte what they were.
+# Tenth change (a third model, gpt-5.5, for the Investigator, and the capacities of the agents' deployments moved with the roles, 2026-11-08, re-recorded on purpose): the list of models of these inputs has three
+# models, so aigateway.parameters.json holds a third model and alias, foundry.parameters.json a third deployment (gpt-5.5, 50) and gpt-6.1-sol has 20 where it had 50, and the output line aigateway_aliases
+# names three aliases. A build of the old list and of the new one was compared on purpose: no other file and no other line differs.
+# The files of the planted waste and the others are byte for byte what they were.
 GOLDEN = {
     "aigateway-policies.json": "e6d99d1633ab16afc3410e50dbdcb7e290f0e125f4283b4b19f63a8eebb8395c",
     "aigateway-subnet.parameters.json": "a2a16b02fd7a1d54d8949ad89796d4ea89d6bf1907db1f5b621205699a5a0196",
-    "aigateway.parameters.json": "936fc16a2a06d5aa3a029f319eab1dcd23c547800eaee01e5183539e746393d2",
+    "aigateway.parameters.json": "5b4cf2135e25e92773937b758578a844cacf4b40443b44d896ae3186b8b391f8",
     "base.parameters.json": "942cff3133e4f0acba426335edcd41e177473802258db4fe2750d72610d692b9",
     "cases.parameters.json": "2ddab00c7dd4c5f7a616fa757aa5cf1fe1d9d9e77a6299d9cece02b0b2fbad6b",
     "environment.parameters.json": "5a722678f859d67fd7ff7895b0150b048b97def6b094c723d70d5849d078a7f3",
-    "foundry.parameters.json": "ed5e8a14727de3595a0ab4bc5b0fcc4979c7d35b088536fce62f80651e59e99d",
+    "foundry.parameters.json": "c9fad0683873d351abbc281322cb3e7bcb6d24bd56f378fade0333801e1e2503",
     "operator.parameters.json": "77f010f57ffcef1d1ab84dea95de7eea61e4ed5c5d2135faf4593c14b6a5b5a4",
     "planted.parameters.json": "62ecf7282a7bf4c968db91a3943ba20a99dc7ac04fcabb7816aadf6f68f9759c",
 }
-GOLDEN_OUTPUT = "926cde9d3764c11168553128b71538fe71668c8309ebfa659672abc9cfd49d3a"
+GOLDEN_OUTPUT = "c316c830f933cf23380dbd933d28e418a8e8afc97914d3ca50412ad2b99b180e"
 
 FOUNDRY = (ROOT / "environment" / "foundry" / "main.bicep").read_text(encoding="utf-8")
 CASES = (ROOT / "environment" / "cases" / "main.bicep").read_text(encoding="utf-8")
@@ -192,7 +196,8 @@ class TheSwitchIsOn(unittest.TestCase):
         self.assertEqual((code, err), (0, ""))
         given = values(files, "foundry.parameters.json")
         self.assertEqual(given["aiGatewayHost"], HOST)
-        self.assertEqual(given["aiGatewayModels"], [{"name": "gpt-6-luna", "version": "2026-09-22"}, {"name": "gpt-6.1-sol", "version": "2026-09-29"}], "the aliases are the deployments' names, with their versions")
+        self.assertEqual(given["aiGatewayModels"], [{"name": "gpt-6-luna", "version": "2026-09-22"}, {"name": "gpt-6.1-sol", "version": "2026-09-29"}, {"name": "gpt-5.5", "version": "2026-04-24"}],
+                         "the aliases are the deployments' names, with their versions")
         self.assertEqual({key: value for key, value in given.items() if not key.startswith("aiGateway")},
                          values(build(SETTINGS)[3], "foundry.parameters.json"), "everything else in the file is what it was")
         self.assertNotIn("aiGatewayConnectionName", given, "the name is the template's own default")
@@ -203,7 +208,7 @@ class TheSwitchIsOn(unittest.TestCase):
         code, out, err, files = self.on()
         self.assertEqual((code, err), (0, ""))
         cases = values(files, "cases.parameters.json")
-        self.assertEqual((cases["foundryModelInvestigator"], cases["foundryModelSkeptic"]), ("aigateway/gpt-6-luna", "aigateway/gpt-6.1-sol"))
+        self.assertEqual((cases["foundryModelInvestigator"], cases["foundryModelSkeptic"]), ("aigateway/gpt-5.5", "aigateway/gpt-6.1-sol"))
         self.assertEqual(cases["aiGatewayHost"], HOST, "the same host serves the judges and, through the connection, the agents")
         plain = values(build(SETTINGS)[3], "cases.parameters.json")
         self.assertEqual({k: v for k, v in cases.items() if not k.startswith("foundryModel") and k != "aiGatewayHost"}, {k: v for k, v in plain.items() if k != "aiGatewayHost"})
@@ -261,7 +266,7 @@ class TheSwitchIsOn(unittest.TestCase):
                 code, out, err, files = build(env, preview=preview, switch=True)
                 self.assertEqual((code, err), (0, ""))
                 self.assertFalse({"aiGatewayHost", "aiGatewayModels"} & set(values(files, "foundry.parameters.json")), "no host, so no connection is asked for")
-                self.assertEqual(values(files, "cases.parameters.json")["foundryModelInvestigator"], "aigateway/gpt-6-luna")
+                self.assertEqual(values(files, "cases.parameters.json")["foundryModelInvestigator"], "aigateway/gpt-5.5")
                 self.assertEqual(values(files, "cases.parameters.json")["aiGatewayHost"], ep.PLACEHOLDER_AIGATEWAY_HOST, "the judges' host is a placeholder where the gateway is not named")
                 self.assertEqual(outputs(out)["agents_via_ai_gateway"], "true", "the workflow reads that the switch is on from the first, preview, run")
 
@@ -282,7 +287,7 @@ class TheSwitchIsOn(unittest.TestCase):
         others = [dict(m, name=name) for m, name in zip(MODELS, ("alpha", "beta"))]
         code, out, err, files = build({**SETTINGS, "ACTION": "foundry", "AIGATEWAY_HOST": HOST}, models=others, switch=True, full=False)
         self.assertEqual((code, out, files), (2, "", {}))
-        self.assertIn("the models of the agents (gpt-6-luna, gpt-6.1-sol) are not in environment/models.json: there is no alias to name", err)
+        self.assertIn("the models of the agents (gpt-5.5, gpt-6.1-sol) are not in environment/models.json: there is no alias to name", err)
         code, _, _, _ = build({**SETTINGS, "ACTION": "foundry", "AIGATEWAY_HOST": HOST}, models=others, switch=False, full=False)
         self.assertEqual(code, 0, "while the switch is off the names of the models do not matter here")
 
@@ -330,15 +335,18 @@ class TheThreeNamesAreOneName(unittest.TestCase):
         deployed = {m["name"] for m in json.loads((ROOT / "environment" / "models.json").read_text(encoding="utf-8"))}
         self.assertTrue(set(ep.AGENT_MODELS.values()) <= deployed, "an alias exists for each of them (environment/aigateway/main.bicep makes one for each model of models.json)")
 
-    # The reason for the pair, from the first two real runs of the agents through the gateway (2026-11-08): the Agent Service has only the Chat Completions route for the gateway (Learn: the
-    # Responses route for the AI Gateway tier is "coming soon"), and on it gpt-6.1-sol refuses function tools together with any reasoning effort and does not take the effort none (low, medium and
-    # high only). The Investigator has tools and asks for the effort none, so its model is not one of these. The Skeptic has no tools and sends no effort.
-    REFUSE_THE_EFFORT_NONE = ("gpt-6.1-sol",)
+    # The reason for the pair, from the first three real runs of the agents through the gateway (2026-11-08): the Agent Service has only the Chat Completions route for the gateway (Learn: the Responses
+    # route for the AI Gateway tier is "coming soon"), and on it both GPT-6 models refuse function tools together with any reasoning effort and refuse the effort none too (low, medium and high
+    # only). Learn documents that limit for the gpt-5.6 models only, and lists gpt-5.5 with Chat Completions and function tools and no such footnote. The Investigator has the function tools, so its
+    # model is not a GPT-6 model. The Skeptic has no tools and sends no effort, so the stronger GPT-6 model judges.
+    GPT_6_MODELS = ("gpt-6-luna", "gpt-6.1-sol")
 
-    def test_the_model_of_the_investigator_is_not_one_that_refuses_the_effort_none_and_the_pair_is_the_one_of_the_runs(self):
-        self.assertEqual(ep.AGENT_MODELS, {"foundryModelInvestigator": "gpt-6-luna", "foundryModelSkeptic": "gpt-6.1-sol"})
-        self.assertNotIn(ep.AGENT_MODELS["foundryModelInvestigator"], self.REFUSE_THE_EFFORT_NONE)
-        self.assertRegex(AGENTS_PY, r'(?m)^INVESTIGATOR_REASONING_EFFORT = "none"$')
+    def test_the_model_of_the_investigator_is_not_a_gpt_6_model_and_the_effort_is_not_sent_unless_the_fallback_is_made(self):
+        self.assertEqual(ep.AGENT_MODELS, {"foundryModelInvestigator": "gpt-5.5", "foundryModelSkeptic": "gpt-6.1-sol"})
+        self.assertNotIn(ep.AGENT_MODELS["foundryModelInvestigator"], self.GPT_6_MODELS)
+        self.assertIn(ep.AGENT_MODELS["foundryModelSkeptic"], self.GPT_6_MODELS)
+        self.assertRegex(AGENTS_PY, r'(?m)^INVESTIGATOR_REASONING_EFFORT = None$')
+        self.assertIn('set this to "none"', AGENTS_PY, "the one-line fallback is in the comment of the constant")
 
     def test_the_host_pattern_is_the_one_that_the_workflow_and_the_check_ask_for(self):
         workflow = (ROOT / ".github" / "workflows" / "deploy-hub.yml").read_text(encoding="utf-8")

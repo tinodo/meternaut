@@ -259,25 +259,30 @@ class TheAgentDefinitions(unittest.TestCase):
         self.assertEqual(agents.investigator(self.SETTINGS, tools).tools, tools)
         self.assertEqual(agents.skeptic(self.SETTINGS).tools, ())
 
-    def test_only_the_investigator_has_a_reasoning_effort_and_it_is_the_effort_none_that_lets_function_tools_work(self):
+    def test_no_agent_sends_a_reasoning_effort_and_the_fallback_for_function_tools_is_one_word_for_the_investigator_only(self):
+        # gpt-5.5 reasons with its default effort and takes function tools on Chat Completions (Learn). If the first real run is refused with "Function tools with reasoning_effort are not supported", the
+        # fallback is one line, INVESTIGATOR_REASONING_EFFORT = "none", which gpt-5.5 takes (Learn, footnote 7 of the reasoning table): the machinery stays, and it sends the effort for the Investigator only.
         tools = FakeToolbox().specs
-        self.assertEqual(agents.INVESTIGATOR_REASONING_EFFORT, "none")
-        self.assertEqual(agents.investigator(self.SETTINGS, tools).reasoning_effort, "none")
-        self.assertIsNone(agents.skeptic(self.SETTINGS).reasoning_effort, "the Skeptic has no tools and keeps the default")
+        self.assertIsNone(agents.INVESTIGATOR_REASONING_EFFORT)
+        self.assertIsNone(agents.investigator(self.SETTINGS, tools).reasoning_effort)
+        self.assertIsNone(agents.skeptic(self.SETTINGS).reasoning_effort, "the Skeptic has no tools and sends no effort")
+        with mock.patch.object(agents, "INVESTIGATOR_REASONING_EFFORT", "none"):
+            self.assertEqual(agents.investigator(self.SETTINGS, tools).reasoning_effort, "none")
+            self.assertIsNone(agents.skeptic(self.SETTINGS).reasoning_effort)
 
-    # The first two real runs of the agents through the gateway (2026-11-08): gpt-6.1-sol refuses function tools together with any reasoning effort on Chat Completions, the only route that the Agent
-    # Service has for the gateway, and it does not take the effort none either (low, medium and high only). The Investigator has tools and asks for the effort none, so its model is not one of these.
-    REFUSE_THE_EFFORT_NONE = ("gpt-6.1-sol",)
+    # The first three real runs of the agents through the gateway (2026-11-08): both GPT-6 models of the gateway refuse function tools together with any reasoning effort on Chat Completions, the only
+    # route that the Agent Service has for the gateway, and refuse the effort none too (low, medium and high only). Learn documents that limit for the gpt-5.6 models only. The Investigator has the
+    # function tools, so its model is not one of the two. The Skeptic has no tools and sends no effort, so the stronger GPT-6 model judges.
+    GPT_6_MODELS = ("gpt-6-luna", "gpt-6.1-sol")
 
-    def test_the_investigator_is_not_a_model_that_refuses_the_effort_none_and_the_pair_is_the_one_of_the_runs(self):
-        self.assertEqual(agents.INVESTIGATOR_REASONING_EFFORT, "none")
-        self.assertEqual((cfg.DEFAULT_MODEL_INVESTIGATOR, cfg.DEFAULT_MODEL_SKEPTIC), ("gpt-6-luna", "gpt-6.1-sol"))
-        self.assertNotIn(cfg.DEFAULT_MODEL_INVESTIGATOR, self.REFUSE_THE_EFFORT_NONE)
-        self.assertIn(cfg.DEFAULT_MODEL_SKEPTIC, self.REFUSE_THE_EFFORT_NONE, "the Skeptic has no tools and sends no effort, so the stronger model that refuses it can judge")
+    def test_the_investigator_is_not_a_gpt_6_model_because_they_refuse_function_tools_on_chat_completions_and_the_effort_none(self):
+        self.assertEqual((cfg.DEFAULT_MODEL_INVESTIGATOR, cfg.DEFAULT_MODEL_SKEPTIC), ("gpt-5.5", "gpt-6.1-sol"))
+        self.assertNotIn(cfg.DEFAULT_MODEL_INVESTIGATOR, self.GPT_6_MODELS)
+        self.assertIn(cfg.DEFAULT_MODEL_SKEPTIC, self.GPT_6_MODELS)
         settings = cfg.load(ENV)
         self.assertEqual((settings.foundry_model_investigator, settings.foundry_model_skeptic), (cfg.DEFAULT_MODEL_INVESTIGATOR, cfg.DEFAULT_MODEL_SKEPTIC))
-        self.assertIsNone(agents.skeptic(settings).reasoning_effort)
-        self.assertEqual(agents.investigator(settings, FakeToolbox().specs).reasoning_effort, "none")
+        self.assertTrue(agents.investigator(settings, FakeToolbox().specs).tools, "the Investigator has the function tools")
+        self.assertEqual(agents.skeptic(settings).tools, ())
 
     def test_a_definition_is_the_same_text_every_time_so_that_the_project_keeps_one_version(self):
         tools = FakeToolbox().specs
@@ -2618,7 +2623,7 @@ class WithTheRealClientOfTheProject(unittest.TestCase):
         self.assertEqual([tool["name"] for tool in first["tools"]], [tool.name for tool in self.real.specs])
         self.assertEqual((second["model"], second["instructions"]), ("model-skeptic", agents.SKEPTIC_INSTRUCTIONS))
         self.assertFalse(second.get("tools"))
-        self.assertEqual(first["reasoning"], {"effort": "none"}, "function tools need the effort none on the route of a model behind the gateway")
+        self.assertNotIn("reasoning", first, "no effort is sent by default: gpt-5.5 reasons with its own, and the fallback is one line in agents.py")
         self.assertNotIn("reasoning", second)
         (started,) = h.of("investigation.started")
         self.assertEqual((started["investigator"], started["skeptic"]), ("meternaut-investigator:1", "meternaut-skeptic:1"))

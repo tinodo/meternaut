@@ -557,7 +557,8 @@ class FirstCases(unittest.TestCase):
         self.assertNotEqual(models["modelDetective"], models["modelSkeptic"], "the Skeptic is another model than the Detective, so that it is more independent")
         deployed = {m["name"] for m in json.loads(MODELS.read_text(encoding="utf-8"))}
         self.assertTrue(set(models.values()) <= deployed, "the Detective and the Skeptic call deployments that the Foundry resource of the agents has")
-        self.assertEqual(set(models.values()), set(ep.AGENT_MODELS.values()), "the same two deployments that the agents use, as they were when a contract named them")
+        self.assertEqual(models, {"modelDetective": "gpt-6-luna", "modelSkeptic": "gpt-6.1-sol"},
+                         "the judges keep the two GPT-6 models that worked through the gateway; the Investigator of the agents is another model, gpt-5.5, because the GPT-6 models refuse function tools on Chat Completions")
 
     def test_the_queue_and_the_one_identity_are_the_ones_the_template_makes(self):
         _, lines = self.build()
@@ -712,7 +713,7 @@ class Foundry(unittest.TestCase):
             self.assertEqual(set(model), {"name", "version", "sku", "capacity"}, "no retirement date and no agentCapacity reaches the template")
 
     def test_the_capacity_of_the_agents_is_the_one_that_the_foundry_file_gets(self):
-        models = [{"name": "gpt-6-luna", "version": "2026-09-22", "sku": "DataZoneStandard", "capacity": 20, "agentCapacity": 70, "retirementDate": "2028-03-11"},
+        models = [{"name": "gpt-5.5", "version": "2026-04-24", "sku": "DataZoneStandard", "capacity": 20, "agentCapacity": 70, "retirementDate": "2027-10-26"},
                   {"name": "gpt-6.1-sol", "version": "2026-09-22", "sku": "DataZoneStandard", "capacity": 30, "agentCapacity": 10, "retirementDate": "2028-03-11"}]
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
@@ -920,7 +921,7 @@ class AiGateway(unittest.TestCase):
                           "cases.parameters.json"})
         self.assertEqual({key: value for key, value in outputs.items() if key.startswith("aigateway_")},
                          {"aigateway_name": outputs["aigateway_name"], "aigateway_subnet_name": "snet-aigw", "aigateway_subnet_prefix": "10.53.0.128/26",
-                          "aigateway_aliases": "gpt-6-luna gpt-6.1-sol", "aigateway_files": "true", "aigateway_connection_name": "aigateway"})
+                          "aigateway_aliases": "gpt-6-luna gpt-6.1-sol gpt-5.5", "aigateway_files": "true", "aigateway_connection_name": "aigateway"})
         self.assertEqual(outputs["agents_via_ai_gateway"], "true", "the agents' route is on in the repository")
         self.assertEqual(files["aigateway-policies.json"], self.policies(), "the policies go to the gateway as they are in the repository")
 
@@ -1054,7 +1055,7 @@ class AiGateway(unittest.TestCase):
         base = json.loads(MODELS.read_text(encoding="utf-8"))
         with tempfile.TemporaryDirectory() as tmp, mock.patch.object(ep, "AGENTS_VIA_AI_GATEWAY", False):
             for names, expected in ((("gpt-6.1-sol", "gpt-6-1-sol"), "no two are the same"), (("gpt-6.1-sol", "ab"), "3 to 63")):
-                models = [{**base[0], "name": names[0]}, {**base[1], "name": names[1]}]
+                models = [{**base[0], "name": names[0]}, {**base[1], "name": names[1]}, base[2]]
                 path = Path(tmp) / "models.json"
                 path.write_text(json.dumps(models), encoding="utf-8")
                 code, out, err, files = run(SETTINGS, "--aigateway-policies", str(self.POLICIES), models=path)
@@ -1139,7 +1140,7 @@ class AiGateway(unittest.TestCase):
         base = json.loads(MODELS.read_text(encoding="utf-8"))
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "models.json"
-            path.write_text(json.dumps([{**base[0]}, {**base[1], "agentCapacity": 80}]), encoding="utf-8")
+            path.write_text(json.dumps([{**base[0]}, {**base[1]}, {**base[2], "agentCapacity": 80}]), encoding="utf-8")
             policies = self.policies()
             policies[0]["count"] = 80000
             policy_path = Path(tmp) / "policies.json"

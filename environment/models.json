@@ -4,7 +4,7 @@
     "version": "2026-09-22",
     "sku": "DataZoneStandard",
     "capacity": 20,
-    "agentCapacity": 50,
+    "agentCapacity": 20,
     "retirementDate": "2028-03-11"
   },
   {
@@ -14,5 +14,13 @@
     "capacity": 20,
     "agentCapacity": 20,
     "retirementDate": "2028-03-11"
+  },
+  {
+    "name": "gpt-5.5",
+    "version": "2026-04-24",
+    "sku": "DataZoneStandard",
+    "capacity": 20,
+    "agentCapacity": 50,
+    "retirementDate": "2027-10-26"
   }
 ]
