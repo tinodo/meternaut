@@ -1,3 +1,4 @@
+import base64
 import datetime as dt
 import importlib.util
 import io
@@ -19,7 +20,7 @@ rc = cc.rc
 
 SITE = "/subscriptions/11111111-2222-3333-4444-555555555555/resourceGroups/rg-example/providers/Microsoft.Web/sites/func-example"
 INSIGHTS = "/subscriptions/11111111-2222-3333-4444-555555555555/resourceGroups/rg-example/providers/Microsoft.Insights/components/appi-example"
-NAMESPACE = "evhns-example"
+ACCOUNT = "stexample"
 SECRET = "SECRET-TOKEN-VALUE"
 DATA_TOKEN = "DATA-PLANE-TOKEN-VALUE"
 APP_ID = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
@@ -127,16 +128,17 @@ class Functions(unittest.TestCase):
                 self.assertEqual(cc.main(["functions", "--site", bad], azure(lambda args: (0, "[]", ""))), 1)
             self.assertIn("--site", err.getvalue())
 
-    def test_the_functions_and_the_hub_are_the_ones_the_app_and_the_template_name(self):
+    def test_the_functions_and_the_queue_are_the_ones_the_app_and_the_template_name(self):
         app = ROOT / "src" / "case-functions" / "function_app.py"
         declared = re.findall(r'function_name\(name="([a-z-]+)"\)', app.read_text(encoding="utf-8"))
         self.assertEqual(sorted(declared), sorted(cc.FUNCTIONS))
-        self.assertEqual(cc.CONTROL_HUB, "cases-control")
-        self.assertIn("var controlHubName = 'cases-control'", (ROOT / "environment" / "cases" / "main.bicep").read_text(encoding="utf-8"))
+        self.assertEqual(cc.CONTROL_QUEUE, "cases-control")
+        self.assertIn("var controlQueueName = 'cases-control'", (ROOT / "environment" / "cases" / "main.bicep").read_text(encoding="utf-8"))
+        self.assertIn("var casesControlQueueName = 'cases-control'", (ROOT / "environment" / "operator" / "main.bicep").read_text(encoding="utf-8"))
 
 
-class SendingTheEvent(unittest.TestCase):
-    def test_the_event_goes_to_the_cases_hub_and_names_one_watch(self):
+class PuttingTheMessage(unittest.TestCase):
+    def test_the_message_goes_to_the_cases_queue_and_names_one_watch(self):
         posts = []
 
         def post(url, headers, body):
@@ -144,14 +146,15 @@ class SendingTheEvent(unittest.TestCase):
             return 201, b""
 
         with mock.patch.dict(os.environ, ENV):
-            rc.send_control_event(azure(lambda args: (0, SECRET + "\n", ""), post), NAMESPACE, "watch", ID, hub=cc.CONTROL_HUB)
+            rc.send_control_message(azure(lambda args: (0, SECRET + "\n", ""), post), ACCOUNT, "watch", ID, queue=cc.CONTROL_QUEUE)
         ((url, body),) = posts
-        self.assertEqual(url, f"https://{NAMESPACE}.servicebus.windows.net/cases-control/messages?timeout=60&api-version=2014-01")
-        self.assertEqual(json.loads(body), {"job": "watch", "requestId": ID})
+        self.assertEqual(url, f"https://{ACCOUNT}.queue.core.windows.net/cases-control/messages?messagettl=3600&timeout=30")
+        text = re.search(rb"<MessageText>([^<]+)</MessageText>", body).group(1)
+        self.assertEqual(json.loads(base64.b64decode(text, validate=True)), {"job": "watch", "requestId": ID})
 
-    def test_the_helper_has_no_default_hub_so_that_a_check_sends_only_to_the_hub_that_it_names(self):
+    def test_the_helper_has_no_default_queue_so_that_a_check_puts_a_message_only_in_the_queue_that_it_names(self):
         with self.assertRaises(TypeError):
-            rc.send_control_event(azure(lambda args: (0, SECRET + "\n", ""), lambda url, headers, body: (201, b"")), NAMESPACE, "watch", ID)
+            rc.send_control_message(azure(lambda args: (0, SECRET + "\n", ""), lambda url, headers, body: (201, b"")), ACCOUNT, "watch", ID)
 
 
 class Parsing(unittest.TestCase):
@@ -221,7 +224,7 @@ class Parsing(unittest.TestCase):
 
 class Run(unittest.TestCase):
     def args(self, *extra):
-        return ["run", "--namespace", NAMESPACE, "--insights", INSIGHTS, *extra]
+        return ["run", "--storage-account", ACCOUNT, "--insights", INSIGHTS, *extra]
 
     def go(self, answers, *extra, post_status=201, env=ENV):
         """Runs the check. `answers` are the answers of the telemetry, one for each query, the last one repeated."""
@@ -443,25 +446,30 @@ class Run(unittest.TestCase):
         code, out, _, _ = self.go([telemetry([*noise, *a_good_run()])])
         self.assertEqual(code, 0)
 
-    def test_a_refused_event_stops_before_anything_is_waited_for(self):
+    def test_a_refused_message_stops_before_anything_is_waited_for(self):
         code, out, err, asked = self.go([telemetry([])], post_status=403)
         self.assertEqual(code, 1)
         self.assertIn("403", err)
         self.assertEqual(asked, [])
 
-    def test_only_a_github_actions_run_may_send_the_event(self):
+    def test_only_a_github_actions_run_may_put_the_message_in_the_queue(self):
         code, out, err, asked = self.go([telemetry([])], env={"GITHUB_ACTIONS": ""})
         self.assertEqual(code, 1)
         self.assertIn("only a GitHub Actions run may do that", err)
         self.assertEqual(asked, [])
 
     def test_bad_names_are_refused_before_anything_is_sent(self):
-        for argv in (["run", "--namespace", "x", "--insights", INSIGHTS], ["run", "--namespace", NAMESPACE, "--insights", "/subscriptions/x"]):
+        for argv in (["run", "--storage-account", "x", "--insights", INSIGHTS], ["run", "--storage-account", ACCOUNT, "--insights", "/subscriptions/x"],
+                     ["run", "--storage-account", "st-example", "--insights", INSIGHTS]):
             sent = []
             with mock.patch.dict(os.environ, ENV), redirect_stderr(io.StringIO()), redirect_stdout(io.StringIO()):
                 code = cc.main(argv, azure(lambda args: (0, "{}", ""), lambda *a: sent.append(a) or (201, b"")))
             self.assertNotEqual(code, 0, argv)
             self.assertEqual(sent, [], argv)
+
+    def test_the_old_argument_is_gone(self):
+        with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            cc.main(["run", "--namespace", "evhns-example", "--insights", INSIGHTS], azure(lambda args: (0, "{}", "")))
 
     def test_the_summary_file_gets_the_same_lines(self):
         with TemporaryDirectory() as tmp:
@@ -511,7 +519,7 @@ class ReadingThroughTheDataPlane(unittest.TestCase):
     def go(self, answers, *extra, via="data-plane", arm=None, component_answer=DEFAULT_COMPONENT):
         """Runs the check. `answers` are what the data plane says to each query, in order, the last one repeated: a document, a (status, body) pair or an exception to raise.
         `arm` is what Resource Manager says to a query through its proxy. `calls` says what was asked, and in which order."""
-        calls = {"order": [], "tokens": [], "components": [], "arm": [], "queries": [], "events": []}
+        calls = {"order": [], "tokens": [], "components": [], "arm": [], "queries": [], "messages": []}
         queue = list(answers)
 
         def runner(args):
@@ -529,9 +537,9 @@ class ReadingThroughTheDataPlane(unittest.TestCase):
             return 0, json.dumps(document), ""
 
         def post(url, headers, body):
-            if "servicebus.windows.net" in url:
-                calls["order"].append("event")
-                calls["events"].append((url, headers, body))
+            if ".queue.core.windows.net" in url:
+                calls["order"].append("message")
+                calls["messages"].append((url, headers, body))
                 return 201, b""
             calls["order"].append("query")
             calls["queries"].append((url, headers, body))
@@ -541,7 +549,7 @@ class ReadingThroughTheDataPlane(unittest.TestCase):
             status, document = answer if isinstance(answer, tuple) else (200, answer)
             return status, document if isinstance(document, bytes) else json.dumps(document).encode("utf-8")
 
-        argv = ["run", "--namespace", NAMESPACE, "--insights", INSIGHTS, *([] if via is None else ["--query-via", via]), *extra]
+        argv = ["run", "--storage-account", ACCOUNT, "--insights", INSIGHTS, *([] if via is None else ["--query-via", via]), *extra]
         out, err = io.StringIO(), io.StringIO()
         with mock.patch.dict(os.environ, ENV, clear=False), mock.patch.object(cc.uuid, "uuid4", return_value=mock.Mock(hex=ID)), \
                 redirect_stdout(out), redirect_stderr(err):
@@ -572,9 +580,9 @@ class ReadingThroughTheDataPlane(unittest.TestCase):
         self.assertIn(ID, document["query"])
         self.assertIn("meternaut_event", document["query"])
         self.assertRegex(document["query"], r"^traces \| where timestamp > ago\(3h\)")
-        self.assertEqual(calls["tokens"], ["https://eventhubs.azure.net", "https://api.applicationinsights.io"])
+        self.assertEqual(calls["tokens"], ["https://storage.azure.com/", "https://api.applicationinsights.io"])
 
-    def test_the_application_id_is_read_once_through_resource_manager_before_the_event_is_sent(self):
+    def test_the_application_id_is_read_once_through_resource_manager_before_the_message_is_put_in_the_queue(self):
         everything = a_good_run()
         early = [e for e in everything if e["type"] != "case.result"]
         code, _, _, calls = self.go([telemetry(early), telemetry(everything)])
@@ -582,7 +590,7 @@ class ReadingThroughTheDataPlane(unittest.TestCase):
         self.assertEqual(len(calls["queries"]), 2, "the loop asked twice")
         (read,) = calls["components"]
         self.assertEqual(read[read.index("--url") + 1], f"https://management.azure.com{INSIGHTS}?api-version=2020-02-02")
-        self.assertEqual(calls["order"][:3], ["component", "event", "query"])
+        self.assertEqual(calls["order"][:3], ["component", "message", "query"])
 
     def test_it_waits_through_a_403_and_names_the_likely_cause_if_it_stays(self):
         refused = (403, {"error": {"code": "InsufficientAccessError", "message": f"no access {DATA_TOKEN}"}})
@@ -604,19 +612,19 @@ class ReadingThroughTheDataPlane(unittest.TestCase):
             self.assertEqual((code, err), (0, ""), via)
             self.assertNotIn("data plane", out)
             self.assertEqual((calls["queries"], calls["components"]), ([], []), via)
-            self.assertEqual(calls["tokens"], ["https://eventhubs.azure.net"], "no token for the data plane")
+            self.assertEqual(calls["tokens"], ["https://storage.azure.com/"], "no token for the data plane")
             (asked,) = calls["arm"]
             self.assertEqual(asked[asked.index("--url") + 1], f"https://management.azure.com{INSIGHTS}/query?api-version=2018-04-20")
 
-    def test_a_component_without_an_application_id_stops_the_run_before_the_event_is_sent(self):
+    def test_a_component_without_an_application_id_stops_the_run_before_the_message_is_put_in_the_queue(self):
         for answer in ({}, {"properties": {"AppId": "not-a-guid"}}, None):
             code, _, err, calls = self.go([telemetry(a_good_run())], component_answer=answer)
             self.assertEqual(code, 1, answer)
             self.assertIn("gives the component no Application ID", err)
-            self.assertEqual((calls["events"], calls["queries"]), ([], []), answer)
+            self.assertEqual((calls["messages"], calls["queries"]), ([], []), answer)
 
     def test_the_option_belongs_to_run_and_takes_one_of_two_values(self):
-        for argv in (["run", "--namespace", NAMESPACE, "--insights", INSIGHTS, "--query-via", "other"], ["functions", "--site", SITE, "--query-via", "arm"]):
+        for argv in (["run", "--storage-account", ACCOUNT, "--insights", INSIGHTS, "--query-via", "other"], ["functions", "--site", SITE, "--query-via", "arm"]):
             sent = []
             with mock.patch.dict(os.environ, ENV), redirect_stderr(io.StringIO()), redirect_stdout(io.StringIO()):
                 with self.assertRaises(SystemExit) as stop:
@@ -640,7 +648,7 @@ class TheCheckerAsksForNoKeyAndCallsNothingElse(unittest.TestCase):
         code = re.sub(r'""".*?"""', "", source, flags=re.S)
         for word in ("listKeys", "listSecrets", "primaryKey", "SharedAccessSignature", "AccountKey", "api-key", "az login"):
             self.assertNotIn(word, code, word)
-        self.assertNotRegex(code, r"https://[a-z0-9.-]+\.(azure-api|documents\.azure|blob\.core\.windows)\.", "it reads only the telemetry and sends one event")
+        self.assertNotRegex(code, r"https://[a-z0-9.-]+\.(azure-api|documents\.azure|blob\.core\.windows)\.", "it reads only the telemetry and puts one message in one queue")
         self.assertNotRegex(code, r"\.token\(", "it asks for no token of its own: the helpers of tools/check-helpers.py do, for the three resources that its own test pins")
         self.assertNotIn("api.applicationinsights.io", code, "the host of the data plane is in the helpers, and in one place")
 

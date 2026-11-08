@@ -32,12 +32,10 @@ BASIC_PLAN, FLEX_PLAN = f"{BASE}/Microsoft.Web/serverfarms/{BASIC_NAME}", f"{BAS
 ENDPOINT = f"{BASE}/Microsoft.Network/privateEndpoints/pe-{APP}"
 STORAGE = f"{BASE}/Microsoft.Storage/storageAccounts/stmeternaut0123abcd"
 INSIGHTS = f"{BASE}/Microsoft.Insights/components/appi-meternaut"
-HUB = f"{BASE}/Microsoft.EventHub/namespaces/evhns-meternaut-0123abcd/eventhubs/cases-control"
-CONTAINERS = [f"{STORAGE}/blobServices/default/containers/{name}" for name in ("azure-webjobs-hosts", "azure-webjobs-secrets", "azure-webjobs-eventhub")]
-RECEIVER, BLOB, QUEUE, TABLE, METRICS = ("a638d3c7-ab3a-418d-83e6-5f17a39d4fde", "b7e6dc6d-f1e8-4753-8033-0f276bb0955b", "974c5e8b-45b9-4653-ba55-5f855dd0fb88",
-                                         "0a9a7e1f-b9d0-4cc4-a60d-0319b160aaa3", "3913510d-42f4-4e42-8a64-420c390055eb")
+CONTAINERS = [f"{STORAGE}/blobServices/default/containers/{name}" for name in ("azure-webjobs-hosts", "azure-webjobs-secrets")]
+BLOB, QUEUE, TABLE, METRICS = ("b7e6dc6d-f1e8-4753-8033-0f276bb0955b", "974c5e8b-45b9-4653-ba55-5f855dd0fb88", "0a9a7e1f-b9d0-4cc4-a60d-0319b160aaa3", "3913510d-42f4-4e42-8a64-420c390055eb")
 # What the template writes for the app: the scope and the role of each assignment, as the preview of the deployment lists them (the model names each with a fixed id).
-THE_TEMPLATES = [(HUB, RECEIVER), *[(container, BLOB) for container in CONTAINERS], (STORAGE, QUEUE), (STORAGE, TABLE), (INSIGHTS, METRICS)]
+THE_TEMPLATES = [*[(container, BLOB) for container in CONTAINERS], (STORAGE, QUEUE), (STORAGE, TABLE), (INSIGHTS, METRICS)]
 THE_IDS = [f"{scope}/providers/Microsoft.Authorization/roleAssignments/00000000-0000-4000-8000-{number:012d}" for number, (scope, _) in enumerate(THE_TEMPLATES, 1)]
 OLD, NEW = "aaaaaaaa-0000-4000-8000-000000000001", "bbbbbbbb-0000-4000-8000-000000000002"
 ENVIRONMENT = {"GITHUB_ACTIONS": "true", "ENV_SUBSCRIPTION_ID": SUB, "ENV_RESOURCE_GROUP": GROUP}
@@ -181,7 +179,7 @@ class TheMove(unittest.TestCase):
         self.assertEqual(azure.deleted, [SITE, BASIC_PLAN, ENDPOINT, *THE_IDS])
         self.assertIn(cm.HOST_NAME_SECONDS, clock.sleeps, "the host name is let go a little after the app")
         self.assertIn("deleted (it ran on the plan plan-meternaut-cases-basic, a Basic plan, and CASES_APP_PLAN asks for Flex)", "\n".join(lines))
-        self.assertIn("the role assignments that the deploy will write: 7 listed, 0 were not there, 0 are the app's own and were kept, 7 were deleted", said(lines))
+        self.assertIn("the role assignments that the deploy will write: 5 listed, 0 were not there, 0 are the app's own and were kept, 5 were deleted", said(lines))
         self.assertEqual(lines[-1], "Clear.")
         self.assertIn("**a new system-assigned identity**", summary)
         self.assertIn("Run `foundry` after this run", summary)
@@ -248,12 +246,13 @@ class TheMove(unittest.TestCase):
         self.assertEqual(azure.deleted, THE_IDS)
         text = "\n".join(lines)
         self.assertIn(f"the cases app {APP}: was not there", text)
-        self.assertIn(f"(Azure Event Hubs Data Receiver on eventhubs/cases-control): deleted (it was for the identity {OLD}; the app's is not there)", text)
         self.assertIn("(Storage Blob Data Owner on containers/azure-webjobs-hosts): deleted", text)
+        self.assertIn("(Storage Blob Data Owner on containers/azure-webjobs-secrets): deleted", text)
         self.assertIn("(Storage Queue Data Contributor on storageAccounts/stmeternaut0123abcd): deleted", text)
         self.assertIn("(Storage Table Data Contributor on storageAccounts/stmeternaut0123abcd): deleted", text)
         self.assertIn("(Monitoring Metrics Publisher on components/appi-meternaut): deleted", text)
-        self.assertIn("7 were deleted", text)
+        self.assertIn("5 were deleted", text)
+        self.assertNotIn("Event Hubs", text, "the template gives the app no role on a hub any more")
         self.assertIn("**a new system-assigned identity**", summary)
 
     def test_a_new_app_keeps_its_own_assignments_and_loses_the_ones_of_an_identity_that_is_gone(self):
@@ -261,14 +260,14 @@ class TheMove(unittest.TestCase):
         azure.plan(FLEX_PLAN, "FlexConsumption")
         azure.site(FLEX_PLAN, NEW)
         azure.endpoint("Approved")
-        for number in (0, 1, 2, 3):
+        for number in (0, 1):
             azure.assignment(number, NEW.upper())
-        for number in (4, 5, 6):
+        for number in (2, 3, 4):
             azure.assignment(number, OLD)
         code, lines, _, _ = run(azure)
-        self.assertEqual((code, azure.deleted), (0, THE_IDS[4:]), lines)
-        self.assertIn("7 listed, 0 were not there, 4 are the app's own and were kept, 3 were deleted", said(lines))
-        self.assertEqual(sum(1 for line in lines if ": kept (it is the app's own)" in line), 4)
+        self.assertEqual((code, azure.deleted), (0, THE_IDS[2:]), lines)
+        self.assertIn("5 listed, 0 were not there, 2 are the app's own and were kept, 3 were deleted", said(lines))
+        self.assertEqual(sum(1 for line in lines if ": kept (it is the app's own)" in line), 2)
 
     def test_a_leftover_plan_of_the_other_kind_is_deleted_when_the_app_is_not_on_it_and_a_wanted_plan_is_not_touched(self):
         azure = FakeAzure()
@@ -467,14 +466,14 @@ class ThePreview(unittest.TestCase):
         azure.plan(FLEX_PLAN, "FlexConsumption")
         code, lines, _, _ = run(azure)
         self.assertEqual(code, 0, lines)
-        self.assertEqual(sorted(azure.deleted), sorted(THE_IDS), "the seven of the template, once each, and nothing of another group, of the subscription or of a resource that is not an assignment")
+        self.assertEqual(sorted(azure.deleted), sorted(THE_IDS), "the five of the template, once each, and nothing of another group, of the subscription or of a resource that is not an assignment")
         self.assertTrue(azure.has(other_group) and azure.has(other_subscription) and azure.has(a_site))
 
     def test_an_assignment_that_is_not_there_yet_is_counted_and_not_read_again(self):
         azure = FakeAzure()
         code, lines, summary, _ = run(azure)
         self.assertEqual(code, 0, lines)
-        self.assertIn("the role assignments that the deploy will write: 7 listed, 7 were not there, 0 are the app's own and were kept, 0 were deleted", said(lines))
+        self.assertIn("the role assignments that the deploy will write: 5 listed, 5 were not there, 0 are the app's own and were kept, 0 were deleted", said(lines))
         self.assertEqual((azure.deleted, summary), ([], ""), "a new estate has nothing in the way and nothing to tell")
 
 

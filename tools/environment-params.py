@@ -16,8 +16,7 @@ ENV_BUDGET_START is the first day of the month in which the budget was first mad
 existing budget (a budget keeps its start date) or, for a new budget, takes from the current month.
 Nothing here reads, makes or names anything of the owner's API Management instance, of the usage recording or of the first model account: they were removed on 2026-11-07 (the usage recording
 copied the calls of that instance, and nothing called the model account any more), and the action retire-old (tools/retire-old.py) deletes what is left of them in the project's resource group.
-The identity that the workflow signs in as has no setting here: no template gives it a role on an event hub (the Operator sends the control
-events), and the workflow reads its own object id from its token only to find and retire the assignment that it held on the control hub of the cases.
+The identity that the workflow signs in as has no setting here: no template gives it a role on the control queue (the Operator puts the control message there, with a role of its own on that one queue).
 CASES_SYSTEM_PRINCIPAL_ID is the object id of the cases app's system-assigned identity, which the workflow reads from the app: the Foundry resource of
 the agents gives it the Foundry User role on its project. The app has no such identity before the action `cases` has run once; without it the Foundry
 file holds a placeholder, says cases_system_principal_known=false, and the workflow refuses to deploy the Foundry resource. Like the other object ids it
@@ -53,10 +52,10 @@ Basic) and function_subnet_name (snet-func). The builder refuses any other value
 It writes these ARM parameter files into --out-dir:
 
     environment.parameters.json       for environment/main.bicep (the action model-side: the virtual network with its subnets, and the budget)
-    base.parameters.json              for environment/base/main.bicep (the action base: the Log Analytics workspace, Application Insights, the storage account and the Event Hubs namespace)
+    base.parameters.json              for environment/base/main.bicep (the action base: the Log Analytics workspace, Application Insights and the storage account)
     foundry.parameters.json           for environment/foundry/main.bicep (the Foundry resource of the agents: project, models, guardrail, private endpoint)
-    operator.parameters.json          for environment/operator/main.bicep (the Operator: its identity, the subnet of its container groups, its two roles; it names the Event Hubs namespace
-                                      whose control hub it reads, which the first cases make in the namespace of the base)
+    operator.parameters.json          for environment/operator/main.bicep (the Operator: its identity, the subnet of its container groups, its two roles; it names the storage account
+                                      whose control queue it reads, which the first cases make in the storage account of the base)
     aigateway-subnet.parameters.json  for environment/aigateway/subnet.bicep (the AI Gateway's subnet and its network security group: the action aigateway deploys it first, and waits for the
                                       landing zone's route table on the subnet before it deploys the gateway),
     aigateway.parameters.json         for environment/aigateway/main.bicep (the AI Gateway: its models and aliases, and its roles; the subnet has to be there already), and
@@ -75,7 +74,7 @@ It writes these ARM parameter files into --out-dir:
                                       (casesAppPublicNetworkAccess). Closing an app is one value and a commit, and
                                       the property is always written: an app whose value is not set has its public access switched off by the first private endpoint (docs/proposals/07-private-by-default.md).
 
-                                      Every value is checked before anything is deployed. The names of the base's storage account and Event Hubs namespace, which are host names too, and of the
+                                      Every value is checked before anything is deployed. The name of the base's storage account, which is a host name too, and of the
 cases app, are worked out here, from the subscription and the resource group, so they are the same on every run; so is the name of the
 Foundry resource of the agents (aif-meternaut-agents-<digest>, also a host name). The
 function subnet (snet-func, for a Flex Consumption app) is the first /27 of the virtual network that does not overlap the private endpoint subnet, and the
@@ -215,12 +214,9 @@ def digest(subscription: str, group: str) -> str:
 
 
 def base_names(subscription: str, group: str) -> dict[str, str]:
-    """The names of the base's services that are host names, so unique worldwide, each inside its own length limit."""
+    """The name of the base's storage account, which is a host name, so unique worldwide, inside its length limit."""
     token = digest(subscription, group)
-    return {
-        "storage_account_name": f"stmeternautfn{token}",
-        "event_hub_namespace": f"evhns-meternaut-{token}",
-    }
+    return {"storage_account_name": f"stmeternautfn{token}"}
 
 
 def cases_names(subscription: str, group: str) -> dict[str, str]:
@@ -442,13 +438,10 @@ def agent_models(models: list[dict]) -> dict[str, str]:
 
 
 def base_endpoints(names: dict[str, str]) -> list[tuple[str, str]]:
-    """The private endpoints of the base and the central private DNS zone that the landing zone registers each in: the three of the storage account and the Event Hubs namespace's.
-    The workflow waits for every one of them, so that an app that starts after the base is deployed finds the names of its storage and its namespace private."""
+    """The private endpoints of the base and the central private DNS zone that the landing zone registers each in: the three of the storage account.
+    The workflow waits for every one of them, so that an app that starts after the base is deployed finds the names of its storage private."""
     storage = names["storage_account_name"]
-    return [
-        *[(f"pe-{storage}-{service}", f"privatelink.{service}.core.windows.net") for service in ("blob", "queue", "table")],
-        (f"pe-{names['event_hub_namespace']}", "privatelink.servicebus.windows.net"),
-    ]
+    return [(f"pe-{storage}-{service}", f"privatelink.{service}.core.windows.net") for service in ("blob", "queue", "table")]
 
 
 def cases_endpoints(names: dict[str, str]) -> list[tuple[str, str]]:
@@ -629,7 +622,7 @@ def build(env, models: list[dict], preview: bool = False, aigateway_policies: li
     if not vnet.subnet_of(PRIVATE_SPACE) or not 16 <= vnet.prefixlen <= 28:
         raise Problem("ENV_VNET_PREFIX is inside 10.0.0.0/8 and between /16 and /28")
     if not subnet.subnet_of(vnet) or subnet.prefixlen > 28:
-        raise Problem("ENV_PE_SUBNET_PREFIX lies inside the virtual network and is at least a /28: the base has four private endpoints (the storage account's three and the namespace's), the Foundry resource one and the cases app one, and Azure keeps five addresses of every subnet")
+        raise Problem("ENV_PE_SUBNET_PREFIX lies inside the virtual network and is at least a /28: the base has three private endpoints (the storage account's), the Foundry resource one and the cases app one, and Azure keeps five addresses of every subnet")
     if CASES_APP_PUBLIC_NETWORK_ACCESS not in PUBLIC_NETWORK_ACCESS:
         raise Problem("CASES_APP_PUBLIC_NETWORK_ACCESS (in tools/environment-params.py) is Enabled or Disabled, so that the template always writes the property")
     if not isinstance(AGENTS_VIA_AI_GATEWAY, bool):
@@ -693,7 +686,6 @@ def build(env, models: list[dict], preview: bool = False, aigateway_policies: li
         "location": location,
         "owner": owner,
         "storageAccountName": names["storage_account_name"],
-        "eventHubNamespaceName": names["event_hub_namespace"],
     }
     outputs = {
         "vnet_name": "vnet-meternaut",
@@ -707,7 +699,7 @@ def build(env, models: list[dict], preview: bool = False, aigateway_policies: li
         "base_endpoints": ",".join(f"{endpoint_name}:{zone}" for endpoint_name, zone in base_endpoints(names)),
         "cases_endpoints": ",".join(f"{endpoint_name}:{zone}" for endpoint_name, zone in cases_endpoints(cases_names(subscription, group))),
         "appinsights_name": "appi-meternaut",
-        "cases_hub_name": "cases-control",
+        "cases_queue_name": "cases-control",
         "console_host": console_host or f"{cases_names(subscription, group)['cases_function_app_name']}{APP_OWN_DOMAIN}",
         "console_host_set": "true" if console_host else "false",
         "door_in_operator": "true" if door_in_operator else "false",
@@ -747,7 +739,7 @@ def build(env, models: list[dict], preview: bool = False, aigateway_policies: li
             "owner": owner,
             "opsSubnetPrefix": str(ops),
             "opsSubnetExists": ops_subnet_exists(env),
-            "eventHubNamespaceName": names["event_hub_namespace"],
+            "storageAccountName": names["storage_account_name"],
         }),
         # The first cases need nothing of the owner's API Management instance: the file is written in every build, with the Foundry facts of this one. Every model call goes through the AI Gateway, so
         # the file always names its host (the placeholder in a preview and a what-if, where the gateway may not be in Azure yet: the action cases is refused without the real one).
@@ -755,7 +747,6 @@ def build(env, models: list[dict], preview: bool = False, aigateway_policies: li
             "location": location,
             "owner": owner,
             "storageAccountName": names["storage_account_name"],
-            "eventHubNamespaceName": names["event_hub_namespace"],
             "functionAppName": outputs["cases_function_app_name"],
             "webSubnetPrefix": str(web),
             "webSubnetExists": web_subnet_exists(env),

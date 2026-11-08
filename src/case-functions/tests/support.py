@@ -41,7 +41,7 @@ ENV = {
     "MODEL_SKEPTIC": "gpt-6.1-sol",
     "AIGATEWAY_HOST": GATEWAY_HOST,
     "MAX_CASES_PER_RUN": "3",
-    "EVENTHUB_CASES_CONTROL_NAME": "cases-control",
+    "CASES_CONTROL_QUEUE_NAME": "cases-control",
     "FOUNDRY_PROJECT_ENDPOINT": FOUNDRY_ENDPOINT,
     "INVESTIGATE": "off",
     "IDENTITY_ENDPOINT": "http://127.0.0.1:8081/msi/token",

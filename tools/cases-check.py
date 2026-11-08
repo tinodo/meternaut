@@ -3,22 +3,22 @@
 
     python tools/cases-check.py whoami
     python tools/cases-check.py functions --site <resource id of the cases app> [--minutes 15]
-    python tools/cases-check.py run --namespace <Event Hubs namespace> --insights <resource id of the cases app's Application Insights>
+    python tools/cases-check.py run --storage-account <storage account of the base> --insights <resource id of the cases app's Application Insights>
                                     [--minutes 30] [--summary <file>] [--query-via arm|data-plane]
 
 It uses the helpers of tools/check-helpers.py, which it loads from its own folder: the same Azure CLI, which the workflow has signed in, and tokens that are used and never printed.
 
 whoami     Read only. Prints the object id of the identity that the CLI is signed in as, read from the claims of its own token (the workflow's identity may not read the directory).
-           The Hub workflow uses it to find the deploy identity's own role assignment on the control hub cases-control, which the action cases retires.
+           The Hub workflow uses it to read the condition of the deploy identity's right to assign roles, before the action aigateway makes the gateway.
 functions  Read only. Waits until the cases app lists its four functions (the app has to be started and has to have read its package) and
            prints their names.
-run        Sends one event to the control hub of the cases (cases-control) with the identity that the CLI is signed in as: in the Hub workflow that is the
-           Operator's identity, which holds Azure Event Hubs Data Sender on that hub, and the tool runs inside the network, because the namespace takes no
+run        Puts one message in the control queue of the cases (cases-control, in the storage account of the base) with the identity that the CLI is signed in as: in the Hub workflow that is the
+           Operator's identity, which holds Storage Queue Data Contributor on that one queue, and the tool runs inside the network, because the storage account takes no
            public traffic. The app runs one Watch now,
            through the same code as its daily timer, and writes the History of that run to its telemetry, one line per step (docs/proposals/02-first-cases.md
            has the lines). This waits for the end of the run and for the lines that the end counts, prints what the run found and what each
            case came to, and fails when the run failed, when a case ended in an error, when the investigation was meant to run and did not, or when no end arrived. Only a GitHub Actions run
-           may send the event (AGENTS.md rule 18). Nothing in the estate is changed by the run: it only reads. (The investigation makes its own agents and
+           may put the message in the queue (AGENTS.md rule 18). Nothing in the estate is changed by the run: it only reads. (The investigation makes its own agents and
            conversations in its own Foundry project: docs/proposals/06-foundry-agents.md.)
 
 --query-via (run) How the History is read from the telemetry: arm (the default, through Azure Resource Manager, which needs a component that accepts queries
@@ -43,7 +43,7 @@ Problem = rc.Problem
 Azure = rc.Azure
 
 FUNCTIONS = ("watch-daily", "cases-control", "runner-tick", "console")
-CONTROL_HUB = "cases-control"
+CONTROL_QUEUE = "cases-control"
 EVENT_PREFIX = "meternaut_event "
 ENDS = ("run.finished", "run.failed")
 SECTION_TITLE = "### The Watch, started once, and what it said"
@@ -287,8 +287,8 @@ def command_run(args, azure: Azure) -> int:
     insights = rc.check_insights(args.insights)
     rc.choose_query_path(azure, args.query_via, insights)
     request_id = uuid.uuid4().hex
-    rc.send_control_event(azure, args.namespace, "watch", request_id, hub=CONTROL_HUB)
-    print(f"Sent the control event for one Watch (request {request_id}); waiting for the History of the run in the telemetry.", flush=True)
+    rc.send_control_message(azure, args.storage_account, "watch", request_id, queue=CONTROL_QUEUE)
+    print(f"Put the control message for one Watch in the queue (request {request_id}); waiting for the History of the run in the telemetry.", flush=True)
     try:
         events = wait_for_run(azure, insights, request_id, args.minutes)
         lines = summary_lines(request_id, events)
@@ -310,8 +310,8 @@ def main(argv=None, azure: Azure | None = None) -> int:
     functions = commands.add_parser("functions", help="wait for the cases app's four functions and list them")
     functions.add_argument("--site", required=True)
     functions.add_argument("--minutes", type=float, default=15)
-    run = commands.add_parser("run", help="send one control event and read the History of the run from the telemetry")
-    run.add_argument("--namespace", required=True)
+    run = commands.add_parser("run", help="put one control message in the queue and read the History of the run from the telemetry")
+    run.add_argument("--storage-account", required=True)
     run.add_argument("--insights", required=True)
     run.add_argument("--minutes", type=float, default=30)
     run.add_argument("--summary")

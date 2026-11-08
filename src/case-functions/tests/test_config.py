@@ -85,7 +85,7 @@ class ClientId(unittest.TestCase):
 
     def test_the_client_id_is_not_a_required_setting_and_the_other_five_are(self):
         self.assertNotIn("AZURE_CLIENT_ID", config.REQUIRED)
-        self.assertEqual(config.REQUIRED, ("SCOPE_SUBSCRIPTIONS", "MODEL_DETECTIVE", "MODEL_SKEPTIC", "AIGATEWAY_HOST", "MAX_CASES_PER_RUN", "EVENTHUB_CASES_CONTROL_NAME"))
+        self.assertEqual(config.REQUIRED, ("SCOPE_SUBSCRIPTIONS", "MODEL_DETECTIVE", "MODEL_SKEPTIC", "AIGATEWAY_HOST", "MAX_CASES_PER_RUN", "CASES_CONTROL_QUEUE_NAME"))
         self.assertEqual(config.AZURE_CLIENT_ID, "AZURE_CLIENT_ID", "the name stays: the app reads it when it is set")
 
     def test_without_a_client_id_the_app_runs_as_its_system_assigned_identity(self):
@@ -296,7 +296,7 @@ class ScopeSwitch(unittest.TestCase):
             self.assertIn("SCOPE_SUBSCRIPTIONS is a comma separated list of subscription ids", str(raised.exception))
 
     def test_the_other_settings_are_still_required_with_the_switch_on(self):
-        for name in ("MODEL_DETECTIVE", "MODEL_SKEPTIC", "AIGATEWAY_HOST", "MAX_CASES_PER_RUN", "EVENTHUB_CASES_CONTROL_NAME"):
+        for name in ("MODEL_DETECTIVE", "MODEL_SKEPTIC", "AIGATEWAY_HOST", "MAX_CASES_PER_RUN", "CASES_CONTROL_QUEUE_NAME"):
             env = {**self.WITHOUT_LIST, "SCOPE_ALL_SUBSCRIPTIONS": "true"}
             del env[name]
             with self.assertRaises(config.ConfigError, msg=name) as raised:

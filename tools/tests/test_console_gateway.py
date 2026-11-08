@@ -767,7 +767,7 @@ class TheFrontDoorOfAClosedAppIsKnockedAtInsideTheNetwork(unittest.TestCase):
 
     def test_the_steps_sit_in_this_order_after_the_runners_door_and_before_the_steps_of_the_operator_and_the_summary(self):
         names = re.findall(r"(?m)^      - name: (.+)$", WORKFLOW)
-        order = ["Knock at the console's front door", self.TITLE, self.CLEANUP, "The control hub that the Operator is given a role on is there", "What was done"]
+        order = ["Knock at the console's front door", self.TITLE, self.CLEANUP, "The control queue that the Operator is given a role on is there", "What was done"]
         positions = [names.index(name) for name in order]
         self.assertEqual(positions, sorted(positions))
         self.assertEqual(positions[1], positions[0] + 1)
@@ -776,7 +776,7 @@ class TheFrontDoorOfAClosedAppIsKnockedAtInsideTheNetwork(unittest.TestCase):
             self.assertEqual(names.count(name), 1, name)
         self.assertLess(names.index("Sign in to Azure a fourth time for the check of the cases, because the third sign-in's credential lasts five minutes too"), names.index(self.TITLE),
                         "a fresh credential: the check follows the fourth sign-in of the action cases by a few quick steps, and the first sign-in of the action loop-check by a few as well")
-        self.assertEqual(WORKFLOW.count("uses: azure/login@"), 8, "no sign-in was added for the front door: the runner makes the container group with the credential of the sign-in before it")
+        self.assertEqual(WORKFLOW.count("uses: azure/login@"), 9, "no sign-in was added for the front door: the runner makes the container group with the credential of the sign-in before it")
 
     def test_the_names_in_the_new_steps_say_web_page_and_the_old_word_is_in_no_new_text(self):
         for name in (self.TITLE, self.CLEANUP):

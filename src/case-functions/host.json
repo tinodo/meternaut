@@ -20,6 +20,11 @@
   "extensions": {
     "http": {
       "routePrefix": ""
+    },
+    "queues": {
+      "batchSize": 1,
+      "newBatchThreshold": 0,
+      "maxDequeueCount": 5
     }
   }
 }

@@ -582,7 +582,7 @@ class TheStepsAreWrittenAsTheRulesSay(unittest.TestCase):
 
     def test_the_condition_is_looked_at_by_the_object_id_that_the_run_read_from_its_own_token(self):
         self.assertIn("DEPLOYER_ID: ${{ steps.me.outputs.oid }}", step(READY))
-        self.assertEqual(WORKFLOW.count("steps.me.outputs.oid"), 2, "the step that retires an old right, and the look at the condition of the right to assign roles")
+        self.assertEqual(WORKFLOW.count("steps.me.outputs.oid"), 1, "only the look at the condition of the right to assign roles: the step that retired the old right to send to the control hub is gone with the hub")
         code = code_of(READY)
         for word in (f"foundry_user={FOUNDRY_USER}", f"models_user={MODELS_USER}", f"administrator={ADMINISTRATOR}", "--fill-principal-name false --fill-role-definition-name false"):
             self.assertIn(word, code, word)

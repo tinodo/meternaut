@@ -45,14 +45,18 @@ class FunctionAppSourceTests(unittest.TestCase):
         self.assertNotIn("AuthLevel.ADMIN", self.source)
         self.assertEqual(self.source.count("@app.route("), 1)
 
-    def test_the_control_function_reads_one_event_from_the_hub_that_the_template_makes_through_the_identity_connection(self):
+    def test_the_control_function_reads_one_message_from_the_queue_that_the_template_makes_through_the_host_storage_connection(self):
         template = (REPO_ROOT / "environment" / "cases" / "main.bicep").read_text(encoding="utf-8")
-        self.assertIn('event_hub_name="%EVENTHUB_CASES_CONTROL_NAME%"', self.source)
-        self.assertIn('consumer_group="casesControl"', self.source)
-        self.assertIn('cardinality="one"', self.source)
-        self.assertIn('EVENT_HUB_CONNECTION = "EventHubConnection"', self.source)
-        self.assertIn("name: 'casesControl'", template)
-        self.assertIn("EventHubConnection__fullyQualifiedNamespace", template)
+        self.assertIn('queue_name="%CASES_CONTROL_QUEUE_NAME%"', self.source)
+        self.assertIn('HOST_STORAGE_CONNECTION = "AzureWebJobsStorage"', self.source)
+        self.assertIn("connection=HOST_STORAGE_CONNECTION", self.source)
+        self.assertIn("func.QueueMessage", self.source)
+        self.assertNotIn("event_hub", self.source.lower())
+        self.assertIn("Microsoft.Storage/storageAccounts/queueServices/queues@", template)
+        self.assertIn("{ name: 'CASES_CONTROL_QUEUE_NAME', value: controlQueueName }", template)
+        for setting in ("AzureWebJobsStorage__credential", "AzureWebJobsStorage__queueServiceUri"):
+            self.assertIn(f"{{ name: '{setting}'", template)
+        self.assertNotIn("{ name: 'AzureWebJobsStorage',", template, "a connection string is a key: the host storage connection is the identity-based settings alone")
 
     def test_only_azure_functions_and_the_cases_package_are_imported(self):
         modules = set()
@@ -107,13 +111,11 @@ class FunctionAppIndexingTests(unittest.TestCase):
         self.assertEqual((binding["type"], str(binding["authLevel"]).lower(), binding["route"]), ("httpTrigger", "anonymous", "{*route}"))
         self.assertEqual(sorted(str(method).upper() for method in binding["methods"]), ["GET", "POST"])
 
-    def test_the_control_function_reads_one_event_from_its_hub_and_consumer_group_through_the_identity_connection(self):
+    def test_the_control_function_reads_one_message_from_its_queue_through_the_host_storage_connection(self):
         binding = self.binding(CONTROL)
-        self.assertEqual(binding["type"], "eventHubTrigger")
-        self.assertEqual(binding["eventHubName"], "%EVENTHUB_CASES_CONTROL_NAME%")
-        self.assertEqual(binding["consumerGroup"], "casesControl")
-        self.assertEqual(binding["cardinality"], "one")
-        self.assertEqual(binding["connection"], "EventHubConnection")
+        self.assertEqual(binding["type"], "queueTrigger")
+        self.assertEqual(binding["queueName"], "%CASES_CONTROL_QUEUE_NAME%")
+        self.assertEqual(binding["connection"], "AzureWebJobsStorage")
 
     def test_the_parameter_of_a_trigger_is_named_in_the_binding(self):
         for name in self.functions:

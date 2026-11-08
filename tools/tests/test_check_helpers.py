@@ -1,4 +1,4 @@
-"""tools/check-helpers.py: what the check tool of the cases (tools/cases-check.py) shares with nothing else: the object id of the signed-in identity, the one event to a control hub,
+"""tools/check-helpers.py: what the check tool of the cases (tools/cases-check.py) shares with nothing else: the object id of the signed-in identity, the one message to the control queue,
 the telemetry read through Resource Manager or through the data plane of Application Insights, and the plain words about what a service answered.
 The commands of the tool itself (the functions, the run) are tested in test_cases_check.py."""
 import base64
@@ -14,6 +14,7 @@ import urllib.request
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest import mock
+from xml.etree import ElementTree
 
 ROOT = Path(__file__).resolve().parents[2]
 cases_spec = importlib.util.spec_from_file_location("cases_check_of_the_helpers_tests", ROOT / "tools" / "cases-check.py")
@@ -24,7 +25,7 @@ rc = cc.rc
 DEFAULT = object()
 SITE = "/subscriptions/11111111-2222-3333-4444-555555555555/resourceGroups/rg-example/providers/Microsoft.Web/sites/func-example"
 INSIGHTS = "/subscriptions/11111111-2222-3333-4444-555555555555/resourceGroups/rg-example/providers/Microsoft.Insights/components/appi-example"
-NAMESPACE = "evhns-example"
+ACCOUNT = "stexample"
 OID = "99999999-8888-7777-6666-555555555555"
 SECRET = "SECRET-TOKEN-VALUE"
 DATA_TOKEN = "DATA-PLANE-TOKEN-VALUE"
@@ -103,12 +104,13 @@ class TheNamesThatAreChecked(unittest.TestCase):
             with self.assertRaises(rc.Problem, msg=bad):
                 rc.check_insights(bad)
 
-    def test_a_namespace_may_be_given_with_its_host_suffix_and_a_bad_one_is_refused(self):
-        self.assertEqual(rc.namespace_host(NAMESPACE), f"{NAMESPACE}.servicebus.windows.net")
-        self.assertEqual(rc.namespace_host(f"{NAMESPACE}.servicebus.windows.net"), f"{NAMESPACE}.servicebus.windows.net")
-        for bad in ("", "x", "a b", "evh/ns", "evh.other.net"):
-            with self.assertRaises(rc.Problem):
-                rc.namespace_host(bad)
+    def test_a_storage_account_may_be_given_with_its_queue_host_and_a_bad_one_is_refused(self):
+        self.assertEqual(rc.queue_host(ACCOUNT), f"{ACCOUNT}.queue.core.windows.net")
+        self.assertEqual(rc.queue_host(f"{ACCOUNT}.queue.core.windows.net"), f"{ACCOUNT}.queue.core.windows.net")
+        self.assertEqual(rc.queue_host(f"  {ACCOUNT.upper()} "), f"{ACCOUNT}.queue.core.windows.net", "a host name has no case")
+        for bad in ("", "x", "ab", "a" * 25, "a b", "st-example", "st_example", "st/example", "st.other.net", f"{ACCOUNT}.blob.core.windows.net", f"{ACCOUNT}.servicebus.windows.net"):
+            with self.assertRaises(rc.Problem, msg=bad):
+                rc.queue_host(bad)
 
     def test_the_functions_of_an_app_are_listed_by_name(self):
         answer = {"value": [{"name": "func-example/console", "properties": {"name": "console"}}, {"name": "func-example/runner-tick"}, "x", {"properties": {}}]}
@@ -122,8 +124,8 @@ class TheNamesThatAreChecked(unittest.TestCase):
         self.assertEqual(calls[0][:6], ["rest", "--method", "get", "--url", f"https://management.azure.com{SITE}/functions?api-version=2024-04-01", "--only-show-errors"])
 
 
-class SendingTheEvent(unittest.TestCase):
-    def sent(self, **changes):
+class PuttingTheControlMessage(unittest.TestCase):
+    def put(self, **changes):
         posts = []
 
         def runner(args):
@@ -131,41 +133,122 @@ class SendingTheEvent(unittest.TestCase):
 
         def post(url, headers, body):
             posts.append((url, headers, body))
+            if "raises" in changes:
+                raise changes["raises"]
             return changes.get("status", 201), changes.get("answer", b"")
 
         with mock.patch.dict(os.environ, ENV):
-            rc.send_control_event(azure(runner, post), changes.get("namespace", NAMESPACE), "watch", "a" * 32, hub=changes.get("hub", "a-control-hub"))
+            rc.send_control_message(azure(runner, post), changes.get("account", ACCOUNT), "watch", "a" * 32, queue=changes.get("queue", "a-control-queue"))
         return posts
 
-    def test_one_event_goes_to_the_named_hub_with_the_workflows_token_and_the_job_and_the_request(self):
-        ((url, headers, body),) = self.sent()
-        self.assertEqual(url, f"https://{NAMESPACE}.servicebus.windows.net/a-control-hub/messages?timeout=60&api-version=2014-01")
-        self.assertEqual(headers["Authorization"], f"Bearer {SECRET}")
-        self.assertEqual(headers["Content-Type"], "application/atom+xml;type=entry;charset=utf-8", "the type that the Event Hubs REST send documents; another one is answered with 415")
-        self.assertEqual(json.loads(body), {"job": "watch", "requestId": "a" * 32})
+    def test_one_message_goes_to_the_named_queue_with_the_operators_token_and_the_documented_headers(self):
+        ((url, headers, body),) = self.put()
+        self.assertEqual(url, f"https://{ACCOUNT}.queue.core.windows.net/a-control-queue/messages?messagettl=3600&timeout=30")
+        self.assertEqual(headers, {"Authorization": f"Bearer {SECRET}", "x-ms-version": "2026-04-06", "Content-Type": "application/xml"},
+                         "Put Message with a Microsoft Entra token: the Bearer scheme, a service version of 2017-11-09 or later, and an XML body")
+        self.assertEqual(rc.QUEUE_SERVICE_VERSION, "2026-04-06")
 
-    def test_the_hub_has_no_default(self):
+    def test_the_body_is_the_xml_of_put_message_and_holds_the_base64_text_of_the_json_that_the_app_reads(self):
+        ((_, _, body),) = self.put()
+        root = ElementTree.fromstring(body.decode("utf-8"))
+        self.assertEqual((root.tag, [child.tag for child in root]), ("QueueMessage", ["MessageText"]))
+        text = root.find("MessageText").text
+        decoded = base64.b64decode(text, validate=True)
+        self.assertEqual(decoded.decode("utf-8"), '{"job":"watch","requestId":"' + "a" * 32 + '"}', "the Functions host decodes base64 before the app reads the message")
+        self.assertEqual(json.loads(decoded), {"job": "watch", "requestId": "a" * 32})
+
+    def test_the_text_that_the_app_gets_is_what_the_app_accepts(self):
+        source = (ROOT / "src" / "case-functions" / "cases" / "control.py").read_text(encoding="utf-8")
+        self.assertIn('REQUEST_ID = re.compile(r"^[0-9a-f]{32}$")', source)
+        self.assertIn('JOB = "watch"', source)
+        ((_, _, body),) = self.put()
+        document = json.loads(base64.b64decode(ElementTree.fromstring(body.decode("utf-8")).find("MessageText").text))
+        self.assertEqual(set(document), {"job", "requestId"}, "a message carries the job and the request id and nothing else")
+        self.assertEqual(document["job"], "watch")
+        self.assertRegex(document["requestId"], r"^[0-9a-f]{32}$")
+
+    def test_the_queue_has_no_default(self):
         with self.assertRaises(TypeError):
-            rc.send_control_event(azure(lambda args: (0, SECRET + "\n", ""), lambda url, headers, body: (201, b"")), NAMESPACE, "watch", "a" * 32)
+            rc.send_control_message(azure(lambda args: (0, SECRET + "\n", ""), lambda url, headers, body: (201, b"")), ACCOUNT, "watch", "a" * 32)
 
-    def test_the_token_is_asked_for_the_event_hubs_audience_only(self):
+    def test_a_message_that_nobody_takes_does_not_stay_for_a_week(self):
+        ((url, _, _),) = self.put()
+        self.assertIn("messagettl=3600", url)
+        self.assertEqual(rc.MESSAGE_TTL_SECONDS, 3600)
+
+    def test_the_token_is_asked_for_the_storage_audience_only(self):
         asked = []
 
         def runner(args):
             asked.append(args)
             return 0, SECRET + "\n", ""
 
-        rc.send_control_event(azure(runner, lambda *a: (201, b"")), NAMESPACE, "watch", "b" * 32, hub="a-control-hub")
-        self.assertEqual(asked, [["account", "get-access-token", "--resource", "https://eventhubs.azure.net", "--query", "accessToken", "--output", "tsv", "--only-show-errors"]])
+        rc.send_control_message(azure(runner, lambda *a: (201, b"")), ACCOUNT, "watch", "b" * 32, queue="a-control-queue")
+        self.assertEqual(asked, [["account", "get-access-token", "--resource", "https://storage.azure.com/", "--query", "accessToken", "--output", "tsv", "--only-show-errors"]])
 
-    def test_a_refusal_says_the_status_and_the_first_line_of_the_answer_and_never_the_token(self):
+    def test_a_created_message_is_the_only_answer_that_is_taken(self):
+        self.put(status=201)
+        for status in (200, 202, 204, 400, 401, 403, 404, 409, 500, 503):
+            with self.assertRaises(rc.Problem, msg=status) as raised:
+                self.put(status=status)
+            self.assertIn(str(status), str(raised.exception))
+
+    def test_a_refusal_says_the_status_the_code_and_the_first_line_of_the_message_and_never_the_token(self):
+        answer = ('<?xml version="1.0" encoding="utf-8"?><Error><Code>AuthorizationPermissionMismatch</Code><Message>This request is not authorized to perform this operation '
+                  'using this permission.\nRequestId:0f0f0f0f\nTime:2026-11-08T00:00:00.0000000Z</Message></Error>').encode("utf-8")
         with self.assertRaises(rc.Problem) as raised:
-            self.sent(status=401, answer=b"401:Unauthorized\nsecond line")
+            self.put(status=403, answer=answer)
         message = str(raised.exception)
-        self.assertIn("401", message)
-        self.assertIn("Unauthorized", message)
-        self.assertNotIn("second line", message)
+        self.assertIn("answered 403", message)
+        self.assertIn("AuthorizationPermissionMismatch: This request is not authorized to perform this operation using this permission.", message)
+        self.assertIn("no Storage Queue Data Contributor role on the queue yet", message)
+        self.assertNotIn("RequestId", message)
         self.assertNotIn(SECRET, message)
+
+    def test_a_refusal_that_echoes_the_token_does_not_show_it(self):
+        with self.assertRaises(rc.Problem) as raised:
+            self.put(status=401, answer=f"<Error><Code>InvalidAuthenticationInfo</Code><Message>Bad token {SECRET}</Message></Error>".encode("utf-8"))
+        self.assertIn("401", str(raised.exception))
+        self.assertIn("the token was not accepted by the Queue service", str(raised.exception))
+        self.assertNotIn(SECRET, str(raised.exception))
+
+    def test_a_queue_that_is_not_there_says_which_action_makes_it(self):
+        with self.assertRaises(rc.Problem) as raised:
+            self.put(status=404, answer=b"<Error><Code>QueueNotFound</Code><Message>The specified queue does not exist.</Message></Error>")
+        self.assertIn("QueueNotFound: The specified queue does not exist.", str(raised.exception))
+        self.assertIn("the action cases makes it", str(raised.exception))
+
+    def test_an_answer_that_is_not_xml_is_said_in_one_short_line(self):
+        with self.assertRaises(rc.Problem) as raised:
+            self.put(status=500, answer=b"upstream\nsecond line")
+        self.assertIn("500: upstream", str(raised.exception))
+        self.assertNotIn("second line", str(raised.exception))
+
+    def test_a_queue_that_cannot_be_reached_is_a_problem_and_not_a_traceback(self):
+        for raised in (urllib.error.URLError("[Errno -2] Name or service not known"), OSError("timed out"), http.client.RemoteDisconnected("closed")):
+            with self.assertRaises(rc.Problem, msg=repr(raised)) as caught:
+                self.put(raises=raised)
+            self.assertIn("the control message could not be sent", str(caught.exception))
+            self.assertNotIn(SECRET, str(caught.exception))
+
+    def test_a_bad_queue_name_or_account_is_refused_before_a_token_is_asked_for_or_anything_is_sent(self):
+        asked, posts = [], []
+
+        def runner(args):
+            asked.append(args)
+            return 0, SECRET + "\n", ""
+
+        for bad in ("", "a", "ab", "A-queue", "-queue", "queue-", "a--b", "a_b", "a" * 64, "q/x", "q?x", "q x"):
+            with mock.patch.dict(os.environ, ENV), self.assertRaises(rc.Problem, msg=bad):
+                rc.send_control_message(azure(runner, lambda *a: posts.append(a) or (201, b"")), ACCOUNT, "watch", "a" * 32, queue=bad)
+        with mock.patch.dict(os.environ, ENV), self.assertRaises(rc.Problem):
+            rc.send_control_message(azure(runner, lambda *a: posts.append(a) or (201, b"")), "not an account", "watch", "a" * 32, queue="a-control-queue")
+        self.assertEqual(posts, [])
+        self.assertEqual(asked, [], "no token is asked for either")
+
+    def test_a_queue_name_that_azure_accepts_is_accepted(self):
+        for good in ("cases-control", "abc", "a1b", "q" * 63, "a-b-c"):
+            self.put(queue=good)
 
     def test_only_a_github_actions_run_may_send(self):
         with mock.patch.dict(os.environ, {"GITHUB_ACTIONS": ""}):
@@ -421,7 +504,7 @@ class NothingReadsTheStoreAndNothingOfTheUsageRecordingIsLeft(unittest.TestCase)
             self.assertNotIn(word, self.code.lower(), "the API key of Application Insights queries is retired, and no key is used (AGENTS.md rule 23)")
         literal = set(re.findall(r'token\(\s*["\']([^"\']+)["\']', self.code))
         named = {getattr(rc, name) for name in re.findall(r"token\(\s*([A-Z_]+)\s*\)", self.code)}
-        self.assertEqual(sorted(literal | named), ["https://api.applicationinsights.io", "https://eventhubs.azure.net", "https://management.azure.com"])
+        self.assertEqual(sorted(literal | named), ["https://api.applicationinsights.io", "https://management.azure.com", "https://storage.azure.com/"])
 
     def test_nothing_of_the_usage_recording_is_in_the_code_and_no_file_of_it_is_left(self):
         for word in ("usage-control", "ai-usage", "pii-usage", "usage_job_result", "TIMED_JOBS", "FUNCTIONS =", "RESULT_PREFIX"):

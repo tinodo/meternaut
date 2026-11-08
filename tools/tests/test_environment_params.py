@@ -138,7 +138,7 @@ class Build(unittest.TestCase):
 
 
 class Base(unittest.TestCase):
-    """The parameter file of the base (environment/base/main.bicep: the workspace, Application Insights, the storage account and the Event Hubs namespace), and the names that it gives to services whose names are host names."""
+    """The parameter file of the base (environment/base/main.bicep: the workspace, Application Insights and the storage account), and the name that it gives to the service whose name is a host name."""
 
     def files(self, **changes):
         code, out, err, files = run({**SETTINGS, **changes})
@@ -156,12 +156,14 @@ class Base(unittest.TestCase):
         for name, wrapped in given.items():
             self.assertIsInstance(wrapped["value"], types[declared[name][0]], name)
 
-    def test_the_file_holds_the_two_names_the_region_and_the_owner_and_nothing_of_the_usage_recording(self):
+    def test_the_file_holds_the_storage_name_the_region_and_the_owner_and_nothing_of_the_usage_recording_or_the_event_hubs_namespace(self):
         files, outputs = self.files()
         base = values(files["base.parameters.json"])
-        self.assertEqual(set(base), {"location", "owner", "storageAccountName", "eventHubNamespaceName"})
+        self.assertEqual(set(base), {"location", "owner", "storageAccountName"})
         self.assertEqual((base["location"], base["owner"]), ("swedencentral", "owner@example.com"))
-        self.assertEqual((base["storageAccountName"], base["eventHubNamespaceName"]), (outputs["storage_account_name"], outputs["event_hub_namespace"]))
+        self.assertEqual(base["storageAccountName"], outputs["storage_account_name"])
+        self.assertNotIn("eventHubNamespaceName", bicep_params(BASE), "the base makes no Event Hubs namespace: the control message goes through a queue in the storage account")
+        self.assertFalse({"event_hub_namespace", "cases_hub_name"} & set(outputs), "no output names an Event Hubs namespace or a control hub")
         for old in ("functionAppName", "cosmosAccountName", "dataReaderPrincipalIds", "gatewayAppInsightsName", "gatewayAppInsightsResourceGroup", "gatewayAppInsightsSubscriptionId",
                     "usageAppPublicNetworkAccess", "gatewayPrincipalId", "workflowPrincipalId", "logicAppName", "dataContributorPrincipalIds"):
             self.assertNotIn(old, base, old)
@@ -183,12 +185,11 @@ class Base(unittest.TestCase):
     def test_the_names_are_host_names_inside_their_limits_and_the_same_on_every_run(self):
         _, first = self.files()
         _, second = self.files()
-        for key, pattern, longest in (("storage_account_name", r"^[a-z0-9]{3,24}$", 24), ("event_hub_namespace", r"^[A-Za-z][A-Za-z0-9-]{4,49}$", 50),
-                                      ("cases_function_app_name", r"^[A-Za-z0-9][A-Za-z0-9-]{1,59}$", 60)):
+        for key, pattern, longest in (("storage_account_name", r"^[a-z0-9]{3,24}$", 24), ("cases_function_app_name", r"^[A-Za-z0-9][A-Za-z0-9-]{1,59}$", 60)):
             self.assertRegex(first[key], pattern, key)
             self.assertLessEqual(len(first[key]), longest, key)
             self.assertEqual(first[key], second[key], key)
-        self.assertEqual(len({first[k] for k in ("storage_account_name", "event_hub_namespace", "cases_function_app_name")}), 3)
+        self.assertEqual(len({first[k] for k in ("storage_account_name", "cases_function_app_name")}), 2)
         self.assertNotIn("logic_app_name", first)
 
     def test_the_names_differ_per_subscription_and_group_and_ignore_case(self):
@@ -196,7 +197,7 @@ class Base(unittest.TestCase):
         self.assertNotEqual(base, ep.base_names(SETTINGS["ENV_SUBSCRIPTION_ID"], "rg-b"))
         self.assertNotEqual(base, ep.base_names("99999999-2222-3333-4444-555555555555", "rg-a"))
         self.assertEqual(base, ep.base_names(SETTINGS["ENV_SUBSCRIPTION_ID"].upper(), "RG-A"))
-        self.assertTrue(base["event_hub_namespace"].endswith(ep.digest(SETTINGS["ENV_SUBSCRIPTION_ID"], "rg-a")))
+        self.assertTrue(base["storage_account_name"].endswith(ep.digest(SETTINGS["ENV_SUBSCRIPTION_ID"], "rg-a")))
 
     def test_the_old_key_based_version_and_its_four_names_are_gone_from_the_builder(self):
         _, outputs = self.files()
@@ -247,33 +248,34 @@ class Base(unittest.TestCase):
         self.assertEqual((code, out, files), (2, "", {}))
         self.assertIn("Basic plan", err)
 
-    def test_the_endpoint_subnet_holds_the_six_private_endpoints(self):
-        # six endpoints (the base's four, the Foundry resource's and the cases app's) and the five addresses that Azure keeps: a /29 has eight addresses and cannot hold them, and a /28 has sixteen
+    def test_the_endpoint_subnet_holds_the_five_private_endpoints(self):
+        # five endpoints (the base's three, the Foundry resource's and the cases app's) and the five addresses that Azure keeps: a /29 has eight addresses and cannot hold them, and a /28 has sixteen
         code, out, err, files = run({**SETTINGS, "ENV_PE_SUBNET_PREFIX": "10.53.0.0/29"})
         self.assertEqual((code, out, files), (2, "", {}))
         self.assertIn("ENV_PE_SUBNET_PREFIX", err)
         self.assertIn("at least a /28", err)
-        self.assertIn("the base has four private endpoints", err)
+        self.assertIn("the base has three private endpoints (the storage account's)", err)
         self.assertIn("the Foundry resource one and the cases app one", err)
         self.assertEqual(run({**SETTINGS, "ENV_PE_SUBNET_PREFIX": "10.53.0.0/28"})[0], 0)
 
     def test_the_private_endpoints_and_their_zones_are_the_ones_the_template_makes(self):
         _, outputs = self.files()
         pairs = [pair.split(":") for pair in outputs["base_endpoints"].split(",")]
-        self.assertEqual(len(pairs), 4)
-        storage, hubs = outputs["storage_account_name"], outputs["event_hub_namespace"]
+        self.assertEqual(len(pairs), 3)
+        storage = outputs["storage_account_name"]
         self.assertEqual(pairs, [[f"pe-{storage}-blob", "privatelink.blob.core.windows.net"], [f"pe-{storage}-queue", "privatelink.queue.core.windows.net"],
-                                 [f"pe-{storage}-table", "privatelink.table.core.windows.net"], [f"pe-{hubs}", "privatelink.servicebus.windows.net"]])
-        for line in ("name: 'pe-${storageAccountName}-${service}'", "name: 'pe-${eventHubNamespaceName}'"):
-            self.assertIn(line, BASE)
+                                 [f"pe-{storage}-table", "privatelink.table.core.windows.net"]])
+        self.assertIn("name: 'pe-${storageAccountName}-${service}'", BASE)
+        self.assertNotIn("privateEndpoints", BASE.replace("storageEndpoints 'Microsoft.Network/privateEndpoints", ""), "the base makes the storage account's three endpoints and no other")
+        self.assertNotIn("servicebus", " ".join(outputs["base_endpoints"].split(",")), "no endpoint for an Event Hubs namespace")
         self.assertEqual(outputs["appinsights_name"], "appi-meternaut")
-        for gone in ("pe-${cosmosAccountName}", "pe-${functionAppName}", "id-${workload}-usage"):
-            self.assertNotIn(gone, BASE, f"{gone}: the usage recording's pieces are not made any more")
+        for gone in ("pe-${cosmosAccountName}", "pe-${functionAppName}", "id-${workload}-usage", "pe-${eventHubNamespaceName}"):
+            self.assertNotIn(gone, BASE, f"{gone}: the usage recording's pieces and the namespace's endpoint are not made any more")
         self.assertIn("name: 'appi-${workload}'", BASE)
 
     def test_the_identity_of_the_workflow_is_no_setting_of_the_builder_and_no_file_carries_it(self):
-        # It used to get the right to send to the control hub of each of the two apps (the parameter workflowPrincipalId of both templates); the Operator sends the control events now, and the workflow
-        # reads its own object id only to find and delete the assignment that it held (the steps that retire it).
+        # It used to get the right to send to the control hub of each of the two apps (the parameter workflowPrincipalId of both templates); the Operator puts the control message in the queue now, and the
+        # workflow reads its own object id from its token only to look at the condition of its right to assign roles before it makes the AI Gateway.
         self.assertNotIn("RECORDING_DEPLOYER_ID", SETTINGS)
         code, out, err, files = run(SETTINGS)
         self.assertEqual((code, err), (0, ""))
@@ -430,11 +432,12 @@ class FirstCases(unittest.TestCase):
         for name, wrapped in given.items():
             self.assertIsInstance(wrapped["value"], types[declared[name][0]], name)
 
-    def test_it_names_the_storage_and_the_namespace_that_the_base_has_and_no_workflow_principal(self):
+    def test_it_names_the_storage_account_that_the_base_has_and_no_namespace_and_no_workflow_principal(self):
         files, lines = self.build()
         cases, base = values(files["cases.parameters.json"]), values(files["base.parameters.json"])
         self.assertEqual(cases["storageAccountName"], base["storageAccountName"])
-        self.assertEqual(cases["eventHubNamespaceName"], base["eventHubNamespaceName"])
+        self.assertNotIn("eventHubNamespaceName", cases)
+        self.assertNotIn("eventHubNamespaceName", bicep_params(self.CASES))
         self.assertNotIn("workflowPrincipalId", cases)
         self.assertNotIn("workflowPrincipalId", base)
         self.assertEqual(cases["location"], base["location"])
@@ -556,9 +559,9 @@ class FirstCases(unittest.TestCase):
         self.assertTrue(set(models.values()) <= deployed, "the Detective and the Skeptic call deployments that the Foundry resource of the agents has")
         self.assertEqual(set(models.values()), set(ep.AGENT_MODELS.values()), "the same two deployments that the agents use, as they were when a contract named them")
 
-    def test_the_hub_and_the_one_identity_are_the_ones_the_template_makes(self):
+    def test_the_queue_and_the_one_identity_are_the_ones_the_template_makes(self):
         _, lines = self.build()
-        self.assertIn("var controlHubName = '" + lines["cases_hub_name"] + "'", self.CASES)
+        self.assertIn("var controlQueueName = '" + lines["cases_queue_name"] + "'", self.CASES)
         self.assertIn("name: 'id-${workload}-console-auth'", self.CASES, "the one user-assigned identity of the template: the console's sign-in")
         self.assertNotIn("id-${workload}-cases", self.CASES, "the user-assigned identity that the app's system-assigned one replaced is not made any more")
         self.assertNotIn("cases_identity_name", lines)
@@ -806,17 +809,19 @@ class Operator(unittest.TestCase):
         for name, wrapped in given.items():
             self.assertIsInstance(wrapped["value"], types[declared[name][0]], name)
         operator = values(files["operator.parameters.json"])
-        self.assertEqual(set(operator), {"location", "owner", "opsSubnetPrefix", "opsSubnetExists", "eventHubNamespaceName"},
-                         "a range, a flag, the name of a namespace and two tags: nothing else, and nothing secret")
+        self.assertEqual(set(operator), {"location", "owner", "opsSubnetPrefix", "opsSubnetExists", "storageAccountName"},
+                         "a range, a flag, the name of the storage account and two tags: nothing else, and nothing secret")
         self.assertEqual((operator["location"], operator["owner"]), ("swedencentral", "owner@example.com"))
 
-    def test_the_namespace_is_the_one_that_the_base_and_the_first_cases_use(self):
+    def test_the_storage_account_is_the_one_that_the_base_and_the_first_cases_use(self):
         files, outputs = self.files()
-        operator = values(files["operator.parameters.json"])["eventHubNamespaceName"]
-        self.assertEqual(operator, values(files["base.parameters.json"])["eventHubNamespaceName"], "the Operator reads the namespace that the base makes")
-        self.assertEqual(operator, outputs["event_hub_namespace"])
-        self.assertRegex(operator, r"^evhns-meternaut-[0-9a-f]{8}$")
-        self.assertIn("param eventHubNamespaceName string", self.OPERATOR)
+        operator = values(files["operator.parameters.json"])["storageAccountName"]
+        self.assertEqual(operator, values(files["base.parameters.json"])["storageAccountName"], "the Operator reads the queue in the storage account that the base makes")
+        self.assertEqual(operator, values(files["cases.parameters.json"])["storageAccountName"])
+        self.assertEqual(operator, outputs["storage_account_name"])
+        self.assertRegex(operator, r"^stmeternautfn[0-9a-f]{8}$")
+        self.assertIn("param storageAccountName string", self.OPERATOR)
+        self.assertNotIn("eventHubNamespaceName", self.OPERATOR)
 
     def test_the_subnet_is_the_last_free_27_and_overlaps_none_of_the_other_three(self):
         files, outputs = self.files()

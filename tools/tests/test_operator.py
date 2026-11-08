@@ -809,11 +809,12 @@ class OperatorTemplate(unittest.TestCase):
     def declared(self):
         return {match.group(1): match.group(2) for match in re.finditer(r"(?m)^resource (\w+) '([^'@]+)@[^']+'", self.code)}
 
-    def test_it_declares_the_identity_the_group_s_network_pieces_the_two_roles_and_reads_the_namespace_and_its_control_hub(self):
+    def test_it_declares_the_identity_the_group_s_network_pieces_the_two_roles_and_reads_the_storage_account_and_its_control_queue(self):
         types = sorted(self.declared().values())
-        self.assertEqual(types, ["Microsoft.Authorization/roleAssignments"] * 2 + ["Microsoft.EventHub/namespaces", "Microsoft.EventHub/namespaces/eventhubs",
-                                                                                 "Microsoft.ManagedIdentity/userAssignedIdentities", "Microsoft.Network/networkSecurityGroups",
-                                                                                 "Microsoft.Network/virtualNetworks", "Microsoft.Network/virtualNetworks/subnets"])
+        self.assertEqual(types, ["Microsoft.Authorization/roleAssignments"] * 2 + ["Microsoft.ManagedIdentity/userAssignedIdentities", "Microsoft.Network/networkSecurityGroups",
+                                                                                 "Microsoft.Network/virtualNetworks", "Microsoft.Network/virtualNetworks/subnets",
+                                                                                 "Microsoft.Storage/storageAccounts", "Microsoft.Storage/storageAccounts/queueServices",
+                                                                                 "Microsoft.Storage/storageAccounts/queueServices/queues"])
 
     def test_the_virtual_network_is_never_declared_again_and_the_subnet_is_made_only_while_it_is_not_there(self):
         # AGENTS.md rule 27: a template that makes the subnet again takes away the route table that the landing zone's network manager put on it.
@@ -841,15 +842,15 @@ class OperatorTemplate(unittest.TestCase):
     def test_the_identity_is_user_assigned_and_named_for_the_operator(self):
         self.assertRegex(self.code, r"resource operatorIdentity 'Microsoft\.ManagedIdentity/userAssignedIdentities@[^']+' = \{\n  name: 'id-\$\{workload\}-operator'")
 
-    def test_the_roles_are_reader_on_the_group_and_data_sender_on_the_control_hub_for_the_identity_only(self):
+    def test_the_roles_are_reader_on_the_group_and_queue_data_contributor_on_the_one_control_queue_for_the_identity_only(self):
         self.assertIn("var readerRoleId = 'acdd72a7-3385-48ef-bd42-f606fba81ae7'", self.code)
-        self.assertIn("var eventHubsDataSenderRoleId = '2b629674-e913-4c01-ae53-ef4638d8f975'", self.code)
-        self.assertEqual(len(re.findall(r"RoleId = '", self.code)), 2, "two roles, Reader and Data Sender, and no third")
+        self.assertIn("var storageQueueDataContributorRoleId = '974c5e8b-45b9-4653-ba55-5f855dd0fb88'", self.code)
+        self.assertEqual(len(re.findall(r"RoleId = '", self.code)), 2, "two roles, Reader and Storage Queue Data Contributor, and no third")
         self.assertEqual(len(re.findall(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", self.code)), 2)
         blocks = dict(re.findall(r"(?ms)^resource (\w+) 'Microsoft\.Authorization/roleAssignments@[^']+' = \{\n(.*?)^\}", self.code))
-        self.assertEqual(sorted(blocks), ["operatorReadsTheGroup", "operatorSendsCasesControl"], "the Operator holds no role on the control hub of the old usage recording any more: that hub was removed on 2026-11-07")
+        self.assertEqual(sorted(blocks), ["operatorPutsCasesControl", "operatorReadsTheGroup"], "the Operator holds no role on a hub: the namespace is gone, and the usage recording's hub was removed on 2026-11-07")
         expected = {"operatorReadsTheGroup": ("resourceGroup()", "guid(resourceGroup().id, operatorIdentity.id, readerRoleId)", "readerRoleId"),
-                    "operatorSendsCasesControl": ("casesControlHub", "guid(casesControlHub.id, operatorIdentity.id, eventHubsDataSenderRoleId)", "eventHubsDataSenderRoleId")}
+                    "operatorPutsCasesControl": ("casesControlQueue", "guid(casesControlQueue.id, operatorIdentity.id, storageQueueDataContributorRoleId)", "storageQueueDataContributorRoleId")}
         for name, (scope, assignment_name, role) in expected.items():
             block = blocks[name]
             self.assertIn(f"  scope: {scope}\n", block, name)
@@ -857,22 +858,23 @@ class OperatorTemplate(unittest.TestCase):
             self.assertIn(f"roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', {role})", block, name)
             self.assertIn("principalId: operatorIdentity.properties.principalId", block, name)
             self.assertIn("principalType: 'ServicePrincipal'", block, name)
-        for wider in ("scope: eventHubs", "scope: subscription", "scope: tenant", "scope: managementGroup", "scope: usageHub", "scope: piiHub", "usageControlHub"):
-            self.assertNotIn(wider, self.code, f"{wider}: the Operator may send to the control hub of the cases and nowhere else")
+        for wider in ("scope: storage\n", "scope: queueService", "scope: subscription", "scope: tenant", "scope: managementGroup", "scope: usageHub", "scope: piiHub", "usageControlHub"):
+            self.assertNotIn(wider, self.code, f"{wider}: the Operator may put a message in the control queue of the cases and nowhere else")
+        self.assertNotIn("c6a89b2d-59bc-44d0-9896-0f6e12d7b80a", self.code, "Storage Queue Data Message Sender is not in the condition of the deploy identity's right to assign roles")
 
-    def test_the_namespace_and_the_control_hub_are_only_read_here_because_the_base_and_the_cases_make_them(self):
-        self.assertEqual(len(re.findall(r"Microsoft\.EventHub", self.code)), 2)
-        self.assertRegex(self.code, r"(?m)^resource eventHubs 'Microsoft\.EventHub/namespaces@[^']+' existing = \{\n  name: eventHubNamespaceName\n\}$")
-        for symbol, name in (("casesControlHub", "casesControlHubName"),):
-            self.assertRegex(self.code, rf"(?m)^resource {symbol} 'Microsoft\.EventHub/namespaces/eventhubs@[^']+' existing = \{{\n  parent: eventHubs\n  name: {name}\n\}}$")
-        for word in ("consumergroups", "authorizationRules", "publicNetworkAccess", "disableLocalAuth", "eventHubs.properties", "ControlHub.properties"):
-            self.assertNotIn(word, self.code, f"{word}: nothing of the namespace or the hub is written or read here")
+    def test_the_storage_account_and_the_control_queue_are_only_read_here_because_the_base_and_the_cases_make_them(self):
+        self.assertEqual(len(re.findall(r"Microsoft\.Storage", self.code)), 3)
+        self.assertRegex(self.code, r"(?m)^resource storage 'Microsoft\.Storage/storageAccounts@[^']+' existing = \{\n  name: storageAccountName\n\}$")
+        self.assertRegex(self.code, r"(?m)^resource queueService 'Microsoft\.Storage/storageAccounts/queueServices@[^']+' existing = \{\n  parent: storage\n  name: 'default'\n\}$")
+        self.assertRegex(self.code, r"(?m)^resource casesControlQueue 'Microsoft\.Storage/storageAccounts/queueServices/queues@[^']+' existing = \{\n  parent: queueService\n  name: casesControlQueueName\n\}$")
+        for word in ("Microsoft.EventHub", "eventHub", "blobServices", "tableServices", "publicNetworkAccess", "allowSharedKeyAccess", "storage.properties", "casesControlQueue.properties", "metadata"):
+            self.assertNotIn(word, self.code, f"{word}: nothing of the storage account or the queue is written or read here")
 
-    def test_the_name_of_the_hub_is_the_one_that_the_first_cases_give_it(self):
-        # A hub that is renamed in the template that makes it must be renamed here too: the role of the Operator is on the hub by its name, and a template that reads a hub that is not there fails.
-        self.assertIn("var casesControlHubName = 'cases-control'", self.code)
-        self.assertIn("var controlHubName = 'cases-control'", text("environment/cases/main.bicep"))
-        self.assertEqual(sorted(re.findall(r"CONTROL_HUB = \"([a-z-]+)\"", text("tools/cases-check.py"))), ["cases-control"], "and the tool sends to the hub of the same name")
+    def test_the_name_of_the_queue_is_the_one_that_the_first_cases_give_it(self):
+        # A queue that is renamed in the template that makes it must be renamed here too: the role of the Operator is on the queue by its name, and a template that reads a queue that is not there fails.
+        self.assertIn("var casesControlQueueName = 'cases-control'", self.code)
+        self.assertIn("var controlQueueName = 'cases-control'", text("environment/cases/main.bicep"))
+        self.assertEqual(sorted(re.findall(r"CONTROL_QUEUE = \"([a-z-]+)\"", text("tools/cases-check.py"))), ["cases-control"], "and the tool puts its message in the queue of the same name")
 
     def test_it_outputs_the_ids_that_the_workflow_and_the_container_need_and_nothing_secret(self):
         outputs = re.findall(r"(?m)^output (\w+) string = (.+)$", self.code)
@@ -881,10 +883,10 @@ class OperatorTemplate(unittest.TestCase):
     def test_every_parameter_says_what_it_is_and_the_text_ones_are_bounded(self):
         for match in re.finditer(r"(?m)^((?:@\w+\([^\n]*\)\n)+)param (\w+) (\w+)", self.code):
             self.assertIn("@description(", match.group(1), match.group(2))
-        for name in ("owner", "opsSubnetPrefix", "eventHubNamespaceName"):
+        for name in ("owner", "opsSubnetPrefix", "storageAccountName"):
             self.assertRegex(self.code, rf"(?m)^@minLength\(\d+\)\n(?:@maxLength\(\d+\)\n)?param {name} string$")
         self.assertRegex(self.code, r"(?m)^@minLength\(9\)\n@maxLength\(18\)\nparam opsSubnetPrefix string$")
-        self.assertRegex(self.code, r"(?m)^@minLength\(6\)\n@maxLength\(50\)\nparam eventHubNamespaceName string$", "the limits of an Event Hubs namespace's name, as in the base's template")
+        self.assertRegex(self.code, r"(?m)^@minLength\(3\)\n@maxLength\(24\)\nparam storageAccountName string$", "the limits of a storage account's name, as in the base's template")
 
     def test_there_is_no_key_in_it(self):
         for word in ("listKeys", "listSecrets", "AccountKey", "SharedAccessKey", "primaryKey", "instrumentationKey", "allowSharedKeyAccess: true", "disableLocalAuth: false"):
@@ -1556,7 +1558,7 @@ class ScriptRunner:
             script = tmp / "run-tool.sh"
             script.write_text(text("operator/run-tool.sh"), encoding="utf-8", newline="\n")
             environment = {**os.environ, "STUBS": posix(bin_dir), "TOOL_VOLUME": posix(volume), "FAKE_LOG": posix(log), "OPERATOR_CLIENT_ID": CLIENT_ID, "TOOL_NAME": tool,
-                           "TOOL_ARGS": "run --namespace evhns-example --job all --minutes 20", "GITHUB_TOKEN": TOKEN_OF_THE_RUN, **(env or {})}
+                           "TOOL_ARGS": "run --storage-account stexample --job all --minutes 20", "GITHUB_TOKEN": TOKEN_OF_THE_RUN, **(env or {})}
             for name in [name for name, value in environment.items() if value is None]:
                 del environment[name]
             done = subprocess.run([BASH, "-c", 'PATH="$STUBS:$PATH"; export PATH; exec bash "$0"', posix(script)], capture_output=True, text=True, env=environment, cwd=tmp)
@@ -1572,7 +1574,7 @@ class RunToolScript(ScriptRunner, unittest.TestCase):
         self.assertEqual((ran.done.returncode, ran.done.stderr), (0, ""))
         self.assertEqual(ran.lines, ["ok: python3 3.12.7", "ok: az login --identity", "ok: running cases-check.py run", "tool output", "run-tool-done: exit code 0"])
         self.assertEqual(ran.calls, [f"az login --identity --client-id {CLIENT_ID} --allow-no-subscriptions --output none",
-                                     f"tool-argv: [{ran.volume}/cases-check.py] [run] [--namespace] [evhns-example] [--job] [all] [--minutes] [20]",
+                                     f"tool-argv: [{ran.volume}/cases-check.py] [run] [--storage-account] [stexample] [--job] [all] [--minutes] [20]",
                                      "sleep 20"], "the sign-in, the tool, and the hold that lets the log be read whole")
 
     def test_the_exit_code_of_the_tool_is_the_exit_code_of_the_container_and_the_log_is_still_held_open(self):
@@ -1685,9 +1687,9 @@ class RunToolScript(ScriptRunner, unittest.TestCase):
         for value in (None, "", "   ", "r" * 601, "run " + "a" * 600):
             self.refused({"TOOL_ARGS": value})
         for character in ";&|$()`\"'<>*?!\\{}[]~#%,@+\n\t\r":
-            ran = self.refused({"TOOL_ARGS": f"run --namespace a{character}b touch canary"})
+            ran = self.refused({"TOOL_ARGS": f"run --storage-account a{character}b touch canary"})
             self.assertNotIn("touch", ran.done.stdout, repr(character))
-        for value in ("run --namespace $(touch canary)", "run; touch canary", "run `touch canary`", "run --x=${HOME}", "run --x=a b\ntouch canary", "run --x=é", "run --x=*", "run --x=?"):
+        for value in ("run --storage-account $(touch canary)", "run; touch canary", "run `touch canary`", "run --x=${HOME}", "run --x=a b\ntouch canary", "run --x=é", "run --x=*", "run --x=?"):
             ran = self.refused({"TOOL_ARGS": value})
             self.assertNotIn(value, ran.done.stdout)
 
@@ -1704,7 +1706,7 @@ class RunToolScript(ScriptRunner, unittest.TestCase):
         self.assertEqual(self.run_tool({"TOOL_HOLD_SECONDS": "05"}).done.returncode, 0)
 
     def test_the_arguments_that_pass_reach_the_tool_as_the_words_they_are_and_nothing_is_expanded(self):
-        value = "run --namespace evhns-example.servicebus.windows.net --insights /subscriptions/sub-id/resourceGroups/rg_a.b/providers/Microsoft.Insights/components/appi-x --job all --minutes=20 --a:b -- -"
+        value = "run --storage-account stexample.queue.core.windows.net --insights /subscriptions/sub-id/resourceGroups/rg_a.b/providers/Microsoft.Insights/components/appi-x --job all --minutes=20 --a:b -- -"
         ran = self.run_tool({"TOOL_ARGS": value})
         self.assertEqual(ran.done.returncode, 0)
         words = " ".join(f"[{word}]" for word in value.split())
@@ -1812,7 +1814,7 @@ class RunToolWithTheRealTools(ScriptRunner, unittest.TestCase):
 
     def test_a_tool_that_would_start_a_job_refuses_until_the_container_is_told_that_it_is_in_a_github_actions_run(self):
         insights = f"/subscriptions/{SUBSCRIPTION}/resourceGroups/{GROUP}/providers/Microsoft.Insights/components/appi-example"
-        args = f"run --namespace evhns-example --insights {insights} --minutes 1"
+        args = f"run --storage-account stexample --insights {insights} --minutes 1"
         for tool, files, arguments in (("cases-check", ["cases-check.py", "check-helpers.py"], args),):
             ran = self.run_real(tool, arguments, files, GITHUB_ACTIONS=None)
             self.assertEqual(ran.done.returncode, 1, tool)
@@ -1846,7 +1848,7 @@ class TheToolsInTheContainer(unittest.TestCase):
             for name in self.TOOLS:
                 done = subprocess.run([sys.executable, "-B", str(volume / name), "run", "--help"], capture_output=True, text=True, cwd=volume)
                 self.assertEqual((done.returncode, done.stderr), (0, ""), name)
-                self.assertIn("--namespace", done.stdout, name)
+                self.assertIn("--storage-account", done.stdout, name)
             self.assertEqual(sorted(path.name for path in volume.iterdir()), sorted(self.TOOLS + self.HELPERS), "nothing was written to the folder: no bytecode, no cache")
             (volume / "check-helpers.py").unlink()
             done = subprocess.run([sys.executable, "-B", str(volume / "cases-check.py"), "run", "--help"], capture_output=True, text=True, cwd=volume)
@@ -1861,7 +1863,7 @@ class TheToolsInTheContainer(unittest.TestCase):
             insights = f"/subscriptions/{SUBSCRIPTION}/resourceGroups/{GROUP}/providers/Microsoft.Insights/components/appi-example"
             for name in self.TOOLS:
                 environment = {key: value for key, value in os.environ.items() if key != "GITHUB_ACTIONS"}
-                done = subprocess.run([sys.executable, "-B", str(Path(tmp) / name), "run", "--namespace", "evhns-example", "--insights", insights], capture_output=True, text=True, env=environment,
+                done = subprocess.run([sys.executable, "-B", str(Path(tmp) / name), "run", "--storage-account", "stexample", "--insights", insights], capture_output=True, text=True, env=environment,
                                       cwd=tmp)
                 self.assertEqual(done.returncode, 1, name)
                 self.assertIn("only a GitHub Actions run may do that", done.stderr, name)
@@ -2075,9 +2077,9 @@ class EventHubsPrivateOnlyRecord(unittest.TestCase):
 
     def test_the_pages_that_said_that_the_workflow_sends_or_that_the_namespace_is_public_say_the_new_state(self):
         cases = text("docs/proposals/02-first-cases.md")
-        self.assertIn("the deployment workflow starts it, through the Operator, which sends the event from inside the network and reads the result from the telemetry", cases)
-        self.assertIn("The Operator may send to that hub (the deployment workflow's identity held that right until the action `cases` retired it on 2026-11-06); the function reads it", cases)
-        self.assertIn("the namespace takes no public traffic since the action `recording` deployed its template that day, so the runner cannot send to it at all", cases)
+        self.assertIn("the deployment workflow starts it, through the Operator, which puts the message in the queue from inside the network and reads the result from the telemetry", cases)
+        self.assertIn("The Operator may put messages in that queue (*Storage Queue Data Contributor* on the queue alone); the function reads it with the role that its host holds on the account already", cases)
+        self.assertIn("The storage account takes no public traffic, so the runner cannot reach the queue at all", cases)
         self.assertNotIn("The workflow may send to that hub", cases)
         readme = text("README.md")
         self.assertIn("the namespace has been private-only since 2026-11-06, deployed and proven; the code of both function apps is published from inside the network, and the usage app takes no public traffic, deployed and proven; "

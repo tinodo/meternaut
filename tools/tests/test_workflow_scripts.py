@@ -236,7 +236,7 @@ class WorkOutTheFoundrySettings(unittest.TestCase):
     ACTIONS = re.findall(r"^          - (\S+)$", re.search(r"(?ms)^      action:\n(.*?)^      \w", WORKFLOW).group(1), re.M)
 
     def test_the_actions_of_the_workflow_are_the_ones_without_the_three_that_made_objects_on_the_instance(self):
-        self.assertEqual(self.ACTIONS, ["what-if", "model-side", "base", "retire-old", "foundry", "cases", "cases-run", "page-latency", "plant", "loop-check", "operator", "operator-probe",
+        self.assertEqual(self.ACTIONS, ["what-if", "model-side", "base", "retire-old", "retire-event-hubs", "foundry", "cases", "cases-run", "page-latency", "plant", "loop-check", "operator", "operator-probe",
                                         "aigateway", "aigateway-check"])
         for retired in ("gateway-prepare", "gateway", "contract", "recording", "recording-check"):
             self.assertNotIn(retired, self.ACTIONS)
@@ -505,8 +505,8 @@ APP_WAIT_AZ = """az() {
 
 @unittest.skipIf(BASH is None, "no bash on this machine")
 class WaitForTheEndpointsOfTheBaseAndTheCasesApp(unittest.TestCase):
-    """The waits of the actions base and cases for the landing zone's policy to register private endpoints in its central zones before anything uses their names: the base's four (the storage account's
-    three and the Event Hubs namespace's) before an app starts, and the cases app's own before its code is published. A deployment of an app after its endpoint was made failed at the publish, because the
+    """The waits of the actions base and cases for the landing zone's policy to register private endpoints in its central zones before anything uses their names: the base's three (the storage account's)
+    before an app starts, and the cases app's own before its code is published. A deployment of an app after its endpoint was made failed at the publish, because the
     app's own name did not resolve until the zone had its record (2026-11-06): so the cases action waits for its own endpoint. Each runs against a stand-in for az that registers the endpoints from the
     check that the test names on."""
 
@@ -524,7 +524,7 @@ class WaitForTheEndpointsOfTheBaseAndTheCasesApp(unittest.TestCase):
         names = cls.params.base_names(cls.SUBSCRIPTION, cls.GROUP)
         cls.base = cls.params.base_endpoints(names)
         cls.cases = cls.params.cases_endpoints(cls.params.cases_names(cls.SUBSCRIPTION, cls.GROUP))
-        cls.namespace_endpoint = f"pe-{names['event_hub_namespace']}"
+        cls.last_endpoint, cls.last_zone = cls.base[-1]
         cls.cases_endpoint = cls.cases[0][0]
 
     def run_wait(self, title, variable, pairs, registered, failing=0, two_checks=False):
@@ -546,13 +546,14 @@ class WaitForTheEndpointsOfTheBaseAndTheCasesApp(unittest.TestCase):
     def sleeps(self, lines):
         return [line for line in lines if line.startswith("sleep")]
 
-    def test_the_list_of_the_base_holds_the_four_endpoints_of_the_storage_account_and_the_namespace_and_the_cases_list_holds_the_cases_app_s(self):
-        self.assertEqual(len(self.base), 4, "the storage account's three (blob, queue and table) and the namespace's, and no app's own: the usage app was removed on 2026-11-07")
-        self.assertEqual(self.base[-1], (self.namespace_endpoint, "privatelink.servicebus.windows.net"))
+    def test_the_list_of_the_base_holds_the_three_endpoints_of_the_storage_account_and_the_cases_list_holds_the_cases_app_s(self):
+        self.assertEqual(len(self.base), 3, "the storage account's three (blob, queue and table), and no app's own (the usage app was removed on 2026-11-07) and none of an Event Hubs namespace, which the base does not make")
+        self.assertEqual([zone for _, zone in self.base], ["privatelink.blob.core.windows.net", "privatelink.queue.core.windows.net", "privatelink.table.core.windows.net"])
+        self.assertNotIn("privatelink.servicebus.windows.net", [zone for _, zone in self.base])
         self.assertNotIn(self.ZONE_OF_THE_APPS, [zone for _, zone in self.base])
         self.assertEqual(self.cases, [(self.cases_endpoint, self.ZONE_OF_THE_APPS)])
 
-    def test_the_base_wait_ends_at_once_when_all_four_endpoints_are_registered_and_asks_about_each_one(self):
+    def test_the_base_wait_ends_at_once_when_all_three_endpoints_are_registered_and_asks_about_each_one(self):
         done, lines, _ = self.run_wait(self.BASE, "BASE_ENDPOINTS", self.base, self.registered(self.base))
         self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
         self.assertIn("The landing zone's policy has registered every private endpoint of the base in its central zone.", done.stdout)
@@ -560,34 +561,34 @@ class WaitForTheEndpointsOfTheBaseAndTheCasesApp(unittest.TestCase):
         self.assertEqual(self.sleeps(lines), [])
 
     def test_an_endpoint_that_is_registered_later_than_the_others_keeps_the_base_waiting_and_is_the_one_that_the_message_names(self):
-        done, lines, _ = self.run_wait(self.BASE, "BASE_ENDPOINTS", self.base, self.registered(self.base, **{self.namespace_endpoint: 3}))
+        done, lines, _ = self.run_wait(self.BASE, "BASE_ENDPOINTS", self.base, self.registered(self.base, **{self.last_endpoint: 3}))
         self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
-        self.assertIn(f"Not registered yet: {self.namespace_endpoint} (check 1 of 40).", done.stdout)
-        self.assertIn(f"Not registered yet: {self.namespace_endpoint} (check 2 of 40).", done.stdout)
+        self.assertIn(f"Not registered yet: {self.last_endpoint} (check 1 of 40).", done.stdout)
+        self.assertIn(f"Not registered yet: {self.last_endpoint} (check 2 of 40).", done.stdout)
         self.assertNotIn("(check 3 of 40)", done.stdout, "registered at the third check")
-        self.assertEqual((len(self.checks(lines)), self.sleeps(lines)), (12, ["sleep 60"] * 2), "three checks of four endpoints, and a minute between them")
+        self.assertEqual((len(self.checks(lines)), self.sleeps(lines)), (9, ["sleep 60"] * 2), "three checks of three endpoints, and a minute between them")
 
     def test_an_endpoint_that_never_gets_its_zone_group_or_gets_another_zone_fails_the_base_and_says_what_it_means(self):
-        others = [pair for pair in self.base if pair[0] != self.namespace_endpoint]
+        others = [pair for pair in self.base if pair[0] != self.last_endpoint]
         for label, registered in (("no zone group", self.registered(others)),
-                                  ("a zone group of another zone", self.registered(others) + [f"{self.namespace_endpoint}=privatelink.blob.core.windows.net"]),
-                                  ("a zone whose name only ends like the zone of the namespace", self.registered(others) + [f"{self.namespace_endpoint}=other-privatelink.servicebus.windows.net"])):
+                                  ("a zone group of another zone", self.registered(others) + [f"{self.last_endpoint}=privatelink.blob.core.windows.net"]),
+                                  ("a zone whose name only ends like the zone of the endpoint", self.registered(others) + [f"{self.last_endpoint}=other-{self.last_zone}"])):
             done, lines, _ = self.run_wait(self.BASE, "BASE_ENDPOINTS", self.base, registered, two_checks=True)
             self.assertEqual(done.returncode, 1, label)
-            self.assertEqual((len(self.checks(lines)), len(self.sleeps(lines))), (8, 2), f"{label}: two checks of four endpoints")
-            self.assertIn(f"Not registered yet: {self.namespace_endpoint} (check 2 of 40).", done.stdout, label)
-            self.assertIn(f"::error::The landing zone's policy has not registered these private endpoints in their central zones: {self.namespace_endpoint}. "
-                          "An app that starts now could not reach its storage or its namespace by their private names.", done.stdout, label)
+            self.assertEqual((len(self.checks(lines)), len(self.sleeps(lines))), (6, 2), f"{label}: two checks of three endpoints")
+            self.assertIn(f"Not registered yet: {self.last_endpoint} (check 2 of 40).", done.stdout, label)
+            self.assertIn(f"::error::The landing zone's policy has not registered these private endpoints in their central zones: {self.last_endpoint}. "
+                          "An app that starts now could not reach its storage by its private name.", done.stdout, label)
             self.assertIn("do not create a private DNS zone", done.stdout)
 
     def test_the_base_gives_up_after_forty_checks_a_minute_apart_and_no_sleep_follows_the_last(self):
         pairs = [self.base[-2], self.base[-1]]
-        self.assertEqual(pairs[-1][0], self.namespace_endpoint, "the namespace's endpoint is the last of the list")
+        self.assertEqual(pairs[-1][0], self.last_endpoint, "the table's endpoint is the last of the list")
         done, lines, _ = self.run_wait(self.BASE, "BASE_ENDPOINTS", pairs, self.registered(pairs[:1]))
         self.assertEqual(done.returncode, 1)
         self.assertEqual((len(self.checks(lines)), len(self.sleeps(lines))), (80, 39), "forty checks of two endpoints, and no sleep after the last check")
         self.assertEqual(set(self.sleeps(lines)), {"sleep 60"})
-        self.assertIn(f"Not registered yet: {self.namespace_endpoint} (check 40 of 40).", done.stdout)
+        self.assertIn(f"Not registered yet: {self.last_endpoint} (check 40 of 40).", done.stdout)
 
     def test_the_cases_wait_ends_at_once_asks_about_the_one_endpoint_of_the_cases_app_and_says_so(self):
         done, lines, _ = self.run_wait(self.CASES, "CASES_ENDPOINTS", self.cases, self.registered(self.cases))
@@ -652,15 +653,15 @@ case "$*" in
 esac
 """
 
-OPERATOR_HUBS_AZ = """#!/bin/bash
-# stand-in for az: FAKE_HUBS is the list of the hubs of the namespace, one name a line; NOTFOUND: the namespace is not there; THROTTLED: the read fails for another reason
+OPERATOR_QUEUE_AZ = """#!/bin/bash
+# stand-in for az: FAKE_QUEUE is the name that the read of the queue prints; NOTFOUND: the queue is not there; THROTTLED: the read fails for another reason
 echo "az $*" >> "$FAKE_LOG"
 case "$*" in
-  *"/eventhubs?"*)
-    case "$FAKE_HUBS" in
-      NOTFOUND) echo "ERROR: (ResourceNotFound) The Resource 'Microsoft.EventHub/namespaces/evhns-meternaut-abc123' under resource group 'rg-of-the-project' was not found." >&2; exit 1 ;;
+  *"/queueServices/default/queues/"*)
+    case "$FAKE_QUEUE" in
+      NOTFOUND) echo "ERROR: (ResourceNotFound) The Resource 'Microsoft.Storage/storageAccounts/stexample/queueServices/default/queues/cases-control' under resource group 'rg-of-the-project' was not found." >&2; exit 1 ;;
       THROTTLED) echo "ERROR: (TooManyRequests) Too many requests, try again later." >&2; exit 1 ;;
-      *) printf '%b' "$FAKE_HUBS" ;;
+      *) printf '%s\\n' "$FAKE_QUEUE" ;;
     esac ;;
   *) echo "unexpected az call: $*" >&2; exit 9 ;;
 esac
@@ -729,45 +730,44 @@ class FindTheOperator(unittest.TestCase):
 
 
 @unittest.skipIf(BASH is None, "no bash on this machine")
-class TheControlHubIsThereBeforeTheOperatorIsDeployed(unittest.TestCase):
-    """The step of the action operator that reads the control hub, which the Operator is given a role on, before anything is deployed."""
+class TheControlQueueIsThereBeforeTheOperatorIsDeployed(unittest.TestCase):
+    """The step of the action operator that reads the control queue, which the Operator is given a role on, before anything is deployed."""
 
-    TITLE = "The control hub that the Operator is given a role on is there"
-    URL = ("az rest --method get --url https://management.azure.com/subscriptions/sub-of-the-project/resourceGroups/rg-of-the-project/providers/Microsoft.EventHub/namespaces/evhns-meternaut-abc123"
-           "/eventhubs?api-version=2024-01-01 --query value[].name --output tsv")
+    TITLE = "The control queue that the Operator is given a role on is there"
+    URL = ("az rest --method get --url https://management.azure.com/subscriptions/sub-of-the-project/resourceGroups/rg-of-the-project/providers/Microsoft.Storage/storageAccounts/stexample"
+           "/queueServices/default/queues/cases-control?api-version=2023-05-01 --query name --output tsv")
 
-    def run_step(self, hubs):
-        return run_step_script(self.TITLE, {"az": OPERATOR_HUBS_AZ},
-                               {"FAKE_HUBS": hubs, "ENV_SUBSCRIPTION_ID": "sub-of-the-project", "ENV_RESOURCE_GROUP": "rg-of-the-project", "EVENT_HUB_NAMESPACE": "evhns-meternaut-abc123"})
+    def run_step(self, queue):
+        return run_step_script(self.TITLE, {"az": OPERATOR_QUEUE_AZ},
+                               {"FAKE_QUEUE": queue, "ENV_SUBSCRIPTION_ID": "sub-of-the-project", "ENV_RESOURCE_GROUP": "rg-of-the-project", "STORAGE_ACCOUNT": "stexample", "CASES_QUEUE": "cases-control"})
 
-    def test_the_hub_there_ends_the_step_well_with_one_read_whatever_else_the_namespace_still_holds(self):
-        for hubs in ("cases-control\\n", "ai-usage\\npii-usage\\nusage-control\\ncases-control\\n"):
-            done, lines, _ = self.run_step(hubs)
-            self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
-            self.assertEqual(lines, [self.URL])
-            self.assertIn("The control hub is there.", done.stdout)
+    def test_the_queue_there_ends_the_step_well_with_one_read(self):
+        done, lines, _ = self.run_step("cases-control")
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertEqual(lines, [self.URL])
+        self.assertIn("The control queue is there.", done.stdout)
 
-    def test_a_hub_that_is_missing_stops_the_step_and_says_which_action_makes_it_and_that_nothing_was_changed(self):
-        for hubs in ("ai-usage\\npii-usage\\nusage-control\\n", "NOTFOUND", "", "ai-usage\\n"):
-            done, _, _ = self.run_step(hubs)
-            self.assertEqual(done.returncode, 1, hubs)
-            self.assertIn("The control hub cases-control is not there. Run cases first (after base): it makes the hub.", done.stdout)
-            self.assertIn("The Operator is given a role on the control hub, so the actions base and cases run before operator. Nothing was changed.", done.stdout)
+    def test_a_queue_that_is_missing_stops_the_step_and_says_which_action_makes_it_and_that_nothing_was_changed(self):
+        for queue in ("NOTFOUND", "", "None"):
+            done, _, _ = self.run_step(queue)
+            self.assertEqual(done.returncode, 1, queue)
+            self.assertIn("The control queue cases-control is not there. Run cases first (after base): it makes the queue.", done.stdout)
+            self.assertIn("The Operator is given a role on the control queue, so the actions base and cases run before operator. Nothing was changed.", done.stdout)
 
-    def test_a_name_that_only_looks_like_a_hub_is_not_the_hub(self):
-        for hubs in ("cases-control-2\\n", "my-cases-control\\n", "Cases-Control\\n", "cases-control \\n"):
-            done, _, _ = self.run_step(hubs)
-            self.assertEqual(done.returncode, 1, hubs)
-            self.assertIn("The control hub cases-control is not there.", done.stdout)
+    def test_a_name_that_only_looks_like_the_queue_is_not_the_queue(self):
+        for queue in ("cases-control-poison", "my-cases-control", "Cases-Control", "cases-control "):
+            done, _, _ = self.run_step(queue)
+            self.assertEqual(done.returncode, 1, queue)
+            self.assertIn("The control queue cases-control is not there.", done.stdout)
 
     def test_a_read_that_fails_for_another_reason_than_not_found_stops_the_step_with_what_it_said(self):
         done, _, _ = self.run_step("THROTTLED")
         self.assertEqual(done.returncode, 1)
-        self.assertIn("The event hubs of the namespace could not be read: ERROR: (TooManyRequests) Too many requests, try again later.", done.stdout)
-        self.assertNotIn("Run cases first", done.stdout, "an unreadable list is not a missing hub")
+        self.assertIn("The control queue cases-control could not be read: ERROR: (TooManyRequests) Too many requests, try again later.", done.stdout)
+        self.assertNotIn("Run cases first", done.stdout, "an unreadable queue is not a missing queue")
 
     def test_the_step_only_reads(self):
-        done, lines, _ = self.run_step("cases-control\\n")
+        done, lines, _ = self.run_step("cases-control")
         self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
         for call in lines:
             self.assertRegex(call, r"^az rest --method get ")
@@ -814,7 +814,7 @@ class TheChecksBuildTheCallOfTheOperatorTool(unittest.TestCase):
 
     def run_check(self, title, dns="10.20.0.4,10.20.0.5", exit_code=0):
         env = {"ENV_SUBSCRIPTION_ID": self.SUBSCRIPTION, "ENV_RESOURCE_GROUP": self.GROUP, "ENV_DNS_SERVERS": dns, "GITHUB_RUN_ID": "1234567890", "OPERATOR_IMAGE": self.IMAGE,
-               "EVENT_HUB_NAMESPACE": "evhns-meternaut-0a1b2c3d", "INSIGHTS_NAME": "appi-meternaut", "OPERATOR_IDENTITY_ID": self.IDENTITY, "OPERATOR_CLIENT_ID": CLIENT,
+               "STORAGE_ACCOUNT": "stexample", "INSIGHTS_NAME": "appi-meternaut", "OPERATOR_IDENTITY_ID": self.IDENTITY, "OPERATOR_CLIENT_ID": CLIENT,
                "OPERATOR_SUBNET_ID": self.SUBNET, "FAKE_EXIT": str(exit_code)}
         done, lines, _ = run_step_script(title, {"python3": OPERATOR_RUN_PYTHON3}, env)
         return done, called(lines)
@@ -839,11 +839,11 @@ class TheChecksBuildTheCallOfTheOperatorTool(unittest.TestCase):
         done, calls = self.run_check(self.CASES)
         self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
         (argv,) = calls
-        self.assertEqual(argv[:-1], self.expected("cases-check", ["cases-check.py", "check-helpers.py"], f"run --namespace evhns-meternaut-0a1b2c3d --insights {self.INSIGHTS} --minutes 30", 2400))
+        self.assertEqual(argv[:-1], self.expected("cases-check", ["cases-check.py", "check-helpers.py"], f"run --storage-account stexample --insights {self.INSIGHTS} --minutes 30", 2400))
         self.assertTrue(argv[-1].endswith("summary.md"), "the log of the container goes into the summary of the run")
         args, plain, secure, servers, files = self.accepted_by_the_tool(argv)
         self.assertEqual((secure, servers), ([], ["10.20.0.4", "10.20.0.5"]), "no secure value: nothing in the call is a secret")
-        self.assertEqual(plain["TOOL_ARGS"], f"run --namespace evhns-meternaut-0a1b2c3d --insights {self.INSIGHTS} --minutes 30")
+        self.assertEqual(plain["TOOL_ARGS"], f"run --storage-account stexample --insights {self.INSIGHTS} --minutes 30")
         self.assertEqual(sorted(files), ["cases-check.py", "check-helpers.py", "run-tool.sh"], "cases-check.py loads check-helpers.py from its own folder")
         self.assertEqual(files["run-tool.sh"], (ROOT / "operator" / "run-tool.sh").read_bytes().replace(b"\r\n", b"\n"))
         self.assertEqual((args.timeout_seconds, args.name, args.cpu, args.memory), (2400, "op-check-1234567890", 1.0, 1.5))
@@ -887,243 +887,15 @@ class TheChecksBuildTheCallOfTheOperatorTool(unittest.TestCase):
                 self.assertEqual(tool.cleanup_command(args, lambda arguments: (0, "[]", "")), 0, "the prefix is one that the tool accepts")
 
 
-RETIRE_SUBSCRIPTION = "11111111-2222-3333-4444-555555555555"
-RETIRE_GROUP = "rg-of-the-project"
-RETIRE_NAMESPACE = "evhns-meternaut-0a1b2c3d"
-DEPLOY_IDENTITY = "5a1d4c9e-7b2f-4e6a-8c3d-9f0e1a2b3c4d"
-GATEWAY_IDENTITY = "6b2e5daf-8c30-4f7b-9d4e-a01f2b3c4d5e"
-USAGE_APP_IDENTITY = "7c3f6eb0-9d41-4a8c-8e5f-b12a3c4d5e6f"
-CASES_APP_IDENTITY = "8d4a7fc1-ae52-4b9d-9f60-c23b4d5e6f70"
-OPERATOR_PRINCIPAL = "9e5b80d2-bf63-4cae-a071-d34c5e6f7081"
-DATA_SENDER = "2b629674-e913-4c01-ae53-ef4638d8f975"
-DATA_RECEIVER = "a638d3c7-ab3a-418d-83e6-5f17a39d4fde"
-
-RETIRE_AZ = """#!/bin/bash
-# stand-in for az. The role assignments of the estate are the lines of assignments.tsv: id, scope, principal, role definition, separated by tabs.
-# FAKE_HUB is how the read of the control hub ends: ok, absent or throttled. FAKE_LIST is what a list of role assignments does: cli (the assignments at exactly the scope given, of exactly the principal given,
-# as the Azure CLI filters them), everything (all of them, as a list that ignored its filters would) or fail. FAKE_DELETE is what a delete does: deleted, refused, or ignored (it says nothing and deletes nothing).
-echo "az $*" >> "$FAKE_LOG"
-state="$FAKE_DIR/assignments.tsv"
-value_of() { local want="$1"; shift; while [ "$#" -gt 1 ]; do if [ "$1" = "$want" ]; then echo "$2"; return; fi; shift; done; }
-case "$*" in
-  "rest --method get --url https://management.azure.com/subscriptions/"*"/eventhubs/"*"?api-version=2024-01-01 --query name --output tsv")
-    case "$FAKE_HUB" in
-      ok) echo "$FAKE_HUB_NAME" ;;
-      absent) echo "ERROR: (ResourceNotFound) The Resource 'Microsoft.EventHub/namespaces/evhns-meternaut-0a1b2c3d/eventhubs/$FAKE_HUB_NAME' under resource group 'rg-of-the-project' was not found." >&2; exit 1 ;;
-      throttled) echo "ERROR: (TooManyRequests) Too many requests for d0404e2a-5b6c-4d7e-8f90-a1b2c3d4e5f6, try again later." >&2; exit 1 ;;
-    esac ;;
-  "role assignment list "*)
-    if [ "$FAKE_LIST" = "fail" ]; then echo "ERROR: (AuthorizationFailed) The client does not have authorization to perform action 'Microsoft.Authorization/roleAssignments/read' over scope '$(value_of --scope "$@")'." >&2; exit 1; fi
-    scope=$(value_of --scope "$@"); assignee=$(value_of --assignee-object-id "$@")
-    while IFS=$'\\t' read -r id s p r; do
-      [ -n "$id" ] || continue
-      if [ "$FAKE_LIST" = "everything" ] || { [ "${s,,}" = "${scope,,}" ] && [ "$p" = "$assignee" ]; }; then printf '%s\\t%s\\t%s\\t%s\\n' "$id" "$s" "$p" "$r"; fi
-    done < "$state" ;;
-  "role assignment delete "*)
-    id=$(value_of --ids "$@")
-    case "$FAKE_DELETE" in
-      refused) echo "ERROR: (AuthorizationFailed) The client does not have authorization to perform action 'Microsoft.Authorization/roleAssignments/delete' over scope '$id' or the scope is invalid." >&2; exit 1 ;;
-      ignored) ;;
-      *) rows=(); while IFS= read -r line; do case "$line" in "$id"$'\\t'*) ;; *) rows+=("$line") ;; esac; done < "$state"; printf '%s\\n' "${rows[@]}" > "$state" ;;
-    esac ;;
-  *) echo "unexpected az call: $*" >&2; exit 9 ;;
-esac
-"""
-
-
-def namespace_scope(hub=None):
-    namespace = f"/subscriptions/{RETIRE_SUBSCRIPTION}/resourceGroups/{RETIRE_GROUP}/providers/Microsoft.EventHub/namespaces/{RETIRE_NAMESPACE}"
-    return f"{namespace}/eventhubs/{hub}" if hub else namespace
-
-
-def assignment_row(scope, principal, role, name):
-    return (f"{scope}/providers/Microsoft.Authorization/roleAssignments/{name}", scope, principal, f"/subscriptions/{RETIRE_SUBSCRIPTION}/providers/Microsoft.Authorization/roleDefinitions/{role}")
-
-
-OLD_ASSIGNMENTS = {"cases-control": assignment_row(namespace_scope("cases-control"), DEPLOY_IDENTITY, DATA_SENDER, "d2d2d2d2-0000-4000-8000-000000000002")}
-# What an estate that was never cleaned up still holds on a hub of the old usage recording: the step of the cases leaves it alone (the action retire-old deletes the hub, and the assignments go with it).
-USAGE_HUB_ASSIGNMENT = assignment_row(namespace_scope("usage-control"), DEPLOY_IDENTITY, DATA_SENDER, "d1d1d1d1-0000-4000-8000-000000000001")
-
-
-def estate():
-    """What an estate holds on its event hubs after the first cases, the Operator and the gateway (and, on one that was never cleaned up, the old usage hubs): the old assignment of the deploy identity among the ones that must stay."""
-    return [assignment_row(namespace_scope("ai-usage"), GATEWAY_IDENTITY, DATA_SENDER, "a1a1a1a1-0000-4000-8000-000000000011"),
-            assignment_row(namespace_scope("pii-usage"), GATEWAY_IDENTITY, DATA_SENDER, "a2a2a2a2-0000-4000-8000-000000000012"),
-            assignment_row(namespace_scope("usage-control"), USAGE_APP_IDENTITY, DATA_RECEIVER, "b1b1b1b1-0000-4000-8000-000000000021"),
-            assignment_row(namespace_scope("cases-control"), CASES_APP_IDENTITY, DATA_RECEIVER, "b2b2b2b2-0000-4000-8000-000000000022"),
-            assignment_row(namespace_scope("usage-control"), OPERATOR_PRINCIPAL, DATA_SENDER, "c1c1c1c1-0000-4000-8000-000000000031"),
-            assignment_row(namespace_scope("cases-control"), OPERATOR_PRINCIPAL, DATA_SENDER, "c2c2c2c2-0000-4000-8000-000000000032"),
-            USAGE_HUB_ASSIGNMENT, OLD_ASSIGNMENTS["cases-control"],
-            assignment_row(namespace_scope("usage-control"), DEPLOY_IDENTITY, DATA_RECEIVER, "e1e1e1e1-0000-4000-8000-000000000041"),
-            assignment_row(namespace_scope(), DEPLOY_IDENTITY, DATA_SENDER, "e2e2e2e2-0000-4000-8000-000000000042")]
-
-
-@unittest.skipIf(BASH is None, "no bash on this machine")
-class RetireTheDeployIdentitysRightToSend(unittest.TestCase):
-    """The step of the action cases that deletes the one assignment that the deploy identity held on the control hub cases-control, run with bash against a stand-in for az that keeps the estate's assignments."""
-
-    STEPS = (("Retire the deploy identity's right to send to the control hub cases-control, when it is still there", "cases-control"),)
-    SKIP = "sleep() { :; }\n"
-
-    def run_step(self, title, hub, rows=None, deployer=DEPLOY_IDENTITY, **knobs):
-        env = {"ENV_SUBSCRIPTION_ID": RETIRE_SUBSCRIPTION, "ENV_RESOURCE_GROUP": RETIRE_GROUP, "EVENT_HUB_NAMESPACE": RETIRE_NAMESPACE, "CONTROL_HUB": hub, "DEPLOYER_ID": deployer,
-               "FAKE_HUB": "ok", "FAKE_HUB_NAME": hub, "FAKE_LIST": "cli", "FAKE_DELETE": "deleted", **knobs}
-        files = {"assignments.tsv": "".join("\t".join(row) + "\n" for row in (estate() if rows is None else rows))}
-        return run_step_script(title, {"az": RETIRE_AZ}, env, files=files, prelude=self.SKIP)
-
-    def hub_read(self, hub):
-        return f"az rest --method get --url https://management.azure.com{namespace_scope(hub)}?api-version=2024-01-01 --query name --output tsv"
-
-    def list_call(self, hub, deployer=DEPLOY_IDENTITY):
-        return (f"az role assignment list --assignee-object-id {deployer.lower()} --scope {namespace_scope(hub)} --fill-principal-name false --fill-role-definition-name false "
-                "--query [].[id, scope, principalId, roleDefinitionId] --output tsv --only-show-errors")
-
-    def delete_call(self, assignment_id):
-        return f"az role assignment delete --ids {assignment_id} --only-show-errors"
-
-    def test_the_old_assignment_is_read_deleted_by_its_id_and_read_back_and_nothing_else_is_deleted(self):
-        for title, hub in self.STEPS:
-            for listing in ("cli", "everything"):
-                with self.subTest(hub=hub, listing=listing):
-                    done, lines, _ = self.run_step(title, hub, FAKE_LIST=listing)
-                    self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
-                    old_id = OLD_ASSIGNMENTS[hub][0]
-                    self.assertEqual(lines, [self.hub_read(hub), self.list_call(hub), self.delete_call(old_id), self.list_call(hub)],
-                                     "read the hub, read the assignments, delete the one by its id and nothing else, read the assignments again")
-                    self.assertIn(f"The deploy identity holds Azure Event Hubs Data Sender on the control hub {hub}, as the assignment {old_id}.", done.stdout)
-                    self.assertIn("this one assignment is deleted, by its id, and nothing else.", done.stdout)
-                    self.assertIn("Read back: the assignment is gone, and no other assignment was deleted or changed.", done.stdout)
-
-    def test_the_delete_names_the_assignment_alone_so_that_it_can_never_delete_what_a_filter_would_match(self):
-        # `az role assignment delete --scope S --assignee X` deletes every assignment that matches: the call names the id and no filter.
-        for title, hub in self.STEPS:
-            _, lines, _ = self.run_step(title, hub)
-            (delete,) = [line for line in lines if " delete " in line]
-            self.assertEqual(delete, self.delete_call(OLD_ASSIGNMENTS[hub][0]))
-            for filter_ in ("--assignee", "--scope", "--role", "--resource-group", "--include-inherited", "--all", "--yes"):
-                self.assertNotIn(filter_, delete)
-
-    def test_the_step_makes_three_kinds_of_call_and_asks_for_no_name_from_the_graph(self):
-        for title, hub in self.STEPS:
-            _, lines, _ = self.run_step(title, hub)
-            for line in lines:
-                self.assertRegex(line, r"^az (rest --method get --url https://management\.azure\.com/|role assignment (list|delete) )")
-            lists = [line for line in lines if "role assignment list" in line]
-            for line in lists:
-                self.assertIn("--fill-principal-name false", line, "no call to the Graph: the sign-in's credential is old by the time the deploy is done")
-                self.assertIn("--fill-role-definition-name false", line)
-                self.assertIn("--assignee-object-id", line, "not --assignee, which asks the Graph")
-
-    def test_the_lists_filter_does_not_matter_only_the_scope_the_principal_and_the_role_of_a_line_do(self):
-        # whatever a list returns, the step deletes only the line that is the deploy identity's Data Sender assignment at the scope of this hub
-        for title, hub in self.STEPS:
-            other = "usage-control"
-            rows = [assignment_row(namespace_scope(other), DEPLOY_IDENTITY, DATA_SENDER, "f1f1f1f1-0000-4000-8000-000000000051"),
-                    assignment_row(namespace_scope(), DEPLOY_IDENTITY, DATA_SENDER, "f2f2f2f2-0000-4000-8000-000000000052"),
-                    assignment_row(namespace_scope(hub), OPERATOR_PRINCIPAL, DATA_SENDER, "f3f3f3f3-0000-4000-8000-000000000053"),
-                    assignment_row(namespace_scope(hub), GATEWAY_IDENTITY, DATA_SENDER, "f4f4f4f4-0000-4000-8000-000000000054"),
-                    assignment_row(namespace_scope(hub), DEPLOY_IDENTITY, DATA_RECEIVER, "f5f5f5f5-0000-4000-8000-000000000055"),
-                    assignment_row(namespace_scope(hub) + "/consumergroups/x", DEPLOY_IDENTITY, DATA_SENDER, "f6f6f6f6-0000-4000-8000-000000000056"),
-                    assignment_row(namespace_scope(hub) + "x", DEPLOY_IDENTITY, DATA_SENDER, "f7f7f7f7-0000-4000-8000-000000000057"),
-                    assignment_row(f"/subscriptions/{RETIRE_SUBSCRIPTION}/resourceGroups/{RETIRE_GROUP}", DEPLOY_IDENTITY, DATA_SENDER, "f8f8f8f8-0000-4000-8000-000000000058"),
-                    assignment_row(namespace_scope(hub), DEPLOY_IDENTITY, DATA_SENDER + "0", "f9f9f9f9-0000-4000-8000-000000000059"),
-                    assignment_row(namespace_scope(hub), DEPLOY_IDENTITY, "00" + DATA_SENDER[2:], "faf1f1f1-0000-4000-8000-00000000005a"),
-                    OLD_ASSIGNMENTS[hub]]
-            done, lines, _ = self.run_step(title, hub, rows=rows, FAKE_LIST="everything")
-            self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
-            self.assertEqual([line for line in lines if " delete " in line], [self.delete_call(OLD_ASSIGNMENTS[hub][0])])
-
-    def test_the_case_of_an_id_does_not_matter_and_the_deploy_identity_is_given_to_the_list_in_lower_case(self):
-        for title, hub in self.STEPS:
-            old_id, scope, principal, definition = OLD_ASSIGNMENTS[hub]
-            kept = [row for row in estate() if row[0] != old_id]
-            for listing, written in (("everything", (old_id, scope.upper(), principal.upper(), definition.upper())),
-                                     # the CLI matches the scope without regard to case, and the principal as it is given: Azure writes it in lower case
-                                     ("cli", (old_id, scope.upper(), principal, definition.upper()))):
-                with self.subTest(hub=hub, listing=listing):
-                    done, lines, _ = self.run_step(title, hub, rows=kept + [written], deployer=DEPLOY_IDENTITY.upper(), FAKE_LIST=listing)
-                    self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
-                    self.assertEqual(lines[1], self.list_call(hub), "the object id of the token is passed in lower case, as Azure writes it")
-                    self.assertEqual([line for line in lines if " delete " in line], [self.delete_call(old_id)])
-
-    def test_an_assignment_that_is_not_there_is_nothing_to_retire_and_no_delete_is_made(self):
-        for title, hub in self.STEPS:
-            for rows in ([row for row in estate() if row[0] != OLD_ASSIGNMENTS[hub][0]], []):
-                with self.subTest(hub=hub, rows=len(rows)):
-                    done, lines, _ = self.run_step(title, hub, rows=rows)
-                    self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
-                    self.assertEqual(lines, [self.hub_read(hub), self.list_call(hub)])
-                    self.assertIn(f"The deploy identity holds no assignment of Azure Event Hubs Data Sender on the control hub {hub}: nothing to retire.", done.stdout)
-
-    def test_the_second_run_finds_nothing_because_the_first_one_deleted_the_assignment(self):
-        # the same estate, run twice: the state is the run's own, so the second run is given what the first one left
-        for title, hub in self.STEPS:
-            left = [row for row in estate() if row[0] != OLD_ASSIGNMENTS[hub][0]]
-            done, lines, _ = self.run_step(title, hub, rows=left)
-            self.assertEqual((done.returncode, len(lines)), (0, 2))
-
-    def test_a_hub_that_is_not_there_is_left_alone_on_a_new_estate_and_any_other_answer_stops_the_step(self):
-        for title, hub in self.STEPS:
-            done, lines, _ = self.run_step(title, hub, FAKE_HUB="absent")
-            self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
-            self.assertEqual(lines, [self.hub_read(hub)])
-            self.assertIn(f"The control hub {hub} is not there, so nothing is assigned on it: nothing to retire.", done.stdout)
-            done, lines, _ = self.run_step(title, hub, FAKE_HUB="throttled")
-            self.assertEqual(done.returncode, 1)
-            self.assertEqual(lines, [self.hub_read(hub)], "no assignment is read or deleted when the hub could not be read")
-            self.assertIn(f"::error::The control hub {hub} could not be read: ERROR: (TooManyRequests) Too many requests for d0404e2a-5b6c-4d7e-8f90-a1b2c3d4e5f6, try again later.", done.stdout,
-                          "an answer that holds the digits 404 inside an id is not taken for NotFound")
-            self.assertNotIn("nothing to retire", done.stdout)
-
-    def test_a_list_that_fails_stops_the_step_before_anything_is_deleted_and_says_what_azure_said(self):
-        for title, hub in self.STEPS:
-            done, lines, _ = self.run_step(title, hub, FAKE_LIST="fail")
-            self.assertEqual(done.returncode, 1)
-            self.assertEqual(lines, [self.hub_read(hub), self.list_call(hub)])
-            self.assertIn(f"::error::The role assignments of the deploy identity on the control hub {hub} could not be read: ERROR: (AuthorizationFailed)", done.stdout + done.stderr)
-
-    def test_a_delete_that_azure_refuses_stops_the_step_changes_nothing_and_says_what_a_person_does(self):
-        for title, hub in self.STEPS:
-            old_id = OLD_ASSIGNMENTS[hub][0]
-            done, lines, _ = self.run_step(title, hub, FAKE_DELETE="refused")
-            self.assertEqual(done.returncode, 1)
-            self.assertEqual(lines, [self.hub_read(hub), self.list_call(hub), self.delete_call(old_id)], "one delete, no second try, no read back")
-            self.assertIn(f"::error::Azure did not delete the assignment {old_id}: ERROR: (AuthorizationFailed)", done.stdout)
-            self.assertIn("Nothing else was changed.", done.stdout)
-            self.assertIn("a person deletes that one assignment with their own sign-in, on the owner's written word, and runs the action again (environment/BOOTSTRAP.md).", done.stdout)
-
-    def test_an_assignment_that_is_still_listed_after_the_delete_fails_the_step_after_six_reads(self):
-        for title, hub in self.STEPS:
-            old_id = OLD_ASSIGNMENTS[hub][0]
-            done, lines, _ = self.run_step(title, hub, FAKE_DELETE="ignored")
-            self.assertEqual(done.returncode, 1)
-            self.assertEqual(lines, [self.hub_read(hub), self.list_call(hub), self.delete_call(old_id)] + [self.list_call(hub)] * 6, "the delete is made once; the read back is tried six times")
-            for attempt in range(1, 7):
-                self.assertIn(f"Read back (check {attempt} of 6): the assignment is still listed.", done.stdout)
-            self.assertIn(f"::error::The assignment {old_id} is still listed after the delete.", done.stdout)
-
-    def test_more_than_one_matching_assignment_is_not_what_was_expected_and_nothing_is_deleted(self):
-        for title, hub in self.STEPS:
-            twin = assignment_row(namespace_scope(hub), DEPLOY_IDENTITY, DATA_SENDER, "abababab-0000-4000-8000-0000000000ab")
-            done, lines, _ = self.run_step(title, hub, rows=estate() + [twin], FAKE_LIST="everything")
-            self.assertEqual(done.returncode, 1)
-            self.assertEqual(lines, [self.hub_read(hub), self.list_call(hub)])
-            self.assertIn(f"::error::The deploy identity holds 2 assignments of Azure Event Hubs Data Sender on the control hub {hub}, and one was expected. Nothing was deleted", done.stdout)
-
-    def test_the_object_id_of_the_deploy_identity_has_to_be_one_before_anything_is_asked_of_azure(self):
-        for title, hub in self.STEPS:
-            for deployer in ("", "none", "me", DEPLOY_IDENTITY + "0", DEPLOY_IDENTITY[:-1], "*"):
-                with self.subTest(hub=hub, deployer=deployer):
-                    done, lines, _ = self.run_step(title, hub, deployer=deployer)
-                    self.assertEqual((done.returncode, lines), (1, []), "no call at all")
-                    self.assertIn(f"::error::The object id of the deploy identity was not read from its token, so its assignment on the control hub {hub} cannot be looked for. Nothing was changed.", done.stdout)
-
+READ_BACK_SUBSCRIPTION = "11111111-2222-3333-4444-555555555555"
+READ_BACK_GROUP = "rg-of-the-project"
+READ_BACK_ACCOUNT = "stmeternautfn0a1b2c3d"
 
 READ_BACK_AZ = """#!/bin/bash
-# stand-in for az: FAKE_STATE is what the read of the namespace prints (FAIL: it fails)
+# stand-in for az: FAKE_STATE is what the read of the storage account prints (FAIL: it fails)
 echo "az $*" >> "$FAKE_LOG"
 case "$*" in
-  "rest --method get --url https://management.azure.com/subscriptions/"*"/providers/Microsoft.EventHub/namespaces/"*"?api-version=2024-01-01 --query "*" --output tsv --only-show-errors")
+  "rest --method get --url https://management.azure.com/subscriptions/"*"/providers/Microsoft.Storage/storageAccounts/"*"?api-version=2023-05-01 --query "*" --output tsv --only-show-errors")
     if [ "$FAKE_STATE" = "FAIL" ]; then echo "ERROR: (TooManyRequests) Too many requests, try again later." >&2; exit 1; fi
     printf '%s\\n' "$FAKE_STATE" ;;
   *) echo "unexpected az call: $*" >&2; exit 9 ;;
@@ -1132,45 +904,49 @@ esac
 
 
 @unittest.skipIf(BASH is None, "no bash on this machine")
-class ReadTheEventHubsNamespaceBack(unittest.TestCase):
-    """The step of the action base that reads the namespace back from Azure after the deploy and fails the run unless it is private, has no key and has an approved private endpoint."""
+class ReadTheStorageAccountBack(unittest.TestCase):
+    """The step of the action base that reads the storage account back from Azure after the deploy and fails the run unless it is private, has no key and has its three private endpoints approved. The account
+    holds the host storage of the cases app and its control queue, so it is the one resource of the base that the control message depends on."""
 
-    TITLE = "Read the Event Hubs namespace back from Azure, which has no public network access and no key"
+    TITLE = "Read the storage account back from Azure, which has no public network access and no key"
+    GOOD = "Disabled false Approved,Approved,Approved"
 
     def run_step(self, state):
-        return run_step_script(self.TITLE, {"az": READ_BACK_AZ}, {"ENV_SUBSCRIPTION_ID": RETIRE_SUBSCRIPTION, "ENV_RESOURCE_GROUP": RETIRE_GROUP, "EVENT_HUB_NAMESPACE": RETIRE_NAMESPACE, "FAKE_STATE": state})
+        return run_step_script(self.TITLE, {"az": READ_BACK_AZ}, {"ENV_SUBSCRIPTION_ID": READ_BACK_SUBSCRIPTION, "ENV_RESOURCE_GROUP": READ_BACK_GROUP, "STORAGE_ACCOUNT": READ_BACK_ACCOUNT, "FAKE_STATE": state})
 
-    def test_a_namespace_that_is_private_has_no_key_and_has_approved_endpoints_passes_with_one_read(self):
-        for state in ("Disabled true Approved", "Disabled True Approved", "Disabled true Approved,Approved"):
+    def test_an_account_that_is_private_has_no_key_and_has_approved_endpoints_passes_with_one_read(self):
+        for state in (self.GOOD, "Disabled False Approved,Approved,Approved", "Disabled false Approved,Approved,Approved,Approved"):
             with self.subTest(state=state):
                 done, lines, _ = self.run_step(state)
                 self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
                 self.assertEqual(len(lines), 1)
-                self.assertTrue(lines[0].startswith(f"az rest --method get --url https://management.azure.com/subscriptions/{RETIRE_SUBSCRIPTION}/resourceGroups/{RETIRE_GROUP}"
-                                                    f"/providers/Microsoft.EventHub/namespaces/{RETIRE_NAMESPACE}?api-version=2024-01-01 --query "), lines[0])
-                self.assertIn(f"The Event Hubs namespace {RETIRE_NAMESPACE}, read back from Azure: public network access is Disabled, local authentication is off, and its private endpoint connection is Approved.", done.stdout)
+                self.assertTrue(lines[0].startswith(f"az rest --method get --url https://management.azure.com/subscriptions/{READ_BACK_SUBSCRIPTION}/resourceGroups/{READ_BACK_GROUP}"
+                                                    f"/providers/Microsoft.Storage/storageAccounts/{READ_BACK_ACCOUNT}?api-version=2023-05-01 --query "), lines[0])
+                self.assertIn(f"The storage account {READ_BACK_ACCOUNT}, read back from Azure: public network access is Disabled, Shared Key access is off, and its private endpoint connections are Approved.",
+                              done.stdout)
 
     def test_the_query_asks_for_the_three_properties_and_the_step_only_reads(self):
-        _, lines, _ = self.run_step("Disabled true Approved")
-        for word in ("properties.publicNetworkAccess", "properties.disableLocalAuth", "properties.privateEndpointConnections", "privateLinkServiceConnectionState.status"):
+        _, lines, _ = self.run_step(self.GOOD)
+        for word in ("properties.publicNetworkAccess", "properties.allowSharedKeyAccess", "properties.privateEndpointConnections", "privateLinkServiceConnectionState.status"):
             self.assertIn(word, lines[0])
         for word in (" put ", " post ", " patch ", " delete ", "role ", "--yes"):
             self.assertNotIn(word, lines[0] + " ")
 
-    def test_each_way_that_the_namespace_is_not_as_the_template_wrote_it_fails_the_run_and_says_which(self):
-        for state, words in (("Enabled true Approved", ["Public network access is 'Enabled', not 'Disabled'."]),
-                             ("SecuredByPerimeter true Approved", ["Public network access is 'SecuredByPerimeter', not 'Disabled'."]),
-                             ("null true Approved", ["Public network access is 'null', not 'Disabled'."]),
-                             ("Disabled false Approved", ["Local authentication is not off (disableLocalAuth is 'false')."]),
-                             ("Disabled null Approved", ["Local authentication is not off (disableLocalAuth is 'null')."]),
-                             ("Disabled true", ["The namespace has no private endpoint connection."]),
-                             ("Disabled true Pending", ["A private endpoint connection of the namespace is not Approved (Pending)."]),
-                             ("Disabled true Approved,Rejected", ["A private endpoint connection of the namespace is not Approved (Approved,Rejected)."]),
-                             ("Enabled false", ["Public network access is 'Enabled', not 'Disabled'.", "Local authentication is not off", "The namespace has no private endpoint connection."])):
+    def test_each_way_that_the_account_is_not_as_the_template_wrote_it_fails_the_run_and_says_which(self):
+        for state, words in (("Enabled false Approved,Approved,Approved", ["Public network access is 'Enabled', not 'Disabled'."]),
+                             ("SecuredByPerimeter false Approved,Approved,Approved", ["Public network access is 'SecuredByPerimeter', not 'Disabled'."]),
+                             ("null false Approved,Approved,Approved", ["Public network access is 'null', not 'Disabled'."]),
+                             ("Disabled true Approved,Approved,Approved", ["Shared Key access is not off (allowSharedKeyAccess is 'true')."]),
+                             ("Disabled null Approved,Approved,Approved", ["Shared Key access is not off (allowSharedKeyAccess is 'null')."]),
+                             ("Disabled false", ["The account has fewer than three private endpoint connections (blob, queue and table): ''."]),
+                             ("Disabled false Approved,Approved", ["The account has fewer than three private endpoint connections (blob, queue and table): 'Approved,Approved'."]),
+                             ("Disabled false Approved,Approved,Pending", ["A private endpoint connection of the account is not Approved (Approved,Approved,Pending)."]),
+                             ("Disabled false Approved,Rejected,Approved", ["A private endpoint connection of the account is not Approved (Approved,Rejected,Approved)."]),
+                             ("Enabled true", ["Public network access is 'Enabled', not 'Disabled'.", "Shared Key access is not off", "The account has fewer than three private endpoint connections"])):
             with self.subTest(state=state):
                 done, lines, _ = self.run_step(state)
                 self.assertEqual(done.returncode, 1, state)
-                self.assertIn(f"::error::The Event Hubs namespace {RETIRE_NAMESPACE} is not as the template wrote it:", done.stdout)
+                self.assertIn(f"::error::The storage account {READ_BACK_ACCOUNT} is not as the template wrote it:", done.stdout)
                 for word in words:
                     self.assertIn(word, done.stdout)
                 self.assertIn("Nothing was changed by this step.", done.stdout)
@@ -1180,7 +956,7 @@ class ReadTheEventHubsNamespaceBack(unittest.TestCase):
         done, lines, _ = self.run_step("FAIL")
         self.assertEqual(done.returncode, 1)
         self.assertEqual(len(lines), 1)
-        self.assertIn("::error::The Event Hubs namespace could not be read: ERROR: (TooManyRequests) Too many requests, try again later.", done.stdout)
+        self.assertIn("::error::The storage account could not be read: ERROR: (TooManyRequests) Too many requests, try again later.", done.stdout)
 
 
 PROBE_STEP_AZ = """#!/bin/bash
@@ -1264,7 +1040,7 @@ class TheProbeStepAsksForTheTokenOfTheDeployIdentity(unittest.TestCase):
 
     def run_probe_step(self, curl="ok", request=True, exit_code=0, **changes):
         env = {"ENV_SUBSCRIPTION_ID": self.SUBSCRIPTION, "ENV_RESOURCE_GROUP": self.GROUP, "ENV_DNS_SERVERS": "10.20.0.4,10.20.0.5", "GITHUB_RUN_ID": "1234567890", "OPERATOR_IMAGE": self.IMAGE,
-               "EVENT_HUB_NAMESPACE": "evhns-meternaut-0a1b2c3d", "STORAGE_ACCOUNT": "stmeternaut0a1b2c3d",
+               "STORAGE_ACCOUNT": "stmeternaut0a1b2c3d",
                "FOUNDRY_ACCOUNT": "aif-meternaut-agents-0a1b2c3d", "CASES_APP": "func-meternaut-cases-0a1b2c3d",
                "DEPLOY_CLIENT_ID": self.DEPLOY_CLIENT, "DEPLOY_TENANT_ID": self.DEPLOY_TENANT, "FAKE_IDENTITY_ID": self.IDENTITY, "FAKE_CLIENT": OPERATOR_CLIENT, "FAKE_CURL": curl,
                "FAKE_TOKEN": self.TOKEN, "FAKE_EXIT": str(exit_code), "ACTIONS_ID_TOKEN_REQUEST_URL": self.URL if request else "",
@@ -1311,6 +1087,8 @@ class TheProbeStepAsksForTheTokenOfTheDeployIdentity(unittest.TestCase):
         env = self.environment_of(argv)
         self.assertEqual(env["PROBE_SCM_HOSTS"], scm)
         self.assertEqual(env["PROBE_NAMES"].split()[-1:], [f"{cases}.azurewebsites.net"])
+        self.assertIn("stmeternaut0a1b2c3d.queue.core.windows.net", env["PROBE_NAMES"].split(), "the name of the control queue's host: the Operator puts the control message there")
+        self.assertNotIn("servicebus", env["PROBE_NAMES"], "no Event Hubs namespace is asked about any more")
         self.assertEqual(env["PROBE_PRIVATE_NAMES"], f"{env['PROBE_NAMES']} {scm}", "the app and its site must resolve to private addresses: the app has a private endpoint")
         self.assertIn(f"https://{cases}.azurewebsites.net/healthz", env["PROBE_URLS"].split())
         self.assertEqual((env["PROBE_DEPLOY_CLIENT_ID"], env["PROBE_DEPLOY_TENANT_ID"]), (self.DEPLOY_CLIENT, self.DEPLOY_TENANT))
