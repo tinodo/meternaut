@@ -2809,7 +2809,7 @@ class TheEvidenceContract(unittest.TestCase):
         self.assertIs(box.specs, box.specs)
         import dataclasses
         self.assertEqual([f.name for f in dataclasses.fields(tb.Resource)], ["handle", "resource_id", "resource_type", "name", "resource_group", "subscription_id", "location",
-                                                                           "tags", "managed_by", "cost_usd_30d"])
+                                                                           "tags", "managed_by", "cost_usd_30d", "part_of"])
         self.assertEqual(list(inspect.signature(Toolbox.__init__).parameters), ["self", "arm", "subscriptions", "now", "notes"])
         self.assertEqual(list(inspect.signature(Toolbox.call).parameters), ["self", "name", "arguments"])
 

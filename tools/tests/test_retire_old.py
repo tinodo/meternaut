@@ -672,6 +672,31 @@ class TheFunctionSubnet(unittest.TestCase):
         self.assertIn(f"The function subnet snet-func is free for the cases app: only the cases app func-meternaut-cases-{TOKEN} is integrated with it, as intended.", out)
         self.assertNotIn(self.FREE, out)
 
+    def test_the_teams_bots_app_on_the_subnet_is_allowed_is_said_so_and_is_never_deleted(self):
+        fake = FakeAzure()
+        bot = fake.add_app(f"func-meternaut-teams-{TOKEN}", SUBNET, "plan-meternaut-teams")
+        code, out, err, _ = go(RUN, fake)
+        self.assertEqual(code, 0, err)
+        self.assertIn(f"The function subnet snet-func is free for the cases app: only the Teams bot's app func-meternaut-teams-{TOKEN} is integrated with it, as intended.", out)
+        self.assertNotIn(self.FREE, out)
+        self.assertIn(bot.lower(), fake.ids(), "an app that is not on the list is never deleted")
+
+    def test_the_cases_app_and_the_teams_bots_app_on_the_subnet_are_both_named(self):
+        fake = FakeAzure()
+        fake.integration[CASES_SITE.lower()] = SUBNET
+        fake.add_app(f"func-meternaut-teams-{TOKEN}", SUBNET, "plan-meternaut-teams")
+        code, out, err, _ = go(RUN, fake)
+        self.assertEqual(code, 0, err)
+        self.assertIn(f"only the cases app func-meternaut-cases-{TOKEN} and the Teams bot's app func-meternaut-teams-{TOKEN} are integrated with it, as intended.", out)
+
+    def test_an_app_that_only_looks_like_the_teams_bots_app_still_holds_the_subnet(self):
+        fake = FakeAzure()
+        fake.add_app("func-meternaut-teams-00000000", SUBNET, "plan-elsewhere")
+        fake.add_app(f"func-meternaut-teams-{TOKEN}-copy", SUBNET, "plan-elsewhere")
+        code, _, err, _ = go(RUN, fake)
+        self.assertEqual(code, 1)
+        self.assertIn("is still taken by func-meternaut-teams-00000000 (plan plan-elsewhere), func-meternaut-teams-" + TOKEN + "-copy (plan plan-elsewhere)", err)
+
     def test_another_app_on_the_subnet_fails_the_run_after_fifteen_minutes_and_names_the_app_and_its_plan(self):
         fake = FakeAzure()
         elsewhere = fake.add_app("func-elsewhere", SUBNET, "plan-elsewhere")
@@ -818,7 +843,7 @@ class TheHubAction(unittest.TestCase):
 
     def test_no_new_input_is_added_for_it(self):
         inputs = re.findall(r"^      ([a-z_]+):$", WORKFLOW[WORKFLOW.index("    inputs:\n"):WORKFLOW.index("permissions:")], re.M)
-        self.assertEqual(inputs, ["action", "minutes", "public_ai_gateway_requested", "plant_public_ip", "evals_command", "evals_judge", "redteam_mode"], "minutes is the input of page-latency; the last three are the inputs of the checks of the agents: retire-old has none")
+        self.assertEqual(inputs, ["action", "minutes", "public_ai_gateway_requested", "public_teams_bot_requested", "plant_public_ip", "evals_command", "evals_judge", "redteam_mode"], "minutes is the input of page-latency; the last three are the inputs of the checks of the agents: retire-old has none")
         self.assertNotIn("inputs.minutes", step("Delete what Meternaut does not use any more, in the project's resource group"))
 
     def test_one_step_runs_the_tool_with_the_workflows_own_group_and_subscription_and_nothing_else(self):
@@ -851,7 +876,7 @@ class TheHubAction(unittest.TestCase):
         text = text[:text.index(";;")]
         for words in ("and nothing else", "The Event Hubs namespace (the action \\`retire-event-hubs\\` deletes it), the storage account, the workspace, Application Insights and every subnet were not touched",
                       "Running \\`retire-old\\` again is safe: it finds nothing.",
-                      "The function subnet \\`snet-func\\` was read back after the deletes: it is free (no app but the cases app is integrated with it), so the action \\`cases\\` can put the web page's app on it if the app is on Flex Consumption"):
+                      "The function subnet \\`snet-func\\` was read back after the deletes: it is free (no app but the cases app and the Teams bot's app is integrated with it), so the action \\`cases\\` can put the web page's app on it if the app is on Flex Consumption"):
             self.assertIn(words, text)
 
     def test_the_stopped_summary_says_what_to_do_when_another_app_holds_the_function_subnet(self):
@@ -862,7 +887,7 @@ class TheHubAction(unittest.TestCase):
 
     def test_the_description_says_that_it_reads_back_that_the_function_subnet_is_free(self):
         text = WORKFLOW[WORKFLOW.index("description: \"what-if"):WORKFLOW.index("type: choice")]
-        self.assertIn("and then reads back that the function subnet snet-func is free (no app but the cases app is integrated with it), which the action cases needs only while the web page's app is on Flex Consumption", text)
+        self.assertIn("and then reads back that the function subnet snet-func is free (no app but the cases app and the Teams bot's app is integrated with it), which the action cases needs only while the web page's app is on Flex Consumption", text)
 
     def test_the_old_settings_are_read_by_nothing(self):
         for name in ("GATEWAY_RESOURCE_ID", "GATEWAY_APPINSIGHTS_ID", "RECORDING_READER_IDS"):

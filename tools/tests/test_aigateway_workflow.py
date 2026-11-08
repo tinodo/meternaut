@@ -25,6 +25,10 @@ OPERATOR_CLIENT = "99999999-8888-7777-6666-555555555555"
 FOUNDRY_USER = "53ca6127-db72-4b80-b1b0-d745d6d5456d"
 MODELS_USER = "a6b68e3d-a1f0-4c60-8678-237c050cf4ea"
 ADMINISTRATOR = "f58310d9-a9f6-439a-9e8d-f62e7b41a168"
+OWNER = "8e3af657-a8ff-443c-a75c-2fe8c4bcb635"
+USER_ACCESS_ADMINISTRATOR = "18d7d88d-d35e-4fb5-a5c3-7773c20a72d9"
+CONTRIBUTOR = "b24988ac-6180-42a0-ab88-20f7382dd24c"
+READER = "acdd72a7-3385-48ef-bd42-f606fba81ae7"
 OLD_ROLES = ("5e0bd9bd-7b93-4f28-af87-19fc36ad61bd", "2b629674-e913-4c01-ae53-ef4638d8f975")
 GROUP_SCOPE = f"/subscriptions/{SUBSCRIPTION}/resourceGroups/{GROUP}"
 
@@ -212,11 +216,51 @@ class TheEstateIsReadyBeforeAnythingIsMade(unittest.TestCase):
         done, _, _, _ = self.ready(FAKE_ASSIGNMENTS=assignment_line(None))
         self.assertEqual(done.returncode, 0, done.stdout)
         self.assertIn("The deploy identity's right to assign roles has no condition: it may give any role.", done.stdout)
-        for what, listed in (("another role only", assignment_line(None, role="b24988ac-6180-42a0-ab88-20f7382dd24c")), ("another scope", assignment_line(GOOD_CONDITION, scope=GROUP_SCOPE + "/providers/Microsoft.EventHub/namespaces/x")),
+        for what, listed in (("another role only", assignment_line(None, role=CONTRIBUTOR)), ("another scope", assignment_line(GOOD_CONDITION, scope=GROUP_SCOPE + "/providers/Microsoft.EventHub/namespaces/x")),
                              ("none", "")):
             done, _, _, _ = self.ready(FAKE_ASSIGNMENTS=listed)
             self.assertEqual(done.returncode, 1, what)
-            self.assertIn("::error::The deploy identity holds no assignment of Role Based Access Control Administrator on the group, so the roles of the AI Gateway cannot be given. Nothing was changed.", done.stdout, what)
+            self.assertIn("::error::The deploy identity holds no assignment of Role Based Access Control Administrator on the group, and none of Owner or User Access Administrator on the group or above it, "
+                          "so the roles of the AI Gateway cannot be given. Nothing was changed.", done.stdout, what)
+
+    def test_a_person_who_runs_the_action_from_their_own_machine_may_hold_owner_or_user_access_administrator_on_the_group_or_above_it(self):
+        subscription = f"/subscriptions/{SUBSCRIPTION}"
+        tenant_root = "/providers/Microsoft.Management/managementGroups/66666666-7777-8888-9999-000000000000"
+        for what, listed in (("Owner on the group", assignment_line(None, role=OWNER)), ("User Access Administrator on the group", assignment_line(None, role=USER_ACCESS_ADMINISTRATOR)),
+                             ("Owner on the subscription", assignment_line(None, scope=subscription, role=OWNER)),
+                             ("User Access Administrator on the subscription", assignment_line(None, scope=subscription, role=USER_ACCESS_ADMINISTRATOR)),
+                             ("Owner on the tenant's root group", assignment_line(None, scope=tenant_root, role=OWNER)), ("User Access Administrator at the root", assignment_line(None, scope="/", role=USER_ACCESS_ADMINISTRATOR)),
+                             ("Owner, the scope written in capitals", assignment_line(None, scope=GROUP_SCOPE.upper(), role=OWNER)),
+                             ("Owner among other assignments", assignment_line(None, role=CONTRIBUTOR) + assignment_line(None, scope=subscription, role=READER) + assignment_line(None, scope=tenant_root, role=OWNER)),
+                             ("Owner and the deploy identity's own assignment", assignment_line(GOOD_CONDITION) + assignment_line(None, scope=subscription, role=OWNER))):
+            with self.subTest(what):
+                done, lines, _, _ = self.ready(FAKE_ASSIGNMENTS=listed)
+                self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+                self.assertIn("The identity holds Owner or User Access Administrator on the group or above it, with no condition: it may give any role.", done.stdout)
+                self.assertNotIn("::error::", done.stdout)
+                self.assertFalse(any(" create" in line or " delete" in line or "--method" in line for line in lines), "it only reads")
+
+    def test_owner_below_the_group_or_with_a_condition_and_other_roles_above_it_do_not_count(self):
+        subscription = f"/subscriptions/{SUBSCRIPTION}"
+        for what, listed in (("Owner on a resource of the group", assignment_line(None, scope=GROUP_SCOPE + "/providers/Microsoft.EventHub/namespaces/x", role=OWNER)),
+                             ("Owner on another group", assignment_line(None, scope=f"{subscription}/resourceGroups/rg-other", role=OWNER)),
+                             ("Owner on a group that the name of this one starts", assignment_line(None, scope=f"{subscription}/resourceGroups/rg", role=OWNER)),
+                             ("Owner on another subscription", assignment_line(None, scope="/subscriptions/99999999-0000-0000-0000-000000000000", role=OWNER)),
+                             ("Owner with a condition", assignment_line(GOOD_CONDITION, role=OWNER)), ("User Access Administrator with a condition", assignment_line(GOOD_CONDITION, scope=subscription, role=USER_ACCESS_ADMINISTRATOR)),
+                             ("Contributor on the group", assignment_line(None, role=CONTRIBUTOR)), ("Reader on the subscription", assignment_line(None, scope=subscription, role=READER)),
+                             ("Role Based Access Control Administrator above the group", assignment_line(None, scope=subscription, role=ADMINISTRATOR))):
+            with self.subTest(what):
+                done, _, _, _ = self.ready(FAKE_ASSIGNMENTS=listed)
+                self.assertEqual(done.returncode, 1, done.stdout)
+                self.assertIn("::error::The deploy identity holds no assignment of Role Based Access Control Administrator on the group, and none of Owner or User Access Administrator on the group or above it", done.stdout)
+
+    def test_the_deploy_identity_is_judged_as_before_when_it_holds_the_assignment_on_the_group_alone(self):
+        done, _, _, _ = self.ready(FAKE_ASSIGNMENTS=assignment_line(GOOD_CONDITION) + assignment_line(None, role=CONTRIBUTOR))
+        self.assertEqual(done.returncode, 0, done.stdout)
+        self.assertIn("The condition of the deploy identity's right to assign roles lists Foundry User and AI Gateway Models User, for a write and for a delete.", done.stdout)
+        done, _, _, _ = self.ready(FAKE_ASSIGNMENTS=assignment_line(condition([*OLD_ROLES, FOUNDRY_USER], [*OLD_ROLES, FOUNDRY_USER])) + assignment_line(None, role=CONTRIBUTOR))
+        self.assertEqual(done.returncode, 1, done.stdout)
+        self.assertIn("does not list AI Gateway Models User", done.stdout)
 
     def test_an_assignment_that_cannot_be_read_and_an_object_id_that_was_not_read_stop_the_run(self):
         done, _, _, _ = self.ready(FAKE_ASSIGNMENTS="FAIL")
@@ -228,11 +272,12 @@ class TheEstateIsReadyBeforeAnythingIsMade(unittest.TestCase):
             self.assertIn("::error::The object id of the deploy identity was not read from its token, so its right to assign roles cannot be looked at. Nothing was changed.", done.stdout)
             self.assertFalse(any("role assignment list" in line for line in lines))
 
-    def test_the_assignments_are_listed_for_the_deploy_identity_on_the_group_alone_and_the_scope_is_compared_whatever_its_case(self):
+    def test_the_assignments_are_listed_for_the_deploy_identity_on_the_group_and_above_it_and_the_scope_is_compared_whatever_its_case(self):
         done, lines, _, _ = self.ready(DEPLOYER_ID=DEPLOYER.upper(), FAKE_ASSIGNMENTS=assignment_line(GOOD_CONDITION, scope=GROUP_SCOPE.upper()))
         self.assertEqual(done.returncode, 0, done.stdout)
         (call,) = [line for line in lines if "role assignment list" in line]
         self.assertIn(f"--assignee-object-id {DEPLOYER} --scope {GROUP_SCOPE} ", call, "the id is lower-cased, and the scope is the group")
+        self.assertIn("--include-inherited", call, "what is held above the group is listed too: an Owner of the subscription or of the tenant's root group may give any role")
         self.assertIn("--fill-principal-name false --fill-role-definition-name false", call)
 
 
@@ -452,7 +497,7 @@ class TheStepsAreWrittenAsTheRulesSay(unittest.TestCase):
 
     def test_the_two_actions_are_offered_after_the_probe_and_described_in_plain_words(self):
         offered = re.findall(r"- (\S+)", re.search(r"options:\n((?:          - .+\n)+)", WORKFLOW).group(1))
-        self.assertEqual(offered[-9:-4], ["aigateway", "aigateway-check", "governance", "gateway-telemetry", "drift-check"], "the three actions of the AI security come right after the two of the gateway")
+        self.assertEqual(offered[-10:-5], ["aigateway", "aigateway-check", "governance", "gateway-telemetry", "drift-check"], "the three actions of the AI security come right after the two of the gateway (the four of the agents' checks and the Teams bot's action, teams, are the last five)")
         self.assertEqual(offered[offered.index("operator-probe") + 1:offered.index("operator-probe") + 3], ["aigateway", "aigateway-check"])
         description = re.search(r'(?m)^        description: "(what-if: .+)"$', WORKFLOW).group(1)
         gateway = description.split(" aigateway: ")[1].split(" aigateway-check: ")[0]

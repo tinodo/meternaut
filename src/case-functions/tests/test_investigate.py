@@ -968,6 +968,16 @@ class TheCostAndTheSaving(unittest.TestCase):
         self.assertEqual({r["resourceName"]: r["costUsd30d"] for r in h.of("case.result")}, {"thing-1": 12.35, "thing-2": 0.0, "thing-3": 3.46})
         self.assertEqual(h.of("investigation.finding")[0]["coveredCostUsd30d"], 15.81)
 
+    def test_a_part_of_a_resource_has_no_cost_figure_and_not_a_cost_of_nil(self):
+        account = resource(1, cost_usd_30d=None)
+        part = resource(2, cost_usd_30d=None, part_of=account.resource_id.lower())
+        toolbox = FakeToolbox([account, part], {"r1": metrics(MetricA=0), "r2": metrics(MetricA=0)})
+        h = Harness(FakeFoundry(answer(finding(handles=["r1", "r2"]))), toolbox)
+        h.contexts = {SUBSCRIPTION: Context(locks=[], recent=set(), managed_groups=set(), costs={}, currency="USD")}
+        h.go()
+        self.assertEqual({r["resourceName"]: r["costUsd30d"] for r in h.of("case.result")}, {"thing-1": 0.0, "thing-2": None},
+                         "a resource with no cost line cost nothing, and the part of it is billed with it and has no figure of its own")
+
     def test_without_cost_lines_there_is_no_figure_and_no_saving(self):
         h = Harness(FakeFoundry(answer(finding())), FakeToolbox([resource(n, cost_usd_30d=None) for n in (1, 2)], {f"r{n}": metrics(MetricA=0) for n in (1, 2)}))
         h.contexts = {SUBSCRIPTION: Context(locks=[], recent=set(), managed_groups=set(), costs=None, currency=None)}

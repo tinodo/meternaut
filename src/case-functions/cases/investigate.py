@@ -301,6 +301,8 @@ def _cost(resource: Resource, context: Context | None) -> float | None:
     value = _number(resource.cost_usd_30d)
     if value is not None:
         return round(float(value), 2)
+    if getattr(resource, "part_of", None) is not None:
+        return None  # a part of a resource is billed with the resource: it has no cost of its own, and that is not a cost of nil
     if context is not None and context.costs is not None and context.currency == "USD":
         return round(context.costs.get(resource.resource_id.lower(), 0.0), 2)
     return None
@@ -719,6 +721,14 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
                 skeptic_step = step("skeptic", st.foundry_model_skeptic, started, False, tokens, _why(s, error))
                 _own_words(note, error)
                 hidden = 0  # the run did not judge anything, and its note says why
+                if isinstance(error, HarnessRefused):
+                    # The harness stopped the Skeptic after the Investigator had run (a switch pulled or a brake tripped in between): the investigation is held like one that was refused at the
+                    # start, so that no case is opened from findings that nobody judged, and only the planted waste goes on (cases/run.py).
+                    out.ran, out.held = False, True
+                    out.note = f"the Skeptic was not let run ({_why(s, error)}), so no case was opened from this investigation"
+                    flush_notes()
+                    finished(False, note=out.note)
+                    return out
             flush_notes()
         if not skeptic_step["ok"] or unjudged:
             reason = skeptic_step["note"] if not skeptic_step["ok"] else f"no verdict for {unjudged} of {len(survivors)} findings"
@@ -780,7 +790,9 @@ def _owner_of(s: "Services", out: Investigation, lead: Lead) -> dict:
         if reader is None:
             reader = out.owners = OwnerReader(s.arm, s.clock())
         hint = reader.hints(lead.resource_id, lead.tags)
-        looked_up = True
+        # A read that was refused, that failed or that was not made (the reads of the run were used up) answers nothing: the page must then say that the lookup was not made, and not that
+        # the resource has no owner.
+        looked_up = hint.get("lastChangedBy") not in (UNAVAILABLE, NOT_VISIBLE)
     except Exception as error:  # noqa: BLE001 (the owner line is a convenience: a lookup that fails never costs a case)
         LOG.warning("investigate: the owner of a resource could not be looked up (%s)", type(error).__name__)
         hint, looked_up = owner_hints(lead.tags, None, False, lead.resource_id, UNAVAILABLE), False

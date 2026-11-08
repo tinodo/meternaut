@@ -364,6 +364,11 @@ class TheChildren(Base):
         self.assertIsNone(self.box.handles[child].cost_usd_30d)
         self.assertEqual(self.box.evidence[child]["properties"]["capacity"], 50)
 
+    def test_the_cost_by_day_of_a_part_is_not_offered_because_a_part_is_billed_with_its_account(self):
+        child = ask(self.box, "children", handle=self.account)["rows"][0][0]
+        self.assertEqual(self.box.handles[child].part_of, self.box.handles[self.account].resource_id.lower())
+        self.assertEqual(ask(self.box, "cost_history", handle=child), {"error": "not-offered"})
+
     def test_the_parts_are_read_once(self):
         ask(self.box, "children", handle=self.account)
         calls = len(self.calls_to("/deployments"))

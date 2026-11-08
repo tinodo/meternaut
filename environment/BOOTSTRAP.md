@@ -2,22 +2,6 @@
 
 Every change to Azure goes through the workflow [`deploy-hub.yml`](../.github/workflows/deploy-hub.yml) ([AGENTS.md](../AGENTS.md) rule 18). The workflow signs in to Azure as an identity, and an identity cannot create itself, so a person creates it once. That is this page. It is the only manual step, and nothing here runs until the owner has said yes in plain words in the conversation.
 
-## Running the Hub on this machine
-
-Since 2026-11-08 an action of the Hub runs from the owner's machine, with his own `az` session, by [`tools/hub-local.py`](../tools/hub-local.py) ([the record](../docs/proposals/16-the-hub-on-the-owners-machine.md)). Where this page says that a run of the workflow does something, the same steps run with the tool. The workflow stays, starts on a click only and is the way back when the quota of GitHub Actions is there again.
-
-**Once.** `python tools/hub-local.py --init` makes `local/hub-local.env` (the variables and secrets that the workflow reads, with empty values) and the run counter `local/hub-local.state.json`, in the `local/` folder of the repository's main working tree, which every worktree shares (`METERNAUT_LOCAL` names another folder). Fill in the values. `--init --from-github` reads the variables and the newest run number from GitHub once and never reads a secret. `AZURE_CLIENT_ID` may stay empty: a run here does not use the deploy identity. Git ignores the file, and the tool refuses to run when git tracks it.
-
-**Each time.** The person signs in to Azure first with `az login`: the tool never signs in, and it refuses an `az` session that is not a person's.
-
-```powershell
-python tools/hub-local.py cases --dry-run   # the plan: nothing runs, no az session needed
-python tools/hub-local.py what-if           # reads only, so it needs no --yes
-python tools/hub-local.py cases --yes       # changes Azure: needs --yes and a clean working tree
-```
-
-`aigateway` also needs `--public-ai-gateway-requested`, `page-latency` takes `--minutes`, and `plant` takes `--plant-public-ip`. The role check of `aigateway` reads the signed-in person's assignments and asks for *Role Based Access Control Administrator* on the group itself, which *Owner* is not (see the record). A run sets the CLI's default subscription to the pilot's for its minutes and puts the previous one back at the end. It writes a record and a log to `local/records/` and ends with a line that says `PASSED` or `FAILED` and the minutes.
-
 ## What the owner approves
 
 **In Azure.** In the subscription that holds the project's resources: two resource groups (one for the identity, one for the project's own resources) and one managed identity with one credential. On the two groups that the workflow works in, these roles:
@@ -29,6 +13,22 @@ python tools/hub-local.py cases --yes       # changes Azure: needs --yes and a c
 | The gateway's own resource group (the subscription of the owner's API Management instance) | Nothing is needed any more. Until 2026-11-07 a custom role, *Meternaut gateway deployer*, was assigned here | No action uses it since 2026-11-07: Meternaut no longer touches the owner's API Management instance, and the repository holds no action, template or tool that can create, change or read an object on it. The role could add and change objects in the instance, attach an identity to it and read one contract's key. A person removes its assignment and the role, on the owner's word ([the section](#the-custom-role-no-longer-used)) |
 
 **In GitHub**, on this repository: three secrets that the workflow reads (the identity's client id, the tenant id and the subscription id; none is a password) and eight variables (the project's resource group, the region, two address ranges, the DNS server, the owner's address twice and the budget). Two older secrets and one older variable were set when the environment was first made, and no workflow step reads any of them since 2026-11-07, so the owner deletes them: the secrets `GATEWAY_RESOURCE_ID` (the resource id of the API Management instance) and `GATEWAY_APPINSIGHTS_ID` (the resource id of the Application Insights component that the usage recording read), and the variable `RECORDING_READER_IDS` (the people who could read the usage store) ([the section](#changed-on-2026-11-07-the-usage-recording-and-the-old-model-account-are-removed)). None is in the repository.
+
+## Running the Hub on this machine
+
+Since 2026-11-08 an action of the Hub runs from the owner's machine, with his own `az` session, by [`tools/hub-local.py`](../tools/hub-local.py) ([the record](../docs/proposals/16-the-hub-on-the-owners-machine.md)). Where this page says that a run of the workflow does something, the same steps run with the tool. The workflow stays, starts on a click only and is the way back when the quota of GitHub Actions is there again.
+
+**Once.** `python tools/hub-local.py --init` makes `local/hub-local.env` (the variables and secrets that the workflow reads, with empty values) and the run counter `local/hub-local.state.json`, in the `local/` folder of the repository's main working tree, which every worktree shares (`METERNAUT_LOCAL` names another folder). Fill in the values. `--init --from-github` reads the variables and the newest run number from GitHub once and never reads a secret. `AZURE_CLIENT_ID` may stay empty: a run here does not use the deploy identity. `DRIFT_ACCEPTED_EXEMPTIONS` and `DRIFT_ACCEPTED_DENY` are optional: no line, or an empty one, accepts nothing, as on GitHub. Git ignores the file, and the tool refuses to run when git tracks it.
+
+**Each time.** The person signs in to Azure first with `az login`: the tool never signs in, and it refuses an `az` session that is not a person's.
+
+```powershell
+python tools/hub-local.py cases --dry-run   # the plan: nothing runs, no az session needed
+python tools/hub-local.py what-if           # reads only, so it needs no --yes
+python tools/hub-local.py cases --yes       # changes Azure: needs --yes and a clean working tree
+```
+
+`aigateway` also needs `--public-ai-gateway-requested`, `page-latency` takes `--minutes`, `plant` takes `--plant-public-ip`, `foundry-evals` takes `--evals-command` (`probe`, `run`, `rule` or `rule-apply`) and `--evals-judge` (`none`, `connection` or `auto`), and `foundry-redteam` takes `--redteam-mode` (`auto`, `cloud` or `dataset`): without a flag the workflow's own default is used, and the plan prints the value. `drift-check`, `agents-drift`, `agent365-check` and `foundry-evals` with `probe` or `rule` only read, so they need no `--yes`. The step that asks GitHub whether CI passed is not run: the person runs the checks here first, and the record names the commit and says whether the tree is clean. The package of the cases app is held against the digest of the app's own files before it is published. The role checks of `aigateway` and `governance` count *Owner* and *User Access Administrator*, on the group or above it, as the right to assign roles. A run sets the CLI's default subscription to the pilot's for its minutes and puts the previous one back at the end. It writes a record and a log to `local/records/` and ends with a line that says `PASSED` or `FAILED` and the minutes.
 
 ## What the identity can and cannot do
 

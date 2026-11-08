@@ -3,6 +3,7 @@
 No network and no subscription: the az session is a fake in memory, git is the real git in repositories that these tests make for themselves (under local/test-scratch, which git ignores), and
 bash is Git's bash when the machine has one (the tests that need it are skipped otherwise). Nothing here reads or writes the owner's configuration."""
 import argparse
+import hashlib
 import importlib.util
 import io
 import json
@@ -15,6 +16,7 @@ import tempfile
 import textwrap
 import time
 import unittest
+import zipfile
 from pathlib import Path
 from unittest import mock
 
@@ -26,6 +28,9 @@ SPEC.loader.exec_module(hub)
 SOURCE = (ROOT / "tools" / "hub-local.py").read_text(encoding="utf-8")
 REAL_WORKFLOW = hub.load_workflow(ROOT / ".github" / "workflows" / "deploy-hub.yml")
 SCRATCH_BASE = ROOT / "local" / "test-scratch"
+DIGEST_SPEC = importlib.util.spec_from_file_location("source_digest_of_the_hub_tests", ROOT / "tools" / "source-digest.py")
+SOURCE_DIGEST = importlib.util.module_from_spec(DIGEST_SPEC)
+DIGEST_SPEC.loader.exec_module(SOURCE_DIGEST)
 
 SUBSCRIPTION = "11111111-2222-3333-4444-555555555555"
 TENANT = "66666666-7777-8888-9999-000000000000"
@@ -91,8 +96,8 @@ def tearDownModule():
 
 
 def make_args(action="what-if", **flags):
-    args = argparse.Namespace(action=action, minutes=None, public_ai_gateway_requested=False, plant_public_ip=False, yes=False, allow_dirty=False, dry_run=False, workflow=None, init=False,
-                              from_github=False)
+    args = argparse.Namespace(action=action, minutes=None, public_ai_gateway_requested=False, plant_public_ip=False, evals_command=None, evals_judge=None, redteam_mode=None, yes=False,
+                              allow_dirty=False, dry_run=False, workflow=None, init=False, from_github=False)
     args.__dict__.update(flags)
     return args
 
@@ -188,6 +193,77 @@ class TheRealWorkflowIsPlanned(unittest.TestCase):
         self.assertEqual(found.count("checkout"), 1)
         self.assertEqual(found.count("python"), 1)
         self.assertGreaterEqual(found.count("az-session"), 2, "the first sign-in and the ones that renew it")
+
+    def test_the_check_of_ci_is_replaced_and_no_other_step_asks_github(self):
+        for step in REAL_WORKFLOW.steps:
+            if "github.token" in " ".join(step.env.values()) or hub.GITHUB_CALL.search(step.run or ""):
+                replacement, reason = hub.classify(step)
+                self.assertIsNone(reason, step.name)
+                self.assertIsNotNone(replacement, f"{step.name}: a step that names the GitHub token or calls gh is replaced, or it stops the plan")
+                self.assertEqual(replacement.kind, "ci-checks", step.name)
+                self.assertFalse(replacement.env_used, "its env is never read: the GitHub token is not an expression that this tool evaluates")
+        for action in REAL_WORKFLOW.actions:
+            plan, _ = plan_for(REAL_WORKFLOW, action, public_ai_gateway_requested=True)
+            self.assertEqual(plan.problems, [], action)
+            for entry in plan.entries:
+                if entry.verdict is not False and not (entry.replacement and entry.replacement.kind == "ci-checks"):
+                    self.assertIsNone(hub.GITHUB_CALL.search(entry.step.run or ""), f"{action}: {entry.step.name}")
+                    self.assertNotIn("github.token", " ".join(entry.step.env.values()), f"{action}: {entry.step.name}")
+
+    def test_the_check_of_ci_runs_for_every_action_and_is_replaced(self):
+        for action in REAL_WORKFLOW.actions:
+            plan, _ = plan_for(REAL_WORKFLOW, action, public_ai_gateway_requested=True)
+            ci = [entry for entry in plan.entries if entry.replacement and entry.replacement.kind == "ci-checks"]
+            self.assertEqual(len(ci), 1, f"{action}: the step that asks GitHub whether CI passed is there once")
+            self.assertIs(ci[0].verdict, True, f"{action}: it is asked of every action, the ones that only read as well")
+
+    def test_the_two_optional_variables_may_be_left_out_and_every_other_name_may_not(self):
+        text = (ROOT / ".github" / "workflows" / "deploy-hub.yml").read_text(encoding="utf-8")
+        values = dict(FAKE_VALUES)
+        self.assertFalse(set(hub.OPTIONAL_NAMES) & set(values))
+        for action in ("what-if", "drift-check", "governance"):
+            plan, ctx = plan_for(REAL_WORKFLOW, action, values=values)
+            self.assertEqual(plan.problems, [], action)
+            self.assertEqual(ctx.optional_unset, {name for name in hub.OPTIONAL_NAMES if f"vars.{name}" in text}, action)
+        with_values = dict(values, DRIFT_ACCEPTED_EXEMPTIONS="", DRIFT_ACCEPTED_DENY="a-policy")
+        plan, ctx = plan_for(REAL_WORKFLOW, "drift-check", values=with_values)
+        self.assertEqual((plan.problems, ctx.optional_unset), ([], set()))
+        for name in ("ENV_LOCATION", "ENV_OWNER", "AZURE_TENANT_ID"):
+            plan, _ = plan_for(REAL_WORKFLOW, "what-if", values={key: value for key, value in values.items() if key != name})
+            self.assertTrue(plan.problems, name)
+
+    def test_what_each_action_does_to_azure_is_known_and_an_action_that_is_not_known_is_a_change(self):
+        reading = ("what-if", "aigateway-check", "page-latency", "loop-check", "operator-probe", "drift-check", "agents-drift", "agent365-check")
+        for action in REAL_WORKFLOW.actions:
+            inputs = hub.input_values(REAL_WORKFLOW, make_args(action))
+            self.assertIs(hub.changes_azure(action, inputs), action not in reading and action != "foundry-evals", action)
+        for command, changes in (("probe", False), ("rule", False), ("run", True), ("rule-apply", True), ("something-new", True)):
+            self.assertIs(hub.changes_azure("foundry-evals", {"evals_command": command}), changes, command)
+        for action in ("governance", "gateway-telemetry", "foundry-redteam", "a-new-action"):
+            self.assertIs(hub.changes_azure(action, {}), True, action)
+
+    def test_the_three_inputs_of_the_harness_have_the_workflows_own_defaults_and_flags_set_them(self):
+        defaults = hub.input_values(REAL_WORKFLOW, make_args("foundry-evals"))
+        self.assertEqual((defaults["evals_command"], defaults["evals_judge"], defaults["redteam_mode"]), ("probe", "none", "auto"))
+        given = hub.input_values(REAL_WORKFLOW, make_args("foundry-evals", evals_command="run", evals_judge="connection", redteam_mode="cloud"))
+        self.assertEqual((given["evals_command"], given["evals_judge"], given["redteam_mode"]), ("run", "connection", "cloud"))
+        for flag, value, options in (("evals_command", "everything", "probe, run, rule, rule-apply"), ("evals_judge", "maybe", "none, connection, auto"), ("redteam_mode", "all", "auto, cloud, dataset")):
+            with self.subTest(flag), self.assertRaises(hub.HubLocalError) as caught:
+                hub.input_values(REAL_WORKFLOW, make_args("foundry-evals", **{flag: value}))
+            self.assertIn(f"{value!r} is not one of the options of the input {flag}: {options}", str(caught.exception))
+
+    def test_an_input_flag_changes_what_the_step_reads(self):
+        for flag, value, name in (("evals_command", "rule", "inputs.evals_command"), ("evals_judge", "auto", "inputs.evals_judge"), ("redteam_mode", "dataset", "inputs.redteam_mode")):
+            _, ctx = plan_for(REAL_WORKFLOW, "foundry-evals", **{flag: value})
+            self.assertEqual(hub.evaluate(hub.parse_expression(name), ctx), value)
+
+    def test_every_step_of_the_harness_and_of_the_ai_security_is_one_that_this_tool_runs(self):
+        for action in ("governance", "gateway-telemetry", "drift-check", "agents-drift", "foundry-evals", "foundry-redteam", "agent365-check"):
+            plan, _ = plan_for(REAL_WORKFLOW, action)
+            self.assertEqual(plan.problems, [], action)
+            running = [entry for entry in plan.entries if entry.verdict is not False]
+            self.assertTrue(any(f"inputs.action == '{action}'" in (entry.step.condition or "") for entry in running), f"{action} has steps of its own")
+            self.assertEqual({entry.replacement.kind for entry in running if entry.replacement} - {"checkout", "python", "az-session", "ci-checks"}, set(), f"{action} needs no other replacement")
 
     def test_an_input_that_the_workflow_does_not_have_is_an_error(self):
         text = (ROOT / ".github" / "workflows" / "deploy-hub.yml").read_text(encoding="utf-8").replace("inputs.minutes", "inputs.nothere", 1)
@@ -414,6 +490,30 @@ class Expressions(unittest.TestCase):
         self.assertEqual(text, "a ${{ vars.NOPE }} b cases")
         self.assertEqual(len(problems), 1)
         self.assertTrue(problems[0].startswith("where: vars.NOPE is not defined in hub-local.env"))
+
+    def test_no_github_token_exists_here_and_naming_one_is_an_error_that_says_so(self):
+        for text in ("github.token", "secrets.GITHUB_TOKEN", "secrets.github_token"):
+            with self.subTest(text=text), self.assertRaises(hub.ExprError) as caught:
+                hub.evaluate(hub.parse_expression(text), self.context())
+            self.assertIn("no GitHub token exists on this machine", str(caught.exception))
+        problems = []
+        self.assertEqual(hub.interpolate("t=${{ github.token }}", self.context(), problems, "where"), "t=${{ github.token }}", "the expression is kept as text, never a value")
+        self.assertTrue(problems[0].startswith("where: github.token: no GitHub token exists on this machine"), problems)
+        with self.assertRaises(hub.ExprError):
+            hub.condition_result("false && github.token == ''", self.context(planning=True))
+
+    def test_the_two_optional_variables_are_empty_when_the_file_has_no_line_for_them(self):
+        ctx = self.context()
+        for name in hub.OPTIONAL_NAMES:
+            self.assertEqual(hub.interpolate("${{ vars." + name + " }}", ctx), "")
+        self.assertEqual(ctx.optional_unset, set(hub.OPTIONAL_NAMES))
+        ctx.variables["DRIFT_ACCEPTED_DENY"] = "policy-a"
+        ctx.optional_unset.clear()
+        self.assertEqual(hub.interpolate("${{ vars.DRIFT_ACCEPTED_DENY }}", ctx), "policy-a")
+        self.assertEqual(ctx.optional_unset, set())
+        for text in ("vars.ENV_LOCATION", "secrets.DRIFT_ACCEPTED_DENY"):
+            with self.subTest(text=text), self.assertRaises(hub.ExprError):
+                hub.evaluate(hub.parse_expression(text), self.context())
 
     def test_what_a_dry_run_cannot_know_yet_stays_unknown_and_the_logic_works_with_it(self):
         ctx = self.context(planning=True)
@@ -908,6 +1008,166 @@ class TheRuns(RunnerCase):
         self.assertEqual(log.count("caf\u00e9 \u2014 \u20ac"), 2, "bash and a native Python both print UTF-8")
 
 
+# The same workflow as the small one, with the inputs of the agent harness and its actions: the choices and the defaults are the real workflow's.
+HARNESS_HEAD = MINI_HEAD.replace("          - aigateway\n", "          - aigateway\n          - foundry-evals\n          - foundry-redteam\n          - drift-check\n", 1).replace(
+    "      plant_public_ip:\n        type: boolean\n        default: false\ndefaults:",
+    "      plant_public_ip:\n        type: boolean\n        default: false\n"
+    "      evals_command:\n        type: choice\n        required: false\n        default: probe\n        options:\n          - probe\n          - run\n          - rule\n          - rule-apply\n"
+    "      evals_judge:\n        type: choice\n        required: false\n        default: none\n        options:\n          - none\n          - connection\n          - auto\n"
+    "      redteam_mode:\n        type: choice\n        required: false\n        default: auto\n        options:\n          - auto\n          - cloud\n          - dataset\ndefaults:", 1)
+
+
+@unittest.skipIf(BASH is None, "no Git bash on this machine")
+class TheInputsOfTheHarnessAreFlags(RunnerCase):
+    EVALS = block("Evaluations", 'echo "evals command=$EVALS_COMMAND judge=$EVALS_JUDGE"', cond="inputs.action == 'foundry-evals'",
+                  env={"EVALS_COMMAND": "${{ inputs.evals_command }}", "EVALS_JUDGE": "${{ inputs.evals_judge }}"})
+    REDTEAM = block("Red team", 'echo "redteam mode=$REDTEAM_MODE"', cond="inputs.action == 'foundry-redteam'", env={"REDTEAM_MODE": "${{ inputs.redteam_mode }}"})
+    DRIFT = block("Drift", 'echo "drift read"', cond="inputs.action == 'drift-check'")
+
+    def setUp(self):
+        super().setUp()
+        self.write_workflow(HARNESS_HEAD + CHECKOUT + LOGIN + self.EVALS + self.REDTEAM + self.DRIFT + ALWAYS)
+
+    def test_the_plan_prints_the_value_of_each_input_that_the_action_reads_and_says_which_are_the_workflows_defaults(self):
+        code, text = self.go("foundry-evals", "--dry-run")
+        self.assertEqual(code, 0, text)
+        self.assertIn("  inputs         evals_command=probe (the workflow's default), evals_judge=none (the workflow's default)", text)
+        code, text = self.go("foundry-evals", "--dry-run", "--evals-command", "run", "--evals-judge", "connection")
+        self.assertIn("  inputs         evals_command=run, evals_judge=connection\n", text)
+        code, text = self.go("foundry-redteam", "--dry-run", "--redteam-mode", "dataset")
+        self.assertIn("  inputs         redteam_mode=dataset\n", text)
+        code, text = self.go("foundry-redteam", "--dry-run")
+        self.assertIn("  inputs         redteam_mode=auto (the workflow's default)", text)
+        code, text = self.go("drift-check", "--dry-run")
+        self.assertEqual(code, 0, text)
+        self.assertNotIn("  inputs ", text)
+
+    def test_the_commands_that_only_read_need_no_yes_and_the_others_do(self):
+        code, text = self.go("foundry-evals")
+        self.assertEqual(code, 0, text)
+        self.assertIn("evals command=probe judge=none", text)
+        self.assertEqual(self.state(), 287, "a read-only run takes no number")
+        code, text = self.go("foundry-evals", "--evals-command", "rule")
+        self.assertEqual(code, 0, text)
+        self.assertIn("evals command=rule", text)
+        for command in ("run", "rule-apply"):
+            code, text = self.go("foundry-evals", "--evals-command", command)
+            self.assertEqual(code, 2, text)
+            self.assertIn("the action foundry-evals changes Azure: it needs --yes", text)
+            self.assertNotIn("evals command=", text)
+        self.assertEqual(self.state(), 287)
+        code, text = self.go("foundry-evals", "--evals-command", "run", "--evals-judge", "connection", "--yes")
+        self.assertEqual(code, 0, text)
+        self.assertIn("evals command=run judge=connection", text)
+        self.assertEqual(self.state(), 288)
+
+    def test_the_red_team_changes_azure_and_takes_its_mode_from_the_flag(self):
+        code, text = self.go("foundry-redteam", "--redteam-mode", "dataset")
+        self.assertEqual(code, 2, text)
+        self.assertIn("the action foundry-redteam changes Azure: it needs --yes", text)
+        code, text = self.go("foundry-redteam", "--redteam-mode", "dataset", "--yes")
+        self.assertEqual(code, 0, text)
+        self.assertIn("redteam mode=dataset", text)
+        code, text = self.go("foundry-redteam", "--yes")
+        self.assertIn("redteam mode=auto", text, "the workflow's own default when the flag is not given")
+
+    def test_the_drift_check_only_reads_and_needs_no_yes(self):
+        code, text = self.go("drift-check")
+        self.assertEqual(code, 0, text)
+        self.assertIn("drift read", text)
+        self.assertEqual(self.state(), 287)
+
+    def test_a_value_that_is_not_an_option_of_the_workflow_is_refused_and_nothing_runs(self):
+        for flag, value in (("--evals-command", "everything"), ("--evals-judge", "maybe"), ("--redteam-mode", "all")):
+            with self.subTest(flag):
+                code, text = self.go("foundry-evals", flag, value, "--dry-run")
+                self.assertEqual(code, 2, text)
+                self.assertIn(f"{value!r} is not one of the options of the input", text)
+        self.assertEqual(self.records(), [])
+
+    def test_a_flag_for_another_action_is_said_in_the_plan_and_ignored_as_the_workflow_ignores_the_input(self):
+        code, text = self.go("plant", "--evals-command", "run", "--minutes", "5", "--redteam-mode", "cloud", "--dry-run")
+        self.assertEqual(code, 0, text)
+        self.assertIn("Note: --evals-command is only for foundry-evals: the action plant ignores it", text)
+        self.assertIn("Note: --minutes is only for page-latency: the action plant ignores it", text)
+        self.assertIn("Note: --redteam-mode is only for foundry-redteam: the action plant ignores it", text)
+        code, text = self.go("foundry-evals", "--dry-run", "--evals-command", "run")
+        self.assertNotIn("Note: --evals-command", text)
+
+    def test_a_flag_for_an_input_that_the_workflow_does_not_have_is_refused(self):
+        self.write_workflow(mini(CHECKOUT, LOGIN, HELLO))
+        code, text = self.go("what-if", "--evals-command", "run", "--dry-run")
+        self.assertEqual(code, 2, text)
+        self.assertIn("--evals-command was given, and the workflow has no input evals_command", text)
+
+
+@unittest.skipIf(BASH is None, "no Git bash on this machine")
+class TheCheckOfCiIsNotAskedOfGitHub(RunnerCase):
+    """The first step of the Hub asks GitHub, with the run's own token, whether CI passed for this commit. Here the person ran the checks on this machine: nothing is asked, and no token exists."""
+    CI = block("The checks of CI have passed for this commit", """
+        echo "the CI step ran, with the token [$GH_TOKEN]"
+        passed=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/checks.yml/runs?head_sha=$GITHUB_SHA&event=push" --jq '.total_count')
+        """, env={"GH_TOKEN": "${{ github.token }}"})
+
+    def setUp(self):
+        super().setUp()
+        self.write_workflow(mini(self.CI, CHECKOUT, LOGIN, HELLO, ALWAYS))
+
+    def head(self):
+        return hub.run_git(["rev-parse", "HEAD"], self.root)[1].strip()
+
+    def test_the_step_is_replaced_and_nothing_is_asked_of_github(self):
+        code, text = self.go("what-if", environ={"GH_TOKEN": "a-token-of-the-person", "GITHUB_TOKEN": "another"})
+        self.assertEqual(code, 0, text)
+        self.assertNotIn("the CI step ran", text)
+        self.assertNotIn("a-token-of-the-person", text)
+        self.assertIn(f"replaced: the checks of CI are not asked of GitHub: the person who starts the run ran them on this machine, for commit {self.head()[:12]}, with the working tree clean", text)
+        self.assertIn("hello from a step", text, "the steps after it run")
+
+    def test_the_record_names_the_commit_and_says_whether_the_tree_was_clean(self):
+        code, text = self.go("what-if")
+        self.assertEqual(code, 0, text)
+        record = self.records()[0].read_text(encoding="utf-8")
+        self.assertIn(f"- the checks of CI are not asked of GitHub: the person who starts the run ran them on this machine, for commit {self.head()[:12]}, with the working tree clean", record)
+        self.assertIn(f"head commit: {self.head()}", record)
+        (self.root / "untracked.txt").write_text("not committed\n", encoding="utf-8")
+        code, text = self.go("what-if")
+        self.assertEqual(code, 0, text)
+        self.assertIn("with the working tree NOT clean", self.records()[-1].read_text(encoding="utf-8"))
+
+    def test_the_plan_shows_the_step_as_replaced_and_has_no_problem(self):
+        code, text = self.go("what-if", "--dry-run")
+        self.assertEqual(code, 0, text)
+        self.assertIn("The checks of CI have passed for this commit", text)
+        self.assertIn("replaced here: the checks of CI are not asked of GitHub", text)
+        self.assertNotIn("These stop the run", text)
+
+    def test_a_step_that_calls_gh_and_is_not_that_step_stops_the_plan_and_nothing_runs(self):
+        self.write_workflow(mini(CHECKOUT, LOGIN, block("Asks GitHub", 'echo "never printed"\ngh run list --limit 1'), ALWAYS))
+        code, text = self.go("what-if")
+        self.assertEqual(code, 2, text)
+        self.assertIn("it calls GitHub with gh, and no GitHub call is made from this machine", text)
+        self.assertNotIn("never printed", text)
+        self.assertEqual(self.records(), [])
+        self.assertEqual(self.az.calls, [], "no az session was asked for either")
+
+    def test_a_token_that_a_step_that_is_not_replaced_names_stops_the_plan_and_says_why(self):
+        self.write_workflow(mini(CHECKOUT, LOGIN, block("Wants a token", 'echo "never printed"', env={"GH_TOKEN": "${{ github.token }}"}),
+                                 block("Wants the other form", 'echo "never printed"', env={"T": "${{ secrets.GITHUB_TOKEN }}"}), ALWAYS))
+        code, text = self.go("what-if")
+        self.assertEqual(code, 2, text)
+        self.assertEqual(text.count("no GitHub token exists on this machine"), 2, text)
+        self.assertNotIn("never printed", text)
+
+    def test_the_forms_of_a_call_of_gh_are_found_and_prose_that_names_it_is_not(self):
+        for script in ("gh api repos/x/y", "  gh run list", 'x=$(gh api repos/x/y --jq .a)', 'if ! gh pr view 1; then echo no; fi', "echo a | gh api -", "cat f && gh issue list",
+                       "(gh api x)", "`gh run list`", "true; gh release view"):
+            self.assertIsNotNone(hub.GITHUB_CALL.search(script), script)
+        for script in ('echo "gh api is not run here"', "# gh api in a comment", 'grep -c "gh api" file', 'urls="https://api.github.com/ https://github.com/"', "ugh api", "echo high run",
+                       "git log", "which gh", 'echo "see: gh run list"'):
+            self.assertIsNone(hub.GITHUB_CALL.search(script), script)
+
+
 class TheGuards(RunnerCase):
     def never_az(self):
         def refuse():
@@ -1079,21 +1339,39 @@ class TheGuards(RunnerCase):
             self.assertEqual(caught.exception.code, 2)
 
 
+REAL_RUN_PROCESS = hub.run_process
+ZIP_HASH = "ab" * 32
+
+
+@unittest.skipIf(BASH is None, "no Git bash on this machine")
 class TheCasesPublish(RunnerCase):
     """The action cases publishes the app from this machine: the package is built by the repository's script and published with az, through the app's public deployment site."""
 
     PUBLISH = block("Publish the cases to the function app from inside the network, in the Operator", '# --script operator/publish.sh\necho "never run"', id="publish_cases",
                     env={"FUNCTION_APP": "func-cases-test", "CASES_APP_PLAN": "Flex"})
-    PACK = block("Pack the cases app's sources for the Operator", 'FUNCTION_APP_SOURCES_ONLY=1 bash tools/build-function-app.sh case-functions cases x y\necho "never run"')
+    PACK = block("Pack the cases app's sources for the Operator", """
+        FUNCTION_APP_SOURCES_ONLY=1 true
+        echo "pack temp=$RUNNER_TEMP conversion=${MSYS_NO_PATHCONV:-on} excluded=${MSYS2_ARG_CONV_EXCL:-none}"
+        echo "zip_sha256=ZIPHASH" >> "$GITHUB_OUTPUT"
+        """.replace("ZIPHASH", ZIP_HASH), id="pack")
     CLEANUP = block("Delete any container group of the publish that is left", 'python3 tools/operator-run.py cleanup --prefix op-publish-\necho "never run"',
                     cond="always() && steps.publish_cases.outcome != 'skipped'")
+    RECORD = block("Record the release", 'echo "recorded zip=$ZIP"', env={"ZIP": "${{ steps.pack.outputs.zip_sha256 }}"})
+    # The files of a package: the app's own (function_app.py and cases/, which the digest covers), what the build adds (host.json, the lock, the libraries), with the line ends of a Windows checkout.
+    APP = {"function_app.py": b"import cases\r\n", "host.json": b"{}\r\n", "requirements.txt": b"six==1.16.0 --hash=sha256:00\r\n", "cases/__init__.py": b"VALUE = 1\r\n",
+           "cases/lock.json": b'{"locked": true}\r\n', ".python_packages/lib/site-packages/lib/__init__.py": b"X = 1\r\n", ".python_packages/lib/site-packages/lib/data.json": b"{}\r\n"}
 
     def setUp(self):
         super().setUp()
-        self.write_workflow(mini(CHECKOUT, LOGIN, self.PACK, self.PUBLISH, self.CLEANUP, ALWAYS))
+        self.write_workflow(mini(CHECKOUT, LOGIN, self.PACK, self.PUBLISH, self.CLEANUP, self.RECORD, ALWAYS))
         self.processes: list = []
+        self.built = b""
+        for relative in ("tools/package-digest.py", "src/case-functions/cases/release.py"):
+            target = self.root / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy(ROOT / relative, target)
 
-    def fake_process(self, build_ok=True, publish_codes=(0,)):
+    def fake_process(self, build_ok=True, publish_codes=(0,), files=None):
         codes = list(publish_codes)
 
         def fake(argv, env, cwd, console, timeout):
@@ -1101,18 +1379,40 @@ class TheCasesPublish(RunnerCase):
                 entry = {"argv": list(argv), "env": dict(env), "timeout": timeout, "script": Path(argv[-1]).read_text(encoding="utf-8")}
                 self.processes.append(entry)
                 if build_ok:
-                    (Path(argv[-1]).parent.parent / "cases.zip").write_bytes(b"PK")
+                    package = Path(argv[-1]).parent.parent / "cases.zip"
+                    if files is None:
+                        package.write_bytes(b"PK")
+                    else:
+                        with zipfile.ZipFile(package, "w", zipfile.ZIP_DEFLATED) as archive:
+                            for name, data in files.items():
+                                archive.writestr(name, data)
+                    self.built = package.read_bytes()
                 return (0 if build_ok else 1), False
             if "config-zip" in argv:
                 self.processes.append({"argv": list(argv), "env": dict(env), "timeout": timeout})
                 console.step_line("publishing to the deployment site")
                 return (codes.pop(0) if codes else 0), False
-            return 0, False
+            return REAL_RUN_PROCESS(argv, env, cwd, console, timeout)
         return fake
 
     def run_cases(self, **kwargs):
         with mock.patch.object(hub, "run_process", self.fake_process(**kwargs)):
             return self.go("what-if")
+
+    def digest_of(self, files):
+        folder = self.base / "digest-of"
+        shutil.rmtree(folder, ignore_errors=True)
+        for name, data in files.items():
+            path = folder / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(data)
+        return SOURCE_DIGEST.digest(folder)
+
+    def run_with_release(self, digest, files, step_id="release", **kwargs):
+        commit = "a" * 40
+        release = block("Work out the release", f'echo "build_commit={commit}" >> "$GITHUB_OUTPUT"\necho "package_sha256={digest}" >> "$GITHUB_OUTPUT"', id=step_id)
+        self.write_workflow(mini(CHECKOUT, LOGIN, release, self.PACK, self.PUBLISH, self.CLEANUP, self.RECORD, ALWAYS))
+        return self.run_cases(files=files, **kwargs)
 
     def test_the_package_is_built_by_the_repositorys_script_and_published_with_the_owners_session(self):
         code, text = self.run_cases()
@@ -1132,12 +1432,75 @@ class TheCasesPublish(RunnerCase):
         self.assertEqual(arguments[8:10], ["--name", "func-cases-test"])
         self.assertEqual(arguments[arguments.index("--build-remote"):arguments.index("--build-remote") + 2], ["--build-remote", "false"])
         self.assertIn("the package is published to func-cases-test (attempt 1 of 3), from this machine, through the app's public deployment site", text)
-        self.assertIn("replaced: not needed: the publish step that follows builds the package", text)
+        self.assertIn("NOTE: runs as written, with Git's path conversion on and the temp folder as /c/...", text)
         self.assertIn("replaced: not needed: the publish made no container group", text)
         self.assertNotIn("never run", text)
         record = self.records()[0].read_text(encoding="utf-8")
         self.assertIn("published from this machine through the app's public deployment site", record)
+        self.assertIn("the archive of the app's sources is made here and is not sent to the Operator", record)
         self.assertEqual(self.az.default, PREVIOUS)
+
+    def test_the_pack_step_runs_as_written_with_a_temp_folder_that_the_build_script_takes_and_its_output_reaches_the_record_step(self):
+        code, text = self.run_cases()
+        self.assertEqual(code, 0, text)
+        self.assertRegex(text, r"pack temp=/\S+ conversion=on excluded=none", "the temp folder starts with a slash (/c/... on Windows) and Git's path conversion is on for this one step")
+        self.assertIn(f"recorded zip={ZIP_HASH}", text, "the step that records the release reads the hash that the pack step wrote")
+        self.assertIn("pack temp=", text)
+
+    def test_the_files_in_the_package_are_held_against_the_digest_of_the_apps_own_files_before_it_is_published(self):
+        lf = {name: data.replace(b"\r\n", b"\n") for name, data in self.APP.items()}
+        digest = self.digest_of(lf)
+        self.assertEqual(self.digest_of(self.APP), digest, "the digest reads CRLF as LF: a checkout on Windows and one on Linux give the same one")
+        code, text = self.run_with_release(digest, self.APP)
+        self.assertEqual(code, 0, text)
+        self.assertIn("the files of the package (function_app.py and cases/) have the digest that the deploy wrote as PACKAGE_SHA256", text)
+        build, publish = self.processes
+        self.assertIn("config-zip", publish["argv"])
+        record = self.records()[0].read_text(encoding="utf-8")
+        self.assertIn(f"the cases package that is published has the SHA-256 {hashlib.sha256(self.built).hexdigest()}", record)
+        self.assertIn(f"Its own files (function_app.py and cases/) have the digest `{digest}`", record)
+        self.assertIn("Nothing went to the Operator in this run", record)
+
+    def test_a_package_whose_files_are_not_the_ones_that_were_digested_is_never_published(self):
+        digest = self.digest_of(self.APP)
+        for what, files in (("a changed file", {**self.APP, "cases/lock.json": b'{"locked": false}\r\n'}), ("an added file", {**self.APP, "cases/new.py": b"X = 2\r\n"}),
+                            ("a missing file", {name: data for name, data in self.APP.items() if name != "cases/lock.json"}), ("a changed entry file", {**self.APP, "function_app.py": b"import evil\r\n"})):
+            with self.subTest(what):
+                self.processes.clear()
+                code, text = self.run_with_release(digest, files)
+                self.assertEqual(code, 1, text)
+                self.assertIn("the files in the package are not the files whose digest the deploy wrote as PACKAGE_SHA256", text)
+                self.assertIn("Nothing was published", text)
+                self.assertEqual(len(self.processes), 1, "the package was built and the publish was not tried")
+                self.assertEqual(self.az.default, PREVIOUS)
+
+    def test_what_the_digest_does_not_cover_may_differ_from_the_checkout(self):
+        digest = self.digest_of(self.APP)
+        other = {**self.APP, "requirements.txt": b"another lock\r\n", "host.json": b'{"a": 1}\r\n', ".python_packages/lib/site-packages/lib/__init__.py": b"X = 2\r\n",
+                 "cases/__pycache__/lock.cpython-313.pyc": b"\x00\x01", "cases/notes.txt": b"not python and not json\r\n"}
+        code, text = self.run_with_release(digest, other)
+        self.assertEqual(code, 0, text)
+        self.assertEqual(len(self.processes), 2)
+
+    def test_a_package_that_is_not_a_zip_file_stops_the_publish_when_a_digest_is_known(self):
+        code, text = self.run_with_release(self.digest_of(self.APP), None)
+        self.assertEqual(code, 1, text)
+        self.assertIn("could not be held against the digest of the app's own files", text)
+        self.assertEqual(len(self.processes), 1)
+
+    def test_the_digest_is_found_by_the_name_of_the_output_whatever_the_step_that_gives_it(self):
+        digest = self.digest_of(self.APP)
+        code, text = self.run_with_release(digest, self.APP, step_id="another_name")
+        self.assertEqual(code, 0, text)
+        self.assertIn("have the digest that the deploy wrote as PACKAGE_SHA256", text)
+        code, text = self.run_with_release(digest, {**self.APP, "cases/__init__.py": b"VALUE = 2\r\n"}, step_id="another_name")
+        self.assertEqual(code, 1, text)
+
+    def test_without_a_digest_the_package_is_published_and_the_run_says_that_it_was_not_held_against_one(self):
+        code, text = self.run_cases()
+        self.assertEqual(code, 0, text)
+        self.assertIn("NOTE: no step of this workflow gave the digest of the app's own files (the output package_sha256), so the package is not held against one", text)
+        self.assertNotIn("Its own files (function_app.py and cases/)", self.records()[0].read_text(encoding="utf-8"))
 
     def test_the_publish_is_tried_three_times_a_minute_apart(self):
         code, text = self.run_cases(publish_codes=(1, 1, 0))
@@ -1184,6 +1547,128 @@ class TheCasesPublish(RunnerCase):
         self.assertEqual(code, 1, text)
         self.assertIn("is not a name", text)
         self.assertEqual(self.processes, [])
+
+
+@unittest.skipIf(BASH is None, "no Git bash on this machine")
+class ThePackageThatTheBuildScriptMakesCarriesTheDigestOfTheApp(unittest.TestCase):
+    """The proof for the release check of the cases app after a publish from this machine (the control A-RELEASE): the zip file that tools/build-function-app.sh makes holds exactly the files whose digest the
+    release step works out, on a checkout with CRLF line ends (Windows) as on one with LF. The libraries are installed into .python_packages from the hash-locked requirements.txt, and the digest does not
+    cover them, so the build here is the one that installs none (FUNCTION_APP_SOURCES_ONLY): the files that the digest covers are copied and zipped by the same lines of the script in both modes."""
+
+    SOURCES = ROOT / "src" / "case-functions"
+
+    def setUp(self):
+        self.tmp = scratch()
+        self.addCleanup(self.tmp.cleanup)
+        self.base = Path(self.tmp.name)
+        (self.base / "shim").mkdir()
+        shim = self.base / "shim" / "python3"
+        shim.write_text(hub.python_shim(sys.executable), encoding="utf-8", newline="\n")
+        shim.chmod(shim.stat().st_mode | 0o111)
+
+    def build(self, source_dir=None, name="package"):
+        env = dict(os.environ, FUNCTION_APP_SOURCES_ONLY="1", PATH=hub.posix(self.base / "shim") + os.pathsep + os.environ["PATH"])
+        for variable in ("MSYS_NO_PATHCONV", "MSYS2_ARG_CONV_EXCL"):
+            env.pop(variable, None)
+        if source_dir:
+            env["FUNCTION_APP_SOURCE_DIR"] = hub.posix_absolute(source_dir)
+        build, package = self.base / f"{name}-build", self.base / f"{name}.zip"
+        command = f"bash tools/build-function-app.sh case-functions cases '{hub.posix_absolute(build)}' '{hub.posix_absolute(package)}'"
+        done = subprocess.run([BASH, "--noprofile", "--norc", "-eo", "pipefail", "-c", command], cwd=ROOT, env=env, capture_output=True, text=True, timeout=300)
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        unpacked = self.base / f"{name}-unpacked"
+        with zipfile.ZipFile(package) as archive:
+            names = archive.namelist()
+            archive.extractall(unpacked)
+        return unpacked, names
+
+    def checkout_with(self, ending: bytes, name: str) -> Path:
+        """The app's folder as a checkout with these line ends has it."""
+        copy = self.base / name
+        copy.mkdir()
+        for entry in ("function_app.py", "host.json", "requirements.txt"):
+            shutil.copy(self.SOURCES / entry, copy / entry)
+        shutil.copytree(self.SOURCES / "cases", copy / "cases", ignore=shutil.ignore_patterns("__pycache__"))
+        for path in copy.rglob("*"):
+            if path.is_file() and path.suffix in (".py", ".json", ".txt"):
+                path.write_bytes(path.read_bytes().replace(b"\r\n", b"\n").replace(b"\n", ending))
+        return copy
+
+    def test_the_zip_holds_exactly_the_files_whose_digest_the_release_step_works_out(self):
+        want = SOURCE_DIGEST.digest(self.SOURCES)
+        unpacked, names = self.build()
+        self.assertEqual(SOURCE_DIGEST.digest(unpacked), want)
+        covered = {relative for relative, _ in SOURCE_DIGEST.files_of(self.SOURCES)}
+        in_zip = {name for name in names if name == "function_app.py" or (name.startswith("cases/") and name.endswith((".py", ".json")))}
+        self.assertEqual(in_zip, covered, "the same files, no more and no fewer")
+        self.assertGreater(len(covered), 20)
+        for name in ("function_app.py", "host.json", "requirements.txt"):
+            self.assertIn(name, names)
+        self.assertEqual([name for name in names if "__pycache__" in name or "\\" in name], [], "no compiled cache, and the paths of the zip file use forward slashes")
+
+    def test_the_apps_own_algorithm_agrees_through_the_tool_that_the_runner_uses(self):
+        want = SOURCE_DIGEST.digest(self.SOURCES)
+        unpacked, _ = self.build()
+        tool = str(ROOT / "tools" / "package-digest.py")
+        done = subprocess.run([sys.executable, tool, str(unpacked), "--check", want], capture_output=True, text=True)
+        self.assertEqual((done.returncode, done.stdout.strip()), (0, "the digest is the one expected"), done.stderr)
+        done = subprocess.run([sys.executable, tool, str(unpacked), "--check", "0" * 64], capture_output=True, text=True)
+        self.assertEqual(done.returncode, 1)
+
+    def test_a_checkout_with_crlf_line_ends_and_one_with_lf_give_the_same_digest(self):
+        want = SOURCE_DIGEST.digest(self.SOURCES)
+        for ending, name in ((b"\r\n", "crlf"), (b"\n", "lf")):
+            with self.subTest(name):
+                copy = self.checkout_with(ending, f"src-{name}")
+                unpacked, _ = self.build(copy, name)
+                self.assertEqual(SOURCE_DIGEST.digest(unpacked), want)
+                self.assertEqual(b"\r\n" in (unpacked / "function_app.py").read_bytes(), ending == b"\r\n", "the zip holds the line ends of the checkout that it was built from")
+
+    def test_one_changed_byte_is_another_digest(self):
+        copy = self.checkout_with(b"\n", "changed")
+        entry = copy / "function_app.py"
+        entry.write_bytes(entry.read_bytes() + b"\n# a change\n")
+        unpacked, _ = self.build(copy, "changed")
+        self.assertNotEqual(SOURCE_DIGEST.digest(unpacked), SOURCE_DIGEST.digest(self.SOURCES))
+
+    def test_only_the_files_that_the_digest_covers_are_unpacked_and_the_libraries_are_not(self):
+        files = {"function_app.py": b"import cases\r\n", "host.json": b"{}\r\n", "requirements.txt": b"x\r\n", "cases/__init__.py": b"X = 1\r\n", "cases/lock.json": b"{}\r\n",
+                 ".python_packages/lib/site-packages/lib/__init__.py": b"Y = 1\r\n"}
+        package = self.base / "small.zip"
+        with zipfile.ZipFile(package, "w") as archive:
+            for name, data in files.items():
+                archive.writestr(name, data)
+        for name, data in files.items():
+            path = self.base / "small-folder" / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(data)
+        run = hub.Hub(make_args(), {}, hub.Deps(root=ROOT), io.StringIO())
+        run.rt = self.base / "rt-small"
+        run.rt.mkdir()
+        self.assertTrue(run.package_has_digest(package, SOURCE_DIGEST.digest(self.base / "small-folder")))
+        unpacked = sorted(path.relative_to(run.rt / "cases-verify").as_posix() for path in (run.rt / "cases-verify").rglob("*") if path.is_file())
+        self.assertEqual(unpacked, ["cases/__init__.py", "cases/lock.json", "function_app.py"])
+
+    def test_a_package_without_the_package_folder_is_refused_with_the_tools_own_words(self):
+        package = self.base / "empty.zip"
+        with zipfile.ZipFile(package, "w") as archive:
+            archive.writestr("function_app.py", b"import cases\n")
+        out = io.StringIO()
+        run = hub.Hub(make_args(), {}, hub.Deps(root=ROOT), out)
+        run.rt = self.base / "rt-empty"
+        run.rt.mkdir()
+        self.assertFalse(run.package_has_digest(package, "0" * 64))
+        self.assertIn("are not the files whose digest the deploy wrote as PACKAGE_SHA256", out.getvalue())
+        self.assertIn("it is not the folder of the app", out.getvalue())
+
+    def test_the_runner_holds_the_package_against_the_digest_and_refuses_another_one(self):
+        want = SOURCE_DIGEST.digest(self.SOURCES)
+        self.build()
+        run = hub.Hub(make_args(), {}, hub.Deps(root=ROOT), io.StringIO())
+        run.rt = self.base / "rt"
+        run.rt.mkdir()
+        self.assertTrue(run.package_has_digest(self.base / "package.zip", want))
+        self.assertFalse(run.package_has_digest(self.base / "package.zip", "0" * 64))
 
 
 class TheLocalFolder(unittest.TestCase):
@@ -1309,6 +1794,18 @@ class TheInit(unittest.TestCase):
         self.assertTrue(all(line.endswith("=") for line in lines), "no value is written without --from-github")
         self.assertEqual(json.loads((self.folder / hub.STATE_NAME).read_text(encoding="utf-8")), {"lastRun": hub.FIRST_RUN_NUMBER - 1})
         self.assertGreaterEqual(hub.FIRST_RUN_NUMBER, 1000)
+
+    def test_the_two_optional_variables_are_in_the_template_and_are_not_asked_to_be_filled_in(self):
+        gh = self.FakeGh(variables=[{"name": "DRIFT_ACCEPTED_DENY", "value": "a-policy"}], runs=[{"number": 301}])
+        code, text = self.init("--from-github", gh=gh)
+        self.assertEqual(code, 0, text)
+        body = (self.folder / hub.CONFIG_NAME).read_text(encoding="utf-8")
+        values = hub.parse_env_file(body)
+        self.assertEqual((values["DRIFT_ACCEPTED_DENY"], values["DRIFT_ACCEPTED_EXEMPTIONS"]), ("a-policy", ""))
+        self.assertIn("optional", body)
+        for name in hub.OPTIONAL_NAMES:
+            self.assertNotIn(name, text.split("fill in:")[1])
+        self.assertIn(f"made: {self.folder / hub.CONFIG_NAME} with {len(hub.TEMPLATE_NAMES)} names, 1 of them filled in from GitHub", text)
 
     def test_what_exists_is_kept_and_never_overwritten(self):
         self.init()

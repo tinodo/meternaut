@@ -352,7 +352,7 @@ class TheActionMakesTheSubnetThenWaitsThenMakesTheGateway(unittest.TestCase):
     def test_every_other_action_still_has_the_steps_that_it_had(self):
         counts = {action: len(re.findall(rf"inputs\.action == '{action}'", WORKFLOW)) for action in ("aigateway", "aigateway-check")}
         self.assertEqual(counts, {"aigateway": 10, "aigateway-check": 4}, "the nine steps of the action and the guard before them")
-        self.assertEqual(WORKFLOW.count("uses: azure/login@"), 11, "the first sign-in and ten more: the ones that the retirements add are two of them, and the read-back of the AI security and of the telemetry exporter one each")
+        self.assertEqual(WORKFLOW.count("uses: azure/login@"), 13, "the first sign-in and twelve more: the ones that the retirements add are two of them, the read-back of the AI security and of the telemetry exporter one each, and the Teams bot's action adds two (before its publish and before its read-back)")
 
 
 BASH = AW.BASH
