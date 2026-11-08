@@ -56,6 +56,7 @@ def _outcome(ctx: Ctx, brief: Brief) -> Safe:
 def _evidence(brief: Brief) -> Safe:
     rows = [(fact.label, fmt('{value}<br><span class="muted">{source}</span>', value=fact.value, source=fact.source)) for fact in brief.facts]
     parts: list[object] = [Safe("<h2>Evidence</h2>"), paragraph(fmt("<strong>How sure: {level}.</strong> {because}", level=brief.confidence.level, because=brief.confidence.because))]
+    parts += [paragraph(line) for line in (brief.past, brief.access) if line]  # how past requests like this were answered, and what the access cannot see when that matters
     parts.append(summary(rows) if rows else paragraph("No fact is recorded for this case."))
     if brief.reasoning:
         parts.append(quoted("The AI's reasoning (not checked by code)", brief.reasoning))

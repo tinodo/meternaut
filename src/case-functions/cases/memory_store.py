@@ -5,8 +5,8 @@ import datetime as dt
 import secrets
 from typing import Callable
 
-from .models import (ActionRecord, CaseRecord, DecisionRecord, MailRecord, NoteRecord, PlanRecord, RunRecord, SettingsRecord, SwitchRecord, SWITCH_NAMES,
-                     TIME_FORMAT)
+from .models import (ActionRecord, CapabilityRecord, CaseRecord, ClaimRecord, DecisionRecord, LessonRecord, MailRecord, NoteRecord, PlanRecord, RunRecord, SettingsRecord,
+                     SwitchRecord, SWITCH_NAMES, TIME_FORMAT)
 
 
 def utc_now() -> dt.datetime:
@@ -34,6 +34,9 @@ class MemoryStore:
         self.notes: dict[tuple[str, str], NoteRecord] = {}
         self.nonces: dict[str, tuple[str, str, dt.datetime, str]] = {}
         self.mails: list[MailRecord] = []
+        self.lessons: dict[str, LessonRecord] = {}
+        self.claims: dict[str, ClaimRecord] = {}
+        self.profiles: list[CapabilityRecord] = []
 
     def runs_recent(self, limit: int = 20) -> list[RunRecord]:
         return sorted(self.runs.values(), key=lambda r: (r.started_at, r.run_id), reverse=True)[:limit]
@@ -156,3 +159,28 @@ class MemoryStore:
 
     def mails_since(self, oid: str, since: str) -> list[MailRecord]:
         return sorted((m for m in self.mails if m.oid == oid and m.sent_at >= since), key=lambda m: (m.sent_at, m.mail_id))
+
+    def lesson_put(self, lesson: LessonRecord) -> None:
+        self.lessons[lesson.lesson_id] = lesson
+
+    def lessons_of(self, resource_type: str, limit: int = 500) -> list[LessonRecord]:
+        found = [lesson for lesson in self.lessons.values() if lesson.resource_type == resource_type]
+        return sorted(found, key=lambda lesson: (lesson.closed_at, lesson.lesson_id), reverse=True)[:limit]
+
+    def lessons_recent(self, limit: int = 300) -> list[LessonRecord]:
+        return sorted(self.lessons.values(), key=lambda lesson: (lesson.updated_at, lesson.lesson_id), reverse=True)[:limit]
+
+    def claim_put(self, claim: ClaimRecord) -> None:
+        self.claims[claim.claim_id] = claim
+
+    def claims_of(self, resource_type: str) -> list[ClaimRecord]:
+        return sorted((c for c in self.claims.values() if c.resource_type == resource_type), key=lambda c: (c.read_at, c.claim_id), reverse=True)
+
+    def claims_recent(self, limit: int = 500) -> list[ClaimRecord]:
+        return sorted(self.claims.values(), key=lambda c: (c.read_at, c.claim_id), reverse=True)[:limit]
+
+    def profile_put(self, profile: CapabilityRecord) -> None:
+        self.profiles.append(profile)
+
+    def profile_latest(self) -> CapabilityRecord | None:
+        return max(self.profiles, key=lambda p: (p.at, p.run_id), default=None)

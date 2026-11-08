@@ -25,7 +25,7 @@ import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Callable, Mapping
 
-from . import agents, decide, guards, roles, wiring
+from . import agents, decide, guards, learning, roles, wiring
 from .approvals import is_fixture
 from .arm import scopes_of
 from .detectors import Context, Lead
@@ -34,7 +34,7 @@ from .guards import Guards
 from .harness import HarnessRefused
 from .http import HttpError
 from .memory_store import parse, stamp
-from .models import CaseRecord, StoreError
+from .models import ADVISE, CaseRecord, StoreError
 from .ownership import NOT_COMPLETE, NOT_IN_WINDOW, NOT_VISIBLE, UNAVAILABLE, OwnerReader, owner_hints
 from .roles import DetectiveAnswer, RoleError, SkepticAnswer, clean_text
 from .toolbox import SUBSCRIPTION_SECONDS, Resource, Toolbox
@@ -813,7 +813,11 @@ def _open_case(s: "Services", out: Investigation, finding: Finding, item: Item, 
     h = s.history
     lead = item.lead
     detective = DetectiveAnswer(finding.proposal, finding.confidence, finding.summary)
-    outcome = decide.decide(lead, Guards({}), detective, finding.verdict if item.shown else None, backed=bool(item.metrics), notes=(finding.note,) if finding.note else ())
+    judged = finding.verdict if item.shown else None
+    outcome = decide.decide(lead, Guards({}), detective, judged, backed=bool(item.metrics), notes=(finding.note,) if finding.note else ())
+    # What past requests like this showed may hold a proposal back for a person, and never makes a finding stronger (cases/learning.py). The case is always an advise plan's: no change is made for it.
+    outcome, held = learning.hold(s.extras.store if s.extras is not None else None, learning.type_word(lead.resource_type), ADVISE, detective.confidence, outcome)
+    learned = {"skeptic": judged.verdict if judged is not None else "none", **({"held": "history"} if held else {})}
     if not item.metrics:
         out.unmeasured += 1
     h.emit("case.result", caseId=case_id, leadId=lead.lead_id, detector=DETECTOR, resourceName=clean_text(lead.name, 120), resourceType=clean_text(lead.resource_type, 120),
@@ -841,11 +845,12 @@ def _open_case(s: "Services", out: Investigation, finding: Finding, item: Item, 
             recommendation=outcome.recommendation, confidence=outcome.confidence, saving_usd_month=_figure(outcome.monthly_saving_usd), cost_usd_30d=lead.cost_usd_30d,
             summary=clean_text(outcome.summary, 600), objections=tuple(clean_text(o, 300) for o in outcome.objections), guards=tuple(outcome.guards),
             models=dict(models), steps=steps, facts=lead.facts, first_seen_at=old.first_seen_at if old and old.first_seen_at else now, updated_at=now,
-            runs_seen=(old.runs_seen + 1) if old else 1, owner=_owner_of(s, out, lead))
+            runs_seen=(old.runs_seen + 1) if old else 1, owner=_owner_of(s, out, lead), learned=learned)
         ex.store.case_put(record)
         if outcome.status in ("proposed", "needs_human"):
             plan = ex.approvals.plan_for(record, lead, ex.approvers())  # a plan of a change is made for none of these cases: the advise plan asks a person whether it is worth acting on
             if plan is not None:
+                record = learning.remember(ex.store, record, plan)  # how past requests like this were answered: the one line of the brief
                 h.emit("plan.created", planId=plan.plan_id, caseKey=record.case_id, family=plan.family, approvers=len(plan.approvers))
                 ex.on_plan(plan, ex.store.case_get(record.case_id) or record)
     except (StoreError, ValueError) as error:

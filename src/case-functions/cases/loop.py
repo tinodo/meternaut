@@ -1,5 +1,6 @@
-"""The timer of the loop, every minute: closes the plans whose time is over, checks the changes that were made, and tells the person what happened. It does
-nothing when the loop is not configured. It cannot change Azure: its token is the reader's, and its list of calls holds no write (runner.py reads them).
+"""The timer of the loop, every minute: closes the plans whose time is over, checks the changes that were made, tells the person what happened and, every fifth minute, writes the lessons
+of the plans that ended (cases/learning.py). It does nothing when the loop is not configured. It cannot change Azure: its token is the reader's, and its list of calls holds no write
+(runner.py reads them).
 """
 from __future__ import annotations
 
@@ -11,7 +12,7 @@ import uuid
 from typing import Callable, Mapping
 
 from . import config as cfg
-from . import loop_config, runner, wiring
+from . import learning, loop_config, runner, wiring
 from .arm import Arm
 from .events import History
 from .http import Client, allowed_calls, default_transport
@@ -63,6 +64,8 @@ def tick(env: Mapping[str, str] | None = None, *, transport=default_transport, s
                                   arm=Arm(reader_client, reader.token), clock=clock, sleep=sleep, emit=history.emit)
         result = runner.tick(services)
         _remind(extras, clock, redact)
+        if clock().minute % learning.SYNC_EVERY_MINUTES == 0:
+            learning.sync(extras.store, clock(), arm=services.arm)  # the lessons of the plans that ended (cases/learning.py); it never raises
         if clock().minute == 0:
             purge = getattr(extras.store, "nonces_purge", None)
             if purge:

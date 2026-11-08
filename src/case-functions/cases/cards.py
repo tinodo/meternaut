@@ -118,6 +118,11 @@ def _saving(brief: Brief) -> dict:
     return {"type": "Container", "id": "value-tile", "style": "emphasis", "items": items}
 
 
+def _learned(brief: Brief) -> list[dict]:
+    """The one line about how past requests like this were answered, and, when it changes what can be said, the one sentence about what the access cannot see."""
+    return [_block(name, md(text, 240)) for name, text in (("past", brief.past), ("access", brief.access)) if text]
+
+
 def _facts(brief: Brief) -> list[dict]:
     rows = [{"title": md(fact.label, 60), "value": f"{md(fact.value, 120).rstrip('.')}. Source: {md(fact.source, 80).rstrip('.')}."} for fact in brief.facts[:3]]
     return [{"type": "FactSet", "id": "facts", "facts": rows}] if rows else []
@@ -218,8 +223,8 @@ def decision_card(brief: Brief, ctx: CardContext, notice: str = "") -> dict:
     body: list[dict] = []
     if notice:
         body.append(_block("notice", md(notice, 240), weight="Bolder"))
-    body += [_saving(brief), _block("confidence", f"**How sure: {md(brief.confidence.level, 12)}.** {md(brief.confidence.because, 240)}"), *_facts(brief), *_decision_lines(brief),
-             *_answer_parts(brief, ctx)]
+    body += [_saving(brief), _block("confidence", f"**How sure: {md(brief.confidence.level, 12)}.** {md(brief.confidence.because, 240)}"), *_learned(brief), *_facts(brief),
+             *_decision_lines(brief), *_answer_parts(brief, ctx)]
     return _card(brief, ctx, brief.kind, body, "A decision waits for you.")
 
 
