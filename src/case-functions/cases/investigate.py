@@ -388,9 +388,13 @@ def _signature(facts: Mapping) -> tuple:
     return facts.get("basis"), facts.get("proposal"), tuple(sorted(metrics.items())) if isinstance(metrics, dict) else ()
 
 
-def _judged_lately(s: "Services", lead: Lead, facts: dict) -> bool:
+def _judged_lately(s: "Services", lead: Lead, facts: dict, open_questions: "learning.OpenQuestions | None" = None) -> bool:
     """A resource whose case was updated within the days of RECHECK_DAYS is not taken up again unless its evidence changed. A case that ended in an error, or
-    whose steps did not all work, is taken up again at once. A case that a person has answered, or that the loop has taken on, is left alone for the whole time."""
+    whose steps did not all work, is taken up again at once. A case that a person has answered, or that the loop has taken on, is left alone for the whole time.
+
+    An open question (learning.OpenQuestions: a case that needs a person or is proposed, with no request to a person open or with a first AI that was not sure enough, that nobody
+    answered lately and that is not marked do-not-touch) is taken up again at once when the Investigator cites it again, whether its evidence changed or not: it comes back with the tools
+    until it is decision-ready or dropped, and a case that older code left with no request gets its request."""
     ex = s.extras
     if ex is None:
         return False
@@ -403,6 +407,8 @@ def _judged_lately(s: "Services", lead: Lead, facts: dict) -> bool:
     if s.clock() - parse(old.updated_at) >= dt.timedelta(days=ex.settings.recheck_days):
         return False
     if old.status in ("proposed", "needs_human", "dropped"):
+        if open_questions is not None and open_questions.is_open(old):
+            return False
         return _signature(old.facts if isinstance(old.facts, dict) else {}) == _signature(facts)
     return True
 
@@ -652,6 +658,7 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
     locks: dict[str, list[str] | None] = {}
     room = MAX_CASES
     held: dict[str, int] = {}
+    open_questions = learning.OpenQuestions(s.extras.store, s.clock()) if s.extras is not None else None  # read once, when the first old case is looked at
     for finding in findings:
         if finding.reason is not None:
             continue
@@ -660,7 +667,7 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
             resource = toolbox.handles[handle]
             facts = _facts(finding, finding.cited[handle], costs[handle], _aggregates(toolbox.evidence, handle), len(finding.listed[handle]) if handle in finding.listed else None)
             lead = _lead(resource, facts, costs[handle], _advisor(toolbox.evidence, handle))
-            if _judged_lately(s, lead, facts):
+            if _judged_lately(s, lead, facts, open_questions):
                 finding.recent += 1
             elif room <= 0:
                 finding.capped += 1

@@ -15,6 +15,10 @@ What is made of the lessons, all of it by code and all of it explainable:
   as a finding that needs one. Learning only ever makes a finding weaker: a calibrated confidence above the stated one changes nothing.
 * `sync` is the sweep that the timer of the loop runs: it writes the lesson of every plan that has ended, adds the measured saving when the verifier has read the cost lines, and, for a
   change that was made on a resource that Meternaut did not plant, looks in the Activity Log for the resource made again (a boomerang).
+* `OpenQuestions` says which earlier findings are still open questions: the case of the investigation is `needs_human` or `proposed`, and either no request to a person is open for the resource
+  or the first AI was not sure enough, and no person answered lately or marked the resource do-not-touch. The Investigator gets them through the tool `recall_open_questions`, as a typed row
+  for each (the resource, how often it was seen, for how long, how sure the last judgement was), and the Watch takes such a resource up again at once when the Investigator cites it again
+  (investigate._judged_lately), so that an open question comes back with the tools until it is decision-ready or dropped.
 
 The starting values below were written before anything was measured, and tools/learning-check.py holds them against evaluation/learning-thresholds.json.
 """
@@ -28,6 +32,7 @@ from dataclasses import dataclass, replace
 from typing import Callable, Iterable, Mapping, Sequence
 
 from . import ownership
+from .approvals import ADVICE_QUIET_DAYS
 from .brief import past_line  # noqa: F401  (the one line of the brief is written there: the brief imports nothing but the records)
 from .decide import PROPOSE_CONFIDENCE, Decision
 from .memory_store import parse, stamp
@@ -436,3 +441,89 @@ def sync(store: Store, now: dt.datetime, *, arm: object | None = None, limit: in
     except Exception as error:  # noqa: BLE001 (a sweep of the timer never stops the timer)
         LOG.warning("learning: the sweep failed (%s)", type(error).__name__)
     return written
+
+
+# -- the open questions -------------------------------------------------------------------------------------------------------------------------------
+
+INVESTIGATION = "investigation"  # the detector of the cases that the investigation opens (investigate.DETECTOR): the Watch's other detectors judge their own leads again every run
+OPEN_STATUSES = ("needs_human", "proposed")
+OPEN_CASES = 300  # the cases of each status that are looked at, the most lately updated first
+OPEN_PLANS = 200  # the plans that are looked at for the answers that people gave lately (the same number as approvals.advise reads)
+OPEN_POOL = 45  # the open questions that one answer starts from: some of their resources may be gone, and the answer shows OPEN_SHOWN of those that are not
+
+
+@dataclass(frozen=True)
+class OpenQuestion:
+    """One earlier finding that is still an open question, as typed values: the resource (an id of an estate, which only code reads: the tool gives the Investigator a handle for it), its type
+    as Azure names it, in how many Watches it was seen, for how many days, how sure the last judgement was, and whether a request to a person waits. No text of the case, no reason and no name
+    of a person."""
+
+    resource_id: str
+    resource_type: str
+    runs_seen: int
+    days_open: int
+    confidence: float | None
+    request: str  # "open" when a request to a person waits for an answer, else "none"
+
+
+def _sure(confidence: object) -> bool:
+    value = _number(confidence)
+    return value is not None and value >= PROPOSE_CONFIDENCE
+
+
+class OpenQuestions:
+    """Which findings of the investigation are open questions, from the store of Meternaut and nothing else (never from a text of the estate).
+
+    A case is one when its status is `needs_human` or `proposed` and either no request to a person is open for its resource (an old case, from code that made no request for a finding that a
+    person has to look at, or one whose request ran out) or the first AI was not sure enough (below the gate of a proposal, or no confidence at all). A resource that a person answered lately
+    (the quiet days of approvals.advise: no new request is made for it) or marked do-not-touch is none: nobody is to be asked again. What the answers hold is read once, when the first
+    question is asked."""
+
+    def __init__(self, store: Store, now: dt.datetime) -> None:
+        self.store = store
+        self.now = now if now.tzinfo else now.replace(tzinfo=dt.timezone.utc)
+        self._state: tuple[set[str], set[str], set[str]] | None = None
+        self._down = False
+
+    def _load(self) -> tuple[set[str], set[str], set[str]]:
+        if self._state is None:
+            quiet = self.now - dt.timedelta(days=ADVICE_QUIET_DAYS)
+            try:
+                waiting = {plan.resource_id.lower() for plan in self.store.plans_open() if plan.state == "open"}
+                answered = {plan.resource_id.lower() for plan in self.store.plans_recent(OPEN_PLANS)
+                            if plan.family == ADVISE and plan.state in ("declined", "consumed", "withdrawn") and parse(plan.created_at) >= quiet}
+            except ValueError:
+                raise StoreError("a plan holds a time that cannot be read") from None
+            self._state = (waiting, answered, {key.lower() for key in self.store.do_not_touch()})
+        return self._state
+
+    def is_open(self, case: CaseRecord) -> bool:
+        """Whether the case is an open question. A store that cannot be read says no, so that nothing is taken up again on a guess."""
+        if case.status not in OPEN_STATUSES or self._down:
+            return False
+        try:
+            waiting, answered, silenced = self._load()
+        except StoreError as error:
+            self._down = True
+            LOG.warning("learning: the open questions could not be read (%s)", type(error).__name__)
+            return False
+        key = case.resource_id.lower()
+        if key in answered or key in silenced:
+            return False
+        return key not in waiting or not _sure(case.confidence)
+
+    def rows(self, limit: int = OPEN_POOL) -> list[OpenQuestion]:
+        """The open questions of the investigation, the one that was looked at longest ago first (so that every one gets its turn), at most `limit`. Raises StoreError when the store cannot be read."""
+        waiting, _, _ = self._load()
+        cases = [case for status in OPEN_STATUSES for case in self.store.cases_recent(OPEN_CASES, status) if case.detector == INVESTIGATION and self.is_open(case)]
+        cases.sort(key=lambda case: (case.updated_at, case.case_id))
+        found = []
+        for case in cases[:limit]:
+            confidence = _number(case.confidence)
+            try:
+                days = max(0, (self.now - parse(case.first_seen_at)).days)
+            except (ValueError, TypeError):
+                days = 0
+            found.append(OpenQuestion(case.resource_id, type_word(case.resource_type), max(0, case.runs_seen), days, round(confidence, 2) if confidence is not None and 0 <= confidence <= 1 else None,
+                                      "open" if case.resource_id.lower() in waiting else "none"))
+        return found

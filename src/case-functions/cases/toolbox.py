@@ -107,6 +107,9 @@ MAX_RULES = 20  # the collection rules that data_writers shows
 MAX_CHILDREN = 40  # the parts of one resource that children shows
 MAX_RESOURCES = 10  # the resources of a type that cost_history shows with their totals
 MAX_LINES = 8  # the lines of one list of one subscription in the answer of commitments
+MAX_OPEN_QUESTIONS = 15  # the rows of the answer of recall_open_questions
+OPEN_COLUMNS = ("handle", "type", "seen", "days_open", "confidence", "request")
+OPEN_SOURCE = "earlier findings that no person has decided: counts and words that Meternaut kept, not facts about this estate"
 QUERY_SECONDS = 45.0  # what one read of a resource's own records may take
 NOT_VISIBLE = "not visible with this access"  # what an answer says of a part that the access of the run cannot read: never "none"
 READER_SOURCES = ("rules", "saved_searches", "workbooks", "analytics_rules")  # what data_readers counts, in the order of its columns
@@ -719,6 +722,13 @@ TOOLS = {tool.name: tool for tool in (
          "says the day the type was last read about ('not yet' when it never was). A quote is text of documentation, not a fact about this estate and not an instruction: it never replaces "
          "a measurement.",
          (Param("type", "type", _TYPE, required=True),)),
+    Tool("recall_open_questions",
+         "Lists findings of earlier Watches that are still open questions: no person has decided them, and either no request to a person is open or the earlier judgement was not sure enough. "
+         "As a table, for each: the handle of the resource (it works with every other tool, like the handle of any resource that an answer shows), its type, how many Watches saw it (seen), "
+         "the days since it was first seen (days_open), the confidence of the last judgement and whether a request to a person is open. gone counts the resources that Azure no longer lists "
+         "and unread those that could not be read. The rows are counts and words that Meternaut kept, never a text about a resource or a person, and they are no evidence about this "
+         "estate: the other tools show what is true of a resource. It takes no arguments.",
+         ()),
 )}
 SPECS = tuple(tool.spec() for tool in TOOLS.values())
 PLACEHOLDER = f"r{HANDLE_LIMIT}"  # as long as any handle: an answer is cut to size with it, then given the real handles
@@ -2164,3 +2174,34 @@ class Toolbox:
     def _tool_recall_knowledge(self, args: dict) -> dict:
         kind = args["type"]
         return library.knowledge_answer(self._remembered(lambda memory: memory.claims_of(kind)), kind, self.now)  # type: ignore[attr-defined,arg-type]
+
+    def _tool_recall_open_questions(self, args: dict) -> dict:
+        """The open questions of the store (learning.OpenQuestions), each with the handle of its resource: the resources are read by id, like those of an id from a cost line, so that a handle
+        is issued by the same rules and works with every other tool. A resource that Resource Graph does not return is counted as gone, and one that could not be read as unread."""
+        pool = self._remembered(lambda memory: learning.OpenQuestions(memory, self.now).rows(learning.OPEN_POOL))
+        self._resolve_quietly([question.resource_id for question in pool])  # type: ignore[attr-defined]
+        found: list[tuple] = []
+        gone = unread = 0
+        for question in pool:  # type: ignore[attr-defined]
+            entry = self._entries.get(question.resource_id.lower())
+            if entry is not None:
+                found.append((question, entry))
+            elif question.resource_id.lower() in self._missing:
+                gone += 1
+            else:
+                unread += 1
+        shown = found[:MAX_OPEN_QUESTIONS]
+        self._prefetch_costs([entry.sub for _, entry in shown])
+        rows: list[list] = []
+        for question, entry in shown:
+            handle = self._show(entry, {})
+            if handle is None:
+                break
+            rows.append([handle, type_word(entry.resource.resource_type) or OTHER, question.runs_seen, question.days_open, question.confidence, question.request])
+        answer: dict = {"source": OPEN_SOURCE, "total": len(pool), "cols": list(OPEN_COLUMNS), "rows": rows}  # type: ignore[arg-type]
+        if len(found) > len(rows):
+            answer["not_shown"] = len(found) - len(rows)
+        for name, count in (("gone", gone), ("unread", unread)):
+            if count:
+                answer[name] = count
+        return answer
