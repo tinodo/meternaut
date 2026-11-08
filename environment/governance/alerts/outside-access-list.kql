@@ -1,0 +1,15 @@
+// An answered call from a caller that is not in the access list for that alias (environment/aigateway/contracts.json): the pair of the caller's object id (the oid claim of its token) and the
+// alias that it asked for is looked up in the list that the deployment of this rule wrote from the live identities. A caller that holds the role but is not listed, a listed caller that asked for an
+// alias that is not on its entry, and a caller whose identity was made again (a new object id) all show here: the last one is mended by running the action governance again.
+// One row for each call, and nothing of the call.
+let accessList = datatable(Oid: string, Alias: string) [
+__ACCESS_LIST__
+];
+OTelSpans
+| where Kind =~ 'Server' and tostring(Attributes['http.route']) contains '/models/'
+| extend Oid = tolower(tostring(Attributes['azure.ai_gateway.identity.claims.oid'])),
+         Alias = tostring(Attributes['gen_ai.request.model']),
+         Status = coalesce(toint(Attributes['http.response.status_code']), toint(Attributes['http.status_code']), toint(ResultCode))
+| where Status between (200 .. 299)
+| join kind=leftanti accessList on Oid, Alias
+| project TimeGenerated, TraceId

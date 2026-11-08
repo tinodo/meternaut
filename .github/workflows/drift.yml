@@ -1,0 +1,81 @@
+name: Drift
+
+# The independent half of the drift check of Meternaut's AI security (docs/proposals/10-ai-security-and-governance.md; docs/design/07-safeguards-and-drift.md: a check never runs inside an agent or an app that it
+# watches). It runs the control-plane tool, tools/drift-check.py, from a GitHub runner with an identity of its own that can only READ: a user-assigned managed identity with a federated credential for the main branch
+# of this repository, and the role Reader on the project's resource group (and nothing that writes: the check makes GET requests and two queries, and the tool refuses every other call). It is not the deploy
+# identity, which can change Azure: the Hub action drift-check runs the same tool with that one, and this workflow exists so that the check can also run on a timer without a right to change anything.
+# The identity is made once by a person (environment/BOOTSTRAP.md, step G4), and the repository variable DRIFT_CLIENT_ID names it; until then the first step stops the run and says so.
+# Started by hand for now. A `schedule:` line is added only after the identity exists, in a change of its own: the lint (tools/workflow-lint.py) refuses one until that change sets its constant DRIFT_ON_A_TIMER to True, and
+# then accepts a timer for this workflow and for no other (the minutes of GitHub Actions are limited: AGENTS.md rule 35).
+# The run fails when a control fails, and the summary says which of them are fail-closed.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: drift
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  drift:
+    name: Drift check
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.actor == 'tinodo')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      ENV_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      ENV_RESOURCE_GROUP: ${{ vars.ENV_RESOURCE_GROUP }}
+      DRIFT_CLIENT_ID: ${{ vars.DRIFT_CLIENT_ID }}
+      DRIFT_ACCEPTED_EXEMPTIONS: ${{ vars.DRIFT_ACCEPTED_EXEMPTIONS }}
+      DRIFT_ACCEPTED_DENY: ${{ vars.DRIFT_ACCEPTED_DENY }}
+    steps:
+      - name: Stop plainly when the read-only identity has not been made yet
+        run: |
+          if [ -z "$DRIFT_CLIENT_ID" ]; then
+            echo "::error::The repository variable DRIFT_CLIENT_ID is not set: the read-only identity of the drift check has not been made yet. A person makes it once, with their own sign-in (environment/BOOTSTRAP.md, step G4): a user-assigned managed identity with a federated credential for this repository's main branch and the role Reader on the project's resource group, and nothing else, and then sets the variable to its client id. This workflow never signs in with the deploy identity. Nothing was read."
+            exit 1
+          fi
+          if ! grep -Eq '^[0-9a-fA-F-]{36}$' <<< "$DRIFT_CLIENT_ID"; then
+            echo "::error::The repository variable DRIFT_CLIENT_ID is not a client id (a GUID). Nothing was read."
+            exit 1
+          fi
+
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python 3.13, the runtime of the function app
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+
+      - name: The tool passes its own selftest, which calls nothing
+        run: python3 tools/drift-check.py --selftest
+
+      - name: Sign in to Azure with the read-only identity
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ vars.DRIFT_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Check for drift from the control plane, with reads only
+        run: |
+          # The tool reads Azure Resource Manager and says PASS, FAIL or UNKNOWN for each control (the Foundry resource, its deployments and guardrail, the model lifecycle, the AI Gateway's policies, models, roles and telemetry,
+          # the project's connection, the policies and their compliance, the roles and the network exposure of the group, the release that the cases app runs against this commit of main, and the lines that the app's own daily
+          # check logged). With a role of Reader on the project's group some things cannot be read, and the tool says UNKNOWN with the reason, never PASS: the Defender plan lives on the subscription, the directory needs its own
+          # right, and the policy exemptions and the non-compliant Deny policies are judged against what the owner accepted (the repository variables DRIFT_ACCEPTED_EXEMPTIONS and DRIFT_ACCEPTED_DENY; unset: UNKNOWN, with what was found).
+          flags=()
+          if [ -n "${DRIFT_ACCEPTED_EXEMPTIONS:-}" ]; then flags+=(--accepted-exemptions "$DRIFT_ACCEPTED_EXEMPTIONS"); fi
+          if [ -n "${DRIFT_ACCEPTED_DENY:-}" ]; then flags+=(--accepted-deny "$DRIFT_ACCEPTED_DENY"); fi
+          python3 tools/drift-check.py --subscription "$ENV_SUBSCRIPTION_ID" --resource-group "$ENV_RESOURCE_GROUP" --models environment/models.json --policies environment/aigateway/policies.json \
+            --access-list environment/aigateway/contracts.json --commit "$GITHUB_SHA" --app-dir src/case-functions --json "$RUNNER_TEMP/drift.json" --summary "$GITHUB_STEP_SUMMARY" "${flags[@]}"

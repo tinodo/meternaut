@@ -1,0 +1,6 @@
+// Requests that the AI Gateway answered with a server error (500 and above): the gateway or the model deployment behind it failed. One row for each request, and nothing of the request.
+OTelSpans
+| where Kind =~ 'Server' and tostring(Attributes['http.route']) contains '/models/'
+| extend Status = coalesce(toint(Attributes['http.response.status_code']), toint(Attributes['http.status_code']), toint(ResultCode))
+| where Status >= 500
+| project TimeGenerated, TraceId, Status

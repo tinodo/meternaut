@@ -1,0 +1,8 @@
+// Requests that the AI Gateway refused although they were well formed: 403 (content safety, a cost limit, a missing role) and 429 (a token limit or a request limit).
+// One row for each refused request, and nothing of the request: the alert counts rows, and its e-mail carries a count and a link, never a prompt, a name or any text of the estate.
+// Read from the gateway's OpenTelemetry spans (environment/aigateway/telemetry.bicep); the table is empty until that exporter is on, and then the rule stays quiet.
+OTelSpans
+| where Kind =~ 'Server' and tostring(Attributes['http.route']) contains '/models/'
+| extend Status = coalesce(toint(Attributes['http.response.status_code']), toint(Attributes['http.status_code']), toint(ResultCode))
+| where Status in (403, 429)
+| project TimeGenerated, TraceId, Status

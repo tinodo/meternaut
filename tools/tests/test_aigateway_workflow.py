@@ -452,7 +452,7 @@ class TheStepsAreWrittenAsTheRulesSay(unittest.TestCase):
 
     def test_the_two_actions_are_offered_after_the_probe_and_described_in_plain_words(self):
         offered = re.findall(r"- (\S+)", re.search(r"options:\n((?:          - .+\n)+)", WORKFLOW).group(1))
-        self.assertEqual(offered[-2:], ["aigateway", "aigateway-check"])
+        self.assertEqual(offered[-5:], ["aigateway", "aigateway-check", "governance", "gateway-telemetry", "drift-check"], "the three actions of the AI security come right after the two of the gateway")
         self.assertEqual(offered[offered.index("operator-probe") + 1:offered.index("operator-probe") + 3], ["aigateway", "aigateway-check"])
         description = re.search(r'(?m)^        description: "(what-if: .+)"$', WORKFLOW).group(1)
         gateway = description.split(" aigateway: ")[1].split(" aigateway-check: ")[0]
@@ -558,8 +558,8 @@ class TheStepsAreWrittenAsTheRulesSay(unittest.TestCase):
             self.assertIn('aigateway-subnet.json"', source)
             self.assertIn("--label aigateway-subnet", source)
             self.assertIn("aigateway-subnet.parameters.json", source)
-        self.assertIn("environment/operator/main.bicep environment/aigateway/main.bicep environment/aigateway/subnet.bicep", WORKFLOW)
-        self.assertIn("environment/operator/main.bicep environment/aigateway/main.bicep environment/aigateway/subnet.bicep", CHECKS)
+        self.assertIn("environment/aigateway/main.bicep", WORKFLOW)
+        self.assertIn("environment/operator/main.bicep environment/aigateway/main.bicep environment/aigateway/subnet.bicep", CHECKS, "CI compiles and lints them in one loop; the Hub compiles each to a file and leaves the lint to CI")
         self.assertIn("--aigateway-policies environment/aigateway/policies.json", CHECKS)
 
     def test_the_preview_reads_the_foundry_resource_and_the_operator_first_and_says_why_it_waits(self):
@@ -582,7 +582,7 @@ class TheStepsAreWrittenAsTheRulesSay(unittest.TestCase):
 
     def test_the_condition_is_looked_at_by_the_object_id_that_the_run_read_from_its_own_token(self):
         self.assertIn("DEPLOYER_ID: ${{ steps.me.outputs.oid }}", step(READY))
-        self.assertEqual(WORKFLOW.count("steps.me.outputs.oid"), 1, "only the look at the condition of the right to assign roles: the step that retired the old right to send to the control hub is gone with the hub")
+        self.assertEqual(WORKFLOW.count("steps.me.outputs.oid"), 2, "the look at the condition of the right to assign roles (the step that retired the old right to send to the control hub is gone with the hub) and the look, before the AI security is made, at the deploy identity's roles on the group")
         code = code_of(READY)
         for word in (f"foundry_user={FOUNDRY_USER}", f"models_user={MODELS_USER}", f"administrator={ADMINISTRATOR}", "--fill-principal-name false --fill-role-definition-name false"):
             self.assertIn(word, code, word)

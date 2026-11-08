@@ -18,7 +18,9 @@
 //  - AI Gateway Models User on the gateway for the Operator's identity (the Operator, environment/operator/main.bicep, runs the check, tools/aigateway-check.py),
 //    for the cases app's identity when its principal id is given (its Detective and Skeptic call the gateway with it), and for the Foundry project's identity when its principal id is given.
 //    Step 2 gives the project's (the workflow passes its object id while the switch of step 2 is on), and an empty value means none yet.
-//  - optionally, the OpenTelemetry exporter to the shared Application Insights component. It is off, and what is missing for turning it on is in the proposal.
+//  - the telemetry exporter is NOT made here any more: it has prerequisites that the rest of the gateway has not (the component's OpenTelemetry ingestion, the resource provider Microsoft.Monitor and
+//    a role that a person gives on a data collection rule that lies in a resource group of the platform), so a missing one must never stop the gateway. environment/aigateway/telemetry.bicep makes it,
+//    by the action gateway-telemetry, after that action has read each prerequisite (docs/proposals/10-ai-security-and-governance.md).
 //
 // THE FRONTEND IS PUBLIC, AND NO TEMPLATE CAN CHANGE THAT. The service offers no private endpoint, and the setting publicNetworkAccess Disabled has no effect (Learn,
 // "Migrate from the AI Gateway tier in API Management", read 2026-11-07: "Private endpoints aren't supported"; the AI Gateway samples, the private networking page: "setting
@@ -70,12 +72,6 @@ param foundryProjectPrincipalId string = ''
 @description('Principal id of the system-assigned identity of the cases app. It gets AI Gateway Models User on the gateway: every model call of the Detective and the Skeptic goes through the gateway with that identity. Empty means none: the app has no identity before the action cases has made it, and the action aigateway then makes the gateway without the role (the next run gives it). The workflow reads it from the app.')
 @maxLength(36)
 param casesPrincipalId string = ''
-
-@description('Switch for the OpenTelemetry exporter to the shared Application Insights component. Off. Turning it on needs three things that no template can do: the component\'s Azure Monitor workspace ingestion has to be on, the resource provider Microsoft.Monitor has to be registered, and the gateway\'s identity needs Monitoring Metrics Publisher on the component\'s data collection rule, which a person gives (the proposal lists them).')
-param telemetryEnabled bool = false
-
-@description('Name of the Application Insights component that the exporter sends to, when it is on.')
-param telemetryComponentName string = 'appi-${workload}'
 
 var tags = {
   workload: workload
@@ -134,7 +130,7 @@ resource gateway 'Microsoft.ApiManagement/aigateways@2025-09-01-preview' = {
   }
 }
 
-// Exists on its own with the gateway, and is only read here: the parent of the provider, the aliases and the exporter.
+// Exists on its own with the gateway, and is only read here: the parent of the provider and the aliases.
 #disable-next-line BCP081
 resource workspace 'Microsoft.ApiManagement/aigateways/workspaces@2025-09-01-preview' existing = {
   parent: gateway
@@ -267,39 +263,6 @@ resource casesCallsTheModels 'Microsoft.Authorization/roleAssignments@2022-04-01
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', aiGatewayModelsUserRoleId)
     principalId: casesPrincipalId
     principalType: 'ServicePrincipal'
-  }
-}
-
-resource insights 'Microsoft.Insights/components@2020-02-02' existing = {
-  name: telemetryComponentName
-}
-
-// The properties of the component that name its OTLP endpoints are not in the Bicep types yet, and they exist only once its Azure Monitor workspace ingestion is on.
-var otlp = any(insights.properties)
-
-// Off. The same shape as the service's own sample (OpenTelemetry, the endpoints of the component, the gateway's identity for the audience https://monitor.azure.com, and
-// no payload of any request or answer). The identity needs Monitoring Metrics Publisher on the component's data collection rule, which lies in a managed resource group
-// that a deployment cannot write to: a person gives that role, and until it has applied the service refuses this resource.
-#disable-next-line BCP081
-resource telemetryExporter 'Microsoft.ApiManagement/aigateways/workspaces/telemetryExporters@2025-09-01-preview' = if (telemetryEnabled) {
-  parent: workspace
-  name: 'appinsights'
-  properties: {
-    kind: 'OpenTelemetry'
-    payloadCapture: false
-    applicationInsights: {
-      resourceId: insights.id
-    }
-    openTelemetry: {
-      metricsEndpoint: otlp.OTLPMetricsEndpoint
-      logsEndpoint: otlp.OTLPLogsEndpoint
-      tracesEndpoint: otlp.OTLPTracesEndpoint
-      credentials: {
-        managedIdentity: {
-          resource: 'https://monitor.azure.com'
-        }
-      }
-    }
   }
 }
 

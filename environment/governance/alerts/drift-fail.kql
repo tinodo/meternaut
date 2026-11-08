@@ -1,0 +1,7 @@
+// A failed control of the app's own daily drift check: for each control the app logs one line that starts with `drift.pass`, `drift.fail` or `drift.unknown`, then a space, then one JSON object
+// {"control": id, "layer": "L1|L2|L3|L4", "state": "PASS|FAIL|UNKNOWN", "detail": text, "readAt": time} (docs/proposals/10-ai-security-and-governance.md says the format). One row for each
+// failed control, and nothing of the line: the alert's e-mail carries a count and a link, and the person who follows the link reads the control's name and what it found.
+AppTraces
+| where Message startswith 'drift.fail'
+    or (Message startswith 'meternaut_event ' and Message contains '"type":"drift.fail"')
+| project TimeGenerated, SeverityLevel

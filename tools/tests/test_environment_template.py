@@ -76,14 +76,31 @@ ALLOWED = {
     "environment/aigateway/main.bicep": {
         "Microsoft.CognitiveServices/accounts",
         "Microsoft.ManagedIdentity/userAssignedIdentities",
-        "Microsoft.Insights/components",
         "Microsoft.ApiManagement/aigateways",
         "Microsoft.ApiManagement/aigateways/workspaces",
         "Microsoft.ApiManagement/aigateways/workspaces/modelProviders",
         "Microsoft.ApiManagement/aigateways/workspaces/modelProviders/models",
         "Microsoft.ApiManagement/aigateways/workspaces/aliases",
-        "Microsoft.ApiManagement/aigateways/workspaces/telemetryExporters",
         "Microsoft.Authorization/roleAssignments",
+    },
+    # The gateway's telemetry exporter (the action gateway-telemetry): one exporter on the gateway's default workspace, and the project's own component, which it only reads.
+    "environment/aigateway/telemetry.bicep": {
+        "Microsoft.ApiManagement/aigateways",
+        "Microsoft.ApiManagement/aigateways/workspaces",
+        "Microsoft.ApiManagement/aigateways/workspaces/telemetryExporters",
+        "Microsoft.Insights/components",
+    },
+    # The AI security (docs/proposals/10-ai-security-and-governance.md, the action governance): Azure Policy at the group (Audit or Deny, no exemption), the alert rules and their action group, the workbook, the
+    # retention of two tables, and a diagnostic setting only where the landing zone has not made one. The workspace, the Foundry resource and the component are only read.
+    "environment/governance/main.bicep": {
+        "Microsoft.OperationalInsights/workspaces",
+        "Microsoft.CognitiveServices/accounts",
+        "Microsoft.Authorization/policyAssignments",
+        "Microsoft.Insights/diagnosticSettings",
+        "Microsoft.OperationalInsights/workspaces/tables",
+        "Microsoft.Insights/actionGroups",
+        "Microsoft.Insights/scheduledQueryRules",
+        "Microsoft.Insights/workbooks",
     },
 }
 
@@ -300,11 +317,15 @@ class Workflow(unittest.TestCase):
         # The incremental deployment never removes a role assignment, and the identity's condition lets it delete the roles that the templates give.
         users = [re.match(r"name: (.+)", b).group(1) for b in self.steps if "az role assignment" in b]
         # The last one only reads: it looks at the condition of the deploy identity's right to assign roles before the AI Gateway is made (test_aigateway_workflow.py pins that it only lists).
+        # The two after it only read as well: the one before the AI security lists the deploy identity's roles on the group, to see that one of them can write a policy assignment, and the one before the
+        # telemetry exporter lists the roles on the component's data collection rule, to see that the AI Gateway's identity may send there (tools/tests/test_governance_workflow.py pins that no step of the AI security writes).
         # The right to send to the control hub usage-control is not retired by a step any more: the hub is deleted by the action retire-old (tools/retire-old.py), with the rest of the usage recording.
         # The deploy identity's old right to send to the control hub cases-control was retired by a step of the action cases until the control message moved to a queue: the hub is deleted
         # now by the action retire-event-hubs, with the roles that were scoped to it, so no step looks for that assignment any more.
         self.assertEqual(users, ["Remove what the Flex Consumption version left in the storage account, when it is still there",
-                                 "The network, the Foundry resource of the agents and the Operator are there, the service is offered here, and the deploy identity may give the roles of the AI Gateway"])
+                                 "The network, the Foundry resource of the agents and the Operator are there, the service is offered here, and the deploy identity may give the roles of the AI Gateway",
+                                 "The base, the Foundry resource and the rights that the AI security needs are there",
+                                 "The AI Gateway is there, the provider is registered, the component reports its endpoints and the gateway's identity may send to them"])
         container = [b for b in self.steps if b.startswith("name: Remove what the Flex Consumption version left")][0]
         self.assertEqual(re.findall(r"az role assignment (\w+)", container), ["list", "delete"], "it lists what is assigned on the container and deletes that, and does nothing else with a role")
         self.assertIn('--scope "$container"', container)
@@ -425,7 +446,7 @@ class Workflow(unittest.TestCase):
         block = self.steps[names.index(again)]
         self.assertIn("if: inputs.action == 'retire-old'", block)
         self.assertIn("uses: azure/login@", block)
-        self.assertEqual(self.text.count("uses: azure/login@"), 9, "the first sign-in, one more before the retirement of the old things, one more before the retirement of the Event Hubs namespace, one more before the publish of the cases, one more before the health check of the cases app in the Operator and one more after it, one more before the read-back of the Foundry resource, which follows a wait of up to 40 minutes, one more before the deploy of the AI Gateway, which follows the deploy of its subnet and a wait of up to 20 minutes for the landing zone's route table, and one more before the limits, the built-in key and the read-back of the AI Gateway")
+        self.assertEqual(self.text.count("uses: azure/login@"), 11, "the first sign-in, one more before the retirement of the old things, one more before the retirement of the Event Hubs namespace, one more before the publish of the cases, one more before the health check of the cases app in the Operator and one more after it, one more before the read-back of the Foundry resource, which follows a wait of up to 40 minutes, one more before the deploy of the AI Gateway, which follows the deploy of its subnet and a wait of up to 20 minutes for the landing zone's route table, one more before the limits, the built-in key and the read-back of the AI Gateway, and one before the read-back of the AI security and one before the read-back of the telemetry exporter, which follow a deploy and are each given a credential of their own")
         self.assertLess(names.index("Sign in to Azure"), names.index(again))
         self.assertEqual(names.index(again) + 1, names.index("Delete what Meternaut does not use any more, in the project's resource group"), "the sign-in is right before the deletes: the first credential is old by then")
         self.assertIn("if: inputs.action == 'retire-old'", self.steps[names.index("Delete what Meternaut does not use any more, in the project's resource group")])
@@ -443,7 +464,7 @@ class Workflow(unittest.TestCase):
         self.assertIsNotNone(pinned, "a full commit, as the lint wants")
         self.assertIn(f"uses: {pinned.group(1)}", text(".github/workflows/checks.yml"), "the very action that the checks use")
         self.assertIn('python-version: "3.13"', block)
-        self.assertLess(names.index(title), names.index("The tools and the templates pass their checks"))
+        self.assertLess(names.index(title), names.index("The templates compile, for the check of their parameter files"))
         self.assertLess(names.index(title), names.index("Pack the cases app's sources for the Operator"), "the app is not built with its libraries on the runner any more, but the runtime is set up before anything of an app is packed")
         self.assertRegex(text("environment/cases/main.bicep"), r"3\.13", "the runtime that the app is made for")
         self.assertIn("python3 -c 'import sys; sys.exit(0 if sys.version_info[:2] == (3, 13) else 1)'", text("tools/build-function-app.sh"))
@@ -462,7 +483,7 @@ class Workflow(unittest.TestCase):
         title = "The network, the Foundry resource of the agents and the Operator are there, the service is offered here, and the deploy identity may give the roles of the AI Gateway"
         self.assertLess(names.index("Read the object id of the signed-in identity"), names.index(title))
         self.assertIn("DEPLOYER_ID: ${{ steps.me.outputs.oid }}", self.steps[names.index(title)], "the object id is used to look at the condition of the identity's right to assign roles")
-        self.assertEqual(self.text.count("steps.me.outputs.oid"), 1, "the one user of the identity's object id is the step that reads the condition of its right to assign roles before the AI Gateway is made: the step that retired its old right on the control hub is gone with the hub")
+        self.assertEqual(self.text.count("steps.me.outputs.oid"), 2, "the users of the identity's object id are the step that reads the condition of its right to assign roles before the AI Gateway is made, and the step that reads, before the AI security is made, that the identity holds a role that can write a policy assignment: the step that retired its old right on the control hub is gone with the hub")
         # no template gives the identity a role any more, so the parameter builder takes no setting for it
         for path in (".github/workflows/deploy-hub.yml", ".github/workflows/checks.yml", "tools/environment-params.py"):
             self.assertNotIn("RECORDING_DEPLOYER_ID", text(path), path)
@@ -1425,7 +1446,8 @@ class CasesWorkflow(unittest.TestCase):
         for line in code.splitlines():
             if "az identity" in line:
                 self.assertIn("IDENTITY_NAME", line.upper(), f"only the gateway's identity is looked up in the identity list: {line.strip()}")
-        self.assertEqual(len(re.findall(r"Microsoft\.ManagedIdentity/userAssignedIdentities", code)), 1, "the retired runner identity, which is read and removed by that one path, and nothing else")
+        self.assertEqual(len(re.findall(r"Microsoft\.ManagedIdentity/userAssignedIdentities", code)), 2, "the retired runner identity, which is read and removed by one path, and the Operator's own identity, which the step "
+                                                                                                     "that works out the settings of the AI security only reads, for its object id (it is one of the identities of the access list), and nothing else")
         self.assertEqual(len(re.findall(r'az rest --method delete --url "https://management\.azure\.com\$\{identity\}\?api-version=2023-01-31"', code)), 1, "the one that is the retired runner's")
         finished_cases = re.search(r"(?m)^\s+cases\) echo \"(The first cases are in resource group.*?)\" ;;$", self.step("What was done")).group(1)
         for words in ("The app no longer carries the user-assigned identity that it used before, \\`id-meternaut-cases\\`. This workflow does not remove that identity: a person does, "
@@ -1828,7 +1850,8 @@ class FoundryWorkflow(unittest.TestCase):
         self.assertEqual(self.names.index(title) - self.names.index(self.ORDER[3]), 1)
 
     def test_the_foundry_file_is_made_checked_against_its_compiled_template_and_the_template_is_compiled_where_the_others_are(self):
-        self.assertIn("environment/foundry/main.bicep environment/cases/main.bicep", self.text)
+        # The Hub compiles each template to a file, for the check of its parameter file; the compile-and-lint loop of the templates is CI's, run once for the commit that is pushed to main (the Hub reads that it passed).
+        self.assertNotIn("az bicep lint", self.text, "the lint of the templates is CI's: the Hub does not repeat it")
         self.assertIn('az bicep build --file environment/foundry/main.bicep --outfile "$RUNNER_TEMP/foundry.json"', self.text)
         params = [b for b in self.steps if b.startswith("name: Work out the settings\n")][0]
         self.assertIn('python3 tools/environment-params.py check --params "$RUNNER_TEMP/foundry.parameters.json" --template "$RUNNER_TEMP/foundry.json" --label foundry', params)
@@ -2131,6 +2154,8 @@ class RetireWorkflow(unittest.TestCase):
         expression = re.sub(r"steps\.params\.outputs\.door_in_operator (==|!=) 'true'", "True", expression)
         # Which plan kind the cases app is on is decided by the constant CASES_APP_PLAN, not by the action: for a question about the action alone either may run.
         expression = re.sub(r"steps\.params\.outputs\.cases_app_plan == '(?:Flex|Basic)'", "True", expression)
+        # Whether the component's OpenTelemetry ingestion is on is decided by the constant GATEWAY_TELEMETRY, not by the action: the step that reads the provider before the base turns it on runs for base alone.
+        expression = re.sub(r"steps\.params\.outputs\.gateway_telemetry == 'true'", "True", expression)
         expression = re.sub(r"steps\.\w+\.outcome != 'skipped'", "True", expression).replace("always()", "True").replace("&&", " and ").replace("||", " or ")
         assert re.fullmatch(r"[\sA-Za-z()]*", expression) and set(re.findall(r"[A-Za-z]+", expression)) <= {"True", "False", "and", "or"}, expression
         return bool(eval(expression, {"__builtins__": {}}))
@@ -2286,7 +2311,11 @@ class OperatorWorkflow(unittest.TestCase):
     def test_the_provider_is_read_and_never_registered_by_the_workflow(self):
         script = self.script(self.PROVIDER)
         self.assertIn("az provider show --namespace Microsoft.ContainerInstance --query registrationState", script)
-        self.assertNotIn("az provider register", self.text)
+        # No line of the workflow runs `az provider register`: a message may tell a person the command (the preflights of the AI security do, when a provider is missing), and nothing else mentions it.
+        for line in self.text.splitlines():
+            if "az provider register" in line:
+                self.assertIn("::error::", line, "only an error message that tells a person what to run names the command")
+                self.assertTrue(line.strip().startswith("echo "), line.strip()[:120])
         self.assertIn("::warning::", script, "a state that cannot be read is said and does not stop the run")
 
     def test_the_probe_is_given_a_pinned_image_the_script_the_names_the_size_the_lock_and_a_summary_and_no_secret_but_the_token_of_the_deploy_identity(self):
@@ -2416,7 +2445,8 @@ class OperatorWorkflow(unittest.TestCase):
             self.assertIn("environment/operator/main.bicep", source)
             self.assertIn('--label operator', source)
             self.assertIn('operator.json"', source)
-        self.assertIn("environment/foundry/main.bicep environment/cases/main.bicep", self.text)
+        self.assertIn("environment/foundry/main.bicep environment/cases/main.bicep environment/operator/main.bicep", text(".github/workflows/checks.yml"), "CI compiles and lints it")
+        self.assertNotIn("az bicep lint", self.text, "the Hub compiles it for the check of its file and leaves the lint to CI, which ran it for exactly this commit")
 
     def test_both_actions_have_a_line_in_the_summary_for_success_and_for_failure(self):
         block = self.step("What was done")
@@ -2471,7 +2501,7 @@ class OperatorChecksWorkflow(unittest.TestCase):
         for word in ("eventhubs.azure.net", "servicebus.windows.net", "storage.azure.com", "/messages?"):
             self.assertNotIn(word, code, f"{word}: the runner takes no token for Storage and posts nothing to a queue")
         self.assertNotRegex(code, r"https?://[^\s\"']*queue\.core\.windows\.net", "the probe is given the name of the queue to see that it resolves to a private address, and nothing is sent to it from the runner")
-        self.assertEqual(self.text.count("uses: azure/login@"), 9, "the check action added no sign-in: the runner makes the container group with the credential of the first one (the nine are the first, the two retirements', the one of cases before its publish, the two of cases around the health check in the Operator, the Foundry read-back's and the two of aigateway, one before the gateway's deploy and one before its limits, which follow the subnet's deploy and a wait for the route table: aigateway-check has none)")
+        self.assertEqual(self.text.count("uses: azure/login@"), 11, "the check action added no sign-in: the runner makes the container group with the credential of the first one (the eleven are the first, the two retirements', the one of cases before its publish, the two of cases around the health check in the Operator, the Foundry read-back's, the two of aigateway, one before the gateway's deploy and one before its limits, which follow the subnet's deploy and a wait for the route table: aigateway-check has none, and the one before the read-back of the AI security and the one before the read-back of the telemetry exporter)")
 
     def test_the_check_runs_the_generic_script_with_its_tool_and_the_arguments_that_the_runner_used_before_and_the_times_are_ordered(self):
         expected = {self.CASES: {"tool": "cases-check", "files": ["cases-check.py", "check-helpers.py"], "args": "run --storage-account $STORAGE_ACCOUNT --insights $insights --minutes 30", "seconds": 2400,

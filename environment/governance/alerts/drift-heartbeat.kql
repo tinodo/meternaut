@@ -1,0 +1,10 @@
+// The heartbeat of the app's own drift check: the check logs a drift.pass or a drift.fail line for each control every day, so a window of __HEARTBEAT_HOURS__ hours without one means that the check is
+// not running, which is as bad as a check that fails. A check that reports unknown for everything is alive and not counted here, because it tells nothing. The query returns one row when no such line was
+// seen in the window and no row when one was, so that the alert needs no threshold of its own. The independent control-plane check (tools/drift-check.py) does not depend on the app, and it reads the same lines.
+let seen = toscalar(AppTraces
+    | where TimeGenerated > ago(__HEARTBEAT_HOURS__h)
+    | where Message startswith 'drift.pass' or Message startswith 'drift.fail'
+        or (Message startswith 'meternaut_event ' and (Message contains '"type":"drift.pass"' or Message contains '"type":"drift.fail"'))
+    | count);
+print LinesInWindow = seen
+| where LinesInWindow == 0

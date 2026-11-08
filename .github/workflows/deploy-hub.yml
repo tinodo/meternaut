@@ -10,13 +10,15 @@ name: Hub
 # Nothing starts this workflow but a click on "Run workflow" in the Actions tab. It signs
 # in to Azure with OpenID Connect and a credential that exists only for the main branch, so a copy of this file on any
 # other branch cannot sign in. "what-if" reads and changes nothing.
+# It does not run the tests again (the owner's quota of GitHub Actions minutes is limited: AGENTS.md rule 35). The unit tests, the workflow lint, the Bicep lint and the selftest of the drift tool run once, in CI
+# (checks.yml), when a commit is pushed to main, and the first step of every run here asks GitHub, read only, whether CI passed for exactly this commit and stops the run, whatever its action, when it did not.
 # What it does, and what to set up once before the first run: environment/BOOTSTRAP.md.
 
 on:
   workflow_dispatch:
     inputs:
       action:
-        description: "what-if: show what the next steps would change and change nothing. model-side: the virtual network with its subnets, and the budget (the name is old, from the time when it also made a model account; it makes none now). base: the parts that the other actions build on, which are a Log Analytics workspace, an Application Insights component and a storage account, with the storage account's private endpoints and without any key; the storage account takes no public traffic (its public network access is Disabled and its private endpoints are the only way in, so from then on only the apps and the Operator reach its queue), and after its deploy the action reads that back from Azure. retire-old: delete what Meternaut does not use any more, in the project's resource group and nowhere else, and nothing else: the usage recording that was made for the calls of the owner's old API Management instance (the usage function app, its plan and its private endpoint, the Cosmos DB account and its private endpoint, and the event hubs ai-usage, pii-usage and usage-control), the old model account (its private endpoint, and then the account itself, which it purges so that its name and its quota are free) and the identity id-meternaut-usage; it reads each one first, deletes it when it is there, reads back until it is gone, and says on one line for each one whether it was deleted or was not there, and then reads back that the function subnet snet-func is free (no app but the cases app is integrated with it), which the action cases needs only while the web page's app is on Flex Consumption; it takes no input, needs no other action first and is safe to run twice. retire-event-hubs: delete the Event Hubs namespace that carried the control event of the cases app before the control message moved to a Storage queue, and its private endpoint, in the project's resource group and nowhere else: the private endpoint, then the namespace (which takes its hub cases-control and that hub's consumer group with it), then the container azure-webjobs-eventhub in the storage account, which held the namespace's checkpoints; run it only after the action cases-run has proved the queue path, because it removes the old channel; it reads each one first, deletes it when it is there, reads back until it is gone, and says on one line for each one whether it was deleted or was not there; it refuses to delete anything while the control queue cases-control is not there, takes no input and is safe to run twice, and on an estate that never had a namespace it finds nothing and passes. cases: the first cases, which is the function app that serves the web page and runs the Watch, on the plan that CASES_APP_PLAN in tools/environment-params.py names (Basic, which is B1 and always on, or Flex Consumption, which scales to zero and bills per execution and waits for a later try; when that value changes, the action first deletes the app of the other kind and its plan, and then makes the new ones; whatever an earlier run that stopped half way left in the way is cleared from the state that Azure shows, each thing read first and read again after, and a gateway time-out of the platform is tried again: a private endpoint of the app that is Disconnected, a plan of the other kind with no app, and the role assignments of an identity that is gone that the deploy would rewrite), on the base's network and storage, with its own system-assigned identity and one user-assigned identity for the console's sign-in, a control queue (cases-control, in the base's storage account), a longer retention of the traces and the History workbook; its Watch changes no resource of the estate (with the investigation on it also creates agents and conversations in its own Foundry project), and it needs the base and the AI Gateway first: every model call of its Detective and Skeptic goes through the gateway (AGENTS.md rule 15 (c)), so it reads the gateway's host name from the service and stops before it changes anything when the gateway is not there (a what-if previews with a placeholder). The switch AGENTS_VIA_AI_GATEWAY in tools/environment-params.py is on, so it gives the app the model names `aigateway/<alias>` for the agents, which name the project's connection to the AI Gateway, and needs that connection first. With the switch set to False, which is the way back, it gives the plain model names. It publishes the app's code from inside the network, in a container group of the Operator that signs in as the deploy identity with a token of the run and goes through the app's private endpoint, so on an estate that has no Operator yet it deploys and stops at the publish: the order is then base, cases, operator, and then cases again. It then checks the web page's front door as loop-check does.         cases-run: start one Watch through the control queue (the Operator puts one message in it) and read its History from the telemetry, both by the Operator from inside the network: it needs operator first. page-latency: measure how fast the web page answers, by the Operator from inside the network over the app's private endpoint and with no credential: a request to /healthz every ten seconds for the minutes of the input minutes (20 at the most), then a quiet gap and three requests after it, so that a start from zero shows; the step summary gets the count, the median, the 95th percentile, the slowest, and how many requests were not 200 or took more than 5 and more than 15 seconds. It only reads, and it needs operator first. The rule that it serves is in docs/proposals/07-private-by-default.md (the web page on Flex Consumption). plant: make waste of Meternaut's own (an unattached disk, and with plant_public_ip an unassigned public IP address) in the project's resource group,         tagged for the loop, so that the whole loop can be shown on something that belongs to nobody else. loop-check: knock at the web page's front door without a sign-in and pass only when nobody gets a page: from this runner, at the name that people open, and, when the cases app takes no public traffic and no host name of a gateway is set, from inside the network, in a short-lived container group of the Operator, at the app's own name (it then needs operator first). foundry: the Foundry resource of the agents (the model account cannot hold projects, so this is a second resource): a project, the same models, a guardrail, one private endpoint and the connection that sends the agents' traces, with no key; it needs base and cases to have run once, and it is run before the next cases, which is then given the project's address. The switch AGENTS_VIA_AI_GATEWAY in tools/environment-params.py is on, so it also makes the project's connection to the AI Gateway, with the project's own identity and no key, and reads it back: it needs aigateway first. With the switch set to False, which is the way back, it makes no connection and leaves an existing one alone. operator: the Operator, the executor that works inside the virtual network for what the workflow cannot do from outside it once the services are private (docs/proposals/07-private-by-default.md): its identity, the subnet of its container groups and two roles (Reader on the project's group, and Storage Queue Data Contributor on the control queue cases-control, which the action cases makes, so it runs after it); it waits until the landing zone has put its route table on that subnet, and it starts nothing, so nothing is paid until a run uses it. The action cases publishes its code through it, as the deploy identity. operator-probe: run operator/probe.sh once in a short-lived container group of the Operator and print what it finds (does the identity sign in, do the names of private endpoints resolve to private addresses, which addresses can a group reach, and how does a package get in); the group is deleted at the end whatever happens, and it costs cents. It needs operator first. aigateway: refused at its first step unless the input public_ai_gateway_requested is set, which only the owner's written request for a public AI Gateway allows (its frontend is public and cannot be made private). When it is set: the AI Gateway of the agents' model calls (Azure's AI Gateway, a preview service that is not API Management): first its subnet, which is delegated to it and made only when it is not there, and, after the landing zone's route table is on that subnet, the gateway with a system-assigned identity, a model and an alias for each model of the agents' Foundry resource, content safety on each model, and AI Gateway Models User for the Operator's identity and for the cases app's identity (the Detective and the Skeptic call the gateway with it; the role is made once the app has an identity, which the action cases makes), with no key; it needs foundry and operator first. The gateway is made on the subnet as the landing zone leaves it, so the action makes the subnet, waits for the landing zone's route table on it (20 minutes at most: when the table does not come the gateway is not made, and a second run repeats only what is missing), signs in again and then makes the gateway. Its frontend is public whatever is asked, because the service has no private frontend, so access is by Microsoft Entra ID and role assignments only. After the deploy the action applies the gateway-wide token, request and cost limits, deletes the built-in key master when the service lets it be deleted, and reads everything back; it changes nothing of the model names of the agents: they keep calling their model deployments until foundry and cases have run. The switch AGENTS_VIA_AI_GATEWAY is on, so it also gives the Foundry project's identity AI Gateway Models User on the gateway, and needs foundry to have run. The order of the real run is aigateway, about ten minutes, foundry, cases, cases-run. aigateway-check: call each alias of the AI Gateway once with the Operator's token, and once without a token and once with a wrong alias, by the Operator from inside the network (the check tool runs in a short-lived container group of the Operator): it needs aigateway and operator first, and about ten minutes after aigateway, because a new role takes up to ten minutes to apply."
+        description: "what-if: show what the next steps would change and change nothing. model-side: the virtual network with its subnets, and the budget (the name is old, from the time when it also made a model account; it makes none now). base: the parts that the other actions build on, which are a Log Analytics workspace, an Application Insights component and a storage account, with the storage account's private endpoints and without any key; the storage account takes no public traffic (its public network access is Disabled and its private endpoints are the only way in, so from then on only the apps and the Operator reach its queue), and after its deploy the action reads that back from Azure. retire-old: delete what Meternaut does not use any more, in the project's resource group and nowhere else, and nothing else: the usage recording that was made for the calls of the owner's old API Management instance (the usage function app, its plan and its private endpoint, the Cosmos DB account and its private endpoint, and the event hubs ai-usage, pii-usage and usage-control), the old model account (its private endpoint, and then the account itself, which it purges so that its name and its quota are free) and the identity id-meternaut-usage; it reads each one first, deletes it when it is there, reads back until it is gone, and says on one line for each one whether it was deleted or was not there, and then reads back that the function subnet snet-func is free (no app but the cases app is integrated with it), which the action cases needs only while the web page's app is on Flex Consumption; it takes no input, needs no other action first and is safe to run twice. retire-event-hubs: delete the Event Hubs namespace that carried the control event of the cases app before the control message moved to a Storage queue, and its private endpoint, in the project's resource group and nowhere else: the private endpoint, then the namespace (which takes its hub cases-control and that hub's consumer group with it), then the container azure-webjobs-eventhub in the storage account, which held the namespace's checkpoints; run it only after the action cases-run has proved the queue path, because it removes the old channel; it reads each one first, deletes it when it is there, reads back until it is gone, and says on one line for each one whether it was deleted or was not there; it refuses to delete anything while the control queue cases-control is not there, takes no input and is safe to run twice, and on an estate that never had a namespace it finds nothing and passes. cases: the first cases, which is the function app that serves the web page and runs the Watch, on the plan that CASES_APP_PLAN in tools/environment-params.py names (Basic, which is B1 and always on, or Flex Consumption, which scales to zero and bills per execution and waits for a later try; when that value changes, the action first deletes the app of the other kind and its plan, and then makes the new ones; whatever an earlier run that stopped half way left in the way is cleared from the state that Azure shows, each thing read first and read again after, and a gateway time-out of the platform is tried again: a private endpoint of the app that is Disconnected, a plan of the other kind with no app, and the role assignments of an identity that is gone that the deploy would rewrite), on the base's network and storage, with its own system-assigned identity and one user-assigned identity for the console's sign-in, a control queue (cases-control, in the base's storage account), a longer retention of the traces and the History workbook; its Watch changes no resource of the estate (with the investigation on it also creates agents and conversations in its own Foundry project), and it needs the base and the AI Gateway first: every model call of its Detective and Skeptic goes through the gateway (AGENTS.md rule 15 (c)), so it reads the gateway's host name from the service and stops before it changes anything when the gateway is not there (a what-if previews with a placeholder). The switch AGENTS_VIA_AI_GATEWAY in tools/environment-params.py is on, so it gives the app the model names `aigateway/<alias>` for the agents, which name the project's connection to the AI Gateway, and needs that connection first. With the switch set to False, which is the way back, it gives the plain model names. It publishes the app's code from inside the network, in a container group of the Operator that signs in as the deploy identity with a token of the run and goes through the app's private endpoint, so on an estate that has no Operator yet it deploys and stops at the publish: the order is then base, cases, operator, and then cases again. It then checks the web page's front door as loop-check does.         cases-run: start one Watch through the control queue (the Operator puts one message in it) and read its History from the telemetry, both by the Operator from inside the network: it needs operator first. page-latency: measure how fast the web page answers, by the Operator from inside the network over the app's private endpoint and with no credential: a request to /healthz every ten seconds for the minutes of the input minutes (20 at the most), then a quiet gap and three requests after it, so that a start from zero shows; the step summary gets the count, the median, the 95th percentile, the slowest, and how many requests were not 200 or took more than 5 and more than 15 seconds. It only reads, and it needs operator first. The rule that it serves is in docs/proposals/07-private-by-default.md (the web page on Flex Consumption). plant: make waste of Meternaut's own (an unattached disk, and with plant_public_ip an unassigned public IP address) in the project's resource group,         tagged for the loop, so that the whole loop can be shown on something that belongs to nobody else. loop-check: knock at the web page's front door without a sign-in and pass only when nobody gets a page: from this runner, at the name that people open, and, when the cases app takes no public traffic and no host name of a gateway is set, from inside the network, in a short-lived container group of the Operator, at the app's own name (it then needs operator first). foundry: the Foundry resource of the agents (the model account cannot hold projects, so this is a second resource): a project, the same models, a guardrail, one private endpoint and the connection that sends the agents' traces, with no key; it needs base and cases to have run once, and it is run before the next cases, which is then given the project's address. The switch AGENTS_VIA_AI_GATEWAY in tools/environment-params.py is on, so it also makes the project's connection to the AI Gateway, with the project's own identity and no key, and reads it back: it needs aigateway first. With the switch set to False, which is the way back, it makes no connection and leaves an existing one alone. operator: the Operator, the executor that works inside the virtual network for what the workflow cannot do from outside it once the services are private (docs/proposals/07-private-by-default.md): its identity, the subnet of its container groups and two roles (Reader on the project's group, and Storage Queue Data Contributor on the control queue cases-control, which the action cases makes, so it runs after it); it waits until the landing zone has put its route table on that subnet, and it starts nothing, so nothing is paid until a run uses it. The action cases publishes its code through it, as the deploy identity. operator-probe: run operator/probe.sh once in a short-lived container group of the Operator and print what it finds (does the identity sign in, do the names of private endpoints resolve to private addresses, which addresses can a group reach, and how does a package get in); the group is deleted at the end whatever happens, and it costs cents. It needs operator first. aigateway: refused at its first step unless the input public_ai_gateway_requested is set, which only the owner's written request for a public AI Gateway allows (its frontend is public and cannot be made private). When it is set: the AI Gateway of the agents' model calls (Azure's AI Gateway, a preview service that is not API Management): first its subnet, which is delegated to it and made only when it is not there, and, after the landing zone's route table is on that subnet, the gateway with a system-assigned identity, a model and an alias for each model of the agents' Foundry resource, content safety on each model, and AI Gateway Models User for the Operator's identity and for the cases app's identity (the Detective and the Skeptic call the gateway with it; the role is made once the app has an identity, which the action cases makes), with no key; it needs foundry and operator first. The gateway is made on the subnet as the landing zone leaves it, so the action makes the subnet, waits for the landing zone's route table on it (20 minutes at most: when the table does not come the gateway is not made, and a second run repeats only what is missing), signs in again and then makes the gateway. Its frontend is public whatever is asked, because the service has no private frontend, so access is by Microsoft Entra ID and role assignments only. After the deploy the action applies the gateway-wide token, request and cost limits, deletes the built-in key master when the service lets it be deleted, and reads everything back; it changes nothing of the model names of the agents: they keep calling their model deployments until foundry and cases have run. The switch AGENTS_VIA_AI_GATEWAY is on, so it also gives the Foundry project's identity AI Gateway Models User on the gateway, and needs foundry to have run. The order of the real run is aigateway, about ten minutes, foundry, cases, cases-run. aigateway-check: call each alias of the AI Gateway once with the Operator's token, and once without a token and once with a wrong alias, by the Operator from inside the network (the check tool runs in a short-lived container group of the Operator):         it needs aigateway and operator first, and about ten minutes after aigateway, because a new role takes up to ten minutes to apply. governance: the policy, the alerts and the workbook of the AI security (AGENTS.md rule 33; docs/proposals/10-ai-security-and-governance.md), in the project's resource group and nowhere else: Azure Policy at the group (the built-in policies for approved models and for model eligibility, each with the effect Audit or Deny that APPROVED_MODELS_EFFECT and MODEL_ELIGIBILITY_EFFECT in tools/environment-params.py say, no exemption and no identity, and the guardrail initiative while the tenant offers it), the alert rules (one for each signal, every 15 minutes or less often) with an action group that mails ENV_ALERT_EMAILS, the workbook Meternaut AI security, the retention of the AI Gateway's two telemetry tables, and the Foundry resource's diagnostic setting only where the landing zone has made none. It reads first and stops, saying which right, who gives it and where, when the deploy identity does not hold Resource Policy Contributor on the group or an identity of the access list (environment/aigateway/contracts.json) is not there yet; afterwards it reads the result back with tools/drift-check.py. It needs cases, foundry and operator first. gateway-telemetry: the AI Gateway's telemetry exporter, which sends the gateway's logs, traces and metrics to the project's Application Insights component with the gateway's own identity, no key and no prompt or answer; it stops before it changes anything, and says what a person does, unless the resource provider Microsoft.Monitor is registered, the component reports its OpenTelemetry endpoints (the action base turns the ingestion on while GATEWAY_TELEMETRY in tools/environment-params.py is True) and the gateway's identity holds Monitoring Metrics Publisher on the component's data collection rule (environment/BOOTSTRAP.md). It needs aigateway and base first. drift-check: read Azure and say, for each control of the AI security, PASS, FAIL or UNKNOWN (tools/drift-check.py): the Foundry resource, its deployments and guardrail, the model lifecycle, the AI Gateway's policies, models, roles and telemetry, the project's connection, the policies and their compliance, the roles and the network exposure of the group, the release that the cases app runs against main, and the lines that the app's own daily check logged. It only reads (GET requests and two queries), as the deploy identity, so the check does not rest on the app; the run fails when a control fails, and the summary says which are fail-closed. The workflow drift.yml runs the same tool with an identity of its own that can only read."
         type: choice
         required: true
         default: what-if
@@ -36,6 +38,9 @@ on:
           - operator-probe
           - aigateway
           - aigateway-check
+          - governance
+          - gateway-telemetry
+          - drift-check
       minutes:
         description: "Only with page-latency: how many minutes the measurement takes, from 1 to 20 (the Operator's container group has to finish within 25 minutes). Every other action ignores it."
         type: string
@@ -54,6 +59,8 @@ on:
 
 permissions:
   contents: read
+  # Only to read whether the checks of CI passed for this commit (the step "The checks of CI have passed for this commit"): the list of the runs of one workflow. Nothing here writes to the repository or to Actions.
+  actions: read
   id-token: write
 
 concurrency:
@@ -85,6 +92,10 @@ jobs:
       CONSOLE_PEOPLE: ${{ vars.CONSOLE_PEOPLE }}
       CONSOLE_HOST_NAME: ${{ vars.CONSOLE_HOST_NAME }}
       MAIL_SENDER: ${{ vars.MAIL_SENDER }}
+      # What the owner has accepted of the policy state at the project's group (tools/drift-check.py): the policy exemptions that he knows of, and the policies with the effect Deny that are non-compliant and that he knows of.
+      # They are repository variables and not files, because they name the landing zone's own policies. Unset: those two controls say UNKNOWN and print what they found, so that he can accept it; the word none accepts nothing.
+      DRIFT_ACCEPTED_EXEMPTIONS: ${{ vars.DRIFT_ACCEPTED_EXEMPTIONS }}
+      DRIFT_ACCEPTED_DENY: ${{ vars.DRIFT_ACCEPTED_DENY }}
       PLANTED_ID: r${{ github.run_number }}
       PLANT_PUBLIC_IP: ${{ inputs.plant_public_ip }}
       # The linux/amd64 manifest of mcr.microsoft.com/azure-cli 2.92.0, read from the registry on 2026-11-06: docs/proposals/07-private-by-default.md says how to read it again. Every step that runs
@@ -104,6 +115,28 @@ jobs:
           fi
           echo "The input public_ai_gateway_requested is set: the owner has asked in writing for a public AI Gateway."
 
+      - name: The checks of CI have passed for this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # This run does not repeat the tests. The unit tests of the tools and of the app, the workflow lint, the Bicep lint and the selftest of the drift tool run once, in CI (checks.yml), when a commit is pushed
+          # to main: about five of the eight minutes that a run of this workflow took on average were those tests, and the owner's minutes of GitHub Actions are limited (AGENTS.md rule 35). What is asked here instead takes seconds,
+          # and it is asked of every action, the ones that only read as well: has the workflow checks.yml a completed, successful run for exactly this commit, started by a push to main? A run for a pull request, for another
+          # commit, one that is still going and one that failed do not count, and nothing else of GitHub is looked at. It is a read of the list of runs with the run's own token (the permission actions: read); nothing is started or changed.
+          if ! grep -Eq '^[0-9a-f]{40}$' <<< "$GITHUB_SHA"; then
+            echo "::error::The commit of this run is not a git commit id, so the checks of CI cannot be looked up. Nothing was changed."
+            exit 1
+          fi
+          if ! passed=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/checks.yml/runs?head_sha=$GITHUB_SHA&event=push&branch=main&status=success&per_page=1" --jq '.total_count' 2>&1); then
+            echo "::error::GitHub did not say whether the checks of CI passed for commit $GITHUB_SHA ($(head -n 1 <<< "$passed")). Nothing was changed. Run the Hub again in a minute; if this stops it again, the workflow needs the permission actions: read."
+            exit 1
+          fi
+          if ! grep -Eq '^[0-9]+$' <<< "$passed" || [ "$passed" -lt 1 ]; then
+            echo "::error::The checks have not passed for this commit: push it and let CI finish, then run the Hub again. What was looked for is a completed, successful run of the workflow checks.yml for commit $GITHUB_SHA that a push to main started; this run does not repeat the tests (AGENTS.md rule 35). Nothing was changed."
+            exit 1
+          fi
+          echo "The checks of CI (checks.yml) have passed for commit $GITHUB_SHA, so this run does not repeat them."
+
       - name: Check out the repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -114,15 +147,10 @@ jobs:
         with:
           python-version: "3.13"
 
-      - name: The tools and the templates pass their checks
+      - name: The templates compile, for the check of their parameter files
         run: |
-          python3 -m unittest discover -s tools/tests
-          python3 -m unittest discover -s src/case-functions/tests
-          python3 tools/workflow-lint.py
-          for template in environment/main.bicep environment/base/main.bicep environment/foundry/main.bicep environment/cases/main.bicep environment/cases/planted.bicep environment/operator/main.bicep environment/aigateway/main.bicep environment/aigateway/subnet.bicep; do
-            az bicep build --file "$template" --stdout > /dev/null
-            az bicep lint --file "$template"
-          done
+          # Only what this run needs from Bicep: each template compiled, because the builder of the parameter files checks every file against the template that it is for (tools/environment-params.py check). The unit tests,
+          # the workflow lint, the Bicep lint and the selftest of the drift tool are not run here: CI ran them for exactly this commit, which the second step of the job has just read.
           az bicep build --file environment/main.bicep --outfile "$RUNNER_TEMP/environment.json"
           az bicep build --file environment/base/main.bicep --outfile "$RUNNER_TEMP/base.json"
           az bicep build --file environment/foundry/main.bicep --outfile "$RUNNER_TEMP/foundry.json"
@@ -131,6 +159,8 @@ jobs:
           az bicep build --file environment/operator/main.bicep --outfile "$RUNNER_TEMP/operator.json"
           az bicep build --file environment/aigateway/main.bicep --outfile "$RUNNER_TEMP/aigateway.json"
           az bicep build --file environment/aigateway/subnet.bicep --outfile "$RUNNER_TEMP/aigateway-subnet.json"
+          az bicep build --file environment/aigateway/telemetry.bicep --outfile "$RUNNER_TEMP/gateway-telemetry.json"
+          az bicep build --file environment/governance/main.bicep --outfile "$RUNNER_TEMP/governance.json"
 
       - name: Sign in to Azure
         uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
@@ -197,10 +227,35 @@ jobs:
           echo "The subnet snet-aigw is there: $aigw."
           echo "aigw_subnet_exists=$aigw" >> "$GITHUB_OUTPUT"
 
+      - name: Work out which release the cases app is given, the commit and the digest of its own files
+        id: release
+        if: inputs.action == 'cases' || inputs.action == 'what-if'
+        run: |
+          # The release that this run deploys (docs/proposals/10-ai-security-and-governance.md, "The release that runs"): the git commit that the run was made from, and the digest of the app's own files at that commit
+          # (tools/source-digest.py: the files that the build puts in the package; the libraries are pinned by hash in requirements.txt, which is one of them, and a zip file would change with every run). The template
+          # gives them to the app as the settings BUILD_COMMIT and PACKAGE_SHA256, and a later step writes them as tags of the app once the code has been published and the app answers, which is what a reader of the
+          # resource group (and tools/drift-check.py) sees. Values, not secrets: nothing here is read from Azure. The preview (what-if) works it out too, so that it shows the two settings of the app changing to this
+          # commit and not going away (a template that is given no value writes no setting, and a preview without one would say that the app loses them).
+          commit="$GITHUB_SHA"
+          if ! grep -Eq '^[0-9a-f]{40}$' <<< "$commit"; then
+            echo "::error::The commit of this run is not a git commit id, so the release cannot be recorded. Nothing was changed."
+            exit 1
+          fi
+          digest=$(python3 tools/source-digest.py src/case-functions)
+          if ! grep -Eq '^[0-9a-f]{64}$' <<< "$digest"; then
+            echo "::error::The digest of the cases app's files could not be worked out. Nothing was changed."
+            exit 1
+          fi
+          echo "build_commit=$commit" >> "$GITHUB_OUTPUT"
+          echo "package_sha256=$digest" >> "$GITHUB_OUTPUT"
+          echo "The release of this run: commit $commit, digest of the app's own files $digest."
+
       - name: Work out the settings
         id: params
         env:
           ENV_BUDGET_START: ${{ steps.budget.outputs.start }}
+          BUILD_COMMIT: ${{ steps.release.outputs.build_commit }}
+          PACKAGE_SHA256: ${{ steps.release.outputs.package_sha256 }}
           ENV_NETWORK_EXISTS: ${{ steps.network.outputs.network_exists }}
           ENV_WEB_SUBNET_EXISTS: ${{ steps.network.outputs.web_subnet_exists }}
           ENV_OPS_SUBNET_EXISTS: ${{ steps.network.outputs.ops_subnet_exists }}
@@ -349,6 +404,68 @@ jobs:
             python3 tools/environment-params.py check --params "$RUNNER_TEMP/aigateway-subnet.parameters.json" --template "$RUNNER_TEMP/aigateway-subnet.json" --label aigateway-subnet
           fi
 
+      - name: Work out the settings of the AI security
+        id: aisec
+        if: inputs.action == 'what-if' || inputs.action == 'governance' || inputs.action == 'gateway-telemetry'
+        env:
+          ENV_BUDGET_START: ${{ steps.budget.outputs.start }}
+          FOUNDRY_ACCOUNT: ${{ steps.params.outputs.foundry_account_name }}
+          FOUNDRY_PROJECT: ${{ steps.params.outputs.foundry_project_name }}
+          CASES_APP: ${{ steps.params.outputs.cases_function_app_name }}
+        run: |
+          # The files of the governance template (the policy at the group, the alert rules, the workbook) and of the telemetry exporter, from the access list of the gateway (environment/aigateway/contracts.json), which the builder
+          # checks against the models, the gateway's limits and the template's roles. They are built in a folder of their own, so that the files of the other actions are what they were. What the files need from Azure is read here and
+          # nothing is changed: the object ids of the identities of the access list (the cases app's, the Foundry project's and the Operator's: the alert rule that watches the gateway for a call from outside the list is made
+          # from them, and the action governance is refused, by name, while one is missing), whether a diagnostic setting of the Foundry resource that sends to a workspace is there already (the landing zone's policy makes one, and a
+          # template never makes a second: AGENTS.md rule 19), and whether the tenant offers the preview initiative that the template may assign.
+          group="/subscriptions/$ENV_SUBSCRIPTION_ID/resourceGroups/$ENV_RESOURCE_GROUP"
+          read_value() {
+            local answer
+            if answer=$(az rest --method get --url "https://management.azure.com${1}?api-version=${2}" --query "$3" --output tsv 2>&1); then
+              if [ "$answer" = None ]; then answer=""; fi
+              printf '%s' "$answer"
+            elif grep -Eqi 'NotFound|\b404\b' <<< "$answer"; then
+              printf ''
+            else
+              echo "::error::${1##*/} could not be read: $answer" >&2
+              return 1
+            fi
+          }
+          cases_principal=$(read_value "$group/providers/Microsoft.Web/sites/$CASES_APP" 2024-04-01 identity.principalId)
+          project_principal=$(read_value "$group/providers/Microsoft.CognitiveServices/accounts/$FOUNDRY_ACCOUNT/projects/$FOUNDRY_PROJECT" 2025-06-01 identity.principalId)
+          operator_principal=$(read_value "$group/providers/Microsoft.ManagedIdentity/userAssignedIdentities/id-meternaut-operator" 2023-01-31 properties.principalId)
+          guid() { if grep -Eq '^[0-9a-fA-F-]{36}$' <<< "$1"; then printf '%s' "$1"; fi; }
+          yesno() { if [ -n "$1" ]; then echo yes; else echo no; fi; }
+          cases_principal=$(guid "$cases_principal")
+          project_principal=$(guid "$project_principal")
+          operator_principal=$(guid "$operator_principal")
+          echo "The identities of the access list that are there: the cases app's $(yesno "$cases_principal"), the Foundry project's $(yesno "$project_principal"), the Operator's $(yesno "$operator_principal")."
+          # The landing zone's diagnostic setting of the Foundry resource, as the template's own is not counted (it sends to this project's workspace, and a second run finds it).
+          diagnostics=false
+          if counted=$(az rest --method get --url "https://management.azure.com${group}/providers/Microsoft.CognitiveServices/accounts/${FOUNDRY_ACCOUNT}/providers/Microsoft.Insights/diagnosticSettings?api-version=2021-05-01-preview" \
+            --query "length(value[?name!='meternaut-foundry-to-workspace' && properties.workspaceId])" --output tsv 2>&1); then
+            if [ "$counted" -ge 1 ] 2> /dev/null; then diagnostics=true; fi
+          elif ! grep -Eqi 'NotFound|\b404\b' <<< "$counted"; then
+            echo "::error::The diagnostic settings of the Foundry resource could not be read: $counted" >&2
+            exit 1
+          fi
+          echo "A diagnostic setting of the Foundry resource that sends to a workspace is there already: $diagnostics."
+          initiative=/providers/Microsoft.Authorization/policySetDefinitions/5207647b-3e83-4e28-b836-c382cb5e2a2e
+          offered=false
+          if found=$(az rest --method get --url "https://management.azure.com${initiative}?api-version=2023-04-01" --query name --output tsv 2>&1); then
+            offered=true
+          elif ! grep -Eqi 'NotFound|\b404\b' <<< "$found"; then
+            echo "::warning::The preview initiative for the guardrail could not be read ($found): it is not assigned in this run."
+          fi
+          echo "The tenant offers the preview initiative for the guardrail: $offered."
+          outputs=$(OPERATOR_PRINCIPAL_ID="$operator_principal" CASES_SYSTEM_PRINCIPAL_ID="$cases_principal" FOUNDRY_PROJECT_PRINCIPAL_ID="$project_principal" \
+            ENV_FOUNDRY_DIAGNOSTICS_EXIST="$diagnostics" GUARDRAIL_INITIATIVE_AVAILABLE="$offered" \
+            python3 tools/environment-params.py build --models environment/models.json --out-dir "$RUNNER_TEMP/aisec" \
+            --aigateway-policies environment/aigateway/policies.json --governance environment/aigateway/contracts.json)
+          grep -E '^(governance_|gateway_telemetry=)' <<< "$outputs" >> "$GITHUB_OUTPUT"
+          python3 tools/environment-params.py check --params "$RUNNER_TEMP/aisec/governance.parameters.json" --template "$RUNNER_TEMP/governance.json" --label governance
+          python3 tools/environment-params.py check --params "$RUNNER_TEMP/aisec/gateway-telemetry.parameters.json" --template "$RUNNER_TEMP/gateway-telemetry.json" --label gateway-telemetry
+
       - name: What the model side, the base, the Foundry resource, the first cases, the Operator and the AI Gateway's templates would change
         if: inputs.action == 'what-if'
         env:
@@ -437,6 +554,39 @@ jobs:
           fi
           echo "::endgroup::"
 
+      - name: What the AI security's templates would change
+        if: inputs.action == 'what-if'
+        env:
+          FOUNDRY_ACCOUNT: ${{ steps.params.outputs.foundry_account_name }}
+          GATEWAY_NAME: ${{ steps.params.outputs.aigateway_name }}
+          INSIGHTS_NAME: ${{ steps.params.outputs.appinsights_name }}
+        run: |
+          # The two templates of the AI security (docs/proposals/10-ai-security-and-governance.md). Each reads what another action makes, so each is previewed only when that is there, and the lines say what is missing.
+          echo "::group::The policy, the alert rules, the workbook and the table retention of the AI security, in the project's resource group (the action governance)"
+          workspace_found=$(az resource list --resource-group "$ENV_RESOURCE_GROUP" --resource-type Microsoft.OperationalInsights/workspaces --query "[?name=='log-meternaut'].name | [0]" --output tsv)
+          foundry_found=$(az resource list --resource-group "$ENV_RESOURCE_GROUP" --resource-type Microsoft.CognitiveServices/accounts --query "[?name=='$FOUNDRY_ACCOUNT'].name | [0]" --output tsv)
+          if [ -z "$workspace_found" ] || [ "$workspace_found" = "None" ] || [ -z "$foundry_found" ] || [ "$foundry_found" = "None" ]; then
+            echo "The AI security cannot be previewed yet: it reads the base's workspace and the Foundry resource of the agents, and the actions base and foundry make them."
+          else
+            python3 tools/az-deploy.py what-if --subscription "$ENV_SUBSCRIPTION_ID" --resource-group "$ENV_RESOURCE_GROUP" \
+              --template environment/governance/main.bicep --parameters "$RUNNER_TEMP/aisec/governance.parameters.json"
+          fi
+          echo "::endgroup::"
+          echo "::group::The telemetry exporter of the AI Gateway, in the project's resource group (the action gateway-telemetry)"
+          group="/subscriptions/$ENV_SUBSCRIPTION_ID/resourceGroups/$ENV_RESOURCE_GROUP"
+          component="$group/providers/Microsoft.Insights/components/$INSIGHTS_NAME"
+          gateway_found=$(az rest --method get --url "https://management.azure.com${group}/providers/Microsoft.ApiManagement/aigateways/${GATEWAY_NAME}?api-version=2025-09-01-preview" --query name --output tsv 2> /dev/null || true)
+          endpoint=$(az rest --method get --url "https://management.azure.com${component}?api-version=2020-02-02" --query properties.OTLPLogsEndpoint --output tsv 2> /dev/null || true)
+          if [ "$gateway_found" != "$GATEWAY_NAME" ]; then
+            echo "The telemetry exporter cannot be previewed yet: it is a child of the AI Gateway, and the action aigateway makes the gateway."
+          elif [ -z "$endpoint" ] || [ "$endpoint" = "None" ]; then
+            echo "The telemetry exporter cannot be previewed yet: it names the OpenTelemetry endpoints that the component reports once its ingestion is on, and the component reports none (the action base turns the ingestion on, after the resource provider Microsoft.Monitor is registered; environment/BOOTSTRAP.md)."
+          else
+            python3 tools/az-deploy.py what-if --subscription "$ENV_SUBSCRIPTION_ID" --resource-group "$ENV_RESOURCE_GROUP" \
+              --template environment/aigateway/telemetry.bicep --parameters "$RUNNER_TEMP/aisec/gateway-telemetry.parameters.json"
+          fi
+          echo "::endgroup::"
+
       - name: Deploy the network and the budget
         if: inputs.action == 'model-side'
         env:
@@ -450,6 +600,23 @@ jobs:
             echo "::error::The deployment returned the network $network, not $EXPECTED_NETWORK."
             exit 1
           fi
+
+      - name: The resource provider Microsoft.Monitor is registered, which the OpenTelemetry ingestion of the component needs
+        if: inputs.action == 'base' && steps.params.outputs.gateway_telemetry == 'true'
+        run: |
+          # The base turns on the OpenTelemetry ingestion of the Application Insights component while GATEWAY_TELEMETRY in tools/environment-params.py is True: Azure then makes a managed Azure Monitor workspace, a data
+          # collection endpoint and a data collection rule, and the AI Gateway's telemetry exporter (the action gateway-telemetry) sends to the endpoints that this gives. That needs the resource provider Microsoft.Monitor in
+          # the subscription, and registering a provider is a right on the subscription that the deploy identity does not hold (it holds its rights on the project's resource group), so a person registers it once. It is read
+          # here, before anything is changed, so that the deploy does not stop half way on a provider that is not there.
+          if ! state=$(az provider show --namespace Microsoft.Monitor --query registrationState --output tsv 2>&1); then
+            echo "::error::The registration of the resource provider Microsoft.Monitor could not be read: $state. Nothing was changed."
+            exit 1
+          fi
+          if [ "$state" != "Registered" ]; then
+            echo "::error::The resource provider Microsoft.Monitor is ${state:-not registered} in the subscription, and the action base turns on the OpenTelemetry ingestion of the Application Insights component (GATEWAY_TELEMETRY in tools/environment-params.py), which makes a managed Azure Monitor workspace and needs that provider. A person who may register a resource provider in the subscription (Contributor or Owner there) registers it once, with their own sign-in: environment/BOOTSTRAP.md, the section on the AI security, step G2 (az provider register --namespace Microsoft.Monitor). The deploy identity holds no right on the subscription, so it cannot. Nothing was changed. Or set GATEWAY_TELEMETRY back to False in tools/environment-params.py and run base again: the component is then left as it was."
+            exit 1
+          fi
+          echo "The resource provider Microsoft.Monitor is registered."
 
       - name: Deploy the base
         id: base
@@ -922,6 +1089,7 @@ jobs:
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: Pack the cases app's sources for the Operator
+        id: pack
         if: inputs.action == 'cases'
         run: |
           # The cases app is published from its sources. Its finished package is 614,068 bytes zipped, and a request with 632,656 bytes of files (that package and the container script) was refused with an
@@ -941,6 +1109,11 @@ jobs:
             exit 1
           fi
           echo "The files that go to the Operator are $total bytes, of the $limit that a container group's request may hold."
+          # The SHA-256 of the exact archive that is sent (a zip holds the time of each file, so it differs from run to run: it says what this run sent, and the digest of the app's own files, which the step that works out the
+          # release gave, is what is compared with main). The record step writes both in the summary once the code is published.
+          zip_sha256=$(sha256sum "$RUNNER_TEMP/cases-source.zip" | cut -d ' ' -f 1)
+          echo "zip_sha256=$zip_sha256" >> "$GITHUB_OUTPUT"
+          echo "The SHA-256 of the sources archive that goes to the Operator is $zip_sha256."
 
       - name: Publish the cases to the function app from inside the network, in the Operator
         id: publish_cases
@@ -1091,6 +1264,42 @@ jobs:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Record the release that runs on the cases app, in its tags and in the summary
+        id: record_release
+        if: inputs.action == 'cases'
+        env:
+          BUILD_COMMIT: ${{ steps.release.outputs.build_commit }}
+          PACKAGE_SHA256: ${{ steps.release.outputs.package_sha256 }}
+          ZIP_SHA256: ${{ steps.pack.outputs.zip_sha256 }}
+          SITE_ID: ${{ steps.cases.outputs.site }}
+        run: |
+          # Release integrity (docs/proposals/10-ai-security-and-governance.md, "The release that runs"). The code was published and the app answers, so only now is the release written as two tags of the function app, which a
+          # reader of the resource group sees (the settings of an app need a right to read that a reader does not hold): meternaut-build-commit and meternaut-package-sha256. A tag is merged in with the tags call of Azure Resource
+          # Manager and touches nothing else of the app. The template wrote the same two values as the app's settings BUILD_COMMIT and PACKAGE_SHA256, which the in-app check reads; a deploy takes the tags off, and this step
+          # puts them back only after a publish that went through, so a run that stops before it leaves no tag that says otherwise. tools/drift-check.py compares the commit with main (UNKNOWN when there is none, FAIL when the
+          # app's files are not those of main). Values, not secrets: the commit and a digest.
+          if ! grep -Eq '^[0-9a-f]{40}$' <<< "$BUILD_COMMIT" || ! grep -Eq '^[0-9a-f]{64}$' <<< "$PACKAGE_SHA256" || ! grep -Eq '^[0-9a-f]{64}$' <<< "$ZIP_SHA256"; then
+            echo "::error::The release of this run is not known (the commit, the digest of the app's files or the digest of the archive is missing or is not hexadecimal), so it cannot be recorded. The code was published; nothing was recorded."
+            exit 1
+          fi
+          body=$(printf '{"operation":"Merge","properties":{"tags":{"meternaut-build-commit":"%s","meternaut-package-sha256":"%s"}}}' "$BUILD_COMMIT" "$PACKAGE_SHA256")
+          az rest --method patch --url "https://management.azure.com${SITE_ID}/providers/Microsoft.Resources/tags/default?api-version=2021-04-01" --body "$body" --only-show-errors --output none
+          read -r commit_tag digest_tag <<< "$(az rest --method get --url "https://management.azure.com${SITE_ID}?api-version=2024-04-01" --query 'join(`" "`, [to_string(tags."meternaut-build-commit"), to_string(tags."meternaut-package-sha256")])' --output tsv)"
+          if [ "$commit_tag" != "$BUILD_COMMIT" ] || [ "$digest_tag" != "$PACKAGE_SHA256" ]; then
+            echo "::error::The tags of the cases app, read back from Azure, are not the release of this run. The code was published; the record is not trustworthy until a run of cases writes it."
+            exit 1
+          fi
+          {
+            echo "### The release that the cases app runs"
+            echo
+            echo "- Commit: \`$BUILD_COMMIT\`"
+            echo "- Digest of the app's own files: \`$PACKAGE_SHA256\` (the setting \`PACKAGE_SHA256\` and the tag \`meternaut-package-sha256\`; \`python3 tools/source-digest.py src/case-functions\` works it out for any commit, and it is what \`tools/drift-check.py\` compares with main)"
+            echo "- SHA-256 of the sources archive that this run sent to the Operator, which built the package from it and the hash-locked libraries inside it: \`$ZIP_SHA256\` (an archive holds the time of each file, so this one differs from run to run: it says what this run sent)"
+            echo "- SHA-256 of the exact package that the Operator built and published: the line \`the cases package that is published has the SHA-256 ...\` of the publish step, above in this summary (it is the hash of the bytes that went to the app, and it differs from run to run too)"
+            echo "- Read back from Azure: the tags \`meternaut-build-commit\` and \`meternaut-package-sha256\` of the function app are these two values."
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "The release is recorded: commit $BUILD_COMMIT, digest of the app's files $PACKAGE_SHA256."
 
       - name: Say whether the integration subnet carries the route table of the landing zone's network manager
         if: inputs.action == 'cases'
@@ -1926,6 +2135,217 @@ jobs:
           python3 tools/operator-run.py cleanup --resource-group "$ENV_RESOURCE_GROUP" --prefix op-aigw- --older-than-minutes 0 \
             || echo "::warning::A container group whose name starts with op-aigw- may be left in resource group $ENV_RESOURCE_GROUP. A person deletes it; it costs cents an hour."
 
+      - name: The base, the Foundry resource and the rights that the AI security needs are there
+        if: inputs.action == 'governance'
+        env:
+          DEPLOYER_ID: ${{ steps.me.outputs.oid }}
+          FOUNDRY_ACCOUNT: ${{ steps.params.outputs.foundry_account_name }}
+        run: |
+          # Everything that can be known before anything is changed is read here, so that the AI security is not made half and then left: a right or a resource provider that is not there stops the run now, with the right, the person
+          # who gives it and the place (environment/BOOTSTRAP.md, the section on the AI security). This step only reads. The identities of the access list were looked for by the step that worked out the settings, which stops by
+          # name when one is not there (the cases app's identity is made by cases, the Foundry project's by foundry, the Operator's by operator).
+          for provider in Microsoft.Authorization Microsoft.Insights Microsoft.OperationalInsights Microsoft.PolicyInsights; do
+            if ! state=$(az provider show --namespace "$provider" --query registrationState --output tsv 2>&1); then
+              echo "::error::The registration of the resource provider $provider could not be read: $state. Nothing was changed."
+              exit 1
+            fi
+            if [ "$state" != "Registered" ]; then
+              echo "::error::The resource provider $provider is ${state:-not registered} in the subscription, and the AI security needs it. A person who may register a resource provider in the subscription (Contributor or Owner there) registers it once, with their own sign-in: environment/BOOTSTRAP.md, the section on the AI security,                             step G2 (az provider register --namespace $provider). The deploy identity holds no right on the subscription, so it cannot. Nothing was changed."
+              exit 1
+            fi
+          done
+          echo "The resource providers of the AI security are registered."
+          found=$(az resource list --resource-group "$ENV_RESOURCE_GROUP" --resource-type Microsoft.OperationalInsights/workspaces --query "[?name=='log-meternaut'].name | [0]" --output tsv)
+          if [ -z "$found" ] || [ "$found" = "None" ]; then
+            echo "::error::The workspace log-meternaut is not in $ENV_RESOURCE_GROUP. Run base first: the alert rules read it and the workbook is made on it. Nothing was changed."
+            exit 1
+          fi
+          found=$(az resource list --resource-group "$ENV_RESOURCE_GROUP" --resource-type Microsoft.CognitiveServices/accounts --query "[?name=='$FOUNDRY_ACCOUNT'].name | [0]" --output tsv)
+          if [ -z "$found" ] || [ "$found" = "None" ]; then
+            echo "::error::The Foundry resource $FOUNDRY_ACCOUNT of the agents is not in $ENV_RESOURCE_GROUP. Run foundry first: the policy is about its model deployments. Nothing was changed."
+            exit 1
+          fi
+          echo "The workspace and the Foundry resource are there."
+          # The deploy identity writes a policy assignment only with a role that holds Microsoft.Authorization/policyAssignments/write: Resource Policy Contributor, or Owner. Contributor cannot, and the deploy identity holds Contributor
+          # and a limited right to assign roles, so a person gives it the role once. It is looked for on the group and above it. An assignment that Azure would refuse after the alert rules were made is found here.
+          resource_policy_contributor=36243c78-bf99-498c-9df9-86d9f8d28608
+          owner=8e3af657-a8ff-443c-a75c-2fe8c4bcb635
+          group="/subscriptions/$ENV_SUBSCRIPTION_ID/resourceGroups/$ENV_RESOURCE_GROUP"
+          if ! grep -Eq '^[0-9a-fA-F-]{36}$' <<< "$DEPLOYER_ID"; then
+            echo "::error::The object id of the deploy identity was not read from its token, so its right to write a policy assignment cannot be looked at. Nothing was changed."
+            exit 1
+          fi
+          deployer="${DEPLOYER_ID,,}"
+          if ! listed=$(az role assignment list --assignee-object-id "$deployer" --scope "$group" --include-inherited --fill-principal-name false --fill-role-definition-name false \
+            --query "[].[scope, roleDefinitionId]" --output tsv --only-show-errors 2>&1); then
+            echo "::error::The role assignments of the deploy identity on the group could not be read: $listed. Nothing was changed."
+            exit 1
+          fi
+          held=no
+          while IFS=$'\t' read -r scope definition; do
+            if [ -z "$scope" ]; then continue; fi
+            if [ "${group,,}" != "${scope,,}" ] && [[ "${group,,}" != "${scope,,}"/* ]] && [ "$scope" != "/" ] && [[ "${scope,,}" != /providers/microsoft.management/managementgroups/* ]]; then continue; fi
+            if [[ "${definition,,}" == */"$resource_policy_contributor" || "${definition,,}" == */"$owner" ]]; then held=yes; fi
+          done <<< "$listed"
+          if [ "$held" != yes ]; then
+            echo "::error::The deploy identity holds no role that can write a policy assignment on the group (Resource Policy Contributor, or Owner): Contributor cannot, and the policy of the AI security is an assignment. A person who may assign roles on the group (Owner or User Access Administrator there) gives it Resource Policy Contributor once, with their own sign-in: environment/BOOTSTRAP.md, the section on the AI security, step G1 (tools/governance-setup.py grant). Nothing was changed."
+            exit 1
+          fi
+          echo "The deploy identity holds a role on the group that can write a policy assignment."
+
+      - name: Deploy the policy, the alert rules and the workbook of the AI security
+        id: governance
+        if: inputs.action == 'governance'
+        run: |
+          # Azure Policy at the project's resource group (the built-in policies for approved models and for model eligibility, at the effect Audit or Deny that tools/environment-params.py says; no exemption, no identity, no remediation),
+          # the action group that mails ENV_ALERT_EMAILS, one alert rule for each signal, the workbook Meternaut AI security, the retention of the AI Gateway's two telemetry tables, and the Foundry resource's diagnostic setting
+          # only where the landing zone has made none (environment/governance/main.bicep). Nothing is deleted, and nothing outside the project's group is touched.
+          name=$(python3 tools/az-deploy.py create --subscription "$ENV_SUBSCRIPTION_ID" --resource-group "$ENV_RESOURCE_GROUP" \
+            --template environment/governance/main.bicep --parameters "$RUNNER_TEMP/aisec/governance.parameters.json" \
+            --name "governance-$GITHUB_RUN_ID" --output actionGroupName)
+          if [ "$name" != "ag-meternaut-ai-security" ]; then
+            echo "::error::The deployment returned the action group $name, not ag-meternaut-ai-security."
+            exit 1
+          fi
+          echo "The action group $name is in resource group $ENV_RESOURCE_GROUP."
+
+      - name: Sign in to Azure again for the read-back of the AI security, because the first sign-in's credential lasts five minutes
+        if: inputs.action == 'governance'
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Read the AI security back from Azure
+        if: inputs.action == 'governance'
+        timeout-minutes: 20
+        run: |
+          # A deployment that says Succeeded does not say that the policy, the alert rules and the workbook came out as the template wrote them (AGENTS.md rule 19). The run fails unless the two assignments of the AI security are on
+          # the group with the effects of tools/environment-params.py and enforced, every alert rule is on and tells the owner by e-mail, the workbook is there, and a diagnostic setting sends the Foundry resource's logs to a workspace.
+          # The policy exemptions are judged against what the owner accepted (the repository variable DRIFT_ACCEPTED_EXEMPTIONS): unset, the line says UNKNOWN and prints what it found. Only GET requests (tools/drift-check.py).
+          flags=()
+          if [ -n "${DRIFT_ACCEPTED_EXEMPTIONS:-}" ]; then flags+=(--accepted-exemptions "$DRIFT_ACCEPTED_EXEMPTIONS"); fi
+          python3 tools/drift-check.py --subscription "$ENV_SUBSCRIPTION_ID" --resource-group "$ENV_RESOURCE_GROUP" --models environment/models.json --policies environment/aigateway/policies.json \
+            --access-list environment/aigateway/contracts.json --only I-policy-assignments,I-alerts,I-diagnostics --summary "$GITHUB_STEP_SUMMARY" "${flags[@]}"
+
+      - name: The AI Gateway is there, the provider is registered, the component reports its endpoints and the gateway's identity may send to them
+        if: inputs.action == 'gateway-telemetry'
+        env:
+          GATEWAY_NAME: ${{ steps.params.outputs.aigateway_name }}
+          INSIGHTS_NAME: ${{ steps.params.outputs.appinsights_name }}
+        run: |
+          # The exporter has three prerequisites that nothing here can make (environment/aigateway/telemetry.bicep says why). Each is read before anything is changed, so that the exporter is not made and then left to send into
+          # nothing: the AI Gateway is there with an identity of its own; the resource provider Microsoft.Monitor is registered (a person registers it, step G2); the component reports its OpenTelemetry endpoints (the action base
+          # turns the ingestion on, and the platform makes the endpoints a few minutes later); and the gateway's identity holds Monitoring Metrics Publisher on the component's data collection rule (a person gives it, step G3,
+          # because the rule is in a resource group that the platform manages). This step only reads.
+          group="/subscriptions/$ENV_SUBSCRIPTION_ID/resourceGroups/$ENV_RESOURCE_GROUP"
+          gateway="$group/providers/Microsoft.ApiManagement/aigateways/$GATEWAY_NAME"
+          if ! principal=$(az rest --method get --url "https://management.azure.com${gateway}?api-version=2025-09-01-preview" --query identity.principalId --output tsv 2>&1); then
+            if grep -Eqi 'NotFound|\b404\b' <<< "$principal"; then
+              echo "::error::The AI Gateway $GATEWAY_NAME is not there. Run aigateway first: the exporter is a child of the gateway. Nothing was changed."
+            else
+              echo "::error::The AI Gateway $GATEWAY_NAME could not be read: $principal"
+            fi
+            exit 1
+          fi
+          if ! grep -Eq '^[0-9a-fA-F-]{36}$' <<< "$principal"; then
+            echo "::error::The AI Gateway $GATEWAY_NAME has no identity of its own that can be read, and it is the identity that sends the telemetry. Nothing was changed."
+            exit 1
+          fi
+          if ! state=$(az provider show --namespace Microsoft.Monitor --query registrationState --output tsv 2>&1); then
+            echo "::error::The registration of the resource provider Microsoft.Monitor could not be read: $state. Nothing was changed."
+            exit 1
+          fi
+          if [ "$state" != "Registered" ]; then
+            echo "::error::The resource provider Microsoft.Monitor is ${state:-not registered} in the subscription, and the telemetry goes to a managed Azure Monitor workspace that needs it. A person who may register a resource provider in the subscription (Contributor or Owner there) registers it once, with their own sign-in: environment/BOOTSTRAP.md, the section on the AI security, step G2 (az provider register --namespace Microsoft.Monitor). The deploy identity holds no right on the subscription. Nothing was changed."
+            exit 1
+          fi
+          echo "The AI Gateway is there with an identity, and the resource provider Microsoft.Monitor is registered."
+          component="$group/providers/Microsoft.Insights/components/$INSIGHTS_NAME"
+          if ! answer=$(az rest --method get --url "https://management.azure.com${component}?api-version=2020-02-02" \
+            --query 'join(`" "`, [to_string(properties.OTLPLogsEndpoint), to_string(properties.OTLPTracesEndpoint), to_string(properties.OTLPMetricsEndpoint), to_string(properties.DataCollectionRuleResourceId)])' --output tsv 2>&1); then
+            echo "::error::The Application Insights component $INSIGHTS_NAME could not be read: $answer"
+            exit 1
+          fi
+          read -r logs traces metrics rule <<< "$answer"
+          for endpoint in "$logs" "$traces" "$metrics"; do
+            if ! grep -Eq '^https://' <<< "$endpoint"; then
+              echo "::error::The component $INSIGHTS_NAME reports no OpenTelemetry endpoint yet. The action base turns its OpenTelemetry ingestion on (while GATEWAY_TELEMETRY in tools/environment-params.py is True), and the platform makes the endpoints a few minutes later: run base, wait ten minutes, and run $ACTION again. Nothing was changed."
+              exit 1
+            fi
+          done
+          echo "The component reports its three OpenTelemetry endpoints."
+          # The data collection rule is in a resource group that the platform manages, behind a deny assignment, so the role cannot be given by a template or by the deploy identity: a person gives it. A role that is missing would make
+          # the exporter send into a refusal, with no word from the service, so it is looked for here when it can be read, and the read-back after the deploy says whether the telemetry arrives.
+          monitoring_metrics_publisher=3913510d-42f4-4e42-8a64-420c390055eb
+          if ! grep -Eq '^/subscriptions/.+/providers/Microsoft\.Insights/dataCollectionRules/.+$' <<< "$rule"; then
+            echo "::warning::The component does not report its data collection rule, so the role of the gateway's identity on it cannot be looked at here. The read-back after the deploy says whether the telemetry reaches the workspace; if it does not, give the role (environment/BOOTSTRAP.md, step G3)."
+          elif ! held=$(az role assignment list --assignee-object-id "${principal,,}" --scope "$rule" --fill-principal-name false --fill-role-definition-name false --query "[].roleDefinitionId" --output tsv --only-show-errors 2>&1); then
+            echo "::warning::The role assignments on the data collection rule could not be read ($held), so the role of the gateway's identity cannot be looked at here. If the telemetry does not arrive, give the role (environment/BOOTSTRAP.md, step G3)."
+          elif ! grep -qi "/$monitoring_metrics_publisher\$" <<< "$held"; then
+            echo "::error::The AI Gateway's identity does not hold Monitoring Metrics Publisher on the data collection rule of the component. The rule is in a resource group that the platform manages, behind a deny assignment and outside the project's group: the deploy identity holds no right there, and no template can give the role. A person who holds a role assignment right on that rule gives it once, with their own sign-in: environment/BOOTSTRAP.md, the section on the AI security, step G3 (tools/governance-setup.py grant). A role takes up to ten minutes to apply. Nothing was changed."
+            exit 1
+          else
+            echo "The AI Gateway's identity holds Monitoring Metrics Publisher on the data collection rule."
+          fi
+
+      - name: Deploy the telemetry exporter of the AI Gateway
+        id: telemetry
+        if: inputs.action == 'gateway-telemetry'
+        run: |
+          # One exporter on the gateway's default workspace, with the three OpenTelemetry endpoints of the component, the gateway's own identity and no key, and payloadCapture false (environment/aigateway/telemetry.bicep).
+          # A template of its own, so that it can never stop the gateway, its models or its roles.
+          name=$(python3 tools/az-deploy.py create --subscription "$ENV_SUBSCRIPTION_ID" --resource-group "$ENV_RESOURCE_GROUP" \
+            --template environment/aigateway/telemetry.bicep --parameters "$RUNNER_TEMP/aisec/gateway-telemetry.parameters.json" \
+            --name "gateway-telemetry-$GITHUB_RUN_ID" --output exporterName)
+          if [ "$name" != "appinsights" ]; then
+            echo "::error::The deployment returned the exporter $name, not appinsights."
+            exit 1
+          fi
+          echo "The exporter $name is on the AI Gateway."
+
+      - name: Sign in to Azure again for the read-back of the telemetry exporter, because the first sign-in's credential lasts five minutes
+        if: inputs.action == 'gateway-telemetry'
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Read the telemetry exporter back from Azure
+        if: inputs.action == 'gateway-telemetry'
+        timeout-minutes: 20
+        run: |
+          # The run fails unless the exporter says that it sends logs, traces and metrics to the project's component with the gateway's own identity and no key, and that payloadCapture is false (no prompt and no answer
+          # is sent). Whether records arrive is seen in the workbook Meternaut AI security a few minutes after the first call of the gateway: a new role takes up to ten minutes to apply. Only GET requests.
+          python3 tools/drift-check.py --subscription "$ENV_SUBSCRIPTION_ID" --resource-group "$ENV_RESOURCE_GROUP" --models environment/models.json --policies environment/aigateway/policies.json \
+            --access-list environment/aigateway/contracts.json --only I-telemetry --summary "$GITHUB_STEP_SUMMARY"
+
+      - name: Check for drift from the control plane, with reads only
+        id: drift
+        if: inputs.action == 'drift-check'
+        timeout-minutes: 30
+        env:
+          CASES_PUBLIC_ACCESS: ${{ steps.params.outputs.cases_public_network_access }}
+        run: |
+          # The control-plane half of the drift check of the AI security (tools/drift-check.py; docs/design/07-safeguards-and-drift.md: the check never rests on an app that it watches). It reads Azure Resource Manager with the
+          # deploy identity, and nothing else: GET requests, and the two queries that need a POST (Azure Resource Graph for the policy compliance, and Application Insights for the lines that the app's own check logged). It says PASS,
+          # FAIL or UNKNOWN for each control, and UNKNOWN is never PASS. The in-app half (the agents' definitions, tools and instructions, which only the Foundry project's private data plane shows) is the app's own daily check
+          # (drift-daily, cases/drift.py): this tool reads the lines that it logs, so an app that has gone silent is a FAIL here (I-heartbeat), and a control that the app says has failed is a FAIL here (I-inapp-results).
+          # The run fails when a control fails, and the summary says which of them are fail-closed (the agents run outside what was designed): then a person switches the investigation off until the cause is fixed.
+          # The policy exemptions and the non-compliant Deny policies are judged against what the owner accepted (the repository variables DRIFT_ACCEPTED_EXEMPTIONS and DRIFT_ACCEPTED_DENY): unset, those lines say UNKNOWN and
+          # print what they found, so that he can accept it. The release that the cases app runs is compared with this commit of main, by its tags and by the digest of the app's own files.
+          # HOOK, the in-network half: the live agents of the Foundry project (their definitions, tools and instructions against environment/agents.lock.json) can only be read from inside the network, because the project's
+          # data plane is private. The change of the agent harness brings tools/agents-drift.py for that, and adds one step for this action right after this one, run by the Operator the way the check actions are
+          # (operator/run-tool.sh). It writes the same report shape ({control, layer, state, detail, readAt}, ids with the prefix A-) and nothing here waits for it.
+          flags=()
+          if [ -n "${DRIFT_ACCEPTED_EXEMPTIONS:-}" ]; then flags+=(--accepted-exemptions "$DRIFT_ACCEPTED_EXEMPTIONS"); fi
+          if [ -n "${DRIFT_ACCEPTED_DENY:-}" ]; then flags+=(--accepted-deny "$DRIFT_ACCEPTED_DENY"); fi
+          python3 tools/drift-check.py --subscription "$ENV_SUBSCRIPTION_ID" --resource-group "$ENV_RESOURCE_GROUP" --models environment/models.json --policies environment/aigateway/policies.json \
+            --access-list environment/aigateway/contracts.json --commit "$GITHUB_SHA" --app-dir src/case-functions --cases-public-access "$CASES_PUBLIC_ACCESS" \
+            --json "$RUNNER_TEMP/drift.json" --summary "$GITHUB_STEP_SUMMARY" "${flags[@]}"
+
       - name: What was done
         if: always()
         env:
@@ -1938,6 +2358,7 @@ jobs:
           CONNECTION_NAME: ${{ steps.params.outputs.aigateway_connection_name }}
           CASES_PUBLIC_ACCESS: ${{ steps.params.outputs.cases_public_network_access }}
           CASES_APP_PLAN: ${{ steps.params.outputs.cases_app_plan }}
+          GATEWAY_TELEMETRY: ${{ steps.params.outputs.gateway_telemetry }}
         run: |
           {
             echo "### Hub: $ACTION, $JOB_STATUS"
@@ -1960,6 +2381,9 @@ jobs:
                 operator-probe) echo "A container group named \`op-probe-$GITHUB_RUN_ID\` may have been made, and the last step of the run deletes it if the tool could not. The lines above say how far the probe came: an image that could not be pulled is the likely reason (the tool prints the group's events then), and a subnet with no way out looks the same. A run costs cents. Running \`operator-probe\` again is safe." ;;
                 aigateway) echo "Part of the AI Gateway may exist now: the subnet \`snet-aigw\` with its network security group (made first, and only when it was not there), and then the gateway \`$AIGATEWAY_NAME\` with its own identity, its provider, its models and aliases, and its roles (the Operator's, and the cases app's when the app had an identity). It is a preview service that is free while the preview lasts (the proposal gives the meter and the date), and a subnet costs nothing. The step that failed says why. If the lines stop before the subnet is made, nothing was changed: they say which of the virtual network, the Foundry resource of the agents (run \`foundry\` first), the Operator (run \`operator\` first), the region or the condition of the deploy identity's right to assign roles is missing, and for the condition a person adds AI Gateway Models User once (environment/BOOTSTRAP.md, the section on the AI Gateway). If the subnet's deploy failed, the lines say why (for example that the range is taken) and the gateway was not made. If the lines stop at the wait for the landing zone's route table, the subnet exists and the gateway is not made, because it is made on the subnet as the landing zone leaves it: nothing else was done, and running \`aigateway\` again later leaves the subnet alone and repeats only what is missing. If the deploy of the gateway was refused at a role, the condition does not list that role. If they stop at the limits, the key or the read-back, the gateway is made and the lines say which thing differs: nothing is repaired from here, and the subnet cannot be changed once the gateway is made (the way back is to delete the gateway and make another). The frontend of the gateway is public and cannot be made private. The agents were not changed by this action. Running \`aigateway\` again is safe and repeats only what is missing." ;;
                 aigateway-check) echo "A container group named \`op-aigw-$GITHUB_RUN_ID\` may have been made, and the last step of the run deletes it if the tool could not. Nothing of the gateway was changed. The lines above say which request got which status. A message that the Operator is not there means that \`operator\` has to be run first, and one that the gateway is not there means that \`aigateway\` has to be run first. A 401 or 403 for the request with the Operator's token means that its role on the gateway has not applied yet (a role takes up to ten minutes) or is missing (\`aigateway\` gives it), or that the service principal of Microsoft's AI Gateway data plane is not in the tenant: the tool says which of them it looks like, and a person creates the service principal once (environment/BOOTSTRAP.md, the section on the AI Gateway). Running \`aigateway-check\` again is safe." ;;
+                governance) echo "Part of the AI security may exist now in resource group \`$ENV_RESOURCE_GROUP\`: the policy assignments at the group, the action group, the alert rules, the workbook and the retention of the two telemetry tables. They cost next to nothing (the alert rules are a few euros a month in all: docs/proposals/10-ai-security-and-governance.md has the prices). The step that failed says why. If the lines stop before anything was changed, they say which right, who gives it and where: the deploy identity needs Resource Policy Contributor on the group (a person gives it once: step G1 of environment/BOOTSTRAP.md), a resource provider has to be registered (step G2), or an identity of the access list is not there yet (run \`cases\`, \`foundry\` and \`operator\` first). A policy assignment that Azure refused names the policy. Running \`governance\` again is safe and repeats only what is missing." ;;
+                gateway-telemetry) echo "The telemetry exporter may exist now on the AI Gateway. If the lines stop before anything was changed, they say which prerequisite is missing and who makes it: the resource provider Microsoft.Monitor (a person registers it once: step G2 of environment/BOOTSTRAP.md), the OpenTelemetry endpoints of the component (the action \`base\` turns the ingestion on, and the platform makes the endpoints about ten minutes later), or Monitoring Metrics Publisher for the gateway's identity on the component's data collection rule (a person gives it once: step G3, and a role takes up to ten minutes to apply). If the read-back failed, the exporter differs from its template and the line says how: nothing is repaired from here. Running \`gateway-telemetry\` again is safe." ;;
+                drift-check) echo "Nothing was changed: the check only reads. At least one control failed, or the check could not run. The summary lists every control as PASS, FAIL or UNKNOWN with what was read, and says which failed controls are fail-closed: for those the agents run outside what was designed, and a person switches the investigation off until the cause is fixed. A control that says UNKNOWN could not be read with the deploy identity's rights, or has no baseline that the owner accepted yet, and is never a PASS. Running \`drift-check\` again is safe." ;;
               esac
             else
               case "$ACTION" in
@@ -1978,6 +2402,9 @@ jobs:
                 operator-probe) echo "The probe ran in a container group on \`snet-ops\` as the Operator's identity, and the group is deleted. The page above has one line for each check: \`ok\` and \`FAIL\` are facts about the landing zone and the network, not errors of the run. It also signed in as the deploy identity with a token of this run (which only the container group saw, as a secure value), built the cases app's libraries in the container from the lock file, and asked the cases app's deployment site for the status of a GET. docs/proposals/07-private-by-default.md says what each answer decides." ;;
                 aigateway) echo "The AI Gateway \`$AIGATEWAY_NAME\` is in resource group \`$ENV_RESOURCE_GROUP\` and was read back from Azure: it is Succeeded, its backend subnet is \`snet-aigw\` (delegated to Microsoft.App/environments, with the landing zone's route table on it when the landing zone puts one on this network), and it has a system-assigned identity that holds Foundry User on the Foundry resource of the agents. It was made after the subnet: the action made the subnet first (or found it and left it alone), waited until the landing zone had put its route table on it, and only then made the gateway, so the gateway was made on the subnet as the landing zone left it. It has one provider, a model and an alias for each model of environment/models.json with content safety at Medium, and the gateway-wide limits of environment/aigateway/policies.json: a token limit, a request rate limit, and a cost limit for the day and one for the month, each counted for every caller alone. The Operator's identity holds AI Gateway Models User on the gateway, and so does the cases app's identity when the app had one (its Detective and Skeptic call the gateway with it). No API key was made: the service makes one named master, and the lines above say whether the service let it be deleted (a refusal is a recorded finding and not an error). THE FRONTEND OF THE GATEWAY IS PUBLIC. The service has no private frontend, and its own setting for one has no effect. A request needs a Microsoft Entra token and a role on the gateway, and there is no filter on the address (docs/proposals/08-ai-gateway.md). The agents were not changed by this action: they go through the gateway once \`foundry\` and \`cases\` have run with the switch of step 2 on. The Detective and the Skeptic call the gateway once the action \`cases\` has deployed the app, after the role has applied. A new role takes up to ten minutes to apply, and then \`aigateway-check\` calls each alias from inside the network." ;;
                 aigateway-check) echo "The Operator, from inside the network, asked for a token for the AI Gateway with its own identity and no key, and sent one small chat completion to each alias. The lines above give each answer's status and the tokens that it used. The gateway also refused a request with no token and a request with an alias that does not exist, as it should. This runner did not call the gateway: the Operator did. The agents were not changed." ;;
+                governance) echo "The AI security is in resource group \`$ENV_RESOURCE_GROUP\` and was read back from Azure: the policy assignments for approved models and for model eligibility are on the group with the effect that tools/environment-params.py says (Audit until a run of \`drift-check\` has shown every deployment compliant, then Deny, which is one line there), enforced, with no exemption and no identity; the alert rules are on and tell the owner by e-mail (the e-mail holds the rule's name, a count and a link, and never a line of the telemetry); the workbook Meternaut AI security is there; and the logs of the Foundry resource go to a workspace. The landing zone's own policies were read and not assigned a second time. The heartbeat rule fires when the app's own daily drift check has logged nothing for 26 hours, so it may mail once until the app that carries that check has been deployed (\`cases\`). The next actions are \`drift-check\`, and \`gateway-telemetry\` once its prerequisites are in place." ;;
+                gateway-telemetry) echo "The AI Gateway has a telemetry exporter, read back from Azure: it sends the gateway's logs, traces and metrics to the project's Application Insights component with the gateway's own identity and no key, and payloadCapture is false, so no prompt and no answer is sent. Records arrive a few minutes after the first call of the gateway (a new role takes up to ten minutes to apply): the workbook Meternaut AI security shows the calls by caller, the refusals and the use of the limits, and the alert rules read the same tables. Run \`aigateway-check\` or \`cases-run\` to make a call, and open the workbook." ;;
+                drift-check) echo "Every control of the AI security was read from Azure and none failed: the summary lists each as PASS or UNKNOWN with what was read. UNKNOWN is never PASS: it says what the deploy identity could not read, or which baseline the owner has not accepted yet (the repository variables DRIFT_ACCEPTED_EXEMPTIONS and DRIFT_ACCEPTED_DENY). Nothing was changed: the check only reads. The in-app half of the check (the agents' definitions in the Foundry project) is the app's own daily check, whose lines this check reads; the workflow drift.yml runs this same tool with an identity of its own that can only read." ;;
               esac
             fi
             # The route of the agents through the AI Gateway (the switch AGENTS_VIA_AI_GATEWAY in tools/environment-params.py, True since the owner's order of 2026-11-07: docs/proposals/08-ai-gateway.md, step 2): what the three
@@ -1996,4 +2423,5 @@ jobs:
                 if [ "$ACTION" = cases-run ]; then echo "**The switch of the agents' route is on.** With the investigation on, the agents' model calls of this run go through the project's connection and the AI Gateway, and the History line \`investigation.started\` names the models as \`$CONNECTION_NAME/<alias>\`. Read the investigation lines above: when the Agent Service could not call the model, the line says so in words."; fi
               fi
             fi
+            if [ "$ACTION" = base ] && [ "$JOB_STATUS" = success ] && [ "$GATEWAY_TELEMETRY" = true ]; then echo "**The OpenTelemetry ingestion of the Application Insights component is on** (the constant GATEWAY_TELEMETRY in tools/environment-params.py): Azure makes a managed Azure Monitor workspace, a data collection endpoint and a data collection rule in a resource group that it manages, and the component reports its OpenTelemetry endpoints a few minutes later. The next step for the AI Gateway's telemetry is for a person to give the gateway's identity Monitoring Metrics Publisher on that rule (step G3 of environment/BOOTSTRAP.md), and then the action \`gateway-telemetry\`."; fi
           } >> "$GITHUB_STEP_SUMMARY"

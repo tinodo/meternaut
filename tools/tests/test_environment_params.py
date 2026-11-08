@@ -159,7 +159,8 @@ class Base(unittest.TestCase):
     def test_the_file_holds_the_storage_name_the_region_and_the_owner_and_nothing_of_the_usage_recording_or_the_event_hubs_namespace(self):
         files, outputs = self.files()
         base = values(files["base.parameters.json"])
-        self.assertEqual(set(base), {"location", "owner", "storageAccountName"})
+        self.assertEqual(set(base), {"location", "owner", "storageAccountName"} | ({"otlpIngestion"} if ep.GATEWAY_TELEMETRY else set()),
+                         "the gateway's telemetry is the one thing that the base was given after the usage recording went (docs/proposals/10-ai-security-and-governance.md)")
         self.assertEqual((base["location"], base["owner"]), ("swedencentral", "owner@example.com"))
         self.assertEqual(base["storageAccountName"], outputs["storage_account_name"])
         self.assertNotIn("eventHubNamespaceName", bicep_params(BASE), "the base makes no Event Hubs namespace: the control message goes through a queue in the storage account")
@@ -943,8 +944,7 @@ class AiGateway(unittest.TestCase):
         self.assertEqual(set(subnet), {"location", "owner", "aigwSubnetPrefix", "aigwSubnetExists"},
                          "the range and whether it is there already; the workload is left to the template's default, as the file of the gateway leaves it")
         self.assertEqual((subnet["location"], subnet["owner"]), (gateway["location"], gateway["owner"]), "the subnet is in the gateway's region and has the gateway's owner")
-        self.assertEqual(bicep_params(self.TEMPLATE)["telemetryEnabled"], ("bool", True))
-        self.assertIn("param telemetryEnabled bool = false", self.TEMPLATE)
+        self.assertNotIn("telemetryEnabled", bicep_params(self.TEMPLATE), "the exporter moved to environment/aigateway/telemetry.bicep (the action gateway-telemetry)")
         self.assertEqual(bicep_params(self.TEMPLATE)["foundryProjectPrincipalId"], ("string", True))
         self.assertEqual(bicep_params(self.TEMPLATE)["casesPrincipalId"], ("string", True), "empty means none: the app has no identity before the action cases has made it")
         for moved in ("aigwSubnetPrefix", "aigwSubnetExists"):

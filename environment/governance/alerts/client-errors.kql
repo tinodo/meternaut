@@ -1,0 +1,8 @@
+// Requests that the AI Gateway answered with a client error that is not a refusal: 400 (a request that the gateway or the model could not take: a wrong option, a filter of the
+// model deployment), 401 (no token or a token that is not accepted: somebody calling without an identity) and 404 (an alias that does not exist). A burst of them means a caller that is
+// wrong, a model that moved, or somebody trying the door. One row for each request and nothing of the request (no text reaches an alert e-mail).
+OTelSpans
+| where Kind =~ 'Server' and tostring(Attributes['http.route']) contains '/models/'
+| extend Status = coalesce(toint(Attributes['http.response.status_code']), toint(Attributes['http.status_code']), toint(ResultCode))
+| where Status in (400, 401, 404)
+| project TimeGenerated, TraceId, Status

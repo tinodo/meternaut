@@ -326,6 +326,9 @@ with zipfile.ZipFile(sys.argv[1]) as archive:
   package_zip="$work/$label.zip"
   zip_bytes=$(wc -c < "$package_zip" | tr -d ' ')
   say ok "the $label package is built: $(clean "$(printf '%s\n' "$build_output" | tail -n 1)"), $(megabytes "$zip_bytes") MB zipped, $SECONDS s, hashes ok"
+  # The SHA-256 of the exact package that is published next: the record of what went to the app (the summary of the run that sent it keeps this line). A zip holds the time of each file, so it differs from run to
+  # run: the digest of the app's own files (PACKAGE_SHA256, tools/source-digest.py) is what is compared with main, and this one says which bytes this run published.
+  say ok "the $label package that is published has the SHA-256 $(sha256sum "$package_zip" | cut -d ' ' -f 1)"
   rm -rf "$work/pip-cache" "$work/build" "$work/source"
 }
 

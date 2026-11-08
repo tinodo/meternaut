@@ -57,10 +57,8 @@ class Template(unittest.TestCase):
             "operatorCallsTheModels": "Microsoft.Authorization/roleAssignments",
             "projectCallsTheModels": "Microsoft.Authorization/roleAssignments",
             "casesCallsTheModels": "Microsoft.Authorization/roleAssignments",
-            "insights": "Microsoft.Insights/components",
-            "telemetryExporter": "Microsoft.ApiManagement/aigateways/workspaces/telemetryExporters",
         })
-        for name in ("account", "operatorIdentity", "workspace", "insights"):
+        for name in ("account", "operatorIdentity", "workspace"):
             self.assertRegex(SOURCE, rf"(?m)^resource {name} '[^']+' existing = \{{$", f"{name} is only read: another template or the service makes it")
 
     def test_the_frontend_is_public_the_header_says_so_and_nothing_asks_for_a_private_one(self):
@@ -96,9 +94,9 @@ class Template(unittest.TestCase):
 
     def test_every_resource_of_the_service_is_at_one_api_version_and_each_has_its_own_suppression_of_the_missing_types(self):
         versions = re.findall(r"(?m)^resource \w+ 'Microsoft\.ApiManagement/aigateways[^'@]*@([^']+)'", CODE)
-        self.assertEqual(versions, ["2025-09-01-preview"] * 6, "the version of the portal and of every sample of Microsoft; the service takes newer ones for the gateway only")
-        self.assertEqual(len(re.findall(r"(?m)^#disable-next-line BCP081\nresource \w+ 'Microsoft\.ApiManagement/aigateways", SOURCE)), 6)
-        self.assertEqual(len(re.findall(r"#disable", SOURCE)), 6, "no other rule is switched off")
+        self.assertEqual(versions, ["2025-09-01-preview"] * 5, "the version of the portal and of every sample of Microsoft; the service takes newer ones for the gateway only")
+        self.assertEqual(len(re.findall(r"(?m)^#disable-next-line BCP081\nresource \w+ 'Microsoft\.ApiManagement/aigateways", SOURCE)), 5)
+        self.assertEqual(len(re.findall(r"#disable", SOURCE)), 5, "no other rule is switched off")
 
     def test_the_gateway_calls_the_foundry_resource_with_its_own_identity_through_a_provider_without_a_key(self):
         role = self.found["gatewayCallsFoundry"][1]
@@ -161,14 +159,14 @@ class Template(unittest.TestCase):
         for words in ("every model call of Meternaut goes through it, with no direct path", "for the cases app's identity when its principal id is given"):
             self.assertIn(words, header, words)
 
-    def test_the_telemetry_is_off_by_default_sends_no_payload_and_has_no_connection_string(self):
-        exporter = self.found["telemetryExporter"][1]
-        self.assertIn("if (telemetryEnabled)", exporter)
-        self.assertRegex(CODE, r"(?m)^param telemetryEnabled bool = false$")
-        for word in ("kind: 'OpenTelemetry'", "payloadCapture: false", "resource: 'https://monitor.azure.com'", "managedIdentity:"):
-            self.assertIn(word, exporter, word)
-        self.assertNotIn("'ApplicationInsights'", CODE, "the kind that takes a connection string is not used (rule 23)")
-        for word in ("connectionString", "ConnectionString", "instrumentationKey", "InstrumentationKey"):
+    def test_the_telemetry_exporter_is_not_in_this_template_any_more_and_the_gateway_template_holds_no_connection_string(self):
+        # The exporter has prerequisites of its own (a registered resource provider, the component's OpenTelemetry endpoints, a role on a data collection rule that a person gives), and a missing
+        # one makes the service refuse that one resource: it moved to environment/aigateway/telemetry.bicep, made by the action gateway-telemetry, so that it can never stop the gateway, its models
+        # or its roles (docs/proposals/10-ai-security-and-governance.md). tools/tests/test_gateway_telemetry.py pins that template.
+        for word in ("telemetryExporter", "telemetryEnabled", "telemetryComponentName", "OpenTelemetry", "payloadCapture", "Microsoft.Insights/components"):
+            self.assertNotIn(word, CODE, word)
+        self.assertIn("telemetry.bicep", re.sub(r"\s*\n//\s*", " ", SOURCE.split("targetScope", 1)[0]), "the header says where the exporter went")
+        for word in ("connectionString", "ConnectionString", "instrumentationKey", "InstrumentationKey", "'ApplicationInsights'"):
             self.assertNotIn(word, CODE, word)
 
     def test_it_gives_the_workflow_the_name_the_host_and_the_subnet_and_nothing_else(self):
@@ -198,6 +196,6 @@ class Template(unittest.TestCase):
         self.assertEqual({r["type"] for r in resources}, {
             "Microsoft.ApiManagement/aigateways",
             "Microsoft.ApiManagement/aigateways/workspaces/modelProviders", "Microsoft.ApiManagement/aigateways/workspaces/modelProviders/models",
-            "Microsoft.ApiManagement/aigateways/workspaces/aliases", "Microsoft.ApiManagement/aigateways/workspaces/telemetryExporters", "Microsoft.Authorization/roleAssignments"})
+            "Microsoft.ApiManagement/aigateways/workspaces/aliases", "Microsoft.Authorization/roleAssignments"})
         self.assertEqual(set(compiled["outputs"]), {"gatewayName", "gatewayHost", "subnetId"})
         self.assertEqual({r["apiVersion"] for r in resources if r["type"].startswith("Microsoft.ApiManagement")}, {"2025-09-01-preview"})

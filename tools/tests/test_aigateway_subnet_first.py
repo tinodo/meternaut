@@ -145,7 +145,7 @@ class TheTemplateOfTheSubnet(unittest.TestCase):
             self.assertNotIn(word, GATEWAY_CODE, f"{word}: it is in the subnet's template now")
         self.assertEqual(depends_on_of_the_gateway(), set(), "no dependsOn: the subnet is in Azure before this template is deployed")
         for word in ("@batchSize(1)\n#disable-next-line BCP081\nresource modelOfProvider ", "@batchSize(1)\n#disable-next-line BCP081\nresource aliasOfModel ", "resource gatewayCallsFoundry ", "resource operatorCallsTheModels ",
-                     "resource projectCallsTheModels ", "resource telemetryExporter ", "output gatewayName string = gateway.name", "output gatewayHost string = gateway.properties.frontend.defaultHostname"):
+                     "resource projectCallsTheModels ", "output gatewayName string = gateway.name", "output gatewayHost string = gateway.properties.frontend.defaultHostname"):
             self.assertIn(word, GATEWAY_CODE, word)
 
     def test_the_two_templates_compile_and_the_parameters_are_where_they_should_be(self):
@@ -313,8 +313,9 @@ class TheActionMakesTheSubnetThenWaitsThenMakesTheGateway(unittest.TestCase):
         self.assertIn("# The AI Gateway's two files are there only when the virtual network has a free range for its subnet", params)
 
     def test_both_workflows_compile_lint_and_check_the_new_template_and_its_file(self):
-        for source in (WORKFLOW, CHECKS):
-            self.assertIn("environment/operator/main.bicep environment/aigateway/main.bicep environment/aigateway/subnet.bicep", source)
+        # CI compiles and lints every template in one loop; the Hub compiles each to a file for the check of its parameter file and leaves the lint to CI, which ran it for exactly this commit.
+        self.assertIn("environment/operator/main.bicep environment/aigateway/main.bicep environment/aigateway/subnet.bicep", CHECKS)
+        self.assertNotIn("az bicep lint", WORKFLOW)
         self.assertIn('az bicep build --file environment/aigateway/subnet.bicep --outfile "$RUNNER_TEMP/aigateway-subnet.json"', WORKFLOW)
         self.assertIn('az bicep build --file environment/aigateway/subnet.bicep --outfile "$out/aigateway-subnet.json"', CHECKS)
         self.assertIn('python tools/environment-params.py check --params "$out/aigateway-subnet.parameters.json" --template "$out/aigateway-subnet.json" --label aigateway-subnet', CHECKS)
@@ -351,7 +352,7 @@ class TheActionMakesTheSubnetThenWaitsThenMakesTheGateway(unittest.TestCase):
     def test_every_other_action_still_has_the_steps_that_it_had(self):
         counts = {action: len(re.findall(rf"inputs\.action == '{action}'", WORKFLOW)) for action in ("aigateway", "aigateway-check")}
         self.assertEqual(counts, {"aigateway": 10, "aigateway-check": 4}, "the nine steps of the action and the guard before them")
-        self.assertEqual(WORKFLOW.count("uses: azure/login@"), 9, "the first sign-in and eight more: the ones that the retirements add are two of them")
+        self.assertEqual(WORKFLOW.count("uses: azure/login@"), 11, "the first sign-in and ten more: the ones that the retirements add are two of them, and the read-back of the AI security and of the telemetry exporter one each")
 
 
 BASH = AW.BASH

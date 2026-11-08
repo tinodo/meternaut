@@ -6,6 +6,7 @@ import textwrap
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
+from unittest import mock
 
 try:
     import yaml
@@ -78,6 +79,35 @@ jobs:
         run: echo "$ACTION"
 """
 
+GOOD_DRIFT = f"""
+name: Drift
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+  id-token: write
+concurrency:
+  group: drift
+jobs:
+  drift:
+    name: Drift check
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.actor == 'tinodo')
+    runs-on: ubuntu-latest
+    env:
+      ACTION: check
+    steps:
+      - name: Check out
+        uses: actions/checkout@{SHA} # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Sign in
+        uses: azure/login@{LOGIN} # v3.1.0
+        with:
+          client-id: ${{{{ vars.DRIFT_CLIENT_ID }}}}
+      - name: Work
+        run: echo "$ACTION"
+"""
+
 
 class Lint(unittest.TestCase):
     def setUp(self):
@@ -139,14 +169,62 @@ class Lint(unittest.TestCase):
         self.assertFinding(self.lint(GOOD_CHECKS.replace("contents: read", "id-token: write")), "id-token: write")
         self.assertFinding(self.lint(GOOD_DEPLOY.replace("id-token: write", "contents: write"), "deploy-hub.yml"), "contents: write")
 
+    def test_the_hub_may_read_the_runs_of_actions_to_see_that_ci_passed_and_may_not_write_them(self):
+        reading = GOOD_DEPLOY.replace("  contents: read\n", "  contents: read\n  actions: read\n")
+        self.assertIn("  actions: read\n", reading)
+        self.assertEqual(self.lint(reading, "deploy-hub.yml"), [])
+        self.assertFinding(self.lint(GOOD_DEPLOY.replace("  contents: read\n", "  contents: read\n  actions: write\n"), "deploy-hub.yml"), "actions: write")
+        self.assertFinding(self.lint(GOOD_DEPLOY.replace("  contents: read\n", "  contents: read\n  actions: write\n"), "drift.yml"), "actions: write")
+
     def test_risky_triggers_are_refused(self):
         for event in ("pull_request_target", "workflow_run", "issue_comment"):
             self.assertFinding(self.lint(GOOD_CHECKS.replace("  pull_request:\n", f"  {event}:\n")), event)
         self.assertFinding(self.lint(GOOD_CHECKS.replace("on:\n  pull_request:\n  push:\n    branches: [main]", "on: [push, pull_request_target]")), "pull_request_target")
 
-    def test_only_the_deploy_workflow_signs_in_to_azure(self):
-        self.assertFinding(self.lint(GOOD_CHECKS + f"      - uses: azure/login@{LOGIN}\n"), "only deploy-hub.yml may")
-        self.assertFinding(self.lint(GOOD_CHECKS + "      - run: az login --service-principal\n"), "only deploy-hub.yml may")
+    def test_only_the_two_workflows_that_may_sign_in_to_azure_do(self):
+        self.assertFinding(self.lint(GOOD_CHECKS + f"      - uses: azure/login@{LOGIN}\n"), "only deploy-hub.yml and drift.yml may")
+        self.assertFinding(self.lint(GOOD_CHECKS + "      - run: az login --service-principal\n"), "only deploy-hub.yml and drift.yml may")
+        self.assertFinding(self.lint(GOOD_DEPLOY, "other.yml"), "only deploy-hub.yml and drift.yml may")
+
+    def test_the_read_only_drift_workflow_passes_by_hand_and_a_timer_is_refused_until_the_constant_lets_one_through(self):
+        self.assertEqual(self.lint(GOOD_DRIFT, "drift.yml"), [])
+        timer = GOOD_DRIFT.replace("on:\n  workflow_dispatch:\n", "on:\n  workflow_dispatch:\n  schedule:\n    - cron: '17 3 * * *'\n")
+        self.assertIn("schedule:", timer)
+        self.assertFinding(self.lint(timer, "drift.yml"), "must run on `workflow_dispatch` alone")
+        self.assertFinding(self.lint(timer, "drift.yml"), "read-only identity exists")
+        self.assertFalse(wl.DRIFT_ON_A_TIMER, "no timer until the owner has made the read-only identity: the change that adds `schedule:` to drift.yml sets the constant in the same commit")
+        with mock.patch.object(wl, "DRIFT_ON_A_TIMER", True):
+            self.assertEqual(self.lint(timer, "drift.yml"), [])
+            self.assertEqual(self.lint(GOOD_DRIFT, "drift.yml"), [])
+
+    def test_the_read_only_drift_workflow_starts_by_hand_and_by_nothing_else_and_by_a_timer_only_when_the_constant_says_so(self):
+        for trigger in ("on:\n  push:\n    branches: [main]\n", "on:\n  workflow_dispatch:\n  push:\n", "on:\n  schedule:\n    - cron: '17 3 * * *'\n", "on: pull_request\n"):
+            with self.subTest(trigger=trigger):
+                problems = self.lint(GOOD_DRIFT.replace("on:\n  workflow_dispatch:\n", trigger), "drift.yml")
+                self.assertFinding(problems, "must run on `workflow_dispatch` alone")
+                with mock.patch.object(wl, "DRIFT_ON_A_TIMER", True):
+                    self.assertFinding(self.lint(GOOD_DRIFT.replace("on:\n  workflow_dispatch:\n", trigger), "drift.yml"), "must run on `workflow_dispatch`, and may run on a timer")
+        self.assertFinding(self.lint(GOOD_DRIFT.replace("on:\n  workflow_dispatch:\n", "on:\n  workflow_dispatch:\n  workflow_run:\n"), "drift.yml"), "workflow_run")
+
+    def test_the_read_only_drift_workflow_is_guarded_for_what_the_guard_says(self):
+        guard = "    if: github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.actor == 'tinodo')\n"
+        self.assertIn(guard, GOOD_DRIFT)
+        for changed in ("github.ref == 'refs/heads/main'", "github.ref == 'refs/heads/main' && github.actor == 'tinodo'", "github.ref == 'refs/heads/main' || github.actor == 'tinodo'",
+                        "(github.event_name == 'schedule' || github.actor == 'tinodo')", "always()", "github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.actor == 'tinodo')"):
+            self.assertFinding(self.lint(GOOD_DRIFT.replace(guard, f"    if: {changed}\n"), "drift.yml"), "only on main, started by the owner or by its timer")
+        self.assertFinding(self.lint(GOOD_DRIFT.replace(guard, ""), "drift.yml"), "only on main, started by the owner or by its timer")
+        self.assertFinding(self.lint(GOOD_DRIFT + "  other:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo hi\n", "drift.yml"), "exactly one job")
+        self.assertFinding(self.lint(GOOD_DRIFT.replace("concurrency:\n  group: drift\n", ""), "drift.yml"), "concurrency")
+        self.assertFinding(self.lint(GOOD_DRIFT.replace("    runs-on: ubuntu-latest\n", "    runs-on: ubuntu-latest\n    continue-on-error: true\n"), "drift.yml"), "continue-on-error")
+        self.assertFinding(self.lint(GOOD_DRIFT.replace(f"      - name: Sign in\n        uses: azure/login@{LOGIN} # v3.1.0\n        with:\n          client-id: ${{{{ vars.DRIFT_CLIENT_ID }}}}\n", ""), "drift.yml"), "does not sign in")
+
+    def test_the_read_only_drift_workflow_never_signs_in_with_the_deploy_identity_and_never_writes(self):
+        problems = self.lint(GOOD_DRIFT.replace("vars.DRIFT_CLIENT_ID", "secrets.AZURE_CLIENT_ID"), "drift.yml")
+        self.assertFinding(problems, "is the deploy identity, which can change Azure")
+        self.assertFinding(self.lint(GOOD_DRIFT.replace("contents: read", "contents: write"), "drift.yml"), "contents: write")
+        self.assertFinding(self.lint(GOOD_DRIFT.replace("id-token: write", "id-token: write\n  pull-requests: write"), "drift.yml"), "pull-requests: write")
+        self.assertEqual(self.lint(GOOD_DRIFT.replace("jobs:", "# the deploy identity is secrets.AZURE_CLIENT_ID, which this workflow never names in its code\njobs:"), "drift.yml"), [], "a comment may say so")
+        self.assertFinding(self.lint(GOOD_DRIFT.replace('echo "$ACTION"', 'echo "${{ github.event.head_commit.message }}"'), "drift.yml"), "expression inside a run script")
 
     def test_the_deploy_workflow_starts_by_hand_alone(self):
         for trigger in ("on:\n  workflow_dispatch:\n  push:\n    branches: [main]", "on: [workflow_dispatch, push]", "on: push", "on:\n  schedule:\n    - cron: '0 3 * * *'"):

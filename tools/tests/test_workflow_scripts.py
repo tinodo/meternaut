@@ -237,7 +237,7 @@ class WorkOutTheFoundrySettings(unittest.TestCase):
 
     def test_the_actions_of_the_workflow_are_the_ones_without_the_three_that_made_objects_on_the_instance(self):
         self.assertEqual(self.ACTIONS, ["what-if", "model-side", "base", "retire-old", "retire-event-hubs", "foundry", "cases", "cases-run", "page-latency", "plant", "loop-check", "operator", "operator-probe",
-                                        "aigateway", "aigateway-check"])
+                                        "aigateway", "aigateway-check", "governance", "gateway-telemetry", "drift-check"])
         for retired in ("gateway-prepare", "gateway", "contract", "recording", "recording-check"):
             self.assertNotIn(retired, self.ACTIONS)
 

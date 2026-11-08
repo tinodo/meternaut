@@ -7,6 +7,9 @@
 //
 // The subnets are not made here: environment/main.bicep (the action model-side) makes the virtual network with snet-pe, snet-func, snet-cases, and this template only reads snet-pe.
 //
+// The component can have its OpenTelemetry ingestion switched on (otlpIngestion, from the constant GATEWAY_TELEMETRY in tools/environment-params.py): the AI Gateway's telemetry exporter
+// (environment/aigateway/telemetry.bicep, the action gateway-telemetry) sends to the endpoints that this makes. It changes nothing of how the apps send their telemetry.
+//
 // No key of any kind, and no opt-out of a policy (AGENTS.md rule 23):
 //  - the storage account has Shared Key access off, and the Application Insights component and the workspace take no
 //    instrumentation key or shared key for ingestion without Entra ID;
@@ -34,6 +37,9 @@ param owner string
 @minLength(3)
 @maxLength(24)
 param storageAccountName string
+
+@description('Turn on the OpenTelemetry ingestion of the Application Insights component, so that the AI Gateway can send its telemetry to it (the action gateway-telemetry makes the exporter, environment/aigateway/telemetry.bicep). Azure then makes a managed Azure Monitor workspace, a data collection endpoint and a data collection rule in a resource group that it manages, and the component reports its OTLP endpoints a few minutes later. It needs the resource provider Microsoft.Monitor registered in the subscription, which a person does once (environment/BOOTSTRAP.md); the action base reads that before it deploys. tools/environment-params.py sets it from the constant GATEWAY_TELEMETRY. False leaves the component as it was: the property is then not written.')
+param otlpIngestion bool = false
 
 var tags = {
   workload: workload
@@ -87,12 +93,15 @@ resource insights 'Microsoft.Insights/components@2020-02-02' = {
   location: location
   kind: 'web'
   tags: tags
-  properties: {
+  // AzureMonitorWorkspaceIngestionMode is not in the Bicep types for this API version yet, so union() adds it, and only while otlpIngestion is true.
+  properties: union({
     Application_Type: 'web'
     WorkspaceResourceId: workspace.id
     IngestionMode: 'LogAnalytics'
     DisableLocalAuth: true
-  }
+  }, otlpIngestion ? {
+    AzureMonitorWorkspaceIngestionMode: 'Enabled'
+  } : {})
 }
 
 resource storage 'Microsoft.Storage/storageAccounts@2023-05-01' = {
