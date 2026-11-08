@@ -1,7 +1,7 @@
 #!/bin/bash
 # Runs one of the repository's check tools inside the Operator's container (docs/proposals/07-private-by-default.md).
 #
-# Once the services of the project are private, a tool that sends an event to Event Hubs or reads the telemetry has to run where those services can be reached: inside the network.
+# Once the services of the project are private, a tool that puts a message in a Storage queue or reads the telemetry has to run where those services can be reached: inside the network.
 # tools/operator-run.py makes the container group, puts this script and the tool's files into the secret volume at /mnt/op, and reads the log. The tools are the ones the workflow ran on
 # its own runner before (standard library only; the image has python3 and az). They find the signed-in identity through the Azure CLI, which this script signs in as the Operator's.
 # A tool that loads another one finds it in the same folder: cases-check.py loads check-helpers.py from its own directory, so both are sent to the volume.

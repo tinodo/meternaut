@@ -5,7 +5,7 @@
 //   Watch --> Detective and Skeptic (chat completions through the AI Gateway, with the app's identity and no key) --> guards in code --> one telemetry line per step --> workbook
 //
 // What it holds: one user-assigned identity (the console's sign-in), a plan with the function app, which has a system-assigned identity of its own (the plan is of the kind that
-// casesAppPlan names: Flex Consumption, or Basic, which is B1, Linux, always on), the subnet that the app is integrated with, one more event hub (the control hub) in the namespace of the
+// casesAppPlan names: Flex Consumption, or Basic, which is B1, Linux, always on), the subnet that the app is integrated with, one Storage queue (the control queue) in the storage account of the
 // base, the roles that connect them, a longer retention for the traces table of the workspace, and the History workbook.
 //
 // Identities, and no right to change Azure. The app's own system-assigned identity reads the subscriptions that it was given the read-only roles for, and their cost lines, stores the
@@ -30,8 +30,8 @@
 // page-latency) and the Basic definition stays here as the way back: one value, CASES_APP_PLAN in tools/environment-params.py, and the action cases
 // (docs/proposals/07-private-by-default.md, "The web page on Flex Consumption").
 //
-// It makes no storage account and no namespace: the app shares the storage account (blob, queue and table private
-// endpoints) and the Event Hubs namespace (private endpoint) of environment/base/main.bicep, so nothing new is billed except the
+// It makes no storage account: the app shares the storage account of environment/base/main.bicep (blob, queue and table private endpoints), and its control queue is in it, so
+// nothing new is billed except the
 // plan, tokens and the app's own private endpoint (below). A Flex app makes no subnet: it uses the function subnet snet-func, which the model side made and delegated to Microsoft.App/environments
 // (the owner's network is small), and it keeps its code package in one container of that storage account. A Basic app makes its own integration subnet (snet-func is delegated to Flex
 // Consumption and cannot serve a Basic plan) and that subnet's network security group. Either one makes one endpoint, which goes into the endpoint subnet that the model side made.
@@ -53,7 +53,7 @@
 // the landing zone's DNS. The app on it then cannot resolve a name, and cannot start. That happened to the first subnet (snet-web) on
 // 2026-11-05, in the second deploy of this template, and the subnet was replaced by this one (snet-cases).
 //
-// No key of any kind (AGENTS.md rule 23): the app's host storage, its Event Hubs trigger and its telemetry use its identity, its calls to the AI Gateway carry its identity's token, and its code is pushed with the deployment workflow's own identity token (no deployment password). The app reads no key at all.
+// No key of any kind (AGENTS.md rule 23): the app's host storage, which is also where the trigger of the control queue reads, and its telemetry use its identity, its calls to the AI Gateway carry its identity's token, and its code is pushed with the deployment workflow's own identity token (no deployment password). The app reads no key at all.
 //
 // The app's system-assigned identity can read nothing until its Reader and Cost Management Reader roles are given, outside this template, by a person on the owner's
 // written word (environment/BOOTSTRAP.md, AGENTS.md rule 18), because the deployment workflow's identity has no right there and must not get one. A person gives them
@@ -88,11 +88,6 @@ param owner string
 @minLength(3)
 @maxLength(24)
 param storageAccountName string
-
-@description('Name of the Event Hubs namespace of the base. It already exists.')
-@minLength(6)
-@maxLength(50)
-param eventHubNamespaceName string
 
 @description('Name of the function app. It is also its host name, so it is unique worldwide.')
 @minLength(2)
@@ -198,7 +193,8 @@ var virtualNetworkName = 'vnet-${workload}'
 var webSubnetName = 'snet-cases'
 var functionSubnetName = 'snet-func'
 var privateEndpointSubnetName = 'snet-pe'
-var controlHubName = 'cases-control'
+// The control queue: one message in it starts one Watch now (the check action cases-run sends it, as the Operator: environment/operator/main.bicep, which names the same queue; a test holds the two together).
+var controlQueueName = 'cases-control'
 var deploymentContainerName = 'app-package-cases'
 
 // Flex: Flex Consumption, which scales to zero and bills per execution; the app uses snet-func, the subnet that the model side made for it. Basic: the B1 plan on snet-cases.
@@ -214,7 +210,6 @@ var signInIsSetUp = !empty(consoleAppClientId)
 // https://<host> from): the console's host name on the platform's Application Gateway when there is one, the app's own name otherwise.
 var consoleHost = empty(consoleHostName) ? '${functionAppName}.azurewebsites.net' : consoleHostName
 
-var eventHubsDataReceiverRoleId = 'a638d3c7-ab3a-418d-83e6-5f17a39d4fde'
 var storageBlobDataOwnerRoleId = 'b7e6dc6d-f1e8-4753-8033-0f276bb0955b'
 var storageQueueDataContributorRoleId = '974c5e8b-45b9-4653-ba55-5f855dd0fb88'
 var storageTableDataContributorRoleId = '0a9a7e1f-b9d0-4cc4-a60d-0319b160aaa3'
@@ -282,8 +277,9 @@ resource blobService 'Microsoft.Storage/storageAccounts/blobServices@2023-05-01'
   name: 'default'
 }
 
-resource eventHubs 'Microsoft.EventHub/namespaces@2024-01-01' existing = {
-  name: eventHubNamespaceName
+resource queueService 'Microsoft.Storage/storageAccounts/queueServices@2023-05-01' existing = {
+  parent: storage
+  name: 'default'
 }
 
 // The identity that the console's app registration trusts through a federated credential, so that the app presents its token (for api://AzureADTokenExchange)
@@ -295,13 +291,11 @@ resource authIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-
   tags: tags
 }
 
-// The two containers and the checkpoints that every Functions host of the account shares: host locks, host secrets and the Event Hubs
-// checkpoints. The base makes them (environment/base/main.bicep). This app's own code is not in the account at all: the
-// deployment workflow pushes it to the app, which keeps it on the plan's own storage.
+// The two containers that every Functions host of the account shares: host locks and host secrets. The base makes them (environment/base/main.bicep). This app's own code is not in the
+// account at all: the deployment workflow pushes it to the app, which keeps it on the plan's own storage.
 var sharedHostContainerNames = [
   'azure-webjobs-hosts'
   'azure-webjobs-secrets'
-  'azure-webjobs-eventhub'
 ]
 
 resource sharedHostContainers 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-05-01' existing = [for name in sharedHostContainerNames: {
@@ -320,19 +314,12 @@ resource deploymentContainer 'Microsoft.Storage/storageAccounts/blobServices/con
   }
 }
 
-// The hub for the control events of the check action: one event, sent by the Operator (environment/operator/main.bicep, which holds Azure Event Hubs Data Sender on this hub), starts one run now.
-resource controlHub 'Microsoft.EventHub/namespaces/eventhubs@2024-01-01' = {
-  parent: eventHubs
-  name: controlHubName
-  properties: {
-    messageRetentionInDays: 1
-    partitionCount: 1
-  }
-}
-
-resource controlConsumerGroup 'Microsoft.EventHub/namespaces/eventhubs/consumergroups@2024-01-01' = {
-  parent: controlHub
-  name: 'casesControl'
+// The queue for the control messages of the check action: one message, put there by the Operator (environment/operator/main.bicep, which holds Storage Queue Data Contributor on this one
+// queue and on no other), starts one run now. The app's trigger reads it through the host storage connection, and a message that fails five times goes to cases-control-poison,
+// a queue that the host makes itself. The app holds Storage Queue Data Contributor on the whole account for its host (below), which covers both queues, so no role is added for the trigger.
+resource controlQueue 'Microsoft.Storage/storageAccounts/queueServices/queues@2023-05-01' = {
+  parent: queueService
+  name: controlQueueName
 }
 
 // The History is the app's own telemetry: one line per step in the traces table. A year of it, for a few megabytes, costs cents.
@@ -345,28 +332,18 @@ resource tracesRetention 'Microsoft.OperationalInsights/workspaces/tables@2023-0
   }
 }
 
-// Each role on the one resource that the caller uses, never on the group: the app reads the control hub and cannot send to it. Storage Blob Data Owner on the three
+// Each role on the one resource that the caller uses, never on the group. Storage Blob Data Owner on the two
 // containers that the Functions hosts of the account share, Storage Queue Data Contributor and Storage Table Data Contributor on the account (the host's documented set
-// for an identity-based host storage; the account holds no queue and no table of anybody else's). Monitoring Metrics Publisher: the app's telemetry, with Entra ID
-// instead of the instrumentation key. The deployment workflow's identity holds no role on the control hub: the Operator sends the control event (it holds Azure Event Hubs
-// Data Sender on this hub, in environment/operator/main.bicep), and the namespace takes no traffic from the workflow's runner. The role that the workflow's identity held here
-// is retired by the action cases, which deletes that one assignment after the deploy when it is still there, because a template never removes an assignment that it stops declaring.
+// for an identity-based host storage; the account holds no queue and no table of anybody else's, and the queue role covers the control queue and its poison queue). Monitoring
+// Metrics Publisher: the app's telemetry, with Entra ID instead of the instrumentation key. The deployment workflow's identity holds no role on the control queue: the Operator puts
+// the control message there (it holds Storage Queue Data Contributor on this one queue, in environment/operator/main.bicep), and the account takes no traffic from the workflow's runner.
+// The roles that the workflow's identity held on the old control hub (Azure Event Hubs Data Sender) went with the Event Hubs namespace, which the action retire-event-hubs deletes.
 //
 // The app's roles are for its own system-assigned identity. A role assignment's name has to be known when the deployment starts, and the principal id of a
 // system-assigned identity exists only once the app does: so the names are seeded with the app's id (the identity lives and dies with the app, and an app that is
 // deleted and made again needs its old assignments removed first), and the principal id is in the properties, which is read later. The roles wait for the app and the
 // app does not wait for them, so the first start of an app on a new estate comes before the roles and the host waits for them; on an estate that has the roles already,
 // the names are the same and nothing changes.
-resource functionReceivesControl 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  scope: controlHub
-  name: guid(controlHub.id, functionApp.id, eventHubsDataReceiverRoleId)
-  properties: {
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', eventHubsDataReceiverRoleId)
-    principalId: functionApp.identity.principalId
-    principalType: 'ServicePrincipal'
-  }
-}
-
 resource functionOwnsHostContainers 'Microsoft.Authorization/roleAssignments@2022-04-01' = [for (name, i) in sharedHostContainerNames: {
   scope: sharedHostContainers[i]
   name: guid(sharedHostContainers[i].id, functionApp.id, storageBlobDataOwnerRoleId)
@@ -419,7 +396,7 @@ resource functionPublishesTelemetry 'Microsoft.Authorization/roleAssignments@202
 }
 
 // The plan is of the kind that casesAppPlan says. Flex: Flex Consumption (FC1), which scales to zero and bills for the memory of an instance while it executes and for the executions, after a free
-// monthly grant, so that an idle web page costs nothing; it is named plan-<workload>-cases. Basic: B1, Linux, one instance, always on: the console, the timers and the control hub's trigger run on
+// monthly grant, so that an idle web page costs nothing; it is named plan-<workload>-cases. Basic: B1, Linux, one instance, always on: the console, the timers and the control queue's trigger run on
 // it side by side, about 13 US dollars a month at the price list of Sweden Central (0.018 US dollars an hour), whatever it does; it is named plan-<workload>-cases-basic. The two have different names,
 // so that the action cases removes the plan of the other kind by its exact name. A plan is in the region of its subnet.
 resource plan 'Microsoft.Web/serverfarms@2024-04-01' = {
@@ -439,14 +416,12 @@ resource plan 'Microsoft.Web/serverfarms@2024-04-01' = {
   }
 }
 
-var eventHubHost = replace(replace(eventHubs.properties.serviceBusEndpoint, 'https://', ''), ':443/', '')
-
 // Only a Basic app is given these: a Flex Consumption app refuses them, and takes its runtime and its package from functionAppConfig instead.
 var basicOnlyAppSettings = isFlex ? [] : [
   { name: 'FUNCTIONS_EXTENSION_VERSION', value: '~4' }
   { name: 'FUNCTIONS_WORKER_RUNTIME', value: 'python' }
   { name: 'WEBSITE_RUN_FROM_PACKAGE', value: '1' }
-  // The host's start-up asks the DNS of the landing zone for the names of the storage account and the namespace, and each lookup of a subnet that cannot reach
+  // The host's start-up asks the DNS of the landing zone for the name of the storage account, and each lookup of a subnet that cannot reach
   // that DNS waits 30 seconds. The platform gives a container 230 seconds by default to answer, and then stops the whole site and starts it again; ten minutes let a slow start finish.
   { name: 'WEBSITES_CONTAINER_START_TIME_LIMIT', value: '600' }
   { name: 'SCM_DO_BUILD_DURING_DEPLOYMENT', value: 'false' }
@@ -456,7 +431,7 @@ var basicOnlyAppSettings = isFlex ? [] : [
 // No Azure Files content share, no storage connection string, no deployment password. Basic: the workflow pushes the code with its own identity's token to the app's deployment endpoint, which keeps it
 // on the plan's own storage and runs the app from that package. Flex: the code is a package in the container app-package-cases, which the app reads with its system-assigned identity, and which the
 // Operator replaces with `az functionapp deployment source config-zip`, as it did for the usage app. One instance at the most: a run is one function execution that waits for
-// models, a timer must not run twice at once, the control hub has one partition and one person uses the web page (the limit is per group of functions: with four, the group of the web page scaled out
+// models, a timer must not run twice at once, a control message starts one run and the host gives the app one message at a time (host.json), and one person uses the web page (the limit is per group of functions: with four, the group of the web page scaled out
 // to four instances for one request every four seconds, and every fourth request waited 40 to 46 seconds). No always-ready instance: the app scales to zero and bills nothing while it is idle.
 resource functionApp 'Microsoft.Web/sites@2024-04-01' = {
   name: functionAppName
@@ -509,9 +484,8 @@ resource functionApp 'Microsoft.Web/sites@2024-04-01' = {
         { name: 'AzureWebJobsStorage__tableServiceUri', value: storage.properties.primaryEndpoints.table }
         { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: insights.properties.ConnectionString }
         { name: 'APPLICATIONINSIGHTS_AUTHENTICATION_STRING', value: 'Authorization=AAD' }
-        { name: 'EventHubConnection__fullyQualifiedNamespace', value: eventHubHost }
-        { name: 'EventHubConnection__credential', value: 'managedidentity' }
-        { name: 'EVENTHUB_CASES_CONTROL_NAME', value: controlHubName }
+        // The control queue in the host storage account: the trigger reads it through the connection AzureWebJobsStorage (the four settings above, which carry no key) as %CASES_CONTROL_QUEUE_NAME%.
+        { name: 'CASES_CONTROL_QUEUE_NAME', value: controlQueueName }
         { name: 'SCOPE_SUBSCRIPTIONS', value: scopeSubscriptions }
         { name: 'SCOPE_ALL_SUBSCRIPTIONS', value: scopeAllSubscriptions ? 'true' : 'false' }
         { name: 'MODEL_DETECTIVE', value: modelDetective }
@@ -550,7 +524,7 @@ resource functionApp 'Microsoft.Web/sites@2024-04-01' = {
   dependsOn: [
     webSubnet
     deploymentContainer
-    controlConsumerGroup
+    controlQueue
   ]
 }
 
@@ -696,5 +670,5 @@ output casesSystemPrincipalId string = functionApp.identity.principalId
 output authIdentityPrincipalId string = authIdentity.properties.principalId
 output authIdentityClientId string = authIdentity.properties.clientId
 output consoleUrl string = 'https://${consoleHost}'
-output controlHubName string = controlHub.name
+output controlQueueName string = controlQueue.name
 output historyWorkbookId string = historyWorkbook.id

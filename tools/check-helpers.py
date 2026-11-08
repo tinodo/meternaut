@@ -4,10 +4,11 @@
 It calls the Azure CLI, which the workflow has signed in. The tokens that the CLI hands out are used and never printed. What it holds:
 
   * the object id of the identity that the CLI is signed in as, read from the claims of its own token (the workflow's identity may not read the directory): the Hub workflow
-    uses it to find the deploy identity's own role assignment on the control hub of the cases, which the action cases retires (no template gives that identity a role there any
-    more, because the Operator sends the control events);
-  * one event to a control hub, with the identity that the CLI is signed in as: in the Hub workflow that is the Operator's identity, which holds Azure Event Hubs Data Sender on
-    that hub, and the tool runs inside the network, because the namespace takes no public traffic. Only a GitHub Actions run may send the event (AGENTS.md rule 18);
+    uses it to read the condition of the deploy identity's right to assign roles, before the action aigateway makes the gateway;
+  * one message to a Storage queue, with the identity that the CLI is signed in as: in the Hub workflow that is the Operator's identity, which holds Storage Queue Data Contributor on that one
+    queue, and the tool runs inside the network, because the storage account takes no public traffic (its queue private endpoint is the way in). The message is the JSON text of the job and the
+    request id, base64-encoded, because the Functions host decodes the text of a queue message from base64 before it hands it to the app. Only a GitHub Actions run may put the message
+    there (AGENTS.md rule 18);
   * the telemetry of the app, read the way --query-via says:
       arm         The default. The query goes to Azure Resource Manager (POST <component>/query). Learn says that such a query cannot use an Azure
                   Monitor private link, so it works only while the component accepts queries from public networks.
@@ -34,12 +35,20 @@ import urllib.request
 
 SITE_ID = re.compile(r"^/subscriptions/[0-9a-fA-F-]{36}/resourceGroups/[A-Za-z0-9._()-]{1,90}/providers/Microsoft\.Web/sites/[A-Za-z0-9-]{2,60}$", re.I)
 INSIGHTS_ID = re.compile(r"^/subscriptions/[0-9a-fA-F-]{36}/resourceGroups/[A-Za-z0-9._()-]{1,90}/providers/Microsoft\.Insights/components/[A-Za-z0-9._()-]{1,260}$", re.I)
-NAMESPACE = re.compile(r"^[A-Za-z][A-Za-z0-9-]{4,49}$")
+STORAGE_ACCOUNT = re.compile(r"^[a-z0-9]{3,24}$")
+# The name of a queue: 3 to 63 lowercase letters, digits and hyphens, beginning and ending with a letter or a digit, with no two hyphens in a row.
+QUEUE_NAME = re.compile(r"^(?=.{3,63}$)[a-z0-9]+(?:-[a-z0-9]+)*$")
 GUID = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
 SITE_API = "2024-04-01"
 QUERY_API = "2018-04-20"
 COMPONENT_API = "2020-02-02"
 DATA_PLANE = "https://api.applicationinsights.io"
+# The Queue service: the token's resource is the one that Learn names for Azure Storage, and the service version is the latest one that the versioning page of Azure Storage says is deployed
+# everywhere (2026-04-06 on 2026-10-29); Microsoft Entra authorization needs 2017-11-09 or later (REST API, Authorize with Microsoft Entra ID).
+STORAGE_RESOURCE = "https://storage.azure.com/"
+QUEUE_SERVICE_VERSION = "2026-04-06"
+# A control message that nobody has taken in an hour is of no use any more (the app refuses one that is older than 15 minutes), so the queue keeps it for an hour and not for its default of seven days.
+MESSAGE_TTL_SECONDS = 3600
 QUERY_VIA = ("arm", "data-plane")
 QUERY_VIA_HELP = ("how the telemetry is read: arm (the default) asks Azure Resource Manager, which needs a component that accepts queries from public networks; "
                   "data-plane asks https://api.applicationinsights.io with a Microsoft Entra token, which is for a component that is private and is run from inside the network")
@@ -47,6 +56,12 @@ DATA_PLANE_REFUSALS = {
     401: "the token was not accepted by the Application Insights API",
     403: ("the identity probably has no Reader or Monitoring Reader role on the component or above it (a new role takes minutes to apply), "
           "or the component refuses queries from this network"),
+}
+QUEUE_REFUSALS = {
+    401: "the token was not accepted by the Queue service",
+    403: ("the identity probably has no Storage Queue Data Contributor role on the queue yet (a new role takes up to ten minutes to apply), "
+          "or the storage account is not reached through its queue private endpoint from this network"),
+    404: "the queue is not there: the action cases makes it",
 }
 
 
@@ -139,11 +154,11 @@ def check_insights(insights: str) -> str:
     return insights
 
 
-def namespace_host(namespace: str) -> str:
-    name = namespace.strip().lower().removesuffix(".servicebus.windows.net")
-    if not NAMESPACE.match(name):
-        raise Problem("--namespace is the name of the Event Hubs namespace")
-    return f"{name}.servicebus.windows.net"
+def queue_host(account: str) -> str:
+    name = account.strip().lower().removesuffix(".queue.core.windows.net")
+    if not STORAGE_ACCOUNT.match(name):
+        raise Problem("--storage-account is the name of the storage account: 3 to 24 lowercase letters and digits")
+    return f"{name}.queue.core.windows.net"
 
 
 def items(answer) -> list[dict]:
@@ -162,15 +177,35 @@ def function_names(azure: Azure, site: str) -> list[str]:
     return sorted(names)
 
 
-def send_control_event(azure: Azure, namespace: str, job: str, request_id: str, hub: str) -> None:
-    """One event to a control hub, with the workflow's own token (Event Hubs accepts Microsoft Entra tokens for its REST send)."""
-    url = f"https://{namespace_host(namespace)}/{hub}/messages?timeout=60&api-version=2014-01"
-    headers = {"Authorization": f"Bearer {azure.token('https://eventhubs.azure.net')}", "Content-Type": "application/atom+xml;type=entry;charset=utf-8"}
-    body = json.dumps({"job": job, "requestId": request_id}, separators=(",", ":")).encode("utf-8")
-    status, answer = azure.post(url, headers, body)
-    if status not in (200, 201):
-        text = answer.decode("utf-8", "replace").strip().splitlines()[:1] if isinstance(answer, bytes) else []
-        raise Problem(f"sending the control event answered {status}: {text[0][:200] if text else 'no message'}")
+def queue_error(answer, token: str) -> str:
+    """What the Queue service says about a refusal, in one short line: its error code and the first line of its message (it answers in XML). The token is never in it."""
+    text = answer.decode("utf-8", "replace") if isinstance(answer, (bytes, bytearray)) else str(answer or "")
+    code = re.search(r"<Code>([^<]{1,80})</Code>", text)
+    message = re.search(r"<Message>([^<]*)</Message>", text)
+    if code or message:
+        text = ": ".join(part for part in (code.group(1).strip() if code else "", (message.group(1).strip() if message else "")) if part)
+    return said(text, token)
+
+
+def send_control_message(azure: Azure, account: str, job: str, request_id: str, queue: str) -> None:
+    """One message to the control queue, with the Operator's own Microsoft Entra token (no key, no shared access signature). Put Message answers 201 and nothing else.
+
+    The text of the message is the JSON of the job and the request id, base64-encoded: the Functions host decodes the text of a queue message from base64 before the app reads it."""
+    if not QUEUE_NAME.match(queue):
+        raise Problem("the queue name is 3 to 63 lowercase letters, digits and hyphens")
+    url = f"https://{queue_host(account)}/{queue}/messages?messagettl={MESSAGE_TTL_SECONDS}&timeout=30"
+    token = azure.token(STORAGE_RESOURCE)
+    headers = {"Authorization": f"Bearer {token}", "x-ms-version": QUEUE_SERVICE_VERSION, "Content-Type": "application/xml"}
+    text = base64.b64encode(json.dumps({"job": job, "requestId": request_id}, separators=(",", ":")).encode("utf-8")).decode("ascii")
+    body = f"<QueueMessage><MessageText>{text}</MessageText></QueueMessage>".encode("utf-8")
+    try:
+        status, answer = azure.post(url, headers, body)
+    except (OSError, http.client.HTTPException) as e:
+        raise Problem(f"the control message could not be sent: {said(f'{type(e).__name__}: {e}', token)}")
+    if status != 201:
+        cause = QUEUE_REFUSALS.get(status)
+        detail = queue_error(answer, token)
+        raise Problem(f"putting the control message in the queue answered {status}" + (f" ({cause})" if cause else "") + (f": {detail}" if detail else ""))
 
 
 def said(answer, token: str, limit: int = 160) -> str:

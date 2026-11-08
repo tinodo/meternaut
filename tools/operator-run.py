@@ -7,7 +7,7 @@
     python tools/operator-run.py cleanup --resource-group G --prefix P [--older-than-minutes 30] [--subscription S]
 
 This is the Operator of docs/proposals/07-private-by-default.md. Once the services of the project are private, the deployment workflow can no longer reach the
-sites that publish code, the event hub that starts a run, the telemetry or the console from outside. What it still reaches is Azure Resource Manager. So it makes a
+sites that publish code, the queue that starts a run, the telemetry or the console from outside. What it still reaches is Azure Resource Manager. So it makes a
 container group (Azure Container Instances) in the Operator's delegated subnet, with the Operator's user-assigned identity, lets one script run in it, reads the
 log through Azure Resource Manager and deletes the group. The container group is made, and only a GitHub Actions run may make it (AGENTS.md rule 18): the command
 refuses to run anywhere else.

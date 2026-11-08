@@ -9,9 +9,9 @@ app = func.FunctionApp()
 TIMER_SCHEDULE = "0 30 5 * * *"
 # Every minute: the plans whose time is over, the changes whose start time has come, the changes to check.
 TICK_SCHEDULE = "0 * * * * *"
-# Identity-based connection. The platform reads EventHubConnection__fullyQualifiedNamespace and __credential; __clientId names a user-assigned identity, and
-# without it the connection uses the app's system-assigned identity.
-EVENT_HUB_CONNECTION = "EventHubConnection"
+# The control queue is in the app's host storage account, so the trigger uses the host's own connection: the platform reads AzureWebJobsStorage__credential and
+# AzureWebJobsStorage__queueServiceUri (the template sets them) and signs in as the app's system-assigned identity. There is no connection string and no key.
+HOST_STORAGE_CONNECTION = "AzureWebJobsStorage"
 
 
 @app.function_name(name="watch-daily")
@@ -21,15 +21,9 @@ def watch_daily(timer: func.TimerRequest) -> None:
 
 
 @app.function_name(name="cases-control")
-@app.event_hub_message_trigger(
-    arg_name="event",
-    event_hub_name="%EVENTHUB_CASES_CONTROL_NAME%",
-    connection=EVENT_HUB_CONNECTION,
-    consumer_group="casesControl",
-    cardinality="one",
-)
-def cases_control(event: func.EventHubEvent) -> None:
-    control.handle_event(event)
+@app.queue_trigger(arg_name="msg", queue_name="%CASES_CONTROL_QUEUE_NAME%", connection=HOST_STORAGE_CONNECTION)
+def cases_control(msg: func.QueueMessage) -> None:
+    control.handle_message(msg)
 
 
 @app.function_name(name="runner-tick")

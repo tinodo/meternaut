@@ -77,10 +77,11 @@ class FilesOfTheAppTests(unittest.TestCase):
                     "applicationInsights": {"samplingSettings": {"isEnabled": False}},
                 },
                 "extensionBundle": {"id": "Microsoft.Azure.Functions.ExtensionBundle", "version": "[4.*, 5.0.0)"},
-                "extensions": {"http": {"routePrefix": ""}},
+                "extensions": {"http": {"routePrefix": ""}, "queues": {"batchSize": 1, "newBatchThreshold": 0, "maxDequeueCount": 5}},
             },
             "sampling is off, so that no line of the History is dropped, and the host's own chatter is off: with the token requests of the Application Insights sign-in "
-            "logged, every instance wrote about one line a second; the console's pages are at the root, with no /api in front",
+            "logged, every instance wrote about one line a second; the console's pages are at the root, with no /api in front; the control queue gives the app one message at a "
+            "time (one Watch at a time, as the one partition of the old control hub did) and moves a message to cases-control-poison after five tries",
         )
 
     def test_funcignore_leaves_out_the_tests_and_compiled_files_but_not_the_libraries(self):
