@@ -107,8 +107,8 @@ class Tenant(FakeEstate):
         if failed:
             return self._refused(failed)
         if short == "costs":
-            rows = [[cost, rid, self.currency] for cost, rid in self.costs_of.get(sub, [])]
-            return self._json({"properties": {"columns": [{"name": "Cost"}, {"name": "ResourceId"}, {"name": "Currency"}], "rows": rows}})
+            rows = [[cost, rid, "Storage", self.currency] for cost, rid in self.costs_of.get(sub, [])]
+            return self._json({"properties": {"columns": [{"name": "Cost"}, {"name": "ResourceId"}, {"name": "ServiceName"}, {"name": "Currency"}], "rows": rows}})
         return self._json({"value": (self.advisor_of if short == "advisor" else self.locks_of).get(sub, [])})
 
     def _list(self, parts):

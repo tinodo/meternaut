@@ -43,6 +43,7 @@ def many(count: int, seconds: float = 10.0, disks: int = 2):
     notes: list[str] = []
     box = toolbox(estate, tuple(subs), notes)
     box.monotonic = clock
+    box.read_workers = 1  # the time of a call is told by this clock, which every answer advances: the reads of the subscriptions are one after the other
     return estate, box, subs, notes
 
 
@@ -67,55 +68,52 @@ class WhenTheTimeOfACallIsUsedUp(unittest.TestCase):
     def test_the_overview_reads_the_subscriptions_that_it_has_time_for_names_the_rest_and_the_next_call_goes_on_where_the_last_one_stopped(self):
         estate, box, subs, notes = many(10)
         first = ask(box, "estate_overview")
-        self.assertEqual(labels(first["subscriptions"]), ["s1", "s2", "s3"], "20 seconds for each: the fourth would start at 60 of the 45")
-        self.assertEqual(first["not_read"], {"count": 7, "first": ["s4", "s5", "s6", "s7", "s8"], "why": WHY})
+        self.assertEqual(labels(first["subscriptions"]), ["s1", "s2", "s3", "s4"], "one read of the types of all ten (10 seconds), then 10 seconds for each cost: the fourth starts at 40 of the 45")
+        self.assertEqual(first["not_read"], {"count": 6, "first": ["s5", "s6", "s7", "s8", "s9"], "why": WHY})
         self.assertEqual(len(notes), 1)
-        self.assertRegex(notes[0], r"^estate_overview: the time for reading the subscriptions \(45 seconds in one call\) was used up, so 7 were not read in this call \(")
-        for sub in subs[3:6]:
+        self.assertRegex(notes[0], r"^estate_overview: the time for reading the subscriptions \(45 seconds in one call\) was used up, so 6 were not read in this call \(")
+        for sub in subs[4:7]:
             self.assertIn(sub[:8], notes[0], "the note names the first of them, eight characters of each")
         self.assertNotIn(subs[-1][:8], notes[0])
 
         second = ask(box, "estate_overview")
-        self.assertEqual(labels(second["subscriptions"]), ["s1", "s2", "s3", "s4", "s5", "s6"], "what was read costs no time in the next call")
-        self.assertEqual(second["not_read"]["count"], 4)
-        self.assertEqual(second["not_read"]["first"], ["s7", "s8", "s9", "s10"])
+        self.assertEqual(labels(second["subscriptions"]), [f"s{n}" for n in range(1, 10)], "what was read costs no time in the next call")
+        self.assertEqual((second["not_read"]["count"], second["not_read"]["first"]), (1, ["s10"]))
         third = ask(box, "estate_overview")
-        self.assertEqual((len(third["subscriptions"]), third["not_read"]["count"], third["not_read"]["first"]), (9, 1, ["s10"]))
-        fourth = ask(box, "estate_overview")
-        self.assertEqual(labels(fourth["subscriptions"]), [f"s{n}" for n in range(1, 11)])
-        self.assertNotIn("not_read", fourth)
-        self.assertEqual(len(notes), 3, "one note for each call that left subscriptions, and none for the call that left none")
+        self.assertEqual(labels(third["subscriptions"]), [f"s{n}" for n in range(1, 11)])
+        self.assertNotIn("not_read", third)
+        self.assertEqual(len(notes), 2, "one note for each call that left subscriptions, and none for the call that left none")
 
-        self.assertEqual(estate.graph_names(), ["estate-types"] * 10, "one read of the types of each subscription, in all four calls")
+        self.assertEqual(estate.graph_names(), ["estate-types"], "one read of the types of every subscription, in all three calls")
         self.assertEqual(sorted(reads_of(estate, "costmanagement").values()), [1] * 10, "and one read of the cost lines of each")
-        block = fourth["subscriptions"][3]
+        block = third["subscriptions"][3]
         self.assertEqual((block["subscription"], block["resources"], block["cost30d"]), ("s4", 2, 81.0))
 
-    def test_a_subscription_whose_read_failed_is_a_note_and_an_error_block_and_is_not_counted_as_unread(self):
+    def test_a_subscription_whose_cost_lines_could_not_be_read_is_a_note_and_says_so_in_its_block_and_is_not_counted_as_unread(self):
         estate, box, subs, notes = many(4, seconds=1.0)
-        estate.failures["graph"] = [None, 403, None, None]
+        estate.failures["costs"] = [None, 403, None, None]
         answer = ask(box, "estate_overview")
-        self.assertEqual(answer["subscriptions"][1], {"subscription": "s2", "error": "unavailable"})
+        self.assertEqual({key: value for key, value in answer["subscriptions"][1].items() if key != "types"}, {"subscription": "s2", "resources": 2, "costs": "unavailable"})
         self.assertNotIn("not_read", answer, "the time was not used up")
         self.assertEqual(len(notes), 1)
-        self.assertIn(f"{subs[1][:8]}: the resources could not be read", notes[0])
+        self.assertIn(f"{subs[1][:8]}: the cost lines could not be read", notes[0])
 
-    def test_the_listing_keeps_what_it_read_and_every_call_makes_progress_until_all_subscriptions_are_read_once(self):
+    def test_the_listing_knows_every_resource_from_one_read_and_goes_on_with_the_cost_lines_from_call_to_call_until_all_subscriptions_are_read_once(self):
         estate, box, subs, notes = many(10)
-        totals, calls = [], 0
+        priced, calls = [], 0
         while True:
             answer = ask(box, "list_resources", type=DISK)
             calls += 1
-            totals.append(answer["total"])
+            self.assertEqual(answer["total"], 20, "one read of Resource Graph names the resources of all ten subscriptions")
+            priced.append(sum(1 for row in answer["rows"] if row[answer["cols"].index("usd30d")] is not None) if "usd30d" in answer["cols"] else 0)
             if "not_read" not in answer:
                 break
             self.assertEqual(answer["not_read"]["why"], WHY)
             self.assertLessEqual(len(answer["not_read"]["first"]), tb.NOT_READ_SHOWN)
             self.assertLess(calls, 10, "a call that reads nothing new would loop for ever")
-        self.assertEqual(totals[0], 10, "five subscriptions of two disks in the first 45 seconds")
-        self.assertEqual(totals[-1], 20)
-        self.assertEqual(totals, sorted(totals), "the listing grows from call to call and never loses what an earlier call read")
-        self.assertEqual(estate.graph_names(), ["type-resources"] * 10, "each subscription's resources were read once")
+        self.assertEqual(priced, sorted(priced), "the costs grow from call to call and never lose what an earlier call read")
+        self.assertEqual((priced[0], priced[-1]), (8, 20), "four subscriptions of two disks in the first 45 seconds after the read of Resource Graph, and all of them at the end")
+        self.assertEqual(estate.graph_names(), ["type-resources"], "each subscription's resources were read once, in one query")
         self.assertEqual(sorted(reads_of(estate, "costmanagement").values()), [1] * 10)
         self.assertEqual(len(notes), calls - 1)
 
@@ -169,35 +167,23 @@ class WhenTheTimeOfACallIsUsedUp(unittest.TestCase):
         self.assertEqual(answer, {"costs": "unavailable", "lines": [], "not_read": {"count": 3, "first": ["s1", "s2", "s3"], "why": WHY}})
         self.assertEqual(estate.calls, [], "nothing was read")
 
-    def test_the_metric_names_look_for_a_resource_of_the_type_one_subscription_after_the_other_and_remember_where_there_was_none(self):
+    def test_the_metric_names_look_for_a_resource_of_the_type_in_one_read_for_every_subscription_and_remember_the_names(self):
         estate, box, subs, notes = many(10)
         estate.rows.append(row(VM, "vm-7", sub=subs[6]))
         estate.offer(VM, "Percentage CPU")
         first = ask(box, "metric_names", type=VM)
-        self.assertEqual((first["total"], first["metrics"], first["not_read"]["count"]), (0, [], 5), "five subscriptions have no machine, and the time is used up before the seventh")
-        self.assertEqual(estate.graph_names(), ["one-of-type"] * 5)
-        second = ask(box, "metric_names", type=VM)
-        self.assertEqual((second["total"], [m["name"] for m in second["metrics"]]), (1, ["Percentage CPU"]))
-        self.assertNotIn("not_read", second)
-        self.assertEqual(estate.graph_names(), ["one-of-type"] * 7, "the five were not looked at again: six and seven were")
+        self.assertEqual((first["total"], [m["name"] for m in first["metrics"]]), (1, ["Percentage CPU"]))
+        self.assertNotIn("not_read", first, "one read for all ten subscriptions takes 10 seconds, not 70")
+        self.assertEqual(estate.graph_names(), ["one-of-type"])
         third = ask(box, "metric_names", type=VM)
         self.assertEqual(third["total"], 1)
-        self.assertEqual(estate.graph_names(), ["one-of-type"] * 7, "and the names are remembered once they were found")
+        self.assertEqual(estate.graph_names(), ["one-of-type"], "and the names are remembered once they were found")
 
-    def test_an_incomplete_search_is_not_remembered_as_a_type_without_metrics(self):
-        estate, box, subs, notes = many(10)
-        first = ask(box, "metric_names", type=VM)
-        self.assertEqual((first["total"], first["not_read"]["count"]), (0, 5))
-        estate.rows.append(row(VM, "vm-9", sub=subs[8]))
-        estate.offer(VM, "Percentage CPU")
-        second = ask(box, "metric_names", type=VM)
-        self.assertEqual(second["total"], 1, "the empty answer of the first call was not kept")
-
-    def test_a_search_that_looked_everywhere_and_found_nothing_is_remembered_and_is_not_repeated(self):
+    def test_a_search_that_found_nothing_in_any_subscription_is_remembered_and_is_not_repeated(self):
         estate, box, subs, notes = many(3, seconds=1.0)
         self.assertEqual(ask(box, "metric_names", type=VM)["total"], 0)
         self.assertEqual(ask(box, "metric_names", type=VM)["total"], 0)
-        self.assertEqual(estate.graph_names(), ["one-of-type"] * 3)
+        self.assertEqual(estate.graph_names(), ["one-of-type"], "one read for the three subscriptions, and not again")
 
     def test_the_time_of_a_call_is_its_own_and_a_tool_that_reads_no_subscription_is_never_cut(self):
         estate, box, subs, notes = many(10)
@@ -265,10 +251,12 @@ class WhenThereAreManySubscriptionsAndTimeIsNotShort(unittest.TestCase):
         subs = [subscription(n + 1) for n in range(15)]
         for sub in subs:
             estate.rows.append(row(DISK, f"d-{sub[:8]}", sub=sub))
-        estate.failures["graph"] = [None] + [403] * 14
+        estate.failures["costs"] = [None] + [403] * 14
         notes: list[str] = []
-        answer = ask(toolbox(estate, tuple(subs), notes), "estate_overview")
-        self.assertEqual(len([block for block in answer["subscriptions"] if "error" in block]), 14)
+        box = toolbox(estate, tuple(subs), notes)
+        box.read_workers = 1  # which of the reads is the first is told by the order of the list
+        answer = ask(box, "estate_overview")
+        self.assertEqual(len([block for block in answer["subscriptions"] if block.get("costs") == "unavailable"]), 14)
         self.assertEqual(len(notes), tb.SUBSCRIPTION_NOTES + 1)
         self.assertEqual(sum("could not be read" in note and note[:8] in {s[:8] for s in subs} for note in notes), tb.SUBSCRIPTION_NOTES)
         self.assertTrue(notes[-1].startswith("more subscriptions could not be read"))

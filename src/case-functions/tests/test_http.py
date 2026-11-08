@@ -57,10 +57,13 @@ class TheList(unittest.TestCase):
 
     def test_the_watch_without_a_foundry_project_makes_the_reads_of_azure_and_nothing_else(self):
         plain = http.allowed_calls()
-        self.assertEqual(len(plain), 8)
-        self.assertEqual(sorted(method for method, _ in plain), ["GET"] * 6 + ["POST"] * 2)
-        for _, pattern in plain:
-            self.assertTrue(pattern.pattern.startswith(re.escape("https://management.azure.com")), pattern.pattern)
+        self.assertEqual(len(plain), 19)
+        self.assertEqual(sorted(method for method, _ in plain), ["GET"] * 16 + ["POST"] * 3)
+        for method, pattern in plain:
+            self.assertTrue(pattern.pattern.startswith(re.escape("https://management.azure.com")) or pattern.pattern.startswith(re.escape("https://api.loganalytics.azure.com/v1/workspaces/")),
+                            pattern.pattern)
+            if pattern.pattern.startswith(re.escape("https://api.loganalytics.azure.com")):
+                self.assertEqual((method, pattern.pattern.endswith("/query")), ("POST", True), "the one call to the Logs query API asks a question and is on one host")
         c = http.Client(plain, Redactor(), transport=Script(ok()), sleep=lambda s: None)
         for method, url in (("POST", CHAT), ("POST", DIRECT_CHAT), ("POST", DIRECT_RESOURCE_CHAT), ("POST", "https://management.azure.com/subscriptions/" + SUBSCRIPTION +
                                                                         "/resourceGroups/rg/providers/Microsoft.ApiManagement/service/x/subscriptions/y/listSecrets")):

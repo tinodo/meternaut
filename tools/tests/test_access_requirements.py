@@ -644,11 +644,22 @@ class TheCallsOfTheApp(unittest.TestCase):
     NAMES = {
         "resource-graph-query": lambda m, p: m == "POST" and "ResourceGraph" in p,
         "cost-management-query": lambda m, p: m == "POST" and "CostManagement" in p,
+        "log-analytics-query": lambda m, p: m == "POST" and p.startswith("https://api.loganalytics.azure.com/v1/workspaces/") and p.endswith("/query"),
         "advisor-read": lambda m, p: m == "GET" and "Advisor" in p,
         "locks-read": lambda m, p: m == "GET" and "Authorization" in p and "locks" in p,
         "metric-definitions-read": lambda m, p: m == "GET" and "Microsoft.Insights/metricDefinitions" in p,
         "metrics-read": lambda m, p: m == "GET" and "Microsoft.Insights/metrics" in p,
         "security-pricings-read": lambda m, p: m == "GET" and "Microsoft.Security/pricings" in p,
+        "workspace-read": lambda m, p: m == "GET" and re.search(r"Microsoft\.OperationalInsights/workspaces/[^/]+$", p) is not None,
+        "workspace-tables-read": lambda m, p: m == "GET" and "Microsoft.OperationalInsights/workspaces/" in p and p.endswith("/tables"),
+        "saved-searches-read": lambda m, p: m == "GET" and "Microsoft.OperationalInsights/workspaces/" in p and p.endswith("/savedSearches"),
+        "sentinel-rules-read": lambda m, p: m == "GET" and p.endswith("/providers/Microsoft.SecurityInsights/alertRules"),
+        "workbooks-read": lambda m, p: m == "GET" and p.endswith("/providers/Microsoft.Insights/workbooks"),
+        "diagnostic-settings-read": lambda m, p: m == "GET" and p.endswith("/providers/Microsoft.Insights/diagnosticSettings"),
+        "deployments-read": lambda m, p: m == "GET" and "Microsoft.CognitiveServices/accounts/" in p and p.endswith("/deployments"),
+        "activity-log-read": lambda m, p: m == "GET" and p.endswith("/providers/Microsoft.Insights/eventtypes/management/values"),
+        "benefit-recommendations-read": lambda m, p: m == "GET" and p.endswith("/providers/Microsoft.CostManagement/benefitRecommendations"),
+        "reservation-recommendations-read": lambda m, p: m == "GET" and p.endswith("/providers/Microsoft.Consumption/reservationRecommendations"),
         "disk-read": lambda m, p: m == "GET" and "Microsoft.Compute/disks" in p,
         "public-ip-read": lambda m, p: m == "GET" and "Microsoft.Network/publicIPAddresses" in p,
         "subscriptions-list": lambda m, p: m == "GET" and p.endswith("/subscriptions"),
@@ -708,7 +719,8 @@ class TheCallsOfTheApp(unittest.TestCase):
         self.assertEqual({method for method, _ in allowed}, {"GET", "POST"})
         for method, pattern in allowed:
             if method == "POST":
-                self.assertTrue(any(word in pattern.pattern for word in ("ResourceGraph", "CostManagement")), pattern.pattern)
+                text = pattern.pattern.replace("\\", "")
+                self.assertTrue(any(word in text for word in ("ResourceGraph", "CostManagement", "https://api.loganalytics.azure.com/v1/workspaces/")), pattern.pattern)
         for method, pattern in allowed:
             for word in ("listSecrets", "listKeys", "ApiManagement", "chat/completions"):
                 self.assertNotIn(word, pattern.pattern, f"{method}: the Watch's own list holds no key read, no call to the gateway and no model call")
@@ -760,6 +772,35 @@ class TheCallsOfTheApp(unittest.TestCase):
         for grant in MANIFEST["grants"]:
             if grant["id"] != "R1":
                 self.assertFalse(new & set(grant.get("calls", [])), grant["id"])
+
+    def test_the_deeper_reads_of_the_investigators_tools_are_gets_but_one_and_belong_to_the_reader_or_the_cost_management_reader(self):
+        # What a workspace keeps, the deployments of an account, diagnostic settings and the Activity Log are read with Reader (*/read); the purchase recommendations are read with
+        # Cost Management Reader (Microsoft.CostManagement/*/read, Microsoft.Consumption/*/read). The one POST is the query API of a workspace, which reads and writes nothing.
+        reader = {"workspace-read", "workspace-tables-read", "saved-searches-read", "sentinel-rules-read", "log-analytics-query", "workbooks-read", "diagnostic-settings-read",
+                  "deployments-read", "activity-log-read"}
+        cost = {"benefit-recommendations-read", "reservation-recommendations-read"}
+        methods = {}
+        for method, pattern in self.watch_calls():
+            text = pattern.pattern.replace("\\", "")
+            for name in reader | cost:
+                if self.NAMES[name](method, text):
+                    methods[name] = method
+        self.assertEqual(methods, {name: ("POST" if name == "log-analytics-query" else "GET") for name in reader | cost})
+        grants = {g["id"]: g for g in MANIFEST["grants"]}
+        self.assertEqual((grants["R1"]["role"], reader <= set(grants["R1"]["calls"])), ("Reader", True))
+        self.assertEqual((grants["R2"]["role"], cost <= set(grants["R2"]["calls"])), ("Cost Management Reader", True))
+        self.assertFalse((reader | cost) & (set(grants["R1"]["calls"]) & set(grants["R2"]["calls"])))
+        self.assertFalse(cost & set(grants["R1"]["calls"]))
+        self.assertFalse(reader & set(grants["R2"]["calls"]))
+
+    def test_the_query_api_of_a_workspace_is_asked_by_the_id_of_the_workspace_only_and_on_one_host(self):
+        (pattern,) = [p for m, p in self.watch_calls() if m == "POST" and self.NAMES["log-analytics-query"](m, p.pattern.replace("\\", ""))]
+        guid = "0a1b2c3d-1111-2222-3333-444455556666"
+        self.assertTrue(pattern.fullmatch(f"https://api.loganalytics.azure.com/v1/workspaces/{guid}/query"))
+        for bad in (f"https://api.loganalytics.io/v1/workspaces/{guid}/query", f"https://api.loganalytics.azure.com.evil.example/v1/workspaces/{guid}/query",
+                    f"https://api.loganalytics.azure.com/v1/workspaces/{guid}/query?x=1", "https://api.loganalytics.azure.com/v1/workspaces/DefaultWorkspace/query",
+                    f"https://api.loganalytics.azure.com/v1/workspaces/{guid}/metadata", f"https://api.loganalytics.azure.com/v1/workspaces/{guid}/query/../x"):
+            self.assertFalse(pattern.fullmatch(bad), bad)
 
     def test_the_metric_reads_may_name_any_resource_of_the_estate_and_the_pricing_read_only_a_subscription(self):
         by_name = {}

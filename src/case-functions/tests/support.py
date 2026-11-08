@@ -136,8 +136,8 @@ class FakeEstate:
             failed = self._failure("costs")
             if failed:
                 return failed, {"retry-after": "1"} if failed == 429 else {}, b'{"error":{"code":"Throttled","message":"slow down"}}'
-            return self._json({"properties": {"columns": [{"name": "Cost"}, {"name": "ResourceId"}, {"name": "Currency"}],
-                                              "rows": [[cost, rid, self.currency] for cost, rid in self.cost_rows]}})
+            return self._json({"properties": {"columns": [{"name": "Cost"}, {"name": "ResourceId"}, {"name": "ServiceName"}, {"name": "Currency"}],
+                                              "rows": [[cost, rid, "Storage", self.currency] for cost, rid in self.cost_rows]}})
         if "/providers/microsoft.advisor/recommendations" in path:
             failed = self._failure("advisor")
             return (failed, {}, b'{"error":{"code":"Failed","message":"boom"}}') if failed else self._json({"value": self.advisor})
