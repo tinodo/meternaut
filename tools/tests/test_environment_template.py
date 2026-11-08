@@ -305,7 +305,7 @@ class Workflow(unittest.TestCase):
         options = re.search(r"options:\n((?:          - .+\n)+)", self.text)
         self.assertIsNotNone(options)
         offered = set(re.findall(r"- (\S+)", options.group(1)))
-        used = set(re.findall(r"inputs\.action == '([a-z-]+)'", self.text))
+        used = set(re.findall(r"inputs\.action == '([a-z0-9-]+)'", self.text))
         self.assertTrue(used <= offered, used - offered)
         self.assertTrue(offered <= used, f"an action with no step of its own: {offered - used}")
 
@@ -377,7 +377,7 @@ class Workflow(unittest.TestCase):
                 self.assertIsNotNone(condition, block[:80])
                 self.assertNotIn("what-if", condition.group(1))
                 self.assertNotIn("always()", condition.group(1))
-        self.assertEqual(found, 6, "one publish and five job starts, all in the Operator's container: the publish of the cases app, the check tool that sends the control event, the health check of the cases app, the measurement of the web page's answering time, the check of the web page's front door, and the check of the AI Gateway")
+        self.assertEqual(found, 10, "one publish and nine job starts, all in the Operator's container: the publish of the cases app, the check tool that sends the control event, the health check of the cases app, the measurement of the web page's answering time, the check of the web page's front door, the check of the AI Gateway, and the four checks of the AI security (the second reader of the drift of the agents, the evaluations, the red team and the Agent 365 check)")
         for block in self.steps:
             for word in ("az functionapp deployment source config-zip", "/api/zipdeploy", "az webapp deploy", "az webapp deployment"):
                 self.assertNotIn(word, block, f"no step publishes from the runner any more: {word} is in {block[:80]!r}")
@@ -2149,7 +2149,7 @@ class RetireWorkflow(unittest.TestCase):
         if not match:
             return True
         expression = match.group(1)
-        expression = re.sub(r"inputs\.action == '([a-z-]+)'", lambda m: "True" if m.group(1) == action else "False", expression)
+        expression = re.sub(r"inputs\.action == '([a-z0-9-]+)'", lambda m: "True" if m.group(1) == action else "False", expression)
         # Which of the two steps that knock at the front door runs is decided by an output of the settings step, not by the action: for a question about the action alone either may run.
         expression = re.sub(r"steps\.params\.outputs\.door_in_operator (==|!=) 'true'", "True", expression)
         # Which plan kind the cases app is on is decided by the constant CASES_APP_PLAN, not by the action: for a question about the action alone either may run.
@@ -2414,7 +2414,7 @@ class OperatorWorkflow(unittest.TestCase):
         digest = re.search(r"OPERATOR_IMAGE: (mcr\.microsoft\.com/azure-cli@sha256:[0-9a-f]{64})", self.text).group(1)
         self.assertIn(digest, text("docs/proposals/07-private-by-default.md"))
         self.assertEqual(len(re.findall(r"OPERATOR_IMAGE: ", self.text)), 1, "the pin is made once")
-        self.assertEqual(len(re.findall(r'--image "\$OPERATOR_IMAGE"', self.text)), 7, "and used by the probe, by the check that starts a Watch, by the health check of the cases app, by the measurement of the web page's answering time, by the check of the web page's front door, by the check of the AI Gateway and by the publish")
+        self.assertEqual(len(re.findall(r'--image "\$OPERATOR_IMAGE"', self.text)), 11, "and used by the probe, by the check that starts a Watch, by the health check of the cases app, by the measurement of the web page's answering time, by the check of the web page's front door, by the check of the AI Gateway, by the publish and by the four checks of the AI security")
         self.assertNotIn("az container", self.text, "the tool makes, reads and deletes the group")
 
     def test_the_cleanup_deletes_only_groups_of_the_probe_through_the_tool_and_a_failure_is_a_warning(self):

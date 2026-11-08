@@ -237,7 +237,7 @@ class WorkOutTheFoundrySettings(unittest.TestCase):
 
     def test_the_actions_of_the_workflow_are_the_ones_without_the_three_that_made_objects_on_the_instance(self):
         self.assertEqual(self.ACTIONS, ["what-if", "model-side", "base", "retire-old", "retire-event-hubs", "foundry", "cases", "cases-run", "page-latency", "plant", "loop-check", "operator", "operator-probe",
-                                        "aigateway", "aigateway-check", "governance", "gateway-telemetry", "drift-check"])
+                                        "aigateway", "aigateway-check", "governance", "gateway-telemetry", "drift-check", "agents-drift", "foundry-evals", "foundry-redteam", "agent365-check"])
         for retired in ("gateway-prepare", "gateway", "contract", "recording", "recording-check"):
             self.assertNotIn(retired, self.ACTIONS)
 
@@ -1855,7 +1855,7 @@ class WhatWasDone(unittest.TestCase):
                    "GITHUB_STEP_SUMMARY": summary.as_posix()}
             done = subprocess.run([BASH, "-e", "-o", "pipefail", script.as_posix()], capture_output=True, text=True, env=env, cwd=ROOT)
             text = summary.read_text(encoding="utf-8")
-        return done, actions, dict(re.findall(r"(?ms)^### Hub: ([a-z-]+), \w+\n(.*?)(?=^### Hub: |\Z)", text))
+        return done, actions, dict(re.findall(r"(?ms)^### Hub: ([a-z0-9-]+), \w+\n(.*?)(?=^### Hub: |\Z)", text))
 
     def test_every_action_has_words_for_a_run_that_finished_and_for_one_that_did_not_and_the_shell_says_nothing_of_its_own(self):
         for status in ("success", "failure"):
