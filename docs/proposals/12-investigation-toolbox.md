@@ -39,7 +39,7 @@ All are read only, answers are at most 6,000 characters, and every call is on th
 
 ## What each tool does not tell
 
-- **Volume** is what is charged for, hour by hour from the `Usage` table; it says nothing about whether the data is useful and shows no record.
+- **Volume** is what is charged for, hour by hour from the `Usage` table; it says nothing about what the data is for and shows no record.
 - **Readers** count a table whose name a text holds. A column that has the name of a table counts too, a text that scans every table names none (counted apart, and added to the number that can be cited), a workbook that takes its workspace from a parameter is not counted, and the audit table holds only what was run while the setting was on (the 300 most run texts are read). Meternaut's own queries carry a marker comment that the count leaves out; whether Azure keeps comments in the audit table is not verified.
 - **Writers** by table are read only for the Analytics plan: a read of any other plan is charged by what it scans. Diagnostic settings are read one resource at a time, so no tool lists every resource that sends to a workspace.
 - **Children** have no cost of their own: Cost Management bills the account.

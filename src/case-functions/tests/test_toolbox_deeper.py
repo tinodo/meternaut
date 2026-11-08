@@ -444,35 +444,33 @@ class TheSplit(Base):
         self.assertEqual(ask(self.box, "metric_split", handle=self.account, metric=self.METRIC, dimension="Region"), {"error": "unavailable"})
 
 
-class TheSizesOfGatewaysAndHubs(Base):
-    """The properties that say how big a gateway, a hub, a load balancer or a firewall is reach the tools as numbers, from the shapes that the REST reference documents. The values are invented."""
+class TheSizesOfResources(Base):
+    """The properties that give the size of a resource (its units, its bandwidth, its capacity) reach the tools as numbers, from key names as the REST reference of the network resources
+    documents them. The values and the type are invented."""
 
-    PROPERTIES = {"vpnGatewayScaleUnit": 3, "provisioningState": "Succeeded", "isRoutingPreferenceInternet": False,
-                  "p2SConnectionConfigurations": [{"name": "a", "properties": {"vpnClientAddressPool": {"addressPrefixes": ["10.0.0.0/24"]}}}, {"name": "b"}],
+    PROPERTIES = {"vpnGatewayScaleUnit": 3, "provisioningState": "Succeeded", "connectionConfigurations": [{"name": "a", "properties": {"addressPool": {"addressPrefixes": ["10.0.0.0/24"]}}}, {"name": "b"}],
                   "virtualRouterAutoScaleConfiguration": {"minCapacity": 2}, "serviceProviderProperties": {"bandwidthInMbps": 200}, "autoscaleConfiguration": {"minCapacity": 2, "maxCapacity": 5},
-                  "frontendIPConfigurations": [{}, {}, {}], "loadBalancingRules": [{"properties": {"idleTimeoutInMinutes": 4, "enableFloatingIP": False}}], "threatIntelMode": "Alert",
+                  "frontendIPConfigurations": [{}, {}, {}], "rules": [{"properties": {"timeoutInMinutes": 4, "enableFloatingIP": False}}], "threatIntelMode": "Alert",
                   "provisionedBandwidthInGbps": 10.5, "throughputUnits": 4}
 
-    def test_the_scale_units_the_bandwidth_and_the_capacity_are_shown_and_the_lists_are_counted(self):
+    def test_the_units_the_bandwidth_and_the_capacity_are_shown_and_the_lists_are_counted(self):
         found = dict(tb.typed_properties(self.PROPERTIES))
-        self.assertEqual({key: found[key] for key in ("vpnGatewayScaleUnit", "virtualRouterAutoScaleConfiguration.minCapacity", "serviceProviderProperties.bandwidthInMbps",
-                                                       "autoscaleConfiguration.maxCapacity", "frontendIPConfigurationsCount", "p2SConnectionConfigurationsCount", "provisionedBandwidthInGbps",
-                                                       "throughputUnits")},
-                         {"vpnGatewayScaleUnit": 3, "virtualRouterAutoScaleConfiguration.minCapacity": 2, "serviceProviderProperties.bandwidthInMbps": 200, "autoscaleConfiguration.maxCapacity": 5,
-                          "frontendIPConfigurationsCount": 3, "p2SConnectionConfigurationsCount": 2, "provisionedBandwidthInGbps": 10.5, "throughputUnits": 4})
+        wanted = {"vpnGatewayScaleUnit": 3, "virtualRouterAutoScaleConfiguration.minCapacity": 2, "serviceProviderProperties.bandwidthInMbps": 200, "autoscaleConfiguration.maxCapacity": 5,
+                  "frontendIPConfigurationsCount": 3, "connectionConfigurationsCount": 2, "provisionedBandwidthInGbps": 10.5, "throughputUnits": 4}
+        self.assertEqual({key: found[key] for key in wanted}, wanted)
         self.assertEqual(found["provisioningState"], "Succeeded")
         self.assertNotIn("threatIntelMode", found)  # a text is shown only under the keys of an enumeration that the toolbox lists
-        self.assertNotIn("p2SConnectionConfigurations.properties.vpnClientAddressPool.addressPrefixes", found)  # an address is never shown
+        self.assertNotIn("connectionConfigurations.properties.addressPool.addressPrefixes", found)  # an address is never shown
 
     def test_a_listing_can_order_such_resources_by_their_size(self):
-        gateways = "microsoft.network/p2svpngateways"
-        self.estate.rows = [row(gateways, "small", properties={"vpnGatewayScaleUnit": 1}), row(gateways, "large", properties={"vpnGatewayScaleUnit": 5}),
-                            row(gateways, "middle", properties={"vpnGatewayScaleUnit": 2})]
-        self.estate.cost_rows = [(SUB, 90.0, self.estate.rows[0]["id"].lower(), "Virtual WAN"), (SUB, 10.0, self.estate.rows[1]["id"].lower(), "Virtual WAN")]
-        answer = ask(self.box, "list_resources", type=gateways, order_by="count")
+        kind = "microsoft.network/sizedthings"
+        self.estate.rows = [row(kind, "small", properties={"vpnGatewayScaleUnit": 1}), row(kind, "large", properties={"vpnGatewayScaleUnit": 5}),
+                            row(kind, "middle", properties={"vpnGatewayScaleUnit": 2})]
+        self.estate.cost_rows = [(SUB, 90.0, self.estate.rows[0]["id"].lower(), "Networking"), (SUB, 10.0, self.estate.rows[1]["id"].lower(), "Networking")]
+        answer = ask(self.box, "list_resources", type=kind, order_by="count")
         place = answer["cols"].index("vpnGatewayScaleUnit")
         self.assertEqual([line[place] for line in answer["rows"]], [5, 2, 1])
-        self.assertEqual([line[place] for line in ask(self.box, "list_resources", type=gateways, order_by="cost")["rows"]], [1, 5, 2])
+        self.assertEqual([line[place] for line in ask(self.box, "list_resources", type=kind, order_by="cost")["rows"]], [1, 5, 2])
 
 
 class TheCommitments(Base):
