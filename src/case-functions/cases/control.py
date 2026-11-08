@@ -3,8 +3,8 @@
 The message sits in the Storage queue of the app's host storage account. It carries the job name and a request id and nothing else, so it cannot choose a scope, a model, a
 budget or a detector. A message that is older than 15 minutes (by the time the queue says that it was inserted), names another job or has no valid request id is refused and the
 History says so; a refusal is an answer, so the message is consumed and does not go back to the queue. The Functions host base64-decodes the message text before it gets here.
-A function that raises is tried again, five times in all, and the message then goes to the poison queue of the same name with the suffix -poison; a text that is not base64 goes
-there at once.
+A function that raises is tried again, five times in all (the first try included), and the message then goes to the poison queue of the same name with the suffix -poison
+(https://learn.microsoft.com/azure/azure-functions/functions-bindings-storage-queue-trigger, "Poison messages").
 """
 from __future__ import annotations
 

@@ -2077,9 +2077,9 @@ class EventHubsPrivateOnlyRecord(unittest.TestCase):
 
     def test_the_pages_that_said_that_the_workflow_sends_or_that_the_namespace_is_public_say_the_new_state(self):
         cases = text("docs/proposals/02-first-cases.md")
-        self.assertIn("the deployment workflow starts it, through the Operator, which sends the event from inside the network and reads the result from the telemetry", cases)
-        self.assertIn("The Operator may send to that hub (the deployment workflow's identity held that right until the action `cases` retired it on 2026-11-06); the function reads it", cases)
-        self.assertIn("the namespace takes no public traffic since the action `recording` deployed its template that day, so the runner cannot send to it at all", cases)
+        self.assertIn("the deployment workflow starts it, through the Operator, which puts the message in the queue from inside the network and reads the result from the telemetry", cases)
+        self.assertIn("The Operator may put messages in that queue (*Storage Queue Data Contributor* on the queue alone); the function reads it with the role that its host holds on the account already", cases)
+        self.assertIn("The storage account takes no public traffic, so the runner cannot reach the queue at all", cases)
         self.assertNotIn("The workflow may send to that hub", cases)
         readme = text("README.md")
         self.assertIn("the namespace has been private-only since 2026-11-06, deployed and proven; the code of both function apps is published from inside the network, and the usage app takes no public traffic, deployed and proven; "
