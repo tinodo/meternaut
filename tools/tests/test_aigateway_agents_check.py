@@ -69,7 +69,7 @@ class TheConnectionIsReadBackAndHeldToTheTemplate(unittest.TestCase):
         text = "\n".join(t for _, t in found[len(plain_found):])
         for words in ("of the category ApiManagement and authenticates with the project's own identity (ProjectManagedIdentity)", "audience is https://azure-api.net/aigateway",
                       "target is the gateway's host with the path /default/models/openai/v1", "holds no credentials: the project's identity is the credential",
-                      "not shared with the other projects of the resource", "the model is sent in the body", "lists the models gpt-6-luna, gpt-6.1-sol: each named by its alias"):
+                      "not shared with the other projects of the resource", "the model is sent in the body", "lists the models gpt-6-luna, gpt-6.1-sol, gpt-5.5: each named by its alias"):
             self.assertIn(words.lower(), text.lower(), words)
 
     def test_it_reads_the_connection_with_a_get_of_its_own_and_only_reads(self):

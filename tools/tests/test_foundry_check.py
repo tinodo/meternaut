@@ -353,7 +353,7 @@ class Pages(unittest.TestCase):
         links = [c[c.index("--url") + 1] for c in az.calls if "skiptoken" in c[c.index("--url") + 1]]
         self.assertEqual(links, [next_link("/deployments", 2)], "the second page is asked for with the address that Azure gave")
         found, _ = check(self.paged("/deployments", both[:1], []))
-        self.assertEqual(len(failures(found)), 1, "without the second page a model is missing")
+        self.assertEqual(len(failures(found)), len(MODELS) - 1, "without the second page the models that were on it are missing")
         self.assertIn(f"The deployment {MODELS[1]['name']} is not there", failures(found)[0])
 
     def test_a_connection_on_a_second_page_is_found_and_two_of_them_in_all_are_a_failure(self):

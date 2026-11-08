@@ -146,10 +146,11 @@ AGENTS_VIA_AI_GATEWAY = True
 # environment/cases/main.bicep; a test holds the three together.
 AIGATEWAY_CONNECTION_NAME = "aigateway"
 # The Investigator calls tools, so its model has to take function tools on the Chat Completions route, which is the only route that the Agent Service has for the gateway (Learn: Responses
-# routing for the AI Gateway tier is "coming soon"). The first two real runs (2026-11-08) showed that gpt-6.1-sol refuses function tools together with any reasoning effort there, and that it does not
-# take the effort none (low, medium and high only). So the Investigator is gpt-6-luna, which takes the effort none (INVESTIGATOR_REASONING_EFFORT in src/case-functions/cases/agents.py), and the
-# Skeptic, which has no tools and sends no effort, is the stronger model. A test pins the pair and the reason.
-AGENT_MODELS = {"foundryModelInvestigator": "gpt-6-luna", "foundryModelSkeptic": "gpt-6.1-sol"}
+# routing for the AI Gateway tier is "coming soon"). The first three real runs (2026-11-08) showed that neither GPT-6 model of the gateway can: gpt-6.1-sol and gpt-6-luna refuse function tools
+# together with any reasoning effort there, and refuse the effort none (low, medium and high only). Learn documents that limit for the gpt-5.6 models only, and lists gpt-5.5 (version 2026-04-24)
+# with Chat Completions and function tools and with no such footnote. So the Investigator is gpt-5.5, the third model of environment/models.json, and the Skeptic, which has no tools and sends no
+# effort, is gpt-6.1-sol. A test pins the pair and the reason.
+AGENT_MODELS = {"foundryModelInvestigator": "gpt-5.5", "foundryModelSkeptic": "gpt-6.1-sol"}
 # The host name that the service reports for the gateway (properties.frontend.defaultHostname): under the service's own domain, which the check of the gateway and the workflow ask for too.
 AIGATEWAY_HOST = re.compile(r"^(?=.{4,253}$)[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?\.ai\.gateway\.azure\.com$")
 # What the cases file carries for the gateway's host name in a --preview and in a what-if, where the gateway may not be in Azure yet. It matches the pattern above and is no gateway: the action cases

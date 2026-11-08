@@ -166,7 +166,7 @@ param planTtlHours int = 72
 param foundryProjectEndpoint string = ''
 
 @description('Model of the Investigator agent. By default a deployment in the Foundry resource of the agents (environment/foundry/main.bicep deploys the models of environment/models.json). While the switch AGENTS_VIA_AI_GATEWAY in tools/environment-params.py is on, the workflow passes `<connection>/<alias>` instead: the name of the Foundry project\'s connection to the AI Gateway and the gateway\'s alias for the model.')
-param foundryModelInvestigator string = 'gpt-6-luna'
+param foundryModelInvestigator string = 'gpt-5.5'
 
 @description('Model of the Skeptic agent, as for the Investigator: a deployment in the same resource by default, `<connection>/<alias>` while the switch is on. It has to be another model than the Investigator, so that the Skeptic is more independent.')
 param foundryModelSkeptic string = 'gpt-6.1-sol'

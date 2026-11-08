@@ -184,7 +184,7 @@ class TheBuilderWritesAFileForEachTemplate(unittest.TestCase):
         files, outputs = self.build()
         self.assertEqual({name for name in files if name.startswith("aigateway")}, {"aigateway-subnet.parameters.json", "aigateway.parameters.json", "aigateway-policies.json"})
         self.assertEqual({key: value for key, value in outputs.items() if key.startswith("aigateway_")},
-                         {"aigateway_name": outputs["aigateway_name"], "aigateway_subnet_name": "snet-aigw", "aigateway_subnet_prefix": "10.53.0.128/26", "aigateway_aliases": "gpt-6-luna gpt-6.1-sol",
+                         {"aigateway_name": outputs["aigateway_name"], "aigateway_subnet_name": "snet-aigw", "aigateway_subnet_prefix": "10.53.0.128/26", "aigateway_aliases": "gpt-6-luna gpt-6.1-sol gpt-5.5",
                           "aigateway_files": "true"}, "the outputs are what they were: the action reads the same names")
 
     def test_the_two_parameters_of_the_subnet_moved_to_its_file_and_the_gateways_file_has_neither(self):
