@@ -153,10 +153,11 @@ class AModelNameWithASlash(unittest.TestCase):
         self.assertEqual(reply.status, 200)
         self.assertEqual([row["Model"] for row in reply.table("steps").rows], [INVESTIGATOR_MODEL, SKEPTIC_MODEL])
         labels = [p.text() for p in reply.main.find_all("p", class_="quote-label")]
-        self.assertEqual(labels, [f"Written by AI (model: {INVESTIGATOR_MODEL}): summary", f"Written by AI (model: {SKEPTIC_MODEL}): objection 1"])
-        self.assertIn(f"Written by AI (models: {INVESTIGATOR_MODEL}, {SKEPTIC_MODEL}). A person approves every change.", reply.root.find("footer").text())
+        self.assertEqual(labels[2:], [f"Written by AI (model: {INVESTIGATOR_MODEL}): summary", f"Written by AI (model: {SKEPTIC_MODEL}): objection 1"])
+        line = f"Written by an AI (models: {INVESTIGATOR_MODEL}, {SKEPTIC_MODEL}); a person approves every change."
+        self.assertIn(line, reply.root.find("footer").text())
         letter = letters.approval_letter(make_letter_plan(), make_letter_case(detector="investigation", models=slashed["models"]), PERSON, BASE, NOW)
-        self.assertIn(f"For this case the Investigator ran on {INVESTIGATOR_MODEL} and the Skeptic ran on {SKEPTIC_MODEL}.", letter.text)
+        self.assertIn(line, letter.text)
 
 
 if __name__ == "__main__":

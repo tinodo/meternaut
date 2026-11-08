@@ -11,6 +11,7 @@ GOOD = {"channel": "desk", "language": "en", "timezone": "Europe/Berlin", "worki
         "weekly_budget": "5", "paused_until": "2026-12-01", "mutes": "digest, weekly-desk"}
 STORED = SettingsRecord(oid=TINO, channel="desk", language="en", timezone="Europe/Berlin", working_days=(1, 2, 3), quiet_from="20:00", quiet_to="07:30", desk_day=3,
                         weekly_budget=5, paused_until="2026-12-01T00:00:00Z", mutes=("digest", "weekly-desk"), updated_at="2026-11-05T09:00:00Z")
+OFFERED = {"channel", "quiet_from", "quiet_to", "weekly_budget", "paused_until"}  # what the page of the settings offers; the others are stored and not offered
 
 
 class TheSettingsPage(unittest.TestCase):
@@ -21,60 +22,56 @@ class TheSettingsPage(unittest.TestCase):
     def save_form(self, page=None):
         return (page or self.page).form("/me/settings", has_button="Save settings")
 
-    def test_every_setting_has_a_control_with_a_label(self):
+    def test_every_setting_has_a_control_with_a_label_and_the_old_ones_are_not_offered(self):
         root = self.page.root
-        legends = [l.text() for l in root.find_all("legend")]
-        self.assertEqual(legends, ["Where Meternaut writes to you first", "Working days", "Quiet hours"])
+        self.assertEqual([l.text() for l in root.find_all("legend")], ["Where I write to you first", "Quiet hours"])
         labels = {l.attrs["for"]: l.text() for l in root.find_all("label")}
-        for field_id, text in (("language", "Language"), ("timezone", "Time zone"), ("quiet_from", "Quiet hours start"), ("quiet_to", "Quiet hours end"),
-                               ("desk_day", "Day of the weekly desk"), ("weekly_budget", "Messages a week"), ("paused_until", "Pause messages until"), ("mutes", "Mutes"),
-                               ("channel-email", "E-mail first"), ("channel-teams", "Teams first"), ("channel-desk", "Only the weekly desk")):
+        for field_id, text in (("quiet_from", "No letters from"), ("quiet_to", "No letters until"), ("weekly_budget", "Other letters a week, at most"),
+                               ("paused_until", "Pause my letters until"), ("channel-email", "E-mail"), ("channel-teams", "Teams (not built yet, so e-mail is used)"),
+                               ("channel-desk", "Only the weekly summary")):
             self.assertEqual(labels[field_id], text)
-        self.assertEqual([labels[f"working_days-{n}"] for n in range(1, 8)], ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"])
+        for gone in ("language", "timezone", "working_days", "desk_day", "mutes"):
+            self.assertIsNone(root.find(id=gone), f"{gone} is not offered on the page")
+        self.assertEqual(set(self.save_form().fields) - {"nonce"}, {"channel", "quiet_from", "quiet_to", "weekly_budget", "paused_until"})
 
     def test_one_line_says_what_is_stored_and_not_applied_yet_and_it_is_the_only_one(self):
         line = self.page.root.find("div", id="not-applied")
-        self.assertEqual(line.text(), "Not applied yet: Teams first, working days, quiet hours and mutes. They are stored, and no message follows them yet.")
-        self.assertEqual(NOT_APPLIED, "Teams first, working days, quiet hours and mutes. They are stored, and no message follows them yet.")
+        self.assertEqual(line.text(), "Quiet hours are saved and not applied yet: a letter can arrive at any time.")
+        self.assertEqual(NOT_APPLIED, line.text())
         content = self.page.content
         self.assertEqual(content.lower().count("not applied"), 1, "the words are in one place only")
-        self.assertLess(content.index("Not applied yet:"), content.index("Where Meternaut writes to you first"), "the line comes before the inputs that it is about")
-        for old in ("Stored. Not applied to approval requests yet.", "Stored. Not applied to messages yet.", "stored and not applied yet"):
+        self.assertLess(content.index("not applied yet"), content.index("Where I write to you first"), "the line comes before the inputs that it is about")
+        for old in ("Stored. Not applied to approval requests yet.", "Stored. Not applied to messages yet.", "stored and not applied yet", "Teams first, working days"):
             self.assertNotIn(old, content)
         self.assertIsNone(self.page.root.find("fieldset", id="quiet-hours").find("p", class_="hint"), "no second note under the quiet hours")
-        self.assertIsNone(self.page.root.find("p", id="working_days-hint"), "no second note under the working days")
 
     def test_the_line_is_also_on_the_page_that_shows_a_refusal(self):
         form = self.save_form()
         reply = self.console.post("/me/settings", {**form.fields, **GOOD, "weekly_budget": "11"})
         self.assertEqual(reply.status, 400)
         self.assertEqual(reply.content.lower().count("not applied"), 1)
-        self.assertEqual(reply.root.find("div", id="not-applied").text(), f"Not applied yet: {NOT_APPLIED}")
+        self.assertEqual(reply.root.find("div", id="not-applied").text(), NOT_APPLIED)
 
     def test_the_notes_under_the_inputs_say_what_the_sender_of_messages_does(self):
         root = self.page.root
         channel = root.find("p", id="channel-hint").text()
         self.assertEqual(channel, CHANNEL_HINT)
-        self.assertEqual(channel, "With only the weekly desk, no message is sent except the weekly one. Requests that wait for your OK stay on the home page.")
+        self.assertEqual(channel, "With only the weekly summary, no other letter is sent. A request that waits for your answer is on the Decisions page whatever you choose.")
         pause = root.find("p", id="paused_until-hint").text()
-        self.assertIn("No message is sent before 00:00 UTC on this date.", pause)
+        self.assertEqual(pause, "Leave it empty for no pause. A date from 2026-11-06 to 2027-11-06.")
         budget = root.find("p", id="weekly_budget-hint").text()
         self.assertEqual(budget, WEEKLY_BUDGET_HINT)
-        self.assertEqual(budget, "How many other messages a week I may send you. 0 means only the weekly desk. Requests that wait for your OK, the first message to you, and "
-                                 "messages that tell you what a change did are never counted or held by this number.")
-        self.assertEqual(root.find("p", id="mutes-hint").text(), "Short words for kinds of messages to silence, separated by commas.")
+        self.assertEqual(budget, "How many other letters a week. 0 means only the weekly summary. A request that waits for your answer and the first letter to you are never counted.")
 
     def test_the_starting_values_are_those_of_the_record(self):
         fields = self.save_form().fields
-        self.assertEqual({k: v for k, v in fields.items() if k != "nonce"},
-                         {"channel": "email", "language": "en", "timezone": "Europe/Amsterdam", "working_days": "1,2,3,4,5", "quiet_from": "18:00", "quiet_to": "08:00",
-                          "desk_day": "2", "weekly_budget": "3", "paused_until": "", "mutes": ""})
+        self.assertEqual({k: v for k, v in fields.items() if k != "nonce"}, {"channel": "email", "quiet_from": "18:00", "quiet_to": "08:00", "weekly_budget": "3", "paused_until": ""})
 
     def test_the_stored_values_are_shown(self):
         self.console.store.settings_put(STORED)
         fields = self.save_form(self.console.get("/me/settings")).fields
-        for name, value in GOOD.items():
-            self.assertEqual(fields[name], value, name)
+        for name in ("channel", "quiet_from", "quiet_to", "weekly_budget", "paused_until"):
+            self.assertEqual(fields[name], GOOD[name], name)
 
     def test_the_time_inputs_and_the_number_and_the_date_have_their_limits_in_the_page_too(self):
         root = self.page.root
@@ -84,11 +81,22 @@ class TheSettingsPage(unittest.TestCase):
         paused = root.find("input", id="paused_until")
         self.assertEqual((paused.attrs["type"], paused.attrs["min"], paused.attrs["max"]), ("date", "2026-11-06", "2027-11-06"))
 
+    def test_the_copy_the_deletion_and_the_notes_are_under_one_closed_disclosure(self):
+        (disclosure,) = self.page.main.find_all("details")
+        self.assertEqual(disclosure.find("summary").text(), "Your data and your notes")
+        self.assertNotIn("open", disclosure.attrs)
+        self.assertEqual([f.action for f in self.page.forms()], ["/me/settings", "/me/settings/export", "/me/settings/delete"])
+        self.assertEqual([a.attrs["href"] for a in disclosure.find_all("a")], ["/me/notes"])
+        outside = self.page.main.text().replace(disclosure.text(), "")
+        for inside in ("Download my settings and notes", "Delete my settings and notes", "Your notes and do-not-touch marks"):
+            self.assertIn(inside, disclosure.text())
+            self.assertNotIn(inside, outside)
+
     def test_a_person_sees_their_own_settings_and_nobody_elses(self):
         self.console.store.settings_put(STORED)
-        self.console.store.settings_put(SettingsRecord(oid=MAYA, channel="teams", mutes=("maya-only",)))
-        self.assertNotIn("maya-only", self.console.get("/me/settings").text)
-        self.assertIn("maya-only", self.console.get("/me/settings", oid=MAYA).text)
+        self.console.store.settings_put(SettingsRecord(oid=MAYA, channel="teams", quiet_from="21:15"))
+        self.assertNotIn("21:15", self.console.get("/me/settings").text)
+        self.assertIn("21:15", self.console.get("/me/settings", oid=MAYA).text)
 
     def test_settings_that_cannot_be_read_show_the_starting_values_and_say_so(self):
         console = Console(store=FailingStore(fail={"settings_get"}, clock=lambda: NOW))
@@ -147,27 +155,29 @@ class SavingSettings(unittest.TestCase):
                     self.assertIn("There is a problem", reply.headings(2))
                     self.assertIn("Nothing was saved.", reply.content)
                     links = [a.attrs["href"] for a in reply.root.find("h2", id="problem-title").parent.find_all("a")]
-                    self.assertEqual(links, [f"#{name}"], "the list of problems links to the field")
-                    self.assertIsNotNone(reply.root.find(id=name), "the link goes to an element of the page")
-                    self.assertIsNotNone(reply.root.find("p", id=f"{name}-error"), "the field shows its own message")
+                    anchor = name if name in OFFERED else "channel"
+                    self.assertEqual(links, [f"#{anchor}"], "the list of problems links to the field, or to the first field for a field that the page does not offer")
+                    self.assertIsNotNone(reply.root.find(id=anchor), "the link goes to an element of the page")
+                    if name in OFFERED:
+                        self.assertIsNotNone(reply.root.find("p", id=f"{name}-error"), "the field shows its own message")
         self.assertEqual(snapshot(self.console.store), before)
 
     def test_every_problem_is_reported_at_once_and_what_was_typed_is_kept(self):
-        reply = self.post(channel="sms", timezone="Nowhere/Land", weekly_budget="99", mutes="Bad Word!")
+        reply = self.post(channel="sms", quiet_from="25:00", weekly_budget="99", timezone="Nowhere/Land")
         self.assertEqual(reply.status, 400)
         links = [a.attrs["href"] for a in reply.root.find("h2", id="problem-title").parent.find_all("a")]
-        self.assertEqual(sorted(links), ["#channel", "#mutes", "#timezone", "#weekly_budget"])
+        self.assertEqual(sorted(links), ["#channel", "#channel", "#quiet_from", "#weekly_budget"])
         fields = reply.form("/me/settings", has_button="Save settings").fields
-        self.assertEqual((fields["timezone"], fields["weekly_budget"], fields["mutes"]), ("Nowhere/Land", "99", "Bad Word!"))
-        self.assertEqual(fields["quiet_from"], "20:00", "what was right is kept too")
+        self.assertEqual((fields["quiet_from"], fields["weekly_budget"]), ("25:00", "99"))
+        self.assertEqual(fields["quiet_to"], "07:30", "what was right is kept too")
 
     def test_the_messages_say_what_is_wrong(self):
-        for name, value, message in (("channel", "sms", "Choose e-mail first, Teams first or only the weekly desk."), ("language", "nl", "English is the only language at present."),
+        for name, value, message in (("channel", "sms", "Choose e-mail, Teams or only the weekly summary."), ("language", "nl", "English is the only language at present."),
                                      ("timezone", "Nowhere/Land", "Enter a time zone name that exists, for example Europe/Amsterdam."),
                                      ("working_days", "", "Choose at least one working day."), ("working_days", "9", "Choose working days from Monday (1) to Sunday (7), each once."),
                                      ("quiet_from", "25:00", "Quiet hours start must be a time as HH:MM, from 00:00 to 23:59."),
                                      ("quiet_to", "25:00", "Quiet hours end must be a time as HH:MM, from 00:00 to 23:59."),
-                                     ("desk_day", "9", "Choose the day of the weekly desk, from Monday (1) to Sunday (7)."),
+                                     ("desk_day", "9", "Choose the day of the weekly summary, from Monday (1) to Sunday (7)."),
                                      ("weekly_budget", "11", "Enter a whole number from 0 to 10."),
                                      ("paused_until", "2026-11-05", "Enter a date from 2026-11-06 to 2027-11-06 as YYYY-MM-DD, or leave it empty."),
                                      ("mutes", "Bad Word!", "Use short words of letters, digits and hyphens, up to 24 characters each, separated by commas.")):

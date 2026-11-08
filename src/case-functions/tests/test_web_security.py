@@ -1,8 +1,8 @@
 import re
 import unittest
 
-from test_web_support import (HOST, MAYA, OPS, OWNER, SIGNIN_URL, STRANGER, TINO, XSS, XSS_ESCAPED, Console, FailingStore, make_action, make_case, make_decision, make_plan,
-                              make_run, at, snapshot)
+from test_web_support import (HOST, MAYA, OPS, OWNER, SIGNIN_URL, STRANGER, TINO, XSS, XSS_ESCAPED, Console, FailingStore, make_action, make_advice, make_advice_case, make_case,
+                              make_decision, make_plan, make_run, at, snapshot)
 
 from cases.models import ActionRecord, Begun, DecideResult, NoteRecord, SettingsRecord, SwitchRecord
 from cases.people import People, Person
@@ -18,12 +18,14 @@ REQUIRED = {
     "Referrer-Policy": "same-origin",
     "Cache-Control": "no-store",
 }
-GET_PATHS = ["/", "/ok/plan0001", "/why/case0001", "/history", "/history?run=run00001", "/me/decisions", "/me/activity", "/me/settings", "/me/notes",
-             "/ops/permissions", "/ops/pause"]
+GET_PATHS = ["/", "/ok/plan0001", "/ok/plan0002", "/why/case0001", "/why/case0002", "/history", "/me/decisions", "/me/activity", "/me/settings", "/me/notes", "/ops", "/ops/runs",
+             "/ops/runs?run=run00001", "/ops/permissions", "/ops/pause"]
+# The one address outside the console that a page may hold: the page of the resource in the Azure portal, made from a resource id that code checked, on a brief page only.
+PORTAL = re.compile(r"^https://portal\.azure\.com/#resource/subscriptions/[0-9A-Fa-f-]{36}/resourceGroups/[A-Za-z0-9._()-]{1,90}/providers/[A-Za-z0-9.]{1,80}(?:/[A-Za-z0-9._()~-]{1,100}){2,16}$")
 # Where the sign-in to Azure sends the person back to. It is the one GET that goes on to a change, and only through the delegate and with the one-time state of the sign-in.
 RETURN = "/arm/return?code=" + "c" * 24 + "&state=" + "s" * 24
-RESULT_KINDS = ("declined", "asked", "not_mine", "ran", "ran_unconfirmed", "stopped", "azure_refused", "failed", "signin_failed", "step_up_failed", "refused_code", "refused_state",
-                "refused_role", "refused_paused", "expired", "duplicate", "error")
+RESULT_KINDS = ("declined", "asked", "later", "acknowledged", "not_mine", "ran", "ran_unconfirmed", "stopped", "azure_refused", "failed", "signin_failed", "step_up_failed",
+                "refused_code", "refused_state", "refused_role", "refused_paused", "expired", "duplicate", "error")
 # The kinds whose page shows the message of the result.
 SHOWS_THE_MESSAGE = ("ran", "ran_unconfirmed", "stopped", "azure_refused", "failed", "signin_failed", "step_up_failed", "refused_state", "error")
 
@@ -33,12 +35,16 @@ def seeded() -> Console:
     console.seed()
     console.store.action_put(make_action())
     console.store.decision_put(make_decision())
+    console.store.case_put(make_advice_case())
+    console.store.plan_put(make_advice())
     return console
 
 
 def active_content(reply) -> list[str]:
-    """Everything in a page that could run or load something: scripts, event handlers, frames, scripted or outside addresses."""
+    """Everything in a page that could run or load something: scripts, event handlers, frames, scripted or outside addresses. The one link to the Azure portal is allowed,
+    once, with rel="noopener" and an address that has the shape of the page of one resource."""
     problems = []
+    portal = 0
     for node in reply.root.walk():
         if node.tag in ("script", "iframe", "object", "embed", "base", "frame", "applet", "svg", "canvas", "img", "video", "audio"):
             problems.append(f"<{node.tag}>")
@@ -49,8 +55,12 @@ def active_content(reply) -> list[str]:
                 problems.append(f"{name} on <{node.tag}>")
             if name in ("href", "src", "action", "formaction", "data", "poster", "srcset"):
                 target = value.strip().lower()
-                if target.startswith(("javascript:", "data:", "vbscript:", "http:", "https:", "//", "ftp:")):
+                if node.tag == "a" and name == "href" and PORTAL.fullmatch(value) and node.attrs.get("rel") == "noopener":
+                    portal += 1
+                elif target.startswith(("javascript:", "data:", "vbscript:", "http:", "https:", "//", "ftp:")):
                     problems.append(f"{name}={value}")
+    if portal > 1:
+        problems.append("more than one link to the Azure portal")
     return problems
 
 
@@ -218,7 +228,7 @@ class NoActiveContent(unittest.TestCase):
                     self.assertNotIn("<script", reply.text.lower())
                     self.assertEqual(reply.problems, [])
                     for href in reply.links():
-                        self.assertRegex(href, r"^(/|#|mailto:)")
+                        self.assertRegex(href, r"^(/|#)")
 
     def test_the_style_loads_nothing(self):
         reply = seeded().get("/")
@@ -227,10 +237,20 @@ class NoActiveContent(unittest.TestCase):
         self.assertNotIn("@import", style)
         self.assertNotIn("http", style)
 
-    def test_the_only_links_are_to_pages_of_the_console_and_to_the_people_who_can_be_written_to(self):
-        reply = seeded().get("/ok/plan0001")
-        for href in reply.links():
-            self.assertRegex(href, r"^(/|#|mailto:)")
+    def test_the_only_links_are_to_pages_of_the_console_and_the_brief_page_adds_the_one_link_to_the_azure_portal(self):
+        console = seeded()
+        for path in GET_PATHS:
+            reply = console.get(path)
+            outside = [href for href in reply.links() if not href.startswith(("/", "#"))]
+            with self.subTest(path=path):
+                self.assertNotIn("mailto:", reply.text, "the person to talk to is plain text, never a link")
+                if path.startswith(("/ok/plan", "/why/case")):
+                    self.assertEqual(len(outside), 1)
+                    self.assertRegex(outside[0], PORTAL)
+                else:
+                    self.assertEqual(outside, [])
+        portal = console.get("/ok/plan0001").root.find("a", rel="noopener")
+        self.assertEqual(portal.text(), "Open in the Azure portal")
 
 
 class SignIn(unittest.TestCase):
@@ -499,6 +519,9 @@ class XssEverywhere(unittest.TestCase):
                                  steps=({"step": XSS, "model": XSS, "promptTokens": XSS, "completionTokens": XSS, "ms": XSS, "ok": XSS, "note": XSS},),
                                  facts={XSS: XSS, "list": [XSS], "nested": {XSS: XSS}}, plan_id="plan0001", run_id="run00001"))
         store.case_put(make_case(case_id='odd"><b>id', resource_name="odd id", plan_id=None, run_id="run00001"))
+        store.case_put(make_advice_case(resource_name=XSS, resource_group=XSS, summary=XSS, objections=(XSS,), models={"investigator": XSS, "skeptic": XSS}, status="needs_human",
+                                        owner={"tagOwner": XSS, "tagName": XSS, "createdBy": XSS, "changedBy": XSS, "changedAt": XSS, "lookedUp": True}))
+        store.plan_put(make_advice(resource_name=XSS, resource_group=XSS, title=XSS, approvers=(TINO, MAYA), state="open"))
         store.plan_put(make_plan(title=XSS, what_changes=XSS, could_go_wrong=XSS, undo=XSS, evidence_level=XSS, resource_name=XSS, resource_group=XSS, resource_id=XSS,
                                  code="7F3K92QD", family=XSS, approvers=(TINO, MAYA), state=state))
         store.action_put(ActionRecord("plan0001", "case0001", XSS, XSS, "queued", at(minutes=-1), result=XSS, error=XSS,
@@ -510,8 +533,8 @@ class XssEverywhere(unittest.TestCase):
 
     def test_the_payload_is_escaped_on_every_page_and_never_becomes_a_tag_or_a_handler(self):
         console = self.console()
-        shows_records = ["/", "/why/case0001", "/history", "/me/decisions", "/me/activity", "/me/notes", "/ops/pause", "/ops/permissions", "/ok/plan0001"]
-        for path in GET_PATHS + ["/history?run=run00001"]:
+        shows_records = ["/", "/why/case0001", "/history", "/me/decisions", "/me/activity", "/me/notes", "/ops/pause", "/ops/permissions", "/ok/plan0001", "/ops/runs"]
+        for path in GET_PATHS:
             for oid in (TINO, MAYA):
                 with self.subTest(path=path, oid=oid):
                     reply = console.get(path, oid=oid)
@@ -528,8 +551,8 @@ class XssEverywhere(unittest.TestCase):
     def test_the_payload_is_escaped_on_the_pages_that_answer_a_post(self):
         console = self.console(state="open")
         text = "<script>alert(1)</script>" * 20
-        form = console.get("/ok/plan0001").form("/ok/plan0001/ask")
-        reply = console.submit(form, note=text)
+        form = console.get("/ok/plan0001").form("/ok/plan0001")
+        reply = console.submit(form, "Ask or tell", note=text)
         self.assertEqual(reply.status, 400)
         self.assertNotIn("<script", reply.text.lower())
         self.assertIn("&lt;script&gt;alert(1)&lt;/script&gt;", reply.text)
@@ -548,7 +571,7 @@ class XssEverywhere(unittest.TestCase):
 
     def test_an_id_with_characters_that_are_not_for_an_address_is_made_safe_in_the_link(self):
         console = self.console()
-        links = console.get("/history").links()
+        links = console.get("/ops/runs").links()
         self.assertIn("/why/odd%22%3E%3Cb%3Eid", links)
         self.assertEqual(console.get("/why/odd%22%3E%3Cb%3Eid").status, 404, "the id of a link is not decoded: only plain ids are routed")
 
@@ -614,8 +637,8 @@ class XssEverywhere(unittest.TestCase):
 class Routing(unittest.TestCase):
     def test_an_unknown_path_is_a_plain_404(self):
         console = seeded()
-        for path in ("/nothing", "/ok", "/ok/", "/ok/a/b", "/why", "/me", "/ops", "/me/settings/other", "/index.html", "/ok/%2e%2e", "/ok/a%20b", "//", "/history/x",
-                     "/ok/plan0001/withdraw", "/arm", "/arm/return/x", "/arm/Return", "/arm//return"):
+        for path in ("/nothing", "/ok", "/ok/", "/ok/a/b", "/why", "/me", "/ops/other", "/ops/runs/x", "/me/settings/other", "/index.html", "/ok/%2e%2e", "/ok/a%20b", "//",
+                     "/history/x", "/ok/plan0001/withdraw", "/arm", "/arm/return/x", "/arm/Return", "/arm//return"):
             with self.subTest(path=path):
                 reply = console.get(path)
                 self.assertEqual(reply.status, 404)
@@ -623,7 +646,8 @@ class Routing(unittest.TestCase):
 
     def test_a_known_path_with_the_wrong_method_is_a_405_that_says_what_is_allowed(self):
         console = seeded()
-        for method, path, allowed in (("POST", "/", "GET, HEAD"), ("POST", "/history", "GET, HEAD"), ("GET", "/me/settings/export", "POST"), ("GET", "/ok/plan0001/ask", "POST"),
+        for method, path, allowed in (("POST", "/", "GET, HEAD"), ("POST", "/history", "GET, HEAD"), ("POST", "/ops", "GET, HEAD"), ("POST", "/ops/runs", "GET, HEAD"),
+                                      ("GET", "/me/settings/export", "POST"), ("GET", "/ok/plan0001/ask", "POST"),
                                       ("POST", "/why/case0001", "GET, HEAD"), ("GET", "/me/settings/delete", "POST"), ("GET", "/me/notes/n1/delete", "POST"),
                                       ("POST", "/arm/return", "GET"), ("GET", "/ok/plan0001/not-mine", "POST")):
             with self.subTest(method=method, path=path):
@@ -649,7 +673,7 @@ class Routing(unittest.TestCase):
         reply = console.get("/")
         self.assertEqual(reply.status, 200)
         for href in reply.links():
-            if href.startswith(("mailto:", "#")):
+            if href.startswith(("https://portal.azure.com/", "#")):
                 continue
             self.assertTrue(href.startswith("/api/") or href == "/api/", href)
         self.assertEqual(console.get("/healthz", oid=None).text, "ok")
@@ -666,7 +690,7 @@ class Routing(unittest.TestCase):
         console.delegate.finished = DecideResult(True, "ran", "Deleted.", make_plan())
         reply = console.get("/arm/return", query={"state": "s" * 24})
         self.assertEqual((reply.status, reply.headings(1)), (200, ["The change was made"]))
-        self.assertIn("/api/me/decisions", reply.links())
+        self.assertIn("/api/history", reply.links())
         self.assertIn("/api/ok/plan0001", reply.links())
         for href in reply.links():
             if not href.startswith(("mailto:", "#")):
@@ -699,7 +723,9 @@ class Determinism(unittest.TestCase):
         self.assertIn("Sun 8 Nov 2026 08:00 UTC", console.get("/ok/plan0001").content)
         console.now = console.now.replace(day=9)
         reply = console.get("/ok/plan0001")
-        self.assertIn("This request expired on Sun 8 Nov 2026 08:00 UTC", reply.content)
+        self.assertIn("Nobody answered in time. Nothing changed.", reply.content)
+        self.assertIn("Sun 8 Nov 2026 08:00 UTC", reply.content)
+        self.assertNotIn("Open until", reply.content)
 
 
 if __name__ == "__main__":
