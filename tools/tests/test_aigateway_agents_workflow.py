@@ -332,20 +332,20 @@ case "$*" in
   *) echo "unexpected az call: $*" >&2; exit 9 ;;
 esac
 """
-    ENV = {"ENV_SUBSCRIPTION_ID": SUBSCRIPTION, "ENV_RESOURCE_GROUP": GROUP, "STORAGE_ACCOUNT": "stmeternautfn0123abcd", "EVENT_HUB_NAMESPACE": "evhns-meternaut-0123abcd",
+    ENV = {"ENV_SUBSCRIPTION_ID": SUBSCRIPTION, "ENV_RESOURCE_GROUP": GROUP, "STORAGE_ACCOUNT": "stmeternautfn0123abcd",
            "FOUNDRY_ACCOUNT": ACCOUNT, "FOUNDRY_PROJECT": PROJECT, "CONNECTION_NAME": "aigateway"}
 
     def check(self, **changes):
         return run_step(PRECHECK, {"az": self.AZ}, {**self.ENV, **changes})
 
-    def test_the_step_needs_the_bases_storage_account_and_namespace_and_nothing_of_the_gateway_or_the_contract(self):
+    def test_the_step_needs_the_bases_storage_account_and_nothing_of_the_gateway_or_the_contract(self):
         done, lines, _, _ = self.check()
         self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
         self.assertEqual([line for line in lines if line.startswith("az ")], [line for line in lines if line.startswith("az resource list ")])
-        self.assertEqual(len(lines), 2, "one read for the storage account and one for the namespace")
+        self.assertEqual(len(lines), 1, "one read, for the storage account: the control queue is made in it, and there is no namespace")
         for word in ("ApiManagement", "gatewayUrl", "listSecrets", "/subscriptions/66666666", "subscriptions?"):
             self.assertFalse([line for line in lines if word in line], word)
-        self.assertIn("The base's storage account and namespace are there.", done.stdout)
+        self.assertIn("The base's storage account is there.", done.stdout)
         self.assertNotIn("contract", done.stdout.lower())
         code = "\n".join(line for line in script_of(PRECHECK).splitlines() if not line.strip().startswith("#"))
         for word in ("GATEWAY_RESOURCE_ID", "CONTRACT_SUBSCRIPTION", "EXPECTED_GATEWAY_URL", "primaryKey", "gatewayUrl"):
@@ -353,10 +353,10 @@ esac
         self.assertNotIn("CONTRACT_SUBSCRIPTION", step(PRECHECK))
         self.assertNotIn("steps.params.outputs.gateway_url", step(PRECHECK))
 
-    def test_a_missing_storage_account_or_namespace_stops_the_step_and_says_to_run_base_first(self):
+    def test_a_missing_storage_account_stops_the_step_and_says_to_run_base_first(self):
         done, _, _, _ = run_step(PRECHECK, {"az": self.AZ.replace("""printf '%s' "found" """, "printf ''")}, dict(self.ENV))
         self.assertEqual(done.returncode, 1)
-        self.assertIn("Run base first: the first cases use its storage account and namespace.", done.stdout)
+        self.assertIn("Run base first: the first cases use its storage account, and their control queue is made in it.", done.stdout)
 
     def test_while_the_switch_is_off_the_step_is_what_it_was_and_does_not_look_for_the_connection(self):
         for off in ({}, {"AGENTS_VIA_AI_GATEWAY": ""}, {"AGENTS_VIA_AI_GATEWAY": "false"}):
