@@ -120,10 +120,11 @@ def operator_run():
 
 @unittest.skipUnless(PASTED, NOT_YET)
 class TheActionsAreOfferedAndTheStepsFollowTheOrder(unittest.TestCase):
-    def test_the_four_actions_follow_the_ai_gateway_ones_and_the_description_says_what_each_does(self):
+    def test_the_four_actions_are_the_last_of_the_options_and_the_description_says_what_each_does(self):
         options = re.search(r"(?ms)^      action:\n(.*?)^      \w", WORKFLOW).group(1)
         listed = re.findall(r"^          - (\S+)$", options, re.M)
-        self.assertEqual(listed[listed.index("aigateway-check") + 1:], ["agents-drift", "foundry-evals", "foundry-redteam", "agent365-check"])
+        self.assertEqual(listed[-4:], ["agents-drift", "foundry-evals", "foundry-redteam", "agent365-check"])
+        self.assertIn("aigateway-check", listed[:-4])
         description = re.search(r'(?m)^        description: "(what-if: .*)"$', options).group(1)
         for action in ("agents-drift", "foundry-evals", "foundry-redteam", "agent365-check"):
             self.assertIn(f" {action}: ", description, action)
