@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Runs the Hub workflow's own steps for one action on the owner's machine, with the owner's own az session (standard library only).
 
-    python tools/hub-local.py <action> [--minutes N] [--public-ai-gateway-requested] [--plant-public-ip] [--evals-command C] [--evals-judge J] [--redteam-mode M]
+    python tools/hub-local.py <action> [--minutes N] [--public-ai-gateway-requested] [--public-teams-bot-requested] [--plant-public-ip] [--evals-command C] [--evals-judge J] [--redteam-mode M]
                                        [--yes] [--allow-dirty] [--dry-run] [--workflow PATH]
     python tools/hub-local.py --init [--from-github]
 
@@ -10,9 +10,13 @@ rule 18). No GitHub workflow changes Azure any more. The logic of every deploy i
 and runs them here, one after the other, with the values that GitHub held as variables and secrets (the git-ignored local/hub-local.env). The workflow is not copied or translated: when it
 changes, the next run follows it, as long as its layout stays the one that tools/workflow-lint.py enforces.
 
-THE HUB IS THIS TOOL NOW. The tools that the steps call (tools/az-deploy.py, retire-old.py, cases-move.py, aigateway-prep.py, aigateway-check.py, check-helpers.py, operator-run.py) accept
-only a run of the Hub and refuse unless GITHUB_ACTIONS is true. This tool gives its steps GITHUB_ACTIONS=true and METERNAUT_HUB_LOCAL=1, because the local Hub is the Hub: it is not a way round
-a guard. The guards that matter here are this tool's own: the owner's az session, the action's options, --yes for an action that changes Azure, a clean working tree, one run at a time, and
+THE HUB IS THIS TOOL NOW. The tools that the steps call and that change Azure (tools/az-deploy.py create, retire-old.py, cases-move.py, aigateway-prep.py, operator-run.py) accept only a run
+of the Hub (tools/hubguard.py): a real GitHub runner, or a process that holds the proof of a run of this tool. GITHUB_ACTIONS=true alone is not enough, because any process on this machine can set
+it: a stray call would skip every guard that only this tool has. So each run makes a proof: a random token in local/rt/<run>/hub-proof, the run's number and the SHA-256 of the token in the lock,
+and METERNAUT_HUB_PROOF in the environment of every step. The file is deleted when the run ends, after a failure and after Ctrl+C too, and the token is never printed or written to the log or the
+record. This stops an accident and a stray call. It does not stop a process that holds the owner's az session: that can call az itself. The steps still get GITHUB_ACTIONS=true and
+METERNAUT_HUB_LOCAL=1: the workflow passes the first on to the Operator's container, whose tools (aigateway-check.py, check-helpers.py, aisec-helpers.py) have no run lock to compare with and keep
+the old test. The guards that matter here are this tool's own: the owner's az session, the action's options, --yes for an action that changes Azure, a clean working tree, one run at a time, and
 a configuration file that git ignores.
 
 Where it keeps its files: the git-ignored local/ folder of the repository's MAIN working tree (the parent of `git rev-parse --git-common-dir`), so that every worktree finds the same
@@ -34,8 +38,10 @@ of the deploy identity inside the Operator (the probe goes on without it, and sa
 The configuration names every variable and secret that the workflow reads. Two repository variables are optional, DRIFT_ACCEPTED_EXEMPTIONS and DRIFT_ACCEPTED_DENY (what the owner accepted of the
 policy state): GitHub reads one that is not set as empty, and so does this tool. A run says so in its plan. Any other name that is missing from the file stops the plan.
 
-The inputs of the workflow are flags: --minutes (page-latency), --plant-public-ip (plant), --public-ai-gateway-requested (aigateway), --evals-command and --evals-judge (foundry-evals) and
---redteam-mode (foundry-redteam). A flag that is not given has the workflow's own default, and the plan prints the value that each input has. An action that only reads needs no --yes:
+The inputs of the workflow are flags: --minutes (page-latency), --plant-public-ip (plant), --public-ai-gateway-requested (aigateway), --public-teams-bot-requested (teams), --evals-command and
+--evals-judge (foundry-evals) and --redteam-mode (foundry-redteam). A flag that is not given has the workflow's own default, and the plan prints the value that each input has. The action teams
+also reads one repository variable that no other action reads, TEAMS_BOT_ENABLED: the owner adds the line TEAMS_BOT_ENABLED=True to the configuration file, after his written request for the
+Teams bot; the other actions never read it, so they need no such line. An action that only reads needs no --yes:
 what-if, aigateway-check, page-latency, loop-check, operator-probe, drift-check, agents-drift, agent365-check, and foundry-evals with the command probe or rule. Every other action changes
 Azure, and so does an action that this tool does not know.
 
@@ -51,10 +57,12 @@ import argparse
 import dataclasses
 import datetime as dt
 import hashlib
+import importlib.util
 import json
 import math
 import os
 import re
+import secrets
 import shlex
 import shutil
 import stat
@@ -69,26 +77,35 @@ from typing import Any, Callable, Optional
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_WORKFLOW = ROOT / ".github" / "workflows" / "deploy-hub.yml"
 
+# What the tools that change Azure ask before they run (tools/hubguard.py): this tool makes the proof that a run of the Hub holds, and the same file says how a tool reads it.
+guard = sys.modules.get("hubguard")
+if guard is None:  # a test has loaded it already; the tool run on its own loads it from its own folder
+    _spec = importlib.util.spec_from_file_location("hubguard", Path(__file__).with_name("hubguard.py"))
+    guard = importlib.util.module_from_spec(_spec)
+    sys.modules["hubguard"] = guard
+    _spec.loader.exec_module(guard)
+
 # The actions that only read and preview (or make a short-lived container group that they delete again): they need no --yes. Every other action changes Azure, and so does an action that
 # this list does not know: a new action is a change until somebody says that it only reads.
 READ_ONLY_ACTIONS = ("what-if", "aigateway-check", "page-latency", "loop-check", "operator-probe", "drift-check", "agents-drift", "agent365-check")
 # An action that reads for some values of an input and changes Azure for the others: foundry-evals reads with probe and rule, and makes evaluation runs and the rule with run and rule-apply.
 READ_ONLY_INPUT_VALUES = {"foundry-evals": ("evals_command", ("probe", "rule"))}
 # The inputs that only some actions read (the workflow says "Every other action ignores it"): a flag for another action is said in the plan, and never guessed.
-INPUT_ACTIONS = {"minutes": ("page-latency",), "plant_public_ip": ("plant",), "public_ai_gateway_requested": ("aigateway",), "evals_command": ("foundry-evals",),
-                 "evals_judge": ("foundry-evals",), "redteam_mode": ("foundry-redteam",)}
-INPUT_FLAGS = {"minutes": "--minutes", "plant_public_ip": "--plant-public-ip", "public_ai_gateway_requested": "--public-ai-gateway-requested", "evals_command": "--evals-command",
-               "evals_judge": "--evals-judge", "redteam_mode": "--redteam-mode"}
+INPUT_ACTIONS = {"minutes": ("page-latency",), "plant_public_ip": ("plant",), "public_ai_gateway_requested": ("aigateway",), "public_teams_bot_requested": ("teams",),
+                 "evals_command": ("foundry-evals",), "evals_judge": ("foundry-evals",), "redteam_mode": ("foundry-redteam",)}
+INPUT_FLAGS = {"minutes": "--minutes", "plant_public_ip": "--plant-public-ip", "public_ai_gateway_requested": "--public-ai-gateway-requested",
+               "public_teams_bot_requested": "--public-teams-bot-requested", "evals_command": "--evals-command", "evals_judge": "--evals-judge", "redteam_mode": "--redteam-mode"}
 PUBLIC_GATEWAY_ACTION = "aigateway"
+TEAMS_ACTION = "teams"
 # The workflow's job guard is `github.actor == 'tinodo' && github.ref == 'refs/heads/main'` (tools/workflow-lint.py enforces it). A local run is the owner's, on the code of this checkout.
 LOCAL_ACTOR = "tinodo"
 LOCAL_REF = "refs/heads/main"
 
 CONFIG_NAME = "hub-local.env"
 STATE_NAME = "hub-local.state.json"
-LOCK_NAME = "hub-local.lock"
+LOCK_NAME = guard.LOCK_NAME
 RECORDS_NAME = "records"
-TEMP_NAME = "rt"
+TEMP_NAME = guard.TEMP_NAME
 LOCAL_OVERRIDE = "METERNAUT_LOCAL"
 
 # What GitHub held as variables and secrets for this workflow. The workflow's own references are checked against the file too, so a new name is found before a run starts.
@@ -99,13 +116,15 @@ SECRET_NAMES = ("AZURE_SUBSCRIPTION_ID", "AZURE_TENANT_ID", "AZURE_CLIENT_ID")
 # that they feed say UNKNOWN and print what they found. Absent or empty is empty here too, and a run says which of them it read as empty. Every other name has to be in the file: write NAME= for
 # an empty value, so that a name that is missing (a new variable of the workflow, a typo) is found before a run starts.
 OPTIONAL_NAMES = ("DRIFT_ACCEPTED_EXEMPTIONS", "DRIFT_ACCEPTED_DENY")
+# A variable that one action alone reads, and that the owner adds to the file when he wants that action: not in the file that --init makes, and what a run says when it is missing.
+SINGLE_ACTION_NAMES = {"TEAMS_BOT_ENABLED": f"only the action {TEAMS_ACTION} reads it: add the line TEAMS_BOT_ENABLED=True when the owner has asked for the Teams bot in writing"}
 TEMPLATE_NAMES = ("ENV_SUBSCRIPTION_ID",) + VARIABLE_NAMES + SECRET_NAMES + OPTIONAL_NAMES
 REQUIRED_NAMES = ("ENV_SUBSCRIPTION_ID", "AZURE_SUBSCRIPTION_ID", "AZURE_TENANT_ID", "ENV_RESOURCE_GROUP", "ENV_LOCATION")
 FIRST_RUN_NUMBER = 1000
 MIN_MASK_LENGTH = 3
 
-# Set in the environment of a step, in addition to the job's and the step's own.
-STEP_ENV_DROPPED = ("GH_TOKEN", "GITHUB_TOKEN", "ACTIONS_ID_TOKEN_REQUEST_URL", "ACTIONS_ID_TOKEN_REQUEST_TOKEN")
+# What a step does not inherit from the person's own environment: the tokens of GitHub, and the variables that only a real GitHub runner has (hubguard.py takes them together as the proof of one).
+STEP_ENV_DROPPED = ("GH_TOKEN", "GITHUB_TOKEN", "ACTIONS_ID_TOKEN_REQUEST_URL", "ACTIONS_ID_TOKEN_REQUEST_TOKEN", "GITHUB_REPOSITORY")
 STATUS_FUNCTIONS = ("always", "success", "failure", "cancelled")
 SESSION_COMMANDS = (("login",), ("logout",), ("account", "set"), ("account", "clear"), ("configure",), ("config", "set"), ("config", "unset"))
 
@@ -762,7 +781,8 @@ class Context:
                 if root == "vars" and rest[0] in OPTIONAL_NAMES:
                     self.optional_unset.add(rest[0])
                     return ""
-                raise ExprError(f"{dotted} is not defined in {CONFIG_NAME} (write the name with an empty value if empty is right)")
+                hint = SINGLE_ACTION_NAMES.get(rest[0]) if root == "vars" else None
+                raise ExprError(f"{dotted} is not defined in {CONFIG_NAME} ({hint or 'write the name with an empty value if empty is right'})")
             (self.variable_names if root == "vars" else self.secret_names).add(rest[0])
             return table[rest[0]]
         if root == "github" and rest == ("token",):
@@ -1082,29 +1102,7 @@ def save_state(local: Path, state: dict) -> None:
     os.replace(temporary, path)
 
 
-def process_alive(pid) -> bool:
-    if not isinstance(pid, int) or pid <= 0:
-        return False
-    if pid == os.getpid():
-        return True
-    if os.name == "nt":
-        import ctypes
-        kernel32 = ctypes.windll.kernel32
-        handle = kernel32.OpenProcess(0x1000, False, pid)
-        if not handle:
-            return kernel32.GetLastError() == 5
-        try:
-            code = ctypes.c_ulong()
-            return bool(kernel32.GetExitCodeProcess(handle, ctypes.byref(code))) and code.value == 259
-        finally:
-            kernel32.CloseHandle(handle)
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    return True
+process_alive = guard.process_alive
 
 
 class Lock:
@@ -1156,6 +1154,16 @@ class Lock:
                 self.path.unlink()
             except FileNotFoundError:
                 pass
+
+
+def drop_stale_proof(rt_base: Path, stale: dict) -> None:
+    """The proof of a run that was killed: its file is left behind, and the lock that named it is taken over. Only a folder that is named like a run's is followed."""
+    run = str(stale.get("run") or "")
+    if re.fullmatch(r"[0-9]{1,12}", run):
+        try:
+            (rt_base / run / guard.PROOF_NAME).unlink()
+        except OSError:
+            pass
 
 
 # --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -1544,6 +1552,8 @@ def input_values(workflow: Workflow, args) -> dict:
         values["minutes"] = str(args.minutes)
     if "public_ai_gateway_requested" in values:
         values["public_ai_gateway_requested"] = bool(args.public_ai_gateway_requested)
+    if "public_teams_bot_requested" in values:
+        values["public_teams_bot_requested"] = bool(args.public_teams_bot_requested)
     if "plant_public_ip" in values:
         values["plant_public_ip"] = bool(args.plant_public_ip)
     for name in ("evals_command", "evals_judge", "redteam_mode"):
@@ -1570,6 +1580,7 @@ def changes_azure(action: str, inputs: dict) -> bool:
 def given_flags(args) -> dict:
     """Which input flags the person gave."""
     return {"minutes": args.minutes is not None, "plant_public_ip": bool(args.plant_public_ip), "public_ai_gateway_requested": bool(args.public_ai_gateway_requested),
+            "public_teams_bot_requested": bool(args.public_teams_bot_requested),
             "evals_command": getattr(args, "evals_command", None) is not None, "evals_judge": getattr(args, "evals_judge", None) is not None,
             "redteam_mode": getattr(args, "redteam_mode", None) is not None}
 
@@ -1721,6 +1732,7 @@ class Hub:
         self.az: Any = None
         self.bash = ""
         self.rt: Optional[Path] = None
+        self.proof: Optional[Path] = None
         self.lock: Optional[Lock] = None
         self.previous_default: Optional[dict] = None
         self.default_changed = False
@@ -1773,6 +1785,8 @@ class Hub:
             refusals.append(f"the action {action} changes Azure: it needs --yes")
         if action == PUBLIC_GATEWAY_ACTION and not args.public_ai_gateway_requested:
             refusals.append("the AI Gateway's front door is public and cannot be made private: the action aigateway needs --public-ai-gateway-requested, which only the owner's written request allows")
+        if action == TEAMS_ACTION and not args.public_teams_bot_requested:
+            refusals.append("the Teams bot's messaging endpoint is public by necessity: the action teams needs --public-teams-bot-requested, which only the owner's written request allows")
         if writes and dirty and not args.allow_dirty:
             refusals.append(f"the working tree is not clean ({len(dirty)} paths): commit or stash first, or pass --allow-dirty")
         console = Console(self.out)
@@ -1841,6 +1855,7 @@ class Hub:
             run_ctx = Context(inputs=ctx.inputs, variables=values, secrets=values, github=ctx.github, runner_temp=posix(rt), step_ids=ctx.step_ids, planning=False)
             self.ctx = run_ctx
             if stale:
+                drop_stale_proof(rt.parent, stale)
                 self.recover_stale(stale)
             self.start_session()
             if writes:
@@ -1850,6 +1865,7 @@ class Hub:
             self.rt = rt
             (rt / "steps").mkdir()
             (rt / "files").mkdir()
+            self.make_proof(rt)
             self.make_shims()
             self.job_env = job_environment(workflow, run_ctx, None)
             passed = self.run_steps()
@@ -1920,6 +1936,32 @@ class Hub:
             self.say(f"  az session of {info.get('user')}; the pilot's subscription is the CLI's default for this run (it is put back at the end)")
         return info
 
+    def make_proof(self, rt: Path) -> None:
+        """Before the first step: the proof that a run of the Hub holds (tools/hubguard.py). A random token in a file of the run's own folder, and in the lock the number of the run and the SHA-256 of the token.
+        The token is masked in everything that is printed or logged, and it is in no other file."""
+        token = secrets.token_hex(32)
+        self.proof = rt / guard.PROOF_NAME
+        self.proof.write_text(token, encoding="utf-8", newline="")
+        self.console.add_mask(token)
+        self.lock.update(run=rt.name, proof=guard.digest_of(token))
+
+    def drop_proof(self) -> None:
+        """First at the end of a run, whatever the end was: the file goes, and the lock no longer holds the digest, so a process that outlives the run has nothing to show after it."""
+        proof, self.proof = self.proof, None
+        if proof is None:
+            return
+        try:
+            proof.unlink()
+        except FileNotFoundError:
+            pass
+        except OSError as error:
+            self.say(f"WARNING: the proof file {proof} could not be deleted ({error}): delete it by hand")
+        try:
+            if self.lock:
+                self.lock.update(proof=None)
+        except OSError:
+            pass
+
     def make_shims(self) -> None:
         shim = self.rt / "shim"
         shim.mkdir()
@@ -1927,7 +1969,8 @@ class Hub:
             path = shim / name
             path.write_text(text, encoding="utf-8", newline="\n")
             path.chmod(path.stat().st_mode | stat.S_IEXEC)
-        env = {"GITHUB_ACTIONS": "true", "METERNAUT_HUB_LOCAL": "1", "GITHUB_ACTOR": LOCAL_ACTOR, "GITHUB_REF": LOCAL_REF, "GITHUB_REF_NAME": "main", "GITHUB_SHA": self.head,
+        env = {"GITHUB_ACTIONS": "true", "METERNAUT_HUB_LOCAL": "1", guard.PROOF_VARIABLE: posix(self.proof), "GITHUB_ACTOR": LOCAL_ACTOR, "GITHUB_REF": LOCAL_REF, "GITHUB_REF_NAME": "main",
+               "GITHUB_SHA": self.head,
                "GITHUB_RUN_ID": str(self.ctx.github["run_id"]), "GITHUB_RUN_NUMBER": str(self.ctx.github["run_number"]), "GITHUB_RUN_ATTEMPT": "1",
                "GITHUB_EVENT_NAME": "workflow_dispatch", "GITHUB_WORKFLOW": self.workflow.name, "GITHUB_WORKSPACE": posix(self.root), "RUNNER_TEMP": posix(self.rt),
                "MSYS_NO_PATHCONV": "1", "MSYS2_ARG_CONV_EXCL": "*", "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8", "PYTHONUNBUFFERED": "1", "AZ": "az",
@@ -2190,16 +2233,19 @@ class Hub:
     # ---- the end of a run ----------------------------------------------------------------------------------------------------------------------------------------------------------------
     def finish(self, action: str, passed: bool, interrupted: bool, started: dt.datetime, ended: dt.datetime, seconds: float, run_number: int, run_id: int, rt: Path,
                record_path: Path, log_path: Path, writes: bool) -> None:
-        """Always: put the CLI's default back first, then clean up, release the lock, write the record, say how it went."""
+        """Always: the proof goes first, then the CLI's default is put back, then clean up, release the lock, write the record, say how it went."""
         try:
-            self.restore_default()
+            self.drop_proof()
         finally:
             try:
-                if rt.exists() and not remove_tree(rt):
-                    self.say(f"WARNING: {rt} could not be deleted completely: delete it by hand")
+                self.restore_default()
             finally:
-                if self.lock:
-                    self.lock.release()
+                try:
+                    if rt.exists() and not remove_tree(rt):
+                        self.say(f"WARNING: {rt} could not be deleted completely: delete it by hand")
+                finally:
+                    if self.lock:
+                        self.lock.release()
         verdict = f"Hub (local) {action}: {'PASSED' if passed else 'FAILED'} in {minutes_text(seconds)} minutes"
         try:
             record_path.write_text(self.record_text(action, verdict, passed, interrupted, started, ended, run_number, run_id, log_path, writes), encoding="utf-8", newline="\n")
@@ -2239,9 +2285,9 @@ class Hub:
                     writes: bool) -> str:
         def cell(text: str) -> str:
             return text.replace("|", "/").replace("\n", " ")
+        every_input = ", ".join(f"{name} {to_text(value)}" for name, value in self.ctx.inputs.items() if name != "action")
         lines = [f"# Hub (local): {action}", "", f"**{verdict}**", "",
-                 f"- action: {action} ({'changes Azure' if writes else 'reads only'}); inputs: minutes {self.ctx.inputs.get('minutes')}, public_ai_gateway_requested {to_text(self.ctx.inputs.get('public_ai_gateway_requested'))}, "
-                 f"plant_public_ip {to_text(self.ctx.inputs.get('plant_public_ip'))}",
+                 f"- action: {action} ({'changes Azure' if writes else 'reads only'}); inputs: {every_input}",
                  f"- head commit: {self.head}; working tree: {'clean' if not self.dirty else 'NOT clean (' + str(len(self.dirty)) + ' paths)'}",
                  f"- started {iso(started)}, ended {iso(ended)}" + ("; interrupted by Ctrl+C" if interrupted else ""),
                  f"- run number {run_number}{'' if writes else ' (not used up: a read-only action)'}, run id {run_id}",
@@ -2325,6 +2371,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("action", nargs="?", help="the action of the Hub workflow (its input 'action')")
     parser.add_argument("--minutes", help="only with page-latency: how many minutes (the workflow's input minutes; its default when not given)")
     parser.add_argument("--public-ai-gateway-requested", action="store_true", help="only with aigateway: the owner has asked in writing for a public AI Gateway")
+    parser.add_argument("--public-teams-bot-requested", action="store_true", help="only with teams: the owner has asked in writing for a public Teams bot")
     parser.add_argument("--plant-public-ip", action="store_true", help="only with plant: also plant an unassigned public IP address")
     parser.add_argument("--evals-command", help="only with foundry-evals: the workflow's input evals_command (probe, run, rule or rule-apply; the workflow's default when not given). "
                         "probe and rule only read; run and rule-apply need --yes")

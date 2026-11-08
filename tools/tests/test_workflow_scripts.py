@@ -800,6 +800,16 @@ def load_operator_tool():
     return tool
 
 
+def load_hubenv():
+    spec = importlib.util.spec_from_file_location("hubenv_of_the_workflow_tests", Path(__file__).with_name("hubenv.py"))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+hubenv = load_hubenv()
+
+
 @unittest.skipIf(BASH is None, "no bash on this machine")
 class TheChecksBuildTheCallOfTheOperatorTool(unittest.TestCase):
     """The steps of cases-run, run with bash against a stand-in for python3: the call of tools/operator-run.py that the check builds, and that the tool itself accepts it."""
@@ -883,7 +893,7 @@ class TheChecksBuildTheCallOfTheOperatorTool(unittest.TestCase):
         args = tool.build_parser().parse_args(called(lines)[0][1:])
         self.assertEqual((args.prefix, args.older_than_minutes, args.resource_group), ("op-check-", 0.0, self.GROUP))
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
-            with mock.patch.dict(os.environ, {"GITHUB_ACTIONS": "true"}):
+            with hubenv.patched():
                 self.assertEqual(tool.cleanup_command(args, lambda arguments: (0, "[]", "")), 0, "the prefix is one that the tool accepts")
 
 
@@ -1410,7 +1420,7 @@ class ThePublishStepsFindTheOperatorAskForTheTokenAndStartTheContainerGroup(unit
             args = tool.build_parser().parse_args(called(lines)[0][1:])
             self.assertEqual((args.prefix, args.older_than_minutes, args.resource_group), ("op-publish-", 0.0, self.GROUP))
             with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
-                with mock.patch.dict(os.environ, {"GITHUB_ACTIONS": "true"}):
+                with hubenv.patched():
                     self.assertEqual(tool.cleanup_command(args, lambda arguments: (0, "[]", "")), 0, "the prefix is one that the tool accepts")
         done, calls, other, _ = self.run_publish("cases")
         self.assertTrue(calls[0][calls[0].index("--name") + 1].startswith("op-publish-"), "the prefix of the cleanup is the start of the name that the publish gives its group")

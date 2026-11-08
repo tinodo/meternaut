@@ -18,6 +18,9 @@ ROOT = Path(__file__).resolve().parents[2]
 spec = importlib.util.spec_from_file_location("retire_old", ROOT / "tools" / "retire-old.py")
 ro = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(ro)
+_hubenv_spec = importlib.util.spec_from_file_location("hubenv", Path(__file__).with_name("hubenv.py"))
+hubenv = importlib.util.module_from_spec(_hubenv_spec)
+_hubenv_spec.loader.exec_module(hubenv)
 params_spec = importlib.util.spec_from_file_location("environment_params_for_retire_test", ROOT / "tools" / "environment-params.py")
 ep = importlib.util.module_from_spec(params_spec)
 params_spec.loader.exec_module(ep)
@@ -32,7 +35,8 @@ WEB_SUBNET = f"{BASE}/Microsoft.Network/virtualNetworks/vnet-meternaut/subnets/s
 CASES_SITE = f"{BASE}/Microsoft.Web/sites/func-meternaut-cases-{TOKEN}"
 USAGE_PRINCIPAL = "aaaaaaaa-0000-4000-8000-000000000001"
 IDENTITY_PRINCIPAL = "bbbbbbbb-0000-4000-8000-000000000002"
-ENVIRONMENT = {"GITHUB_ACTIONS": "true", "ENV_SUBSCRIPTION_ID": SUB, "ENV_RESOURCE_GROUP": GROUP}
+ENVIRONMENT = hubenv.inside({"ENV_SUBSCRIPTION_ID": SUB, "ENV_RESOURCE_GROUP": GROUP})
+PROJECT = {"ENV_SUBSCRIPTION_ID": SUB, "ENV_RESOURCE_GROUP": GROUP}
 
 # The whole list, in this order: (what it is, its exact name, the id of the resource, the API version it is read and deleted with).
 THE_LIST = [
@@ -337,8 +341,8 @@ class TheRefusal(unittest.TestCase):
         self.assertIn("ENV_SUBSCRIPTION_ID", err)
 
     def test_a_workflow_without_its_settings_refuses(self):
-        self.refused(RUN, {"GITHUB_ACTIONS": "true"})
-        self.refused(RUN, {"GITHUB_ACTIONS": "true", "ENV_RESOURCE_GROUP": "", "ENV_SUBSCRIPTION_ID": ""})
+        self.refused(RUN, hubenv.inside())
+        self.refused(RUN, hubenv.inside({"ENV_RESOURCE_GROUP": "", "ENV_SUBSCRIPTION_ID": ""}))
 
     def test_a_group_name_that_is_not_one_is_refused(self):
         for bad in ("rg/../other", "rg example", "", "a" * 91):
@@ -347,12 +351,33 @@ class TheRefusal(unittest.TestCase):
     def test_a_subscription_that_is_not_an_id_is_refused(self):
         self.refused(["run", "--subscription", "not-an-id", "--resource-group", GROUP], {**ENVIRONMENT, "ENV_SUBSCRIPTION_ID": "not-an-id"})
 
-    def test_only_a_github_actions_run_may_delete(self):
+    def test_only_a_run_of_the_hub_may_delete(self):
         fake = FakeAzure()
-        code, _, err, _ = go(RUN, fake, {"ENV_SUBSCRIPTION_ID": SUB, "ENV_RESOURCE_GROUP": GROUP})
+        code, _, err, _ = go(RUN, fake, PROJECT)
         self.assertEqual(code, 2)
-        self.assertIn("only a GitHub Actions run may do that", err)
+        self.assertIn("this command deletes, and only a GitHub Actions run may do that (AGENTS.md rule 18)", err)
         self.assertEqual(fake.calls, [])
+
+    def test_github_actions_true_alone_is_refused_and_the_refusal_names_what_is_missing(self):
+        fake = FakeAzure()
+        code, _, err, _ = go(RUN, fake, {**PROJECT, "GITHUB_ACTIONS": "true"})
+        self.assertEqual(code, 2)
+        self.assertIn("GITHUB_ACTIONS=true alone is no proof", err)
+        for name in ("GITHUB_RUN_ID", "GITHUB_REPOSITORY", "ACTIONS_ID_TOKEN_REQUEST_URL", "METERNAUT_HUB_PROOF"):
+            self.assertIn(name, err)
+        self.assertEqual(fake.calls, [])
+
+    def test_the_proof_of_a_run_of_tools_hub_local_that_is_alive_is_enough_and_a_stale_one_is_not(self):
+        with tempfile.TemporaryDirectory() as folder:
+            proof = hubenv.make_proof(folder)
+            code, _, err, _ = go(RUN, FakeAzure(), {**PROJECT, "METERNAUT_HUB_PROOF": str(proof)})
+            self.assertEqual(code, 0, err)
+            proof = hubenv.make_proof(folder, pid=hubenv.dead_pid())
+            fake = FakeAzure()
+            code, _, err, _ = go(RUN, fake, {**PROJECT, "METERNAUT_HUB_PROOF": str(proof)})
+            self.assertEqual(code, 2)
+            self.assertIn("is not alive: this proof is stale", err)
+            self.assertEqual(fake.calls, [])
 
     def test_show_reads_without_a_run_of_the_workflow(self):
         fake = FakeAzure()
@@ -1120,9 +1145,11 @@ class RefusalsOfTheEventHubsList(unittest.TestCase):
         self.refused(["show", "--list", "event-hubs", "--subscription", SUB, "--resource-group", "rg-other"])
         self.assertIn("ENV_SUBSCRIPTION_ID", self.refused(["run", "--list", "event-hubs", "--subscription", "99999999-8888-7777-6666-555555555555", "--resource-group", GROUP]))
 
-    def test_only_a_github_actions_run_may_delete(self):
-        err = self.refused(EVENT_HUBS_RUN, {"ENV_SUBSCRIPTION_ID": SUB, "ENV_RESOURCE_GROUP": GROUP})
-        self.assertIn("only a GitHub Actions run may do that", err)
+    def test_only_a_run_of_the_hub_may_delete(self):
+        err = self.refused(EVENT_HUBS_RUN, PROJECT)
+        self.assertIn("this command deletes, and only a GitHub Actions run may do that (AGENTS.md rule 18)", err)
+        err = self.refused(EVENT_HUBS_RUN, {**PROJECT, "GITHUB_ACTIONS": "true"})
+        self.assertIn("GITHUB_ACTIONS=true alone is no proof", err)
 
     def test_a_list_that_is_not_one_is_refused_by_the_parser(self):
         with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):

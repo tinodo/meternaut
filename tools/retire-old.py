@@ -44,7 +44,7 @@ association links) as information: a link can stay for a while after its app is 
 snet-func is free. When another app still holds the subnet, the run fails and names that app. A subnet that is not there is said, and is no error (the action model-side makes it).
 
 show   Read only. Says for each item of the list whether it is there, whether a soft-deleted model account of that name is left, and which apps are integrated with snet-func.
-run    Deletes, as above. Only a GitHub Actions run may do that (AGENTS.md rule 18). Exit 0 when everything on the list is gone and snet-func is free, 1 when something could not be
+run    Deletes, as above. Only a run of the Hub may do that (AGENTS.md rule 18; tools/hubguard.py says what counts as one). Exit 0 when everything on the list is gone and snet-func is free, 1 when something could not be
        deleted or read, or when another app holds snet-func (nothing after a failed delete is touched, and the second run goes on from there), 2 when it refuses.
 
 The list `event-hubs` (the action `retire-event-hubs`). Until the control message of the cases app moved to a Storage queue, the cases app was started by an event in an Event Hubs
@@ -63,12 +63,21 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.util
 import json
 import os
 import re
 import subprocess
 import sys
 import time
+from pathlib import Path
+
+guard = sys.modules.get("hubguard")
+if guard is None:  # a test has loaded it already; a tool run on its own loads it from its own folder
+    _spec = importlib.util.spec_from_file_location("hubguard", Path(__file__).with_name("hubguard.py"))
+    guard = importlib.util.module_from_spec(_spec)
+    sys.modules["hubguard"] = guard
+    _spec.loader.exec_module(guard)
 
 GUID = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
 GROUP = re.compile(r"^[A-Za-z0-9._()-]{1,90}$")
@@ -400,9 +409,14 @@ def command_show(args, azure: Azure, out) -> int:
     return 0
 
 
+def refuse_unless_the_hub(environ) -> None:
+    why = guard.what_is_missing(environ)
+    if why:
+        raise Refused(f"this command deletes, and only a GitHub Actions run may do that (AGENTS.md rule 18): {why}")
+
+
 def command_run(args, azure: Azure, environ, out) -> int:
-    if environ.get("GITHUB_ACTIONS") != "true":
-        raise Refused("this command deletes, and only a GitHub Actions run may do that (AGENTS.md rule 18)")
+    refuse_unless_the_hub(environ)
     group = args.resource_group
     deleted = 0
     absent = 0
@@ -450,8 +464,7 @@ def command_show_event_hubs(args, azure: Azure, out) -> int:
 
 
 def command_run_event_hubs(args, azure: Azure, environ, out) -> int:
-    if environ.get("GITHUB_ACTIONS") != "true":
-        raise Refused("this command deletes, and only a GitHub Actions run may do that (AGENTS.md rule 18)")
+    refuse_unless_the_hub(environ)
     group = args.resource_group
     listed = event_hub_items(args.subscription, group)
     out(f"Deleting the Event Hubs namespace that carried the control event, and what belongs to it, in resource group {group} and nowhere else:")

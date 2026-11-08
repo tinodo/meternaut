@@ -22,18 +22,27 @@ A delete that still gets only such answers is not taken for failed: the thing is
 A preview that cannot be read is said, and the run goes on: the deploy that follows says whether an assignment was in the way.
 
 The tool deletes only what is named above, in the project's own resource group: the app and the endpoint by the name that it is given, the plan by the name that it is given, and a role assignment only when
-its id is in that group and in the preview. It refuses unless the group is the ENV_RESOURCE_GROUP of the workflow, and unless a GitHub Actions run starts it (AGENTS.md rule 18). Exit code 0 when everything is
+its id is in that group and in the preview. It refuses unless the group is the ENV_RESOURCE_GROUP of the workflow, and unless a run of the Hub starts it (AGENTS.md rule 18; tools/hubguard.py says what counts as one). Exit code 0 when everything is
 clear, 1 when something could not be read or deleted (the next run starts from what is left), 2 when it refuses.
 """
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import os
 import re
 import subprocess
 import sys
 import time
+from pathlib import Path
+
+guard = sys.modules.get("hubguard")
+if guard is None:  # a test has loaded it already; a tool run on its own loads it from its own folder
+    _spec = importlib.util.spec_from_file_location("hubguard", Path(__file__).with_name("hubguard.py"))
+    guard = importlib.util.module_from_spec(_spec)
+    sys.modules["hubguard"] = guard
+    _spec.loader.exec_module(guard)
 
 GUID = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
 GROUP = re.compile(r"^[A-Za-z0-9._()-]{1,90}$")
@@ -285,8 +294,9 @@ NEW_IDENTITY = ("### The cases app is made again, with a new identity\n\n"
 
 
 def command_run(args, azure: Azure, environ, out, sleep) -> int:
-    if environ.get("GITHUB_ACTIONS") != "true":
-        raise Refused("this command deletes, and only a GitHub Actions run may do that (AGENTS.md rule 18)")
+    why = guard.what_is_missing(environ)
+    if why:
+        raise Refused(f"this command deletes, and only a GitHub Actions run may do that (AGENTS.md rule 18): {why}")
     group = f"/subscriptions/{args.subscription}/resourceGroups/{args.resource_group}"
     out(f"Clearing what is in the way of the deploy of the cases app {args.app}, on the {args.wanted_kind} plan, in resource group {args.resource_group}:")
     app_deleted, plan_deleted = clear_the_app(azure, args, group, out)
