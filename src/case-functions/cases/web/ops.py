@@ -1,5 +1,5 @@
 """The pages for the platform team: Operations (the switches, the latest runs, what Meternaut may change), every run and every case, the standing permissions (none exist,
-read-only) and the kill switch (three levels).
+read-only) and the kill switch (four switches).
 
 This is where the tables that the start page and History do not carry now live: the content is the earlier one, moved, not extended.
 """
@@ -14,7 +14,7 @@ from .core import ID, MAX_REASON, Ctx, Response, Safe, fmt, join, link_part, sta
 from .layout import block, button, error_summary, field, form, hidden, items, link, message_page, notice, page, paragraph, table
 
 PERMISSIONS_WHY = "your role lets you see how Meternaut is allowed to act"
-PAUSE_WHY = "your role ops lets you stop work at three levels"
+PAUSE_WHY = "your role ops lets you stop work at four levels"
 OPS_WHY = "your role ops lets you see how Meternaut is running"
 RUN_HEADERS = ["Started", "Trigger", "Result", "Leads", "Cases", "Proposed", "Needs a person", "Dropped", "Errors", "Tokens", "Seconds", "Notes", "Cases of the run"]
 LATEST_RUNS = ["Started", "Trigger", "Result", "Cases", "Proposed", "Needs a person", "Errors"]
@@ -47,7 +47,7 @@ def hub(ctx: Ctx) -> Response:
     parts: list[object] = [
         Safe("<h1>Operations</h1>"),
         paragraph("For the platform team: the switches, the latest runs and what Meternaut may change in Azure.", "lead"),
-        Safe("<h2>The three switches</h2>"), _switches_table(ctx), paragraph(link(ctx.url("/ops/pause"), "Pause or resume work")),
+        Safe("<h2>The four switches</h2>"), _switches_table(ctx), paragraph(link(ctx.url("/ops/pause"), "Pause or resume work")),
         Safe("<h2>Latest runs</h2>"),
     ]
     if not ok:
@@ -170,7 +170,7 @@ def pause_save(ctx: Ctx) -> Response:
                             "Open the page again and use the form there.", back=("/ops/pause", "Back to the kill switch"))
     name, action, reason = form_data.get("name", ""), form_data.get("action", ""), form_data.get("reason", "")
     if name not in SWITCH_NAMES or action not in ("pause", "resume"):
-        return message_page(ctx, 400, "Nothing was changed", "The form did not name one of the three switches and one of the two actions.", back=("/ops/pause", "Back to the kill switch"))
+        return message_page(ctx, 400, "Nothing was changed", "The form did not name one of the four switches and one of the two actions.", back=("/ops/pause", "Back to the kill switch"))
     if len(reason) > MAX_REASON:
         return pause_page(ctx, errors={f"reason-{name}": f"The reason has {len(reason)} characters. The most is {MAX_REASON}."}, values=dict(form_data), status=400)
     try:

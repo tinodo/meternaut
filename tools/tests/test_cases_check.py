@@ -109,7 +109,7 @@ class Functions(unittest.TestCase):
             code = cc.main(["functions", "--site", SITE], azure(runner))
         self.assertEqual(code, 0)
         self.assertEqual(len(calls), 3)
-        self.assertEqual(len(cc.FUNCTIONS), 4)
+        self.assertEqual(len(cc.FUNCTIONS), 5)
         self.assertIn(f"lists {len(cc.FUNCTIONS)} functions", out.getvalue())
         for name in cc.FUNCTIONS:
             self.assertIn(name, out.getvalue())

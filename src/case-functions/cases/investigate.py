@@ -31,6 +31,7 @@ from .arm import scopes_of
 from .detectors import Context, Lead
 from .foundry import SOFT_TIME_SHARE, FoundryError
 from .guards import Guards
+from .harness import HarnessRefused
 from .http import HttpError
 from .memory_store import parse, stamp
 from .models import CaseRecord, StoreError
@@ -128,11 +129,14 @@ class Investigation:
     guarded: int = 0
     unmeasured: int = 0
     owners: object = None  # the OwnerReader of the run: one for all its cases, so that the reads of the Activity Log share one budget
+    # True when the harness did not let the agents run (a pulled switch, a lock that does not hold, a stored definition that differs) or stopped a run: the run of the Watch then opens no new
+    # case from the investigation, and the planted waste, the approvals and the messages go on (cases/harness.py).
+    held: bool = False
 
     @property
     def state(self) -> str:
-        """`ran`, `off` or `failed`: what the end of the run says of the investigation."""
-        return "ran" if self.ran else "off" if self.off else "failed"
+        """`ran`, `held`, `off` or `failed`: what the end of the run says of the investigation."""
+        return "ran" if self.ran else "held" if self.held else "off" if self.off else "failed"
 
 
 # -- what the answers hold ---------------------------------------------------------------------------------------------------------------------------
@@ -520,6 +524,10 @@ def investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str]
         LOG.warning("the investigation failed: %s", text)
         out.ran, out.note = False, f"it failed ({text})"
         return out
+    finally:
+        harness = getattr(s, "harness", None)
+        if harness is not None:
+            harness.close()  # the line of every agent run, and the brake for a run that misbehaved (cases/harness.py)
 
 
 def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str], toolbox: Toolbox | None, out: Investigation) -> Investigation:
@@ -546,10 +554,19 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
         # Investigator needs for its answer and the Skeptic for its verdicts.
         toolbox.read_seconds = min(SUBSCRIPTION_SECONDS, max(5.0, budget / 8))
     try:
-        investigator_ref = s.foundry.ensure_agent(agents.investigator(st, toolbox.specs))
-        skeptic_ref = s.foundry.ensure_agent(agents.skeptic(st))
+        # The harness (cases/harness.py) stands between the run and the agents: it holds the code and the stored definitions against the lock, reads the switches, and makes the agent only from
+        # a definition that equals the lock. Without a harness (a test that plays the agents) the client makes the agents as it always did.
+        spec_i, spec_s = agents.investigator(st, toolbox.specs), agents.skeptic(st)
+        harness = getattr(s, "harness", None)
+        if harness is None:
+            investigator_ref = s.foundry.ensure_agent(spec_i)
+            skeptic_ref = s.foundry.ensure_agent(spec_s)
+        else:
+            investigator_ref = harness.ensure(spec_i)
+            skeptic_ref = harness.ensure(spec_s)
     except FoundryError as error:
         _own_words(note, error)
+        out.held = isinstance(error, HarnessRefused)
         out.note = f"the agents could not be made ready ({_why(s, error)})"
         return out
     h.emit("investigation.started", investigator=investigator_ref, skeptic=skeptic_ref, modelInvestigator=st.foundry_model_investigator,
@@ -578,15 +595,19 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
     reserve = min(RESERVE_SECONDS, budget / 4)
     run_seconds = max(1.0, budget - reserve)
     started = s.monotonic()
+    max_calls = harness.budget.tool_calls if harness is not None else st.investigate_max_calls
     try:
-        answer = s.foundry.run(investigator_ref, agents.investigator_input(st.investigate_max_calls), toolbox.call, max_calls=st.investigate_max_calls,
-                               max_seconds=run_seconds)
+        if harness is None:
+            answer = s.foundry.run(investigator_ref, agents.investigator_input(max_calls), toolbox.call, max_calls=max_calls, max_seconds=run_seconds)
+        else:
+            answer = harness.run(investigator_ref, spec_i, agents.investigator_input(max_calls), toolbox.call, max_calls=max_calls, max_seconds=run_seconds)
     except FoundryError as error:
         partial = getattr(error, "partial", None)  # what the run had come to: the calls that it made and the tokens that it used
         out.tool_calls = len(_made(partial.calls)) if partial is not None else len(toolbox.log)
         out.tokens = partial.input_tokens + partial.output_tokens if partial is not None else 0
         flush_notes()
         _own_words(note, error)
+        out.held = isinstance(error, HarnessRefused)
         out.note = f"the investigator gave no answer ({_why(s, error)})"
         finished(False, note=out.note)
         return out
@@ -606,6 +627,8 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
     try:
         raw_findings, examined = parse_answer(answer.text)
     except RoleError as error:
+        if harness is not None:
+            harness.guard_failed(spec_i.name, "unreadable")
         out.note = f"the investigator gave no answer that could be read ({clean_text(error, 200)})"
         finished(False, note=out.note)
         return out
@@ -620,6 +643,8 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
         finding, handles, entries = parse_finding(number, raw)
         if finding.reason is None:
             _verify(finding, handles, entries, toolbox, taken)
+            if finding.unknown and harness is not None:
+                harness.guard_failed(spec_i.name, "unknown-handle")  # an answer that cites a handle that no tool returned is a failure of the run, and a third failure trips the brake
         findings.append(finding)
     locks: dict[str, list[str] | None] = {}
     room = MAX_CASES
@@ -670,10 +695,18 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
                     for item in finding.items:
                         item.shown = item.handle in shown_handles
                 hidden = sum(1 for finding in survivors for item in finding.items if not item.shown)
-                judged = s.foundry.run(skeptic_ref, skeptic_text, None, max_calls=0, max_seconds=left)
+                if harness is None:
+                    judged = s.foundry.run(skeptic_ref, skeptic_text, None, max_calls=0, max_seconds=left)
+                else:
+                    judged = harness.run(skeptic_ref, spec_s, skeptic_text, None, max_calls=0, max_seconds=left)
                 tokens = (judged.input_tokens, judged.output_tokens)
                 out.tokens += judged.input_tokens + judged.output_tokens
-                verdicts = parse_verdicts(judged.text, len(survivors))
+                try:
+                    verdicts = parse_verdicts(judged.text, len(survivors))
+                except RoleError:
+                    if harness is not None:
+                        harness.guard_failed(spec_s.name, "unreadable")
+                    raise
                 for index, verdict in verdicts.items():
                     survivors[index].verdict = verdict
                 unjudged = len(survivors) - len(verdicts)

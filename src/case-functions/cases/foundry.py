@@ -36,9 +36,15 @@ RESPONSE_TIMEOUT = 180
 CLEANUP_TIMEOUT = 15
 WORDS_LIMIT = 200
 MAX_NOTES = 20
+# A list of the project (agents, connections) is read in pages of this many, and at most this many pages: an agent or a connection beyond them is not looked at, and the answer says so.
+LIST_PAGE = 100
+LIST_PAGES = 5
+CURSOR = re.compile(r"[A-Za-z0-9_:.-]{1,128}")
 TOOL_FAILED = '{"error":"tool-failed"}'
 BAD_ARGUMENTS = '{"error":"bad-arguments"}'
 CUT_NOTE = " [cut: the answer was longer than the limit]"
+# What a run says when the agent ends with no text and no tool call: the harness counts it as a failure of the run (cases/harness.py), so the words are one constant.
+NO_TEXT = "the answer holds no text"
 BUDGET_USED_UP = '{"error":"budget-used-up"}'
 GRACE_ROUNDS = 3  # after the first answer that says so, the agent has this many more rounds to give its text
 # A call that may already have been carried out (a creation, a run) is repeated only when the service says "not now".
@@ -60,6 +66,8 @@ CONVERSATION_ID = re.compile(FOUNDRY_CONVERSATION_ID)
 VERSION = re.compile(r"[A-Za-z0-9._-]{1,64}")
 TOOL_NAME = re.compile(r"[A-Za-z0-9_-]{1,64}")
 KIND = re.compile(r"[a-z_]{1,40}")
+# A kind of connection or of credential as the data plane names it (AzureOpenAI, ApiKey, ProjectManagedIdentity, ...): plain words, and nothing else is kept of an answer.
+KIND_WORD = re.compile(r"[A-Za-z_]{1,40}")
 STATUSES = frozenset({"failed", "in_progress", "cancelled", "queued", "incomplete"})
 # The key of the agent reference in the body of a response: the REST reference writes the first, the article on function calling the second. The service may take only
 # one of them, and the words that it uses to refuse the other are not relied on, but for the two kinds of answer that follow: see Foundry._respond. A service refuses an
@@ -251,6 +259,11 @@ def _payload(spec: AgentSpec) -> dict:
     raise FoundryError(f"Foundry: the definition of the agent is not valid: {problem}")
 
 
+def definition_of(spec: AgentSpec) -> dict:
+    """The `definition` that this app sends to the service for a spec: the one that the lock of the agents pins (cases/lockfile.py) and that the harness compares with the stored one."""
+    return _payload(spec)["definition"]
+
+
 class Foundry:
     """Calls the Foundry Agent Service of one project. A client belongs to one run: `run` and `_call` set its deadline and its transport for as long as they work.
     `notes` holds short texts about problems that stopped nothing (a conversation that could not be deleted, a key of the agent reference that was refused).
@@ -310,7 +323,59 @@ class Foundry:
         LOG.info("Foundry agent %s: new version %s", spec.name, version)
         return f"{spec.name}:{version}"
 
-    def run(self, agent: str, user_input: str, handler: ToolHandler | None = None, *, max_calls: int = 20, max_seconds: float | None = None) -> AgentRun:
+    def read_agent(self, name: str) -> dict | None:
+        """The latest version of an agent as the service stores it: {name, version, metadata, definition, ...}, or None when there is no agent of that name. It is one read, and the
+        harness makes it right before a run, to hold the stored definition against the lock."""
+        if not isinstance(name, str) or not AGENT_NAME.fullmatch(name):
+            raise FoundryError("Foundry: the name of the agent is not valid")
+        saved = self._call("GET", f"/agents/{name}?{API}", purpose="read agent", gone_ok=True)
+        return None if saved is None else self._version(saved, name, "read agent", of_agent=True)
+
+    def list_agents(self) -> tuple[list[dict], bool]:
+        """Every agent of the project as {"name", "latest"}: the name (None when it is not a name that this app accepts) and the latest version as the service stores it (None when the
+        answer has none). The second value is True when the list goes on after the pages that were read. Only the drift check lists agents, with a client of its own."""
+        found: list[dict] = []
+        after = None
+        for _ in range(LIST_PAGES):
+            document = self._call("GET", f"/agents?{API}&limit={LIST_PAGE}" + (f"&after={after}" if after else ""), purpose="list agents")
+            page = document.get("data") if isinstance(document.get("data"), list) else document.get("value") if isinstance(document.get("value"), list) else []
+            for item in page:
+                if not isinstance(item, dict):
+                    found.append({"name": None, "latest": None})
+                    continue
+                versions = item.get("versions")
+                latest = versions.get("latest") if isinstance(versions, dict) else None
+                name = item.get("name")
+                found.append({"name": name if isinstance(name, str) and AGENT_NAME.fullmatch(name) else None, "latest": latest if isinstance(latest, dict) else None})
+            last = document.get("last_id")
+            if document.get("has_more") is not True or not isinstance(last, str) or not CURSOR.fullmatch(last):
+                return found, False
+            after = last
+        return found, True
+
+    def list_connections(self) -> tuple[list[dict], bool]:
+        """Every connection of the project as the data plane shows it, without credentials: {"name", "type", "target", "credentials"} with plain words only (the kind of credential, never
+        one). A name or a word that this app does not accept is shown as None. The second value is True when the list goes on after the pages that were read."""
+        found: list[dict] = []
+        path = f"/connections?{API}"
+        for _ in range(LIST_PAGES):
+            document = self._call("GET", path, purpose="list connections")
+            page = document.get("value") if isinstance(document.get("value"), list) else document.get("data") if isinstance(document.get("data"), list) else []
+            for item in page:
+                item = item if isinstance(item, dict) else {}
+                credentials = item.get("credentials") if isinstance(item.get("credentials"), dict) else {}
+                found.append({"name": item.get("name") if isinstance(item.get("name"), str) and CONNECTION_NAME.fullmatch(item["name"]) else None,
+                              "type": item.get("type") if isinstance(item.get("type"), str) and KIND_WORD.fullmatch(item["type"]) else None,
+                              "target": item.get("target") if isinstance(item.get("target"), str) and len(item["target"]) <= 300 else None,
+                              "credentials": credentials.get("type") if isinstance(credentials.get("type"), str) and KIND_WORD.fullmatch(credentials["type"]) else None})
+            link = document.get("nextLink")
+            if not isinstance(link, str) or not link.startswith(self.endpoint + "/"):
+                return found, False
+            path = link[len(self.endpoint):]
+        return found, True
+
+    def run(self, agent: str, user_input: str, handler: ToolHandler | None = None, *, max_calls: int = 20, max_seconds: float | None = None,
+            stop: Callable[[AgentRun], str | None] | None = None) -> AgentRun:
         """Runs the agent on one input, answers each function call of it with `handler`, and returns when the agent gives its text.
 
         `agent` is what ensure_agent returned ("name:version": that version is run) or a name. The calls of one answer are all made and answered in one request.
@@ -327,7 +392,10 @@ class Foundry:
         The key of the agent reference is `agent_reference` (the REST reference). If the first response that the service answers in the life of this client is an
         HTTP 400 or 422 that is not about the model, its reasoning effort or its function tools, it is made again, once, with `agent` (the article on function calling),
         and the key that worked is kept for every later call. That first call carries no function output, so repeating it is safe. No other call and no other answer
-        starts that. A second failure is raised, and so is the first answer when the second one says that `agent` is deprecated: `agent_reference` then stays."""
+        starts that. A second failure is raised, and so is the first answer when the second one says that `agent` is deprecated: `agent_reference` then stays.
+
+        `stop` is the brake of the harness (cases/harness.py): it is called with what the run has come to before every request to the model, the first one too, and a reason that it
+        returns (plain words) ends the run with a FoundryError. A `stop` that raises ends the run too: a brake that cannot decide is a brake that holds."""
         reference = self._reference(agent)
         self._model = self._models.get(reference["name"])
         if not isinstance(user_input, str) or not user_input.strip():
@@ -354,6 +422,13 @@ class Foundry:
                 if deadline is not None and now() >= deadline:
                     raise self._error(f"Foundry run stopped: the time allowed ({max_seconds:g} seconds) was used up after {made} tool calls"
                                       + (f" and {refused} that were refused" if refused else ""))
+                if stop is not None:
+                    try:
+                        why = stop(result)
+                    except Exception:  # noqa: BLE001 (a brake that cannot decide holds)
+                        why = "the stop check failed"
+                    if why:
+                        raise self._error(f"Foundry run stopped by the harness: {why}")
                 document = self._respond(reference, conversation, pending, purpose)
                 result.responses += 1
                 self._count(result, document, purpose)
@@ -640,7 +715,7 @@ class Foundry:
                     raise self._error(f"Foundry {purpose} failed: a message of the answer holds content that this app does not use")
         text = "\n".join(parts)
         if not text.strip():
-            raise self._error(f"Foundry {purpose} failed: the answer holds no text")
+            raise self._error(f"Foundry {purpose} failed: {NO_TEXT}")
         return text
 
     def _answer(self, call: dict, handler: ToolHandler, result: AgentRun) -> dict:

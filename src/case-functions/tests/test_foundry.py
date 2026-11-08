@@ -241,7 +241,7 @@ class Interface(unittest.TestCase):
         self.assertEqual([(p.name, p.kind.name, p.default) for p in run.values()],
                          [("self", "POSITIONAL_OR_KEYWORD", inspect.Parameter.empty), ("agent", "POSITIONAL_OR_KEYWORD", inspect.Parameter.empty),
                           ("user_input", "POSITIONAL_OR_KEYWORD", inspect.Parameter.empty), ("handler", "POSITIONAL_OR_KEYWORD", None),
-                          ("max_calls", "KEYWORD_ONLY", 20), ("max_seconds", "KEYWORD_ONLY", None)])
+                          ("max_calls", "KEYWORD_ONLY", 20), ("max_seconds", "KEYWORD_ONLY", None), ("stop", "KEYWORD_ONLY", None)])
         self.assertEqual([f.name for f in dataclasses.fields(FunctionTool)], ["name", "description", "parameters"])
         self.assertEqual([f.name for f in dataclasses.fields(AgentSpec)], ["name", "description", "model", "instructions", "tools", "reasoning_effort"])
         self.assertIsNone(AgentSpec("n", "d", "m", "i").reasoning_effort, "the effort is left out unless a spec asks for one")

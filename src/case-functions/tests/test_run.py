@@ -930,7 +930,9 @@ class TheFoundryOfTheRun(unittest.TestCase):
     def test_the_client_of_the_project_is_made_from_the_settings_with_the_clients_token_and_the_redactor(self):
         estate = estate_with_leads()
         fake = FakeFoundry()
-        with mock.patch.object(run, "Foundry", return_value=fake) as made, mock.patch.object(investigate, "Toolbox", lambda *a: FakeToolbox()):
+        # The harness is built with the client that the run makes (it reads the lock and the store, and it is tested in test_harness.py): here it is left out, to see the client alone.
+        with mock.patch.object(run, "Foundry", return_value=fake) as made, mock.patch.object(run.harness_module, "build", return_value=None), \
+                mock.patch.object(investigate, "Toolbox", lambda *a: FakeToolbox()):
             run_watch(estate, env=INVESTIGATING)
         (call,) = made.call_args_list
         endpoint, client, token, redact = call.args
@@ -938,6 +940,23 @@ class TheFoundryOfTheRun(unittest.TestCase):
         self.assertIsInstance(client, http.Client)
         self.assertTrue(callable(token) and callable(redact))
         self.assertEqual(len(fake.runs), 2)
+
+    def test_the_client_that_the_run_makes_always_has_a_harness_around_its_agents_and_a_client_that_is_handed_in_has_none_of_its_own(self):
+        built = []
+        real = run.harness_module.build
+
+        def spy(*args, **kwargs):
+            built.append(args[1])
+            return real(*args, **kwargs)
+
+        fake = FakeFoundry()
+        with mock.patch.object(run, "Foundry", return_value=fake), mock.patch.object(run.harness_module, "build", spy), mock.patch.object(investigate, "Toolbox", lambda *a: FakeToolbox()):
+            run_watch(estate_with_leads(), env=INVESTIGATING)
+        self.assertEqual(built, [fake], "the harness is made with the client of the project")
+        built.clear()
+        with mock.patch.object(run.harness_module, "build", spy), mock.patch.object(investigate, "Toolbox", lambda *a: FakeToolbox()):
+            run_watch(estate_with_leads(), env=INVESTIGATING, foundry=FakeFoundry())
+        self.assertEqual(built, [], "a test that plays the agents gives its own harness, or none")
 
     def test_the_project_is_on_the_list_of_calls_of_the_app_only_when_it_is_set(self):
         seen = []

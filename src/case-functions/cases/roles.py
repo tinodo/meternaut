@@ -48,6 +48,9 @@ MAX_SCAN = 2 * MAX_ANSWER_CHARS  # the most that the tries of extract_object may
 _DECODER = json.JSONDecoder()
 _MARKER = "[figure removed]"
 _CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f]+")
+# Characters that show nothing or turn the text around: zero-width spaces and joiners, the marks and the overrides of the direction of the text, the invisible operators, the byte
+# order mark, the soft hyphen and the tag characters. A model's text that holds them could hide words from a reader or show them in the other order, so they are taken out.
+_INVISIBLE = re.compile("[\u00ad\u061c\u180e\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufeff\ufff9-\ufffb\U000e0000-\U000e007f]+")
 _LINK = re.compile(r"(?i)\b(?:https?://|www\.)\S+")
 # Money, best effort. These run on a text with one space between its words. A pattern can start only at the beginning of a number (never inside one) or at a currency,
 # and a number is read once (possessive), so the time is linear in the length of the text.
@@ -130,13 +133,14 @@ def _number_words(match: re.Match[str]) -> str:
 
 
 def clean_text(value: object, limit: int = MAX_TEXT) -> str:
-    """One line of plain text: no control character, no link, no figure about money that the patterns recognise, and at most `limit` characters.
+    """One line of plain text: no control character, no character that shows nothing or turns the text around, no link, no figure about money that the patterns recognise, and at most
+    `limit` characters.
 
     The text is cut first, to four times the limit and a little more (never more than MAX_CLEAN_INPUT), so that every pattern after it has a bounded text to read.
     The removal of money is best effort: it finds the usual ways of writing a sum, and the figures that count are the ones that code computes. A count such as
     "27 resources have data every day" stays: a plain figure with a period phrase goes only when a word about money is near it."""
     text = "" if value is None else str(value)
-    text = " ".join(_CONTROL.sub(" ", text[: min(max(limit, 0) * 4 + 100, MAX_CLEAN_INPUT)]).split())
+    text = " ".join(_CONTROL.sub(" ", _INVISIBLE.sub("", text[: min(max(limit, 0) * 4 + 100, MAX_CLEAN_INPUT)])).split())
     text = _NUMBER_WORDS.sub(_number_words, _MONEY.sub(_money, _LINK.sub("[link removed]", text))).replace("`", "'")
     return text if len(text) <= limit else text[: limit - 3].rstrip() + "..."
 

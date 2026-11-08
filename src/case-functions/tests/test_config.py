@@ -367,7 +367,7 @@ class TemplateAndCode(unittest.TestCase):
         # The settings of the loop are read by loop_config.py, the people by people.py, and the platform reads the ones of its sign-in and of its own hosting itself
         # (the Functions host's version and language, and how the Basic plan runs and builds the code).
         read |= set(re.findall(r'^([A-Z][A-Z0-9_]+) = "\1"$', (REPO_ROOT / "src" / "case-functions" / "cases" / "loop_config.py").read_text(encoding="utf-8"), re.M))
-        read |= {"CONSOLE_PEOPLE", "OVERRIDE_USE_MI_FIC_ASSERTION_CLIENTID"}
+        read |= {"CONSOLE_PEOPLE", "OVERRIDE_USE_MI_FIC_ASSERTION_CLIENTID", "BUILD_COMMIT", "PACKAGE_SHA256"}  # the last two (the release) are read by harness.py and drift_rules.py
         read |= {"FUNCTIONS_EXTENSION_VERSION", "FUNCTIONS_WORKER_RUNTIME", "WEBSITE_RUN_FROM_PACKAGE", "WEBSITES_CONTAINER_START_TIME_LIMIT", "SCM_DO_BUILD_DURING_DEPLOYMENT", "ENABLE_ORYX_BUILD"}
         self.assertIn('SETTING = "CONSOLE_PEOPLE"', (REPO_ROOT / "src" / "case-functions" / "cases" / "people.py").read_text(encoding="utf-8"))
         self.assertEqual(sorted(set(config.REQUIRED) - given), [], "the template does not set what the code requires")

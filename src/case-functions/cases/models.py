@@ -28,7 +28,7 @@ DECISIONS = ("approve", "decline", "ask", "not_mine", "later")
 # Why a person declined, from a short list (the form of a decline offers exactly these; an empty reason is allowed).
 DECLINE_REASONS = ("still-needed", "figure-wrong", "handled", "other")
 ACTION_STATES = ("queued", "running", "done", "failed", "unknown", "verified", "withdrawn")
-SWITCH_NAMES = ("all", "changes", "messages")
+SWITCH_NAMES = ("all", "changes", "messages", "investigation")
 NOTE_KINDS = ("note", "do_not_touch")
 CHANNELS = ("email", "teams", "desk")
 ROLES = ("owner", "approver", "ops")

@@ -45,6 +45,9 @@ FOUNDRY_MODEL_SKEPTIC = "FOUNDRY_MODEL_SKEPTIC"
 INVESTIGATE = "INVESTIGATE"
 INVESTIGATE_MAX_CALLS = "INVESTIGATE_MAX_CALLS"
 INVESTIGATE_MAX_SECONDS = "INVESTIGATE_MAX_SECONDS"
+# The tokens that one agent run may use before the harness stops it (cases/harness.py): a brake against a loop in a model, not a limit of normal work. The fourth real run of the agents
+# (2026-11-08) used about 169,000 tokens in all; this is about three and a half times that, written here before it was measured again. A setting can lower it and never raise it.
+INVESTIGATE_MAX_TOKENS = "INVESTIGATE_MAX_TOKENS"
 
 # The Investigator is gpt-5.5 (no effort sent: see INVESTIGATOR_REASONING_EFFORT in agents.py) and the Skeptic gpt-6.1-sol: see AGENT_MODELS in tools/environment-params.py for why, and a test holds the files together.
 DEFAULT_MODEL_INVESTIGATOR = "gpt-5.5"
@@ -53,12 +56,13 @@ DEFAULT_INVESTIGATE_CALLS = 40
 LIMIT_INVESTIGATE_CALLS = 40
 DEFAULT_INVESTIGATE_SECONDS = 420
 LIMIT_INVESTIGATE_SECONDS = 600
+LIMIT_INVESTIGATE_TOKENS = 600_000
 
 # SCOPE_SUBSCRIPTIONS is required unless SCOPE_ALL_SUBSCRIPTIONS is on (load below): the template always sets it, as the fallback.
 REQUIRED = (SCOPE_SUBSCRIPTIONS, MODEL_DETECTIVE, MODEL_SKEPTIC, AIGATEWAY_HOST, MAX_CASES_PER_RUN, CASES_CONTROL_QUEUE_NAME)
 OPTIONAL = {MAX_TOKENS_PER_RUN: str(LIMIT_TOKENS_PER_RUN), MAX_COMPLETION_TOKENS: str(LIMIT_COMPLETION_TOKENS), RUN_DEADLINE_SECONDS: str(LIMIT_DEADLINE_SECONDS),
             FOUNDRY_MODEL_INVESTIGATOR: DEFAULT_MODEL_INVESTIGATOR, FOUNDRY_MODEL_SKEPTIC: DEFAULT_MODEL_SKEPTIC,
-            INVESTIGATE_MAX_CALLS: str(DEFAULT_INVESTIGATE_CALLS), INVESTIGATE_MAX_SECONDS: str(DEFAULT_INVESTIGATE_SECONDS)}
+            INVESTIGATE_MAX_CALLS: str(DEFAULT_INVESTIGATE_CALLS), INVESTIGATE_MAX_SECONDS: str(DEFAULT_INVESTIGATE_SECONDS), INVESTIGATE_MAX_TOKENS: str(LIMIT_INVESTIGATE_TOKENS)}
 
 GUID = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
 # The name of a model of the Detective and the Skeptic: an alias of the AI Gateway, which has the name of the model deployment of the agents' own Foundry resource, and so do the agents.
@@ -94,6 +98,7 @@ class Settings:
     investigate: bool = False
     investigate_max_calls: int = DEFAULT_INVESTIGATE_CALLS
     investigate_max_seconds: int = DEFAULT_INVESTIGATE_SECONDS
+    investigate_max_tokens: int = LIMIT_INVESTIGATE_TOKENS
     # True: `subscriptions` is only the fallback, and the list that a run reads is made at its start (scope.py). The run then works with a copy whose `subscriptions` is that list.
     all_subscriptions: bool = False
 
@@ -144,6 +149,7 @@ def _investigation(env: Mapping[str, str], problems: list[str]) -> dict:
         "investigate": investigate,
         "investigate_max_calls": _integer(env, INVESTIGATE_MAX_CALLS, 1, LIMIT_INVESTIGATE_CALLS, OPTIONAL[INVESTIGATE_MAX_CALLS], problems),
         "investigate_max_seconds": _integer(env, INVESTIGATE_MAX_SECONDS, 30, LIMIT_INVESTIGATE_SECONDS, OPTIONAL[INVESTIGATE_MAX_SECONDS], problems),
+        "investigate_max_tokens": _integer(env, INVESTIGATE_MAX_TOKENS, 10_000, LIMIT_INVESTIGATE_TOKENS, OPTIONAL[INVESTIGATE_MAX_TOKENS], problems),
     }
 
 
