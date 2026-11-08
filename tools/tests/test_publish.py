@@ -762,7 +762,8 @@ class PublishScript(unittest.TestCase):
         self.assertIn("for attempt in 1 2 3 4 5; do", source, "five attempts, as on the runner")
         self.assertIn('if [ "$code" = 200 ] || [ "$code" = 202 ]; then', source)
         workflow = text(".github/workflows/deploy-hub.yml")
-        self.assertFalse("config-zip" in workflow, "the runner does not publish any more: this script is the one way")
+        self.assertEqual(workflow.count("config-zip"), 1, "the runner publishes one app only: the Teams bot's, which is public by necessity (docs/proposals/13-teams-and-outlook.md); every private app goes through this script")
+        self.assertIn("Publish the code to the Teams bot's function app", workflow[:workflow.index("config-zip")].rsplit("      - name: ", 1)[1])
         self.assertFalse("/api/zipdeploy" in workflow, "the runner does not post a package any more either")
 
 
