@@ -1,0 +1,19 @@
+{
+  "writtenBefore": "the first run of tools/learning-check.py (AGENTS.md rule 14 (c)): 2026-11-09. The check, the replay set and the numbers below were written in this order: this file, then the check, then the replay set, then the first run.",
+  "what": "The same replay of closed requests, decided twice: with frozen memory (what the first AI stated is all that there is) and with updated memory (the lessons of the requests that closed earlier in the replay: cases/learning.py calibrated_confidence and holds, the code that the Watch runs). The check says whether updated beats frozen, and it says so in numbers that this file fixed first.",
+  "thresholds": {
+    "labelledMin": {"min": 20, "why": "the part of the replay that is graded (the later half) holds at least this many closed requests that say whether the finding was right (approved, or declined as still needed or with a wrong figure); with fewer the check says that it did not measure and fails, because nothing is proved"},
+    "brierImprovementMin": {"min": 0.02, "why": "a starting value, not yet measured: the Brier score of the confidence that decides (the stated one, or the calibrated one when it is lower) must be lower with updated memory than with frozen memory by at least this much, over the graded part"},
+    "decoysHeldShareMin": {"min": 0.5, "why": "a starting value, not yet measured: of the proposals that a person then declined as wrong, at least this share is held back for a person by updated memory (a decoy is a request that frozen memory proposes and that people declined as wrong)"},
+    "goodHeldShareMax": {"max": 0.25, "why": "a starting value, not yet measured: of the proposals that a person then approved, at most this share is held back by updated memory; a held request still goes to a person, so a wrong hold costs a word on the page and not a finding, and a share above this says that learning does more harm than good"},
+    "coldStartIdentical": {"equals": true, "why": "for a resource type with fewer than the minimum of labelled outcomes in the band of the stated confidence, updated memory decides exactly as frozen memory does: learning never acts on no history"}
+  },
+  "ifMissed": "learning is withdrawn: the tool prints it and exits 1, docs/proposals/15-learning.md and the README say that the claim of learning is withdrawn, and the numbers stay in the proposal as they came out",
+  "notMeasured": [
+    "real closed requests: the replay set is invented, with the patterns that the mechanism is built for, so a pass says that the mechanism does what it is made to do, and nothing about how often real findings are over-confident",
+    "money: no saving, predicted or measured, enters the check",
+    "the Investigator's use of recall_lessons, recall_knowledge and recall_open_questions: that is behaviour of a model, which this check does not call",
+    "the claims of the Study: they reach no decision of code, only the Investigator through a tool",
+    "boomerangs: a change that is undone within weeks cannot be replayed without Azure"
+  ]
+}
