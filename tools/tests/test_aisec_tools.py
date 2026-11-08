@@ -557,6 +557,14 @@ class TheEvaluations(unittest.TestCase):
         answers = [late("list_resources", {}) for _ in range(evals.TOOL_BUDGET + 1)]
         self.assertEqual(answers[-1], '{"error":"budget-used-up"}')
 
+    def test_every_tool_of_the_toolbox_has_an_answer_in_the_fixtures_and_none_is_made_up(self):
+        from cases import toolbox
+
+        rows = helpers.read_jsonl(ROOT / "evaluation" / "cases.jsonl", 40)
+        names = {spec.name for spec in toolbox.SPECS}
+        for row in rows:
+            self.assertEqual(set(evals.answers_of(row)), names, f"{row['id']}: a tool that the fixtures do not answer is replayed as an unknown tool; extend answers_of in tools/foundry-evals.py in the shapes of the real tool")
+
     def test_the_thresholds_are_read_from_the_file_and_a_threshold_that_is_missed_is_a_failure(self):
         thresholds = json.loads((ROOT / "evaluation" / "thresholds.json").read_text(encoding="utf-8"))["codeGraders"]
         rows = [{"kind": "decoy", "expect": {"propose": ["r1"], "never": []}}]
