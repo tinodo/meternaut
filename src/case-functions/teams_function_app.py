@@ -1,6 +1,6 @@
 """Entry point of the Teams bot's function app (Python v2 programming model). Wiring only: the logic is in cases/teams.py.
 
-This file is not the entry of the cases app: the build of the bot's package (tools/build-function-app.sh with FUNCTION_APP_ENTRY=teams_function_app.py) puts it in place of function_app.py,
+This file is not the entry of the cases app: the build of the bot's package (tools/build-teams-bot.sh) puts it in place of function_app.py,
 so that the public app has exactly two functions, the messaging endpoint and the timer that offers cards, and none of the cases app's: no console route, no Watch, no loop's timer.
 """
 import azure.functions as func

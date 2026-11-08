@@ -4,8 +4,9 @@ Teams talks to a bot through the Bot Framework Connector, which POSTs an activit
 standard library: no Bot Framework SDK, because the Python SDK has no routing for the Universal Actions (`Action.Execute`) that the cards use, and the wire protocol is plain REST and a
 JWT (docs/proposals/13-teams-and-outlook.md has the sources and the dates).
 
-What is public, and why. Microsoft publishes no service tag or address list for the Connector, so the endpoint cannot be closed to it by address. It is open to every caller on the internet
-and trusts none: the first thing it does with a request is botauth.py (the token, the audience, the issuer, the service URL, the signature, the channel), and a request that fails gets a
+What is public, and why. No address list is documented for the Connector's calls to a Teams bot (the Bot Framework security FAQ says that allow-listing inbound addresses is not supported), and the
+service tag AzureBotService is documented for the Direct Line channel and is not proved for Teams (environment/teams/main.bicep has it behind a parameter that is off). So the endpoint is open to
+every caller on the internet and trusts none: the first thing it does with a request is botauth.py (the token, the audience, the issuer, the service URL, the signature, the channel), and a request that fails gets a
 status and an empty body. Everything that follows is bounded by design: an approval that changes Azure is never taken from a card (the card's one link goes to the page, where the person
 signs in to Azure and Azure checks the person's own rights); what a card can record is an answer that changes nothing in Azure (a decline, a question, "not mine", "later", and "worth acting
 on" for advice), for a person on the list of people, with the plan's code and a one-time token that the server made for that person and that plan. A forged call therefore cannot approve

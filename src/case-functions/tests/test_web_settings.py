@@ -27,7 +27,8 @@ class TheSettingsPage(unittest.TestCase):
         self.assertEqual([l.text() for l in root.find_all("legend")], ["Where I write to you first", "Quiet hours"])
         labels = {l.attrs["for"]: l.text() for l in root.find_all("label")}
         for field_id, text in (("quiet_from", "No letters from"), ("quiet_to", "No letters until"), ("weekly_budget", "Other letters a week, at most"),
-                               ("paused_until", "Pause my letters until"), ("channel-email", "E-mail"), ("channel-teams", "Teams (not built yet, so e-mail is used)"),
+                               ("paused_until", "Pause my letters until"), ("channel-email", "E-mail"),
+                               ("channel-teams", "Teams (a card first; a letter only if no card was sent within 20 minutes)"),
                                ("channel-desk", "Only the weekly summary")):
             self.assertEqual(labels[field_id], text)
         for gone in ("language", "timezone", "working_days", "desk_day", "mutes"):
