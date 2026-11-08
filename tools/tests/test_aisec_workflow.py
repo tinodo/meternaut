@@ -123,8 +123,9 @@ class TheActionsAreOfferedAndTheStepsFollowTheOrder(unittest.TestCase):
     def test_the_four_actions_are_the_last_of_the_options_and_the_description_says_what_each_does(self):
         options = re.search(r"(?ms)^      action:\n(.*?)^      \w", WORKFLOW).group(1)
         listed = re.findall(r"^          - (\S+)$", options, re.M)
-        self.assertEqual(listed[-4:], ["agents-drift", "foundry-evals", "foundry-redteam", "agent365-check"])
-        self.assertIn("aigateway-check", listed[:-4])
+        self.assertEqual(listed[-5:-1], ["agents-drift", "foundry-evals", "foundry-redteam", "agent365-check"], "the four actions of the agents' checks come right before the last option, the Teams bot's action, teams")
+        self.assertEqual(listed[-1], "teams")
+        self.assertIn("aigateway-check", listed[:-5])
         description = re.search(r'(?m)^        description: "(what-if: .*)"$', options).group(1)
         for action in ("agents-drift", "foundry-evals", "foundry-redteam", "agent365-check"):
             self.assertIn(f" {action}: ", description, action)

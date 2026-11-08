@@ -74,7 +74,7 @@ class TheWorkflowTouchesOnlyTheProjectsGroup(unittest.TestCase):
                     head = " ".join(words[:3]) if words[1] == "private-endpoint" and words[2] == "list" else " ".join(words[:4])
                 heads.setdefault(head, []).append(number)
         allowed = {"bicep build", "bicep lint", "rest", "resource list", "resource delete", "group show", "provider show", "role assignment",
-                   "network private-endpoint list", "network private-endpoint dns-zone-group"}
+                   "network private-endpoint list", "network private-endpoint dns-zone-group", "functionapp deployment"}  # functionapp deployment: the Teams bot's publish, the one app that is public
         self.assertEqual({head for head in heads if head not in allowed}, set(),
                          "a new kind of az call (for example az identity, az apim, az monitor or az ad): say which resource group it reads and why the deployment identity may, and add it here")
 

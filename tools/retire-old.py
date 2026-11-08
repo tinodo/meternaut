@@ -39,7 +39,7 @@ identities before it deletes them, and when it is done it lists the assignments 
 
 The function subnet: the usage app was integrated with the subnet snet-func (virtual network vnet-meternaut), and the cases app uses that subnet too when it runs on Flex Consumption (it runs on a Basic plan, on a subnet of its own, since 2026-11-08):
 the action cases then refuses to deploy while another app holds it. So after the deletes the tool reads the subnet again, lists the apps of the group that are integrated with it (the usage
-app, which was just deleted, must not be one) and reads again until no app but the cases app is, for at most 15 minutes. It prints the platform's links on the subnet (service
+app, which was just deleted, must not be one) and reads again until no app but the cases app and the Teams bot's app (docs/proposals/13-teams-and-outlook.md: it shares the subnet on purpose) is, for at most 15 minutes. It prints the platform's links on the subnet (service
 association links) as information: a link can stay for a while after its app is gone, and it does not stop the action cases, whose own check looks at the apps. Then it says that
 snet-func is free. When another app still holds the subnet, the run fails and names that app. A subnet that is not there is said, and is no error (the action model-side makes it).
 
@@ -353,8 +353,9 @@ def show_the_function_subnet(azure: Azure, subscription: str, group: str, out) -
 
 
 def free_the_function_subnet(azure: Azure, subscription: str, group: str, out) -> None:
-    """After the deletes: no app but the cases app may be integrated with the function subnet, so that the action cases can use it when the cases app runs on Flex Consumption. Reads until that is so."""
+    """After the deletes: no app but the cases app and the Teams bot's app may be integrated with the function subnet, so that the action cases can use it when the cases app runs on Flex Consumption. Reads until that is so."""
     cases_app = f"func-meternaut-cases-{digest(subscription, group)}"
+    teams_app = f"func-meternaut-teams-{digest(subscription, group)}"
     subnet = azure.function_subnet(subscription, group)
     if subnet is None:
         out(f"The function subnet {FUNCTION_SUBNET} is not there, so no app is integrated with it. The action model-side makes it, and the action cases needs it.")
@@ -369,14 +370,19 @@ def free_the_function_subnet(azure: Azure, subscription: str, group: str, out) -
     deadline = azure.clock() + WAIT_SECONDS
     while True:
         on_it = azure.apps_on_the_function_subnet(subscription, group)
-        others = [f"{name} (plan {plan})" for name, plan in on_it if name.lower() != cases_app.lower()]
+        others = [f"{name} (plan {plan})" for name, plan in on_it if name.lower() not in (cases_app.lower(), teams_app.lower())]
         if not others:
             break
         if azure.clock() >= deadline:
             raise Problem(f"the function subnet {FUNCTION_SUBNET} is still taken by {', '.join(others)}, {WAIT_SECONDS // 60} minutes after the deletes. The action cases needs it for itself: "
                           "a person looks at that app (it has to be deleted, or moved to another subnet) and runs the action again. Nothing else was changed")
         azure.sleep(POLL_SECONDS)
-    if on_it:
+    held = {name.lower() for name, _ in on_it}
+    if cases_app.lower() in held and teams_app.lower() in held:
+        out(f"The function subnet {FUNCTION_SUBNET} is free for the cases app: only the cases app {cases_app} and the Teams bot's app {teams_app} are integrated with it, as intended.")
+    elif teams_app.lower() in held:
+        out(f"The function subnet {FUNCTION_SUBNET} is free for the cases app: only the Teams bot's app {teams_app} is integrated with it, as intended.")
+    elif on_it:
         out(f"The function subnet {FUNCTION_SUBNET} is free for the cases app: only the cases app {cases_app} is integrated with it, as intended.")
     else:
         out(f"The function subnet {FUNCTION_SUBNET} is free: no app is integrated with it, so the action cases can use it.")

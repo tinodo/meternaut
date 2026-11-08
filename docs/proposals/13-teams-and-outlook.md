@@ -1,6 +1,6 @@
 # Teams and Outlook: a card in Teams, a letter in Outlook — a decision record
 
-**Status: built, not deployed, and not run in Teams or in Azure. The Hub action `teams` is written and waits to be added to the workflow ([`deploy-hub.yml`](../../.github/workflows/deploy-hub.yml)); it refuses to start unless the owner has asked in writing for a public endpoint (the input `public_teams_bot_requested`) and the repository variable `TEAMS_BOT_ENABLED` is True (False until he says so). Whether a card reaches a person is not proven until the first card arrives. Microsoft facts below name their page and status, read on 2026-11-08.**
+**Status: built, not deployed, and not run in Teams or in Azure. The Hub action `teams` is in the workflow ([`deploy-hub.yml`](../../.github/workflows/deploy-hub.yml)); it refuses to start unless the owner has asked in writing for a public endpoint (the input `public_teams_bot_requested`) and the repository variable `TEAMS_BOT_ENABLED` is True (False until he says so). Whether a card reaches a person is not proven until the first card arrives. Microsoft facts below name their page and status, read on 2026-11-08.**
 
 ## What a person sees
 
@@ -68,7 +68,7 @@ Each person:
 ## Risks that remain
 
 - The app's system identity can read and write the loop's tables. A flaw that runs code in the bot reaches the cases app's records, not Azure.
-- The bot shares the function subnet `snet-func` with the cases app. It is a /27 and is not changed once made. Learn [allows a shared Flex Consumption subnet](https://learn.microsoft.com/azure/azure-functions/flex-consumption-how-to), says that one app can affect the others, and advises a /26 for several apps. The workflow check that gives the web page the subnet to itself, and the same rule in `tools/retire-old.py`, need one change for the bot's app.
+- The bot shares the function subnet `snet-func` with the cases app. It is a /27 and is not changed once made. Learn [allows a shared Flex Consumption subnet](https://learn.microsoft.com/azure/azure-functions/flex-consumption-how-to), says that one app can affect the others, and advises a /26 for several apps. The workflow check that gives the web page the subnet to itself, and the same rule in `tools/retire-old.py`, let the bot's app through.
 - The Teams app package (manifest schema 1.30, current: [reference](https://learn.microsoft.com/microsoft-365/extensibility/schema/)) and the template were checked by tools and tests, not by Teams or Azure.
 
 ## What is not built
