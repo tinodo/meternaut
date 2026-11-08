@@ -3,6 +3,6 @@
   "maxRows": 40,
   "maxModelCalls": 400,
   "maxTokens": 1500000,
-  "maxSeconds": 3600,
-  "note": "A run counts every call of a model that it makes or asks the service to make through the AI Gateway: each response of the replayed Investigator, each judge call (rows times judge evaluators), each attack and each response of the synthetic copy. The tool prints the number, and the orchestrator holds it against the gateway's own telemetry. The seconds are counted from the start of the tool and cut every wait: the replay of the cases and the two evaluation runs fit in them."
+  "maxSeconds": 3300,
+  "note": "A run counts every call of a model that it makes or asks the service to make through the AI Gateway: each response of the replayed Investigator, each judge call (rows times judge evaluators), each attack and each response of the synthetic copy. The tool prints the number, and the orchestrator holds it against the gateway's own telemetry. The seconds are counted from the start of the tool and cut every wait: the replay of the cases and the two evaluation runs fit in them, and they stay under the 3600 seconds that is the most that the Operator's container group can be given, so that the tool stops itself and says so."
 }

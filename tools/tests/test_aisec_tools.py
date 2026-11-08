@@ -303,7 +303,8 @@ class TheEvaluationFiles(unittest.TestCase):
         limits = json.loads((ROOT / "evaluation" / "limits.json").read_text(encoding="utf-8"))
         helpers.Spend(limits)
         self.assertGreaterEqual(limits["maxRows"], len(self.rows()))
-        self.assertGreaterEqual(limits["maxSeconds"], 3600, "the replay of the cases and the two evaluation runs of the service fit in the seconds of the cap")
+        self.assertGreaterEqual(limits["maxSeconds"], 3000, "the replay of the cases and the two evaluation runs of the service fit in the seconds of the cap")
+        self.assertLess(limits["maxSeconds"], 3600, "the tool stops itself and says so before the Operator's container group, which can be given 3600 seconds at the most, is stopped")
 
     def prompts(self):
         return helpers.read_jsonl(ROOT / "evaluation" / "redteam-prompts.jsonl", 40)
