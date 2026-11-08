@@ -5,7 +5,9 @@ Read on Microsoft Learn on 2026-11-06 and not tried on the service. The token is
 version is immutable and has metadata (16 pairs, values up to 512 characters): the hash of the definition is kept there, because an agent holds 1,000 versions at most.
 Conversations: POST /openai/v1/conversations and DELETE /openai/v1/conversations/ID. A run: POST /openai/v1/responses with {agent_reference, conversation, input}. The
 article on function calling writes the key `agent` and the REST reference `agent_reference`: the reference is sent first, and if the first response is answered with an
-HTTP 400 or 422, whatever it says, `agent` is sent once and kept. An answer has status, error {code, message}, output items (message, function_call, reasoning)
+HTTP 400 or 422 that is not about the model (MODEL_TROUBLE), `agent` is sent once and kept; if that is answered that `agent` is deprecated, the first answer is raised and
+`agent_reference` stays (the first real run, 2026-11-08, showed that `agent_reference` is the key). A definition may hold `reasoning: {"effort": ...}` (AgentSpec.reasoning_effort).
+An answer has status, error {code, message}, output items (message, function_call, reasoning)
 and usage {input_tokens, output_tokens}. All the function calls of an answer are answered in one input list of function_call_output items. A run expires 10 minutes after
 it was made. Structured output (text.format) is set on the definition or the response: this module sets none. A function tool has strict false: its default is true.
 """
@@ -60,9 +62,18 @@ TOOL_NAME = re.compile(r"[A-Za-z0-9_-]{1,64}")
 KIND = re.compile(r"[a-z_]{1,40}")
 STATUSES = frozenset({"failed", "in_progress", "cancelled", "queued", "incomplete"})
 # The key of the agent reference in the body of a response: the REST reference writes the first, the article on function calling the second. The service may take only
-# one of them, and the words that it uses to refuse the other are not relied on: see Foundry._respond. A service refuses an unknown field with a 400, and some stacks with a 422.
+# one of them, and the words that it uses to refuse the other are not relied on, but for the two kinds of answer that follow: see Foundry._respond. A service refuses an
+# unknown field with a 400, and some stacks with a 422.
 AGENT_KEYS = ("agent_reference", "agent")
 FIRST_CALL_REFUSALS = frozenset({400, 422})
+# An answer about the model, its reasoning effort or its function tools is not about the key, and the call is not made again with the other key. The first real run (2026-11-08)
+# was refused with the code `model_error` ("Function tools with reasoning_effort are not supported for the model in /v1/chat/completions"), and the call that was made again
+# with `agent` was told that this key is deprecated: the second answer hid the first, which was the real one.
+MODEL_TROUBLE = re.compile(r"\bmodel_[a-z_]+\b|reasoning[_ ]effort|function[_ ]tools?")
+# What the service says of the other key when the first one was the right one ("The 'agent' property is deprecated. Use 'agent_reference' instead"): the first answer is then raised.
+KEY_DEPRECATED = re.compile(r"\bdeprecated\b.*\bagent_reference\b")
+# The effort that a definition asks the model to reason with: the service knows the words (none, minimal, low, medium, high, xhigh, max), this app only keeps to one plain word.
+EFFORT = re.compile(r"[a-z]{1,16}")
 # The model of an agent may be named `<connection>/<model>`: it is then called through a connection of the project, which for this project is the AI Gateway (docs/proposals/08-ai-gateway.md, step 2).
 # A call of a run that such a model fails is explained in fixed words that a person can act on (FoundryError.route), and only when the service's own status and words say that the failure is about the
 # route: a call that the service refuses for another reason keeps its own words and gets no explanation. What the Agent Service says when the gateway refuses it is not known (nothing of this has run), so the
@@ -155,13 +166,15 @@ class FunctionTool:
 
 @dataclass(frozen=True)
 class AgentSpec:
-    """The definition of a prompt agent. A change to it makes a new version of the agent in the project."""
+    """The definition of a prompt agent. A change to it makes a new version of the agent in the project. `reasoning_effort` is the effort that the model is asked to reason
+    with, sent as `reasoning.effort` of the definition: the word "none" is sent as the effort none, and None (the default) leaves it out."""
 
     name: str
     description: str
     model: str
     instructions: str
     tools: tuple[FunctionTool, ...] = ()
+    reasoning_effort: str | None = None
 
 
 @dataclass
@@ -223,11 +236,15 @@ def _payload(spec: AgentSpec) -> dict:
         problem = "the names of the tools (each different, letters, digits, _ and - only)"
     elif not all(isinstance(t.description, str) and isinstance(t.parameters, dict) for t in tools):
         problem = "the description or the parameters of a tool"
+    elif spec.reasoning_effort is not None and not (isinstance(spec.reasoning_effort, str) and EFFORT.fullmatch(spec.reasoning_effort)):
+        problem = "the reasoning effort (one word of lower-case letters, or None to leave it out)"
     else:
         definition: dict = {"kind": "prompt", "model": spec.model, "instructions": spec.instructions}
         if tools:
             # strict is set: its default is true (Learn, FunctionTool.Strict), and a strict schema must list every property as required.
             definition["tools"] = [{"type": "function", "name": t.name, "description": t.description, "parameters": t.parameters, "strict": False} for t in tools]
+        if spec.reasoning_effort is not None:
+            definition["reasoning"] = {"effort": spec.reasoning_effort}  # PromptAgentDefinition.reasoning (Learn, azure-ai-projects): Reasoning.effort
         return {"definition": definition, **({"description": spec.description} if spec.description else {})}
     raise FoundryError(f"Foundry: the definition of the agent is not valid: {problem}")
 
@@ -306,8 +323,9 @@ class Foundry:
         What the run had gathered is in the `partial` of every FoundryError of a run. The conversation is deleted in every case, after the time is used up too.
 
         The key of the agent reference is `agent_reference` (the REST reference). If the first response that the service answers in the life of this client is an
-        HTTP 400 or 422, whatever it says, it is made again, once, with `agent` (the article on function calling), and the key that worked is kept for every later call. That
-        first call carries no function output, so repeating it is safe. No other call and no other answer starts that; a second failure is raised."""
+        HTTP 400 or 422 that is not about the model, its reasoning effort or its function tools, it is made again, once, with `agent` (the article on function calling),
+        and the key that worked is kept for every later call. That first call carries no function output, so repeating it is safe. No other call and no other answer
+        starts that. A second failure is raised, and so is the first answer when the second one says that `agent` is deprecated: `agent_reference` then stays."""
         reference = self._reference(agent)
         self._model = self._models.get(reference["name"])
         if not isinstance(user_input, str) or not user_input.strip():
@@ -370,9 +388,11 @@ class Foundry:
 
     def _respond(self, reference: dict, conversation: str, pending: list[dict], purpose: str) -> dict:
         """One POST of /responses. The first one that the service answers in the life of this client is made again, once, with the other key of the agent reference,
-        when the service answers it with an HTTP 400 or 422, whatever it says: the REST reference and the article on function calling write the key differently, and the
-        service may take only one. The key that worked is kept. That first call carries no function output (it is the one that opens the conversation), so repeating
-        it is safe, and no function output is ever sent twice. A second failure is raised, and a note says which key was refused and why."""
+        when the service answers it with an HTTP 400 or 422 that is not about the model: the REST reference and the article on function calling write the key
+        differently, and the service may take only one. An answer about the model, its reasoning effort or its function tools (MODEL_TROUBLE) is raised as it is,
+        because the other key cannot mend it. The key that worked is kept. That first call carries no function output (it is the one that opens the conversation), so
+        repeating it is safe, and no function output is ever sent twice. A second failure is raised, and a note says which key was refused and why. But when the second
+        answer says that the other key is deprecated (KEY_DEPRECATED), the first key was the right one: the first answer is the real one, it is raised, and the key stays."""
         first, key = self._key_open and not pending, self._key
         refused = None
         try:
@@ -380,7 +400,7 @@ class Foundry:
         except FoundryError as error:
             if error.status is not None:
                 self._key_open = False
-            if not (first and error.status in FIRST_CALL_REFUSALS):
+            if not (first and error.status in FIRST_CALL_REFUSALS) or MODEL_TROUBLE.search(f"{error.code} {error.words}".lower()):
                 raise
             refused = error
         else:
@@ -390,7 +410,10 @@ class Foundry:
         reason = refused.words or "no reason given"
         try:
             document = self._post_response(other, reference, conversation, pending, purpose)
-        except FoundryError:
+        except FoundryError as second:
+            if KEY_DEPRECATED.search(second.words.lower()):
+                self._note(f"Foundry {purpose}: the service says that the key {other} is deprecated, so {key} stays, and the first answer is the real one ({reason})")
+                raise refused from None
             self._note(f"Foundry {purpose}: the key {key} was refused ({reason}), and {other} failed too")
             raise
         self._key = other

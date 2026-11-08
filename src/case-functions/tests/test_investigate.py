@@ -259,6 +259,12 @@ class TheAgentDefinitions(unittest.TestCase):
         self.assertEqual(agents.investigator(self.SETTINGS, tools).tools, tools)
         self.assertEqual(agents.skeptic(self.SETTINGS).tools, ())
 
+    def test_only_the_investigator_has_a_reasoning_effort_and_it_is_the_effort_none_that_lets_function_tools_work(self):
+        tools = FakeToolbox().specs
+        self.assertEqual(agents.INVESTIGATOR_REASONING_EFFORT, "none")
+        self.assertEqual(agents.investigator(self.SETTINGS, tools).reasoning_effort, "none")
+        self.assertIsNone(agents.skeptic(self.SETTINGS).reasoning_effort, "the Skeptic has no tools and keeps the default")
+
     def test_a_definition_is_the_same_text_every_time_so_that_the_project_keeps_one_version(self):
         tools = FakeToolbox().specs
         self.assertEqual(agents.investigator(self.SETTINGS, tools), agents.investigator(self.SETTINGS, tools))
@@ -2598,6 +2604,8 @@ class WithTheRealClientOfTheProject(unittest.TestCase):
         self.assertEqual([tool["name"] for tool in first["tools"]], [tool.name for tool in self.real.specs])
         self.assertEqual((second["model"], second["instructions"]), ("model-skeptic", agents.SKEPTIC_INSTRUCTIONS))
         self.assertFalse(second.get("tools"))
+        self.assertEqual(first["reasoning"], {"effort": "none"}, "function tools need the effort none on the route of a model behind the gateway")
+        self.assertNotIn("reasoning", second)
         (started,) = h.of("investigation.started")
         self.assertEqual((started["investigator"], started["skeptic"]), ("meternaut-investigator:1", "meternaut-skeptic:1"))
 
