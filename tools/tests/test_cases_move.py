@@ -8,10 +8,13 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import re
 import tempfile
+import types
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
 spec = importlib.util.spec_from_file_location("cases_move", ROOT / "tools" / "cases-move.py")
@@ -473,6 +476,13 @@ class ThePreview(unittest.TestCase):
         self.assertEqual(code, 0, lines)
         self.assertIn("the role assignments that the deploy will write: 7 listed, 7 were not there, 0 are the app's own and were kept, 0 were deleted", said(lines))
         self.assertEqual((azure.deleted, summary), ([], ""), "a new estate has nothing in the way and nothing to tell")
+
+
+class TheRunner(unittest.TestCase):
+    def test_az_is_the_one_of_the_environment_and_is_asked_to_show_errors_only(self):
+        with mock.patch.object(cm.subprocess, "run", return_value=types.SimpleNamespace(returncode=3, stdout="out", stderr="err")) as called, mock.patch.dict(os.environ, {"AZ": "/x/az"}):
+            self.assertEqual(cm.run_az(["rest", "--method", "get"]), (3, "out", "err"))
+        called.assert_called_once_with(["/x/az", "rest", "--method", "get", "--only-show-errors"], capture_output=True, text=True)
 
 
 class TheRefusals(unittest.TestCase):
