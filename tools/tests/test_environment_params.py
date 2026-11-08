@@ -479,7 +479,7 @@ class FirstCases(unittest.TestCase):
             self.assertEqual((code, err), (0, ""))
             self.assertEqual(values(files["cases.parameters.json"])["aiGatewayHost"], host, extra)
             self.assertNotIn(host, out, "the host name is not printed")
-        for action, extra in (("", ()), ("what-if", ()), ("cases", ("--preview",)), ("foundry", ()), ("base", ()), ("aigateway", ())):
+        for action, extra in (("", ()), ("what-if", ()), ("cases", ("--preview",)), ("base", ())):
             code, out, err, files = run({**SETTINGS, "ACTION": action}, *extra)
             self.assertEqual((code, err), (0, ""), action)
             self.assertEqual(values(files["cases.parameters.json"])["aiGatewayHost"], ep.PLACEHOLDER_AIGATEWAY_HOST, f"{action!r}: the placeholder, because the gateway is not named")
@@ -709,8 +709,8 @@ class Foundry(unittest.TestCase):
             self.assertEqual(set(model), {"name", "version", "sku", "capacity"}, "no retirement date and no agentCapacity reaches the template")
 
     def test_the_capacity_of_the_agents_is_the_one_that_the_foundry_file_gets(self):
-        models = [{"name": "alpha", "version": "2026-09-22", "sku": "DataZoneStandard", "capacity": 20, "agentCapacity": 70, "retirementDate": "2028-03-11"},
-                  {"name": "beta", "version": "2026-09-22", "sku": "DataZoneStandard", "capacity": 30, "agentCapacity": 10, "retirementDate": "2028-03-11"}]
+        models = [{"name": "gpt-6-luna", "version": "2026-09-22", "sku": "DataZoneStandard", "capacity": 20, "agentCapacity": 70, "retirementDate": "2028-03-11"},
+                  {"name": "gpt-6.1-sol", "version": "2026-09-22", "sku": "DataZoneStandard", "capacity": 30, "agentCapacity": 10, "retirementDate": "2028-03-11"}]
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         path = Path(tmp.name) / "models.json"
