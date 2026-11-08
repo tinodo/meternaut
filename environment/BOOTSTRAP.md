@@ -2,6 +2,22 @@
 
 Every change to Azure goes through the workflow [`deploy-hub.yml`](../.github/workflows/deploy-hub.yml) ([AGENTS.md](../AGENTS.md) rule 18). The workflow signs in to Azure as an identity, and an identity cannot create itself, so a person creates it once. That is this page. It is the only manual step, and nothing here runs until the owner has said yes in plain words in the conversation.
 
+## Running the Hub on this machine
+
+Since 2026-11-08 an action of the Hub runs from the owner's machine, with his own `az` session, by [`tools/hub-local.py`](../tools/hub-local.py) ([the record](../docs/proposals/16-the-hub-on-the-owners-machine.md)). Where this page says that a run of the workflow does something, the same steps run with the tool. The workflow stays, starts on a click only and is the way back when the quota of GitHub Actions is there again.
+
+**Once.** `python tools/hub-local.py --init` makes `local/hub-local.env` (the variables and secrets that the workflow reads, with empty values) and the run counter `local/hub-local.state.json`, in the `local/` folder of the repository's main working tree, which every worktree shares (`METERNAUT_LOCAL` names another folder). Fill in the values. `--init --from-github` reads the variables and the newest run number from GitHub once and never reads a secret. `AZURE_CLIENT_ID` may stay empty: a run here does not use the deploy identity. Git ignores the file, and the tool refuses to run when git tracks it.
+
+**Each time.** The person signs in to Azure first with `az login`: the tool never signs in, and it refuses an `az` session that is not a person's.
+
+```powershell
+python tools/hub-local.py cases --dry-run   # the plan: nothing runs, no az session needed
+python tools/hub-local.py what-if           # reads only, so it needs no --yes
+python tools/hub-local.py cases --yes       # changes Azure: needs --yes and a clean working tree
+```
+
+`aigateway` also needs `--public-ai-gateway-requested`, `page-latency` takes `--minutes`, and `plant` takes `--plant-public-ip`. The role check of `aigateway` reads the signed-in person's assignments and asks for *Role Based Access Control Administrator* on the group itself, which *Owner* is not (see the record). A run sets the CLI's default subscription to the pilot's for its minutes and puts the previous one back at the end. It writes a record and a log to `local/records/` and ends with a line that says `PASSED` or `FAILED` and the minutes.
+
 ## What the owner approves
 
 **In Azure.** In the subscription that holds the project's resources: two resource groups (one for the identity, one for the project's own resources) and one managed identity with one credential. On the two groups that the workflow works in, these roles:

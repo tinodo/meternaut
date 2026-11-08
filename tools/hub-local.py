@@ -845,6 +845,7 @@ class Console:
         self.log = open(log_path, "w", encoding="utf-8", newline="\n") if log_path else None
         self.errors = 0
         self.warnings = 0
+        self.last_output = time.monotonic()
 
     def add_mask(self, value: str) -> None:
         if len(value) >= MIN_MASK_LENGTH and value not in self.masks:
@@ -858,6 +859,7 @@ class Console:
         return text
 
     def emit(self, text: str) -> None:
+        self.last_output = time.monotonic()
         text = self.mask(text)
         try:
             print(text, file=self.out, flush=True)
@@ -1326,22 +1328,34 @@ class ProcessGroup:
         except OSError:
             pass
 
+    def interrupt(self) -> None:
+        """Asks for a clean stop. On Windows the console has sent Ctrl+C to everything that shares it already; elsewhere the command is in a session of its own and is told."""
+        if os.name != "nt":
+            import signal
+            try:
+                os.killpg(self.proc.pid, signal.SIGINT)
+            except OSError:
+                pass
+
     def close(self) -> None:
         if self.job:
             self.job[0].CloseHandle(self.job[1])
             self.job = None
 
 
+INTERRUPT_GRACE_SECONDS = 60
+HEARTBEAT_SECONDS = 120
+
+
 def run_process(argv: list, env: dict, cwd, console: Console, timeout_seconds: float) -> tuple:
     """Runs a command with its output streamed live through the console. Returns (exit code, timed out).
 
-    The command is in a process group of its own, so a Ctrl+C reaches this tool and not the command: this tool then ends everything that the command started. What a command leaves behind
-    when it ends is ended too: a step does not leave an az or a container-group call running. The output is read by a thread, because a blocking read of a pipe is not interrupted by
-    Ctrl+C on Windows, while a wait with a timeout is."""
+    Everything that the command starts is in one group (a job object on Windows), so that a timeout ends all of it, and so does the end of the command: a step does not leave an az or a
+    container-group call running. A Ctrl+C reaches the command too, as it does when a person runs it by hand, and a tool that cleans up after itself (operator-run.py deletes its container
+    group) gets up to a minute for that; a second Ctrl+C, or the minute, ends it. The output is read by a thread, because a blocking read of a pipe is not interrupted by Ctrl+C on
+    Windows, while a wait with a timeout is. A command that is silent for two minutes is said to be still running."""
     options: dict = {}
-    if os.name == "nt":
-        options["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
-    else:
+    if os.name != "nt":
         options["start_new_session"] = True
     proc = subprocess.Popen(argv, cwd=str(cwd), env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, **options)
     group = ProcessGroup(proc)
@@ -1352,24 +1366,39 @@ def run_process(argv: list, env: dict, cwd, console: Console, timeout_seconds: f
 
     reader = threading.Thread(target=pump, daemon=True)
     reader.start()
-    deadline = time.monotonic() + timeout_seconds
+    began = time.monotonic()
+    deadline = began + timeout_seconds
     timed_out = False
     try:
         while proc.poll() is None:
             reader.join(0.2)
             if not reader.is_alive():
                 time.sleep(0.2)
-            if not timed_out and time.monotonic() > deadline:
+            now = time.monotonic()
+            if not timed_out and now > deadline:
                 timed_out = True
                 group.kill()
+            if now - console.last_output > HEARTBEAT_SECONDS:
+                console.emit(f"    ... still running after {(now - began) / 60:.0f} minutes")
         reader.join(2)
         group.kill()
         reader.join(5)
+    except KeyboardInterrupt:
+        group.interrupt()
+        try:
+            end = time.monotonic() + INTERRUPT_GRACE_SECONDS
+            while proc.poll() is None and time.monotonic() < end:
+                time.sleep(0.2)
+        except KeyboardInterrupt:
+            pass
+        group.kill()
+        raise
     except BaseException:
         group.kill()
         raise
     finally:
         group.close()
+        reader.join(2)
         if not reader.is_alive():
             try:
                 proc.stdout.close()
@@ -1759,7 +1788,7 @@ class Hub:
 
     def start_session(self) -> None:
         target = self.values["ENV_SUBSCRIPTION_ID"]
-        code, out, err = self.az.run(["account", "show", "--query", "{id:id, name:name, tenant:tenantId, user:user.name, type:user.type}", "--output", "json"])
+        code, out, err = self.az.run(["account", "show", "--query", "{id:id, tenant:tenantId, user:user.name, type:user.type}", "--output", "json"])
         if code != 0:
             raise HubLocalError(f"there is no az session on this machine ({(err.strip().splitlines() or [''])[0][:200]}). Sign in yourself with `az login`: this tool never signs in")
         try:
@@ -1768,7 +1797,7 @@ class Hub:
             raise HubLocalError("az account show did not answer with json") from None
         if info.get("type") != "user":
             raise HubLocalError(f"the az session is a {info.get('type')}, not a person: a deploy runs with the owner's own session only")
-        self.previous_default = {"id": info.get("id", ""), "name": info.get("name", "")}
+        self.previous_default = {"id": info.get("id", "")}
         self.session_user = info.get("user", "")
         self.lock.update(previousDefault=self.previous_default["id"])
         self.default_changed = True
@@ -1791,7 +1820,7 @@ class Hub:
         if info.get("type") != "user":
             raise HubLocalError("the az session is not a person's any more")
         if first:
-            self.say(f"  az session of {info.get('user')}; the pilot's subscription is the CLI's default for this run (it is put back at the end: it was {self.previous_default['name'] or 'another subscription'})")
+            self.say(f"  az session of {info.get('user')}; the pilot's subscription is the CLI's default for this run (it is put back at the end)")
         return info
 
     def make_shims(self) -> None:
@@ -2030,10 +2059,9 @@ class Hub:
         if not self.default_changed or not self.previous_default:
             return
         previous = self.previous_default
-        label = previous["name"] or previous["id"]
         code, _, err = self.az.run(["account", "set", "--subscription", previous["id"]])
         if code == 0:
-            self.restore_note = f"the CLI's default subscription was put back: it is {label} again"
+            self.restore_note = "the CLI's default subscription was put back to the one that it was before the run"
         else:
             self.restore_note = f"THE CLI'S DEFAULT SUBSCRIPTION WAS NOT PUT BACK ({err.strip()[:200]}). Run: az account set --subscription {previous['id']}"
         self.default_changed = False

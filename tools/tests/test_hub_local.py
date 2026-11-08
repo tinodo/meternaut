@@ -1520,6 +1520,82 @@ class TheSmallParts(unittest.TestCase):
         self.assertFalse(folder.exists())
 
 
+@unittest.skipIf(BASH is None, "no Git bash on this machine")
+class TheProcessRunner(unittest.TestCase):
+    """run_process: live output, a timeout that ends everything, a silent command that is said to be running, and Ctrl+C with time to clean up."""
+
+    def setUp(self):
+        self.tmp = scratch()
+        self.addCleanup(self.tmp.cleanup)
+        self.base = Path(self.tmp.name)
+        self.out = io.StringIO()
+        self.console = hub.Console(self.out)
+
+    def run_script(self, text, timeout=60, console=None):
+        script = self.base / "s.sh"
+        script.write_text(text, encoding="utf-8", newline="\n")
+        return hub.run_process([BASH, "--noprofile", "--norc", "-eo", "pipefail", script.as_posix()], dict(os.environ), self.base, console or self.console, timeout)
+
+    def test_the_output_is_streamed_and_the_exit_code_is_given(self):
+        code, timed_out = self.run_script('echo "one"\necho "two" >&2\nexit 7\n')
+        self.assertEqual((code, timed_out), (7, False))
+        self.assertEqual(sorted(self.out.getvalue().split()), ["one", "two"])
+
+    def test_what_a_command_leaves_running_when_it_ends_is_ended_with_it(self):
+        marker = self.base / "late.txt"
+        code, timed_out = self.run_script(f'( sleep 4; echo late > "{marker.as_posix()}" ) &\necho started\n')
+        self.assertEqual((code, timed_out), (0, False))
+        time.sleep(6)
+        self.assertFalse(marker.exists(), "the background process of the step was ended with the step")
+
+    def test_a_command_that_is_silent_for_a_while_is_said_to_be_still_running(self):
+        with mock.patch.object(hub, "HEARTBEAT_SECONDS", 1):
+            code, _ = self.run_script("sleep 4\necho done\n")
+        self.assertEqual(code, 0)
+        self.assertIn("... still running after", self.out.getvalue())
+        self.assertIn("done", self.out.getvalue())
+
+    def test_ctrl_c_gives_the_command_time_to_clean_up_and_then_ends_it(self):
+        class Interrupting(hub.Console):
+            """Stands in for a Ctrl+C that arrives in the main thread, on the second look of the wait loop at the console."""
+            looks = 0
+
+            @property
+            def last_output(self):
+                Interrupting.looks += 1
+                if Interrupting.looks == 6:
+                    raise KeyboardInterrupt
+                return time.monotonic()
+
+            @last_output.setter
+            def last_output(self, value):
+                pass
+        out = io.StringIO()
+        console = Interrupting(out)
+        with mock.patch.object(hub, "INTERRUPT_GRACE_SECONDS", 30), self.assertRaises(KeyboardInterrupt):
+            self.run_script('echo working\nsleep 3\necho "cleaned up after the interrupt"\n', console=console)
+        self.assertIn("cleaned up after the interrupt", out.getvalue(), "the command ran on to its own end: a tool that deletes what it made has its time")
+
+    def test_ctrl_c_ends_a_command_that_does_not_stop_when_the_grace_is_over(self):
+        class Interrupting(hub.Console):
+            looks = 0
+
+            @property
+            def last_output(self):
+                Interrupting.looks += 1
+                if Interrupting.looks == 6:
+                    raise KeyboardInterrupt
+                return time.monotonic()
+
+            @last_output.setter
+            def last_output(self, value):
+                pass
+        began = time.monotonic()
+        with mock.patch.object(hub, "INTERRUPT_GRACE_SECONDS", 2), self.assertRaises(KeyboardInterrupt):
+            self.run_script("sleep 100\n", console=Interrupting(io.StringIO()))
+        self.assertLess(time.monotonic() - began, 30)
+
+
 class NothingReachesGitHubButTheOptionalInitRead(unittest.TestCase):
     code = re.sub(r"(?m)^\s*#.*$", "", re.sub(r'""".*?"""', "", SOURCE, flags=re.S))
 
