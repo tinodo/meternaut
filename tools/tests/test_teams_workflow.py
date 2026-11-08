@@ -212,8 +212,7 @@ class TheAction(unittest.TestCase):
         self.assertNotRegex(script, r"\baz (?:rest --method (?!get)|resource (?:create|delete)|deployment|role)")
         for words in ("Run base first", "run model-side first", "Microsoft.App/environments", "Microsoft.BotService", "A person does that once"):
             self.assertIn(words, script, words)
-        self.assertEqual(script.count("az provider register"), 2, "the workflow only says the command: it does not run it (the lines are the messages)")
-        self.assertNotRegex(re.sub(r'echo "[^\n]*', "", script), r"az provider register", "and no line runs it")
+        self.assertNotIn("az provider register", script, "the workflow reads the provider and never registers it, and does not even print the command (tools/tests/test_environment_template.py)")
 
     def test_it_is_deployed_through_the_one_deploy_tool_with_the_teams_template_and_nothing_else(self):
         script = commands_of(named("Deploy the Teams bot"))
