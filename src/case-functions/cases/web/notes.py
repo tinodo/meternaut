@@ -114,7 +114,7 @@ def notes_page(ctx: Ctx, *, values: dict[str, str] | None = None, errors: dict[s
                    error=errors.get("expires", ""), required=True, attrs={"min": today.isoformat(), "max": last.isoformat()}),
              fmt('<div class="actions">{b}</div>', b=button("Save", kind="primary"))),
     ]
-    return page(ctx, "What I know about your resources", join(block(p) for p in parts), current="/me/notes", status=status, why="These are the notes that you wrote.")
+    return page(ctx, "What I know about your resources", join(block(p) for p in parts), current="/me/settings", status=status, why="these are the notes that you wrote")
 
 
 def _refused(ctx: Ctx) -> Response:

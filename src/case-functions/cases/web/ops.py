@@ -1,15 +1,117 @@
-"""The two pages for the platform team: the standing permissions (none exist, read-only) and the kill switch (three levels)."""
+"""The pages for the platform team: Operations (the switches, the latest runs, what Meternaut may change), every run and every case, the standing permissions (none exist,
+read-only) and the kill switch (three levels).
+
+This is where the tables that the start page and History do not carry now live: the content is the earlier one, moved, not extended.
+"""
 from __future__ import annotations
+
+import re
 
 from ..models import SWITCH_NAMES, SwitchRecord
 from . import words
-from .common import switch_states
-from .core import MAX_REASON, Ctx, Response, Safe, fmt, join, stamp
-from .home import switch_text
-from .layout import block, button, error_summary, field, form, hidden, message_page, notice, page, paragraph
+from .common import CASE_HEADERS, case_rows, count, legend, read, run_result, switch_states
+from .core import ID, MAX_REASON, Ctx, Response, Safe, fmt, join, link_part, stamp
+from .layout import block, button, error_summary, field, form, hidden, items, link, message_page, notice, page, paragraph, table
 
-PERMISSIONS_WHY = "Your role lets you see how Meternaut is allowed to act."
-PAUSE_WHY = "Your role ops lets you stop work at three levels."
+PERMISSIONS_WHY = "your role lets you see how Meternaut is allowed to act"
+PAUSE_WHY = "your role ops lets you stop work at three levels"
+OPS_WHY = "your role ops lets you see how Meternaut is running"
+RUN_HEADERS = ["Started", "Trigger", "Result", "Leads", "Cases", "Proposed", "Needs a person", "Dropped", "Errors", "Tokens", "Seconds", "Notes", "Cases of the run"]
+LATEST_RUNS = ["Started", "Trigger", "Result", "Cases", "Proposed", "Needs a person", "Errors"]
+RUNS_SHOWN = 20
+CASES_SHOWN = 100
+CASES_SEARCHED = 1000
+
+
+def switch_text(ctx: Ctx, name: str, record) -> Safe:
+    """The state of one switch in words. A switch that cannot be read counts as pulled."""
+    if record is None:
+        return Safe("Cannot be read: treated as pulled.")
+    if not record.paused:
+        return Safe("Running.")
+    who = f" by {record.by}" if record.by else ""
+    reason = f" Reason: {record.reason}" if record.reason else " No reason is recorded."
+    return fmt("Paused{who} on {when}.{reason}", who=who, when=ctx.when(record.at, "a time that is not recorded"), reason=reason)
+
+
+def _switches_table(ctx: Ctx) -> Safe:
+    rows = []
+    for name, record in switch_states(ctx):
+        label, stops, _ = words.SWITCH[name]
+        rows.append([label, stops, switch_text(ctx, name, record)])
+    return table("switches", "State of each switch", ["Switch", "What it stops", "State"], rows, row_header=True)
+
+
+def hub(ctx: Ctx) -> Response:
+    runs, ok = read(lambda: ctx.store.runs_recent(5), [])
+    parts: list[object] = [
+        Safe("<h1>Operations</h1>"),
+        paragraph("For the platform team: the switches, the latest runs and what Meternaut may change in Azure.", "lead"),
+        Safe("<h2>The three switches</h2>"), _switches_table(ctx), paragraph(link(ctx.url("/ops/pause"), "Pause or resume work")),
+        Safe("<h2>Latest runs</h2>"),
+    ]
+    if not ok:
+        parts.append(notice("error", "The runs cannot be read", "I cannot read the runs now. Nothing has changed."))
+    elif not runs:
+        parts.append(paragraph("No run is recorded yet."))
+    else:
+        parts.append(table("latest-runs", "The five latest runs, newest first", LATEST_RUNS,
+                           [[ctx.when(r.started_at), r.trigger, run_result(r), count(r.cases), count(r.proposed), count(r.needs_human), count(r.errors)] for r in runs]))
+    parts += [paragraph(link(ctx.url("/ops/runs"), "Every run and every case")),
+              Safe("<h2>What Meternaut can change in Azure</h2>"),
+              paragraph(fmt("On its own, nothing: Meternaut holds no right to change Azure. When a person approves a change, they sign in to Azure and Meternaut makes that one change "
+                            "with their own permissions. The code makes only this change: {acts_on}.", acts_on=ctx.services.acts_on)),
+              paragraph(link(ctx.url("/ops/permissions"), "The standing permissions"))]
+    return page(ctx, "Operations", join(block(p) for p in parts), current="/ops", why=OPS_WHY)
+
+
+def _runs_table(ctx: Ctx, runs: list, selected: str) -> Safe:
+    rows = []
+    for run in runs:
+        mark = Safe("<strong>Selected.</strong> ") if run.run_id == selected else ""
+        rows.append([
+            fmt("{mark}{when}", mark=mark, when=ctx.when(run.started_at)), run.trigger, run_result(run), count(run.leads), count(run.cases), count(run.proposed),
+            count(run.needs_human), count(run.dropped), count(run.errors), count(run.tokens), count(run.seconds),
+            items(run.notes) if run.notes else "none",
+            fmt('<a href="{href}">Show them<span class="visually-hidden"> for run {run}</span></a>', href=ctx.url(f"/ops/runs?run={link_part(run.run_id)}"), run=run.run_id),
+        ])
+    return table("runs", f"The latest {RUNS_SHOWN} runs, newest first", RUN_HEADERS, rows)
+
+
+def runs_page(ctx: Ctx) -> Response:
+    """Every run of the search and every case that the runs looked at, newest first."""
+    raw = ctx.request.query.get("run", "")
+    selected = raw if raw and re.fullmatch(ID, raw) else ""
+    runs, runs_ok = read(lambda: ctx.store.runs_recent(RUNS_SHOWN), [])
+    cases, cases_ok = read(lambda: ctx.store.cases_recent(CASES_SEARCHED if selected else CASES_SHOWN), [])
+    if selected:
+        cases = [case for case in cases if case.run_id == selected]
+    parts: list[object] = [
+        Safe("<h1>Runs and cases</h1>"),
+        paragraph("Every run of the search and every case that the runs looked at, newest first. Money is in US dollars. An estimated saving is an estimate from cost lines of the last 30 days.", "lead"),
+        Safe("<h2>Runs</h2>"),
+    ]
+    if not runs_ok:
+        parts.append(notice("error", "The runs cannot be read", "I cannot read the runs now. Nothing has changed."))
+    elif not runs:
+        parts.append(paragraph("No run is recorded yet."))
+    else:
+        parts.append(_runs_table(ctx, runs, selected))
+    parts.append(Safe("<h2>Cases</h2>"))
+    if raw and not selected:
+        parts.append(notice("warning", "That run id is not valid", "A run id has letters, digits, dots, hyphens and underscores only. All cases are shown."))
+    if selected:
+        parts.append(paragraph(fmt('Cases of the run {run}. <a href="{href}">Show all cases</a>.', run=selected, href=ctx.url("/ops/runs"))))
+    else:
+        parts.append(paragraph(f"The latest {CASES_SHOWN} cases, most recently updated first."))
+    if not cases_ok:
+        parts.append(notice("error", "The cases cannot be read", "I cannot read the cases now. Nothing has changed."))
+    elif not cases:
+        parts.append(paragraph("No case is recorded for this run." if selected else "No case is recorded yet."))
+    else:
+        parts.append(table("cases", "Cases with their status, recommendation and estimated saving", CASE_HEADERS, case_rows(ctx, cases)))
+    parts += [Safe("<h2>What the status words mean</h2>"), legend()]
+    return page(ctx, "Runs and cases", join(block(p) for p in parts), current="/ops", ai=True, why=OPS_WHY)
 
 
 def permissions(ctx: Ctx) -> Response:
@@ -21,7 +123,7 @@ def permissions(ctx: Ctx) -> Response:
         Safe("<h2>What Meternaut can change in Azure</h2>"),
         paragraph(fmt("On its own, nothing. The code makes only this change, and only for a person who approved it: {acts_on}.", acts_on=ctx.services.acts_on)),
     ]
-    return page(ctx, "Standing permissions", join(block(p) for p in parts), current="/ops/permissions", why=PERMISSIONS_WHY)
+    return page(ctx, "Standing permissions", join(block(p) for p in parts), current="/ops", why=PERMISSIONS_WHY)
 
 
 def _switch_form(ctx: Ctx, name: str, record: SwitchRecord | None, errors: dict[str, str], values: dict[str, str]) -> Safe:
@@ -55,7 +157,7 @@ def pause_page(ctx: Ctx, *, banner: Safe | None = None, errors: dict[str, str] |
         parts.append(error_summary(list(errors.items())))
     states = dict(switch_states(ctx))
     parts += [_switch_form(ctx, name, states.get(name), errors, values) for name in SWITCH_NAMES]
-    return page(ctx, "The kill switch", join(block(p) for p in parts), current="/ops/pause", status=status, why=PAUSE_WHY)
+    return page(ctx, "The kill switch", join(block(p) for p in parts), current="/ops", status=status, why=PAUSE_WHY)
 
 
 def pause_save(ctx: Ctx) -> Response:

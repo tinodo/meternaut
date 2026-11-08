@@ -2,7 +2,8 @@
 
 Nothing here changes Azure, and Meternaut holds no right to change Azure. An approval is made when the person signs in to Azure, and the change is made
 with that person's own token (delegated.py and runner.py), so Azure checks the person's own rights. The plan is computed by code from the lead's typed
-facts and never from a model's words.
+facts and never from a model's words. A finding about a resource that Meternaut may not change gets an advise plan: a person says whether it is worth acting on,
+and the answer is recorded and changes nothing in Azure.
 """
 from __future__ import annotations
 
@@ -12,13 +13,18 @@ import uuid
 from dataclasses import dataclass, replace
 from typing import Callable
 
-from . import switches
+from . import brief, switches
 from .detectors import Lead
 from .memory_store import parse, stamp, utc_now
-from .models import (ActionRecord, CaseRecord, DecideResult, DecisionRecord, PlanRecord, Principal, Store, StoreError)
+from .models import (ADVISE, DECLINE_REASONS, ActionRecord, CaseRecord, DecideResult, DecisionRecord, PlanRecord, Principal, Store, StoreError)
 from .roles import clean_text
 
 FAMILY_OF = {"orphan-managed-disk": "delete-disk", "orphan-public-ip": "delete-public-ip"}
+# The answers that a person can give (a request that changes nothing in Azure takes all of them on the page; a change takes the sign-in for its approval).
+ANSWERS = ("approve", "decline", "ask", "not_mine", "later")
+# A finding that a person has answered is not put to them again for this long.
+ADVICE_QUIET_DAYS = 30
+ADVICE_STATUSES = ("proposed", "needs_human")
 # title, what the resource is called in a sentence, what cannot be undone
 WORDS = {
     "delete-disk": ("Delete an unattached managed disk", "disk",
@@ -28,7 +34,8 @@ WORDS = {
 }
 RE_CHECK = ("the resource is still unattached or unassigned, still carries the tag that marks it as planted by Meternaut, is still in this resource group "
             "and has no management lock")
-PAUSED_MESSAGE = "Changes are paused here. Nothing has changed, and your OK cannot be recorded now."
+PAUSED_MESSAGE = brief.PAUSED_CHANGES
+PAUSED_ADVICE = brief.PAUSED_ADVICE
 
 
 @dataclass(frozen=True)
@@ -109,6 +116,24 @@ def build_plan(case: CaseRecord, lead: Lead, approvers: tuple[str, ...], now: dt
     )
 
 
+def build_advice(case: CaseRecord, approvers: tuple[str, ...], now: dt.datetime, settings: ApprovalSettings, new_id: Callable[[], str] = lambda: uuid.uuid4().hex) -> PlanRecord:
+    """The plan that asks a person whether a finding is worth acting on. It changes nothing in Azure: the words are code's, and the figures are the case's own."""
+    plan_id = new_id()
+    expires = stamp(now + dt.timedelta(hours=settings.ttl_hours))
+    code = hashlib.sha256(f"{plan_id}|{ADVISE}|{case.resource_id.lower()}|{expires}".encode("utf-8")).hexdigest()[:8].upper()
+    saving = case.saving_usd_month if (case.saving_usd_month or 0) > 0 else None
+    judged = ("Judged: two AI reviewers agree that this looks wasted, and code re-checked the numbers that the first one cited." if case.status == "proposed" else
+              "Judged: the AI reviewers did not settle it, or a check by code held it back, so a person has to decide.")
+    return PlanRecord(
+        plan_id=plan_id, case_id=case.case_id, family=ADVISE, resource_id=case.resource_id, resource_name=clean_text(case.resource_name, 120),
+        resource_group=clean_text(case.resource_group, 90), subscription_id=case.subscription_id, code=code,
+        title=brief.headline_of(ADVISE, case.resource_name, case.resource_group, case.resource_type, case.recommendation), what_changes=brief.ADVICE_CHANGE,
+        saving_usd_month=saving, waiting_costs_usd_day=round(saving / 30, 2) if saving else None, could_go_wrong=brief.ADVICE_RISK, undo=brief.ADVICE_UNDO,
+        evidence_level=judged + " Not measured yet: the saving, which cost lines confirm after a change.", approvers=approvers, created_at=stamp(now), expires_at=expires,
+        state="open", approval_class="R1", preconditions={"family": ADVISE, "caseStatus": case.status},
+    )
+
+
 class Approvals:
     """The Decider that the pages call, and the rest of the loop around a plan."""
 
@@ -129,51 +154,63 @@ class Approvals:
 
     def _gate(self, principal: Principal, plan_id: str, decision: str, code: str, now: dt.datetime) -> tuple[PlanRecord | None, DecideResult | None]:
         """The checks that every answer shares, in this order. Returns the plan, or the refusal. It records nothing and uses no one-time token."""
-        if decision not in ("approve", "decline", "ask", "not_mine"):
+        if decision not in ANSWERS:
             return None, DecideResult(False, "error", "That answer is not one of the answers on the page.")
         plan = self.store.plan_get(plan_id)
         if plan is None:
             return None, DecideResult(False, "refused_state", "This request does not exist. Nothing is approved.")
-        if not principal.has("approver") or principal.oid.lower() not in plan.approvers:
+        advice = plan.family == ADVISE
+        # A change is approved by an approver. An advise plan only records an opinion, so the owner may answer it too; either way the person has to be named on the plan.
+        if not (principal.has("approver") or (advice and principal.has("owner"))) or principal.oid.lower() not in {a.lower() for a in plan.approvers}:
             return None, DecideResult(False, "refused_role", "I cannot take your OK on this request.")
         plan = self._expire_if_due(plan, now)
         if plan.state == "expired":
             return None, DecideResult(False, "expired", f"This request expired on {plan.expires_at} UTC. Nothing has changed.", plan)
         if plan.state != "open":
             return None, DecideResult(False, "refused_state", f"This request is {_words(plan.state)}. Nothing more can be recorded.", plan)
-        if decision == "approve" and switches.pulled(self.store, "all", "changes"):
-            return None, DecideResult(False, "refused_paused", PAUSED_MESSAGE, plan)
+        if decision == "approve" and switches.pulled(self.store, *(("all",) if advice else ("all", "changes"))):  # no change is made for advice, so only the full stop holds it
+            return None, DecideResult(False, "refused_paused", PAUSED_ADVICE if advice else PAUSED_MESSAGE, plan)
         if (code or "").strip().upper() != plan.code:
             return None, DecideResult(False, "refused_code", "This plan changed. Nothing is approved. A new message will bring the new plan and code.")
         return plan, None
 
-    def decide(self, principal: Principal, plan_id: str, decision: str, code: str, nonce: str, note: str = "") -> DecideResult:
-        """An answer that changes nothing in Azure: decline, a question, or "not mine". An approval is made at the person's sign-in to Azure (delegated.py)."""
+    def decide(self, principal: Principal, plan_id: str, decision: str, code: str, nonce: str, note: str = "", reason: str = "") -> DecideResult:
+        """An answer that changes nothing in Azure: decline, a question, "not mine", "later", and the answer "worth acting on" of an advise plan (sent as approve). The
+        approval of a change is made at the person's sign-in to Azure (delegated.py)."""
         now = self.clock()
         try:
-            return self._decide(principal, plan_id, decision, code, nonce, clean_text(note, 300), now)
+            return self._decide(principal, plan_id, decision, code, nonce, clean_text(note, 300), now, reason)
         except StoreError:
             return DecideResult(False, "error", "I cannot reach my records right now. Nothing is approved. Try again in a few minutes.")
 
-    def _decide(self, principal: Principal, plan_id: str, decision: str, code: str, nonce: str, note: str, now: dt.datetime) -> DecideResult:
+    def _decide(self, principal: Principal, plan_id: str, decision: str, code: str, nonce: str, note: str, now: dt.datetime, reason: str = "") -> DecideResult:
         if decision == "approve":
-            return DecideResult(False, "error", "An approval is made when you sign in to Azure, not here. Nothing is approved.")
+            known = self.store.plan_get(plan_id)
+            if known is None or known.family != ADVISE:
+                return DecideResult(False, "error", "An approval is made when you sign in to Azure, not here. Nothing is approved.")
         plan, refusal = self._gate(principal, plan_id, decision, code, now)
         if refusal is not None or plan is None:
             return refusal or DecideResult(False, "error", "")
         if not self.store.nonce_use(nonce, principal.oid, plan.plan_id):
             return DecideResult(False, "error", "This form is no longer valid. Open the link in the message again. Nothing is approved.", plan)
         record = DecisionRecord(plan_id=plan.plan_id, approver_oid=principal.oid, approver_name=clean_text(principal.name, 80), decision=decision,
-                                at=stamp(now), plan_code=plan.code, note=note)
+                                at=stamp(now), plan_code=plan.code, note=note, reason=reason if decision == "decline" and reason in DECLINE_REASONS else "")
         if not self.store.decision_put(record):
             return DecideResult(False, "duplicate", "You answered this request already. Your answer stands.", plan)
         if decision == "ask":
-            return DecideResult(True, "asked", "Your question is recorded. Nothing is approved. The request stays open.", plan)
+            return DecideResult(True, "asked", "Recorded with your name. It approves nothing. The request stays open.", plan)
+        if decision == "later":
+            return DecideResult(True, "later", "Noted. Nothing is approved. The request stays open, in your list.", plan)
         if decision == "decline":
             plan = _plan_with(plan, state="declined")
             self.store.plan_put(plan)
             self._set_case(plan.case_id, "declined")
             return DecideResult(True, "declined", "Declined. Nothing has changed.", plan)
+        if decision == "approve":  # only the answer of an advise plan gets here: worth acting on, and nothing is changed in Azure
+            plan = _plan_with(plan, state="consumed")
+            self.store.plan_put(plan)
+            self._set_case(plan.case_id, "acknowledged")
+            return DecideResult(True, "acknowledged", "Recorded: worth acting on. Nothing was changed in Azure.", plan)
         plan = _plan_with(plan, state="withdrawn")
         self.store.plan_put(plan)
         self._set_case(plan.case_id, "needs_human")
@@ -182,14 +219,14 @@ class Approvals:
     def check_approve(self, principal: Principal, plan_id: str, code: str) -> tuple[PlanRecord | None, DecideResult | None]:
         """The checks before an approval is recorded, without a one-time token: the person, the plan's state and expiry, the switches and the plan code."""
         try:
-            return self._gate(principal, plan_id, "approve", code, self.clock())
+            return self._no_advice(*self._gate(principal, plan_id, "approve", code, self.clock()))
         except StoreError:
             return None, DecideResult(False, "error", "I cannot reach my records right now. Nothing is approved. Try again in a few minutes.")
 
     def check_form(self, principal: Principal, plan_id: str, code: str, nonce: str) -> tuple[PlanRecord | None, DecideResult | None]:
         """The checks of the approve form, in the order of every other answer: the person, the plan, the switches, the plan code and then the one-time token."""
         try:
-            plan, refusal = self._gate(principal, plan_id, "approve", code, self.clock())
+            plan, refusal = self._no_advice(*self._gate(principal, plan_id, "approve", code, self.clock()))
             if refusal is not None or plan is None:
                 return None, refusal or DecideResult(False, "error", "")
             if not self.store.nonce_use(nonce, principal.oid, plan.plan_id):
@@ -197,6 +234,13 @@ class Approvals:
             return plan, None
         except StoreError:
             return None, DecideResult(False, "error", "I cannot reach my records right now. Nothing is approved. Try again in a few minutes.")
+
+    @staticmethod
+    def _no_advice(plan: PlanRecord | None, refusal: DecideResult | None) -> tuple[PlanRecord | None, DecideResult | None]:
+        """An advise plan makes no change in Azure, so there is no sign-in to Azure for it: it is answered on its page."""
+        if plan is not None and plan.family == ADVISE:
+            return None, DecideResult(False, "refused_state", "This request makes no change in Azure, so there is nothing to sign in to. Answer it on its page. Nothing is approved.", plan)
+        return plan, refusal
 
     def check_stepup(self, principal: Principal, plan_id: str, code: str, resource_id: str) -> tuple[PlanRecord | None, ActionRecord | None, DecideResult | None]:
         """The checks before the change is tried again, after the approver's extra sign-in check: the plan is approved (not open: the approval is recorded already), with this
@@ -287,6 +331,43 @@ class Approvals:
         self.store.plan_put(plan)
         self.store.case_put(_with(case, status="awaiting_ok", plan_id=plan.plan_id, updated_at=stamp(self.clock())))
         return plan
+
+    def advise(self, case: CaseRecord, approvers: tuple[str, ...]) -> PlanRecord | None:
+        """The advise plan for a finding that a person has to look at and that Meternaut may not change: it makes no change in Azure, and the person's answer is recorded.
+
+        None when the case is not a finding for a person (its status is not proposed or needs_human), when nobody can answer, when a person marked the resource do-not-touch,
+        when a plan for the resource is open already (the case is linked to it when it is the case's own), or when a person answered an advise plan for the resource lately.
+        The status of the case is left as it is while the plan is open: it still says what the AIs came to."""
+        if case.status not in ADVICE_STATUSES or not approvers:
+            return None
+        try:
+            if case.resource_id.lower() in self.store.do_not_touch():
+                return None
+            for plan in self.store.plans_open():
+                if plan.resource_id.lower() == case.resource_id.lower():
+                    if plan.state == "open" and plan.case_id == case.case_id and case.plan_id != plan.plan_id:
+                        self.store.case_put(_with(case, plan_id=plan.plan_id))
+                    return None
+            now = self.clock()
+            quiet = now - dt.timedelta(days=ADVICE_QUIET_DAYS)
+            for plan in self.store.plans_recent(200):
+                if (plan.resource_id.lower() == case.resource_id.lower() and plan.family == ADVISE and plan.state in ("declined", "consumed", "withdrawn")
+                        and parse(plan.created_at) >= quiet):
+                    return None
+            plan = build_advice(case, approvers, now, self.settings)
+            self.store.plan_put(plan)
+            self.store.case_put(_with(case, plan_id=plan.plan_id, updated_at=stamp(now)))
+            return plan
+        except StoreError:
+            return None
+
+    def plan_for(self, case: CaseRecord, lead: Lead, approvers: tuple[str, ...]) -> PlanRecord | None:
+        """The plan for a case that a person has to look at: the plan of a change when Meternaut may make one for it, else the advise plan."""
+        if case.status == "proposed":
+            plan = self.create(case, lead, approvers)
+            if plan is not None:
+                return plan
+        return self.advise(case, approvers)
 
 
 def _words(state: str) -> str:

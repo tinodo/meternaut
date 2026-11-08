@@ -1,76 +1,75 @@
-"""The start page: what needs your OK, what Meternaut did lately, the state of the three switches and what Meternaut can change in Azure."""
+"""The start page, "Decisions": what waits for the person, and what was decided lately. Nothing else.
+
+"Waiting for you" lists the requests that this person may answer, the larger saving first and then the one that has waited longest; each row is the headline, what it is
+worth, the risk, how long ago it was found and one button. "Recently decided" is five one-line rows. When nothing waits, one sentence says so and says when the Watch looks
+next. The switches, the runs and what Meternaut can change in Azure are on the pages of the platform team (ops.py), not here.
+"""
 from __future__ import annotations
 
-from . import words
-from .common import CASE_HEADERS, case_rows, count, is_expired, may_answer, read, run_result, switch_states
-from .core import Ctx, Response, Safe, esc, fmt, join, link_part, usd
-from .layout import block, link, notice, page, paragraph, table
+from ..brief import Brief, ago_text, order_key, plan_headline, usd_text
+from ..models import DecisionRecord
+from .common import brief_of, cases_by_id, effective_state, is_expired, may_answer, read
+from .core import Ctx, Response, Safe, fmt, join, link_part
+from .layout import block, notice, page, paragraph
 
-ABOUT = ("Meternaut finds Azure resources that may cost money for nothing. Two AI models review each finding, and a person approves every change on a page of this "
-         "console. After an OK, the person signs in to Azure, and Meternaut makes the one approved change with that person's own permissions, checks the result and records it.")
-
-
-def switch_text(ctx: Ctx, name: str, record) -> Safe:
-    """The state of one switch in words. A switch that cannot be read counts as pulled."""
-    if record is None:
-        return esc("Cannot be read: treated as pulled.")
-    if not record.paused:
-        return esc("Running.")
-    who = f" by {record.by}" if record.by else ""
-    reason = f" Reason: {record.reason}" if record.reason else " No reason is recorded."
-    return fmt("Paused{who} on {when}.{reason}", who=who, when=ctx.when(record.at, "a time that is not recorded"), reason=reason)
+WAITING_SHOWN = 10
+WAITING_MAX = 100
+DECIDED_SHOWN = 5
+DECIDED_CONSIDERED = 12
 
 
-def switches_table(ctx: Ctx) -> Safe:
-    rows = []
-    for name, record in switch_states(ctx):
-        label, stops, _ = words.SWITCH[name]
-        rows.append([label, stops, switch_text(ctx, name, record)])
-    return table("switches", "State of each switch", ["Switch", "What it stops", "State"], rows, row_header=True)
+def _waiting_line(ctx: Ctx, brief: Brief, later: bool) -> Safe:
+    saving = fmt("About {amount} a month, {level}.", amount=usd_text(brief.saving.monthly), level=brief.saving.level) if brief.saving.monthly is not None else "No figure."
+    _, ago = ago_text(ctx.now, brief.found_at)
+    found = fmt(" Found {ago}.", ago=ago) if ago else Safe("")
+    snoozed = " You chose to decide later." if later else ""
+    return fmt("{saving} Risk: {risk}.{found}{snoozed}", saving=saving, risk=brief.risk.level, found=found, snoozed=snoozed)
 
 
-def _needs_ok(ctx: Ctx) -> Safe:
+def _row(ctx: Ctx, brief: Brief, later: bool) -> Safe:
+    return fmt('<li><p class="row-title">{headline}</p><p class="row-meta">{meta}</p><p><a class="btn primary" href="{href}">Open<span class="visually-hidden">: {headline}</span></a></p></li>',
+               headline=brief.headline, meta=_waiting_line(ctx, brief, later), href=ctx.url(f"/ok/{link_part(brief.plan_id)}"))
+
+
+def _waiting(ctx: Ctx) -> Safe:
     plans, ok = read(lambda: ctx.store.plans_open(), [])
     if not ok:
         return notice("error", "The requests cannot be read", "I cannot read the open requests now. Nothing has changed.")
-    mine = sorted((p for p in plans if p.state == "open" and may_answer(ctx.principal, p) and not is_expired(ctx, p)), key=lambda p: (p.expires_at, p.plan_id))  # type: ignore[arg-type]
-    if not mine:
-        return paragraph("Nothing needs your OK now.")
-    rows = [[fmt('{title}<br><span class="muted">{name}</span>', title=p.title, name=p.resource_name),
-             usd(p.saving_usd_month) if p.saving_usd_month is not None else "no figure", ctx.when(p.expires_at),
-             fmt('<a class="btn primary" href="{href}">Review and give your OK<span class="visually-hidden"> for {title}</span></a>', href=ctx.url(f"/ok/{link_part(p.plan_id)}"),
-                 title=p.title)] for p in mine]
-    return join([paragraph("Each request is answered on its own page. Opening a page approves nothing."),
-                 table("needs-ok", "Requests that wait for your OK", ["Request", "Estimated saving a month", "Answer by", "Open"], rows)])
+    mine = [p for p in plans if p.state == "open" and may_answer(ctx.principal, p) and not is_expired(ctx, p)]  # type: ignore[arg-type]
+    later_ids = {d.plan_id for d in read(lambda: ctx.store.decisions_by(ctx.principal.oid, 200), [])[0] if d.decision == "later"}  # type: ignore[union-attr]
+    cases = cases_by_id(ctx, {p.case_id for p in mine})
+    briefs = sorted(((brief_of(ctx, plan, cases.get(plan.case_id)), plan.plan_id in later_ids) for plan in mine), key=lambda item: (item[1], order_key(item[0])))
+    heading = Safe(f"<h2>Waiting for you ({len(briefs)})</h2>")
+    if not briefs:
+        return join([heading, paragraph(f"Nothing waits for you. The next search is {ctx.next_search()}.")])
+    every = ctx.request.query.get("all") == "1"
+    shown = briefs[:WAITING_MAX if every else WAITING_SHOWN]
+    rest = len(briefs) - len(shown)
+    more = paragraph(fmt('{n} more wait. <a href="{href}">Show all</a>.', n=rest, href=ctx.url("/?all=1"))) if rest > 0 else Safe("")
+    return join([heading, fmt('<ol class="rows">{rows}</ol>', rows=join(_row(ctx, brief, later) for brief, later in shown)), more])
+
+
+def _recently(ctx: Ctx) -> Safe:
+    """The last five requests that were decided (or that nobody answered), for the person who is named in them: what, who, when and the result."""
+    plans, ok = read(lambda: ctx.store.plans_recent(60), [])
+    heading = Safe("<h2>Recently decided</h2>")
+    if not ok:
+        return join([heading, notice("error", "The decisions cannot be read", "I cannot read the recent decisions now. Nothing has changed.")])
+    actions = {a.plan_id: a for a in read(lambda: ctx.store.actions_recent(100), [])[0]}
+    rows: list[tuple[str, Safe]] = []
+    for plan in [p for p in plans if may_answer(ctx.principal, p) and effective_state(ctx, p) != "open"][:DECIDED_CONSIDERED]:  # type: ignore[arg-type]
+        decisions: list[DecisionRecord] = read(lambda plan=plan: ctx.store.decisions_of_plan(plan.plan_id), [])[0]
+        outcome = brief_of(ctx, plan, None, action=actions.get(plan.plan_id), decisions=decisions).outcome
+        if not outcome.state:
+            continue
+        by = fmt(", {who}", who=outcome.by) if outcome.by else Safe("")
+        rows.append((outcome.at or plan.created_at, fmt("{headline}: {result}{by} on {day}.", headline=plan_headline(plan), result=outcome.result, by=by, day=ctx.day(outcome.at or plan.created_at))))
+    rows.sort(key=lambda item: item[0], reverse=True)
+    if not rows:
+        return join([heading, paragraph("Nothing was decided yet.")])
+    return join([heading, fmt('<ul class="feed">{rows}</ul>', rows=join(fmt("<li>{row}</li>", row=row) for _, row in rows[:DECIDED_SHOWN]))])
 
 
 def home(ctx: Ctx) -> Response:
-    runs, runs_ok = read(lambda: ctx.store.runs_recent(5), [])
-    cases, cases_ok = read(lambda: ctx.store.cases_recent(10), [])
-    run_rows = [[ctx.when(r.started_at), r.trigger, run_result(r), count(r.cases), count(r.proposed), count(r.needs_human), count(r.errors)] for r in runs]
-    parts: list[object] = [
-        Safe("<h1>Meternaut</h1>"), paragraph(ABOUT, "lead"),
-        Safe("<h2>Needs your OK now</h2>"), _needs_ok(ctx),
-        Safe("<h2>What Meternaut can change in Azure</h2>"),
-        paragraph(fmt("On its own, nothing: Meternaut holds no right to change Azure. When you approve a change, you sign in to Azure and Meternaut makes that one change "
-                      "with your own permissions. The code makes only this change: {acts_on}.", acts_on=ctx.services.acts_on)),
-        Safe("<h2>The three switches</h2>"), switches_table(ctx),
-    ]
-    if ctx.principal.has("ops"):  # type: ignore[union-attr]
-        parts.append(paragraph(link(ctx.url("/ops/pause"), "Open the kill switch")))
-    parts.append(Safe("<h2>Latest runs</h2>"))
-    if not runs_ok:
-        parts.append(notice("error", "The runs cannot be read", "I cannot read the runs now. Nothing has changed."))
-    elif not runs:
-        parts.append(paragraph("No run is recorded yet."))
-    else:
-        parts.append(table("latest-runs", "The five latest runs, newest first", ["Started", "Trigger", "Result", "Cases", "Proposed", "Needs a person", "Errors"], run_rows))
-    parts.append(Safe("<h2>Latest cases</h2>"))
-    if not cases_ok:
-        parts.append(notice("error", "The cases cannot be read", "I cannot read the cases now. Nothing has changed."))
-    elif not cases:
-        parts.append(paragraph("No case is recorded yet."))
-    else:
-        parts.append(table("latest-cases", "The ten latest cases, most recently updated first", CASE_HEADERS, case_rows(ctx, cases)))
-    parts.append(paragraph(link(ctx.url("/history"), "See every run and every case")))
-    return page(ctx, "Home", join(block(p) for p in parts), current="/", ai=True, why="You are signed in and listed as a person who may use this console.")
+    parts: list[object] = [Safe("<h1>Decisions</h1>"), _waiting(ctx), _recently(ctx)]
+    return page(ctx, "Decisions", join(block(p) for p in parts), current="/", ai=True, why="you are signed in and listed as a person who may use this page")

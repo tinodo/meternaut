@@ -12,8 +12,9 @@ object of findings. Nothing in it is believed before code has checked it:
 A resource whose finding cites no measurement that matched the tools is never proposed, whatever the agents say: a person has to judge it. The same holds for a
 resource that the Skeptic was not shown, for a finding that it gave no verdict (or two verdicts) for, and for a finding whose confidence is not a number from 0 to 1.
 
-Each resource of a finding that is left becomes one case, so that the History, the notebook and the letters show it like any other case. Nothing here changes
-Azure, and the plan of a change is never made here: approvals.create decides that, and it makes none for a case that this module opens.
+Each resource of a finding that is left becomes one case, so that the History, the page of the case and the letters show it like any other case. Nothing here changes
+Azure: no plan of a change is made for a case that this module opens (approvals.create refuses it), and the advise plan that asks a person whether it is worth acting on
+changes nothing in Azure.
 """
 from __future__ import annotations
 
@@ -92,6 +93,7 @@ class Finding:
     claimed: int = 0  # the distinct handles that the answer listed
     handles: list[str] = field(default_factory=list)  # the handles that the tools showed, in the finding's order
     cited: dict[str, dict[str, float]] = field(default_factory=dict)
+    listed: dict[str, set[str]] = field(default_factory=dict)  # the measurements that the agent cited for each handle, whether or not they matched the tools
     items: list[Item] = field(default_factory=list)
     unknown: int = 0
     unproven: int = 0
@@ -318,6 +320,7 @@ def _verify(finding: Finding, handles: list[str], entries: object, toolbox: Tool
     for entry in (entries if isinstance(entries, list) else [])[:MAX_ENTRIES]:
         if not isinstance(entry, dict) or not isinstance(entry.get("handle"), str) or entry["handle"] not in cited or not isinstance(entry.get("metric"), str):
             continue
+        finding.listed.setdefault(entry["handle"], set()).add(entry["metric"])
         handle, said = entry["handle"], _number(entry.get("total"))
         shown = recorded[handle].get(entry["metric"])
         if said is None or shown is None:
@@ -470,9 +473,20 @@ def _lead(resource: Resource, facts: dict, cost: float | None, advisor: float | 
                 advisor_saving_usd=advisor, cost_usd_30d=cost)
 
 
-def _facts(finding: Finding, metrics: dict[str, float], cost: float | None) -> dict:
-    """The typed digest of a case: what the finding rests on, and no name."""
-    return {"basis": finding.basis, "proposal": finding.proposal, "metrics": dict(metrics), "costUsd30d": cost, "finding": finding.number}
+def _facts(finding: Finding, metrics: dict[str, float], cost: float | None, recorded: Mapping[str, dict] | None = None, listed: int | None = None) -> dict:
+    """The typed digest of a case: what the finding rests on, and no name. `recorded` is what the tools showed for the resource (its unit and the days of each measurement)
+    and `listed` how many measurements the agent cited for it: a person reads "code re-checked 5 of 6 numbers" from them."""
+    facts: dict = {"basis": finding.basis, "proposal": finding.proposal, "metrics": dict(metrics), "costUsd30d": cost, "finding": finding.number}
+    shown = recorded or {}
+    units = {name: shown[name]["unit"] for name in metrics if name in shown and shown[name].get("unit")}
+    days = {name: shown[name]["days"] for name in metrics if name in shown and shown[name].get("days")}
+    if units:
+        facts["metricUnits"] = units
+    if days:
+        facts["metricDays"] = days
+    if listed is not None and listed >= len(metrics):
+        facts["citedMetrics"] = listed
+    return facts
 
 
 def _figure(value: float | None) -> float | None:
@@ -614,7 +628,7 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
         costs = {handle: _cost(toolbox.handles[handle], contexts.get(toolbox.handles[handle].subscription_id.lower())) for handle in finding.handles}
         for handle in sorted(finding.handles, key=lambda handle: -(costs[handle] or 0.0)):
             resource = toolbox.handles[handle]
-            facts = _facts(finding, finding.cited[handle], costs[handle])
+            facts = _facts(finding, finding.cited[handle], costs[handle], _aggregates(toolbox.evidence, handle), len(finding.listed[handle]) if handle in finding.listed else None)
             lead = _lead(resource, facts, costs[handle], _advisor(toolbox.evidence, handle))
             if _judged_lately(s, lead, facts):
                 finding.recent += 1
@@ -759,8 +773,8 @@ def _open_case(s: "Services", out: Investigation, finding: Finding, item: Item, 
             models=dict(models), steps=steps, facts=lead.facts, first_seen_at=old.first_seen_at if old and old.first_seen_at else now, updated_at=now,
             runs_seen=(old.runs_seen + 1) if old else 1)
         ex.store.case_put(record)
-        if outcome.status == "proposed":
-            plan = ex.approvals.create(record, lead, ex.approvers())  # it makes none for a case of this detector: no change is made for a finding
+        if outcome.status in ("proposed", "needs_human"):
+            plan = ex.approvals.plan_for(record, lead, ex.approvers())  # a plan of a change is made for none of these cases: the advise plan asks a person whether it is worth acting on
             if plan is not None:
                 h.emit("plan.created", planId=plan.plan_id, caseKey=record.case_id, family=plan.family, approvers=len(plan.approvers))
                 ex.on_plan(plan, ex.store.case_get(record.case_id) or record)

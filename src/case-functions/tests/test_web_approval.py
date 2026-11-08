@@ -1,8 +1,8 @@
 import re
 import unittest
 
-from test_web_support import (ACTS_ON, MAYA, NOW, OPS, OWNER, SIGNIN_URL, STRANGER, TINO, Console, FailingStore, ScriptedDecider, ScriptedDelegate, at, make_action, make_case,
-                              make_decision, make_plan, snapshot)
+from test_web_support import (ACTS_ON, MAYA, NOW, OPS, OWNER, SIGNIN_URL, STRANGER, TINO, VM, Console, FailingStore, ScriptedDecider, ScriptedDelegate, at, make_action,
+                              make_advice, make_advice_case, make_case, make_decision, make_plan, snapshot)
 
 from cases.models import MAX_SIGNIN_PATH, Begun, DecideResult, StoreError, SwitchRecord
 from cases.people import People, Person
@@ -12,7 +12,9 @@ APPROVE = "Approve and sign in to Azure"
 CODE = "0.AbCdEfGhIjKlMnOpQrSt-code-from-the-sign-in"
 STATE = "state-of-the-sign-in_0123456789"
 RETURN = {"code": CODE, "state": STATE, "session_state": "a-session-state"}
-DETAIL_NAMES = ["What changes", "Resource", "Who makes the change", "Estimated saving a month", "What waiting costs a day", "What could go wrong", "How to undo it", "Evidence"]
+HEADLINE = "Delete the unattached disk planted-disk-1 in group meternaut-test-rg"
+ANSWERS = [("decision", "approve", APPROVE), ("decision", "decline", "Decline"), ("decision", "not_mine", "This is not mine"), ("decision", "ask", "Ask or tell"),
+           ("decision", "later", "Decide later")]
 
 
 def rows(reply) -> dict[str, str]:
@@ -26,78 +28,142 @@ def rows(reply) -> dict[str, str]:
     return found
 
 
+def _parents(node):
+    while node.parent is not None:
+        node = node.parent
+        yield node
+
+
 class ThePage(unittest.TestCase):
     def setUp(self):
         self.console = Console()
         self.console.seed()
         self.reply = self.console.get("/ok/plan0001")
 
-    def test_the_title_is_the_stored_one_and_a_sentence_says_that_it_needs_the_persons_ok_on_this_page(self):
+    def test_the_headline_says_what_is_asked_and_the_lead_what_it_gives(self):
         self.assertEqual(self.reply.status, 200)
-        self.assertEqual(self.reply.headings(1), [make_plan().title])
-        lead = self.reply.main.find("p", class_="lead")
-        self.assertEqual(lead.text(), "This change needs your OK on this page.")
-        self.assertEqual(self.reply.root.find("title").text(), f"{make_plan().title} - Meternaut")
+        self.assertEqual(self.reply.headings(1), [HEADLINE])
+        self.assertEqual(self.reply.root.find("title").text(), f"{HEADLINE} - Meternaut")
+        self.assertEqual(self.reply.main.find("p", class_="lead").text(),
+                         "Expected saving: about 7.17 US dollars a month, from the cost lines of the last 30 days. Waiting costs about 0.24 US dollars a day.")
+        self.assertEqual(self.reply.main.find("p", class_="muted").text(), "Found 3 days ago. Open until Sun 8 Nov 2026 08:00 UTC (09:00 CET).")
 
-    def test_what_changes_who_makes_it_what_it_saves_what_waiting_costs_what_could_go_wrong_how_to_undo_it_and_the_evidence_are_there(self):
-        found = rows(self.reply)
-        self.assertEqual(list(found), DETAIL_NAMES)
-        plan = make_plan()
-        self.assertEqual(found["What changes"], plan.what_changes)
-        self.assertIn("planted-disk-1, in resource group meternaut-test-rg", found["Resource"])
-        self.assertIn(plan.resource_id, found["Resource"])
-        who = found["Who makes the change"]
-        self.assertTrue(who.startswith("You do, with your own permissions."), who)
-        self.assertIn("When you approve, you sign in to Azure and Meternaut makes this one change as you", who)
-        self.assertIn(f"it may only {ACTS_ON}.", who)
-        self.assertIn("Azure refuses the change if your account may not make it.", who)
-        self.assertIn("Meternaut holds no right of its own to change Azure.", who)
-        self.assertNotIn("runner", who.lower())
-        self.assertEqual(found["Estimated saving a month"], "About 7.17 US dollars. This is an estimate from cost lines of the last 30 days.")
-        self.assertEqual(found["What waiting costs a day"], "About 0.24 US dollars for each day that the resource stays as it is. This is an estimate.")
-        self.assertEqual(found["What could go wrong"], plan.could_go_wrong)
-        self.assertIn(plan.undo, found["How to undo it"])
-        self.assertIn("This change cannot be undone.", found["How to undo it"])
-        self.assertIn(plan.evidence_level, found["Evidence"])
+    def test_the_page_answers_the_eight_questions_in_this_order(self):
+        self.assertEqual(self.reply.headings(2)[:4], ["Evidence", "If you approve", "Whose is it", "Your answer"])
+        self.assertIn("How sure: High.", self.reply.content)
+        self.assertEqual(list(self.reply.summary(0)), ["Cost, last 30 days", "State", "Locks and keep tags"])
+        found = self.reply.summary(1)
+        self.assertEqual(list(found), ["What changes", "Who does it", "Checked again", "Undo", "What could go wrong"])
+        self.assertEqual(found["What changes"], "Deletes the disk planted-disk-1 in resource group meternaut-test-rg. Nothing else changes.")
+        self.assertTrue(found["Who does it"].startswith("You do, with your own Azure sign-in"), found["Who does it"])
+        self.assertIn("Azure checks your rights, and the change is made right then.", found["Who does it"])
+        self.assertIn("Meternaut holds no right of its own to change anything.", found["Who does it"])
+        self.assertNotIn("runner", found["Who does it"].lower())
+        self.assertEqual(found["Undo"], "This cannot be undone.")
+        self.assertEqual(found["What could go wrong"], "If something still uses the disk, that use stops, and the data on it is lost for good. Risk: medium.")
+        self.assertIn("Meternaut has not looked up who owns this resource yet.", self.reply.content)
+        self.assertIn("Managed disk planted-disk-1, resource group meternaut-test-rg, subscription bbbbbbbb.", self.reply.content)
 
-    def test_what_could_go_wrong_and_the_warning_are_always_visible(self):
-        for node in self.reply.main.walk():
-            self.assertNotIn(node.tag, ("details", "summary"), "nothing is folded away")
-            self.assertNotIn("hidden", node.attrs)
-        self.assertIn("What could go wrong", self.reply.content)
-        self.assertIn("Warning: This change cannot be undone.", self.reply.main.find("p", class_="warning-text").text())
+    def test_what_could_go_wrong_and_the_undo_are_not_folded_away_and_a_delete_says_in_bold_that_it_cannot_be_undone(self):
+        outside = [node for node in self.reply.main.walk() if node.tag == "dl" and not any(parent.tag == "details" for parent in _parents(node))]
+        text = " ".join(node.text() for node in outside)
+        self.assertIn("What could go wrong", text)
+        self.assertIn("Undo", text)
+        self.assertEqual([strong.text() for strong in self.reply.main.find_all("strong")][-1:], ["This cannot be undone."])
 
-    def test_a_change_that_is_not_a_deletion_and_has_an_undo_does_not_say_that_it_cannot_be_undone(self):
+    def test_a_change_that_has_an_undo_does_not_say_that_it_cannot_be_undone(self):
         self.console.store.plan_put(make_plan(family="resize-disk", undo="Resize the disk back to its old size within 24 hours."))
         reply = self.console.get("/ok/plan0001")
         self.assertNotIn("cannot be undone", reply.content)
-        self.assertIn("Resize the disk back to its old size within 24 hours.", rows(reply)["How to undo it"])
-        self.assertIn(f"You approve: {make_plan().title}", reply.content)
+        self.assertEqual(reply.summary(1)["Undo"], "Resize the disk back to its old size within 24 hours.")
+        self.assertEqual(reply.headings(1), ["Delete an unattached managed disk in resource group meternaut-test-rg"], "a family without words of its own keeps the plan's title")
 
     def test_a_change_with_no_undo_text_says_so_plainly(self):
         self.console.store.plan_put(make_plan(family="resize-disk", undo=""))
         reply = self.console.get("/ok/plan0001")
-        self.assertIn("This change cannot be undone.", reply.content)
-        self.assertIn("No way to undo this change is recorded.", reply.content)
+        self.assertEqual(reply.summary(1)["Undo"], "This cannot be undone.")
 
-    def test_the_evidence_row_links_to_the_notebook_of_the_case(self):
-        evidence = [a for a in self.reply.root.find_all("a") if a.attrs["href"] == "/why/case0001"]
-        self.assertEqual(len(evidence), 1)
-        self.assertEqual(evidence[0].text(), "Open the notebook for this case")
-        self.assertIn("Open the notebook for this case", rows(self.reply)["Evidence"])
-        self.assertEqual(self.console.get("/why/case0001").status, 200)
+    def test_the_two_ais_words_are_in_boxes_that_say_that_code_did_not_check_them(self):
+        labels = [p.text() for p in self.reply.main.find_all("p", class_="quote-label")]
+        self.assertEqual(labels[:2], ["The AI's reasoning (not checked by code)", "The second AI's doubt"])
+        self.assertIn("The disk is not attached and nothing uses it.", self.reply.content)
+        self.assertIn("It may hold data that somebody wants.", self.reply.content)
 
-    def test_check_before_you_approve_restates_the_decision_in_four_lines(self):
-        box = self.reply.main.find("section", class_="check")
-        self.assertEqual(box.find("h2").text(), "Check before you approve")
-        lines = [li.text() for li in box.find_all("li")]
-        self.assertEqual(len(lines), 4)
-        self.assertEqual(lines[0], 'You approve: Delete an unattached managed disk: the disk named "planted-disk-1" in resource group "meternaut-test-rg".')
-        self.assertEqual(lines[1], "Undo: It cannot be undone.")
-        self.assertEqual(lines[2], "Next you sign in to Azure. The change is made right after, with your own permissions, and it cannot be cancelled.")
-        self.assertTrue(lines[3].startswith("Your OK covers this plan only: code 7F3K92QD. Answer by Sun 8 Nov 2026 08:00 UTC"))
-        order = [node.tag for node in self.reply.main.walk() if node.tag in ("section", "form")]
-        self.assertEqual(order[0], "section", "the box comes before the buttons")
+    def test_one_closed_disclosure_holds_everything_a_decision_does_not_need(self):
+        (disclosure,) = self.reply.main.find_all("details")
+        self.assertEqual(disclosure.find("summary").text(), "Details")
+        self.assertNotIn("open", disclosure.attrs)
+        inside = disclosure.text()
+        outside = self.reply.main.text().replace(inside, "")
+        for detail in ("Plan code 7F3K92QD", "case0001", "run00001", "orphan-managed-disk", "Every step of the case", "diskState", "Served from"):
+            self.assertIn(detail, inside)
+            self.assertNotIn(detail, outside, f"{detail} is not in the default view")
+
+    def test_the_decision_is_one_form_with_a_note_a_reason_and_a_button_for_each_answer_that_exists(self):
+        (form,) = self.reply.forms()
+        self.assertEqual((form.action, form.method), ("/ok/plan0001", "post"))
+        self.assertEqual(set(form.fields), {"code", "nonce", "note", "reason"})
+        self.assertEqual(form.fields["code"], "7F3K92QD")
+        self.assertEqual(form.buttons, [(name, value, text) for name, value, text in ANSWERS])
+        self.assertEqual([o.text() for o in form.node.find("select").find_all("option")],
+                         ["No reason", "It is still needed", "The figure is wrong", "It is already handled", "Another reason (say it in the note)"])
+        self.assertIn("A question, an objection or something to remember", self.reply.content)
+        self.assertIn("It is recorded with your name, Meternaut does not answer yet, and it approves nothing.", self.reply.content)
+
+    def test_the_old_buttons_explain_challenge_and_teach_are_one_answer_ask_or_tell(self):
+        labels = [text for _, _, text in self.reply.forms()[0].buttons]
+        self.assertIn("Ask or tell", labels)
+        for gone in ("Explain", "Challenge", "Teach", "Ask a question first", "Send the question or suggestion"):
+            self.assertNotIn(gone, labels)
+            self.assertNotIn(f">{gone}<", self.reply.text)
+
+    def test_the_page_links_to_the_azure_portal_with_an_address_made_from_the_resource_id_only(self):
+        portal = [a for a in self.reply.root.find_all("a") if a.attrs["href"].startswith("https://")]
+        self.assertEqual([(a.text(), a.attrs["href"], a.attrs.get("rel")) for a in portal],
+                         [("Open in the Azure portal", f"https://portal.azure.com/#resource{make_plan().resource_id}", "noopener")])
+        self.console.store.case_put(make_case(plan_id="plan0001", resource_id='/subscriptions/x"><script>', resource_name="x"))
+        self.console.store.plan_put(make_plan(resource_id='/subscriptions/x"><script>'))
+        hostile = self.console.get("/ok/plan0001")
+        self.assertEqual([a for a in hostile.root.find_all("a") if a.attrs["href"].startswith("https://")], [], "an id that is not the id of one resource makes no link")
+        self.assertNotIn("<script>", hostile.text)
+
+    def test_the_case_page_is_the_same_brief(self):
+        case_page = self.console.get("/why/case0001")
+        self.assertEqual(case_page.status, 200)
+        self.assertEqual(case_page.headings(1), [HEADLINE])
+        self.assertEqual(case_page.headings(2)[:4], ["Evidence", "If you approve", "Whose is it", "Your answer"])
+        self.assertEqual(case_page.summary(1), self.reply.summary(1))
+
+    def test_the_footer_is_one_line_that_says_who_wrote_it_why_the_person_sees_it_and_whom_to_talk_to(self):
+        footer = self.reply.root.find("footer")
+        lines = footer.find_all("p")
+        self.assertEqual([p.text() for p in lines], [
+            "Written by an AI (models: model-detective-x, model-skeptic-y); a person approves every change. You see this because you are named as an approver of this "
+            "request, and you have the role approver. Talk to a person: Olga (olga@example.com)."])
+        self.assertEqual(footer.find_all("a"), [], "the person to talk to is plain text with the address, not a link")
+        for gone in ("Plan code", "Why you are seeing this", "This page is served from", "This request expires on"):
+            self.assertNotIn(gone, footer.text())
+
+    def test_what_a_model_wrote_is_only_in_its_labelled_boxes_and_in_the_details_and_never_in_a_heading_a_link_or_a_row_of_the_change(self):
+        self.console.store.case_put(make_case(plan_id="plan0001", summary="MODEL-PROSE", objections=("MODEL-OBJECTION",)))
+        reply = self.console.get("/ok/plan0001")
+        self.assertIn("MODEL-PROSE", reply.text)
+        for tag in ("h1", "h2", "h3", "a", "button", "title", "th", "dt"):
+            for node in reply.root.find_all(tag):
+                self.assertNotIn("MODEL", node.text())
+        for rows_ in (reply.summary(0), reply.summary(1)):
+            for name, value in rows_.items():
+                self.assertNotIn("MODEL", value, name)
+
+    def test_the_form_carries_the_code_and_a_token_for_this_person_and_this_plan(self):
+        (form,) = self.reply.forms()
+        token = form.fields["nonce"]
+        store = self.console.store
+        self.assertFalse(store.nonce_use(token, MAYA, "plan0001"), "bound to the person")
+        self.assertFalse(store.nonce_use(token, TINO, "plan0002"), "bound to the plan")
+        self.assertTrue(store.nonce_use(token, TINO, "plan0001"))
+        self.assertFalse(store.nonce_use(token, TINO, "plan0001"), "used once")
+        self.assertNotEqual(self.console.get("/ok/plan0001").forms()[0].fields["nonce"], token, "each page has a token of its own")
 
     def test_approve_and_decline_are_buttons_of_the_same_size_and_height_in_one_row(self):
         form = self.reply.form("/ok/plan0001", has_button=APPROVE)
@@ -110,38 +176,6 @@ class ThePage(unittest.TestCase):
         self.assertRegex(style, r"\.actions>\*\{flex:1 1 14rem;max-width:22rem\}")
         for rule in re.findall(r"(?:button|\.btn)\.(?:primary|secondary|danger)[^{]*\{[^}]*\}", style):
             self.assertNotRegex(rule, r"(?<![a-z-])(?:padding|min-height|min-width|height|width|font-size|border-width)\b", rule)
-
-    def test_the_footer_has_the_plan_code_the_expiry_with_its_time_zone_why_a_person_to_talk_to_and_the_ai_line(self):
-        footer = self.reply.root.find("footer").text()
-        self.assertIn("Plan code 7F3K92QD.", footer)
-        self.assertIn("It is a reference, not proof that this page is genuine.", footer)
-        self.assertIn("This request expires on Sun 8 Nov 2026 08:00 UTC (09:00 CET).", footer)
-        self.assertIn("Why you are seeing this. You are named as an approver of this plan, and you have the role approver.", footer)
-        self.assertIn("Talk to a person. Write to Tino, Olga, Otto.", footer)
-        self.assertIn("Written by AI (models: model-detective-x, model-skeptic-y). A person approves every change.", footer)
-        self.assertIn("This page is served from console.example.test.", footer)
-        self.assertEqual([a.attrs["href"] for a in self.reply.root.find("footer").find_all("a")], ["mailto:tino@example.com", "mailto:olga@example.com"])
-
-    def test_the_page_never_shows_what_a_model_wrote(self):
-        self.console.store.case_put(make_case(plan_id="plan0001", summary="MODEL-PROSE", objections=("MODEL-OBJECTION",)))
-        reply = self.console.get("/ok/plan0001")
-        self.assertNotIn("MODEL-PROSE", reply.text)
-        self.assertNotIn("MODEL-OBJECTION", reply.text)
-        self.assertIn("MODEL-PROSE", self.console.get("/why/case0001").text)
-
-    def test_the_forms_carry_the_code_and_a_token_for_this_person_and_this_plan_each_of_its_own(self):
-        forms = self.reply.forms()
-        self.assertEqual([f.action for f in forms], ["/ok/plan0001", "/ok/plan0001/ask", "/ok/plan0001/not-mine"])
-        self.assertEqual({f.method for f in forms}, {"post"})
-        tokens = [f.fields["nonce"] for f in forms]
-        self.assertEqual(len(set(tokens)), 3)
-        self.assertEqual({f.fields["code"] for f in forms}, {"7F3K92QD"})
-        store = self.console.store
-        self.assertFalse(store.nonce_use(tokens[0], MAYA, "plan0001"), "bound to the person")
-        self.assertFalse(store.nonce_use(tokens[0], TINO, "plan0002"), "bound to the plan")
-        self.assertTrue(store.nonce_use(tokens[0], TINO, "plan0001"))
-        self.assertFalse(store.nonce_use(tokens[0], TINO, "plan0001"), "used once")
-        self.assertTrue(store.nonce_use(tokens[1], TINO, "plan0001"))
 
     def test_the_token_lasts_until_the_plan_expires_but_not_longer_than_a_day(self):
         store = self.console.store
@@ -159,30 +193,23 @@ class ThePage(unittest.TestCase):
         self.console.store.decision_put(make_decision(decision="ask", note="Is this the standby disk?"))
         self.console.store.decision_put(make_decision(approver_oid=MAYA, approver_name="Maya", decision="ask", note="MAYA-PRIVATE"))
         reply = self.console.get("/ok/plan0001")
-        self.assertIn("Your earlier question or suggestion", reply.content)
+        self.assertIn("Your earlier question", reply.content)
         self.assertIn("Is this the standby disk?", reply.content)
         self.assertNotIn("MAYA-PRIVATE", reply.text)
-        self.assertEqual(len(reply.forms()), 3, "a question is not a decision: the plan is still open")
+        self.assertEqual(len(reply.forms()), 1, "a question is not a decision: the plan is still open")
 
     def test_two_people_class_says_so(self):
         self.console.store.plan_put(make_plan(approval_class="R3"))
-        self.assertEqual(self.console.get("/ok/plan0001").main.find("p", class_="lead").text(), "This change needs two people, each on their own.")
+        self.assertEqual(self.console.get("/ok/plan0001").summary(1)["Who approves"], "Two people approve this, each on their own.")
 
     def test_time_is_in_utc_and_in_the_persons_own_zone(self):
         content = self.reply.content
         self.assertIn("Sun 8 Nov 2026 08:00 UTC (09:00 CET)", content)
         self.assertIn('datetime="2026-11-08T08:00:00Z"', self.reply.text)
 
-    def test_the_answer_says_that_approving_takes_the_person_to_the_sign_in_to_azure_and_that_the_change_cannot_be_cancelled(self):
-        self.assertIn("Your answer", self.reply.headings(2))
-        self.assertIn("Approving takes you to Microsoft Entra to sign in to Azure. The change is made right after, with your own permissions, and it cannot be cancelled. "
-                      "Declining closes the request and nothing changes.", self.reply.content)
-        self.assertNotIn("Approve or decline.", self.reply.content)
-        self.assertIn(APPROVE, [label for form in self.reply.forms() for _, _, label in form.buttons])
-
     def test_the_page_has_no_cancel_no_start_time_and_no_form_that_posts_to_withdraw(self):
         self.assertEqual(self.reply.status, 200)
-        self.assertEqual([f.action for f in self.reply.forms()], ["/ok/plan0001", "/ok/plan0001/ask", "/ok/plan0001/not-mine"])
+        self.assertEqual([f.action for f in self.reply.forms()], ["/ok/plan0001"])
         self.assertNotIn("withdraw", self.reply.text.lower())
         for gone in ("Cancel my OK", "The change starts at", "start time", "120 seconds", "runner"):
             self.assertNotIn(gone.lower(), self.reply.content.lower(), gone)
@@ -211,10 +238,16 @@ class WhenThePlanIsNotOpen(unittest.TestCase):
         self.assertNotIn(APPROVE, reply.content)
         self.assertNotIn("Check before you approve", reply.content)
 
+    def notice(self, reply):
+        """The title and the lines of the one notice that says what became of the request."""
+        (title,) = reply.main.find_all("p", class_="notice-title")
+        return title.text(), title.parent.text().replace(title.text(), "", 1).strip()
+
     def test_a_plan_whose_time_is_over_shows_it_has_expired_also_when_the_record_still_says_open(self):
         reply = self.page(expires_at=at(minutes=-1))
         self.assert_no_buttons(reply)
-        self.assertIn("This request expired on Thu 5 Nov 2026 08:59 UTC (09:59 CET). Nothing has changed.", reply.content)
+        self.assertEqual(self.notice(reply), ("Expired", "Nobody answered in time. Nothing changed. Thu 5 Nov 2026 08:59 UTC (09:59 CET)"))
+        self.assertNotIn("Open until", reply.content)
 
     def test_the_plan_that_expires_at_this_moment_has_expired(self):
         self.assert_no_buttons(self.page(expires_at=at()))
@@ -225,20 +258,28 @@ class WhenThePlanIsNotOpen(unittest.TestCase):
         self.assertIn("Expired", reply.content)
 
     def test_each_other_state_shows_its_state_in_words_and_no_buttons(self):
-        for state, title, words_ in (("declined", "Declined", "This request was declined. Nothing has changed."),
-                                     ("withdrawn", "Withdrawn", "This request was withdrawn. Nothing has changed."),
-                                     ("consumed", "Used", "The change was made, with the permissions of the person who approved it. A plan runs once. What happened is below."),
-                                     ("failed", "Failed", "The change could not be finished. What happened is below."),
-                                     ("approved", "Approved", "This plan is approved. The change is being made now.")):
+        for state, title, words_ in (("declined", "Declined", "Declined by Tino. Reason: it is already handled. Nothing changed."),
+                                     ("withdrawn", "Not theirs", "Tino said that this is not theirs. Nothing changed."),
+                                     ("consumed", "Done", "Approved by Tino, and made with their own Azure rights. Deleted. Azure no longer lists the resource."),
+                                     ("failed", "Not made", "Azure refused to delete the resource."),
+                                     ("approved", "Approved", "Approved by Tino. The change is being made now.")):
             with self.subTest(state=state):
-                reply = self.page(state=state)
+                console = Console()
+                console.seed()
+                console.store.decision_put(make_decision(decision={"declined": "decline", "withdrawn": "not_mine"}.get(state, "approve"), reason="handled" if state == "declined" else ""))
+                if state in ("consumed", "failed"):
+                    console.store.action_put(make_action(state="done" if state == "consumed" else "failed", started_at=at(minutes=-3), finished_at=at(minutes=-2),
+                                                         result="Deleted. Azure no longer lists the resource." if state == "consumed" else "Azure refused to delete the resource.",
+                                                         verification={"gone": True, "checkedAt": at(minutes=-2)} if state == "consumed" else {}))
+                console.store.plan_put(make_plan(state=state))
+                reply = console.get("/ok/plan0001")
                 self.assert_no_buttons(reply)
-                self.assertIn(words_, reply.content)
-                self.assertEqual([p.text() for p in reply.main.find_all("p", class_="notice-title")], [title])
-                self.assertIn(make_plan().title, reply.headings(1))
-                self.assertIn("What changes", reply.content, "the plan stays readable")
+                self.assertEqual(self.notice(reply)[0], title)
+                self.assertIn(words_, self.notice(reply)[1])
+                self.assertIn(HEADLINE, reply.headings(1))
+                self.assertIn("If you approve", reply.headings(2), "the plan stays readable")
 
-    def test_a_plan_that_was_used_shows_what_happened_to_the_change(self):
+    def test_a_plan_that_was_used_shows_what_happened_to_the_change_in_the_details(self):
         self.console.store.action_put(make_action(state="done", started_at=at(minutes=-3), finished_at=at(minutes=-2), result="Deleted. Azure no longer lists the resource.",
                                                   verification={"gone": True, "checkedAt": at(minutes=-2)}))
         reply = self.page(state="consumed")
@@ -247,29 +288,30 @@ class WhenThePlanIsNotOpen(unittest.TestCase):
         self.assertEqual(found["State"], "Done.")
         self.assertEqual(found["Result"], "Deleted. Azure no longer lists the resource.")
         self.assertIn("Azure no longer lists the resource.", found["Checked afterwards"])
-        self.assertIn("What happened to the change", reply.headings(2))
-        self.assertNotIn("What the runner did", reply.headings(2))
+        (disclosure,) = reply.main.find_all("details")
+        self.assertIn("What happened to the change", disclosure.text())
+        self.assertNotIn("What the runner did", reply.content)
 
-    def test_a_plan_that_failed_shows_what_happened_to_the_change(self):
+    def test_a_plan_that_failed_shows_what_happened_to_the_change_in_the_details(self):
         self.console.store.action_put(make_action(state="failed", started_at=at(minutes=-3), finished_at=at(minutes=-2), result="Azure refused to delete the resource.",
                                                   error="Azure refused to delete the resource."))
         reply = self.page(state="failed")
         self.assert_no_buttons(reply)
         found = rows(reply)
         self.assertEqual((found["State"], found["Result"]), ("Failed.", "Azure refused to delete the resource."))
-        self.assertIn("What happened to the change", reply.headings(2))
+        self.assertEqual(self.notice(reply)[0], "Not made")
 
     def test_a_plan_with_no_action_shows_no_part_for_what_happened(self):
         for state in ("approved", "consumed", "failed", "declined"):
             with self.subTest(state=state):
-                self.assertNotIn("What happened to the change", self.page(state=state).headings(2))
+                self.assertNotIn("What happened to the change", self.page(state=state).main.text())
 
     def test_an_approved_plan_says_that_the_change_is_being_made_and_has_no_form_and_no_start_time(self):
         self.console.store.decision_put(make_decision())
         self.console.store.action_put(make_action())
         reply = self.page(state="approved")
         self.assertEqual(reply.status, 200)
-        self.assertIn("Your OK is recorded since Thu 5 Nov 2026 08:59 UTC (09:59 CET). The change is being made now. Open this page again in a moment.", reply.content)
+        self.assertEqual(self.notice(reply), ("Approved", "Approved by Tino. The change is being made now. Thu 5 Nov 2026 08:59 UTC (09:59 CET)"))
         self.assertEqual(reply.forms(), [])
         self.assertEqual(reply.root.find_all("button"), [])
         for gone in ("Cancel my OK", "Nothing has changed yet", "The change starts at", "start time", "the runner"):
@@ -277,14 +319,12 @@ class WhenThePlanIsNotOpen(unittest.TestCase):
         found = rows(reply)
         self.assertEqual(found["State"], "Queued. It has not started.")
         self.assertNotIn("Starts at", found)
-        self.assertIn("What happened to the change", reply.headings(2))
 
-    def test_an_approved_plan_that_another_person_approved_says_so_without_the_time_of_the_viewer(self):
+    def test_an_approved_plan_that_another_person_approved_names_that_person(self):
         self.console.store.decision_put(make_decision(approver_oid=MAYA, approver_name="Maya"))
         self.console.store.action_put(make_action())
         reply = self.page(state="approved", approvers=(TINO, MAYA))
-        self.assertIn("This plan is approved. The change is being made now.", reply.content)
-        self.assertNotIn("Your OK is recorded since", reply.content)
+        self.assertIn("Approved by Maya. The change is being made now.", reply.content)
         self.assertEqual(reply.forms(), [])
 
     def test_an_approved_plan_whose_change_waits_for_the_extra_sign_in_check_says_so_and_that_nothing_was_changed_yet(self):
@@ -293,21 +333,13 @@ class WhenThePlanIsNotOpen(unittest.TestCase):
         self.console.store.action_put(make_action(step_up=True, result=wait))
         reply = self.page(state="approved")
         self.assertEqual(reply.status, 200)
-        self.assertIn("Your OK is recorded since Thu 5 Nov 2026 08:59 UTC (09:59 CET). Azure asked for an extra sign-in check before it would make the change. "
-                      "The change waits until the check is completed. Nothing was changed yet. Open this page again in a moment.", reply.content)
+        self.assertIn("Approved by Tino. Azure asked for an extra sign-in check before it would make the change. "
+                      "The change waits until the check is completed. Nothing was changed yet.", reply.content)
         self.assertNotIn("The change is being made now", reply.content)
         found = rows(reply)
         self.assertEqual((found["State"], found["Result"]), ("Queued. It has not started.", wait))
         self.assertEqual((reply.forms(), reply.root.find_all("button")), ([], []))
-        self.assertEqual([p.text() for p in reply.main.find_all("p", class_="notice-title")], ["Approved"])
-
-    def test_the_same_wait_is_told_to_another_approver_who_did_not_approve(self):
-        self.console.store.decision_put(make_decision(approver_oid=MAYA, approver_name="Maya"))
-        self.console.store.action_put(make_action(step_up=True, result="waits"))
-        reply = self.page(state="approved", approvers=(TINO, MAYA))
-        self.assertIn("This plan is approved. Azure asked for an extra sign-in check before it would make the change. The change waits until the check is completed. "
-                      "Nothing was changed yet.", reply.content)
-        self.assertNotIn("Your OK is recorded since", reply.content)
+        self.assertEqual(self.notice(reply)[0], "Approved")
 
     def test_an_action_that_asked_for_the_check_and_is_running_again_is_being_made_now(self):
         self.console.store.decision_put(make_decision())
@@ -350,9 +382,22 @@ class WhenChangesArePaused(unittest.TestCase):
                 self.assertEqual(reply.status, 200)
                 self.assertNotIn(APPROVE, reply.content)
                 self.assertIn(self.PAUSED, reply.content)
-                self.assertEqual([b[2] for f in reply.forms() for b in f.buttons], ["Decline", "Send the question or suggestion", "This is not mine"])
+                self.assertEqual([b[2] for f in reply.forms() for b in f.buttons], ["Decline", "This is not mine", "Ask or tell", "Decide later"])
                 self.console.store.switch_put(SwitchRecord(name))
         self.assertIn(APPROVE, self.console.get("/ok/plan0001").content)
+
+    def test_advice_is_held_by_the_full_stop_only_because_nothing_changes_in_azure_for_it(self):
+        self.console.store.case_put(make_advice_case())
+        self.console.store.plan_put(make_advice())
+        for name, held in (("changes", False), ("all", True)):
+            with self.subTest(switch=name):
+                self.console.store.switch_put(SwitchRecord(name, True, "Otto", at(minutes=-1), "drill"))
+                reply = self.console.get("/ok/plan0002")
+                labels = [b[2] for f in reply.forms() for b in f.buttons]
+                self.assertEqual("Worth acting on" in labels, not held)
+                self.assertEqual("Meternaut is paused here. Nothing has changed, and your answer cannot be recorded now." in reply.content, held)
+                self.assertIn("Not worth it", labels)
+                self.console.store.switch_put(SwitchRecord(name))
 
     def test_the_switch_of_the_messages_does_not_stop_an_answer(self):
         self.console.store.switch_put(SwitchRecord("messages", True, "Otto", at(minutes=-1), "drill"))
@@ -380,29 +425,43 @@ class WhoMayAnswer(unittest.TestCase):
                 reply = self.console.get("/ok/plan0001", oid=who)
                 self.assertEqual(reply.status, 403)
                 self.assertEqual(reply.headings(1), ["I cannot take your OK on this request."])
-                for secret in (make_plan().title, "planted-disk-1", "7F3K92QD", "meternaut-test-rg", "What changes", "Estimated saving", "7.17"):
+                for secret in (HEADLINE, make_plan().title, "planted-disk-1", "7F3K92QD", "meternaut-test-rg", "If you approve", "Expected saving", "7.17"):
                     self.assertNotIn(secret, reply.content, f"no plan detail: {secret}")
                 self.assertEqual(reply.root.find_all("button"), [])
-                self.assertIn("Talk to a person.", reply.content)
+                self.assertIn("Talk to a person: ", reply.content)
 
     def test_a_request_that_does_not_exist_is_a_404_for_an_approver_and_the_refusal_for_anybody_else(self):
         self.assertEqual(self.console.get("/ok/nothing", oid=TINO).status, 404)
         self.assertEqual(self.console.get("/ok/nothing", oid=MAYA).status, 404)
         self.assertEqual(self.console.get("/ok/nothing", oid=OWNER).status, 403)
+        self.assertEqual(self.console.get("/ok/nothing", oid=OPS).status, 403)
+
+    def test_an_owner_who_is_named_may_answer_advice_and_nothing_else(self):
+        self.console.store.case_put(make_advice_case())
+        self.console.store.plan_put(make_advice(approvers=(TINO, OWNER)))
+        self.console.store.plan_put(make_plan(approvers=(TINO, OWNER)))
+        advice = self.console.get("/ok/plan0002", oid=OWNER)
+        self.assertEqual(advice.status, 200)
+        self.assertEqual([b[2] for f in advice.forms() for b in f.buttons], ["Worth acting on", "Not worth it", "This is not mine", "Ask or tell", "Decide later"])
+        change = self.console.get("/ok/plan0001", oid=OWNER)
+        self.assertEqual(change.status, 403, "an owner who is not an approver cannot approve a change")
+        unnamed = self.console.get("/ok/plan0002", oid=MAYA)
+        self.assertEqual(unnamed.status, 403, "and a person who is not named cannot answer anything")
 
     def test_neither_the_decider_nor_the_delegate_is_called_for_a_person_who_may_not_answer(self):
         form = self.console.get("/ok/plan0001").forms()
         before = snapshot(self.console.store)
         for who in (MAYA, OWNER, OPS):
-            for action, fields in (("/ok/plan0001", {"decision": "approve", "code": "7F3K92QD", "nonce": form[0].fields["nonce"]}),
-                                   ("/ok/plan0001", {"decision": "decline", "code": "7F3K92QD", "nonce": form[0].fields["nonce"]}),
-                                   ("/ok/plan0001/ask", {"note": "hm", "code": "7F3K92QD", "nonce": form[1].fields["nonce"]}),
-                                   ("/ok/plan0001/not-mine", {"code": "7F3K92QD", "nonce": form[2].fields["nonce"]})):
-                with self.subTest(who=who, action=action, decision=fields.get("decision")):
-                    reply = self.console.post(action, fields, oid=who)
+            for decision, note in (("approve", ""), ("decline", ""), ("ask", "hm"), ("not_mine", ""), ("later", "")):
+                fields = {"decision": decision, "code": "7F3K92QD", "nonce": form[0].fields["nonce"], "note": note}
+                with self.subTest(who=who, decision=decision):
+                    reply = self.console.post("/ok/plan0001", fields, oid=who)
                     self.assertEqual(reply.status, 403)
                     self.assertIn("I cannot take your OK on this request.", reply.content)
                     self.assertNotIn("Location", reply.headers)
+            for old in ("/ok/plan0001/ask", "/ok/plan0001/not-mine"):
+                with self.subTest(who=who, address=old):
+                    self.assertEqual(self.console.post(old, {"note": "hm", "code": "7F3K92QD", "nonce": form[0].fields["nonce"]}, oid=who).status, 403)
         self.assertEqual(self.console.decider.calls, [])
         self.assertEqual((self.console.delegate.begins, self.console.delegate.finishes), ([], []))
         self.assertEqual(snapshot(self.console.store), before)
@@ -430,7 +489,9 @@ class WhoMayAnswer(unittest.TestCase):
 
 KINDS = {  # the status, the title of the page, and a sentence that the page always has
     "declined": (200, "Declined", "Declined. Nothing has changed. The request is closed."),
-    "asked": (200, "Your question is recorded", "Recorded. Your question or suggestion approves nothing."),
+    "asked": (200, "Recorded: your words", "Recorded with your name. It approves nothing, and Meternaut does not answer yet."),
+    "later": (200, "Noted", "Noted. Nothing is approved and nothing has changed. The request stays in your list."),
+    "acknowledged": (200, "Recorded: worth acting on", "Recorded. Nothing was changed in Azure."),
     "not_mine": (200, "Recorded: not yours", "Recorded. Nothing is approved. The request goes back to finding the right owner."),
     "ran": (200, "The change was made", "It was made with your own permissions: Azure's Activity Log shows your name as the person who made it. "
                                         "Meternaut holds no right of its own to change Azure."),
@@ -451,7 +512,8 @@ KINDS = {  # the status, the title of the page, and a sentence that the page alw
 }
 # The kinds whose page has a line for the message of the result. The page of every other kind has its own words only.
 SHOWS_THE_MESSAGE = ("ran", "ran_unconfirmed", "stopped", "azure_refused", "failed", "signin_failed", "step_up_failed", "refused_state", "error")
-SUCCESSES = ("declined", "asked", "not_mine", "ran", "ran_unconfirmed")
+SUCCESSES = ("declined", "asked", "later", "acknowledged", "not_mine", "ran", "ran_unconfirmed")
+BACK_TO_THE_LIST = ("not_mine", "later", "refused_role")  # the pages whose back link goes to the decisions and not to the request
 
 
 class EveryKindOfResult(unittest.TestCase):
@@ -485,8 +547,8 @@ class EveryKindOfResult(unittest.TestCase):
         return [(a.attrs["href"], a.text()) for a in reply.main.find_all("a") if a.text().startswith("Back to")]
 
     def test_there_is_a_page_for_each_kind_of_result_and_for_no_other(self):
-        self.assertEqual(set(KINDS), {"declined", "asked", "not_mine", "ran", "ran_unconfirmed", "stopped", "azure_refused", "failed", "signin_failed", "step_up_failed",
-                                      "refused_code", "refused_state", "refused_role", "refused_paused", "expired", "duplicate", "error"})
+        self.assertEqual(set(KINDS), {"declined", "asked", "later", "acknowledged", "not_mine", "ran", "ran_unconfirmed", "stopped", "azure_refused", "failed", "signin_failed",
+                                      "step_up_failed", "refused_code", "refused_state", "refused_role", "refused_paused", "expired", "duplicate", "error"})
         self.assertEqual(set(KINDS), set(approval.STATUS))
 
     def test_every_kind_has_a_plain_page_of_its_own_whichever_step_gives_it(self):
@@ -497,25 +559,25 @@ class EveryKindOfResult(unittest.TestCase):
                     self.assertEqual(reply.status, status)
                     self.assertEqual(reply.headings(1), [title])
                     self.assertIn(sentence, reply.content)
-                    self.assertIn("Talk to a person.", reply.content, "the same help on every page")
-                    self.assertIn("Written by AI (models:", reply.content)
+                    self.assertIn("Talk to a person: ", reply.content, "the same help on every page")
+                    self.assertIn("Written by an AI (models:", reply.content)
                     self.assertEqual(reply.problems, [])
                     self.assertEqual(reply.root.find_all("button"), [])
                     self.assertEqual(reply.forms(), [])
                     self.assertNotIn("Location", reply.headers)
 
-    def test_the_back_link_goes_to_the_request_or_to_the_start_page(self):
+    def test_the_back_link_goes_to_the_request_or_to_the_decisions(self):
         for route in self.routes:
             for kind in KINDS:
                 with self.subTest(route=route.__name__, kind=kind):
-                    wanted = ("/", "Back to the start page") if kind in ("not_mine", "refused_role") else ("/ok/plan0001", "Back to the request")
+                    wanted = ("/", "Back to the decisions") if kind in BACK_TO_THE_LIST else ("/ok/plan0001", "Back to the request")
                     self.assertEqual(self.backs(route(kind)), [wanted])
 
-    def test_a_result_that_holds_no_plan_goes_back_to_the_start_page_after_a_return_and_to_the_request_after_an_answer(self):
+    def test_a_result_that_holds_no_plan_goes_back_to_the_decisions_after_a_return_and_to_the_request_after_an_answer(self):
         for kind in KINDS:
             with self.subTest(kind=kind):
-                self.assertEqual(self.backs(self.by_return(kind, plan=False)), [("/", "Back to the start page")])
-                wanted = ("/", "Back to the start page") if kind in ("not_mine", "refused_role") else ("/ok/plan0001", "Back to the request")
+                self.assertEqual(self.backs(self.by_return(kind, plan=False)), [("/", "Back to the decisions")])
+                wanted = ("/", "Back to the decisions") if kind in BACK_TO_THE_LIST else ("/ok/plan0001", "Back to the request")
                 self.assertEqual(self.backs(self.by_decider(kind, plan=False)), [wanted], "the address of the page names the plan")
 
     def test_the_time_of_an_expired_result_is_read_from_the_plan_in_the_store_and_left_out_when_no_plan_is_known(self):
@@ -589,11 +651,13 @@ class EveryKindOfResult(unittest.TestCase):
                 self.assertEqual(self.console.post("/ok/plan0001", {"decision": decision, "code": "c", "nonce": "n"}).status, 404)
         self.assertEqual((self.decider.calls, self.delegate.begins), ([], []))
 
-    def test_a_decline_goes_to_the_decider_with_the_person_the_plan_the_answer_the_code_the_token_and_the_note(self):
+    def test_a_decline_goes_to_the_decider_with_the_person_the_plan_the_answer_the_code_the_token_the_note_and_the_reason(self):
         form = self.console.get("/ok/plan0001").form("/ok/plan0001", has_button=APPROVE)
         self.console.submit(form, "Decline", note="No, thank you")
-        self.assertEqual(self.decider.calls, [dict(oid=TINO, plan_id="plan0001", decision="decline", code="7F3K92QD", nonce=form.fields["nonce"], note="No, thank you")])
+        self.assertEqual(self.decider.calls, [dict(oid=TINO, plan_id="plan0001", decision="decline", code="7F3K92QD", nonce=form.fields["nonce"], note="No, thank you", reason="")])
         self.assertEqual(self.delegate.begins, [])
+        self.console.submit(self.console.get("/ok/plan0001").form("/ok/plan0001", has_button=APPROVE), "Decline", reason="handled")
+        self.assertEqual(self.decider.calls[-1]["reason"], "handled")
 
 
 class WhatIsCheckedBeforeAnAnswerGoesOn(unittest.TestCase):
@@ -605,17 +669,24 @@ class WhatIsCheckedBeforeAnAnswerGoesOn(unittest.TestCase):
         self.console = Console(decider=self.decider, delegate=self.delegate)
         self.console.seed()
         self.page = self.console.get("/ok/plan0001")
-        self.main, self.ask, self.mine = self.page.forms()
+        (self.main,) = self.page.forms()
 
     def assert_nothing_was_asked(self):
         self.assertEqual((self.decider.calls, self.delegate.begins, self.delegate.finishes), ([], [], []))
 
-    def test_an_answer_that_is_neither_approve_nor_decline_is_refused_and_nothing_is_asked(self):
-        for decision in ("", "ask", "not_mine", "APPROVE", "approve,decline", "delete"):
+    def test_an_answer_that_is_not_one_of_the_five_is_refused_and_nothing_is_asked(self):
+        for decision in ("", "APPROVE", "approve,decline", "delete", "answer"):
             with self.subTest(decision=decision):
                 reply = self.console.post("/ok/plan0001", {**self.main.fields, "decision": decision})
                 self.assertEqual(reply.status, 400)
-                self.assertIn("The form did not say Approve or Decline. Nothing was recorded.", reply.content)
+                self.assertIn("The form did not say which answer you chose. Nothing was recorded.", reply.content)
+        self.assert_nothing_was_asked()
+
+    def test_a_reason_that_is_not_in_the_list_is_refused_with_the_text_kept_and_nothing_is_asked(self):
+        reply = self.console.submit(self.main, "Decline", note="my note", reason="because")
+        self.assertEqual(reply.status, 400)
+        self.assertIn("Choose one of the reasons in the list.", reply.content)
+        self.assertEqual(reply.form("/ok/plan0001", has_button=APPROVE).fields["note"], "my note")
         self.assert_nothing_was_asked()
 
     def test_a_form_with_no_token_is_refused_and_nothing_is_asked(self):
@@ -655,23 +726,35 @@ class WhatIsCheckedBeforeAnAnswerGoesOn(unittest.TestCase):
         self.assertEqual(self.console.submit(self.main, APPROVE, note="a" * 300).status, 303)
         self.assertEqual(self.delegate.begins[0]["note"], "a" * 300)
 
-    def test_a_question_needs_text_of_at_most_300_characters(self):
-        for note, message in (("", "Write your question or suggestion."), ("a" * 301, "The text has 301 characters. The most is 300.")):
+    def test_ask_or_tell_needs_text_of_at_most_300_characters(self):
+        for note, message in (("", "Write your question, your objection or what to remember."), ("a" * 301, "The note has 301 characters. The most is 300.")):
             with self.subTest(length=len(note)):
-                reply = self.console.submit(self.ask, note=note)
+                reply = self.console.submit(self.main, "Ask or tell", note=note)
                 self.assertEqual(reply.status, 400)
                 self.assertIn(message, reply.content)
                 self.assert_nothing_was_asked()
-        reply = self.console.submit(self.ask, note="Is it the standby disk?")
+        reply = self.console.submit(self.main, "Ask or tell", note="Is it the standby disk?")
         self.assertEqual(reply.status, 200)
-        self.assertEqual(self.decider.calls, [dict(oid=TINO, plan_id="plan0001", decision="ask", code="7F3K92QD", nonce=self.ask.fields["nonce"], note="Is it the standby disk?")])
+        self.assertEqual(self.decider.calls, [dict(oid=TINO, plan_id="plan0001", decision="ask", code="7F3K92QD", nonce=self.main.fields["nonce"], note="Is it the standby disk?",
+                                                   reason="")])
         self.assertEqual(self.delegate.begins, [])
 
-    def test_not_mine_goes_to_the_decider_with_what_it_needs(self):
+    def test_not_mine_and_later_go_to_the_decider_with_what_they_need(self):
         self.decider.result = DecideResult(True, "not_mine", "ok", make_plan())
-        self.console.submit(self.mine)
-        self.assertEqual(self.decider.calls, [dict(oid=TINO, plan_id="plan0001", decision="not_mine", code="7F3K92QD", nonce=self.mine.fields["nonce"], note="")])
+        self.console.submit(self.main, "This is not mine")
+        self.assertEqual(self.decider.calls, [dict(oid=TINO, plan_id="plan0001", decision="not_mine", code="7F3K92QD", nonce=self.main.fields["nonce"], note="", reason="")])
+        self.decider.result = DecideResult(True, "later", "ok", make_plan())
+        self.console.submit(self.main, "Decide later")
+        self.assertEqual(self.decider.calls[-1]["decision"], "later")
         self.assertEqual(self.delegate.begins, [])
+
+    def test_the_older_addresses_of_the_question_and_of_not_mine_answer_like_the_buttons(self):
+        self.decider.result = DecideResult(True, "asked", "ok", make_plan())
+        reply = self.console.post("/ok/plan0001/ask", {**self.main.fields, "note": "a question"})
+        self.assertEqual(reply.status, 200)
+        self.decider.result = DecideResult(True, "not_mine", "ok", make_plan())
+        self.console.post("/ok/plan0001/not-mine", dict(self.main.fields))
+        self.assertEqual([(c["decision"], c["note"]) for c in self.decider.calls], [("ask", "a question"), ("not_mine", "")])
 
     def test_the_note_is_cleaned_of_control_characters_before_it_goes_on(self):
         for decision in ("decline", "approve"):
@@ -748,9 +831,10 @@ class TheSignInRedirect(unittest.TestCase):
 
     def test_only_an_approval_goes_to_the_delegate(self):
         self.console.submit(self.form, "Decline")
-        self.console.submit(self.console.get("/ok/plan0001").form("/ok/plan0001/ask"), note="Is it the standby disk?")
-        self.console.submit(self.console.get("/ok/plan0001").form("/ok/plan0001/not-mine"))
-        self.assertEqual([call["decision"] for call in self.decider.calls], ["decline", "ask", "not_mine"])
+        self.console.submit(self.console.get("/ok/plan0001").form("/ok/plan0001"), "Ask or tell", note="Is it the standby disk?")
+        self.console.submit(self.console.get("/ok/plan0001").form("/ok/plan0001"), "This is not mine")
+        self.console.submit(self.console.get("/ok/plan0001").form("/ok/plan0001"), "Decide later")
+        self.assertEqual([call["decision"] for call in self.decider.calls], ["decline", "ask", "not_mine", "later"])
         self.assertEqual((self.delegate.begins, self.delegate.finishes), ([], []))
 
     def test_a_refusal_from_begin_is_the_page_of_its_kind_with_no_redirect_and_changes_nothing(self):
@@ -1010,13 +1094,15 @@ class AgainstTheLoop(unittest.TestCase):
         self.console.seed()
         self.console.store.plan_put(make_plan(approvers=(TINO, MAYA)))
 
-    def forms(self, who=TINO):
-        return self.console.get("/ok/plan0001", oid=who).forms()
+    def form(self, who=TINO):
+        (form,) = self.console.get("/ok/plan0001", oid=who).forms()
+        return form
 
-    def test_a_decline_is_recorded_once_and_the_same_form_cannot_be_used_twice(self):
-        main, _, _ = self.forms()
-        self.assertEqual(self.console.submit(main, "Decline", note="Not now").status, 200)
-        self.assertEqual([d.decision for d in self.console.store.decisions_of_plan("plan0001")], ["decline"])
+    def test_a_decline_is_recorded_once_with_its_reason_and_the_same_form_cannot_be_used_twice(self):
+        main = self.form()
+        self.assertEqual(self.console.submit(main, "Decline", note="Not now", reason="handled").status, 200)
+        (record,) = self.console.store.decisions_of_plan("plan0001")
+        self.assertEqual((record.decision, record.note, record.reason), ("decline", "Not now", "handled"))
         before = snapshot(self.console.store)
         second = self.console.submit(main, "Decline")
         self.assertEqual(second.status, 500)
@@ -1024,7 +1110,7 @@ class AgainstTheLoop(unittest.TestCase):
         self.assertEqual(snapshot(self.console.store), before)
 
     def test_a_wrong_code_is_refused_and_changes_nothing(self):
-        main, _, _ = self.forms()
+        main = self.form()
         before = snapshot(self.console.store)
         reply = self.console.submit(main, "Decline", code="AAAAAAAA")
         self.assertEqual(reply.status, 409)
@@ -1032,7 +1118,7 @@ class AgainstTheLoop(unittest.TestCase):
         self.assertEqual(snapshot(self.console.store), before)
 
     def test_a_missing_or_wrong_token_changes_nothing(self):
-        main, _, _ = self.forms()
+        main = self.form()
         before = snapshot(self.console.store)
         for token in ("", "nope", "x" * 32):
             reply = self.console.submit(main, "Decline", nonce=token)
@@ -1040,9 +1126,9 @@ class AgainstTheLoop(unittest.TestCase):
         self.assertEqual(snapshot(self.console.store), before)
 
     def test_a_token_of_another_person_or_another_plan_is_refused(self):
-        main, _, _ = self.forms(TINO)
+        main = self.form(TINO)
         self.console.store.plan_put(make_plan(plan_id="plan0002", approvers=(TINO,)))
-        other = self.console.get("/ok/plan0002").forms()[0]
+        (other,) = self.console.get("/ok/plan0002").forms()
         before = snapshot(self.console.store)
         reply = self.console.submit(main, "Decline", oid=MAYA)
         self.assertEqual(reply.status, 500)
@@ -1053,7 +1139,7 @@ class AgainstTheLoop(unittest.TestCase):
         self.assertEqual(self.console.submit(main, "Decline").status, 200, "the right person with the right token still can")
 
     def test_an_approval_never_reaches_the_loop_and_records_nothing(self):
-        main, _, _ = self.forms()
+        main = self.form()
         before = snapshot(self.console.store)
         reply = self.console.submit(main, APPROVE, note="Go on")
         self.assertEqual(reply.status, 303)
@@ -1062,26 +1148,33 @@ class AgainstTheLoop(unittest.TestCase):
         self.assertEqual(self.console.store.plan_get("plan0001").state, "open")
 
     def test_a_decline_closes_the_request_and_the_page_shows_it(self):
-        main, _, _ = self.forms()
-        reply = self.console.submit(main, "Decline", note="Not now")
+        reply = self.console.submit(self.form(), "Decline", note="Not now")
         self.assertEqual(reply.headings(1), ["Declined"])
         self.assertEqual(self.console.store.plan_get("plan0001").state, "declined")
-        self.assertEqual(self.console.get("/ok/plan0001").forms(), [])
-        self.assertIn("This request was declined.", self.console.get("/ok/plan0001").content)
+        page = self.console.get("/ok/plan0001")
+        self.assertEqual(page.forms(), [])
+        self.assertIn("Declined by Tino.", page.content)
 
-    def test_a_question_leaves_the_request_open_and_is_shown_to_the_person_who_asked(self):
-        _, ask, _ = self.forms()
-        reply = self.console.submit(ask, note="Is it the standby disk?")
-        self.assertEqual(reply.headings(1), ["Your question is recorded"])
+    def test_asking_or_telling_leaves_the_request_open_and_is_shown_to_the_person_who_wrote_it(self):
+        reply = self.console.submit(self.form(), "Ask or tell", note="Is it the standby disk?")
+        self.assertEqual(reply.headings(1), ["Recorded: your words"])
         self.assertIn("The request stays open until Sun 8 Nov 2026 08:00 UTC", reply.content)
         page = self.console.get("/ok/plan0001")
-        self.assertEqual(len(page.forms()), 3)
+        self.assertEqual(len(page.forms()), 1)
         self.assertIn("Is it the standby disk?", page.content)
         self.assertNotIn("Is it the standby disk?", self.console.get("/ok/plan0001", oid=MAYA).content)
 
+    def test_later_leaves_the_request_open_and_a_second_answer_is_still_possible(self):
+        reply = self.console.submit(self.form(), "Decide later")
+        self.assertEqual(reply.headings(1), ["Noted"])
+        self.assertEqual(self.console.store.plan_get("plan0001").state, "open")
+        page = self.console.get("/ok/plan0001")
+        self.assertIn("You chose to decide later. Nothing has changed.", page.content)
+        self.assertEqual(self.console.submit(page.forms()[0], "Decline").status, 200)
+        self.assertEqual(self.console.store.plan_get("plan0001").state, "declined")
+
     def test_not_mine_closes_the_request_for_the_person(self):
-        _, _, mine = self.forms()
-        reply = self.console.submit(mine)
+        reply = self.console.submit(self.form(), "This is not mine")
         self.assertEqual(reply.headings(1), ["Recorded: not yours"])
         self.assertEqual(self.console.store.plan_get("plan0001").state, "withdrawn")
 

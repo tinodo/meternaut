@@ -10,12 +10,13 @@ import re
 from typing import Callable
 
 from ..models import StoreError
-from . import approval, decisions, history, home, notebook, notes, ops, settings
+from . import approval, history, home, notebook, notes, ops, settings
 from .core import FORM_TYPE, ID, Ctx, Request, Response, Services, utc
 from .layout import TEXT, denied, message_page, respond, secured
 
 LOG = logging.getLogger("meternaut.web")
 PRINCIPAL_HEADER = "x-ms-client-principal-id"
+BACK = ("/", "Back to the decisions")
 
 Handler = Callable[..., Response]
 # method, path, handler, the roles of which a person needs one (none: any listed person)
@@ -28,8 +29,8 @@ ROUTES: tuple[tuple[str, str, Handler, tuple[str, ...]], ...] = (
     ("GET", "/arm/return", approval.arm_return, ()),
     ("GET", rf"/why/(?P<case_id>{ID})", notebook.notebook, ()),
     ("GET", "/history", history.history, ()),
-    ("GET", "/me/decisions", decisions.decisions, ()),
-    ("GET", "/me/activity", decisions.activity, ()),
+    ("GET", "/me/decisions", history.history, ()),
+    ("GET", "/me/activity", history.history, ()),
     ("GET", "/me/settings", settings.settings_page, ()),
     ("POST", "/me/settings", settings.settings_save, ()),
     ("POST", "/me/settings/export", settings.settings_export, ()),
@@ -37,6 +38,8 @@ ROUTES: tuple[tuple[str, str, Handler, tuple[str, ...]], ...] = (
     ("GET", "/me/notes", notes.notes_page, ()),
     ("POST", "/me/notes", notes.notes_add, ()),
     ("POST", rf"/me/notes/(?P<note_id>{ID})/delete", notes.notes_delete, ()),
+    ("GET", "/ops", ops.hub, ("ops",)),
+    ("GET", "/ops/runs", ops.runs_page, ("ops",)),
     ("GET", "/ops/permissions", ops.permissions, ("ops", "owner")),
     ("POST", "/ops/pause", ops.pause_save, ("ops",)),
     ("GET", "/ops/pause", ops.pause_page, ("ops",)),
@@ -78,7 +81,7 @@ def _fault(request: Request, services: Services, status: int, title: str, advice
             return denied()
         ctx = Ctx(request, services, principal, utc(services.now()))
         said = "Nothing has changed." if request.method in ("GET", "HEAD") else "Open the page again to see what was stored."
-        return message_page(ctx, status, title, said, advice, back=("/", "Back to the start page"))
+        return message_page(ctx, status, title, said, advice, back=BACK)
     except Exception:  # noqa: BLE001 (the last resort: a bare page)
         return respond(status, "<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>Error</title></head><body><main><h1>Error</h1></main></body></html>")
 
@@ -94,30 +97,30 @@ def _handle(request: Request, services: Services) -> Response:
         return denied()
     ctx = Ctx(request, services, principal, utc(services.now()))
     if request.problem == "too_large":
-        return message_page(ctx, 413, "The form is too large", "A form may hold at most 16 KB. Nothing was sent.", back=("/", "Back to the start page"))
+        return message_page(ctx, 413, "The form is too large", "A form may hold at most 16 KB. Nothing was sent.", back=BACK)
     if request.problem:
-        return message_page(ctx, 400, "The form cannot be read", "Nothing was sent.", back=("/", "Back to the start page"))
+        return message_page(ctx, 400, "The form cannot be read", "Nothing was sent.", back=BACK)
     if method not in ("GET", "HEAD", "POST"):
-        refusal = message_page(ctx, 405, "This kind of request is not accepted", "Pages are opened with GET and answered with POST.", back=("/", "Back to the start page"))
+        refusal = message_page(ctx, 405, "This kind of request is not accepted", "Pages are opened with GET and answered with POST.", back=BACK)
         return Response(405, {**refusal.headers, "Allow": "GET, HEAD, POST"}, refusal.body)
     if method == "POST":
         if headers.get("sec-fetch-site", "same-origin") != "same-origin":
-            return message_page(ctx, 403, "This form was not sent from this console", "Nothing was changed.", back=("/", "Back to the start page"))
+            return message_page(ctx, 403, "This form was not sent from this page", "Nothing was changed.", back=BACK)
         if headers.get("content-type", "").split(";")[0].strip().lower() != FORM_TYPE:
-            return message_page(ctx, 415, "This form cannot be read", "Nothing was changed.", back=("/", "Back to the start page"))
+            return message_page(ctx, 415, "This form cannot be read", "Nothing was changed.", back=BACK)
     found = path is not None and [(m, rx.fullmatch(path), h, r) for m, rx, h, r in COMPILED if rx.fullmatch(path)]
     if not found:
-        return message_page(ctx, 404, "I cannot find this page", "No page has this address. Nothing has changed.", back=("/", "Back to the start page"))
+        return message_page(ctx, 404, "I cannot find this page", "No page has this address. Nothing has changed.", back=BACK)
     wanted = "GET" if method == "HEAD" else method
     route = next(((match, handler, roles) for m, match, handler, roles in found if m == wanted and not (method == "HEAD" and handler in NO_HEAD)), None)
     if route is None:
-        refusal = message_page(ctx, 405, "This page does not take that kind of request", "Nothing has changed.", back=("/", "Back to the start page"))
+        refusal = message_page(ctx, 405, "This page does not take that kind of request", "Nothing has changed.", back=BACK)
         head_ok = any(m == "GET" and handler not in NO_HEAD for m, _, handler, _ in found)
         allowed = sorted({m for m, *_ in found} | ({"HEAD"} if head_ok else set()))
         return Response(405, {**refusal.headers, "Allow": ", ".join(allowed)}, b"" if method == "HEAD" else refusal.body)
     match, handler, roles = route
     if roles and not any(principal.has(role) for role in roles):
         return message_page(ctx, 403, "You do not have the role that this page needs", f"This page is for people with the role {' or '.join(roles)}. Nothing has changed.",
-                            back=("/", "Back to the start page"))
+                            back=BACK)
     response = handler(ctx, **match.groupdict())
     return Response(response.status, response.headers, b"") if method == "HEAD" else response

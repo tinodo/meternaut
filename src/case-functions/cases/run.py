@@ -114,8 +114,8 @@ def work_case(s: Services, number: int, lead: Lead, context: Context, tokens_bef
                 objections=tuple(clean_text(o, 300) for o in objections), guards=tuple(flags_on), models=dict(models), steps=tuple(steps), facts=facts,
                 first_seen_at=old.first_seen_at if old and old.first_seen_at else now, updated_at=now, runs_seen=(old.runs_seen + 1) if old else 1)
             ex.store.case_put(record)
-            if status == "proposed":
-                plan = ex.approvals.create(record, lead, ex.approvers())
+            if status in ("proposed", "needs_human"):
+                plan = ex.approvals.plan_for(record, lead, ex.approvers())
                 if plan is not None:
                     h.emit("plan.created", planId=plan.plan_id, caseKey=record.case_id, family=plan.family, approvers=len(plan.approvers))
                     ex.on_plan(plan, ex.store.case_get(record.case_id) or record)

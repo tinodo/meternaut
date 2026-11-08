@@ -640,7 +640,7 @@ class TheStepUp(Story):
         after = self.browser.send("GET", f"/ok/{self.plan.plan_id}")
         self.assertEqual(rows(after)["State"], "Done.")
         self.assertEqual(rows(after)["Result"], "Deleted. Azure no longer lists the resource.")
-        self.assertIn("The change was made, with the permissions of the person who approved it.", after.content)
+        self.assertIn("made with their own Azure rights", after.content)
         self.assertEqual(after.forms(), [])
 
         # The timer tells what ran, once.

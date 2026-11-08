@@ -1,11 +1,12 @@
 """What more than one page needs: reading the store without failing a whole page, the switches, who may answer a plan, what happened to a change,
-and the rows of the tables of cases."""
+and the rows of the tables of cases and runs."""
 from __future__ import annotations
 
 import math
 from typing import Callable, Iterable, TypeVar
 
-from ..models import SWITCH_NAMES, ActionRecord, CaseRecord, PlanRecord, Principal, RunRecord, SwitchRecord
+from ..brief import Brief, build_brief
+from ..models import ADVISE, SWITCH_NAMES, ActionRecord, CaseRecord, DecisionRecord, PlanRecord, Principal, RunRecord, SwitchRecord
 from . import words
 from .core import Ctx, Safe, esc, fmt, join, link_part, number, parse_time, usd
 from .layout import code, paragraph, summary
@@ -19,6 +20,24 @@ def read(fn: Callable[[], T], default: T) -> tuple[T, bool]:
         return fn(), True
     except Exception:  # noqa: BLE001 (any failure of a read is a section that cannot be read)
         return default, False
+
+
+def cases_by_id(ctx: Ctx, wanted: set[str]) -> dict[str, CaseRecord]:
+    """The cases with these ids: the recent cases in one read, and the others one by one. A case that cannot be read is left out."""
+    recent, _ = read(lambda: ctx.store.cases_recent(1000), [])
+    found = {case.case_id: case for case in recent if case.case_id in wanted}
+    for case_id in sorted(wanted - found.keys()):
+        case, _ = read(lambda case_id=case_id: ctx.store.case_get(case_id), None)
+        if case is not None:
+            found[case_id] = case
+    return found
+
+
+def brief_of(ctx: Ctx, plan: PlanRecord | None, case: CaseRecord | None, *, action: ActionRecord | None = None, decisions: Iterable[DecisionRecord] = (), answerable: bool = False) -> Brief:
+    """The brief of one request, as the signed-in person sees it. A switch that holds this kind of answer (a change is held by `all` and `changes`, advice by `all`) takes the
+    answer that it holds out of the brief."""
+    paused = answerable and plan is not None and plan.state == "open" and pulled(ctx, *(("all",) if plan.family == ADVISE else ("all", "changes")))
+    return build_brief(case, plan, action, list(decisions), now=ctx.now, may_answer=answerable, changes_paused=paused)
 
 
 def switch_states(ctx: Ctx) -> list[tuple[str, SwitchRecord | None]]:
@@ -40,8 +59,9 @@ def pulled(ctx: Ctx, *names: str) -> bool:
 
 
 def may_answer(principal: Principal, plan: PlanRecord) -> bool:
-    """Only a person with the role approver who is named in the plan may answer it, checked by directory object id."""
-    return principal.has("approver") and principal.oid.lower() in {a.lower() for a in plan.approvers}
+    """Only a person named in the plan may answer it, checked by directory object id, and with the role approver. Advice changes nothing in Azure, so the owner may answer it too."""
+    named = principal.oid.lower() in {a.lower() for a in plan.approvers}
+    return named and (principal.has("approver") or (plan.family == ADVISE and principal.has("owner")))
 
 
 def is_expired(ctx: Ctx, plan: PlanRecord) -> bool:
@@ -135,7 +155,7 @@ def confidence(value: object) -> str:
     return f"{value:.2f}" if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) else "none"
 
 
-CASE_HEADERS = ["Resource", "Found by", "Status", "Recommendation", "Confidence (0 to 1)", "Estimated saving a month", "Last updated", "Notebook"]
+CASE_HEADERS = ["Resource", "Found by", "Status", "Recommendation", "Confidence (0 to 1)", "Estimated saving a month", "Last updated", "Page"]
 
 
 def case_rows(ctx: Ctx, cases: Iterable[CaseRecord]) -> list[list[object]]:
@@ -145,7 +165,7 @@ def case_rows(ctx: Ctx, cases: Iterable[CaseRecord]) -> list[list[object]]:
         rows.append([
             resource_cell(case.resource_name, case.resource_type, case.resource_group), detector_cell(case.detector), words.case_status(case.status),
             words.recommendation_word(case.recommendation), confidence(case.confidence), figure(case.saving_usd_month), ctx.when(case.updated_at),
-            fmt('<a href="{href}">Open<span class="visually-hidden"> the notebook for {name}</span></a>', href=ctx.url(f"/why/{link_part(case.case_id)}"),
+            fmt('<a href="{href}">Open<span class="visually-hidden"> the page of {name}</span></a>', href=ctx.url(f"/why/{link_part(case.case_id)}"),
                 name=case.resource_name),
         ])
     return rows

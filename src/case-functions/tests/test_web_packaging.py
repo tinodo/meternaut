@@ -34,11 +34,11 @@ def imported(path):
 
 class ThePackage(unittest.TestCase):
     def test_the_files_are_where_they_should_be_and_nothing_else_is(self):
-        self.assertEqual([p.name for p in modules()], ["__init__.py", "approval.py", "common.py", "core.py", "decisions.py", "history.py", "home.py", "layout.py", "notebook.py",
+        self.assertEqual([p.name for p in modules()], ["__init__.py", "approval.py", "brief_page.py", "common.py", "core.py", "history.py", "home.py", "layout.py", "notebook.py",
                                                        "notes.py", "ops.py", "router.py", "settings.py", "words.py"])
         self.assertEqual(sorted(p.name for p in WEB.iterdir() if p.name != "__pycache__"), [p.name for p in modules()])
 
-    def test_it_imports_the_standard_library_only_and_the_two_modules_of_the_contract(self):
+    def test_it_imports_the_standard_library_only_and_the_three_modules_of_the_contract(self):
         standard = set(sys.stdlib_module_names)
         for path in modules():
             for module, level in imported(path):
@@ -46,10 +46,10 @@ class ThePackage(unittest.TestCase):
                     if level == 0:
                         self.assertIn(module.split(".")[0], standard)
                     elif level == 1:
-                        self.assertIn(module.split(".")[0], {"", "core", "layout", "common", "words", "approval", "decisions", "history", "home", "notebook", "notes", "ops", "router", "settings"})
+                        self.assertIn(module.split(".")[0], {"", "core", "layout", "common", "words", "approval", "brief_page", "history", "home", "notebook", "notes", "ops", "router", "settings"})
                     else:
                         self.assertEqual(level, 2)
-                        self.assertIn(module, {"models", "people"}, "the pages know the records and the people, and nothing of how they are kept")
+                        self.assertIn(module, {"brief", "models", "people"}, "the pages know the records, the people and the decision brief, and nothing of how they are kept")
 
     def test_a_page_does_not_touch_a_network_a_process_or_a_file(self):
         for path in modules():
@@ -108,8 +108,8 @@ class ThePackage(unittest.TestCase):
             raise AssertionError("the console reached for the network or for a process")
         with mock.patch.object(socket, "socket", refuse), mock.patch.object(socket, "create_connection", refuse), mock.patch.object(subprocess, "Popen", refuse):
             for oid in (TINO, MAYA, OPS):
-                for path in ("/", "/ok/plan0001", "/why/case0001", "/history", "/me/decisions", "/me/activity", "/me/settings", "/me/notes", "/ops/permissions", "/ops/pause",
-                             "/arm/return?code=" + "c" * 24 + "&state=" + "s" * 24):
+                for path in ("/", "/ok/plan0001", "/why/case0001", "/history", "/me/decisions", "/me/activity", "/me/settings", "/me/notes", "/ops", "/ops/runs", "/ops/permissions",
+                             "/ops/pause", "/arm/return?code=" + "c" * 24 + "&state=" + "s" * 24):
                     console.get(path, oid=oid)
             form = console.get("/me/settings").form("/me/settings/export")
             self.assertEqual(console.submit(form).status, 200)
@@ -123,12 +123,13 @@ class ThePackage(unittest.TestCase):
         self.assertEqual(shown, {
             ("GET", "/"), ("GET", "/ok/<id>"), ("POST", "/ok/<id>"), ("POST", "/ok/<id>/ask"), ("POST", "/ok/<id>/not-mine"), ("GET", "/arm/return"), ("GET", "/why/<id>"),
             ("GET", "/history"), ("GET", "/me/decisions"), ("GET", "/me/activity"), ("GET", "/me/settings"), ("POST", "/me/settings"), ("POST", "/me/settings/export"),
-            ("POST", "/me/settings/delete"), ("GET", "/me/notes"), ("POST", "/me/notes"), ("POST", "/me/notes/<id>/delete"), ("GET", "/ops/permissions"), ("GET", "/ops/pause"),
-            ("POST", "/ops/pause")})
+            ("POST", "/me/settings/delete"), ("GET", "/me/notes"), ("POST", "/me/notes"), ("POST", "/me/notes/<id>/delete"), ("GET", "/ops"), ("GET", "/ops/runs"),
+            ("GET", "/ops/permissions"), ("GET", "/ops/pause"), ("POST", "/ops/pause")})
         self.assertNotIn(("POST", "/ok/<id>/withdraw"), shown, "an approval cannot be cancelled: the change is made right after the sign-in")
         self.assertEqual({method for method, *_ in router.ROUTES}, {"GET", "POST"}, "a page that shows something is a GET and a change is a POST")
         needs = {(method, re.sub(r"\(\?P<\w+>[^)]*\)", "<id>", pattern)): tuple(roles) for method, pattern, _, roles in router.ROUTES if roles}
-        self.assertEqual(needs, {("GET", "/ops/permissions"): ("ops", "owner"), ("GET", "/ops/pause"): ("ops",), ("POST", "/ops/pause"): ("ops",)})
+        self.assertEqual(needs, {("GET", "/ops"): ("ops",), ("GET", "/ops/runs"): ("ops",), ("GET", "/ops/permissions"): ("ops", "owner"), ("GET", "/ops/pause"): ("ops",),
+                                 ("POST", "/ops/pause"): ("ops",)})
         self.assertNotIn(("GET", "/arm/return"), needs, "any listed person may come back from the sign-in: the delegate checks that the sign-in was started by this person")
 
 

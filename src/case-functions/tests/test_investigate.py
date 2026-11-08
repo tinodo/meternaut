@@ -1123,13 +1123,14 @@ class WhenNoMeasurementBacksAFinding(unittest.TestCase):
         results, _ = self.run_with(finding(basis="low-usage", evidence=[]), verdicts(("disagree", ("It may be in use.", "The window is short."), "Contested.")))
         self.assertEqual({tuple(r["objections"]) for r in results.values()}, {(self.SAYS, "It may be in use.", "The window is short.")})
 
-    def test_the_case_in_the_store_has_the_sentence_and_is_not_proposed_and_no_plan_is_made(self):
+    def test_the_case_in_the_store_has_the_sentence_and_is_not_proposed_and_only_an_advise_plan_is_made(self):
         h = Harness(FakeFoundry(answer(finding(basis="low-usage", evidence=[]))), with_store=True)
         h.go()
         cases = h.store.cases_recent()
         self.assertEqual({(c.status, c.objections) for c in cases}, {("needs_human", (self.SAYS,))})
         self.assertEqual([c.facts["metrics"] for c in cases], [{}, {}], "the digest says that the finding cites no measurement")
-        self.assertEqual(h.store.plans_open(), [])
+        self.assertEqual({(p.family, p.state) for p in h.store.plans_open()}, {("advise", "open")}, "a person is asked whether it is worth acting on; nothing can be changed")
+        self.assertEqual(sorted(p.case_id for p in h.store.plans_open()), sorted(c.case_id for c in cases))
 
     def test_one_note_of_the_run_says_how_many_resources_need_a_person_for_it_and_none_is_said_when_all_are_backed(self):
         _, h = self.run_with(finding(basis="low-usage", evidence=[entry("r1", "MetricA", 0)]))
@@ -1183,7 +1184,8 @@ class WhenSomeResourcesOfATypeHaveNoMeasurementAndTheirPeersHaveData(unittest.Te
                          {("needs_human", "investigate", 0.4, self.SUMMARY, (decide.NO_MEASUREMENT,))})
         self.assertEqual({(c.facts["basis"], c.facts["proposal"], tuple(c.facts["metrics"])) for c in cases}, {("other", "investigate", ())})
         self.assertEqual((h.result.cases, h.result.needs_human, h.result.proposed, h.result.unmeasured), (4, 4, 0, 4))
-        self.assertEqual(h.store.plans_open(), [])
+        self.assertEqual({p.family for p in h.store.plans_open()}, {"advise"})
+        self.assertEqual(len(h.store.plans_open()), 4, "each of the four cases waits for a person, and the person can answer it")
 
     def test_the_same_finding_with_the_basis_no_usage_is_dropped_because_nothing_was_measured(self):
         for label, evidence in (("no entry", []), ("an entry with no total", [entry(handle, "MetricA", None) for handle in self.HANDLES]),
@@ -1231,7 +1233,7 @@ class WhenTheConfidenceIsOutOfRange(unittest.TestCase):
         self.assertEqual({(r["status"], r["confidence"], tuple(r["objections"])) for r in h.of("case.result")}, {("needs_human", 0.0, (self.NOTE,))})
         self.assertEqual((h.result.proposed, h.result.needs_human), (0, 2))
         self.assertEqual({(c.status, c.confidence, c.objections) for c in h.store.cases_recent()}, {("needs_human", 0.0, (self.NOTE,))})
-        self.assertEqual(h.store.plans_open(), [])
+        self.assertEqual({p.family for p in h.store.plans_open()}, {"advise"}, "a finding that no AI settled is put to a person as advice, and changes nothing")
 
     def test_the_line_of_the_finding_and_a_note_of_the_run_show_the_problem_to_a_person(self):
         h = self.go()
@@ -1722,8 +1724,12 @@ class WhatIsKept(unittest.TestCase):
         self.assertEqual((case.resource_id, case.resource_name, case.resource_type, case.resource_group, case.subscription_id),
                          (resource(2).resource_id, "thing-2", "microsoft.example/things", "rg-app", SUBSCRIPTION))
         self.assertEqual((case.detector, case.run_id, case.status, case.recommendation, case.confidence), ("investigation", "r" * 32, "proposed", "delete", 0.9))
-        self.assertEqual((case.saving_usd_month, case.cost_usd_30d, case.summary, case.objections, case.guards, case.plan_id),
-                         (20.0, 20.0, "Nothing used these in the window.", (), (), None))
+        self.assertEqual((case.saving_usd_month, case.cost_usd_30d, case.summary, case.objections, case.guards),
+                         (20.0, 20.0, "Nothing used these in the window.", (), ()))
+        plan = self.store.plan_get(case.plan_id)
+        self.assertEqual((plan.family, plan.state, plan.case_id, plan.resource_id), ("advise", "open", case.case_id, case.resource_id),
+                         "the case is proposed, and Meternaut may not change it: a person is asked whether it is worth acting on")
+        self.assertEqual(case.status, "proposed", "the status keeps saying what the AIs came to while the plan is open")
         self.assertEqual((case.first_seen_at, case.updated_at, case.runs_seen), (stamp(NOW), stamp(NOW), 1))
 
     def test_the_case_names_the_two_models_and_the_two_agent_runs_as_its_steps(self):
@@ -1738,7 +1744,7 @@ class WhatIsKept(unittest.TestCase):
 
     def test_the_facts_are_a_typed_digest_with_the_measurements_and_no_name(self):
         case = self.store.case_get(key_of(resource(2)))
-        self.assertEqual(case.facts, {"basis": "no-usage", "proposal": "delete", "metrics": {"MetricA": 0}, "costUsd30d": 20.0, "finding": 1})
+        self.assertEqual(case.facts, {"basis": "no-usage", "proposal": "delete", "metrics": {"MetricA": 0}, "costUsd30d": 20.0, "finding": 1, "citedMetrics": 1})
         text = json.dumps(case.facts)
         for word in ("thing-", "rg-app", "swedencentral", SUBSCRIPTION):
             self.assertNotIn(word, text)
@@ -1748,15 +1754,16 @@ class WhatIsKept(unittest.TestCase):
         case = self.store.case_get(key_of(resource(1)))
         self.assertEqual(CaseRecord.from_json(case.to_json()), case)
 
-    def test_no_plan_is_made_for_a_case_of_the_investigation_not_even_for_a_resource_that_meternaut_planted(self):
+    def test_only_an_advise_plan_is_made_for_a_case_of_the_investigation_not_even_for_a_resource_that_meternaut_planted(self):
         planted = resource(1, resource_id=f"{RG}/{GROUP}/providers/Microsoft.Example/things/thing-1", resource_group=GROUP, tags={"meternaut-planted": "demo"})
         h = Harness(FakeFoundry(answer(finding(handles=["r1"]))), FakeToolbox([planted], {"r1": metrics(MetricA=0)}), with_store=True)
         h.contexts = {SUBSCRIPTION: Context(locks=[], recent={planted.resource_id.lower()}, managed_groups=set(), costs={}, currency="USD")}
         h.go()
         (case,) = h.store.cases_recent()
-        self.assertEqual((case.status, case.recommendation, case.plan_id), ("proposed", "delete", None))
-        self.assertEqual(h.store.plans_open(), [])
-        self.assertEqual(h.of("plan.created"), [])
+        (plan,) = h.store.plans_open()
+        self.assertEqual((case.status, case.recommendation, case.plan_id), ("proposed", "delete", plan.plan_id))
+        self.assertEqual((plan.family, plan.state), ("advise", "open"), "no change is made for a finding: the plan asks whether it is worth acting on")
+        self.assertEqual([(e["family"], e["caseKey"]) for e in h.of("plan.created")], [("advise", case.case_id)])
 
     def test_approvals_decide_whether_a_plan_is_made_and_are_asked_for_each_proposed_case_only(self):
         from unittest import mock

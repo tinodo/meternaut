@@ -236,7 +236,7 @@ class TableStore:
 
     def decision_put(self, decision: DecisionRecord) -> bool:
         row, _ = self._get(DECISIONS, decision.plan_id, decision.approver_oid)
-        if row is not None and self._records([row], DecisionRecord)[0].decision != "ask":
+        if row is not None and self._records([row], DecisionRecord)[0].decision not in ("ask", "later"):
             return False
         if row is None:
             return self._insert(DECISIONS, decision.plan_id, decision.approver_oid, decision, approverOid=decision.approver_oid)

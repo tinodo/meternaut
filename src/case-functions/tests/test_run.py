@@ -599,8 +599,10 @@ class WhenTheInvestigationRan(unittest.TestCase):
         self.assertEqual(len(of_type(events, "case.started")), 1)
         self.assertIn(f"2 leads were {NOTE_LEFT}", [e["note"] for e in of_type(events, "run.note")], "the planted disk is not counted: it is not left")
         self.assertEqual((summary.leads, summary.cases), (3, 3), "two cases of the investigation and the planted disk")
-        (plan,) = extras.store.plans_open()
-        self.assertEqual((plan.family, plan.state), ("delete-disk", "open"), "the approval loop works as it did")
+        plans = extras.store.plans_open()
+        self.assertEqual(sorted(p.family for p in plans), ["advise", "advise", "delete-disk"], "a plan of a change for the planted disk, and advice for the two findings")
+        (plan,) = [p for p in plans if p.family == "delete-disk"]
+        self.assertEqual(plan.state, "open", "the approval loop works as it did")
         self.assertEqual(len(foundry.runs), 2)
 
     def test_when_nothing_is_real_nothing_is_left_and_there_is_no_note_about_it(self):
