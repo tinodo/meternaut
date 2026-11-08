@@ -6,8 +6,12 @@ from dataclasses import replace
 from support import APP_ROOT  # noqa: F401
 
 from cases import loop_config, wiring
-from cases.approvals import Approvals, ApprovalSettings, FAMILY_OF, WORDS, build_plan, is_fixture, why_not
+from cases.approvals import Approvals, ApprovalSettings, build_plan, is_fixture, why_not
 from cases.detectors import Lead
+from cases.families import digest as plan_digest
+from cases.families import registry
+from cases.families.gates import ChangeScope
+from cases.families.words import SHOWN
 from cases.memory_store import MemoryStore, stamp
 from cases.models import CaseRecord, DecisionRecord, NoteRecord, Principal, StoreError, SwitchRecord
 
@@ -17,8 +21,8 @@ SUB = "bbbbbbbb-2222-4333-9444-555555555555"
 OTHER_SUB = "cccccccc-3333-4444-8555-666666666666"
 GROUP = "meternaut-sc-rg"
 NOW = dt.datetime(2026, 11, 5, 9, 0, 0, tzinfo=dt.timezone.utc)
-SETTINGS = ApprovalSettings(change_group=GROUP, ttl_hours=72)
-IN_SUB = ApprovalSettings(change_group=GROUP, ttl_hours=72, change_subscription=SUB)
+SETTINGS = ApprovalSettings(change_scopes=(ChangeScope(SUB, GROUP),), ttl_hours=72)
+IN_SUB = SETTINGS  # a scope is always one group in one subscription: there is no setting that leaves the subscription out
 APPROVER = Principal(OID, "Tino", ("owner", "approver", "ops"))
 
 
@@ -146,7 +150,7 @@ class TheChangeSubscription(unittest.TestCase):
     def test_the_subscription_compares_without_case_on_either_side(self):
         self.assertTrue(is_fixture(replace(lead(), subscription_id=SUB.upper()), IN_SUB))
         self.assertIsNone(why_not(case_for(replace(lead(), subscription_id=SUB.upper())), replace(lead(), subscription_id=SUB.upper()), IN_SUB, self.store))
-        upper = ApprovalSettings(change_group=GROUP, change_subscription=SUB.upper())
+        upper = ApprovalSettings(change_scopes=(ChangeScope(SUB.upper(), GROUP),))
         self.assertTrue(is_fixture(lead(), upper))
         self.assertIsNone(why_not(case_for(lead()), lead(), upper, self.store))
 
@@ -159,28 +163,38 @@ class TheChangeSubscription(unittest.TestCase):
         self.assertIn("no change for this kind", why_not(case_for(other_kind), other_kind, IN_SUB, self.store))
 
     def test_a_subscription_that_is_empty_in_the_settings_matches_nothing(self):
-        # Only None means "not looked at". An empty text is a setting that went wrong, and then nothing is planted.
-        empty = ApprovalSettings(change_group=GROUP, change_subscription="")
+        # An empty text is a setting that went wrong, and then nothing is planted.
+        empty = ApprovalSettings(change_scopes=(ChangeScope("", GROUP),))
         for item in (lead(), elsewhere(None)):
             self.assertFalse(is_fixture(item, empty))
             self.assertIsNotNone(why_not(case_for(item), item, empty, self.store))
 
-    def test_without_a_subscription_in_the_settings_the_subscription_is_not_looked_at(self):
-        # A caller from before the setting. The app does not leave it out: see the next test.
-        self.assertIsNone(SETTINGS.change_subscription)
+    def test_the_settings_have_no_way_to_leave_the_subscription_out_and_none_at_all_means_nothing_may_be_changed(self):
+        self.assertFalse(hasattr(SETTINGS, "change_subscription"))
+        self.assertFalse(hasattr(SETTINGS, "change_group"))
+        nowhere = ApprovalSettings(change_scopes=())
+        self.assertFalse(is_fixture(lead(), nowhere))
+        self.assertIn("outside", why_not(case_for(lead()), lead(), nowhere, self.store))
         item = elsewhere()
-        self.assertTrue(is_fixture(item, SETTINGS))
-        self.assertIsNone(why_not(case_for(item), item, SETTINGS, self.store))
+        self.assertFalse(is_fixture(item, SETTINGS), "the group of the right name in another subscription is not a scope")
+        self.assertIsNotNone(why_not(case_for(item), item, SETTINGS, self.store))
 
-    def test_the_wiring_gives_every_place_that_decides_the_subscription_of_the_loop(self):
-        env = {"STORE_ACCOUNT_NAME": "stexample", "CHANGE_RESOURCE_GROUP": GROUP, "CHANGE_SUBSCRIPTION_ID": SUB.upper(), "CONSOLE_HOST": "func.example.net"}
+    def test_the_wiring_gives_every_place_that_decides_the_scopes_of_the_loop(self):
+        env = {"STORE_ACCOUNT_NAME": "stexample", "CHANGE_SCOPES": f"{SUB.upper()}/{GROUP}", "CONSOLE_HOST": "func.example.net"}
         loop = loop_config.load(env)
-        self.assertEqual(loop.change_subscription, SUB, "the loop's settings hold it in lower case")
+        self.assertEqual(tuple((s.subscription, s.group) for s in loop.change_scopes), ((SUB, GROUP),), "the loop's settings hold the subscription in lower case")
         approval = wiring.approval_settings(loop)
-        self.assertEqual((approval.change_group, approval.change_subscription), (GROUP, SUB))
+        self.assertEqual(tuple((s.subscription, s.group) for s in approval.change_scopes), ((SUB, GROUP),))
         self.assertTrue(is_fixture(lead(), approval))
         self.assertFalse(is_fixture(elsewhere(), approval))
         self.assertIsNone(Approvals(self.store, approval, Clock()).create(case_for(elsewhere()), elsewhere(), (OID,)))
+
+    def test_an_app_that_was_deployed_with_the_two_older_settings_has_the_same_one_scope(self):
+        env = {"STORE_ACCOUNT_NAME": "stexample", "CHANGE_RESOURCE_GROUP": GROUP, "CHANGE_SUBSCRIPTION_ID": SUB.upper(), "CONSOLE_HOST": "func.example.net"}
+        approval = wiring.approval_settings(loop_config.load(env))
+        self.assertEqual(tuple((s.subscription, s.group) for s in approval.change_scopes), ((SUB, GROUP),))
+        self.assertTrue(is_fixture(lead(), approval))
+        self.assertFalse(is_fixture(elsewhere(), approval))
 
 
 class BuildPlan(unittest.TestCase):
@@ -229,8 +243,8 @@ class BuildPlan(unittest.TestCase):
         b = build_plan(case_for(item), item, (OID,), NOW, SETTINGS, new_id=lambda: "b" * 32)
         self.assertNotEqual(a.code, b.code)
 
-    def test_every_family_has_words_and_a_detector(self):
-        self.assertEqual(set(FAMILY_OF.values()), set(WORDS))
+    def test_every_family_of_the_registry_has_its_words_and_every_entry_of_the_words_a_family(self):
+        self.assertEqual(set(registry.names()), set(SHOWN))
 
 
 class Loop(unittest.TestCase):
@@ -320,7 +334,8 @@ class Loop(unittest.TestCase):
 
     def test_of_two_approvers_who_answer_at_the_same_moment_only_one_records_an_approval_and_gets_the_action(self):
         other = Principal(OTHER, "Other", ("approver",))
-        self.store.plan_put(replace(self.plan, approvers=(OID, OTHER)))
+        self.plan = plan_digest.sealed(replace(self.plan, approvers=(OID, OTHER)))  # a plan with two approvers is another plan: it has its own digest and code
+        self.store.plan_put(self.plan)
         first_view, _ = self.approvals.check_approve(APPROVER, self.plan.plan_id, self.plan.code)
         second_view, _ = self.approvals.check_approve(other, self.plan.plan_id, self.plan.code)  # both pass the checks before either one records
         won, action = self.approvals.record_approval(APPROVER, first_view, "")
@@ -471,18 +486,18 @@ class Loop(unittest.TestCase):
 
         store = Unreadable(clock=self.clock)
         approvals = Approvals(store, SETTINGS, self.clock)
-        case = case_for(lead(name="d2"))
+        case = case_for(lead(name="planted-disk-d2"))
         store.case_put(case)
-        plan = approvals.create(case, lead(name="d2"), (OID,))
+        plan = approvals.create(case, lead(name="planted-disk-d2"), (OID,))
         result = approvals.check_form(APPROVER, plan.plan_id, plan.code, store.nonce_new(OID, plan.plan_id))[1]
         self.assertEqual(result.kind, "refused_paused")
 
     def test_a_failing_store_is_an_error_that_approves_nothing_and_the_claim_of_the_action_is_given_back(self):
         store = FailingStore(("decision_put",))
         approvals = Approvals(store, SETTINGS, self.clock)
-        case = case_for(lead(name="d3"))
+        case = case_for(lead(name="planted-disk-d3"))
         store.case_put(case)
-        plan = approvals.create(case, lead(name="d3"), (OID,))
+        plan = approvals.create(case, lead(name="planted-disk-d3"), (OID,))
         result, action = approvals.record_approval(APPROVER, plan, "")
         self.assertEqual((result.ok, result.kind, action), (False, "error", None))
         self.assertIn("Nothing was changed", result.message)
@@ -495,9 +510,9 @@ class Loop(unittest.TestCase):
     def test_a_store_that_cannot_give_the_claim_back_is_still_only_an_error_page(self):
         store = FailingStore(("decision_put", "action_release"))
         approvals = Approvals(store, SETTINGS, self.clock)
-        case = case_for(lead(name="d4"))
+        case = case_for(lead(name="planted-disk-d4"))
         store.case_put(case)
-        plan = approvals.create(case, lead(name="d4"), (OID,))
+        plan = approvals.create(case, lead(name="planted-disk-d4"), (OID,))
         result, action = approvals.record_approval(APPROVER, plan, "")
         self.assertEqual((result.ok, result.kind, action), (False, "error", None))
         self.assertEqual(store.plan_get(plan.plan_id).state, "open")

@@ -13,7 +13,9 @@ import support  # noqa: F401  (puts the app on the path)
 from cases import brief
 from cases.brief import (Brief, build_brief, check_lines, confidence_of, contact_text, days_text, doubt_of, facts_of, footer_line, headline_of, kind_words, models_of, number_text,
                          order_key, owner_of, plain, plan_headline, portal_url, quantity, reasoning_of, usd_text, visible, written_by)
-from cases.models import ADVISE, FAMILIES
+from cases.families import registry
+from cases.families.words import SHOWN
+from cases.models import ADVISE
 
 IP = f"/subscriptions/{SUB}/resourceGroups/{GROUP}/providers/Microsoft.Network/publicIPAddresses/planted-ip-1"
 INJECTIONS = (
@@ -507,7 +509,8 @@ class TheSmallWords(unittest.TestCase):
         self.assertEqual(kind_words("Microsoft.Compute/Disks"), ("Managed disk", "disk"))
         self.assertEqual(kind_words("microsoft.thing/things"), ("microsoft.thing/things", "resource"))
         self.assertEqual(kind_words(""), ("Resource", "resource"))
-        self.assertEqual(set(FAMILIES.values()) - set(brief.TYPE_WORDS), set(), "every family of change has words for its kind of resource")
+        every_type = {kind.type for family in registry.REGISTRY for kind in family.kinds}
+        self.assertEqual(every_type - set(brief.TYPE_WORDS), set(), "every kind of resource that a family of change changes has words in the brief")
 
     def test_the_portal_address_is_made_only_from_the_id_of_one_resource(self):
         good = f"/subscriptions/{SUB}/resourceGroups/rg-a/providers/Microsoft.Compute/disks/d-1"
@@ -645,17 +648,32 @@ def strings_of(value, path="brief"):
 
 class WhatTheModuleIs(unittest.TestCase):
     source = (Path(support.APP_ROOT) / "cases" / "brief.py").read_text(encoding="utf-8")
+    words_source = (Path(support.APP_ROOT) / "cases" / "families" / "words.py").read_text(encoding="utf-8")
 
-    def test_it_imports_only_the_standard_library_and_the_records(self):
+    def test_it_imports_only_the_standard_library_the_records_and_the_words_of_the_families(self):
         allowed = {"__future__", "datetime", "math", "re", "unicodedata", "dataclasses", "typing"}
         for node in ast.walk(ast.parse(self.source)):
             if isinstance(node, ast.Import):
                 self.assertLessEqual({a.name.split(".")[0] for a in node.names}, allowed)
             elif isinstance(node, ast.ImportFrom):
                 if node.level == 1:
-                    self.assertEqual(node.module, "models")
+                    self.assertIn(node.module, ("models", "families.words"), "the words of the families are a module that holds no way to reach Azure (next test)")
                 else:
                     self.assertIn((node.module or "").split(".")[0], allowed)
+
+    def test_the_words_of_the_families_import_only_the_standard_library_and_the_records_and_read_nothing(self):
+        allowed = {"__future__", "re", "dataclasses", "typing"}
+        for node in ast.walk(ast.parse(self.words_source)):
+            if isinstance(node, ast.Import):
+                self.assertLessEqual({a.name.split(".")[0] for a in node.names}, allowed)
+            elif isinstance(node, ast.ImportFrom):
+                if node.level:
+                    self.assertEqual((node.level, node.module), (2, "models"))
+                else:
+                    self.assertIn((node.module or "").split(".")[0], allowed)
+        for pattern in (r"\.(now|utcnow|today)\(", r"\bimport time\b", r"\bopen\(", r"\bprint\(", r"\bos\.", r"\bsys\.", r"\burlopen", r"\bsocket", r"\blogging", r"\brandom\b", r"\buuid\b",
+                        r"https?://", r"\bhttp\b"):
+            self.assertIsNone(re.search(pattern, self.words_source), pattern)
 
     def test_it_reads_no_clock_and_does_no_input_or_output(self):
         for pattern in (r"\.(now|utcnow|today)\(", r"\bimport time\b", r"\btime\.(time|sleep|monotonic)\(", r"\bopen\(", r"\bprint\(", r"\bos\.", r"\bsys\.", r"\burlopen",
@@ -665,10 +683,10 @@ class WhatTheModuleIs(unittest.TestCase):
     def test_it_makes_no_link_but_the_portal_address_of_a_checked_id(self):
         self.assertEqual(sorted(set(re.findall(r"https?://[A-Za-z0-9./#{}_-]+", self.source))), ["https://portal.azure.com/#resource{resource_id}"])
 
-    def test_a_change_family_that_has_words_is_a_family_that_the_records_know(self):
-        self.assertEqual(set(brief.FAMILY), set(brief.CHANGE_FAMILIES))
-        self.assertEqual(set(brief.FAMILY), set(FAMILIES))
-        self.assertNotIn(ADVISE, brief.FAMILY)
+    def test_a_change_family_that_has_words_is_a_family_of_the_registry_and_advise_is_neither(self):
+        self.assertEqual(set(SHOWN), set(registry.names()))
+        self.assertNotIn(ADVISE, SHOWN)
+        self.assertEqual(brief.called_of(ADVISE), "change", "a name that is not a family of change is called just a change")
 
 
 if __name__ == "__main__":

@@ -519,10 +519,10 @@ resource functionApp 'Microsoft.Web/sites@2024-04-01' = {
         { name: 'AIGATEWAY_HOST', value: aiGatewayHost }
         { name: 'MAX_CASES_PER_RUN', value: string(maxCasesPerRun) }
         { name: 'STORE_ACCOUNT_NAME', value: storage.name }
-        // The one resource group, in the one subscription, in which the console runs a change (it refuses one anywhere else). Azure allows the change only when the
-        // approving person's own rights allow it: the app holds no right to change anything.
-        { name: 'CHANGE_RESOURCE_GROUP', value: resourceGroup().name }
-        { name: 'CHANGE_SUBSCRIPTION_ID', value: subscription().subscriptionId }
+        // The resource groups in which the console runs a change, each as <subscription id>/<resource group>, separated by commas (it refuses one anywhere else, and a resource that
+        // Meternaut did not plant and tag itself anywhere): exactly the one group where Meternaut plants waste of its own. Azure allows the change only when the approving person's own
+        // rights allow it: the app holds no right to change anything.
+        { name: 'CHANGE_SCOPES', value: '${subscription().subscriptionId}/${resourceGroup().name}' }
         // The sign-in to Azure Resource Manager that an approval starts: this tenant, and the console's app registration (the one of the platform's sign-in). These two and
         // the identity's client id below are set together, or none of the three is (signInIsSetUp).
         { name: 'SIGNIN_TENANT_ID', value: signInIsSetUp ? tenant().tenantId : '' }

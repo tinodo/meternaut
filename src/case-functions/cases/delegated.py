@@ -4,15 +4,18 @@ Meternaut holds no right to change Azure. The flow is the OAuth 2.0 authorizatio
 
 1. The approve form is checked (the person, the plan, its code, the switches, the one-time token of the form). Nothing is recorded yet. The person is sent to
    Microsoft Entra with the console's own app registration, the scope `user_impersonation` of Azure Resource Manager and no `offline_access`, so that no
-   refresh token exists. A `state` (one use, bound to the person and the plan, kept on the server for ten minutes), a PKCE verifier and a nonce are made.
+   refresh token exists. A `state` (one use, bound to the person, the plan and the digest of the plan, kept on the server for ten minutes), a PKCE verifier and a nonce are
+   made. The digest is the SHA-256 of every field of the plan but its state (cases/families/digest.py).
 2. Entra sends the person back to `/arm/return`. The `state` is used once, and only by the person it was made for.
 3. The code is redeemed with the app registration's federated identity credential: a token of a managed identity of the app, for `api://AzureADTokenExchange`,
    is the client assertion. There is no secret and no certificate anywhere. The ID token must name the same person (object id), the same tenant, this client
-   and the nonce of the request, come from this tenant's endpoint and not be expired, or nothing is recorded.
-4. Only then the approval is recorded, and the change is made with the person's access token (runner.py): it re-reads the resource and the locks, deletes the
-   resource and reads until Azure says that it is gone. Azure checks the person's own rights, and the Activity Log shows the person.
-5. A person who signed in without the multifactor check that a change needs can use the console, but Azure answers the delete with a claims challenge (HTTP 401 and a
-   `www-authenticate` header that asks for more claims). That is a step-up and not a refusal: nothing was deleted, the plan stays approved and its action waits in the
+   and the nonce of the request, come from this tenant's endpoint and not be expired, or nothing is recorded. The plan is read again, and its digest must be the one that the
+   state holds: a plan that changed while the person signed in is refused, and nothing is approved.
+4. Only then the approval is recorded, and the change is made with the person's access token (runner.py): the family of the plan re-reads the resource and the locks, the runner
+   compares the digest once more and makes the one change of the family (a delete, a stop, a resize, a change of tier), and follows it until Azure says that it is done. A change that
+   Azure carries out later is `running` when the person's request ends, and the timer settles it by reading. Azure checks the person's own rights, and the Activity Log shows the person.
+5. A person who signed in without the multifactor check that a change needs can use the console, but Azure answers the write with a claims challenge (HTTP 401 and a
+   `www-authenticate` header that asks for more claims). That is a step-up and not a refusal: nothing was changed, the plan stays approved and its action waits in the
    queue. The person is sent to Microsoft Entra once more, with the claims request that Azure gave, in a new state with a new PKCE verifier and a new nonce. The return of
    that second sign-in records no second approval: it checks that the approval is recorded and the action waits, redeems the code, checks the ID token as before and makes
    the change once more. A second challenge is final, and a person who cancels the check ends the request: nothing was changed.
@@ -33,6 +36,7 @@ from typing import TYPE_CHECKING, Callable
 from urllib.parse import quote, urlencode
 
 from .approvals import Approvals
+from .families import digest as plan_digest
 from .http import Client, HttpError, Refused
 from .models import ActionRecord, Begun, DecideResult, MAX_SIGNIN_PATH, PlanRecord, Principal, Store, StoreError
 from .roles import clean_text
@@ -242,8 +246,10 @@ class Delegation:
             return Begun(refusal=refusal or DecideResult(False, "error", "This request cannot be approved now. Nothing is approved."))
         verifier, challenge = self.pkce()
         oidc_nonce = self.token(16)
-        data = json.dumps({"plan": plan.plan_id, "code": plan.code, "resource": plan.resource_id, "verifier": verifier, "nonce": oidc_nonce, "note": clean_text(note, 300)},
-                          separators=(",", ":"))
+        # The digest of the plan that this approval is for is kept with the state of the round trip, on the server (cases/families/digest.py): at the return it is compared with the plan as
+        # it is stored then, and the runner compares it once more right before it acts.
+        data = json.dumps({"plan": plan.plan_id, "code": plan.code, "resource": plan.resource_id, "digest": plan.digest, "verifier": verifier, "nonce": oidc_nonce,
+                           "note": clean_text(note, 300)}, separators=(",", ":"))
         try:
             state = self.store.nonce_new(principal.oid, PURPOSE, SIGNIN_SECONDS, data)
         except StoreError:
@@ -277,6 +283,9 @@ class Delegation:
             return refusal or DecideResult(False, "error", "This request cannot be approved now. Nothing is approved.")
         if plan.resource_id != started["resource"]:
             return DecideResult(False, "refused_code", "This plan changed. Nothing is approved. A new message will bring the new plan and code.", plan)
+        problem = plan_digest.problem(plan, started["digest"])
+        if problem:
+            return DecideResult(False, "refused_code", plan_digest.refusal(problem), plan)
         try:
             tokens = self.redeem(code, started["verifier"])
         except SigninError as error:
@@ -295,12 +304,12 @@ class Delegation:
     def _change(self, principal: Principal, plan: PlanRecord, started: dict, action: ActionRecord, tokens: Tokens) -> DecideResult:
         """Makes the change with the person's token. When Azure asks for an extra sign-in check, the person is sent to Microsoft Entra once more (and only once)."""
         try:
-            done = execute(self.run(tokens.access_token), action)
+            done = execute(self.run(tokens.access_token), action, approved_digest=started["digest"])
         except StoreError:
             return DecideResult(False, "error", "I cannot reach my records right now. Look at the resource in Azure before anything is tried again.", plan)
         if done.kind == "step_up" and not started.get("stepup"):
             return self._ask_again(principal, plan, started, done.action, done.claims, str(tokens.claims.get("preferred_username") or ""))
-        return DecideResult(done.kind in ("ran", "ran_unconfirmed"), done.kind, done.action.result or done.action.error or "", self._plan(plan.plan_id) or plan)
+        return DecideResult(done.kind in ("ran", "ran_unconfirmed", "running"), done.kind, done.action.result or done.action.error or "", self._plan(plan.plan_id) or plan)
 
     def _ask_again(self, principal: Principal, plan: PlanRecord, started: dict, action: ActionRecord, request: str, hint: str) -> DecideResult:
         """Azure asked for an extra sign-in check (a claims challenge): the person goes to Microsoft Entra once more, with the claims request that Azure gave.
@@ -311,8 +320,8 @@ class Delegation:
         assert settings is not None
         verifier, challenge = self.pkce()
         oidc_nonce = self.token(16)
-        data = json.dumps({"plan": plan.plan_id, "code": plan.code, "resource": plan.resource_id, "verifier": verifier, "nonce": oidc_nonce, "note": started["note"],
-                           "stepup": "1", "claims": request}, separators=(",", ":"))
+        data = json.dumps({"plan": plan.plan_id, "code": plan.code, "resource": plan.resource_id, "digest": started["digest"], "verifier": verifier, "nonce": oidc_nonce,
+                           "note": started["note"], "stepup": "1", "claims": request}, separators=(",", ":"))
         if len(data) > MAX_NONCE_DATA:
             return self._closed(plan, action, "Meternaut cannot keep the request for it: it is too large.")
         try:
@@ -333,6 +342,9 @@ class Delegation:
         plan, action, refusal = self.approvals.check_stepup(principal, plan_id, started["code"], started["resource"])
         if plan is None or action is None:
             return refusal or DecideResult(False, "error", "This request cannot be tried again now. Nothing was changed.")
+        problem = plan_digest.problem(plan, started["digest"])
+        if problem:
+            return self._closed_for(plan, action, f"The change was not made: {problem}. Nothing was changed. The request is closed.")
         if query.get("error"):
             self.emit("signin.failed", planId=plan_id, reason=re.sub(r"[^a-z_]", "", query["error"].lower())[:40])
             found = re.search(r"AADSTS(\d{3,7})", query.get("error_description", ""))
@@ -349,6 +361,16 @@ class Delegation:
             self.emit("signin.failed", planId=plan_id, reason="identity")
             return self._closed(plan, action, "It was done with another account, or it does not belong to this request.")
         return self._change(principal, plan, started, action, tokens)
+
+    def _closed_for(self, plan: PlanRecord, action: ActionRecord, text: str) -> DecideResult:
+        """The change that waited for the extra sign-in check is closed for a reason of its own (the plan is not the one that was approved): the action, the plan and the case fail with the
+        reason in plain words. Nothing was changed."""
+        try:
+            self.approvals.close_waiting(plan, action, text)
+        except StoreError:
+            return DecideResult(False, "error", "I cannot reach my records right now. Nothing was changed. The request closes by itself in a few minutes.", plan)
+        self.emit("action.finished", planId=plan.plan_id, family=plan.family, ok=False)
+        return DecideResult(False, "refused_code", text, self._plan(plan.plan_id) or plan)
 
     def _closed(self, plan: PlanRecord, action: ActionRecord, why: str) -> DecideResult:
         """The extra sign-in check cannot be completed, so the change that waited for it will not be made: the action and the plan are closed as failed, with the reason in plain
@@ -396,7 +418,7 @@ def _read(raw: str | None) -> dict | None:
         data = json.loads(raw)
     except ValueError:
         return None
-    if not isinstance(data, dict) or not all(isinstance(data.get(key), str) for key in ("plan", "code", "resource", "verifier", "nonce", "note")):
+    if not isinstance(data, dict) or not all(isinstance(data.get(key), str) for key in ("plan", "code", "resource", "digest", "verifier", "nonce", "note")):
         return None
     if "stepup" not in data:
         return None if "claims" in data else data

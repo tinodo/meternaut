@@ -17,6 +17,7 @@ from . import config as cfg
 from . import delegated, loop_config, people as people_mod, runner, web, wiring
 from .approvals import Approvals
 from .events import History
+from .families import registry
 from .http import Client, default_transport
 from .identity import Identity
 from .memory_store import utc_now
@@ -45,15 +46,14 @@ def build_services(env: Mapping[str, str], *, transport=default_transport, sleep
     approval = wiring.approval_settings(settings)
     approvals = Approvals(store, approval, clock)
     watch = cfg.load(env)
-    acts_on = (f"delete an unattached managed disk or an unassigned public IP address that carries the tag {settings.planted_tag}, "
-               f"in resource group {settings.change_group} and nowhere else")
+    acts_on = registry.acts_on(settings.planted_tag, settings.change_scopes)
     history = History(uuid.uuid4().hex, None, clock, redact)
     signin = delegated.settings_of(settings)
-    change_client = Client(runner.change_calls(settings.change_subscription, settings.change_group), redact, transport=transport, sleep=sleep, monotonic=monotonic)
+    change_client = Client(runner.change_calls(settings.change_scopes), redact, transport=transport, sleep=sleep, monotonic=monotonic)
 
     def run(token: str) -> RunnerServices:
         # The person's own token, for the one request that makes the change: nothing keeps it.
-        return RunnerServices(store, change_client, lambda resource: token, approval, settings.change_subscription, clock=clock, sleep=sleep, emit=history.emit)
+        return RunnerServices(store, change_client, lambda resource: token, approval, clock=clock, sleep=sleep, emit=history.emit)
 
     if signin is None:
         def redeem(code: str, verifier: str) -> delegated.Tokens:

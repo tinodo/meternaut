@@ -775,14 +775,16 @@ class Cases(unittest.TestCase):
 
     def test_the_app_is_told_where_it_keeps_its_records_where_it_may_run_a_change_how_a_person_signs_in_to_azure_and_who_may_use_it(self):
         body = self.found["functionApp"][1]
-        for setting in ("STORE_ACCOUNT_NAME", "CHANGE_RESOURCE_GROUP", "CHANGE_SUBSCRIPTION_ID", "SIGNIN_TENANT_ID", "SIGNIN_CLIENT_ID", "CONSOLE_HOST", "CONSOLE_PEOPLE",
+        for setting in ("STORE_ACCOUNT_NAME", "CHANGE_SCOPES", "SIGNIN_TENANT_ID", "SIGNIN_CLIENT_ID", "CONSOLE_HOST", "CONSOLE_PEOPLE",
                         "MAIL_SENDER", "PLAN_TTL_HOURS", "OVERRIDE_USE_MI_FIC_ASSERTION_CLIENTID"):
             self.assertIn(f"name: '{setting}'", body, setting)
         for gone in ("WRITER_RESOURCE_GROUP", "WRITER_SUBSCRIPTION_ID", "WRITER_CLIENT_ID", "APPROVAL_DELAY_SECONDS", "approvalDelaySeconds"):
             self.assertNotIn(gone, self.source, f"{gone}: Meternaut holds no right to change Azure, and an approval has no window to cancel in")
         self.assertIn("{ name: 'STORE_ACCOUNT_NAME', value: storage.name }", self.code)
-        self.assertIn("{ name: 'CHANGE_RESOURCE_GROUP', value: resourceGroup().name }", self.code)
-        self.assertIn("{ name: 'CHANGE_SUBSCRIPTION_ID', value: subscription().subscriptionId }", self.code)
+        # One list of the groups where a change may be made: exactly the one group where Meternaut plants waste of its own, and no other (the app's own gate on top of it is in the code).
+        self.assertIn("{ name: 'CHANGE_SCOPES', value: '${subscription().subscriptionId}/${resourceGroup().name}' }", self.code)
+        for older in ("CHANGE_RESOURCE_GROUP", "CHANGE_SUBSCRIPTION_ID"):
+            self.assertNotIn(older, self.code, f"{older} is replaced by the list of the groups where a change may be made")
         # The app takes the three settings of the sign-in to Azure together or not at all (src/case-functions/cases/loop_config.py), and the Watch fails with a part of them:
         # until the console's app registration exists none is set.
         self.assertIn("var signInIsSetUp = !empty(consoleAppClientId)", self.code)
@@ -796,7 +798,9 @@ class Cases(unittest.TestCase):
         config = text("src/case-functions/cases/loop_config.py")
         names = set(re.findall(r'^([A-Z_]+) = "\1"$', config, re.M))
         left_to_their_defaults = {"PLANTED_TAG", "RECHECK_DAYS"}
-        for name in names - left_to_their_defaults:
+        read_only_without_the_list = {"CHANGE_RESOURCE_GROUP", "CHANGE_SUBSCRIPTION_ID"}  # the two older settings of one group: read only when CHANGE_SCOPES is not set
+        self.assertIn("CHANGE_SCOPES", names)
+        for name in names - left_to_their_defaults - read_only_without_the_list:
             self.assertTrue(f"name: '{name}'" in self.code, f"the app reads {name} and the template does not set it")
         self.assertTrue("CONSOLE_PEOPLE" in self.code, "the people are read by people.py")
 
@@ -2036,9 +2040,12 @@ class HandSteps(unittest.TestCase):
         for name in ("WRITER_RESOURCE_GROUP", "WRITER_SUBSCRIPTION_ID", "WRITER_CLIENT_ID", "APPROVAL_DELAY_SECONDS"):
             self.assertIn(f"`{name}`", self.change)
             self.assertNotIn(name, self.template, name)
-        for name in ("CHANGE_RESOURCE_GROUP", "CHANGE_SUBSCRIPTION_ID", "SIGNIN_TENANT_ID", "SIGNIN_CLIENT_ID"):
+        for name in ("CHANGE_SCOPES", "SIGNIN_TENANT_ID", "SIGNIN_CLIENT_ID"):
             self.assertIn(f"`{name}`", self.change)
             self.assertIn(f"name: '{name}'", self.template, name)
+        for name in ("CHANGE_RESOURCE_GROUP", "CHANGE_SUBSCRIPTION_ID"):
+            self.assertIn(f"`{name}`", self.change, "the page says that the two older settings are replaced by the list")
+            self.assertNotIn(name, self.template, name)
 
 
 class NoStandingRightToSend(unittest.TestCase):

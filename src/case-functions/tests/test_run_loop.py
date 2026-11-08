@@ -7,6 +7,7 @@ from support import ENV, NOW, RG, SUBSCRIPTION, FakeEstate, detective_says, disk
 
 from cases import loop_config, people as people_mod, wiring
 from cases.approvals import Approvals
+from cases.families.gates import ChangeScope
 from cases.memory_store import MemoryStore, stamp
 from cases.models import StoreError
 
@@ -28,7 +29,7 @@ class Moving:
 
 def loop_for(clock, store=None, *, recheck_days=7, approvers=True, on_plan=None):
     store = store or MemoryStore(clock=clock)
-    settings = loop_config.LoopSettings(store_account="stexample", change_group=GROUP, change_subscription=SUBSCRIPTION, console_host="func.example.net",
+    settings = loop_config.LoopSettings(store_account="stexample", change_scopes=(ChangeScope(SUBSCRIPTION, GROUP),), console_host="func.example.net",
                                         mail_sender=None, planted_tag="meternaut-planted", plan_ttl_hours=72, recheck_days=recheck_days)
     roles = ("owner", "approver", "ops") if approvers else ("owner",)
     people = people_mod.People((people_mod.Person(OID, "Tino", roles, "tino@example.com"),))

@@ -250,11 +250,11 @@ def execute(s: Services, trigger: str) -> Summary:
         return record
 
     # The subscriptions of this run are listed once, here. Every later read, the tools of the investigation and the History work with this list (a copy of the settings that
-    # holds it), so that they cannot differ. What a change may touch does not depend on it: plans and changes are keyed on the one subscription and group of the loop.
-    loop_subscription = s.extras.settings.change_subscription if s.extras is not None else None
+    # holds it), so that they cannot differ. What a change may touch does not depend on it: plans and changes are keyed on the resource groups of the change scopes.
+    loop_subscriptions = tuple(dict.fromkeys(scope.subscription for scope in s.extras.settings.change_scopes)) if s.extras is not None else ()
     refusal = None
     try:
-        scope = scope_mod.resolve(s.arm, st, loop_subscription, s.redact)
+        scope = scope_mod.resolve(s.arm, st, loop_subscriptions, s.redact)
     except scope_mod.ScopeError as error:
         scope, refusal = scope_mod.Scope((), "none"), clean_text(s.redact(error), 300)
     notes.extend(scope.notes)
@@ -273,10 +273,10 @@ def execute(s: Services, trigger: str) -> Summary:
         keep(True, refusal)
         return summary
 
-    # The share of the deadline for reading: the subscription of the loop first (the waste that Meternaut plants itself is there), then the others in the order of their ids.
+    # The share of the deadline for reading: the subscriptions of the loop first (the waste that Meternaut plants itself is there), then the others in the order of their ids.
     read_deadline = started + READ_SHARE * st.deadline_seconds
     s.client.deadline = min(deadline, started + (READ_SHARE + READ_GRACE) * st.deadline_seconds)
-    estate = detectors.collect_estate(s.arm, sorted(st.subscriptions, key=lambda sub: sub != loop_subscription), s.clock(), notes,
+    estate = detectors.collect_estate(s.arm, sorted(st.subscriptions, key=lambda sub: sub not in loop_subscriptions), s.clock(), notes,
                                       out_of_time=lambda: s.monotonic() >= read_deadline)
     s.client.deadline = deadline
     found: list[Lead] = estate.leads

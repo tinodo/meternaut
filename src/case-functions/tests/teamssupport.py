@@ -14,6 +14,7 @@ from cases import teams, wiring
 from cases.approvals import Approvals
 from cases.botauth import BotAuthenticator, KeyStore
 from cases.connector import Connector, connector_calls
+from cases.families.gates import ChangeScope
 from cases.http import Client
 from cases.loop_config import LoopSettings
 from cases.memory_store import MemoryStore, stamp
@@ -95,7 +96,7 @@ def people() -> People:
 
 
 def loop_settings() -> LoopSettings:
-    return LoopSettings(store_account="stexample", change_group=GROUP, change_subscription=SUBSCRIPTION, console_host="meternaut.example", mail_sender=None,
+    return LoopSettings(store_account="stexample", change_scopes=(ChangeScope(SUBSCRIPTION, GROUP),), console_host="meternaut.example", mail_sender=None,
                         planted_tag="meternaut-planted", plan_ttl_hours=72, recheck_days=7)
 
 

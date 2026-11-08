@@ -240,8 +240,7 @@ resource botApp 'Microsoft.Web/sites@2024-04-01' = {
         { name: 'APPLICATIONINSIGHTS_AUTHENTICATION_STRING', value: 'Authorization=AAD' }
         // The loop's records, which the bot reads and writes with the system-assigned identity: the plans, the decisions, the one-time tokens, the switches, the people's settings and its own table.
         { name: 'STORE_ACCOUNT_NAME', value: storage.name }
-        { name: 'CHANGE_RESOURCE_GROUP', value: resourceGroup().name }
-        { name: 'CHANGE_SUBSCRIPTION_ID', value: subscription().subscriptionId }
+        { name: 'CHANGE_SCOPES', value: '${subscription().subscriptionId}/${resourceGroup().name}' }
         { name: 'CONSOLE_HOST', value: consoleHost }
         { name: 'CONSOLE_PEOPLE', value: consolePeople }
         { name: 'PLAN_TTL_HOURS', value: string(planTtlHours) }

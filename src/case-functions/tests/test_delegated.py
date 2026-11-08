@@ -16,6 +16,7 @@ from cases.approvals import Approvals, ApprovalSettings
 from cases.delegated import (ARM_SCOPE, STEP_UP_SENT, Delegation, SigninError, SigninSettings, Tokens, TokenClient, authorize_url, explain, explain_stepup, new_pkce, settings_of,
                              token_calls)
 from cases.detectors import Lead
+from cases.families.gates import ChangeScope
 from cases.http import Client, HttpError, Refused
 from cases.memory_store import MemoryStore, stamp
 from cases.models import MAX_SIGNIN_PATH, ActionRecord, CaseRecord, DecisionRecord, Principal, StoreError, SwitchRecord
@@ -33,7 +34,7 @@ CLIENT = "dddddddd-1111-4222-8333-444444444444"
 ASSERTION_CLIENT = "eeeeeeee-1111-4222-8333-444444444444"
 HOST = "console.example.test"
 SETTINGS = SigninSettings(TENANT, CLIENT, ASSERTION_CLIENT, HOST)
-APPROVAL = ApprovalSettings(change_group=GROUP)
+APPROVAL = ApprovalSettings(change_scopes=(ChangeScope(SUB, GROUP),))
 APPROVER = Principal(OID, "Tino", ("owner", "approver", "ops"))
 ACCESS = "ey" + "A" * 60 + ".ARM-ACCESS-TOKEN-THAT-MUST-NEVER-BE-KEPT." + "B" * 40
 ACCESS_MFA = "ey" + "C" * 60 + ".ARM-ACCESS-TOKEN-AFTER-THE-EXTRA-CHECK." + "D" * 40
@@ -320,7 +321,7 @@ class TheWordsOfTheExtraCheck(unittest.TestCase):
 
 
 class TheSettings(unittest.TestCase):
-    ENV = {"STORE_ACCOUNT_NAME": "stexample", "CHANGE_RESOURCE_GROUP": GROUP, "CHANGE_SUBSCRIPTION_ID": SUB, "CONSOLE_HOST": HOST}
+    ENV = {"STORE_ACCOUNT_NAME": "stexample", "CHANGE_SCOPES": f"{SUB}/{GROUP}", "CONSOLE_HOST": HOST}
 
     def test_the_sign_in_is_there_only_when_all_three_settings_are(self):
         full = {**self.ENV, "SIGNIN_TENANT_ID": TENANT, "SIGNIN_CLIENT_ID": CLIENT, "OVERRIDE_USE_MI_FIC_ASSERTION_CLIENTID": ASSERTION_CLIENT}
@@ -373,8 +374,8 @@ class Flow(unittest.TestCase):
 
         def run(token):
             self.tokens_used.append(token)
-            client = Client(change_calls(SUB, GROUP), lambda t: t, transport=self.azure.transport, sleep=lambda s: None, monotonic=lambda: 0.0)
-            return RunnerServices(store or self.store, client, lambda resource: token, APPROVAL, SUB, clock=self.clock, sleep=lambda s: None,
+            client = Client(change_calls(APPROVAL.change_scopes), lambda t: t, transport=self.azure.transport, sleep=lambda s: None, monotonic=lambda: 0.0)
+            return RunnerServices(store or self.store, client, lambda resource: token, APPROVAL, clock=self.clock, sleep=lambda s: None,
                                   emit=lambda kind, **f: self.events.append((kind, f)))
 
         return Delegation(store or self.store, self.approvals, signin, redeem, run, emit=lambda kind, **f: self.events.append((kind, f)),
@@ -417,8 +418,8 @@ class BeginningAnApproval(Flow):
         owner, purpose, expires, data = self.store.nonces[state]
         self.assertEqual((owner, purpose), (OID, "arm-signin"))
         self.assertEqual((expires - NOW).total_seconds(), 600)
-        self.assertEqual(json.loads(data), {"plan": self.plan.plan_id, "code": self.plan.code, "resource": self.plan.resource_id, "verifier": VERIFIER, "nonce": NONCE,
-                                            "note": "go ahead"})
+        self.assertEqual(json.loads(data), {"plan": self.plan.plan_id, "code": self.plan.code, "resource": self.plan.resource_id, "digest": self.plan.digest, "verifier": VERIFIER,
+                                            "nonce": NONCE, "note": "go ahead"})
         self.assertNotIn(VERIFIER, begun.location, "the verifier never leaves the server")
 
     def test_the_form_token_is_used_up(self):
@@ -553,8 +554,9 @@ class ReturningFromTheSignIn(Flow):
         self.assertEqual(self.redeemed, [])
 
     def test_what_was_kept_for_the_state_must_be_what_begin_wrote(self):
-        for data in ("not json", "[]", json.dumps({"plan": "p"}), json.dumps({"plan": 1, "code": "c", "resource": "r", "verifier": "v", "nonce": "n", "note": ""}),
-                     json.dumps({"plan": "p", "code": "c", "verifier": "v", "nonce": "n", "note": ""})):
+        for data in ("not json", "[]", json.dumps({"plan": "p"}), json.dumps({"plan": 1, "code": "c", "resource": "r", "digest": "d", "verifier": "v", "nonce": "n", "note": ""}),
+                     json.dumps({"plan": "p", "code": "c", "digest": "d", "verifier": "v", "nonce": "n", "note": ""}),
+                     json.dumps({"plan": "p", "code": "c", "resource": "r", "verifier": "v", "nonce": "n", "note": ""})):
             with self.subTest(data=data):
                 state = self.store.nonce_new(OID, "arm-signin", 600, data)
                 self.assertEqual(self.back(state).kind, "refused_state")
@@ -861,8 +863,8 @@ class SteppingUp(Flow):
         data = json.loads(self.store.nonces[self.state_of(step)][3])
         verifier = data["verifier"]
         self.assertEqual(verifier, "verifier-03".ljust(43, "v"), "the second verifier that was made")
-        self.assertEqual(data, {"plan": self.plan.plan_id, "code": self.plan.code, "resource": self.plan.resource_id, "verifier": verifier, "nonce": self.nonce_of[verifier],
-                                "note": "go ahead", "stepup": "1", "claims": CLAIMS})
+        self.assertEqual(data, {"plan": self.plan.plan_id, "code": self.plan.code, "resource": self.plan.resource_id, "digest": self.plan.digest, "verifier": verifier,
+                                "nonce": self.nonce_of[verifier], "note": "go ahead", "stepup": "1", "claims": CLAIMS})
         self.assertEqual(self.nonce_of[verifier], "nonce-04".ljust(22, "n"))
         self.assertLessEqual(len(self.store.nonces[self.state_of(step)][3]), MAX_NONCE_DATA)
 
@@ -1069,7 +1071,7 @@ class SteppingUp(Flow):
         self.assertEqual(self.store.action_get(self.plan.plan_id).state, "queued")
 
     def test_a_state_that_is_not_what_the_step_up_wrote_is_refused_without_redeeming_anything(self):
-        base = {"plan": self.plan.plan_id, "code": self.plan.code, "resource": self.plan.resource_id, "verifier": VERIFIER, "nonce": NONCE, "note": ""}
+        base = {"plan": self.plan.plan_id, "code": self.plan.code, "resource": self.plan.resource_id, "digest": self.plan.digest, "verifier": VERIFIER, "nonce": NONCE, "note": ""}
         self.asked()
         for label, data in (("the flag without the claims", {**base, "stepup": "1"}), ("empty claims", {**base, "stepup": "1", "claims": ""}),
                             ("claims that are not text", {**base, "stepup": "1", "claims": {"a": 1}}), ("another flag", {**base, "stepup": "2", "claims": CLAIMS}),
@@ -1085,7 +1087,8 @@ class SteppingUp(Flow):
     # -- what cannot be sent -----------------------------------------------------------------------------------------------------------------
 
     def test_a_request_that_is_too_large_to_keep_closes_the_change_and_makes_no_state(self):
-        started = {"plan": self.plan.plan_id, "code": self.plan.code, "resource": self.plan.resource_id, "verifier": VERIFIER, "nonce": NONCE, "note": "\u00e9" * 300}
+        started = {"plan": self.plan.plan_id, "code": self.plan.code, "resource": self.plan.resource_id, "digest": self.plan.digest, "verifier": VERIFIER, "nonce": NONCE,
+                   "note": "\u00e9" * 300}
         huge = '{"a":"' + "x" * 1900 + '"}'
         self.assertGreater(len(json.dumps({**started, "stepup": "1", "claims": huge}, separators=(",", ":"))), MAX_NONCE_DATA, "the test needs a state that is too large")
         result = self.delegation._ask_again(APPROVER, self.store.plan_get(self.plan.plan_id), started, self.waiting_action(), huge, "")

@@ -8,6 +8,8 @@ from support import APP_ROOT  # noqa: F401
 
 from cases.approvals import Approvals, ApprovalSettings
 from cases.detectors import Lead
+from cases.families import digest as plan_digest
+from cases.families.gates import ChangeScope
 from cases.http import Client, HttpError, Refused
 from cases.memory_store import MemoryStore, stamp
 from cases.models import ActionRecord, CaseRecord, NoteRecord, Principal, SwitchRecord
@@ -17,7 +19,8 @@ OID = "aaaaaaaa-1111-4222-8333-444444444444"
 SUB = "bbbbbbbb-2222-4333-9444-555555555555"
 GROUP = "meternaut-sc-rg"
 NOW = dt.datetime(2026, 11, 5, 9, 0, 0, tzinfo=dt.timezone.utc)
-SETTINGS = ApprovalSettings(change_group=GROUP)
+SCOPES = (ChangeScope(SUB, GROUP),)
+SETTINGS = ApprovalSettings(change_scopes=SCOPES)
 APPROVER = Principal(OID, "Tino", ("owner", "approver", "ops"))
 DISK = f"/subscriptions/{SUB}/resourceGroups/{GROUP}/providers/Microsoft.Compute/disks/planted-disk-1"
 IP = f"/subscriptions/{SUB}/resourceGroups/{GROUP}/providers/Microsoft.Network/publicIPAddresses/planted-ip-1"
@@ -127,25 +130,29 @@ class Base(unittest.TestCase):
         self.sleeps = []
         self.person_tokens = []
         self.reader_tokens = []
-        change = Client(change_calls(SUB, GROUP), lambda t: t, transport=self.azure.transport, sleep=lambda s: None, monotonic=lambda: 0.0)
-        check = Client(read_calls(SUB, GROUP), lambda t: t, transport=self.azure.transport, sleep=lambda s: None, monotonic=lambda: 0.0)
+        change = Client(change_calls(SCOPES), lambda t: t, transport=self.azure.transport, sleep=lambda s: None, monotonic=lambda: 0.0)
+        check = Client(read_calls(SCOPES), lambda t: t, transport=self.azure.transport, sleep=lambda s: None, monotonic=lambda: 0.0)
         self.arm = FakeArm()
         emit = lambda kind, **f: self.events.append((kind, f))  # noqa: E731
         # `s` makes a change with the token of the person who approved it; `t` is the timer's: the reader's token and no write on its list.
-        self.s = RunnerServices(self.store, change, lambda r: (self.person_tokens.append(r), "person-token")[1], SETTINGS, SUB, clock=self.clock,
+        self.s = RunnerServices(self.store, change, lambda r: (self.person_tokens.append(r), "person-token")[1], SETTINGS, clock=self.clock,
                                 sleep=self.sleeps.append, emit=emit)
-        self.t = RunnerServices(self.store, check, lambda r: (self.reader_tokens.append(r), "reader-token")[1], SETTINGS, SUB, arm=self.arm, clock=self.clock,
+        self.t = RunnerServices(self.store, check, lambda r: (self.reader_tokens.append(r), "reader-token")[1], SETTINGS, arm=self.arm, clock=self.clock,
                                 sleep=self.sleeps.append, emit=emit)
         self.approvals = Approvals(self.store, SETTINGS, self.clock)
 
-    def approved(self, resource_id=DISK, detector="orphan-managed-disk", name="planted-disk-1", cost=None):
-        """A plan that a person approved at the sign-in to Azure: the decision is recorded and the action waits to be made."""
+    def approved(self, resource_id=DISK, detector="orphan-managed-disk", name="planted-disk-1", cost=None, plan_mutate=None):
+        """A plan that a person approved at the sign-in to Azure: the decision is recorded and the action waits to be made. `plan_mutate` changes a field of the plan before it is approved
+        (and the plan is sealed again, so that what is approved is that plan): the re-check of the family is then the only guard that can stop it."""
         item = lead_for(resource_id, detector, name)
         case = CaseRecord(case_id="k" + item.lead_id, resource_id=resource_id, resource_name=name, resource_type=item.resource_type, resource_group=GROUP,
                           subscription_id=SUB, detector=detector, run_id="r1", status="proposed", recommendation="delete", confidence=0.9, cost_usd_30d=cost,
                           saving_usd_month=cost, updated_at=stamp(NOW), first_seen_at=stamp(NOW))
         self.store.case_put(case)
         plan = self.approvals.create(case, item, (OID,))
+        if plan_mutate:
+            plan = plan_digest.sealed(replace(plan, **plan_mutate))
+            self.store.plan_put(plan)
         checked, refusal = self.approvals.check_approve(APPROVER, plan.plan_id, plan.code)
         assert refusal is None, refusal
         result, action = self.approvals.record_approval(APPROVER, checked, "")
@@ -154,13 +161,13 @@ class Base(unittest.TestCase):
 
     def make_change(self, plan):
         """Makes the change of the plan's action with the person's token, as the sign-in to Azure does."""
-        return execute(self.s, self.store.action_get(plan.plan_id))
+        return execute(self.s, self.store.action_get(plan.plan_id), approved_digest=plan.digest)
 
 
 class TheListsOfCalls(unittest.TestCase):
     def setUp(self):
-        self.change = Client(change_calls(SUB, GROUP), lambda t: t, transport=lambda *a: (200, {}, b"{}"), sleep=lambda s: None, monotonic=lambda: 0.0)
-        self.check = Client(read_calls(SUB, GROUP), lambda t: t, transport=lambda *a: (200, {}, b"{}"), sleep=lambda s: None, monotonic=lambda: 0.0)
+        self.change = Client(change_calls(SCOPES), lambda t: t, transport=lambda *a: (200, {}, b"{}"), sleep=lambda s: None, monotonic=lambda: 0.0)
+        self.check = Client(read_calls(SCOPES), lambda t: t, transport=lambda *a: (200, {}, b"{}"), sleep=lambda s: None, monotonic=lambda: 0.0)
 
     def test_a_change_reads_and_deletes_a_disk_and_a_public_ip_address_in_the_one_group_and_reads_locks(self):
         base = f"https://management.azure.com/subscriptions/{SUB}/resourceGroups/{GROUP}/providers"
@@ -171,14 +178,29 @@ class TheListsOfCalls(unittest.TestCase):
         for scope in (f"/subscriptions/{SUB}", f"/subscriptions/{SUB}/resourceGroups/{GROUP}", DISK):
             self.change.request("GET", f"https://management.azure.com{scope}/providers/Microsoft.Authorization/locks?api-version=2016-09-01")
 
-    def test_the_checks_of_the_timer_read_the_same_things_and_can_not_even_attempt_a_delete(self):
+    def test_a_change_also_reads_a_machine_and_makes_the_calls_of_the_other_families_and_nothing_else_of_a_machine(self):
+        base = f"https://management.azure.com/subscriptions/{SUB}/resourceGroups/{GROUP}/providers/Microsoft.Compute"
+        for method, path in (("GET", "/virtualMachines/vm1"), ("GET", "/virtualMachines/vm1/vmSizes"), ("POST", "/virtualMachines/vm1/deallocate"), ("PATCH", "/virtualMachines/vm1"),
+                             ("PATCH", "/disks/d1"), ("DELETE", "/snapshots/s1")):
+            with self.subTest(method=method, path=path):
+                self.change.request(method, base + path + "?api-version=2026-04-01")
+        for method, path in (("DELETE", "/virtualMachines/vm1"), ("POST", "/virtualMachines/vm1/restart"), ("POST", "/virtualMachines/vm1/start"), ("PUT", "/virtualMachines/vm1"),
+                             ("POST", "/virtualMachines/vm1/runCommand"), ("PATCH", "/snapshots/s1"), ("PUT", "/disks/d1")):
+            with self.subTest(refused=(method, path)):
+                with self.assertRaises(Refused):
+                    self.change.request(method, base + path + "?api-version=2026-04-01")
+
+    def test_the_checks_of_the_timer_read_the_same_things_and_can_not_even_attempt_a_write(self):
         base = f"https://management.azure.com/subscriptions/{SUB}/resourceGroups/{GROUP}/providers"
-        for path in ("/Microsoft.Compute/disks/d1", "/Microsoft.Network/publicIPAddresses/ip1"):
+        for path in ("/Microsoft.Compute/disks/d1", "/Microsoft.Network/publicIPAddresses/ip1", "/Microsoft.Compute/virtualMachines/vm1"):
             self.check.request("GET", base + path + "?api-version=2024-03-02")
-            with self.assertRaises(Refused):
-                self.check.request("DELETE", base + path + "?api-version=2024-03-02")
+            for method in ("DELETE", "PATCH", "PUT"):
+                with self.assertRaises(Refused):
+                    self.check.request(method, base + path + "?api-version=2024-03-02")
+        with self.assertRaises(Refused):
+            self.check.request("POST", base + "/Microsoft.Compute/virtualMachines/vm1/deallocate?api-version=2026-04-01")
         self.check.request("GET", f"https://management.azure.com{DISK}/providers/Microsoft.Authorization/locks?api-version=2016-09-01")
-        self.assertEqual({method for method, _ in read_calls(SUB, GROUP)}, {"GET"})
+        self.assertEqual({method for method, _ in read_calls(SCOPES)}, {"GET"})
 
     def test_everything_else_is_refused_by_both_lists(self):
         other = "22222222-2222-2222-2222-222222222222"
@@ -186,18 +208,17 @@ class TheListsOfCalls(unittest.TestCase):
         refused = [
             ("DELETE", f"https://management.azure.com/subscriptions/{SUB}/resourceGroups/other-rg/providers/Microsoft.Compute/disks/d1"),
             ("DELETE", f"https://management.azure.com/subscriptions/{other}/resourceGroups/{GROUP}/providers/Microsoft.Compute/disks/d1"),
-            ("DELETE", base + "/Microsoft.Compute/virtualMachines/vm1"),
             ("DELETE", base + "/Microsoft.Storage/storageAccounts/sa1"),
             ("DELETE", f"https://management.azure.com/subscriptions/{SUB}/resourceGroups/{GROUP}"),
             ("DELETE", f"https://management.azure.com/subscriptions/{SUB}"),
             ("PUT", base + "/Microsoft.Compute/disks/d1"),
-            ("PATCH", base + "/Microsoft.Compute/disks/d1"),
             ("POST", base + "/Microsoft.Compute/disks/d1/beginGetAccess"),
             ("POST", base + "/Microsoft.Compute/disks/d1"),
             ("DELETE", base + "/Microsoft.Compute/disks/d1/extra"),
             ("DELETE", f"https://management.azure.com/subscriptions/{SUB}/providers/Microsoft.Authorization/locks/x"),
             ("GET", "https://example.com/subscriptions/" + SUB),
-            ("GET", base + "/Microsoft.Compute/virtualMachines/vm1"),
+            ("GET", base + "/Microsoft.Storage/storageAccounts/sa1"),
+            ("GET", base + "/Microsoft.KeyVault/vaults/kv1/secrets"),
         ]
         for client in (self.change, self.check):
             for method, url in refused:
@@ -205,10 +226,18 @@ class TheListsOfCalls(unittest.TestCase):
                     with self.assertRaises(Refused):
                         client.request(method, url)
 
-    def test_the_only_deletes_are_the_two_kinds(self):
-        deletes = [pattern.pattern for method, pattern in change_calls(SUB, GROUP) if method == "DELETE"]
-        self.assertEqual(len(deletes), 2)
-        self.assertTrue(all("disks" in p or "publicIPAddresses" in p for p in deletes))
+    def test_the_only_deletes_are_the_kinds_of_the_closed_list(self):
+        deletes = [pattern.pattern for method, pattern in change_calls(SCOPES) if method == "DELETE"]
+        self.assertEqual(len(deletes), 7)
+        for kind in ("disks", "publicIPAddresses", "snapshots", "networkInterfaces", "natGateways", "loadBalancers", "privateEndpoints"):
+            self.assertEqual(len([p for p in deletes if f"/{kind}/" in p]), 1, kind)
+
+    def test_a_second_group_of_the_scopes_gets_the_same_calls_and_a_group_outside_them_gets_none(self):
+        second = (*SCOPES, ChangeScope("33333333-3333-4333-9333-333333333333", "meternaut-two"))
+        wide = Client(change_calls(second), lambda t: t, transport=lambda *a: (200, {}, b"{}"), sleep=lambda s: None, monotonic=lambda: 0.0)
+        wide.request("DELETE", "https://management.azure.com/subscriptions/33333333-3333-4333-9333-333333333333/resourceGroups/meternaut-two/providers/Microsoft.Compute/disks/d1?api-version=2024-03-02")
+        with self.assertRaises(Refused):
+            self.change.request("DELETE", "https://management.azure.com/subscriptions/33333333-3333-4333-9333-333333333333/resourceGroups/meternaut-two/providers/Microsoft.Compute/disks/d1")
 
 
 class TheChange(Base):
@@ -259,11 +288,9 @@ class TheChange(Base):
         self.assertEqual((done.kind, done.action.state), ("failed", "failed"))
 
     def stops(self, expect_in_text, mutate=None, plan_mutate=None):
-        plan, action = self.approved()
+        plan, action = self.approved(plan_mutate=plan_mutate)
         if mutate:
             mutate()
-        if plan_mutate:
-            self.store.plan_put(replace(self.store.plan_get(plan.plan_id), **plan_mutate))
         done = self.make_change(plan)
         self.assertEqual((done.kind, done.action.state), ("stopped", "failed"), done.action.result)
         self.assertIn(expect_in_text, done.action.result)
@@ -306,6 +333,7 @@ class TheChange(Base):
         self.stops("another resource", lambda: self.azure.resources[DISK.lower()].update(id=DISK.replace("planted-disk-1", "other")))
 
     def test_it_stops_when_the_plan_names_another_group_family_or_precondition(self):
+        """The plan was approved as it is (sealed with its digest), so the digest cannot stop it: the re-check of the family is the guard."""
         for label, change in {
             "group": {"resource_id": DISK.replace(GROUP, "other-rg")},
             "family": {"family": "delete-public-ip"},
@@ -430,7 +458,7 @@ class WhenAzureAsksForAnExtraSignInCheck(Base):
     def test_the_retry_reads_everything_again_deletes_with_the_new_token_and_closes_the_plan_as_any_change_does(self):
         plan, step_up = self.asked()
         self.azure.calls.clear()
-        done = execute(self.s, step_up.action)
+        done = execute(self.s, step_up.action, approved_digest=plan.digest)
         self.assertEqual((done.kind, done.claims, done.action.state), ("ran", "", "done"))
         self.assertEqual(done.action.result, "Deleted. Azure no longer lists the resource.", "the words of the wait are gone")
         self.assertEqual((done.action.step_up, done.action.error, bool(done.action.started_at), bool(done.action.finished_at)), (True, None, True, True))
@@ -454,7 +482,7 @@ class WhenAzureAsksForAnExtraSignInCheck(Base):
                 self.setUp()
                 plan, step_up = self.asked()
                 change()
-                done = execute(self.s, step_up.action)
+                done = execute(self.s, step_up.action, approved_digest=plan.digest)
                 self.assertEqual((done.kind, done.action.state), ("stopped", "failed"), done.action.result)
                 self.assertIn(expected, done.action.result)
                 self.assertIn("Nothing was changed", done.action.result)
@@ -465,7 +493,7 @@ class WhenAzureAsksForAnExtraSignInCheck(Base):
     def test_a_second_challenge_is_final_and_says_that_azure_asked_again_and_that_nothing_was_changed(self):
         plan, step_up = self.asked()
         self.azure.delete_answers = [(401, challenge())]
-        done = execute(self.s, step_up.action)
+        done = execute(self.s, step_up.action, approved_digest=plan.digest)
         self.assertEqual((done.kind, done.claims, done.action.state), ("azure_refused", "", "failed"))
         self.assertEqual((done.action.result, done.action.error), (ASKED_AGAIN, ASKED_AGAIN))
         for words in ("a second time", "was not made", "Nothing was changed", "does not ask a second time", "The request is closed"):
@@ -480,8 +508,8 @@ class WhenAzureAsksForAnExtraSignInCheck(Base):
     def test_a_third_challenge_is_not_reached_because_the_second_closed_the_plan(self):
         plan, step_up = self.asked()
         self.azure.delete_answers = [(401, challenge()), (401, challenge())]
-        execute(self.s, step_up.action)
-        again = execute(self.s, self.store.action_get(plan.plan_id))
+        execute(self.s, step_up.action, approved_digest=plan.digest)
+        again = execute(self.s, self.store.action_get(plan.plan_id), approved_digest=plan.digest)
         self.assertEqual((again.kind, again.action.state), ("failed", "failed"))
         self.assertIn("no approval by a named approver", again.action.result)
         self.assertEqual([m for m, _ in self.azure.calls].count("DELETE"), 2)
@@ -544,7 +572,7 @@ class WhenAzureAsksForAnExtraSignInCheck(Base):
         for secret in (CLAIMS, "c-unique-4711", base64.b64encode(CLAIMS.encode()).decode(), "insufficient_claims", SCHEME):
             self.assertNotIn(secret, seen)
         self.assertEqual(step_up.claims, CLAIMS, "the claims are for the one that sends the person to Microsoft Entra")
-        done = execute(self.s, step_up.action)
+        done = execute(self.s, step_up.action, approved_digest=plan.digest)
         self.assertNotIn("c-unique-4711", json.dumps([done.action.to_json(), json.dumps(self.events), repr(done)]))
 
     def test_only_the_delete_that_the_runner_makes_with_a_persons_token_can_step_up_and_the_timer_has_no_part_in_it(self):

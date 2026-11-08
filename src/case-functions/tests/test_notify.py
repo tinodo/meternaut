@@ -16,7 +16,7 @@ STRANGER = "44444444-5555-6666-7777-888888888888"
 SENDER = "meternaut-ai@example.com"
 TUESDAY = dt.datetime(2026, 11, 3, 10, 0, 0, tzinfo=dt.timezone.utc)
 ENV = {
-    "STORE_ACCOUNT_NAME": "stexample", "CHANGE_RESOURCE_GROUP": "rg-meternaut", "CHANGE_SUBSCRIPTION_ID": "bbbbbbbb-2222-4333-9444-555555555555",
+    "STORE_ACCOUNT_NAME": "stexample", "CHANGE_SCOPES": "bbbbbbbb-2222-4333-9444-555555555555/rg-meternaut",
     "CONSOLE_HOST": "func.example.net", "MAIL_SENDER": SENDER,
     "CONSOLE_PEOPLE": json.dumps([
         {"oid": TINO, "name": "Tino", "roles": ["owner", "approver", "ops"], "mail": "tino@example.com"},

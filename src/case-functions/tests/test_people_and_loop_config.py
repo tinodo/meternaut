@@ -81,10 +81,15 @@ class LoadPeople(unittest.TestCase):
 
 
 FULL = {
-    "STORE_ACCOUNT_NAME": "stexample", "CHANGE_RESOURCE_GROUP": "rg-meternaut", "CHANGE_SUBSCRIPTION_ID": SUBSCRIPTION.upper(),
+    "STORE_ACCOUNT_NAME": "stexample", "CHANGE_SCOPES": f"{SUBSCRIPTION.upper()}/rg-meternaut",
     "CONSOLE_HOST": "Func-Example.azurewebsites.net",
 }
+LEGACY = {"CHANGE_RESOURCE_GROUP": "rg-meternaut", "CHANGE_SUBSCRIPTION_ID": SUBSCRIPTION.upper()}
 SIGNIN = {"SIGNIN_TENANT_ID": TENANT, "SIGNIN_CLIENT_ID": APP, "OVERRIDE_USE_MI_FIC_ASSERTION_CLIENTID": ASSERTION}
+
+
+def scopes_of(settings) -> tuple:
+    return tuple((scope.subscription, scope.group) for scope in settings.change_scopes)
 
 
 class LoadLoopSettings(unittest.TestCase):
@@ -94,7 +99,7 @@ class LoadLoopSettings(unittest.TestCase):
 
     def test_a_full_set_is_read_with_the_defaults_and_in_lower_case(self):
         settings = loop_config.load(FULL)
-        self.assertEqual((settings.store_account, settings.change_group, settings.change_subscription), ("stexample", "rg-meternaut", SUBSCRIPTION))
+        self.assertEqual((settings.store_account, scopes_of(settings)), ("stexample", ((SUBSCRIPTION, "rg-meternaut"),)))
         self.assertEqual((settings.console_host, settings.base_url), ("func-example.azurewebsites.net", "https://func-example.azurewebsites.net"))
         self.assertEqual((settings.mail_sender, settings.planted_tag, settings.plan_ttl_hours, settings.recheck_days), (None, "meternaut-planted", 72, 7))
         self.assertEqual((settings.signin_tenant_id, settings.signin_client_id, settings.signin_assertion_client_id), (None, None, None), "no sign-in unless it is set")
@@ -109,13 +114,35 @@ class LoadLoopSettings(unittest.TestCase):
 
     def test_the_settings_of_the_old_writer_and_the_delay_are_not_read_and_do_not_break_the_start(self):
         settings = loop_config.load({**FULL, "WRITER_RESOURCE_GROUP": "x", "WRITER_SUBSCRIPTION_ID": "x", "WRITER_CLIENT_ID": "x", "APPROVAL_DELAY_SECONDS": "5"})
-        self.assertEqual((settings.change_group, settings.change_subscription), ("rg-meternaut", SUBSCRIPTION))
+        self.assertEqual(scopes_of(settings), ((SUBSCRIPTION, "rg-meternaut"),))
         self.assertFalse(any("writer" in name or "delay" in name for name in vars(settings)))
+
+    def test_the_list_of_scopes_can_name_more_than_one_group_and_each_is_one_group_in_one_subscription(self):
+        other = "99999999-8888-4777-9666-555555555555"
+        settings = loop_config.load({**FULL, "CHANGE_SCOPES": f"{SUBSCRIPTION}/rg-one, {other.upper()}/rg-two"})
+        self.assertEqual(scopes_of(settings), ((SUBSCRIPTION, "rg-one"), (other, "rg-two")))
+        for bad in ("rg-only", f"{SUBSCRIPTION}", f"{SUBSCRIPTION}/", f"{SUBSCRIPTION}/*", "*/rg-one", f"{SUBSCRIPTION}/rg-one,", f"{SUBSCRIPTION}/rg-one,,{other}/rg-two",
+                    f"{SUBSCRIPTION}/rg-one,{SUBSCRIPTION.upper()}/RG-ONE", f"{SUBSCRIPTION}/rg with spaces", f"not-a-guid/rg-one", f"{SUBSCRIPTION}/rg-one/extra"):
+            with self.subTest(bad=bad):
+                with self.assertRaises(loop_config.LoopConfigError) as raised:
+                    loop_config.load({**FULL, "CHANGE_SCOPES": bad})
+                self.assertIn("CHANGE_SCOPES", str(raised.exception))
+
+    def test_the_two_older_settings_are_read_only_when_the_list_is_not_set_and_they_name_the_same_one_scope(self):
+        without = {name: value for name, value in FULL.items() if name != "CHANGE_SCOPES"}
+        settings = loop_config.load({**without, **LEGACY})
+        self.assertEqual(scopes_of(settings), ((SUBSCRIPTION, "rg-meternaut"),))
+        both = loop_config.load({**FULL, "CHANGE_SCOPES": f"{SUBSCRIPTION}/rg-new", **LEGACY})
+        self.assertEqual(scopes_of(both), ((SUBSCRIPTION, "rg-new"),), "the list wins: the older pair is not added to it")
+        for left_out in LEGACY:
+            with self.assertRaises(loop_config.LoopConfigError, msg=left_out) as raised:
+                loop_config.load({**without, **{n: v for n, v in LEGACY.items() if n != left_out}})
+            self.assertIn(f"{left_out} is not set", str(raised.exception))
 
     def test_a_half_configured_loop_is_refused_and_every_missing_setting_is_listed(self):
         with self.assertRaises(loop_config.LoopConfigError) as raised:
             loop_config.load({"STORE_ACCOUNT_NAME": "stexample"})
-        for name in ("CHANGE_RESOURCE_GROUP", "CHANGE_SUBSCRIPTION_ID", "CONSOLE_HOST"):
+        for name in ("CHANGE_SCOPES", "CONSOLE_HOST"):
             self.assertIn(f"{name} is not set", str(raised.exception))
 
     def test_the_sign_in_is_set_together_or_not_at_all(self):
@@ -129,8 +156,7 @@ class LoadLoopSettings(unittest.TestCase):
     def test_each_setting_is_checked(self):
         for name, value, word in (
             ("STORE_ACCOUNT_NAME", "Not_Valid", "a storage account name"),
-            ("CHANGE_RESOURCE_GROUP", "rg with spaces", "a resource group name"),
-            ("CHANGE_SUBSCRIPTION_ID", "not-a-guid", "a subscription id"),
+            ("CHANGE_SCOPES", "rg with spaces", "is not <subscription id>/<resource group>"),
             ("SIGNIN_TENANT_ID", "not-a-guid", "a tenant id"),
             ("SIGNIN_CLIENT_ID", "not-a-guid", "a client id"),
             ("OVERRIDE_USE_MI_FIC_ASSERTION_CLIENTID", "not-a-guid", "a client id"),
@@ -149,9 +175,17 @@ class LoadLoopSettings(unittest.TestCase):
             self.assertIn(word, str(raised.exception))
             self.assertIn(name, str(raised.exception))
 
+    def test_each_of_the_older_settings_is_still_checked_when_it_is_the_one_in_use(self):
+        without = {name: value for name, value in FULL.items() if name != "CHANGE_SCOPES"}
+        for name, value, word in (("CHANGE_RESOURCE_GROUP", "rg with spaces", "a resource group name"), ("CHANGE_SUBSCRIPTION_ID", "not-a-guid", "a subscription id")):
+            with self.assertRaises(loop_config.LoopConfigError, msg=f"{name}={value}") as raised:
+                loop_config.load({**without, **LEGACY, name: value})
+            self.assertIn(word, str(raised.exception))
+            self.assertIn(name, str(raised.exception))
+
     def test_all_the_problems_are_in_one_message(self):
         with self.assertRaises(loop_config.LoopConfigError) as raised:
-            loop_config.load({**FULL, "CHANGE_SUBSCRIPTION_ID": "x", "PLAN_TTL_HOURS": "0", "MAIL_SENDER": "x"})
+            loop_config.load({**FULL, "CHANGE_SCOPES": "x", "PLAN_TTL_HOURS": "0", "MAIL_SENDER": "x"})
         self.assertEqual(str(raised.exception).count(";"), 2)
 
 

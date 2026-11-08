@@ -8,14 +8,13 @@ MAX_SUBSCRIPTIONS of them, which is what one Resource Graph query takes.
 When the list cannot be had, or has no subscription in it, the run reads the subscriptions of SCOPE_SUBSCRIPTIONS and says so. With no such list it does not run: the History says
 why, and a run never watches nothing without saying so. With the switch off, only SCOPE_SUBSCRIPTIONS is read.
 
-Nothing here changes what a change may touch: plans and changes are keyed on the one subscription and group of the loop (CHANGE_SUBSCRIPTION_ID, CHANGE_RESOURCE_GROUP), whatever
-the Watch reads.
+Nothing here changes what a change may touch: plans and changes are keyed on the resource groups of the change scopes (CHANGE_SCOPES), whatever the Watch reads.
 """
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Callable
+from typing import Callable, Iterable
 
 from .arm import Arm
 from .config import GUID, Settings
@@ -57,10 +56,10 @@ def readable(items: list[dict]) -> list[str]:
     return sorted(ids)
 
 
-def resolve(arm: Arm, settings: Settings, keep: str | None = None, redact: Callable[[object], str] = str) -> Scope:
+def resolve(arm: Arm, settings: Settings, keep: "str | Iterable[str] | None" = None, redact: Callable[[object], str] = str) -> Scope:
     """The subscriptions that a run reads, with the notes that the History carries. Raises ScopeError when there are none.
 
-    `keep` is a subscription that stays in the list when the list has to be cut at MAX_SUBSCRIPTIONS (the one where Meternaut plants its own waste: the loop is proved there).
+    `keep` is a subscription, or several, that stay in the list when the list has to be cut at MAX_SUBSCRIPTIONS (the ones where Meternaut plants its own waste: the loop is proved there).
     `redact` cleans the text of an error before it is part of a note."""
     explicit = tuple(dict.fromkeys(settings.subscriptions))
     if not settings.all_subscriptions:
@@ -81,14 +80,16 @@ def resolve(arm: Arm, settings: Settings, keep: str | None = None, redact: Calla
     raise ScopeError(f"{why}, and SCOPE_SUBSCRIPTIONS is empty, so there is nothing to read")
 
 
-def _cut(ids: list[str], keep: str | None) -> Scope:
+def _cut(ids: list[str], keep: "str | Iterable[str] | None") -> Scope:
     if len(ids) <= MAX_SUBSCRIPTIONS:
         return Scope(tuple(ids), SOURCE_ESTATE)
     chosen = ids[:MAX_SUBSCRIPTIONS]
-    must = keep.strip().lower() if keep else None
+    wanted = [keep] if isinstance(keep, str) else list(keep or ())
+    must = {sub.strip().lower() for sub in wanted if sub and sub.strip()}
     which = f"the first {MAX_SUBSCRIPTIONS} by id"
-    if must and must in ids and must not in chosen:
-        chosen = sorted([*chosen[:MAX_SUBSCRIPTIONS - 1], must])
-        which = f"the first {MAX_SUBSCRIPTIONS - 1} by id and the one where Meternaut plants its own waste"
+    missing = sorted(sub for sub in must if sub in ids and sub not in chosen)
+    if missing:
+        chosen = sorted([*chosen[:MAX_SUBSCRIPTIONS - len(missing)], *missing])
+        which = (f"the first {MAX_SUBSCRIPTIONS - len(missing)} by id and the {'one' if len(missing) == 1 else 'ones'} where Meternaut plants its own waste")
     return Scope(tuple(chosen), SOURCE_ESTATE, (f"the identity can read {len(ids)} subscriptions and one query takes at most {MAX_SUBSCRIPTIONS}: "
                                                 f"{which} are read, the other {len(ids) - MAX_SUBSCRIPTIONS} are not",))
