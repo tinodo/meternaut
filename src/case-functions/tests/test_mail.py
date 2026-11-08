@@ -330,7 +330,7 @@ class Holds(unittest.TestCase):
         self.assertEqual(fixture.send(kind="reminder").status, "held")
 
     def test_the_free_kinds_are_pinned_and_each_is_neither_held_by_the_budget_nor_counted_against_it(self):
-        self.assertEqual(BUDGET_FREE_KINDS, ("approval", "first_contact", "notice", "verified", "digest"))
+        self.assertEqual(BUDGET_FREE_KINDS, ("approval", "first_contact", "notice", "verified", "digest", "alert"))
         for kind in BUDGET_FREE_KINDS:
             with self.subTest(kind=kind, what="not held when the budget is used up"):
                 fixture = Fixture()
@@ -385,7 +385,7 @@ class Holds(unittest.TestCase):
             self.assertIn("budget of 0", " ".join(text.split()))
         text = " ".join(mail.__doc__.split())
         self.assertIn("is valid and counts against the weekly budget", text)
-        self.assertIn("the weekly budget neither counts nor holds any of these five", text)
+        self.assertIn("the weekly budget neither counts nor holds any of these six", text)
         self.assertNotIn("counts like a notice", text)
         self.assertIn("the weekly desk (the digest) still goes", " ".join(Mailer.send.__doc__.split()))
 

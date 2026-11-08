@@ -18,6 +18,7 @@ from typing import Callable, Mapping
 
 from . import config as cfg
 from . import decide, detectors, evidence, guards, investigate, roles, wiring
+from . import harness as harness_module
 from . import scope as scope_mod
 from .approvals import is_fixture
 from .arm import Arm, scopes_of
@@ -56,6 +57,8 @@ class Services:
     monotonic: Callable[[], float]
     extras: "wiring.Extras | None" = None
     foundry: "Foundry | None" = None
+    # What surrounds the agents (cases/harness.py). The client of the Foundry project that run_watch makes always has one; a test that plays the agents gives none, or its own.
+    harness: "harness_module.Harness | None" = None
 
 
 @dataclass
@@ -329,10 +332,14 @@ def execute(s: Services, trigger: str) -> Summary:
     summary.dropped += investigation.dropped
     summary.errors += investigation.errors
     candidates = ranked
-    if investigation.ran:
-        # The investigation found the waste by itself, so the leads of the fixed detectors that are real resources are left to it. They stay in the History as leads.
+    if investigation.ran or investigation.held:
+        # The investigation found the waste by itself, so the leads of the fixed detectors that are real resources are left to it. They stay in the History as leads. When the harness held
+        # the investigation (a pulled switch, a lock that does not hold, a stored definition that differs) no new case of the investigation is opened, and these leads are not judged by the
+        # two roles either: only the waste that Meternaut planted itself goes on, so that the loop stays proved.
         candidates = [lead for lead in ranked if planted(lead)]
         left_to_it = len(ranked) - len(candidates)
+        if investigation.held:
+            say(f"the investigation is held: {investigation.note}")
         if left_to_it:
             say(f"{left_to_it} lead{'s were' if left_to_it != 1 else ' was'} left to the investigation and not judged by the Detective and the Skeptic")
     else:
@@ -387,11 +394,13 @@ def execute(s: Services, trigger: str) -> Summary:
 
 def run_watch(trigger: str, request_id: str | None, env: Mapping[str, str] | None = None, *, clock: Callable[[], dt.datetime] = utc_now,
               monotonic: Callable[[], float] = time.monotonic, sleep: Callable[[float], None] = time.sleep, transport=default_transport, fetch=None,
-              new_id: Callable[[], str] = lambda: uuid.uuid4().hex, extras: "wiring.Extras | None" = None, foundry: "Foundry | None" = None) -> Summary:
+              new_id: Callable[[], str] = lambda: uuid.uuid4().hex, extras: "wiring.Extras | None" = None, foundry: "Foundry | None" = None,
+              harness: "harness_module.Harness | None" = None) -> Summary:
     """The whole run, with a History line for whatever goes wrong. It never raises: the History says how the run ended.
 
     `extras` is the loop (the store, the people, the approvals); None builds it from the settings, and a run without the settings of the loop is the Watch alone.
-    `foundry` is the client of the Foundry project of the investigation; None builds it from the settings, and without an endpoint there is none."""
+    `foundry` is the client of the Foundry project of the investigation; None builds it from the settings, and without an endpoint there is none. The harness around its agents is built
+    with it (cases/harness.py): a caller that hands in a client of its own hands in the harness too, or none."""
     env = os.environ if env is None else env
     redact = Redactor()
     history = History(new_id(), request_id, clock, redact)
@@ -403,8 +412,9 @@ def run_watch(trigger: str, request_id: str | None, env: Mapping[str, str] | Non
             extras = wiring.build_extras(env, identity.token, redact, transport=transport, sleep=sleep, monotonic=monotonic, clock=clock)
         if foundry is None and settings.foundry_endpoint:
             foundry = Foundry(settings.foundry_endpoint, client, identity.token, redact)
+            harness = harness_module.build(settings, foundry, extras, env=env, clock=clock, monotonic=monotonic, redact=redact)
         services = Services(settings, client, Arm(client, identity.token), Models(settings, client, identity.token, redact), history, redact, clock, monotonic, extras,
-                            foundry)
+                            foundry, harness)
         return execute(services, trigger)
     except Exception as error:  # noqa: BLE001 (the History must say how every run ended)
         reason = clean_text(redact(f"{type(error).__name__}: {error}"), 300)

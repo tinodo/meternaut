@@ -12,7 +12,7 @@ import logging
 import uuid
 from typing import Callable, Mapping
 
-from . import letters
+from . import alerts, letters
 from .http import Client
 from .loop_config import LoopSettings
 from .mail import Mailer, mail_calls
@@ -99,3 +99,21 @@ def hooks(env: Mapping[str, str], settings: LoopSettings, store: Store, people: 
         safely("the weekly desk", work)
 
     return on_plan, on_action, on_run
+
+
+def alert_hook(settings: LoopSettings, store: Store, people: People, token: Callable[[str], str], redact: Callable[[str], str], *, transport, sleep, monotonic,
+               clock: Callable[[], dt.datetime]) -> Callable[[str, str], None]:
+    """The hook of a trip (cases/harness.py): the one letter to each person with the role owner, from the same mailer as every other letter. It never raises. The letter says what stopped
+    and how to release it, in fixed sentences (cases/alerts.py); it is sent as the kind `alert`, which the weekly budget does not hold."""
+    mailer = build_mailer(settings, store, people, token, redact, transport=transport, sleep=sleep, monotonic=monotonic, clock=clock)
+
+    def on_alert(code: str, detail: str) -> None:
+        try:
+            now = clock()
+            for person in people.with_role("owner"):
+                if person.mail:
+                    mailer.send(person, alerts.letter(code, detail, settings.base_url, now), "alert")
+        except Exception as error:  # noqa: BLE001 (a letter never stops the brake)
+            LOG.error(redact(f"the letter of a trip could not be sent: {type(error).__name__}"))
+
+    return on_alert

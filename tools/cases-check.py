@@ -10,7 +10,7 @@ It uses the helpers of tools/check-helpers.py, which it loads from its own folde
 
 whoami     Read only. Prints the object id of the identity that the CLI is signed in as, read from the claims of its own token (the workflow's identity may not read the directory).
            The Hub workflow uses it to read the condition of the deploy identity's right to assign roles, before the action aigateway makes the gateway.
-functions  Read only. Waits until the cases app lists its four functions (the app has to be started and has to have read its package) and
+functions  Read only. Waits until the cases app lists its five functions (the app has to be started and has to have read its package) and
            prints their names.
 run        Puts one message in the control queue of the cases (cases-control, in the storage account of the base) with the identity that the CLI is signed in as: in the Hub workflow that is the
            Operator's identity, which holds Storage Queue Data Contributor on that one queue, and the tool runs inside the network, because the storage account takes no
@@ -42,7 +42,7 @@ _spec.loader.exec_module(rc)
 Problem = rc.Problem
 Azure = rc.Azure
 
-FUNCTIONS = ("watch-daily", "cases-control", "runner-tick", "console")
+FUNCTIONS = ("watch-daily", "cases-control", "runner-tick", "console", "drift-daily")
 CONTROL_QUEUE = "cases-control"
 EVENT_PREFIX = "meternaut_event "
 ENDS = ("run.finished", "run.failed")
@@ -57,7 +57,7 @@ def clean(value, limit: int = 300) -> str:
 
 
 def wait_for_functions(azure: Azure, site: str, minutes: float, interval: float = 20.0) -> list[str]:
-    """The function names once both are listed. An app that has just started, or has just been given a package, lists fewer first."""
+    """The function names once all of them are listed. An app that has just started, or has just been given a package, lists fewer first."""
     deadline = azure.clock() + minutes * 60
     last = "no answer yet"
     while True:
@@ -70,7 +70,7 @@ def wait_for_functions(azure: Azure, site: str, minutes: float, interval: float 
         except Problem as e:
             last = str(e)
         if azure.clock() >= deadline:
-            raise Problem(f"the cases app does not list its two functions after {minutes:g} minutes ({last})")
+            raise Problem(f"the cases app does not list its functions after {minutes:g} minutes ({last})")
         print(f"The cases app is not ready ({last}); waiting.", flush=True)
         azure.sleep(interval)
 
@@ -307,7 +307,7 @@ def main(argv=None, azure: Azure | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("whoami", help="print the object id of the signed-in identity")
-    functions = commands.add_parser("functions", help="wait for the cases app's four functions and list them")
+    functions = commands.add_parser("functions", help="wait for the cases app's five functions and list them")
     functions.add_argument("--site", required=True)
     functions.add_argument("--minutes", type=float, default=15)
     run = commands.add_parser("run", help="put one control message in the queue and read the History of the run from the telemetry")

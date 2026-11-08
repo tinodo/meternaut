@@ -26,6 +26,8 @@ class Extras:
     on_plan: Callable[[PlanRecord, CaseRecord], None] = lambda plan, case: None
     on_action: Callable[[ActionRecord, PlanRecord | None, CaseRecord | None], None] = lambda action, plan, case: None
     on_run: Callable[[RunRecord], None] = lambda run: None
+    # The letter of a trip of the agent harness or of the drift check (cases/harness.py, cases/drift.py): given the code of the reason and a plain detail, it tells the owner once.
+    on_alert: Callable[[str, str], None] = lambda code, detail: None
 
     def approvers(self) -> tuple[str, ...]:
         return tuple(p.oid for p in self.people.with_role("approver"))
@@ -52,7 +54,8 @@ def build_extras(env: Mapping[str, str], token: Callable[[str], str], redact: Ca
     store = build_store(settings, token, redact, transport=transport, sleep=sleep, monotonic=monotonic, clock=clock)
     extras = Extras(settings, store, people, Approvals(store, approval_settings(settings), clock))
     if settings.mail_sender:
-        from .notify import hooks  # imported only when a sender is set
+        from .notify import alert_hook, hooks  # imported only when a sender is set
         extras.on_plan, extras.on_action, extras.on_run = hooks(env, settings, store, people, token, redact, transport=transport, sleep=sleep,
                                                                 monotonic=monotonic, clock=clock)
+        extras.on_alert = alert_hook(settings, store, people, token, redact, transport=transport, sleep=sleep, monotonic=monotonic, clock=clock)
     return extras

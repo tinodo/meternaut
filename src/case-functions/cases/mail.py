@@ -9,7 +9,8 @@ Graph answers 202 Accepted with no body. That means Graph took the letter, not t
 `x-auto-response-suppress: All`, which asks Exchange and Outlook for no automatic replies and receipts. The message is saved in the Sent Items of the mailbox.
 
 Kinds of letter: the notifier sends `digest` (the weekly desk), `approval` (a plan waits for an OK), `notice` (a change ran or failed), `verified` (the check
-afterwards) and `first_contact` (the one-time introduction); the weekly budget neither counts nor holds any of these five. Any other name of the shape
+afterwards), `first_contact` (the one-time introduction) and `alert` (an agent safeguard stopped the investigation: cases/alerts.py); the weekly budget neither counts nor holds any of
+these six. Any other name of the shape
 `[a-z][a-z0-9_-]{0,31}` is valid and counts against the weekly budget (and is not allowed for a person of the weekly desk).
 
 Before a call the mailer checks, in this order, and the first check that fails ends the send and is written as the outcome:
@@ -19,7 +20,7 @@ Before a call the mailer checks, in this order, and the first check that fails e
 3. held: the switch `messages` or the switch `all` is pulled. A switch that cannot be read counts as pulled.
 4. held: the person paused messages (`SettingsRecord.paused_until` is in the future).
 5. held: the person's weekly budget (`SettingsRecord.weekly_budget`) is reached. It counts the messages of the person with the status sent since Monday
-   00:00 UTC of the current ISO week. The kinds of BUDGET_FREE_KINDS (`approval`, `first_contact`, `notice`, `verified`, `digest`) are not counted
+   00:00 UTC of the current ISO week. The kinds of BUDGET_FREE_KINDS (`approval`, `first_contact`, `notice`, `verified`, `digest`, `alert`) are not counted
    against the budget and are not held by it: they ask for an OK, introduce Meternaut once, tell a person the outcome of a decision of theirs (an
    approver must always be told), or are the weekly desk itself, which is what a budget of 0 leaves (docs/experience/06 and 08). Every other kind
    counts and can be held.
@@ -46,7 +47,7 @@ from .people import People, Person
 GRAPH_RESOURCE = "https://graph.microsoft.com"
 SENDER = re.compile(r"^[A-Za-z0-9._-]{1,64}@[A-Za-z0-9.-]{1,200}\.[A-Za-z]{2,24}$")
 KIND = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
-BUDGET_FREE_KINDS = ("approval", "first_contact", "notice", "verified", "digest")
+BUDGET_FREE_KINDS = ("approval", "first_contact", "notice", "verified", "digest", "alert")
 DESK_KINDS = ("digest",)
 SWITCHES = ("messages", "all")
 RETRY_ONLY = frozenset({429})
@@ -95,7 +96,7 @@ class Mailer:
         """Sends `letter` to `person` if every check allows it, and writes the outcome. It does not raise for a problem of the send.
 
         The status `sent` means that Graph accepted the letter (202). Delivery is proved by receipt in the inbox, not by this call. The kinds of
-        BUDGET_FREE_KINDS (approval, first_contact, notice, verified, digest) are neither counted against the weekly budget nor held by it; every other
+        BUDGET_FREE_KINDS (approval, first_contact, notice, verified, digest, alert) are neither counted against the weekly budget nor held by it; every other
         kind is. With a budget of 0 only those other kinds are held: the weekly desk (the digest) still goes.
         """
         now = self.clock()

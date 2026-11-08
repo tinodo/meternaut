@@ -173,7 +173,9 @@ class WhatTheAppIs(unittest.TestCase):
         for method, path in re.findall(r"""\b_call\(\s*"([A-Z]+)",\s*(f?"[^"]+")""", source):
             paths.setdefault(method, set()).add(path)
         self.assertEqual(paths, {
-            "GET": {'f"/agents/{spec.name}?{API}"'},
+            # The reads of the harness and of the drift check (read_agent, list_agents) go through the same _call: the list of calls that the Watch holds (http.foundry_calls, below) lets only
+            # the first through, and the drift check's client has a list of its own (cases/drift.py, tested in test_drift.py).
+            "GET": {'f"/agents/{spec.name}?{API}"', 'f"/agents/{name}?{API}"', 'f"/agents?{API}&limit={LIST_PAGE}"'},
             "POST": {'f"/agents?{API}"', 'f"/agents/{spec.name}/versions?{API}"', '"/openai/v1/conversations"', '"/openai/v1/responses"'},
             "DELETE": {'f"/openai/v1/conversations/{conversation}"'},
         })
@@ -210,7 +212,7 @@ class WhatTheAppIs(unittest.TestCase):
             "import cases, cases.config, cases.http, cases.identity, cases.arm, cases.detectors, cases.evidence, cases.guards, cases.roles, cases.decide, "
             "cases.modelcalls, cases.foundry, cases.events, cases.run, cases.control, cases.redact, cases.models, cases.memory_store, cases.store, cases.approvals, cases.claims, "
             "cases.runner, cases.people, cases.switches, cases.wiring, cases.loop_config, cases.delegated, cases.console, cases.loop, cases.web, cases.mail, cases.letters, "
-            "cases.agents, cases.investigate; "            "print(sorted(name for name in sys.modules if name == 'azure' or name.startswith('azure.')))"
+            "cases.agents, cases.investigate, cases.plaintext, cases.lockfile, cases.release, cases.alerts, cases.harness, cases.drift_rules, cases.drift; "            "print(sorted(name for name in sys.modules if name == 'azure' or name.startswith('azure.')))"
         )
         done = subprocess.run([sys.executable, "-c", code, str(APP_ROOT)], capture_output=True, text=True, check=True)
         self.assertEqual(done.stdout.strip(), "[]")
@@ -227,9 +229,9 @@ class WhatTheAppIs(unittest.TestCase):
                     with self.subTest(file=path.name, line=number):
                         self.assertNotRegex(line, r"(?i)\bclaims\b|\bchallenge\b|www-authenticate")
 
-    def test_the_four_functions_read_and_start_nothing_but_the_watch_and_the_loop(self):
+    def test_the_five_functions_read_and_start_nothing_but_the_watch_the_drift_check_and_the_loop(self):
         self.assertEqual(sorted(re.findall(r'function_name\(name="([a-z-]+)"\)', (APP_ROOT / "function_app.py").read_text(encoding="utf-8"))),
-                         ["cases-control", "console", "runner-tick", "watch-daily"])
+                         ["cases-control", "console", "drift-daily", "runner-tick", "watch-daily"])
 
 
 if __name__ == "__main__":
