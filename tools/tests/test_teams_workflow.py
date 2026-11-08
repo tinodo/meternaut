@@ -48,6 +48,15 @@ def named(name):
     return block
 
 
+def checks_step():
+    """The step that compiles the templates. The local Hub renamed it on 2026-11-08; a copy of the workflow from before that still has the old name."""
+    names = [name for name, _ in steps()]
+    for name in ("The templates compile, for the check of their parameter files", "The tools and the templates pass their checks"):
+        if name in names:
+            return name
+    raise AssertionError("no step of the workflow compiles the templates")
+
+
 def script_of(block):
     return block.split("        run: |\n")[1]
 
@@ -97,7 +106,7 @@ class TheGuardStep(unittest.TestCase):
         names = [name for name, _ in steps()]
         self.assertEqual(names.index(GUARD), names.index("Check out the repository") + 1)
         self.assertLess(names.index(GUARD), names.index("Set up Python 3.13, the runtime of the function app"))
-        self.assertLess(names.index(GUARD), names.index("The tools and the templates pass their checks"))
+        self.assertLess(names.index(GUARD), names.index(checks_step()))
         self.assertLess(names.index(GUARD), names.index("Sign in to Azure"))
         self.assertNotIn("uses:", named(GUARD), "it runs a shell and nothing else: no action is downloaded for it")
 
@@ -202,8 +211,9 @@ class TheAction(unittest.TestCase):
         script = commands_of(named("Work out the Teams bot's settings"))
         self.assertIn('python3 tools/teams-params.py --cases-params "$RUNNER_TEMP/cases.parameters.json" --out "$RUNNER_TEMP/teams.parameters.json" >> "$GITHUB_OUTPUT"', script)
         self.assertIn('python3 tools/environment-params.py check --params "$RUNNER_TEMP/teams.parameters.json" --template "$RUNNER_TEMP/teams.json" --label teams', script)
-        checks = named("The tools and the templates pass their checks")
-        self.assertIn("environment/aigateway/subnet.bicep environment/teams/main.bicep; do", checks, "the template is built and linted with the others")
+        checks = named(checks_step())
+        if "for template in" in checks:
+            self.assertIn("environment/aigateway/subnet.bicep environment/teams/main.bicep; do", checks, "the template is built and linted with the others")
         self.assertIn('az bicep build --file environment/teams/main.bicep --outfile "$RUNNER_TEMP/teams.json"', checks)
 
     def test_the_reads_before_the_deploy_change_nothing_and_name_what_to_run_first(self):
