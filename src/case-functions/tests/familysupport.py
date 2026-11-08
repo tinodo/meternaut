@@ -72,9 +72,11 @@ def vm(name: str = "planted-vm-1", size: str = "Standard_D4s_v5", power: str = "
     return resource
 
 
-def disk(name: str = "planted-disk-1", sku: str = "Premium_LRS", state: str = "Unattached", managed_by: str = "", tags: dict | None = None, **more) -> dict:
+def disk(name: str = "planted-disk-1", sku: str = "Premium_LRS", state: str = "Unattached", managed_by: str = "", tags: dict | None = None, size_gb: int | None = 4, **more) -> dict:
     resource = {"id": rid("disk", name), "name": name, "location": REGION, "tags": dict(PLANTED if tags is None else tags), "sku": {"name": sku},
-                "properties": {"diskState": state, "provisioningState": "Succeeded", "diskSizeGB": 4}}
+                "properties": {"diskState": state, "provisioningState": "Succeeded"}}
+    if size_gb is not None:
+        resource["properties"]["diskSizeGB"] = size_gb
     if managed_by:
         resource["managedBy"] = managed_by
     resource.update(more)

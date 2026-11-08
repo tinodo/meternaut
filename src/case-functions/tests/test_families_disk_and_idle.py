@@ -32,7 +32,7 @@ class MovingADiskOneTierDown(unittest.TestCase):
         for sku, target in TIERS.items():
             with self.subTest(sku):
                 world = World()
-                resource = world.arm.add(fs.disk(sku=sku))
+                resource = world.arm.add(fs.disk(sku=sku, size_gb=64))
                 plan = world.plan(resource, "disk", "change", cost=20.0)
                 self.assertEqual((plan.family, plan.target), ("change-disk-tier", {"skuName": target, "fromSkuName": sku}))
                 self.assertEqual(plan.title, f"Move a managed disk to {tier_words(target)} in resource group meternaut-fam-rg")
@@ -43,6 +43,26 @@ class MovingADiskOneTierDown(unittest.TestCase):
                 self.assertIn(f"Change the disk back to {tier_words(sku)}", plan.undo)
                 self.assertIn(f"the disk is a {tier_words(sku)} and is unattached, as Azure shows it now", plan.evidence_level)
                 self.assertEqual(plan.preconditions["family"], "change-disk-tier")
+
+    def test_a_standard_ssd_of_up_to_16_gib_is_not_moved_to_a_standard_hdd_because_that_is_billed_from_32_gib_and_costs_more(self):
+        for size, planned in ((1, False), (4, False), (8, False), (16, False), (17, True), (32, True), (128, True), (None, False)):
+            with self.subTest(size=size):
+                world = World()
+                resource = world.arm.add(fs.disk(sku="StandardSSD_LRS", size_gb=size))
+                self.assertEqual(world.plan(resource, "disk", "change", cost=20.0) is not None, planned)
+        for size in (1, 4, 16, 17, 32768, None):
+            with self.subTest(premium=size):
+                world = World()
+                resource = world.arm.add(fs.disk(sku="Premium_LRS", size_gb=size))
+                self.assertIsNotNone(world.plan(resource, "disk", "change", cost=20.0), "a Premium SSD is dearer than a Standard SSD of any size")
+
+    def test_a_size_that_azure_shows_as_something_else_than_a_whole_number_of_gib_counts_as_not_shown(self):
+        for shown in (True, False, "64", 0, -1, 65537, 1.5, [64]):
+            with self.subTest(shown=shown):
+                world = World()
+                resource = world.arm.add(fs.disk(sku="StandardSSD_LRS", size_gb=None))
+                resource["properties"]["diskSizeGB"] = shown
+                self.assertIsNone(world.plan(resource, "disk", "change", cost=20.0))
 
     def test_the_table_is_the_documented_one_and_holds_nothing_that_is_converted_in_a_way_that_azure_does_not_allow(self):
         self.assertEqual({name: target for name, target in ((k.lower(), v) for k, v in TIERS.items())}, STEPS)

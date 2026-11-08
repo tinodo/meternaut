@@ -22,12 +22,22 @@ SKU_NAME = re.compile(r"[A-Za-z0-9_]{1,40}")
 # One step down, by the name of the type as Azure writes it (Learn, Disks - Update: sku.name is one of Standard_LRS, Premium_LRS, StandardSSD_LRS, UltraSSD_LRS, Premium_ZRS,
 # StandardSSD_ZRS, PremiumV2_LRS). Nothing else is moved: an Ultra Disk and a Premium SSD v2 are not converted in place.
 STEPS = {"premium_lrs": "StandardSSD_LRS", "standardssd_lrs": "Standard_LRS", "premium_zrs": "StandardSSD_ZRS"}
+# Learn, "Select a disk type for Azure IaaS VMs" (read on 2026-11-08): a managed disk is billed at the nearest offered size above the provisioned one, and the smallest Standard HDD offer
+# (S4) is 32 GiB, while a Standard SSD is offered from 4 GiB (E1, E2 and E3 are 4, 8 and 16 GiB). So a Standard SSD of up to 16 GiB would be billed at 32 GiB on a Standard HDD, which costs
+# more. A move to Standard HDD is planned for a larger disk only.
+HDD_COSTS_LESS_ABOVE_GIB = 16
 
 
 def sku_of(disk: dict) -> str:
     sku = disk.get("sku")
     name = sku.get("name") if isinstance(sku, dict) else None
     return KNOWN.get(str(name).lower(), "") if isinstance(name, str) and SKU_NAME.fullmatch(name) else ""
+
+
+def size_gb_of(disk: dict) -> int | None:
+    properties = disk.get("properties") if isinstance(disk.get("properties"), dict) else {}
+    size = properties.get("diskSizeGB")
+    return size if isinstance(size, int) and not isinstance(size, bool) and 1 <= size <= 65536 else None
 
 
 def aim_of(plan: PlanRecord) -> tuple[str, str]:
@@ -78,7 +88,7 @@ class ChangeDiskTier(Family):
             attached = self.attachment_of(env, disk)
         except Stop as stop:
             raise Unreadable(str(stop)) from stop
-        return {"sku": sku, "attached": attached}
+        return {"sku": sku, "attached": attached, "sizeGb": size_gb_of(disk)}
 
     def attachment_of(self, env: Env, disk: dict) -> str:
         """`unattached`, or `stopped` when the disk is attached to a machine of Meternaut's own that is stopped and released. Raises Stop for anything else: Azure documents that a disk has to be
@@ -106,6 +116,10 @@ class ChangeDiskTier(Family):
         to = STEPS.get(frm.lower())
         if not to:
             return f"there is no lower tier to move this disk to ({tier_words(frm)})"
+        size = facts.get("sizeGb")
+        if to == "Standard_LRS" and (not isinstance(size, int) or size <= HDD_COSTS_LESS_ABOVE_GIB):
+            return ("a Standard HDD is billed from 32 GiB up, so a Standard SSD of "
+                    f"{f'{size} GiB' if isinstance(size, int) else 'a size that Azure does not show'} would cost more there, not less")
         group = clean_text(getattr(lead, "resource_group"), 90)
         name = clean_text(getattr(lead, "name"), 120)
         wait = ("The disk is not attached to anything, so nothing stops while it changes." if facts.get("attached") == "unattached"
