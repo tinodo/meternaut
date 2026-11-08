@@ -851,7 +851,7 @@ class TheHubAction(unittest.TestCase):
         text = text[:text.index(";;")]
         for words in ("and nothing else", "The Event Hubs namespace (the action \\`retire-event-hubs\\` deletes it), the storage account, the workspace, Application Insights and every subnet were not touched",
                       "Running \\`retire-old\\` again is safe: it finds nothing.",
-                      "The function subnet \\`snet-func\\` was read back after the deletes: it is free (no app but the cases app is integrated with it), so the action \\`cases\\` can put the web page's Flex Consumption app on it"):
+                      "The function subnet \\`snet-func\\` was read back after the deletes: it is free (no app but the cases app is integrated with it), so the action \\`cases\\` can put the web page's app on it if the app is on Flex Consumption"):
             self.assertIn(words, text)
 
     def test_the_stopped_summary_says_what_to_do_when_another_app_holds_the_function_subnet(self):
@@ -862,7 +862,7 @@ class TheHubAction(unittest.TestCase):
 
     def test_the_description_says_that_it_reads_back_that_the_function_subnet_is_free(self):
         text = WORKFLOW[WORKFLOW.index("description: \"what-if"):WORKFLOW.index("type: choice")]
-        self.assertIn("and then reads back that the function subnet snet-func is free (no app but the cases app is integrated with it), which the action cases needs for its Flex Consumption app", text)
+        self.assertIn("and then reads back that the function subnet snet-func is free (no app but the cases app is integrated with it), which the action cases needs only while the web page's app is on Flex Consumption", text)
 
     def test_the_old_settings_are_read_by_nothing(self):
         for name in ("GATEWAY_RESOURCE_ID", "GATEWAY_APPINSIGHTS_ID", "RECORDING_READER_IDS"):

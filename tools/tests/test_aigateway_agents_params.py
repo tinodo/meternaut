@@ -68,19 +68,22 @@ PROJECT_PRINCIPAL = SETTINGS["FOUNDRY_PROJECT_PRINCIPAL_ID"]
 # Eighth change (the control message goes through a Storage queue and the Event Hubs namespace is gone, re-recorded on purpose): base.parameters.json and cases.parameters.json lost eventHubNamespaceName;
 # operator.parameters.json lost eventHubNamespaceName and gained storageAccountName (the Operator is given its role on the queue that the base's storage account holds); and the output lost the lines
 # event_hub_namespace and cases_hub_name, gained cases_queue_name, and base_endpoints lost the endpoint of the namespace, so that it lists the three of the storage account.
+# Ninth change (the web page is on a Basic plan, after the measurement of 2026-11-08, re-recorded on purpose): cases.parameters.json holds casesAppPlan "Basic" in place of "Flex", and the output holds the
+# Basic values for the lines about the plan kind (cases_app_plan, cases_plan_name, cases_plan_tier, cases_other_plan_name, cases_other_plan_tier and cases_subnet_name); function_subnet_name is still
+# snet-func, and every other file is what it was.
 # The files of the AI Gateway, the Foundry resource and the planted waste are byte for byte what they were.
 GOLDEN = {
     "aigateway-policies.json": "e6d99d1633ab16afc3410e50dbdcb7e290f0e125f4283b4b19f63a8eebb8395c",
     "aigateway-subnet.parameters.json": "a2a16b02fd7a1d54d8949ad89796d4ea89d6bf1907db1f5b621205699a5a0196",
     "aigateway.parameters.json": "936fc16a2a06d5aa3a029f319eab1dcd23c547800eaee01e5183539e746393d2",
     "base.parameters.json": "942cff3133e4f0acba426335edcd41e177473802258db4fe2750d72610d692b9",
-    "cases.parameters.json": "ac128bf1263b9e05e69b4b5f1711fb536cdddf413cd6e79e6bc0270ebedf8964",
+    "cases.parameters.json": "2ddab00c7dd4c5f7a616fa757aa5cf1fe1d9d9e77a6299d9cece02b0b2fbad6b",
     "environment.parameters.json": "5a722678f859d67fd7ff7895b0150b048b97def6b094c723d70d5849d078a7f3",
     "foundry.parameters.json": "ed5e8a14727de3595a0ab4bc5b0fcc4979c7d35b088536fce62f80651e59e99d",
     "operator.parameters.json": "77f010f57ffcef1d1ab84dea95de7eea61e4ed5c5d2135faf4593c14b6a5b5a4",
     "planted.parameters.json": "62ecf7282a7bf4c968db91a3943ba20a99dc7ac04fcabb7816aadf6f68f9759c",
 }
-GOLDEN_OUTPUT = "5847c25b271fed0b9cb118811c5b628d64d312da183467431b9845948156a913"
+GOLDEN_OUTPUT = "926cde9d3764c11168553128b71538fe71668c8309ebfa659672abc9cfd49d3a"
 
 FOUNDRY = (ROOT / "environment" / "foundry" / "main.bicep").read_text(encoding="utf-8")
 CASES = (ROOT / "environment" / "cases" / "main.bicep").read_text(encoding="utf-8")
