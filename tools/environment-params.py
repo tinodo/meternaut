@@ -138,14 +138,18 @@ CASES_SUBNET_NAMES = {"Flex": "snet-func", "Basic": "snet-cases"}
 SCOPE_ALL_SUBSCRIPTIONS = True
 # Whether the two agents of the investigation call their models through the AI Gateway (docs/proposals/08-ai-gateway.md, step 2). True: the action foundry makes the project's connection to the gateway,
 # the action aigateway gives the project's identity AI Gateway Models User on the gateway, and the action cases passes the model names `<connection>/<alias>` to the app. It is True in code since the change
-# that the owner ordered on 2026-11-07, and the order of the real run follows from it: aigateway, a wait of about ten minutes for the new role, foundry, cases, cases-run. That run has not been made at the time
-# of this change; the record of its outcome comes after it. False is the way back: the agents then call the model deployments of their own Foundry resource, as they did before, and no parameter file, no
+# that the owner ordered on 2026-11-07, and the order of the real run follows from it: aigateway, a wait of about ten minutes for the new role, foundry, cases, cases-run. That run was made on 2026-11-08
+# and its record is in docs/proposals/08-ai-gateway.md (what the first real runs showed). False is the way back: the agents then call the model deployments of their own Foundry resource, as they did before, and no parameter file, no
 # output and no action differs from what it was (a test holds that, with the constant set to False inside the test). The record says what stays after a way back.
 AGENTS_VIA_AI_GATEWAY = True
 # The name of the project's connection to the gateway (the default of environment/foundry/main.bicep): an agent names its model `<connection>/<alias>`. The two models of the agents are the defaults of
 # environment/cases/main.bicep; a test holds the three together.
 AIGATEWAY_CONNECTION_NAME = "aigateway"
-AGENT_MODELS = {"foundryModelInvestigator": "gpt-6.1-sol", "foundryModelSkeptic": "gpt-6-luna"}
+# The Investigator calls tools, so its model has to take function tools on the Chat Completions route, which is the only route that the Agent Service has for the gateway (Learn: Responses
+# routing for the AI Gateway tier is "coming soon"). The first two real runs (2026-11-08) showed that gpt-6.1-sol refuses function tools together with any reasoning effort there, and that it does not
+# take the effort none (low, medium and high only). So the Investigator is gpt-6-luna, which takes the effort none (INVESTIGATOR_REASONING_EFFORT in src/case-functions/cases/agents.py), and the
+# Skeptic, which has no tools and sends no effort, is the stronger model. A test pins the pair and the reason.
+AGENT_MODELS = {"foundryModelInvestigator": "gpt-6-luna", "foundryModelSkeptic": "gpt-6.1-sol"}
 # The host name that the service reports for the gateway (properties.frontend.defaultHostname): under the service's own domain, which the check of the gateway and the workflow ask for too.
 AIGATEWAY_HOST = re.compile(r"^(?=.{4,253}$)[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?\.ai\.gateway\.azure\.com$")
 # What the cases file carries for the gateway's host name in a --preview and in a what-if, where the gateway may not be in Azure yet. It matches the pattern above and is no gateway: the action cases

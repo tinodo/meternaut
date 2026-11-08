@@ -56,21 +56,25 @@ def causes_of_the_app():
 
 
 class TheRecordOfStep2(unittest.TestCase):
-    def test_the_status_says_that_step_1_is_deployed_step_2_is_on_in_code_and_ran_once_the_switch_is_true_and_the_question_is_open(self):
+    def test_the_status_says_that_step_1_is_deployed_step_2_is_on_in_code_and_ran_the_switch_is_true_and_the_question_is_open(self):
         status = re.search(r"\*\*Status: .*?\*\* This page records", PROPOSAL).group(0)
-        for words in ("Step 1 of 2 is deployed and checked", "Step 2 of 2 is built and on in code, and it ran once in Azure on 2026-11-08", "`AGENTS_VIA_AI_GATEWAY` in `tools/environment-params.py`, that is True since the owner's order of 2026-11-07",
-                      "The Detective and the Skeptic of the cases app call the gateway, and ran through it in that run", "the fix, the effort `none` in the Investigator's definition, has not been run",
+        for words in ("Step 1 of 2 is deployed and checked", "Step 2 of 2 is built and on in code, and it ran in Azure on 2026-11-08, with two `cases-run`s", "`AGENTS_VIA_AI_GATEWAY` in `tools/environment-params.py`, that is True since the owner's order of 2026-11-07",
+                      "The Detective and the Skeptic of the cases app call the gateway, and ran through it in those runs", "the fix, the Investigator on gpt-6-luna with the effort `none`, has not been run",
                       "Whether the connection calls the gateway with the project's own managed identity and no key is not proved"):
             self.assertIn(words, status, words)
         self.assertNotIn("is not built", status)
         for old in ("Step 1 of 2 is built and not deployed", "not deployed too", "Nothing was made in Azure", "Step 2 of 2 is built and not deployed", "that is False", "so that nothing changes until the owner flips it",
-                    "the agents were not touched", "it has not run in Azure", "which has not run either", "it was not tried"):
+                    "the agents were not touched", "it has not run in Azure", "which has not run either", "it was not tried", "ran once"):
             self.assertNotIn(old, status, old)
         first = PROPOSAL.split("**Update, 2026-11-08:")[1].split("**Update, 2026-11-07: the agents' route is on in code.**")[0]
         for words in ("The judges ran through the gateway (3 cases, every step ok).", "function tools do not work together with a reasoning effort for its model",
                       "So the Agent Service does call the gateway on the Chat Completions route (read from that answer: the gateway's own log is off, so it is not seen from the gateway's side).",
-                      "The Responses route, which the answer names as the other way, is not offered for this service.", "the Investigator's definition now asks for the reasoning effort `none`",
-                      "no longer made again with the old key `agent`", "**That fix has not been run in Azure**", "it makes a new version of the Investigator on the next `cases-run`"):
+                      "The Responses route, which the answer names as the other way, is not offered for this service.", "The first fix asked for the reasoning effort `none`",
+                      "In the second run the same model, gpt-6.1-sol, refused the effort `none` too: it takes low, medium and high only.",
+                      "So gpt-6.1-sol cannot use function tools on the one route that the Agent Service has for the gateway.",
+                      "The agents' models are now swapped: the Investigator is gpt-6-luna, which takes the effort `none`, and the Skeptic, which has no tools and sends no effort, is gpt-6.1-sol",
+                      "no longer made again with the old key `agent`", "**That fix has not been run in Azure**", "it makes a new version of each agent on the next `cases-run`",
+                      "If gpt-6-luna refuses too, the agents cannot use the gateway until the Responses route is offered for it, and the way back is the switch `AGENTS_VIA_AI_GATEWAY` set to False (the owner decides)."):
             self.assertIn(words, first, words)
         update = PROPOSAL.split("**Update, 2026-11-07: the agents' route is on in code.**")[1].split("**Update, 2026-11-07, before that:")[0]
         for words in ("\"Route [the agents] to the AI gateway ... IT NEEDS TO ADHERE TO THE CITADEL DESIGN PRINCIPLES\"", "the switch `AGENTS_VIA_AI_GATEWAY` in `tools/environment-params.py` is True",
@@ -93,7 +97,7 @@ class TheRecordOfStep2(unittest.TestCase):
                       "after the owner's order of 2026-11-07 and after `aigateway` and `aigateway-check` had passed on the real estate", "The way back is the same line set to False.",
                       "the parameter files, the templates and every action are what they were before step 2", "the same byte for byte, and that the new parameters are empty or false",
                       "**`foundry` makes the connection `aigateway`**", "reads it back with GET only", "no credential held",
-                      "**`aigateway` gives the Foundry project's identity *AI Gateway Models User***", "**`cases` gives the app the model names `aigateway/gpt-6.1-sol` and `aigateway/gpt-6-luna`,**",
+                      "**`aigateway` gives the Foundry project's identity *AI Gateway Models User***", "**`cases` gives the app the model names `aigateway/gpt-6-luna` and `aigateway/gpt-6.1-sol`,**",
                       "exactly `<name>` or `<name>/<name>`", "The builder refuses True when it cannot name the gateway."):
             self.assertIn(words, section, words)
         for old in ("Nothing changes until the owner flips one constant", "`AGENTS_VIA_AI_GATEWAY = False`", "Nothing of step 2 is deployed"):
@@ -144,8 +148,8 @@ class TheRecordOfStep2(unittest.TestCase):
         self.assertEqual(on_the_page, in_the_record, "the actions come in the same order on the page")
         self.assertIn("the owner's order and the change of one line that sets the switch to True (made)", sentence)
         self.assertIn("about ten minutes", sentence)
-        self.assertIn("The last five are the real run. It was made on 2026-11-08, and the investigation stopped at the model's refusal of function tools together with a reasoning effort:", flat(step_2_of_the_record()))
-        self.assertIn("and the run with the fix, which sets the effort `none`, has not been made.", flat(step_2_of_the_record()))
+        self.assertIn("The last five are the real run. It was made on 2026-11-08 and repeated after the first fix, and both times the investigation stopped at the model's refusal of function tools:", flat(step_2_of_the_record()))
+        self.assertIn("and the run with the second fix, which makes the Investigator gpt-6-luna with the effort `none`, has not been made.", flat(step_2_of_the_record()))
         self.assertIn("On an estate that has neither the Foundry project nor the gateway, `foundry` and `aigateway` each ask for the other while the switch is True, so they are made with the switch False first.",
                       flat(step_2_of_the_record()))
 
@@ -182,21 +186,30 @@ class TheRecordOfStep2(unittest.TestCase):
 
     def test_the_section_of_the_first_real_run_says_what_it_showed_what_the_fix_is_and_that_the_fix_is_not_run(self):
         part = flat(PROPOSAL_TEXT.split("### What the first real run showed")[1].split("\n### ")[0])
-        for words in ("On 2026-11-08 `cases-run` ran with the agents on the gateway", "`aigateway/gpt-6.1-sol` for the Investigator and `aigateway/gpt-6-luna` for the Skeptic",
-                      "**The judges ran through the gateway.**", "judged 3 cases, and every step was ok", "**The Agent Service calls the gateway's route, on Chat Completions.**",
+        for words in ("On 2026-11-08 `cases-run` ran twice with the agents on the gateway", "`aigateway/gpt-6.1-sol` for the Investigator and `aigateway/gpt-6-luna` for the Skeptic",
+                      "**The judges ran through the gateway.**", "judged 3 cases, and every step was ok", "**Run 1: the Agent Service calls the gateway's route, on Chat Completions.**",
                       "HTTP 400 and the code `model_error`", "Function tools with reasoning_effort are not supported for gpt-6.1-sol in /v1/chat/completions.",
                       "To use function tools, use /v1/responses or set reasoning_effort to 'none'.", "It is not known whether the model or the Agent Service itself refused it, because the gateway's own log is off.",
                       "**The Responses route is not offered for this service.**", "\"coming soon\"", "**`agent_reference` is the key.**",
                       "The 'agent' property is deprecated. Use 'agent_reference' instead", "That answer hid the first one.",
-                      "**The fix, not run yet.**", "`reasoning: {\"effort\": \"none\"}`", "`PromptAgentDefinition.reasoning`", "The Skeptic has no tools and is unchanged.",
-                      "so the next `cases-run` makes a new version of the Investigator, and the Skeptic keeps its version",
-                      "no longer made again with the other key", "the first answer is shown and `agent_reference` stays",
-                      "**Not known:** that an investigation completes with the effort `none`, that the Skeptic agent runs, and whether the Agent Service reports token numbers for a model behind a connection."):
+                      "**Run 2, with the effort `none` asked for: the same model refuses it.**", "the code `unsupported_value`",
+                      "Unsupported value: 'none' is not supported with the 'gpt-6.1-sol-2026-09-29' model. Supported values are: 'low', 'medium', and 'high'.",
+                      "**So gpt-6.1-sol cannot use function tools on this route.**", "The model that uses tools has to be one that takes the effort none.",
+                      "**The fix, built and not run yet.**", "The agents' models are swapped: the Investigator is `gpt-6-luna` with `reasoning: {\"effort\": \"none\"}` in its definition",
+                      "`PromptAgentDefinition.reasoning`", "and the Skeptic is `gpt-6.1-sol`, with no tools and no effort sent, so that the stronger model judges.",
+                      "a test holds the pair together with the reason: the Investigator's model is not one that refuses the effort `none`",
+                      "The capacities of `environment/models.json` moved with the roles (gpt-6-luna 50 thousand tokens a minute for the agents, gpt-6.1-sol 20)",
+                      "they apply when `foundry` is run", "Both agents get a new version on the next `cases-run`.",
+                      "is not made again with the other key, and is shown as it came", "the first answer is shown and `agent_reference` stays",
+                      "**If gpt-6-luna refuses too,** the agents cannot use the gateway until the Responses route is offered for it", "the owner decides",
+                      "**Not known:** that an investigation completes on gpt-6-luna with the effort `none`, that the Skeptic agent runs on gpt-6.1-sol, and whether the Agent Service reports token numbers for a model behind a connection."):
             self.assertIn(words, part, words)
         for secret in ("request id", "request-id"):
             self.assertNotIn(secret, part)
         table = flat(PROPOSAL_TEXT.split("### What each failure means")[1].split("### The way back from step 2")[0])
         self.assertIn("An answer of the model itself (the code `model_error`, or words about the reasoning effort or the function tools) is about something else too, even when it names the ModelGateway.", table)
+        known = PROPOSAL.split("## What is verified, what is inferred, what is not known")[1].split("## The frontend is public only")[0]
+        self.assertIn("| Whether gpt-6-luna does function tools with the effort `none` on the Chat Completions route, which is the only route that the Agent Service has for the gateway | **Not known; the next `cases-run` answers** |", known)
 
     def test_the_part_of_the_record_that_is_about_step_2_holds_no_key_no_address_of_the_owner_and_no_guid(self):
         section = step_2_of_the_record()
@@ -208,10 +221,11 @@ class TheRecordOfStep2(unittest.TestCase):
 class TheOtherDocumentsOfStep2(unittest.TestCase):
     def test_the_bootstrap_section_has_the_order_what_is_not_known_and_the_way_back(self):
         section = flat(section_of_bootstrap())
-        for words in ("**Built, on in code, and run once in Azure (2026-11-08).**", "Step 2 adds no action and no hand step.",
+        for words in ("**Built, on in code, and run in Azure (2026-11-08).**", "Step 2 adds no action and no hand step.",
                       "`AGENTS_VIA_AI_GATEWAY` in [`tools/environment-params.py`](../tools/environment-params.py), which is `True` since the owner's order of 2026-11-07",
                       "No Azure change was made and no Hub run was made for step 2 when this page was written.",
-                      "It was run once on 2026-11-08 (items 4 to 7 below, up to `cases-run`): the Investigator was refused at its first call, because its model does not take function tools together with a reasoning effort, and its definition now asks for the effort `none`. That fix has not been run",
+                      "It was run on 2026-11-08 (items 4 to 7 below, up to `cases-run`, and `cases-run` again after a first fix): the Investigator was refused at its first call both times, because its model, gpt-6.1-sol, does not take function tools together with a reasoning effort and does not take the effort none either. The Investigator is now gpt-6-luna with the effort `none`, and the Skeptic gpt-6.1-sol. That fix has not been run",
+                      "`cases` gives the app the model names `aigateway/gpt-6-luna` for the Investigator and `aigateway/gpt-6.1-sol` for the Skeptic",
                       "**What the constant does when it is True.**",
                       "No key is used and none is built: if the connection needs one, the owner decides ([rule 23](../AGENTS.md)).",
                       "**What is not known.**", "**The order.**", "**Going back.**", "**What stays:** the connection `aigateway` in the Foundry project",
@@ -235,25 +249,27 @@ class TheOtherDocumentsOfStep2(unittest.TestCase):
         self.assertIn("If Azure refuses the connection, or the read-back differs, stop.", items["5"])
         self.assertIn("the audience `https://azure-api.net/aigateway`", items["5"])
         self.assertIn("the action checks first, and stops before it deploys when it has not", items["6"])
-        self.assertIn("`investigation.started` names the models `aigateway/gpt-6.1-sol` and `aigateway/gpt-6-luna`", items["7"])
+        self.assertIn("`investigation.started` names the models `aigateway/gpt-6-luna` and `aigateway/gpt-6.1-sol`", items["7"])
         self.assertIn("A run of the Investigator that gives an answer is the proof that the route works.", items["7"])
         self.assertIn("the sentence of [rule 15 (c)](../AGENTS.md) about the agents is struck", items["8"])
 
     def test_the_end_of_the_list_of_actions_points_to_the_section_of_step_2(self):
         after = BOOTSTRAP.split("\n## After it\n")[1].split("\n## ")[0]
-        self.assertIn("Its step 2, which sends the agents through it, is a constant that is True (the owner ordered the route on 2026-11-07, and it ran once in Azure on 2026-11-08 and stopped at the Investigator's first call), "
+        self.assertIn("Its step 2, which sends the agents through it, is a constant that is True (the owner ordered the route on 2026-11-07, and it ran in Azure on 2026-11-08 and stopped at the Investigator's first call), "
                       "and its order is in [its own section](#added-on-2026-11-07-for-the-agents-route-through-the-ai-gateway-step-2).", after)
         self.assertLess(BOOTSTRAP.index("## Added on 2026-11-07 for the AI Gateway"), BOOTSTRAP.index(SECTION))
         self.assertLess(BOOTSTRAP.index(SECTION), BOOTSTRAP.index("\n## After it\n"))
 
-    def test_rule_15_c_says_that_the_agents_route_is_on_in_code_and_ran_once_with_the_switch_true_and_that_the_judges_go_through_the_ai_gateway(self):
+    def test_rule_15_c_says_that_the_agents_route_is_on_in_code_and_ran_with_the_switch_true_and_that_the_judges_go_through_the_ai_gateway(self):
         (rule,) = [line for line in AGENTS.splitlines()
                    if line.lstrip().startswith("- **(c) Every model call of Meternaut goes through the AI Gateway, the governance hub of the Citadel design, with no direct path, not even for a test, unless the owner makes a written exception**")]
-        self.assertIn("**The agents' route through the gateway is on in code and ran once in Azure** (2026-11-07, the owner: \"Route [the agents] to the AI gateway ... IT NEEDS TO ADHERE TO THE CITADEL DESIGN PRINCIPLES\"): "
+        self.assertIn("**The agents' route through the gateway is on in code and ran in Azure** (2026-11-07, the owner: \"Route [the agents] to the AI gateway ... IT NEEDS TO ADHERE TO THE CITADEL DESIGN PRINCIPLES\"): "
                       "the two agents of the investigation (rule 30) go through the gateway by step 2, the connection of the Foundry project to the gateway, which one line switches on "
                       "(`AGENTS_VIA_AI_GATEWAY` in `tools/environment-params.py`, True). The order of the real run is `aigateway`, about ten minutes, `foundry`, `cases`, `cases-run`; "
-                      "it was made on 2026-11-08, and the Investigator was refused at its first call, because its model does not take function tools together with a reasoning effort. "
-                      "Its definition now asks for the effort `none`, and that fix has not been run, so no investigation has completed through the gateway yet", rule)
+                      "it was made on 2026-11-08 and repeated after a first fix, and the Investigator was refused at its first call both times, because its model (gpt-6.1-sol) does not take function tools "
+                      "together with a reasoning effort and does not take the effort none either. The Investigator is now gpt-6-luna with the effort `none` and the Skeptic gpt-6.1-sol, "
+                      "and that fix has not been run, so no investigation has completed through the gateway yet", rule)
+        self.assertIn("If gpt-6-luna refuses too, the agents cannot use the gateway until the Responses route is offered for it, and the owner decides.", rule)
         self.assertNotIn("the agents that are deployed still call the model deployments of their own Foundry resource", rule)
         self.assertNotIn("has not run in Azure", rule)
         self.assertIn("The way back is the line set to False and a run of `foundry` and `cases`; it is a direct route, so it needs the owner's written exception.", rule)
@@ -265,13 +281,13 @@ class TheOtherDocumentsOfStep2(unittest.TestCase):
         self.assertNotIn("the AI Gateway is not deployed", rule)
         self.assertEqual(rule.count("Planned end, 2026-11-07"), 0, "the planned end of the exception is gone with the exception: the governance-hub route ended on 2026-11-07")
 
-    def test_the_routes_row_says_that_the_gateway_is_deployed_and_step_2_is_on_in_code_and_ran_once_with_the_switch(self):
+    def test_the_routes_row_says_that_the_gateway_is_deployed_and_step_2_is_on_in_code_and_ran_with_the_switch(self):
         rows = [line for line in FOUNDRY_AGENTS.splitlines() if line.startswith("| **AI Gateway, Azure's separate service")]
         self.assertEqual(len(rows), 1)
         row = flat(rows[0])
-        for words in ("(deployed; step 2 is on in code, the switch is True, and ran once in Azure)",
+        for words in ("(deployed; step 2 is on in code, the switch is True, and ran in Azure)",
                       "step 2 builds it behind one switch, `AGENTS_VIA_AI_GATEWAY` in `tools/environment-params.py`, which is True since the owner's order of 2026-11-07",
-                      "The gateway is deployed (2026-11-07); the connection was made, and the Agent Service called the gateway's route on 2026-11-08, with an answer that refused function tools together with a reasoning effort for the Investigator's model.",
+                      "The gateway is deployed (2026-11-07); the connection was made, and the Agent Service called the gateway's route on 2026-11-08, with answers that refused function tools for the Investigator's model, first together with a reasoning effort and then with the effort `none`.",
                       "the three outcomes of step 2 and the order of its real run",
                       "The real run of step 2 was made on 2026-11-08 and stopped at the Investigator's first call; the fix has not been run.",
                       "**Deployed on 2026-11-07 at the owner's written request; the Detective and the Skeptic of the cases app call it (they ran through it on 2026-11-08), and the agents are made with its model names "
@@ -279,23 +295,25 @@ class TheOtherDocumentsOfStep2(unittest.TestCase):
             self.assertIn(words, row, words)
         self.assertNotIn("Until the real run of step 2 has been made, the deployed agents call their own resource", row)
         self.assertNotIn("Not used since 2026-11-07", row)
-        self.assertIn("`modelInvestigator` and `modelSkeptic` read `<connection>/<alias>`, for example `aigateway/gpt-6.1-sol`", FOUNDRY_AGENTS)
+        self.assertIn("`modelInvestigator` and `modelSkeptic` read `<connection>/<alias>`, for example `aigateway/gpt-6-luna`", FOUNDRY_AGENTS)
         self.assertIn("so an answer about the model, its reasoning effort or its function tools (the code `model_error`) is not sent again, and when the second answer says that `agent` is deprecated, the first answer is the one that is shown",
                       flat(FOUNDRY_AGENTS))
         self.assertNotIn("whatever it says", FOUNDRY_AGENTS)
 
-    def test_the_readme_says_that_step_1_is_deployed_and_step_2_is_on_in_code_and_ran_once(self):
+    def test_the_readme_says_that_step_1_is_deployed_and_step_2_is_on_in_code_and_ran(self):
         rows = [line for line in README.splitlines() if line.startswith("| **[An AI Gateway for the agents](docs/proposals/08-ai-gateway.md)**")]
         (row,) = rows
-        self.assertIn("step 2, the Foundry connection and a switch for the agents' model names, is on in code (the switch is True) and ran once in Azure on 2026-11-08: the Investigator was refused at its first call, "
-                      "because its model does not take function tools together with a reasoning effort, and the fix (the effort `none`) has not been run", row)
+        self.assertIn("step 2, the Foundry connection and a switch for the agents' model names, is on in code (the switch is True) and ran in Azure on 2026-11-08, twice at `cases-run`: the Investigator was refused at its first call both times, "
+                      "because its model (gpt-6.1-sol) does not take function tools together with a reasoning effort and does not take the effort none either, and the fix (the Investigator on gpt-6-luna with the effort `none`, "
+                      "the Skeptic on gpt-6.1-sol) has not been run", row)
         self.assertNotIn("so the deployed agents do not call through the gateway yet", row)
         (bullet,) = [line for line in README.splitlines() if line.startswith("- **An AI Gateway for every model call")]
-        self.assertIn("step 2 for the agents is on in code and ran once, and its fix has not been run", bullet)
+        self.assertIn("step 2 for the agents is on in code and ran twice at `cases-run`, and its fix has not been run", bullet)
         self.assertNotIn("both steps are built and not deployed", bullet)
         self.assertIn("`AGENTS_VIA_AI_GATEWAY` in [`tools/environment-params.py`](tools/environment-params.py), that is True since the owner's order of 2026-11-07", bullet)
-        self.assertIn("The order of the real run is `aigateway`, about ten minutes, `foundry`, `cases`, `cases-run`; it was made on 2026-11-08, and the Investigator was refused at its first call, "
-                      "because its model does not take function tools together with a reasoning effort. Its definition now asks for the effort `none`, and that fix has not been run", bullet)
+        self.assertIn("The order of the real run is `aigateway`, about ten minutes, `foundry`, `cases`, `cases-run`; it was made on 2026-11-08 and repeated after a first fix, and the Investigator was refused at its first call both times, "
+                      "because its model (gpt-6.1-sol) does not take function tools together with a reasoning effort and does not take the effort none either. The Investigator is now gpt-6-luna with the effort `none` "
+                      "and the Skeptic gpt-6.1-sol, and that fix has not been run", bullet)
         self.assertNotIn("until it has been made, the deployed agents keep calling their model deployments", bullet)
         self.assertNotIn("Not built: step 2", bullet)
         self.assertNotIn("that is False, so that nothing changes until the owner flips it", bullet)

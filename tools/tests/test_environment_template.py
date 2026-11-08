@@ -768,7 +768,7 @@ class Cases(unittest.TestCase):
                      "{ name: 'FOUNDRY_MODEL_SKEPTIC', value: foundryModelSkeptic }", "{ name: 'INVESTIGATE', value: empty(foundryProjectEndpoint) ? 'off' : 'on' }",
                      "{ name: 'INVESTIGATE_MAX_CALLS', value: string(investigateMaxCalls) }", "{ name: 'INVESTIGATE_MAX_SECONDS', value: string(investigateMaxSeconds) }"):
             self.assertIn(line, body)
-        for line in ("param foundryProjectEndpoint string = ''", "param foundryModelInvestigator string = 'gpt-6.1-sol'", "param foundryModelSkeptic string = 'gpt-6-luna'",
+        for line in ("param foundryProjectEndpoint string = ''", "param foundryModelInvestigator string = 'gpt-6-luna'", "param foundryModelSkeptic string = 'gpt-6.1-sol'",
                      "param investigateMaxCalls int = 40", "param investigateMaxSeconds int = 420"):
             self.assertRegex(self.code, rf"(?m)^{re.escape(line)}$")
         self.assertEqual(len(re.findall(r"name: '(?:FOUNDRY_\w+|INVESTIGATE\w*)'", body)), 6)
