@@ -623,15 +623,20 @@ class FirstCases(unittest.TestCase):
                 self.assertEqual(code, 2, err)
                 self.assertEqual(out, "")
 
-    def test_the_planting_has_a_name_that_the_run_chooses_and_a_public_address_only_when_asked(self):
+    def test_the_planting_has_a_name_that_the_run_chooses_and_a_public_address_and_a_machine_only_when_asked(self):
         files, _ = self.build()
         planted = values(files["planted.parameters.json"])
-        self.assertEqual((planted["plantedId"], planted["plantPublicIp"]), ("demo", False))
+        self.assertEqual((planted["plantedId"], planted["plantPublicIp"], planted["plantVm"]), ("demo", False, False))
+        self.assertEqual(planted["plantedVmSize"], ep.PLANTED_VM_SIZE)
+        self.assertEqual(ep.PLANTED_VM_SIZE, "Standard_B2s", "the cheapest burstable size that has a smaller one in its series, so that resize-vm has a step to take (Standard_B1s)")
         files, _ = self.build(PLANTED_ID="r42", PLANT_PUBLIC_IP="TRUE")
         planted = values(files["planted.parameters.json"])
-        self.assertEqual((planted["plantedId"], planted["plantPublicIp"]), ("r42", True))
+        self.assertEqual((planted["plantedId"], planted["plantPublicIp"], planted["plantVm"]), ("r42", True, False))
         self.assertEqual(planted["location"], values(files["base.parameters.json"])["location"])
-        for bad in ({"PLANTED_ID": "Has Space"}, {"PLANTED_ID": "x" * 13}, {"PLANT_PUBLIC_IP": "maybe"}):
+        files, _ = self.build(PLANTED_ID="r43", PLANT_VM="True")
+        planted = values(files["planted.parameters.json"])
+        self.assertEqual((planted["plantedId"], planted["plantPublicIp"], planted["plantVm"]), ("r43", False, True))
+        for bad in ({"PLANTED_ID": "Has Space"}, {"PLANTED_ID": "x" * 13}, {"PLANT_PUBLIC_IP": "maybe"}, {"PLANT_VM": "maybe"}, {"PLANT_VM": "1"}):
             with self.subTest(bad):
                 self.assertEqual(run({**SETTINGS, **bad})[0], 2)
 

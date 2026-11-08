@@ -22,7 +22,7 @@ A guard refuses and does not warn. The `az` session is a person's, in the config
 
 ## What a person sees
 
-`--dry-run` prints the plan (each step that would run, what is replaced, each input's value) and needs no `az` session. The inputs are flags (`--minutes`, `--plant-public-ip`, `--evals-command`, `--evals-judge`, `--redteam-mode`); the workflow's default is used and printed when one is missing. A run prints the steps live, writes `local/records/hub-local-<action>-<time>.md` (commit, tree state, each step's outcome and seconds, what was restored) and a `.log`, and ends with `Hub (local) <action>: PASSED in N minutes` or `FAILED`.
+`--dry-run` prints the plan (each step that would run, what is replaced, each input's value) and needs no `az` session. The inputs are flags (`--minutes`, `--plant-public-ip`, `--plant-vm`, `--evals-command`, `--evals-judge`, `--redteam-mode`); the workflow's default is used and printed when one is missing. A run prints the steps live, writes `local/records/hub-local-<action>-<time>.md` (commit, tree state, each step's outcome and seconds, what was restored) and a `.log`, and ends with `Hub (local) <action>: PASSED in N minutes` or `FAILED`.
 
 ## What changed from a run on GitHub
 

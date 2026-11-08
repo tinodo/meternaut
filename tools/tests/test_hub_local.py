@@ -96,7 +96,7 @@ def tearDownModule():
 
 
 def make_args(action="what-if", **flags):
-    args = argparse.Namespace(action=action, minutes=None, public_ai_gateway_requested=False, plant_public_ip=False, evals_command=None, evals_judge=None, redteam_mode=None, yes=False,
+    args = argparse.Namespace(action=action, minutes=None, public_ai_gateway_requested=False, plant_public_ip=False, plant_vm=False, evals_command=None, evals_judge=None, redteam_mode=None, yes=False,
                               allow_dirty=False, dry_run=False, workflow=None, init=False, from_github=False)
     args.__dict__.update(flags)
     return args
@@ -1006,6 +1006,35 @@ class TheRuns(RunnerCase):
         self.assertEqual(code, 0, text)
         log = self.records(".log")[0].read_text(encoding="utf-8")
         self.assertEqual(log.count("caf\u00e9 \u2014 \u20ac"), 2, "bash and a native Python both print UTF-8")
+
+
+class ThePlantingOfAMachineIsAFlag(unittest.TestCase):
+    """The input plant_vm of the real workflow (the families of change, 2026-11-08): off unless the person gives --plant-vm, and said in the plan like every other input."""
+
+    def test_the_workflow_has_the_input_and_it_is_off_unless_the_flag_is_given(self):
+        self.assertIn("plant_vm", REAL_WORKFLOW.inputs)
+        self.assertIs(REAL_WORKFLOW.inputs["plant_vm"].default, False)
+        self.assertIs(hub.input_values(REAL_WORKFLOW, make_args("plant"))["plant_vm"], False)
+        self.assertIs(hub.input_values(REAL_WORKFLOW, make_args("plant", plant_vm=True))["plant_vm"], True)
+        self.assertIs(hub.input_values(REAL_WORKFLOW, make_args("plant", plant_public_ip=True))["plant_vm"], False, "the two plantings are asked for apart")
+
+    def test_the_plan_prints_it_for_plant_and_says_when_it_is_the_workflows_default(self):
+        self.assertEqual(hub.inputs_line(REAL_WORKFLOW, make_args("plant")), "plant_public_ip=false (the workflow's default), plant_vm=false (the workflow's default)")
+        self.assertEqual(hub.inputs_line(REAL_WORKFLOW, make_args("plant", plant_vm=True)), "plant_public_ip=false (the workflow's default), plant_vm=true")
+        self.assertEqual(hub.inputs_line(REAL_WORKFLOW, make_args("what-if")), "")
+
+    def test_a_flag_for_another_action_is_said_in_the_plan_and_ignored(self):
+        self.assertEqual(hub.ignored_flags(make_args("cases", plant_vm=True)), ["--plant-vm is only for plant: the action cases ignores it"])
+        self.assertEqual(hub.ignored_flags(make_args("plant", plant_vm=True)), [])
+
+    def test_the_parser_has_the_flag(self):
+        parser = hub.build_parser()
+        self.assertTrue(parser.parse_args(["plant", "--plant-vm"]).plant_vm)
+        self.assertFalse(parser.parse_args(["plant"]).plant_vm)
+
+    def test_the_planting_job_passes_the_input_to_the_parameter_builder_through_its_environment(self):
+        self.assertEqual(REAL_WORKFLOW.job_env["PLANT_VM"], "${{ inputs.plant_vm }}")
+        self.assertEqual(REAL_WORKFLOW.job_env["PLANT_PUBLIC_IP"], "${{ inputs.plant_public_ip }}")
 
 
 # The same workflow as the small one, with the inputs of the agent harness and its actions: the choices and the defaults are the real workflow's.

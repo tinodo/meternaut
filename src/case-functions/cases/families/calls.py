@@ -142,13 +142,24 @@ def _usage(scope: ChangeScope) -> "re.Pattern[str]":
     return re.compile(re.escape(f"https://{ARM_HOST}/subscriptions/{scope.subscription}/providers/{COMPUTE}/locations/") + r"[A-Za-z0-9]{1,40}/usages", re.I)
 
 
+def _once(calls: Sequence[tuple[str, "re.Pattern[str]"]]) -> tuple[tuple[str, "re.Pattern[str]"], ...]:
+    """The same list without a call twice: two kinds of one collection (the disk is read and deleted with one api-version and read and moved with another) have one address."""
+    seen: set[tuple[str, str]] = set()
+    kept = []
+    for method, pattern in calls:
+        if (method, pattern.pattern) not in seen:
+            seen.add((method, pattern.pattern))
+            kept.append((method, pattern))
+    return tuple(kept)
+
+
 def read_patterns(scopes: Sequence[ChangeScope]) -> tuple[tuple[str, "re.Pattern[str]"], ...]:
     """(method, address without its query) of the reads that the checks make: each kind of resource in each scope, the sizes a machine can be resized to, the locks and the quota. No write."""
     calls: list[tuple[str, "re.Pattern[str]"]] = []
     for scope in scopes:
         calls += [(call.method, _pattern(scope, call)) for call in READS]
         calls += [(GET, _locks(scope)), (GET, _usage(scope))]
-    return tuple(calls)
+    return _once(calls)
 
 
 def change_patterns(scopes: Sequence[ChangeScope]) -> tuple[tuple[str, "re.Pattern[str]"], ...]:
@@ -157,4 +168,4 @@ def change_patterns(scopes: Sequence[ChangeScope]) -> tuple[tuple[str, "re.Patte
     for scope in scopes:
         calls += [(call.method, _pattern(scope, call)) for call in WRITES]
         calls.append((GET, _operations(scope)))
-    return tuple(calls)
+    return _once(calls)

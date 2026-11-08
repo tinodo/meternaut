@@ -114,6 +114,12 @@ class TheListsOfTheClients(unittest.TestCase):
     def allowed(self, client, method, url) -> bool:
         return not refused(client, method, url)
 
+    def test_no_call_is_on_a_list_twice_although_two_kinds_of_one_collection_have_each_their_api_version(self):
+        self.assertEqual(len({(kind.provider, kind.collection) for kind in calls.KINDS}), len(calls.KINDS) - 1, "the disk is read and deleted with one api-version and moved with another")
+        for patterns in (change_calls(fs.SCOPES), read_calls(fs.SCOPES)):
+            keys = [(method, pattern.pattern) for method, pattern in patterns]
+            self.assertEqual(len(keys), len(set(keys)))
+
     def test_the_client_of_a_change_makes_each_call_of_the_list_in_the_scope_and_no_other(self):
         for call in calls.WRITES:
             with self.subTest(call=f"{call.method} {call.kind.collection}{call.suffix}"):

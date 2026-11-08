@@ -47,7 +47,8 @@ ALLOWED = {
         "Microsoft.Web/sites/basicPublishingCredentialsPolicies",
         "Microsoft.Web/sites/config",
     },
-    "environment/cases/planted.bicep": {"Microsoft.Compute/disks", "Microsoft.Network/publicIPAddresses"},
+    # The planted waste (2026-11-08, the families of change): a disk, an address when asked, and when asked a machine with its network interface and its OS disk. The machine's subnet is read and never made.
+    "environment/cases/planted.bicep": {"Microsoft.Compute/disks", "Microsoft.Network/publicIPAddresses", "Microsoft.Network/networkInterfaces", "Microsoft.Compute/virtualMachines"},
     # The Teams bot (docs/proposals/13-teams-and-outlook.md): its own identity, plan and function app, the Azure Bot resource with its Teams channel, and the roles on the shared storage account.
     # It makes no storage account, no subnet, no endpoint and no DNS object.
     "environment/teams/main.bicep": {
@@ -1117,34 +1118,92 @@ class TheCodeIsPublishedFromInsideTheNetwork(unittest.TestCase):
 
 
 class Planted(unittest.TestCase):
-    """The waste that Meternaut plants (environment/cases/planted.bicep): a disk and, when asked, an address, both unattached and both tagged."""
+    """The waste that Meternaut plants (environment/cases/planted.bicep): an unattached disk and, when asked, an address and a machine that nothing uses, all tagged. The names and the types are the
+    planted list of the app (cases/families/gates.py): the one place that says which resources a family of change may touch."""
 
     def setUp(self):
         self.source = text("environment/cases/planted.bicep")
         self.code = re.sub(r"//.*", "", self.source)
         self.found = resources(self.source)
 
-    def test_it_makes_an_unattached_disk_and_an_optional_unassigned_address_and_nothing_else(self):
-        self.assertEqual(sorted(self.found), ["address", "disk"])
+    def test_it_makes_an_unattached_disk_an_optional_unassigned_address_and_an_optional_machine_with_its_interface_and_disk_and_nothing_else(self):
+        self.assertEqual(sorted(self.found), ["address", "disk", "machine", "nic", "osDisk"])
+        self.assertEqual({name: kind for name, (kind, _) in self.found.items()},
+                         {"disk": "Microsoft.Compute/disks", "address": "Microsoft.Network/publicIPAddresses", "nic": "Microsoft.Network/networkInterfaces", "osDisk": "Microsoft.Compute/disks",
+                          "machine": "Microsoft.Compute/virtualMachines"})
         self.assertIn("if (plantPublicIp)", self.source)
+        self.assertEqual(self.code.count("= if (plantVm)"), 3, "the interface, the OS disk and the machine are made together and only when asked")
         self.assertNotIn("managedBy", self.code)
-        self.assertNotIn("ipConfiguration", self.code)
+        self.assertNotIn("ipConfiguration", self.found["address"][1], "the address is attached to nothing")
         self.assertNotIn("Microsoft.Authorization", self.code)
         self.assertIn("createOption: 'Empty'", self.found["disk"][1])
         self.assertIn("diskSizeGB: 4", self.found["disk"][1])
         self.assertIn("networkAccessPolicy: 'DenyAll'", self.found["disk"][1])
 
-    def test_both_carry_the_tag_that_the_loop_looks_for_and_a_name_that_says_what_they_are(self):
+    def test_the_disk_is_a_premium_ssd_so_that_the_tier_family_has_a_step_to_take_and_the_os_disk_is_the_cheapest_standard_ssd(self):
+        self.assertIn("name: 'Premium_LRS'", self.found["disk"][1])
+        self.assertIn("name: 'StandardSSD_LRS'", self.found["osDisk"][1])
+        self.assertIn("diskSizeGB: 4", self.found["osDisk"][1])
+
+    def test_the_machine_has_no_credential_no_public_address_no_identity_and_leaves_its_disk_and_interface_when_it_is_deleted(self):
+        machine = self.found["machine"][1]
+        for gone in ("osProfile", "adminPassword", "adminUsername", "sshKey", "publicKeys", "identity", "secrets", "customData", "extensions"):
+            self.assertNotIn(gone, self.code, gone)
+        self.assertNotIn("publicIPAddress", machine)
+        self.assertNotIn("publicIPAddress", self.found["nic"][1])
+        self.assertIn("createOption: 'Attach'", machine)
+        self.assertIn("deleteOption: 'Detach'", machine)
+        self.assertEqual(machine.count("deleteOption: 'Detach'"), 2)
+        self.assertIn("vmSize: plantedVmSize", machine)
+        self.assertIn("privateIPAllocationMethod: 'Dynamic'", self.found["nic"][1])
+
+    def test_the_subnet_of_the_interface_is_read_by_its_id_and_never_made_or_changed_here(self):
+        self.assertNotIn("Microsoft.Network/virtualNetworks", self.code.replace("resourceId('Microsoft.Network/virtualNetworks/subnets', 'vnet-${workload}', 'snet-pe')", ""))
+        self.assertIn("resourceId('Microsoft.Network/virtualNetworks/subnets', 'vnet-${workload}', 'snet-pe')", self.code)
+        self.assertIn("param workload string = 'meternaut'", self.code, "the same name as the other templates of the model side give the virtual network")
+
+    def test_every_resource_carries_the_tag_that_the_loop_looks_for_and_a_name_that_says_what_it_is(self):
         self.assertIn("'meternaut-planted': plantedId", self.code)
-        self.assertIn("name: 'planted-disk-${plantedId}'", self.code)
-        self.assertIn("name: 'planted-ip-${plantedId}'", self.code)
-        self.assertEqual(self.code.count("tags: tags"), 2)
+        for name in ("planted-disk-${plantedId}", "planted-ip-${plantedId}", "planted-nic-${plantedId}", "planted-osdisk-${plantedId}", "planted-vm-${plantedId}"):
+            self.assertIn(f"name: '{name}'", self.code)
+        self.assertEqual(self.code.count("tags: tags"), 5)
+
+    def test_the_planted_list_of_the_app_and_the_template_say_the_same_thing(self):
+        """The two gates of a change (cases/families/gates.py) are the tag and the planted list. The list holds a type and the shape of a name for each thing that this template makes, and
+        nothing that it does not make, so that no family may change a resource that the planting never made."""
+        import importlib
+        import sys
+        sys.path.insert(0, str(ROOT / "src" / "case-functions"))
+        try:
+            gates = importlib.import_module("cases.families.gates")
+        finally:
+            sys.path.pop(0)
+        made = {}
+        for symbol, (kind, body) in self.found.items():
+            name = re.search(r"name: '([^']+)'", body).group(1).replace("${plantedId}", "r42")
+            made.setdefault(kind.lower(), []).append(name)
+        self.assertEqual(sorted(gates.PLANTED_NAMES), sorted(made), "the types of the list are the types that the template makes")
+        for kind, names in made.items():
+            for name in names:
+                self.assertTrue(gates.on_planted_list(kind, name), f"{name} is made by the template and is not on the planted list")
+            for other in ("planted-xx-r42", "planted-", "planted-disk-", "planted-disk-r42-extra", "disk-r42", "x" * 20):
+                if other not in names:
+                    self.assertFalse(gates.on_planted_list(kind, other), f"{other} must not pass for {kind}")
+        # the id of a planting is 1 to 12 lower-case letters or digits (tools/environment-params.py), and the list takes every one of them
+        for planted_id in ("a", "demo", "r1234", "x" * 12):
+            self.assertTrue(gates.on_planted_list("microsoft.compute/virtualmachines", f"planted-vm-{planted_id}"))
+        self.assertFalse(gates.on_planted_list("microsoft.compute/virtualmachines", "planted-vm-" + "x" * 13))
 
     def test_the_tag_and_the_group_are_the_ones_of_the_app(self):
         approvals = text("src/case-functions/cases/approvals.py")
         self.assertIn('planted_tag: str = "meternaut-planted"', approvals)
         loop = text("src/case-functions/cases/loop_config.py")
         self.assertIn('planted_tag=values[PLANTED_TAG] or "meternaut-planted"', loop)
+
+    def test_the_size_of_the_machine_has_a_smaller_one_in_its_series_so_that_the_resize_family_has_a_step(self):
+        params = text("tools/environment-params.py")
+        self.assertIn('PLANTED_VM_SIZE = "Standard_B2s"', params)
+        self.assertIn("param plantedVmSize string = 'Standard_B2s'", self.code)
 
 
 class CasesWorkflow(unittest.TestCase):
