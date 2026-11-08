@@ -126,7 +126,8 @@ class Estate:
         return 404, {}, b"{}"
 
     def _graph(self, body):
-        sub, query = body["subscriptions"][0].lower(), body["query"]
+        subs = {item.lower() for item in body["subscriptions"]}
+        query = body["query"]
         name = re.match(r"// meternaut:(\S+)", query).group(1)
         failed = self._failure(f"graph:{name}") or self._failure("graph")
         if failed:
@@ -135,12 +136,13 @@ class Estate:
             for part in clause.split(","):
                 if "=" in part and part.split("=")[0].strip().lower() in TABLE_COLUMNS:
                     return self._json({"error": {"code": "BadRequest", "message": "ParserFailure at the equals sign"}}, 400)
-        mine = [r for r in self.rows if r["subscriptionId"].lower() == sub]
+        mine = [r for r in self.rows if r["subscriptionId"].lower() in subs]
         if name == "estate-types":
             counts = {}
             for r in mine:
-                counts[r["type"]] = counts.get(r["type"], 0) + 1
-            data = [{"type": kind, "n": n} for kind, n in counts.items()]
+                key = (r["type"], r["subscriptionId"])
+                counts[key] = counts.get(key, 0) + 1
+            data = [{"type": kind, "subscriptionId": sub, "n": n} for (kind, sub), n in counts.items()]
         elif name in ("type-resources", "one-of-type"):
             wanted = re.search(r"type =~ '([^']+)'", query).group(1).lower()
             data = [r for r in mine if r["type"].lower() == wanted]
@@ -255,10 +257,10 @@ class Clock:
 
 
 class TheSpecs(unittest.TestCase):
-    def test_there_are_nine_tools_and_each_schema_lists_every_parameter_as_required_and_allows_no_other(self):
+    def test_there_are_sixteen_tools_and_each_schema_lists_every_parameter_as_required_and_allows_no_other(self):
         specs = Toolbox(None, (), NOW, []).specs
         self.assertEqual([s.name for s in specs], ["estate_overview", "list_resources", "metric_names", "metric_summary", "measure", "cost_lines", "advisor_items", "paid_features",
-                                                   "describe"])
+                                                   "describe", "data_volume", "data_readers", "data_writers", "children", "metric_split", "commitments", "cost_history"])
         for spec in specs:
             schema = spec.parameters
             self.assertEqual((schema["type"], schema["additionalProperties"]), ("object", False), spec.name)
@@ -363,7 +365,7 @@ class TheCodeDecidesNothing(unittest.TestCase):
         source = (APP_ROOT / "cases" / "toolbox.py").read_text(encoding="utf-8")
         for path in tb.KNOWN_PATHS:
             self.assertEqual(source.count('"' + ".".join(path) + '"'), 1, f"{'.'.join(path)} is written once, in the list")
-            self.assertRegex(path[-1], r"^(status|code|instanceCount)$", "a path of the list ends in the state or the count that it gives")
+            self.assertRegex(path[-1], r"^(status|code|instanceCount|minCapacity)$", "a path of the list ends in the state or the count (or the capacity, which is a count of units) that it gives")
 
     def test_the_source_holds_no_comparison_that_could_be_a_threshold_on_a_measured_value_except_the_one_that_counts(self):
         source = (APP_ROOT / "cases" / "toolbox.py").read_text(encoding="utf-8")
@@ -814,7 +816,7 @@ class TheArguments(unittest.TestCase):
         words.add(json.loads(self.box.call("list_resources", {"type": DISK}))["error"])
         self.assertEqual(words, {"bad-arguments", "unknown-tool", "unknown-handle", "unavailable"})
         self.assertLessEqual(words, set(tb.ERRORS))
-        self.assertEqual(set(tb.ERRORS), {"bad-arguments", "unknown-tool", "unknown-handle", "unknown-metric", "unavailable", "limit", "too-large", "failed"})
+        self.assertEqual(set(tb.ERRORS), {"bad-arguments", "unknown-tool", "unknown-handle", "unknown-metric", "not-offered", "unavailable", "limit", "too-large", "failed"})
 
 
 class TheLimit(unittest.TestCase):
@@ -1109,19 +1111,20 @@ class TheOverview(unittest.TestCase):
         block = ask(toolbox(Estate()), "estate_overview")["subscriptions"][0]
         self.assertEqual(block, {"subscription": "s1", "resources": 0, "cost30d": 0.0, "services": [], "types": []})
 
-    def test_two_subscriptions_are_two_blocks_named_in_order_and_one_that_fails_is_an_error_block(self):
+    def test_two_subscriptions_are_two_blocks_named_in_order_from_one_read_of_the_types_and_a_failed_read_is_unavailable_and_noted_for_each(self):
         estate = standard()
         estate.rows.append(row(DISK, "other-disk", sub=SUB2))
         estate.cost_rows.append((SUB2, 7.0, estate.id_of("other-disk").lower(), "Storage"))
         blocks = ask(toolbox(estate, (SUB, SUB2)), "estate_overview")["subscriptions"]
         self.assertEqual([(b["subscription"], b["resources"], b["cost30d"]) for b in blocks], [("s1", 9, 275.15), ("s2", 1, 7.0)])
+        self.assertEqual(estate.graph_names(), ["estate-types"], "one query of Resource Graph for the types of both subscriptions")
+        self.assertEqual(len(estate.paths("costmanagement")), 2, "and one read of the cost lines of each")
         broken = standard()
         broken.rows.append(row(DISK, "other-disk", sub=SUB2))
-        broken.failures["graph:estate-types"] = [None, 500, 500, 500]
+        broken.failures["graph:estate-types"] = 500
         notes = []
-        blocks = ask(toolbox(broken, (SUB, SUB2), notes), "estate_overview")["subscriptions"]
-        self.assertEqual((blocks[0]["resources"], blocks[1]), (9, {"subscription": "s2", "error": "unavailable"}))
-        self.assertTrue(any(note.startswith(SUB2[:8]) for note in notes))
+        self.assertEqual(toolbox(broken, (SUB, SUB2), notes).call("estate_overview", {}), '{"error":"unavailable"}')
+        self.assertTrue(any(note.startswith(SUB2[:8]) for note in notes) and any(note.startswith(SUB[:8]) for note in notes))
 
     def test_when_no_subscription_can_be_read_the_answer_is_unavailable(self):
         estate = standard()
@@ -1401,12 +1404,16 @@ class TheResources(unittest.TestCase):
         self.assertEqual([(r["sub"], r["usd30d"]) for r in answer["resources"]], [("s1", 30.0), ("s2", 20.0), ("s1", 10.0), ("s1", 0.5)])
         self.assertNotIn("sub", listed(toolbox(standard()), DISK)["resources"][0], "one subscription needs no label")
 
-    def test_a_subscription_that_cannot_be_read_is_named_and_the_rest_is_listed(self):
+    def test_a_read_of_the_resources_that_fails_is_unavailable_for_every_subscription_because_one_read_covers_them_all(self):
         estate = standard()
         estate.rows.append(row(DISK, "other-disk", sub=SUB2))
-        estate.failures["graph:type-resources"] = [None, 500, 500, 500]
-        answer = listed(toolbox(estate, (SUB, SUB2)), DISK)
-        self.assertEqual((answer["unavailable"], answer["total"]), (["s2"], 3))
+        box = toolbox(estate, (SUB, SUB2))
+        answer = listed(box, DISK)
+        self.assertEqual((answer["total"], estate.graph_names()), (4, ["type-resources"]), "one query of Resource Graph for both subscriptions")
+        estate = standard()
+        estate.rows.append(row(DISK, "other-disk", sub=SUB2))
+        estate.failures["graph:type-resources"] = 500
+        self.assertEqual(toolbox(estate, (SUB, SUB2)).call("list_resources", {"type": DISK}), '{"error":"unavailable"}')
 
     def test_when_the_costs_of_one_subscription_cannot_be_read_the_answer_names_it_and_the_rows_of_it_have_no_cost(self):
         estate = standard()
@@ -2000,12 +2007,16 @@ class TheMeasure(unittest.TestCase):
         self.assertEqual([(r[0], r[1]) for r in answer["rows"]], [("r1", 100), ("r2", 99), ("r3", None)])
         self.assertNotIn("cost30d", box.evidence["r3"])
 
-    def test_a_subscription_that_cannot_be_read_is_named_and_the_rest_is_measured(self):
+    def test_a_read_of_the_resources_that_fails_makes_the_measurement_unavailable_and_one_read_covers_every_subscription(self):
         estate = self.estate(2)
         estate.rows.append(row(VM, "other", sub=SUB2))
-        estate.failures["graph:type-resources"] = [None, 500, 500, 500]
         answer = ask(toolbox(estate, (SUB, SUB2)), "measure", type=VM, metric=VM1_METRIC)
-        self.assertEqual((answer["unavailable"], answer["total"], len(answer["rows"])), (["s2"], 2, 2))
+        self.assertEqual((answer["total"], len(answer["rows"])), (3, 3))
+        self.assertEqual(estate.graph_names().count("type-resources"), 1, "the type was read once for both subscriptions")
+        estate = self.estate(2)
+        estate.rows.append(row(VM, "other", sub=SUB2))
+        estate.failures["graph:type-resources"] = 500
+        self.assertEqual(toolbox(estate, (SUB, SUB2)).call("measure", {"type": VM, "metric": VM1_METRIC}), '{"error":"unavailable"}')
 
     def test_when_no_subscription_can_be_read_the_answer_is_unavailable(self):
         estate = self.estate(2)

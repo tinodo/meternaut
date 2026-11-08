@@ -60,6 +60,7 @@ from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass, field
 from typing import Callable, Iterable, TypeVar
 
+from . import deeper
 from .arm import SCOPE_ID, Arm, CostLine, MetricPoint
 from .detectors import some
 from .foundry import FunctionTool
@@ -83,6 +84,7 @@ TOP_COST_SERVICES = 3  # services of one resource in a list
 ADVISOR_PAGE = 20
 RESOLVE_CHUNK = 25  # resource ids in one read of Resource Graph
 PARALLEL_READS = 8
+READ_WORKERS = 4  # subscriptions whose cost lines, recommendations or plans are read at the same time in one call: Cost Management allows 12 query units in 10 seconds for a tenant, and a 30 day read costs one
 READ_BUDGET_SECONDS = 60.0  # of one measurement
 SUBSCRIPTION_SECONDS = 45.0  # what the reads of the subscriptions in one tool call may take in all: a call that has used it reads no further subscription (what it read is kept)
 NOT_READ_SHOWN = 5  # the subscriptions that an answer names, by label, when some were not read or could not be: it counts the rest
@@ -93,8 +95,23 @@ MAX_SEGMENT = 32  # characters of one key of a property
 MAX_NODES = 4000  # values looked at in the properties of one resource
 LIST_ITEMS = 20  # items of a list that are looked at
 MAX_TOTALS = 20  # the totals of one metric of one resource that the evidence keeps
+MAX_DIMENSIONS = 10  # the names of the dimensions of one metric that metric_names shows
+MAX_SPLIT = 20  # values of a dimension in one answer of metric_split
+DEFAULT_SPLIT = 10
+MAX_HISTORY = 90  # the closed days that cost_history looks back, at most
+DEFAULT_HISTORY = 30
+DEFAULT_TABLES = 20  # kinds of data in one answer of data_readers when the agent gives no limit
+MAX_SOURCES = 12  # the resources that data_writers shows for one kind of data
+MAX_RULES = 20  # the collection rules that data_writers shows
+MAX_CHILDREN = 40  # the parts of one resource that children shows
+MAX_RESOURCES = 10  # the resources of a type that cost_history shows with their totals
+MAX_LINES = 8  # the lines of one list of one subscription in the answer of commitments
+QUERY_SECONDS = 45.0  # what one read of a resource's own records may take
+NOT_VISIBLE = "not visible with this access"  # what an answer says of a part that the access of the run cannot read: never "none"
+READER_SOURCES = ("rules", "saved_searches", "workbooks", "analytics_rules")  # what data_readers counts, in the order of its columns
+CHILD_COLUMNS = ("model", "version", "sku", "capacity", "requests_per_minute", "tokens_per_minute", "state", "upgrade")  # what children tells of each part, in the order of its columns
 
-ERRORS = ("bad-arguments", "unknown-tool", "unknown-handle", "unknown-metric", "unavailable", "limit", "too-large", "failed")
+ERRORS = ("bad-arguments", "unknown-tool", "unknown-handle", "unknown-metric", "not-offered", "unavailable", "limit", "too-large", "failed")
 READ_ERRORS = (HttpError, Refused, IdentityError)
 OTHER = "other"  # what an answer shows for a text that is there and fails its check: never the text itself
 
@@ -104,7 +121,9 @@ TYPE_PATTERN = r"^[a-z0-9.]+(/[a-z0-9._-]+){1,4}$"
 SERVICE_PATTERN = r"^[A-Za-z0-9 .&()-]{1,40}$"
 METRIC_PATTERN = r"^[A-Za-z0-9_./ ]{1,64}$"
 HANDLE_PATTERN = r"^r[0-9]{1,4}$"
-TYPE, SERVICE, METRIC, HANDLE = (re.compile(pattern) for pattern in (TYPE_PATTERN, SERVICE_PATTERN, METRIC_PATTERN, HANDLE_PATTERN))
+TABLE_PATTERN = r"^(t[0-9]{1,4}|[A-Za-z][A-Za-z0-9]{0,63})$"  # a kind of data of a resource: a handle of this run or the name that the platform gave it
+DIMENSION_PATTERN = r"^[A-Za-z][A-Za-z0-9]{0,40}$"  # the name of a dimension of a metric, as metric_names shows it
+TYPE, SERVICE, METRIC, HANDLE, TABLE, DIMENSION = (re.compile(pattern) for pattern in (TYPE_PATTERN, SERVICE_PATTERN, METRIC_PATTERN, HANDLE_PATTERN, TABLE_PATTERN, DIMENSION_PATTERN))
 SERVICE_FORM = re.compile(r"[A-Za-z0-9.&()-]+(?: [A-Za-z0-9.&()-]+){0,4}")  # one to five words, one space between them
 SKU_FORM = re.compile(r"[A-Za-z0-9_.-]+(?:,[A-Za-z0-9_.-]+){0,2}")  # a SKU or a kind: one to three parts, separated by commas
 TOKEN = re.compile(r"[A-Za-z0-9]+")  # a word of the platform that has no separator: an impact, a unit, a plan, a tier
@@ -115,10 +134,11 @@ CURRENCY = re.compile(r"[A-Za-z]{3}")
 NUMBER = re.compile(r"-?[0-9]{1,15}(?:\.[0-9]{1,9})?")  # a number that a property gives as text
 GUID = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
 
-# A flag or a number of a property is shown only when the last part of its key ends in one of these, or is a number of something. The list is generic: it names no resource type.
+# A flag or a number of a property is shown only when the last part of its key ends in one of these, or is a number of something. The list is generic: it names no resource type. The last four
+# are the units that a size is given in (scale units, bandwidth): without them a gateway's or a hub's size is a number that no tool could show.
 SUFFIXES = ("State", "Status", "Code", "Tier", "Capacity", "Count", "Replicas", "Size", "GB", "Cores", "Mode", "Enabled", "Version", "Access", "Zone", "Zones",
-            "Redundant", "Days", "Method", "Throughput")
-COUNT_LIKE = frozenset(SUFFIXES.index(suffix) for suffix in ("Capacity", "Count", "Replicas", "Size", "GB", "Cores", "Throughput"))  # what `count` orders by
+            "Redundant", "Days", "Method", "Throughput", "Unit", "Units", "Mbps", "Gbps")
+COUNT_LIKE = frozenset(SUFFIXES.index(suffix) for suffix in ("Capacity", "Count", "Replicas", "Size", "GB", "Cores", "Throughput", "Unit", "Units", "Mbps", "Gbps"))  # what `count` orders by
 _ALTERNATIVES = "|".join(SUFFIXES)
 LEAF = re.compile(rf"(?:[a-z][A-Za-z0-9]*)?(?:{_ALTERNATIVES})|(?:{_ALTERNATIVES.lower()})|(?:[a-z][A-Za-z0-9]*)?[Nn]umberOf[A-Z][A-Za-z0-9]*")
 KEY = re.compile(rf"[A-Za-z][A-Za-z0-9]{{0,{MAX_SEGMENT - 1}}}")
@@ -140,7 +160,8 @@ KNOWN_PATHS = frozenset(tuple(path.split(".")) for path in (
     "manualPrivateLinkServiceConnections.properties.privateLinkServiceConnectionState.status",
     "privateEndpointConnections.properties.privateLinkServiceConnectionState.status",
     "extended.instanceView.powerState.code", "powerState.code", "agentPoolProfiles.powerState.code",
-    "functionAppConfig.scaleAndConcurrency.alwaysReady.instanceCount"))
+    "functionAppConfig.scaleAndConcurrency.alwaysReady.instanceCount",
+    "virtualRouterAutoScaleConfiguration.minCapacity"))  # the key of a hub's units is longer than MAX_SEGMENT
 _KNOWN_PREFIXES = frozenset(path[:length] for path in KNOWN_PATHS for length in range(1, len(path) + 1))
 # Names that hold somebody's text, an address or a secret, or that hold a dictionary whose keys somebody chose: never shown and never followed, wherever they are in a
 # path. A key is denied when the whole of it is one of these names, or when one of the words of its camel case is one of the DENIED_WORDS (nodeLabels, appSettings).
@@ -159,7 +180,7 @@ FIXED_FIELDS = ("usd30d", "service", "sub", "sku", "kind", "region", "managed")
 # Every read of Resource Graph starts with a comment that names it, as in detectors.py. Resource Graph refuses an alias that is the name of a column of the table
 # (kind, here), so the two text columns that are turned into words get names of their own.
 RESOURCE_COLUMNS = "project id, name, type, resourceGroup, subscriptionId, location, tags, managedByText = tostring(managedBy), kindName = tostring(kind), sku, properties"
-TYPE_COUNTS = "// meternaut:estate-types\nresources\n| summarize n = count() by type"
+TYPE_COUNTS = "// meternaut:estate-types\nresources\n| summarize n = count() by type, subscriptionId"
 TYPE_RESOURCES = "// meternaut:type-resources\nresources\n| where type =~ '{type}'\n| " + RESOURCE_COLUMNS
 ONE_OF_TYPE = "// meternaut:one-of-type\nresources\n| where type =~ '{type}'\n| take 1\n| project id"
 RESOURCES_BY_ID = "// meternaut:resources-by-id\nresources\n| where id in~ ({ids})\n| " + RESOURCE_COLUMNS
@@ -418,8 +439,19 @@ class UnknownHandle(Exception):
     """A handle that no answer has shown."""
 
 
+class NotOffered(Exception):
+    """A tool that has nothing to read on the type of the resource that the handle stands for."""
+
+
 class TooLarge(Exception):
     """An answer that cannot be made small enough, even with nothing left in its lists."""
+
+
+@dataclass(frozen=True)
+class Failed:
+    """The outcome of a read of one subscription that ended in an error of the reads (READ_ERRORS)."""
+
+    error: Exception
 
 
 @dataclass
@@ -433,6 +465,7 @@ class _Entry:
     location: str | None
     properties: list[tuple[str, "bool | int | float | str | list"]]
     size: float  # the largest count, size or capacity among the properties: what `count` orders by
+    part_of: str | None = None  # the key of the resource that keeps it inside itself, for a part that Resource Graph does not list: it has no cost of its own
 
     @property
     def key(self) -> str:
@@ -473,6 +506,17 @@ class _Advice:
     currency: str | None  # the word that Advisor gives; some recommendations give none
 
 
+@dataclass
+class _Space:
+    """What one run knows of a resource that keeps records of the data written to it: its settings and its list of tables, each as a word that says whether it was read."""
+
+    pricing: dict
+    customer: str | None  # the id that the query API names it by
+    tables: "deeper.TableBook"
+    settings: str  # `read`, NOT_VISIBLE or `unavailable`
+    listing: str  # the same, for the list of tables
+
+
 @dataclass(frozen=True)
 class Param:
     """One argument of a tool. The same declaration gives the JSON schema that the agent reads and the check that a call must pass."""
@@ -498,7 +542,8 @@ class Param:
         elif self.kind == "handles":
             body = {"type": "array", "items": {"type": "string", "pattern": HANDLE_PATTERN}, "minItems": 1, "maxItems": MAX_MEASURED}
         else:
-            body = {"type": typed("string"), "pattern": {"type": TYPE_PATTERN, "service": SERVICE_PATTERN, "metric": METRIC_PATTERN, "handle": HANDLE_PATTERN}[self.kind]}
+            body = {"type": typed("string"), "pattern": {"type": TYPE_PATTERN, "service": SERVICE_PATTERN, "metric": METRIC_PATTERN, "handle": HANDLE_PATTERN, "table": TABLE_PATTERN,
+                                                        "dimension": DIMENSION_PATTERN}[self.kind]}
         return {**body, "description": self.description}
 
     def check(self, value: object) -> object:
@@ -516,7 +561,8 @@ class Param:
             if not isinstance(value, list) or not 1 <= len(value) <= MAX_MEASURED or not all(isinstance(item, str) and HANDLE.fullmatch(item) for item in value):
                 raise BadArguments(self.name)
             return list(dict.fromkeys(value))
-        text = {"type": type_word, "service": _service_form, "metric": lambda item: _match(METRIC, item), "handle": lambda item: _match(HANDLE, item)}[self.kind](value)
+        text = {"type": type_word, "service": _service_form, "metric": lambda item: _match(METRIC, item), "handle": lambda item: _match(HANDLE, item),
+                "table": lambda item: _match(TABLE, item), "dimension": lambda item: _match(DIMENSION, item)}[self.kind](value)
         if text is None:
             raise BadArguments(self.name)
         return text
@@ -606,8 +652,59 @@ TOOLS = {tool.name: tool for tool in (
          "name, its tier, its sub plan and its coverage, as short words. It takes no arguments."),
     Tool("describe",
          "Describes one resource by its handle: its type, SKU, kind, region, cost of the last 30 days, the cost by service and up to 30 properties that are numbers, flags "
-         "or words. The answer carries no names, tags or other text of the resource.",
+         "or words. When the type has deeper reads, reads names them. The answer carries no names, tags or other text of the resource.",
          (Param("handle", "handle", "The handle of a resource that an earlier answer showed.", required=True),)),
+    Tool("data_volume",
+         "Reads what a resource records about the data written to it, over the closed days of a window, as a table: for each kind of data its plan, how long it is kept, the "
+         "volume that is charged for in GB, its share of the whole, how many days had data, the free volume when there is some, and its trend in equal parts of the "
+         "window, the oldest first. It also gives the resource's pricing tier, retention and daily cap. A kind of data that the platform made is named; any other is a "
+         "handle (t1, t2, ...) for this run only. A volume can be cited as the metric 'Billable GB <kind of data>'. What this run's access cannot read is said so and is "
+         "never counted as none. When has_more is true, read the next page with next_offset.",
+         (Param("handle", "handle", "The handle of a resource whose reads field names data_volume.", required=True),
+          Param("days", "integer", "How many closed days to look back, 1 to 30. Null for 30.", low=1, high=MAX_DAYS), _OFFSET)),
+    Tool("data_readers",
+         "Counts what reads the kinds of data that a resource keeps: for each kind of data, how many rules, saved searches, workbooks and analytics rules name it, and how many times what "
+         "people ran named it, when the resource records that. Each source says how many of its items were read, so that 0 means that none of those named it; a source that this run's "
+         "access cannot read says so and its counts are null. Items that read every kind of data at once name none: they are counted apart, as scanning_all. A count can be cited as the "
+         "metric 'Readers <kind of data>' (the items that name it plus those that read every kind) and 'Runs <kind of data>'; a source that was not read makes it null. It shows no name "
+         "and no text of an item. Kinds of data are named as data_volume names them.",
+         (Param("handle", "handle", "The handle of a resource whose reads field names data_readers.", required=True),
+          Param("limit", "integer", "How many kinds of data to return, 1 to 40. Null for 20.", low=1, high=MAX_LISTED), _OFFSET)),
+    Tool("data_writers",
+         "Shows what writes to a resource that takes in data, or where a resource sends its own data. For a resource whose reads field names data_writers: the collection rules that send "
+         "to it, as handles with typed facts (the kinds and number of their data sources, their flows, how many flows filter the data before it is stored, the kinds of data that they "
+         "write); and, with table, the resources that wrote the most of that kind of data on the last closed day, as handles with their share (only for a kind of data on the plan that "
+         "is free to read: any other says so). For any other resource: its diagnostic settings, as the number of categories of logs and of metrics that each sends and the kinds of "
+         "destination.",
+         (Param("handle", "handle", "The handle of a resource that takes in data (its reads field names data_writers), or of any resource to see where it sends its own data.", required=True),
+          Param("table", "table", "One kind of data, as data_volume names it: the platform's name or a handle t1, t2, .... Null for none.")), ),
+    Tool("children",
+         "Lists the parts that a resource keeps inside itself and that Resource Graph does not list as resources, as a table of handles: for each its model (as kind), "
+         "version, SKU, capacity, rate limits a minute for requests and for tokens, state and what happens to it when its version is retired, as typed values. A handle "
+         "that this shows can be given to describe, to metric_summary, and metric_split names it for a value of a dimension. The reads field of list_resources and describe "
+         "says which types have such parts.",
+         (Param("handle", "handle", "The handle of a resource whose reads field names children.", required=True),)),
+    Tool("metric_split",
+         "Measures one Azure Monitor metric of one resource split by one dimension of it, in daily buckets over the last days (at most 30), as a table of values: for each "
+         "value its total, maximum, average and the days that have data. A value that is the name of a part that children showed is given as that part's handle, a whole "
+         "number as that number, any other value as a label (v1, v2, ...) that stands for it in this answer only. A value with no data in the window has no row. "
+         "metric_names shows the dimensions that each metric has.",
+         (Param("handle", "handle", "The handle of a resource that an earlier answer showed.", required=True), Param("metric", "metric", _METRIC, required=True),
+          Param("dimension", "dimension", "A dimension of the metric, as metric_names shows it.", required=True),
+          Param("days", "integer", "How many closed days to look back, 1 to 30. Null for 30.", low=1, high=MAX_DAYS),
+          Param("limit", "integer", "How many values to return, 1 to 20. Null for 10.", low=1, high=MAX_SPLIT))),
+    Tool("commitments",
+         "Shows, for each subscription, how the cost of the last 30 days was paid for, amortized, as lines of pricing model and kind of charge with their amounts in US dollars, "
+         "and the purchase recommendations that the platform itself makes for savings plans and for reservations, as typed values. A part that this run's access cannot read "
+         "says 'not visible with this access' and is never counted as none. It takes no arguments."),
+    Tool("cost_history",
+         "Shows the cost of one resource (handle) or of all resources of one type (type) for each day of the last 7 to 90 days, as the actual or the amortized cost in US "
+         "dollars: the daily numbers, oldest first, their total, the days that have a cost, and for a type the dearest resources with their totals. Give a handle or a type, "
+         "never both. An answer is kept for the run, so asking again costs nothing.",
+         (Param("handle", "handle", "The handle of one resource that an earlier answer showed. Null when a type is given.", ),
+          Param("type", "type", "A resource type, in lower case, as estate_overview shows it. Null when a handle is given."),
+          Param("days", "integer", "How many closed days to look back, 7 to 90. Null for 30.", low=7, high=MAX_HISTORY),
+          Param("basis", "choice", "actual: what was charged. amortized: a purchase spread over its term. Null for actual.", choices=("actual", "amortized")))),
 )}
 SPECS = tuple(tool.spec() for tool in TOOLS.values())
 PLACEHOLDER = f"r{HANDLE_LIMIT}"  # as long as any handle: an answer is cut to size with it, then given the real handles
@@ -703,6 +800,7 @@ class Toolbox:
         self.log: list[dict] = []  # one dict per call: name, arguments, ok, chars
         self.monotonic: Callable[[], float] = time.monotonic  # the clock of the time budget of a measurement; a test replaces it
         self.workers = PARALLEL_READS
+        self.read_workers = READ_WORKERS  # subscriptions read at the same time; 1 reads them one after the other
         self.budget_seconds = READ_BUDGET_SECONDS
         self.read_seconds = SUBSCRIPTION_SECONDS  # the time of the reads of the subscriptions in one call; the investigation or a test sets it
         self._began = 0.0  # when the call that is running began
@@ -710,6 +808,7 @@ class Toolbox:
         self._skipped: dict[str, None] = {}  # the subscriptions that this call did not read because its time was used up, in the order of the list
         self._noted = 0
         self._lock = threading.Lock()
+        self._notes_lock = threading.Lock()  # the reads of several subscriptions at once write their notes through it
         self._calls = 0
         self._next_handle = 1
         self._entries: dict[str, _Entry] = {}  # every resource that a read returned, by lower-case id
@@ -720,9 +819,13 @@ class Toolbox:
         self._advice: dict[str, list[_Advice]] = {}
         self._pricings: dict[str, list[dict]] = {}
         self._metric_names: dict[str, list[dict]] = {}
-        self._without: set[tuple[str, str]] = set()  # (subscription, type) of which a read found no resource, so that a later call does not look there again
+        self._without: set[str] = set()  # the types of which a read found no resource in any subscription, so that a later call does not look again
         self._reads: dict[tuple[str, str, int], dict[str, str]] = {}  # (type, metric, days) -> handle -> how its measurement counts: every resource whose numbers were shown
         self._missing: set[str] = set()  # ids that Resource Graph did not return
+        self._spaces: dict[str, _Space] = {}  # handle -> what is known of its settings and tables
+        self._volumes: dict[tuple[str, int], tuple[list, float, str]] = {}  # (handle, days) -> the tables by volume, the billable MB, and the word that says whether it was read
+        self._kept: dict[tuple, object] = {}  # what the deeper reads of the run have read, by what they asked for: a read is made once in a run, whether it worked or not
+        self._failures: dict[int, Failed] = {}  # the failures that have a note already, by id
 
     @property
     def specs(self) -> tuple[FunctionTool, ...]:
@@ -768,6 +871,8 @@ class Toolbox:
             return {"error": "bad-arguments"}
         except UnknownHandle:
             return {"error": "unknown-handle"}
+        except NotOffered:
+            return {"error": "not-offered"}
         except TooLarge:
             return {"error": "too-large"}
         except READ_ERRORS as error:
@@ -784,11 +889,12 @@ class Toolbox:
     def _say(self, text: str) -> None:
         """A note about a subscription that could not be read. The first SUBSCRIPTION_NOTES of a run are kept and the others are counted in one note, so that an estate with many
         subscriptions does not write a line for each."""
-        self._noted += 1
-        if self._noted <= SUBSCRIPTION_NOTES:
-            self.notes.append(text)
-        elif self._noted == SUBSCRIPTION_NOTES + 1:
-            self.notes.append(f"more subscriptions could not be read, and the notes about them are not repeated after the first {SUBSCRIPTION_NOTES}")
+        with self._notes_lock:
+            self._noted += 1
+            if self._noted <= SUBSCRIPTION_NOTES:
+                self.notes.append(text)
+            elif self._noted == SUBSCRIPTION_NOTES + 1:
+                self.notes.append(f"more subscriptions could not be read, and the notes about them are not repeated after the first {SUBSCRIPTION_NOTES}")
 
     def _note(self, sub: str, what: str, error: Exception) -> None:
         self._say(f"{sub[:8]}: {what} could not be read ({str(error)[:200]})")
@@ -822,25 +928,74 @@ class Toolbox:
         return moment.astimezone(dt.timezone.utc).date()
 
     def _each(self, read: Callable[[str], T], what: str, ready: Callable[[str], bool] = lambda sub: False) -> tuple[list[tuple[str, T]], list[str]]:
-        """Runs a read in every subscription. A subscription that cannot be read is a note and is returned in the second list; when none can be read, the error is raised.
+        """Runs a read in every subscription, `read_workers` of them at a time. A subscription that cannot be read is a note and is returned in the second list; when none can be read, the
+        error is raised. The results are in the order of the subscriptions, whichever read ended first.
 
         A subscription that the call has no time left for is not read, unless `ready` says that its read is in a cache already: it is in `_skipped` and in neither list."""
+        outcomes = self._pool([sub for sub in self.subscriptions if not ready(sub)], read)
         done: list[tuple[str, T]] = []
         failed: list[str] = []
         last: Exception | None = None
         for sub in self.subscriptions:
-            if not ready(sub) and self._late():
-                self._skip(sub)
-                continue
-            try:
-                done.append((sub, read(sub)))
-            except READ_ERRORS as error:
-                self._note(sub, what, error)
-                failed.append(sub)
-                last = error
+            if ready(sub):
+                try:
+                    done.append((sub, read(sub)))
+                except READ_ERRORS as error:
+                    self._note(sub, what, error)
+                    failed.append(sub)
+                    last = error
+            elif sub in outcomes:
+                found = outcomes[sub]
+                if isinstance(found, Failed):
+                    self._note(sub, what, found.error)
+                    failed.append(sub)
+                    last = found.error
+                else:
+                    done.append((sub, found))
         if last is not None and not done:
             raise last
         return done, failed
+
+    def _pool(self, subs: list[str], read: Callable[[str], T]) -> "dict[str, T | Failed]":
+        """Reads of the subscriptions of the list, `read_workers` at a time, in the order of the list. A read is started only while the time of the call is not used up (the subscriptions
+        that are not started are `_skipped`, and the call goes on with the ones that are running). A read that fails with an error of the reads is a `Failed` in its place; any other
+        error is raised when all that were started have ended."""
+        outcomes: dict[str, "T | Failed"] = {}
+        queue = list(subs)
+        running: dict[Future, str] = {}
+        workers = max(1, self.read_workers)
+        pool = ThreadPoolExecutor(max_workers=workers)
+        fault: BaseException | None = None
+        try:
+            while queue or running:
+                while queue and len(running) < workers and fault is None and not self._late():
+                    sub = queue.pop(0)
+                    running[pool.submit(self._guarded, read, sub)] = sub
+                if queue and not running:
+                    for sub in queue:
+                        self._skip(sub)
+                    break
+                finished, _ = wait(running, return_when=FIRST_COMPLETED)
+                for future in finished:
+                    sub = running.pop(future)
+                    try:
+                        outcomes[sub] = future.result()
+                    except BaseException as error:  # noqa: BLE001 (it is raised below, once the reads that were started have ended)
+                        fault = fault or error
+                if fault is not None and not running:
+                    break
+        finally:
+            pool.shutdown(wait=True, cancel_futures=True)
+        if fault is not None:
+            raise fault
+        return outcomes
+
+    @staticmethod
+    def _guarded(read: Callable[[str], T], sub: str) -> "T | Failed":
+        try:
+            return read(sub)
+        except READ_ERRORS as error:
+            return Failed(error)
 
     def _costs_of(self, sub: str, force: bool = False) -> _Costs | None:
         """The cost lines of a subscription, read once in a run. None when they could not be read or are not in US dollars, and, when the call has no time left to read them
@@ -851,6 +1006,13 @@ class Toolbox:
                 return None
             self._costs[sub] = self._read_costs(sub)
         return self._costs[sub]
+
+    def _prefetch_costs(self, subs: Iterable[str]) -> None:
+        """Reads the cost lines of the subscriptions that have none yet, `read_workers` at a time, so that the answer that follows finds them in the cache. What cannot be started in the
+        time of the call is `_skipped` and read by a later call."""
+        todo = [sub for sub in dict.fromkeys(subs) if sub not in self._costs]
+        for sub, outcome in self._pool(todo, self._read_costs).items():
+            self._costs[sub] = None if isinstance(outcome, Failed) else outcome
 
     def _read_costs(self, sub: str) -> _Costs | None:
         today = self._today()
@@ -865,6 +1027,8 @@ class Toolbox:
         return _Costs.of(lines)
 
     def _cost_total(self, entry: _Entry) -> float | None:
+        if entry.part_of is not None:
+            return None  # a part of a resource is billed with the resource, and no cost line is its own
         costs = self._costs_of(entry.sub)
         return None if costs is None else _money(sum(costs.by_resource.get(entry.key, {}).values()))
 
@@ -893,11 +1057,13 @@ class Toolbox:
     def _facts(self, entry: _Entry, shown: int) -> dict:
         """What describe says about one resource, except its handle."""
         facts: dict = {}
-        costs = self._costs_of(entry.sub)
+        costs = None if entry.part_of is not None else self._costs_of(entry.sub)
         if costs is not None:
             lines = costs.by_resource.get(entry.key, {})
             facts["cost30d"] = _money(sum(lines.values()))
             facts["cost_by_service"] = {name: _money(amount) for name, amount in sorted(lines.items(), key=lambda item: (-item[1], item[0]))[:TOP_COST_SERVICES]}
+        if entry.part_of is not None and entry.part_of in self._entries:
+            facts["part_of"] = self._entries[entry.part_of].resource.handle or None
         facts.update(sku=entry.sku, kind=entry.kind, location=entry.location, managed=bool(entry.resource.managed_by), properties=dict(entry.properties[:shown]))
         return facts
 
@@ -952,14 +1118,16 @@ class Toolbox:
                 free -= 1
         return len(page)
 
-    def _caveats(self, failed: list[str]) -> dict:
-        """The parts of an answer that say what could not be read: the subscriptions without costs, the ones whose resources could not be read, and the ones that this call had
-        no time to read (their costs, which a later call reads, are not counted as unavailable). A list of subscriptions names the first few and counts the rest."""
+    def _caveats(self, failed: list[str], subs: Iterable[str] | None = None) -> dict:
+        """The parts of an answer that say what could not be read: the subscriptions without costs (the ones that the answer is about: `subs`, every subscription when it is not given), the ones
+        whose resources could not be read, and the ones that this call had no time to read (their costs, which a later call reads, are not counted as unavailable). A list of subscriptions
+        names the first few and counts the rest."""
         said: dict = {}
-        blind = [sub for sub in self.subscriptions if self._costs_of(sub) is None and sub not in self._skipped]
+        about = list(self.subscriptions) if subs is None else [sub for sub in self.subscriptions if sub in set(subs)]
+        blind = [sub for sub in about if self._costs_of(sub) is None and sub not in self._skipped]
         if blind:
             said["costs"] = "unavailable"
-            if len(blind) < len(self.subscriptions):
+            if len(blind) < len(about):
                 self._listing(said, "costs_unavailable", blind)
         if failed:
             self._listing(said, "unavailable", failed)
@@ -970,21 +1138,33 @@ class Toolbox:
         parts = key.split("/")
         return next((sub for sub in self.subscriptions if len(parts) > 2 and sub.lower() == parts[2]), None)
 
+    def _owner_of(self, row: dict, fallback: str | None = None) -> str | None:
+        """The subscription of the list that a row of Resource Graph belongs to: the one that the row names (subscriptionId, or the id in the id of the resource), or the only one that was asked."""
+        for value in (row.get("subscriptionId"), str(row.get("id") or "").split("/")[2] if str(row.get("id") or "").lower().startswith("/subscriptions/") else None):
+            sub = next((item for item in self.subscriptions if isinstance(value, str) and item.lower() == value.strip().lower()), None)
+            if sub is not None:
+                return sub
+        return fallback
+
     def _resolve(self, resource_ids: list[str]) -> None:
         """Reads the resources that no read has returned yet, so that an id from a cost line or from Advisor can have a handle. An id that Resource Graph does
-        not return is remembered as missing."""
-        wanted: dict[str, list[str]] = {}
+        not return is remembered as missing. The ids of several subscriptions are read together: one query for each RESOLVE_CHUNK of them."""
+        wanted: list[tuple[str, str]] = []
         for resource_id in dict.fromkeys(resource_ids):
             key = resource_id.lower()
             sub = self._sub_of(key)
             if sub and key not in self._entries and key not in self._missing and SCOPE_ID.fullmatch(resource_id) and type_of_id(resource_id):
-                wanted.setdefault(sub, []).append(resource_id)
-        for sub, ids in wanted.items():
-            for start in range(0, len(ids), RESOLVE_CHUNK):
-                chunk = ids[start:start + RESOLVE_CHUNK]
-                rows = self.arm.graph(sub, RESOURCES_BY_ID.format(ids=", ".join(f"'{item}'" for item in chunk)))
-                found = {entry.key for entry in (self._ingest(row, sub) for row in rows) if entry}
-                self._missing.update(item.lower() for item in chunk if item.lower() not in found)
+                wanted.append((sub, resource_id))
+        for start in range(0, len(wanted), RESOLVE_CHUNK):
+            chunk = wanted[start:start + RESOLVE_CHUNK]
+            subs = list(dict.fromkeys(sub for sub, _ in chunk))
+            found: set[str] = set()
+            for row in self.arm.graph_many(subs, RESOURCES_BY_ID.format(ids=", ".join(f"'{item}'" for _, item in chunk))):
+                owner = self._owner_of(row, subs[0] if len(subs) == 1 else None)
+                entry = self._ingest(row, owner) if owner else None
+                if entry is not None:
+                    found.add(entry.key)
+            self._missing.update(item.lower() for _, item in chunk if item.lower() not in found)
 
     def _resolve_quietly(self, resource_ids: list[str]) -> None:
         try:
@@ -992,25 +1172,36 @@ class Toolbox:
         except READ_ERRORS as error:
             self.notes.append(f"the resources of some ids could not be read ({str(error)[:200]})")
 
-    def _load_type(self, sub: str, kind: str) -> list[_Entry]:
-        if (sub, kind) not in self._by_type:
-            rows = self.arm.graph(sub, TYPE_RESOURCES.format(type=kind))
-            self._by_type[(sub, kind)] = [entry.key for entry in (self._ingest(row, sub) for row in rows) if entry]
-        return [self._entries[key] for key in self._by_type[(sub, kind)]]
+    def _load_type(self, kind: str) -> None:
+        """The resources of one type in every subscription, from one query of Resource Graph for all of them. A subscription that has none has an empty list."""
+        if all((sub, kind) in self._by_type for sub in self.subscriptions):
+            return
+        found: dict[str, list[str]] = {sub: [] for sub in self.subscriptions}
+        for row in self.arm.graph_many(list(self.subscriptions), TYPE_RESOURCES.format(type=kind)):
+            owner = self._owner_of(row)
+            entry = self._ingest(row, owner) if owner else None
+            if entry is not None and entry.sub == owner and entry.key not in found[owner]:
+                found[owner].append(entry.key)
+        for sub, keys in found.items():
+            self._by_type[(sub, kind)] = keys
 
-    def _type_counts(self, sub: str) -> tuple[int, dict[str, int]]:
-        if sub not in self._counts:
-            total, counts = 0, {}
-            for row in self.arm.graph(sub, TYPE_COUNTS):
-                number = row.get("n")
-                if isinstance(number, bool) or not isinstance(number, int) or number < 0:
-                    continue
-                total += number
-                kind = type_word(str(row.get("type") or "").lower())
-                if kind:
-                    counts[kind] = counts.get(kind, 0) + number
-            self._counts[sub] = (total, counts)
-        return self._counts[sub]
+    def _entries_of(self, kind: str, subs: Iterable[str] | None = None) -> list[_Entry]:
+        return [self._entries[key] for sub in self.subscriptions if subs is None or sub in set(subs) for key in self._by_type.get((sub, kind), [])]
+
+    def _load_counts(self) -> None:
+        """The number of resources of each type in every subscription, from one query of Resource Graph for all of them."""
+        if all(sub in self._counts for sub in self.subscriptions):
+            return
+        found: dict[str, tuple[int, dict[str, int]]] = {sub: (0, {}) for sub in self.subscriptions}
+        for row in self.arm.graph_many(list(self.subscriptions), TYPE_COUNTS):
+            owner = self._owner_of(row)
+            number = row.get("n")
+            if owner is None or isinstance(number, bool) or not isinstance(number, int) or number < 0:
+                continue
+            total, counts = found[owner]
+            kind = type_word(str(row.get("type") or "").lower())
+            found[owner] = (total + number, {**counts, **({kind: counts.get(kind, 0) + number} if kind else {})})
+        self._counts.update(found)
 
     def _entry(self, handle: str) -> _Entry:
         if handle not in self._by_handle:
@@ -1019,19 +1210,20 @@ class Toolbox:
 
     # -- the tools -----------------------------------------------------------------------------------------------------------------------------
     def _tool_estate_overview(self, args: dict) -> dict:
+        try:
+            self._load_counts()
+        except READ_ERRORS as error:
+            for sub in self.subscriptions:
+                self._note(sub, "the resources", error)
+            return {"error": "unavailable"}
+        self._prefetch_costs(self.subscriptions)
         blocks: list[dict] = []
         for sub in self.subscriptions:
-            if not (sub in self._counts and sub in self._costs) and self._late():
-                self._skip(sub)
+            if sub in self._skipped:
                 continue
             block: dict = {"subscription": self._label(sub)}
-            try:
-                total, counts = self._type_counts(sub)
-            except READ_ERRORS as error:
-                self._note(sub, "the resources", error)
-                blocks.append({**block, "error": "unavailable"})
-                continue
-            costs = self._costs_of(sub, force=True)  # a subscription is shown whole or not at all
+            total, counts = self._counts[sub]
+            costs = self._costs.get(sub)
             block["resources"] = total
             if costs is None:
                 block["costs"] = "unavailable"
@@ -1048,8 +1240,6 @@ class Toolbox:
             if len(kinds) > TOP_TYPES:
                 block["types_not_shown"] = len(kinds) - TOP_TYPES
             blocks.append(block)
-        if blocks and all("error" in block for block in blocks):
-            return {"error": "unavailable"}
         answer = {"window_days": MAX_DAYS, "subscriptions": blocks, **self._unread()}
         if len(blocks) > MAX_BLOCKS:
             # An estate with many subscriptions: the dearest are shown, and the count of the others says that there are more.
@@ -1070,16 +1260,18 @@ class Toolbox:
         return answer
 
     def _listed(self, kind: str, order: str) -> tuple[list[_Entry], list[str]]:
-        """The resources of one type in the order of a listing, and the subscriptions whose resources could not be read."""
-        done, failed = self._each(lambda sub: self._load_type(sub, kind), "the resources of a type", ready=lambda sub: (sub, kind) in self._by_type)
-        entries = [entry for _, found in done for entry in found]
+        """The resources of one type in the order of a listing, and the subscriptions whose resources could not be read (none: one read of Resource Graph covers every subscription, and a
+        read that fails is raised). The cost lines of the subscriptions that have such a resource are read at the same time, `read_workers` of them at once."""
+        self._load_type(kind)
+        entries = self._entries_of(kind)
+        self._prefetch_costs(sorted({entry.sub for entry in entries}, key=list(self.subscriptions).index))
 
         def cost(entry: _Entry) -> float:
             total = self._cost_total(entry)
             return 0.0 if total is None else total
 
         entries.sort(key=(lambda entry: (-entry.size, -cost(entry), entry.key)) if order == "count" else (lambda entry: (-cost(entry), entry.key)))
-        return entries, failed
+        return entries, []
 
     def _tool_list_resources(self, args: dict) -> dict:
         kind, order, limit, offset = args["type"], args["order_by"] or "cost", args["limit"] or DEFAULT_LISTED, args["offset"] or 0
@@ -1087,13 +1279,13 @@ class Toolbox:
         page = entries[offset:offset + limit]
         page = page[:self._within_handles(page)]
         cells = [self._cells(entry) for entry in page]
-        caveats = self._caveats(failed)
+        caveats = self._caveats(failed, {entry.sub for entry in entries})
 
         def table(count: int) -> tuple[dict, list[list], set[str]]:
             same, columns, rows, visible = _layout([(PLACEHOLDER, cell) for cell in cells[:count]])
             more = offset + count < len(entries)
             answer = {"type": kind, "total": len(entries), "offset": offset, "has_more": more, **({"next_offset": offset + count} if more else {}), **caveats,
-                      **({"same": same} if same else {}), "cols": columns, "rows": rows}
+                      **({"reads": deeper.offered(kind)} if deeper.offered(kind) else {}), **({"same": same} if same else {}), "cols": columns, "rows": rows}
             return answer, rows, visible
 
         count = len(page)
@@ -1108,35 +1300,18 @@ class Toolbox:
         return answer
 
     def _one_of_type(self, kind: str) -> tuple[str | None, bool]:
-        """The id of one resource of the type, from a list that was read before or else from reads of its own, one subscription after the other until a resource is found, and
-        whether every subscription was looked at (False when the time of the call ran out first)."""
+        """The id of one resource of the type, from a list that was read before or else from one read of Resource Graph for every subscription, and whether the search was complete (it
+        always is: there is one read, and a failed read is raised)."""
         for sub in self.subscriptions:
             if self._by_type.get((sub, kind)):
                 return self._entries[self._by_type[(sub, kind)][0]].resource.resource_id, True
-        last: Exception | None = None
-        looked = incomplete = False
-        for sub in self.subscriptions:
-            if (sub, kind) in self._without:
-                looked = True
-                continue
-            if self._late():
-                self._skip(sub)
-                incomplete = True
-                continue
-            try:
-                rows = self.arm.graph(sub, ONE_OF_TYPE.format(type=kind))
-            except READ_ERRORS as error:
-                self._note(sub, "a resource of the type", error)
-                last = error
-                continue
-            looked = True
-            for row in rows:
-                if str(row.get("id") or "").lower().startswith("/subscriptions/"):
-                    return str(row["id"]), True
-            self._without.add((sub, kind))
-        if last is not None and not looked:
-            raise last
-        return None, not incomplete
+        if kind in self._without or all((sub, kind) in self._by_type for sub in self.subscriptions):
+            return None, True
+        for row in self.arm.graph_many(list(self.subscriptions), ONE_OF_TYPE.format(type=kind)):
+            if str(row.get("id") or "").lower().startswith("/subscriptions/"):
+                return str(row["id"]), True
+        self._without.add(kind)
+        return None, True
 
     def _names_of(self, kind: str) -> list[dict]:
         if kind not in self._metric_names:
@@ -1147,7 +1322,9 @@ class Toolbox:
                 word = metric_word(name.get("value") if isinstance(name, dict) else None)
                 # A metric that is only offered for a chosen dimension cannot be measured without one, and metric_summary names none.
                 if word is not None and definition.get("isDimensionRequired") is not True:
-                    found.setdefault(word, {"name": word, "unit": token_word(definition.get("unit"), 16), "aggregation": token_word(definition.get("primaryAggregationType"), 16)})
+                    dimensions = [token_word(item.get("value"), 41) for item in definition.get("dimensions") or [] if isinstance(item, dict)]
+                    found.setdefault(word, {"name": word, "unit": token_word(definition.get("unit"), 16), "aggregation": token_word(definition.get("primaryAggregationType"), 16),
+                                            **({"dimensions": [item for item in dimensions if item][:MAX_DIMENSIONS]} if any(dimensions) else {})})
             if not complete:
                 return []  # no resource was found in the subscriptions that were looked at, and the others were not: nothing is remembered, a later call looks again
             self._metric_names[kind] = sorted(found.values(), key=lambda item: item["name"].lower())
@@ -1295,7 +1472,7 @@ class Toolbox:
                 summaries[handle] = (_summarise(outcome[1]), token_word(outcome[0], 16))
         skipped = set(unread)
         columns = ["handle", *(["usd30d"] if priced else []), "total", "max", "avg", "days_with_data"]
-        caveats = self._caveats(failed)
+        caveats = self._caveats(failed, {entry.sub for entry in entries})
         more = offset + len(page) < len(entries)
         counted = dict(self._reads.get((kind, metric, days), {}))  # what the pages and the calls before this one showed
 
@@ -1329,6 +1506,7 @@ class Toolbox:
         service, kind, limit = args["service"], args["type"], args["limit"] or DEFAULT_LINES
         lines: list[tuple[float, str, str | None, str]] = []
         blind = 0
+        self._prefetch_costs(self.subscriptions)
         for sub in self.subscriptions:
             costs = self._costs_of(sub)
             if costs is None:
@@ -1450,8 +1628,507 @@ class Toolbox:
     def _tool_describe(self, args: dict) -> dict:
         entry = self._entry(args["handle"])
         facts = self._facts(entry, DESCRIBED_PROPERTIES)
-        answer = {"handle": args["handle"], "type": type_word(entry.resource.resource_type), **facts}
+        kind = type_word(entry.resource.resource_type)
+        answer = {"handle": args["handle"], "type": kind, **({"reads": deeper.offered(kind)} if deeper.offered(kind) else {}), **facts}
         while len(_dump(answer)) > MAX_RESULT_CHARS and answer["properties"]:
             answer["properties"].popitem()
         self._show(entry, facts)
+        return answer
+
+    # -- the deeper reads: what a resource records about the data written to it, who reads and writes it, the parts inside it, a metric by dimension, commitments, cost by day ------------------
+    def _offered_entry(self, handle: str, tool: str) -> _Entry:
+        entry = self._entry(handle)
+        if tool not in deeper.offered(type_word(entry.resource.resource_type)):
+            raise NotOffered(handle)
+        return entry
+
+    @staticmethod
+    def _guard(read: "Callable[[], T]") -> "T | Failed":
+        try:
+            return read()
+        except READ_ERRORS as error:
+            return Failed(error)
+
+    def _together(self, reads: "list[Callable[[], T]]") -> "list[T | Failed]":
+        """Runs the reads at the same time, at most `workers` of them, and gives each one's result in its place, or a Failed for a read that ended in an error of the reads."""
+        if len(reads) == 1:
+            return [self._guard(reads[0])]
+        pool = ThreadPoolExecutor(max_workers=max(1, min(self.workers, len(reads))))
+        try:
+            return [future.result() for future in [pool.submit(self._guard, read) for read in reads]]
+        finally:
+            pool.shutdown(wait=True)
+
+    def _fail(self, tool: str, what: str, failed: Failed) -> str:
+        """The note for a read that failed (written once for each failure), and the word that the answer says for it: a refusal of the platform (401, 403) is NOT_VISIBLE, and anything
+        else is `unavailable`."""
+        if id(failed) not in self._failures:
+            self._failures[id(failed)] = failed  # kept, so that the id stays this failure's
+            self.notes.append(f"{tool}: {what} could not be read ({str(failed.error)[:200]})")
+        return NOT_VISIBLE if getattr(failed.error, "status", None) in (401, 403) else "unavailable"
+
+    def _space(self, entry: _Entry, tool: str) -> _Space:
+        """The settings and the tables of a resource that keeps records of the data written to it, read once in a run (the two reads are made at the same time). When neither can be read the
+        error is raised."""
+        handle, resource_id = entry.resource.handle, entry.resource.resource_id
+        if handle not in self._spaces:
+            settings, tables = self._together([lambda: self.arm.workspace(resource_id), lambda: self.arm.workspace_tables(resource_id)])
+            if isinstance(settings, Failed) and isinstance(tables, Failed):
+                raise settings.error
+            found = _Space({}, None, deeper.TableBook({}), "read", "read")
+            if isinstance(settings, Failed):
+                found.settings = self._fail(tool, "the settings", settings)
+            else:
+                found.pricing, found.customer = deeper.pricing(settings), deeper.customer_id(settings)
+            if isinstance(tables, Failed):
+                found.listing = self._fail(tool, "the list of tables", tables)
+            else:
+                found.tables = deeper.TableBook(deeper.table_index(tables))
+            self._spaces[handle] = found
+        return self._spaces[handle]
+
+    def _moment(self) -> dt.datetime:
+        return self.now if self.now.tzinfo else self.now.replace(tzinfo=dt.timezone.utc)
+
+    def _records(self, space: _Space, tool: str, text: str, start: dt.datetime, end: dt.datetime) -> "tuple[list[dict] | None, str]":
+        """The rows of one read of the resource's own records over the time from start to end, or None and the word that says why there are none."""
+        if space.customer is None:
+            return None, (space.settings if space.settings != "read" else "unavailable")
+        try:
+            return self.arm.log_query(space.customer, text, start, end, timeout=QUERY_SECONDS), "read"
+        except READ_ERRORS as error:
+            return None, self._fail(tool, "the records", Failed(error))
+
+    @staticmethod
+    def _gb(mb: float) -> "int | float":
+        return deeper.number(round(mb / 1000, 3))
+
+    def _volume(self, entry: _Entry, space: _Space, days: int) -> "tuple[list[deeper.TableUse], float, str]":
+        """The tables of a resource by the volume that is charged for over the last `days` closed days, the volume of all of them in MB, and the word that says whether it was read.
+        The read is made once for a handle and a window, and a read that failed is not made again in the run."""
+        key = (entry.resource.handle, days)
+        if key not in self._volumes:
+            first, _ = self._window(days)
+            # The records of an hour are made after the hour ends, so the read starts two days before the window and ends now: the query itself keeps to the closed days.
+            rows, word = self._records(space, "data_volume", deeper.usage_query(days), first - dt.timedelta(days=2), self._moment())
+            if rows is None:
+                self._volumes[key] = ([], 0.0, word)
+            else:
+                ranked, total = deeper.volume_rows(deeper.usage_by_table(rows, first.date(), days), days)
+                self._volumes[key] = (ranked, total, "read")
+        return self._volumes[key]
+
+    @staticmethod
+    def _fit(answer: dict, lists: "list[tuple[list, dict, str]]") -> None:
+        """Takes rows off the longest of the lists of an answer until it fits under the cap, and counts what it left out under `<key>_not_shown` in the dict that holds the list."""
+        while len(_dump(answer)) > MAX_RESULT_CHARS:
+            longest = max(((rows, holder, key) for rows, holder, key in lists if rows), key=lambda item: len(item[0]), default=None)
+            if longest is None:
+                raise TooLarge()
+            rows, holder, key = longest
+            rows.pop()
+            holder[f"{key}_not_shown"] = holder.get(f"{key}_not_shown", 0) + 1
+
+    def _tool_data_volume(self, args: dict) -> dict:
+        entry = self._offered_entry(args["handle"], "data_volume")
+        handle, days, offset = args["handle"], args["days"] or MAX_DAYS, args["offset"] or 0
+        space = self._space(entry, "data_volume")
+        ranked, total, word = self._volume(entry, space, days)
+        answer: dict = {"handle": handle, "days": days, "settings": space.settings, "tables_listed": space.listing, **({"pricing": space.pricing} if space.pricing else {}), "volume": word}
+        if word != "read":
+            return answer
+        free = sum(use.free_mb for use in ranked)
+        extra = free > 0
+        shown = ranked[offset:]
+        rows: list[list] = []
+        for use in shown:
+            info = space.tables.index.get(use.name, {})
+            row = [space.tables.label(use.name), info.get("plan"), info.get("retention"), info.get("total_retention"), self._gb(use.billable_mb),
+                   deeper.number(round(use.billable_mb / total, 3)) if total > 0 else 0, sum(1 for mb in use.daily.values() if mb > 0), deeper.trend(use, days)]
+            rows.append([*row, self._gb(use.free_mb)] if extra else row)
+        answer.update({"billable_gb": self._gb(total), **({"free_gb": self._gb(free)} if extra else {}), "tables_with_data": len(ranked), "tables_in_workspace": len(space.tables.index),
+                       "cols": ["table", "plan", "retention_days", "total_retention_days", "gb", "share", "days", "trend", *(["free_gb"] if extra else [])], "rows": rows})
+        _page(answer, rows, offset, len(ranked))
+        for place, (use, row) in enumerate(zip(shown, rows), start=offset):
+            if place >= deeper.MAX_TABLES:
+                break
+            daily = [mb / 1000 for mb in use.daily.values() if mb > 0]
+            self._record_metric(handle, f"Billable GB {row[0]}", {"total": row[4], "max": deeper.number(round(max(daily), 3)) if daily else None,
+                                                                "average": deeper.number(round(math.fsum(daily) / len(daily), 3)) if daily else None, "days_with_data": row[6]}, days, "GB")
+        return answer
+
+    def _readers(self, entry: _Entry, space: _Space, records: str) -> dict:
+        """What reads the tables of a workspace, read once in a run: how many of the items of each source name each table, and how many of them read every table at once. The sources are read at
+        the same time. The texts of the items are counted by code and leave it as numbers. `records` says whether the records of the workspace could be read (the volume's word): when they
+        could not, the record of the runs is not asked for, and says the same."""
+        key = ("readers", entry.resource.handle)
+        if key in self._kept:
+            return self._kept[key]  # type: ignore[return-value]
+        workspace_id, sub, known = entry.resource.resource_id, entry.sub, space.tables.known() if space.listing == "read" else set()
+
+        def rules() -> tuple[list[list[str]], int]:
+            found = deeper.scheduled_rules(self.arm.graph_many(list(self.subscriptions), deeper.rules_query(workspace_id)), workspace_id)
+            return [texts for enabled, texts in found if enabled], sum(1 for enabled, _ in found if not enabled)
+
+        def audit() -> tuple[list[dict], list[dict]]:
+            if space.customer is None or records != "read":
+                raise HttpError(0, "the records of the workspace could not be read")
+            start = self._window(MAX_DAYS)[0]
+            return (self.arm.log_query(space.customer, deeper.LOG_AUDIT_TOTALS, start, self._moment(), timeout=QUERY_SECONDS),
+                    self.arm.log_query(space.customer, deeper.LOG_AUDIT_TEXTS, start, self._moment(), timeout=QUERY_SECONDS))
+
+        done = self._together([rules, lambda: deeper.query_texts(self.arm.saved_searches(workspace_id)), lambda: deeper.workbook_texts(self.arm.workbooks(sub), workspace_id),
+                               lambda: deeper.query_texts(self.arm.sentinel_rules(workspace_id), ("Scheduled", "NRT")), audit])
+        sources: dict[str, object] = {}
+        groups: dict[str, list[list[str]]] = {}
+        disabled = 0
+        for name, outcome in zip(READER_SOURCES, done):
+            if isinstance(outcome, Failed):
+                onboarded = name == "analytics_rules" and getattr(outcome.error, "status", None) == 400 and "onboard" in str(outcome.error).lower()
+                sources[name] = "not enabled" if onboarded else self._fail("data_readers", f"the {name.replace('_', ' ')}", outcome)
+            elif name == "rules":
+                groups[name], disabled = outcome  # type: ignore[misc]
+            else:
+                groups[name] = outcome  # type: ignore[assignment]
+        mentions, scanning = deeper.mention_counts(groups, known)
+        for name, items in groups.items():
+            sources[name] = {"read": len(items), **({"disabled": disabled} if name == "rules" and disabled else {}), "scanning_all": scanning[name]}
+        runs: dict[str, int] | None = None
+        log = done[len(READER_SOURCES)]
+        if isinstance(log, Failed):
+            if records != "read":
+                sources["query_log"] = records
+            else:
+                sources["query_log"] = "not recorded" if getattr(log.error, "status", None) == 400 else self._fail("data_readers", "the record of the runs", log)
+        else:
+            totals, texts = log  # type: ignore[misc]
+            first = totals[0] if totals else {}
+            sources["query_log"] = {"runs": deeper.count(first.get("Runs")) or 0, "callers": deeper.count(first.get("Callers")) or 0, "texts_read": len(texts)}
+            runs = deeper.audit_counts(texts, known)
+        self._kept[key] = {"sources": sources, "mentions": mentions, "runs": runs}
+        return self._kept[key]  # type: ignore[return-value]
+
+    def _tool_data_readers(self, args: dict) -> dict:
+        entry = self._offered_entry(args["handle"], "data_readers")
+        handle, limit, offset = args["handle"], args["limit"] or DEFAULT_TABLES, args["offset"] or 0
+        space = self._space(entry, "data_readers")
+        ranked, _, word = self._volume(entry, space, MAX_DAYS)
+        answer: dict = {"handle": handle, "days": MAX_DAYS, "tables_listed": space.listing, "volume": word}
+        if space.listing != "read":
+            return answer  # without the list of its tables nothing can be counted by table, and a count of 0 would say what was not read
+        found = self._readers(entry, space, word)
+        sources = found["sources"]
+        answer["sources"] = sources
+        if word != "read":
+            return answer
+        counted = {name: sources[name] if isinstance(sources[name], dict) else 0 if sources[name] == "not enabled" else None for name in READER_SOURCES}
+        rows = [[space.tables.label(use.name), *[None if counted[name] is None else found["mentions"].get(use.name, {}).get(name, 0) for name in READER_SOURCES],
+                 None if found["runs"] is None else found["runs"].get(use.name, 0)] for use in ranked[offset:offset + limit]]
+        answer.update({"tables_with_data": len(ranked), "cols": ["table", *READER_SOURCES, "runs"], "rows": rows})
+        _page(answer, rows, offset, len(ranked))
+        broad = sum(source.get("scanning_all", 0) for source in sources.values() if isinstance(source, dict))  # the items that read every table at once
+        for place, row in enumerate(rows, start=offset):
+            if place >= deeper.MAX_TABLES:
+                break
+            named = row[1:1 + len(READER_SOURCES)]
+            complete = None not in named  # the number is the items that name the table and those that read every table, and only when every source was read
+            self._record_metric(handle, f"Readers {row[0]}", {"total": sum(named) + broad if complete else None, "max": None, "average": None, "days_with_data": 1 if complete else 0},
+                                MAX_DAYS, None)
+            if row[-1] is not None:
+                self._record_metric(handle, f"Runs {row[0]}", {"total": row[-1], "max": None, "average": None, "days_with_data": 1}, MAX_DAYS, None)
+        return answer
+
+    def _once(self, key: tuple, read: "Callable[[], T]") -> "T | Failed":
+        """The result of one read of the deeper tools, made once in a run: a read that failed gives the same Failed again, and its note is written once."""
+        if key not in self._kept:
+            self._kept[key] = self._guard(read)
+        return self._kept[key]  # type: ignore[return-value]
+
+    def _access(self, sub: str, what: str, outcome: "T | Failed") -> "T | str":
+        """The value of a read, or the word that says why there is none: NOT_VISIBLE when the platform refused the access of the run, `unavailable` for any other failure."""
+        if not isinstance(outcome, Failed):
+            return outcome
+        self._note(sub, what, outcome.error)
+        return NOT_VISIBLE if getattr(outcome.error, "status", None) in (401, 403) else "unavailable"
+
+    @staticmethod
+    def _tables_named(space: _Space, names: Iterable[str]) -> list[str]:
+        """Tables as the agent names them: the ones that the workspace lists, and `other` for a name that it does not list."""
+        return sorted({space.tables.label(name) if name in space.tables.index else OTHER for name in names})[:8]
+
+    def _collection_rules(self, entry: _Entry) -> "list[tuple[_Entry, dict]]":
+        found: list[tuple[_Entry, dict]] = []
+        for row in self.arm.graph_many(list(self.subscriptions), deeper.collection_rules_query(entry.resource.resource_id)):
+            facts = deeper.collection_rule(row, entry.resource.resource_id)
+            owner = self._owner_of(row)
+            rule = self._ingest(row, owner) if facts is not None and owner else None
+            if rule is not None:
+                found.append((rule, facts))  # type: ignore[arg-type]
+        found.sort(key=lambda item: (-item[1]["flows"], -sum(item[1]["sources"].values()), item[0].key))
+        return found
+
+    def _table_sources(self, space: _Space, name: str) -> "tuple[list[tuple[str, float]], float | None, str]":
+        """The resources that wrote the most billable data to one table on the last closed day, as ids and MB, the MB that the table took in that day, and the word that says
+        whether it was read. The resources of the ids are read, so that they can have handles."""
+        start, end = self._window(1)
+        rows, word = self._records(space, "data_writers", deeper.sources_query(name, MAX_SOURCES), start, end)
+        if rows is None:
+            return [], None, word
+        found, whole = deeper.sources(rows)
+        self._resolve_quietly([resource for resource, _ in found])
+        return found, whole, "read"
+
+    def _writers_to(self, entry: _Entry, table: str | None) -> dict:
+        handle = entry.resource.handle
+        space = self._space(entry, "data_writers")
+        answer: dict = {"handle": handle, "tables_listed": space.listing}
+        lists: list[tuple[list, dict, str]] = []
+        named: list[tuple[list, list[tuple[list, _Entry | None]]]] = []  # a list of rows, and each of its rows with the entry that it stands for
+        rules = self._once(("collection-rules", handle), lambda: self._collection_rules(entry))
+        if isinstance(rules, Failed):
+            answer["collection_rules"] = self._fail("data_writers", "the collection rules", rules)
+        else:
+            rows = [[PLACEHOLDER, facts["kind"], facts["sources"], facts["flows"], facts["transforms"], self._tables_named(space, facts["tables"])] for _, facts in rules[:MAX_RULES]]
+            answer["collection_rules"] = {"total": len(rules), "cols": ["handle", "kind", "sources", "flows", "transforms", "tables"], "rows": rows}
+            lists.append((rows, answer["collection_rules"], "rows"))
+            named.append((rows, [(row, rule) for row, (rule, _) in zip(rows, rules)]))
+        if table is not None:
+            name = space.tables.name_of(table)
+            if name is None:
+                raise BadArguments("table")
+            plan = space.tables.index.get(name, {}).get("plan")
+            block: dict = {"table": space.tables.label(name), "plan": plan}
+            answer["table"] = block
+            if plan != "Analytics" or not deeper.queryable(name):
+                block["writers"] = "not read for this plan"  # a read of any other plan is charged by the volume that it scans
+            else:
+                found = self._once(("sources", handle, name), lambda: self._table_sources(space, name))
+                if isinstance(found, Failed):
+                    block["writers"] = self._fail("data_writers", "the writers of the table", found)
+                elif found[2] != "read":
+                    block["writers"] = found[2]
+                else:
+                    sources, whole, _ = found
+                    rows = []
+                    owners = []
+                    for resource_id, mb in sources[:MAX_SOURCES]:
+                        owner = self._entries.get(resource_id)
+                        rows.append([PLACEHOLDER if owner else None, type_of_id(resource_id), self._gb(mb), deeper.number(round(mb / whole, 3)) if whole else None])
+                        owners.append((rows[-1], owner))
+                    shares = [row[3] for row in rows if row[3] is not None]
+                    block["writers"] = {"day": self._window(1)[0].date().isoformat(), **({"billable_gb": self._gb(whole)} if whole is not None else {}),
+                                        **({"other_share": deeper.number(round(max(0.0, 1 - math.fsum(shares)), 3))} if whole and len(shares) == len(rows) else {}),
+                                        "cols": ["handle", "type", "gb", "share"], "rows": rows}
+                    lists.append((rows, block["writers"], "rows"))
+                    named.append((rows, owners))
+        self._fit(answer, lists)
+        for rows, pairs in named:
+            kept = {id(row) for row in rows}
+            for row, owner in pairs:
+                if id(row) in kept and owner is not None:
+                    row[0] = self._show(owner, {})
+        return answer
+
+    def _sends_to(self, entry: _Entry) -> dict:
+        handle = entry.resource.handle
+        answer: dict = {"handle": handle, "type": type_word(entry.resource.resource_type)}
+        found = self._once(("diagnostics", handle), lambda: self.arm.diagnostic_settings(entry.resource.resource_id))
+        if isinstance(found, Failed):
+            answer["diagnostic_settings"] = self._fail("data_writers", "the diagnostic settings", found)
+            return answer
+        built = [deeper.diagnostic_setting(item) for item in found]
+        self._resolve_quietly([workspace for _, workspace in built if workspace])
+        rows = []
+        for facts, workspace in built:
+            owner = self._entries.get(workspace) if workspace else None
+            target = self._show(owner, {}) if owner is not None else OTHER if facts["workspace"] else None
+            rows.append([facts["logs"], facts["metrics"], target, facts["storage"], facts["event_hub"], facts["partner"], facts["own_tables"]])
+        rows.sort(key=lambda row: (-row[0], -row[1], str(row[2])))
+        answer["diagnostic_settings"] = {"total": len(rows), "cols": ["logs", "metrics", "workspace", "storage", "event_hub", "partner", "own_tables"], "rows": rows}
+        return answer
+
+    def _tool_data_writers(self, args: dict) -> dict:
+        entry = self._entry(args["handle"])
+        if "data_writers" in deeper.offered(type_word(entry.resource.resource_type)):
+            return self._writers_to(entry, args["table"])
+        if args["table"] is not None:
+            raise BadArguments("table")
+        return self._sends_to(entry)
+
+    def _deployments(self, entry: _Entry) -> "list[tuple[_Entry, dict]]":
+        """The parts that an AI services account keeps inside itself, as entries (they get their handles when an answer shows them) with their typed facts. They have no cost of their own."""
+        account = {"resourceGroup": entry.resource.resource_group, "subscriptionId": entry.resource.subscription_id, "location": entry.resource.location}
+        built: list[tuple[_Entry, dict]] = []
+        for item in self.arm.deployments(entry.resource.resource_id):
+            row = deeper.deployment_row(item, account)
+            child = self._ingest(row, entry.sub) if row else None
+            if child is not None:
+                child.part_of = entry.key
+                built.append((child, deeper.deployment_facts(item)))
+        built.sort(key=lambda item: (-(item[1].get("capacity") or 0), item[1].get("model") or "", item[0].key))
+        return built
+
+    def _tool_children(self, args: dict) -> dict:
+        entry = self._offered_entry(args["handle"], "children")
+        handle = args["handle"]
+        found = self._once(("children", handle), lambda: self._deployments(entry))
+        if isinstance(found, Failed):
+            return {"handle": handle, "children": self._fail("children", "the parts", found)}
+        rows = [[PLACEHOLDER, *(facts.get(column) for column in CHILD_COLUMNS)] for _, facts in found[:MAX_CHILDREN]]
+        answer: dict = {"handle": handle, "total": len(found), "returned": len(rows), "cols": ["handle", *CHILD_COLUMNS], "rows": rows}
+        self._fit(answer, [(rows, answer, "rows")])
+        answer["returned"] = len(rows)
+        for row, (child, facts) in zip(rows, found):
+            shown: dict = {key: value for key, value in (("sku", facts.get("sku")), ("kind", facts.get("model"))) if value is not None}
+            shown["properties"] = {name: facts[key] for name, key in (("version", "version"), ("capacity", "capacity"), ("requestsPerMinute", "requests_per_minute"),
+                                                                     ("tokensPerMinute", "tokens_per_minute"), ("state", "state"), ("upgrade", "upgrade")) if key in facts}
+            row[0] = self._show(child, shown)
+        return answer
+
+    def _tool_metric_split(self, args: dict) -> dict:
+        handle, metric, dimension, days, limit = args["handle"], args["metric"], args["dimension"], args["days"] or MAX_DAYS, args["limit"] or DEFAULT_SPLIT
+        entry = self._entry(handle)
+        kind = type_word(entry.resource.resource_type)
+        offered = next((item for item in self._names_of(kind) if item["name"] == metric), None) if kind else None
+        if offered is None:
+            return {"error": "unknown-metric"}
+        if dimension not in offered.get("dimensions", []):
+            raise BadArguments("dimension")
+        parts: dict[str, _Entry] = {}
+        if "children" in deeper.offered(kind):
+            known = self._once(("children", handle), lambda: self._deployments(entry))
+            if not isinstance(known, Failed):
+                parts = {child.resource.name.lower(): child for child, _ in known}
+        start, end = self._window(days)
+        unit, series = self.arm.metrics_split(entry.resource.resource_id, metric, dimension, start, end, top=limit)
+        labels: dict[str, str] = {}
+        found: list[tuple[object, dict, _Entry | None]] = []
+        for value, points in series:
+            summary = _summarise(points)
+            if _bucket(summary) == "no_data":
+                continue
+            text, part = value.strip(), parts.get(value.strip().lower())
+            if part is not None:
+                said: object = PLACEHOLDER
+            elif re.fullmatch(r"[0-9]{1,9}", text):
+                said = int(text)
+            else:
+                said = labels.setdefault(text, f"v{len(labels) + 1}")
+            found.append((said, summary, part))
+        found.sort(key=lambda item: (-(item[1]["total"] if item[1]["total"] is not None else -1), str(item[0])))
+        rows = [[said, summary["total"], summary["max"], summary["average"], summary["days_with_data"]] for said, summary, _ in found]
+        shown_unit = token_word(unit, 16)
+        answer: dict = {"handle": handle, "metric": metric, "dimension": dimension, "days": days, **({"unit": shown_unit} if shown_unit else {}), "values": len(rows),
+                        "limit_reached": len(series) >= limit, "cols": ["value", "total", "max", "avg", "days_with_data"], "rows": rows}
+        self._fit(answer, [(rows, answer, "rows")])
+        for row, (_, summary, part) in zip(rows, found):
+            if part is not None:
+                row[0] = self._show(part, {})
+                if row[0] is not None:
+                    self._record_metric(row[0], metric, summary, days, shown_unit)
+        return answer
+
+    def _read_commitments(self, sub: str) -> dict:
+        """What one subscription's commitments read: how the cost of the last 30 days was paid for, and the platform's own purchase recommendations. Each part is a list, or the word that says why
+        there is none."""
+        today = self._today()
+        start, end = today - dt.timedelta(days=MAX_DAYS), today - dt.timedelta(days=1)
+
+        def paid() -> list[dict]:
+            lines, currency = deeper.pricing_lines(self.arm.cost_models(sub, start, end))
+            if lines and currency != "USD":
+                raise HttpError(0, "the cost is not in US dollars")
+            return [{"pricing": line["pricing"], "charge": line["charge"], "usd": line["amount"]} for line in lines[:MAX_LINES]]
+
+        def savings() -> list[dict]:
+            found = [fact for term in ("P1Y", "P3Y") for item in self.arm.benefit_recommendations(sub, term) for fact in [deeper.savings_plan(item)] if fact]
+            return sorted(found, key=lambda fact: (-(fact.get("saving") or 0), str(fact.get("term")), str(fact.get("sku"))))[:MAX_LINES]
+
+        def reservations() -> list[dict]:
+            found = [fact for item in self.arm.reservation_recommendations(sub) for fact in [deeper.reservation(item)] if fact]
+            return sorted(found, key=lambda fact: (-(fact.get("saving") or 0), str(fact.get("term")), str(fact.get("sku"))))[:MAX_LINES]
+
+        return {name: self._access(sub, what, self._guard(read)) for name, what, read in (
+            ("paid_for", "the cost by how it was paid for", paid), ("savings_plan", "the savings plan recommendations", savings), ("reservation", "the reservation recommendations", reservations))}
+
+    def _tool_commitments(self, args: dict) -> dict:
+        for sub, outcome in self._pool([sub for sub in self.subscriptions if ("commitments", sub) not in self._kept], self._read_commitments).items():
+            self._kept[("commitments", sub)] = outcome
+        blocks = []
+        for sub in self.subscriptions:
+            kept = self._kept.get(("commitments", sub))
+            if isinstance(kept, dict):
+                blocks.append({"subscription": self._label(sub), **{name: list(value) if isinstance(value, list) else value for name, value in kept.items()}})
+        answer: dict = {"window_days": MAX_DAYS, "basis": "amortized", "subscriptions": blocks, **self._unread()}
+        if len(blocks) > MAX_BLOCKS:
+            blocks.sort(key=lambda block: (-sum(len(value) for value in block.values() if isinstance(value, list)), len(block["subscription"]), block["subscription"]))
+            answer["subscriptions_not_shown"] = len(blocks) - MAX_BLOCKS
+            del blocks[MAX_BLOCKS:]
+        self._fit(answer, [(block[name], block, name) for block in blocks for name in ("paid_for", "savings_plan", "reservation") if isinstance(block.get(name), list)])
+        return answer
+
+    def _tool_cost_history(self, args: dict) -> dict:
+        handle, kind, days, basis = args["handle"], args["type"], args["days"] or DEFAULT_HISTORY, args["basis"] or "actual"
+        if (handle is None) == (kind is None):
+            raise BadArguments("handle")
+        today = self._today()
+        start, end = today - dt.timedelta(days=days), today - dt.timedelta(days=1)
+        amortized = basis == "amortized"
+        if handle is not None:
+            entry = self._entry(handle)
+            subs, where, scope = [entry.sub], ("ResourceId", (entry.resource.resource_id,)), entry.key
+        else:
+            self._load_type(kind)
+            subs = sorted({item.sub for item in self._entries_of(kind)}, key=list(self.subscriptions).index)
+            where, scope = ("ResourceType", (kind,)), kind
+
+        def read(sub: str) -> "list[tuple[dt.date, str, float, str]] | Failed":
+            return self._once(("history", sub, scope, days, amortized), lambda: self.arm.cost_days(sub, start, end, amortized=amortized, where=where))
+
+        outcomes = self._pool(subs, read)
+        rows: list[tuple[dt.date, str, float, str]] = []
+        failed: list[str] = []
+        last: Exception | None = None
+        for sub in subs:
+            found = outcomes.get(sub)
+            if isinstance(found, Failed):
+                self._note(sub, "the cost by day", found.error)
+                failed.append(sub)
+                last = found.error
+            elif found is not None:
+                rows.extend(found)
+        if last is not None and len(failed) == len([sub for sub in subs if sub in outcomes]):
+            raise last
+        if any(code != "USD" for _, _, _, code in rows):
+            self.notes.append("cost_history: the cost is not in US dollars, so it is not shown")
+            return {"error": "unavailable"}
+        daily = [0.0] * days
+        per_resource: dict[str, float] = {}
+        for day, resource, amount, _ in rows:
+            place = (day - start).days
+            if 0 <= place < days and (handle is None or resource == entry.key):
+                daily[place] += amount
+                per_resource[resource] = per_resource.get(resource, 0.0) + amount
+        total, with_cost = _money(sum(daily)), [amount for amount in daily if amount > 0]
+        said: dict = {}
+        if failed:
+            self._listing(said, "unavailable", failed)
+        said.update(self._unread())
+        answer: dict = {**({"handle": handle} if handle is not None else {"type": kind}), "basis": basis, "days": days, "from": start.isoformat(), "to": end.isoformat(),
+                        "total": total, "days_with_cost": len(with_cost), "daily": [_cents(_money(amount)) for amount in daily], **said}
+        ranked: list[tuple[str, float]] = []
+        if handle is None:
+            ranked = sorted(per_resource.items(), key=lambda item: (-item[1], item[0]))[:MAX_RESOURCES]
+            self._resolve_quietly([resource for resource, _ in ranked])
+            answer["resources_total"] = len(per_resource)
+            answer["resources"] = [[PLACEHOLDER if resource in self._entries else None, _cents(_money(amount))] for resource, amount in ranked]
+            self._fit(answer, [(answer["resources"], answer, "resources")])
+            for row, (resource, _) in zip(answer["resources"], ranked):
+                if resource in self._entries:
+                    row[0] = self._show(self._entries[resource], {})
+        elif len(_dump(answer)) > MAX_RESULT_CHARS:
+            raise TooLarge()
+        if handle is not None:
+            self._record_metric(handle, f"Cost {basis} USD {days}d", {"total": total, "max": _cents(_money(max(daily))), "average": _money(math.fsum(with_cost) / len(with_cost)) if with_cost else None,
+                                                                   "days_with_data": len(with_cost)}, days, "USD")
         return answer

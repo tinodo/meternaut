@@ -71,10 +71,10 @@ class CostLines(unittest.TestCase):
             arm.cost_lines(SUBSCRIPTION, FIRST, LAST)
         self.assertEqual((raised.exception.status, len(script.calls)), (429, 3))
 
-    def test_the_cost_of_every_resource_is_still_asked_for_with_one_grouping_and_gives_the_same_totals(self):
-        arm, script = arm_with(ok(self.page([[1.5, RESOURCE, "USD"]], [{"name": "Cost"}, {"name": "ResourceId"}, {"name": "Currency"}])))
-        self.assertEqual(arm.costs(SUBSCRIPTION, FIRST, LAST), ({RESOURCE.lower(): 1.5}, "USD"))
-        self.assertEqual(json.loads(script.calls[0][3])["dataset"]["grouping"], [{"type": "Dimension", "name": "ResourceId"}])
+    def test_the_cost_of_every_resource_is_added_up_from_the_lines_and_gives_the_same_totals(self):
+        arm, script = arm_with(ok(self.page([[1.5, RESOURCE, "Storage", "USD"], [0.5, RESOURCE, "Bandwidth", "USD"]])))
+        self.assertEqual(arm.costs(SUBSCRIPTION, FIRST, LAST), ({RESOURCE.lower(): 2.0}, "USD"))
+        self.assertEqual(json.loads(script.calls[0][3])["dataset"]["grouping"], [{"type": "Dimension", "name": "ResourceId"}, {"type": "Dimension", "name": "ServiceName"}])
 
 
 class SecurityPricings(unittest.TestCase):
@@ -240,7 +240,8 @@ class TheCallsThatAreAllowed(unittest.TestCase):
         c = self.client()
         base = "https://management.azure.com"
         for url in (f"{base}{RESOURCE}/providers/Microsoft.Insights/metrics?api-version=2023-10-01", f"{base}{CHILD}/providers/microsoft.insights/metrics",
-                    f"{base}{RESOURCE}/providers/Microsoft.Insights/metricDefinitions?api-version=2018-01-01", f"{base}/subscriptions/{SUBSCRIPTION}/providers/Microsoft.Security/pricings?api-version=2024-01-01"):
+                    f"{base}{RESOURCE}/providers/Microsoft.Insights/metricDefinitions?api-version=2018-01-01", f"{base}/subscriptions/{SUBSCRIPTION}/providers/Microsoft.Security/pricings?api-version=2024-01-01",
+                    f"{base}{RESOURCE}/providers/Microsoft.Insights/diagnosticSettings?api-version=2021-05-01-preview"):
             self.assertEqual(c.request("GET", url).status, 200, url)
 
     def test_nothing_else_of_these_services_is_allowed(self):
@@ -251,7 +252,8 @@ class TheCallsThatAreAllowed(unittest.TestCase):
             ("DELETE", f"{base}{RESOURCE}/providers/Microsoft.Insights/metricDefinitions"), ("PATCH", f"{base}/subscriptions/{SUBSCRIPTION}/providers/Microsoft.Security/pricings"),
             ("PUT", f"{base}/subscriptions/{SUBSCRIPTION}/providers/Microsoft.Security/pricings/VirtualMachines"), ("GET", f"{base}/subscriptions/{SUBSCRIPTION}/providers/Microsoft.Security/pricings/VirtualMachines"),
             ("GET", f"{base}/subscriptions/{SUBSCRIPTION}/resourceGroups/rg/providers/Microsoft.Security/pricings"),
-            ("GET", f"{base}{RESOURCE}/providers/Microsoft.Insights/diagnosticSettings"), ("GET", f"{base}{RESOURCE}/providers/Microsoft.Insights/metricsx"),
+            ("GET", f"{base}{RESOURCE}/providers/Microsoft.Insights/diagnosticSettings/extra"), ("GET", f"{base}{RESOURCE}/providers/Microsoft.Insights/metricsx"),
+            ("POST", f"{base}{RESOURCE}/providers/Microsoft.Insights/diagnosticSettings"),
             ("GET", f"{base}{RESOURCE}/providers/Microsoft.Insights/metrics/extra"), ("GET", f"{base}{RESOURCE}/providers/Microsoft.Insights/metricAlerts"),
             ("GET", f"https://management.azure.com.evil.example{RESOURCE}/providers/Microsoft.Insights/metrics"), ("GET", f"http://management.azure.com{RESOURCE}/providers/Microsoft.Insights/metrics"),
             ("GET", f"https://evil.example{RESOURCE}/providers/Microsoft.Insights/metrics"), ("GET", f"{base}/subscriptions/not-a-guid/providers/Microsoft.Security/pricings"),

@@ -46,8 +46,8 @@ class Graph(unittest.TestCase):
 
 
 class Costs(unittest.TestCase):
-    PAGE = {"properties": {"columns": [{"name": "Cost"}, {"name": "ResourceId"}, {"name": "Currency"}],
-                           "rows": [[1.5, RESOURCE, "USD"], [2.0, RESOURCE.upper(), "USD"], [0.25, "/subscriptions/x/other", "USD"]]}}
+    PAGE = {"properties": {"columns": [{"name": "Cost"}, {"name": "ResourceId"}, {"name": "ServiceName"}, {"name": "Currency"}],
+                           "rows": [[1.5, RESOURCE, "Storage", "USD"], [2.0, RESOURCE.upper(), "Bandwidth", "USD"], [0.25, "/subscriptions/x/other", "Support", "USD"]]}}
 
     def test_the_cost_lines_of_a_resource_are_added_up_by_lower_case_id(self):
         arm, script = arm_with(ok(self.PAGE))
@@ -56,11 +56,12 @@ class Costs(unittest.TestCase):
         body = json.loads(script.calls[0][3])
         self.assertEqual(body["type"], "ActualCost")
         self.assertEqual(body["timePeriod"], {"from": "2026-10-05T00:00:00Z", "to": "2026-11-03T23:59:59Z"})
-        self.assertEqual(body["dataset"]["grouping"], [{"type": "Dimension", "name": "ResourceId"}])
+        self.assertEqual(body["dataset"]["grouping"], [{"type": "Dimension", "name": "ResourceId"}, {"type": "Dimension", "name": "ServiceName"}],
+                         "the totals are added up from the lines by resource and service, which the tools of the investigation use too")
 
     def test_the_next_page_is_read_from_the_same_service_only(self):
         link = f"https://management.azure.com/subscriptions/{SUBSCRIPTION}/providers/Microsoft.CostManagement/query?api-version=2023-11-01&$skiptoken=abc"
-        second = {"properties": {"columns": self.PAGE["properties"]["columns"], "rows": [[4.0, RESOURCE, "USD"]]}}
+        second = {"properties": {"columns": self.PAGE["properties"]["columns"], "rows": [[4.0, RESOURCE, "Storage", "USD"]]}}
         arm, script = arm_with(ok({"properties": {**self.PAGE["properties"], "nextLink": link}}), ok(second))
         totals, _ = arm.costs(SUBSCRIPTION, dt.date(2026, 10, 5), dt.date(2026, 11, 3))
         self.assertEqual(totals[RESOURCE.lower()], 7.5)
@@ -76,19 +77,57 @@ class Costs(unittest.TestCase):
             self.assertEqual(len(script.calls), 1)
 
     def test_more_than_one_currency_is_said_and_no_line_has_no_currency(self):
-        mixed = {"properties": {"columns": self.PAGE["properties"]["columns"], "rows": [[1.0, "a", "USD"], [1.0, "b", "EUR"]]}}
+        mixed = {"properties": {"columns": self.PAGE["properties"]["columns"], "rows": [[1.0, "a", "S", "USD"], [1.0, "b", "S", "EUR"]]}}
         self.assertEqual(arm_with(ok(mixed))[0].costs(SUBSCRIPTION, dt.date(2026, 10, 5), dt.date(2026, 11, 3))[1], "mixed")
         empty = {"properties": {"columns": self.PAGE["properties"]["columns"], "rows": []}}
         self.assertEqual(arm_with(ok(empty))[0].costs(SUBSCRIPTION, dt.date(2026, 10, 5), dt.date(2026, 11, 3)), ({}, None))
 
     def test_a_pre_tax_cost_column_is_read_too(self):
-        page = {"properties": {"columns": [{"name": "PreTaxCost"}, {"name": "ResourceId"}], "rows": [[2.0, "a"]]}}
+        page = {"properties": {"columns": [{"name": "PreTaxCost"}, {"name": "ResourceId"}, {"name": "ServiceName"}], "rows": [[2.0, "a", "S"]]}}
         self.assertEqual(arm_with(ok(page))[0].costs(SUBSCRIPTION, dt.date(2026, 10, 5), dt.date(2026, 11, 3)), ({"a": 2.0}, None))
 
     def test_an_answer_that_is_not_a_cost_table_is_an_error(self):
-        for answer in ({"properties": {"columns": [{"name": "Other"}], "rows": []}}, {"nope": 1}, [], {"properties": {"columns": self.PAGE["properties"]["columns"], "rows": [["x", "a", "USD"]]}}):
+        for answer in ({"properties": {"columns": [{"name": "Other"}], "rows": []}}, {"nope": 1}, [], {"properties": {"columns": self.PAGE["properties"]["columns"], "rows": [["x", "a", "S", "USD"]]}}):
             with self.assertRaises(HttpError):
                 arm_with(ok(answer))[0].costs(SUBSCRIPTION, dt.date(2026, 10, 5), dt.date(2026, 11, 3))
+
+    def test_the_lines_are_read_once_for_a_period_and_the_totals_and_the_lines_share_the_read(self):
+        arm, script = arm_with(ok(self.PAGE))
+        first, last = dt.date(2026, 10, 5), dt.date(2026, 11, 3)
+        lines = arm.cost_lines(SUBSCRIPTION, first, last)
+        self.assertEqual(arm.costs(SUBSCRIPTION, first, last)[0][RESOURCE.lower()], 3.5)
+        self.assertEqual(arm.cost_lines(SUBSCRIPTION.upper(), first, last), lines, "the id of the subscription has no case")
+        self.assertEqual(len(script.calls), 1, "one read of Cost Management for the subscription and the period")
+        arm.cost_lines(SUBSCRIPTION, first, dt.date(2026, 11, 2))
+        self.assertEqual(len(script.calls), 2, "another period is another read")
+
+    def test_a_read_that_failed_is_not_kept_so_the_next_caller_reads_again(self):
+        arm, script = arm_with((500, {}, b"{}"), (500, {}, b"{}"), (500, {}, b"{}"), ok(self.PAGE))
+        with self.assertRaises(HttpError):
+            arm.cost_lines(SUBSCRIPTION, dt.date(2026, 10, 5), dt.date(2026, 11, 3))
+        self.assertEqual(len(arm.cost_lines(SUBSCRIPTION, dt.date(2026, 10, 5), dt.date(2026, 11, 3))), 3)
+
+    def test_the_lines_that_the_caller_gets_are_a_copy(self):
+        arm, _ = arm_with(ok(self.PAGE))
+        arm.cost_lines(SUBSCRIPTION, dt.date(2026, 10, 5), dt.date(2026, 11, 3)).clear()
+        self.assertEqual(len(arm.cost_lines(SUBSCRIPTION, dt.date(2026, 10, 5), dt.date(2026, 11, 3))), 3)
+
+    def test_a_subscription_with_more_lines_than_the_pages_that_are_read_still_has_its_totals_from_the_single_grouping(self):
+        link = f"https://management.azure.com/subscriptions/{SUBSCRIPTION}/providers/Microsoft.CostManagement/query?api-version=2023-11-01&$skiptoken=abc"
+        full = {"properties": {**self.PAGE["properties"], "nextLink": link}}
+        totals = {"properties": {"columns": [{"name": "Cost"}, {"name": "ResourceId"}, {"name": "Currency"}], "rows": [[7.0, RESOURCE, "USD"]]}}
+        arm, script = arm_with(*([ok(full)] * 10), ok(totals))
+        self.assertEqual(arm.costs(SUBSCRIPTION, dt.date(2026, 10, 5), dt.date(2026, 11, 3)), ({RESOURCE.lower(): 7.0}, "USD"))
+        self.assertEqual(json.loads(script.calls[-1][3])["dataset"]["grouping"], [{"type": "Dimension", "name": "ResourceId"}])
+        with self.assertRaises(HttpError):
+            arm_with(*([ok(full)] * 10))[0].cost_lines(SUBSCRIPTION, dt.date(2026, 10, 5), dt.date(2026, 11, 3))
+
+    def test_every_cost_read_names_its_own_client_type_so_that_it_does_not_share_the_quota_of_every_caller_that_names_none(self):
+        arm, script = arm_with(ok(self.PAGE), ok({"properties": {"columns": [{"name": "Cost"}, {"name": "PricingModel"}, {"name": "ChargeType"}, {"name": "Currency"}],
+                                                                  "rows": [[5.0, "OnDemand", "Usage", "USD"]]}}))
+        arm.cost_lines(SUBSCRIPTION, dt.date(2026, 10, 5), dt.date(2026, 11, 3))
+        arm.cost_models(SUBSCRIPTION, dt.date(2026, 10, 5), dt.date(2026, 11, 3))
+        self.assertEqual([call[2]["ClientType"] for call in script.calls], ["Meternaut", "Meternaut"])
 
 
 class AdvisorAndLocks(unittest.TestCase):

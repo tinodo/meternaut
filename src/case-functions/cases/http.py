@@ -23,6 +23,14 @@ ARM_HOST = "management.azure.com"
 GUID = r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
 # A subscription, a resource group of it, or one resource of it (a child resource has more name segments).
 SCOPE = rf"/subscriptions/{GUID}(?:/resourceGroups/[A-Za-z0-9._()-]{{1,90}}(?:/providers/[A-Za-z0-9.]{{1,80}}(?:/[A-Za-z0-9._()~-]{{1,100}}){{2,16}})?)?"
+# The resource group of a subscription, a Log Analytics workspace of it (4 to 63 letters, digits and hyphens, none at the ends) and an account of the AI services of it.
+GROUP = rf"/subscriptions/{GUID}/resourceGroups/[A-Za-z0-9._()-]{{1,90}}"
+WORKSPACE = rf"{GROUP}/providers/Microsoft\.OperationalInsights/workspaces/[A-Za-z0-9][A-Za-z0-9-]{{2,61}}[A-Za-z0-9]"
+AI_ACCOUNT = rf"{GROUP}/providers/Microsoft\.CognitiveServices/accounts/[A-Za-z0-9][A-Za-z0-9._-]{{0,63}}"
+# The query API of Azure Monitor Logs (Learn, "Request format for the Azure Monitor Logs query API"): the public endpoint, whose token is asked for the audience below. A workspace is named
+# there by its id (a GUID, the customerId of the workspace), and the one POST of it asks a question.
+LOG_ANALYTICS_HOST = "api.loganalytics.azure.com"
+LOG_ANALYTICS_RESOURCE = "https://api.loganalytics.io"
 RETRY_STATUSES = frozenset({429, 500, 502, 503, 504})
 MAX_CHALLENGE = 1500
 # The endpoint of one Microsoft Foundry project (the default project is called _project), the name of an agent in it and the id of a conversation of it.
@@ -96,17 +104,30 @@ def ai_gateway_calls(host: str) -> tuple[tuple[str, "re.Pattern[str]"], ...]:
 
 def allowed_calls(foundry_endpoint: str | None = None, ai_gateway_host: str | None = None) -> tuple[tuple[str, "re.Pattern[str]"], ...]:
     """(method, address without its query) of every call that the app may make. `foundry_endpoint` adds the calls of foundry_calls for that one project and `ai_gateway_host` the one
-    call of ai_gateway_calls; without them the app makes none, and every call of the Watch to Azure is a read. The one GET of /subscriptions lists the subscriptions that the app's own
-    identity can read (scope.py): the Reader role covers it (R1 of environment/access-requirements.json), and the address has no part after it."""
+    call of ai_gateway_calls; without them the app makes none, and every call of the Watch to Azure is a read (two POSTs of Azure Resource Manager and one of the Logs query API ask a
+    question: a query). The one GET of /subscriptions lists the subscriptions that the app's own identity can read (scope.py): the Reader role covers it (R1 of
+    environment/access-requirements.json), and the address has no part after it. The reads of the investigation's deeper tools name their own addresses (a workspace, its tables, its saved
+    searches, the deployments of an account, the activity log, the diagnostic settings of a resource) and never a resource as such: a GET of one resource would read any of its properties."""
     arm = re.escape(f"https://{ARM_HOST}")
     calls = (
         ("POST", re.compile(arm + r"/providers/Microsoft\.ResourceGraph/resources", re.I)),
         ("POST", re.compile(arm + rf"/subscriptions/{GUID}/providers/Microsoft\.CostManagement/query", re.I)),
+        ("GET", re.compile(arm + rf"/subscriptions/{GUID}/providers/Microsoft\.CostManagement/benefitRecommendations", re.I)),
+        ("GET", re.compile(arm + rf"/subscriptions/{GUID}/providers/Microsoft\.Consumption/reservationRecommendations", re.I)),
         ("GET", re.compile(arm + rf"/subscriptions/{GUID}/providers/Microsoft\.Advisor/recommendations", re.I)),
         ("GET", re.compile(arm + rf"{SCOPE}/providers/Microsoft\.Authorization/locks", re.I)),
         ("GET", re.compile(arm + rf"{SCOPE}/providers/Microsoft\.Insights/metricDefinitions", re.I)),
         ("GET", re.compile(arm + rf"{SCOPE}/providers/Microsoft\.Insights/metrics", re.I)),
+        ("GET", re.compile(arm + rf"{SCOPE}/providers/Microsoft\.Insights/diagnosticSettings", re.I)),
+        ("GET", re.compile(arm + rf"/subscriptions/{GUID}/providers/Microsoft\.Insights/workbooks", re.I)),
+        ("GET", re.compile(arm + rf"/subscriptions/{GUID}/providers/Microsoft\.Insights/eventtypes/management/values", re.I)),
         ("GET", re.compile(arm + rf"/subscriptions/{GUID}/providers/Microsoft\.Security/pricings", re.I)),
+        ("GET", re.compile(arm + WORKSPACE, re.I)),
+        ("GET", re.compile(arm + WORKSPACE + "/tables", re.I)),
+        ("GET", re.compile(arm + WORKSPACE + "/savedSearches", re.I)),
+        ("GET", re.compile(arm + WORKSPACE + r"/providers/Microsoft\.SecurityInsights/alertRules", re.I)),
+        ("GET", re.compile(arm + AI_ACCOUNT + "/deployments", re.I)),
+        ("POST", re.compile(re.escape(f"https://{LOG_ANALYTICS_HOST}/v1/workspaces/") + GUID + "/query", re.I)),
         ("GET", re.compile(arm + r"/subscriptions", re.I)),
     )
     if foundry_endpoint is not None:

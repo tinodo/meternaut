@@ -85,8 +85,8 @@ class TheRulesAndThePages(unittest.TestCase):
                       "Not checked: the scheduled daily run on the whole estate, unattended; Advisor, which is still read for each subscription; throttling on a much larger estate"):
             self.assertIn(words, page, words)
         calls = flat(RECORD).split("**Which call needs which grant.**")[1].split("**The calls are checked against the file.**")[0]
-        self.assertIn("ten kinds of call", calls)
-        self.assertIn("The Watch makes eight: the list of the subscriptions that its identity can read", calls)
+        self.assertIn("21 kinds of call", calls)
+        self.assertIn("The Watch makes nineteen: the list of the subscriptions that its identity can read", calls)
 
     def test_the_first_cases_page_says_that_the_watch_is_no_longer_limited_to_the_pilot_subscription(self):
         page = flat(FIRST_CASES)
