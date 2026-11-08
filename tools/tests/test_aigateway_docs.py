@@ -43,7 +43,7 @@ class TheDecisionRecord(unittest.TestCase):
                       "AIGatewayPrivateEndpointsNotEnabled", "Reported with this change; not read again here", "Only the way from the gateway to the Foundry resource can be private",
                       "That breaks the rule of [private by default]"):
             self.assertIn(words, PROPOSAL, words)
-        self.assertRegex(PROPOSAL, r"\*\*Status: .*Step 1 of 2 is deployed and checked.*Step 2 of 2 is built and on in code, and it ran in Azure on 2026-11-08.*the fix, the Investigator on gpt-5.5, a third model of the gateway, has not been run.*The Detective and the Skeptic of the cases app call the gateway, and ran through it in those runs",
+        self.assertRegex(PROPOSAL, r"\*\*Status: .*Step 1 of 2 is deployed and checked.*Step 2 of 2 is built and on in code, and it ran in Azure on 2026-11-08.*The fourth run, with the Investigator on gpt-5.5, a third model of the gateway, worked.*The Detective and the Skeptic of the cases app call the gateway, and ran through it in those runs",
                          "the status at the top says what is true")
 
     def test_it_lists_what_protects_the_public_endpoint_and_what_is_not_done_and_why(self):
@@ -66,7 +66,7 @@ class TheDecisionRecord(unittest.TestCase):
             self.assertIn(words, PROPOSAL, words)
 
     def test_it_names_the_three_outcomes_of_step_2_and_who_decides_each(self):
-        for words in ("| It works without a key |", "The part of [rule 15 (c)](../../AGENTS.md) that is not proved yet ends", "The owner reads the proof, and the record of the run is written", "| It needs a key |", "[Rule 23](../../AGENTS.md) says no key",
+        for words in ("| It works without a key |", "The part of [rule 15 (c)](../../AGENTS.md) that is not proved yet ends", "**This is what happened in run 4 (2026-11-08).**", "The owner reads the proof; the record of the run is this page and [the changelog](../../CHANGELOG.md)", "| It needs a key |", "[Rule 23](../../AGENTS.md) says no key",
                       "| It fails (the Agent Service cannot call the gateway, or Responses is not supported) |", "The investigation does not run, and the History says why. The way back makes the agents call their deployments again",
                       "The subnet cannot be changed", "delete the gateway and make another"):
             self.assertIn(words, PROPOSAL, words)
@@ -144,8 +144,8 @@ class TheOtherDocuments(unittest.TestCase):
         self.assertEqual(firsts[-1], "**AI Gateway, Azure's separate service (deployed; step 2 is on in code, the switch is True, and ran in Azure)**")
         self.assertEqual([first for first in firsts if first in old], old, "the old rows keep their order")
         last = flat(table[-1])
-        for words in ("`Microsoft.ApiManagement/aigateways`", "not an API Management instance", "no key", "not known, and step 2", "I LEAN STRONG TOWARDS YOU CREATING AN AI GATEWAY",
-                      "Its frontend is public only", "`10k AI Gateway Requests`", "no service level", "(08-ai-gateway.md)", "The real run of step 2 was made on 2026-11-08, three times at `cases-run`, and stopped at the Investigator's first call each time"):
+        for words in ("`Microsoft.ApiManagement/aigateways`", "not an API Management instance", "no key", "the service allows it (the fourth real run went through it), and step 2", "I LEAN STRONG TOWARDS YOU CREATING AN AI GATEWAY",
+                      "Its frontend is public only", "`10k AI Gateway Requests`", "no service level", "(08-ai-gateway.md)", "The real run of step 2 was made on 2026-11-08, four times at `cases-run`"):
             self.assertIn(words, last, words)
 
     def test_the_changelog_has_the_entry_of_step_1_above_the_console_entry_and_says_what_it_must(self):
@@ -165,7 +165,7 @@ class TheOtherDocuments(unittest.TestCase):
         self.assertEqual(len(rows), 1)
         self.assertIn("is on in code (the switch is True) and ran in Azure on 2026-11-08", rows[0])
         self.assertIn("is deployed and checked since 2026-11-07", rows[0])
-        bullets = [line for line in README.splitlines() if line.startswith("- **An AI Gateway for every model call (deployed on 2026-11-07; the Detective and the Skeptic call it and ran through it on 2026-11-08; step 2 for the agents is on in code and ran three times at `cases-run`, and its fix has not been run)**")]
+        bullets = [line for line in README.splitlines() if line.startswith("- **An AI Gateway for every model call (deployed on 2026-11-07; the Detective and the Skeptic call it and ran through it on 2026-11-08; the agents go through it too, since the fourth `cases-run` of step 2 on 2026-11-08)**")]
         self.assertEqual(len(bullets), 1)
         self.assertIn("The owner believed that the gateway can be private. It cannot", bullets[0])
         self.assertLess(README.index("| **[Private by default](docs/proposals/07-private-by-default.md)**"), README.index(rows[0]), "the new row follows the row of the record before it")

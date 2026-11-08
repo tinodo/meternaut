@@ -27,8 +27,8 @@ MAX_EXAMINED_TEXT = 100
 # The shape of the Skeptic's answer.
 MAX_VERDICT_SUMMARY = 200
 
-# The effort that the Investigator's definition asks for. None leaves it out, so that the model reasons with its default effort: gpt-5.5 takes function tools on Chat Completions, the one route that
-# the Agent Service has for a model of the project, and Learn documents no limit on an effort for it. The fallback is one line: if the first real run is refused with "Function tools with
+# The effort that the Investigator's definition asks for. None leaves it out, so that the model reasons with its default effort: gpt-5.5 takes function tools on Chat Completions with no effort sent
+# (the fourth real run, 2026-11-08), the one route that the Agent Service has for a model of the project. The fallback is one line, and it was not needed: if a run is refused with "Function tools with
 # reasoning_effort are not supported", set this to "none" (the word, not Python's None), which gpt-5.5 takes (Learn, footnote 7 of the reasoning table). The Skeptic has no tools and sends no effort.
 # A change of this value makes a new version of the Investigator in the project.
 INVESTIGATOR_REASONING_EFFORT = None
