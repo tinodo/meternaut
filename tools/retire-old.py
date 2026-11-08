@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """Deletes what Meternaut does not use any more, in the project's own resource group and nowhere else (standard library only).
 
-    python tools/retire-old.py show --subscription S --resource-group G
-    python tools/retire-old.py run  --subscription S --resource-group G [--summary <file>]
+    python tools/retire-old.py show [--list old|event-hubs] --subscription S --resource-group G
+    python tools/retire-old.py run  [--list old|event-hubs] --subscription S --resource-group G [--summary <file>]
 
-It is the action `retire-old` of the Hub workflow. On 2026-11-07 the owner ordered the old leftovers of two parts of Meternaut removed, because a tool that finds waste
+It is the code of two actions of the Hub workflow, each with a list of its own: `retire-old` (the list `old`, the default) and `retire-event-hubs` (the list `event-hubs`, described at the end).
+
+The list `old`. On 2026-11-07 the owner ordered the old leftovers of two parts of Meternaut removed, because a tool that finds waste
 must not carry waste of its own:
 
   * the old model account (an Azure AI Services account with two model deployments, and its private endpoint): since 2026-11-07 every model call goes to the models of the
@@ -19,7 +21,7 @@ What it deletes is this list, in this order, each by its exact name, and nothing
    3. its private endpoint                   pe-func-meternaut-usage-<digest>
    4. the Cosmos DB account                  cosmos-meternaut-<digest>
    5. its private endpoint                   pe-cosmos-meternaut-<digest>
-   6. the event hub ai-usage                 in the namespace evhns-meternaut-<digest> (the namespace and its hub cases-control are not touched)
+   6. the event hub ai-usage                 in the namespace evhns-meternaut-<digest> (the namespace itself is on the list `event-hubs`, not on this one)
    7. the event hub pii-usage                same namespace
    8. the event hub usage-control            same namespace
    9. the old model account's private endpoint   pe-aif-meternaut-<digest>
@@ -44,6 +46,18 @@ snet-func is free. When another app still holds the subnet, the run fails and na
 show   Read only. Says for each item of the list whether it is there, whether a soft-deleted model account of that name is left, and which apps are integrated with snet-func.
 run    Deletes, as above. Only a GitHub Actions run may do that (AGENTS.md rule 18). Exit 0 when everything on the list is gone and snet-func is free, 1 when something could not be
        deleted or read, or when another app holds snet-func (nothing after a failed delete is touched, and the second run goes on from there), 2 when it refuses.
+
+The list `event-hubs` (the action `retire-event-hubs`). Until the control message of the cases app moved to a Storage queue, the cases app was started by an event in an Event Hubs
+namespace, which cost 29.2 US dollars a month (the namespace, Standard, one throughput unit, and its private endpoint) for a channel that carried one small message now and then. Nothing reads the namespace any more.
+A template that stops declaring a resource does not delete it, so this list does, after a run of the action `cases-run` has shown that the queue path works, by their exact names, in this order:
+
+   1. the namespace's private endpoint       pe-evhns-meternaut-<digest>
+   2. the Event Hubs namespace               evhns-meternaut-<digest>: its hub cases-control, that hub's consumer group and whatever else is in it go with it (no purge is needed for Event Hubs)
+   3. the container of its checkpoints       azure-webjobs-eventhub in the base's storage account stmeternautfn<digest>, which only the Event Hubs trigger of the cases app used
+
+It reads each one first, deletes it when it is there, reads again until it is gone, and prints one line each; a second run finds nothing and says so, and an estate that never had a namespace passes.
+It refuses to delete anything while the control queue cases-control is not in the storage account (the channel that replaces the namespace), and says so. It deletes no role assignment: the roles that were on the hub
+were scoped to the hub alone, so nothing is left for them to apply to. `show` with this list is read only and also says whether the control queue is there.
 """
 from __future__ import annotations
 
@@ -71,12 +85,23 @@ PLAN = ("Microsoft.Web/serverfarms", "2024-04-01")
 ENDPOINT = ("Microsoft.Network/privateEndpoints", "2025-05-01")
 COSMOS = ("Microsoft.DocumentDB/databaseAccounts", "2024-11-15")
 HUB = ("Microsoft.EventHub/namespaces", "2024-01-01")
+NAMESPACE = ("Microsoft.EventHub/namespaces", "2024-01-01")
 ACCOUNT = ("Microsoft.CognitiveServices/accounts", "2025-06-01")
 IDENTITY = ("Microsoft.ManagedIdentity/userAssignedIdentities", "2023-01-31")
 
 USAGE_HUBS = ("ai-usage", "pii-usage", "usage-control")
 USAGE_PLAN = "plan-meternaut-usage"
 USAGE_IDENTITY = "id-meternaut-usage"
+
+# The two lists: the old model account and the usage recording (`old`, the action retire-old), and the Event Hubs namespace that carried the control event (`event-hubs`, the action retire-event-hubs).
+OLD_LIST = "old"
+EVENT_HUBS_LIST = "event-hubs"
+LISTS = (OLD_LIST, EVENT_HUBS_LIST)
+# The container where the Functions host kept the checkpoints of an Event Hubs trigger, in the base's storage account, and the control queue that replaces the namespace (environment/cases/main.bicep makes it).
+CHECKPOINT_CONTAINER = "azure-webjobs-eventhub"
+CONTAINER_API = "2023-05-01"
+CONTROL_QUEUE = "cases-control"
+QUEUE_API = "2023-05-01"
 
 # The function subnet that the usage app was integrated with and that the cases app (Flex Consumption) uses.
 NETWORK = "vnet-meternaut"
@@ -129,6 +154,28 @@ def items(subscription: str, group: str) -> list[Item]:
         one("the old model account", ACCOUNT, f"aif-meternaut-{token}", "model-account"),
         one("the identity of the usage app", IDENTITY, USAGE_IDENTITY, "usage-identity"),
     ]
+
+
+def event_hub_items(subscription: str, group: str) -> list[Item]:
+    """The list `event-hubs`, in the order in which it is deleted: the namespace's private endpoint, the namespace, and the container of its checkpoints in the base's storage account.
+    Every id is built from the subscription and the group that were given, so no other group can be named."""
+    token = digest(subscription, group)
+    base = f"/subscriptions/{subscription}/resourceGroups/{group}/providers"
+    namespace = f"evhns-meternaut-{token}"
+    account = f"stmeternautfn{token}"
+    return [
+        Item("the Event Hubs namespace's private endpoint", f"pe-{namespace}", f"{base}/{ENDPOINT[0]}/pe-{namespace}", ENDPOINT[1]),
+        Item("the Event Hubs namespace", namespace, f"{base}/{NAMESPACE[0]}/{namespace}", NAMESPACE[1]),
+        Item("the container of the namespace's checkpoints", CHECKPOINT_CONTAINER,
+             f"{base}/Microsoft.Storage/storageAccounts/{account}/blobServices/default/containers/{CHECKPOINT_CONTAINER}", CONTAINER_API),
+    ]
+
+
+def control_queue_url(subscription: str, group: str) -> str:
+    """The control queue that replaces the namespace, in the base's storage account, as Azure Resource Manager addresses it."""
+    account = f"stmeternautfn{digest(subscription, group)}"
+    return (f"{ARM}/subscriptions/{subscription}/resourceGroups/{group}/providers/Microsoft.Storage/storageAccounts/{account}"
+            f"/queueServices/default/queues/{CONTROL_QUEUE}?api-version={QUEUE_API}")
 
 
 def run_az(args: list[str]) -> tuple[int, str, str]:
@@ -223,6 +270,10 @@ class Azure:
 
     def function_subnet(self, subscription: str, group: str) -> dict | None:
         return self.get(f"{ARM}{subnet_id(subscription, group)}?api-version={SUBNET_API}", f"the function subnet {FUNCTION_SUBNET}")
+
+    def control_queue(self, subscription: str, group: str) -> dict | None:
+        """The control queue as Azure shows it, or None when it is not there."""
+        return self.get(control_queue_url(subscription, group), f"the control queue {CONTROL_QUEUE}")
 
     def apps_on_the_function_subnet(self, subscription: str, group: str) -> list[tuple[str, str]]:
         """The name and the plan of every app of the group that is integrated with the function subnet, as Azure lists the apps (pages followed)."""
@@ -381,6 +432,43 @@ def command_run(args, azure: Azure, environ, out) -> int:
     return 0
 
 
+def command_show_event_hubs(args, azure: Azure, out) -> int:
+    out(f"What is still there in resource group {args.resource_group}, of the Event Hubs namespace that carried the control event (read only):")
+    for item in event_hub_items(args.subscription, args.resource_group):
+        out(f"  {item.what} {item.name}: {'still there' if azure.read(item) is not None else 'was not there'}")
+    if azure.control_queue(args.subscription, args.resource_group) is None:
+        out(f"  the control queue {CONTROL_QUEUE}, which replaces the namespace: is not there (the action cases makes it, and nothing of the list is deleted while it is not there)")
+    else:
+        out(f"  the control queue {CONTROL_QUEUE}, which replaces the namespace: is there")
+    return 0
+
+
+def command_run_event_hubs(args, azure: Azure, environ, out) -> int:
+    if environ.get("GITHUB_ACTIONS") != "true":
+        raise Refused("this command deletes, and only a GitHub Actions run may do that (AGENTS.md rule 18)")
+    group = args.resource_group
+    listed = event_hub_items(args.subscription, group)
+    out(f"Deleting the Event Hubs namespace that carried the control event, and what belongs to it, in resource group {group} and nowhere else:")
+    if any(azure.read(item) is not None for item in listed) and azure.control_queue(args.subscription, group) is None:
+        raise Problem(f"the control queue {CONTROL_QUEUE} is not in the base's storage account, so the control message has no other way to go: nothing was deleted. "
+                      "Run the action cases, then the action cases-run (it shows that the queue path works), and then this action again")
+    deleted = 0
+    absent = 0
+    for item in listed:
+        if azure.read(item) is None:
+            absent += 1
+            line = "was not there"
+        else:
+            azure.delete(item)
+            if not azure.gone(item):
+                raise Problem(f"{item.what} {item.name} is still there {WAIT_SECONDS // 60} minutes after the delete was accepted. Nothing after it was touched: run the action again")
+            deleted += 1
+            line = "deleted"
+        out(f"  {item.what} {item.name}: {line}")
+    out(f"{deleted} deleted, {absent} were not there.")
+    return 0
+
+
 def purge_account(azure: Azure, group: str, name: str, out) -> str:
     """Purges the soft-deleted account of this name, so that its name and its quota are free. What it says is added to the line of the account."""
     locations = azure.soft_deleted(group, name)
@@ -422,6 +510,7 @@ def main(argv=None, runner=run_az, environ=None, sleep=time.sleep, clock=time.mo
         command = commands.add_parser(name, help=help_text, allow_abbrev=False)
         command.add_argument("--subscription", required=True)
         command.add_argument("--resource-group", required=True)
+        command.add_argument("--list", choices=LISTS, default=OLD_LIST, help="which list: old (the usage recording and the old model account, the default) or event-hubs (the Event Hubs namespace that carried the control event)")
         if name == "run":
             command.add_argument("--summary", help="a file that gets the lines of the run as a Markdown section (the step summary)")
     args = parser.parse_args(argv)
@@ -434,7 +523,10 @@ def main(argv=None, runner=run_az, environ=None, sleep=time.sleep, clock=time.mo
     azure = Azure(runner, sleep, clock)
     try:
         refuse_unless_the_workflows_own(args, environ)
-        code = command_show(args, azure, say) if args.command == "show" else command_run(args, azure, environ, say)
+        if args.list == EVENT_HUBS_LIST:
+            code = command_show_event_hubs(args, azure, say) if args.command == "show" else command_run_event_hubs(args, azure, environ, say)
+        else:
+            code = command_show(args, azure, say) if args.command == "show" else command_run(args, azure, environ, say)
     except Refused as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
@@ -442,8 +534,10 @@ def main(argv=None, runner=run_az, environ=None, sleep=time.sleep, clock=time.mo
         print(f"error: {e}", file=sys.stderr)
         code = 1
     if args.command == "run" and getattr(args, "summary", None):
+        title = ("The Event Hubs namespace that carried the control event, and was deleted" if args.list == EVENT_HUBS_LIST
+                 else "What Meternaut does not use any more, and was deleted")
         with open(args.summary, "a", encoding="utf-8") as summary:
-            summary.write("### What Meternaut does not use any more, and was deleted\n\n```\n" + "\n".join(lines) + "\n```\n")
+            summary.write(f"### {title}\n\n```\n" + "\n".join(lines) + "\n```\n")
     return code
 
 
