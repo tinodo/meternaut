@@ -38,7 +38,7 @@ One object, made by code from a case, its plan and its action, in `src/case-func
 | Where, age | Group, kind of resource in words, one link to the Azure portal (web page only); "Found 3 days ago. Open until ...", with no urgency |
 | Answers, footer | The choices that exist now for this person; one footer line: an AI wrote it and which models, why this person got it, whom to talk to (a name and an address as text) |
 
-Text from the estate, from a tag, from a person or from a model passes one function, `plain()`, in every render: one line, no hidden or direction character, no Markdown link, no address that a client would link, and a length limit. A link is made from an id, never from text. Tests put the worst texts into every field of every page, letter and card.
+Text from the estate, from a tag, from a person or from a model passes one function, `plain()`, in every render: one line, no hidden or direction character, no Markdown link, no address with a scheme (it is split from its slashes), and a length limit. A link is made from an id, never from text. A mail or chat client may still turn a bare host name in such text into a link: that is a known limit, and the one link that matters, to the page of the decision, is made from an id. Tests put the worst texts into every field of every page, letter and card.
 
 ## What a person sees
 
@@ -81,8 +81,8 @@ Records stay readable: new fields have defaults and unknown fields are dropped. 
 
 ## What is not done
 
-- **The Teams cards** and their templates (in [the web pages](../experience/06-web-pages.md) and the messages design) still show three answer buttons and a link to a person. They will be rebuilt from the same decision brief.
-- **The owner is not looked up yet:** until something fills `CaseRecord.owner`, every page says so.
+- **The Teams cards** are rebuilt from the same decision brief ([the Teams record](13-teams-and-outlook.md)): built and tested, not deployed. The older templates in [the web pages](../experience/06-web-pages.md) and the messages design still show three answer buttons and a link to a person.
+- **The owner** is looked up for a case that the investigation opens (a tag of a closed set and the Activity Log: [the toolbox record](12-investigation-toolbox.md)); a case of the fixed detectors, the planted waste, has none, and the page says so.
 - **Nothing learns from the answers yet.** They are stored; nothing reads them.
 - **Forwarding a finding to its likely owner** is not built; it needs the owner's word on contacting people outside the list.
 - **The link to the Azure portal** is `https://portal.azure.com/#resource` and the resource id, made only from an id of the shape of one resource. The portal's documentation also shows a shape with the directory in it. Neither was tried against the real portal.
