@@ -2488,7 +2488,7 @@ jobs:
       - name: Run the evaluations of the Investigator in the Operator
         id: aisec_evals
         if: inputs.action == 'foundry-evals'
-        # The replay makes up to 12 responses for each of 24 cases, then the evaluation runs wait up to 15 minutes each; the tool stops itself at the seconds of evaluation/limits.json (3,300). The group is given
+        # The replay makes up to 12 responses for each of 28 cases, then the evaluation runs wait up to 15 minutes each; the tool stops itself at the seconds of evaluation/limits.json (3,300). The group is given
         # 60 minutes (3600 seconds, the most that tools/operator-run.py allows); the tool deletes the group at the end of every run, and the limit of the step is a second line behind that.
         timeout-minutes: 75
         env:
