@@ -138,14 +138,16 @@ class Azure:
             document = json.loads(out)
         except ValueError:
             document = None
-        changes = document.get("changes") if isinstance(document, dict) else None
-        if changes is None and isinstance(document, dict):
-            changes = (document.get("properties") or {}).get("changes")
+        document = document if isinstance(document, dict) else {}
+        body = document if "changes" in document else (document.get("properties") if isinstance(document.get("properties"), dict) else {})
+        changes = body.get("changes")
         if not isinstance(changes, list):
             self.out("::warning::The preview of the deployment has no list of changes, so the role assignments that it would write are not known and none was looked for.")
             return None
+        # What the preview is sure of is in changes, and what it cannot work out before the deploy (an id that depends on something that is made by it) is in potentialChanges: both are the deploy's.
+        potential = body.get("potentialChanges")
         ids: list[str] = []
-        for change in changes:
+        for change in [*changes, *(potential if isinstance(potential, list) else [])]:
             resource_id = str((change or {}).get("resourceId") or "") if isinstance(change, dict) else ""
             if ASSIGNMENT_PATH in resource_id.lower() and resource_id.lower().startswith(group.lower() + "/") and resource_id.lower() not in {i.lower() for i in ids}:
                 ids.append(resource_id)

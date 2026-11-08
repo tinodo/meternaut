@@ -435,6 +435,14 @@ class ThePreview(unittest.TestCase):
                 self.assertEqual((code, azure.deleted), (0, []), lines)
                 self.assertTrue(any("The preview of the deployment has no list of changes" in line for line in lines), lines)
 
+    def test_an_id_that_the_preview_cannot_work_out_before_the_deploy_is_in_potential_changes_and_counts_too(self):
+        azure = FakeAzure()
+        azure.all_assignments(OLD)
+        azure.preview_raw = json.dumps({"status": "Succeeded", "changes": [{"resourceId": THE_IDS[0], "changeType": "Modify"}],
+                                        "potentialChanges": [{"resourceId": THE_IDS[1], "changeType": "Ignore"}, {"resourceId": THE_IDS[0], "changeType": "Ignore"}]})
+        code, lines, _, _ = run(azure)
+        self.assertEqual((code, azure.deleted), (0, THE_IDS[:2]), lines)
+
     def test_the_list_may_sit_under_properties_as_the_service_writes_it(self):
         azure = FakeAzure()
         azure.all_assignments(OLD)
