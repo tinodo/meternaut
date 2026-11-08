@@ -81,10 +81,11 @@ class TheRulesAndTheRecordSayTheSame(unittest.TestCase):
 
     def test_the_record_marks_steps_1_to_4_done_and_step_5_half_done(self):
         section = RECORD.split("## What a person does")[1].split("## Telemetry is off")[0]
-        for words in ("Steps 1 to 4 were done on 2026-11-07. Step 5 is half done: the owner ordered it and the switch is on in code, and the real run has not been made.", f'"{REQUEST}"',
+        for words in ("Steps 1 to 4 were done on 2026-11-07. Step 5 is half done: the owner ordered it, the switch is on in code, and the real run was made on 2026-11-08 and stopped at the model's refusal of the Investigator's function tools; the fix has not been run. Step 6, the judges' route, ran in that run: 3 cases through the gateway.", f'"{REQUEST}"',
                       "**Not needed on 2026-11-07, for the Operator's identity:**",
                       "Whether the Foundry Agent Service needs it in step 2 is not known.", "from inside the network in the Operator, passed 4 of 4", "the service never returns `apiFormat` for a model",
-                      "**Done:** the owner ordered it (2026-11-07), and the switch is True. **Not done:** the real run, so the deployed agents still call their own deployments."):
+                      "**Done:** the owner ordered it (2026-11-07), the switch is True, and the real run was made on 2026-11-08 up to `cases-run`: the agents were made with the model names of the gateway, and the Investigator was refused at its first call",
+                      "**Not done:** the run with the fix, which sets the reasoning effort `none`.", "**Done on 2026-11-08:** the judges ran through the gateway with the app's own identity, in the first real run of step 5: 3 cases, every step ok."):
             self.assertIn(words, section, words)
 
     def test_no_live_page_says_any_more_that_the_gateway_is_not_deployed_or_not_used(self):

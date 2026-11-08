@@ -43,7 +43,7 @@ class TheDecisionRecord(unittest.TestCase):
                       "AIGatewayPrivateEndpointsNotEnabled", "Reported with this change; not read again here", "Only the way from the gateway to the Foundry resource can be private",
                       "That breaks the rule of [private by default]"):
             self.assertIn(words, PROPOSAL, words)
-        self.assertRegex(PROPOSAL, r"\*\*Status: .*Step 1 of 2 is deployed and checked.*Step 2 of 2 is built and on in code, and it has not run in Azure.*The Detective and the Skeptic of the cases app call the gateway since an earlier change of this page.*the agents go through it by step 2, which has not run either\.",
+        self.assertRegex(PROPOSAL, r"\*\*Status: .*Step 1 of 2 is deployed and checked.*Step 2 of 2 is built and on in code, and it ran once in Azure on 2026-11-08.*the fix, the effort `none` in the Investigator's definition, has not been run.*The Detective and the Skeptic of the cases app call the gateway, and ran through it in that run",
                          "the status at the top says what is true")
 
     def test_it_lists_what_protects_the_public_endpoint_and_what_is_not_done_and_why(self):

@@ -1577,8 +1577,7 @@ class TheKeyOfTheAgent(unittest.TestCase):
     DEPRECATED = {"code": "invalid_payload", "message": "The 'agent' property is deprecated. Use 'agent_reference' instead"}
     # An HTTP 400 about the model, its reasoning effort or its function tools: the other key cannot mend it, so it is raised as it is.
     ABOUT_THE_MODEL = (
-        MODEL_ERROR, {"code": "model_error"}, {"code": "MODEL_ERROR", "message": "The model failed."}, {"code": "model_not_found", "message": "The model 'x' was not found."},
-        {"code": "model_not_supported"}, {"code": "invalid_request_error", "message": "Unsupported model: it does not support function tools."},
+        MODEL_ERROR, {"code": "model_error"}, {"code": "MODEL_ERROR", "message": "The model failed."}, {"code": "invalid_request_error", "message": "Unsupported model: it does not support function tools."},
         {"message": "Unsupported model: it does not support function tools."}, {"message": "The reasoning effort 'high' is not supported."},
         {"code": "invalid_request_error", "message": "reasoning_effort: unknown value"}, {"message": "Function tool calls need the Responses route."},
     )
@@ -1595,6 +1594,7 @@ class TheKeyOfTheAgent(unittest.TestCase):
          "invalid_request_error: The model deployment 'gpt-6.1-sol' does not exist."),
         ({"error": {"message": "Agent 'meternaut-investigator' version '3' was not found."}}, "Agent 'meternaut-investigator' version '3' was not found."),
         ({"error": {"code": "BadRequest", "message": "Invalid model deployment."}}, "BadRequest: Invalid model deployment."),
+        ({"error": {"code": "model_not_found", "message": "The model 'x' was not found."}}, "model_not_found: The model 'x' was not found."),
         ({"error": {"message": "Invalid value for 'instructions'."}}, "Invalid value for 'instructions'."),
         ({"error": {"code": "content_filter", "message": "The prompt was filtered."}}, "content_filter: The prompt was filtered."),
         ({"error": {"code": "x"}}, "x"), ({"error": {}}, "no reason given"), ({"error": "text"}, "no reason given"), ({"message": "top level words"}, "no reason given"),

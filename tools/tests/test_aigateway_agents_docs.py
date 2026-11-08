@@ -56,25 +56,31 @@ def causes_of_the_app():
 
 
 class TheRecordOfStep2(unittest.TestCase):
-    def test_the_status_says_that_step_1_is_deployed_step_2_is_on_in_code_and_has_not_run_the_switch_is_true_and_the_question_is_open(self):
+    def test_the_status_says_that_step_1_is_deployed_step_2_is_on_in_code_and_ran_once_the_switch_is_true_and_the_question_is_open(self):
         status = re.search(r"\*\*Status: .*?\*\* This page records", PROPOSAL).group(0)
-        for words in ("Step 1 of 2 is deployed and checked", "Step 2 of 2 is built and on in code, and it has not run in Azure", "`AGENTS_VIA_AI_GATEWAY` in `tools/environment-params.py`, that is True since the owner's order of 2026-11-07",
-                      "The Detective and the Skeptic of the cases app call the gateway since an earlier change of this page", "and the agents go through it by step 2, which has not run either.",
-                      "Whether the connection can call the gateway with the project's own managed identity and no key is not known, and it was not tried"):
+        for words in ("Step 1 of 2 is deployed and checked", "Step 2 of 2 is built and on in code, and it ran once in Azure on 2026-11-08", "`AGENTS_VIA_AI_GATEWAY` in `tools/environment-params.py`, that is True since the owner's order of 2026-11-07",
+                      "The Detective and the Skeptic of the cases app call the gateway, and ran through it in that run", "the fix, the effort `none` in the Investigator's definition, has not been run",
+                      "Whether the connection calls the gateway with the project's own managed identity and no key is not proved"):
             self.assertIn(words, status, words)
         self.assertNotIn("is not built", status)
         for old in ("Step 1 of 2 is built and not deployed", "not deployed too", "Nothing was made in Azure", "Step 2 of 2 is built and not deployed", "that is False", "so that nothing changes until the owner flips it",
-                    "the agents were not touched"):
+                    "the agents were not touched", "it has not run in Azure", "which has not run either", "it was not tried"):
             self.assertNotIn(old, status, old)
-        update = PROPOSAL.split("**Update: the agents' route is on in code, and has not run in Azure.**")[1].split("**Update, 2026-11-07, before that:")[0]
+        first = PROPOSAL.split("**Update, 2026-11-08:")[1].split("**Update, 2026-11-07: the agents' route is on in code.**")[0]
+        for words in ("The judges ran through the gateway (3 cases, every step ok).", "function tools do not work together with a reasoning effort for its model",
+                      "So the Agent Service does call the gateway on the Chat Completions route (read from that answer: the gateway's own log is off, so it is not seen from the gateway's side).",
+                      "The Responses route, which the answer names as the other way, is not offered for this service.", "the Investigator's definition now asks for the reasoning effort `none`",
+                      "no longer made again with the old key `agent`", "**That fix has not been run in Azure**", "it makes a new version of the Investigator on the next `cases-run`"):
+            self.assertIn(words, first, words)
+        update = PROPOSAL.split("**Update, 2026-11-07: the agents' route is on in code.**")[1].split("**Update, 2026-11-07, before that:")[0]
         for words in ("\"Route [the agents] to the AI gateway ... IT NEEDS TO ADHERE TO THE CITADEL DESIGN PRINCIPLES\"", "the switch `AGENTS_VIA_AI_GATEWAY` in `tools/environment-params.py` is True",
-                      "Nothing of it has run in Azure, and whether the Agent Service can call the gateway through the connection is not known.",
-                      "The order of the real run is `aigateway`, about ten minutes, `foundry`, `cases`, `cases-run`", "what came of it is recorded afterwards", "The way back is the switch set to False"):
+                      "The order of the real run is `aigateway`, about ten minutes, `foundry`, `cases`, `cases-run`", "the update above says what came of it", "The way back is the switch set to False"):
             self.assertIn(words, update, words)
+        self.assertNotIn("Nothing of it has run in Azure", update)
 
     def test_the_section_of_step_2_has_its_parts_in_order(self):
         headings = re.findall(r"(?m)^(##+ .*)$", PROPOSAL_TEXT)
-        wanted = [STEP_2, "### The order of the real run", "### What each failure means", "### The way back from step 2", "### Choices of step 2 that the owner can change"]
+        wanted = [STEP_2, "### The order of the real run", "### What the first real run showed", "### What each failure means", "### The way back from step 2", "### Choices of step 2 that the owner can change"]
         positions = [headings.index(heading) for heading in wanted]
         self.assertEqual(positions, sorted(positions))
         self.assertEqual(positions, list(range(positions[0], positions[0] + len(wanted))), "the parts follow one another")
@@ -93,12 +99,13 @@ class TheRecordOfStep2(unittest.TestCase):
         for old in ("Nothing changes until the owner flips one constant", "`AGENTS_VIA_AI_GATEWAY = False`", "Nothing of step 2 is deployed"):
             self.assertNotIn(old, section, old)
 
-    def test_it_says_what_the_connection_is_and_that_its_shape_is_not_tried_and_that_no_key_path_is_built(self):
+    def test_it_says_what_the_connection_is_and_that_its_shape_was_tried_once_and_that_no_key_path_is_built(self):
         section = flat(step_2_of_the_record())
         for words in ("Category `ApiManagement`, `authType` `ProjectManagedIdentity`, `audience` `https://azure-api.net/aigateway`, target `https://<host>/default/models/openai/v1`, empty `credentials`, "
-                      "`isSharedToAll` false", "`deploymentInPath` `false`", "a static `models` list whose names are the aliases", "**The shape comes from the samples and from Learn and has not been tried**",
+                      "`isSharedToAll` false", "`deploymentInPath` `false`", "a static `models` list whose names are the aliases",
+                      "**The shape comes from the samples and from Learn; it was tried on 2026-11-08, and the Agent Service called the gateway's route**",
                       "No key is used, and no path for a key is built: if the connection needs a key, the owner decides ([rule 23](../../AGENTS.md)).",
-                      "Responses routing for the AI Gateway tier is \"coming soon\" in Learn, and it is not asked for."):
+                      "Responses routing for the AI Gateway tier is \"coming soon\" in Learn, so the Responses route is not offered for this service and is not asked for."):
             self.assertIn(words, section, words)
 
     def test_it_says_the_order_of_the_writes_that_the_template_keeps(self):
@@ -137,7 +144,8 @@ class TheRecordOfStep2(unittest.TestCase):
         self.assertEqual(on_the_page, in_the_record, "the actions come in the same order on the page")
         self.assertIn("the owner's order and the change of one line that sets the switch to True (made)", sentence)
         self.assertIn("about ten minutes", sentence)
-        self.assertIn("The last five are the real run. It has not been made, and what came of it is recorded afterwards.", flat(step_2_of_the_record()))
+        self.assertIn("The last five are the real run. It was made on 2026-11-08, and the investigation stopped at the model's refusal of function tools together with a reasoning effort:", flat(step_2_of_the_record()))
+        self.assertIn("and the run with the fix, which sets the effort `none`, has not been made.", flat(step_2_of_the_record()))
         self.assertIn("On an estate that has neither the Foundry project nor the gateway, `foundry` and `aigateway` each ask for the other while the switch is True, so they are made with the switch False first.",
                       flat(step_2_of_the_record()))
 
@@ -160,16 +168,35 @@ class TheRecordOfStep2(unittest.TestCase):
                       "which [rule 15 (c)](../../AGENTS.md) allows only on the owner's written exception"):
             self.assertIn(words, part, words)
 
-    def test_the_table_of_what_is_known_has_the_rows_of_step_2_and_marks_the_connection_as_not_tried(self):
+    def test_the_table_of_what_is_known_has_the_rows_of_step_2_and_says_what_the_first_real_run_answered(self):
         table = PROPOSAL.split("## What is verified, what is inferred, what is not known")[1].split("## The frontend is public only")[0]
-        for words in ("| Whether a Foundry project's connection can use its managed identity to call this gateway | **Not known; step 2 is built to find out, and has not run** |",
-                      "| Inferred, **not tried** |", "| An agent names its model `<connection>/<model>`, and a wrong name is answered with \"model not found\" | Verified |",
-                      "| Whether the service takes the category `ApiManagement` with a managed identity for a target that is not `*.azure-api.net` | **Not known** |",
+        for words in ("| Whether a Foundry project's connection can use its managed identity to call this gateway | **Not proved: the first real run (2026-11-08) was refused for the call's options and not for the token, which suggests that the identity was taken (inferred)** |",
+                      "| Inferred, **tried on 2026-11-08: the connection exists, and the Agent Service called the gateway's route** |",
+                      "| An agent names its model `<connection>/<model>`, and a wrong name is answered with \"model not found\" | Verified |",
+                      "| Whether the service takes the category `ApiManagement` with a managed identity for a target that is not `*.azure-api.net` | **Yes: the connection was made (2026-11-08)** |",
                       "| Whether the Agent Service then calls the gateway with a token of the project's identity", "| What the Agent Service answers when the gateway refuses a call: the status, the code and the words | **Not known** |",
                       "| Whether the Agent Service reports token usage for a model behind a connection | **Not known** |",
                       "| Whether the optional version of a model in the connection's list is added to the model name in the call | **Not known** |",
                       "| That the gateway is reachable from the managed inference plane of the Agent Service | Inferred |"):
             self.assertIn(words, table, words)
+
+    def test_the_section_of_the_first_real_run_says_what_it_showed_what_the_fix_is_and_that_the_fix_is_not_run(self):
+        part = flat(PROPOSAL_TEXT.split("### What the first real run showed")[1].split("\n### ")[0])
+        for words in ("On 2026-11-08 `cases-run` ran with the agents on the gateway", "`aigateway/gpt-6.1-sol` for the Investigator and `aigateway/gpt-6-luna` for the Skeptic",
+                      "**The judges ran through the gateway.**", "judged 3 cases, and every step was ok", "**The Agent Service calls the gateway's route, on Chat Completions.**",
+                      "HTTP 400 and the code `model_error`", "Function tools with reasoning_effort are not supported for gpt-6.1-sol in /v1/chat/completions.",
+                      "To use function tools, use /v1/responses or set reasoning_effort to 'none'.", "It is not known whether the model or the Agent Service itself refused it, because the gateway's own log is off.",
+                      "**The Responses route is not offered for this service.**", "\"coming soon\"", "**`agent_reference` is the key.**",
+                      "The 'agent' property is deprecated. Use 'agent_reference' instead", "That answer hid the first one.",
+                      "**The fix, not run yet.**", "`reasoning: {\"effort\": \"none\"}`", "`PromptAgentDefinition.reasoning`", "The Skeptic has no tools and is unchanged.",
+                      "so the next `cases-run` makes a new version of the Investigator, and the Skeptic keeps its version",
+                      "no longer made again with the other key", "the first answer is shown and `agent_reference` stays",
+                      "**Not known:** that an investigation completes with the effort `none`, that the Skeptic agent runs, and whether the Agent Service reports token numbers for a model behind a connection."):
+            self.assertIn(words, part, words)
+        for secret in ("request id", "request-id"):
+            self.assertNotIn(secret, part)
+        table = flat(PROPOSAL_TEXT.split("### What each failure means")[1].split("### The way back from step 2")[0])
+        self.assertIn("An answer of the model itself (the code `model_error`, or words about the reasoning effort or the function tools) is about something else too, even when it names the ModelGateway.", table)
 
     def test_the_part_of_the_record_that_is_about_step_2_holds_no_key_no_address_of_the_owner_and_no_guid(self):
         section = step_2_of_the_record()

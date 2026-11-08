@@ -68,8 +68,8 @@ AGENT_KEYS = ("agent_reference", "agent")
 FIRST_CALL_REFUSALS = frozenset({400, 422})
 # An answer about the model, its reasoning effort or its function tools is not about the key, and the call is not made again with the other key. The first real run (2026-11-08)
 # was refused with the code `model_error` ("Function tools with reasoning_effort are not supported for the model in /v1/chat/completions"), and the call that was made again
-# with `agent` was told that this key is deprecated: the second answer hid the first, which was the real one.
-MODEL_TROUBLE = re.compile(r"\bmodel_[a-z_]+\b|reasoning[_ ]effort|function[_ ]tools?")
+# with `agent` was told that this key is deprecated: the second answer hid the first, which was the real one. Such an answer is not about the route either (route_failure).
+MODEL_TROUBLE = re.compile(r"\bmodel_error\b|reasoning[_ ]effort|function[_ ]tools?")
 # What the service says of the other key when the first one was the right one ("The 'agent' property is deprecated. Use 'agent_reference' instead"): the first answer is then raised.
 KEY_DEPRECATED = re.compile(r"\bdeprecated\b.*\bagent_reference\b")
 # The effort that a definition asks the model to reason with: the service knows the words (none, minimal, low, medium, high, xhigh, max), this app only keeps to one plain word.
@@ -131,6 +131,8 @@ def route_failure(model: object, purpose: str, status: int | None, code: str, wo
     if not connection or purpose not in ROUTE_PURPOSES or (status in (403, 404) and dns not in (None, "private")):
         return ""
     text = f"{code} {words}".lower()
+    if MODEL_TROUBLE.search(text):  # the model refused the call: the answer says so in its own words, and the route is not at fault
+        return ""
     for rule in ROUTE_CAUSES:
         if not ((status in rule.statuses) or rule.words.search(text)):
             continue

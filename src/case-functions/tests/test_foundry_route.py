@@ -100,6 +100,21 @@ class TheFixedWordsOfAFailedCall(RouteTest):
                 self.assertEqual(error.route, "")
                 self.assertIn(f"HTTP {status}", str(error))
 
+    def test_an_answer_of_the_model_keeps_its_own_words_even_when_they_name_the_gateway(self):
+        # The first real run (2026-11-08): the model refused function tools together with a reasoning effort, and the answer names the ModelGateway, which the last row of the table
+        # would take for a failure of the gateway. The route is not at fault, and a person reads the words of the model.
+        words = ("Function tools with reasoning_effort are not supported for gpt-6.1-sol in /v1/chat/completions. To use function tools, use /v1/responses or set "
+                 "reasoning_effort to 'none'. ModelGateway")
+        for status, code, said in ((400, "model_error", words), (422, "model_error", words), (400, "invalid_request_error", "The reasoning effort is not allowed on this gateway."),
+                                   (400, "invalid_request_error", "Function tools are not allowed on this connection.")):
+            with self.subTest(status=status, code=code, words=said):
+                error = self.response_fails(routed_rig(), failing(status, code, said))
+                self.assertEqual((error.route, error.status, error.code), ("", status, code))
+                self.assertIn(f"HTTP {status}; {code}: {said}", str(error))
+        rig = routed_rig()
+        error = self.raises(lambda: rig.run(reply([message("x")], error={"code": "model_error", "message": words})))
+        self.assertEqual((error.status, error.route), (None, ""))
+
     def test_a_failure_of_the_network_or_an_answer_that_is_not_json_is_no_failure_of_the_route(self):
         error = self.response_fails(routed_rig(), (200, {}, b"not json"))
         self.assertEqual(error.route, "")
