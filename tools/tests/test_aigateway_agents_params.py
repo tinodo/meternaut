@@ -88,6 +88,7 @@ GOLDEN_OUTPUT = "926cde9d3764c11168553128b71538fe71668c8309ebfa659672abc9cfd49d3
 FOUNDRY = (ROOT / "environment" / "foundry" / "main.bicep").read_text(encoding="utf-8")
 CASES = (ROOT / "environment" / "cases" / "main.bicep").read_text(encoding="utf-8")
 CASES_CONFIG = (ROOT / "src" / "case-functions" / "cases" / "config.py").read_text(encoding="utf-8")
+AGENTS_PY = (ROOT / "src" / "case-functions" / "cases" / "agents.py").read_text(encoding="utf-8").replace("\r\n", "\n")
 
 
 def build(env, models=None, preview=False, switch=False, full=True):
@@ -202,7 +203,7 @@ class TheSwitchIsOn(unittest.TestCase):
         code, out, err, files = self.on()
         self.assertEqual((code, err), (0, ""))
         cases = values(files, "cases.parameters.json")
-        self.assertEqual((cases["foundryModelInvestigator"], cases["foundryModelSkeptic"]), ("aigateway/gpt-6.1-sol", "aigateway/gpt-6-luna"))
+        self.assertEqual((cases["foundryModelInvestigator"], cases["foundryModelSkeptic"]), ("aigateway/gpt-6-luna", "aigateway/gpt-6.1-sol"))
         self.assertEqual(cases["aiGatewayHost"], HOST, "the same host serves the judges and, through the connection, the agents")
         plain = values(build(SETTINGS)[3], "cases.parameters.json")
         self.assertEqual({k: v for k, v in cases.items() if not k.startswith("foundryModel") and k != "aiGatewayHost"}, {k: v for k, v in plain.items() if k != "aiGatewayHost"})
@@ -260,7 +261,7 @@ class TheSwitchIsOn(unittest.TestCase):
                 code, out, err, files = build(env, preview=preview, switch=True)
                 self.assertEqual((code, err), (0, ""))
                 self.assertFalse({"aiGatewayHost", "aiGatewayModels"} & set(values(files, "foundry.parameters.json")), "no host, so no connection is asked for")
-                self.assertEqual(values(files, "cases.parameters.json")["foundryModelInvestigator"], "aigateway/gpt-6.1-sol")
+                self.assertEqual(values(files, "cases.parameters.json")["foundryModelInvestigator"], "aigateway/gpt-6-luna")
                 self.assertEqual(values(files, "cases.parameters.json")["aiGatewayHost"], ep.PLACEHOLDER_AIGATEWAY_HOST, "the judges' host is a placeholder where the gateway is not named")
                 self.assertEqual(outputs(out)["agents_via_ai_gateway"], "true", "the workflow reads that the switch is on from the first, preview, run")
 
@@ -281,7 +282,7 @@ class TheSwitchIsOn(unittest.TestCase):
         others = [dict(m, name=name) for m, name in zip(MODELS, ("alpha", "beta"))]
         code, out, err, files = build({**SETTINGS, "ACTION": "foundry", "AIGATEWAY_HOST": HOST}, models=others, switch=True, full=False)
         self.assertEqual((code, out, files), (2, "", {}))
-        self.assertIn("the models of the agents (gpt-6.1-sol, gpt-6-luna) are not in environment/models.json: there is no alias to name", err)
+        self.assertIn("the models of the agents (gpt-6-luna, gpt-6.1-sol) are not in environment/models.json: there is no alias to name", err)
         code, _, _, _ = build({**SETTINGS, "ACTION": "foundry", "AIGATEWAY_HOST": HOST}, models=others, switch=False, full=False)
         self.assertEqual(code, 0, "while the switch is off the names of the models do not matter here")
 
@@ -328,6 +329,16 @@ class TheThreeNamesAreOneName(unittest.TestCase):
         self.assertEqual(re.search(r'(?m)^DEFAULT_MODEL_SKEPTIC = "([^"]+)"$', CASES_CONFIG).group(1), ep.AGENT_MODELS["foundryModelSkeptic"])
         deployed = {m["name"] for m in json.loads((ROOT / "environment" / "models.json").read_text(encoding="utf-8"))}
         self.assertTrue(set(ep.AGENT_MODELS.values()) <= deployed, "an alias exists for each of them (environment/aigateway/main.bicep makes one for each model of models.json)")
+
+    # The reason for the pair, from the first two real runs of the agents through the gateway (2026-11-08): the Agent Service has only the Chat Completions route for the gateway (Learn: the
+    # Responses route for the AI Gateway tier is "coming soon"), and on it gpt-6.1-sol refuses function tools together with any reasoning effort and does not take the effort none (low, medium and
+    # high only). The Investigator has tools and asks for the effort none, so its model is not one of these. The Skeptic has no tools and sends no effort.
+    REFUSE_THE_EFFORT_NONE = ("gpt-6.1-sol",)
+
+    def test_the_model_of_the_investigator_is_not_one_that_refuses_the_effort_none_and_the_pair_is_the_one_of_the_runs(self):
+        self.assertEqual(ep.AGENT_MODELS, {"foundryModelInvestigator": "gpt-6-luna", "foundryModelSkeptic": "gpt-6.1-sol"})
+        self.assertNotIn(ep.AGENT_MODELS["foundryModelInvestigator"], self.REFUSE_THE_EFFORT_NONE)
+        self.assertRegex(AGENTS_PY, r'(?m)^INVESTIGATOR_REASONING_EFFORT = "none"$')
 
     def test_the_host_pattern_is_the_one_that_the_workflow_and_the_check_ask_for(self):
         workflow = (ROOT / ".github" / "workflows" / "deploy-hub.yml").read_text(encoding="utf-8")
