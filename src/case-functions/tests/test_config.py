@@ -120,15 +120,15 @@ class Investigation(unittest.TestCase):
                 settings.investigate_max_seconds)
 
     def test_without_the_endpoint_the_app_does_not_investigate_and_the_defaults_are_the_ones_that_were_fixed(self):
-        self.assertEqual(self.investigation(config.load(ENV_NO_PROJECT)), (None, False, "gpt-5.5", "gpt-6.1-sol", 40, 420))
-        self.assertEqual(self.investigation(config.load({**ENV, "FOUNDRY_PROJECT_ENDPOINT": "", "INVESTIGATE": ""})), (None, False, "gpt-5.5", "gpt-6.1-sol", 40, 420))
+        self.assertEqual(self.investigation(config.load(ENV_NO_PROJECT)), (None, False, "gpt-5.5", "gpt-6.1-sol", 40, 600))
+        self.assertEqual(self.investigation(config.load({**ENV, "FOUNDRY_PROJECT_ENDPOINT": "", "INVESTIGATE": ""})), (None, False, "gpt-5.5", "gpt-6.1-sol", 40, 600))
         self.assertEqual((config.OPTIONAL["FOUNDRY_MODEL_INVESTIGATOR"], config.OPTIONAL["FOUNDRY_MODEL_SKEPTIC"], config.OPTIONAL["INVESTIGATE_MAX_CALLS"],
-                          config.OPTIONAL["INVESTIGATE_MAX_SECONDS"]), ("gpt-5.5", "gpt-6.1-sol", "40", "420"))
+                          config.OPTIONAL["INVESTIGATE_MAX_SECONDS"]), ("gpt-5.5", "gpt-6.1-sol", "40", "600"))
         for name in ("FOUNDRY_PROJECT_ENDPOINT", "FOUNDRY_MODEL_INVESTIGATOR", "FOUNDRY_MODEL_SKEPTIC", "INVESTIGATE", "INVESTIGATE_MAX_CALLS", "INVESTIGATE_MAX_SECONDS"):
             self.assertNotIn(name, config.REQUIRED)
 
     def test_the_endpoint_turns_the_investigation_on_unless_it_is_switched_off(self):
-        self.assertEqual(self.investigation(config.load({**ENV_NO_PROJECT, "FOUNDRY_PROJECT_ENDPOINT": self.ENDPOINT})), (self.ENDPOINT, True, "gpt-5.5", "gpt-6.1-sol", 40, 420))
+        self.assertEqual(self.investigation(config.load({**ENV_NO_PROJECT, "FOUNDRY_PROJECT_ENDPOINT": self.ENDPOINT})), (self.ENDPOINT, True, "gpt-5.5", "gpt-6.1-sol", 40, 600))
         for value in ("off", "OFF", "0", "false", "False", "no", " off "):
             self.assertFalse(config.load({**ENV, "FOUNDRY_PROJECT_ENDPOINT": self.ENDPOINT, "INVESTIGATE": value}).investigate, value)
         for value in ("on", "ON", "1", "true", "True", "yes", " on "):
@@ -233,7 +233,7 @@ class Investigation(unittest.TestCase):
         for env in (ENV, {**ENV, "INVESTIGATE_MAX_CALLS": ""}, {**ENV, "FOUNDRY_PROJECT_ENDPOINT": self.ENDPOINT}):
             self.assertEqual(config.load(env).investigate_max_calls, 40)
         self.assertEqual(config.load({**ENV, "INVESTIGATE_MAX_CALLS": "24"}).investigate_max_calls, 24)
-        self.assertEqual(config.load({**ENV, "INVESTIGATE_MAX_CALLS": "24"}).investigate_max_seconds, 420, "the seconds are not touched")
+        self.assertEqual(config.load({**ENV, "INVESTIGATE_MAX_CALLS": "24"}).investigate_max_seconds, 600, "the seconds are not touched")
 
     def test_every_problem_is_named_at_once_with_the_older_ones_and_their_texts_do_not_change(self):
         env = {**ENV, "MODEL_DETECTIVE": "Bad Model", "FOUNDRY_PROJECT_ENDPOINT": "https://evil.example/api/projects/p", "FOUNDRY_MODEL_SKEPTIC": "gpt-5.5",
@@ -249,7 +249,7 @@ class Investigation(unittest.TestCase):
     def test_settings_that_are_made_by_hand_without_the_new_fields_have_their_defaults(self):
         settings = config.Settings(client_id="c", subscriptions=("s",), model_detective="a", model_skeptic="b",
                                    max_cases=1, max_tokens_per_run=1000, max_completion_tokens=100, deadline_seconds=60)
-        self.assertEqual(self.investigation(settings), (None, False, "gpt-5.5", "gpt-6.1-sol", 40, 420))
+        self.assertEqual(self.investigation(settings), (None, False, "gpt-5.5", "gpt-6.1-sol", 40, 600))
 
 
 class ScopeSwitch(unittest.TestCase):

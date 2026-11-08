@@ -188,7 +188,7 @@ param investigateMaxCalls int = 40
 @description('Most seconds that one investigation may take. The code accepts no more than 600 (LIMIT_INVESTIGATE_SECONDS in src/case-functions/cases/config.py).')
 @minValue(30)
 @maxValue(600)
-param investigateMaxSeconds int = 420
+param investigateMaxSeconds int = 600
 
 var tags = {
   workload: workload

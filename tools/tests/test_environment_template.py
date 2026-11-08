@@ -810,7 +810,7 @@ class Cases(unittest.TestCase):
                      "{ name: 'INVESTIGATE_MAX_CALLS', value: string(investigateMaxCalls) }", "{ name: 'INVESTIGATE_MAX_SECONDS', value: string(investigateMaxSeconds) }"):
             self.assertIn(line, body)
         for line in ("param foundryProjectEndpoint string = ''", "param foundryModelInvestigator string = 'gpt-5.5'", "param foundryModelSkeptic string = 'gpt-6.1-sol'",
-                     "param investigateMaxCalls int = 40", "param investigateMaxSeconds int = 420"):
+                     "param investigateMaxCalls int = 40", "param investigateMaxSeconds int = 600"):
             self.assertRegex(self.code, rf"(?m)^{re.escape(line)}$")
         self.assertEqual(len(re.findall(r"name: '(?:FOUNDRY_\w+|INVESTIGATE\w*)'", body)), 6)
         self.assertEqual(self.code.count("foundryProjectEndpoint"), 3, "the parameter, the setting and the switch, and nothing else reads it")
@@ -820,7 +820,7 @@ class Cases(unittest.TestCase):
 
     def test_the_template_cannot_ask_for_more_of_the_investigation_than_the_code_accepts_and_starts_from_the_budget_that_the_code_starts_from(self):
         self.assertRegex(self.code, r"@minValue\(1\)\n@maxValue\(40\)\nparam investigateMaxCalls int = 40\n")
-        self.assertRegex(self.code, r"@minValue\(30\)\n@maxValue\(600\)\nparam investigateMaxSeconds int = 420\n")
+        self.assertRegex(self.code, r"@minValue\(30\)\n@maxValue\(600\)\nparam investigateMaxSeconds int = 600\n")
         constants = {(kind, what): value for kind, what, value in re.findall(r"(?m)^(LIMIT|DEFAULT)_INVESTIGATE_(CALLS|SECONDS) = (\d+)$",
                                                                               (ROOT / "src" / "case-functions" / "cases" / "config.py").read_text(encoding="utf-8"))}
         if not constants:
