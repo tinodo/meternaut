@@ -20,6 +20,9 @@ ROOT = Path(__file__).resolve().parents[2]
 spec = importlib.util.spec_from_file_location("operator_run", ROOT / "tools" / "operator-run.py")
 op = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(op)
+_hubenv_spec = importlib.util.spec_from_file_location("hubenv", Path(__file__).with_name("hubenv.py"))
+hubenv = importlib.util.module_from_spec(_hubenv_spec)
+_hubenv_spec.loader.exec_module(hubenv)
 
 SUBSCRIPTION = "11111111-2222-3333-4444-555555555555"
 GROUP = "rg-example"
@@ -129,10 +132,8 @@ def run_tool(*extra, az, clock=None, env=None, script_text="echo hi\n", files=No
             path.write_bytes(content)
             argv += ["--secret-file", f"{file_name}={path}"]
         out, err = io.StringIO(), io.StringIO()
-        environment = {"RUNNER_TEMP": str(tmp), **({"GITHUB_ACTIONS": "true"} if actions else {}), **(env or {})}
-        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err), mock.patch.dict(os.environ, environment, clear=False):
-            if not actions:
-                os.environ.pop("GITHUB_ACTIONS", None)
+        environment = {"RUNNER_TEMP": str(tmp), **(env or {})}
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err), hubenv.patched(actions, environment):
             code = op.main(argv, az=az, sleep=clock.sleep, clock=clock)
         return code, out.getvalue(), err.getvalue(), tmp
 
@@ -175,19 +176,19 @@ class Arguments(unittest.TestCase):
                           f"mcr.microsoft.com/azure-cli@sha256:{'G' * 64}", f"mcr.microsoft.com/azure-cli@md5:{'a' * 32}", "mcr.microsoft.com/azure-cli@sha256:" + "a" * 64 + " --x"):
                 with self.subTest(image=image):
                     az, err = FakeAz(), io.StringIO()
-                    with contextlib.redirect_stderr(err), mock.patch.dict(os.environ, {"GITHUB_ACTIONS": "true"}):
+                    with contextlib.redirect_stderr(err), hubenv.patched():
                         code = op.main([*base, "--image", image], az=az)
                     self.assertEqual(code, 2)
                     self.assertEqual(az.calls, [])
                     self.assertIn("sha256", err.getvalue())
             az, err = FakeAz(), io.StringIO()
-            with contextlib.redirect_stderr(err), mock.patch.dict(os.environ, {"GITHUB_ACTIONS": "true"}):
+            with contextlib.redirect_stderr(err), hubenv.patched():
                 code = op.main([*base, "--image", "mcr.microsoft.com/azure-cli:2.92.0"], az=az)
             self.assertIn("is a tag, and a tag can move", err.getvalue())
             self.assertIn("--allow-tag", err.getvalue())
             az = FakeAz(shows=[shown(container="Terminated", exit_code=0)])
             out = io.StringIO()
-            with contextlib.redirect_stdout(out), mock.patch.dict(os.environ, {"GITHUB_ACTIONS": "true"}):
+            with contextlib.redirect_stdout(out), hubenv.patched():
                 code = op.main([*base, "--image", "mcr.microsoft.com/azure-cli:2.92.0", "--allow-tag"], az=az, sleep=Clock().sleep)
             self.assertEqual(code, 0)
             self.assertIn("pinned by tag", out.getvalue())
@@ -199,7 +200,7 @@ class Arguments(unittest.TestCase):
             script.write_text("echo hi\n", encoding="utf-8")
             for subnet, identity in (("snet-ops", IDENTITY), (SUBNET, "id-example-operator"), (SUBNET.replace("/subnets/snet-ops", ""), IDENTITY), (SUBNET, IDENTITY.replace("userAssignedIdentities", "disks"))):
                 az, err = FakeAz(), io.StringIO()
-                with contextlib.redirect_stderr(err), mock.patch.dict(os.environ, {"GITHUB_ACTIONS": "true"}):
+                with contextlib.redirect_stderr(err), hubenv.patched():
                     code = op.main(["run", "--resource-group", GROUP, "--name", NAME, "--subnet-id", subnet, "--identity-id", identity, "--image", IMAGE, "--script", str(script)], az=az)
                 self.assertEqual((code, az.calls), (2, []), (subnet, identity))
 
@@ -245,12 +246,29 @@ class Arguments(unittest.TestCase):
         self.refused("--timeout-seconds", "3601")
         self.refused("--poll-seconds", "61")
 
-    def test_nothing_is_made_outside_a_github_actions_run(self):
+    def test_nothing_is_made_outside_a_run_of_the_hub(self):
         az = FakeAz()
         code, _, err = clean_run(az, actions=False)
         self.assertEqual((code, az.calls), (2, []))
-        self.assertIn("only a GitHub Actions run may do that", err)
+        self.assertIn("this command makes and deletes resources in Azure, and only a GitHub Actions run may do that (AGENTS.md rule 18)", err)
         self.assertIn("rule 18", err)
+
+    def test_a_process_that_only_says_that_github_actions_is_true_makes_nothing_and_the_refusal_names_what_is_missing(self):
+        az = FakeAz()
+        code, _, err = clean_run(az, actions=False, env={"GITHUB_ACTIONS": "true"})
+        self.assertEqual((code, az.calls), (2, []))
+        self.assertIn("GITHUB_ACTIONS=true alone is no proof", err)
+        self.assertIn("METERNAUT_HUB_PROOF", err)
+
+    def test_the_proof_of_a_run_of_tools_hub_local_that_is_alive_is_enough_and_a_stale_one_is_not(self):
+        with tempfile.TemporaryDirectory() as folder:
+            az = FakeAz(shows=[shown(container="Terminated", exit_code=0)])
+            code, _, err = clean_run(az, actions=False, env={"METERNAUT_HUB_PROOF": str(hubenv.make_proof(folder))})
+            self.assertEqual(code, 0, err)
+            az = FakeAz()
+            code, _, err = clean_run(az, actions=False, env={"METERNAUT_HUB_PROOF": str(hubenv.make_proof(folder, pid=hubenv.dead_pid()))})
+            self.assertEqual((code, az.calls), (2, []))
+            self.assertIn("is not alive: this proof is stale", err)
 
     def test_files_of_the_secret_volume_are_checked(self):
         az = FakeAz()
@@ -261,7 +279,7 @@ class Arguments(unittest.TestCase):
                 out, err = io.StringIO(), io.StringIO()
                 script = Path(tmp) / "probe.sh"
                 script.write_text("echo hi\n", encoding="utf-8")
-                with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err), mock.patch.dict(os.environ, {"GITHUB_ACTIONS": "true"}):
+                with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err), hubenv.patched():
                     code = op.main(["run", "--resource-group", GROUP, "--name", NAME, "--subnet-id", SUBNET, "--identity-id", IDENTITY, "--image", IMAGE, "--script", str(script),
                                     "--secret-file", pair], az=az)
                 self.assertEqual(code, 2, pair)
@@ -308,7 +326,7 @@ class Arguments(unittest.TestCase):
     def test_the_script_that_cannot_be_read_is_refused(self):
         az = FakeAz()
         err = io.StringIO()
-        with contextlib.redirect_stderr(err), mock.patch.dict(os.environ, {"GITHUB_ACTIONS": "true"}):
+        with contextlib.redirect_stderr(err), hubenv.patched():
             code = op.main(["run", "--resource-group", GROUP, "--name", NAME, "--subnet-id", SUBNET, "--identity-id", IDENTITY, "--image", IMAGE, "--script", "does-not-exist.sh"], az=az)
         self.assertEqual((code, az.calls), (2, []))
 
@@ -729,9 +747,7 @@ class Cleanup(unittest.TestCase):
         az = az or FakeAz(listing=(0, json.dumps(group_listing()), ""))
         out, err = io.StringIO(), io.StringIO()
         arguments = ["cleanup", "--resource-group", GROUP, "--prefix", "op-probe-", *extra]
-        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err), mock.patch.dict(os.environ, {"GITHUB_ACTIONS": "true"} if actions else {}, clear=False):
-            if not actions:
-                os.environ.pop("GITHUB_ACTIONS", None)
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err), hubenv.patched(actions):
             parser = op.build_parser()
             args = parser.parse_args(arguments)
             try:
@@ -768,19 +784,19 @@ class Cleanup(unittest.TestCase):
         for prefix in ("op", "OP-", "op probe", "-op-", "op/../"):
             az = FakeAz(listing=(0, "[]", ""))
             out, err = io.StringIO(), io.StringIO()
-            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err), mock.patch.dict(os.environ, {"GITHUB_ACTIONS": "true"}):
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err), hubenv.patched():
                 code = op.main(["cleanup", "--resource-group", GROUP, f"--prefix={prefix}"], az=az)
             self.assertEqual((code, az.calls), (2, []), prefix)
 
     def test_a_list_that_fails_is_an_error_and_nothing_is_deleted(self):
         az = FakeAz(listing=(1, "", "ERROR: no"))
         out, err = io.StringIO(), io.StringIO()
-        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err), mock.patch.dict(os.environ, {"GITHUB_ACTIONS": "true"}):
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err), hubenv.patched():
             code = op.main(["cleanup", "--resource-group", GROUP, "--prefix", "op-probe-"], az=az)
         self.assertEqual(code, 1)
         self.assertNotIn("delete", az.verbs())
 
-    def test_it_refuses_to_run_outside_a_github_actions_run(self):
+    def test_it_refuses_to_run_outside_a_run_of_the_hub(self):
         code, out, err, az = self.cleanup(actions=False)
         self.assertEqual(code, 2)
         self.assertEqual(az.calls, [])

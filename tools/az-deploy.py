@@ -4,8 +4,9 @@
     python tools/az-deploy.py what-if --subscription S --resource-group G --template T --parameters P [--restore-param NAME]
     python tools/az-deploy.py create  --subscription S --resource-group G --template T --parameters P --name N [--output NAME] [--restore-param NAME]
 
-Standard library only. `what-if` reads and changes nothing. `create` deploys, and only a GitHub Actions run may do that
-(AGENTS.md rule 18). With --output, the value of that output of the deployment is printed alone on standard output, so a
+Standard library only. `what-if` reads and changes nothing. `create` deploys, and only a run of the Hub may do that
+(AGENTS.md rule 18; tools/hubguard.py says what counts as one), and only in the project's own subscription and resource
+group (the settings ENV_SUBSCRIPTION_ID and ENV_RESOURCE_GROUP that the workflow gives every step). With --output, the value of that output of the deployment is printed alone on standard output, so a
 step can read it; everything else goes to standard error.
 
 Three answers of the service are not failures of the template:
@@ -20,11 +21,20 @@ At most three tries. Anything else stops the run at once, with the service's own
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import os
 import re
 import subprocess
 import sys
 import time
+from pathlib import Path
+
+guard = sys.modules.get("hubguard")
+if guard is None:  # a test has loaded it already; a tool run on its own loads it from its own folder
+    _spec = importlib.util.spec_from_file_location("hubguard", Path(__file__).with_name("hubguard.py"))
+    guard = importlib.util.module_from_spec(_spec)
+    sys.modules["hubguard"] = guard
+    _spec.loader.exec_module(guard)
 
 RESTORE = "FlagMustBeSetForRestore"
 TRANSIENT = re.compile(r"IfMatchPreconditionFailed|deadlock detected by _ModuleLock|ServiceBusy|ServiceUnavailable|TooManyRequests|RequestTimeout|GatewayTimeout")
@@ -65,8 +75,13 @@ def main(argv=None, runner=run, sleep=time.sleep) -> int:
     parser.add_argument("--restore-param", help="the template parameter that restores a soft-deleted account")
     args = parser.parse_args(argv)
     if args.mode == "create":
-        if os.environ.get("GITHUB_ACTIONS") != "true":
-            print("error: this command deploys, and only a GitHub Actions run may do that (AGENTS.md rule 18)", file=sys.stderr)
+        not_the_hub = guard.what_is_missing()
+        if not_the_hub:
+            print(f"error: this command deploys, and only a GitHub Actions run may do that (AGENTS.md rule 18): {not_the_hub}", file=sys.stderr)
+            return 2
+        other_scope = guard.other_scope(args.subscription, args.resource_group)
+        if other_scope:
+            print(f"error: {other_scope}", file=sys.stderr)
             return 2
         if not args.name:
             print("error: create needs --name", file=sys.stderr)

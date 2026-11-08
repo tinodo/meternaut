@@ -9,8 +9,8 @@
 This is the Operator of docs/proposals/07-private-by-default.md. Once the services of the project are private, the deployment workflow can no longer reach the
 sites that publish code, the queue that starts a run, the telemetry or the console from outside. What it still reaches is Azure Resource Manager. So it makes a
 container group (Azure Container Instances) in the Operator's delegated subnet, with the Operator's user-assigned identity, lets one script run in it, reads the
-log through Azure Resource Manager and deletes the group. The container group is made, and only a GitHub Actions run may make it (AGENTS.md rule 18): the command
-refuses to run anywhere else.
+log through Azure Resource Manager and deletes the group. The container group is made, and only a run of the Hub may make it (AGENTS.md rule 18; tools/hubguard.py says what
+counts as one): the command refuses to run anywhere else.
 
 run      Creates the group (`az container create --file`, restart policy Never, Linux, the identity, the subnet, the DNS servers that are given), mounts the script
          and every --secret-file as one secret volume at /mnt/op, and starts `/bin/bash /mnt/op/<script>`. It polls the group every --poll-seconds seconds with
@@ -40,6 +40,7 @@ from __future__ import annotations
 import argparse
 import base64
 import datetime
+import importlib.util
 import ipaddress
 import json
 import os
@@ -51,6 +52,13 @@ import sys
 import tempfile
 import time
 from pathlib import Path
+
+guard = sys.modules.get("hubguard")
+if guard is None:  # a test has loaded it already; a tool run on its own loads it from its own folder
+    _spec = importlib.util.spec_from_file_location("hubguard", Path(__file__).with_name("hubguard.py"))
+    guard = importlib.util.module_from_spec(_spec)
+    sys.modules["hubguard"] = guard
+    _spec.loader.exec_module(guard)
 
 API_VERSION = "2023-05-01"
 CONTAINER = "operator"
@@ -222,8 +230,9 @@ def first_line(text: str, limit: int = 300) -> str:
 
 
 def require_actions() -> None:
-    if os.environ.get("GITHUB_ACTIONS") != "true":
-        raise Problem("this command makes and deletes resources in Azure, and only a GitHub Actions run may do that (AGENTS.md rule 18)", 2)
+    why = guard.what_is_missing()
+    if why:
+        raise Problem(f"this command makes and deletes resources in Azure, and only a GitHub Actions run may do that (AGENTS.md rule 18): {why}", 2)
 
 
 def split_pair(pair: str, what: str) -> tuple[str, str]:

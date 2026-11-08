@@ -29,6 +29,7 @@ read-back   Reads the gateway and what hangs on it and fails for each thing that
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import os
 import re
@@ -37,6 +38,13 @@ import sys
 import time
 from pathlib import Path
 from typing import Callable
+
+guard = sys.modules.get("hubguard")
+if guard is None:  # a test has loaded it already; a tool run on its own loads it from its own folder
+    _spec = importlib.util.spec_from_file_location("hubguard", Path(__file__).with_name("hubguard.py"))
+    guard = importlib.util.module_from_spec(_spec)
+    sys.modules["hubguard"] = guard
+    _spec.loader.exec_module(guard)
 
 API = "2025-09-01-preview"
 NETWORK_API = "2025-05-01"
@@ -316,8 +324,9 @@ def merge(current: list, wanted: list[dict]) -> tuple[list, list[str]]:
 
 
 def only_in_actions() -> None:
-    if os.environ.get("GITHUB_ACTIONS") != "true":
-        raise Problem("this command writes to Azure, and only a GitHub Actions run may do that (AGENTS.md rule 18)", 2)
+    why = guard.what_is_missing()
+    if why:
+        raise Problem(f"this command writes to Azure, and only a GitHub Actions run may do that (AGENTS.md rule 18): {why}", 2)
 
 
 def guarded(action: Callable[[], list[Line]]) -> list[Line]:

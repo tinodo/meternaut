@@ -6,17 +6,18 @@ import copy
 import importlib.util
 import io
 import json
-import os
 import re
 import tempfile
 import unittest
 from pathlib import Path
-from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
 spec = importlib.util.spec_from_file_location("aigateway_prep", ROOT / "tools" / "aigateway-prep.py")
 prep = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(prep)
+_hubenv_spec = importlib.util.spec_from_file_location("hubenv", Path(__file__).with_name("hubenv.py"))
+hubenv = importlib.util.module_from_spec(_hubenv_spec)
+_hubenv_spec.loader.exec_module(hubenv)
 
 SUBSCRIPTION = "11111111-2222-3333-4444-555555555555"
 GROUP = "rg-example"
@@ -122,12 +123,9 @@ class Azure:
         return [call for call in self.calls if call[0] != "get"]
 
 
-def run(argv, azure, summary=None, actions=True):
+def run(argv, azure, summary=None, actions=True, extra=None):
     out, err = io.StringIO(), io.StringIO()
-    environment = {"GITHUB_ACTIONS": "true"} if actions else {}
-    with mock.patch.dict(os.environ, environment, clear=False), contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-        if not actions:
-            os.environ.pop("GITHUB_ACTIONS", None)
+    with hubenv.patched(actions, extra), contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
         code = prep.main([*argv, *(["--summary", str(summary)] if summary else [])], az=azure, sleep=azure.sleeps.append)
     return code, out.getvalue(), err.getvalue()
 
@@ -193,8 +191,27 @@ class Policies(unittest.TestCase):
         azure = Azure()
         code, out, err = self.command(azure, actions=False)
         self.assertEqual((code, out), (2, ""))
-        self.assertIn("only a GitHub Actions run may do that (AGENTS.md rule 18)", err)
+        self.assertIn("this command writes to Azure, and only a GitHub Actions run may do that (AGENTS.md rule 18)", err)
         self.assertEqual(azure.calls, [])
+
+    def test_a_process_that_only_says_that_github_actions_is_true_is_refused_and_the_refusal_names_what_is_missing(self):
+        azure = Azure()
+        code, out, err = self.command(azure, actions=False, extra={"GITHUB_ACTIONS": "true"})
+        self.assertEqual((code, out), (2, ""))
+        self.assertIn("GITHUB_ACTIONS=true alone is no proof", err)
+        self.assertIn("METERNAUT_HUB_PROOF", err)
+        self.assertEqual(azure.calls, [])
+
+    def test_the_proof_of_a_run_of_tools_hub_local_that_is_alive_is_enough_and_a_stale_one_is_not(self):
+        with tempfile.TemporaryDirectory() as folder:
+            azure = Azure(world(policies=[]))
+            code, _, err = self.command(azure, actions=False, extra={"METERNAUT_HUB_PROOF": str(hubenv.make_proof(folder))})
+            self.assertEqual(code, 0, err)
+            azure = Azure()
+            code, out, err = self.command(azure, actions=False, extra={"METERNAUT_HUB_PROOF": str(hubenv.make_proof(folder, pid=hubenv.dead_pid()))})
+            self.assertEqual((code, out), (2, ""))
+            self.assertIn("is not alive: this proof is stale", err)
+            self.assertEqual(azure.calls, [])
 
     def test_an_empty_workspace_gets_the_four_policies_in_one_patch_that_holds_nothing_else_and_they_are_read_back(self):
         azure = Azure(world(policies=[]))
@@ -287,7 +304,7 @@ class Policies(unittest.TestCase):
             return original(arguments)
 
         out, err = io.StringIO(), io.StringIO()
-        with mock.patch.dict(os.environ, {"GITHUB_ACTIONS": "true"}), contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        with hubenv.patched(), contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
             code = prep.main(["policies", *ARGUMENTS, "--file", str(self.file)], az=patch_that_changes_nothing, sleep=azure.sleeps.append)
         self.assertEqual(code, 1)
         self.assertEqual(azure.sleeps, [prep.READ_BACK_SECONDS] * 5)
@@ -307,7 +324,7 @@ class Policies(unittest.TestCase):
             return original(arguments)
 
         out = io.StringIO()
-        with mock.patch.dict(os.environ, {"GITHUB_ACTIONS": "true"}), contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+        with hubenv.patched(), contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
             code = prep.main(["policies", *ARGUMENTS, "--file", str(self.file)], az=patch_with_another_amount, sleep=lambda seconds: None)
         self.assertEqual(code, 1)
         self.assertIn("different: costLimit meternaut-day", out.getvalue())
@@ -425,7 +442,7 @@ class RemoveKey(unittest.TestCase):
             return original(arguments)
 
         out = io.StringIO()
-        with mock.patch.dict(os.environ, {"GITHUB_ACTIONS": "true"}), contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+        with hubenv.patched(), contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
             code = prep.main(["remove-key", *ARGUMENTS], az=delete_that_deletes_nothing, sleep=azure.sleeps.append)
         self.assertEqual(code, 0)
         self.assertEqual(azure.sleeps, [prep.READ_BACK_SECONDS] * 5)
@@ -442,7 +459,7 @@ class RemoveKey(unittest.TestCase):
             return azure(arguments)
 
         out = io.StringIO()
-        with mock.patch.dict(os.environ, {"GITHUB_ACTIONS": "true"}), contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+        with hubenv.patched(), contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
             code = prep.main(["remove-key", *ARGUMENTS], az=raced, sleep=lambda seconds: None)
         self.assertEqual(code, 0)
         self.assertIn("note: The service says that the key master is not there any more", out.getvalue())
@@ -778,7 +795,7 @@ class TheTemplateAndTheToolAgree(unittest.TestCase):
     def test_the_tool_uses_the_standard_library_alone_and_has_no_other_way_to_reach_azure_than_az_rest(self):
         source = (ROOT / "tools" / "aigateway-prep.py").read_text(encoding="utf-8")
         imports = set(re.findall(r"(?m)^(?:import|from) (\w+)", source))
-        self.assertLessEqual(imports, {"argparse", "json", "os", "re", "subprocess", "sys", "time", "pathlib", "typing", "__future__"})
+        self.assertLessEqual(imports, {"argparse", "importlib", "json", "os", "re", "subprocess", "sys", "time", "pathlib", "typing", "__future__"}, "importlib loads tools/hubguard.py from the tool's own folder")
         self.assertEqual(re.findall(r'subprocess\.run\(\[([^\]]*)\]', source), ['os.environ.get("AZ", "az"), *arguments'])
         for word in ("urllib", "http.client", "socket", "listKeys", "listSecrets"):
             self.assertNotIn(word, source, word)

@@ -20,6 +20,9 @@ ROOT = Path(__file__).resolve().parents[2]
 spec = importlib.util.spec_from_file_location("cases_move", ROOT / "tools" / "cases-move.py")
 cm = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(cm)
+_hubenv_spec = importlib.util.spec_from_file_location("hubenv", Path(__file__).with_name("hubenv.py"))
+hubenv = importlib.util.module_from_spec(_hubenv_spec)
+_hubenv_spec.loader.exec_module(hubenv)
 
 SUB = "11111111-2222-3333-4444-555555555555"
 GROUP = "rg-example"
@@ -38,7 +41,8 @@ BLOB, QUEUE, TABLE, METRICS = ("b7e6dc6d-f1e8-4753-8033-0f276bb0955b", "974c5e8b
 THE_TEMPLATES = [*[(container, BLOB) for container in CONTAINERS], (STORAGE, QUEUE), (STORAGE, TABLE), (INSIGHTS, METRICS)]
 THE_IDS = [f"{scope}/providers/Microsoft.Authorization/roleAssignments/00000000-0000-4000-8000-{number:012d}" for number, (scope, _) in enumerate(THE_TEMPLATES, 1)]
 OLD, NEW = "aaaaaaaa-0000-4000-8000-000000000001", "bbbbbbbb-0000-4000-8000-000000000002"
-ENVIRONMENT = {"GITHUB_ACTIONS": "true", "ENV_SUBSCRIPTION_ID": SUB, "ENV_RESOURCE_GROUP": GROUP}
+PROJECT = {"ENV_SUBSCRIPTION_ID": SUB, "ENV_RESOURCE_GROUP": GROUP}
+ENVIRONMENT = hubenv.inside(PROJECT)
 TIMEOUT = 'ERROR: Gateway Timeout({"error":{"code":"GatewayTimeout","message":"The gateway did not receive a response from \'Microsoft.Web\' within the specified time period."}})'
 NOT_THERE = "ERROR: (ResourceNotFound) The Resource '{}' under resource group 'rg-example' was not found."
 
@@ -485,11 +489,29 @@ class TheRunner(unittest.TestCase):
 
 
 class TheRefusals(unittest.TestCase):
-    def test_nothing_is_read_or_changed_outside_a_github_actions_run(self):
+    def test_nothing_is_read_or_changed_outside_a_run_of_the_hub(self):
         azure = basic_world()
-        code, lines, _, _ = run(azure, environ={"ENV_SUBSCRIPTION_ID": SUB, "ENV_RESOURCE_GROUP": GROUP})
+        code, lines, _, _ = run(azure, environ=dict(PROJECT))
         self.assertEqual((code, azure.calls), (2, []))
-        self.assertIn("only a GitHub Actions run may do that (AGENTS.md rule 18)", lines[-1])
+        self.assertIn("this command deletes, and only a GitHub Actions run may do that (AGENTS.md rule 18)", lines[-1])
+
+    def test_github_actions_true_alone_is_refused_and_the_refusal_names_what_is_missing(self):
+        azure = basic_world()
+        code, lines, _, _ = run(azure, environ={**PROJECT, "GITHUB_ACTIONS": "true"})
+        self.assertEqual((code, azure.calls), (2, []))
+        self.assertIn("GITHUB_ACTIONS=true alone is no proof", lines[-1])
+        self.assertIn("GITHUB_RUN_ID", lines[-1])
+        self.assertIn("METERNAUT_HUB_PROOF", lines[-1])
+
+    def test_the_proof_of_a_run_of_tools_hub_local_that_is_alive_is_enough_and_a_stale_one_is_not(self):
+        with tempfile.TemporaryDirectory() as folder:
+            azure = basic_world()
+            code, lines, _, _ = run(azure, environ={**PROJECT, "METERNAUT_HUB_PROOF": str(hubenv.make_proof(folder))})
+            self.assertEqual(code, 0, lines)
+            azure = basic_world()
+            code, lines, _, _ = run(azure, environ={**PROJECT, "METERNAUT_HUB_PROOF": str(hubenv.make_proof(folder, pid=hubenv.dead_pid()))})
+            self.assertEqual((code, azure.calls), (2, []))
+            self.assertIn("is not alive: this proof is stale", lines[-1])
 
     def test_no_other_group_or_subscription_can_be_named(self):
         for environ in ({**ENVIRONMENT, "ENV_RESOURCE_GROUP": "rg-another"}, {**ENVIRONMENT, "ENV_SUBSCRIPTION_ID": "99999999-2222-3333-4444-555555555555"}):
