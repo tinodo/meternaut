@@ -94,7 +94,8 @@ class TheBootstrapSection(unittest.TestCase):
 
     def test_what_the_hub_no_longer_does_is_said_with_the_sentence_it_prints_and_the_reason(self):
         page = flat(section())
-        for words in ("**What the Hub no longer does, and why.**", REFUSAL, "`actions: read`", "about five of the eight minutes", "[rule 35](../AGENTS.md)", "The way back is to put the two test commands back"):
+        for words in ("**What the Hub no longer does, and why.**", REFUSAL, "`actions: read`", "about five of the eight minutes", "[rule 35](../AGENTS.md)", "The way back is to put the two test commands back",
+                      "a head with that marker has no run to find"):
             self.assertIn(words, page, words)
         self.assertIn(f"::error::{REFUSAL}.", HUB, "the sentence that the Hub prints is the one that the page quotes")
 
