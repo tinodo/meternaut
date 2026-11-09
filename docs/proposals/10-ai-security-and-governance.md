@@ -73,7 +73,7 @@ About 3.6 euro a month, and the alert rules are the whole of it. The budget of t
 ## What is not built, and who can close it
 
 - **Agent-level guardrails for models behind a gateway.** Microsoft does not support them (preview, and not for connected models). The deployment filter, the gateway's content safety and the app's harness stand in. Nobody here can close it; Microsoft can.
-- **Defender for Cloud in Sweden Central.** The plan is on; Microsoft lists the region as not covered. Moving the resources or accepting the gap is the owner's decision.
+- **Defender for Cloud in Sweden Central.** The plan is on; Microsoft lists the region as not covered. On 2026-11-09 it mailed the owner an alert for a blocked jailbreak attempt. Moving the resources or accepting the gap is the owner's decision.
 - **Purview data security for AI.** It does not support a network-isolated Foundry resource. Revisit when Microsoft does.
 - **A policy for the AI Gateway resource.** No built-in policy targets it. The drift check reads the gateway's policies, models, roles and exporter instead.
 - **Customer-managed keys.** The policy is built, with the kinds that it leaves out emptied so that the Foundry resource is judged, and it is off: keys need a key vault with purge protection, and the owner has not decided.
