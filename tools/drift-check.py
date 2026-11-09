@@ -863,73 +863,115 @@ def role_assignments(ctx: Context) -> Outcome:
                   "approve a change: they are not judged here).")
 
 
-def reach_of(ctx: Context, role: str) -> str | None:
-    """What a role holds beyond reading: its name when it is Foundry User or a wider role of Foundry, a few words when its definition writes or holds data actions of the Foundry resource, empty when it adds
-    nothing, and None when the definition cannot be read."""
+FOUNDRY_DATA = re.compile(r"^(\*|microsoft\.cognitiveservices/)", re.I)
+PROJECT_LEVEL, RESOURCE_LEVEL = "the Foundry project", "the Foundry resource"
+
+
+def level_of(ctx: Context, scope: object) -> str:
+    """Where a role is held, in words, for the scopes that `atScope()` lists: the Foundry project and everything above it."""
+    text = str(scope or "").lower().rstrip("/")
+    if text == ctx.project_path.lower():
+        return PROJECT_LEVEL
+    if text == ctx.account_path.lower():
+        return RESOURCE_LEVEL
+    if text == ctx.group_path.lower():
+        return "the project's resource group"
+    if re.fullmatch(r"/subscriptions/[^/]+", text):
+        return "the subscription"
+    if text.startswith("/providers/microsoft.management/managementgroups/"):
+        return "a management group"
+    return "the root of the tenant" if not text else "a scope above the project"
+
+
+def reach_of(ctx: Context, role: str) -> tuple[str, str] | None:
+    """The name of a role and what it holds beyond reading: "user" (Foundry User), "wider" (a wider role of Foundry), "writes" (an action of Azure Resource Manager that is not a read), "data" (a data action that
+    reaches the Foundry resource, and so its model deployments, or every data action) or "" (nothing). None when the definition cannot be read."""
     guid = tail(role).lower()
     if guid == FOUNDRY_USER:
-        return "Foundry User"
+        return "Foundry User", "user"
     if guid in WIDER_FOUNDRY_ROLES:
-        return WIDER_FOUNDRY_ROLES[guid]
+        return WIDER_FOUNDRY_ROLES[guid], "wider"
     try:
         definition = ctx.read(f"The role definition {tail(role)}", role, AUTHORIZATION_API) if role.startswith("/") else {}
     except (Missing, CannotRead):
         definition = {}
     if not definition:
         return None
+    properties = definition.get("properties") or {}
+    name = plain(properties.get("roleName"), 50) or f"the role {tail(role)[:8]}..."
     if writes(definition):
-        return f"the role {tail(role)[:8]}..., which can change Azure"
-    permissions = (definition.get("properties") or {}).get("permissions") or []
-    if any(isinstance(data, str) and (data == "*" or data.lower().startswith("microsoft.cognitiveservices/")) for p in permissions for data in (p.get("dataActions") or [])):
-        return f"the role {tail(role)[:8]}..., which holds data actions of the Foundry resource"
-    return ""
+        return name, "writes"
+    if any(isinstance(data, str) and FOUNDRY_DATA.match(data) for p in properties.get("permissions") or [] for data in (p.get("dataActions") or [])):
+        return name, "data"
+    return name, ""
+
+
+def judge_foundry_role(ctx: Context, who: str, principal: str, items: list, missing: str, purpose: str) -> Outcome:
+    """What one identity holds at the Foundry project and at every scope above it, which is what `atScope()` lists (the Foundry resource, the group, the subscription, the management groups). The design is exactly
+    Foundry User on the project. A role anywhere in that list that can change Azure, that holds data actions that reach the Foundry resource (and so its model deployments, which only the AI Gateway may call: AGENTS.md
+    rule 15 (c)) or that is wider than Foundry User is a FAIL, whatever its scope; a role whose definition cannot be read is UNKNOWN, never a pass."""
+    held = set()
+    for item in items:
+        properties = (item or {}).get("properties") or {}
+        if str(properties.get("principalId") or "").lower() == principal:
+            held.add((str(properties.get("scope") or ""), str(properties.get("roleDefinitionId") or "")))
+    has_role = False
+    elsewhere = False
+    problems = []
+    unreadable = []
+    for scope, role in sorted(held):
+        level = level_of(ctx, scope)
+        reach = reach_of(ctx, role)
+        if reach is None:
+            unreadable.append(f"{tail(role)[:8]}... at {level}")
+            continue
+        name, kind = reach
+        if kind == "user" and level == PROJECT_LEVEL:
+            has_role = True
+        elif kind:
+            elsewhere = elsewhere or kind == "user"
+            why = {"writes": "which can change Azure", "wider": "which is wider than Foundry User", "data": "which holds data actions of the Foundry resource", "user": "which is meant for the project alone"}[kind]
+            if level != PROJECT_LEVEL and kind != "writes":
+                why += ": a role there reaches the model deployments, and a role on the project alone does not"
+            problems.append(f"{who} holds {name} {'on' if level in (PROJECT_LEVEL, RESOURCE_LEVEL) else 'at'} {level}, {why}")
+    if not has_role and not elsewhere:
+        problems.append(missing)
+    if problems:
+        return failed("; ".join(problems) + ".", closed=False)
+    if unreadable:
+        return unknown(f"The role(s) that {who} holds at or above the Foundry project could not be read ({', '.join(sorted(unreadable))}), so it is not known whether they reach beyond Foundry User.")
+    return passed(f"{who[0].upper() + who[1:]} holds Foundry User on the Foundry project, and nothing wider there, on the Foundry resource or above them: {purpose}.")
+
+
+def project_roles_of(ctx: Context) -> list:
+    """The role assignments at the Foundry project and at every scope above it (`atScope()` lists them all). A project that is not there ends the control."""
+    ctx.read("The Foundry project", ctx.project_path, FOUNDRY_API)
+    return ctx.read("The role assignments at the Foundry project", f"{ctx.project_path}/providers/Microsoft.Authorization/roleAssignments", AUTHORIZATION_API, query="%24filter=atScope()", pages=True)
 
 
 @control("I-operator-role", "L4")
 def operator_role(ctx: Context) -> Outcome:
-    """The role that the Operator holds on the Foundry project: Foundry User, which the tools that check the agents from inside the network read the project with (docs/proposals/11-agent-harness-and-evaluation.md),
-    and nothing wider on the project or on the Foundry resource. The roles at the group are judged by I-role-assignments."""
+    """The roles that the Operator holds at the Foundry project and at every scope above it: Foundry User on the project, which the tools that check the agents from inside the network read the project with
+    (docs/proposals/11-agent-harness-and-evaluation.md), and no role anywhere above that can change Azure or reaches the model deployments (rule 15 (c): they are called through the AI Gateway alone)."""
     operator = ctx.principal("operator")
     if not operator:
         return passed("The Operator's identity is not made yet (the action operator makes it), so it holds no role on the Foundry project; the action foundry gives it Foundry User there.")
-    ctx.read("The Foundry project", ctx.project_path, FOUNDRY_API)
-    items = ctx.read("The role assignments at the Foundry project", f"{ctx.project_path}/providers/Microsoft.Authorization/roleAssignments", AUTHORIZATION_API, query="%24filter=atScope()", pages=True)
-    places = {ctx.project_path.lower(): "the Foundry project", ctx.account_path.lower(): "the Foundry resource"}
-    held: dict[str, list[str]] = {place: [] for place in places.values()}
-    above = set()
-    for item in items:
-        properties = (item or {}).get("properties") or {}
-        if str(properties.get("principalId") or "").lower() != operator:
-            continue
-        place = places.get(str(properties.get("scope") or "").lower().rstrip("/"))
-        role = str(properties.get("roleDefinitionId") or "")
-        if place:
-            held[place].append(role)
-        elif tail(role).lower() == FOUNDRY_USER or tail(role).lower() in WIDER_FOUNDRY_ROLES:
-            # The list holds the assignments of the scopes above as well: only a Foundry role is the business of this control there (the other roles of the group are judged by I-role-assignments).
-            above.add(WIDER_FOUNDRY_ROLES.get(tail(role).lower(), "Foundry User"))
-    has_role = False
-    problems = [f"the Operator holds {name} above the Foundry resource, which is wider than the project" for name in sorted(above)]
-    unreadable = []
-    for place, roles in held.items():
-        for role in sorted(set(roles)):
-            reach = reach_of(ctx, role)
-            if reach is None:
-                unreadable.append(tail(role)[:8] + "...")
-            elif reach == "Foundry User" and place == "the Foundry project":
-                has_role = True
-            elif reach and place == "the Foundry resource":
-                problems.append(f"the Operator holds {reach} on the Foundry resource: a role there reaches the model deployments, and a role on the project alone does not")
-            elif reach:
-                problems.append(f"the Operator holds {reach} on the Foundry project, which is wider than Foundry User")
-    if not has_role and not above:
-        problems.append("the Operator does not hold the role Foundry User on the Foundry project, so agents-drift, foundry-evals and foundry-redteam, which read the project with its identity, are answered 403 or 401 "
-                        "(the action foundry gives it the role, after the action operator)")
-    if problems:
-        return failed("; ".join(problems) + ".", closed=False)
-    if unreadable:
-        return unknown(f"The role definition(s) {', '.join(sorted(set(unreadable)))} held by the Operator on the Foundry project or the Foundry resource could not be read, so it is not known whether they reach beyond Foundry User.")
-    return passed("The Operator holds Foundry User on the Foundry project, and nothing wider there or on the Foundry resource: the tools that check the agents from inside the network read the project with it.")
+    return judge_foundry_role(ctx, "the Operator", operator, project_roles_of(ctx),
+                              "the Operator does not hold the role Foundry User on the Foundry project, so agents-drift, foundry-evals and foundry-redteam, which read the project with its identity, are answered 403 or 401 "
+                              "(the action foundry gives it the role, after the action operator)",
+                              "the tools that check the agents from inside the network read the project with it")
+
+
+@control("I-project-role", "L4")
+def project_role(ctx: Context) -> Outcome:
+    """The same for the Foundry project's own identity, which a continuous evaluation rule runs as: Foundry User on the project and no role above it that can change Azure or reaches the model deployments."""
+    items = project_roles_of(ctx)
+    principal = ctx.principal("foundry-project")
+    if not principal:
+        return failed("The Foundry project has no identity of its own, so a continuous evaluation rule cannot run as it and no role is held for it (the action foundry makes the project with one).", closed=False)
+    return judge_foundry_role(ctx, "the Foundry project's identity", principal, items,
+                              "the Foundry project's identity does not hold the role Foundry User on the Foundry project, so a continuous evaluation rule cannot run as it (the action foundry gives it the role)",
+                              "a continuous evaluation rule runs as it")
 
 
 @control("I-network", "L4")
@@ -1284,6 +1326,8 @@ SELFTEST_DIGEST = "b" * 64
 SELFTEST_IDS = {"cases": "12345678-dddd-eeee-ffff-123456789012", "foundry-project": "12345678-eeee-ffff-1111-123456789012", "operator": "12345678-aaaa-bbbb-cccc-123456789012",
                 "account": "12345678-1111-2222-3333-123456789012", "gateway": "12345678-4444-5555-6666-123456789012", "console": "12345678-7777-8888-9999-123456789012",
                 "deploy": "12345678-0000-0000-0000-123456789012", "stranger": "12345678-9999-9999-9999-123456789012"}
+SELFTEST_READER = "acdd72a7-3385-48ef-bd42-f606fba81ae7"
+SELFTEST_OPENAI_USER = "5e0bd9bd-7b93-4f28-af87-19fc36ad61bd"
 
 
 def assignment_of(scope: str, role: str, principal: str, kind: str = "ServicePrincipal") -> dict:
@@ -1314,9 +1358,10 @@ def fake_estate(models: list[dict], policies: list[dict], names: dict[str, str])
         f"{account_path}/models": {"value": [{"kind": "OpenAI", "model": {"name": m["name"], "version": m["version"], "lifecycleStatus": "GenerallyAvailable",
                                                                           "deprecation": {"inference": m["retirementDate"] + "T00:00:00Z"}, "skus": [{"name": m["sku"], "deprecationDate": m["retirementDate"] + "T00:00:00Z"}]}} for m in models]},
         f"{account_path}/projects/{names['project']}": {"identity": {"principalId": SELFTEST_IDS["foundry-project"]}},
-        # What `atScope()` answers: the assignments at the project and those above it (the deploy identity's Owner at the subscription), which I-operator-role leaves to the controls of those scopes.
+        # What `atScope()` answers: the assignments at the project and those above it. The Operator holds Reader at the group by design; the deploy identity's Owner at the subscription is nobody's business here.
         f"{account_path}/projects/{names['project']}/providers/Microsoft.Authorization/roleAssignments": {"value": [
             assignment_of(f"{account_path}/projects/{names['project']}", FOUNDRY_USER, SELFTEST_IDS[k]) for k in ("cases", "foundry-project", "operator")] + [
+            assignment_of(base, SELFTEST_READER, SELFTEST_IDS["operator"]),
             assignment_of(f"/subscriptions/{sub}", "8e3af657-a8ff-443c-a75c-2fe8c4bcb635", SELFTEST_IDS["deploy"], "User")]},
         f"{account_path}/projects/{names['project']}/connections": {"value": [
             {"name": "aigateway", "properties": {"category": "ApiManagement"}}, {"name": "appinsights", "properties": {"category": "AppInsights", "authType": "ProjectManagedIdentity"}}]},
@@ -1353,6 +1398,10 @@ def fake_estate(models: list[dict], policies: list[dict], names: dict[str, str])
         "/providers/microsoft.authorization/roledefinitions/contributor": {"properties": {"permissions": [{"actions": ["*"], "notActions": []}]}},
         "/providers/microsoft.authorization/roledefinitions/reader": {"properties": {"permissions": [{"actions": ["*/read"]}]}},
         "/providers/microsoft.authorization/roledefinitions/queue-data": {"properties": {"permissions": [{"actions": [], "dataActions": ["Microsoft.Storage/*/write"]}]}},
+        f"/subscriptions/{sub}/providers/Microsoft.Authorization/roleDefinitions/{SELFTEST_READER}": {"properties": {"roleName": "Reader", "permissions": [{"actions": ["*/read"], "dataActions": []}]}},
+        f"/subscriptions/{sub}/providers/Microsoft.Authorization/roleDefinitions/{SELFTEST_OPENAI_USER}": {"properties": {"roleName": "Cognitive Services OpenAI User", "permissions": [{
+            "actions": ["Microsoft.CognitiveServices/*/read", "Microsoft.Authorization/roleAssignments/read", "Microsoft.Authorization/roleDefinitions/read"],
+            "dataActions": ["Microsoft.CognitiveServices/accounts/OpenAI/*/read", "Microsoft.CognitiveServices/accounts/OpenAI/deployments/chat/completions/action", "Microsoft.CognitiveServices/accounts/OpenAI/responses/*"]}]}},
         f"{base}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/{OPERATOR_IDENTITY}": {"properties": {"principalId": SELFTEST_IDS["operator"]}},
         f"{base}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/{CONSOLE_IDENTITY}": {"properties": {"principalId": SELFTEST_IDS["console"]}},
         f"{base}/providers/Microsoft.Web/sites/{names['cases_app']}": {"identity": {"principalId": SELFTEST_IDS["cases"]}, "properties": {"publicNetworkAccess": "Enabled"},
@@ -1442,6 +1491,8 @@ def selftest() -> int:
     project_path = f"{account_path}/projects/{names['project']}"
     project_roles = f"{project_path}/providers/Microsoft.Authorization/roleAssignments"
     operator_id = SELFTEST_IDS["operator"]
+    project_id = SELFTEST_IDS["foundry-project"]
+    management_group = "/providers/Microsoft.Management/managementGroups/example-root"
 
     healthy = world()
     expected_unknown = {"I-defender", "I-entra-console", "I-entra-agents"}
@@ -1469,6 +1520,11 @@ def selftest() -> int:
         ("I-operator-role", lambda e: e[project_roles].update(value=[a for a in e[project_roles]["value"] if a["properties"]["principalId"] != operator_id])),
         ("I-operator-role", lambda e: e[project_roles]["value"].append(assignment_of(project_path, FOUNDRY_PROJECT_MANAGER, operator_id))),
         ("I-operator-role", lambda e: e[project_roles]["value"].append(assignment_of(account_path, FOUNDRY_USER, operator_id))),
+        ("I-operator-role", lambda e: e[project_roles]["value"].append(assignment_of(base, SELFTEST_OPENAI_USER, operator_id))),
+        ("I-operator-role", lambda e: e[project_roles]["value"].append(assignment_of(management_group, SELFTEST_OPENAI_USER, operator_id))),
+        ("I-project-role", lambda e: e[project_roles].update(value=[a for a in e[project_roles]["value"] if a["properties"]["principalId"] != project_id])),
+        ("I-project-role", lambda e: e[project_roles]["value"].append(assignment_of(account_path, FOUNDRY_USER, project_id))),
+        ("I-project-role", lambda e: e[project_roles]["value"].append(assignment_of(f"/subscriptions/{SELFTEST_SUBSCRIPTION}", SELFTEST_OPENAI_USER, project_id))),
         ("I-release", lambda e: e[f"{base}/providers/Microsoft.Web/sites/{names['cases_app']}"]["tags"].update({"meternaut-build-commit": "c" * 40, "meternaut-package-sha256": "d" * 64})),
         ("I-alerts", lambda e: e[f"{base}/providers/Microsoft.Insights/scheduledQueryRules"]["value"].pop()),
         ("I-diagnostics", lambda e: e[f"{account_path}/providers/Microsoft.Insights/diagnosticSettings"]["value"].clear()),
@@ -1488,8 +1544,9 @@ def selftest() -> int:
         broken.append("I-policy-compliance did not say PASS for a Deny policy that the owner accepted")
     if world(accepted_deny=None).get("I-policy-compliance") != UNKNOWN:
         broken.append("I-policy-compliance did not say UNKNOWN with no accepted baseline")
-    if world(lambda e: e[project_roles]["value"].append(assignment_of(project_path, "00000000-0000-0000-0000-00000000dead", operator_id))).get("I-operator-role") != UNKNOWN:
-        broken.append("I-operator-role did not say UNKNOWN for a role of the Operator whose definition cannot be read")
+    for control_id, identity in (("I-operator-role", operator_id), ("I-project-role", project_id)):
+        if world(lambda e, who=identity: e[project_roles]["value"].append(assignment_of(base, "00000000-0000-0000-0000-00000000dead", who))).get(control_id) != UNKNOWN:
+            broken.append(f"{control_id} did not say UNKNOWN for a role above the project whose definition cannot be read")
     # a control that cannot read says UNKNOWN, and never PASS
     estate = fake_estate(models, policies, names)
     denied = FakeAz(estate, app_rows=healthy_rows())
