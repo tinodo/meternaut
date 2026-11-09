@@ -185,13 +185,19 @@ class ActionRecord(Record):
     result: str = ""
     correlation_id: str = ""
     verified_at: str | None = None
-    verification: dict = field(default_factory=dict)  # {"gone": bool, "costAfterUsd": float or None, "note": text}, and for a change that is not a delete {"now": what a read showed}
+    verification: dict = field(default_factory=dict)  # {"gone": bool, "costAfterUsd": float or None, "note": text}, and for a change that is not a delete {"now": what a read showed}; "noChange": True when nothing was written
     error: str | None = None
     step_up: bool = False  # Azure asked for an extra sign-in check: the action waits in the queue for it, and a second ask is final
     plan_digest: str = ""  # the digest of the plan that this action carries out (empty in an action of before the digest existed)
     # A write that Azure accepted and is still carrying out (the state is then `running`): {"pending": True, "acceptedAt": time, "via": the header that gave its address, or "none"}. The timer
     # reads the resource later and settles it. Empty for every other action.
     operation: dict = field(default_factory=dict)
+
+    @property
+    def no_change(self) -> bool:
+        """The action made no change: when Meternaut looked, the resource was in the state that the plan wants (or was gone already), so nothing was written. The runner marks it with
+        `noChange` in the check. Such an action is not checked by cost lines later and is never shown with a saving: this approval did not make it."""
+        return isinstance(self.verification, dict) and self.verification.get("noChange") is True
 
 
 @dataclass(frozen=True)
@@ -263,7 +269,8 @@ class Principal:
 class DecideResult:
     ok: bool
     # Answers: declined, asked, not_mine, later, and acknowledged (an advise plan answered with "worth acting on": nothing changes in Azure). What a sign-in to Azure led to:
-    # ran, ran_unconfirmed, running (Azure accepted the change and is still making it: the timer reads the resource later), stopped, azure_refused, failed, signin_failed, and step_up_failed
+    # ran, ran_unconfirmed, running (Azure accepted the change and is still making it: the timer reads the resource later), unchanged (nothing had to be changed: the resource was as the plan
+    # wants when the runner looked, and nothing was written), stopped, azure_refused, failed, signin_failed, and step_up_failed
     # (the extra sign-in check that Azure asked for was not completed: the request is closed). step_up: Azure asked for an extra sign-in check, and `location` is where the person goes.
     # Refusals: refused_code, refused_state, refused_role, refused_paused, expired, duplicate, error.
     kind: str

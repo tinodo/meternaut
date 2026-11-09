@@ -24,10 +24,10 @@ GET_PATHS = ["/", "/ok/plan0001", "/ok/plan0002", "/why/case0001", "/why/case000
 PORTAL = re.compile(r"^https://portal\.azure\.com/#resource/subscriptions/[0-9A-Fa-f-]{36}/resourceGroups/[A-Za-z0-9._()-]{1,90}/providers/[A-Za-z0-9.]{1,80}(?:/[A-Za-z0-9._()~-]{1,100}){2,16}$")
 # Where the sign-in to Azure sends the person back to. It is the one GET that goes on to a change, and only through the delegate and with the one-time state of the sign-in.
 RETURN = "/arm/return?code=" + "c" * 24 + "&state=" + "s" * 24
-RESULT_KINDS = ("declined", "asked", "later", "acknowledged", "not_mine", "ran", "ran_unconfirmed", "running", "stopped", "azure_refused", "failed", "signin_failed", "step_up_failed",
-                "refused_code", "refused_state", "refused_role", "refused_paused", "expired", "duplicate", "error")
+RESULT_KINDS = ("declined", "asked", "later", "acknowledged", "not_mine", "ran", "ran_unconfirmed", "running", "unchanged", "stopped", "azure_refused", "failed", "signin_failed",
+                "step_up_failed", "refused_code", "refused_state", "refused_role", "refused_paused", "expired", "duplicate", "error")
 # The kinds whose page shows the message of the result.
-SHOWS_THE_MESSAGE = ("ran", "ran_unconfirmed", "running", "stopped", "azure_refused", "failed", "signin_failed", "step_up_failed", "refused_state", "error")
+SHOWS_THE_MESSAGE = ("ran", "ran_unconfirmed", "running", "unchanged", "stopped", "azure_refused", "failed", "signin_failed", "step_up_failed", "refused_state", "error")
 
 
 def seeded() -> Console:
@@ -134,7 +134,7 @@ class Headers(unittest.TestCase):
         form = console.get("/ok/plan0001").form("/ok/plan0001", has_button=APPROVE)
         for kind in RESULT_KINDS:
             with self.subTest(kind=kind):
-                result = DecideResult(kind in ("declined", "asked", "not_mine", "ran", "ran_unconfirmed"), kind, "a message", make_plan())
+                result = DecideResult(kind in ("declined", "asked", "not_mine", "ran", "ran_unconfirmed", "unchanged"), kind, "a message", make_plan())
                 console.delegate.finished = result
                 console.delegate.begun = Begun(refusal=result)
                 self.check(console.get(RETURN))

@@ -10,7 +10,9 @@ then re-checks the facts that the plan states, and a check that fails stops the 
 the extra check that a change needs), nothing was changed: the action waits in the queue for that check, and `execute` is called again after it (delegated.py). A write that Azure
 carries out later (a stop, a resize, a change of a disk's tier) is followed for a few seconds with the same token; when it is not finished by then the action is `running`, the person is
 told so, and `tick` reads the resource later with the reader's token and settles it. A change that has no known end is `unknown`, and nothing here ever makes a second write: a retry is a
-new approval by a person. Every step is recorded. `tick` is the timer of the loop: it closes plans, checks what was done, and cannot change Azure (its list of calls is `read_calls`).
+new approval by a person. An approval that found nothing to change (the resource was as the plan wants, or gone) is marked `noChange`: no write was made, and no saving is ever claimed for it.
+The saving of a change that was made is confirmed later by the cost lines, from whole days only (cost_window) and asked for once a day, never from a line that is not in yet. Every step is
+recorded. `tick` is the timer of the loop: it closes plans, checks what was done, and cannot change Azure (its list of calls is `read_calls`).
 """
 from __future__ import annotations
 
@@ -37,8 +39,14 @@ POLL_ATTEMPTS = 6
 POLL_SECONDS = 5
 STUCK_MINUTES = 15
 QUEUED_MINUTES = 10
-VERIFY_AFTER_DAYS = 2
+# The check by cost lines reads whole days only. Cost Management shows the usage of a day typically within 8 to 24 hours on Enterprise Agreement and Microsoft Customer Agreement subscriptions
+# and up to 72 hours on pay-as-you-go ones, and each service emits usage at its own interval, so some lines come before others (Learn, "Understand Cost Management data"). So the day of the
+# change is left out (it is part before and part after the change), and so is every day that ended less than COST_SETTLE_DAYS full days ago: the last day that is read is the day before
+# yesterday or an earlier one. A pay-as-you-go subscription would need a larger number. Cost Management is asked once a day at most, until the lines are there or GIVE_UP_AFTER_DAYS are over.
+COST_SETTLE_DAYS = 1
 GIVE_UP_AFTER_DAYS = 7
+# An approved plan whose action is still `unknown` after this many days (the app stopped between the start and the write, and the resource has not shown the change since) is closed as failed.
+APPROVED_UNKNOWN_DAYS = 2
 # An operation that Azure accepted and has not shown the end of, after this long, is `unknown`: the timer then goes on reading the resource, and it never makes a second write.
 RUNNING_GIVE_UP_MINUTES = 60
 # What the record of an action says while its change waits for the approver's extra sign-in check, when that check was asked for twice, and when it was never completed.
@@ -51,6 +59,12 @@ STEP_UP_ABANDONED = ("The extra sign-in check that Azure asked for was not compl
 RUNNING_TEXT = ("Azure accepted the change and is still making it. Meternaut reads the resource again in a few minutes and records what it finds. "
                 "It makes no second try: if it does not work, a new try is a new approval by a person.")
 UNKNOWN_END = ("Azure accepted the change and has not shown its end. Meternaut makes no second try. Look at the resource in Azure: a new try is a new approval by a person.")
+# What the record says when the cost lines gave no figure for the resource in all the days that Meternaut waited: the saving stays unconfirmed, and the change itself was checked.
+COST_GAVE_UP = (f"Not confirmed: in the {GIVE_UP_AFTER_DAYS} days after the change the cost lines gave no figure for this resource to compare with, so Meternaut stopped asking. "
+                "The change itself was checked.")
+# What the record says of a plan that was approved, whose change never showed in the resource, and whose action stayed unknown for APPROVED_UNKNOWN_DAYS: nothing was made.
+NOT_MADE_APP_STOPPED = (f"The change was not made: the app stopped before it could say, and in the {APPROVED_UNKNOWN_DAYS} days since, the resource has not shown the change. "
+                        "Nothing is known to have been changed. A new plan is made when the Watch finds the resource again.")
 
 
 def read_calls(scopes: Sequence[ChangeScope]) -> tuple[tuple[str, "re.Pattern[str]"], ...]:
@@ -79,9 +93,10 @@ class RunnerServices:
 
 @dataclass(frozen=True)
 class Executed:
-    """What `execute` did: the action as it was recorded, and what kind of end it came to: ran, ran_unconfirmed, running, stopped, azure_refused or failed.
+    """What `execute` did: the action as it was recorded, and what kind of end it came to: ran, ran_unconfirmed, running, unchanged, stopped, azure_refused or failed.
 
-    The kind running is not an end either: Azure accepted the change and is still making it. The kind step_up is not an end: Azure asked for an extra sign-in check (a claims challenge) in
+    The kind unchanged is an end with no write: when the runner looked, the resource was in the state that the plan wants (or gone), and the action is marked `noChange`.
+    The kind running is not an end: Azure accepted the change and is still making it. The kind step_up is not an end either: Azure asked for an extra sign-in check (a claims challenge) in
     answer to the write, so nothing was changed, the action waits in the queue and the plan stays approved. `claims` is the claims request that Microsoft Entra has to be given, as compact JSON
     text. It is not a record, and it is on no page and in no log."""
 
@@ -146,14 +161,16 @@ def execute(s: RunnerServices, action: ActionRecord, *, approved_digest: str) ->
         if not family.deletes:
             return _failed(s, started, plan, _stopped("the resource does not exist any more"), kind="stopped")
         done = _finish(s, started, plan, state="done", result="The resource did not exist any more when Meternaut looked. Nothing to delete.", plan_state="consumed",
-                       case_status="done", verification={"gone": True, "note": "already gone"})
+                       case_status="done", verification={"gone": True, "noChange": True, "note": "already gone"})
         s.emit("action.finished", planId=plan.plan_id, family=plan.family, ok=True)
-        return Executed(done, "ran")
+        return Executed(done, "unchanged")
     already = family.already(plan, resource)
     if already:
-        done = _finish(s, started, plan, state="done", result=already, plan_state="consumed", case_status="done", verification={"now": already, "note": "nothing to change"})
+        # Nothing is written: when Meternaut looked, the resource was in the state that the plan wants. `noChange` keeps it out of every later claim of a saving (see _verify and brief.py).
+        done = _finish(s, started, plan, state="done", result=already, plan_state="consumed", case_status="done",
+                       verification={"now": already, "noChange": True, "note": "nothing to change"})
         s.emit("action.finished", planId=plan.plan_id, family=plan.family, ok=True)
-        return Executed(done, "ran")
+        return Executed(done, "unchanged")
     if switches.pulled(s.store, "all", "changes"):
         return _failed(s, started, plan, "Stopped before the change: changes were paused after the approval. Nothing was changed.", kind="stopped")
     # The plan is read once more and compared with the digest that was approved, as late as it can be: nothing between here and the call can change what is made.
@@ -301,11 +318,56 @@ def _settle_pending(s: RunnerServices, action: ActionRecord) -> ActionRecord | N
     return None
 
 
+def cost_window(finished: dt.datetime, now: dt.datetime) -> tuple[dt.date, dt.date] | None:
+    """The whole days whose cost lines say what the change did, both days included as Cost Management asks: from the day after the change to the last day that ended at least
+    COST_SETTLE_DAYS full days ago. None while there is no such day yet."""
+    first = finished.date() + dt.timedelta(days=1)
+    last = now.date() - dt.timedelta(days=1 + COST_SETTLE_DAYS)
+    return (first, last) if last >= first else None
+
+
+def _cost_check(s: RunnerServices, plan: PlanRecord, family: Family, finished: dt.datetime, now: dt.datetime, verification: dict) -> tuple[bool, bool]:
+    """The step of `_verify` that asks the cost lines whether the saving is there. It writes into `verification`. Returns (the record of the check changed, the lines confirm the saving).
+
+    It reads whole days only (cost_window) and asks once a day at most, whatever came of the ask. A resource with no line yet is "no data yet", never a cost of zero: for a change that
+    leaves the resource billing (a resize, a change of tier) a missing line or a line of zero is not an answer, and for every family an answer without a single line is not one. Nothing is
+    stored then, and the next day asks again, until GIVE_UP_AFTER_DAYS are over: the record then says that no figure came."""
+    if "costAfterUsd" in verification or verification.get("costGaveUp"):
+        return False, False
+    if now - finished > dt.timedelta(days=GIVE_UP_AFTER_DAYS):
+        verification.update(costGaveUp=True, note=COST_GAVE_UP)
+        return True, False
+    window = cost_window(finished, now)
+    today = now.date().isoformat()
+    if window is None or verification.get("costAskedOn") == today:
+        return False, False
+    first_day, last_day = window
+    verification["costAskedOn"] = today
+    try:
+        totals, currency = s.arm.costs(plan.subscription_id, first_day, last_day)  # type: ignore[union-attr]
+    except (HttpError, Refused):
+        return True, False
+    amount = totals.get(plan.resource_id.lower(), 0.0)
+    if not totals or (not family.cost_ends and amount <= 0):
+        return True, False
+    after = round(amount, 2)
+    case = s.store.case_get(plan.case_id)
+    before = case.cost_usd_30d if case else None
+    confirmed, note, saved = family.cost_check(before, after, (last_day - first_day).days + 1)
+    verification.update(costAfterUsd=after, currency=currency or "USD", costLinesFrom=first_day.isoformat(), costLinesTo=last_day.isoformat(), costBeforeUsd30d=before)
+    verification["note"] = note
+    if saved is not None:
+        verification["savedUsdMonth"] = saved
+    return True, confirmed
+
+
 def _verify(s: RunnerServices, action: ActionRecord) -> ActionRecord | None:
-    """The check after the change: first that it took effect (the family's own read), later that the cost lines show it. Returns the action when it changed."""
+    """The check after the change: first that it took effect (the family's own read), later that the cost lines show it. Returns the action when it changed.
+
+    An action that changed nothing (`noChange`: the resource was as the plan wants when Meternaut looked) has nothing to check, and no saving is ever booked for it."""
     plan = s.store.plan_get(action.plan_id)
     family = registry.get(plan.family) if plan is not None else None
-    if plan is None or family is None:
+    if plan is None or family is None or action.no_change:
         return None
     now = s.clock()
     verification = dict(action.verification)
@@ -316,38 +378,25 @@ def _verify(s: RunnerServices, action: ActionRecord) -> ActionRecord | None:
         if verdict.state == "done":
             verification.update(verdict.evidence, checkedAt=stamp(now))
             settled, changed = True, True
-    if settled and action.state in ("unknown", "done") and action.finished_at:
-        finished = parse(action.finished_at)
-        if s.arm is not None and now - finished >= dt.timedelta(days=VERIFY_AFTER_DAYS) and "costAfterUsd" not in verification:
-            first_day = finished.date() + dt.timedelta(days=1)
-            try:
-                totals, currency = s.arm.costs(plan.subscription_id, first_day, now.date())
-            except (HttpError, Refused):
-                totals, currency = None, None
-            if totals is not None:
-                after = round(totals.get(plan.resource_id.lower(), 0.0), 2)
-                case = s.store.case_get(plan.case_id)
-                before = case.cost_usd_30d if case else None
-                confirmed, note, saved = family.cost_check(before, after, max(1, (now.date() - first_day).days))
-                verification.update(costAfterUsd=after, currency=currency or "USD", costLinesFrom=first_day.isoformat(), costBeforeUsd30d=before)
-                verification["note"] = note
-                if saved is not None:
-                    verification["savedUsdMonth"] = saved
-                changed = True
-                if confirmed:
-                    updated = replace(action, state="verified", verified_at=stamp(now), verification=verification)
-                    s.store.action_put(updated)
-                    case = s.store.case_get(plan.case_id)
-                    if case is not None:
-                        s.store.case_put(replace(case, status="verified", updated_at=stamp(now)))
-                    return updated
+    if settled and action.state in ("unknown", "done") and action.finished_at and s.arm is not None:
+        touched, confirmed = _cost_check(s, plan, family, parse(action.finished_at), now, verification)
+        changed = changed or touched
+        if confirmed:
+            updated = replace(action, state="verified", verified_at=stamp(now), verification=verification)
+            s.store.action_put(updated)
+            case = s.store.case_get(plan.case_id)
+            if case is not None:
+                s.store.case_put(replace(case, status="verified", updated_at=stamp(now)))
+            return updated
     if changed:
         updated = replace(action, state="done" if action.state == "unknown" else action.state, verification=verification)
+        if action.state == "unknown" and settled and not updated.finished_at:
+            updated = replace(updated, finished_at=stamp(now))  # seen done only now: the whole days of cost lines count from here
         s.store.action_put(updated)
         if action.state == "unknown" and settled:
             s.store.plan_put(replace(plan, state="consumed"))
             case = s.store.case_get(plan.case_id)
-            if case is not None and case.status in ("failed", "running"):
+            if case is not None and case.status in ("approved", "failed", "running"):
                 s.store.case_put(replace(case, status="done", updated_at=stamp(now)))
             updated = replace(updated, result=verdict_text(family, verification, updated.result))
             s.store.action_put(updated)
@@ -364,7 +413,7 @@ def verdict_text(family: Family, verification: dict, said: str) -> str:
 
 
 def tick(s: RunnerServices) -> TickResult:
-    """What runs every minute: closes the plans that have expired and the approvals whose change never started, and checks the changes that were made.
+    """What runs every minute: closes the plans that have expired and the approvals whose change never started or never showed, and checks the changes that were made.
 
     It makes no change: its token is the reader's and its list of calls holds no write."""
     result = TickResult()
@@ -388,10 +437,31 @@ def tick(s: RunnerServices) -> TickResult:
             s.store.action_put(stuck)
             action = stuck
         if action.state in ("done", "unknown") and not action.verified_at:
-            if action.finished_at and now - parse(action.finished_at) > dt.timedelta(days=GIVE_UP_AFTER_DAYS) and "costAfterUsd" in action.verification:
+            check = action.verification
+            if action.no_change or check.get("costGaveUp"):
+                continue  # nothing to check afterwards, or the days of waiting for cost lines are used up (the record says so)
+            if action.finished_at and now - parse(action.finished_at) > dt.timedelta(days=GIVE_UP_AFTER_DAYS) and "costAfterUsd" in check:
                 continue
             changed = _verify(s, action)
             if changed is not None and changed.state == "verified":
                 result.verified.append(changed)
                 s.emit("action.verified", planId=changed.plan_id, family=changed.family)
+            closed = _close_unmade(s, changed or action, now)
+            if closed is not None:
+                result.finished.append(closed)
     return result
+
+
+def _close_unmade(s: RunnerServices, action: ActionRecord, now: dt.datetime) -> ActionRecord | None:
+    """Closes an approved plan whose change never showed: the app stopped after the action began and before it could write or say (a restart), the action became `unknown`, and for
+    APPROVED_UNKNOWN_DAYS the resource has not shown the change in the reads of `_verify`. Without this the plan stays `approved` for ever, and "a plan for this resource is open
+    already" holds the resource for good. The plan, the action and the case close as failed, through the same transition as every other failure. Returns the closed action, or None."""
+    if action.state != "unknown":
+        return None
+    since = action.started_at or action.queued_at
+    if not since or now - parse(since) <= dt.timedelta(days=APPROVED_UNKNOWN_DAYS):
+        return None
+    plan = s.store.plan_get(action.plan_id)
+    if plan is None or plan.state != "approved":
+        return None
+    return _failed(s, action, plan, NOT_MADE_APP_STOPPED).action

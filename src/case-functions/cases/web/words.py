@@ -45,6 +45,8 @@ ACTION_STATE = {
     "verified": "Done and verified.",
     "withdrawn": WITHDRAWN_ACTION,
 }
+# What the page says of an approved change that was not needed: when Meternaut looked, the resource was as the plan wants (or gone), so no write was made.
+NOTHING_CHANGED_STATE = "Done. Nothing was changed."
 
 DETECTOR = {
     "orphan-private-endpoint": "A private endpoint with no approved connection",

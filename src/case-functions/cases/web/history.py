@@ -42,7 +42,8 @@ def _decision_line(ctx: Ctx, plan: PlanRecord, decision: DecisionRecord) -> tupl
 def _action_lines(ctx: Ctx, plan: PlanRecord, action: ActionRecord) -> list[tuple[str, Safe]]:
     lines: list[tuple[str, Safe]] = []
     if action.finished_at and action.state in ("done", "verified", "unknown"):
-        lines.append((action.finished_at, fmt("Change made: {headline}. {result}", headline=_headline(ctx, plan), result=action.result)))
+        made = "Nothing was changed" if action.no_change else "Change made"  # an approval that found nothing to change wrote nothing
+        lines.append((action.finished_at, fmt("{made}: {headline}. {result}", made=made, headline=_headline(ctx, plan), result=action.result)))
     elif action.finished_at and action.state == "failed":
         lines.append((action.finished_at, fmt("Change not made: {headline}. {result}", headline=_headline(ctx, plan), result=action.error or action.result)))
     if action.verified_at:

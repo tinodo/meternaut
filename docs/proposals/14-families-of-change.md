@@ -4,7 +4,7 @@
 
 ## The decision
 
-Until 2026-11-08 an approval could do two things, both written into the runner: delete an unattached managed disk and delete an unassigned public IP address. They are now two of six **families**, kept in a registry in `src/case-functions/cases/families/`. A family is one kind of change on one or more kinds of resource, with its own plan, re-check, call, check afterwards and tests. The runner and the approval loop know the interface and nothing of any one family, and the decision brief reads each family's words (`words.py`, which holds no way to reach Azure), so no page, letter or card has a case of its own ([the decision brief](09-the-decision-brief.md)). The first two behave as before: tests hold their old texts word for word.
+Until 2026-11-08 an approval could do two things, both written into the runner: delete an unattached managed disk and delete an unassigned public IP address. They are now two of six **families**, kept in a registry in `src/case-functions/cases/families/`. A family is one kind of change on one or more kinds of resource, with its own plan, re-check, call, check afterwards and tests. The runner and the approval loop know the interface and nothing of any one family, and the decision brief reads each family's words (`words.py`, which holds no way to reach Azure), so no page, letter or card has a case of its own ([the decision brief](09-the-decision-brief.md)). The first two keep their calls and their words, except for what happens after the change (below).
 
 | Family | What it changes | The call and its api-version | Read again right before it acts | Undo | The approver's role must allow |
 |---|---|---|---|---|---|
@@ -35,6 +35,12 @@ The plan carries a digest: SHA-256 over every field except its state, the digest
 A stop or a resize answers 200 or 202. For a 202 the runner follows `Azure-AsyncOperation`, else `Location` ([asynchronous operations](https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/async-operations)), waits as Azure asks but two to five seconds, and looks at most six times. A status that the approver's token may not read is not a failure: the resource is read instead. A resize is done only when the provisioning state is `Succeeded` and the size is the new one, because a failed resize still shows the size that was asked for. A write is made once and never retried.
 
 If the end is not there yet, the action is `running`, the plan is used, and the page says that the change is being made. The timer then reads the resource with the reader's token, which holds no write, until Azure shows it: done (confirmed by the later check), failed, or unknown after an hour, which makes no second try. A new try is a new approval.
+
+## After the change
+
+Two checks follow a change. The family's own read says that it took effect. The cost lines then say whether it saved anything. They are read for whole days only, from the day after the change to a day that ended at least a day ago, and once a day: Cost Management is 8 to 72 hours late ([Learn](https://learn.microsoft.com/en-us/azure/cost-management-billing/costs/understand-cost-mgt-data)). A resource with no line yet is "no data yet", never a cost of zero. A stop or a delete is confirmed when no cost is left, a resize or a change of tier only by a lower daily figure. After seven days without a figure the record says so and stops asking.
+
+An approval that finds the resource as the plan wants it, or gone, writes nothing: it says "Nothing was changed", is not checked by cost lines and claims no saving. A plan left approved because the app stopped before it wrote is closed as failed after two days, and its resource is free again.
 
 ## What each family costs on planted waste
 

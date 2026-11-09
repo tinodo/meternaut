@@ -13,7 +13,7 @@ from cases.families.gates import ChangeScope
 from cases.http import Client, HttpError, Refused
 from cases.memory_store import MemoryStore, stamp
 from cases.models import ActionRecord, CaseRecord, NoteRecord, Principal, SwitchRecord
-from cases.runner import ASKED_AGAIN, STEP_UP_ABANDONED, STEP_UP_WAIT, Executed, RunnerServices, change_calls, execute, read_calls, tick
+from cases.runner import ASKED_AGAIN, COST_GAVE_UP, STEP_UP_ABANDONED, STEP_UP_WAIT, Executed, RunnerServices, change_calls, execute, read_calls, tick
 
 OID = "aaaaaaaa-1111-4222-8333-444444444444"
 SUB = "bbbbbbbb-2222-4333-9444-555555555555"
@@ -24,6 +24,8 @@ SETTINGS = ApprovalSettings(change_scopes=SCOPES)
 APPROVER = Principal(OID, "Tino", ("owner", "approver", "ops"))
 DISK = f"/subscriptions/{SUB}/resourceGroups/{GROUP}/providers/Microsoft.Compute/disks/planted-disk-1"
 IP = f"/subscriptions/{SUB}/resourceGroups/{GROUP}/providers/Microsoft.Network/publicIPAddresses/planted-ip-1"
+# A cost line of another resource, in the lower case in which Cost Management's answers are read: that Cost Management has lines at all for the days is what the checks need to know.
+OTHER_LINE = f"/subscriptions/{SUB}/resourcegroups/{GROUP}/providers/microsoft.compute/disks/another-disk"
 SCHEME = "Bearer"
 # A claims request with a value that no page, record, line or log has any reason to hold.
 CLAIMS = '{"access_token":{"acrs":{"essential":true,"value":"c-unique-4711"}}}'
@@ -311,7 +313,7 @@ class TheChange(Base):
         self.azure.resources.pop(DISK.lower())
         self.store.switch_put(SwitchRecord(name="all", paused=True, by=OID, at=stamp(NOW)))
         done = self.make_change(plan)
-        self.assertEqual((done.kind, done.action.state), ("ran", "done"))
+        self.assertEqual((done.kind, done.action.state), ("unchanged", "done"))
 
     def test_it_stops_when_the_disk_is_managed_by_a_machine(self):
         self.stops("not unattached any more", lambda: self.azure.resources[DISK.lower()].update(managedBy="/vm"))
@@ -366,7 +368,7 @@ class TheChange(Base):
         plan, _ = self.approved()
         del self.azure.resources[DISK.lower()]
         done = self.make_change(plan)
-        self.assertEqual((done.kind, done.action.state), ("ran", "done"))
+        self.assertEqual((done.kind, done.action.state), ("unchanged", "done"))
         self.assertIn("did not exist", done.action.result)
         self.assertNotIn("DELETE", [m for m, _ in self.azure.calls])
 
@@ -722,21 +724,26 @@ class TheTick(Base):
         self.assertEqual(after.state, "done")
         self.assertTrue(after.verification["gone"])
 
-    def test_the_cost_lines_confirm_a_saving_after_two_days_and_not_before(self):
+    def test_the_cost_lines_confirm_a_saving_from_whole_days_only_and_not_before(self):
         plan, _ = self.approved(cost=3.65)
+        self.arm.totals = {OTHER_LINE: 1.5}  # Cost Management has lines of another resource for the days, and none of the deleted disk
         self.assertEqual(self.make_change(plan).action.state, "done")
         self.clock.advance(days=1)
         tick(self.t)
         self.assertEqual(self.arm.asked, [], "too early to ask Cost Management")
-        self.clock.advance(days=1, hours=1)
+        self.clock.advance(days=1, hours=1)  # 7 Nov, 10:00: the day after the change ended 10 hours ago, and a whole day has to pass after a day ends
+        tick(self.t)
+        self.assertEqual(self.arm.asked, [], "a day that ended less than a day ago is not read: its lines may not be all in")
+        self.clock.advance(days=1)  # 8 Nov, 10:00
         result = tick(self.t)
         self.assertEqual([a.state for a in result.verified], ["verified"])
         action = self.store.action_get(plan.plan_id)
         self.assertEqual(action.verification["costAfterUsd"], 0.0)
         self.assertEqual(action.verification["costBeforeUsd30d"], 3.65)
+        self.assertEqual((action.verification["costLinesFrom"], action.verification["costLinesTo"]), ("2026-11-06", "2026-11-06"))
         self.assertIn("Confirmed", action.verification["note"])
         self.assertEqual(self.store.case_get(plan.case_id).status, "verified")
-        self.assertEqual(self.arm.asked[0][1], dt.date(2026, 11, 6))
+        self.assertEqual(self.arm.asked, [(SUB, dt.date(2026, 11, 6), dt.date(2026, 11, 6))])
         self.assertIn(("action.verified", {"planId": plan.plan_id, "family": "delete-disk"}), self.events)
 
     def test_cost_lines_that_continue_are_not_a_confirmation(self):
@@ -758,6 +765,71 @@ class TheTick(Base):
         self.clock.advance(days=3)
         self.assertEqual(tick(self.t).verified, [])
         self.assertEqual(self.store.action_get(plan.plan_id).state, "done")
+
+    def test_cost_management_is_asked_once_a_day_at_most_whatever_came_of_the_ask(self):
+        plan, _ = self.approved(cost=3.65)
+        self.arm.fail = True
+        self.make_change(plan)
+        self.clock.advance(days=3)
+        for _ in range(5):
+            self.clock.advance(minutes=1)
+            tick(self.t)
+        self.assertEqual(len(self.arm.asked), 1, "the timer runs every minute, and a failed read is tried again the next day and not at once")
+        self.arm.fail = False
+        self.arm.totals = {OTHER_LINE: 1.5}
+        self.clock.advance(days=1)
+        self.assertEqual([a.state for a in tick(self.t).verified], ["verified"])
+        self.assertEqual(len(self.arm.asked), 2)
+
+    def test_an_answer_with_no_line_at_all_is_no_data_yet_and_the_next_day_asks_again(self):
+        plan, _ = self.approved(cost=3.65)
+        self.make_change(plan)
+        self.clock.advance(days=3)
+        self.assertEqual(tick(self.t).verified, [])
+        action = self.store.action_get(plan.plan_id)
+        self.assertEqual(action.state, "done")
+        self.assertNotIn("costAfterUsd", action.verification, "no data is not a cost of zero, and nothing is stored as one")
+        self.assertEqual(action.verification["costAskedOn"], "2026-11-08")
+        self.arm.totals = {OTHER_LINE: 1.5}
+        tick(self.t)
+        self.assertEqual(len(self.arm.asked), 1, "the same day: not asked again")
+        self.clock.advance(days=1)
+        self.assertEqual([a.state for a in tick(self.t).verified], ["verified"])
+        self.assertEqual(self.arm.asked[-1], (SUB, dt.date(2026, 11, 6), dt.date(2026, 11, 7)), "the whole days after the change, up to the day before yesterday")
+
+    def test_the_days_of_waiting_for_cost_lines_are_used_up_and_the_record_says_that_no_figure_came(self):
+        plan, _ = self.approved(cost=3.65)
+        self.make_change(plan)
+        for _ in range(8):
+            self.clock.advance(days=1)
+            tick(self.t)
+        action = self.store.action_get(plan.plan_id)
+        self.assertEqual(action.state, "done")
+        self.assertTrue(action.verification["costGaveUp"])
+        self.assertEqual(action.verification["note"], COST_GAVE_UP)
+        self.assertIn("no figure", action.verification["note"])
+        self.assertNotIn("costAfterUsd", action.verification)
+        asked = len(self.arm.asked)
+        self.assertEqual(asked, 5, "once a day from the 8th of November to the 12th")
+        self.arm.totals = {OTHER_LINE: 1.5}
+        self.clock.advance(days=1)
+        self.assertEqual(tick(self.t).verified, [])
+        self.assertEqual(len(self.arm.asked), asked, "it stopped asking")
+
+    def test_a_delete_of_a_disk_that_was_gone_already_is_marked_no_change_and_is_never_checked_by_cost_lines(self):
+        plan, _ = self.approved(cost=3.65)
+        del self.azure.resources[DISK.lower()]
+        self.arm.totals = {OTHER_LINE: 1.5}
+        done = self.make_change(plan)
+        self.assertEqual((done.kind, done.action.state), ("unchanged", "done"))
+        self.assertTrue(done.action.no_change)
+        self.assertEqual(done.action.verification, {"gone": True, "noChange": True, "note": "already gone"})
+        self.clock.advance(days=4)
+        self.assertEqual(tick(self.t).verified, [])
+        self.assertEqual(self.arm.asked, [], "there is nothing to confirm: this approval wrote nothing")
+        after = self.store.action_get(plan.plan_id)
+        self.assertEqual((after.state, after.verified_at, "costAfterUsd" in after.verification), ("done", None, False))
+        self.assertEqual(self.store.case_get(plan.case_id).status, "done")
 
     def test_without_a_cost_reader_the_deletion_is_still_checked(self):
         self.t.arm = None

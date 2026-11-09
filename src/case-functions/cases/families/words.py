@@ -195,13 +195,16 @@ class Shown:
     saving_level: str = "Expected"  # Verified, Expected or Scenario: only used with a basis of the family's own
     saving_basis: str = ""  # what the figure is computed from, when it is not the cost lines of the last 30 days as they are (the brief says that for a family without one)
     no_figure: str = ""  # why a plan that has no figure claims none
+    # The change ends the cost of the resource (a delete, a stop), so that cost lines which show none afterwards are the aim. A change that only lowers the cost (a resize, a change of tier)
+    # leaves the resource billing: for it a missing cost line is a line that is not in yet, never "no cost", and a family has to say so to be read the other way.
+    cost_ends: bool = False
 
 
 SHOWN: dict[str, Shown] = {
-    "delete-disk": Shown(deletes("microsoft.compute/disks"), "delete", "microsoft.compute/disks"),
-    "delete-public-ip": Shown(deletes("microsoft.network/publicipaddresses"), "delete", "microsoft.network/publicipaddresses"),
+    "delete-disk": Shown(deletes("microsoft.compute/disks"), "delete", "microsoft.compute/disks", cost_ends=True),
+    "delete-public-ip": Shown(deletes("microsoft.network/publicipaddresses"), "delete", "microsoft.network/publicipaddresses", cost_ends=True),
     "stop-vm": Shown(
-        stop_vm, "stop", "microsoft.compute/virtualmachines",
+        stop_vm, "stop", "microsoft.compute/virtualmachines", cost_ends=True,
         saving_basis="the cost lines of the machine in the last 30 days (its disks and public IP addresses keep billing and are not counted)"),
     "resize-vm": Shown(
         resize_vm, "resize", "microsoft.compute/virtualmachines", saving_level="Scenario",
@@ -210,7 +213,7 @@ SHOWN: dict[str, Shown] = {
     "change-disk-tier": Shown(
         change_disk_tier, "change of tier", "microsoft.compute/disks",
         no_figure="The price of a disk depends on its size and its type, and Meternaut does not read the price list, so it claims no figure for this change."),
-    "delete-idle-resource": Shown(deletes(""), "delete"),
+    "delete-idle-resource": Shown(deletes(""), "delete", cost_ends=True),
 }
 
 

@@ -498,6 +498,7 @@ KINDS = {  # the status, the title of the page, and a sentence that the page alw
     "ran_unconfirmed": (200, "The delete was accepted", "Meternaut looks again in a few minutes and records what it finds. It was made with your own permissions."),
     "running": (200, "The change is being made", "Meternaut reads the resource again in a few minutes and records what it finds. It was made with your own permissions, and it is "
                                                   "not made a second time."),
+    "unchanged": (200, "Nothing was changed", "The resource was already as the plan wants, so Meternaut wrote nothing, and no saving is claimed for this approval."),
     "stopped": (409, "The change was stopped", "Nothing was changed. The request is closed."),
     "azure_refused": (403, "Azure refused the change", "Meternaut holds no right of its own: the change is made with your permissions. If you should be able to make it, "
                                                        "ask whoever manages access to this resource group."),
@@ -513,8 +514,8 @@ KINDS = {  # the status, the title of the page, and a sentence that the page alw
     "error": (500, "I could not take your answer", "Open the request again to see where it stands."),
 }
 # The kinds whose page has a line for the message of the result. The page of every other kind has its own words only.
-SHOWS_THE_MESSAGE = ("ran", "ran_unconfirmed", "running", "stopped", "azure_refused", "failed", "signin_failed", "step_up_failed", "refused_state", "error")
-SUCCESSES = ("declined", "asked", "later", "acknowledged", "not_mine", "ran", "ran_unconfirmed", "running")
+SHOWS_THE_MESSAGE = ("ran", "ran_unconfirmed", "running", "unchanged", "stopped", "azure_refused", "failed", "signin_failed", "step_up_failed", "refused_state", "error")
+SUCCESSES = ("declined", "asked", "later", "acknowledged", "not_mine", "ran", "ran_unconfirmed", "running", "unchanged")
 BACK_TO_THE_LIST = ("not_mine", "later", "refused_role")  # the pages whose back link goes to the decisions and not to the request
 
 
@@ -549,8 +550,8 @@ class EveryKindOfResult(unittest.TestCase):
         return [(a.attrs["href"], a.text()) for a in reply.main.find_all("a") if a.text().startswith("Back to")]
 
     def test_there_is_a_page_for_each_kind_of_result_and_for_no_other(self):
-        self.assertEqual(set(KINDS), {"declined", "asked", "later", "acknowledged", "not_mine", "ran", "ran_unconfirmed", "running", "stopped", "azure_refused", "failed", "signin_failed",
-                                      "step_up_failed", "refused_code", "refused_state", "refused_role", "refused_paused", "expired", "duplicate", "error"})
+        self.assertEqual(set(KINDS), {"declined", "asked", "later", "acknowledged", "not_mine", "ran", "ran_unconfirmed", "running", "unchanged", "stopped", "azure_refused", "failed",
+                                      "signin_failed", "step_up_failed", "refused_code", "refused_state", "refused_role", "refused_paused", "expired", "duplicate", "error"})
         self.assertEqual(set(KINDS), set(approval.STATUS))
 
     def test_every_kind_has_a_plain_page_of_its_own_whichever_step_gives_it(self):
@@ -607,6 +608,7 @@ class EveryKindOfResult(unittest.TestCase):
 
     def test_a_page_that_shows_the_message_has_a_plain_line_of_its_own_when_the_message_is_empty(self):
         lines = {"ran": "Done.", "ran_unconfirmed": "Azure accepted the delete.", "running": "Azure accepted the change and is still making it.",
+                 "unchanged": "Nothing was changed.",
                  "stopped": "A check failed before the change.", "azure_refused": "Azure refused the change.",
                  "failed": "The change failed.", "signin_failed": "Nothing is approved.",
                  "step_up_failed": "The extra sign-in check that Azure asked for was not completed. The change was not made.",
