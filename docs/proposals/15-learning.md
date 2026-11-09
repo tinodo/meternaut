@@ -1,6 +1,6 @@
 # Learning — a decision record
 
-**Status: built and tested with fakes on 2026-11-09; none of it has run in Azure. The claim that learning improves what Meternaut proposes is withdrawn: the first run of its check missed two thresholds that were written first, and the hold that the claim was about is off.** The rules of [the Foundry agents](06-foundry-agents.md) stand: no text of an estate or of a person reaches a model, every model call goes through the AI Gateway, and only the approver changes Azure.
+**Status: built with fakes on 2026-11-09 and deployed with the app; no lesson exists yet. The claim that learning improves what Meternaut proposes is withdrawn: the first run of its check missed two thresholds that were written first, and the hold that the claim was about is off.** The rules of [the Foundry agents](06-foundry-agents.md) stand: no text of an estate or of a person reaches a model, every model call goes through the AI Gateway, and only the approver changes Azure.
 
 ## What is learned, from what
 

@@ -22,15 +22,15 @@ def flat(source):
 
 
 CHANGELOG = text("CHANGELOG.md")
-ENTRY = CHANGELOG.split("\n## ")[5]
+ENTRY = CHANGELOG.split("\n## ")[6]
 RECORD = flat(text("docs/proposals/08-ai-gateway.md"))
 
 
 class TheChangelogEntry(unittest.TestCase):
     def test_it_is_the_entry_under_the_two_entries_of_the_estate_watch_and_the_web_page_and_has_at_most_twelve_lines(self):
         headings = re.findall(r"(?m)^## (.*)$", CHANGELOG)
-        self.assertTrue(headings[3].startswith("The Watch reads every subscription that its identity can read"), "the entry of 2026-11-07 about the build of the estate-wide Watch follows the entries of the deployed Watch and of the web page")
-        self.assertEqual(headings[4], TITLE)
+        self.assertTrue(headings[4].startswith("The Watch reads every subscription that its identity can read"), "the entry of 2026-11-07 about the build of the estate-wide Watch follows the entries of the deployed Watch and of the web page")
+        self.assertEqual(headings[5], TITLE)
         self.assertTrue(ENTRY.startswith(TITLE))
         self.assertLessEqual(len(ENTRY.strip().splitlines()), 12, "the owner reads nothing long")
 

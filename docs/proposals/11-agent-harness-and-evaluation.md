@@ -1,6 +1,6 @@
 # The agent harness, the drift check and the evaluations — a decision record
 
-**Status: built and tested with fakes on 2026-11-08. The first real run of `agents-drift`, that night, read nothing (403 and 401): the Operator held no role on the project. The template now gives it one (item 1 under [What a person does](#what-a-person-does-and-what-the-first-real-runs-must-show)); not yet deployed.** Until the real runs there have happened, nothing here is proved against the real project.
+**Status, 2026-11-09: built and tested with fakes on 2026-11-08, and deployed from the owner's machine. The first real run of `agents-drift`, that night, read nothing (403 and 401): the Operator held no role on the project. The template gave it one (item 1 under [What a person does](#what-a-person-does-and-what-the-first-real-runs-must-show)) and the run `foundry` made it; the next runs read the project (`agents-drift`: 4 pass, 0 fail, 4 unknown, the Scholar being absent). The harness wrote its `harness.run` line for every run of 2026-11-09, the in-app drift check wrote its lines at 05:10 UTC, and both evaluation routes answer (the probe). Not run yet: the evaluations and the red team, which spend the model budget.** What is proved against the real project is what those runs read; the rest of this page is design and fakes.
 
 ## The owner's words
 

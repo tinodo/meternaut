@@ -28,7 +28,7 @@ def section(source, heading):
 
 
 CHANGELOG = text("CHANGELOG.md")
-ENTRY = CHANGELOG.split("\n## ")[2]
+ENTRY = CHANGELOG.split("\n## ")[3]
 README = text("README.md")
 BOOTSTRAP = text("environment/BOOTSTRAP.md")
 RECORD = text("docs/proposals/03-access-and-onboarding.md")
@@ -37,7 +37,7 @@ FIRST_CASES = text("docs/proposals/02-first-cases.md")
 
 class TheChangelogEntry(unittest.TestCase):
     def test_it_is_the_newest_entry_and_has_at_most_ten_lines(self):
-        self.assertEqual(re.findall(r"(?m)^## (.*)$", CHANGELOG)[1], TITLE)
+        self.assertEqual(re.findall(r"(?m)^## (.*)$", CHANGELOG)[2], TITLE)
         self.assertTrue(ENTRY.startswith(TITLE))
         self.assertLessEqual(len(ENTRY.strip().splitlines()), 10, "the owner reads nothing long")
 

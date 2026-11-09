@@ -24,7 +24,7 @@ def flat(source):
 
 
 CHANGELOG = text("CHANGELOG.md")
-ENTRY = CHANGELOG.split("\n## ")[4]
+ENTRY = CHANGELOG.split("\n## ")[5]
 BOOTSTRAP = text("environment/BOOTSTRAP.md")
 RECORD = text("docs/proposals/03-access-and-onboarding.md")
 FIRST_CASES = text("docs/proposals/02-first-cases.md")
@@ -37,7 +37,7 @@ def section(source, heading):
 
 class TheChangelogEntry(unittest.TestCase):
     def test_it_is_the_third_entry_and_is_short(self):
-        self.assertEqual(re.findall(r"(?m)^## (.*)$", CHANGELOG)[3], TITLE, "the entry of the whole-estate Watch that is deployed (test_estate_watch_deployed.py) and the one of the web page (test_console_gateway.py) are above it")
+        self.assertEqual(re.findall(r"(?m)^## (.*)$", CHANGELOG)[4], TITLE, "the entry of the whole-estate Watch that is deployed (test_estate_watch_deployed.py) and the one of the web page (test_console_gateway.py) are above it")
         self.assertTrue(ENTRY.startswith(TITLE))
         self.assertLessEqual(len(ENTRY.strip().splitlines()), 15, "the owner reads nothing long")
 

@@ -1,6 +1,6 @@
 # The investigation toolbox — a decision record
 
-**Status: ordered by the owner on 2026-11-08 ("build the entire thing"), built the same day, with fakes for every call. Not yet run in Azure: nothing on this page about the new tools was seen in a real run, and a claim that rests on Microsoft Learn alone says so.** This page records what the Investigator's read-only tools gained, why its reads were slow, and what each tool does not tell. It builds on [the Foundry agents](06-foundry-agents.md) and leaves their rules as they are: the tools only read, give typed values and handles instead of names, and no text from the estate reaches a model.
+**Status, 2026-11-09: ordered by the owner on 2026-11-08 ("build the entire thing"), built the same day with fakes for every call, and deployed with the app. The Investigator used its tools in four real runs on 2026-11-09 (24 to 28 tool calls each); what the tools returned in those runs is not described on this page, and a claim that rests on Microsoft Learn alone says so.** This page records what the Investigator's read-only tools gained, why its reads were slow, and what each tool does not tell. It builds on [the Foundry agents](06-foundry-agents.md) and leaves their rules as they are: the tools only read, give typed values and handles instead of names, and no text from the estate reaches a model.
 
 ## The problem
 

@@ -64,7 +64,7 @@ class TheProposal(unittest.TestCase):
 
     def test_it_says_what_ran_in_azure_and_what_did_not_and_what_the_hub_no_longer_does(self):
         flat_proposal = flat(PROPOSAL)
-        for words in ("nothing of it has run in Azure yet", "Every Hub run first reads that CI passed for its commit, so the Hub does not repeat the tests", "Ran in Azure 2026-11-07",
+        for words in ("built, deployed from the owner's machine and read back in Azure", "Every Hub run first reads that CI passed for its commit, so the Hub does not repeat the tests", "Ran in Azure 2026-11-07",
                       "no `drift.pass` or `drift.fail` line for 26 hours", "`drift.yml` has no timer until the identity exists", "`BUILD_COMMIT`", "`PACKAGE_SHA256`"):
             self.assertIn(words, flat_proposal, words)
 
