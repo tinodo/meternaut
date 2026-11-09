@@ -339,7 +339,8 @@ def read_cost_series(s: Services, contexts: Mapping[str, Context], say: Callable
 
 
 def _read_use_of(arm: Arm, resource_id: str, kind: usage.Use, start: dt.datetime, end: dt.datetime, first: dt.date) -> list[float | None]:
-    """The use of one resource on each of the thirty days from `first`, from the metrics of its kind in daily buckets of Azure Monitor (the days between `start` and `end`, UTC), or an HttpError.
+    """The use of one resource on each of the thirty days from `first`, from the metrics of its kind in daily buckets of Azure Monitor (the days between `start` and `end`, UTC), or an HttpError
+    (also for a bucket that is not a UTC day: that is an answer of another shape than the one that Learn documents, and the History says so).
     A kind that takes the larger of its metrics does without one that the resource does not have (Azure answers 400 for a name that it does not offer for that resource) and fails on any other
     answer, so that a failed read is never a day of nothing; a kind that adds its metrics needs every one of them."""
     parts: list[list[float | None]] = []
@@ -352,6 +353,8 @@ def _read_use_of(arm: Arm, resource_id: str, kind: usage.Use, start: dt.datetime
                 raise
             missing = missing or error
             continue
+        if any(usage.day_of(point.time) is None for point in points):  # a bucket that is not a UTC day is an answer that the app does not understand, and not a day without a value
+            raise HttpError(200, "Azure Monitor gave a bucket that is not a UTC day")
         parts.append(usage.daily(((point.time, getattr(point, kind.aggregate)) for point in points), first, usage.DAYS))
     if not parts:
         raise missing if missing is not None else HttpError(0, "the use of the resource has no metric to read")
@@ -406,7 +409,7 @@ def _read_use(s: Services, ex: "wiring.Extras", say: Callable[[str], None]) -> N
     if failed:
         say(f"the use of {failed} open request{'' if failed == 1 else 's'} could not be read ({why}); what was read before stays")
     if late:
-        say(f"the use of {late} open request{'' if late == 1 else 's'} {'was' if late == 1 else 'were'} not read: the run had too little time left")
+        say(f"the use of {late} open request{'' if late == 1 else 's'} was not read: the run had too little time left")
     if waiting:
         say(f"{waiting} more open request{'' if waiting == 1 else 's'} {'waits' if waiting == 1 else 'wait'} for the next search: at most {USE_MAX_RESOURCES} resources are read in one search")
 

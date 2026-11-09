@@ -146,7 +146,7 @@ class TheUseOfOneCase(unittest.TestCase):
                 read(self.store, FakeMonitor({(rid.lower(), metric): every_day(triple)}))
                 self.assertEqual((kept(self.store, case.case_id).use_series[3], kept(self.store, case.case_id).use_kind), (expected, kind.kind))
 
-    def test_a_value_is_kept_to_a_ten_thousandth_a_zero_stays_a_zero_and_a_bucket_that_is_not_a_utc_day_is_a_gap(self):
+    def test_a_value_is_kept_to_a_ten_thousandth_a_zero_stays_a_zero_and_a_value_that_cannot_be_a_use_is_a_gap(self):
         monitor = FakeMonitor(series_of_vm(1, {**every_day(1.0), FIRST: 0.12345678, FIRST + DAY: 0, FIRST + 2 * DAY: -1.0, FIRST + 3 * DAY: float("nan")}))
         read(self.store, monitor)
         self.assertEqual(kept(self.store).use_series[:5], [0.1235, 0.0, None, None, 1.0])
@@ -402,7 +402,7 @@ class TheLimits(unittest.TestCase):
         monitor = FakeMonitor()
         for left in (29.9, 0.0, -5.0):
             with self.subTest(left=left):
-                self.assertEqual(read(self.store, monitor, left=left), ["the use of 2 open requests were not read: the run had too little time left"])
+                self.assertEqual(read(self.store, monitor, left=left), ["the use of 2 open requests was not read: the run had too little time left"])
         self.assertEqual(monitor.reads, [])
         self.assertEqual(read(self.store, FakeMonitor(), left=30.0), [], "thirty seconds are enough, and a case with no value is silent")
 
@@ -455,6 +455,22 @@ class WhenTheUseCannotBeRead(unittest.TestCase):
     def test_an_answer_that_the_app_does_not_understand_is_an_error_like_any_other(self):
         said = read(self.store, FakeMonitor(fail=HttpError(200, "Azure Monitor gave an answer that the app does not understand")))
         self.assertEqual((kept(self.store), len(said)), (self.case, 1))
+
+    def test_a_bucket_that_is_not_a_utc_day_is_an_answer_of_another_shape_and_said_so_and_not_a_day_without_a_value(self):
+        class Odd(FakeMonitor):
+            def __init__(self, time):
+                super().__init__(series_of_vm(1, every_day()))
+                self.time = time
+
+            def metrics(self, resource_id, metric, start, end):
+                unit, points = super().metrics(resource_id, metric, start, end)
+                return unit, [points[0]._replace(time=self.time), *points[1:]]
+
+        for time in ("2026-10-05T12:00:00Z", "2026-10-05T00:00:00+02:00", "2026-10-05", "garbage", ""):
+            with self.subTest(time=time):
+                said = read(self.store, Odd(time))
+                self.assertEqual(kept(self.store), self.case, "nothing is stored from an answer of another shape")
+                self.assertEqual(said, ["the use of 1 open request could not be read (Azure Monitor gave a bucket that is not a UTC day); what was read before stays"])
 
     def test_another_error_goes_on_with_the_other_resources_and_one_line_counts_the_cases_that_failed(self):
         second, third = open_case(self.store, 2), open_case(self.store, 3)
@@ -514,7 +530,7 @@ class WhenTheUseCannotBeRead(unittest.TestCase):
         with mock.patch.object(run, "USE_MAX_RESOURCES", 3):
             said = read(self.store, monitor, left=lambda: next(times))
         self.assertEqual(said, ["the use of 1 open request could not be read (GET management.azure.com: 500 InternalServerError: boom); what was read before stays",
-                                "the use of 2 open requests were not read: the run had too little time left",
+                                "the use of 2 open requests was not read: the run had too little time left",
                                 "1 more open request waits for the next search: at most 3 resources are read in one search"])
 
 

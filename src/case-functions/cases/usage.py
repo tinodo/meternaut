@@ -13,7 +13,8 @@ confirmed there is not in the table. Time in a series is UTC: a bucket of Azure 
 
 What this repository has not seen from a live Azure Monitor, and the code therefore does not assume: that a read in daily buckets (interval P1D, as Arm.metrics asks for it) is answered for a metric
 whose page of Learn lists the time grain PT1M only (most of the table), whether a day without traffic comes back as a bucket with a zero or as a bucket with no value (a gap here, and a series
-with fewer than MIN_DAYS values is not kept), and what Azure answers for a metric that a resource does not offer (a case that takes the larger of its metrics reads it as a 400 and leaves it out).
+with fewer than MIN_DAYS values is not kept), and what Azure answers for a metric that a resource does not offer (a case that takes the larger of its metrics reads it as a 400 and leaves it out). A bucket
+whose time is not the start of a UTC day (day_of) is an answer of another shape than the one that Learn documents: the Watch fails that read and says so, and never takes it for a day without a value.
 """
 from __future__ import annotations
 
