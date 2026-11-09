@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Style guide - Meternaut</title>
+<link rel="stylesheet" href="meternaut-ui.css">
+<style>
+/* Helpers of this page only. Nothing here is part of the style of the app. */
+.gs h2{margin-top:var(--spacingXXXL);padding-top:var(--spacingL);border-top:var(--strokeWidthThin) solid var(--colorNeutralStroke2)}
+.gs h3{margin-top:var(--spacingXXL)}
+nav.toc{padding:0;border:0}
+nav.toc ul{gap:var(--spacingS) var(--spacingXL)}
+nav.toc a{min-height:0;padding:0;border:0}
+.two{display:grid;grid-template-columns:repeat(auto-fit,minmax(18rem,1fr));gap:var(--spacingL)}
+.demo{padding:var(--spacingL);border:var(--strokeWidthThin) dashed var(--colorNeutralStrokeAccessible);border-radius:var(--borderRadiusXLarge);background:var(--colorNeutralBackground1)}
+.demo>*:first-child{margin-top:0}
+.demo>*:last-child{margin-bottom:0}
+.flex{display:flex;flex-wrap:wrap;gap:var(--spacingL);align-items:flex-start}
+.sw{display:grid;grid-template-columns:repeat(auto-fill,minmax(12.5rem,1fr));gap:var(--spacingM);margin:var(--spacingM) 0;padding:0;list-style:none}
+.sw li{border:var(--strokeWidthThin) solid var(--colorNeutralStroke2);border-radius:var(--borderRadiusLarge);overflow:hidden;background:var(--colorNeutralBackground1)}
+.sw i{display:block;height:2.75rem;border-bottom:var(--strokeWidthThin) solid var(--colorNeutralStroke2)}
+.sw b{display:block;padding:var(--spacingS) var(--spacingM) 0}
+.sw span{display:block;padding:0 var(--spacingM) var(--spacingS);color:var(--colorNeutralForeground2);font-size:var(--fontSizeBase200);line-height:var(--lineHeightBase200)}
+.c1{background:var(--colorNeutralBackground1)}.c2{background:var(--colorNeutralBackground2)}.c3{background:var(--colorNeutralBackground3)}
+.f1{background:var(--colorNeutralForeground1)}.f2{background:var(--colorNeutralForeground2)}.f3{background:var(--colorNeutralForeground3)}
+.s1{background:var(--colorNeutralStroke1)}.s2{background:var(--colorNeutralStroke2)}.sa{background:var(--colorNeutralStrokeAccessible)}
+.b1{background:var(--colorBrandBackground)}.b2{background:var(--colorBrandBackgroundHover)}.b3{background:var(--colorBrandBackground2)}.b4{background:var(--colorBrandForegroundLink)}
+.g1{background:var(--colorPaletteGreenForeground1)}.g2{background:var(--colorPaletteGreenBackground1)}.g3{background:var(--colorPaletteGreenBorder1)}
+.o1{background:var(--colorPaletteDarkOrangeForeground1)}.o2{background:var(--colorPaletteDarkOrangeBackground1)}.o3{background:var(--colorPaletteDarkOrangeBorder1)}
+.r1{background:var(--colorPaletteRedForeground1)}.r2{background:var(--colorPaletteRedBackground1)}.r3{background:var(--colorPaletteRedBorder1)}
+.y1{background:var(--colorPaletteYellowForeground1)}.y2{background:var(--colorPaletteYellowBackground1)}.y3{background:var(--colorPaletteYellowBorder1)}
+.ty-display{font-size:var(--fontSizeHero900);line-height:var(--lineHeightHero900);font-weight:var(--fontWeightSemibold)}
+.ty-title1{font-size:var(--fontSizeHero800);line-height:var(--lineHeightHero800);font-weight:var(--fontWeightSemibold)}
+.ty-title3{font-size:var(--fontSizeBase600);line-height:var(--lineHeightBase600);font-weight:var(--fontWeightSemibold)}
+.ty-sub{font-size:var(--fontSizeBase500);line-height:var(--lineHeightBase500);font-weight:var(--fontWeightSemibold)}
+.ty-strong{font-size:var(--fontSizeBase300);line-height:var(--lineHeightBase300);font-weight:var(--fontWeightSemibold)}
+.ty-body{font-size:var(--fontSizeBase300);line-height:var(--lineHeightBase300)}
+.ty-cap{font-size:var(--fontSizeBase200);line-height:var(--lineHeightBase200)}
+.step{display:block;height:12px;background:var(--colorBrandForeground1);border-radius:var(--borderRadiusSmall)}
+.w2{width:2px}.w4{width:4px}.w8{width:8px}.w12{width:12px}.w16{width:16px}.w20{width:20px}.w24{width:24px}.w32{width:32px}
+.box{display:inline-block;width:4rem;height:2.5rem;border:var(--strokeWidthThin) solid var(--colorNeutralStroke1);background:var(--colorNeutralBackground1)}
+.rad4{border-radius:var(--borderRadiusMedium)}.rad8{border-radius:var(--borderRadiusXLarge)}.radc{border-radius:var(--borderRadiusCircular)}
+.sh4{box-shadow:var(--shadow4)}.sh8{box-shadow:var(--shadow8)}
+.ok{color:var(--colorPaletteGreenForeground1);font-weight:var(--fontWeightSemibold)}
+.w9{width:9rem}
+.bare{margin:0;padding:0;border:0}
+.no{color:var(--colorPaletteRedForeground1);font-weight:var(--fontWeightSemibold)}
+.anat{display:grid;gap:var(--spacingS);margin:var(--spacingM) 0;padding:0;list-style:none;counter-reset:a}
+.anat li{counter-increment:a;padding:var(--spacingS) var(--spacingM);border:var(--strokeWidthThin) solid var(--colorNeutralStroke2);border-radius:var(--borderRadiusMedium);background:var(--colorNeutralBackground2)}
+.anat li::before{content:counter(a) "  ";font-weight:var(--fontWeightSemibold);color:var(--colorBrandForegroundLink)}
+</style>
+</head>
+<body>
+<a class="skip" href="#main">Skip to the content</a>
+<header>
+<p class="brand"><a href="#top">Meternaut (AI)</a></p>
+<p class="who">Style guide, version 1, 2026-11-09</p>
+</header>
+<main id="main" class="wide gs">
+<div id="top" class="head"><div><h1>Meternaut style guide</h1><p>Fluent 2 tokens, one stylesheet, no script. Drawn from the Decisions page, which is the first page built from it.</p></div></div>
+<p class="lead">This is the one place that says how a Meternaut page looks and reads. Every page is made from the parts below, with the tokens below, and nothing else. A rule that is not written here is not a rule. When a page needs something new, it is drawn here first.</p>
+<p>See it all together in the <a href="decisions-preview.html">Decisions preview</a>. The stylesheet is <code>meternaut-ui.css</code>, next to this file.</p>
+<nav class="toc" aria-label="On this page"><ul>
+<li><a href="#principles">1 Principles</a></li><li><a href="#colour">2 Colour</a></li><li><a href="#type">3 Type</a></li><li><a href="#space">4 Space, shape, depth</a></li><li><a href="#layout">5 Layout</a></li><li><a href="#components">6 Components</a></li><li><a href="#writing">7 Writing</a></li><li><a href="#charts">8 Charts</a></li><li><a href="#access">9 Access</a></li><li><a href="#keeping">10 Keeping to this guide</a></li>
+</ul></nav>
+
+<h2 id="principles">1 Principles</h2>
+<p>Eight rules. Each has a test that a person can apply in a second.</p>
+<div class="table-wrap"><table><thead><tr><th scope="col">Rule</th><th scope="col">What it means</th><th scope="col">The test</th></tr></thead><tbody>
+<tr><td class="strong-line">1 Answer first</td><td>The first line of a decision says what to do and what it is worth.</td><td>A stranger can say what to do after one second.</td></tr>
+<tr><td class="strong-line">2 One thing in focus</td><td>One decision is shown large. The rest are ranked by what is at stake, and a bar shows the difference.</td><td>You can name the most important item without reading.</td></tr>
+<tr><td class="strong-line">3 Money has a unit, a period and a source</td><td>"$1,682 a year", "$100.74 a month at list price". Never a bare number.</td><td>Every figure answers: how much, per what, from where.</td></tr>
+<tr><td class="strong-line">4 Say what is not known</td><td>Never "No figure". Show what is known, and say why the rest is missing.</td><td>An empty slot always carries a reason.</td></tr>
+<tr><td class="strong-line">5 One row per decision</td><td>Findings of the same kind are one row that opens into its members. The same resource is never shown twice.</td><td>No two rows have the same headline.</td></tr>
+<tr><td class="strong-line">6 Less text, more shape</td><td>A row has a headline, one figure, one chart and one verdict. The reasoning is one click away.</td><td>A row fits on one screen line pair, with no paragraph.</td></tr>
+<tr><td class="strong-line">7 Colour never works alone</td><td>Every colour has a word or a shape beside it.</td><td>The page still reads in greyscale.</td></tr>
+<tr><td class="strong-line">8 Calm by default</td><td>Neutral surfaces. Blue for actions and data, green for money saved, orange and red only for risk.</td><td>Nothing on the page shouts that is not urgent.</td></tr>
+</tbody></table></div>
+
+<h2 id="colour">2 Colour</h2>
+<p>Fluent 2 alias tokens, as CSS custom properties. Light is shown; dark has its own values in the same file. Every pair of text and its background below was measured against WCAG 2.2: text needs 4.5 to 1, lines and shapes that carry meaning need 3 to 1. Strokes that only decorate (Stroke 1 and 2) never carry meaning.</p>
+<h3>Neutral</h3>
+<ul class="sw">
+<li><i class="c1"></i><b>Background 1</b><span>#ffffff · the page, cards, rows</span></li>
+<li><i class="c2"></i><b>Background 2</b><span>#fafafa · KPI tiles, quiet panels</span></li>
+<li><i class="c3"></i><b>Background 3</b><span>#f5f5f5 · header, hover, table heads</span></li>
+<li><i class="f1"></i><b>Foreground 1</b><span>#242424 · text · 15.5 to 1</span></li>
+<li><i class="f2"></i><b>Foreground 2</b><span>#424242 · secondary text · 10.1 to 1</span></li>
+<li><i class="f3"></i><b>Foreground 3</b><span>#616161 · notes, axes · 6.2 to 1 (5.9 on Background 2)</span></li>
+<li><i class="s1"></i><b>Stroke 1</b><span>#d1d1d1 · decoration only (1.5 to 1)</span></li>
+<li><i class="s2"></i><b>Stroke 2</b><span>#e0e0e0 · dividers, card borders</span></li>
+<li><i class="sa"></i><b>Stroke accessible</b><span>#616161 · buttons, inputs · 6.2 to 1</span></li>
+</ul>
+<h3>Brand</h3>
+<ul class="sw">
+<li><i class="b1"></i><b>Brand background</b><span>#0f6cbd · primary button, rank 1 · white on it 5.4 to 1</span></li>
+<li><i class="b2"></i><b>Brand hover</b><span>#115ea3 · white on it 6.7 to 1</span></li>
+<li><i class="b3"></i><b>Brand tint</b><span>#ebf3fc · chart area, selected segment</span></li>
+<li><i class="b4"></i><b>Brand link</b><span>#115ea3 · links · 6.7 to 1 · on the tint 6.0 to 1</span></li>
+</ul>
+<h3>Status</h3>
+<ul class="sw">
+<li><i class="g2"></i><b>Green</b><span>text #0e700e on #f1faf1 · 5.9 to 1 · border #107c10 (5.4 to 1)</span></li>
+<li><i class="o2"></i><b>Dark orange</b><span>text #bc4b09 on #fdf6f3 · 4.7 to 1 · border #f7630c (3.1 to 1)</span></li>
+<li><i class="r2"></i><b>Red</b><span>text #b10e1c on #fdf3f4 · 6.6 to 1 · border #d13438</span></li>
+<li><i class="y2"></i><b>Yellow</b><span>text #835b00 on #fffbe6 · 5.8 to 1 · border #c19c00</span></li>
+</ul>
+<p>Dark mode, measured the same way: text 14.6, 10.0 and 6.5 to 1; brand link 5.2; green 6.1; orange 6.6; red 5.8; yellow 7.2.</p>
+<div class="table-wrap"><table><thead><tr><th scope="col">Colour</th><th scope="col">Means</th><th scope="col">Never used for</th></tr></thead><tbody>
+<tr><td class="strong-line">Blue</td><td>An action, a link, the line of a chart.</td><td>Status.</td></tr>
+<tr><td class="strong-line">Green</td><td>Money saved, low risk, done.</td><td>Decoration.</td></tr>
+<tr><td class="strong-line">Dark orange</td><td>Medium risk, a threshold line.</td><td>Errors.</td></tr>
+<tr><td class="strong-line">Red</td><td>High risk, a refusal, an error.</td><td>Anything that is merely large.</td></tr>
+<tr><td class="strong-line">Yellow</td><td>A notice that has to be read.</td><td>Data.</td></tr>
+<tr><td class="strong-line">Grey</td><td>Everything else.</td><td>Meaning that a person must not miss.</td></tr>
+</tbody></table></div>
+
+<h2 id="type">3 Type</h2>
+<p>Segoe UI Variable Text, then Segoe UI and the system fonts. Two weights only: 400 and 600. Sentence case everywhere, never all capitals. Every figure uses tabular numerals, so columns line up. Names of resources are in the monospace font.</p>
+<div class="table-wrap"><table><thead><tr><th scope="col">Name</th><th scope="col">Specimen</th><th scope="col">Size, line, weight</th><th scope="col">Used for</th></tr></thead><tbody>
+<tr><td class="strong-line">Display</td><td class="ty-display num">$1,682</td><td>40 / 52 · 600</td><td>The figure of the decision in focus.</td></tr>
+<tr><td class="strong-line">Title 1</td><td class="ty-title1">Decisions</td><td>32 / 40 · 600</td><td>The page title and the value of a summary tile.</td></tr>
+<tr><td class="strong-line">Title 3</td><td class="ty-title3">Stop virtual machine</td><td>24 / 32 · 600</td><td>The title of the decision in focus.</td></tr>
+<tr><td class="strong-line">Subtitle</td><td class="ty-sub num">$4,297 a year</td><td>20 / 28 · 600</td><td>A section heading and the yearly figure of a row.</td></tr>
+<tr><td class="strong-line">Body strong</td><td class="ty-strong">Move 3 disks to a lower tier</td><td>14 / 20 · 600</td><td>A row headline, a label, a button.</td></tr>
+<tr><td class="strong-line">Body</td><td class="ty-body">Stops the machine and releases its compute.</td><td>14 / 20 · 400</td><td>Everything else.</td></tr>
+<tr><td class="strong-line">Caption</td><td class="ty-cap">Found 3 days ago · Sweden Central</td><td>12 / 16 · 400</td><td>A note under a figure, a chart axis, a footer.</td></tr>
+</tbody></table></div>
+<p>A line of text is at most 70 characters wide. A page of reading (a request, a letter) is 46rem wide; a page of figures (Decisions) is 70rem.</p>
+
+<h2 id="space">4 Space, shape, depth</h2>
+<p>A 4 pixel grid. Use the token, never the number.</p>
+<div class="table-wrap"><table><thead><tr><th scope="col">Token</th><th scope="col" class="r">Pixels</th><th scope="col">Shown</th><th scope="col">Used for</th></tr></thead><tbody>
+<tr><td><code>spacingXXS</code></td><td class="r num">2</td><td><span class="step w2"></span></td><td>A line gap inside a figure block.</td></tr>
+<tr><td><code>spacingXS</code></td><td class="r num">4</td><td><span class="step w4"></span></td><td>Icon to text; a bar under a figure.</td></tr>
+<tr><td><code>spacingS</code></td><td class="r num">8</td><td><span class="step w8"></span></td><td>Between rows; between chips.</td></tr>
+<tr><td><code>spacingM</code></td><td class="r num">12</td><td><span class="step w12"></span></td><td>Inside a row; between a heading and its list.</td></tr>
+<tr><td><code>spacingL</code></td><td class="r num">16</td><td><span class="step w16"></span></td><td>Card padding; between tiles.</td></tr>
+<tr><td><code>spacingXL</code></td><td class="r num">20</td><td><span class="step w20"></span></td><td>The side margin of a page.</td></tr>
+<tr><td><code>spacingXXL</code></td><td class="r num">24</td><td><span class="step w24"></span></td><td>The padding of the focus card.</td></tr>
+<tr><td><code>spacingXXXL</code></td><td class="r num">32</td><td><span class="step w32"></span></td><td>Between sections.</td></tr>
+</tbody></table></div>
+<div class="flex">
+<div><span class="box rad4"></span><p class="m">Radius medium, 4: buttons, inputs, notices</p></div>
+<div><span class="box rad8"></span><p class="m">Radius extra large, 8: cards, rows, tiles</p></div>
+<div><span class="box radc"></span><p class="m">Circular: chips, the rank number</p></div>
+<div><span class="box rad8 sh4"></span><p class="m">Shadow 4: the focus card, a row under the pointer</p></div>
+<div><span class="box rad8 sh8"></span><p class="m">Shadow 8: a menu or a pop-over (none yet)</p></div>
+</div>
+<p>Nothing animates. A change of state is instant, so there is nothing to switch off for a person who asks for less motion.</p>
+
+<h2 id="layout">5 Layout</h2>
+<p>The Decisions page, top to bottom. Every page of figures is built in this order, and leaves out what it does not have.</p>
+<ol class="anat">
+<li>Header and tabs, as on every page.</li>
+<li>Title and one sentence that says what is at stake, and how to sort.</li>
+<li>Summary tiles: at most three, each a figure with a unit and a note.</li>
+<li>The decision in focus: the one with the largest known saving, with its figure, its evidence and two charts.</li>
+<li>Ranked rows below it, with a bar that shows how much each is worth against the first.</li>
+<li>A second list for what looks wasteful but is not measured, headed by its total cost.</li>
+<li>What is held back, and what was decided lately, both quiet.</li>
+<li>The footer: who wrote this, and a way to find who answers for it.</li>
+</ol>
+<div class="table-wrap"><table><thead><tr><th scope="col">Width</th><th scope="col">What changes</th></tr></thead><tbody>
+<tr><td>Wider than 52rem</td><td>A row has five columns: rank, headline, figure, chart, button. The focus card has text on the left and two charts on the right.</td></tr>
+<tr><td>40em to 52rem</td><td>A row has two lines: the headline and figure above, the chart and button below. The focus card is one column.</td></tr>
+<tr><td>Narrower than 40em</td><td>Everything is one column, in the same order. Buttons are as wide as the screen.</td></tr>
+</tbody></table></div>
+
+<h2 id="components">6 Components</h2>
+
+<h3>Summary tile</h3>
+<div class="two"><div class="demo"><ul class="kpis"><li class="kpi good"><p class="k">Ready to save</p><p class="v">$3,255<small> a year</small></p><p class="n">3 decisions · saving known</p></li></ul></div>
+<ul><li>A label, one figure with its unit, one note.</li><li>The figure is green only when it is money saved.</li><li>No figure: show a dash, and put the reason in the note.</li></ul></div>
+
+<h3>Impact figure</h3>
+<p>The most important part of a row. It has three states, and a row is always in one of them. The yearly figure is large, the monthly figure is small, and the label says what kind of figure it is.</p>
+<div class="demo flex">
+<div class="impact save"><span class="lab">Saves</span><span class="y">$364<small> a year</small></span><span class="mo">$30.33 a month</span></div>
+<div class="impact cost"><span class="lab">Costs, saving not measured</span><span class="y">$4,297<small> a year</small></span><span class="mo">$358.11 a month</span></div>
+<div class="impact none"><span class="lab">Cost not visible</span><span class="y">—</span><span class="mo">This identity cannot read cost</span></div>
+</div>
+<ul><li><strong>Saves</strong>: a concrete change with a known saving. Green. Say "estimate" and the source when it comes from the list price.</li>
+<li><strong>Costs, saving not measured</strong>: the cost is known and the saving is not. Neutral. The cost is the most that could be saved.</li>
+<li><strong>Cost not visible</strong>: nothing is known. Grey, with the reason. This is the only place a dash may stand in for a figure.</li>
+<li>Rows are ranked by the larger of the saving (when known) or the cost, and the bar under the figure shows it against the first row.</li></ul>
+
+<h3>Chips</h3>
+<p>A chip says one thing in one or two words, with a shape, so that colour is never alone.</p>
+<div class="demo"><p class="chips">
+<span class="chip low"><svg viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="4"/></svg>Low risk</span>
+<span class="chip mid"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M6 1.5 11 10.5H1z"/></svg>Medium risk</span>
+<span class="chip high"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M6 1 11 6 6 11 1 6z"/></svg>High risk</span>
+<span class="chip info"><svg viewBox="0 0 12 12" aria-hidden="true"><rect x="2" y="2" width="8" height="8" rx="1.5"/></svg>High confidence</span>
+<span class="chip"><svg viewBox="0 0 12 12" aria-hidden="true"><rect x="2" y="2" width="8" height="8" rx="1.5"/></svg>Needs measuring</span>
+</p></div>
+<ul><li>Risk is a circle (low), a triangle (medium) or a diamond (high). Confidence and state are squares.</li><li>At most two chips in a row, and never one that repeats the label next to it.</li></ul>
+
+<h3>Buttons</h3>
+<div class="demo"><p class="acts"><a class="btn primary" href="#buttons">Review and decide</a><a class="btn" href="#buttons">Decide later</a><a class="btn subtle" href="#buttons">Show details</a><a class="btn danger" href="#buttons">Decline</a><a class="btn sm primary" href="#buttons">Review</a></p></div>
+<ul><li>A button starts with a verb and says what it does: "Review and decide", never "OK" or "Open".</li><li>One primary button for each card or row. The rest are plain or subtle.</li><li>Height 40 pixels, or 32 in a row. A button that changes Azure says so in its own words ("Approve and sign in to Azure").</li></ul>
+
+<h3>Charts in a row</h3>
+<div class="two"><div class="demo flex">
+<div class="w9"><svg class="sp" viewBox="0 0 120 32" role="img" aria-label="Cost per day, last 30 days: slowly rising from $0.36 to $0.42."><path class="ar" d="M2.0,9.1 L6.0,9.0 L10.0,8.9 L14.0,8.8 L18.0,8.7 L22.0,8.6 L26.0,8.4 L30.0,8.3 L34.0,8.1 L38.0,8.0 L42.0,7.9 L46.0,7.8 L50.0,7.7 L54.0,7.6 L58.0,7.4 L62.0,7.3 L66.0,7.2 L70.0,7.1 L74.0,7.0 L78.0,6.9 L82.0,6.8 L86.0,6.6 L90.0,6.5 L94.0,6.3 L98.0,6.2 L102.0,6.1 L106.0,6.0 L110.0,5.9 L114.0,5.8 L118.0,5.7 L118.0,30 L2.0,30 Z"/><path class="ln" d="M2.0,9.1 L6.0,9.0 L10.0,8.9 L14.0,8.8 L18.0,8.7 L22.0,8.6 L26.0,8.4 L30.0,8.3 L34.0,8.1 L38.0,8.0 L42.0,7.9 L46.0,7.8 L50.0,7.7 L54.0,7.6 L58.0,7.4 L62.0,7.3 L66.0,7.2 L70.0,7.1 L74.0,7.0 L78.0,6.9 L82.0,6.8 L86.0,6.6 L90.0,6.5 L94.0,6.3 L98.0,6.2 L102.0,6.1 L106.0,6.0 L110.0,5.9 L114.0,5.8 L118.0,5.7"/><circle class="dt" cx="118" cy="5.7" r="2"/></svg><p class="m">With data</p></div>
+<div class="w9"><svg class="sp none" viewBox="0 0 120 32" role="img" aria-label="No cost lines yet: Cost Management reports use 8 to 72 hours late."><path class="ln" d="M2,22 L118,22"/><text class="ax" x="60" y="12" text-anchor="middle">No cost lines yet</text></svg><p class="m">No data yet</p></div>
+</div>
+<ul><li>30 daily points, a 1.5 pixel line, a tint under it and a dot on today. No axes: the figure beside it is the scale.</li><li>It starts at zero, so a flat line means a steady cost.</li><li>No data is a dashed line with the reason, never a line at zero.</li></ul></div>
+
+<h3>Decision row and group row</h3>
+<p>A row is one decision. When findings of one kind cover several resources, the row is a group: it shows the count and the total, and it opens into a table of its members. "Review all" decides them together, "Review one by one" does not.</p>
+<ol class="items"><li class="item">
+<span class="rank">3</span>
+<div class="main"><p class="t">Move 3 disks to a lower tier</p><p class="m">Premium SSD to Standard SSD · found 3 days ago</p><p class="chips"><span class="chip low"><svg viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="4"/></svg>Low risk</span></p></div>
+<div class="impact save"><span class="lab">Saves</span><span class="y">$364<small> a year</small></span><span class="mo">$30.33 a month</span><svg class="bar" viewBox="0 0 100 4" preserveAspectRatio="none" aria-hidden="true"><rect class="bt" width="100" height="4" rx="2"/><rect class="bv" width="22" height="4" rx="2"/></svg></div>
+<div class="spark"><svg class="sp" viewBox="0 0 120 32" role="img" aria-label="Cost per day, last 30 days: flat at about $1.01 a day."><path class="ar" d="M2.0,5.8 L118.0,5.9 L118.0,30 L2.0,30 Z"/><path class="ln" d="M2.0,5.8 L118.0,5.9"/><circle class="dt" cx="118" cy="5.9" r="2"/></svg></div>
+<div class="act"><a class="btn sm primary" href="#components">Review</a></div>
+</li></ol>
+<ul><li>Columns: rank, headline with one note line and chips, the impact figure, a chart, one button. Nothing else.</li><li>The headline names the action and the target ("Stop virtual machine x"), or the count and the kind ("4 storage accounts in 3 resource groups").</li><li>A group row's button is "Show 4". Inside, the members are a table, and the choices are two buttons.</li></ul>
+
+<h3>The decision in focus</h3>
+<p>The largest known saving, shown large: the rank, the title, the figure, the chips, four facts (what changes, why, checked, undo), two buttons, and two charts. A page has one. It is drawn in full in the <a href="decisions-preview.html">Decisions preview</a>.</p>
+
+<h3>Notices</h3>
+<div class="demo">
+<div class="notice info"><p class="notice-title">Information</p><p>Cost lines arrive 8 to 72 hours after use.</p></div>
+<div class="notice success"><p class="notice-title">Done</p><p>The machine is stopped and released.</p></div>
+<div class="notice warning"><p class="notice-title">Needs a look</p><p>The check before the change could not read the machine.</p></div>
+<div class="notice error" role="alert"><p class="notice-title">Nothing was changed</p><p>Azure refused the request.</p></div>
+</div>
+
+<h3>The AI line in the footer</h3>
+<div class="demo"><footer class="bare"><p>Recommendations written by AI. A person approves every change.</p><details><summary>About this page</summary><p>Two AI agents, the Investigator and the Skeptic, wrote what you see. Code checked every figure against Cost Management and Azure. You see this page because you are listed as an approver. Responsible for Meternaut: Tino (owner@example.com).</p></details></footer></div>
+<ul><li>One quiet line says that an AI wrote the page and that a person approves every change.</li><li>"About this page" holds the details: which agents, how the figures were checked, why this person sees it, and who answers for Meternaut. It replaces "Talk to a person", which told the owner to talk to himself.</li></ul>
+
+<h2 id="writing">7 Writing</h2>
+<p>Plain words, short, in the order a person needs them. The page speaks to the person who decides.</p>
+<div class="table-wrap"><table><thead><tr><th scope="col">Do</th><th scope="col">Don't</th></tr></thead><tbody>
+<tr><td><span class="ok">Stop virtual machine</span> <code>build-agent-03</code></td><td><span class="no">Look at the virtual machine build-agent-03 in group rg-build</span> (a verb that says nothing)</td></tr>
+<tr><td><span class="ok">$1,682 a year</span>, <span class="ok">$140.16 a month</span></td><td><span class="no">About 140.16 a month, medium.</span></td></tr>
+<tr><td><span class="ok">Costs $358 a month, saving not measured yet</span></td><td><span class="no">No figure.</span></td></tr>
+<tr><td><span class="ok">4 storage accounts in 3 resource groups</span> (one row)</td><td><span class="no">Look at the storage account a… / b… / c…</span> (three rows that read the same)</td></tr>
+<tr><td><span class="ok">About this page</span></td><td><span class="no">Talk to a person</span></td></tr>
+<tr><td><span class="ok">Found 3 days ago</span></td><td><span class="no">Found at 2026-11-06T09:41:07Z</span></td></tr>
+<tr><td><span class="ok">Review and decide</span></td><td><span class="no">OK, Open, Submit</span></td></tr>
+</tbody></table></div>
+<ul>
+<li><strong>Money.</strong> A dollar sign before the figure and a thousands separator: $4,297. Whole dollars from $100 up, cents below. "a year" and "a month" in words, never "/yr". Say the source when it is not Cost Management's cost lines: "at list price", "estimate".</li>
+<li><strong>Time.</strong> "today", "yesterday", "3 days ago", then the weekday and date. The exact time is for the hover text and the history.</li>
+<li><strong>Names.</strong> A resource is in the monospace font, with its kind in words in front of it.</li>
+<li><strong>Words we do not use on a page for people.</strong> Family, plan (for a change), case, lead, gate, digest, re-check. Say kind, request, finding, "checked again".</li>
+<li><strong>Length.</strong> A headline is at most 70 characters. A note under it is one line. Reasoning is at most four short facts.</li>
+</ul>
+
+<h2 id="charts">8 Charts</h2>
+<ul>
+<li>A chart answers one question, and its title says which: the thing, the period, the unit. "Cost per day, last 30 days".</li>
+<li>A cost chart starts at zero. A usage chart (CPU, calls) has a dashed line for the threshold the AI used ("5% idle line").</li>
+<li>Blue is the line. Orange is a threshold. Green is only for money saved. No second data colour until a chart needs one, and then it is a grey.</li>
+<li>Missing data is a gap or a dashed line with a reason, never a zero.</li>
+<li>No pie, no 3-D, no two vertical scales on one chart, no legend that a label can replace.</li>
+<li>Every chart has a text alternative that says what it shows in a sentence ("flat at about $4.67 a day"), not "chart".</li>
+<li>A row has one small chart. The focus card has at most two large ones. A chart is drawn by the page itself, as inline SVG, so it needs no script and no outside file.</li>
+</ul>
+
+<h2 id="access">9 Access</h2>
+<ul>
+<li>Text 4.5 to 1 and meaningful shapes 3 to 1, in light and in dark. The numbers are in the colour section.</li>
+<li>A focus ring of 3 pixels on everything that takes the keyboard, never removed.</li>
+<li>A button is at least 32 pixels high; the main one is 40.</li>
+<li>Headings in order, landmarks (header, nav, main, footer), a skip link, a list for a list and a table for a table.</li>
+<li>Colour is never alone: risk has a shape and a word; a chart has a text alternative.</li>
+<li>Readable at 200% and at 320 pixels wide without sideways scrolling, except inside a table.</li>
+<li>Forced colours are handled: borders, lines and shapes use system colours.</li>
+<li>No animation, no script, no autoplay. The page works with the keyboard alone.</li>
+</ul>
+
+<h2 id="keeping">10 Keeping to this guide</h2>
+<p>A guide that nothing enforces is a wish. These are the means, and what is done.</p>
+<div class="table-wrap"><table><thead><tr><th scope="col">Means</th><th scope="col">State today</th></tr></thead><tbody>
+<tr><td>One stylesheet, <code>docs/ui/meternaut-ui.css</code>, that the pages of the app use as their only style</td><td>Written. The app does not use it yet.</td></tr>
+<tr><td>The Decisions page drawn from it</td><td>Drawn, with sample data. Not built into the app yet.</td></tr>
+<tr><td>A test that fails when the app's page style differs from the file</td><td>Next, with the first page that uses it.</td></tr>
+<tr><td>A test that fails on a style attribute, a colour value or a pixel size in the code of a page</td><td>Next.</td></tr>
+<tr><td>This guide served by the app itself at <code>/styleguide</code>, with the real stylesheet</td><td>Next.</td></tr>
+<tr><td>Every other page (a request, History, Settings, Operations, letters, Teams cards) moved onto it, one at a time</td><td>After the Decisions page.</td></tr>
+</tbody></table></div>
+<p class="muted">Changes to this guide: version 1, 2026-11-09, first version.</p>
+</main>
+<footer>
+<p>Meternaut style guide, version 1. Written with AI; checked by a person.</p>
+</footer>
+</body>
+</html>
