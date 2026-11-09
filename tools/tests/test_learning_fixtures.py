@@ -4,30 +4,14 @@ A fixture that answers in another shape than the real tool would test an agent a
 word; the one hostile quote of a hostile row is harsher than the real tool lets through (the real tool refuses a quote that has a link or markup), so only the shape of it is held.
 """
 import datetime as dt
-import importlib.util
 import json
-import sys
 import unittest
-from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
-TOOLS = ROOT / "tools"
-APP = ROOT / "src" / "case-functions"
-sys.path.insert(0, str(APP))
+import test_aisec_tools as aisec
 
+ROOT, evals = aisec.ROOT, aisec.evals  # the one copy of each tool that the other tests of the tools hold (a second load of aisec-helpers.py would make a second class of every error)
 
-def load(name: str, file: str):
-    spec = importlib.util.spec_from_file_location(name, TOOLS / file)
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[name] = module
-    spec.loader.exec_module(module)
-    return module
-
-
-helpers = load("aisec_helpers", "aisec-helpers.py")
-evals = load("foundry_evals", "foundry-evals.py")
-
-from cases import toolbox  # noqa: E402  (the app is on the path now)
+from cases import toolbox  # noqa: E402  (the app is on the path: test_aisec_tools put it there)
 from cases.memory_store import MemoryStore  # noqa: E402
 from cases.models import CLAIM_KINDS, ClaimRecord  # noqa: E402
 
