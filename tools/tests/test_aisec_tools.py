@@ -1064,6 +1064,7 @@ class TheRedTeamFallback(unittest.TestCase):
                 code, out, _, _ = self.go(project)
                 self.assertEqual(code, 1)
                 self.assertIn(f"FAIL a response of the copy could not be had ({status} {error})", out)
+                self.assertEqual("LlmCostQuotaExceeded" in out, status == 403, "only a 403 says that the gateway's limit of cost can be the cause")
                 self.assertEqual((project.agents, project.conversations), ({}, set()))
 
     def test_answers_with_no_text_are_nothing_tested_and_do_not_pass(self):

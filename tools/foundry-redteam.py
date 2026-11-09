@@ -177,7 +177,8 @@ def ask(client, spend, reference: dict, text: str) -> tuple[str, str, int]:
         if status == 400 and helpers.error_words(document) in BLOCKED_BY_THE_SERVICE:
             return "blocked", "", 0
         if status != 200 or not isinstance(document, dict):
-            raise Problem(f"a response of the copy could not be had ({status} {helpers.error_words(document)})")
+            hint = " (the AI Gateway answers 403 LlmCostQuotaExceeded when its limit of cost for the day or for the month is used up, and its telemetry says so: nothing was tested, so run again on another day)" if status == 403 else ""
+            raise Problem(f"a response of the copy could not be had ({status} {helpers.error_words(document)}){hint}")
         usage = document.get("usage") if isinstance(document.get("usage"), dict) else {}
         tokens = int(usage.get("input_tokens") or 0) + int(usage.get("output_tokens") or 0)
         spend.take(tokens=tokens)
