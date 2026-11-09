@@ -405,6 +405,21 @@ class WhenTheSameFindingComesAgain(unittest.TestCase):
         (line,) = again.of("investigation.finding")
         self.assertEqual((line["judgedLately"], line["handles"]), (7, 1), "the seven were closed lately and stay as they are, and the first one, whose group is old, is judged again")
 
+    def test_members_whose_requests_were_closed_go_back_into_a_group_that_the_first_ai_was_not_sure_about_whatever_the_evidence(self):
+        clock = Moving()
+        resources = endpoints(8, cost=lambda n: 100.0 + n)
+        unsure = lambda: raw_of(8, basis="low-usage", confidence=0.4, evidence=[entry(f"r{n}", "Traffic", 0) for n in range(1, 9)])
+        first = watch(unsure(), resources, clock=clock, evidence={f"r{n}": metrics(Traffic=0) for n in range(1, 9)})
+        extras = first.extras
+        for member in resources[:-1]:
+            extras.store.case_put(CaseRecord(case_id=key_of(member), resource_id=member.resource_id, resource_name=member.name, resource_type=member.resource_type,
+                                             resource_group=member.resource_group, subscription_id=member.subscription_id, detector="investigation", run_id="r0", status="expired",
+                                             recommendation="investigate", confidence=0.4, summary="Closed lately.", updated_at=stamp(clock()), first_seen_at=stamp(clock())))
+        clock.advance(days=1)
+        again = watch(unsure(), resources, clock=clock, extras=extras, evidence={f"r{n}": metrics(Traffic=0) for n in range(1, 9)})
+        (line,) = again.of("investigation.finding")
+        self.assertEqual((line["judgedLately"], line["handles"]), (0, 8), "a group that is an open question is still a group that stands for its members: the eight are looked at as one, and not the lead alone")
+
     def test_the_resources_that_older_runs_made_a_case_of_one_by_one_stay_as_they_were(self):
         clock = Moving()
         first = watch(raw_of(5, confidence=0.8), endpoints(5, cost=lambda n: 100.0), clock=clock)
