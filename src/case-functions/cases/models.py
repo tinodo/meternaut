@@ -106,6 +106,7 @@ class RunRecord(Record):
     seconds: int = 0
     notes: tuple[str, ...] = ()
     reason: str | None = None
+    investigated: bool = False  # the investigation ran in this run: the daily timer waits INVESTIGATE_EVERY_DAYS after the last such run (cases/run.py)
 
 
 @dataclass(frozen=True)

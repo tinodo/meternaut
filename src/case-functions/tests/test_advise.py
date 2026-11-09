@@ -330,6 +330,14 @@ class TheWorthOfARequest(unittest.TestCase):
         self.assertIsNotNone(self.approvals.advise(agreed, NAMED))
         self.assertEqual(len(self.open_advice()), ADVICE_OPEN_MAX + 1)
 
+    def test_the_requests_for_findings_that_both_ais_agree_on_take_no_place_from_the_ones_that_nobody_settled(self):
+        for n in range(ADVICE_OPEN_MAX + 2):
+            self.assertIsNotNone(self.approvals.advise(self.finding(n, status="proposed", cost_usd_30d=80.0, objections=(), confidence=0.9), NAMED))
+        self.assertEqual(len(self.open_advice()), ADVICE_OPEN_MAX + 2)
+        for n in range(100, 100 + ADVICE_OPEN_MAX):
+            self.assertIsNotNone(self.approvals.advise(self.finding(n, cost_usd_30d=80.0, objections=("It may be in use.",)), NAMED), "a place is free for the unsettled ones")
+        self.assertIsNone(self.approvals.advise(self.finding(199, cost_usd_30d=80.0, objections=("It may be in use.",)), NAMED), "now the places of the unsettled ones are full")
+
     def test_the_plans_of_a_change_do_not_take_a_place(self):
         item = planted_disk()
         case = case_of(item)

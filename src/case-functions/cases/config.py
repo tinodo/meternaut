@@ -45,6 +45,12 @@ FOUNDRY_MODEL_SKEPTIC = "FOUNDRY_MODEL_SKEPTIC"
 INVESTIGATE = "INVESTIGATE"
 INVESTIGATE_MAX_CALLS = "INVESTIGATE_MAX_CALLS"
 INVESTIGATE_MAX_SECONDS = "INVESTIGATE_MAX_SECONDS"
+# How many days the daily timer waits after an investigation that ran before it investigates again. A run costs about two US dollars of model calls, and the standing limit of the AI Gateway
+# is 5 a day and 25 a month for each caller (rule 15 (g)): investigating every day would use the month's allowance in about twelve days. A run that a person starts always investigates; the
+# leads of the fixed detectors are judged by the Detective and the Skeptic every day anyway, which costs cents.
+INVESTIGATE_EVERY_DAYS = "INVESTIGATE_EVERY_DAYS"
+DEFAULT_INVESTIGATE_EVERY_DAYS = 7
+LIMIT_INVESTIGATE_EVERY_DAYS = 30
 # The tokens that one agent run may use before the harness stops it (cases/harness.py): a brake against a loop in a model, not a limit of normal work. The fourth real run of the agents
 # (2026-11-08) used about 169,000 tokens in all; this is about three and a half times that, written here before it was measured again. A setting can lower it and never raise it.
 INVESTIGATE_MAX_TOKENS = "INVESTIGATE_MAX_TOKENS"
@@ -87,6 +93,7 @@ LEARNING_HOLD = "LEARNING_HOLD"
 OPTIONAL = {MAX_TOKENS_PER_RUN: str(LIMIT_TOKENS_PER_RUN), MAX_COMPLETION_TOKENS: str(LIMIT_COMPLETION_TOKENS), RUN_DEADLINE_SECONDS: str(LIMIT_DEADLINE_SECONDS),
             FOUNDRY_MODEL_INVESTIGATOR: DEFAULT_MODEL_INVESTIGATOR, FOUNDRY_MODEL_SKEPTIC: DEFAULT_MODEL_SKEPTIC,
             INVESTIGATE_MAX_CALLS: str(DEFAULT_INVESTIGATE_CALLS), INVESTIGATE_MAX_SECONDS: str(DEFAULT_INVESTIGATE_SECONDS), INVESTIGATE_MAX_TOKENS: str(LIMIT_INVESTIGATE_TOKENS),
+            INVESTIGATE_EVERY_DAYS: str(DEFAULT_INVESTIGATE_EVERY_DAYS),
             STUDY_MAX_TYPES: str(DEFAULT_STUDY_TYPES), STUDY_MAX_PAGES: str(DEFAULT_STUDY_PAGES), STUDY_MAX_SECONDS: str(DEFAULT_STUDY_SECONDS), STUDY_MAX_TOKENS: str(DEFAULT_STUDY_TOKENS)}
 
 GUID = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
@@ -124,6 +131,7 @@ class Settings:
     investigate_max_calls: int = DEFAULT_INVESTIGATE_CALLS
     investigate_max_seconds: int = DEFAULT_INVESTIGATE_SECONDS
     investigate_max_tokens: int = LIMIT_INVESTIGATE_TOKENS
+    investigate_every_days: int = DEFAULT_INVESTIGATE_EVERY_DAYS
     # True: `subscriptions` is only the fallback, and the list that a run reads is made at its start (scope.py). The run then works with a copy whose `subscriptions` is that list.
     all_subscriptions: bool = False
     # The quota ids of the subscriptions of the run, as the one list of subscriptions of the run gave them (scope.py): not a setting of the environment, the run fills them in its copy.
@@ -185,6 +193,7 @@ def _investigation(env: Mapping[str, str], problems: list[str]) -> dict:
         "investigate_max_calls": _integer(env, INVESTIGATE_MAX_CALLS, 1, LIMIT_INVESTIGATE_CALLS, OPTIONAL[INVESTIGATE_MAX_CALLS], problems),
         "investigate_max_seconds": _integer(env, INVESTIGATE_MAX_SECONDS, 30, LIMIT_INVESTIGATE_SECONDS, OPTIONAL[INVESTIGATE_MAX_SECONDS], problems),
         "investigate_max_tokens": _integer(env, INVESTIGATE_MAX_TOKENS, 10_000, LIMIT_INVESTIGATE_TOKENS, OPTIONAL[INVESTIGATE_MAX_TOKENS], problems),
+        "investigate_every_days": _integer(env, INVESTIGATE_EVERY_DAYS, 1, LIMIT_INVESTIGATE_EVERY_DAYS, OPTIONAL[INVESTIGATE_EVERY_DAYS], problems),
     }
 
 

@@ -28,7 +28,7 @@ from .evidence import EvidenceError
 from .foundry import Foundry
 from .http import Client, HttpError, allowed_calls, default_transport
 from .identity import Identity
-from .memory_store import stamp
+from .memory_store import parse, stamp
 from .modelcalls import ModelError, Models
 from .models import CaseRecord, RunRecord, StoreError
 from .redact import Redactor
@@ -88,6 +88,37 @@ def _figure(value: float | None) -> float | None:
 
 def _cases(number: int) -> str:
     return "1 case was" if number == 1 else f"{number} cases were"
+
+
+# The daily timer fires at the same minute every day, so a run is a few seconds or minutes short of whole days after the last one: this much slack keeps "seven days" from becoming eight.
+TIMER_SLACK = dt.timedelta(hours=1)
+
+
+def investigation_wait(s: Services, trigger: str) -> str | None:
+    """None when the investigation is due; else the plain reason why it waits. A run that a person starts (any trigger but the daily timer) always investigates. The daily timer investigates when
+    INVESTIGATE_EVERY_DAYS have passed since the last run that investigated, because a run costs about two US dollars and the owner's standing limit is 5 a day and 25 a month for each caller.
+    A store that cannot be read, or a time that cannot be read, means that the investigation waits: nothing is spent on a guess."""
+    if trigger != "timer" or s.extras is None:
+        return None
+    every = s.settings.investigate_every_days
+    try:
+        last = max((parsed for parsed in (_when(run.started_at) for run in s.extras.store.runs_recent(60) if run.investigated) if parsed is not None), default=None)
+    except StoreError:
+        return "the earlier runs could not be read, so the cost of another investigation was not weighed"
+    if last is None:
+        return None
+    waited = s.clock() - last
+    if waited >= dt.timedelta(days=every) - TIMER_SLACK:
+        return None
+    days = waited.days
+    return f"the last investigation ran {days} day{'' if days == 1 else 's'} ago, and the timer investigates every {every} days (INVESTIGATE_EVERY_DAYS); a run that a person starts does it at once"
+
+
+def _when(value: object) -> dt.datetime | None:
+    try:
+        return parse(str(value))
+    except ValueError:
+        return None
 
 
 def work_case(s: Services, number: int, lead: Lead, context: Context, tokens_before: int) -> tuple[str, int]:
@@ -235,6 +266,7 @@ def execute(s: Services, trigger: str) -> Summary:
     summary = Summary()
     notes: list[str] = []
     started_at = stamp(s.clock())
+    investigated = False  # set when the investigation has run: the record of the run says so, and the timer counts its days from it
 
     def keep(finished: bool, reason: str | None = None) -> RunRecord | None:
         """The run goes to the store, when there is one. A store that fails never stops the run."""
@@ -243,7 +275,7 @@ def execute(s: Services, trigger: str) -> Summary:
         record = RunRecord(
             run_id=h.run_id, trigger=trigger, started_at=started_at, finished_at=stamp(s.clock()) if finished else None, ok=summary.ok and reason is None,
             leads=summary.leads, cases=summary.cases, proposed=summary.proposed, needs_human=summary.needs_human, dropped=summary.dropped, errors=summary.errors,
-            tokens=summary.tokens, seconds=summary.seconds, notes=tuple(clean_text(n, 300) for n in notes[:20]), reason=reason)
+            tokens=summary.tokens, seconds=summary.seconds, notes=tuple(clean_text(n, 300) for n in notes[:20]), reason=reason, investigated=investigated)
         try:
             s.extras.store.run_put(record)
         except StoreError as error:
@@ -324,7 +356,12 @@ def execute(s: Services, trigger: str) -> Summary:
 
     # The investigation goes first, with a budget and a time of its own: what it takes is not taken from the deadline of the cases after it.
     before = s.monotonic()
-    investigation = investigate.investigate(s, contexts, notes)
+    waits = investigation_wait(s, trigger)
+    if waits is None:
+        investigation = investigate.investigate(s, contexts, notes)
+    else:
+        investigation = investigate.Investigation(off=True, note=waits)
+    investigated = investigation.ran
     deadline += s.monotonic() - before
     s.client.deadline = deadline
     summary.cases += investigation.cases

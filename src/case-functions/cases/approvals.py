@@ -386,7 +386,8 @@ class Approvals:
                     return None
             if why_not_ask(case) is not None:
                 return None
-            if case.status == "needs_human" and sum(1 for plan in open_plans if plan.family == ADVISE and plan.state == "open") >= ADVICE_OPEN_MAX:
+            if case.status == "needs_human" and sum(1 for plan in open_plans if plan.family == ADVISE and plan.state == "open"
+                                                    and (plan.preconditions or {}).get("caseStatus") == "needs_human") >= ADVICE_OPEN_MAX:
                 return None
             now = self.clock()
             quiet = now - dt.timedelta(days=ADVICE_QUIET_DAYS)
