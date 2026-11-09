@@ -152,6 +152,16 @@ fi
 if have python3; then
   if version=$(python3 -c 'import sys; print("%d.%d.%d" % sys.version_info[:3])' 2> /dev/null); then
     say ok "python3 $version"
+    # The sources that the workflow sends are LZMA-compressed, so the container needs lzma (bz2 is the other compression that a zip can use).
+    absent=""
+    for module in lzma bz2; do
+      python3 -c "import $module" > /dev/null 2>&1 || absent="$absent $module"
+    done
+    if [ -z "$absent" ]; then
+      say ok "python3 imports lzma and bz2"
+    else
+      say FAIL "python3 cannot import:$absent"
+    fi
   else
     say FAIL "python3 does not run"
   fi

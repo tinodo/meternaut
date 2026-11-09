@@ -1809,7 +1809,8 @@ class TheCasesPublish(RunnerCase):
 class ThePackageThatTheBuildScriptMakesCarriesTheDigestOfTheApp(unittest.TestCase):
     """The proof for the release check of the cases app after a publish from this machine (the control A-RELEASE): the zip file that tools/build-function-app.sh makes holds exactly the files whose digest the
     release step works out, on a checkout with CRLF line ends (Windows) as on one with LF. The libraries are installed into .python_packages from the hash-locked requirements.txt, and the digest does not
-    cover them, so the build here is the one that installs none (FUNCTION_APP_SOURCES_ONLY): the files that the digest covers are copied and zipped by the same lines of the script in both modes."""
+    cover them, so the build here is the one that installs none (FUNCTION_APP_SOURCES_ONLY): the files that the digest covers are copied by the same lines of the script in both modes, and the archive of
+    the sources holds them in a zip of its own, which is opened here as the container opens it."""
 
     SOURCES = ROOT / "src" / "case-functions"
 
@@ -1833,7 +1834,7 @@ class ThePackageThatTheBuildScriptMakesCarriesTheDigestOfTheApp(unittest.TestCas
         done = subprocess.run([BASH, "--noprofile", "--norc", "-eo", "pipefail", "-c", command], cwd=ROOT, env=env, capture_output=True, text=True, timeout=300)
         self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
         unpacked = self.base / f"{name}-unpacked"
-        with zipfile.ZipFile(package) as archive:
+        with zipfile.ZipFile(package) as outer, zipfile.ZipFile(io.BytesIO(outer.read("sources.zip"))) as archive:
             names = archive.namelist()
             archive.extractall(unpacked)
         return unpacked, names
@@ -1919,12 +1920,18 @@ class ThePackageThatTheBuildScriptMakesCarriesTheDigestOfTheApp(unittest.TestCas
 
     def test_the_runner_holds_the_package_against_the_digest_and_refuses_another_one(self):
         want = SOURCE_DIGEST.digest(self.SOURCES)
-        self.build()
+        unpacked, _ = self.build()
+        # What the build of the whole package makes is a plain zip with the files at its root, and these are its files (the libraries are not covered by the digest): the archive of the sources is another shape
+        package = self.base / "as-a-package.zip"
+        with zipfile.ZipFile(package, "w", zipfile.ZIP_DEFLATED) as archive:
+            for path in sorted(unpacked.rglob("*")):
+                if path.is_file():
+                    archive.write(path, path.relative_to(unpacked).as_posix())
         run = hub.Hub(make_args(), {}, hub.Deps(root=ROOT), io.StringIO())
         run.rt = self.base / "rt"
         run.rt.mkdir()
-        self.assertTrue(run.package_has_digest(self.base / "package.zip", want))
-        self.assertFalse(run.package_has_digest(self.base / "package.zip", "0" * 64))
+        self.assertTrue(run.package_has_digest(package, want))
+        self.assertFalse(run.package_has_digest(package, "0" * 64))
 
 
 class TheLocalFolder(unittest.TestCase):

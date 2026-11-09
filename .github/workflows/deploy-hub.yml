@@ -1179,8 +1179,8 @@ jobs:
         if: inputs.action == 'cases'
         run: |
           # The cases app is published from its sources. Its finished package is 614,068 bytes zipped, and a request with 632,656 bytes of files (that package and the container script) was refused with an
-          # internal server error on 2026-11-06, because a request takes at most 480,000 bytes of files (tools/operator-run.py). So the sources go (about 200 KB zipped) and the container builds the libraries (from the
-          # hash-locked requirements.txt in them) with the pip command of tools/build-function-app.sh (docs/proposals/07-private-by-default.md, phase 2). The same script makes this zip:
+          # internal server error on 2026-11-06, because a request takes at most 480,000 bytes of files (tools/operator-run.py). So the sources go (about 300 KB, packed as one LZMA stream) and the container builds the libraries (from the
+          # hash-locked requirements.txt in them) with the pip command of tools/build-function-app.sh (docs/proposals/07-private-by-default.md, phase 2). The same script makes this archive:
           # its copy of the app's files, and no libraries.
           FUNCTION_APP_SOURCES_ONLY=1 bash tools/build-function-app.sh case-functions cases "$RUNNER_TEMP/cases-source" "$RUNNER_TEMP/cases-source.zip"
           # Everything that the request carries is counted here, with the evidence, before the Operator is looked for: the sources, the build script and the container script. tools/operator-run.py refuses more than 480,000 bytes

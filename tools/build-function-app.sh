@@ -12,7 +12,10 @@
 # and a request takes at most 480,000 bytes of files: tools/operator-run.py has the evidence), and its code is published from inside the network (docs/proposals/07-private-by-default.md,
 # phase 2): the workflow sends the sources, and operator/publish.sh builds the libraries in the container. It is still this one script, with three switches, each set only by the caller that needs it,
 # so that there is one build command and one layout:
-#   FUNCTION_APP_SOURCES_ONLY=1       the app's own files and no libraries, zipped: the sources that the workflow sends to the Operator (nothing is installed, so no interpreter is checked)
+#   FUNCTION_APP_SOURCES_ONLY=1       the app's own files and no libraries: the sources that the workflow sends to the Operator (nothing is installed, so no interpreter is checked). Python makes the zip, with
+#                                     one entry, sources.zip, that is LZMA-compressed and holds the files in a zip of their own, stored: the files are compressed together, which makes the archive a third smaller
+#                                     than a zip that compresses each file alone. Only the container opens it (operator/publish.sh, which needs Python's lzma module). A package that an app runs from stays
+#                                     deflate: the deployment site cannot read LZMA
 #   FUNCTION_APP_SOURCE_DIR=<folder>  where the app's files are, in place of src/<app> next to this script: the folder in which the Operator unpacked those sources
 #   FUNCTION_APP_BUILD_IN_OPERATOR=1  the build runs in the Operator's container (operator/publish.sh). Its Python is 3.12, and pip is the one that ensurepip made. The libraries are still the wheels
 #                                     for Python 3.13: pip is told so (--python-version below) and checks the Requires-Python of a library against that target and not against the interpreter that
@@ -102,7 +105,25 @@ if [ -z "$in_operator" ] || command -v find > /dev/null 2>&1; then
   find "$build" -type d -name '__pycache__' -prune -exec rm -rf {} +
 fi
 
-if [ -n "$zip_file" ]; then
+if [ -n "$sources_only" ]; then
+  # The request that carries the sources is small (tools/operator-run.py, MAX_FILE_BYTES). A zip compresses each file alone, and the files of the app share most of their text, so one LZMA entry holds all of
+  # them, in a zip of their own that stores them. operator/publish.sh opens the entry and then that zip.
+  rm -f "$zip_file"
+  python3 -c '
+import io, os, sys, zipfile
+root, target = sys.argv[1], sys.argv[2]
+files = io.BytesIO()
+with zipfile.ZipFile(files, "w", zipfile.ZIP_STORED) as archive:
+    for folder, folders, names in os.walk(root):
+        folders[:] = sorted(name for name in folders if name != "__pycache__")
+        for name in sorted(names):
+            path = os.path.join(folder, name)
+            archive.write(path, os.path.relpath(path, root).replace(os.sep, "/"))
+with zipfile.ZipFile(target, "w", zipfile.ZIP_LZMA) as envelope:
+    envelope.writestr("sources.zip", files.getvalue())
+print("%d files" % len(archive.namelist()))
+' "$build" "$zip_file"
+elif [ -n "$zip_file" ]; then
   rm -f "$zip_file"
   if [ -z "$in_operator" ] && command -v zip > /dev/null 2>&1; then
     (cd "$build" && zip -qr "$zip_file" .)

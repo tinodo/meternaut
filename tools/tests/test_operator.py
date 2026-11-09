@@ -1073,7 +1073,8 @@ exec "$@"
 """
 
 STUB_PYTHON = """#!/bin/bash
-# stand-in for python3. -c with sys.version_info says the version; -c with os.walk is the real Python (REAL_PYTHON), which counts the files of a folder; -c with sysconfig says where ensurepip put pip.
+# stand-in for python3. -c with sys.version_info says the version; -c with os.walk is the real Python (REAL_PYTHON), which counts the files of a folder; -c with sysconfig says where ensurepip put pip;
+# -c with import lzma or import bz2 works unless FAKE_PYTHON_MODULES_MISSING names the module (the names are separated by spaces).
 # -m pip is FAKE_PIP: ok, missing (no pip, unless PYTHONPATH names the one that ensurepip made), strict-fails (the first attempt says Requires-Python and the one with --ignore-requires-python works),
 # hash, network, timeout (the exit code of timeout) or other (an error that nobody planned for). -m ensurepip is FAKE_ENSUREPIP: ok or disabled. Every -m call is logged with its arguments and PYTHONPATH,
 # and a call that finds the federated token in its environment says so.
@@ -1089,6 +1090,11 @@ case "$1" in
         if command -v cygpath > /dev/null 2>&1; then dir=$(cygpath -w "$3"); fi
         exec "$REAL_PYTHON" -c "$2" "$dir" ;;
       *sysconfig*) echo "$3/usr/lib/python3.12/site-packages"; exit 0 ;;
+      "import lzma" | "import bz2")
+        case " ${FAKE_PYTHON_MODULES_MISSING:-} " in
+          *" ${2#import } "*) echo "ModuleNotFoundError: No module named '_${2#import }'" >&2; exit 1 ;;
+        esac
+        exit 0 ;;
       *) echo 3.12.7; exit 0 ;;
     esac ;;
   -m)
@@ -1210,6 +1216,7 @@ class ProbeScript(unittest.TestCase):
         self.assertEqual(self.without_seconds(lines), [
             "ok: az, curl, getent and python3 are in the image",
             "ok: python3 3.12.7",
+            "ok: python3 imports lzma and bz2",
             "ok: python3 -m pip 24.0",
             "ok: az login as the deploy identity with the OpenID Connect token",
             "ok: az group show of the project group as the deploy identity",
@@ -1255,6 +1262,26 @@ class ProbeScript(unittest.TestCase):
         done, lines = self.run_probe({**self.good_env(), "FAKE_AZ_GROUP": "fail"}, size=4000)
         self.assertIn("ok: az login --identity", lines)
         self.assertIn("FAIL: az group show: ERROR: (AuthorizationFailed) The client does not have authorization", lines)
+
+    def test_a_python_that_cannot_import_lzma_or_bz2_is_one_FAIL_line_that_names_what_it_cannot_import_and_the_probe_goes_on(self):
+        # The sources that the workflow sends are one LZMA entry (tools/build-function-app.sh), so the container needs lzma; bz2 is the other compression that a zip can use
+        for missing, said in (("lzma", "FAIL: python3 cannot import: lzma"), ("bz2", "FAIL: python3 cannot import: bz2"), ("lzma bz2", "FAIL: python3 cannot import: lzma bz2")):
+            done, lines = self.good_run(FAKE_PYTHON_MODULES_MISSING=missing)
+            self.assertEqual((done.returncode, done.stderr), (0, ""), missing)
+            self.assertEqual(lines[1:3], ["ok: python3 3.12.7", said], missing)
+            self.assertNotIn("ok: python3 imports lzma and bz2", lines)
+            self.assertNotIn("ModuleNotFoundError", done.stdout, "what Python said is not printed")
+            self.assertIn("ok: python3 -m pip 24.0", lines, "the other checks go on")
+            self.assertEqual(lines[-1], "probe-done")
+        done, lines = self.good_run()
+        self.assertEqual(lines[1:3], ["ok: python3 3.12.7", "ok: python3 imports lzma and bz2"])
+
+    def test_a_python_that_does_not_run_is_said_once_and_its_modules_are_not_asked_about(self):
+        broken = "#!/bin/bash\nexit 1\n"
+        done, lines = self.run_probe({}, stubs={"python3": broken})
+        self.assertIn("FAIL: python3 does not run", lines)
+        self.assertEqual([line for line in lines if "lzma" in line or "bz2" in line], [])
+        self.assertEqual(lines[-1], "probe-done")
 
     def test_a_secret_volume_without_the_file_that_was_to_be_sent_is_a_failure_and_without_a_size_it_is_only_said(self):
         _, lines = self.run_probe({"PROBE_SIZE_BYTES": "4000"}, size=None)

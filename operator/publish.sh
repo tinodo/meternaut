@@ -10,11 +10,12 @@
 # The image is mcr.microsoft.com/azure-cli (bash, az, python3 3.12, curl, getent and the coreutils). It has no pip, no zip, no unzip and no find that anything may rely on, so pip is made by
 # ensurepip in a work folder, and Python opens and makes the zip files. A container group's request takes only a few hundred kilobytes of files (tools/operator-run.py, MAX_FILE_BYTES, has the
 # evidence), and the app's package is not that small (614,068 bytes), so no package travels in it. The workflow sends the app's sources (cases-source.zip, made by tools/build-function-app.sh with
-# FUNCTION_APP_SOURCES_ONLY=1) and that same script (build-function-app.sh), and the libraries are built here from the hash-locked requirements.txt in the sources, with the one pip command of
-# that script (FUNCTION_APP_BUILD_IN_OPERATOR=1). The app runs on the plan that PUBLISH_PLAN names, and the package is published the way that plan needs:
+# FUNCTION_APP_SOURCES_ONLY=1: one LZMA entry, sources.zip, so Python needs its lzma module) and that same script (build-function-app.sh), and the libraries are built here from the hash-locked
+# requirements.txt in the sources, with the one pip command of that script (FUNCTION_APP_BUILD_IN_OPERATOR=1). The app runs on the plan that PUBLISH_PLAN names, and the package is published the way
+# that plan needs:
 #   Flex    the Flex Consumption app: `az functionapp deployment source config-zip` of the built package, as the runner ran it before the publish moved into the network
 #   Basic   the built package is posted to the deployment site's zip deployment, with curl, as the runner did
-# (The usage app, which was the other app published here, was removed on 2026-11-07 with the usage recording; the action retire-old deletes what is left of it.)
+# (The usage app, the other one published here, was removed on 2026-11-07.)
 #
 # What it reads, all from the environment (none of it is a secret, except the one that says so):
 #   PUBLISH_KIND            cases (the only app that is published here now)
@@ -28,7 +29,7 @@
 #                           variable. It is read once at the start and taken out of the environment, so that nothing that runs below inherits it, and it is never printed: it is handed to the
 #                           az login of the deploy identity and to nothing else
 #   PUBLISH_FILE_BYTES      the size that the main file of the secret volume (cases-source.zip) was sent with: a file that arrived short is never published
-#   PUBLISH_HOLD_SECONDS    optional, 0 to 60, default 20: how long the container stays after the work, so that the tool that reads the log through Azure Resource Manager can read the whole of it
+#   PUBLISH_HOLD_SECONDS    optional, 0 to 60, default 20: how long the container stays after the work, so that the log can be read whole
 #   PUBLISH_VOLUME          where the secret volume is mounted (default /mnt/op); PUBLISH_TMP where the work folder is made (default /tmp): both only for the tests
 #
 # It prints a few short lines of its own ("ok:" or "FAIL:"), then at most a few lines of what a failed command said, and at last "publish-done: exit code N". Anything that looks like a token is
@@ -163,6 +164,11 @@ else
   say FAIL "python3 does not run"
   exit 3
 fi
+# The sources are LZMA-compressed: stop before the sign-in when Python cannot open them.
+if ! python3 -c 'import lzma' 2> /dev/null; then
+  say FAIL "python3 has no lzma module: the sources cannot be unpacked"
+  exit 3
+fi
 if ! work=$(mktemp -d "$tmp_root/publish-XXXXXX" 2> /dev/null); then
   work=""
   say FAIL "no work folder to publish from"
@@ -201,9 +207,8 @@ else
   exit 3
 fi
 
-# The Azure CLI gets every new token with the sign-in's assertion, the OpenID Connect token, which is valid for five minutes: the sign-in was only the first exchange. The start of the group, pip and
-# the build come before the publish, so the token that the publish needs is fetched now, while the assertion is fresh, and the CLI finds it in its cache. It is the lesson of the Hub's new sign-in
-# before each publish.
+# The Azure CLI gets every new token with the sign-in's assertion, which is valid for five minutes, and the start of the group, pip and the build come before the publish: so the token that the publish
+# needs is fetched now, while the assertion is fresh, and the CLI finds it in its cache (the lesson of the Hub's new sign-in before each publish).
 if [ "$plan" = Flex ]; then
   # On a Flex Consumption app `az functionapp deployment source config-zip` asks Microsoft Entra for one more token, for the App Service resource (read in the Azure CLI's development source, not in
   # 2.92.0). A failure is said and does not stop the run: the publish says what it needs.
@@ -213,8 +218,8 @@ if [ "$plan" = Flex ]; then
     say FAIL "az token for the App Service resource (the publish goes on): $(clean "${message//"$federated_token"/<token>}")"
   fi
 else
-  # The package goes to the app's deployment site (Kudu's zip deployment) with the signed-in identity's token for Azure Resource Manager, which is how Microsoft documents a zip deployment to a site
-  # whose basic authentication is off. The token is held in a variable, it is on no command line (curl reads the header from a configuration on standard input), and it is hidden in what is printed.
+  # The package goes to the deployment site (Kudu's zip deployment) with the signed-in identity's token for Azure Resource Manager, which is how Microsoft documents it for a site whose basic
+  # authentication is off. The token is in a variable, on no command line (curl reads the header from a configuration on standard input), and hidden in what is printed.
   if arm_token=$(timeout 120 az account get-access-token --resource https://management.azure.com --query accessToken --output tsv 2> "$work/token.err") && looks_like_a_token "$arm_token"; then
     say ok "az account get-access-token for Azure Resource Manager"
   else
@@ -224,9 +229,9 @@ else
   fi
 fi
 
-# The point of publishing from here is the private endpoint of the app: both names of the app have to resolve to a private address, which they do once the landing zone's policy has registered
-# them in its central zone (the workflow waits for that). A name that is public, or that does not resolve, would make the publish go the public way, which proves nothing, or end the deployment
-# with "Reset all workers endpoint responded with Name or service not known". The first minute of a group can be noisy, so a name is tried three times.
+# The point of publishing from here is the private endpoint of the app: both names of the app have to resolve to a private address, which they do once the landing zone's policy has registered them in
+# its central zone (the workflow waits for that). A name that is public, or does not resolve, would make the publish go the public way, which proves nothing, or fail with "Reset all workers endpoint
+# responded with Name or service not known". The first minute of a group can be noisy, so a name is tried three times.
 for host in "$app.scm.azurewebsites.net" "$app.azurewebsites.net"; do
   verdict=""
   for attempt in 1 2 3; do
@@ -292,9 +297,9 @@ build_package() {
   local app_directory=$1 package_name=$2 label=$3 attempt built=0 zip_bytes
   make_pip || return 3
   if ! message=$(python3 -c '
-import os, sys, zipfile
+import io, os, sys, zipfile
 target = os.path.realpath(sys.argv[2])
-with zipfile.ZipFile(sys.argv[1]) as archive:
+with zipfile.ZipFile(sys.argv[1]) as outer, zipfile.ZipFile(io.BytesIO(outer.read("sources.zip"))) as archive:
     for member in archive.infolist():
         path = os.path.realpath(os.path.join(target, member.filename))
         if path != target and not path.startswith(target + os.sep):
@@ -326,14 +331,14 @@ with zipfile.ZipFile(sys.argv[1]) as archive:
   package_zip="$work/$label.zip"
   zip_bytes=$(wc -c < "$package_zip" | tr -d ' ')
   say ok "the $label package is built: $(clean "$(printf '%s\n' "$build_output" | tail -n 1)"), $(megabytes "$zip_bytes") MB zipped, $SECONDS s, hashes ok"
-  # The SHA-256 of the exact package that is published next: the record of what went to the app (the summary of the run that sent it keeps this line). A zip holds the time of each file, so it differs from run to
-  # run: the digest of the app's own files (PACKAGE_SHA256, tools/source-digest.py) is what is compared with main, and this one says which bytes this run published.
+  # The SHA-256 of the exact package that is published next: the record of what went to the app (the summary of the run keeps this line). A zip holds the time of each file, so it differs from run to run:
+  # the digest of the app's own files (PACKAGE_SHA256, tools/source-digest.py) is what is compared with main, and this one says which bytes this run published.
   say ok "the $label package that is published has the SHA-256 $(sha256sum "$package_zip" | cut -d ' ' -f 1)"
   rm -rf "$work/pip-cache" "$work/build" "$work/source"
 }
 
-# The Flex Consumption app: the package is built here ($1 is the app's directory under src, $2 the name of its code package, $3 what the package is called here) and published with the
-# command that the runner ran before the publish moved into the network, with the same flags and the same attempts. The web page's app is published this way while it runs on Flex Consumption.
+# The Flex Consumption app: the package is built here ($1 is the app's directory under src, $2 the name of its code package, $3 what it is called here) and published with the command that the runner
+# ran before the publish moved into the network, with the same flags and attempts.
 publish_flex() {
   local app_directory=$1 package_name=$2 label=$3 attempt
   # The version of the CLI that does the publish is said, because what `config-zip` does for a Flex Consumption app depends on it (the image is pinned by its digest).
@@ -358,8 +363,8 @@ publish_flex() {
 publish_cases() {
   local attempt code
   build_package case-functions cases cases || return 3
-  # The built package goes to the app's deployment site (Kudu's zip deployment) with the token of Azure Resource Manager that was fetched at the start. A site that has just been made may need a few
-  # minutes. The package is in the work folder of the container, so no limit of the request applies to it.
+  # The built package goes to the deployment site (Kudu's zip deployment) with the token of Azure Resource Manager that was fetched at the start. A site that has just been made may need a few minutes.
+  # The package is in the work folder of the container, so no limit of the request applies to it.
   for attempt in 1 2 3 4 5; do
     code=$(printf 'header = "Authorization: Bearer %s"\n' "$arm_token" | curl --config - --silent --show-error --output "$work/zipdeploy.txt" --write-out '%{http_code}' --max-time 900 \
       --request POST --header 'Content-Type: application/zip' --data-binary "@$package_zip" "https://$app.scm.azurewebsites.net/api/zipdeploy" || echo "000")

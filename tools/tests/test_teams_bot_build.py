@@ -1,5 +1,6 @@
 """tools/build-teams-bot.sh: the package of the Teams bot's function app has the bot's entry in the place of function_app.py and the cases app's code package behind it, and no other entry. It is run in
 the mode that zips the sources (FUNCTION_APP_SOURCES_ONLY=1: nothing is installed, so no wheels and no network are needed), with the Git bash that the other build tests find."""
+import io
 import json
 import os
 import re
@@ -57,7 +58,7 @@ class TheBotsPackage(unittest.TestCase):
         cls.done = build(ROOT / "tools" / "build-teams-bot.sh", posix(base / "bot"), posix(base / "bot.zip"))
         cls.files, cls.names = {}, []
         if (base / "bot.zip").exists():
-            with zipfile.ZipFile(base / "bot.zip") as archive:
+            with zipfile.ZipFile(base / "bot.zip") as outer, zipfile.ZipFile(io.BytesIO(outer.read("sources.zip"))) as archive:
                 cls.names = archive.namelist()
                 cls.files = {name: archive.read(name) for name in cls.names if not name.endswith("/")}
 

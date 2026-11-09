@@ -156,9 +156,9 @@ echo "sleep $*" >> "$FAKE_LOG"
 
 STUB_PYTHON = """#!/bin/bash
 # stand-in for python3. -c with the guard of the build script exits as FAKE_PYTHON_VERSION says (3.13.x passes); -c with the version of the interpreter says FAKE_PYTHON_VERSION; -c with sysconfig says where
-# ensurepip put pip; -m pip --version is FAKE_PIP (ok, or missing: no pip unless PYTHONPATH names the one that ensurepip made); -m ensurepip is FAKE_ENSUREPIP (ok or disabled); -m pip install is a fake
-# download that FAKE_PIP says how it ends (ok, foreign: it unpacks a compiled module of another Python, hash, network, first-fails: the first attempt fails and the next works). Every other call is the real
-# Python (REAL_PYTHON), with the paths that it is given turned into the paths that it understands.
+# ensurepip put pip; -c with import lzma exits as FAKE_PYTHON_LZMA says (ok, or missing); -m pip --version is FAKE_PIP (ok, or missing: no pip unless PYTHONPATH names the one that ensurepip made); -m
+# ensurepip is FAKE_ENSUREPIP (ok or disabled); -m pip install is a fake download that FAKE_PIP says how it ends (ok, foreign: it unpacks a compiled module of another Python, hash, network,
+# first-fails: the first attempt fails and the next works). Every other call is the real Python (REAL_PYTHON), with the paths that it is given turned into the paths that it understands.
 if [ -n "${FAKE_LOG:-}" ]; then
   if [ "$1" = -m ]; then echo "python3 $* [PYTHONPATH=${PYTHONPATH:-none}]" >> "$FAKE_LOG"; fi
   if [ -n "${AZURE_FEDERATED_TOKEN:-}" ]; then echo "python3 SAW THE TOKEN IN ITS ENVIRONMENT" >> "$FAKE_LOG"; fi
@@ -181,6 +181,7 @@ case "$1" in
       *"== (3, 13)"*) case "${FAKE_PYTHON_VERSION:-3.12.7}" in 3.13.*) exit 0 ;; *) exit 1 ;; esac ;;
       *'%d.%d.%d'*) echo "${FAKE_PYTHON_VERSION:-3.12.7}"; exit 0 ;;
       *sysconfig*) echo "$3/usr/lib/python3.12/site-packages"; exit 0 ;;
+      "import lzma") if [ "${FAKE_PYTHON_LZMA:-ok}" = missing ]; then echo "ModuleNotFoundError: No module named '_lzma'" >&2; exit 1; fi; exit 0 ;;
       *) real "$@" ;;
     esac ;;
   -m)
@@ -231,14 +232,15 @@ CASES_SOURCE_FILES = {"function_app.py": b"# the cases app\n", "host.json": b"{}
 
 
 def source_zip(files=None):
-    """The zip of the sources, as tools/build-function-app.sh makes it with FUNCTION_APP_SOURCES_ONLY=1: the files at its root."""
-    path = Path(tempfile.mkdtemp()) / "sources.zip"
-    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as archive:
+    """The archive of the sources, as tools/build-function-app.sh makes it with FUNCTION_APP_SOURCES_ONLY=1: one LZMA entry, sources.zip, that holds the files at its root in a zip of their own, stored."""
+    inner = io.BytesIO()
+    with zipfile.ZipFile(inner, "w", zipfile.ZIP_STORED) as archive:
         for name, content in (files or CASES_SOURCE_FILES).items():
             archive.writestr(name, content)
-    data = path.read_bytes()
-    shutil.rmtree(path.parent)
-    return data
+    outer = io.BytesIO()
+    with zipfile.ZipFile(outer, "w", zipfile.ZIP_LZMA) as archive:
+        archive.writestr("sources.zip", inner.getvalue())
+    return outer.getvalue()
 
 
 class Ran:
@@ -611,6 +613,26 @@ class PublishScript(unittest.TestCase):
         self.assertIn("FAIL: the sources could not be unpacked: a file of the sources would be unpacked outside the folder", ran.lines)
         self.assertEqual([call for call in ran.calls if call.startswith(("python3 -m pip install", "az functionapp"))], [])
 
+    def test_sources_that_are_not_the_one_lzma_entry_that_holds_the_files_are_refused_in_plain_words_and_nothing_is_built(self):
+        files_at_the_root = io.BytesIO()
+        with zipfile.ZipFile(files_at_the_root, "w", zipfile.ZIP_DEFLATED) as archive:
+            for name, content in CASES_SOURCE_FILES.items():
+                archive.writestr(name, content)
+        ran = self.run_publish(package=files_at_the_root.getvalue())
+        self.assertEqual(ran.done.returncode, 3)
+        self.assertTrue([line for line in ran.lines if line.startswith("FAIL: the sources could not be unpacked: ")], ran.lines)
+        self.assertEqual([call for call in ran.calls if call.startswith(("python3 -m pip install", "az functionapp", "curl"))], [])
+        self.assertEqual(ran.leftover, [])
+
+    def test_a_python_without_the_lzma_module_stops_the_run_before_the_sign_in_and_says_so_in_plain_words(self):
+        for kind in ("flex", "cases"):
+            ran = self.run_publish({"FAKE_PYTHON_LZMA": "missing"}, kind=kind)
+            self.assertEqual((ran.done.returncode, ran.done.stderr), (3, ""), kind)
+            self.assertEqual(ran.lines, ["ok: python3 3.12.7", "FAIL: python3 has no lzma module: the sources cannot be unpacked", "publish-done: exit code 3"], kind)
+            self.assertEqual(ran.calls, [], f"{kind}: no sign-in, no name, no build and no hold: the check comes first")
+            self.assertEqual(ran.leftover, [], "no work folder was made")
+            self.assertNotIn("ModuleNotFoundError", ran.done.stdout, "what Python said is not printed: the message is the script's own")
+
     def test_a_build_that_fails_is_tried_once_more_fifteen_seconds_later_and_a_second_failure_ends_the_run_without_a_publish(self):
         ran = self.run_publish({"FAKE_PIP": "hash"})
         self.assertEqual(ran.done.returncode, 3)
@@ -768,9 +790,13 @@ class PublishScript(unittest.TestCase):
 
 
 def members_of(zip_path):
-    """The files of a zip, by name: Info-ZIP, which the runner has, also stores an entry for each folder, and Python's zipfile, which the container uses, does not."""
+    """The files of a zip, by name: Info-ZIP, which the runner has, also stores an entry for each folder, and Python's zipfile, which the container uses, does not. The archive of the sources holds its
+    files in the zip that is its one entry."""
     with zipfile.ZipFile(zip_path) as archive:
-        return sorted(name for name in archive.namelist() if not name.endswith("/"))
+        names = archive.namelist()
+        if names == ["sources.zip"]:
+            names = zipfile.ZipFile(io.BytesIO(archive.read("sources.zip"))).namelist()
+        return sorted(name for name in names if not name.endswith("/"))
 
 
 @unittest.skipIf(BASH is None, "no bash on this machine")
@@ -821,10 +847,93 @@ class TheBuildScriptInTheOperator(unittest.TestCase):
             self.assertEqual(members, self.expected_sources(kind), f"{kind}: what the build copies, and nothing of the tests, the caches or the libraries")
             self.assertEqual([call for call in calls if call.startswith("python3 -m pip")], [], "nothing is installed")
             self.assertEqual(folder, sorted({name.split("/")[0] for name in self.expected_sources(kind)}))
+            self.assertEqual(done.stdout.strip().splitlines()[-1], f"{len(members)} files", f"{kind}: the last line that the script prints is the count of the files, as it was")
             sent = len(self.last_zip) + (ROOT / "tools" / "build-function-app.sh").stat().st_size + (ROOT / "operator" / "publish.sh").stat().st_size
             self.assertLess(sent, 480_000, f"{kind}: the files of the group (the sources, the build script and the container script) are within the cap of tools/operator-run.py: "
                                            "the libraries are made in the container")
         self.assertTrue([name for name in self.expected_sources("cases") if name.startswith("cases/web/")], "the cases package has a sub-package, and the build copies it")
+
+    # What the archive of the sources of this repository measured on 2026-11-09 (92 files, 1,421,202 bytes, as the script made it), and the room that more sources may take before this test asks for a decision.
+    SOURCES_ARCHIVE_MEASURED = 302_600
+    SOURCES_ARCHIVE_MARGIN = 5_000
+
+    def sources_archive(self, fresh=False):
+        """The archive that the script makes of the real sources of the cases app, with the switch of the runner's pack step. It is made once for the tests of this class, and again when a fresh one is asked for."""
+        if fresh or TheBuildScriptInTheOperator.made_sources_archive is None:
+            done, _, _, _ = self.run_build(env={"FUNCTION_APP_SOURCES_ONLY": "1"}, python="3.12.7")
+            self.assertEqual(done.returncode, 0, done.stderr)
+            TheBuildScriptInTheOperator.made_sources_archive = self.last_zip
+        return TheBuildScriptInTheOperator.made_sources_archive
+
+    made_sources_archive = None
+
+    @staticmethod
+    def inner_zip(data):
+        """The zip of the files that the archive carries as its one entry."""
+        with zipfile.ZipFile(io.BytesIO(data)) as outer:
+            return zipfile.ZipFile(io.BytesIO(outer.read("sources.zip")))
+
+    def test_the_archive_of_the_sources_is_one_lzma_entry_that_holds_the_files_stored_in_a_zip_so_that_they_are_compressed_together(self):
+        data = self.sources_archive()
+        with zipfile.ZipFile(io.BytesIO(data)) as outer:
+            self.assertEqual([(info.filename, info.compress_type) for info in outer.infolist()], [("sources.zip", zipfile.ZIP_LZMA)], "every entry of the archive is LZMA, and there is one")
+            self.assertIsNone(outer.testzip())
+        inner = self.inner_zip(data)
+        self.assertEqual({info.compress_type for info in inner.infolist()}, {zipfile.ZIP_STORED}, "the files are stored: the LZMA of the entry that holds them compresses them, across the files")
+        names = inner.namelist()
+        self.assertEqual(sorted(names), self.expected_sources("cases"), "the layout of the package: the three files at the root and the code package")
+        self.assertEqual(names[:3], ["function_app.py", "host.json", "requirements.txt"], "the files of the root come first")
+        by_folder = {}
+        for name in names:
+            folder, _, base = name.rpartition("/")
+            by_folder.setdefault(folder, []).append(base)
+        self.assertEqual([folder for folder, bases in by_folder.items() if bases != sorted(bases)], [], "in each folder the files come by name")
+        self.assertEqual([name for name in names if "\\" in name or name.endswith("/") or "__pycache__" in name], [], "forward slashes, no entry for a folder and no compiled cache")
+        self.assertEqual(self.inner_zip(self.sources_archive(fresh=True)).namelist(), names, "the same order every time")
+
+    def test_the_archive_unpacks_with_zipfile_to_the_files_and_the_bytes_of_the_source_tree(self):
+        data = self.sources_archive()
+        root = ROOT / "src" / "case-functions"
+        with tempfile.TemporaryDirectory() as tmp:
+            self.inner_zip(data).extractall(tmp)
+            unpacked = sorted(path.relative_to(tmp).as_posix() for path in Path(tmp).rglob("*") if path.is_file())
+            self.assertEqual(unpacked, self.expected_sources("cases"))
+            for name in unpacked:
+                self.assertEqual((Path(tmp) / name).read_bytes(), (root / name).read_bytes(), name)
+
+    def test_the_archive_is_at_least_a_quarter_smaller_than_the_same_files_each_compressed_alone_and_stays_within_its_ceiling(self):
+        data = self.sources_archive()
+        root = ROOT / "src" / "case-functions"
+        one_by_one = io.BytesIO()
+        with zipfile.ZipFile(one_by_one, "w", zipfile.ZIP_LZMA) as archive:
+            for name in self.expected_sources("cases"):
+                archive.write(root / name, name)
+        self.assertLess(len(data), len(one_by_one.getvalue()) * 0.75, "LZMA for each file alone saves only about 4 percent against deflate, because the files share most of their text: the saving is in the whole")
+        self.assertLessEqual(len(data), self.SOURCES_ARCHIVE_MEASURED + self.SOURCES_ARCHIVE_MARGIN, "the sources have grown by more than the margin that was left: raise the ceiling on purpose, with the new measure")
+
+    def test_the_archive_and_the_two_scripts_leave_at_least_100000_bytes_below_the_cap_of_the_request(self):
+        sent = len(self.sources_archive()) + (ROOT / "tools" / "build-function-app.sh").stat().st_size + (ROOT / "operator" / "publish.sh").stat().st_size
+        self.assertLessEqual(sent, 480_000 - 100_000, "480,000 is MAX_FILE_BYTES of tools/operator-run.py, which is not raised: the room is made by the archive")
+
+    def test_the_archive_that_the_script_makes_is_unpacked_by_the_code_of_the_container_script_to_the_files_that_it_was_made_of(self):
+        data = self.sources_archive()
+        unpack = re.search(r"python3 -c '\n(import io.+?)\n' \"\$main_file\"", text("operator/publish.sh"), re.S).group(1)
+        with tempfile.TemporaryDirectory() as tmp:
+            archive, target = Path(tmp) / "cases-source.zip", Path(tmp) / "source"
+            archive.write_bytes(data)
+            done = subprocess.run([sys.executable, "-c", unpack, str(archive), str(target)], capture_output=True, text=True)
+            self.assertEqual((done.returncode, done.stdout.strip()), (0, str(len(self.expected_sources("cases")))), done.stderr)
+            self.assertEqual(sorted(path.relative_to(target).as_posix() for path in target.rglob("*") if path.is_file()), self.expected_sources("cases"))
+
+    def test_the_package_that_an_app_runs_from_is_deflate_in_each_build_that_makes_one_because_the_deployment_site_cannot_read_lzma(self):
+        for label, env, python in (("the runner's build", {"FAKE_PIP": "ok"}, "3.13.0"), ("the build in the Operator", {"FUNCTION_APP_BUILD_IN_OPERATOR": "1", "FAKE_PIP": "ok"}, "3.12.7")):
+            done, calls, members, folder = self.run_build(env=env, python=python)
+            self.assertEqual(done.returncode, 0, (label, done.stderr))
+            with zipfile.ZipFile(io.BytesIO(self.last_zip)) as package:
+                methods = {info.compress_type for info in package.infolist()}
+                self.assertIn(zipfile.ZIP_DEFLATED, methods, label)
+                self.assertLessEqual(methods, {zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED}, f"{label}: only what the deployment site reads (Info-ZIP stores a file that is empty)")
+                self.assertNotIn("sources.zip", package.namelist(), f"{label}: the package holds the files and the libraries, and not the archive of the sources")
 
     def test_the_sources_are_zipped_only_when_a_zip_file_is_named_and_the_two_switches_are_not_set_together_or_set_to_anything_but_1(self):
         for env, said in (({"FUNCTION_APP_SOURCES_ONLY": "1", "FUNCTION_APP_BUILD_IN_OPERATOR": "1"}, "are not set together"), ({"FUNCTION_APP_SOURCES_ONLY": "yes"}, "are 1 or not set"),
@@ -893,9 +1002,7 @@ class TheBuildScriptInTheOperator(unittest.TestCase):
             sources_zip = self.last_zip
 
             def unpacked(tmp, sources_zip=sources_zip):
-                (tmp / "sources.zip").write_bytes(sources_zip)
-                with zipfile.ZipFile(tmp / "sources.zip") as archive:
-                    archive.extractall(tmp / "unpacked")
+                self.inner_zip(sources_zip).extractall(tmp / "unpacked")
                 return tmp / "unpacked"
 
             operator, operator_calls, operator_members, _ = self.run_build(arguments=arguments, env={"FUNCTION_APP_BUILD_IN_OPERATOR": "1", "FAKE_PIP": "ok"}, python="3.12.7", prior=unpacked)
@@ -933,3 +1040,24 @@ class TheBuildScriptInTheOperator(unittest.TestCase):
         self.assertEqual(sorted(cases), ["azure-functions", "markupsafe", "werkzeug"])
         self.assertEqual(cases_markers, [], "no environment marker in a lock: pip evaluates it for the interpreter that runs it, which is 3.12 in the Operator and 3.13 on the runner")
         self.assertTrue(all(hashes for _, hashes in cases.values()), "every library of the lock is checked against hashes")
+
+
+class TheCompressionOfTheArchivesIsChosenWhereTheyAreMade(unittest.TestCase):
+    """The text of the two scripts: LZMA is made in the branch of the build script that packs the sources and nowhere else, every branch that makes the package that an app runs from is deflate (the
+    deployment site cannot read LZMA), and the container script checks that Python has lzma before it uses the token of the run."""
+
+    def test_the_branch_of_the_sources_is_the_only_one_with_lzma_and_the_branches_of_the_packages_are_deflate(self):
+        code = re.sub(r"(?m)^\s*#.*$", "", text("tools/build-function-app.sh"))
+        sources, _, packages = code.partition('elif [ -n "$zip_file" ]; then')
+        self.assertIn("zipfile.ZIP_LZMA", sources)
+        self.assertEqual(code.count("LZMA"), 1)
+        self.assertNotIn("ZIP_DEFLATED", sources, "the archive of the sources is not a package")
+        self.assertIn("zipfile.ZIP_DEFLATED", packages, "the package that the container builds is made with Python, deflate")
+        self.assertIn('zip -qr "$zip_file" .', packages, "and the package of the runner is made by the zip program, deflate")
+
+    def test_the_container_script_checks_for_lzma_before_the_sign_in_and_unpacks_the_sources_from_the_entry_that_holds_them(self):
+        code = re.sub(r"(?m)^\s*#.*$", "", text("operator/publish.sh"))
+        self.assertIn("python3 -c 'import lzma'", code)
+        self.assertLess(code.index("python3 -c 'import lzma'"), code.index("az login --service-principal"), "before the token of the run is used")
+        self.assertIn('zipfile.ZipFile(io.BytesIO(outer.read("sources.zip")))', code)
+        self.assertEqual(code.count("extractall"), 1, "the sources are unpacked in one place, with the check that no file leaves the folder before it")
