@@ -102,12 +102,15 @@ def investigation_wait(s: Services, trigger: str) -> str | None:
         return None
     every = s.settings.investigate_every_days
     try:
-        last = max((parsed for parsed in (_when(run.started_at) for run in s.extras.store.runs_recent(60) if run.investigated) if parsed is not None), default=None)
+        runs = s.extras.store.runs_recent(60)
     except StoreError:
         return "the earlier runs could not be read, so the cost of another investigation was not weighed"
+    now = s.clock()
+    # A run that is dated after now (a clock that went back, or a record that somebody wrote) counts for nothing: it would hold the timer off for days that have not come.
+    last = max((parsed for parsed in (_when(run.started_at) for run in runs if run.investigated) if parsed is not None and parsed <= now), default=None)
     if last is None:
         return None
-    waited = s.clock() - last
+    waited = now - last
     if waited >= dt.timedelta(days=every) - TIMER_SLACK:
         return None
     days = waited.days
@@ -362,6 +365,8 @@ def execute(s: Services, trigger: str) -> Summary:
     else:
         investigation = investigate.Investigation(off=True, note=waits)
     investigated = investigation.ran
+    if investigated:
+        keep(False)  # the money is spent: the clock starts now, and a fault or a restart later in the run does not make the timer pay for another investigation tomorrow
     deadline += s.monotonic() - before
     s.client.deadline = deadline
     summary.cases += investigation.cases

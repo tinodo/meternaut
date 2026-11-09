@@ -122,7 +122,7 @@ class TheDecisionsPage(unittest.TestCase):
         self.assertNotIn("held back", console.get("/").content, "none is held")
         self.held(console, 3)
         reply = console.get("/")
-        self.assertIn("3 findings are held back: no measurement backs them yet, or the places for requests are full. The AIs look at them again at every search.", reply.content)
+        self.assertIn("3 findings are held back: no measurement backs them yet, or the places for requests are full. The AIs look at them again at the next investigation.", reply.content)
         self.assertEqual(len(waiting(reply)), 1, "they are not rows: nobody has to decide them")
         self.held(console, 1, case_id="case3900", resource_id=f"{VM_ID}-x", resource_name="endpoint-x")
         self.assertIn("4 findings are held back", console.get("/").content)
@@ -132,7 +132,7 @@ class TheDecisionsPage(unittest.TestCase):
         self.held(console, 1)
         content = console.get("/").content
         self.assertIn("Nothing waits for you. The next search is tomorrow at 06:30.", content)
-        self.assertIn("1 finding is held back: no measurement backs it yet, or the places for requests are full. The AIs look at it again at every search.", content)
+        self.assertIn("1 finding is held back: no measurement backs it yet, or the places for requests are full. The AIs look at it again at the next investigation.", content)
 
     def test_a_finding_with_a_request_an_answered_one_a_finding_of_another_detector_and_one_that_is_over_are_not_held(self):
         console = seeded()

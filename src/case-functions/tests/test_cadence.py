@@ -99,6 +99,13 @@ class WhenTheInvestigationIsDue(unittest.TestCase):
         self.assertIsNone(self.wait(store, every=2))
         self.assertIsNone(self.wait(store, every=1))
 
+    def test_a_run_dated_in_the_future_counts_for_nothing(self):
+        store = MemoryStore(clock=lambda: NOW)
+        kept(store, -dt.timedelta(days=20))
+        self.assertIsNone(self.wait(store), "a record from the future must not hold the timer off")
+        kept(store, dt.timedelta(days=2))
+        self.assertIn("the last investigation ran 2 days ago", self.wait(store))
+
     def test_a_store_that_cannot_be_read_means_wait_and_a_time_that_cannot_be_read_is_left_out(self):
         class Broken(MemoryStore):
             def runs_recent(self, limit=20):
@@ -162,6 +169,23 @@ class InARealRun(unittest.TestCase):
         _, again, _, foundry, _ = self.watch(clock, extras, "timer")
         self.assertEqual(len(of_type(again, "investigation.started")), 1)
         self.assertEqual(len(foundry.runs), 2)
+
+    def test_a_fault_after_the_investigation_does_not_make_the_next_timer_pay_again(self):
+        from unittest import mock
+        from test_run_loop import estate_with
+        clock = Moving()
+        extras = loop_for(clock)
+        with mock.patch.object(run, "work_case", side_effect=RuntimeError("a fault after the investigation")):
+            try:
+                investigating(estate_with(planted_disk=True), clock=clock, extras=extras, trigger="timer", new_id=self.new_id)
+            except Exception:  # noqa: BLE001 (the fault may or may not leave run_watch: the record of the run is what is asserted)
+                pass
+        records = extras.store.runs_recent()
+        self.assertEqual([(r.investigated, r.finished_at) for r in records], [(True, None)], "the record of the run that died says that it investigated")
+        clock.advance(days=1)
+        _, next_day, _, foundry, _ = self.watch(clock, extras, "timer")
+        self.assertEqual(of_type(next_day, "investigation.started"), [])
+        self.assertEqual(foundry.runs, [])
 
     def test_a_run_that_could_not_investigate_does_not_start_the_clock(self):
         clock = Moving()

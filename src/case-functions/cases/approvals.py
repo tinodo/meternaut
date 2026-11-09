@@ -28,7 +28,7 @@ from .roles import clean_text
 ANSWERS = ("approve", "decline", "ask", "not_mine", "later")
 ADVICE_STATUSES = ("proposed", "needs_human")
 # A person's time is the scarce thing: a request that gives nothing to decide with, or that comes in dozens, is noise. A finding that no measurement backs, that names no saving and that
-# concerns a resource of under ADVICE_MIN_USD in 30 days is no request: it stays a case and an open question that the AIs look at again at every search (cases/learning.py).
+# concerns a resource of under ADVICE_MIN_USD in 30 days is no request: it stays a case and an open question that the AIs look at again at the next investigation (cases/learning.py).
 ADVICE_MIN_USD = 50.0
 # And no more than ADVICE_OPEN_MAX requests wait at the same time for a finding that the AIs did not settle (a finding that both AIs agree on and that code re-checked is not held by it):
 # the first page of the start page. The rest wait as open questions, and a request is made for them when a place is free.

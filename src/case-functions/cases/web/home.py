@@ -55,7 +55,7 @@ def _held(ctx: Ctx) -> Safe:
         return Safe("")
     many = held != 1
     return paragraph(f"{held} finding{'s are' if many else ' is'} held back: no measurement backs {'them' if many else 'it'} yet, or the places for requests are full. "
-                     f"The AIs look at {'them' if many else 'it'} again at every search.")
+                     f"The AIs look at {'them' if many else 'it'} again at the next investigation.")
 
 
 def _waiting(ctx: Ctx) -> Safe:
