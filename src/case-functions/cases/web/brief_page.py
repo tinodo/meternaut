@@ -77,7 +77,7 @@ def _stake(brief: Brief, figure: Figure) -> Safe:
                year=a_year(figure.monthly), label=figure.label, month=dollars(figure.monthly), note=note, waiting=waiting, money=MONEY)
 
 
-def _consequences(brief: Brief) -> list[tuple[str, object]]:
+def consequences(brief: Brief) -> list[tuple[str, object]]:
     """What happens if the person says yes, as names and values: what changes, who does it with whose rights, what is read again, whether it can be undone and what could go wrong."""
     if brief.kind == "info":
         return [("What changes", brief.change)]
@@ -95,7 +95,7 @@ def _decision(brief: Brief, case: CaseRecord | None) -> Safe:
     """The card: what is at stake in figures and in a chart, and what happens if the person says yes. The heading says what the person is about to do."""
     figure = _figure_of(brief, case)
     heading = {"change": "If you approve", "advice": "If you answer"}.get(brief.kind, "What changes")
-    facts = join(fmt("<dt>{name}</dt><dd>{text}</dd>", name=name, text=text) for name, text in _consequences(brief))
+    facts = join(fmt("<dt>{name}</dt><dd>{text}</dd>", name=name, text=text) for name, text in consequences(brief))
     plot = chart(series_of(case.cost_series) if case is not None else None, series_reason(brief, case))
     return fmt('<section class="focus" aria-labelledby="decision-title"><div><h2 class="eyebrow" id="decision-title">{heading}</h2>{stake}</div><div>{plot}</div><dl class="facts">{facts}</dl></section>',
                heading=heading, stake=_stake(brief, figure), facts=facts, plot=plot)

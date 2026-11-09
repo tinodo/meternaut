@@ -797,7 +797,7 @@ class WhatIsCheckedBeforeAnAnswerGoesOn(unittest.TestCase):
 
     def test_the_note_is_cleaned_of_control_characters_before_it_goes_on(self):
         for decision in ("decline", "approve"):
-            self.console.post("/ok/plan0001", {**self.main.fields, "decision": decision, "note": "line one\r\nline\ttwo\x00"})
+            self.console.post("/ok/plan0001", {**self.main.fields, "decision": decision, "confirm": "yes", "note": "line one\r\nline\ttwo\x00"})
         self.assertEqual(self.decider.calls[0]["note"], "line one line two")
         self.assertEqual(self.delegate.begins[0]["note"], "line one line two")
 
@@ -809,6 +809,111 @@ class WhatIsCheckedBeforeAnAnswerGoesOn(unittest.TestCase):
         self.assertEqual(self.console.post("/ok/plan0001", body=b"decision=approve&note=" + b"a" * 20000).status, 413)
         self.assert_nothing_was_asked()
         self.assertEqual(snapshot(self.console.store), before)
+
+
+class TheConfirmationOfAChangeThatCannotBeUndone(unittest.TestCase):
+    """Approving a change that cannot be undone (a delete) asks once more, on a page of its own, before the sign-in to Azure starts. The safe button is the main one."""
+
+    YES = "Yes, delete it and sign in to Azure"
+
+    def setUp(self):
+        self.delegate = ScriptedDelegate()
+        self.console = Console(delegate=self.delegate)
+        self.console.seed()
+        self.form = self.console.get("/ok/plan0001").form("/ok/plan0001", has_button=APPROVE)
+        self.reply = self.console.submit(self.form, APPROVE, confirm=False, note="Go on")
+
+    def second_form(self, reply=None):
+        return (reply or self.reply).form("/ok/plan0001", has_button=self.YES)
+
+    def test_approving_a_delete_shows_a_page_that_asks_once_more_and_starts_no_sign_in(self):
+        self.assertEqual(self.reply.status, 200)
+        self.assertEqual(self.reply.headings(1), ["Confirm: Delete the unattached disk planted-disk-1"])
+        self.assertEqual(self.reply.root.find("title").text(), "Confirm: Delete the unattached disk planted-disk-1 - Meternaut")
+        self.assertNotIn("Location", self.reply.headers)
+        self.assertEqual((self.delegate.begins, self.delegate.finishes), ([], []))
+        self.assertEqual(self.console.store.plan_get("plan0001").state, "open")
+        self.assertEqual(self.console.store.decisions_of_plan("plan0001"), [])
+
+    def test_it_says_what_is_lost_who_does_it_and_that_it_cannot_be_undone_without_a_question_mark(self):
+        main = self.reply.main
+        self.assertEqual([p.text() for p in main.find_all("p", class_="notice-title")], ["This cannot be undone"])
+        self.assertIn("If something still uses the disk, that use stops, and the data on it is lost for good.", main.find("div", class_="notice warning").text())
+        found = {dt.text(): dd.text() for dl in main.find_all("dl", class_="summary") for div in dl.find_all("div") for dt, dd in [(div.find("dt"), div.find("dd"))]}
+        self.assertEqual(list(found), ["What changes", "Who does it", "Checked again", "Undo", "What could go wrong"])
+        self.assertEqual(found["Undo"], "This cannot be undone.")
+        self.assertEqual(found["What changes"], "Deletes the disk planted-disk-1 in resource group meternaut-test-rg. Nothing else changes.")
+        self.assertIn("Managed disk planted-disk-1, resource group meternaut-test-rg, subscription bbbbbbbb.", main.text())
+        self.assertIn("This change cannot be undone. Nothing is changed until you confirm here and sign in to Azure.", main.text())
+        self.assertNotIn("?", main.text())
+
+    def test_the_safe_button_is_the_main_one_and_it_is_a_plain_link_back_to_the_request(self):
+        (back,) = [a for a in self.reply.main.find_all("a") if a.text() == "No, go back"]
+        self.assertEqual((back.attrs["href"], back.classes()), ("/ok/plan0001", ["btn", "primary"]))
+        (yes,) = self.second_form().node.find_all("button")
+        self.assertEqual((yes.text(), yes.classes(), yes.attrs["name"], yes.attrs["value"]), (self.YES, ["danger"], "decision", "approve"))
+        self.assertEqual(self.console.get("/ok/plan0001").status, 200)
+        self.assertEqual((self.delegate.begins, self.console.store.decisions_of_plan("plan0001")), ([], []))
+
+    def test_the_form_carries_what_the_first_form_carried_and_the_word_that_the_person_saw_this_page(self):
+        second = self.second_form()
+        self.assertEqual((second.action, second.method), ("/ok/plan0001", "post"))
+        self.assertEqual(second.fields, {"code": "7F3K92QD", "nonce": self.form.fields["nonce"], "note": "Go on", "confirm": "yes"})
+
+    def test_confirming_starts_the_sign_in_with_the_same_code_token_and_note(self):
+        reply = self.console.submit(self.second_form(), self.YES, confirm=False)
+        self.assertEqual((reply.status, reply.headers["Location"]), (303, SIGNIN_URL))
+        self.assertEqual(self.delegate.begins, [dict(oid=TINO, plan_id="plan0001", code="7F3K92QD", nonce=self.form.fields["nonce"], note="Go on", hint="someone@example.com")])
+
+    def test_only_the_word_yes_counts(self):
+        for value in ("", "no", "true", "1", "YES"):
+            with self.subTest(confirm=value):
+                reply = self.console.post("/ok/plan0001", {**self.form.fields, "decision": "approve", "confirm": value})
+                self.assertEqual(reply.headings(1), ["Confirm: Delete the unattached disk planted-disk-1"])
+        self.assertEqual(self.delegate.begins, [])
+
+    def test_a_change_that_can_be_undone_goes_straight_to_the_sign_in(self):
+        self.console.store.plan_put(make_plan(family="resize-disk", undo="Resize the disk back to its old size within 24 hours."))
+        form = self.console.get("/ok/plan0001").form("/ok/plan0001", has_button=APPROVE)
+        reply = self.console.submit(form, APPROVE, confirm=False)
+        self.assertEqual((reply.status, reply.headers["Location"]), (303, SIGNIN_URL))
+        self.assertEqual(len(self.delegate.begins), 1)
+
+    def test_the_other_answers_to_a_delete_never_ask_again(self):
+        for button in ("Decline", "This is not mine", "Decide later"):
+            with self.subTest(button=button):
+                self.assertNotIn("Confirm:", self.console.submit(self.form, button, confirm=False).headings(1)[0])
+
+    def test_a_change_that_is_held_by_a_switch_is_refused_by_the_sign_in_step_as_before_and_not_confirmed_first(self):
+        self.console.store.switch_put(SwitchRecord("changes", True, "Otto", at(minutes=-5), "drill"))
+        reply = self.console.post("/ok/plan0001", {**self.form.fields, "decision": "approve"})
+        self.assertNotIn("Confirm:", reply.text)
+        self.assertEqual(len(self.delegate.begins), 1, "the sign-in step is reached and refuses it in its own words (here the stand-in lets it through, which is not the point)")
+
+    def test_a_person_who_may_not_answer_gets_the_refusal_and_never_the_page(self):
+        for who in (MAYA, STRANGER):
+            with self.subTest(who=who):
+                reply = self.console.post("/ok/plan0001", {**self.form.fields, "decision": "approve"}, oid=who)
+                self.assertEqual(reply.status, 403)
+                self.assertNotIn("Confirm:", reply.text)
+
+    def test_what_comes_from_the_estate_is_escaped_and_the_page_has_no_style_attribute_and_no_script(self):
+        hostile = '<img src=x onerror=alert(1)>'
+        self.console.store.case_put(make_case(plan_id="plan0001", resource_name=hostile))
+        self.console.store.plan_put(make_plan(resource_name=hostile, title=f"Delete the unattached disk {hostile}"))
+        form = self.console.get("/ok/plan0001").form("/ok/plan0001", has_button=APPROVE)
+        reply = self.console.submit(form, APPROVE, confirm=False, note=hostile)
+        self.assertEqual(reply.status, 200)
+        self.assertNotIn(hostile, reply.text)
+        self.assertEqual([n.tag for n in reply.root.walk() if n.tag in ("script", "img", "iframe")], [])
+        self.assertNotIn(" style=", reply.text)
+
+    def test_the_page_changes_nothing_and_has_the_headers_of_every_page(self):
+        before = snapshot(self.console.store)
+        self.console.submit(self.form, APPROVE, confirm=False)
+        self.assertEqual(snapshot(self.console.store), before)
+        self.assertEqual({name: self.reply.headers.get(name) for name in layout.SECURITY_HEADERS}, layout.SECURITY_HEADERS)
+        self.assertIn("Recommendations written by AI. A person approves every change.", self.reply.content)
 
 
 class TheSignInRedirect(unittest.TestCase):
@@ -857,13 +962,13 @@ class TheSignInRedirect(unittest.TestCase):
 
     def test_the_code_goes_on_as_the_form_sent_it(self):
         self.console.submit(self.form, APPROVE, code="WRONG")
-        self.console.post("/ok/plan0001", {"decision": "approve", "nonce": "tok"})
+        self.console.post("/ok/plan0001", {"decision": "approve", "nonce": "tok", "confirm": "yes"})
         self.assertEqual([call["code"] for call in self.delegate.begins], ["WRONG", ""])
         self.assertEqual(self.delegate.begins[1]["nonce"], "tok")
 
     def test_the_hint_is_the_name_in_the_header_of_the_platform_and_never_a_field_of_the_form(self):
         self.console.submit(self.form, APPROVE, **{"x-ms-client-principal-name": "evil@example.com", "hint": "evil@example.com", "login_hint": "evil@example.com"})
-        fields = {**self.form.fields, "decision": "approve"}
+        fields = {**self.form.fields, "decision": "approve", "confirm": "yes"}
         self.console.send("POST", "/ok/plan0001", form=fields, oid=None, headers={"x-ms-client-principal-id": TINO, "x-ms-client-principal-name": "tino@example.com"})
         self.console.send("POST", "/ok/plan0001", form=fields, oid=None, headers={"x-ms-client-principal-id": TINO})
         self.assertEqual([call["hint"] for call in self.delegate.begins], ["someone@example.com", "tino@example.com", ""])

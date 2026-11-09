@@ -10,12 +10,13 @@ from __future__ import annotations
 
 import re
 
-from ..brief import PAUSED_ADVICE, called_of
+from ..brief import PAUSED_ADVICE, Brief, called_of
 from ..models import ADVISE, DECLINE_REASONS, MAX_SIGNIN_PATH, DecideResult, PlanRecord
 from . import brief_page
 from .common import brief_of, may_answer, read
-from .core import MAX_NOTE, Ctx, Response, Safe, clean_line, fmt, link_part
-from .layout import SIGNIN_ORIGIN, link, message_page, paragraph
+from .core import MAX_NOTE, Ctx, Response, Safe, clean_line, fmt, join, link_part
+from .figures import title_of
+from .layout import SIGNIN_ORIGIN, button, form, head, hidden, link, message_page, notice, page, paragraph, summary
 
 REFUSED_ROLE = "I cannot take your OK on this request."
 PAUSED = brief_page.PAUSED
@@ -27,6 +28,7 @@ STATUS = {"declined": 200, "asked": 200, "not_mine": 200, "later": 200, "acknowl
           "azure_refused": 403, "failed": 502, "signin_failed": 400, "step_up_failed": 400, "refused_code": 409, "refused_state": 409, "refused_role": 403, "refused_paused": 409,
           "expired": 410, "duplicate": 409, "error": 500}
 WHY = "you answered a request on this page"
+CONFIRM_WHY = "you asked to approve a change that cannot be undone"
 ANSWERS = ("approve", "decline", "ask", "not_mine", "later")
 # What kind of news each result is, for the box that the page of the result puts its lines in: a change made is a success, an answer recorded or a change that was not needed is information, a
 # check that stopped a change, a sign-in that was not completed or an answer that cannot be taken now is a warning, and a refusal or a failure of Azure is an error.
@@ -213,8 +215,26 @@ def _begin(ctx: Ctx, plan_id: str, nonce: str) -> Response:
     return _to_sign_in(ctx, begun.location, plan_id)
 
 
+def confirm_page(ctx: Ctx, plan: PlanRecord, brief: Brief, code: str, nonce: str, note: str) -> Response:
+    """The second step before a change that cannot be undone: what would be lost, who does it and with whose rights, and two buttons, of which the safe one is the main one. Nothing is
+    recorded and nothing is changed until the person confirms here and then signs in to Azure. The form carries what the first form carried (the plan code, the one-time token and the
+    note) and the word that says that the person saw this page."""
+    called = called_of(plan.family)
+    _, title = title_of(brief)
+    back = ctx.url(f"/ok/{link_part(plan.plan_id)}")
+    yes = button(f"Yes, {called} it and sign in to Azure", name="decision", value="approve", kind="danger")
+    answer = form(back, hidden("code", code), hidden("nonce", nonce), hidden("note", note), hidden("confirm", "yes"),
+                  fmt('<div class="acts"><a class="btn primary" href="{back}">No, go back</a>{yes}</div>', back=back, yes=yes))
+    body = join([head(f"Confirm: {title}", "This change cannot be undone. Nothing is changed until you confirm here and sign in to Azure."),
+                 notice("warning", "This cannot be undone", brief.risk.text), summary(brief_page.consequences(brief)),
+                 fmt('<p class="m">{where}</p>', where=f"{brief.where.kind} {brief.where.name}, resource group {brief.where.group}, subscription {brief.where.subscription}."),
+                 answer])
+    return page(ctx, f"Confirm: {title}", body, ai=True, models=brief.models or None, why=CONFIRM_WHY)
+
+
 def _answer(ctx: Ctx, plan: PlanRecord, nonce: str, decision: str) -> Response:
-    """One answer of the form, after the checks that every answer shares. A change is approved at the sign-in to Azure; every other answer is the decider's."""
+    """One answer of the form, after the checks that every answer shares. A change is approved at the sign-in to Azure, and one that cannot be undone asks once more first; every other
+    answer is the decider's."""
     plan_id = plan.plan_id
     form_data = ctx.request.form
     note, reason = form_data.get("note", ""), form_data.get("reason", "")
@@ -225,6 +245,11 @@ def _answer(ctx: Ctx, plan: PlanRecord, nonce: str, decision: str) -> Response:
     if reason and reason not in DECLINE_REASONS:
         return render_plan(ctx, plan, values={"note": note}, errors={"reason": "Choose one of the reasons in the list."}, status=400)
     if decision == "approve" and plan.family != ADVISE:
+        if form_data.get("confirm") != "yes":
+            case, _ = read(lambda: ctx.store.case_get(plan.case_id), None)
+            brief = brief_of(ctx, plan, case, answerable=True)
+            if "approve" in brief.answers and not brief.undo.reversible:  # a request that cannot be approved now (paused, closed) is refused by `begin`, in its own words
+                return confirm_page(ctx, plan, brief, form_data.get("code", ""), nonce, note)
         return _begin(ctx, plan_id, nonce)
     return outcome(ctx, _call(lambda: ctx.services.decider.decide(ctx.principal, plan_id, decision, form_data.get("code", ""), nonce, note, reason)), plan_id)  # type: ignore[arg-type]
 

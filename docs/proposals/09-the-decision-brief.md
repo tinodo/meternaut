@@ -52,6 +52,8 @@ Text from the estate, from a tag, from a person or from a model passes one funct
 
 The buttons Explain, Challenge and Teach became one answer, "Ask or tell": a text box for a question, an objection or something to remember. It is recorded with the person's name and approves nothing.
 
+**An irreversible change asks twice.** A person once pressed the wrong answer and a delete ran after one press and the sign-in. Now "Approve and sign in to Azure" on a request whose undo says it cannot be undone (a delete) opens a second page first, "Confirm: <short title>": that this cannot be undone, what would be lost and where, and two buttons, "No, go back" (the main one, first) and "Yes, <delete> it and sign in to Azure". Nothing is recorded and nothing is changed before that second press and the sign-in. A change that can be undone (stop, resize, tier) and advice never ask, so the question keeps its weight. The one-time token and the note travel to the second page and come back with it. A person who posts the form with `confirm=yes` straight away skips the page; that is accepted, because the page guards against a slip and not against a client, and the token, the sign-in, the checks and the switches are unchanged.
+
 ## A finding that Meternaut may not change
 
 Such a finding (outside the one group where a change may be made, or of a kind with no change) now gets a plan of the family `advise`. It changes nothing in Azure and uses the same plan code, one-time token, expiry (72 hours) and decision record as every plan.

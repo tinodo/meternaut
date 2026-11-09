@@ -226,12 +226,19 @@ class Browser:
         self.seen.append(reply.text)
         return reply
 
-    def press_approve(self, plan_id):
+    def press_approve(self, plan_id, confirm=True):
+        """The person presses Approve. A change that cannot be undone is answered with the page that asks once more, and the person presses "Yes" there (unless `confirm` is False)."""
         page = self.send("GET", f"/ok/{plan_id}")
         assert page.status == 200, page.text
         form = page.form(f"/ok/{plan_id}", has_button=APPROVE)
         name, value = form.button_value(APPROVE)
-        return self.send("POST", f"/ok/{plan_id}", form={**form.fields, name: value})
+        reply = self.send("POST", f"/ok/{plan_id}", form={**form.fields, name: value})
+        second = next((f for f in reply.forms() if f.fields.get("confirm") == "yes"), None) if confirm and reply.status == 200 else None
+        if second is not None:
+            yes = next(label for _, _, label in second.buttons if label.startswith("Yes, "))
+            name, value = second.button_value(yes)
+            reply = self.send("POST", second.action, form={**second.fields, name: value})
+        return reply
 
 
 def watch(world, clock):

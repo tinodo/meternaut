@@ -299,7 +299,7 @@ class SignIn(unittest.TestCase):
     def test_an_approval_is_started_for_the_signed_in_person_and_never_for_one_named_in_the_form(self):
         console = seeded()
         form = console.get("/ok/plan0001").form("/ok/plan0001", has_button=APPROVE)
-        named = {**form.fields, "decision": "approve", "oid": MAYA, "x-ms-client-principal-id": MAYA}
+        named = {**form.fields, "decision": "approve", "confirm": "yes", "oid": MAYA, "x-ms-client-principal-id": MAYA}
         self.assertEqual(console.post("/ok/plan0001", named, oid=TINO).status, 303)
         self.assertEqual([call["oid"] for call in console.delegate.begins], [TINO])
         self.assertEqual(console.post("/ok/plan0001", {**form.fields, "decision": "approve", "oid": TINO}, oid=STRANGER).status, 403)

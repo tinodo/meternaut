@@ -485,15 +485,22 @@ class Console:
     def post(self, path: str, form: dict | None = None, **kwargs) -> Reply:
         return self.send("POST", path, form=form or {}, **kwargs)
 
-    def submit(self, form: Form, button: str | None = None, oid: str | None = TINO, **fields) -> Reply:
-        """Sends a form as a browser would: the fields that the form holds, then the changes, then the button that was pressed."""
+    def submit(self, form: Form, button: str | None = None, oid: str | None = TINO, confirm: bool = True, **fields) -> Reply:
+        """Sends a form as a browser would: the fields that the form holds, then the changes, then the button that was pressed. An approval of a change that cannot be undone is
+        answered with the page that asks once more; unless `confirm` is False the person presses "Yes" there too (the tests of that page look at it with `confirm=False`)."""
         data = dict(form.fields)
         data.update(fields)
         if button is not None:
             name, value = form.button_value(button)
             if name:
                 data[name] = value
-        return self.post(form.action, data, oid=oid)
+        reply = self.post(form.action, data, oid=oid)
+        if confirm and reply.status == 200 and "confirm" not in form.fields:
+            again = next((f for f in reply.forms() if f.fields.get("confirm") == "yes"), None)
+            if again is not None:
+                yes = next(label for _, _, label in again.buttons if label.startswith("Yes, "))
+                return self.submit(again, yes, oid=oid)
+        return reply
 
     def seed(self, *, plan=True, case=True, run=True) -> None:
         if run:

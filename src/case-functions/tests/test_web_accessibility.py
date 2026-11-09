@@ -90,6 +90,7 @@ def gallery() -> dict:
                  "/me/notes", "/ops", "/ops/runs", "/ops/runs?run=run00001", "/ops/runs?run=%3C", "/ops/permissions", "/ops/pause", "/nothing", "/ok/nothing", "/why/nothing"):
         pages[f"GET {path}"] = console.get(path)
     pages["busy decisions"] = busy().get("/")
+    pages["confirm"] = console.submit(console.get("/ok/plan0001").form("/ok/plan0001", has_button=APPROVE), APPROVE, confirm=False, note="Go on")
     pages["GET refused"] = console.get("/ok/plan0001", oid=MAYA)
     pages["GET wrong role"] = console.get("/ops/pause", oid=MAYA)
     pages["denied"] = console.get("/", oid=STRANGER)
