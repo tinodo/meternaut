@@ -17,7 +17,7 @@ from .common import brief_of, cases_by_id, effective_state, is_expired, may_answ
 from .core import Ctx, Response, Safe, esc, fmt, join, link_part, stamp
 from .figures import (NO_LINES, READ_LATER, RISKS, WEAKEST_FIRST, WHEN_JUDGED, Figure, a_year, bar, chart, chip, cost_of, dollars, figure_of, ids_known, risk_chip, series_of, spark, summed,
                       title_of)
-from .layout import code, details, notice, page, paragraph, table
+from .layout import code, details, kpi, kpis, notice, page, paragraph, table
 
 ROWS_SHOWN = 12  # the rows of each lane that the page shows, unless a person asks for all of them
 ROWS_MAX = 100
@@ -228,23 +228,18 @@ def _count(n: int, noun: str) -> str:
     return f"{n} {noun}{'' if n == 1 else 's'}"
 
 
-def _kpi(label: str, value: str, unit: str, note: str, good: bool = False) -> Safe:
-    return fmt('<li class="kpi{good}"><p class="k">{label}</p><p class="v">{value}{unit}</p><p class="n">{note}</p></li>', good=" good" if good else "", label=label, value=value,
-               unit=Safe(f"<small> {unit}</small>") if unit else Safe(""), note=note)
-
-
 def _summary(units: Sequence[Unit], measured: tuple[float, int]) -> Safe:
     saves = [u for u in units if u.figure.state == "save"]
     costs = [u for u in units if u.figure.state == "cost"]
     levels = ", ".join(w for w in WEAKEST_FIRST if w in {u.figure.level for u in saves})
-    ready = (_kpi("Ready to save", a_year(sum(u.figure.monthly for u in saves)), "a year", f"{_count(len(saves), 'decision')} · {levels}. The basis is in each row.", True)  # type: ignore[misc]
-             if saves else _kpi("Ready to save", "—", "", "No saving is known yet."))
-    under = (_kpi("Cost under review", a_year(sum(u.figure.monthly for u in costs)), "a year", f"{_count(len(costs), 'decision')} · saving not measured. Cost Management, 30 days.")  # type: ignore[misc]
-             if costs else _kpi("Cost under review", "—", "", "Nothing is under review."))
+    ready = (kpi("Ready to save", a_year(sum(u.figure.monthly for u in saves)), "a year", f"{_count(len(saves), 'decision')} · {levels}. The basis is in each row.", True)  # type: ignore[misc]
+             if saves else kpi("Ready to save", "—", "", "No saving is known yet."))
+    under = (kpi("Cost under review", a_year(sum(u.figure.monthly for u in costs)), "a year", f"{_count(len(costs), 'decision')} · saving not measured. Cost Management, 30 days.")  # type: ignore[misc]
+             if costs else kpi("Cost under review", "—", "", "Nothing is under review."))
     total, count = measured
-    done = (_kpi("Saving measured", a_year(total), "a year", f"{dollars(total)} a month, confirmed by Cost Management after {_count(count, 'change')}.", True)
-            if total > 0 else _kpi("Saving measured", "—", "", "Nothing measured yet. Cost lines arrive 8 to 72 hours after a change."))
-    return fmt('<ul class="kpis" aria-label="Summary">{ready}{under}{done}</ul>', ready=ready, under=under, done=done)
+    done = (kpi("Saving measured", a_year(total), "a year", f"{dollars(total)} a month, confirmed by Cost Management after {_count(count, 'change')}.", True)
+            if total > 0 else kpi("Saving measured", "—", "", "Nothing measured yet. Cost lines arrive 8 to 72 hours after a change."))
+    return kpis(ready, under, done)
 
 
 def _head(ctx: Ctx, units: Sequence[Unit], sort: str) -> Safe:

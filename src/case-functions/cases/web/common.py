@@ -9,6 +9,7 @@ from ..brief import Brief, build_brief
 from ..models import ADVISE, SWITCH_NAMES, ActionRecord, CaseRecord, DecisionRecord, PlanRecord, Principal, RunRecord, SwitchRecord
 from . import words
 from .core import Ctx, Safe, esc, fmt, join, link_part, number, parse_time, usd
+from .figures import chip
 from .layout import code, paragraph, summary
 
 T = TypeVar("T")
@@ -169,7 +170,7 @@ def case_rows(ctx: Ctx, cases: Iterable[CaseRecord]) -> list[list[object]]:
     rows: list[list[object]] = []
     for case in cases:
         rows.append([
-            resource_cell(case.resource_name, case.resource_type, case.resource_group), detector_cell(case.detector), words.case_status(case.status),
+            resource_cell(case.resource_name, case.resource_type, case.resource_group), detector_cell(case.detector), status_chip(case.status),
             words.recommendation_word(case.recommendation), confidence(case.confidence), figure(case.saving_usd_month), ctx.when(case.updated_at),
             fmt('<a href="{href}">Open<span class="visually-hidden"> the page of {name}</span></a>', href=ctx.url(f"/why/{link_part(case.case_id)}"),
                 name=case.resource_name),
@@ -177,10 +178,22 @@ def case_rows(ctx: Ctx, cases: Iterable[CaseRecord]) -> list[list[object]]:
     return rows
 
 
-def run_result(run: RunRecord) -> str:
+# The look of each status word of a case: a colour class and a shape (the guide: a chip is a word and a shape). A status that is not listed is shown as it is stored, as a plain chip.
+STATUS_LOOK = {"proposed": ("info", "square"), "needs_human": ("mid", "triangle"), "dropped": ("", "square"), "error": ("high", "diamond"), "awaiting_ok": ("info", "square"),
+               "approved": ("info", "square"), "running": ("info", "square"), "done": ("low", "circle"), "failed": ("high", "diamond"), "declined": ("", "square"),
+               "expired": ("", "square"), "verified": ("low", "circle"), "acknowledged": ("info", "square")}
+
+
+def status_chip(status: str) -> Safe:
+    kind, shape = STATUS_LOOK.get(status, ("", "square"))
+    return chip(words.case_status(status), kind, shape)
+
+
+def run_result(run: RunRecord) -> Safe:
+    """How a run ended, as a chip and, for a failure, the reason after it (the text reads "Failed: the reason")."""
     if not run.ok:
-        return f"Failed: {run.reason}" if run.reason else "Failed"
-    return "OK" if run.finished_at else "Started, not finished"
+        return fmt("{chip}{reason}", chip=chip("Failed", "high", "diamond"), reason=f": {run.reason}" if run.reason else "")
+    return chip("OK", "low", "circle") if run.finished_at else chip("Started, not finished", "info", "square")
 
 
 def count(value: object) -> str:

@@ -11,7 +11,8 @@ from ..models import SWITCH_NAMES, SwitchRecord
 from . import words
 from .common import CASE_HEADERS, case_rows, count, legend, read, run_result, switch_states
 from .core import ID, MAX_REASON, Ctx, Response, Safe, fmt, join, link_part, stamp
-from .layout import block, button, error_summary, field, form, hidden, items, link, message_page, notice, page, paragraph, table
+from .figures import chip
+from .layout import block, button, error_summary, field, form, head, hidden, items, kpi, kpis, link, message_page, notice, page, panel, paragraph, table
 
 PERMISSIONS_WHY = "your role lets you see how Meternaut is allowed to act"
 PAUSE_WHY = "your role ops lets you stop work at four levels"
@@ -24,14 +25,14 @@ CASES_SEARCHED = 1000
 
 
 def switch_text(ctx: Ctx, name: str, record) -> Safe:
-    """The state of one switch in words. A switch that cannot be read counts as pulled."""
+    """The state of one switch: a chip (Running, Paused, or Cannot be read) and, for a switch that is pulled, who pulled it, when and why. A switch that cannot be read counts as pulled."""
     if record is None:
-        return Safe("Cannot be read: treated as pulled.")
+        return fmt("{chip}: treated as pulled.", chip=chip("Cannot be read", "high", "diamond"))
     if not record.paused:
-        return Safe("Running.")
+        return chip("Running", "low", "circle")
     who = f" by {record.by}" if record.by else ""
     reason = f" Reason: {record.reason}" if record.reason else " No reason is recorded."
-    return fmt("Paused{who} on {when}.{reason}", who=who, when=ctx.when(record.at, "a time that is not recorded"), reason=reason)
+    return fmt("{chip}{who} on {when}.{reason}", chip=chip("Paused", "high", "diamond"), who=who, when=ctx.when(record.at, "a time that is not recorded"), reason=reason)
 
 
 def _switches_table(ctx: Ctx) -> Safe:
@@ -42,11 +43,27 @@ def _switches_table(ctx: Ctx) -> Safe:
     return table("switches", "State of each switch", ["Switch", "What it stops", "State"], rows, row_header=True)
 
 
+def _tiles(ctx: Ctx, runs: list, runs_ok: bool) -> Safe:
+    """Three tiles: how many switches run, how the latest run ended, and when the search looks next."""
+    states = switch_states(ctx)
+    pulled = [words.SWITCH[name][0] for name, record in states if record is None or record.paused]
+    switches = kpi("Switches", f"{len(states) - len(pulled)} of {len(states)}", "running", "Nothing is paused." if not pulled else f"Pulled: {', '.join(pulled)}.")
+    if not runs_ok:
+        latest = kpi("Latest run", "—", "", "The runs cannot be read.")
+    elif not runs:
+        latest = kpi("Latest run", "—", "", "The search has not run yet.")
+    else:
+        run = runs[0]
+        latest = kpi("Latest run", "Failed" if not run.ok else ("OK" if run.finished_at else "Not finished"), "",
+                     fmt("{when} · {cases} case{s}", when=ctx.when(run.started_at), cases=count(run.cases), s="" if run.cases == 1 else "s"))
+    return kpis(switches, latest, kpi("Next search", ctx.next_search(), "", "The search runs every day."), label="How Meternaut is running")
+
+
 def hub(ctx: Ctx) -> Response:
     runs, ok = read(lambda: ctx.store.runs_recent(5), [])
     parts: list[object] = [
-        Safe("<h1>Operations</h1>"),
-        paragraph("For the platform team: the switches, the latest runs and what Meternaut may change in Azure.", "lead"),
+        head("Operations", "For the platform team: the switches, the latest runs and what Meternaut may change in Azure."),
+        _tiles(ctx, runs, ok),
         Safe("<h2>The four switches</h2>"), _switches_table(ctx), paragraph(link(ctx.url("/ops/pause"), "Pause or resume work")),
         Safe("<h2>Latest runs</h2>"),
     ]
@@ -87,8 +104,7 @@ def runs_page(ctx: Ctx) -> Response:
     if selected:
         cases = [case for case in cases if case.run_id == selected]
     parts: list[object] = [
-        Safe("<h1>Runs and cases</h1>"),
-        paragraph("Every run of the search and every case that the runs looked at, newest first. This page shows what was found and what happened to it. It is not a cost report.", "lead"),
+        head("Runs and cases", "Every run of the search and every case that the runs looked at, newest first. This page shows what was found and what happened to it. It is not a cost report."),
         paragraph("A case is a resource in the subscription that the search found and that may be unused or too big. Meternaut only reads it and does not use it. "
                   "Nothing is changed until a person approves a plan."),
         paragraph("Money is in US dollars. An estimated saving is an estimate from cost lines of the last 30 days."),
@@ -119,9 +135,9 @@ def runs_page(ctx: Ctx) -> Response:
 
 def permissions(ctx: Ctx) -> Response:
     parts: list[object] = [
-        Safe("<h1>Standing permissions</h1>"),
-        paragraph("Meternaut holds no permission to change Azure. A change is made only after a person approves that exact change on its own page and signs in to Azure: "
-                  "it is made with that person's own permissions, and Azure refuses it if the person may not make it.", "lead"),
+        head("Standing permissions", "Meternaut holds no permission to change Azure."),
+        notice("info", "", "A change is made only after a person approves that exact change on its own page and signs in to Azure: "
+                          "it is made with that person's own permissions, and Azure refuses it if the person may not make it."),
         paragraph("This page only shows what exists. It cannot write, change or end a permission."),
         Safe("<h2>What Meternaut can change in Azure</h2>"),
         paragraph(fmt("On its own, nothing. The code makes only this change, and only for a person who approved it: {acts_on}.", acts_on=ctx.services.acts_on)),
@@ -136,21 +152,17 @@ def _switch_form(ctx: Ctx, name: str, record: SwitchRecord | None, errors: dict[
     action = "pause" if pause else "resume"
     reason = field(f"reason-{name}", "reason", "Reason (optional)", values.get("reason", "") if values.get("name") == name else "", hint=f"Up to {MAX_REASON} characters. It is kept with the last change of this switch.",
                    error=errors.get(f"reason-{name}", ""), maxlength=MAX_REASON)
-    return join([
-        fmt('<section aria-labelledby="switch-{name}"><h2 id="switch-{name}">{label}</h2>', name=name, label=label),
-        paragraph(fmt("<strong>State:</strong> {state}", state=switch_text(ctx, name, record))),
-        paragraph(fmt("<strong>What it stops:</strong> {stops}", stops=stops)),
-        form(ctx.url("/ops/pause"), hidden("name", name), hidden("action", action), hidden("nonce", ctx.nonce("pause")), reason,
-             fmt('<div class="actions">{b}</div>', b=button(f"{'Pause' if pause else 'Resume'} {button_word}", kind="danger" if pause else "primary"))),
-        Safe("</section>"),
-    ])
+    return panel(f"switch-{name}", label,
+                 paragraph(fmt("<strong>State:</strong> {state}", state=switch_text(ctx, name, record))),
+                 paragraph(fmt("<strong>What it stops:</strong> {stops}", stops=stops)),
+                 form(ctx.url("/ops/pause"), hidden("name", name), hidden("action", action), hidden("nonce", ctx.nonce("pause")), reason,
+                      fmt('<div class="acts">{b}</div>', b=button(f"{'Pause' if pause else 'Resume'} {button_word}", kind="danger" if pause else "primary"))))
 
 
 def pause_page(ctx: Ctx, *, banner: Safe | None = None, errors: dict[str, str] | None = None, values: dict[str, str] | None = None, status: int = 200) -> Response:
     errors, values = errors or {}, values or {}
     parts: list[object] = [
-        Safe("<h1>The kill switch</h1>"),
-        paragraph("Pull a switch to stop the work that is written under its name. A change that was already sent to Azure is not recalled. Resume lets the work start again.", "lead"),
+        head("The kill switch", "Pull a switch to stop the work that is written under its name. A change that was already sent to Azure is not recalled. Resume lets the work start again."),
         paragraph("Only the last change of each switch is kept, with the person, the time and the reason. Earlier changes are not kept."),
         paragraph("A switch that cannot be read counts as pulled."),
     ]
@@ -159,7 +171,7 @@ def pause_page(ctx: Ctx, *, banner: Safe | None = None, errors: dict[str, str] |
     if errors:
         parts.append(error_summary(list(errors.items())))
     states = dict(switch_states(ctx))
-    parts += [_switch_form(ctx, name, states.get(name), errors, values) for name in SWITCH_NAMES]
+    parts.append(fmt('<div class="grid">{panels}</div>', panels=join(_switch_form(ctx, name, states.get(name), errors, values) for name in SWITCH_NAMES)))
     return page(ctx, "The kill switch", join(block(p) for p in parts), current="/ops", status=status, why=PAUSE_WHY)
 
 

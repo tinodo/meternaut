@@ -15,7 +15,7 @@ import re
 from ..models import CHANNELS, SettingsRecord
 from .common import read
 from .core import Ctx, Response, Safe, canonical_zone, fmt, join, stamp
-from .layout import (JSON, block, button, choices, details, error_summary, field, form, hidden, link, message_page, notice, page, paragraph, respond)
+from .layout import (JSON, block, button, choices, details, error_summary, field, form, head, hidden, link, message_page, notice, page, panel, paragraph, respond)
 
 NOT_APPLIED = "Quiet hours are saved and not applied yet: a letter can arrive at any time."
 CHANNEL_HINT = "With only the weekly summary, no other letter is sent. A request that waits for your answer is on the Decisions page whatever you choose."
@@ -141,14 +141,14 @@ def settings_page(ctx: Ctx, *, values: dict[str, str] | None = None, errors: dic
     record, ok = read(lambda: ctx.store.settings_get(ctx.principal.oid), SettingsRecord(oid=ctx.principal.oid))  # type: ignore[union-attr]
     values = values if values is not None else _values(record, ctx.now)
     errors = errors or {}
-    parts: list[object] = [Safe("<h1>Settings</h1>"), paragraph("How and when I write to you. They are stored with your directory object id and nothing else about you.", "lead")]
+    parts: list[object] = [head("Settings", "How and when I write to you. They are stored with your directory object id and nothing else about you.")]
     if banner is not None:
         parts.append(banner)
     if not ok:
         parts.append(notice("warning", "Your settings cannot be read", "The values below are the starting values, not what you saved."))
     if errors:
         parts.append(error_summary([(key if key in OFFERED else "channel", message) for key, message in errors.items()]))
-    parts += [fmt('<div class="notice info" id="not-applied"><p>{text}</p></div>', text=NOT_APPLIED), _form(ctx, values, errors), _your_data(ctx)]
+    parts += [fmt('<div class="notice info" id="not-applied"><p>{text}</p></div>', text=NOT_APPLIED), panel("letters", "Your letters", _form(ctx, values, errors)), _your_data(ctx)]
     return page(ctx, "Settings", join(block(p) for p in parts), current="/me/settings", status=status, why="these are the settings that belong to you")
 
 

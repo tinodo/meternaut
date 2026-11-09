@@ -42,6 +42,16 @@ def rows(reply) -> dict[str, str]:
     return found
 
 
+def feed_lines(reply) -> list[tuple[str, str, str]]:
+    """The lines of the history: for each one the chip, the title or the count, and the quiet part (empty when the line has none)."""
+    found = []
+    for ul in reply.main.find_all("ul", class_="recent"):
+        for li in ul.find_all("li"):
+            texts = [child.text() for child in li.children if hasattr(child, "tag") and child.tag == "span"]
+            found.append(tuple((texts + ["", ""])[:3]))
+    return found
+
+
 def form_action_of(reply) -> list[str]:
     """The sources that the policy of a response allows for `form-action`."""
     for part in reply.headers["Content-Security-Policy"].split(";"):
@@ -200,11 +210,11 @@ class WithTheRealLoop(unittest.TestCase):
         self.assertEqual(rows(plan_page)["State"], "Done.")
         self.assertEqual(rows(plan_page)["Result"], "Deleted. Azure no longer lists the resource.")
         history = self.console.get("/history")
-        lines = [li.text() for li in history.main.find_all("li")]
-        self.assertIn(f"Tino approved: Delete the unattached disk planted-disk-1 in group {GROUP}.", lines)
-        self.assertIn(f"Change made: Delete the unattached disk planted-disk-1 in group {GROUP}. Deleted. Azure no longer lists the resource.", lines)
+        lines = feed_lines(history)
+        self.assertIn(("Approved", "Delete the unattached disk planted-disk-1", "Tino"), lines)
+        self.assertIn(("Change made", "Delete the unattached disk planted-disk-1", "Deleted. Azure no longer lists the resource."), lines)
         for old in ("/me/decisions", "/me/activity"):
-            self.assertEqual([li.text() for li in self.console.get(old).main.find_all("li")], lines, "the old addresses answer with the same page")
+            self.assertEqual(feed_lines(self.console.get(old)), lines, "the old addresses answer with the same page")
         notebook = self.console.get("/why/k1")
         self.assertEqual(rows(notebook)["State of the plan"], "Used. The change was made with the approver's own permissions, and a plan runs once.")
         self.assertIn("Nothing waits for you.", self.console.get("/").content)
@@ -338,8 +348,8 @@ class WithTheRealLoop(unittest.TestCase):
         self.assertEqual(self.console.store.case_get("k1").status, "declined")
         (record,) = self.console.store.decisions_of_plan(self.plan.plan_id)
         self.assertEqual((record.decision, record.note, record.reason), ("decline", "Not now", "handled"))
-        lines = [li.text() for li in self.console.get("/history").main.find_all("li")]
-        self.assertIn(f"Tino declined: Delete the unattached disk planted-disk-1 in group {GROUP}. Reason: it is already handled.", lines)
+        lines = feed_lines(self.console.get("/history"))
+        self.assertIn(("Declined", "Delete the unattached disk planted-disk-1", "Tino · reason: it is already handled"), lines)
 
     def test_a_person_who_is_not_named_is_refused_by_the_page_before_the_loop(self):
         self.assertEqual(self.console.get(self.path, oid=MAYA).status, 403)

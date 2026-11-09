@@ -443,9 +443,9 @@ class AnApprovalThatChangedNothing(unittest.TestCase):
     def test_the_history_does_not_say_that_a_change_was_made(self):
         world, plan, resource, action = self.nothing_to_do("stop-vm")
         reply = console_of(world, plan, world.store.case_get(plan.case_id)).get("/history")
-        lines = [li.text() for ul in reply.main.find_all("ul", class_="feed") for li in ul.find_all("li")]
-        self.assertTrue(any(line.startswith("Nothing was changed: Stop (deallocate) the virtual machine planted-vm-1") for line in lines), lines)
-        self.assertFalse(any(line.startswith("Change made:") for line in lines), lines)
+        lines = [tuple(c.text() for c in li.children if hasattr(c, "tag") and c.tag == "span") for ul in reply.main.find_all("ul", class_="recent") for li in ul.find_all("li")]
+        self.assertTrue(any(line[:1] == ("Nothing changed",) and line[1].startswith("Stop (deallocate) the virtual machine planted-vm-1") for line in lines), lines)
+        self.assertFalse(any(line[:1] == ("Change made",) for line in lines), lines)
 
     def test_a_change_that_was_made_still_reads_as_before(self):
         world = World()

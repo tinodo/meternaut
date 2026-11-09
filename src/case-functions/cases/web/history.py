@@ -1,58 +1,78 @@
-"""History, "What happened": a plain feed of the last 30 days, a line for each thing that happened, newest day first.
+"""History, "What happened": a feed of the last 30 days, newest day first, drawn from the style guide.
 
-Three kinds of line: what people decided (with their reason, for a decline), the changes that were made and checked, and, for each day, how many new findings there were. A
-person sees the decisions and the changes of the requests that they are named in, and the number of findings; the run tables and the cases are on the pages of the platform
-team (ops.py). The old addresses of "My decisions" and "What I did here" answer with this page.
+At the top three tiles count what happened (decisions, changes made, new findings). Under them each day is a list of lines, and a line is a chip that says what kind of thing it was, the title of
+the request as a link (or, for the findings of a day, how many) and one quiet part: who, why, or what came of it. Three kinds of line: what people decided (with their reason, for a decline),
+the changes that were made and checked, and, for each day, how many new findings there were. A person sees the decisions and the changes of the requests that they are named in, and the number
+of findings; the run tables and the cases are on the pages of the platform team (ops.py). The old addresses of "My decisions" and "What I did here" answer with this page.
 """
 from __future__ import annotations
 
 import datetime as dt
+from dataclasses import dataclass
 
 from ..brief import REASON_WORDS, plan_headline
 from ..models import ActionRecord, DecisionRecord, PlanRecord
 from .common import effective_state, may_answer, read
 from .core import Ctx, Response, Safe, fmt, join, link_part, stamp
-from .layout import block, link, notice, page, paragraph
+from .figures import chip, short_title
+from .layout import head, kpi, kpis, link, notice, page, paragraph
 
 DAYS = 30
 PLANS_READ = 40
 MAX_DECISION_AGE = 15  # a request is answered within days of its making; an older plan has nothing to say in the last 30 days
 COUNTED = ("proposed", "needs_human", "awaiting_ok", "approved", "running", "done", "failed", "declined", "expired", "verified", "acknowledged")
+# What kind of line it is, as the chip says it: the word, the colour class and the shape (the guide: a chip is a word and a shape, never a colour alone).
+KINDS = {"approved": ("Approved", "info", "square"), "worth": ("Worth acting on", "info", "square"), "declined": ("Declined", "", "square"), "not-worth": ("Not worth it", "", "square"),
+         "not-mine": ("Not theirs", "", "square"), "made": ("Change made", "low", "circle"), "unchanged": ("Nothing changed", "", "square"), "failed": ("Change not made", "high", "diamond"),
+         "checked": ("Checked", "low", "circle"), "expired": ("Expired", "", "square"), "closed": ("Closed", "", "square"), "search": ("Search", "info", "square")}
+DECISIONS = ("approved", "worth", "declined", "not-worth", "not-mine")
+
+
+@dataclass(frozen=True)
+class Event:
+    """One line of the feed: when, what kind (a key of KINDS), the main part, the quiet part, and how many findings it counts (a line of findings only)."""
+
+    at: str
+    kind: str
+    what: Safe | str
+    note: Safe | str = ""
+    count: int = 0
+
+
+def _title(plan: PlanRecord) -> str:
+    return short_title(plan_headline(plan), plan.resource_group)
 
 
 def _headline(ctx: Ctx, plan: PlanRecord) -> Safe:
-    return link(ctx.url(f"/ok/{link_part(plan.plan_id)}"), plan_headline(plan))
+    return link(ctx.url(f"/ok/{link_part(plan.plan_id)}"), _title(plan))
 
 
-def _decision_line(ctx: Ctx, plan: PlanRecord, decision: DecisionRecord) -> tuple[str, Safe] | None:
+def _decision_event(ctx: Ctx, plan: PlanRecord, decision: DecisionRecord) -> Event | None:
     advice = plan.family == "advise"
     who = decision.approver_name or "A person"
-    reason = REASON_WORDS.get(decision.reason, "")
     if decision.decision == "decline":
-        said = "said it is not worth acting on" if advice else "declined"
-        return decision.at, fmt("{who} {said}: {headline}.{reason}", who=who, said=said, headline=_headline(ctx, plan), reason=f" Reason: {reason}." if reason else "")
+        reason = REASON_WORDS.get(decision.reason, "")
+        return Event(decision.at, "not-worth" if advice else "declined", _headline(ctx, plan), fmt("{who}{reason}", who=who, reason=f" · reason: {reason}" if reason else ""))
     if decision.decision == "not_mine":
-        return decision.at, fmt("{who} said that this is not theirs: {headline}.", who=who, headline=_headline(ctx, plan))
+        return Event(decision.at, "not-mine", _headline(ctx, plan), who)
     if decision.decision == "approve":
-        said = "said it is worth acting on" if advice else "approved"
-        return decision.at, fmt("{who} {said}: {headline}.", who=who, said=said, headline=_headline(ctx, plan))
+        return Event(decision.at, "worth" if advice else "approved", _headline(ctx, plan), who)
     return None
 
 
-def _action_lines(ctx: Ctx, plan: PlanRecord, action: ActionRecord) -> list[tuple[str, Safe]]:
-    lines: list[tuple[str, Safe]] = []
+def _action_events(ctx: Ctx, plan: PlanRecord, action: ActionRecord) -> list[Event]:
+    events: list[Event] = []
     if action.finished_at and action.state in ("done", "verified", "unknown"):
-        made = "Nothing was changed" if action.no_change else "Change made"  # an approval that found nothing to change wrote nothing
-        lines.append((action.finished_at, fmt("{made}: {headline}. {result}", made=made, headline=_headline(ctx, plan), result=action.result)))
+        events.append(Event(action.finished_at, "unchanged" if action.no_change else "made", _headline(ctx, plan), action.result))  # an approval that found nothing to change wrote nothing
     elif action.finished_at and action.state == "failed":
-        lines.append((action.finished_at, fmt("Change not made: {headline}. {result}", headline=_headline(ctx, plan), result=action.error or action.result)))
+        events.append(Event(action.finished_at, "failed", _headline(ctx, plan), action.error or action.result))
     if action.verified_at:
         note = action.verification.get("note", "") if isinstance(action.verification, dict) else ""
-        lines.append((action.verified_at, fmt("Change checked: {headline}. {note}", headline=_headline(ctx, plan), note=note or "Cost lines confirm it.")))
-    return lines
+        events.append(Event(action.verified_at, "checked", _headline(ctx, plan), note or "Cost lines confirm it."))
+    return events
 
 
-def _events(ctx: Ctx, since: str) -> tuple[list[tuple[str, Safe]], bool]:
+def _events(ctx: Ctx, since: str) -> tuple[list[Event], bool]:
     """The lines of the feed, each with its time: the decisions and the changes of the requests that the person is named in, then the findings of each day."""
     plans, ok = read(lambda: ctx.store.plans_recent(100), [])
     old = stamp(ctx.now - dt.timedelta(days=DAYS + MAX_DECISION_AGE))
@@ -66,39 +86,58 @@ def _events(ctx: Ctx, since: str) -> tuple[list[tuple[str, Safe]], bool]:
                 mine.append(plan)
     mine = mine[:PLANS_READ]
     actions = {a.plan_id: a for a in read(lambda: ctx.store.actions_recent(100), [])[0]}
-    lines: list[tuple[str, Safe]] = []
+    events: list[Event] = []
     for plan in mine:
         for decision in read(lambda plan=plan: ctx.store.decisions_of_plan(plan.plan_id), [])[0]:
-            line = _decision_line(ctx, plan, decision)
-            if line is not None:
-                lines.append(line)
+            event = _decision_event(ctx, plan, decision)
+            if event is not None:
+                events.append(event)
         if plan.family != "advise" and plan.plan_id in actions:
-            lines += _action_lines(ctx, plan, actions[plan.plan_id])
+            events += _action_events(ctx, plan, actions[plan.plan_id])
         if effective_state(ctx, plan) == "expired":
-            lines.append((plan.expires_at, fmt("Nobody answered in time: {headline}.", headline=_headline(ctx, plan))))
+            events.append(Event(plan.expires_at, "expired", _headline(ctx, plan), "Nobody answered in time."))
     for found in quiet.values():
-        lines.append((max(found), fmt("Closed with no answer: {n} request{s} to look at a finding.", n=len(found), s="" if len(found) == 1 else "s")))
+        events.append(Event(max(found), "closed", f"{len(found)} request{'' if len(found) == 1 else 's'} to look at a finding", "Closed with no answer."))
     cases = read(lambda: ctx.store.cases_recent(1000), [])[0]
     per_day: dict[str, list[str]] = {}
     for case in cases:
         if case.status in COUNTED and case.first_seen_at >= since:
             per_day.setdefault(ctx.day_key(case.first_seen_at), []).append(case.first_seen_at)
     for found in per_day.values():
-        lines.append((max(found), fmt("{n} new finding{s}.", n=len(found), s="" if len(found) == 1 else "s")))
-    return [(at, line) for at, line in lines if at >= since], ok
+        events.append(Event(max(found), "search", f"{len(found)} new finding{'' if len(found) == 1 else 's'}", "", len(found)))
+    return [event for event in events if event.at >= since], ok
+
+
+def _line(event: Event) -> Safe:
+    label, kind, shape = KINDS[event.kind]
+    note = fmt('<span class="quiet">{note}</span>', note=event.note) if event.note else Safe("")
+    return fmt("<li>{chip}<span>{what}</span>{note}</li>", chip=chip(label, kind, shape), what=event.what, note=note)
+
+
+def _tiles(events: list[Event]) -> Safe:
+    decided = sum(1 for e in events if e.kind in DECISIONS)
+    made = sum(1 for e in events if e.kind == "made")
+    found = sum(e.count for e in events)
+    return kpis(kpi("Decisions", str(decided), "", f"Answers that people gave in the last {DAYS} days."),
+                kpi("Changes made", str(made), "", "Made in Azure with the approver's own rights."),
+                kpi("New findings", str(found), "", f"Found by the search in the last {DAYS} days."), label=f"The last {DAYS} days")
 
 
 def history(ctx: Ctx) -> Response:
     since = stamp(ctx.now - dt.timedelta(days=DAYS))
-    lines, ok = _events(ctx, since)
-    parts: list[object] = [Safe("<h1>What happened</h1>"), paragraph(f"The last {DAYS} days: what was decided, what was changed and checked, and how many new findings there were each day.", "lead")]
+    events, ok = _events(ctx, since)
+    parts: list[object] = [head("What happened", f"The last {DAYS} days: what was decided, what was changed and checked, and how many new findings there were each day.")]
     if not ok:
         parts.append(notice("error", "The history cannot be read", "I cannot read the requests now. Nothing has changed."))
-    if not lines:
+    if not events:
         parts.append(paragraph(f"Nothing has happened in the last {DAYS} days."))
-    days: dict[str, list[tuple[str, Safe]]] = {}
-    for at, line in sorted(lines, key=lambda item: item[0], reverse=True):
-        days.setdefault(ctx.day_key(at), []).append((at, line))
+    else:
+        parts.append(_tiles(events))
+    days: dict[str, list[Event]] = {}
+    for event in sorted(events, key=lambda item: item.at, reverse=True):
+        days.setdefault(ctx.day_key(event.at), []).append(event)
     for key in sorted(days, reverse=True):
-        parts += [fmt("<h2>{day}</h2>", day=ctx.day(days[key][0][0])), fmt('<ul class="feed">{rows}</ul>', rows=join(fmt("<li>{row}</li>", row=line) for _, line in days[key]))]
-    return page(ctx, "What happened", join(block(p) for p in parts), current="/history", ai=True, why="you are signed in and listed as a person who may use this page")
+        anchor = f"day-{link_part(key)}"
+        parts.append(fmt('<section aria-labelledby="{anchor}"><div class="sec"><h2 id="{anchor}">{day}</h2></div><ul class="recent">{rows}</ul></section>', anchor=anchor,
+                         day=ctx.day(days[key][0].at), rows=join(_line(event) for event in days[key])))
+    return page(ctx, "What happened", join(parts), current="/history", ai=True, why="you are signed in and listed as a person who may use this page")

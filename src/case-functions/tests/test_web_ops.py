@@ -9,6 +9,12 @@ APPROVE = "Approve and sign in to Azure"
 BUTTONS = ["Pause everything", "Pause changes", "Pause all messages", "Pause the investigation"]
 
 
+def _ancestors(node):
+    while node.parent is not None:
+        node = node.parent
+        yield node
+
+
 class TheOperationsPage(unittest.TestCase):
     """Operations: what the start page no longer carries (the switches, the latest runs, what Meternaut may change), for the role ops."""
 
@@ -22,7 +28,7 @@ class TheOperationsPage(unittest.TestCase):
         self.assertEqual(self.reply.headings(1), ["Operations"])
         self.assertEqual(self.reply.headings(2), ["The four switches", "Latest runs", "What Meternaut can change in Azure"])
         self.assertEqual([r["Switch"] for r in self.reply.table("switches").rows], ["Everything", "Changes", "All messages", "The investigation"])
-        self.assertEqual([r["State"] for r in self.reply.table("switches").rows], ["Running.", "Running.", "Running.", "Running."])
+        self.assertEqual([r["State"] for r in self.reply.table("switches").rows], ["Running", "Running", "Running", "Running"])
         self.assertEqual([r["What it stops"] for r in self.reply.table("switches").rows], [
             "No approval is accepted, no change is made in Azure and no message is sent.", "No approval is accepted and no change is made in Azure.", "No message is sent to anybody.",
             "The AI agents do not run and open no new case. Waste that Meternaut planted itself, approvals, changes and messages go on."])
@@ -152,7 +158,9 @@ class TheRunsPage(unittest.TestCase):
                       "Nothing is changed until a person approves a plan.", reply.content)
         self.assertIn("It is not a cost report.", reply.content)
         for node in reply.root.walk():
-            self.assertNotIn(node.tag, ("svg", "canvas", "img", "script", "video"))
+            if node.tag == "svg":
+                self.assertIn("chip", " ".join(p.attrs.get("class", "") for p in _ancestors(node)), "the only drawings are the shapes of the chips")
+            self.assertNotIn(node.tag, ("canvas", "img", "script", "video"))
         for word in ("chart", "dashboard", "graph"):
             self.assertNotIn(word, reply.content.lower())
 
@@ -257,7 +265,7 @@ class TheKillSwitchPage(unittest.TestCase):
         for overclaim in ("Every pull and resume is kept", "Other work goes on", "nothing else runs by itself", "The last change of each switch is kept"):
             self.assertNotIn(overclaim, self.page.content)
         self.assertIn("A switch that cannot be read counts as pulled.", self.page.content)
-        self.assertEqual(self.page.content.count("State: Running."), 4)
+        self.assertEqual(self.page.content.count("State: Running"), 4)
 
     def test_only_the_role_ops_may_open_it_and_pull_a_switch(self):
         for who in (MAYA, OWNER):

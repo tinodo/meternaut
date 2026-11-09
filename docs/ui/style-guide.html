@@ -191,7 +191,22 @@ nav.toc a{min-height:0;padding:0;border:0}
 
 <h3>Summary tile</h3>
 <div class="two"><div class="demo"><ul class="kpis"><li class="kpi good"><p class="k">Ready to save</p><p class="v">$3,255<small> a year</small></p><p class="n">3 decisions · Scenario, Expected. The basis is in each row.</p></li></ul></div>
-<ul><li>A label, one figure with its unit, one note. The page has three: Ready to save, Cost under review and Saving measured.</li><li>The figure is green only for a saving. Saving measured counts what Cost Management confirmed after a change, and nothing that was only expected.</li><li>No figure: show a dash, and put the reason in the note.</li></ul></div>
+<ul><li>A label, one figure with its unit, one note. The Decisions page has three: Ready to save, Cost under review and Saving measured.</li><li>The figure is green only for a saving. Saving measured counts what Cost Management confirmed after a change, and nothing that was only expected.</li><li>No figure: show a dash, and put the reason in the note.</li><li>A page of counts (What happened, Operations) uses the same tile with a count or a short word in place of a figure: a label, the number, one note. A tile of counts never shows money (Meternaut is not a cost report), and it is never green.</li></ul></div>
+
+<h3>Feed line</h3>
+<div class="demo"><ul class="recent">
+<li><span class="chip"><svg viewBox="0 0 12 12" aria-hidden="true"><rect x="2" y="2" width="8" height="8" rx="1.5"/></svg>Declined</span><span><a href="#components">Review the disk <code>build-disk-02</code></a></span><span class="quiet">Tino · reason: it is already handled</span></li>
+<li><span class="chip low"><svg viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="4"/></svg>Change made</span><span><a href="#components">Stop virtual machine <code>build-agent-03</code></a></span><span class="quiet">Stopped and released (deallocated).</span></li>
+<li><span class="chip info"><svg viewBox="0 0 12 12" aria-hidden="true"><rect x="2" y="2" width="8" height="8" rx="1.5"/></svg>Search</span><span>3 new findings</span></li>
+</ul></div>
+<ul><li>A line is a chip that says what kind of thing it was, the title of the request as a link (or a count, for findings) and one quiet part: who, why, or what came of it. Nothing else, no sentence that repeats the chip.</li><li>Lines are grouped by day under a heading of that day, newest first. The title is the one that the row and the request page show.</li></ul>
+
+<h3>Panel and grid</h3>
+<div class="demo"><div class="grid">
+<section class="panel"><h2>Changes</h2><p><strong>State:</strong> <span class="chip low"><svg viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="4"/></svg>Running</span></p><p><strong>What it stops:</strong> No approval is accepted and no change is made in Azure.</p></section>
+<section class="panel"><h2>All messages</h2><p><strong>State:</strong> <span class="chip high"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M6 1 11 6 6 11 1 6z"/></svg>Paused</span> by Otto</p><p><strong>What it stops:</strong> No message is sent to anybody.</p></section>
+</div></div>
+<ul><li>A panel is one thing that a person does or reads together: a group of settings, one switch, the answer to a request. It has a heading of its own, so a screen reader can reach it.</li><li>Panels that stand side by side are a grid: as many columns of at least 20rem as fit, one column on a narrow screen.</li><li>State is a chip (a word and a shape) and then, when there is more to say, who, when and why in plain words.</li></ul>
 
 <h3>Impact figure</h3>
 <p>The most important part of a row. It has three states, and a row is always in one of them. The yearly figure is large, the monthly figure is small, and the label says what kind of figure it is.</p>
@@ -308,13 +323,14 @@ nav.toc a{min-height:0;padding:0;border:0}
 <div class="table-wrap"><table><thead><tr><th scope="col">Means</th><th scope="col">State today</th></tr></thead><tbody>
 <tr><td>One stylesheet, <code>docs/ui/meternaut-ui.css</code>, that the pages of the app use as their only style</td><td>Built. The app carries the same text as <code>cases/web/style.py</code> (the web package reads no file), and every page uses it.</td></tr>
 <tr><td>The Decisions page drawn from it</td><td>Built into the app and deployed on 2026-11-09 (local run 316). The preview shows the same page with sample data.</td></tr>
-<tr><td>The request page drawn from it (the page behind "Review") and the pages that say what came of an answer</td><td>Built into the app on 2026-11-09 and tested; the figure, the chips and the chart of the request page are the same code as the rows of the Decisions page (<code>cases/web/figures.py</code>). The request page is deployed (local run 319); the pages that say what came of an answer are not yet.</td></tr>
+<tr><td>What happened, Operations (the hub, the kill switch, the standing permissions, the runs), Settings and Notes drawn from it</td><td>Built into the app on 2026-11-09 and tested, not yet deployed: a title and one sentence, tiles of counts, feed lines with chips, panels in a grid.</td></tr>
+<tr><td>The request page drawn from it (the page behind "Review") and the pages that say what came of an answer</td><td>Built into the app on 2026-11-09 and tested; the figure, the chips and the chart of the request page are the same code as the rows of the Decisions page (<code>cases/web/figures.py</code>). The request page and the pages that say what came of an answer are deployed (local runs 319 and 320).</td></tr>
 <tr><td>A test that fails when the app's page style differs from the file</td><td>Built: <code>tests/test_web_style.py</code>.</td></tr>
 <tr><td>A test that fails on a style attribute, a colour value or a pixel size in the code of a page, and on a class that the stylesheet does not have</td><td>Built: the same file.</td></tr>
 <tr><td>This guide served by the app itself at <code>/styleguide</code>, with the real stylesheet</td><td>Next.</td></tr>
-<tr><td>Every other page (History, Settings, Operations, letters, Teams cards) moved onto it, one at a time</td><td>The pages of the app already carry the stylesheet. Their words and layout follow the guide one page at a time, after the Decisions page, the request page and the pages that say what came of an answer.</td></tr>
+<tr><td>Every other page moved onto it, one at a time</td><td>Left: the letters and the Teams cards (being redrawn, see "Letters and cards" when it is there), the page of a person who may not answer, the denied page. The pages of the app already carry the stylesheet.</td></tr>
 </tbody></table></div>
-<p class="muted">Changes to this guide: version 1, 2026-11-09, first version; the same day, made to say what the Decisions page of the app does (levels on every saving, one chart in focus, the footer); and again that evening for the request page (the card, the answer panel, the wide layout).</p>
+<p class="muted">Changes to this guide: version 1, 2026-11-09, first version; the same day, made to say what the Decisions page of the app does (levels on every saving, one chart in focus, the footer); that evening for the request page (the card, the answer panel, the wide layout); and at night for the pages of counts and settings (tiles of counts, the feed line, the panel and the grid).</p>
 </main>
 <footer>
 <p>Meternaut style guide, version 1. Written with AI; checked by a person.</p>

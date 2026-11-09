@@ -763,7 +763,9 @@ class TheWholeWay(unittest.TestCase):
         again = self.console.get(self.path)
         self.assertEqual(again.status, 200)
         self.assertEqual([f for f in again.forms() if f.action == self.path], [])
-        self.assertIn("Tino said it is worth acting on", self.console.get("/history").content)
+        history = self.console.get("/history")
+        lines = [tuple(c.text() for c in li.children if hasattr(c, "tag") and c.tag == "span") for ul in history.main.find_all("ul", class_="recent") for li in ul.find_all("li")]
+        self.assertTrue(any(line[:1] == ("Worth acting on",) and line[2:] == ("Tino",) for line in lines), lines)
 
     def test_a_second_answer_with_the_old_form_changes_nothing(self):
         form = self.console.get(self.path).form(self.path)

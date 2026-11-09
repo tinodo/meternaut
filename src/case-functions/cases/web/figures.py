@@ -94,15 +94,20 @@ def series_reason(brief: Brief, case: CaseRecord | None) -> str:
     return READ_LATER if (cost_of(brief, case) or 0) > 0 else NO_LINES
 
 
+def short_title(headline: str, group: str = "") -> str:
+    """A headline as the title of a row, of a page and of a line of the history: without its place (the line under it says the place), with "Review" for "Look at"."""
+    place = f" in group {group}" if group else ""
+    text = headline[: -len(place)] if place and headline.endswith(place) else headline
+    return "Review " + text[8:] if text.startswith("Look at ") else text
+
+
 def title_of(brief: Brief) -> tuple[Safe, str]:
     """The title of one request as markup and as plain text: how many of what and where when it stands for many resources, else the headline without its place (the line under it says the
     place), with "Review" for "Look at" and the name of the resource in code type."""
     if brief.group is not None:
         text = things(brief.group.count, brief.group.kind, brief.group.groups)
         return esc(text), text
-    text, place = brief.headline, f" in group {brief.where.group}" if brief.where.group else ""
-    text = text[: -len(place)] if place and text.endswith(place) else text
-    text = "Review " + text[8:] if text.startswith("Look at ") else text
+    text = short_title(brief.headline, brief.where.group)
     name = brief.where.name
     before, found, after = text.partition(name) if name else (text, "", "")
     return (fmt("{before}<code>{name}</code>{after}", before=before, name=name, after=after) if found else esc(text)), text

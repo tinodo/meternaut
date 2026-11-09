@@ -9,7 +9,7 @@ from test_web_support import (MAYA, NOW, OPS, OWNER, SUB, TINO, VM, XSS, Console
                               snapshot)
 
 from cases.models import GROUP_FACT, SettingsRecord
-from cases.web import core, figures
+from cases.web import core, figures, history
 
 VM_ID = VM
 
@@ -751,25 +751,46 @@ class TheHistory(unittest.TestCase):
         self.reply = self.console.get("/history")
 
     def feed(self, reply):
-        days = reply.headings(2)
-        lists = [[li.text() for li in ul.find_all("li")] for ul in reply.main.find_all("ul", class_="feed")]
-        return dict(zip(days, lists))
+        """The lines of each day, newest day first: for each line the chip, the main part and the quiet part (empty when the line has none)."""
+        lists = [[tuple((spans(li) + ["", ""])[:3]) for li in ul.find_all("li")] for ul in reply.main.find_all("ul", class_="recent")]
+        return dict(zip(reply.headings(2), lists))
 
     def test_it_is_a_feed_grouped_by_day_newest_first(self):
         self.assertEqual(self.reply.headings(1), ["What happened"])
         self.assertEqual(self.reply.headings(2), ["Wed 4 Nov", "Tue 3 Nov", "Mon 2 Nov"])
         self.assertEqual(self.reply.root.find_all("table"), [], "no run table and no case table: they are on the Operations page")
 
-    def test_each_line_says_what_was_decided_changed_or_found(self):
+    def test_each_line_is_a_chip_a_title_and_one_quiet_part_that_says_who_why_or_what_came_of_it(self):
         feed = self.feed(self.reply)
         self.assertEqual(feed["Wed 4 Nov"], [
-            f"Tino declined: {HEADLINE}. Reason: it is already handled.",
-            "1 new finding.",
-            f"Change checked: {HEADLINE}. Cost lines show no cost."])
-        self.assertEqual(feed["Tue 3 Nov"], [f"Nobody answered in time: {HEADLINE}.",
-                                              "Tino said it is worth acting on: Consider changing the virtual machine oversized-vm-1 in group team-apps-rg."])
-        self.assertIn(f"Change made: {HEADLINE}. Deleted. Azure no longer lists the resource.", feed["Mon 2 Nov"])
-        self.assertIn(f"Tino approved: {HEADLINE}.", feed["Mon 2 Nov"])
+            ("Declined", TITLE, "Tino · reason: it is already handled"),
+            ("Search", "1 new finding", ""),
+            ("Checked", TITLE, "Cost lines show no cost.")])
+        self.assertEqual(feed["Tue 3 Nov"], [("Expired", TITLE, "Nobody answered in time."),
+                                              ("Worth acting on", "Consider changing the virtual machine oversized-vm-1", "Tino")])
+        self.assertIn(("Change made", TITLE, "Deleted. Azure no longer lists the resource."), feed["Mon 2 Nov"])
+        self.assertIn(("Approved", TITLE, "Tino"), feed["Mon 2 Nov"])
+
+    def test_a_chip_is_a_word_and_a_shape_and_every_kind_of_line_has_one(self):
+        for chip_ in self.reply.main.find_all("span", class_="chip") + self.reply.main.find_all("span", class_="chip low") + self.reply.main.find_all("span", class_="chip info"):
+            self.assertEqual(len(chip_.find_all("svg")), 1, "a shape beside the word")
+            self.assertEqual(chip_.find("svg").attrs.get("aria-hidden"), "true")
+        self.assertEqual(set(history.DECISIONS) - set(history.KINDS), set())
+        self.assertTrue(all(label and kind in ("", "low", "mid", "high", "info") and shape in figures.SHAPES for label, kind, shape in history.KINDS.values()))
+
+    def test_three_tiles_count_the_decisions_the_changes_and_the_findings_and_no_money(self):
+        (tiles,) = self.reply.main.find_all("ul", class_="kpis")
+        self.assertEqual(tiles.attrs["aria-label"], "The last 30 days")
+        found = [(li.find("p", class_="k").text(), li.find("p", class_="v").text(), li.find("p", class_="n").text()) for li in tiles.find_all("li")]
+        self.assertEqual(found, [("Decisions", "3", "Answers that people gave in the last 30 days."),
+                                 ("Changes made", "1", "Made in Azure with the approver's own rights."),
+                                 ("New findings", "3", "Found by the search in the last 30 days.")])
+        self.assertNotIn("$", tiles.text(), "Meternaut is not a cost report (rule 25): the tiles count things and add up no money")
+
+    def test_a_history_with_nothing_in_it_has_no_tiles(self):
+        reply = Console().get("/history")
+        self.assertEqual(reply.main.find_all("ul", class_="kpis"), [])
+        self.assertIn("Nothing has happened in the last 30 days.", reply.content)
 
     def test_the_count_of_the_advice_that_nobody_answered_is_not_cut_and_does_not_take_the_places_of_the_other_plans(self):
         store = self.console.store
@@ -777,8 +798,8 @@ class TheHistory(unittest.TestCase):
             store.case_put(make_advice_case(case_id=f"case6{n:03d}", resource_id=f"{VM_ID}-k{n}", resource_name=f"endpoint-k{n}", plan_id=f"plan6{n:03d}"))
             store.plan_put(make_advice(plan_id=f"plan6{n:03d}", case_id=f"case6{n:03d}", resource_id=f"{VM_ID}-k{n}", state="expired", created_at=at(days=-1, hours=-1), expires_at=at(days=-1)))
         feed = self.feed(self.console.get("/history"))
-        self.assertIn("Closed with no answer: 49 requests to look at a finding.", feed["Wed 4 Nov"])
-        self.assertIn(f"Tino declined: {HEADLINE}. Reason: it is already handled.", feed["Wed 4 Nov"], "the decisions of the other plans are still there")
+        self.assertIn(("Closed", "49 requests to look at a finding", "Closed with no answer."), feed["Wed 4 Nov"])
+        self.assertIn(("Declined", TITLE, "Tino · reason: it is already handled"), feed["Wed 4 Nov"], "the decisions of the other plans are still there")
 
     def test_a_line_that_names_a_request_links_to_its_page(self):
         self.assertIn("/ok/plan0001", self.reply.links())
@@ -790,9 +811,9 @@ class TheHistory(unittest.TestCase):
             store.case_put(make_advice_case(case_id=f"case5{n:03d}", resource_id=f"{VM_ID}-h{n}", resource_name=f"endpoint-h{n}", plan_id=f"plan5{n:03d}"))
             store.plan_put(make_advice(plan_id=f"plan5{n:03d}", case_id=f"case5{n:03d}", resource_id=f"{VM_ID}-h{n}", state="expired", created_at=at(days=-3), expires_at=at(days=-1, hours=-n)))
         feed = self.feed(self.console.get("/history"))
-        self.assertEqual(feed["Tue 3 Nov"][0], f"Nobody answered in time: {HEADLINE}.", "the change that expired is a line of its own")
-        self.assertIn("Closed with no answer: 3 requests to look at a finding.", feed["Wed 4 Nov"])
-        self.assertFalse([line for lines in feed.values() for line in lines if "Nobody answered in time: Consider" in line], feed)
+        self.assertEqual(feed["Tue 3 Nov"][0], ("Expired", TITLE, "Nobody answered in time."), "the change that expired is a line of its own")
+        self.assertIn(("Closed", "3 requests to look at a finding", "Closed with no answer."), feed["Wed 4 Nov"])
+        self.assertFalse([line for lines in feed.values() for line in lines if line[0] == "Expired" and line[1].startswith("Consider")], feed)
 
     def test_the_old_addresses_of_my_decisions_and_what_i_did_here_answer_with_the_same_page(self):
         for path in ("/me/decisions", "/me/activity"):
@@ -805,8 +826,12 @@ class TheHistory(unittest.TestCase):
         reply = self.console.get("/history", oid=MAYA)
         lines = [line for lines_ in self.feed(reply).values() for line in lines_]
         self.assertTrue(lines)
-        for line in lines:
-            self.assertRegex(line, r"^\d+ new findings?\.$")
+        for chip_, what, quiet in lines:
+            self.assertEqual(chip_, "Search")
+            self.assertRegex(what, r"^\d+ new findings?$")
+            self.assertEqual(quiet, "")
+        (tiles,) = reply.main.find_all("ul", class_="kpis")
+        self.assertEqual([li.find("p", class_="v").text() for li in tiles.find_all("li")][:2], ["0", "0"])
 
     def test_an_empty_history_says_so(self):
         reply = Console().get("/history")

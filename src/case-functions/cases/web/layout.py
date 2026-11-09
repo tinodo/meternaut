@@ -104,6 +104,28 @@ def details(label: str, *content: object) -> Safe:
     return fmt('<details class="more"><summary>{label}</summary><div>{content}</div></details>', label=label, content=join(block(c) for c in content))
 
 
+def head(title: str, lead: str = "", aside: object = "") -> Safe:
+    """The top of a page of the guide: the title, one sentence under it that says what the page holds, and at the right what the page offers (the links to sort it, for example)."""
+    sentence = fmt("<p>{lead}</p>", lead=lead) if lead else Safe("")
+    return fmt('<div class="head"><div><h1>{title}</h1>{sentence}</div>{aside}</div>', title=title, sentence=sentence, aside=aside)
+
+
+def kpi(label: str, value: str, unit: str = "", note: str = "", good: bool = False) -> Safe:
+    """A tile of the summary: a label, one figure with its unit and one note. It is green only for a saving (the guide)."""
+    return fmt('<li class="kpi{good}"><p class="k">{label}</p><p class="v">{value}{unit}</p><p class="n">{note}</p></li>', good=" good" if good else "", label=label, value=value,
+               unit=Safe(f"<small> {esc(unit)}</small>") if unit else Safe(""), note=note)
+
+
+def kpis(*tiles: Safe, label: str = "Summary") -> Safe:
+    """The tiles of the summary, side by side where there is room and one above the other where there is not."""
+    return fmt('<ul class="kpis" aria-label="{label}">{tiles}</ul>', label=label, tiles=join(tiles))
+
+
+def panel(anchor: str, title: str, *content: object) -> Safe:
+    """A grey panel with its own heading: one thing that a person does or reads together (a group of settings, one switch)."""
+    return fmt('<section class="panel" aria-labelledby="{anchor}"><h2 id="{anchor}">{title}</h2>{content}</section>', anchor=anchor, title=title, content=join(block(c) for c in content))
+
+
 def table(table_id: str, caption: str, headers: Sequence[str], rows: Sequence[Sequence[object]], *, row_header: bool = False, quiet_caption: bool = False) -> Safe:
     """A data table in a region that scrolls and can be reached with the keyboard. The first column is the row header when `row_header` is set; the caption is only for a screen reader
     when `quiet_caption` is set (the table sits under a heading that says the same)."""

@@ -12,7 +12,7 @@ import re
 from ..models import NOTE_KINDS, NoteRecord
 from .common import read
 from .core import MAX_NOTE, Ctx, Response, Safe, clean_line, fmt, join, link_part, parse_time, stamp
-from .layout import (block, button, choices, error_summary, field, form, hidden, message_page, notice, page, paragraph, table, textarea)
+from .layout import (block, button, choices, error_summary, field, form, head, hidden, message_page, notice, page, panel, paragraph, table, textarea)
 
 GUID = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
 # A resource group name does not end with a period. The rest is the id of one resource: a provider and at least one pair of type and name.
@@ -85,9 +85,8 @@ def notes_page(ctx: Ctx, *, values: dict[str, str] | None = None, errors: dict[s
     today = ctx.now.date()
     last = today + dt.timedelta(days=MAX_DAYS)
     parts: list[object] = [
-        Safe("<h1>What I know about your resources</h1>"),
-        paragraph("Here is everything that you told Meternaut about your resources. A note is about one resource and never more. Every note expires, and you can delete one "
-                  "at any time.", "lead"),
+        head("What I know about your resources", "Here is everything that you told Meternaut about your resources. A note is about one resource and never more. Every note expires, and you can delete "
+                                                  "one at any time."),
     ]
     if banner is not None:
         parts.append(banner)
@@ -102,8 +101,8 @@ def notes_page(ctx: Ctx, *, values: dict[str, str] | None = None, errors: dict[s
         token = ctx.nonce("note-delete")
         parts.append(table("notes", "Notes and marks, newest first", ["Kind", "Resource", "What you wrote", "How it was understood", "Source", "Added", "Expires", "Times used", "Delete"],
                            [_row(ctx, note, token) for note in notes]))
-    parts += [
-        Safe("<h2>Add a note or a do-not-touch mark</h2>"),
+    parts.append(panel(
+        "add-note", "Add a note or a do-not-touch mark",
         paragraph("A do-not-touch mark stops changes to that resource until it expires or you delete it. Only a person sets or clears it."),
         form(ctx.url("/me/notes"), hidden("nonce", ctx.nonce("note-add")),
              choices("kind", "What to add", "kind", KIND_WORDS, values.get("kind", "note"), error=errors.get("kind", "")),
@@ -112,8 +111,7 @@ def notes_page(ctx: Ctx, *, values: dict[str, str] | None = None, errors: dict[s
              textarea("text", "text", "What you know", values.get("text", ""), hint=f"Up to {MAX_NOTE} characters.", error=errors.get("text", ""), maxlength=MAX_NOTE),
              field("expires", "expires", "Expires on", values.get("expires", ""), kind="date", hint=f"Required. From {today.isoformat()} up to {last.isoformat()}.",
                    error=errors.get("expires", ""), required=True, attrs={"min": today.isoformat(), "max": last.isoformat()}),
-             fmt('<div class="actions">{b}</div>', b=button("Save", kind="primary"))),
-    ]
+             fmt('<div class="actions">{b}</div>', b=button("Save", kind="primary")))))
     return page(ctx, "What I know about your resources", join(block(p) for p in parts), current="/me/settings", status=status, why="these are the notes that you wrote")
 
 
