@@ -669,6 +669,8 @@ class Cases(unittest.TestCase):
         self.assertRegex(flex, r"triggers: \{\n\s+http: \{\n\s+perInstanceConcurrency: 50\n\s+\}\n\s+\}",
                          "a Python app on Flex Consumption has an HTTP concurrency of one by default (Learn), and with one instance at the most the platform let one request reach the app a minute: the host log of 2026-11-08 has no two requests less than 60 seconds apart")
         self.assertIn("instanceMemoryMB: 2048", flex)
+        self.assertRegex(flex, r"siteUpdateStrategy: \{\n\s+type: 'RollingUpdate'\n\s+\}",
+                         "the default, Recreate, stops the run that is in progress when a site update comes (a deployment, a tag, a setting): the Watch of 2026-11-09 06:47 UTC was lost that way")
         self.assertNotIn("alwaysReady", self.code, "no always-ready instance: the app scales to zero and bills nothing while it is idle")
         self.assertRegex(flex, r"runtime: \{\n\s+name: 'python'\n\s+version: '3.13'\n\s+\}")
         self.assertEqual(self.found["deploymentContainer"][0], "Microsoft.Storage/storageAccounts/blobServices/containers")

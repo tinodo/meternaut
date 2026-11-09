@@ -493,6 +493,12 @@ resource functionApp 'Microsoft.Web/sites@2024-04-01' = {
         name: 'python'
         version: '3.13'
       }
+      // A site update (a deployment, a tag, a setting) restarts the instances, and the default, Recreate, ends the run that is in progress: ten minutes after the tags were written the platform
+      // drained the instance of a Watch and stopped it four minutes later, and the run was lost (2026-11-09). A rolling update lets it finish, up to 60 minutes (Learn, "Site update strategies in Flex Consumption").
+      // The Bicep types of the API versions do not list the property yet, so the compiler warns (BCP037) and still writes it; the platform takes it from API version 2023-12-01 on.
+      siteUpdateStrategy: {
+        type: 'RollingUpdate'
+      }
     } : null
     siteConfig: {
       linuxFxVersion: isFlex ? null : 'PYTHON|3.13'
