@@ -28,6 +28,11 @@ STATUS = {"declined": 200, "asked": 200, "not_mine": 200, "later": 200, "acknowl
           "expired": 410, "duplicate": 409, "error": 500}
 WHY = "you answered a request on this page"
 ANSWERS = ("approve", "decline", "ask", "not_mine", "later")
+# What kind of news each result is, for the box that the page of the result puts its lines in: a change made is a success, an answer recorded or a change that was not needed is information, a
+# check that stopped a change, a sign-in that was not completed or an answer that cannot be taken now is a warning, and a refusal or a failure of Azure is an error.
+TONE = {"ran": "success", "ran_unconfirmed": "info", "running": "info", "unchanged": "info", "stopped": "warning", "azure_refused": "error", "failed": "error", "signin_failed": "warning",
+        "step_up_failed": "warning", "declined": "info", "asked": "info", "not_mine": "info", "later": "info", "acknowledged": "info", "refused_code": "warning", "refused_state": "warning",
+        "refused_paused": "warning", "expired": "warning", "duplicate": "info", "error": "error"}
 
 
 def _base(ctx: Ctx, plan_id: str) -> str:
@@ -112,7 +117,7 @@ def outcome(ctx: Ctx, result: DecideResult, plan_id: str | None) -> Response:
     kind = result.kind if result.kind in STATUS else "error"
     status = STATUS[kind]
     back = _back(ctx, plan_id)
-    show = lambda title, *lines, back_to=back: message_page(ctx, status, title, *lines, back=back_to, ai=True, why=WHY)  # noqa: E731
+    show = lambda title, *lines, back_to=back: message_page(ctx, status, title, *lines, back=back_to, ai=True, why=WHY, kind=TONE.get(kind, "info"))  # noqa: E731
     text = clean_line(result.message)[:400]
     history = paragraph(link(ctx.url("/history"), "See the history"))
     if kind == "ran":

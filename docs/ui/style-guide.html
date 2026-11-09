@@ -255,6 +255,7 @@ nav.toc a{min-height:0;padding:0;border:0}
 <div class="notice warning"><p class="notice-title">Needs a look</p><p>The check before the change could not read the machine.</p></div>
 <div class="notice error" role="alert"><p class="notice-title">Nothing was changed</p><p>Azure refused the request.</p></div>
 </div>
+<ul><li>A notice says what kind of news it is in words (its title) and in its edge and colour. The kinds: information (an answer recorded, a change that was not needed), success (a change made), warning (a check stopped a change, a sign-in was not completed, an answer cannot be taken now) and error (Azure refused, or the change failed).</li><li>The page that says what came of an answer is the title, one notice of the kind of news it is (with no title of its own, because the title of the page is it), and one main button back.</li></ul>
 
 <h3>The AI line in the footer</h3>
 <div class="demo"><footer class="bare"><p>Recommendations written by AI. A person approves every change.</p><details><summary>About this page</summary><p>Two AI agents, the Investigator and the Skeptic, wrote what you see. Code checked every figure against Cost Management and Azure. You see this page because you are listed as an approver. Responsible for Meternaut: Tino (owner@example.com).</p></details></footer></div>
@@ -307,11 +308,11 @@ nav.toc a{min-height:0;padding:0;border:0}
 <div class="table-wrap"><table><thead><tr><th scope="col">Means</th><th scope="col">State today</th></tr></thead><tbody>
 <tr><td>One stylesheet, <code>docs/ui/meternaut-ui.css</code>, that the pages of the app use as their only style</td><td>Built. The app carries the same text as <code>cases/web/style.py</code> (the web package reads no file), and every page uses it.</td></tr>
 <tr><td>The Decisions page drawn from it</td><td>Built into the app and deployed on 2026-11-09 (local run 316). The preview shows the same page with sample data.</td></tr>
-<tr><td>The request page drawn from it (the page behind "Review")</td><td>Built into the app on 2026-11-09 and tested; its figure, chips and chart are the same code as the rows of the Decisions page (<code>cases/web/figures.py</code>).</td></tr>
+<tr><td>The request page drawn from it (the page behind "Review") and the pages that say what came of an answer</td><td>Built into the app on 2026-11-09 and tested; the figure, the chips and the chart of the request page are the same code as the rows of the Decisions page (<code>cases/web/figures.py</code>). The request page is deployed (local run 319); the pages that say what came of an answer are not yet.</td></tr>
 <tr><td>A test that fails when the app's page style differs from the file</td><td>Built: <code>tests/test_web_style.py</code>.</td></tr>
 <tr><td>A test that fails on a style attribute, a colour value or a pixel size in the code of a page, and on a class that the stylesheet does not have</td><td>Built: the same file.</td></tr>
 <tr><td>This guide served by the app itself at <code>/styleguide</code>, with the real stylesheet</td><td>Next.</td></tr>
-<tr><td>Every other page (History, Settings, Operations, the pages that say what came of an answer, letters, Teams cards) moved onto it, one at a time</td><td>The pages of the app already carry the stylesheet. Their words and layout follow the guide one page at a time, after the Decisions page and the request page.</td></tr>
+<tr><td>Every other page (History, Settings, Operations, letters, Teams cards) moved onto it, one at a time</td><td>The pages of the app already carry the stylesheet. Their words and layout follow the guide one page at a time, after the Decisions page, the request page and the pages that say what came of an answer.</td></tr>
 </tbody></table></div>
 <p class="muted">Changes to this guide: version 1, 2026-11-09, first version; the same day, made to say what the Decisions page of the app does (levels on every saving, one chart in focus, the footer); and again that evening for the request page (the card, the answer panel, the wide layout).</p>
 </main>

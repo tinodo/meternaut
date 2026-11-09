@@ -586,6 +586,23 @@ class EveryKindOfResult(unittest.TestCase):
                     self.assertEqual(reply.forms(), [])
                     self.assertNotIn("Location", reply.headers)
 
+    def test_a_result_is_a_box_of_the_kind_of_news_it_is_and_the_way_back_is_a_button(self):
+        self.assertEqual(set(approval.TONE), set(KINDS) - {"refused_role"}, "a refusal of the role is the plain page of its own")
+        roles = {"success": "status", "error": "alert"}
+        for route in self.routes:
+            for kind in KINDS:
+                if kind == "refused_role":
+                    continue
+                with self.subTest(route=route.__name__, kind=kind):
+                    reply = route(kind)
+                    (box,) = [node for node in reply.main.find_all("div") if "notice" in node.classes()]
+                    self.assertEqual(box.classes(), ["notice", approval.TONE[kind]])
+                    self.assertEqual(box.attrs.get("role"), roles.get(approval.TONE[kind]))
+                    self.assertIsNone(box.find("p", class_="notice-title"), "the title of the page is the title of the box")
+                    (back,) = [a for a in reply.main.find_all("a") if a.text().startswith("Back to")]
+                    self.assertEqual(back.classes(), ["btn", "primary"])
+        self.assertEqual([approval.TONE[kind] for kind in ("ran", "failed", "stopped", "declined")], ["success", "error", "warning", "info"])
+
     def test_the_back_link_goes_to_the_request_or_to_the_decisions(self):
         for route in self.routes:
             for kind in KINDS:

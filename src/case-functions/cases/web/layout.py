@@ -83,10 +83,10 @@ def code(text: object) -> Safe:
 
 
 def notice(kind: str, title: str, *body: object) -> Safe:
-    """A box with a title that says what it is in words (not by colour alone). `kind` is info, success, warning or error."""
+    """A box that says what it is in words (not by colour alone). `kind` is info, success, warning or error. Its title is a line of its own; a box with no title is only its lines."""
     role = {"error": ' role="alert"', "success": ' role="status"'}.get(kind, "")
-    return fmt('<div class="notice {kind}"{role}><p class="notice-title">{title}</p>{body}</div>', kind=kind, role=Safe(role), title=title,
-               body=join(block(b) for b in body))
+    heading = fmt('<p class="notice-title">{title}</p>', title=title) if title else Safe("")
+    return fmt('<div class="notice {kind}"{role}>{heading}{body}</div>', kind=kind, role=Safe(role), heading=heading, body=join(block(b) for b in body))
 
 
 def summary(rows: Sequence[tuple[str, object]]) -> Safe:
@@ -248,10 +248,15 @@ def page(ctx: Ctx, title: str, body: Safe, *, status: int = 200, current: str = 
     return respond(status, document, headers=headers)
 
 
-def message_page(ctx: Ctx, status: int, title: str, *lines: object, back: tuple[str, str] | None = None, ai: bool = False, why: str = "", current: str = "") -> Response:
-    """A short page: a title, a few lines, and a link back."""
-    back_link = paragraph(link(ctx.url(back[0]), back[1])) if back else Safe("")
-    body = fmt("<h1>{title}</h1>{lines}{back}", title=title, lines=join(block(line) for line in lines), back=back_link)
+def message_page(ctx: Ctx, status: int, title: str, *lines: object, back: tuple[str, str] | None = None, ai: bool = False, why: str = "", current: str = "", kind: str = "") -> Response:
+    """A short page: a title, a few lines, and a link back. With a `kind` (info, success, warning or error) the lines stand in a box that says what kind of news they are, and the way back is
+    a button, so that the page of what came of an answer reads as the guide's pages do."""
+    if kind:
+        way = fmt('<p class="acts"><a class="btn primary" href="{href}">{label}</a></p>', href=ctx.url(back[0]), label=back[1]) if back else Safe("")
+        body = fmt("<h1>{title}</h1>{box}{back}", title=title, box=notice(kind, "", *lines), back=way)
+    else:
+        back_link = paragraph(link(ctx.url(back[0]), back[1])) if back else Safe("")
+        body = fmt("<h1>{title}</h1>{lines}{back}", title=title, lines=join(block(line) for line in lines), back=back_link)
     return page(ctx, title, body, status=status, ai=ai, why=why, current=current)
 
 
