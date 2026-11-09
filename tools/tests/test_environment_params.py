@@ -628,7 +628,7 @@ class FirstCases(unittest.TestCase):
         planted = values(files["planted.parameters.json"])
         self.assertEqual((planted["plantedId"], planted["plantPublicIp"], planted["plantVm"]), ("demo", False, False))
         self.assertEqual(planted["plantedVmSize"], ep.PLANTED_VM_SIZE)
-        self.assertEqual(ep.PLANTED_VM_SIZE, "Standard_B2s", "the cheapest burstable size that has a smaller one in its series, so that resize-vm has a step to take (Standard_B1s)")
+        self.assertEqual(ep.PLANTED_VM_SIZE, "Standard_B4als_v2", "a size of the pilot's subscription that has a smaller one in its series, so that resize-vm has a step to take (Standard_B2als_v2)")
         files, _ = self.build(PLANTED_ID="r42", PLANT_PUBLIC_IP="TRUE")
         planted = values(files["planted.parameters.json"])
         self.assertEqual((planted["plantedId"], planted["plantPublicIp"], planted["plantVm"]), ("r42", True, False))

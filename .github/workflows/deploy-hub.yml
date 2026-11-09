@@ -67,7 +67,7 @@ on:
         required: false
         default: false
       plant_vm:
-        description: "Only with plant: also plant a virtual machine that nothing uses, so that the families of change that stop a machine and resize it can be shown on it: a Standard_B2s (tools/environment-params.py, PLANTED_VM_SIZE) with no public IP address, no account and no key, its network interface in the subnet snet-pe and an empty 4 GiB OS disk. At the price list of Sweden Central (the public Retail Prices API, read on 2026-11-08) it costs 0.0432 US dollars an hour while it runs, nothing for compute once it is stopped and released, and 0.0108 an hour after a resize to Standard_B1s; its OS disk adds 0.30 US dollars a month. The action deletes nothing, and a second planting makes a second machine under a new name."
+        description: "Only with plant: also plant a virtual machine that nothing uses, so that the families of change that stop a machine and resize it can be shown on it: a Standard_B4als_v2 (tools/environment-params.py, PLANTED_VM_SIZE) with no public IP address, no account and no key, its network interface in the subnet snet-pe and an empty 4 GiB OS disk. At the price list of Sweden Central (the public Retail Prices API, read on 2026-11-09) it costs 0.138 US dollars an hour while it runs, nothing for compute once it is stopped and released, and 0.0389 an hour after a resize to Standard_B2als_v2; its OS disk adds 0.30 US dollars a month. The action deletes nothing, and a second planting makes a second machine under a new name."
         type: boolean
         required: false
         default: false

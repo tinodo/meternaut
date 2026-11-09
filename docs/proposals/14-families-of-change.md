@@ -51,11 +51,11 @@ Prices are Sweden Central's, for Linux, from the public Retail Prices API, read 
 | `delete-disk` | `planted-disk-<id>`, an unattached Premium SSD of 4 GiB | 0.0011 | 0 |
 | `change-disk-tier` | the same kind of disk, from a second planting | 0.0011 | 0.0004 (Standard SSD) |
 | `delete-public-ip` | `planted-ip-<id>` (`--plant-public-ip`) | 0.0050 | 0 |
-| `stop-vm` | `planted-vm-<id>`, a Standard_B2s (`--plant-vm`) | 0.0432, and 0.0004 for its OS disk | 0.0004 |
-| `resize-vm` | the same machine | 0.0432 | 0.0108 (Standard_B1s) |
+| `stop-vm` | `planted-vm-<id>`, a Standard_B4als_v2 (`--plant-vm`) | 0.138, and 0.0004 for its OS disk | 0.0004 |
+| `resize-vm` | the same machine | 0.138 | 0.0389 (Standard_B2als_v2) |
 | `delete-idle-resource` | not proved in Azure | 0 | 0 |
 
-`python tools/hub-local.py plant --plant-vm --yes` plants the machine with its network interface in the subnet `snet-pe` and an empty 4 GiB OS disk: no public IP address, no account, no key. The action deletes nothing, and a full planting costs about 0.05 an hour. A Standard_B2s because the cheapest burstable size has no smaller one in its series. The OS disk is attached empty (`createOption: Attach`, no `osProfile`), so Azure should show the machine running with nothing on it: the template compiles, and that has not been tried. The planted network interface belongs to the machine, so it is not idle, and nothing plants a snapshot, a NAT gateway, a load balancer or a private endpoint: `delete-idle-resource` is tested on fakes and cannot change anything real yet.
+`python tools/hub-local.py plant --plant-vm --yes` plants the machine with its network interface in the subnet `snet-pe` and an empty 4 GiB OS disk: no public IP address, no account, no key. The action deletes nothing, and a full planting costs about 0.14 an hour while the machine runs. A Standard_B4als_v2 because the cheapest size has no smaller one in its series, and because the older Standard_B2s is not available to the pilot's subscription in Sweden Central (the first real planting, on 2026-11-09, was refused for it; prices of this size were read on that day). The OS disk is attached empty (`createOption: Attach`, no `osProfile`), so Azure should show the machine running with nothing on it: the template compiles, and that has not been tried. The planted network interface belongs to the machine, so it is not idle, and nothing plants a snapshot, a NAT gateway, a load balancer or a private endpoint: `delete-idle-resource` is tested on fakes and cannot change anything real yet.
 
 ## How a family is added
 

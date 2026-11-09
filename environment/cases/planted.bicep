@@ -8,9 +8,10 @@
 //  - the disk is the smallest Premium SSD size (P1, 4 GiB: 0.78 US dollars a month, about 0.0011 an hour). It is a Premium SSD, and not the smaller price of a Standard SSD, so that the family
 //    change-disk-tier has a tier to move it down from; a Standard SSD of that size is not moved, because a Standard HDD is billed from 32 GiB and would cost more;
 //  - a Standard public IP address is about 3.65 a month (plantPublicIp);
-//  - the machine (plantVm) is a Standard_B2s, which is billed 0.0432 US dollars an hour while it runs (Linux), nothing for compute once it is stopped and released, and 0.0108 an hour
-//    after a resize to Standard_B1s. Its OS disk is a Standard SSD of 4 GiB (0.30 a month), its network interface costs nothing, and it has no public IP address. It is not the cheapest
-//    burstable size (Standard_B1ls) because that one has no smaller size in its series, and then resize-vm would have nothing to show.
+//  - the machine (plantVm) is a Standard_B4als_v2, which is billed 0.138 US dollars an hour while it runs (Linux), nothing for compute once it is stopped and released, and 0.0389 an hour
+//    after a resize to Standard_B2als_v2. Its OS disk is a Standard SSD of 4 GiB (0.30 a month), its network interface costs nothing, and it has no public IP address. It is not the cheapest
+//    size (Standard_B2ts_v2, 0.0108 an hour) because that one has no smaller size in its series, and then resize-vm would have nothing to show; and the older Standard_B2s is not
+//    available to the subscription of the pilot in Sweden Central (the real run of 2026-11-09 was refused for it).
 // Nothing here is connected to anything but the machine's own disk and network interface. The machine has no operating system, no account and no key: its OS disk is an empty disk that is
 // attached as it is (createOption Attach, no osProfile), so there is nothing on it to sign in to. Deployed only by the workflow .github/workflows/deploy-hub.yml, action "plant"
 // (AGENTS.md rule 18).
@@ -35,7 +36,7 @@ param plantPublicIp bool = false
 param plantVm bool = false
 
 @description('The size of the planted virtual machine. tools/environment-params.py sets it: a burstable size that has a smaller one in its series, so that resize-vm has a step to take.')
-param plantedVmSize string = 'Standard_B2s'
+param plantedVmSize string = 'Standard_B4als_v2'
 
 @description('Short name of the workload, used in the name of the virtual network that the machine\'s network interface is in.')
 param workload string = 'meternaut'

@@ -1202,8 +1202,8 @@ class Planted(unittest.TestCase):
 
     def test_the_size_of_the_machine_has_a_smaller_one_in_its_series_so_that_the_resize_family_has_a_step(self):
         params = text("tools/environment-params.py")
-        self.assertIn('PLANTED_VM_SIZE = "Standard_B2s"', params)
-        self.assertIn("param plantedVmSize string = 'Standard_B2s'", self.code)
+        self.assertIn('PLANTED_VM_SIZE = "Standard_B4als_v2"', params)
+        self.assertIn("param plantedVmSize string = 'Standard_B4als_v2'", self.code)
 
 
 class CasesWorkflow(unittest.TestCase):
