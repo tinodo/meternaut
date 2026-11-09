@@ -8,7 +8,7 @@ from support import APP_ROOT
 from test_web_support import (MAYA, NOW, OPS, OWNER, SUB, TINO, VM, XSS, Console, FailingStore, at, make_action, make_advice, make_advice_case, make_case, make_decision, make_plan,
                               snapshot)
 
-from cases.models import GROUP_FACT, SettingsRecord
+from cases.models import GROUP_FACT, SettingsRecord, StoreError
 from cases.web import core, figures, history
 
 VM_ID = VM
@@ -782,10 +782,47 @@ class TheHistory(unittest.TestCase):
         (tiles,) = self.reply.main.find_all("ul", class_="kpis")
         self.assertEqual(tiles.attrs["aria-label"], "The last 30 days")
         found = [(li.find("p", class_="k").text(), li.find("p", class_="v").text(), li.find("p", class_="n").text()) for li in tiles.find_all("li")]
-        self.assertEqual(found, [("Decisions", "3", "Answers that people gave in the last 30 days."),
-                                 ("Changes made", "1", "Made in Azure with the approver's own rights."),
+        self.assertEqual(found, [("Decisions", "3", "Answers on the requests that you may answer, in the last 30 days."),
+                                 ("Changes made", "1", "Made in Azure on those requests, with the approver's own rights."),
                                  ("New findings", "3", "Found by the search in the last 30 days.")])
         self.assertNotIn("$", tiles.text(), "Meternaut is not a cost report (rule 25): the tiles count things and add up no money")
+
+    def tiles_of(self, reply):
+        (tiles,) = reply.main.find_all("ul", class_="kpis")
+        return {li.find("p", class_="k").text(): (li.find("p", class_="v").text(), li.find("p", class_="n").text()) for li in tiles.find_all("li")}
+
+    def test_a_count_that_rests_on_a_read_that_failed_is_a_dash_and_the_others_are_still_counted(self):
+        exact = self.tiles_of(self.reply)
+        for failing, dashed in (("plans_recent", {"Decisions", "Changes made"}), ("actions_recent", {"Changes made"}), ("decisions_of_plan", {"Decisions"}),
+                                ("cases_recent", {"New findings"})):
+            with self.subTest(failing=failing), mock.patch.object(self.console.store, failing, side_effect=StoreError("the store is down", 503)):
+                reply = self.console.get("/history")
+                self.assertEqual(reply.status, 200)
+                self.assertIn("cannot be read", reply.content)
+                for name, tile in self.tiles_of(reply).items():
+                    self.assertEqual(tile, ("—", "Cannot be read now.") if name in dashed else exact[name], name)
+
+    def test_a_count_that_the_page_reads_only_in_part_is_at_least_that_many_and_says_so(self):
+        exact = self.tiles_of(self.reply)
+        store = self.console.store
+        for n in range(history.PLANS_READ + 5):
+            store.plan_put(make_plan(plan_id=f"plan7{n:03d}", case_id=f"case7{n:03d}", state="consumed", created_at=at(days=-1, minutes=-n), expires_at=at(days=1)))
+            store.decision_put(make_decision(plan_id=f"plan7{n:03d}", at=at(days=-1, minutes=-n)))
+        tiles = self.tiles_of(self.console.get("/history"))
+        for name in ("Decisions", "Changes made"):
+            self.assertRegex(tiles[name][0], r"^\d+\+$", name)
+            self.assertEqual(tiles[name][1], "At least this many: the page reads only the latest records.")
+        self.assertEqual(tiles["New findings"], exact["New findings"], "the findings are read in full")
+
+    def test_a_store_that_holds_more_plans_than_the_page_asks_for_makes_the_counts_at_least_and_so_do_more_findings(self):
+        store = self.console.store
+        for n in range(history.PLANS_ASKED):
+            store.plan_put(make_plan(plan_id=f"plan8{n:03d}", case_id=f"case8{n:03d}", state="declined", approvers=("someone-else",), created_at=at(days=-1, minutes=-n)))
+        tiles = self.tiles_of(self.console.get("/history"))
+        self.assertRegex(tiles["Decisions"][0], r"^\d+\+$")
+        for n in range(history.CASES_ASKED):
+            store.case_put(make_case(case_id=f"case9{n:04d}", first_seen_at=at(days=-2), updated_at=at(minutes=-n - 1), plan_id=None))
+        self.assertRegex(self.tiles_of(self.console.get("/history"))["New findings"][0], r"^\d+\+$")
 
     def test_a_history_with_nothing_in_it_has_no_tiles(self):
         reply = Console().get("/history")

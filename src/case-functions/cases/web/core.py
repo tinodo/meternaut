@@ -214,7 +214,7 @@ def time_text(moment: dt.datetime, zone: dt.tzinfo | None) -> str:
 def usd(value: object) -> str:
     """Money as the records hold it: US dollars."""
     if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
-        return "no figure"
+        return "not known"
     return f"{value:,.2f} US dollars"
 
 

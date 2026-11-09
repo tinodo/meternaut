@@ -9,7 +9,7 @@ from ..brief import Brief, build_brief
 from ..models import ADVISE, SWITCH_NAMES, ActionRecord, CaseRecord, DecisionRecord, PlanRecord, Principal, RunRecord, SwitchRecord
 from . import words
 from .core import Ctx, Safe, esc, fmt, join, link_part, number, parse_time, usd
-from .figures import chip
+from .figures import a_year, chip, cost_of, dollars, figure_of
 from .layout import code, paragraph, summary
 
 T = TypeVar("T")
@@ -81,7 +81,7 @@ def _money_in(amount: object, currency: object) -> str:
     if currency in (None, "", "USD"):
         return usd(amount)
     if isinstance(amount, bool) or not isinstance(amount, (int, float)) or not math.isfinite(amount):
-        return "no figure"
+        return "not known"
     return f"{amount:,.2f} {currency}"
 
 
@@ -154,24 +154,31 @@ def detector_cell(detector: str) -> Safe:
     return fmt("{plain}<br><code>{id}</code>", plain=plain, id=detector) if plain else code(detector)
 
 
-def figure(value: object) -> str:
-    return usd(value) if value is not None else "not estimated"
-
-
 def confidence(value: object) -> str:
     return f"{value:.2f}" if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) else "none"
 
 
-CASE_HEADERS = ["Resource", "Found by", "Status", "Recommendation", "Confidence (0 to 1)", "Estimated saving a month", "Last updated", "Page"]
+def saving_cell(ctx: Ctx, case: CaseRecord) -> Safe:
+    """What a finding would save, said as the pages of the guide say it and from the same code: the figure a year, then its level, the month and its basis; or what it costs; or why no
+    figure can be shown. A figure never stands without its level and its basis (rule 13)."""
+    brief = brief_of(ctx, None, case)
+    figure = figure_of([brief.saving], [cost_of(brief, case)])
+    note = figure.note if figure.state == "save" or not brief.saving.specific else brief.saving.why_none
+    if figure.monthly is None:
+        return fmt('{label}<br><span class="muted">{note}</span>', label=figure.label, note=note)
+    return fmt('{year} a year<br><span class="muted">{label}. {month} a month. {note}</span>', year=a_year(figure.monthly), label=figure.label, month=dollars(figure.monthly), note=note)
+
+
+CASE_HEADERS = ["Resource", "Found by", "Status", "Recommendation", "Confidence (0 to 1)", "What it would save", "Last updated", "Page"]
 
 
 def case_rows(ctx: Ctx, cases: Iterable[CaseRecord]) -> list[list[object]]:
-    """The rows of a table of cases, in the order of CASE_HEADERS."""
+    """The rows of a table of findings, in the order of CASE_HEADERS."""
     rows: list[list[object]] = []
     for case in cases:
         rows.append([
             resource_cell(case.resource_name, case.resource_type, case.resource_group), detector_cell(case.detector), status_chip(case.status),
-            words.recommendation_word(case.recommendation), confidence(case.confidence), figure(case.saving_usd_month), ctx.when(case.updated_at),
+            words.recommendation_word(case.recommendation), confidence(case.confidence), saving_cell(ctx, case), ctx.when(case.updated_at),
             fmt('<a href="{href}">Open<span class="visually-hidden"> the page of {name}</span></a>', href=ctx.url(f"/why/{link_part(case.case_id)}"),
                 name=case.resource_name),
         ])

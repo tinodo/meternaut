@@ -271,14 +271,11 @@ def page(ctx: Ctx, title: str, body: Safe, *, status: int = 200, current: str = 
 
 
 def message_page(ctx: Ctx, status: int, title: str, *lines: object, back: tuple[str, str] | None = None, ai: bool = False, why: str = "", current: str = "", kind: str = "") -> Response:
-    """A short page: a title, a few lines, and a link back. With a `kind` (info, success, warning or error) the lines stand in a box that says what kind of news they are, and the way back is
-    a button, so that the page of what came of an answer reads as the guide's pages do."""
-    if kind:
-        way = fmt('<p class="acts"><a class="btn primary" href="{href}">{label}</a></p>', href=ctx.url(back[0]), label=back[1]) if back else Safe("")
-        body = fmt("<h1>{title}</h1>{box}{back}", title=title, box=notice(kind, "", *lines), back=way)
-    else:
-        back_link = paragraph(link(ctx.url(back[0]), back[1])) if back else Safe("")
-        body = fmt("<h1>{title}</h1>{lines}{back}", title=title, lines=join(block(line) for line in lines), back=back_link)
+    """A short page of the guide: a title, one box that says in its edge, its colour and its place what kind of news the lines are (information, success, warning or error; when the caller
+    does not say, the status decides: success below 300, error from 500, warning between), and one main button back."""
+    kind = kind or ("success" if status < 300 else "error" if status >= 500 else "warning")
+    way = fmt('<p class="acts"><a class="btn primary" href="{href}">{label}</a></p>', href=ctx.url(back[0]), label=back[1]) if back else Safe("")
+    body = fmt("<h1>{title}</h1>{box}{back}", title=title, box=notice(kind, "", *lines), back=way)
     return page(ctx, title, body, status=status, ai=ai, why=why, current=current)
 
 

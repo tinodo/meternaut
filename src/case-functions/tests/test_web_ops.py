@@ -100,18 +100,22 @@ class TheRunsPage(unittest.TestCase):
         self.assertEqual((by_start["Thu 5 Nov 2026 08:55 UTC"]["Result"], by_start["Thu 5 Nov 2026 08:55 UTC"]["Notes"]), ("Started, not finished", "a b"))
         self.assertEqual([row["Started"].split(" (")[0] for row in table.rows], ["Thu 5 Nov 2026 08:55 UTC", "Thu 5 Nov 2026 08:00 UTC", "Thu 5 Nov 2026 07:00 UTC"], "newest first")
 
-    def test_every_case_is_there_with_its_recommendation_confidence_and_estimated_saving_and_a_link_to_its_page(self):
+    def test_every_case_is_there_with_its_recommendation_confidence_and_what_it_would_save_and_a_link_to_its_page(self):
         reply = self.console.get("/ops/runs")
         table = reply.table("cases")
-        self.assertEqual(table.headers, ["Resource", "Found by", "Status", "Recommendation", "Confidence (0 to 1)", "Estimated saving a month", "Last updated", "Page"])
+        self.assertEqual(table.headers, ["Resource", "Found by", "Status", "Recommendation", "Confidence (0 to 1)", "What it would save", "Last updated", "Page"])
         self.assertEqual([r["Status"] for r in table.rows], ["Needs a person", "Proposed"], "most recently updated first")
         first = next(r for r in table.rows if r["Status"] == "Proposed")
         self.assertIn("planted-disk-1", first["Resource"])
         self.assertIn("Managed disk (microsoft.compute/disks)", first["Resource"])
         self.assertIn("Resource group meternaut-test-rg.", first["Resource"])
-        self.assertEqual((first["Recommendation"], first["Confidence (0 to 1)"], first["Estimated saving a month"]), ("Delete", "0.91", "7.17 US dollars"))
+        self.assertEqual((first["Recommendation"], first["Confidence (0 to 1)"]), ("Delete", "0.91"))
+        self.assertIn("$86 a year", first["What it would save"])
+        self.assertIn("Saves, Expected. $7.17 a month. Based on the cost lines of the last 30 days.", first["What it would save"], "a figure carries its level and its basis (rule 13)")
         second = next(r for r in table.rows if r["Status"] == "Needs a person")
-        self.assertEqual((second["Recommendation"], second["Confidence (0 to 1)"], second["Estimated saving a month"]), ("Investigate", "0.50", "not estimated"))
+        self.assertEqual((second["Recommendation"], second["Confidence (0 to 1)"]), ("Investigate", "0.50"))
+        self.assertIn("Costs, saving not measured. $7.17 a month.", second["What it would save"], "no saving is claimed where none was measured")
+        self.assertNotIn("Saves", second["What it would save"])
         self.assertIn("/why/case0001", reply.links())
         self.assertIn("/why/case0002", reply.links())
 
@@ -197,7 +201,8 @@ class TheRunsPage(unittest.TestCase):
         self.assertIn("something new", [r["Status"] for r in rows])
         row = next(r for r in rows if "oversized-thing" in r["Resource"])
         self.assertIn("Found by the Watch's own investigation", row["Found by"])
-        self.assertEqual((row["Status"], row["Recommendation"], row["Confidence (0 to 1)"], row["Estimated saving a month"]), ("Proposed", "Change", "0.85", "not estimated"))
+        self.assertEqual((row["Status"], row["Recommendation"], row["Confidence (0 to 1)"]), ("Proposed", "Change", "0.85"))
+        self.assertNotIn("Saves", row["What it would save"], "a finding with no saving of its own claims none, whatever the cost lines say")
 
     def test_only_the_role_ops_may_open_it(self):
         for who, status in ((TINO, 200), (OPS, 200), (OWNER, 403), (MAYA, 403), (STRANGER, 403)):

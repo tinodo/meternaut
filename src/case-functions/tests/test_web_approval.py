@@ -838,10 +838,9 @@ class TheConfirmationOfAChangeThatCannotBeUndone(unittest.TestCase):
     def test_it_says_what_is_lost_who_does_it_and_that_it_cannot_be_undone_without_a_question_mark(self):
         main = self.reply.main
         self.assertEqual([p.text() for p in main.find_all("p", class_="notice-title")], ["This cannot be undone"])
-        self.assertIn("If something still uses the disk, that use stops, and the data on it is lost for good.", main.find("div", class_="notice warning").text())
+        self.assertIn("If something still uses the disk, that use stops, and the data on it is lost for good. Risk: medium.", main.find("div", class_="notice warning").text())
         found = {dt.text(): dd.text() for dl in main.find_all("dl", class_="summary") for div in dl.find_all("div") for dt, dd in [(div.find("dt"), div.find("dd"))]}
-        self.assertEqual(list(found), ["What changes", "Who does it", "Checked again", "Undo", "What could go wrong"])
-        self.assertEqual(found["Undo"], "This cannot be undone.")
+        self.assertEqual(list(found), ["What changes", "Who does it", "Checked again"], "the undo and the risk are said once, in the notice")
         self.assertEqual(found["What changes"], "Deletes the disk planted-disk-1 in resource group meternaut-test-rg. Nothing else changes.")
         self.assertIn("Managed disk planted-disk-1, resource group meternaut-test-rg, subscription bbbbbbbb.", main.text())
         self.assertIn("This change cannot be undone. Nothing is changed until you confirm here and sign in to Azure.", main.text())
@@ -872,12 +871,22 @@ class TheConfirmationOfAChangeThatCannotBeUndone(unittest.TestCase):
                 self.assertEqual(reply.headings(1), ["Confirm: Delete the unattached disk planted-disk-1"])
         self.assertEqual(self.delegate.begins, [])
 
-    def test_a_change_that_can_be_undone_goes_straight_to_the_sign_in(self):
-        self.console.store.plan_put(make_plan(family="resize-disk", undo="Resize the disk back to its old size within 24 hours."))
-        form = self.console.get("/ok/plan0001").form("/ok/plan0001", has_button=APPROVE)
-        reply = self.console.submit(form, APPROVE, confirm=False)
-        self.assertEqual((reply.status, reply.headers["Location"]), (303, SIGNIN_URL))
-        self.assertEqual(len(self.delegate.begins), 1)
+    def test_a_change_that_can_be_undone_goes_straight_to_the_sign_in_and_every_delete_asks_first(self):
+        for family, asks in (("stop-vm", False), ("resize-vm", False), ("change-disk-tier", False), ("delete-disk", True), ("delete-public-ip", True), ("delete-idle-resource", True)):
+            with self.subTest(family=family):
+                delegate = ScriptedDelegate()
+                console = Console(delegate=delegate)
+                console.seed()
+                console.store.plan_put(make_plan(family=family))
+                form = console.get("/ok/plan0001").form("/ok/plan0001", has_button=APPROVE)
+                reply = console.submit(form, APPROVE, confirm=False)
+                if asks:
+                    self.assertEqual(reply.status, 200)
+                    self.assertTrue(reply.headings(1)[0].startswith("Confirm: "), reply.headings(1))
+                    self.assertEqual(delegate.begins, [])
+                else:
+                    self.assertEqual((reply.status, reply.headers["Location"]), (303, SIGNIN_URL))
+                    self.assertEqual(len(delegate.begins), 1)
 
     def test_the_other_answers_to_a_delete_never_ask_again(self):
         for button in ("Decline", "This is not mine", "Decide later"):

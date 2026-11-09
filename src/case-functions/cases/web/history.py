@@ -19,6 +19,7 @@ from .layout import head, kpi, kpis, link, notice, page, paragraph
 
 DAYS = 30
 PLANS_READ = 40
+PLANS_ASKED, ACTIONS_ASKED, CASES_ASKED = 100, 100, 1000  # what each read asks the store for: a window that holds more than that is read in part, and the page says so
 MAX_DECISION_AGE = 15  # a request is answered within days of its making; an older plan has nothing to say in the last 30 days
 COUNTED = ("proposed", "needs_human", "awaiting_ok", "approved", "running", "done", "failed", "declined", "expired", "verified", "acknowledged")
 # What kind of line it is, as the chip says it: the word, the colour class and the shape (the guide: a chip is a word and a shape, never a colour alone).
@@ -37,6 +38,16 @@ class Event:
     what: Safe | str
     note: Safe | str = ""
     count: int = 0
+
+
+@dataclass(frozen=True)
+class Feed:
+    """What the page could read: the lines, the sources that could not be read ("plans", "actions", "decisions", "cases"), and the sources that hold more of the window than the page reads.
+    A count that rests on a source that failed cannot be given, and one that rests on a source that was cut is at least that many."""
+
+    events: list[Event]
+    failed: frozenset[str]
+    cut: frozenset[str]
 
 
 def _title(plan: PlanRecord) -> str:
@@ -72,10 +83,16 @@ def _action_events(ctx: Ctx, plan: PlanRecord, action: ActionRecord) -> list[Eve
     return events
 
 
-def _events(ctx: Ctx, since: str) -> tuple[list[Event], bool]:
+def _events(ctx: Ctx, since: str) -> Feed:
     """The lines of the feed, each with its time: the decisions and the changes of the requests that the person is named in, then the findings of each day."""
-    plans, ok = read(lambda: ctx.store.plans_recent(100), [])
+    failed: set[str] = set()
+    cut: set[str] = set()
+    plans, ok = read(lambda: ctx.store.plans_recent(PLANS_ASKED), [])
+    if not ok:
+        failed.add("plans")
     old = stamp(ctx.now - dt.timedelta(days=DAYS + MAX_DECISION_AGE))
+    if len(plans) >= PLANS_ASKED and plans[-1].created_at >= old:  # the oldest plan that was read is still inside the window, so older ones may be as well
+        cut.add("plans")
     quiet: dict[str, list[str]] = {}  # the advice that nobody answered, for each day: one line, not one for each, and none of them takes a place of the plans that are read
     mine = []
     for plan in plans:
@@ -84,11 +101,21 @@ def _events(ctx: Ctx, since: str) -> tuple[list[Event], bool]:
                 quiet.setdefault(ctx.day_key(plan.expires_at), []).append(plan.expires_at)
             else:
                 mine.append(plan)
+    if len(mine) > PLANS_READ:
+        cut.add("plans")
     mine = mine[:PLANS_READ]
-    actions = {a.plan_id: a for a in read(lambda: ctx.store.actions_recent(100), [])[0]}
+    recent, ok = read(lambda: ctx.store.actions_recent(ACTIONS_ASKED), [])
+    if not ok:
+        failed.add("actions")
+    if len(recent) >= ACTIONS_ASKED and recent[-1].queued_at >= old:
+        cut.add("actions")
+    actions = {a.plan_id: a for a in recent}
     events: list[Event] = []
     for plan in mine:
-        for decision in read(lambda plan=plan: ctx.store.decisions_of_plan(plan.plan_id), [])[0]:
+        decisions, ok = read(lambda plan=plan: ctx.store.decisions_of_plan(plan.plan_id), [])
+        if not ok:
+            failed.add("decisions")
+        for decision in decisions:
             event = _decision_event(ctx, plan, decision)
             if event is not None:
                 events.append(event)
@@ -98,14 +125,18 @@ def _events(ctx: Ctx, since: str) -> tuple[list[Event], bool]:
             events.append(Event(plan.expires_at, "expired", _headline(ctx, plan), "Nobody answered in time."))
     for found in quiet.values():
         events.append(Event(max(found), "closed", f"{len(found)} request{'' if len(found) == 1 else 's'} to look at a finding", "Closed with no answer."))
-    cases = read(lambda: ctx.store.cases_recent(1000), [])[0]
+    cases, ok = read(lambda: ctx.store.cases_recent(CASES_ASKED), [])
+    if not ok:
+        failed.add("cases")
+    if len(cases) >= CASES_ASKED and cases[-1].updated_at >= since:  # a finding of the window was updated inside it, so the oldest finding that was read tells whether more are left out
+        cut.add("cases")
     per_day: dict[str, list[str]] = {}
     for case in cases:
         if case.status in COUNTED and case.first_seen_at >= since:
             per_day.setdefault(ctx.day_key(case.first_seen_at), []).append(case.first_seen_at)
     for found in per_day.values():
         events.append(Event(max(found), "search", f"{len(found)} new finding{'' if len(found) == 1 else 's'}", "", len(found)))
-    return [event for event in events if event.at >= since], ok
+    return Feed([event for event in events if event.at >= since], frozenset(failed), frozenset(cut))
 
 
 def _line(event: Event) -> Safe:
@@ -114,27 +145,39 @@ def _line(event: Event) -> Safe:
     return fmt("<li>{chip}<span>{what}</span>{note}</li>", chip=chip(label, kind, shape), what=event.what, note=note)
 
 
-def _tiles(events: list[Event]) -> Safe:
+def _tile(feed: Feed, label: str, count: int, note: str, rests_on: set[str]) -> Safe:
+    """One tile: the count, or a dash when a source that it rests on could not be read, or the count with a plus when a source that it rests on holds more than the page reads."""
+    if feed.failed & rests_on:
+        return kpi(label, "—", "", "Cannot be read now.")
+    if feed.cut & rests_on:
+        return kpi(label, f"{count}+", "", "At least this many: the page reads only the latest records.")
+    return kpi(label, str(count), "", note)
+
+
+def _tiles(feed: Feed) -> Safe:
+    events = feed.events
     decided = sum(1 for e in events if e.kind in DECISIONS)
     made = sum(1 for e in events if e.kind == "made")
     found = sum(e.count for e in events)
-    return kpis(kpi("Decisions", str(decided), "", f"Answers that people gave in the last {DAYS} days."),
-                kpi("Changes made", str(made), "", "Made in Azure with the approver's own rights."),
-                kpi("New findings", str(found), "", f"Found by the search in the last {DAYS} days."), label=f"The last {DAYS} days")
+    return kpis(_tile(feed, "Decisions", decided, f"Answers on the requests that you may answer, in the last {DAYS} days.", {"plans", "decisions"}),
+                _tile(feed, "Changes made", made, "Made in Azure on those requests, with the approver's own rights.", {"plans", "actions"}),
+                _tile(feed, "New findings", found, f"Found by the search in the last {DAYS} days.", {"cases"}), label=f"The last {DAYS} days")
 
 
 def history(ctx: Ctx) -> Response:
     since = stamp(ctx.now - dt.timedelta(days=DAYS))
-    events, ok = _events(ctx, since)
+    feed = _events(ctx, since)
     parts: list[object] = [head("What happened", f"The last {DAYS} days: what was decided, what was changed and checked, and how many new findings there were each day.")]
-    if not ok:
+    if "plans" in feed.failed:
         parts.append(notice("error", "The history cannot be read", "I cannot read the requests now. Nothing has changed."))
-    if not events:
+    elif feed.failed:
+        parts.append(notice("error", "Part of the history cannot be read", "I cannot read all of it now, so some lines and counts are missing. Nothing has changed."))
+    if not feed.events and not feed.failed:
         parts.append(paragraph(f"Nothing has happened in the last {DAYS} days."))
     else:
-        parts.append(_tiles(events))
+        parts.append(_tiles(feed))
     days: dict[str, list[Event]] = {}
-    for event in sorted(events, key=lambda item: item.at, reverse=True):
+    for event in sorted(feed.events, key=lambda item: item.at, reverse=True):
         days.setdefault(ctx.day_key(event.at), []).append(event)
     for key in sorted(days, reverse=True):
         anchor = f"day-{link_part(key)}"
