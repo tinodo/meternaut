@@ -857,9 +857,9 @@ class TheBuildScriptInTheOperator(unittest.TestCase):
                                            "the libraries are made in the container")
         self.assertTrue([name for name in self.expected_sources("cases") if name.startswith("cases/web/")], "the cases package has a sub-package, and the build copies it")
 
-    # What the archive of the sources of this repository measured on 2026-11-09, after the Decisions page was built from the style guide (94 files, 1,461,376 bytes, as the script made it; 302,601 with
-    # the 92 files before it), and the room that more sources may take before this test asks for a decision.
-    SOURCES_ARCHIVE_MEASURED = 312_300
+    # What the archive of the sources of this repository measured on 2026-11-10, after the pages, the confirmation, the letters and the cards were redrawn from the style guide (318,835 bytes; it
+    # measured 312,300 on 2026-11-09 with 94 files, and 302,601 with the 92 files before them), and the room that more sources may take before this test asks for a decision.
+    SOURCES_ARCHIVE_MEASURED = 318_900
     SOURCES_ARCHIVE_MARGIN = 5_000
 
     def sources_archive(self, fresh=False):
