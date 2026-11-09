@@ -380,6 +380,14 @@ class TheWords(unittest.TestCase):
                          "happy to help", "great question", "awesome", "simply", "just click", "dive into"):
                 self.assertNotIn(word, text, f"{name}: {word}")
 
+    def test_no_page_uses_a_word_that_the_guide_forbids(self):
+        """The guide (section 7) says kind, request, finding and "checked again", never family, plan, case, lead, gate, digest or re-check, and never "No figure" or "Talk to a person"."""
+        forbidden = re.compile(r"(?<![\w-])(?:family|families|plans?|cases?|leads?|gates?|digests?|re-check(?:s|ed)?|no figure|talk to a person)(?![\w-])", re.I)
+        for name, reply in self.pages.items():
+            with self.subTest(page=name):
+                text = re.sub(r"App Service plans?", "", reply.content)  # the name of an Azure product
+                self.assertEqual(forbidden.findall(text), [], name)
+
     def test_no_page_names_a_runner_a_start_time_or_a_way_to_cancel_an_approval(self):
         for name, reply in self.pages.items():
             with self.subTest(page=name):

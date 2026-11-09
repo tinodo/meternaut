@@ -296,7 +296,7 @@ nav.toc a{min-height:0;padding:0;border:0}
 <li><strong>Money.</strong> A dollar sign before the figure and a thousands separator: $4,297. A year is in whole dollars and is twelve times the month, a month has its cents ($358.11). "a year" and "a month" in words, never "/yr". Every saving carries its level (Expected, Scenario or Verified) and its basis in one line, and the page says once that money is in US dollars.</li>
 <li><strong>Time.</strong> "today", "yesterday", "3 days ago", then the weekday and date. The exact time is for the hover text and the history.</li>
 <li><strong>Names.</strong> A resource is in the monospace font, with its kind in words in front of it.</li>
-<li><strong>Words we do not use on a page for people.</strong> Family, plan (for a change), case, lead, gate, digest, re-check. Say kind, request, finding, "checked again".</li>
+<li><strong>Words we do not use on a page for people.</strong> Family, plan (for a change), case, lead, gate, digest, re-check. Say kind, request, finding, "checked again". A test reads every page of the gallery, the Details and the pages of Operations included, and fails on any of these words, on "No figure" and on "Talk to a person" (an Azure product name such as "App Service plan" is the one exception).</li>
 <li><strong>Length.</strong> A headline is at most 70 characters. A note under it is one line. Reasoning is at most four short facts.</li>
 </ul>
 
@@ -331,6 +331,7 @@ nav.toc a{min-height:0;padding:0;border:0}
 <tr><td>What happened, Operations (the hub, the kill switch, the standing permissions, the runs), Settings and Notes drawn from it</td><td>Built into the app on 2026-11-09 and tested, not yet deployed: a title and one sentence, tiles of counts, feed lines with chips, panels in a grid.</td></tr>
 <tr><td>The request page drawn from it (the page behind "Review") and the pages that say what came of an answer</td><td>Built into the app on 2026-11-09 and tested; the figure, the chips and the chart of the request page are the same code as the rows of the Decisions page (<code>cases/web/figures.py</code>). The request page and the pages that say what came of an answer are deployed (local runs 319 and 320).</td></tr>
 <tr><td>The confirmation before a change that cannot be undone</td><td>Built into the app on 2026-11-09 and tested, not yet deployed: a delete asks twice, a change that can be undone and advice never ask. It is in the gallery of pages, so the contrast, heading and landmark tests read it too.</td></tr>
+<tr><td>A test that fails when a page uses a word that the guide forbids</td><td>Built: <code>TheWords</code> in <code>tests/test_web_accessibility.py</code>, over every page of the gallery. Not covered yet: the letters and the Teams cards.</td></tr>
 <tr><td>A test that fails when the app's page style differs from the file</td><td>Built: <code>tests/test_web_style.py</code>.</td></tr>
 <tr><td>A test that fails on a style attribute, a colour value or a pixel size in the code of a page, and on a class that the stylesheet does not have</td><td>Built: the same file.</td></tr>
 <tr><td>This guide served by the app itself at <code>/styleguide</code>, with the real stylesheet</td><td>Next.</td></tr>

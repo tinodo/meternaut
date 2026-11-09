@@ -106,7 +106,7 @@ def skeptic_sentence(case: CaseRecord) -> str:
 
 NOT_MEASURED = "Not measured yet: the saving, which cost lines confirm after the change."
 JUDGED_ROLES = "Judged: two AI roles running on different models agree."
-JUDGED_AGENTS = "Judged: the Investigator proposed it, the Skeptic agreed, and code re-checked the numbers that the Investigator cited."
+JUDGED_AGENTS = "Judged: the Investigator proposed it, the Skeptic agreed, and code checked again the numbers that the Investigator cited."
 
 
 def per_day_check(before_30d: float | None, after_total: float, days_after: int, what: str) -> tuple[bool, str, float | None]:

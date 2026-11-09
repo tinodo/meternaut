@@ -155,7 +155,7 @@ def detector_cell(detector: str) -> Safe:
 
 
 def figure(value: object) -> str:
-    return usd(value) if value is not None else "no figure"
+    return usd(value) if value is not None else "not estimated"
 
 
 def confidence(value: object) -> str:

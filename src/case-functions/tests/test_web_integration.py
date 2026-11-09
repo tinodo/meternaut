@@ -216,7 +216,7 @@ class WithTheRealLoop(unittest.TestCase):
         for old in ("/me/decisions", "/me/activity"):
             self.assertEqual(feed_lines(self.console.get(old)), lines, "the old addresses answer with the same page")
         notebook = self.console.get("/why/k1")
-        self.assertEqual(rows(notebook)["State of the plan"], "Used. The change was made with the approver's own permissions, and a plan runs once.")
+        self.assertEqual(rows(notebook)["State of the request"], "Used. The change was made with the approver's own permissions, and a request runs once.")
         self.assertIn("Nothing waits for you.", self.console.get("/").content)
         for page in (returned, plan_page, history, notebook):
             for secret in (ACCESS, CODE, query["state"], query["nonce"], query["code_challenge"]):
@@ -297,7 +297,7 @@ class WithTheRealLoop(unittest.TestCase):
     def test_a_wrong_code_a_token_of_somebody_else_and_a_pulled_switch_each_have_their_page_and_start_no_sign_in(self):
         main = self.form(button=APPROVE)
         reply = self.console.submit(main, APPROVE, code="WRONG")
-        self.assertEqual((reply.status, reply.headings(1)), (409, ["This plan changed"]))
+        self.assertEqual((reply.status, reply.headings(1)), (409, ["This request changed"]))
         self.reseal(approvers=(TINO, MAYA))
         main = self.form(button=APPROVE)
         reply = self.console.submit(main, APPROVE, oid=MAYA)

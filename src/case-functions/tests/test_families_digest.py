@@ -119,7 +119,7 @@ class TheDigest(unittest.TestCase):
         self.assertEqual(plan_digest.problem(self.plan, "0" * 64), plan_digest.OTHER)
         self.assertEqual(plan_digest.problem(self.plan, ""), plan_digest.OTHER, "an approval that holds no digest approves no plan")
         sentence = plan_digest.refusal(plan_digest.CHANGED)
-        for words in ("This plan cannot be approved", "Nothing is approved", "A new message will bring a new plan and code"):
+        for words in ("This request cannot be approved", "Nothing is approved", "A new message will bring a new request and its code"):
             self.assertIn(words, sentence)
 
 
@@ -166,7 +166,7 @@ class AtTheRunner(unittest.TestCase):
                 self.assertEqual(done.action.state, "failed", done.action.result)
                 self.assertEqual(self.world.arm.writes(), [])
                 self.assertIn(done.kind, ("stopped", "failed"))
-                self.assertTrue("another plan" in done.action.result or "no approval" in done.action.result or "approved" in done.action.result, done.action.result)
+                self.assertTrue("another request" in done.action.result or "no approval" in done.action.result or "approved" in done.action.result, done.action.result)
 
     def test_a_digest_that_is_not_the_one_that_was_approved_is_refused_and_so_is_none(self):
         for digest in ("0" * 64, "", self.plan.digest[:-1] + ("0" if self.plan.digest[-1] != "0" else "1")):
@@ -268,7 +268,7 @@ class AtTheSignIn(unittest.TestCase):
         self.world.store.plan_put(replace(self.plan, target={**self.plan.target, "vmSize": "Standard_D8s_v5"}))
         begun = self.begin()
         self.assertEqual((begun.location, begun.refusal.kind), ("", "refused_code"))
-        self.assertIn("This plan cannot be approved", begun.refusal.message)
+        self.assertIn("This request cannot be approved", begun.refusal.message)
         self.assertEqual([n for n in self.world.store.nonces.values() if n[1] == "arm-signin"], [])
 
     def test_each_field_changed_while_the_person_signs_in_is_refused_at_the_return_and_the_code_is_not_redeemed(self):

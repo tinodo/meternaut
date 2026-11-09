@@ -300,7 +300,7 @@ class TheAnswersOnACard(unittest.TestCase):
     def test_a_plan_code_that_is_not_the_plans_is_refused_and_uses_no_token(self):
         self.world.open_plan()
         nonce = self.world.nonce()
-        self.message(self.world.answer("later", nonce=nonce, code="WRONG123"), "This plan changed")
+        self.message(self.world.answer("later", nonce=nonce, code="WRONG123"), "This request changed")
         self.assertEqual(self.decisions(), [])
         self.assertIsNotNone(self.store.nonce_take(nonce, ts.MAYA, ts.PLAN_ID))
 

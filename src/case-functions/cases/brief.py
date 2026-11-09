@@ -107,7 +107,7 @@ ADVICE_CHANGE = "Nothing changes in Azure. Your answer is recorded with your nam
 ADVICE_WHO = "Meternaut may not change this resource. If you act on it, you do it in Azure with your own rights."
 ADVICE_RISK = "If the finding is wrong, time goes to a resource that is needed. Nothing changes in Azure when you answer."
 ADVICE_UNDO = "Nothing is changed, so there is nothing to undo."
-NO_CHANGE = "No request is open for this case. Nothing changes in Azure."
+NO_CHANGE = "No request is open for this finding. Nothing changes in Azure."
 # What a plan says while its change waits in the queue: Azure asked the approver for an extra sign-in check, and the check is not completed yet.
 WAITING_FOR_THE_CHECK = "Azure asked for an extra sign-in check before it would make the change. The change waits until the check is completed. Nothing was changed yet."
 # What a plan says while Azure carries out a change that it accepted and has not finished (a machine takes minutes to stop or resize): the runner records its own words in the action.
@@ -586,9 +586,9 @@ def confidence_of(case: CaseRecord | None, plan: PlanRecord | None = None) -> Co
         if not metrics:
             pieces.append("no number backs it")
         elif cited:
-            pieces.append(f"code re-checked {len(metrics)} of {cited} numbers")
+            pieces.append(f"code checked {len(metrics)} of {cited} numbers again")
         else:
-            pieces.append(f"code re-checked {len(metrics)} number{'' if len(metrics) == 1 else 's'}")
+            pieces.append(f"code checked {len(metrics)} number{'' if len(metrics) == 1 else 's'} again")
     else:
         pieces.append("code read the facts itself")
     if first is not None and first < SURE_ENOUGH:
@@ -894,7 +894,7 @@ def _typed_facts(case: CaseRecord) -> list[Fact]:
     if state:
         rows.append(Fact(state[0], state[1], graph))
     if case.detector == "investigation" and facts.get("basis") in BASIS_WORDS:
-        rows.append(Fact("What the investigation found", BASIS_WORDS[facts["basis"]], "The first AI; the numbers are re-checked by code"))
+        rows.append(Fact("What the investigation found", BASIS_WORDS[facts["basis"]], "The first AI; code checks the numbers again"))
     age = facts.get("ageDays")
     if isinstance(age, int) and not isinstance(age, bool) and age >= 0:
         rows.append(Fact("Age", "Made today" if age == 0 else days_text(age), graph))
@@ -912,7 +912,7 @@ def _typed_facts(case: CaseRecord) -> list[Fact]:
         rows.append(Fact("Workers", number_text(workers), graph))
     family, vcpu = facts.get("sizeFamily"), facts.get("vcpu")
     if isinstance(vcpu, int) and not isinstance(vcpu, bool):
-        rows.append(Fact("Size", f"{vcpu} vCPUs" + (f", family {_word(family)}" if isinstance(family, str) and family not in ("", "other") else ""), graph))
+        rows.append(Fact("Size", f"{vcpu} vCPUs" + (f", {_word(family)} series" if isinstance(family, str) and family not in ("", "other") else ""), graph))
     allocation = facts.get("allocation")
     if isinstance(allocation, str) and allocation != "other":
         rows.append(Fact("Address", _word(allocation).capitalize(), graph))

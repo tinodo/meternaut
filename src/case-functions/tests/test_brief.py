@@ -261,20 +261,20 @@ class TheConfidence(unittest.TestCase):
         investigated = dict(detector="investigation", status="proposed", confidence=0.9, facts={"metrics": {"A": 1, "B": 0}})
         self.assertEqual(confidence_of(make_case(**{**investigated, "facts": {"metrics": {"A": 1, "B": 0}, "citedMetrics": 2}})).level, "High")
         some = confidence_of(make_case(**{**investigated, "facts": {"metrics": {"A": 1, "B": 0}, "citedMetrics": 3}}))
-        self.assertEqual((some.level, some.because), ("Medium", "Both AI reviewers agree; code re-checked 2 of 3 numbers."))
+        self.assertEqual((some.level, some.because), ("Medium", "Both AI reviewers agree; code checked 2 of 3 numbers again."))
         none = confidence_of(make_case(**{**investigated, "facts": {}}))
         self.assertEqual((none.level, none.because), ("Low", "Both AI reviewers agree; no number backs it."))
-        self.assertEqual(confidence_of(make_case(**{**investigated, "facts": {"metrics": {"A": 1}}})).because, "Both AI reviewers agree; code re-checked 1 number.")
+        self.assertEqual(confidence_of(make_case(**{**investigated, "facts": {"metrics": {"A": 1}}})).because, "Both AI reviewers agree; code checked 1 number again.")
 
     def test_a_second_ai_that_did_not_agree_is_low_and_the_words_say_why(self):
         base = dict(status="needs_human", detector="investigation", facts={"metrics": {"A": 1}}, confidence=0.9)
         asked = ({"step": "investigator", "ok": True}, {"step": "skeptic", "ok": True})
         models = {"investigator": "m1", "skeptic": "m2"}
         cases = (
-            ({"steps": asked, "objections": ("It may be needed.",), "models": models}, "The second AI raised an objection; code re-checked 1 number."),
-            ({"steps": asked, "objections": (), "models": models}, "The AI reviewers did not settle it; code re-checked 1 number."),
-            ({"steps": ({"step": "investigator", "ok": True}, {"step": "skeptic", "ok": False}), "objections": (), "models": models}, "The second AI gave no verdict; code re-checked 1 number."),
-            ({"steps": ({"step": "investigator", "ok": True},), "objections": (), "models": {"investigator": "m1", "skeptic": None}}, "Only one AI reviewed it; code re-checked 1 number."),
+            ({"steps": asked, "objections": ("It may be needed.",), "models": models}, "The second AI raised an objection; code checked 1 number again."),
+            ({"steps": asked, "objections": (), "models": models}, "The AI reviewers did not settle it; code checked 1 number again."),
+            ({"steps": ({"step": "investigator", "ok": True}, {"step": "skeptic", "ok": False}), "objections": (), "models": models}, "The second AI gave no verdict; code checked 1 number again."),
+            ({"steps": ({"step": "investigator", "ok": True},), "objections": (), "models": {"investigator": "m1", "skeptic": None}}, "Only one AI reviewed it; code checked 1 number again."),
         )
         for changes, because in cases:
             with self.subTest(because=because):
@@ -357,7 +357,7 @@ class TheFacts(unittest.TestCase):
             row = [r for r in brief._typed_facts(dataclasses.replace(case, facts={key: case.facts[key]})) if r.label == label]
             every[label] = row[0].value
         self.assertEqual(every, {"Age": "Made today", "Size": "up to 128 GB", "Type": "Premium SSD (LRS)", "Tier": "Basic", "Workers": "2", "Address": "Static"})
-        self.assertEqual([r.value for r in brief._typed_facts(dataclasses.replace(case, facts={"vcpu": 8, "sizeFamily": "D"})) if r.label == "Size"], ["8 vCPUs, family D"])
+        self.assertEqual([r.value for r in brief._typed_facts(dataclasses.replace(case, facts={"vcpu": 8, "sizeFamily": "D"})) if r.label == "Size"], ["8 vCPUs, D series"])
         self.assertEqual([r.value for r in brief._typed_facts(make_case(facts={"ageDays": 12})) if r.label == "Age"], ["12 days"])
 
     def test_a_value_that_is_not_one_of_the_known_shapes_is_not_a_fact(self):

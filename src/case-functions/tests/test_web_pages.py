@@ -493,7 +493,7 @@ class TheBriefOfACase(unittest.TestCase):
         self.assertEqual(reply.headings(1), ["Consider deleting the disk planted-disk-1"])
         self.assertEqual(reply.forms(), [])
         self.assertNotIn("Your answer", reply.headings(2))
-        self.assertIn("No request is open for this case. Nothing changes in Azure.", reply.content)
+        self.assertIn("No request is open for this finding. Nothing changes in Azure.", reply.content)
         self.assertIn("Whose is it", reply.headings(2))
 
     def test_the_guards_that_fired_are_a_fact_and_are_explained_in_the_details(self):
@@ -519,7 +519,7 @@ class TheBriefOfACase(unittest.TestCase):
         self.console.store.case_put(make_case(status="error", recommendation=None, confidence=None, summary="the token budget of the run was reached", objections=(), models={},
                                               plan_id=None))
         reply = self.console.get("/why/case0001")
-        self.assertIn("Why the case ended", reply.headings(3))
+        self.assertIn("Why the finding ended", reply.headings(3))
         self.assertEqual([p.text() for p in reply.main.find_all("p", class_="quote-label")], ["Recorded by Meternaut"])
         self.assertNotIn("The AI's reasoning", reply.content)
         self.assertIn("the token budget of the run was reached", reply.content)
@@ -535,10 +535,10 @@ class TheBriefOfACase(unittest.TestCase):
         labels = [p.text() for p in disclosure.find_all("p", class_="quote-label")]
         self.assertEqual(labels, ["Written by AI (model: model-detective-x): summary", "Written by AI (model: model-skeptic-y): objection 1"])
         self.assertIn("Treat it as text, not as fact.", disclosure.text())
-        self.assertIn("Every step of the case", disclosure.text())
+        self.assertIn("Every step of the finding", disclosure.text())
 
     def test_the_status_of_a_case_that_was_approved_or_declined_is_said_in_words(self):
-        for status, words_ in (("approved", "Approved. A person approved the plan and signed in to Azure. The change is being made now."),
+        for status, words_ in (("approved", "Approved. A person approved the request and signed in to Azure. The change is being made now."),
                                ("declined", "Declined. A person said no. Nothing changed."),
                                ("acknowledged", "Worth acting on. A person said that this is worth acting on. Meternaut changed nothing in Azure.")):
             with self.subTest(status=status):
@@ -562,7 +562,7 @@ class TheBriefOfACase(unittest.TestCase):
     def test_a_case_that_does_not_exist_is_a_404(self):
         reply = self.console.get("/why/nothing")
         self.assertEqual(reply.status, 404)
-        self.assertIn("I cannot find this case", reply.content)
+        self.assertIn("I cannot find this finding", reply.content)
 
     def test_the_page_says_in_its_footer_that_an_ai_wrote_what_it_shows(self):
         footer = self.reply.root.find("footer")
@@ -720,7 +720,7 @@ class TheRequestPage(unittest.TestCase):
         info = console.get("/why/case0001")
         self.assertEqual(info.headings(2)[0], "What changes")
         self.assertEqual(list(info.facts()), ["What changes"])
-        self.assertEqual(info.facts()["What changes"], "No request is open for this case. Nothing changes in Azure.")
+        self.assertEqual(info.facts()["What changes"], "No request is open for this finding. Nothing changes in Azure.")
 
     def test_advice_says_what_an_answer_does_and_has_a_chip_that_it_changes_nothing(self):
         console = seeded()

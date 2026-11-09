@@ -108,7 +108,7 @@ class ThePage(unittest.TestCase):
         self.assertNotIn("open", disclosure.attrs)
         inside = disclosure.text()
         outside = self.reply.main.text().replace(inside, "")
-        for detail in ("Plan code 7F3K92QD", "case0001", "run00001", "orphan-managed-disk", "Every step of the case", "diskState", "Served from"):
+        for detail in ("Request code 7F3K92QD", "case0001", "run00001", "orphan-managed-disk", "Every step of the finding", "diskState", "Served from"):
             self.assertIn(detail, inside)
             self.assertNotIn(detail, outside, f"{detail} is not in the default view")
 
@@ -155,7 +155,7 @@ class ThePage(unittest.TestCase):
             "Responsible for Meternaut: Olga (olga@example.com)."])
         self.assertEqual(footer.find("summary").text(), "About this page")
         self.assertEqual(footer.find_all("a"), [], "the person who is responsible is plain text with the address, not a link")
-        for gone in ("Plan code", "Why you are seeing this", "This page is served from", "This request expires on"):
+        for gone in ("Request code", "Why you are seeing this", "This page is served from", "This request expires on"):
             self.assertNotIn(gone, footer.text())
 
     def test_what_a_model_wrote_is_only_in_its_labelled_boxes_and_in_the_details_and_never_in_a_heading_a_link_or_a_row_of_the_change(self):
@@ -514,14 +514,14 @@ KINDS = {  # the status, the title of the page, and a sentence that the page alw
     "ran_unconfirmed": (200, "The delete was accepted", "Meternaut looks again in a few minutes and records what it finds. It was made with your own permissions."),
     "running": (200, "The change is being made", "Meternaut reads the resource again in a few minutes and records what it finds. It was made with your own permissions, and it is "
                                                   "not made a second time."),
-    "unchanged": (200, "Nothing was changed", "The resource was already as the plan wants, so Meternaut wrote nothing, and no saving is claimed for this approval."),
+    "unchanged": (200, "Nothing was changed", "The resource was already as the request asks, so Meternaut wrote nothing, and no saving is claimed for this approval."),
     "stopped": (409, "The change was stopped", "Nothing was changed. The request is closed."),
     "azure_refused": (403, "Azure refused the change", "Meternaut holds no right of its own: the change is made with your permissions. If you should be able to make it, "
                                                        "ask whoever manages access to this resource group."),
     "failed": (502, "The change failed", "Look at the resource in Azure before anything is tried again."),
     "signin_failed": (400, "The sign-in to Azure was not completed", "The request stays open. Open it again to try again."),
     "step_up_failed": (400, "The extra sign-in check was not completed", "Nothing was changed. The request is closed."),
-    "refused_code": (409, "This plan changed", "This plan changed. Nothing is approved. A new message will bring the new plan and code."),
+    "refused_code": (409, "This request changed", "This request changed. Nothing is approved. A new message will bring the new request and its code."),
     "refused_state": (409, "This request cannot take an answer", ""),
     "refused_role": (403, "I cannot take your OK on this request.", "Nothing is approved. If this request should be yours, ask the person named under About this page at the foot of this page."),
     "refused_paused": (409, "Changes are paused", "Changes are paused here. Nothing has changed, and your OK cannot be recorded now."),
@@ -1258,7 +1258,7 @@ class AgainstTheLoop(unittest.TestCase):
         before = snapshot(self.console.store)
         reply = self.console.submit(main, "Decline", code="AAAAAAAA")
         self.assertEqual(reply.status, 409)
-        self.assertIn("This plan changed. Nothing is approved. A new message will bring the new plan and code.", reply.content)
+        self.assertIn("This request changed. Nothing is approved. A new message will bring the new request and its code.", reply.content)
         self.assertEqual(snapshot(self.console.store), before)
 
     def test_a_missing_or_wrong_token_changes_nothing(self):

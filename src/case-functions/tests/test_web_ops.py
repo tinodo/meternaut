@@ -31,9 +31,9 @@ class TheOperationsPage(unittest.TestCase):
         self.assertEqual([r["State"] for r in self.reply.table("switches").rows], ["Running", "Running", "Running", "Running"])
         self.assertEqual([r["What it stops"] for r in self.reply.table("switches").rows], [
             "No approval is accepted, no change is made in Azure and no message is sent.", "No approval is accepted and no change is made in Azure.", "No message is sent to anybody.",
-            "The AI agents do not run and open no new case. Waste that Meternaut planted itself, approvals, changes and messages go on."])
+            "The AI agents do not run and open no new finding. Waste that Meternaut planted itself, approvals, changes and messages go on."])
         run = self.reply.table("latest-runs").rows[0]
-        self.assertEqual((run["Trigger"], run["Result"], run["Cases"], run["Proposed"], run["Needs a person"], run["Errors"]), ("timer", "OK", "3", "3", "0", "0"))
+        self.assertEqual((run["Trigger"], run["Result"], run["Findings"], run["Proposed"], run["Needs a person"], run["Errors"]), ("timer", "OK", "3", "3", "0", "0"))
         self.assertIn("On its own, nothing: Meternaut holds no right to change Azure. When a person approves a change, they sign in to Azure and Meternaut makes that one change "
                       f"with their own permissions. The code makes only this change: {ACTS_ON}.", self.reply.content)
         self.assertEqual([l for l in self.reply.links() if l.startswith("/ops")], ["/ops", "/ops/pause", "/ops/runs", "/ops/permissions"])
@@ -90,11 +90,12 @@ class TheRunsPage(unittest.TestCase):
     def test_every_run_is_there_with_all_of_its_numbers(self):
         reply = self.console.get("/ops/runs")
         table = reply.table("runs")
-        self.assertEqual(table.headers, ["Started", "Trigger", "Result", "Leads", "Cases", "Proposed", "Needs a person", "Dropped", "Errors", "Tokens", "Seconds", "Notes", "Cases of the run"])
+        self.assertEqual(table.headers, ["Started", "Trigger", "Result", "Candidates", "Findings", "Proposed", "Needs a person", "Dropped", "Errors", "Tokens", "Seconds", "Notes",
+                                         "Findings of the run"])
         by_start = {row["Started"].split(" (")[0]: row for row in table.rows}
         ok = by_start["Thu 5 Nov 2026 07:00 UTC"]
-        self.assertEqual((ok["Trigger"], ok["Result"], ok["Leads"], ok["Cases"], ok["Proposed"], ok["Needs a person"], ok["Dropped"], ok["Errors"], ok["Tokens"], ok["Seconds"], ok["Notes"]),
-                         ("timer", "OK", "4", "3", "3", "0", "0", "0", "2,089", "28", "one source was not read"))
+        self.assertEqual((ok["Trigger"], ok["Result"], ok["Candidates"], ok["Findings"], ok["Proposed"], ok["Needs a person"], ok["Dropped"], ok["Errors"], ok["Tokens"], ok["Seconds"],
+                          ok["Notes"]), ("timer", "OK", "4", "3", "3", "0", "0", "0", "2,089", "28", "one source was not read"))
         self.assertEqual((by_start["Thu 5 Nov 2026 08:00 UTC"]["Result"], by_start["Thu 5 Nov 2026 08:00 UTC"]["Notes"]), ("Failed: no detector could read any subscription", "none"))
         self.assertEqual((by_start["Thu 5 Nov 2026 08:55 UTC"]["Result"], by_start["Thu 5 Nov 2026 08:55 UTC"]["Notes"]), ("Started, not finished", "a b"))
         self.assertEqual([row["Started"].split(" (")[0] for row in table.rows], ["Thu 5 Nov 2026 08:55 UTC", "Thu 5 Nov 2026 08:00 UTC", "Thu 5 Nov 2026 07:00 UTC"], "newest first")
@@ -110,7 +111,7 @@ class TheRunsPage(unittest.TestCase):
         self.assertIn("Resource group meternaut-test-rg.", first["Resource"])
         self.assertEqual((first["Recommendation"], first["Confidence (0 to 1)"], first["Estimated saving a month"]), ("Delete", "0.91", "7.17 US dollars"))
         second = next(r for r in table.rows if r["Status"] == "Needs a person")
-        self.assertEqual((second["Recommendation"], second["Confidence (0 to 1)"], second["Estimated saving a month"]), ("Investigate", "0.50", "no figure"))
+        self.assertEqual((second["Recommendation"], second["Confidence (0 to 1)"], second["Estimated saving a month"]), ("Investigate", "0.50", "not estimated"))
         self.assertIn("/why/case0001", reply.links())
         self.assertIn("/why/case0002", reply.links())
 
@@ -120,8 +121,8 @@ class TheRunsPage(unittest.TestCase):
         rows = reply.table("cases").rows
         self.assertEqual(len(rows), 1)
         self.assertIn("other-disk", rows[0]["Resource"])
-        self.assertIn("Cases of the run run00002.", reply.content)
-        self.assertIn("/ops/runs", reply.links(), "a link shows all cases again")
+        self.assertIn("Findings of the run run00002.", reply.content)
+        self.assertIn("/ops/runs", reply.links(), "a link shows all findings again")
         self.assertEqual(len(reply.table("runs").rows), 3, "every run is still listed")
         self.assertEqual(sum("Selected." in r["Started"] for r in reply.table("runs").rows), 1)
         self.assertIn("/ops/runs?run=run00002", reply.links())
@@ -129,8 +130,8 @@ class TheRunsPage(unittest.TestCase):
     def test_a_run_with_no_cases_and_an_unknown_run_say_so(self):
         reply = self.console.get("/ops/runs", query={"run": "run00003"})
         self.assertFalse(reply.has_table("cases"))
-        self.assertIn("No case is recorded for this run.", reply.content)
-        self.assertIn("No case is recorded for this run.", self.console.get("/ops/runs", query={"run": "nothing"}).content)
+        self.assertIn("No finding is recorded for this run.", reply.content)
+        self.assertIn("No finding is recorded for this run.", self.console.get("/ops/runs", query={"run": "nothing"}).content)
 
     def test_a_run_id_that_is_not_a_run_id_is_said_so_and_shows_every_case(self):
         for bad in ("a b", "<script>", "x" * 81, "a/b", "%00"):
@@ -148,14 +149,14 @@ class TheRunsPage(unittest.TestCase):
         console.store.case_put(make_case(case_id="old", run_id="run00001", resource_name="very-old", updated_at=at(days=-30)))
         reply = console.get("/ops/runs")
         self.assertEqual(len(reply.table("cases").rows), 100)
-        self.assertIn("The latest 100 cases, most recently updated first.", reply.content)
+        self.assertIn("The latest 100 findings, most recently updated first.", reply.content)
         self.assertNotIn("very-old", reply.content)
         self.assertIn("very-old", console.get("/ops/runs", query={"run": "run00001"}).content, "a run that is far back is complete")
 
-    def test_the_page_says_that_a_case_is_a_resource_that_meternaut_only_reads_and_that_it_is_not_a_cost_report(self):
+    def test_the_page_says_that_a_finding_is_a_resource_that_meternaut_only_reads_and_that_it_is_not_a_cost_report(self):
         reply = self.console.get("/ops/runs")
-        self.assertIn("A case is a resource in the subscription that the search found and that may be unused or too big. Meternaut only reads it and does not use it. "
-                      "Nothing is changed until a person approves a plan.", reply.content)
+        self.assertIn("A finding is a resource in the subscription that the search found and that may be unused or too big. Meternaut only reads it and does not use it. "
+                      "Nothing is changed until a person approves the request.", reply.content)
         self.assertIn("It is not a cost report.", reply.content)
         for node in reply.root.walk():
             if node.tag == "svg":
@@ -183,11 +184,11 @@ class TheRunsPage(unittest.TestCase):
     def test_an_empty_page_says_so_and_a_store_that_cannot_be_read_is_said_plainly(self):
         reply = Console().get("/ops/runs")
         self.assertIn("No run is recorded yet.", reply.content)
-        self.assertIn("No case is recorded yet.", reply.content)
+        self.assertIn("No finding is recorded yet.", reply.content)
         reply = Console(store=FailingStore(fail={"runs_recent", "cases_recent"}, clock=lambda: NOW)).get("/ops/runs")
         self.assertEqual(reply.status, 200)
         self.assertIn("The runs cannot be read", reply.content)
-        self.assertIn("The cases cannot be read", reply.content)
+        self.assertIn("The findings cannot be read", reply.content)
 
     def test_a_status_that_is_not_in_the_list_is_shown_as_stored_and_a_case_of_the_investigation_is_a_row_like_any_other(self):
         self.console.store.case_put(make_case(case_id="case0003", status="something new"))
@@ -196,7 +197,7 @@ class TheRunsPage(unittest.TestCase):
         self.assertIn("something new", [r["Status"] for r in rows])
         row = next(r for r in rows if "oversized-thing" in r["Resource"])
         self.assertIn("Found by the Watch's own investigation", row["Found by"])
-        self.assertEqual((row["Status"], row["Recommendation"], row["Confidence (0 to 1)"], row["Estimated saving a month"]), ("Proposed", "Change", "0.85", "no figure"))
+        self.assertEqual((row["Status"], row["Recommendation"], row["Confidence (0 to 1)"], row["Estimated saving a month"]), ("Proposed", "Change", "0.85", "not estimated"))
 
     def test_only_the_role_ops_may_open_it(self):
         for who, status in ((TINO, 200), (OPS, 200), (OWNER, 403), (MAYA, 403), (STRANGER, 403)):
@@ -257,7 +258,7 @@ class TheKillSwitchPage(unittest.TestCase):
         self.assertEqual(self.page.headings(2), ["Everything", "Changes", "All messages", "The investigation"])
         self.assertEqual([b[2] for f in self.page.forms() for b in f.buttons], BUTTONS)
         for sentence in ("No approval is accepted, no change is made in Azure and no message is sent.", "No approval is accepted and no change is made in Azure.",
-                         "No message is sent to anybody.", "The AI agents do not run and open no new case. Waste that Meternaut planted itself, approvals, changes and messages go on."):
+                         "No message is sent to anybody.", "The AI agents do not run and open no new finding. Waste that Meternaut planted itself, approvals, changes and messages go on."):
             self.assertIn(f"What it stops: {sentence}", self.page.content)
         self.assertIn("A change that was already sent to Azure is not recalled.", self.page.content)
         self.assertIn("Only the last change of each switch is kept, with the person, the time and the reason. Earlier changes are not kept.", self.page.content)

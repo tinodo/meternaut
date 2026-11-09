@@ -17,8 +17,8 @@ from .layout import block, button, error_summary, field, form, head, hidden, ite
 PERMISSIONS_WHY = "your role lets you see how Meternaut is allowed to act"
 PAUSE_WHY = "your role ops lets you stop work at four levels"
 OPS_WHY = "your role ops lets you see how Meternaut is running"
-RUN_HEADERS = ["Started", "Trigger", "Result", "Leads", "Cases", "Proposed", "Needs a person", "Dropped", "Errors", "Tokens", "Seconds", "Notes", "Cases of the run"]
-LATEST_RUNS = ["Started", "Trigger", "Result", "Cases", "Proposed", "Needs a person", "Errors"]
+RUN_HEADERS = ["Started", "Trigger", "Result", "Candidates", "Findings", "Proposed", "Needs a person", "Dropped", "Errors", "Tokens", "Seconds", "Notes", "Findings of the run"]
+LATEST_RUNS = ["Started", "Trigger", "Result", "Findings", "Proposed", "Needs a person", "Errors"]
 RUNS_SHOWN = 20
 CASES_SHOWN = 100
 CASES_SEARCHED = 1000
@@ -55,7 +55,7 @@ def _tiles(ctx: Ctx, runs: list, runs_ok: bool) -> Safe:
     else:
         run = runs[0]
         latest = kpi("Latest run", "Failed" if not run.ok else ("OK" if run.finished_at else "Not finished"), "",
-                     fmt("{when} · {cases} case{s}", when=ctx.when(run.started_at), cases=count(run.cases), s="" if run.cases == 1 else "s"))
+                     fmt("{when} · {found} finding{s}", when=ctx.when(run.started_at), found=count(run.cases), s="" if run.cases == 1 else "s"))
     return kpis(switches, latest, kpi("Next search", ctx.next_search(), "", "The search runs every day."), label="How Meternaut is running")
 
 
@@ -74,7 +74,7 @@ def hub(ctx: Ctx) -> Response:
     else:
         parts.append(table("latest-runs", "The five latest runs, newest first", LATEST_RUNS,
                            [[ctx.when(r.started_at), r.trigger, run_result(r), count(r.cases), count(r.proposed), count(r.needs_human), count(r.errors)] for r in runs]))
-    parts += [paragraph(link(ctx.url("/ops/runs"), "Every run and every case")),
+    parts += [paragraph(link(ctx.url("/ops/runs"), "Every run and every finding")),
               Safe("<h2>What Meternaut can change in Azure</h2>"),
               paragraph(fmt("On its own, nothing: Meternaut holds no right to change Azure. When a person approves a change, they sign in to Azure and Meternaut makes that one change "
                             "with their own permissions. The code makes only this change: {acts_on}.", acts_on=ctx.services.acts_on)),
@@ -104,9 +104,9 @@ def runs_page(ctx: Ctx) -> Response:
     if selected:
         cases = [case for case in cases if case.run_id == selected]
     parts: list[object] = [
-        head("Runs and cases", "Every run of the search and every case that the runs looked at, newest first. This page shows what was found and what happened to it. It is not a cost report."),
-        paragraph("A case is a resource in the subscription that the search found and that may be unused or too big. Meternaut only reads it and does not use it. "
-                  "Nothing is changed until a person approves a plan."),
+        head("Runs and findings", "Every run of the search and every finding that the runs looked at, newest first. This page shows what was found and what happened to it. It is not a cost report."),
+        paragraph("A finding is a resource in the subscription that the search found and that may be unused or too big. Meternaut only reads it and does not use it. "
+                  "Nothing is changed until a person approves the request."),
         paragraph("Money is in US dollars. An estimated saving is an estimate from cost lines of the last 30 days."),
         Safe("<h2>Runs</h2>"),
     ]
@@ -116,21 +116,21 @@ def runs_page(ctx: Ctx) -> Response:
         parts.append(paragraph("No run is recorded yet."))
     else:
         parts.append(_runs_table(ctx, runs, selected))
-    parts.append(Safe("<h2>Cases</h2>"))
+    parts.append(Safe("<h2>Findings</h2>"))
     if raw and not selected:
-        parts.append(notice("warning", "That run id is not valid", "A run id has letters, digits, dots, hyphens and underscores only. All cases are shown."))
+        parts.append(notice("warning", "That run id is not valid", "A run id has letters, digits, dots, hyphens and underscores only. All findings are shown."))
     if selected:
-        parts.append(paragraph(fmt('Cases of the run {run}. <a href="{href}">Show all cases</a>.', run=selected, href=ctx.url("/ops/runs"))))
+        parts.append(paragraph(fmt('Findings of the run {run}. <a href="{href}">Show all findings</a>.', run=selected, href=ctx.url("/ops/runs"))))
     else:
-        parts.append(paragraph(f"The latest {CASES_SHOWN} cases, most recently updated first."))
+        parts.append(paragraph(f"The latest {CASES_SHOWN} findings, most recently updated first."))
     if not cases_ok:
-        parts.append(notice("error", "The cases cannot be read", "I cannot read the cases now. Nothing has changed."))
+        parts.append(notice("error", "The findings cannot be read", "I cannot read the findings now. Nothing has changed."))
     elif not cases:
-        parts.append(paragraph("No case is recorded for this run." if selected else "No case is recorded yet."))
+        parts.append(paragraph("No finding is recorded for this run." if selected else "No finding is recorded yet."))
     else:
-        parts.append(table("cases", "Cases with their status, recommendation and estimated saving", CASE_HEADERS, case_rows(ctx, cases)))
+        parts.append(table("cases", "Findings with their status, recommendation and estimated saving", CASE_HEADERS, case_rows(ctx, cases)))
     parts += [Safe("<h2>What the status words mean</h2>"), legend()]
-    return page(ctx, "Runs and cases", join(block(p) for p in parts), current="/ops", ai=True, why=OPS_WHY)
+    return page(ctx, "Runs and findings", join(block(p) for p in parts), current="/ops", ai=True, why=OPS_WHY)
 
 
 def permissions(ctx: Ctx) -> Response:

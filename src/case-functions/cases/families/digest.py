@@ -18,9 +18,9 @@ from ..models import PlanRecord
 
 EXCLUDED = ("state", "digest", "code")
 # Why a plan may not be acted on, as fragments of a sentence (no capital, no full stop): the page, the letter and the runner put each in a sentence of their own.
-NOT_BOUND = "the plan was made before plans were bound to what a person approves"
-CHANGED = "something in the plan changed after it was made, so it is not the plan that was approved"
-OTHER = "this approval was made for another plan than the one that is stored now"
+NOT_BOUND = "the request was made before requests were bound to what a person approves"
+CHANGED = "something in the request changed after it was made, so it is not the request that was approved"
+OTHER = "this approval was made for another request than the one that is stored now"
 
 
 def canonical(plan: PlanRecord) -> str:
@@ -59,4 +59,4 @@ def problem(plan: PlanRecord, approved: str) -> str:
 
 def refusal(problem_text: str) -> str:
     """The plain words for a page that refuses an approval because of `problem`."""
-    return f"This plan cannot be approved: {problem_text}. Nothing is approved. A new message will bring a new plan and code."
+    return f"This request cannot be approved: {problem_text}. Nothing is approved. A new message will bring a new request and its code."

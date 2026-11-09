@@ -11,9 +11,9 @@ CASE_STATUS = {
     "proposed": ("Proposed", "A change is suggested. The first model recommended it, the second model agreed, and no guard stopped it."),
     "needs_human": ("Needs a person", "A person has to look at it. A guard fired, the second model did not agree, or the first model was not sure enough."),
     "dropped": ("Dropped", "No change is suggested. The first model recommended keeping the resource."),
-    "error": ("Error", "The case could not be finished. A check or a model call failed."),
-    "awaiting_ok": ("Waiting for an OK", "A plan was made and waits for a person's OK."),
-    "approved": ("Approved", "A person approved the plan and signed in to Azure. The change is being made now."),
+    "error": ("Error", "The finding could not be finished. A check or a model call failed."),
+    "awaiting_ok": ("Waiting for an OK", "A request was made and waits for a person's OK."),
+    "approved": ("Approved", "A person approved the request and signed in to Azure. The change is being made now."),
     "running": ("Running", "The change has started and is not confirmed yet."),
     "done": ("Done", "The change was made."),
     "failed": ("Failed", "The change failed, or it was stopped before it started."),
@@ -26,7 +26,7 @@ CASE_STATUS = {
 PLAN_STATE = {
     "open": "Open. It waits for an OK.",
     "approved": "Approved. The change is being made now.",
-    "consumed": "Used. The change was made with the approver's own permissions, and a plan runs once.",
+    "consumed": "Used. The change was made with the approver's own permissions, and a request runs once.",
     "declined": "Declined. Nothing changed.",
     "expired": "Expired. Nothing changed.",
     "withdrawn": "Withdrawn. Nothing changed.",
@@ -91,7 +91,7 @@ SWITCH = {
     "all": ("Everything", "No approval is accepted, no change is made in Azure and no message is sent.", "everything"),
     "changes": ("Changes", "No approval is accepted and no change is made in Azure.", "changes"),
     "messages": ("All messages", "No message is sent to anybody.", "all messages"),
-    "investigation": ("The investigation", "The AI agents do not run and open no new case. Waste that Meternaut planted itself, approvals, changes and messages go on.", "the investigation"),
+    "investigation": ("The investigation", "The AI agents do not run and open no new finding. Waste that Meternaut planted itself, approvals, changes and messages go on.", "the investigation"),
 }
 
 

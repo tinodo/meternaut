@@ -120,7 +120,7 @@ def build_advice(case: CaseRecord, approvers: tuple[str, ...], now: dt.datetime,
     of its own (a change has none: decide.py) but whose facts hold one that code worked out from the data that a workspace takes in and nothing reads (cases/unread.py) takes that one."""
     expires = stamp(now + dt.timedelta(hours=settings.ttl_hours))
     saving = case.saving_usd_month if (case.saving_usd_month or 0) > 0 else brief.unread_saving(case)
-    judged = ("Judged: two AI reviewers agree that this looks wasted, and code re-checked the numbers that the first one cited." if case.status == "proposed" else
+    judged = ("Judged: two AI reviewers agree that this looks wasted, and code checked again the numbers that the first one cited." if case.status == "proposed" else
               "Judged: the AI reviewers did not settle it, or a check by code held it back, so a person has to decide.")
     return plan_digest.sealed(PlanRecord(
         plan_id=new_id(), case_id=case.case_id, family=ADVISE, resource_id=case.resource_id, resource_name=clean_text(case.resource_name, 120),
@@ -171,7 +171,7 @@ class Approvals:
         if decision == "approve" and switches.pulled(self.store, *(("all",) if advice else ("all", "changes"))):  # no change is made for advice, so only the full stop holds it
             return None, DecideResult(False, "refused_paused", PAUSED_ADVICE if advice else PAUSED_MESSAGE, plan)
         if (code or "").strip().upper() != plan.code:
-            return None, DecideResult(False, "refused_code", "This plan changed. Nothing is approved. A new message will bring the new plan and code.")
+            return None, DecideResult(False, "refused_code", "This request changed. Nothing is approved. A new message will bring the new request and its code.")
         return plan, None
 
     def decide(self, principal: Principal, plan_id: str, decision: str, code: str, nonce: str, note: str = "", reason: str = "") -> DecideResult:
@@ -268,7 +268,7 @@ class Approvals:
         if switches.pulled(self.store, "all", "changes"):
             return _refused_stepup("refused_paused", PAUSED_MESSAGE, plan)
         if (code or "").strip().upper() != plan.code or plan.resource_id != resource_id:
-            return _refused_stepup("refused_code", "This plan changed. Nothing was changed. A new message will bring the new plan and code.", plan)
+            return _refused_stepup("refused_code", "This request changed. Nothing was changed. A new message will bring the new request and its code.", plan)
         mine = principal.oid.lower()
         if not any(d.decision == "approve" and d.plan_code == plan.code and d.plan_digest == plan.digest and d.approver_oid.lower() == mine for d in self.store.decisions_of_plan(plan_id)):
             return _refused_stepup("refused_state", "Your OK on this request is not recorded. Nothing was changed.", plan)

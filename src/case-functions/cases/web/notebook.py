@@ -14,8 +14,8 @@ from .layout import message_page
 def notebook(ctx: Ctx, case_id: str) -> Response:
     case = ctx.store.case_get(case_id)
     if case is None:
-        return message_page(ctx, 404, "I cannot find this case", "No case has this address. Nothing has changed.", back=("/history", "Back to the history"), ai=True,
-                            why="you opened an address that holds no case")
+        return message_page(ctx, 404, "I cannot find this finding", "No finding has this address. Nothing has changed.", back=("/history", "Back to the history"), ai=True,
+                            why="you opened an address that holds no finding")
     plan, action, decisions = None, None, []
     if case.plan_id:
         plan, _ = read(lambda: ctx.store.plan_get(case.plan_id), None)
@@ -25,4 +25,4 @@ def notebook(ctx: Ctx, case_id: str) -> Response:
     seen = decisions if answerable else []  # who answered is shown to the people who are named for the request, and to nobody else
     brief = brief_of(ctx, plan, case, action=action, decisions=seen, answerable=answerable)
     answer = brief_page.answer_form(ctx, plan, brief, {}, {}) if brief.answers and plan is not None else None
-    return brief_page.render(ctx, brief, case=case, plan=plan, action=action, decisions=seen, answer=answer, why="you opened the record of one case that Meternaut looked at")
+    return brief_page.render(ctx, brief, case=case, plan=plan, action=action, decisions=seen, answer=answer, why="you opened the record of one finding that Meternaut looked at")

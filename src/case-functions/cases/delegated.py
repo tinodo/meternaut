@@ -282,7 +282,7 @@ class Delegation:
         if plan is None:
             return refusal or DecideResult(False, "error", "This request cannot be approved now. Nothing is approved.")
         if plan.resource_id != started["resource"]:
-            return DecideResult(False, "refused_code", "This plan changed. Nothing is approved. A new message will bring the new plan and code.", plan)
+            return DecideResult(False, "refused_code", "This request changed. Nothing is approved. A new message will bring the new request and its code.", plan)
         problem = plan_digest.problem(plan, started["digest"])
         if problem:
             return DecideResult(False, "refused_code", plan_digest.refusal(problem), plan)

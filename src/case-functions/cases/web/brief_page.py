@@ -121,7 +121,7 @@ def _measured(brief: Brief) -> Safe:
     rows = [[fact.label, fact.value, fmt('<span class="muted">{source}</span>', source=fact.source)] for fact in brief.facts]
     parts: list[object] = [Safe("<h2>What was measured</h2>"),
                            table("measured", "What was measured, and where it was read", ["Fact", "Value", "Where it was read"], rows, row_header=True, quiet_caption=True)
-                           if rows else paragraph("No fact is recorded for this case."), _unread(brief)]
+                           if rows else paragraph("No fact is recorded for this finding."), _unread(brief)]
     return join(block(part) for part in parts)
 
 
@@ -216,13 +216,13 @@ def _steps(case: CaseRecord) -> Safe:
         ok = step.get("ok")
         rows.append([code(step.get("step") or ""), step.get("model") or "none", number(step.get("promptTokens")) or "none", number(step.get("completionTokens")) or "none",
                      number(step.get("ms")) or "none", "ok" if ok is True else "not ok" if ok is False else "not known", step.get("note") or ""])
-    return table("steps", "Every step of the case", STEP_HEADERS, rows) if rows else paragraph("No step is recorded for this case.")
+    return table("steps", "Every step of the finding", STEP_HEADERS, rows) if rows else paragraph("No step is recorded for this finding.")
 
 
 def _ai_words(case: CaseRecord) -> Safe:
     """Both AIs' words in full, marked as written by AI. A case that ended in an error has no AI text: its summary is the reason that it ended."""
     if case.status == "error":
-        return join([Safe("<h3>Why the case ended</h3>"), quoted("Recorded by Meternaut", case.summary or "No reason is recorded.")])
+        return join([Safe("<h3>Why the finding ended</h3>"), quoted("Recorded by Meternaut", case.summary or "No reason is recorded.")])
     investigated = case.detector == INVESTIGATION
     first, second = _model(case, "investigator" if investigated else "detective"), _model(case, "skeptic")
     verdict = summary([("Recommendation", words.recommendation_word(case.recommendation)), ("Confidence of the first AI (0 to 1)", confidence(case.confidence))])
@@ -240,16 +240,16 @@ def _details(ctx: Ctx, brief: Brief, case: CaseRecord | None, plan: PlanRecord |
     if case is not None:
         status_word, meaning = words.CASE_STATUS.get(case.status, (case.status, ""))
         run = link(ctx.url(f"/ops/runs?run={link_part(case.run_id)}"), case.run_id) if ctx.principal.has("ops") else code(case.run_id)  # type: ignore[union-attr]
-        rows += [("Resource id", code(case.resource_id)), ("Subscription", code(case.subscription_id)), ("Case", code(case.case_id)),
-                 ("How it was found", detector_cell(case.detector)), ("Status of the case", f"{status_word}. {meaning}".strip()), ("Run", run),
+        rows += [("Resource id", code(case.resource_id)), ("Subscription", code(case.subscription_id)), ("Finding", code(case.case_id)),
+                 ("How it was found", detector_cell(case.detector)), ("Status of the finding", f"{status_word}. {meaning}".strip()), ("Run", run),
                  ("First seen", ctx.when(case.first_seen_at)), ("Last updated", ctx.when(case.updated_at)), ("Seen in", "1 run" if case.runs_seen == 1 else f"{case.runs_seen} runs"),
                  ("Resource type", kind_text(case.resource_type))]
     elif plan is not None:
         rows += [("Resource id", code(plan.resource_id)), ("Subscription", code(plan.subscription_id))]
     if plan is not None:
         waiting = action is not None and plan.state == "approved" and action.state == "queued" and action.step_up
-        rows += [("Plan code", fmt("{code}. It is a reference, not proof that this page is genuine.", code=code(plan.code))),
-                 ("State of the plan", words.WAITING_TEXT if waiting else words.PLAN_STATE.get(plan.state, plan.state)), ("Expires", ctx.when(plan.expires_at))]
+        rows += [("Request code", fmt("{code}. It is a reference, not proof that this page is genuine.", code=code(plan.code))),
+                 ("State of the request", words.WAITING_TEXT if waiting else words.PLAN_STATE.get(plan.state, plan.state)), ("Expires", ctx.when(plan.expires_at))]
     if ctx.services.host:
         rows.append(("Served from", ctx.services.host))
     parts: list[object] = [summary(rows)]
@@ -258,8 +258,8 @@ def _details(ctx: Ctx, brief: Brief, case: CaseRecord | None, plan: PlanRecord |
         parts += [Safe("<h3>Steps</h3>"), _steps(case)]
         typed = {name: value for name, value in (case.facts if isinstance(case.facts, dict) else {}).items() if name not in (UNREAD, GROUP_FACT)}  # what code made of the estate is in the evidence above, and no AI saw it
         parts.append(table("facts", "The typed facts that the AIs saw", ["Fact", "Value"], [[code(name), _fact(value)] for name, value in sorted(typed.items())], row_header=False)
-                     if typed else paragraph("No typed fact is recorded for this case."))
-        parts.append(join([paragraph("These guards fired. A guard stops a case from becoming a proposal, and no model can lift it."),
+                     if typed else paragraph("No typed fact is recorded for this finding."))
+        parts.append(join([paragraph("These guards fired. A guard stops a finding from becoming a request, and no model can lift it."),
                            summary([(guard, words.GUARD.get(guard, "")) for guard in case.guards])]) if case.guards else paragraph("No guard fired."))
     if action is not None:
         parts += [Safe("<h3>What happened to the change</h3>"), action_block(ctx, action)]

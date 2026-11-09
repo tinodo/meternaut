@@ -20,7 +20,7 @@ from .layout import SIGNIN_ORIGIN, button, form, head, hidden, link, message_pag
 
 REFUSED_ROLE = "I cannot take your OK on this request."
 PAUSED = brief_page.PAUSED
-CHANGED = "This plan changed. Nothing is approved. A new message will bring the new plan and code."
+CHANGED = "This request changed. Nothing is approved. A new message will bring the new request and its code."
 # The only address that an approval may send a person to: the sign-in of Microsoft Entra, with a query that holds nothing but escaped characters. The same check holds for the
 # first sign-in (`begin`) and for the second one that Azure's claims challenge asks for (the result of `finish`).
 SIGNIN_ADDRESS = re.compile(re.escape(SIGNIN_ORIGIN) + rf"/[A-Za-z0-9._~%/+=&?-]{{1,{MAX_SIGNIN_PATH}}}")
@@ -134,7 +134,7 @@ def outcome(ctx: Ctx, result: DecideResult, plan_id: str | None) -> Response:
                     "Meternaut reads the resource again in a few minutes and records what it finds. It was made with your own permissions, and it is not made a second time.", history)
     if kind == "unchanged":
         return show("Nothing was changed", text or "Nothing was changed.",
-                    "The resource was already as the plan wants, so Meternaut wrote nothing, and no saving is claimed for this approval.", history)
+                    "The resource was already as the request asks, so Meternaut wrote nothing, and no saving is claimed for this approval.", history)
     if kind == "stopped":
         return show("The change was stopped", text or "A check failed before the change.", "Nothing was changed. The request is closed.")
     if kind == "azure_refused":
@@ -163,7 +163,7 @@ def outcome(ctx: Ctx, result: DecideResult, plan_id: str | None) -> Response:
     if kind == "not_mine":
         return show("Recorded: not yours", "Recorded. Nothing is approved. The request goes back to finding the right owner.", back_to=("/", "Back to the decisions"))
     if kind == "refused_code":
-        return show("This plan changed", CHANGED)
+        return show("This request changed", CHANGED)
     if kind == "refused_state":
         return show("This request cannot take an answer", text or "This request is not open for an answer now. It may be answered, expired or replaced. Nothing has changed.")
     if kind == "refused_role":

@@ -633,7 +633,7 @@ class TheCheckAfterTheExtraSignIn(unittest.TestCase):
                               ("the same resource in another case", {"resource": self.plan.resource_id.upper()})):
             with self.subTest(label):
                 refusal = self.refused("refused_code", **kwargs)
-                self.assertIn("This plan changed", refusal.message)
+                self.assertIn("This request changed", refusal.message)
                 self.assertIn("Nothing was changed", refusal.message)
 
     def test_the_approval_of_this_person_for_this_exact_plan_must_be_recorded(self):
