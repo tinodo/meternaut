@@ -32,6 +32,7 @@ SUBJECT_PREFIX = "[Meternaut]"
 MAX_LISTED = 5
 MAX_FACTS = 3
 MAX_KINDS = 3  # the kinds of data that nothing reads which a letter lists: a letter has no room for a table of five rows
+KIND_WORDS = 19  # the words that the lines of kinds, the line that counts the rest and what was not counted take together in a decision letter: three lines of five words, that line, and two words of room
 
 # Text and background pairs. The tests check the ratios that WCAG AA asks for (4.5 to 1) for every text colour on the colour it sits on.
 LIGHT = {"background": "#ffffff", "text": "#1b1b1b", "muted": "#4a4a4a", "link": "#0b5cad", "head": "#eef2f7", "rule": "#c9ced6", "button": "#0b5cad", "button_text": "#ffffff"}
@@ -230,17 +231,38 @@ def _fact_rows(brief: Brief) -> tuple[tuple[str, str], ...]:
     return tuple((_data(f.label, 60), _data(f.value, 120)) for f in brief.facts[:MAX_FACTS])
 
 
-def _unread_block(doc: "_Doc", brief: Brief, closing: bool = False) -> None:
+def _within(lines: Sequence[str], room: int) -> tuple[list[str], int]:
+    """The first of the lines of kinds that fit in `room` words, and the words that are left."""
+    kept: list[str] = []
+    for text in lines:
+        words = len(text.split())
+        if words > room:
+            break
+        kept.append(text)
+        room -= words
+    return kept, room
+
+
+def _unread_block(doc: "_Doc", brief: Brief, closing: bool = False, tight: bool = False) -> None:
     """What a finding about the data that a workspace takes in and nothing reads adds to a letter, in the room that a letter has: the method in one sentence, the first kinds of data as
-    short lines (the largest first, at most MAX_KINDS of them), and the choices in one line, with the closing sentence of the page's section when `closing` is set. The page has every line,
-    the readers of each and the whole of every choice."""
+    short lines (the largest first, at most MAX_KINDS of them), what was not counted when something was, and the choices in one line, with the closing sentence of the page's section when
+    `closing` is set. The page has every line, the readers of each, the whole of every choice and the whole sentence about what was not counted. In a `tight` letter what was not counted
+    takes its words from the lines of kinds: the line that counts the rest goes first and then the last kinds, since the first kinds are what a person needs and a caveat on the figure is
+    more than the third one."""
     unread = brief.unread
     if unread is None:
         return
     doc.paragraph(_data(unread.sentence, 240))
+    caveat = _data(unread.caveat, 160)
     lines = [f"{_data(line.kind, 60)}, {line.gb} ({line.percent})" for line in unread.lines[:MAX_KINDS]]
+    spare = 2  # the words of the line that counts the rest
+    if tight and caveat:
+        lines, spare = _within(lines, KIND_WORDS - len(caveat.split()))
     left = len(unread.lines) - len(lines) + unread.more
-    doc.items(*lines, *([f"{left} more"] if left > 0 else []))
+    if lines:
+        doc.items(*lines, *([f"{left} more"] if left > 0 and spare >= 2 else []))
+    if caveat:
+        doc.paragraph(caveat)
     if brief.options:
         doc.paragraph(_data(brief_mod.OPTIONS_SHORT + (f" {brief_mod.OPTIONS_END}" if closing else ""), 240))
 
@@ -286,10 +308,11 @@ def approval_letter(plan: PlanRecord, case: CaseRecord | None, person: Person, b
         if line:
             doc.paragraph(_data(line, 240))
     if about_data:
-        _unread_block(doc, brief)
+        _unread_block(doc, brief, tight=True)
         doc.facts(*_decision_rows(brief)[:2])  # whose it is, and that the answer changes nothing in Azure: the choices say what each puts at risk, and there is nothing to undo
     elif about_group:
-        doc.facts(*_fact_rows(brief))
+        rows = _fact_rows(brief)
+        doc.facts(*(rows[:2] if brief.group.capped else rows))  # a group that the limit of a run cut says so in its first row, and then a letter has no room for the examples as well
         doc.facts(*_decision_rows(brief)[:2])  # whose it is, and that the answer changes nothing in Azure: a letter for many resources has no room for more
     else:
         doc.facts(*_fact_rows(brief))

@@ -11,6 +11,10 @@ it shows a run, the data is read. The figure is a scenario: the cost of the last
 asked for and the record is not enough, no figure is made and the digest says what is missing. A record that holds a volume and never asked for the readers makes no claim: the finding is about
 something else.
 
+The share is over the whole volume that the last read of the volume reported, for the days that it covers, and never over what the rows of the record add up to: a read keeps only its first
+tables, so the rows are a part of it. Only the rows of that read count. A row of an earlier read of other days is left out, and a record with no whole volume, or whose rows are more than it,
+makes no figure.
+
 The digest is kept in the facts of the case (the key `unread`) as numbers, flags and the names of kinds of data, and the brief (cases/brief.py) reads it. The names of tables are text from the
 estate for a person to read: the brief cuts and escapes them, and nothing here sends them to a model.
 """
@@ -26,6 +30,7 @@ VOLUME, READERS, RUNS = "Billable GB ", "Readers ", "Runs "  # the names of the 
 MAX_KINDS = 6  # the kinds that the digest lists, the largest first
 MAX_LABEL = 120
 WINDOW = 30  # the days of a measurement that records none
+ROUNDING = 0.001  # the GB that each of the rounded rows of a read may add to the rounded whole of that read
 RESOURCE_TYPE = re.compile(r"[a-z0-9.]{1,60}(?:/[a-z0-9._-]{1,50}){1,4}")
 
 
@@ -61,11 +66,11 @@ def _measurements(block: Mapping) -> tuple[dict[str, tuple[float, int]], dict[st
     return volume, readers, runs
 
 
-def _whole(block: Mapping, days: int, held: float) -> float:
-    """The whole volume of the window: the one that the tool reported when it covers the same days and is not smaller than the kinds that the record holds, else what the kinds add up to."""
-    reported = block.get("volume") if isinstance(block.get("volume"), Mapping) else {}
-    total = _number(reported.get("billable_gb"))
-    return total if total is not None and _count(reported.get("days")) == days and total >= held else held
+def _reported(block: Mapping) -> tuple[float | None, int | None]:
+    """The whole volume that the last read of the volume reported and the days that it covers, each None when the record does not hold it as a number."""
+    found = block.get("volume") if isinstance(block.get("volume"), Mapping) else {}
+    total = _number(found.get("billable_gb"))
+    return (total if total is not None and total >= 0 else None), _count(found.get("days")) or None
 
 
 def _writers(block: Mapping, kind: str) -> list[str]:
@@ -86,14 +91,15 @@ def analyse(block: object, cost: float | None, names: Mapping[str, str] | None =
     volume, readers, runs = _measurements(block)
     if not (volume or readers or runs):
         return None
-    days = max((window for _, window in volume.values()), default=WINDOW)
-    here = {kind: gb for kind, (gb, window) in volume.items() if window == days}
-    if not here:
+    whole, days = _reported(block)
+    here = {kind: gb for kind, (gb, window) in volume.items() if window == days}  # the rows of the last read of the volume; those of an earlier read of other days are stale
+    if whole is None or not here:
         return {"missing": "volume"}
     held = sum(here.values())
     if held <= 0:
         return None
-    whole = _whole(block, days, held)
+    if whole <= 0 or held > whole + ROUNDING * len(here):
+        return {"missing": "volume"}  # the rows and the whole volume are not of one read: neither is believed
     nothing: list[tuple[str, float, float | None]] = []
     unknown = 0
     for kind, gb in here.items():
@@ -109,7 +115,7 @@ def analyse(block: object, cost: float | None, names: Mapping[str, str] | None =
     if not nothing:
         return {"missing": "readers"} if unknown and (readers or runs) else None  # the readers were asked for and could not be counted; a record that never asked has no claim to check
     nothing.sort(key=lambda item: (-item[1], item[0]))
-    gone = sum(gb for _, gb, _ in nothing)
+    gone = min(sum(gb for _, gb, _ in nothing), whole)  # the rounded rows of a read may add up to a few thousandths more than its rounded whole
     share = min(1.0, gone / whole)
     named = names if isinstance(names, Mapping) else {}
     kinds = []

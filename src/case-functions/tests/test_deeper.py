@@ -181,6 +181,13 @@ class TheReaders(unittest.TestCase):
         for text in (deeper.LOG_AUDIT_TOTALS, deeper.LOG_AUDIT_TEXTS):
             self.assertTrue(text.startswith("// meternaut:audit\nLAQueryLogs | where QueryText !contains \"meternaut:\""))
 
+    def test_the_read_of_the_texts_keeps_the_ones_that_were_run_most_often_and_a_read_that_came_back_full_may_have_left_texts_out(self):
+        self.assertEqual(deeper.MAX_AUDIT_TEXTS, 300)
+        self.assertTrue(deeper.LOG_AUDIT_TEXTS.endswith("| top 300 by Runs desc"))
+        for rows, cut in (([], False), ([{"QueryText": "x", "Runs": 1}] * 299, False), ([{"QueryText": "x", "Runs": 1}] * 300, True), ([{"QueryText": "x", "Runs": 1}] * 301, True)):
+            with self.subTest(rows=len(rows)):
+                self.assertEqual(deeper.audit_cut(rows), cut)
+
 
 class TheWriters(unittest.TestCase):
     def test_the_table_that_a_stream_writes_to(self):

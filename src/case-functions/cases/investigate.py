@@ -14,7 +14,9 @@ resource that the Skeptic was not shown, for a finding that it gave no verdict (
 
 Each resource of a finding that is left becomes one case, so that the History, the page of the case and the letters show it like any other case. The exception is a finding that asks
 for a look (the proposal investigate) and has more than GROUP_MIN resources left after the checks of code: it is one case, which belongs to its dearest resource, and so one question to a
-person, because nobody can use dozens of look-alike requests. Nothing here changes Azure: no plan of a change is made for a case that this module opens (approvals.create refuses it),
+person, because nobody can use dozens of look-alike requests. The case keeps which resources it stands for. A case of a group that was judged lately stands for a later finding only when most of
+that finding's resources (COVER_PERCENT) are ones that it stands for already; the resources of the finding that it stands for are not asked about again, and the others are a group of their own.
+A resource that a person marked do-not-touch is never one of a group. Nothing here changes Azure: no plan of a change is made for a case that this module opens (approvals.create refuses it),
 and the advise plan that asks a person whether it is worth acting on changes nothing in Azure.
 """
 from __future__ import annotations
@@ -46,7 +48,9 @@ if TYPE_CHECKING:
 DETECTOR = "investigation"
 MAX_CASES = 60  # the cases that one run opens
 GROUP_MIN = 5  # a finding to investigate that has more resources than this left after the checks of code is one case, and one question to a person, not one for each resource
+COVER_PERCENT = 80  # of each hundred resources of a later finding, how many a group case that was judged lately has to stand for already, for that case to stand for the finding too
 MAX_GROUP_NAMES = 12  # the names of the other resources that the case of such a finding keeps, for the page of a person
+MEMBER = re.compile(r"[0-9a-f]{12}")  # the short id of a resource that the case of a group keeps (Lead.lead_id)
 MAX_ENTRIES = 720  # the entries of metric_evidence that are read: a handful for each of the handles that a finding may hold
 MAX_FACT_METRICS = 12  # the measurements that a case keeps
 MAX_TOTALS = 20  # the totals of one measurement that are read: the toolbox records at most as many
@@ -84,6 +88,7 @@ class Item:
     metrics: dict[str, float]  # the entries of the finding that matched the tools: metric name -> the total that the tools returned
     shown: bool = False  # the Skeptic was given a row for the resource
     earlier: CaseRecord | None = None  # the case that an earlier Watch opened for the resource, when there is one
+    marked: bool = False  # a person marked the resource do-not-touch
 
 
 @dataclass
@@ -107,7 +112,9 @@ class Finding:
     recent: int = 0
     guarded: int = 0
     capped: int = 0
-    covered: bool = False  # a case that an earlier Watch opened for the finding's group of resources was judged lately, so that no resource of the finding is taken up again
+    seen: set[str] = field(default_factory=set)  # the short ids of every resource that the finding names and that the tools showed, whatever became of it
+    stood: list[CaseRecord] = field(default_factory=list)  # the cases of a group, judged lately, that a resource of the finding is the first of: what the finding may be covered by
+    silenced: int = 0  # the resources that a person marked do-not-touch and that the case of the group leaves out
     reason: str | None = None
     verdict: SkepticAnswer | None = None
     covered_usd: float | None = None
@@ -434,6 +441,63 @@ def _stands_for_a_group(case: CaseRecord | None) -> bool:
     return case is not None and isinstance(case.facts, dict) and isinstance(case.facts.get(GROUP_FACT), dict)
 
 
+def _members_of(case: CaseRecord) -> set[str]:
+    """The short ids of the resources that the case of a group stands for, as the case keeps them: only the resource that it belongs to when it keeps none (a case that a run made before it did)."""
+    found = case.facts.get(GROUP_FACT) if isinstance(case.facts, dict) else None
+    listed = found.get("members") if isinstance(found, dict) else None
+    ids = {item for item in listed if isinstance(item, str) and MEMBER.fullmatch(item)} if isinstance(listed, list) else set()
+    return ids or {case.case_id[1:]}
+
+
+def _alike(later: set[str], stored: set[str]) -> bool:
+    """Whether most of `later` (COVER_PERCENT of them) is in `stored`: a group that stands for most of what a finding names stands for the finding."""
+    return bool(later) and len(later & stored) * 100 >= COVER_PERCENT * len(later)
+
+
+def _marked(s: "Services") -> set[str]:
+    """The ids, in lower case, of the resources that a person marked do-not-touch. A store that cannot be read gives none: no request is made then either (approvals.advise reads the same marks)."""
+    if s.extras is None:
+        return set()
+    try:
+        return {key.lower() for key in s.extras.store.do_not_touch()}
+    except StoreError:
+        LOG.warning("investigate: the do-not-touch marks could not be read")
+        return set()
+
+
+def _settle(finding: Finding, marked: set[str]) -> int:
+    """What the cases of groups that were judged lately, and the marks of people, make of the resources that a finding to investigate has left. Returns the places of the cap of cases that this frees.
+
+    A case of a group that a resource of the finding is the first of stands for the whole finding when most of the finding's resources are ones that it stands for (`_alike`): nothing of the finding
+    is taken up again. When it stands for few of them, the resources that it does stand for are left out, since they were asked about, and the others go on: they are a group of their own, or
+    cases of their own when they are few. A finding that is one case (see _group_of) leaves out the resources that a person marked do-not-touch, and says how many; a finding with fewer
+    resources has a case for each of them as ever, and approvals.advise makes no request for one that is marked."""
+    if finding.proposal != "investigate":
+        return 0
+    freed = 0
+    if finding.stood:
+        stored = set().union(*(_members_of(case) for case in finding.stood))
+        if _alike(finding.seen, stored):
+            freed = len(finding.items)
+            finding.recent += freed + finding.capped
+            finding.items, finding.capped = [], 0
+            return freed
+        left = [item for item in finding.items if item.lead.lead_id not in stored]
+        freed = len(finding.items) - len(left)
+        finding.recent += freed
+        finding.items = left
+    open_items = []
+    for item in finding.items:
+        item.marked = item.lead.resource_id.lower() in marked
+        if not item.marked:
+            open_items.append(item)
+    if GROUP_MIN < len(open_items) < len(finding.items):
+        finding.silenced = len(finding.items) - len(open_items)
+        freed += finding.silenced
+        finding.items = open_items
+    return freed
+
+
 # -- what the Skeptic is given -----------------------------------------------------------------------------------------------------------------------
 
 def _nonzero(aggregate: dict) -> bool:
@@ -696,6 +760,7 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
     room = MAX_CASES
     held: dict[str, int] = {}
     open_questions = learning.OpenQuestions(s.extras.store, s.clock()) if s.extras is not None else None  # read once, when the first old case is looked at
+    marked = _marked(s)
     for finding in findings:
         if finding.reason is not None:
             continue
@@ -707,11 +772,12 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
             if found_unread is not None:
                 facts[unread.KEY] = found_unread  # a workspace: the data that nothing reads, and the scenario figure that rests on it (the saving of a change has no figure of its own: decide.py)
             lead = _lead(resource, facts, costs[handle], _advisor(toolbox.evidence, handle))
+            finding.seen.add(lead.lead_id)
             old = _earlier(s, lead)
             if _recent(s, old, facts, open_questions):
                 finding.recent += 1
                 if finding.proposal == "investigate" and _stands_for_a_group(old):
-                    finding.covered = True  # the case of the group was judged lately: the question to a person is open or was answered, and no other resource of the finding adds one
+                    finding.stood.append(old)  # the case of a group, judged lately: the question to a person is open or was answered. Whether it stands for this finding is settled below
             elif room <= 0:
                 finding.capped += 1
             else:
@@ -724,10 +790,7 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
                 else:
                     finding.items.append(Item(handle, lead, finding.cited[handle], earlier=old))
                     room -= 1
-        if finding.covered:
-            finding.recent += len(finding.items) + finding.capped
-            room += len(finding.items)
-            finding.items, finding.capped = [], 0
+        room += _settle(finding, marked)
         known = [i.lead.cost_usd_30d for i in finding.items if i.lead.cost_usd_30d is not None]
         finding.covered_usd = round(sum(known), 2) if known else None
         if not finding.items:
@@ -808,7 +871,8 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
             steps = tuple(x for x in (investigator_step, _skeptic_step_of(skeptic_step, finding, item)) if x is not None)
             _open_case(s, out, finding, item, models, steps, f"{h.run_id[:8]}-i{number}", **({"group": group} if group else {}))
         if group:
-            note(f"finding {finding.number}: its {len(group)} resources are one case and one question to a person, which belong to the dearest of them")
+            left_out = f"; {finding.silenced} more that a person marked do-not-touch {'is' if finding.silenced == 1 else 'are'} left out" if finding.silenced else ""
+            note(f"finding {finding.number}: its {len(group)} resources are one case and one question to a person, which belong to the dearest of them{left_out}")
     out.kept = len(survivors)
     out.dropped_findings = len(raw_findings) - len(survivors)
     if out.guarded:
@@ -868,26 +932,31 @@ def _owner_of(s: "Services", out: Investigation, lead: Lead) -> dict:
 def _group_of(finding: Finding) -> list[Item] | None:
     """The resources of a finding that is one case, with the one that the case belongs to first, or None when each resource of the finding is a case.
 
-    Only a finding that asks for a look (investigate) is one case, and only when it has more than GROUP_MIN resources left after the checks of code: a delete and a change need a decision for
-    each resource, and a handful of requests can each be read. The case belongs to the resource that an earlier Watch made it for (so that a Watch that finds the same group again
-    does not make another case and another request when the costs have moved), or else to the dearest resource, and the first of them when the cost is the same."""
-    if finding.proposal != "investigate" or len(finding.items) <= GROUP_MIN:
+    Only a finding that asks for a look (investigate) is one case, and only when it has more than GROUP_MIN resources left after the checks of code, not counting those that a person marked
+    do-not-touch (_settle leaves those out of a finding that is one case): a delete and a change need a decision for each resource, and a handful of requests can each be read. The case belongs to
+    the resource that an earlier Watch made it for, when that case stands for most of these resources (so that a Watch that finds the same group again does not make another case and another
+    request when the costs have moved), or else to the dearest resource, and the first of them when the cost is the same."""
+    if finding.proposal != "investigate" or sum(1 for item in finding.items if not item.marked) <= GROUP_MIN:
         return None
-    first = next((item for item in finding.items if _stands_for_a_group(item.earlier)), finding.items[0])  # the items are in the order of their cost, the dearest first
+    ids = {item.lead.lead_id for item in finding.items}
+    stands = (item for item in finding.items if _stands_for_a_group(item.earlier) and _alike(ids, _members_of(item.earlier)))
+    first = next(stands, finding.items[0])  # the items are in the order of their cost, the dearest first
     return [first] + [item for item in finding.items if item is not first]
 
 
-def _together(members: list[Item]) -> dict:
+def _together(members: list[Item], capped: int = 0, silenced: int = 0) -> dict:
     """What the case of a group keeps of it, as typed numbers and cleaned names (cases/brief.py shows it): how many resources, what they cost together (None when no cost line was read for any
-    of them), their type ("other" when they differ), in how many resource groups they are, and the names of the first of the others. The names are text of the estate: cut and cleaned here, and
-    cleaned again where they are shown."""
+    of them), their type ("other" when they differ), in how many resource groups they are, the names of the first of the others, how many more of the finding the cap of cases left out, how
+    many a person marked do-not-touch, and the short ids of the resources that it stands for (a later Watch compares a finding with them: _settle). The names are text of the estate: cut
+    and cleaned here, and cleaned again where they are shown."""
     leads = [member.lead for member in members]
     known = [lead.cost_usd_30d for lead in leads if lead.cost_usd_30d is not None]
     types = {(lead.resource_type or "").lower() for lead in leads}
     kind = next(iter(types)) if len(types) == 1 else "other"
     names = [clean_text(lead.name, 60) for lead in leads[1 : 1 + MAX_GROUP_NAMES]]
     return {"count": len(leads), "costUsd30d": _figure(sum(known)) if known else None, "type": kind if len(kind) <= 120 and RESOURCE_TYPE.fullmatch(kind) else "other",
-            "groups": len({(lead.subscription_id.lower(), (lead.resource_group or "").lower()) for lead in leads}), "names": [name for name in names if name]}
+            "groups": len({(lead.subscription_id.lower(), (lead.resource_group or "").lower()) for lead in leads}), "names": [name for name in names if name],
+            "capped": capped, "silenced": silenced, "members": sorted(lead.lead_id for lead in leads)}
 
 
 def _open_case(s: "Services", out: Investigation, finding: Finding, item: Item, models: dict, steps: tuple[dict, ...], case_id: str, group: list[Item] | None = None) -> None:
@@ -900,7 +969,7 @@ def _open_case(s: "Services", out: Investigation, finding: Finding, item: Item, 
     h = s.history
     lead = item.lead
     if group:
-        together = _together(group)
+        together = _together(group, finding.capped, finding.silenced)
         lead = replace(lead, cost_usd_30d=together["costUsd30d"], facts={**{k: v for k, v in lead.facts.items() if k != unread.KEY}, "costUsd30d": together["costUsd30d"], GROUP_FACT: together})
     detective = DetectiveAnswer(finding.proposal, finding.confidence, finding.summary)
     judged = finding.verdict if item.shown else None

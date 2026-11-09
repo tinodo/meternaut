@@ -16,7 +16,7 @@ import json
 import math
 import re
 from dataclasses import dataclass, field
-from typing import Callable, Iterable, Mapping
+from typing import Callable, Iterable, Mapping, Sequence
 
 from . import kql
 from .http import WORKSPACE as _WORKSPACE_PATTERN
@@ -304,12 +304,14 @@ def mention_counts(groups: Mapping[str, list[list[str]]], known: set[str]) -> tu
     return per_table, scanning
 
 
+MAX_AUDIT_TEXTS = 300  # the distinct texts of queries that the read of the record of the runs keeps: the ones that were run most often
 LOG_AUDIT_TOTALS = ("// meternaut:audit\nLAQueryLogs | where QueryText !contains \"meternaut:\" | summarize Runs = count(), Callers = dcount(AADObjectId)")
-LOG_AUDIT_TEXTS = ("// meternaut:audit\nLAQueryLogs | where QueryText !contains \"meternaut:\" | summarize Runs = count() by QueryText | top 300 by Runs desc")
+LOG_AUDIT_TEXTS = (f"// meternaut:audit\nLAQueryLogs | where QueryText !contains \"meternaut:\" | summarize Runs = count() by QueryText | top {MAX_AUDIT_TEXTS} by Runs desc")
 
 
 def audit_counts(rows: Iterable[Mapping], known: set[str]) -> dict[str, int]:
-    """From the rows of LOG_AUDIT_TEXTS: for each table, how many of the recorded runs of queries named it."""
+    """From the rows of LOG_AUDIT_TEXTS: for each table, how many of the recorded runs of queries named it. A table that no text names is not in it, and that is none only when the rows are all
+    there are: a read that returned MAX_AUDIT_TEXTS rows may have left texts out (see audit_cut)."""
     found: dict[str, int] = {}
     for row in rows:
         runs = count(row.get("Runs"))
@@ -318,6 +320,11 @@ def audit_counts(rows: Iterable[Mapping], known: set[str]) -> dict[str, int]:
         for name in kql.mentioned(row.get("QueryText"), known):
             found[name] = found.get(name, 0) + runs
     return found
+
+
+def audit_cut(rows: Sequence[Mapping]) -> bool:
+    """Whether the read of LOG_AUDIT_TEXTS may have left texts out: it returned as many rows as it may, so a table that none of them names is not known to be read by no query."""
+    return len(rows) >= MAX_AUDIT_TEXTS
 
 
 # -- who writes to a workspace ----------------------------------------------------------------------------------------------------------------------

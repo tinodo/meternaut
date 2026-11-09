@@ -130,8 +130,8 @@ def _facts(brief: Brief) -> list[dict]:
 
 
 def _unread(brief: Brief) -> list[dict]:
-    """The data that a workspace takes in and nothing reads, in the room that a card has: the method in one sentence, the first kinds of data (the largest first), and the choices in one
-    line. The page has every line, the readers of each and the whole of every choice."""
+    """The data that a workspace takes in and nothing reads, in the room that a card has: the method in one sentence, the first kinds of data (the largest first), what was not counted when
+    something was, and the choices in one line. The page has every line, the readers of each, the whole sentence about what was not counted and the whole of every choice."""
     unread = brief.unread
     if unread is None:
         return []
@@ -141,6 +141,8 @@ def _unread(brief: Brief) -> list[dict]:
     blocks += [_block(f"unread-{number}", f"{md(line.kind, 60)}, {md(line.gb, 24)} ({md(line.percent, 30)})") for number, line in enumerate(shown, 1)]
     if left > 0:
         blocks.append(_block("unread-more", f"{left} more"))
+    if unread.caveat:
+        blocks.append(_block("unread-caveat", md(unread.caveat, 200), isSubtle=True))
     if brief.options:
         blocks.append(_block("options", md(OPTIONS_SHORT, 200)))
     return blocks
