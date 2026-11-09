@@ -96,7 +96,8 @@ TIMER_SLACK = dt.timedelta(hours=1)
 
 def investigation_wait(s: Services, trigger: str) -> str | None:
     """None when the investigation is due; else the plain reason why it waits. A run that a person starts (any trigger but the daily timer) always investigates. The daily timer investigates when
-    INVESTIGATE_EVERY_DAYS have passed since the last run that investigated, because a run costs about two US dollars and the owner's standing limit is 5 a day and 25 a month for each caller.
+    INVESTIGATE_EVERY_DAYS have passed since the last run that investigated, because a run costs about half a US dollar and the owner's standing limit of 5 a day and 25 a month for each caller is
+    shared with the evaluations, the red team and the runs that people start.
     A store that cannot be read, or a time that cannot be read, means that the investigation waits: nothing is spent on a guess."""
     if trigger != "timer" or s.extras is None:
         return None

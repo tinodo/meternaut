@@ -45,9 +45,10 @@ FOUNDRY_MODEL_SKEPTIC = "FOUNDRY_MODEL_SKEPTIC"
 INVESTIGATE = "INVESTIGATE"
 INVESTIGATE_MAX_CALLS = "INVESTIGATE_MAX_CALLS"
 INVESTIGATE_MAX_SECONDS = "INVESTIGATE_MAX_SECONDS"
-# How many days the daily timer waits after an investigation that ran before it investigates again. A run costs about two US dollars of model calls, and the standing limit of the AI Gateway
-# is 5 a day and 25 a month for each caller (rule 15 (g)): investigating every day would use the month's allowance in about twelve days. A run that a person starts always investigates; the
-# leads of the fixed detectors are judged by the Detective and the Skeptic every day anyway, which costs cents.
+# How many days the daily timer waits after an investigation that ran before it investigates again. A run uses about 340,000 tokens and costs about half a US dollar (Cost Management, read on
+# 2026-11-09: 0.68 US dollars for the gpt-5.5 lines of 2026-11-08, a day of three investigations and about 430,000 tokens). The standing limit of the AI Gateway is 5 a day and 25 a month for
+# each caller (rule 15 (g)), and the project's identity also pays for the evaluations, the red team and every run that a person starts: a weekly investigation uses about 2 of the 25 and a
+# daily one about 15. A run that a person starts always investigates; the leads of the fixed detectors are judged by the Detective and the Skeptic every day anyway, which costs cents.
 INVESTIGATE_EVERY_DAYS = "INVESTIGATE_EVERY_DAYS"
 DEFAULT_INVESTIGATE_EVERY_DAYS = 7
 LIMIT_INVESTIGATE_EVERY_DAYS = 30
