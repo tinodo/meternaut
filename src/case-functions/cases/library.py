@@ -73,9 +73,13 @@ class LibraryError(Exception):
 
 # -- the addresses -----------------------------------------------------------------------------------------------------------------------------------
 
+DOC_AREAS = {"learn.microsoft.com": ("azure", "rest", "lifecycle"), "azure.microsoft.com": ("pricing",)}  # the first folder of a page that the Study may read: Microsoft's own documentation and price pages, never the areas of Learn that people write in (answers, collections, users, community)
+
+
 def doc_url(value: object) -> str | None:
-    """The address if it is one that the Study may read, else None. A page of the two hosts of http.DOCS_PAGES: https, the host alone (no user, no port), a path under the English folder of
-    plain words between slashes (no encoded character, no folder of dots only) and no query or fragment. The price list: its one address, with nothing or one `$filter` of plain words."""
+    """The address if it is one that the Study may read, else None. A page of the two hosts of http.DOCS_PAGES: https, the host alone (no user, no port), a path under the English folder and
+    then one of the folders of DOC_AREAS, of plain words between slashes (no encoded character, no folder of dots only) and no query or fragment. The price list: its one address, with nothing or
+    one `$filter` of plain words."""
     if not isinstance(value, str) or not 12 <= len(value) <= MAX_URL or not value.isascii() or any(ord(ch) < 32 or ord(ch) == 127 for ch in value):
         return None
     base, mark, query = value.partition("?")
@@ -95,6 +99,8 @@ def doc_url(value: object) -> str | None:
         return None
     rest = [part for part in parts.path[len(prefix):].split("/") if part != ""]
     if not 1 <= len(rest) <= MAX_SEGMENTS or "//" in parts.path or not all(PATH_PART.fullmatch(part) and set(part) != {"."} for part in rest):
+        return None
+    if rest[0] not in DOC_AREAS.get(parts.netloc, ()):
         return None
     return value
 

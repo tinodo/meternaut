@@ -57,20 +57,27 @@ def claim(**changes):
 
 class TheAddressesThatMayBeRead(unittest.TestCase):
     def test_a_page_of_the_two_hosts_under_the_english_folder_and_the_price_list_may_be_read(self):
-        for good in (PAGE, OTHER, "https://learn.microsoft.com/en-us/azure/a.b_c~d-e/f/", "https://learn.microsoft.com/en-us/x", PRICES,
+        for good in (PAGE, OTHER, "https://learn.microsoft.com/en-us/azure/a.b_c~d-e/f/", "https://learn.microsoft.com/en-us/azure/x", "https://learn.microsoft.com/en-us/rest/api/x",
+                     "https://learn.microsoft.com/en-us/lifecycle/products/x", PRICES,
                      PRICES + "?$filter=serviceName eq 'Example Widgets'", PRICES + "?$filter=armRegionName eq 'swedencentral' and priceType eq 'Reservation'"):
             self.assertEqual(library.doc_url(good), good, good)
 
+    def test_the_areas_of_learn_that_people_write_in_are_not_read_only_what_microsoft_wrote(self):
+        for bad in ("https://learn.microsoft.com/en-us/answers/questions/1/x", "https://learn.microsoft.com/en-us/collections/x", "https://learn.microsoft.com/en-us/users/x",
+                    "https://learn.microsoft.com/en-us/community/x", "https://learn.microsoft.com/en-us/training/x", "https://learn.microsoft.com/en-us/x",
+                    "https://azure.microsoft.com/en-us/blog/x", "https://azure.microsoft.com/en-us/azure/x", "https://learn.microsoft.com/en-us/Azure/x", "https://learn.microsoft.com/en-us/pricing/x"):
+            self.assertIsNone(library.doc_url(bad), bad)
+
     def test_nothing_else_may_be_read_not_a_host_a_scheme_a_port_a_query_a_fragment_or_a_path_that_leaves_the_folder(self):
-        for bad in ("https://example.com/en-us/x", "http://learn.microsoft.com/en-us/x", "https://learn.microsoft.com:443/en-us/x", "https://user@learn.microsoft.com/en-us/x",
-                    "https://learn.microsoft.com/en-us/x?view=1", "https://learn.microsoft.com/en-us/x#part", "https://learn.microsoft.com/azure/x", "https://learn.microsoft.com/en-gb/x",
-                    "https://learn.microsoft.com/en-us/", "https://learn.microsoft.com/en-us", "https://learn.microsoft.com/en-us/../x", "https://learn.microsoft.com/en-us/./x",
-                    "https://learn.microsoft.com/en-us//x", "https://learn.microsoft.com/en-us/%2e%2e/x", "https://learn.microsoft.com/en-us/a b",
-                    "https://LEARN.MICROSOFT.COM/en-us/x", "https://learn.microsoft.com.evil.example/en-us/x", "https://evil.example/https://learn.microsoft.com/en-us/x",
-                    "https://learn.microsoft.com/en-us/x\\y", "https://learn.microsoft.com/en-us/x\n", "https://learn.microsoft.com/en-us/" + "a/" * 17,
-                    "https://learn.microsoft.com/en-us/" + "a" * 101, "https://learn.microsoft.com/en-us/" + "a" * 300,
+        for bad in ("https://example.com/en-us/azure/x", "http://learn.microsoft.com/en-us/azure/x", "https://learn.microsoft.com:443/en-us/azure/x", "https://user@learn.microsoft.com/en-us/azure/x",
+                    "https://learn.microsoft.com/en-us/azure/x?view=1", "https://learn.microsoft.com/en-us/azure/x#part", "https://learn.microsoft.com/azure/x", "https://learn.microsoft.com/en-gb/azure/x",
+                    "https://learn.microsoft.com/en-us/", "https://learn.microsoft.com/en-us", "https://learn.microsoft.com/en-us/azure/../x", "https://learn.microsoft.com/en-us/azure/./x",
+                    "https://learn.microsoft.com/en-us//azure/x", "https://learn.microsoft.com/en-us/azure/%2e%2e/x", "https://learn.microsoft.com/en-us/azure/a b",
+                    "https://LEARN.MICROSOFT.COM/en-us/azure/x", "https://learn.microsoft.com.evil.example/en-us/azure/x", "https://evil.example/https://learn.microsoft.com/en-us/azure/x",
+                    "https://learn.microsoft.com/en-us/azure/x\\y", "https://learn.microsoft.com/en-us/azure/x\n", "https://learn.microsoft.com/en-us/azure/" + "a/" * 17,
+                    "https://learn.microsoft.com/en-us/azure/" + "a" * 101, "https://learn.microsoft.com/en-us/azure/" + "a" * 300,
                     PRICES + "?$top=1", PRICES + "?$filter=", PRICES + "?$filter=a;b", PRICES + "?$filter=<b>", PRICES + "?api-version=2023-01-01-preview", PRICES + "/other",
-                    PRICES + "?$filter=" + "a" * 201, "https://prices.azure.com/api/retail/prices ", None, 5, ["https://learn.microsoft.com/en-us/x"], b"https://learn.microsoft.com/en-us/x", ""):
+                    PRICES + "?$filter=" + "a" * 201, "https://prices.azure.com/api/retail/prices ", None, 5, ["https://learn.microsoft.com/en-us/azure/x"], b"https://learn.microsoft.com/en-us/azure/x", ""):
             self.assertIsNone(library.doc_url(bad), repr(bad))
 
     def test_the_list_of_calls_agrees_with_the_checks_and_has_no_method_but_a_read(self):
@@ -370,7 +377,7 @@ class WhatTheInvestigatorGets(unittest.TestCase):
         self.assertNotIn("evil", json.dumps(answer))
 
     def test_at_most_eight_claims_are_shown_and_the_answer_fits_the_cap_of_a_tool_answer_even_when_every_part_is_as_long_as_it_may_be(self):
-        long_url = "https://learn.microsoft.com/en-us/" + "/".join(["a" * 20] * 12)
+        long_url = "https://learn.microsoft.com/en-us/azure/" + "/".join(["a" * 20] * 11)
         quote_text = ("word " * 40).strip()
         records = [claim(claim_id=f"c{n:02d}", url=long_url[:300].rstrip("/"), quote=quote_text, read_at=stamp(TIME + dt.timedelta(minutes=n))) for n in range(12)]
         records = [record for record in records if library.doc_url(record.url) == record.url]

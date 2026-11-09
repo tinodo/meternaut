@@ -136,7 +136,7 @@ class RecallKnowledge(unittest.TestCase):
     def test_the_answer_fits_the_cap_of_a_tool_answer(self):
         store = MemoryStore(clock=lambda: NOW)
         for n in range(30):
-            store.claim_put(claim(claim_id=f"c{n:02d}", quote=("word " * 40).strip(), url="https://learn.microsoft.com/en-us/" + "/".join(["a" * 20] * 12)))
+            store.claim_put(claim(claim_id=f"c{n:02d}", quote=("word " * 40).strip(), url="https://learn.microsoft.com/en-us/azure/" + "/".join(["a" * 20] * 11)))
         text = box(store).call("recall_knowledge", {"type": TYPE})
         self.assertLess(len(text), tb.MAX_RESULT_CHARS)
         self.assertEqual(len(json.loads(text)["claims"]), 8)

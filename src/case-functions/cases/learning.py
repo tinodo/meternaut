@@ -361,8 +361,12 @@ def remember(store: Store | None, case: CaseRecord, plan: PlanRecord, **more: ob
 
 def recall(lessons: Iterable[LessonRecord], resource_type: str) -> dict:
     """The answer of the tool `recall_lessons`: counts and rates of the lessons of one type, by family, and the share that was approved in each band of confidence. Typed values and fixed
-    words only: no text of a person, no name, nothing that was written by anybody."""
-    found = [lesson for lesson in lessons if lesson.resource_type == resource_type]
+    words only: no text of a person, no name, nothing that was written by anybody. A family that is not one of the families of change or advise is counted as `other`, whatever a stored
+    record says."""
+    from .families import registry  # imported here: the registry loads the families, which the other users of this module do not need
+
+    known = {*registry.names(), ADVISE}
+    found = [replace(lesson, family=lesson.family if lesson.family in known else "other") for lesson in lessons if lesson.resource_type == resource_type]
     answer: dict = {"type": resource_type, "closed": len(found),
                     "source": "how people answered past requests of this type: counts, not facts about this estate"}
     if not found:

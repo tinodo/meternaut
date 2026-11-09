@@ -860,6 +860,9 @@ def _open_case(s: "Services", out: Investigation, finding: Finding, item: Item, 
     now = stamp(s.clock())
     try:
         old = ex.store.case_get(f"k{lead.lead_id}")
+        past = old.learned.get("past") if old is not None and isinstance(old.learned, dict) else None
+        if past and "past" not in learned:
+            learned["past"] = past  # a case judged again while its request is still open keeps the line of the past that the request was made with (no second request writes it)
         record = CaseRecord(
             case_id=f"k{lead.lead_id}", resource_id=lead.resource_id, resource_name=clean_text(lead.name, 120), resource_type=clean_text(lead.resource_type, 120),
             resource_group=clean_text(lead.resource_group, 90), subscription_id=lead.subscription_id, detector=DETECTOR, run_id=h.run_id, status=outcome.status,

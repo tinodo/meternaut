@@ -532,6 +532,37 @@ class AnApprovedPlanWhoseAppStopped(unittest.TestCase):
         self.assertEqual([a.state for a in world.tick().verified], ["verified"])
         self.assertEqual(world.state(plan), ("consumed", "verified", "verified"))
 
+    def test_a_plan_whose_resource_could_not_be_read_is_not_closed_as_not_made_and_is_settled_when_the_reads_work_again(self):
+        world, plan, resource = self.stopped()
+        world.arm.read_status = 403  # the reader is refused: nobody can say whether the change was made
+        world.clock.advance(days=APPROVED_UNKNOWN_DAYS, hours=2)
+        self.assertEqual(world.tick().finished, [])
+        self.assertEqual(world.state(plan), ("approved", "unknown", "approved"), "the reads failed: it is not known that the change was not made")
+        world.clock.advance(days=3)
+        self.assertEqual(world.tick().finished, [], "however long the reads fail")
+        fs.Arm.set_power(resource, "deallocated")  # the machine was stopped in fact, and the reads work again
+        world.arm.read_status = 200
+        world.clock.advance(minutes=1)
+        self.assertEqual(world.tick().finished, [])
+        self.assertEqual(world.state(plan), ("consumed", "done", "done"), "the check sees the change and settles it: it is not closed as failed")
+
+    def test_a_resource_that_was_read_and_does_not_show_the_change_is_closed_once_the_two_days_are_over(self):
+        world, plan, resource = self.stopped()
+        world.clock.advance(days=APPROVED_UNKNOWN_DAYS, hours=2)
+        self.assertEqual([a.state for a in world.tick().finished], ["failed"], "the reads answered: the machine runs")
+        self.assertEqual(world.action(plan).verification.get("lastRead"), "pending")
+
+    def test_a_read_that_failed_after_one_that_answered_keeps_the_plan_open(self):
+        world, plan, resource = self.stopped()
+        world.clock.advance(days=1)
+        world.tick()
+        self.assertEqual(world.action(plan).verification.get("lastRead"), "pending")
+        world.arm.read_status = 500
+        world.clock.advance(days=APPROVED_UNKNOWN_DAYS)
+        self.assertEqual(world.tick().finished, [])
+        self.assertEqual(world.action(plan).verification.get("lastRead"), "unknown")
+        self.assertEqual(world.state(plan), ("approved", "unknown", "approved"))
+
     def test_a_plan_that_is_used_is_never_closed_by_this_rule_however_long_its_action_is_unknown(self):
         world = World()
         resource = machine(world)

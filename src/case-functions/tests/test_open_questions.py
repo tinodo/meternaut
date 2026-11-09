@@ -403,12 +403,15 @@ class WhenTheInvestigatorCitesAnOpenQuestionAgain(unittest.TestCase):
 
     def test_a_case_with_an_open_request_and_a_judgement_that_was_not_sure_is_judged_again_and_gets_no_second_request(self):
         old = self.store.case_get(self.key)
+        past = old.learned.get("past")
+        self.assertTrue(past, "the first Watch kept how past requests like this were answered, for the line of the brief")
         self.store.case_put(replace(old, status="needs_human", confidence=0.5))
         self.clock.advance(days=1)
         second = self.watch()
         self.assertEqual(second.result.cases, 1)
         case = self.store.case_get(self.key)
         self.assertEqual((case.runs_seen, case.plan_id), (2, old.plan_id), "the case is linked to the request that is open: no second one is made")
+        self.assertEqual(case.learned.get("past"), past, "the request that is still open keeps its line of the past: no second request is made that would write it again")
         self.assertEqual(len(self.store.plans_open()), 2)
         self.assertEqual(second.of("plan.created"), [])
 

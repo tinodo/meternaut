@@ -372,12 +372,16 @@ def _verify(s: RunnerServices, action: ActionRecord) -> ActionRecord | None:
     now = s.clock()
     verification = dict(action.verification)
     changed = False
+    noted = False
     settled = bool(verification.get("gone")) if family.deletes else bool(verification.get("now"))
     if not settled:
         verdict = _verdict(s, family, plan)
         if verdict.state == "done":
             verification.update(verdict.evidence, checkedAt=stamp(now))
             settled, changed = True, True
+        elif verification.get("lastRead") != verdict.state:
+            verification["lastRead"] = verdict.state  # what the last read said: pending or failed = it answered and the change is not shown; unknown = it could not be read
+            noted = True
     if settled and action.state in ("unknown", "done") and action.finished_at and s.arm is not None:
         touched, confirmed = _cost_check(s, plan, family, parse(action.finished_at), now, verification)
         changed = changed or touched
@@ -400,6 +404,10 @@ def _verify(s: RunnerServices, action: ActionRecord) -> ActionRecord | None:
                 s.store.case_put(replace(case, status="done", updated_at=stamp(now)))
             updated = replace(updated, result=verdict_text(family, verification, updated.result))
             s.store.action_put(updated)
+        return updated
+    if noted:
+        updated = replace(action, verification=verification)  # only what the last read said: the action stays as it is
+        s.store.action_put(updated)
         return updated
     return None
 
@@ -458,6 +466,8 @@ def _close_unmade(s: RunnerServices, action: ActionRecord, now: dt.datetime) -> 
     already" holds the resource for good. The plan, the action and the case close as failed, through the same transition as every other failure. Returns the closed action, or None."""
     if action.state != "unknown":
         return None
+    if action.verification.get("lastRead") not in ("pending", "failed"):
+        return None  # the last read of the resource failed, or there was none: nobody knows that the change was not made, so the plan stays open
     since = action.started_at or action.queued_at
     if not since or now - parse(since) <= dt.timedelta(days=APPROVED_UNKNOWN_DAYS):
         return None
