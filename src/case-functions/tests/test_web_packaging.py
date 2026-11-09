@@ -38,7 +38,7 @@ class ThePackage(unittest.TestCase):
                                                        "notebook.py", "notes.py", "ops.py", "router.py", "settings.py", "style.py", "words.py"])
         self.assertEqual(sorted(p.name for p in WEB.iterdir() if p.name != "__pycache__"), [p.name for p in modules()])
 
-    def test_it_imports_the_standard_library_only_and_the_three_modules_of_the_contract(self):
+    def test_it_imports_the_standard_library_only_and_the_modules_of_the_contract(self):
         standard = set(sys.stdlib_module_names)
         for path in modules():
             for module, level in imported(path):
@@ -50,7 +50,21 @@ class ThePackage(unittest.TestCase):
                                                              "settings", "style"})
                     else:
                         self.assertEqual(level, 2)
-                        self.assertIn(module, {"brief", "models", "people"}, "the pages know the records, the people and the decision brief, and nothing of how they are kept")
+                        # `usage` joined the three modules of the contract with the chart of use: a table of data and a few pure functions that reads nothing (the test below pins that).
+                        self.assertIn(module, {"brief", "models", "people", "usage"}, "the pages know the records, the people, the decision brief and the table of the use that is drawn, and "
+                                                                                      "nothing of how they are kept")
+
+    def test_the_table_of_use_that_the_pages_know_is_data_and_pure_functions_over_the_standard_library_and_nothing_of_the_app(self):
+        path = APP_ROOT / "cases" / "usage.py"
+        found = imported(path)
+        self.assertEqual({level for _, level in found}, {0}, "it imports no module of the app: the pages must not reach the client, the store or the network through it")
+        self.assertLessEqual({module.split(".")[0] for module, _ in found}, set(sys.stdlib_module_names))
+        self.assertEqual({module for module, _ in found} & NOT_FOR_A_PAGE, set())
+        source = path.read_text(encoding="utf-8")
+        for node in ast.walk(ast.parse(source)):
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+                self.assertNotIn(node.func.id, {"open", "eval", "exec", "compile", "__import__", "input", "print"}, f"usage.py:{node.lineno}")
+        self.assertNotRegex(source, r"\.now\(|\.today\(|time\.time\(", "no clock: a page gives it the day")
 
     def test_a_page_does_not_touch_a_network_a_process_or_a_file(self):
         for path in modules():

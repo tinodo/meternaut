@@ -2,7 +2,8 @@
 
 A stranger must be able to answer eight questions from this page in a minute, without opening anything else: what am I asked to decide, what do I get, how sure is it and
 on what evidence, what exactly happens if I say yes (who does it, with whose rights), can it be undone, what could go wrong, whose resource is it, and what are my choices.
-So the page is the title, what is at stake in figures (a year and a month, with its level and basis, and a chart of the cost) and what happens if the person says yes, in one card;
+So the page is the title, what is at stake in figures (a year and a month, with its level and basis, and a chart of the cost, and of the use for a kind of resource that has one) and what
+happens if the person says yes, in one card;
 then what was measured, why the two AIs think so (in boxes that say they are not checked), whose resource it is, and, beside them on a wide screen, ONE form with the answers
 that exist right now. Everything else (the steps, the models, the tokens, the checks, the ids, the log of the change) is in one collapsed Details disclosure at the end.
 
@@ -11,6 +12,7 @@ that code has checked to be the id of one resource.
 """
 from __future__ import annotations
 
+import datetime as dt
 import json
 
 from ..brief import OPTIONS_END, PAUSED_ADVICE, PAUSED_CHANGES, UNREAD, ago_text, Brief
@@ -18,7 +20,7 @@ from ..models import GROUP_FACT, ActionRecord, CaseRecord, DecisionRecord, PlanR
 from . import words
 from .common import action_block, confidence, detector_cell, kind_text, read
 from .core import MAX_NOTE, Ctx, Response, Safe, esc, fmt, join, link_part, number, parse_time
-from .figures import Figure, a_year, chart, chip, cost_of, dollars, figure_of, risk_chip, series_of, series_reason, title_of
+from .figures import Figure, a_year, chart, chip, cost_of, dollars, figure_of, risk_chip, series_of, series_reason, title_of, use_block
 from .layout import block, button, code, details, error_summary, form, hidden, items, link, notice, page, paragraph, quoted, select, summary, table, textarea
 
 INVESTIGATION = "investigation"  # the detector of the cases that the Watch's own investigation opens (cases/investigate.py)
@@ -91,12 +93,13 @@ def consequences(brief: Brief) -> list[tuple[str, object]]:
     return rows
 
 
-def _decision(brief: Brief, case: CaseRecord | None) -> Safe:
-    """The card: what is at stake in figures and in a chart, and what happens if the person says yes. The heading says what the person is about to do."""
+def _decision(brief: Brief, case: CaseRecord | None, now: dt.datetime) -> Safe:
+    """The card: what is at stake in figures and in charts (the cost of each day, and, for a kind of resource that has one, its use), and what happens if the person says yes. The heading says
+    what the person is about to do."""
     figure = _figure_of(brief, case)
     heading = {"change": "If you approve", "advice": "If you answer"}.get(brief.kind, "What changes")
     facts = join(fmt("<dt>{name}</dt><dd>{text}</dd>", name=name, text=text) for name, text in consequences(brief))
-    plot = chart(series_of(case.cost_series) if case is not None else None, series_reason(brief, case))
+    plot = join([chart(series_of(case.cost_series) if case is not None else None, series_reason(brief, case)), use_block([(brief, case)], now)])
     return fmt('<section class="focus" aria-labelledby="decision-title"><div><h2 class="eyebrow" id="decision-title">{heading}</h2>{stake}</div><div>{plot}</div><dl class="facts">{facts}</dl></section>',
                heading=heading, stake=_stake(brief, figure), facts=facts, plot=plot)
 
@@ -276,7 +279,7 @@ def render(ctx: Ctx, brief: Brief, *, case: CaseRecord | None, plan: PlanRecord 
     parts: list[object] = [_head(ctx, brief, title), _chips(brief)]
     if errors:
         parts.append(error_summary(list(errors.items())))
-    parts += [_outcome(ctx, brief), _decision(brief, case)]
+    parts += [_outcome(ctx, brief), _decision(brief, case, ctx.now)]
     side: Safe | None = None
     if answer is not None:
         side = fmt('<section class="panel" aria-labelledby="answer-title"><h2 id="answer-title">Your answer</h2>{earlier}{answer}</section>', earlier=_own_answers(ctx, decisions), answer=answer)

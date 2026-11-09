@@ -1,7 +1,8 @@
 """The start page, "Decisions": what waits for the person, ranked by what is at stake, and what was decided lately. Nothing else.
 
-It is built from the style guide (docs/ui/style-guide.html). The decision with the most at stake is in focus, with its figures and a chart of its cost. The others follow in two lanes, the
-changes that are ready to decide and the findings that are worth a closer look: one row for each decision, with its figure a year and a month, its risk and a small chart of its cost.
+It is built from the style guide (docs/ui/style-guide.html). The decision with the most at stake is in focus, with its figures and a chart of its cost (and, for a kind of resource that has
+one, a chart of its use). The others follow in two lanes, the changes that are ready to decide and the findings that are worth a closer look: one row for each decision, with its figure a
+year and a month, its risk and a small chart of its cost.
 Findings of one kind that nobody asked about as a group are one row that opens. Money is what Cost Management reports, in US dollars, and a year is twelve times a month. When nothing waits,
 one sentence says so and says when the Watch looks next. The switches, the runs and what Meternaut can change in Azure are on the pages of the platform team (ops.py), not here.
 """
@@ -16,7 +17,7 @@ from ..models import ADVICE_QUIET_DAYS, ADVISE, INVESTIGATION, ActionRecord, Cas
 from .common import brief_of, cases_by_id, effective_state, is_expired, may_answer, read
 from .core import Ctx, Response, Safe, esc, fmt, join, link_part, stamp
 from .figures import (NO_LINES, READ_LATER, RISKS, WEAKEST_FIRST, WHEN_JUDGED, Figure, a_year, bar, chart, chip, cost_of, dollars, figure_of, ids_known, risk_chip, series_of, spark, summed,
-                      title_of)
+                      title_of, use_block)
 from .layout import code, details, kpi, kpis, notice, page, paragraph, table
 
 ROWS_SHOWN = 12  # the rows of each lane that the page shows, unless a person asks for all of them
@@ -210,7 +211,7 @@ def _focus(ctx: Ctx, unit: Unit) -> Safe:
                '<p class="acts"><a class="btn primary" href="{href}">Review and decide<span class="visually-hidden">: {name}</span></a></p></div><div>{chart}</div></article>',
                title=markup, meta=_meta(ctx, unit), big=big, sub=sub, chips=_chips(unit),
                facts=join(fmt("<dt>{name}</dt><dd>{text}</dd>", name=label, text=text) for label, text in facts if text), href=ctx.url(f"/ok/{link_part(brief.plan_id)}"), name=name,
-               chart=chart(unit.series, unit.reason))
+               chart=join([chart(unit.series, unit.reason), use_block([(m.brief, m.case) for m in unit.members], ctx.now)]))
 
 
 def _lane(ctx: Ctx, anchor: str, title: str, blurb: str, units: Sequence[Unit], top: float, show: int, focus: bool) -> Safe:

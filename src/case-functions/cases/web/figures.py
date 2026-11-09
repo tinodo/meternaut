@@ -1,17 +1,22 @@
 """The figures of the page of the decisions: money as a person reads it, and the small charts and chips that go with it.
 
 A chart is an inline SVG with no script. Its colours and the size of its text are the classes of the stylesheet (never a value of its own), and every number in it was checked here.
-A series is the cost of each day, oldest first, as a case keeps it.
+A series is the cost of each day, oldest first, as a case keeps it. The use of a resource is a second series, with a gap for a day that has no value, and its chart (use_chart) is the
+second figure of a decision card: it starts at zero, it is broken at a gap and it shows the line that the kind of use is read against, when it has one (cases/usage.py).
 """
 from __future__ import annotations
 
+import datetime as dt
 import math
 from dataclasses import dataclass
-from typing import Sequence
+from typing import Callable, Sequence
 
 from ..brief import Brief, Saving, things
 from ..models import GROUP_FACT, CaseRecord
-from .core import Safe, esc, fmt
+from ..usage import DAYS as USE_DAYS
+from ..usage import MIN_DAYS as USE_MIN_DAYS
+from ..usage import Use, axis_text, entry_of, scale_of, value_text
+from .core import DAYS, MONTHS, Safe, esc, fmt, join, utc
 
 WEAKEST_FIRST = ("Scenario", "Expected", "Verified")
 RISKS = {"low": ("Low risk", "low", "circle", 0), "medium": ("Medium risk", "mid", "triangle", 1), "high": ("High risk", "high", "diamond", 2)}
@@ -20,9 +25,13 @@ SERIES_MAX = 60
 NO_LINES = "Cost Management reports a cost 8 to 72 hours after it happens."
 READ_LATER = "The next search reads them."
 WHEN_JUDGED = "They are read when the AIs judge this finding again."
+USE_LATER = f"Azure Monitor shows use a few hours after it happens. The next search reads it, and the chart fills in once {USE_MIN_DAYS} of the last {USE_DAYS} days have a value."
+USE_MANY = "Use is not drawn for a finding about many resources."
 SHAPES = {"circle": '<circle cx="6" cy="6" r="4"/>', "triangle": '<path d="M6 1.5 11 10.5H1z"/>', "diamond": '<path d="M6 1 11 6 6 11 1 6z"/>',
           "square": '<rect x="2" y="2" width="8" height="8" rx="1.5"/>'}  # a chip says what it is in words and in a shape, never by colour alone
 NICE = (1, 1.2, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10)
+USE_NICE = (1, 2, 4, 6, 8, 10)  # the ceilings of a chart of use: the line in the middle is a round number too
+PLOT = (40, 352, 8, 96)  # left, right, top and bottom of the plot of a chart: the two charts of a card line up
 
 
 def number_of(value: object) -> float | None:
@@ -173,6 +182,204 @@ def chart(series: list[float] | None, reason: str = NO_LINES) -> Safe:
                '<svg viewBox="0 0 360 112" role="img" aria-label="Cost per day for the last {days} days: {words}.">{grid}{labels}<path class="ar" d="{area}"/><path class="ln" d="{line}"/>'
                '<circle class="dt" cx="{x}" cy="{y}" r="3"/></svg></figure>', days=len(series), last=dollars(series[-1]), words=describe(series), grid=Safe(grid), labels=Safe(labels),
                area=area, line=line, x=f"{x:.1f}", y=f"{y:.1f}")
+
+
+# -- the use of a resource ----------------------------------------------------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class UseData:
+    """The use of one resource, or of several added up, as a page may draw it: the kind (cases/usage.py), the value of each day (None for a day that has none) and the day that the series
+    ends on (YYYY-MM-DD), or None when that is not known."""
+
+    use: Use
+    values: list[float | None]
+    end: str | None
+
+
+def kept_day(value: object) -> dt.date | None:
+    """A day as a case keeps it (YYYY-MM-DD), or None."""
+    try:
+        return dt.date.fromisoformat(value) if isinstance(value, str) and len(value) == 10 else None
+    except ValueError:
+        return None
+
+
+def use_values(value: object) -> list[float | None] | None:
+    """A series of use as a case keeps it, or None when it is not what it should be: a list of 2 to 60 entries, each a finite number that is not below zero or None, and at least one number."""
+    if not isinstance(value, list) or not SERIES_MIN <= len(value) <= SERIES_MAX:
+        return None
+    values: list[float | None] = []
+    for item in value:
+        number = None if item is None else number_of(item)
+        if item is not None and (number is None or number < 0):
+            return None
+        values.append(number)
+    return values if any(v is not None for v in values) else None
+
+
+def use_of(case: CaseRecord | None) -> UseData | None:
+    """The stored use of a case as it can be drawn: the case is of one resource (a case of a group has none) of a type that has a kind of use, it was stored under that kind, and its series
+    is what it should be."""
+    if case is None or (isinstance(case.facts, dict) and GROUP_FACT in case.facts):
+        return None
+    use, values = entry_of(case.resource_type), use_values(case.use_series)
+    if use is None or values is None or case.use_kind != use.kind:
+        return None
+    return UseData(use, values, case.use_series_end if kept_day(case.use_series_end) is not None else None)
+
+
+def use_summed(parts: Sequence[UseData | None]) -> UseData | None:
+    """The use of several requests added up, day by day, for a kind whose numbers may be added (bytes, calls); None when one of them has no series, they are not of one kind, the kind may not
+    be added (a percentage, connections at one time) or the lengths differ. A day that any of them has no value for is a gap: the sum of the others would be less than the use."""
+    if not parts or any(part is None for part in parts):
+        return None
+    first = parts[0]  # type: ignore[index]
+    if not first.use.additive or any(part.use.kind != first.use.kind or len(part.values) != len(first.values) for part in parts):  # type: ignore[union-attr]
+        return None
+    values = [None if any(v is None for v in day) else math.fsum(day) for day in zip(*(part.values for part in parts))]  # type: ignore[union-attr]
+    ends = {part.end for part in parts}  # type: ignore[union-attr]
+    return UseData(first.use, values, ends.pop() if len(ends) == 1 else None)
+
+
+def _nice_use(value: float) -> float:
+    """The smallest of 1, 2, 4, 6, 8 or 10 times a power of ten that is not below the value."""
+    if value <= 0:
+        return 1.0
+    scale = 10 ** math.floor(math.log10(value))
+    return next(step * scale for step in USE_NICE if value <= step * scale * (1 + 1e-9))
+
+
+def _short_day(day: dt.date) -> str:
+    return f"{DAYS[day.weekday()][:3]} {day.day} {MONTHS[day.month - 1]}"
+
+
+def _line(label: str) -> str:
+    return label if label.endswith("line") else f"{label} line"
+
+
+def describe_use(use: Use, values: Sequence[float | None]) -> str:
+    """The shape of a series of use in words, for a person who cannot see the chart: how it runs, how it stands to the line of its kind, and how many days have no value."""
+    present = [v for v in values if v is not None]
+    low, high, mean = min(present), max(present), math.fsum(present) / len(present)
+    if high == 0:
+        shape = "zero on every day with data"
+    elif high - low <= 0.15 * mean:
+        shape = f"flat at about {value_text(use.unit, mean)}"
+    else:
+        last = f"{value_text(use.unit, present[-1])} on the last day" + ("" if values[-1] is not None else " with data")
+        shape = f"from {value_text(use.unit, low)} to {value_text(use.unit, high)}, {last}"
+    if use.threshold is not None:
+        shape += f", at or under the {_line(use.threshold_label)} on {sum(1 for v in present if v <= use.threshold)} of {len(present)} days with data"
+    blank = len(values) - len(present)
+    return shape + ("." if not blank else f". {blank} day{'' if blank == 1 else 's'} without data {'is' if blank == 1 else 'are'} left blank.")
+
+
+def use_quiet(use: Use, reason: str, said: str = "no use figures yet") -> Safe:
+    """The chart of use of a resource that has none to draw: the title, what is missing, and why."""
+    return fmt('<figure class="chart"><figcaption>{title} <span>{said}</span></figcaption><p class="m">{reason}</p></figure>', title=use.title, said=said, reason=reason)
+
+
+def _use_scale(use: Use, peak: float) -> tuple[float, float, str]:
+    """The ceiling of a chart of use and what its labels divide by and end with: a round number that is not below the largest value, holds the line of the kind with room above it, and (for
+    a count) is not below 2, so that the line in the middle is a whole number."""
+    divisor, suffix = scale_of(use.unit, peak)
+    if use.unit == "bytes" and peak == 0:
+        divisor, suffix = 1024.0, "KB"
+    ceiling = _nice_use(max(peak, 1.5 * (use.threshold or 0.0)) / divisor) * divisor
+    return (max(2.0, ceiling) if use.unit == "count" else ceiling), divisor, suffix
+
+
+def _runs(values: Sequence[float | None], left: float, step: float, at: Callable[[float], float]) -> list[list[tuple[float, float]]]:
+    """The stretches of days that have a value, as points of the chart: a day with no value ends a stretch, so that the line is broken there."""
+    runs: list[list[tuple[float, float]]] = []
+    inside = False
+    for i, value in enumerate(values):
+        if value is None:
+            inside = False
+            continue
+        if not inside:
+            runs.append([])
+            inside = True
+        runs[-1].append((left + i * step, at(value)))
+    return runs
+
+
+def _use_days(end: str | None, today: dt.date | None, days: int, last_index: int) -> tuple[str, str, str]:
+    """The two labels of the time axis and the day of the last value in the caption: "yesterday" when it was yesterday, else the date, else "the last day"."""
+    last = kept_day(end)
+    if last is None:
+        return "first day", "last day", "the last day" if last_index == days - 1 else "the last day with data"
+    yesterday = today - dt.timedelta(days=1) if today is not None else None
+    value_day = last - dt.timedelta(days=days - 1 - last_index)
+    when = "yesterday" if value_day == yesterday else _short_day(value_day)
+    if last == yesterday:
+        return f"{days} days ago", "yesterday", when
+    return _short_day(last - dt.timedelta(days=days - 1)), _short_day(last), when
+
+
+def _path(run: list[tuple[float, float]]) -> str:
+    return "M" + " L".join(f"{x:.1f},{y:.1f}" for x, y in run)
+
+
+def use_chart(use: Use, values: Sequence[float | None], end: str | None = None, today: dt.date | None = None) -> Safe:
+    """The large chart of the use of a resource: the value of each of the last days on a scale that starts at zero and has a round ceiling that holds the line of its kind with room above it.
+    A day with no value is a gap: the line is broken there (and a value with no neighbour is a dot). The last day with a value has a dot, the line of the kind (when it has one) is dashed
+    and named, and a sentence says in words what the chart shows. `end` is the day that the series ends on and `today` the day it is now (UTC): they decide whether the chart says "yesterday"."""
+    present = [(i, v) for i, v in enumerate(values) if v is not None]
+    if len(values) < SERIES_MIN or not present:
+        return use_quiet(use, USE_LATER)
+    left, right, top, bottom = PLOT
+    middle = (top + bottom) // 2
+    ceiling, divisor, suffix = _use_scale(use, max(v for _, v in present))
+
+    def at(value: float) -> float:
+        return bottom - (bottom - top) * value / ceiling
+
+    runs = _runs(values, left, (right - left) / (len(values) - 1), at)
+    drawn = [run for run in runs if len(run) > 1]
+    last_point = runs[-1][-1]
+    line = " ".join(_path(run) for run in drawn)
+    area = " ".join(f"{_path(run)} L{run[-1][0]:.1f},{bottom} L{run[0][0]:.1f},{bottom} Z" for run in drawn)
+    lone = "".join(f'<circle class="dt" cx="{x:.1f}" cy="{y:.1f}" r="2"/>' for run in runs if len(run) == 1 and run[0] != last_point for x, y in run)
+    grid = "".join(f'<line class="gl" x1="{left}" y1="{y}" x2="{right}" y2="{y}"/>' for y in (top, middle, bottom))
+    labels = join(fmt('<text class="ax" x="{x}" y="{y}" text-anchor="end">{text}</text>', x=left - 6, y=y + 4, text=axis_text(use.unit, value, divisor, suffix))
+                  for y, value in ((top, ceiling), (middle, ceiling / 2), (bottom, 0)))
+    start_label, end_label, when = _use_days(end, today, len(values), present[-1][0])
+    axes = join([fmt('<text class="ax" x="{x}" y="110">{text}</text>', x=left, text=start_label),
+                 fmt('<text class="ax" x="{x}" y="110" text-anchor="end">{text}</text>', x=right, text=end_label)])
+    threshold = Safe("")
+    if use.threshold is not None:
+        y = at(use.threshold)
+        threshold = fmt('<line class="thr" x1="{left}" y1="{y}" x2="{right}" y2="{y}"/><text class="thr-t" x="{x}" y="{up}" text-anchor="end">{label}</text>', left=left, right=right,
+                        y=f"{y:.1f}", x=right - 4, up=f"{y - 4:.1f}", label=use.threshold_label)
+    caption = ", ".join(part for part in (use.daily, f"last {len(values)} days", f"yesterday {value_text(use.unit, present[-1][1])}" if when == "yesterday"
+                                          else f"{value_text(use.unit, present[-1][1])} on {when}") if part)
+    words = f"{use.title}{f' ({use.daily})' if use.daily else ''} for the last {len(values)} days: {describe_use(use, values)}"
+    shape = fmt('<path class="ar" d="{area}"/><path class="ln" d="{line}"/>', area=area, line=line) if drawn else Safe("")
+    return fmt('<figure class="chart"><figcaption>{title} <span>{caption}</span></figcaption>'
+               '<svg viewBox="0 0 360 112" role="img" aria-label="{words}">{grid}{labels}{axes}{threshold}{shape}{lone}<circle class="dt" cx="{x}" cy="{y}" r="3"/></svg></figure>',
+               title=use.title, caption=caption, words=words, grid=Safe(grid), labels=labels, axes=axes, threshold=threshold, shape=shape, lone=Safe(lone), x=f"{last_point[0]:.1f}",
+               y=f"{last_point[1]:.1f}")
+
+
+def use_block(members: Sequence[tuple[Brief, CaseRecord | None]], now: dt.datetime) -> Safe:
+    """What a decision card shows of use, under the chart of its cost: nothing for a resource of a type that has no kind of use; the chart when the case has a series of use; and, for a type
+    that has one and a case that has none yet, the same figure made quiet, with the reason (a finding about many resources has none, and says so). `members` are the requests that the card
+    stands for, each with its case: one for a card, several for a row that stands for many, which draws the sum of their use only for a kind that may be added and only when each has a series
+    of it."""
+    today = utc(now).date()
+    if len(members) == 1:
+        brief, case = members[0]
+        if brief.group is not None:
+            kind = entry_of(brief.group.kind)
+            return use_quiet(kind, USE_MANY, "not drawn") if kind is not None else Safe("")
+        kind = entry_of(case.resource_type) if case is not None else None
+        if kind is None:
+            return Safe("")
+        data = use_of(case)
+        return use_chart(data.use, data.values, data.end, today) if data is not None else use_quiet(kind, USE_LATER)
+    total = use_summed([use_of(case) for _, case in members])
+    return use_chart(total.use, total.values, total.end, today) if total is not None else Safe("")
 
 
 def bar(share: float) -> Safe:

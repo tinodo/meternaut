@@ -17,7 +17,7 @@ from dataclasses import dataclass, replace
 from typing import Callable, Mapping
 
 from . import config as cfg
-from . import decide, detectors, evidence, guards, investigate, learning, roles, wiring
+from . import decide, detectors, evidence, guards, investigate, learning, roles, usage, wiring
 from . import harness as harness_module
 from . import scope as scope_mod
 from .approvals import is_fixture
@@ -44,6 +44,8 @@ READ_GRACE = 0.1
 SCOPES_SHOWN = 5  # the subscriptions that run.started names, at eight characters each; it also carries their count
 COST_DAYS = 30  # the closed days of cost_usd_30d, and of the series that a case with an open plan carries (CaseRecord.cost_series)
 COST_IDS = 50  # the resource ids that one Cost Management query asks about
+USE_MAX_RESOURCES = 30  # the resources whose use one Watch reads (one read of Azure Monitor for each of their metrics): the others wait for the next Watch
+USE_MIN_SECONDS = 30  # the use of a resource is not read when the run has less time than this left: one read of Azure Monitor may take that long
 LOG = logging.getLogger("meternaut.run")
 
 
@@ -336,6 +338,93 @@ def read_cost_series(s: Services, contexts: Mapping[str, Context], say: Callable
         say(f"the daily cost of the open requests could not be read ({clean_text(s.redact(f'{type(error).__name__}: {error}'), 200)})")
 
 
+def _read_use_of(arm: Arm, resource_id: str, kind: usage.Use, start: dt.datetime, end: dt.datetime, first: dt.date) -> list[float | None]:
+    """The use of one resource on each of the thirty days from `first`, from the metrics of its kind in daily buckets of Azure Monitor (the days between `start` and `end`, UTC), or an HttpError.
+    A kind that takes the larger of its metrics does without one that the resource does not have (Azure answers 400 for a name that it does not offer for that resource) and fails on any other
+    answer, so that a failed read is never a day of nothing; a kind that adds its metrics needs every one of them."""
+    parts: list[list[float | None]] = []
+    missing: HttpError | None = None
+    for metric in kind.metrics:
+        try:
+            _, points = arm.metrics(resource_id, metric, start, end)
+        except HttpError as error:
+            if kind.combine != "max" or error.status != 400:
+                raise
+            missing = missing or error
+            continue
+        parts.append(usage.daily(((point.time, getattr(point, kind.aggregate)) for point in points), first, usage.DAYS))
+    if not parts:
+        raise missing if missing is not None else HttpError(0, "the use of the resource has no metric to read")
+    return usage.combine(parts, kind.combine)
+
+
+def _read_use(s: Services, ex: "wiring.Extras", say: Callable[[str], None]) -> None:
+    last = s.clock().astimezone(dt.timezone.utc).date() - dt.timedelta(days=1)
+    first = last - dt.timedelta(days=usage.DAYS - 1)
+    start, end = (dt.datetime.combine(day, dt.time.min, tzinfo=dt.timezone.utc) for day in (first, last + dt.timedelta(days=1)))  # the thirty closed days, as UTC days
+    due: dict[str, tuple[usage.Use, list[CaseRecord]]] = {}
+    seen: set[str] = set()
+    for plan in ex.store.plans_open():
+        case = ex.store.case_get(plan.case_id)
+        if case is None or case.case_id in seen:
+            continue
+        seen.add(case.case_id)
+        kind = usage.for_resource(case.resource_id, case.resource_type)
+        if kind is None or (isinstance(case.facts, dict) and GROUP_FACT in case.facts):  # a case that stands for many resources has no use of its own
+            continue
+        if case.use_series_end == last.isoformat() and case.use_kind == kind.kind and len(case.use_series or ()) == usage.DAYS:
+            continue
+        due.setdefault(case.resource_id.lower(), (kind, []))[1].append(case)
+    ranked = sorted(due.values(), key=lambda item: min(case.use_series_end or "" for case in item[1]))  # a resource that was never read goes first, then the one read longest ago
+    chosen, waiting = ranked[:USE_MAX_RESOURCES], sum(len(cases) for _, cases in ranked[USE_MAX_RESOURCES:])
+    failed = late = 0
+    why = ""
+    for position, (kind, cases) in enumerate(chosen):
+        left = s.client.remaining()  # the clock of the run's deadline
+        if left is not None and left < USE_MIN_SECONDS:
+            late = sum(len(rest) for _, rest in chosen[position:])
+            break
+        try:
+            series = _read_use_of(s.arm, cases[0].resource_id, kind, start, end, first)
+        except HttpError as error:
+            why = why or clean_text(s.redact(error), 200)
+            failed += len(cases)
+            if error.status == 429:
+                failed += sum(len(rest) for _, rest in chosen[position + 1:])  # a limit ends the step: the others are not asked
+                break
+            continue
+        if usage.days_with_value(series) < usage.MIN_DAYS:
+            continue
+        try:
+            for case in cases:
+                kept = ex.store.case_get(case.case_id)  # read again just before the write: a person may have answered since
+                if kept is not None:
+                    ex.store.case_put(replace(kept, use_series=series, use_series_end=last.isoformat(), use_kind=kind.kind))
+        except StoreError as error:
+            why = why or clean_text(s.redact(error), 200)
+            failed += len(cases)
+    if failed:
+        say(f"the use of {failed} open request{'' if failed == 1 else 's'} could not be read ({why}); what was read before stays")
+    if late:
+        say(f"the use of {late} open request{'' if late == 1 else 's'} {'was' if late == 1 else 'were'} not read: the run had too little time left")
+    if waiting:
+        say(f"{waiting} more open request{'' if waiting == 1 else 's'} {'waits' if waiting == 1 else 'wait'} for the next search: at most {USE_MAX_RESOURCES} resources are read in one search")
+
+
+def read_use_series(s: Services, say: Callable[[str], None]) -> None:
+    """The step after read_cost_series: reads the use (CaseRecord.use_series) of each case with an open plan whose series is missing or does not end yesterday, for a case of one resource of a
+    type that the table of cases/usage.py has. The days are the thirty closed days to yesterday (UTC), a day that Azure Monitor has no value for is a gap, and nothing is stored unless
+    usage.MIN_DAYS of the days have a value. At most USE_MAX_RESOURCES resources are read in a Watch, and none when the run has less than USE_MIN_SECONDS left. A failure leaves the case as it
+    was and is one line in the History for its kind of problem; a limit ends the step. It only reads, and it never fails the run."""
+    ex = s.extras
+    if ex is None:
+        return
+    try:
+        _read_use(s, ex, say)
+    except Exception as error:  # noqa: BLE001 (this step never stops the run)
+        say(f"the use of the open requests could not be read ({clean_text(s.redact(f'{type(error).__name__}: {error}'), 200)})")
+
+
 def execute(s: Services, trigger: str) -> Summary:
     h, st = s.history, s.settings
     started = s.monotonic()
@@ -502,6 +591,7 @@ def execute(s: Services, trigger: str) -> Summary:
         else:
             summary.errors += 1
     read_cost_series(s, contexts, say)
+    read_use_series(s, say)
     summary.tokens = tokens
     summary.seconds = int(s.monotonic() - started)
     h.emit("run.finished", ok=summary.ok, leads=summary.leads, cases=summary.cases, proposed=summary.proposed, needsHuman=summary.needs_human,

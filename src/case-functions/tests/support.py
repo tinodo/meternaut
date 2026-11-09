@@ -12,7 +12,7 @@ import logging
 import re
 import sys
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 APP_ROOT = Path(__file__).resolve().parents[1]
 REPO_ROOT = APP_ROOT.parents[1]
@@ -87,7 +87,10 @@ class FakeEstate:
 
     `graph` maps the name that heads a Resource Graph query (`// meternaut:<name>`) to its rows. `locks` is the answer of the subscription-wide list of
     locks and `locks_at` maps a lower-case scope to the answer of the list of that scope. `days` holds the daily cost lines (a date, a resource id, a cost) that a query by day
-    asks for. `failures` maps a source (`graph:<name>`, `advisor`, `locks`, `locks_at`, `costs`, `daily`, `chat`) to a status that is answered instead (or to a list of statuses, one for each call).
+    asks for. `metrics` maps (a resource id in lower case, a metric name) to {a day: its value} for a read of Azure Monitor in daily buckets: a value is a number (the bucket has it as its total,
+    its maximum and its average), a (total, maximum, average) tuple, or None (a bucket with no value); a day that is not there is a bucket with no value too. `failures` maps a source
+    (`graph:<name>`, `advisor`, `locks`, `locks_at`, `costs`, `daily`, `metrics`, `metrics:<name of a metric>`, `chat`) to a status that is answered instead (or to a list of statuses, one
+    for each call).
     `after_chat` is called after each answer of the model, to move a clock. `first_call` is called before the first call of any kind, for the same reason.
     """
 
@@ -99,6 +102,7 @@ class FakeEstate:
         self.locks_at: dict[str, list[dict]] = {}
         self.cost_rows: list[list] = []
         self.days: list[tuple[dt.date, str, float]] = []
+        self.metrics: dict[tuple[str, str], dict[dt.date, object]] = {}
         self.currency = "USD"
         self.failures: dict[str, object] = {}
         self.chat_replies: list[tuple[int, object]] = []
@@ -142,6 +146,8 @@ class FakeEstate:
                 return self._by_day(body)
             return self._json({"properties": {"columns": [{"name": "Cost"}, {"name": "ResourceId"}, {"name": "ServiceName"}, {"name": "Currency"}],
                                               "rows": [[cost, rid, "Storage", self.currency] for cost, rid in self.cost_rows]}})
+        if path.endswith("/providers/microsoft.insights/metrics"):
+            return self._metrics(parts)
         if "/providers/microsoft.advisor/recommendations" in path:
             failed = self._failure("advisor")
             return (failed, {}, b'{"error":{"code":"Failed","message":"boom"}}') if failed else self._json({"value": self.advisor})
@@ -175,6 +181,30 @@ class FakeEstate:
         asked = {value.lower() for value in body["dataset"]["filter"]["dimensions"]["values"]}
         return self._json({"properties": {"columns": [{"name": "Cost"}, {"name": "UsageDate"}, {"name": "ResourceId"}, {"name": "Currency"}],
                                           "rows": [[cost, int(day.strftime("%Y%m%d")), rid.lower(), self.currency] for day, rid, cost in self.days if rid.lower() in asked]}})
+
+    def _metrics(self, parts):
+        """The answer to a read of one metric of one resource in daily buckets (Learn, "Metrics - List"): a bucket for each day of the timespan that the call names, with the values that
+        `metrics` holds for it and no value for a day that it does not hold. A resource and a metric that `metrics` does not know are answered like any metric with no data."""
+        query = parse_qs(parts.query)
+        metric = query["metricnames"][0]
+        failed = self._failure(f"metrics:{metric}") or self._failure("metrics")
+        if failed:
+            return failed, {"retry-after": "1"} if failed == 429 else {}, b'{"error":{"code":"Throttled","message":"slow down"}}'
+        start, end = (dt.datetime.strptime(moment, "%Y-%m-%dT%H:%M:%SZ").date() for moment in query["timespan"][0].split("/"))
+        resource = re.sub(r"(?i)/providers/microsoft\.insights/metrics$", "", parts.path)
+        known = self.metrics.get((resource.lower(), metric), {})
+        data = []
+        for n in range((end - start).days):
+            day = start + dt.timedelta(days=n)
+            bucket: dict = {"timeStamp": f"{day.isoformat()}T00:00:00Z"}
+            value = known.get(day)
+            if value is not None:
+                total, maximum, average = value if isinstance(value, tuple) else (value, value, value)
+                bucket.update({"total": total, "maximum": maximum, "average": average})
+            data.append(bucket)
+        return self._json({"cost": 0, "timespan": query["timespan"][0], "interval": "P1D",
+                           "value": [{"id": f"{resource}/providers/Microsoft.Insights/metrics/{metric}", "type": "Microsoft.Insights/metrics", "name": {"value": metric, "localizedValue": metric},
+                                      "unit": "Count", "timeseries": [{"metadatavalues": [], "data": data}], "errorCode": "Success"}]})
 
     # -- what the tests ask -----------------------------------------------------------------------------------------------------------------------
     def prompts(self) -> list[str]:

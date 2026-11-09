@@ -244,6 +244,17 @@ class StoreContract:
         self.assertEqual((got.cost_series, got.cost_series_end), (series, "2026-11-03"))
         self.assertEqual((self.store.case_get("k10").cost_series, self.store.case_get("k10").cost_series_end), (None, None))
 
+    def test_a_case_keeps_its_daily_use_with_its_gaps_the_day_it_ends_on_and_its_kind_and_a_case_without_them_has_none(self):
+        series = [None, 0.0, 1.5] * 9 + [None, 2.5, 123456789012.3456]
+        self.store.case_put(case("k11", "awaiting_ok", use_series=series, use_series_end="2026-11-03", use_kind="vm-cpu"))
+        self.store.case_put(case("k12", "awaiting_ok"))
+        got = self.store.case_get("k11")
+        self.assertEqual((got.use_series, got.use_series_end, got.use_kind), (series, "2026-11-03", "vm-cpu"))
+        self.assertEqual([i for i, value in enumerate(got.use_series) if value is None][:3], [0, 3, 6], "a gap stays a gap and never becomes a zero")
+        self.assertEqual(got.use_series[1], 0.0)
+        bare = self.store.case_get("k12")
+        self.assertEqual((bare.use_series, bare.use_series_end, bare.use_kind), (None, None, None))
+
     def test_an_advise_plan_is_kept_and_listed_like_any_other_plan(self):
         advice = replace(plan("p5"), family="advise", approval_class="R1", preconditions={"family": "advise", "caseStatus": "needs_human"})
         self.store.plan_put(advice)

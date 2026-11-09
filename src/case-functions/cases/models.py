@@ -11,7 +11,8 @@ renamed or removed, so no stored record has to be rewritten, and the tables keep
 The families of change added the same kind of thing: `PlanRecord.target` and `PlanRecord.digest` (a plan of before has no digest, so it cannot be approved: the Watch makes a new one),
 `DecisionRecord.plan_digest`, `ActionRecord.plan_digest` and `ActionRecord.operation`. The constant FAMILIES is gone: the families are in cases/families (their registry is
 cases/families/registry.py). The learning (docs/proposals/15-learning.md) added three new kinds of record, LessonRecord, ClaimRecord and CapabilityRecord, each with its own table, and no
-field of a record that was there before. The daily cost of a request added `CaseRecord.cost_series` and `cost_series_end` (None: never read).
+field of a record that was there before. The daily cost of a request added `CaseRecord.cost_series` and `cost_series_end` (None: never read), and its daily use added `use_series`,
+`use_series_end` and `use_kind` (None: never read, or not a kind of resource that has one).
 """
 from __future__ import annotations
 
@@ -149,6 +150,13 @@ class CaseRecord(Record):
     # while a request about the case is open (cases/run.py, read_cost_series). None: never read, or could not be.
     cost_series: list[float] | None = None
     cost_series_end: str | None = None
+    # The use of the resource on each of the last 30 closed days, for the second chart of the card of its request: one number a day, the oldest first, in the unit of the kind that `use_kind`
+    # names (cases/usage.py: a percentage, bytes or a count), None for a day that Azure Monitor has no value for (a gap, never a zero), the last on `use_series_end` (YYYY-MM-DD, UTC). It is
+    # kept while a request about the case is open, only for a case of one resource of a type that the table of cases/usage.py has, and only when at least 20 of the 30 days have a value
+    # (cases/run.py, read_use_series). `use_kind` is a key of that table, a constant of the code and never text from the estate or from a model. None: never read, or could not be.
+    use_series: list[float | None] | None = None
+    use_series_end: str | None = None
+    use_kind: str | None = None
 
 
 @dataclass(frozen=True)

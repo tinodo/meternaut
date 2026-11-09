@@ -74,10 +74,29 @@ def endpoints(console: Console) -> None:
                                        title="Look at 50 private endpoints"))
 
 
+def machine(console: Console, **changes) -> str:
+    """One request to stop a virtual machine, the largest saving of the page, so that it is the decision in focus. Its case holds the daily cost and the daily use that the Watch reads (the use
+    has a gap on the eleventh day). Returns the id of the machine."""
+    rid = f"/subscriptions/{SUB}/resourceGroups/rg-build-sample/providers/Microsoft.Compute/virtualMachines/build-agent-03"
+    use = [round(0.6 + 0.1 * (n % 4), 1) for n in range(30)]
+    for n in (6, 13, 20, 27):
+        use[n] = 2.4  # a short blip
+    use[11] = None
+    case = dict(case_id="case8000", resource_id=rid, resource_name="build-agent-03", resource_type="microsoft.compute/virtualmachines", resource_group="rg-build-sample", detector="investigation",
+                saving_usd_month=140.16, cost_usd_30d=140.16, plan_id="plan8000", first_seen_at=at(days=-1), cost_series=[4.67] * 30, cost_series_end="2026-11-04", use_series=use,
+                use_series_end="2026-11-04", use_kind="vm-cpu", summary="The machine used under 5 percent of its CPU in the last 30 days.")
+    console.store.case_put(make_case(**{**case, **changes}))
+    console.store.plan_put(make_plan(plan_id="plan8000", case_id="case8000", family="stop-vm", resource_id=rid, resource_name="build-agent-03", resource_group="rg-build-sample",
+                                     saving_usd_month=140.16, title="Stop (deallocate) a virtual machine in resource group rg-build-sample",
+                                     preconditions={"family": "stop-vm", "resourceType": "microsoft.compute/virtualmachines"}))
+    return rid
+
+
 def busy() -> Console:
-    """A console whose page of the decisions has every part: a decision in focus, rows, a row that opens for three requests, one that stands for fifty resources, a finding with no
-    cost, a request that was put off, a finding that is held back and a decision that was made."""
+    """A console whose page of the decisions has every part: a decision in focus (a machine, with the charts of its cost and of its use), rows, a row that opens for three requests, one that
+    stands for fifty resources, a finding with no cost, a request that was put off, a finding that is held back and a decision that was made."""
     console = seeded()
+    machine(console)
     more_plans(console, 2, saving=lambda n: 30.0, seen=lambda n: (-3, -10)[n])
     console.store.case_put(make_advice_case())
     console.store.plan_put(make_advice())
@@ -739,6 +758,135 @@ class TheRequestPage(unittest.TestCase):
         self.assertEqual(reply.headings(2)[0], "If you answer")
         self.assertIn("Changes nothing in Azure", reply.main.find("p", class_="chips").text())
         self.assertEqual([text for _, _, text in reply.forms()[0].buttons], ["Worth acting on", "Not worth it", "This is not mine", "Ask or tell", "Decide later"])
+
+
+class TheUseOfAResource(unittest.TestCase):
+    """The second chart of a decision card: the use of the resource, in the decision in focus of the page of the decisions and in the card of the request page, under the chart of its cost.
+    A row has one small chart and never this one."""
+
+    WORDS = ("CPU use per day (daily average) for the last 30 days: from 0.6% to 2.4%, 0.7% on the last day, at or under the 5% idle line on 29 of 29 days with data. "
+             "1 day without data is left blank.")
+
+    @staticmethod
+    def charts(node):
+        return node.find_all("figure", class_="chart")
+
+    def focus(self, console):
+        return console.get("/").main.find("article", class_="focus")
+
+    def test_the_decision_in_focus_draws_the_use_of_its_resource_under_the_chart_of_its_cost(self):
+        console = seeded()
+        machine(console)
+        cost, use = self.charts(self.focus(console))
+        self.assertEqual(cost.find("figcaption").text(), "Cost per day last 30 days, yesterday $4.67")
+        self.assertEqual(use.find("figcaption").text(), "CPU use per day daily average, last 30 days, yesterday 0.7%")
+        svg = use.find("svg")
+        self.assertEqual((svg.attrs["role"], svg.attrs["aria-label"]), ("img", self.WORDS))
+        self.assertEqual([text.text() for text in svg.find_all("text", class_="ax")], ["8%", "4%", "0%", "30 days ago", "yesterday"])
+        self.assertEqual([text.text() for text in svg.find_all("text", class_="thr-t")], ["5% idle line"])
+        self.assertEqual(len(svg.find_all("line", class_="thr")), 1)
+        self.assertEqual(len(svg.find_all("circle", class_="dt")), 1, "a dot on the last day")
+        (line,) = svg.find_all("path", class_="ln")
+        self.assertEqual(line.attrs["d"].count("M"), 2, "the line is broken at the day that has no value")
+
+    def test_the_card_of_the_request_page_draws_the_same_two_charts_from_the_same_code(self):
+        console = seeded()
+        machine(console)
+        card = console.get("/ok/plan8000").main.find("section", class_="focus")
+        cost, use = self.charts(card)
+        self.assertEqual(cost.find("figcaption").text(), "Cost per day last 30 days, yesterday $4.67")
+        self.assertEqual((use.find("figcaption").text(), use.find("svg").attrs["aria-label"]), ("CPU use per day daily average, last 30 days, yesterday 0.7%", self.WORDS))
+        shown = self.charts(self.focus(console))[1]
+        self.assertEqual((use.text(), use.find("svg").attrs["aria-label"], use.find("path", class_="ln").attrs["d"]),
+                         (shown.text(), shown.find("svg").attrs["aria-label"], shown.find("path", class_="ln").attrs["d"]), "the card and the decision in focus show one figure from one piece of code")
+
+    def test_a_row_has_one_small_chart_and_the_chart_of_use_is_never_in_a_row(self):
+        reply = busy().get("/", query={"all": "1"})
+        for anchor in ("ready", "look"):
+            for row in rows(reply, anchor):
+                self.assertEqual(row.find_all("figure"), [], anchor)
+                self.assertEqual(len([svg for svg in row.find_all("svg") if "sp" in svg.classes()]), 1, anchor)
+        self.assertEqual(len(self.charts(reply.main)), 2, "the two charts of the card in focus and no other")
+
+    def test_a_row_that_opens_for_several_requests_draws_no_chart_of_use_whatever_their_series_are(self):
+        console = Console()
+        storage(console, 2)
+        for n in range(2):
+            console.store.case_put(replace(console.store.case_get(f"case5{n:03d}"), use_series=[1000.0 + n] * 30, use_series_end="2026-11-04", use_kind="storage-transactions"))
+        reply = console.get("/")
+        (row,) = rows(reply, "look")
+        self.assertEqual((row.find_all("figure"), reply.main.find_all("figure")), ([], []))
+
+    def test_a_machine_whose_use_is_not_read_yet_gets_the_quiet_figure_and_the_reason(self):
+        console = seeded()
+        machine(console, use_series=None, use_series_end=None, use_kind=None)
+        use = self.charts(self.focus(console))[1]
+        self.assertEqual(use.find("figcaption").text(), "CPU use per day no use figures yet")
+        self.assertEqual((use.find("p", class_="m").text(), use.find_all("svg")), (figures.USE_LATER, []))
+        self.assertIn("Azure Monitor shows use a few hours after it happens.", use.text())
+        self.assertIn("20 of the last 30 days have a value", use.text())
+
+    def test_a_series_that_is_not_what_it_should_be_or_that_was_stored_for_another_kind_is_the_quiet_figure(self):
+        for bad in ({"use_series": [1.0]}, {"use_series": [-1.0] * 30}, {"use_series": "x"}, {"use_series": [None] * 30}, {"use_series": [float("nan")] * 30}, {"use_series": [1.0] * 61},
+                    {"use_series": [True] * 30}, {"use_kind": "plan-cpu"}, {"use_kind": None}, {"use_kind": "unheard-of"}):
+            with self.subTest(bad=str(bad)[:30]):
+                console = seeded()
+                machine(console, **bad)
+                use = self.charts(self.focus(console))[1]
+                self.assertEqual(use.find("p", class_="m").text(), figures.USE_LATER)
+
+    def test_a_resource_of_a_type_that_has_no_kind_of_use_has_no_figure_of_use(self):
+        console = seeded()
+        self.assertEqual(len(self.charts(self.focus(console))), 1, "the planted disk: the chart of its cost and no other")
+        self.assertEqual(len(self.charts(console.get("/ok/plan0001").main.find("section", class_="focus"))), 1)
+        self.assertNotIn("use per day", console.get("/").content.lower())
+
+    def test_a_chart_that_does_not_end_yesterday_says_the_day_that_it_ends_on_and_one_that_does_not_know_says_the_last_day(self):
+        console = seeded()
+        machine(console, use_series_end="2026-11-02")
+        use = self.charts(self.focus(console))[1]
+        self.assertEqual(use.find("figcaption").text(), "CPU use per day daily average, last 30 days, 0.7% on Mon 2 Nov")
+        self.assertEqual([text.text() for text in use.find_all("text", class_="ax")][3:], ["Sun 4 Oct", "Mon 2 Nov"])
+        machine(console, use_series_end="garbage")
+        use = self.charts(self.focus(console))[1]
+        self.assertEqual(use.find("figcaption").text(), "CPU use per day daily average, last 30 days, 0.7% on the last day")
+        self.assertEqual([text.text() for text in use.find_all("text", class_="ax")][3:], ["first day", "last day"])
+
+    def test_a_finding_about_many_resources_has_no_use_of_its_own_and_says_so_when_its_type_has_a_kind(self):
+        console = seeded()
+        endpoints(console)
+        card = console.get("/ok/plan6000").main.find("section", class_="focus")
+        use = self.charts(card)[1]
+        self.assertEqual(use.find("figcaption").text(), "Traffic per day not drawn")
+        self.assertEqual((use.find("p", class_="m").text(), use.find_all("svg")), (figures.USE_MANY, []))
+        console.store.case_put(replace(console.store.case_get("case6000"), use_series=[1.0] * 30, use_series_end="2026-11-04", use_kind="pe-traffic"))
+        self.assertEqual(self.charts(console.get("/ok/plan6000").main.find("section", class_="focus"))[1].find("p", class_="m").text(), figures.USE_MANY, "a series that a group case should not have is not drawn")
+
+    def test_a_finding_about_many_resources_of_a_type_that_has_no_kind_has_no_figure_of_use(self):
+        console = seeded()
+        group = {"count": 5, "groups": 2, "type": "microsoft.compute/disks", "names": ["d2", "d3"], "costUsd30d": 25.0}
+        console.store.case_put(make_advice_case(case_id="case6100", resource_id=f"/subscriptions/{SUB}/resourceGroups/rg-d/providers/Microsoft.Compute/disks/d1", resource_name="d1",
+                                                resource_type="microsoft.compute/disks", resource_group="rg-d", saving_usd_month=None, cost_usd_30d=25.0, plan_id="plan6100",
+                                                facts={"basis": "idle", GROUP_FACT: group}))
+        console.store.plan_put(make_advice(plan_id="plan6100", case_id="case6100", resource_name="d1", resource_group="rg-d", saving_usd_month=None, title="Look at 5 disks"))
+        self.assertEqual(len(self.charts(console.get("/ok/plan6100").main.find("section", class_="focus"))), 1)
+
+    def test_a_request_about_one_resource_of_a_kind_that_adds_up_has_its_chart_without_a_line_and_in_the_unit_of_its_kind(self):
+        console = seeded()
+        storage(console, 1, cost=lambda n: 80.0)
+        console.store.case_put(replace(console.store.case_get("case5000"), use_series=[1204.0] * 29 + [3.0e6], use_series_end="2026-11-04", use_kind="storage-transactions"))
+        (use,) = [chart for chart in self.charts(console.get("/ok/plan5000").main.find("section", class_="focus")) if "Transactions" in chart.text()]
+        self.assertEqual(use.find("figcaption").text(), "Transactions per day last 30 days, yesterday 3,000,000")
+        self.assertEqual(use.find_all("line", class_="thr"), [])
+        self.assertEqual([text.text() for text in use.find_all("text", class_="ax")][:3], ["4M", "2M", "0"])
+        self.assertEqual(use.find("svg").attrs["aria-label"], "Transactions per day for the last 30 days: from 1,204 to 3,000,000, 3,000,000 on the last day.")
+
+    def test_a_case_without_a_request_page_card_has_no_figure_of_use(self):
+        console = Console()
+        console.store.case_put(make_advice_case(plan_id=None, use_series=[1.0] * 30, use_series_end="2026-11-04", use_kind="vm-cpu"))
+        reply = console.get("/why/case0002")
+        self.assertEqual(reply.status, 200)
+        self.assertEqual(len(self.charts(reply.main.find("section", class_="focus"))), 2, "the cost and the use of a case are shown by its card, with or without a request")
 
 
 class TheHistory(unittest.TestCase):

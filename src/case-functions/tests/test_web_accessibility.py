@@ -45,6 +45,9 @@ LIGHT_DARK_PAIRS = (
     # parts of a control or a state, which need 3 to 1
     ("colorNeutralStrokeAccessible", "colorNeutralBackground1", 3.0), ("colorStrokeFocus2", "colorNeutralBackground1", 3.0), ("colorBrandStroke1", "colorNeutralBackground1", 3.0),
     ("colorPaletteRedBorder1", "colorNeutralBackground1", 3.0), ("colorBrandStroke1", "colorNeutralBackground2", 3.0),
+    # the chart of use: the line that it is read against (a dashed stroke) and its name, over the page and over the tint under the line of the chart
+    ("colorPaletteDarkOrangeBorder1", "colorNeutralBackground1", 3.0), ("colorPaletteDarkOrangeForeground1", "colorNeutralBackground1", 4.5),
+    ("colorPaletteDarkOrangeForeground1", "colorBrandBackground2", 4.5),
 )
 
 
@@ -84,7 +87,8 @@ def gallery() -> dict:
     console.store.note_put(NoteRecord("n1", TINO, "note", "A note", f"/subscriptions/{'1' * 8}-1111-1111-1111-{'1' * 12}/resourceGroups/g/providers/p.q/t/n", "x", "you", at(days=-1), at(days=9), 1))
     console.store.case_put(make_case(case_id="case0002", status="error", summary="a reason", models={}, run_id="run00001"))
     console.store.run_put(make_run(run_id="run00002", ok=False, reason="a reason", finished_at=None))
-    console.store.case_put(make_advice_case(case_id="case0005", plan_id="plan0005"))
+    console.store.case_put(make_advice_case(case_id="case0005", plan_id="plan0005", use_series=[round(0.6 + 0.1 * (n % 4), 1) for n in range(29)] + [None], use_series_end="2026-11-04",
+                                            use_kind="vm-cpu"))  # a machine: its request page shows the chart of its use, with a gap on the last day
     console.store.plan_put(make_advice(plan_id="plan0005", case_id="case0005"))
     for path in ("/", "/ok/plan0001", "/ok/plan0005", "/why/case0001", "/why/case0002", "/why/case0005", "/history", "/me/decisions", "/me/activity", "/me/settings",
                  "/me/notes", "/ops", "/ops/runs", "/ops/runs?run=run00001", "/ops/runs?run=%3C", "/ops/permissions", "/ops/pause", "/nothing", "/ok/nothing", "/why/nothing"):
@@ -284,6 +288,28 @@ class EveryPage(unittest.TestCase):
                 if "notice" in classes:
                     first = notice.children[0]
                     self.assertTrue(first.text(), f"{name}: a notice has a title in words")
+
+    def test_every_chart_is_an_image_with_a_sentence_that_says_what_it_shows_and_the_dashed_line_has_a_name(self):
+        charts = 0
+        for name, reply in self.each():
+            for figure in reply.root.find_all("figure"):
+                if "chart" not in figure.classes():
+                    continue
+                self.assertEqual(figure.children[0].tag, "figcaption", f"{name}: a chart is named first")
+                svg = figure.find("svg")
+                if svg is None:
+                    self.assertTrue(figure.find("p", class_="m").text(), f"{name}: a chart with nothing to draw says why")
+                    continue
+                charts += 1
+                self.assertEqual(svg.attrs["role"], "img")
+                words = svg.attrs["aria-label"]
+                self.assertRegex(words, r"^[A-Z][^<>]{30,}\.$", f"{name}: a sentence")
+                self.assertNotRegex(words, r"(?i)^chart\b")
+                self.assertEqual(len(svg.find_all("line", class_="thr")), len(svg.find_all("text", class_="thr-t")), f"{name}: a dashed line is named")
+        self.assertGreaterEqual(charts, 3, "the gallery has the charts of cost and of use")
+        busy = self.pages["busy decisions"].main.find("article", class_="focus")
+        self.assertEqual([figure.find("figcaption").text().split(" ")[0] for figure in busy.find_all("figure")], ["Cost", "CPU"], "the card in focus has both charts, the cost first")
+        self.assertEqual(len(busy.find_all("line", class_="thr")), 1, "the machine's chart has its idle line")
 
 
 class TheStyle(unittest.TestCase):
