@@ -220,7 +220,8 @@ def _welcome(s: Services, ctx: Context, person: Person) -> None:
     """The one card that the app sends when a person adds it: who it is, what it does and does not do, and the link to the web page."""
     now = s.clock()
     try:
-        card = cards.first_contact_card(person.name, s.settings.loop.base_url, offers.contacts_of(s.people), why="You got this because you added me in Teams, and you are on my list of people.")
+        card = cards.first_contact_card(person.name, s.settings.loop.base_url, offers.contacts_of(s.people, person.oid),
+                                        why="You got this because you added me in Teams, and you are on my list of people.")
         delivery = s.connector.send(ctx.service_url, ctx.conversation_id, cards.message_activity(card, "first_contact"), ctx.user_id)
         status, detail = ("sent" if delivery.status == "sent" else "failed"), delivery.detail
     except CardError as error:
@@ -282,7 +283,7 @@ def _card_after(s: Services, principal: Principal, plan, notice: str) -> dict:
     brief = _brief(s, principal, plan)
     answers = brief.kind in ("change", "advice") and brief.state == "open" and bool(brief.answers)
     nonce = s.store.nonce_new(principal.oid, plan.plan_id, offers.nonce_seconds(plan, s.clock())) if answers else ""
-    context = CardContext(page_url=cards.page_url(s.settings.loop.base_url, plan.plan_id), nonce=nonce, contacts=offers.contacts_of(s.people))
+    context = CardContext(page_url=cards.page_url(s.settings.loop.base_url, plan.plan_id), nonce=nonce, contacts=offers.contacts_of(s.people, principal.oid))
     return cards.invoke_card(cards.card_for(brief, context, notice))
 
 

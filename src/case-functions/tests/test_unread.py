@@ -230,6 +230,20 @@ def page_of(case, plan) -> tuple[object, str]:
     return reply, reply.main.text()
 
 
+def walk_blocks(card) -> list:
+    """The TextBlocks of a card that have an id, at any depth (the figure and the footer are in a container or at the end, and a test reads them by id)."""
+    found, stack = [], [card]
+    while stack:
+        node = stack.pop()
+        if isinstance(node, dict):
+            if node.get("type") == "TextBlock" and "id" in node:
+                found.append(node)
+            stack.extend(node.values())
+        elif isinstance(node, list):
+            stack.extend(node)
+    return found
+
+
 class WhatTheInvestigationKeeps(unittest.TestCase):
     def setUp(self):
         self.h = run_investigation(workspace_toolbox())
@@ -349,7 +363,7 @@ class WhatAPersonSees(unittest.TestCase):
         letter = letters.digest_letter(PERSON, BASE, WEB_NOW, [(self.plan, self.case)], CONTACTS)
         self.assertEqual(letter.subject, "[Meternaut] 1 decision waits for you")
         text = letter.text
-        self.assertIn("Consider changing the Log Analytics workspace ws-demo in group rg-demo. About 71.60 US dollars a month, Scenario.", text)
+        self.assertIn("- Consider changing the Log Analytics workspace ws-demo: $859 a year, Scenario.", text)
         self.assertIn("About 75 percent of what this workspace is billed for is data that nothing reads.", text)
         self.assertEqual([line for line in text.splitlines() if line.startswith("- ") and ("GB" in line or "more" in line)],
                          ["- AzureDiagnostics, 40.2 GB (34 percent)", "- ContainerLogV2, 22 GB (19 percent)", "- AppLog_CL, 13.7 GB (12 percent)", "- 1 more"])
@@ -361,14 +375,18 @@ class WhatAPersonSees(unittest.TestCase):
         other = (dataclasses.replace(self.plan, plan_id="plan-two", case_id="case-two"), dataclasses.replace(self.case, case_id="case-two"))
         letter = letters.digest_letter(PERSON, BASE, WEB_NOW, [(self.plan, self.case), other], CONTACTS)
         self.assertEqual(sum(1 for line in letter.text.splitlines() if line.startswith("- ")), 2)
-        self.assertIn("Consider changing the Log Analytics workspace ws-demo in group rg-demo. About 71.60 US dollars a month, Scenario.", letter.text)
+        self.assertEqual(letter.text.count("Consider changing the Log Analytics workspace ws-demo: $859 a year, Scenario."), 2)
         self.assertNotIn("Options:", letter.text)
         self.assertLessEqual(word_count(letter), MOST_WORDS["digest"])
 
     def test_the_decision_letter_stays_within_the_words_of_a_letter_and_has_what_it_rests_on(self):
         letter = letters.approval_letter(self.plan, self.case, PERSON, BASE, WEB_NOW, CONTACTS)
         self.assertEqual(letter.subject, "[Meternaut] A decision waits for you")
-        self.assertIn("Scenario saving: about 71.60 US dollars a month. How sure: ", letter.text)
+        self.assertEqual(letter.text.splitlines()[0], "Consider changing the Log Analytics workspace ws-demo", "the title of the page")
+        self.assertIn("Log Analytics workspace, resource group rg-demo", letter.text)
+        self.assertIn("Low risk, High confidence, Changes nothing in Azure", letter.text)
+        self.assertIn("$859 a year\nSaves, Scenario. $71.60 a month.\nMoney is in US dollars, and a year is twelve times the month.", letter.text)
+        self.assertNotIn("Based on", letter.text, "the lines that follow say what the figure rests on: the method, the share and the kinds")
         self.assertIn("About 75 percent of what this workspace is billed for is data that nothing reads.", letter.text)
         self.assertIn("- AzureDiagnostics, 40.2 GB (34 percent)", letter.text)
         self.assertIn("Options: stop sending it, filter it before it is stored, or use a cheaper plan.", letter.text)
@@ -382,12 +400,13 @@ class WhatAPersonSees(unittest.TestCase):
     def test_the_card_has_the_rows_and_the_choices_in_one_line_and_passes_the_check_of_cards(self):
         b = brief.build_brief(self.case, self.plan, now=WEB_NOW, may_answer=True)
         card = cards.decision_card(b, cards.CardContext(page_url=f"https://meternaut.example/ok/{self.plan.plan_id}", nonce="n" * 24))
-        texts = {block["id"]: block["text"] for block in card["body"] if block.get("type") == "TextBlock"}
+        texts = {block["id"]: block["text"] for block in walk_blocks(card)}
         self.assertIn("About 75 percent of what this workspace is billed for is data that nothing reads.", texts["unread"])
         self.assertEqual([texts[f"unread-{n}"] for n in (1, 2, 3)], ["AzureDiagnostics, 40.2 GB (34 percent)", "ContainerLogV2, 22 GB (19 percent)", "AppLog\\_CL, 13.7 GB (12 percent)"])
         self.assertEqual(texts["unread-more"], "1 more")
         self.assertIn("Options: stop sending it, filter it before it is stored, or use a cheaper plan.", texts["options"])
-        self.assertIn("Basis: the workspace's cost of the last 30 days times the share of its data that nothing reads, about 75 percent", json.dumps(card))
+        self.assertEqual((texts["value"], texts["saving-word"]), ("$859 a year", "Saves, Scenario. $71.60 a month."))
+        self.assertEqual(texts["price-basis"], "Based on the workspace's cost of the last 30 days times the share of its data that nothing reads, about 75 percent.")
 
 
 class WhenTheRecordIsNotEnough(unittest.TestCase):
@@ -397,26 +416,31 @@ class WhenTheRecordIsNotEnough(unittest.TestCase):
         _, text = page_of(case, plan)
         return case, plan, text, letters.approval_letter(plan, case, PERSON, BASE, WEB_NOW, CONTACTS)
 
-    def test_without_the_volume_there_is_no_figure_and_the_page_and_the_letter_say_what_is_missing(self):
+    def test_without_the_volume_there_is_no_saving_and_the_page_the_letter_and_the_card_say_what_is_missing(self):
         case, plan, text, letter = self.render(record({}, READERS, RUNS))
         self.assertEqual(case.facts["unread"], {"missing": "volume"})
         self.assertIsNone(plan.saving_usd_month)
-        self.assertIn("Costs, saving not measured. $95.90 a month. How much data this workspace takes in was not read, so there is no way to say how much of it nothing reads.", text)
-        self.assertIn("No figure: how much data this workspace takes in was not read", letter.text)
+        why = "How much data this workspace takes in was not read, so there is no way to say how much of it nothing reads."
+        self.assertIn(f"Costs, saving not measured. $95.90 a month. {why}", text)
+        self.assertIn(f"$1,151 a year\nCosts, saving not measured. $95.90 a month. {why}", letter.text)
+        self.assertNotIn("No figure", letter.text)
         self.assertNotIn("Data that nothing reads", text)
         self.assertNotIn("What you could do", text)
-        self.assertNotIn("a month", letter.text)
         weekly = letters.digest_letter(PERSON, BASE, WEB_NOW, [(plan, case)], CONTACTS)
-        self.assertIn("- Consider changing the Log Analytics workspace ws-demo in group rg-demo.\n", weekly.text)
-        self.assertNotIn("a month", weekly.text)
+        self.assertIn("- Consider changing the Log Analytics workspace ws-demo: costs $1,151 a year, saving not measured.\n", weekly.text)
+        b = brief.build_brief(case, plan, now=WEB_NOW, may_answer=True)
+        card = cards.decision_card(b, cards.CardContext(page_url=f"https://meternaut.example/ok/{plan.plan_id}", nonce="n" * 24))
+        texts = {block["id"]: block["text"] for block in walk_blocks(card)}
+        self.assertEqual((texts["value"], texts["saving-word"], texts["price-basis"]), ("$1,151 a year", "Costs, saving not measured. $95.90 a month.", why))
 
-    def test_a_source_of_readers_that_was_not_read_leaves_no_figure_and_says_so_and_names_no_kind_as_unread(self):
+    def test_a_source_of_readers_that_was_not_read_leaves_no_saving_and_says_so_and_names_no_kind_as_unread(self):
         case, plan, text, letter = self.render(record(VOLUMES, {kind: None for kind in READERS}, RUNS, volume={"billable_gb": 118.4, "days": 30, "tables": 5}))
         self.assertEqual(case.facts["unread"], {"missing": "readers"})
         self.assertIsNone(plan.saving_usd_month)
-        self.assertIn("Costs, saving not measured. $95.90 a month. Not everything that reads this workspace's data (its rules, saved searches, workbooks and analytics rules) could be read, "
-                      "so Meternaut cannot say which data nothing reads.", text)
-        self.assertIn("No figure: not everything that reads this workspace's data", letter.text)
+        why = ("Not everything that reads this workspace's data (its rules, saved searches, workbooks and analytics rules) could be read, so Meternaut cannot say which data nothing reads.")
+        self.assertIn(f"Costs, saving not measured. $95.90 a month. {why}", text)
+        self.assertIn(f"$1,151 a year\nCosts, saving not measured. $95.90 a month. {why}", letter.text)
+        self.assertNotIn("No figure", letter.text)
         self.assertNotIn("What you could do", text)
         self.assertNotIn("AzureDiagnostics: ", text)
 
@@ -592,16 +616,19 @@ class WhenTheVolumeMovesWhileTheRequestIsOpen(unittest.TestCase):
             self.assertNotIn(gone, text)
         approval = letters.approval_letter(plan, case, PERSON, BASE, WEB_NOW, CONTACTS)
         weekly = letters.digest_letter(PERSON, BASE, WEB_NOW, [(plan, case)], CONTACTS)
-        self.assertIn("Scenario saving: about 66.60 US dollars a month. How sure: ", approval.text)
-        self.assertIn("About 66.60 US dollars a month, Scenario.", weekly.text)
+        self.assertIn("$799 a year\nSaves, Scenario. $66.60 a month.", approval.text)
+        self.assertIn("Consider changing the Log Analytics workspace ws-demo: $799 a year, Scenario.", weekly.text)
         for letter in (approval, weekly):
             self.assertIn("About 69 percent of what this workspace is billed for is data that nothing reads.", letter.text)
             self.assertNotIn("71.60", letter.text)
+            self.assertNotIn("$859", letter.text)
         b = brief.build_brief(case, plan, now=WEB_NOW, may_answer=True)
         text_of_card = json.dumps(cards.decision_card(b, cards.CardContext(page_url=f"https://meternaut.example/ok/{plan.plan_id}", nonce="n" * 24)))
-        self.assertIn("About 66.60 US dollars a month", text_of_card)
+        self.assertIn("$799 a year", text_of_card)
+        self.assertIn("Saves, Scenario. $66.60 a month.", text_of_card)
         self.assertIn("about 69 percent", text_of_card)
         self.assertNotIn("71.60", text_of_card)
+        self.assertNotIn("$859", text_of_card)
 
     def test_a_digest_that_holds_no_figure_now_shows_none_and_says_why_and_the_old_figure_of_the_request_is_not_shown(self):
         case, plan = self.two_watches(cost=0.0)

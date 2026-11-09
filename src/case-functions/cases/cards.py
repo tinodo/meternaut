@@ -1,8 +1,9 @@
 """The Teams card of a decision brief: an Adaptive Card of schema 1.5, as a pure function of the brief (brief.py) and what the card needs besides it.
 
 The page, the letter and the card are renders of the same brief (AGENTS.md rule 34), and the card is the one that a person answers fastest. It holds what a person needs to decide
-in a minute and nothing more: the headline, what it is worth with its level and its basis, how sure it is, the facts, what changes, whether it can be undone, what could go wrong,
-whose resource it is, the answers that exist, and ONE footer line (that an AI wrote it and which models, why this person got it, whom to talk to). Nothing else: no reasoning box,
+in a minute and nothing more: the title and the place under it, the risk, how sure and what a change leaves behind as one line of words, what it is worth (the figure a year and a month, its
+level and its basis, and once that money is in US dollars: the words of the pages, cases/stake.py), the facts, what changes, whether it can be undone, what could go wrong, whose resource it
+is, the answers that exist, and ONE footer line (that an AI wrote it and which models, why this person got it, who is responsible for Meternaut). Nothing else: no reasoning box,
 no counters, no banner.
 
 The answers. An approval that changes Azure is never taken on a card: the card's one link, "Review and decide", is the page of the request, where the person signs in to Azure and
@@ -23,7 +24,8 @@ from dataclasses import dataclass
 from typing import Sequence
 
 from . import cardcheck
-from .brief import OPTIONS_SHORT, PAUSED_ADVICE, PAUSED_CHANGES, TWO_PEOPLE, Brief, footer_line, plain, usd_text
+from .brief import OPTIONS_SHORT, PAUSED_ADVICE, PAUSED_CHANGES, TWO_PEOPLE, Brief, footer_line, plain
+from .stake import chips_of, place_of, stake_of, title_text
 
 SENDER = "Meternaut (AI)"
 MAX_KINDS = 3  # the kinds of data that nothing reads which a card lists
@@ -59,7 +61,7 @@ class CardError(Exception):
 @dataclass(frozen=True)
 class CardContext:
     """What a card needs besides the brief: the address of the page of its request (page_url makes it), a one-time token that was made for the person and the plan (empty when the
-    card shows no answer), why the person got it and whom to talk to (people, each as plain text with the address)."""
+    card shows no answer), why the person got it, and who is responsible for Meternaut (people, each as plain text with the address: the card names the first)."""
 
     page_url: str
     nonce: str = ""
@@ -106,17 +108,27 @@ def _header(kind: str) -> dict:
     ]}
 
 
-def _saving(brief: Brief) -> dict:
-    """What it is worth, as a tile: the figure, its level word and its basis (AGENTS.md rule 13 (c)); without a figure, why there is none. How long the request has waited and what
-    waiting costs are on the page and not on the card: neither helps a person decide, and the second one pushes."""
-    saving = brief.saving
-    if saving.monthly is None:
-        items = [_block("value", "No figure", size="Large", weight="Bolder"), _block("saving-word", "No saving is shown", weight="Bolder"),
-                 _block("price-basis", md(saving.why_none, 200) or "No cost line backs a figure.", isSubtle=True)]
-    else:
-        items = [_block("value", f"About {md(usd_text(saving.monthly))} a month", size="Large", weight="Bolder"), _block("saving-word", f"{md(saving.level, 20)} saving", weight="Bolder"),
-                 _block("price-basis", f"Basis: {md(saving.basis, 200)}", isSubtle=True)]
+def _stake(brief: Brief) -> dict:
+    """What is at stake, as a tile in the words of the pages (cases/stake.py, which uses the code of the pages): the figure a year in large type, its label and the month, its basis or why
+    there is none, and, where a figure is shown, the one line that says what the money is in (AGENTS.md rule 13 (c) and 36). How long the request has waited and what waiting costs are on the
+    page and not on the card: neither helps a person decide, and the second one pushes."""
+    stake = stake_of(brief)
+    label = f"{md(stake.label, 80)}. {md(stake.month, 40)} a month." if stake.month else f"{md(stake.label, 80)}."
+    items = [_block("saving-word", label, weight="Bolder"), _block("price-basis", md(stake.note, 300), isSubtle=True)]
+    if stake.year:
+        items = [_block("value", md(stake.year, 60), size="Large", weight="Bolder"), *items, _block("money", md(stake.money, 120), isSubtle=True, size="Small")]
     return {"type": "Container", "id": "value-tile", "style": "emphasis", "items": items}
+
+
+def _place(brief: Brief) -> list[dict]:
+    """The line under the title: what kind of resource and its resource group (none for a request about many resources: its title counts them)."""
+    place = place_of(brief)
+    return [_block("place", md(place, 200), isSubtle=True)] if place else []
+
+
+def _chips(brief: Brief) -> dict:
+    """The chips of the page as one line of words: the risk, how sure the AIs are, and what a change leaves behind (or that an answer changes nothing in Azure)."""
+    return _block("chips", md(", ".join(chips_of(brief)), 120), weight="Bolder")
 
 
 def _learned(brief: Brief) -> list[dict]:
@@ -200,8 +212,9 @@ def _answer_parts(brief: Brief, ctx: CardContext) -> list[dict]:
 
 
 def footer(models: Sequence[str], why: str, contacts: Sequence[str]) -> dict:
-    """The one footer line: that an AI wrote this and which models, why the person got it and whom to talk to, as plain text."""
-    line = footer_line([gentle(m, 60) for m in models], gentle(why, 200), [gentle(c, 160) for c in contacts])
+    """The one footer line: that an AI wrote this and which models, why the person got it and who is responsible for Meternaut (the first of the contacts, as the page names one person), as
+    plain text."""
+    line = footer_line([gentle(m, 60) for m in models], gentle(why, 200), [gentle(c, 160) for c in contacts[:1]])
     return _block("ai-footer", line, isSubtle=True, size="Small", separator=True)
 
 
@@ -225,10 +238,11 @@ def _finish(card: dict) -> dict:
 
 
 def _card(brief: Brief, ctx: CardContext, kind: str, body: list[dict], what: str) -> dict:
+    title = title_text(brief)
     return _finish({
         "type": "AdaptiveCard", "$schema": cardcheck.SCHEMA, "version": cardcheck.VERSION, "msteams": {"width": "Full"},
-        "fallbackText": f"{SENDER}: {md(brief.headline, 200)}. {what} Open it on the page: {ctx.page_url} Written by an AI.",
-        "body": [_header(kind), _block("headline", md(brief.headline, 200), size="Large", weight="Bolder", style="heading"), *body, footer(brief.models, ctx.why, ctx.contacts)],
+        "fallbackText": f"{SENDER}: {md(title, 200)}. {what} Open it on the page: {ctx.page_url} Written by an AI.",
+        "body": [_header(kind), _block("headline", md(title, 200), size="Large", weight="Bolder", style="heading"), *body, footer(brief.models, ctx.why, ctx.contacts)],
     })
 
 
@@ -243,26 +257,27 @@ def decision_card(brief: Brief, ctx: CardContext, notice: str = "") -> dict:
     body: list[dict] = []
     if notice:
         body.append(_block("notice", md(notice, 240), weight="Bolder"))
-    body += [_saving(brief), _block("confidence", f"**How sure: {md(brief.confidence.level, 12)}.** {md(brief.confidence.because, 240)}"), *_learned(brief), *_facts(brief), *_unread(brief),
-             *_decision_lines(brief), *_answer_parts(brief, ctx)]
+    body += [*_place(brief), _chips(brief), _stake(brief), _block("confidence", f"**How sure: {md(brief.confidence.level, 12)}.** {md(brief.confidence.because, 240)}"), *_learned(brief),
+             *_facts(brief), *_unread(brief), *_decision_lines(brief), *_answer_parts(brief, ctx)]
     return _card(brief, ctx, brief.kind, body, "A decision waits for you.")
 
 
 def result_card(brief: Brief, ctx: CardContext, notice: str = "") -> dict:
-    """The card of a request that is not open any more, or that a change has run for: what became of it in plain lines, what it is worth, whether it can be undone, and the page. It
-    holds no answer, so it holds no token."""
+    """The card of a request that is not open any more, or that a change has run for: what became of it in plain lines, what it saves (the figure of the pages: Verified only when the cost
+    lines after the change confirm it), whether it can be undone, and the page. It holds no answer, so it holds no token."""
     _check_context(ctx, brief, needs_nonce=False)
     outcome = brief.outcome
     body: list[dict] = []
     if notice:
         body.append(_block("notice", md(notice, 240), weight="Bolder"))
+    body += _place(brief)
     if outcome.state:
         body.append(_block("outcome", md(outcome.title, 80), weight="Bolder"))
         body += [_block(f"outcome-line-{n}", md(line, 300)) for n, line in enumerate(outcome.lines[:4], 1)]
     elif not notice:
         body.append(_block("outcome", "Nothing can be answered here now.", weight="Bolder"))
     if outcome.state in ("done", "verified"):
-        body += [_saving(brief), _undo(brief)]
+        body += [_stake(brief), _undo(brief)]
     body.append({"type": "ActionSet", "id": "decisions", "actions": [{"type": "Action.OpenUrl", "id": "page", "title": "See the request", "url": ctx.page_url}]})
     return _card(brief, ctx, "result", body, "What became of a request.")
 

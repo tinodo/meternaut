@@ -101,11 +101,12 @@ class AboutAPlan(unittest.TestCase):
         self.assertEqual(self.f.graph.sent, [])
         self.assertEqual(self.f.records(), [])
 
-    def test_the_first_contact_links_to_the_first_request_and_names_one_person_to_talk_to(self):
+    def test_the_first_contact_links_to_the_first_request_and_names_the_one_person_who_is_responsible_for_meternaut(self):
         self.f.on_plan(plan(), make_case())
         first = next(m for _, m in self.f.graph.sent if m["subject"].endswith("will write to you"))
         self.assertIn('href="https://func.example.net/ok/p1a2b3c4d5"', first["body"]["content"])
-        self.assertIn("Talk to a person: Ops (ops@example.com).", first["body"]["content"])
+        self.assertIn("Responsible for Meternaut: Ops (ops@example.com).", first["body"]["content"])
+        self.assertNotIn("Talk to a person", first["body"]["content"])
         self.assertNotIn("mailto:", first["body"]["content"])
 
     def test_the_subject_holds_no_resource_name_and_the_link_is_the_console(self):

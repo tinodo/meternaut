@@ -108,11 +108,15 @@ class TheDecisionCardOfAChange(unittest.TestCase):
 
     def test_it_holds_what_a_person_needs_to_decide_and_nothing_else(self):
         self.assertEqual([n["id"] for n in self.card["body"] if "id" in n],
-                         ["header", "headline", "value-tile", "confidence", "facts", "change", "undo", "risk", "owner", "decisions", "message", "ask", "ai-footer"])
-        self.assertEqual(self.ids["headline"]["text"], "Delete the unattached disk disk-zq7-name in group rg-zq7-group")
-        self.assertEqual(self.ids["value"]["text"], "About 41.20 US dollars a month")
-        self.assertEqual(self.ids["saving-word"]["text"], "Expected saving")
-        self.assertIn("the cost lines of the last 30 days", self.ids["price-basis"]["text"], "every figure carries its basis")
+                         ["header", "headline", "place", "chips", "value-tile", "confidence", "facts", "change", "undo", "risk", "owner", "decisions", "message", "ask", "ai-footer"])
+        self.assertEqual(self.ids["headline"]["text"], "Delete the unattached disk disk-zq7-name", "the title of the page: the place is on the line under it")
+        self.assertEqual(self.ids["place"]["text"], "Managed disk, resource group rg-zq7-group")
+        self.assertEqual(self.ids["chips"]["text"], "Medium risk, High confidence, Cannot be undone", "the chips of the page as words")
+        self.assertEqual([n["id"] for n in self.ids["value-tile"]["items"]], ["value", "saving-word", "price-basis", "money"])
+        self.assertEqual(self.ids["value"]["text"], "$494 a year")
+        self.assertEqual(self.ids["saving-word"]["text"], "Saves, Expected. $41.20 a month.")
+        self.assertEqual(self.ids["price-basis"]["text"], "Based on the cost lines of the last 30 days.", "every figure carries its basis")
+        self.assertEqual(self.ids["money"]["text"], "Money is in US dollars, and a year is twelve times the month.")
         self.assertNotIn("waiting", self.ids, "what waiting costs is on the page: it does not help a person decide, and it pushes")
         self.assertNotIn("when", self.ids, "how long ago it was found and until when it is open are on the page")
         self.assertTrue(self.ids["confidence"]["text"].startswith("**How sure: "))
@@ -158,12 +162,14 @@ class TheDecisionCardOfAChange(unittest.TestCase):
         for action in actions_of(self.card):
             self.assertLessEqual(len(action["title"]), 24, "a button title is short")
 
-    def test_it_says_that_an_ai_wrote_it_and_why_the_person_got_it_in_one_footer_line(self):
+    def test_it_says_that_an_ai_wrote_it_why_the_person_got_it_and_who_is_responsible_in_one_footer_line(self):
         self.assertEqual(self.ids["ai-label"]["text"], "Meternaut (AI)")
         footer = self.ids["ai-footer"]["text"]
         self.assertTrue(footer.startswith("Written by an AI (models: model-d, model-s); a person approves every change."), footer)
         self.assertIn("You got this because you are named as an approver of this request.", footer)
-        self.assertIn("Talk to a person: Maya (maya@example.com), Ops (ops@example.com).", footer)
+        self.assertTrue(footer.endswith("Responsible for Meternaut: Maya (maya@example.com)."), "one person, as on the page: the first of the contacts")
+        self.assertNotIn("Ops (ops@example.com)", footer)
+        self.assertNotIn("Talk to a person", footer)
         self.assertNotIn("\n", footer)
         self.assertEqual(self.card["body"][-1]["id"], "ai-footer")
         self.assertIn("Written by an AI.", self.card["fallbackText"])
@@ -209,6 +215,53 @@ class TheDecisionCardOfAdvice(unittest.TestCase):
     def test_six_buttons_at_the_most_in_one_row(self):
         self.assertLessEqual(len(self.ids["decisions"]["actions"]), 6)
         self.assertEqual(len(self.ids["ask"]["actions"]), 1)
+
+
+class TheFigureOnTheCard(unittest.TestCase):
+    """The tile of the card says what the page says: the year, the label with the month, the basis or the reason, and once that money is in US dollars."""
+
+    MONEY = "Money is in US dollars, and a year is twelve times the month."
+
+    def tile(self, saving=41.2, cost=41.2, **case_changes):
+        brief = brief_of(plan=make_plan(saving_usd_month=saving), case=make_case(saving_usd_month=saving, cost_usd_30d=cost, **case_changes))
+        card = cards.decision_card(brief, ctx_for(brief))
+        self.assertEqual(cardcheck.check(card), [])
+        ids = by_id(card)
+        return card, {name: ids[name]["text"] for name in ("value", "saving-word", "price-basis", "money") if name in ids}
+
+    def test_a_saving_is_the_year_in_large_type_the_label_with_the_month_the_basis_and_the_line_about_money(self):
+        card, tile = self.tile()
+        self.assertEqual(tile, {"value": "$494 a year", "saving-word": "Saves, Expected. $41.20 a month.", "price-basis": "Based on the cost lines of the last 30 days.", "money": self.MONEY})
+        self.assertEqual(by_id(card)["value"]["size"], "Large")
+        self.assertEqual([item["id"] for item in by_id(card)["value-tile"]["items"]], ["value", "saving-word", "price-basis", "money"])
+
+    def test_the_level_is_in_the_label_a_scenario_says_what_it_rests_on(self):
+        _, tile = self.tile(detector="advisor-cost")
+        self.assertEqual((tile["saving-word"], tile["price-basis"]), ("Saves, Scenario. $41.20 a month.", "Based on Azure Advisor's own estimate: no cost line of this resource backs it."))
+
+    def test_a_cost_is_the_most_that_a_change_could_save_and_says_that_no_saving_was_measured(self):
+        _, tile = self.tile(saving=None, cost=358.11)
+        self.assertEqual(tile, {"value": "$4,297 a year", "saving-word": "Costs, saving not measured. $358.11 a month.",
+                                "price-basis": "The most that a change could save: what it would save was not worked out.", "money": self.MONEY})
+
+    def test_nothing_that_can_be_shown_has_no_year_and_no_money_line_and_says_why(self):
+        for cost, why in ((0.0, "No cost line in the last 30 days."), (None, "No cost line was read yet.")):
+            with self.subTest(cost=cost):
+                card, tile = self.tile(saving=None, cost=cost)
+                self.assertEqual(tile, {"saving-word": "Cost not visible.", "price-basis": why})
+                self.assertNotIn("a year", " ".join(texts(card)))
+
+    def test_the_line_about_money_is_said_once_on_a_card(self):
+        for kwargs in ({}, {"saving": None, "cost": 80.0}):
+            card, _ = self.tile(**kwargs)
+            self.assertEqual(sum(text.count(self.MONEY) for text in texts(card)), 1)
+
+    def test_no_card_says_no_figure_no_saving_is_shown_or_talk_to_a_person(self):
+        for kwargs in ({}, {"saving": None, "cost": 80.0}, {"saving": None, "cost": None}):
+            card, _ = self.tile(**kwargs)
+            everything = " ".join(texts(card))
+            for old in ("No figure", "No saving is shown", "Talk to a person", "About 41.20 US dollars"):
+                self.assertNotIn(old, everything)
 
 
 class WhenASwitchHoldsTheAnswer(unittest.TestCase):
@@ -259,7 +312,7 @@ class TheCardOfWhatBecameOfARequest(unittest.TestCase):
         ids = by_id(cards.card_for(brief, ctx_for(brief, nonce="")))
         self.assertEqual(ids["outcome"]["text"], "Expired")
 
-    def test_a_change_that_ran_has_a_result_card_with_what_it_saved_and_the_undo_line(self):
+    def test_a_change_that_ran_has_a_result_card_with_what_it_saves_in_the_words_of_the_pages_and_the_undo_line(self):
         plan = make_plan(state="consumed")
         action = ActionRecord(plan_id=PLAN_ID, case_id="c1", family="delete-disk", resource_id="r1", state="verified", queued_at="2026-11-05T09:00:00Z", finished_at="2026-11-05T09:05:00Z",
                               result="Deleted. Azure no longer lists the resource.", verification={"gone": True, "costAfterUsd": 0.0, "costBeforeUsd30d": 41.2, "checkedAt": "2026-11-05T09:05:00Z"})
@@ -269,7 +322,9 @@ class TheCardOfWhatBecameOfARequest(unittest.TestCase):
         ids = by_id(card)
         self.assertEqual(cardcheck.check(card), [])
         self.assertEqual(ids["outcome"]["text"], "Done and checked")
-        self.assertEqual(ids["saving-word"]["text"], "Verified saving")
+        self.assertEqual((ids["value"]["text"], ids["saving-word"]["text"]), ("$494 a year", "Saves, Verified. $41.20 a month."), "Verified, and only because the cost lines confirm it")
+        self.assertEqual(ids["price-basis"]["text"], "Based on the cost lines after the change, which show no cost for this resource.")
+        self.assertEqual(ids["place"]["text"], "Managed disk, resource group rg-zq7-group")
         self.assertEqual(ids["undo"]["text"], "Undo: This cannot be undone.")
         self.assertEqual(cards.message_activity(card, "result")["summary"], "[Meternaut] A change to Azure has run")
 

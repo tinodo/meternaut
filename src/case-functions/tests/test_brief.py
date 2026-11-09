@@ -703,14 +703,15 @@ class TheSmallWords(unittest.TestCase):
         self.assertEqual((models_of(None), models_of(make_case(models={}))), ((), ()))
         self.assertEqual(models_of(make_case(models={"a": "x\u202e[y](javascript:z)"})), ("x(y)(javascript:z)",))
 
-    def test_the_footer_says_that_an_ai_wrote_it_why_the_person_got_it_and_whom_to_talk_to(self):
+    def test_the_footer_says_that_an_ai_wrote_it_why_the_person_got_it_and_who_is_responsible_for_meternaut(self):
         self.assertEqual(written_by(("m1", "m2")), "Written by an AI (models: m1, m2); a person approves every change.")
         self.assertEqual(written_by(()), "Written by an AI; a person approves every change.")
         self.assertEqual(footer_line(("m1",), "You got this because you are on my list of people.", ("Olga (olga@example.com)",)),
-                         "Written by an AI (models: m1); a person approves every change. You got this because you are on my list of people. Talk to a person: Olga (olga@example.com).")
-        self.assertTrue(footer_line((), "Why.").endswith("Talk to a person: whoever put you on my list of people."))
+                         "Written by an AI (models: m1); a person approves every change. You got this because you are on my list of people. Responsible for Meternaut: Olga (olga@example.com).")
+        self.assertEqual(footer_line((), "Why."), "Written by an AI; a person approves every change. Why.", "nobody to name: the line leaves the sentence out, as the page does")
+        self.assertNotIn("Talk to a person", footer_line(("m1",), "Why.", ("Olga (olga@example.com)",)))
 
-    def test_a_person_to_talk_to_is_plain_text_with_the_address(self):
+    def test_a_person_who_is_responsible_for_meternaut_is_plain_text_with_the_address(self):
         self.assertEqual(contact_text("Olga", "olga@example.com"), "Olga (olga@example.com)")
         self.assertEqual((contact_text("Olga", ""), contact_text("", "olga@example.com"), contact_text(None, None)), ("Olga", "olga@example.com", ""))
         hostile = contact_text("[Olga](javascript:alert(1))\u202e", "o@example.com\nBcc: x@example.com")

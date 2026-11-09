@@ -14,7 +14,7 @@ from support import SUBSCRIPTION
 from test_cost_series import FIRST, LAST, FakeCosts, read as read_costs
 from test_investigate import OID, SAFE, FakeFoundry, FakeToolbox, Harness, Moving, answer, entry, finding, key_of, loop_for, metrics, resource, verdicts
 from test_letters import BASE, CONTACTS, MOST_WORDS, PERSON, word_count
-from test_unread import page_of
+from test_unread import page_of, walk_blocks
 from test_web_support import NOW as WEB_NOW, SUB, TINO, Console, make_advice_case
 
 from cases import approvals, brief, cards, investigate, learning, letters
@@ -839,16 +839,18 @@ class WhatAPersonSees(unittest.TestCase):
         self.assertIn("Review all 60", text)
         self.assertNotIn("No figure", text)
 
-    def test_the_weekly_letter_has_the_headline_and_what_the_resources_cost_together_and_stays_within_its_words(self):
+    def test_the_weekly_letter_has_the_title_and_the_cost_a_year_with_no_total_and_stays_within_its_words(self):
         letter = letters.digest_letter(PERSON, BASE, WEB_NOW, [(self.plan, self.case)], CONTACTS)
         self.assertEqual(letter.subject, "[Meternaut] 1 decision waits for you")
-        self.assertIn(f"- {HEADLINE}. Together they cost 1,830.00 US dollars in 30 days.\n", letter.text)
+        self.assertIn("- 60 private endpoints in 14 resource groups: costs $21,960 a year, saving not measured.\n", letter.text)
+        self.assertNotIn("Look at", letter.text, "the title of the page, not the headline")
         self.assertLessEqual(word_count(letter), MOST_WORDS["digest"])
         self.assertEqual(letter.html.count('href="'), 1)
         self.assertTrue(letter.text.isascii())
         many = [(dataclasses.replace(self.plan, plan_id=f"plan-{n}", case_id=f"case-{n}"), dataclasses.replace(self.case, case_id=f"case-{n}")) for n in range(3)]
         three = letters.digest_letter(PERSON, BASE, WEB_NOW, many, CONTACTS)
         self.assertEqual(sum(1 for line in three.text.splitlines() if line.startswith("- ")), 3)
+        self.assertNotIn("$65,880", three.text, "no total: a total belongs to the Decisions page")
         self.assertLessEqual(word_count(three), MOST_WORDS["digest"])
 
     def test_the_decision_letter_has_the_three_rows_and_stays_within_the_words_of_a_letter(self):
@@ -856,19 +858,27 @@ class WhatAPersonSees(unittest.TestCase):
         for row in ("Covers: 60 private endpoints in 14 resource groups", "Together they cost: 1,830.00 US dollars in the last 30 days",
                     "Examples: pe-60, pe-59, pe-58, pe-57, pe-56, pe-55 and 54 more", "If you answer: Nothing changes in Azure. Your answer is recorded with your name."):
             self.assertIn(row, letter.text)
-        self.assertIn("No figure: the 60 resources cost 1,830.00 US dollars together in the last 30 days.", letter.text)
+        self.assertEqual(letter.text.splitlines()[0], "60 private endpoints in 14 resource groups", "the title of the page: it counts the resources and their groups")
+        self.assertIn("$21,960 a year\nCosts, saving not measured. $1,830.00 a month. The most that a change could save: what it would save was not worked out.\n"
+                      "Money is in US dollars, and a year is twelve times the month.", letter.text)
+        self.assertNotIn("No figure", letter.text)
+        self.assertNotIn("resource group rg", letter.text, "a request for many resources has no place of its own: the title counts the groups")
         self.assertLessEqual(word_count(letter), MOST_WORDS["approval"])
         self.assertTrue(letter.text.isascii())
         for gone in ("?", "!", "saved", "\u2013", "\u2014"):
             self.assertNotIn(gone, letter.text.lower())
 
-    def test_the_card_has_the_headline_and_the_first_three_rows(self):
+    def test_the_card_has_the_title_the_figure_and_the_first_three_rows(self):
         b = brief.build_brief(self.case, self.plan, now=WEB_NOW, may_answer=True)
         card = cards.decision_card(b, cards.CardContext(page_url=f"https://meternaut.example/ok/{self.plan.plan_id}", nonce="n" * 24))
         text = json.dumps(card)
-        self.assertIn(HEADLINE, text)
+        found = {block["id"]: block["text"] for block in walk_blocks(card)}
+        self.assertEqual(found["headline"], "60 private endpoints in 14 resource groups")
+        self.assertNotIn("place", found, "a request for many resources has no place of its own")
+        self.assertEqual((found["value"], found["saving-word"]), ("$21,960 a year", "Costs, saving not measured. $1,830.00 a month."))
         for row in ("Covers", "60 private endpoints in 14 resource groups", "Together they cost", "1,830.00 US dollars in the last 30 days", "Examples", "and 54 more"):
             self.assertIn(row, text)
+        self.assertNotIn("No figure", text)
 
     def test_the_history_and_the_start_page_know_a_request_that_was_answered_by_the_same_headline(self):
         self.assertEqual(brief.plan_headline(dataclasses.replace(self.plan, state="declined")), HEADLINE)
@@ -913,10 +923,14 @@ class WhatAHostileEstateCanDo(unittest.TestCase):
         self.assertEqual(reply.root.find_all("script"), [])
         self.assertEqual(reply.problems, [])
         self.assertFalse([link for link in reply.links() if "evil.example" in link])
-        for letter in (letters.digest_letter(PERSON, BASE, WEB_NOW, [(self.plan, self.case)], CONTACTS), letters.approval_letter(self.plan, self.case, PERSON, BASE, WEB_NOW, CONTACTS)):
-            self.assertNotIn("<script>", letter.html)
-            self.assertIn("&lt;script&gt;", letter.html)
-            self.assertLessEqual(max(len(line) for line in letter.text.splitlines() if not line.startswith("Decide:")), 500)
+        digest = letters.digest_letter(PERSON, BASE, WEB_NOW, [(self.plan, self.case)], CONTACTS)
+        self.assertNotIn("<script>", digest.html)
+        self.assertNotIn("script", digest.text, "the title of a request for many resources counts them and names none: the names are in the rows of the decision letter")
+        approval = letters.approval_letter(self.plan, self.case, PERSON, BASE, WEB_NOW, CONTACTS)
+        self.assertNotIn("<script>", approval.html)
+        self.assertIn("&lt;script&gt;", approval.html, "the examples are names from the estate: they are text, escaped")
+        for letter in (digest, approval):
+            self.assertLessEqual(max(len(line) for line in letter.text.splitlines() if not line.startswith("Review and decide:")), 500)
         b = brief.build_brief(self.case, self.plan, now=WEB_NOW, may_answer=True)
         card = cards.decision_card(b, cards.CardContext(page_url=f"https://meternaut.example/ok/{self.plan.plan_id}", nonce="n" * 24))
         self.assertNotIn("<script>", json.dumps(card))

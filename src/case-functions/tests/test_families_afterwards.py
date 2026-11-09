@@ -196,7 +196,7 @@ class ScenarioA(unittest.TestCase):
                 saving = shown(world, plan).saving
                 self.assertEqual((saving.level, saving.monthly), ("Verified", 31.1))
                 if SHOWN[name].cost_ends:
-                    self.assertEqual(saving.basis, "the cost lines after the change show no cost for this resource")
+                    self.assertEqual(saving.basis, "the cost lines after the change, which show no cost for this resource")
                 else:
                     self.assertNotIn("no cost", saving.basis, "a resource that still bills never shows no cost")
 
@@ -227,7 +227,7 @@ class ScenarioA(unittest.TestCase):
         self.assertEqual(action.verification["costAfterUsd"], 0.0)
         b = shown(world, plan)
         self.assertEqual((b.saving.monthly, b.saving.level), (60.0, "Verified"))
-        self.assertEqual(b.saving.basis, "the cost lines after the change show no cost for this resource")
+        self.assertEqual(b.saving.basis, "the cost lines after the change, which show no cost for this resource")
 
     def test_the_days_of_waiting_are_used_up_and_the_record_says_that_no_figure_came(self):
         world, plan, resource = self.resized()

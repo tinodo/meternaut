@@ -75,8 +75,8 @@ def hooks(env: Mapping[str, str], settings: LoopSettings, store: Store, people: 
             return False
 
     def contacts() -> tuple[str, ...]:
-        """The people to talk to, for the last line of a letter: those with the role owner or ops (or everybody listed, when none has one), each as a name with the address, in
-        plain text. A letter names the first of them who is not the person who reads it."""
+        """The people who are responsible for Meternaut, for the last line of a letter: those with the role owner or ops (or everybody listed, when none has one), each as a name with the
+        address, in plain text. A letter names the first of them who is not the person who reads it."""
         chosen = [p for p in people.persons if "ops" in p.roles or "owner" in p.roles] or list(people.persons)
         return tuple(contact_text(p.name, p.mail) for p in chosen[:3])
 

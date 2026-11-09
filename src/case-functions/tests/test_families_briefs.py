@@ -205,12 +205,15 @@ class TheLettersAndTheCardsAreRendersOfTheBrief(unittest.TestCase):
                 b = a_brief(plan, case)
                 letter = letters.approval_letter(plan, case, PERSON, BASE, fs.NOW, CONTACTS)
                 self.assertEqual(letter.subject, "[Meternaut] A change to Azure waits for your OK")
-                self.assertIn(brief.plain(b.headline, 200), letter.text)
+                self.assertIn(brief.plain(figures.title_of(b)[1], 200), letter.text)
+                self.assertIn(f"{b.where.kind}, resource group {fs.GROUP}", letter.text, "the place is on the line under the title")
                 self.assertIn(brief.plain(b.change, 200), letter.text)
                 self.assertIn("It runs with your own permissions, after you sign in to Azure.", letter.text)
                 self.assertIn("This cannot be undone." if not REVERSIBLE[name] else brief.plain(b.undo.how, 160), letter.text)
+                self.assertIn("Cannot be undone" if not REVERSIBLE[name] else "Can be undone", letter.text)
                 self.assertIn(f"Risk, {b.risk.level}", letter.text)
                 self.assertIn(brief.plain(b.risk.text, 200), letter.text)
+                self.assertIn("Review and decide: ", letter.text)
 
     def test_the_letter_about_a_change_that_ran_says_what_the_brief_says_and_how_to_undo_it(self):
         for name in MAKERS:
@@ -222,7 +225,7 @@ class TheLettersAndTheCardsAreRendersOfTheBrief(unittest.TestCase):
                 b = a_brief(done, case, action)
                 letter = letters.done_letter(done, action, case, PERSON, BASE, fs.NOW, CONTACTS)
                 self.assertEqual(letter.subject, "[Meternaut] A change to Azure has run")
-                self.assertIn(f"Done: {brief.plain(b.headline, 200)}.", letter.text)
+                self.assertIn(f"Done: {brief.plain(figures.title_of(b)[1], 200)}.", letter.text)
                 self.assertIn("Azure shows the change. Azure shows the new state.", letter.text)
                 self.assertIn("This cannot be undone." if not REVERSIBLE[name] else brief.plain(b.undo.how, 200), letter.text)
 
@@ -234,7 +237,9 @@ class TheLettersAndTheCardsAreRendersOfTheBrief(unittest.TestCase):
                 card = cards.card_for(b, card_context(b))
                 self.assertEqual(cardcheck.check(card), [])
                 found = texts_of(card)
-                self.assertEqual(found["headline"], cards.md(b.headline, 200))
+                self.assertEqual(found["headline"], cards.md(figures.title_of(b)[1], 200))
+                self.assertEqual(found["place"], f"{b.where.kind}, resource group {fs.GROUP}")
+                self.assertEqual(found["chips"], ", ".join((figures.RISKS[b.risk.level][0], f"{b.confidence.level} confidence", "Can be undone" if REVERSIBLE[name] else "Cannot be undone")))
                 self.assertIn(cards.md(b.change, 300), found["change"])
                 self.assertEqual(found["undo"], "Undo: This cannot be undone." if not REVERSIBLE[name] else f"**Undo:** {cards.md(b.undo.how, 200)}")
                 self.assertEqual(found["risk"], f"**Risk, {b.risk.level}:** {cards.md(b.risk.text, 240)}")
@@ -242,12 +247,13 @@ class TheLettersAndTheCardsAreRendersOfTheBrief(unittest.TestCase):
                 self.assertNotIn("approve", [a.get("verb") for a in _actions(card)], "no card approves a change in Azure")
                 json.dumps(card)
 
-    def test_the_card_of_a_figure_less_change_says_why_there_is_no_figure(self):
+    def test_the_card_of_a_change_whose_saving_is_not_worked_out_says_what_it_costs_and_why_there_is_no_saving(self):
         _, plan, case = made("change-disk-tier")
         b = a_brief(plan, case)
         found = texts_of(cards.card_for(b, card_context(b)))
-        self.assertEqual((found["value"], found["saving-word"]), ("No figure", "No saving is shown"))
+        self.assertEqual((found["value"], found["saving-word"]), ("$240 a year", "Costs, saving not measured. $20.00 a month."))
         self.assertIn("does not read the price list", found["price-basis"])
+        self.assertEqual(found["money"], "Money is in US dollars, and a year is twelve times the month.")
 
 
 def _actions(card) -> list[dict]:

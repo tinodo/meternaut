@@ -288,6 +288,9 @@ class Brief:
     unread: Unread | None = None
     options: tuple[Option, ...] = ()
     group: Group | None = None
+    # What the finding costs in 30 days, from the cost lines (everything that it stands for when it is a group); None when no cost line was read. A request that has no saving shows this cost as
+    # the most that a change could save. The letter and the card read it from here, because the card has no case at hand: it is the number that the pages read with cost_of (a test holds the two together).
+    cost: float | None = None
 
 
 # -- small helpers ------------------------------------------------------------------------------------------------------------------------------
@@ -450,9 +453,10 @@ def contact_text(name: object, address: object = "") -> str:
 
 
 def footer_line(models: Sequence[str], why: str, people: Sequence[str] = ()) -> str:
-    """The one line at the foot of a letter: that an AI wrote it (and which models), why this person got it, and whom to talk to, as plain text with the address and no link."""
-    talk = f"Talk to a person: {', '.join(people)}." if people else "Talk to a person: whoever put you on my list of people."
-    return f"{written_by(models)} {why} {talk}"
+    """The one line at the foot of a letter and of a card: that an AI wrote it (and which models), why this person got it, and who is responsible for Meternaut, as plain text with the address and
+    no link: the words of "About this page" on a page. Without a person to name the line leaves the last sentence out."""
+    responsible = f" Responsible for Meternaut: {', '.join(people)}." if people else ""
+    return f"{written_by(models)} {why}{responsible}"
 
 
 # -- the parts ------------------------------------------------------------------------------------------------------------------------------
@@ -842,10 +846,10 @@ def _saving(case: CaseRecord | None, plan: PlanRecord | None, action: ActionReco
     # figure, in the branch below, and never "no cost".
     ends = fam is None or fam.cost_ends
     if action is not None and action.state == "verified" and ends and before is not None and after == 0 and before > 0:
-        return Saving(round(before, 2), "Verified", "the cost lines after the change show no cost for this resource", None, "")
+        return Saving(round(before, 2), "Verified", "the cost lines after the change, which show no cost for this resource", None, "")
     saved = _figure(check.get("savedUsdMonth"))
     if action is not None and action.state == "verified" and saved is not None and saved > 0:
-        return Saving(round(saved, 2), "Verified", "the cost lines of the whole days after the change are lower than those of the 30 days before it", None, "")
+        return Saving(round(saved, 2), "Verified", "the cost lines of the whole days after the change, which are lower than those of the 30 days before it", None, "")
     if figure is None or figure <= 0:
         cost = _figure(case.cost_usd_30d) if case is not None else None
         group = group_of(case)
@@ -1134,7 +1138,8 @@ def build_brief(case: CaseRecord | None, plan: PlanRecord | None, action: Action
         models=models_of(case), outcome=_outcome(plan, state, action, decisions), two_people=plan is not None and plan.approval_class == "R3",
         past=past_line(case.learned.get("past")) if kind != "info" and case is not None and isinstance(case.learned, dict) and "past" in case.learned else "",
         access=ACCESS_WORDS.get(str(case.learned.get("access")), "") if kind != "info" and case is not None and isinstance(case.learned, dict) else "",
-        unread=unread, options=options_of(unread, saving.monthly is not None) if kind == "advice" else (), group=together)
+        unread=unread, options=options_of(unread, saving.monthly is not None) if kind == "advice" else (), group=together,
+        cost=together.cost if together is not None and together.cost is not None else (_figure(case.cost_usd_30d) if case is not None else None))
 
 
 def order_key(brief: Brief) -> tuple:

@@ -60,10 +60,12 @@ def _week_start(now: dt.datetime) -> dt.datetime:
     return now.replace(hour=0, minute=0, second=0, microsecond=0) - dt.timedelta(days=now.weekday())
 
 
-def contacts_of(people: People) -> tuple[str, ...]:
-    """The people to talk to, for the last line of a card: those with the role owner or ops (or everybody listed, when none has one), each as a name with the address, in plain text."""
+def contacts_of(people: People, reader: str = "") -> tuple[str, ...]:
+    """The people who are responsible for Meternaut, for the last line of a card: those with the role owner or ops (or everybody listed, when none has one), each as a name with the address, in
+    plain text. A card names the first of them, and never the person who reads it (`reader` is that person's object id) when somebody else is listed, as the page and the letters do."""
     chosen = [p for p in people.persons if "ops" in p.roles or "owner" in p.roles] or list(people.persons)
-    return tuple(contact_text(p.name, p.mail) for p in chosen[:3])
+    others = [p for p in chosen if p.oid.lower() != reader.lower()] if reader else chosen
+    return tuple(contact_text(p.name, p.mail) for p in (others or chosen)[:3])
 
 
 def may_answer(principal, plan: PlanRecord) -> bool:
@@ -178,7 +180,7 @@ class Offers:
             paused = plan.family != ADVISE and switches.pulled(self.store, "changes")
             brief = build_brief(case, plan, None, self.store.decisions_of_plan(plan.plan_id), now=now, may_answer=True, changes_paused=paused)
             nonce = self.store.nonce_new(person.oid, plan.plan_id, nonce_seconds(plan, now))  # type: ignore[union-attr]
-            return cards.decision_card(brief, CardContext(page_url=cards.page_url(self.base_url, plan.plan_id), nonce=nonce, contacts=contacts_of(self.people)))
+            return cards.decision_card(brief, CardContext(page_url=cards.page_url(self.base_url, plan.plan_id), nonce=nonce, contacts=contacts_of(self.people, person.oid)))  # type: ignore[union-attr]
         return self._deliver(person, kind, plan.plan_id, now, card)  # type: ignore[arg-type]
 
     def _change(self, oid: str, plan: PlanRecord, action: ActionRecord, case: CaseRecord | None) -> int:
@@ -199,7 +201,7 @@ class Offers:
 
             def card() -> dict:
                 brief = build_brief(case, plan, action, self.store.decisions_of_plan(plan.plan_id), now=now, may_answer=False)
-                return cards.result_card(brief, CardContext(page_url=cards.page_url(self.base_url, plan.plan_id), contacts=contacts_of(self.people)))
+                return cards.result_card(brief, CardContext(page_url=cards.page_url(self.base_url, plan.plan_id), contacts=contacts_of(self.people, person.oid)))  # type: ignore[union-attr]
             total += self._deliver(person, kind, plan.plan_id, now, card)  # type: ignore[arg-type]
         return total
 
