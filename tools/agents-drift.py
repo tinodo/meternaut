@@ -12,7 +12,7 @@ only: the list of the agents, each agent that the lock names, and the list of th
 
 and prints one line for each, in the report shape of every drift check: `drift.pass|drift.fail|drift.unknown {"control", "layer", "state", "detail", "readAt"}`. The controls that only the app
 can see (its code, its files, its settings, its lists of calls, its switches) are not judged here. A text of the project never gets into a line (the rules write plain words and counts), and a
-token is never printed. The Operator needs the role Foundry User on the project for these reads (docs/proposals/11-agent-harness-and-evaluation.md).
+token is never printed. The Operator needs the role Foundry User on the project for these reads: the action foundry gives it, and the control I-operator-role of tools/drift-check.py reads it back (docs/proposals/11-agent-harness-and-evaluation.md).
 
 The exit code is 0 when no control failed, 1 when one failed or the project could not be read at all, 2 when the tool refused to run.
 """

@@ -21,7 +21,9 @@
 //  - the cases app signs in with its system-assigned managed identity (a Microsoft Entra token for https://ai.azure.com) and holds the Foundry User role on the
 //    project, which lets it create agents and run them there, and nothing else here;
 //  - the project's own managed identity sends the agents' traces to the Application Insights component with Microsoft Entra ID: it holds
-//    Monitoring Metrics Publisher on the component, whose local authentication is off (environment/base/main.bicep).
+//    Monitoring Metrics Publisher on the component, whose local authentication is off (environment/base/main.bicep);
+//  - the Operator's identity (the tools that check the agents run with it, inside the network) holds the Foundry User role on the project too, while its object id is given
+//    (operatorPrincipalId), and so does the project's own identity, for a continuous evaluation rule (docs/proposals/11-agent-harness-and-evaluation.md says why, and what each allows).
 //
 // Left out on purpose (AGENTS.md rule 19), because the landing zone provides it: private DNS zones, virtual network links and the private
 // endpoint's DNS zone group. The landing zone's policy registers the endpoint in the central zones. The project endpoint's host name
@@ -73,6 +75,10 @@ param models array
 @minLength(36)
 @maxLength(36)
 param casesSystemPrincipalId string
+
+@description('Principal id of the user-assigned identity of the Operator (id-meternaut-operator), which runs the tools that check the agents from inside the network: agents-drift, foundry-evals and foundry-redteam. It gets the Foundry User role on the project, and nothing else here: the narrowest built-in role that reads the agents and the connections and makes the evaluations. Empty, which is the default, no role is made: the workflow passes it only when the identity is there, so that this template still deploys on an estate that has no Operator yet.')
+@maxLength(36)
+param operatorPrincipalId string = ''
 
 @description('Host name of the AI Gateway (the separate service that environment/aigateway/main.bicep makes), as the service reports it in properties.frontend.defaultHostname: under .ai.gateway.azure.com. The workflow reads it from the service and passes it only while the switch AGENTS_VIA_AI_GATEWAY in tools/environment-params.py is True. Empty: no connection to the gateway is made, and nothing here is different for an estate that has no gateway.')
 @maxLength(253)
@@ -308,6 +314,39 @@ resource casesMayUseTheAgents 'Microsoft.Authorization/roleAssignments@2022-04-0
   properties: {
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', foundryUserRoleId)
     principalId: casesSystemPrincipalId
+    principalType: 'ServicePrincipal'
+  }
+  dependsOn: [
+    privateEndpoint
+  ]
+}
+
+// The Operator runs tools/agents-drift.py, tools/foundry-evals.py and tools/foundry-redteam.py from inside the network with its own identity, and without a role on the project they read nothing: the first real run of
+// agents-drift (2026-11-08) was answered 403 for the agents and 401 for the connections. Foundry User is the narrowest built-in role that fits (Learn, "Role-based access control for Microsoft Foundry", read 2026-11-09): Foundry
+// Agent Consumer holds the one data action that interacts with agent endpoints, and Foundry Project Runtime User only the responses; neither reads agents or connections, and neither makes an evaluation. So the Operator can
+// also create, change, delete and run the agents of the project, which is wider than a reader needs. In Azure itself it is a reader (Learn's table: no creating of projects or accounts, no managing of models, no role assignments), and, as
+// Learn says, a role on the project alone does not authorize model inference. Made only while the object id is given, and after the private endpoint, like the other roles. The way back is to delete the assignment.
+resource operatorMayCheckTheAgents 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!empty(operatorPrincipalId)) {
+  scope: project
+  name: guid(project.id, operatorPrincipalId, foundryUserRoleId)
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', foundryUserRoleId)
+    principalId: operatorPrincipalId
+    principalType: 'ServicePrincipal'
+  }
+  dependsOn: [
+    privateEndpoint
+  ]
+}
+
+// A continuous evaluation rule runs as the project's own identity, and Learn ("Set up permissions for Microsoft Foundry evaluation workflows", read 2026-11-09) asks for Foundry User for it, at the Foundry resource or at the
+// project: the project, which is the narrower. The scope of the resource, which Learn asks for when evaluation runs in an isolated resource, would let the identity call the deployments direct (AGENTS.md rule 15 (c)): it is not made here.
+resource projectMayRunTheEvaluationRule 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  scope: project
+  name: guid(project.id, 'the-project-itself', foundryUserRoleId)
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', foundryUserRoleId)
+    principalId: project.identity.principalId
     principalType: 'ServicePrincipal'
   }
   dependsOn: [

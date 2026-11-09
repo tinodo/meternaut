@@ -33,6 +33,9 @@ the app reads as AIGATEWAY_HOST): the action cases is refused without it, and a 
 checked, whatever the action. The same host serves the agents' route when the switch below is on.
 CASES_SYSTEM_PRINCIPAL_ID is also the principal of the role AI Gateway Models User on the AI Gateway, which the file of the gateway (casesPrincipalId) gives it: the Detective and the Skeptic call the
 gateway with that identity. Empty means none yet, and the gateway is then made without the role; the next run of the action aigateway gives it.
+OPERATOR_PRINCIPAL_ID (optional, may be empty) is the object id of the Operator's user-assigned identity (id-meternaut-operator), which the workflow reads from Azure for the actions foundry and what-if (the governance
+file reads it too, for the access list). While it is set, foundry.parameters.json carries it as operatorPrincipalId and the Foundry resource gives that identity the Foundry User role on its project, which the tools
+agents-drift, foundry-evals and foundry-redteam need (docs/proposals/11-agent-harness-and-evaluation.md); empty, the file is what it was and no role is made. It is checked as a GUID and never printed when it is not one.
 AGENTS_VIA_AI_GATEWAY (a constant near the top of this file, True) is the switch of the agents' route through the AI Gateway (docs/proposals/08-ai-gateway.md, step 2). While it is True: AIGATEWAY_HOST goes into
 foundry.parameters.json with the aliases (aiGatewayHost, aiGatewayModels), so that the Foundry resource makes the project's connection; the cases file carries the model names `<connection>/<alias>`
 (foundryModelInvestigator and foundryModelSkeptic); and two outputs are added (agents_via_ai_gateway=true and aigateway_connection_name), which the workflow reads. The builder refuses True without the host
@@ -805,6 +808,9 @@ def build(env, models: list[dict], preview: bool = False, aigateway_policies: li
     cases_system_principal = (env.get("CASES_SYSTEM_PRINCIPAL_ID") or "").strip()
     if cases_system_principal and not GUID.match(cases_system_principal):
         raise Problem("CASES_SYSTEM_PRINCIPAL_ID is the object id of the cases app's system-assigned identity")
+    operator_principal = (env.get("OPERATOR_PRINCIPAL_ID") or "").strip()
+    if operator_principal and not GUID.match(operator_principal):
+        raise Problem("OPERATOR_PRINCIPAL_ID is the object id of the Operator's user-assigned identity, or empty")
     foundry_exists = exists_flag(env, "ENV_FOUNDRY_PROJECT_EXISTS")
 
     vnet = network(need(env, "ENV_VNET_PREFIX"), "ENV_VNET_PREFIX")
@@ -930,6 +936,9 @@ def build(env, models: list[dict], preview: bool = False, aigateway_policies: li
         "casesSystemPrincipalId": (cases_system_principal or PLACEHOLDER).lower(),
         "owner": owner,
     }
+    # The Operator's role on the project is asked for only while its object id is given: the file is what it was on an estate that has no Operator yet (the template's default is empty).
+    if operator_principal:
+        foundry_values["operatorPrincipalId"] = operator_principal.lower()
     routed = agent_models(models) if AGENTS_VIA_AI_GATEWAY else {}
     if AGENTS_VIA_AI_GATEWAY and gateway_host:
         foundry_values["aiGatewayHost"] = gateway_host

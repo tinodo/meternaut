@@ -1464,8 +1464,9 @@ class CasesWorkflow(unittest.TestCase):
         for line in code.splitlines():
             if "az identity" in line:
                 self.assertIn("IDENTITY_NAME", line.upper(), f"only the gateway's identity is looked up in the identity list: {line.strip()}")
-        self.assertEqual(len(re.findall(r"Microsoft\.ManagedIdentity/userAssignedIdentities", code)), 2, "the retired runner identity, which is read and removed by one path, and the Operator's own identity, which the step "
-                                                                                                     "that works out the settings of the AI security only reads, for its object id (it is one of the identities of the access list), and nothing else")
+        self.assertEqual(len(re.findall(r"Microsoft\.ManagedIdentity/userAssignedIdentities", code)), 3, "the retired runner identity, which is read and removed by one path, and the Operator's own identity, which two steps "
+                                                                                                     "only read, for its object id: the one that works out the settings of the AI security (it is one of the identities of the access list) and the one that works "
+                                                                                                     "out the settings of the Foundry file (the role of the Operator on the project), and nothing else")
         self.assertEqual(len(re.findall(r'az rest --method delete --url "https://management\.azure\.com\$\{identity\}\?api-version=2023-01-31"', code)), 1, "the one that is the retired runner's")
         finished_cases = re.search(r"(?m)^\s+cases\) echo \"(The first cases are in resource group.*?)\" ;;$", self.step("What was done")).group(1)
         for words in ("The app no longer carries the user-assigned identity that it used before, \\`id-meternaut-cases\\`. This workflow does not remove that identity: a person does, "
@@ -1501,7 +1502,7 @@ class Foundry(unittest.TestCase):
 
     def test_it_declares_the_resources_of_the_design_and_makes_no_dns_no_network_and_no_gateway_object(self):
         self.assertEqual(set(self.found), {"insights", "account", "guardrail", "modelDeployment", "project", "projectPublishesTraces", "tracesConnection", "aiGatewayConnection", "privateEndpoint",
-                                           "casesMayUseTheAgents"})
+                                           "casesMayUseTheAgents", "operatorMayCheckTheAgents", "projectMayRunTheEvaluationRule"})
         self.assertRegex(self.source, r"(?m)^resource insights 'Microsoft.Insights/components@2020-02-02' existing = ")
         for word in ("privateDnsZones", "privateDnsZoneGroups", "virtualNetworkLinks", "virtualNetworkPeerings", "routeTables", "Microsoft.ApiManagement",
                      "Microsoft.Network/virtualNetworks'", "networkSecurityGroups", "SecurityControl", "optOut"):
@@ -1544,6 +1545,8 @@ class Foundry(unittest.TestCase):
         self.assertIn("projectPublishesTraces", depends_on(found["tracesConnection"][1]))
         self.assertTrue({"modelDeployment", "project", "tracesConnection"} <= depends_on(found["privateEndpoint"][1]))
         self.assertIn("privateEndpoint", depends_on(found["casesMayUseTheAgents"][1]))
+        self.assertIn("privateEndpoint", depends_on(found["operatorMayCheckTheAgents"][1]))
+        self.assertIn("privateEndpoint", depends_on(found["projectMayRunTheEvaluationRule"][1]))
         self.assertRegex(self.source, r"@batchSize\(1\)\nresource modelDeployment ", "the resource accepts one deployment write at once")
         self.assertIn("raiPolicyName: guardrail.name", found["modelDeployment"][1], "the guardrail is made before the deployments that use it")
         # nothing else is written to the resource (or below it) at the same time as its private endpoint: each write is before it or after it, by dependsOn or by a reference
@@ -1578,20 +1581,33 @@ class Foundry(unittest.TestCase):
             self.assertNotIn(word, body, word)
         self.assertRegex(self.code, r"(?m)^param guardrailName string = 'meternaut-agents'$")
 
-    def test_the_roles_are_two_each_on_one_resource_for_one_service_principal_and_none_on_the_group_the_account_or_the_subscription(self):
+    def test_the_roles_are_foundry_user_on_the_project_for_the_cases_app_the_operator_and_the_project_itself_and_one_on_the_component_and_none_on_the_group_the_account_or_the_subscription(self):
         guids = set(re.findall(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", self.code))
         self.assertEqual(guids, {"53ca6127-db72-4b80-b1b0-d745d6d5456d", "3913510d-42f4-4e42-8a64-420c390055eb"})  # Foundry User, Monitoring Metrics Publisher
         assignments = {name: body for name, (kind, body) in self.found.items() if kind == "Microsoft.Authorization/roleAssignments"}
-        self.assertEqual(sorted(assignments), ["casesMayUseTheAgents", "projectPublishesTraces"])
+        self.assertEqual(sorted(assignments), ["casesMayUseTheAgents", "operatorMayCheckTheAgents", "projectMayRunTheEvaluationRule", "projectPublishesTraces"])
         for name, body in assignments.items():
             self.assertIn("principalType: 'ServicePrincipal'", body, name)
         self.assertEqual({name: re.search(r"(?m)^  scope: (.+)$", body).group(1) for name, body in assignments.items()},
-                         {"casesMayUseTheAgents": "project", "projectPublishesTraces": "insights"})
-        # the one identity that holds the Foundry User role is the cases app's own system-assigned one: its principal id is a parameter, so the name is known at the start
+                         {"casesMayUseTheAgents": "project", "operatorMayCheckTheAgents": "project", "projectMayRunTheEvaluationRule": "project", "projectPublishesTraces": "insights"})
+        for name in ("casesMayUseTheAgents", "operatorMayCheckTheAgents", "projectMayRunTheEvaluationRule"):
+            self.assertIn("roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', foundryUserRoleId)", assignments[name], f"{name}: Foundry User and no other role")
+        # the identity of the cases app: its principal id is a parameter, so the name is known at the start
         self.assertIn("foundryUserRoleId", assignments["casesMayUseTheAgents"])
         self.assertIn("name: guid(project.id, casesSystemPrincipalId, foundryUserRoleId)", assignments["casesMayUseTheAgents"], "the name that the first step gave the role: nothing new is made")
         self.assertIn("principalId: casesSystemPrincipalId", assignments["casesMayUseTheAgents"])
         self.assertFalse(assignments["casesMayUseTheAgents"].startswith("if ("), "the role is always there: the workflow refuses to deploy while the app has no identity")
+        # the Operator's identity (the tools agents-drift, foundry-evals and foundry-redteam read the project with it): only while its object id is given, so that the template still deploys with no Operator
+        operator = assignments["operatorMayCheckTheAgents"]
+        self.assertTrue(operator.startswith("if (!empty(operatorPrincipalId)) {"), "no role while the parameter is empty")
+        self.assertIn("name: guid(project.id, operatorPrincipalId, foundryUserRoleId)", operator)
+        self.assertIn("principalId: operatorPrincipalId", operator)
+        self.assertRegex(self.code, r"@maxLength\(36\)\nparam operatorPrincipalId string = ''\n", "optional: empty is the default")
+        # the project's own identity (the continuous evaluation rule runs as it): on the project, which is the narrower scope that Learn names; the name must not hold the principal id, which is known only after the project is made
+        rule = assignments["projectMayRunTheEvaluationRule"]
+        self.assertIn("principalId: project.identity.principalId", rule)
+        self.assertIn("name: guid(project.id, 'the-project-itself', foundryUserRoleId)", rule)
+        self.assertFalse(rule.startswith("if ("))
         self.assertIn("monitoringMetricsPublisherRoleId", assignments["projectPublishesTraces"])
         self.assertIn("principalId: project.identity.principalId", assignments["projectPublishesTraces"])
         for word in ("scope: account", "scope: resourceGroup", "scope: subscription", "subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '"):
@@ -1921,6 +1937,20 @@ class FoundryWorkflow(unittest.TestCase):
         self.assertIn('echo "::warning::The preview of the cases app assumes that the Foundry project is not in Azure', params)
         self.assertNotIn("ACTION: ${{", params.split("run: |")[0], "the job's ACTION is used")
         self.assertIn("ACTION: ${{ inputs.action }}", self.text.split("    steps:")[0])
+
+    def test_the_settings_step_reads_the_identity_of_the_operator_for_foundry_and_what_if_only_and_hands_its_object_id_to_the_final_build_on_a_line_of_its_own(self):
+        # The Foundry file gives that identity the Foundry User role on the project (docs/proposals/11-agent-harness-and-evaluation.md): the tools that check the agents read the project with it.
+        params = [b for b in self.steps if b.startswith("name: Work out the settings\n")][0]
+        self.assertRegex(params, r'(?m)^ +operator_principal=""\n +if \[ "\$ACTION" = foundry \] \|\| \[ "\$ACTION" = what-if \]; then\n +if operator_principal=\$\(az rest --method get ')
+        self.assertIn("/providers/Microsoft.ManagedIdentity/userAssignedIdentities/id-meternaut-operator?api-version=2023-01-31\" --query properties.principalId --output tsv 2>&1); then", params)
+        self.assertEqual(params.count("userAssignedIdentities/id-meternaut-operator"), 1, "read once, by the name that the AI security's step reads it by")
+        self.assertEqual(len(re.findall(r"echo \"::error::The Operator's identity could not be read", params)), 1, "a read that fails stops foundry")
+        self.assertEqual(len(re.findall(r"echo \"::warning::The Operator's identity could not be read", params)), 1, "and is a warning for what-if")
+        self.assertEqual(params.count("OPERATOR_PRINCIPAL_ID"), 1, "one place: the export before the final build, and not inside the builder's line, which other tests hold to its words")
+        self.assertRegex(params, r'(?m)^          export OPERATOR_PRINCIPAL_ID="\$operator_principal"\n')
+        self.assertLess(params.index('operator_principal=""'), params.index("export OPERATOR_PRINCIPAL_ID"))
+        self.assertLess(params.index("export OPERATOR_PRINCIPAL_ID"), params.rindex("python3 tools/environment-params.py build"), "the final build gets it and the preview does not")
+        self.assertEqual(params.count("--preview"), 1)
 
     def test_the_texts_of_the_watch_say_that_it_changes_no_resource_of_the_estate_and_what_the_investigation_adds(self):
         block = self.step("Start one Watch and read its History")
