@@ -25,7 +25,7 @@ import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Callable, Mapping
 
-from . import agents, capability, decide, guards, learning, roles, wiring
+from . import agents, capability, decide, guards, learning, roles, unread, wiring
 from .approvals import is_fixture
 from .arm import scopes_of
 from .detectors import Context, Lead
@@ -508,6 +508,15 @@ def _figure(value: float | None) -> float | None:
     return None if value is None else round(value, 2)
 
 
+def _unread(toolbox: Toolbox, resource: Resource, cost: float | None) -> dict | None:
+    """What a workspace takes in and nothing reads (cases/unread.py), for a finding about a workspace: worked out by code from everything that the tools recorded for it, and not from what the
+    Investigator cited. The names of the tables that are not the platform's (t1, t2, ...) are put back for the page of a person; no model sees them."""
+    if (resource.resource_type or "").lower() != unread.WORKSPACE:
+        return None
+    names = getattr(toolbox, "table_names", None)
+    return unread.analyse(_block(toolbox.evidence, resource.handle), cost, names(resource.handle) if callable(names) else None)
+
+
 def _why(s: "Services", error: Exception) -> str:
     """Why a call of the Agent Service failed, in at most 200 characters: the fixed words of the route when the model of the agent goes through a connection and the answer is about that route
     (FoundryError.route), and the text of the error as it always was in every other case."""
@@ -674,6 +683,9 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
         for handle in sorted(finding.handles, key=lambda handle: -(costs[handle] or 0.0)):
             resource = toolbox.handles[handle]
             facts = _facts(finding, finding.cited[handle], costs[handle], _aggregates(toolbox.evidence, handle), len(finding.listed[handle]) if handle in finding.listed else None)
+            found_unread = _unread(toolbox, resource, costs[handle])
+            if found_unread is not None:
+                facts[unread.KEY] = found_unread  # a workspace: the data that nothing reads, and the scenario figure that rests on it (the saving of a change has no figure of its own: decide.py)
             lead = _lead(resource, facts, costs[handle], _advisor(toolbox.evidence, handle))
             if _judged_lately(s, lead, facts, open_questions):
                 finding.recent += 1

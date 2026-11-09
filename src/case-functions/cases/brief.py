@@ -67,6 +67,7 @@ TYPE_WORDS = {
     "microsoft.servicebus/namespaces": ("Service Bus namespace", "Service Bus namespace"),
     "microsoft.kusto/clusters": ("Data Explorer cluster", "Data Explorer cluster"),
     "microsoft.recoveryservices/vaults": ("Recovery Services vault", "Recovery Services vault"),
+    "microsoft.operationalinsights/workspaces": ("Log Analytics workspace", "Log Analytics workspace"),
 }
 GUARD_WORDS = {
     "locked": "A management lock covers the resource.",
@@ -111,6 +112,19 @@ NOTHING_CHANGED_SAVING = "Nothing was changed, so no saving is claimed for this 
 # What a person is told while a switch holds the answer that approves: all of them hold a change, and only the full stop holds advice (nothing changes in Azure for it).
 PAUSED_CHANGES = "Changes are paused here. Nothing has changed, and your OK cannot be recorded now."
 PAUSED_ADVICE = "Meternaut is paused here. Nothing has changed, and your answer cannot be recorded now."
+# The data that a workspace takes in and nothing reads: cases/unread.py works it out and keeps it in the facts of the case under this key, as numbers, flags and the names of kinds of data. This
+# module reads that typed digest and nothing of how it is made. The words are code's; the names of tables are text of the estate and are cut and escaped like every other.
+UNREAD = "unread"
+MAX_UNREAD_LINES = 6
+READS_NOTHING = "0 rules, 0 saved searches and 0 workbooks"
+UNREAD_MISSING = {
+    "volume": "How much data this workspace takes in was not read, so there is no way to say how much of it nothing reads.",
+    "readers": "Not everything that reads this workspace's data (its rules, saved searches, workbooks and analytics rules) could be read, so Meternaut cannot say which data nothing reads.",
+}
+# What a person could do about data that nothing reads, in one line, for a letter that has no room for the section of the page. The section ends with OPTIONS_END; a letter adds it where
+# no other line says that the answer changes nothing in Azure.
+OPTIONS_END = "Nothing changes in Azure when you answer."
+OPTIONS_SHORT = "Options: stop sending it, filter it before it is stored, or use a cheaper plan."
 
 
 @dataclass(frozen=True)
@@ -180,6 +194,39 @@ class Outcome:
 
 
 @dataclass(frozen=True)
+class DataLine:
+    """One kind of data that nothing reads, as a typed line: what it is, how much of it came in, its share of what is billed, and what reads it. `writers` names the kinds of resource of its
+    largest writers on the last closed day when the tools showed them ("" otherwise): the options use it and the line does not."""
+
+    kind: str
+    gb: str
+    percent: str
+    reads: str
+    writers: str = ""
+
+
+@dataclass(frozen=True)
+class Unread:
+    """The data that a workspace takes in and nothing reads, for the evidence of a request: the method in one plain sentence, the volume that it rests on ("That is 88 GB of the 118 GB that
+    it took in over 30 days."), the days, up to six typed lines (the largest first), how many more kinds there are, and one sentence about what was not counted ("" when everything was)."""
+
+    sentence: str
+    volume: str
+    days: str
+    lines: tuple[DataLine, ...]
+    more: int
+    note: str
+
+
+@dataclass(frozen=True)
+class Option:
+    """One thing that a person could do about it, in words that code wrote, and what is lost or at risk if they do it."""
+
+    what: str
+    risk: str
+
+
+@dataclass(frozen=True)
 class Brief:
     case_id: str
     plan_id: str
@@ -211,6 +258,10 @@ class Brief:
     # one sentence about that. Both are written by code from the case's own record of them (CaseRecord.learned); empty when the case has none.
     past: str = ""
     access: str = ""
+    # The data that a workspace takes in and nothing reads, and what a person could do about it (both written by code from the typed digest in the facts of the case; None and () for every
+    # other finding).
+    unread: Unread | None = None
+    options: tuple[Option, ...] = ()
 
 
 # -- small helpers ------------------------------------------------------------------------------------------------------------------------------
@@ -552,8 +603,139 @@ def doubt_of(case: CaseRecord | None, plan: PlanRecord | None = None) -> str:
     return "The second AI raised no objection in words."
 
 
+# -- the data that a workspace takes in and nothing reads ----------------------------------------------------------------------------------------------
+
+CUSTOM_TABLE = re.compile(r"t[0-9]{1,4}")  # what the tools call a table that the platform did not make, when they do not know its name: a handle that means something in one run only
+
+
+def _digest(case: CaseRecord | None) -> dict | None:
+    facts = case.facts if case is not None and isinstance(case.facts, dict) else {}
+    found = facts.get(UNREAD)
+    return found if isinstance(found, dict) else None
+
+
+def _whole(value: object) -> int:
+    return value if isinstance(value, int) and not isinstance(value, bool) and value > 0 else 0
+
+
+def _percent(share: float) -> str:
+    points = round(share * 100)
+    return "under 1 percent" if points < 1 else f"{points} percent"
+
+
+def _about(share: float) -> str:
+    return _percent(share) if round(share * 100) < 1 else f"about {_percent(share)}"
+
+
+def _gb_text(value: float) -> str:
+    return "under 0.01 GB" if 0 < value < 0.005 else f"{number_text(round(value, 2))} GB"
+
+
+def _series(words: Sequence[str]) -> str:
+    return words[0] if len(words) == 1 else f"{', '.join(words[:-1])} and {words[-1]}"
+
+
+def _kind_name(item: Mapping) -> str:
+    """The name of a kind of data as a person reads it: the name of the table when it is known, the platform's own name, or "custom table t3" for a table of the customer that has none."""
+    name, kind = plain(item.get("name"), 60), plain(item.get("kind"), 60)
+    if name:
+        return name
+    return f"custom table {kind}" if CUSTOM_TABLE.fullmatch(kind) else kind
+
+
+def _writers_text(item: Mapping) -> str:
+    """The kinds of resource of the largest writers of a kind of data on the last closed day, in the words of the brief ("Key Vault, Storage account"); "" when the tools showed none."""
+    types = item.get("writers") if isinstance(item.get("writers"), list) else []
+    return ", ".join(dict.fromkeys(kind_words(text_of(kind, 80))[0] for kind in types[:3] if isinstance(kind, str) and text_of(kind, 80)))
+
+
+def unread_of(case: CaseRecord | None) -> Unread | None:
+    """The data that a workspace takes in and nothing reads, as the facts of its case keep it (cases/unread.py), or None for a case that has none or whose digest holds no kind. Every number
+    is checked again here: a digest that is not as it should be shows less and never something else."""
+    digest = _digest(case)
+    if digest is None:
+        return None
+    share, gone, whole, days = _figure(digest.get("share")), _figure(digest.get("unreadGb")), _figure(digest.get("billableGb")), _whole(digest.get("days"))
+    if share is None or not 0 < share <= 1 or gone is None or whole is None or not 0 < gone <= whole or not days:
+        return None
+    lines: list[DataLine] = []
+    skipped = 0
+    for item in digest.get("kinds") if isinstance(digest.get("kinds"), list) else []:
+        if not isinstance(item, dict):
+            continue
+        volume, part, runs, kind = _figure(item.get("gb")), _figure(item.get("share")), item.get("runs"), _kind_name(item)
+        counted = isinstance(runs, int) and not isinstance(runs, bool)
+        if volume is None or volume < 0 or part is None or not 0 <= part <= 1 or not kind or (counted and runs != 0) or (runs is not None and not counted):
+            continue  # a kind that something reads is not one that nothing reads
+        if len(lines) == MAX_UNREAD_LINES:
+            skipped += 1
+            continue
+        lines.append(DataLine(kind, _gb_text(volume), _percent(part), f"Read by {READS_NOTHING}; " + ("0 queries run" if counted else "queries run: not recorded"), _writers_text(item)))
+    if not lines:
+        return None
+    notes = []
+    unknown = _whole(digest.get("unknown"))
+    if unknown:
+        notes.append(f"What reads {unknown} other kind{'s' if unknown != 1 else ''} of data could not be read, so {'they are' if unknown != 1 else 'it is'} not counted.")
+    if digest.get("runsRecorded") is not True:
+        notes.append("The queries that people run were not counted: the record of them is off or could not be read.")
+    first = "Under 1 percent" if round(share * 100) < 1 else f"About {_percent(share)}"
+    sentence = f"{first} of what this workspace is billed for is data that nothing reads."
+    volume = f"That is {_gb_text(gone)} of the {_gb_text(whole)} that it took in over {days_text(days)}."
+    return Unread(sentence, volume, days_text(days), tuple(lines), _whole(digest.get("more")) + skipped, " ".join(notes))
+
+
+def unread_saving(case: CaseRecord | None) -> float | None:
+    """The saving of the data that nothing reads in US dollars a month, when the digest of the case holds one that is whole: a number above 0 that is not more than the cost of the resource in the
+    last 30 days. Code worked it out (cases/unread.py); a model never writes it."""
+    digest = _digest(case)
+    figure = _figure(digest.get("savingUsd")) if digest is not None else None
+    cost = _figure(case.cost_usd_30d) if case is not None else None
+    if figure is None or figure <= 0 or cost is None or figure > cost + 0.005:
+        return None
+    return round(figure, 2)
+
+
+def _unread_basis(case: CaseRecord | None) -> str:
+    """What the figure of the data that nothing reads is computed from, as a part of a sentence of every render ("from ...", "(...)", "Basis: ...")."""
+    digest = _digest(case) or {}
+    share = _figure(digest.get("share"))
+    return "the workspace's cost of the last 30 days times the share of its data that nothing reads" + (f", {_about(share)}" if share is not None and 0 < share <= 1 else "")
+
+
+def _unread_missing(case: CaseRecord | None) -> str:
+    """Why there is no figure for a workspace whose record was not enough to say which data nothing reads ("" for any other case)."""
+    digest = _digest(case)
+    return UNREAD_MISSING.get(str(digest.get("missing")), "") if digest is not None and not digest.get("kinds") else ""
+
+
+def options_of(unread: Unread | None, figure: bool) -> tuple[Option, ...]:
+    """What a person could do about data that nothing reads, in three choices, with what each loses or puts at risk. The words are code's. They name the kinds of data that are listed and, when the
+    tools showed them, the kinds of resource of its largest writers; they never name a thing that the tools did not show. `figure` says that the request shows a figure, which counts all of
+    this data as no longer stored: the choices that remove only some of it save less."""
+    if unread is None or not unread.lines:
+        return ()
+    names = [line.kind for line in unread.lines]
+    others = max(0, len(names) - 3) + unread.more
+    listed = f"{', '.join(names[:3])} and {others} more" if others > 0 else _series(names[:3])
+    written = " ".join([f"On the last closed day, the largest writers of {line.kind} were: {line.writers}." for line in unread.lines if line.writers][:2])
+    less = " That lowers the bill by less than the figure above." if figure else ""
+    return (
+        Option(f"Stop sending {listed} at the source: the log categories that a diagnostic setting sends, or the data collection rule that writes it." + (f" {written}" if written else ""),
+               "alert rules, workbooks or investigations that need this data get no new data."),
+        Option("Filter it before it is stored: a transformation in the data collection rule that sends it (or, for data that comes through a diagnostic setting, in the workspace's own "
+               "transformation rule) can drop the rows or the columns that nobody needs.",
+               "what the filter drops cannot be searched later, and a filter that is too wide hides what an investigation needs. It lowers the bill only by what it drops."),
+        Option("Keep it, but cheaper: for data that people only search now and then, move its table to the Basic or Auxiliary plan, if the table supports it, or keep it for less time.",
+               "those plans offer fewer ways to query the data and charge each query for what it scans, and a shorter retention deletes old data for good." + less),
+    )
+
+
 def _saving(case: CaseRecord | None, plan: PlanRecord | None, action: ActionRecord | None, state: str) -> Saving:
     figure = _figure(plan.saving_usd_month if plan is not None else (case.saving_usd_month if case is not None else None))
+    scenario = unread_saving(case)  # the figure that code worked out from the data that a workspace takes in and nothing reads: the case holds no figure of its own for a change
+    if plan is None and (figure is None or figure <= 0):
+        figure = scenario
     waiting = _figure(plan.waiting_costs_usd_day) if plan is not None else None
     check = action.verification if action is not None and isinstance(action.verification, dict) else {}
     before, after = _figure(check.get("costBeforeUsd30d")), _figure(check.get("costAfterUsd"))
@@ -578,11 +760,15 @@ def _saving(case: CaseRecord | None, plan: PlanRecord | None, action: ActionReco
             why = f"The resource cost {usd_text(cost)} in the last 30 days. What a change would save was not worked out."
         if fam is not None and fam.no_figure:
             why = fam.no_figure
+        elif _unread_missing(case):
+            why = _unread_missing(case)
         return Saving(None, "", "", None, why)
     if waiting is None:
         waiting = round(figure / 30, 2)
     if fam is not None and fam.saving_basis:
         return Saving(round(figure, 2), fam.saving_level, fam.saving_basis, waiting, "")
+    if fam is None and scenario is not None and abs(figure - scenario) < 0.005:
+        return Saving(round(figure, 2), "Scenario", _unread_basis(case), waiting, "")
     advisor = case is not None and (case.detector == "advisor-cost" or (case.detector == "investigation" and case.recommendation == "change"))
     if advisor:
         return Saving(round(figure, 2), "Scenario", "Azure Advisor's own estimate: no cost line of this resource backs it", waiting, "")
@@ -676,7 +862,7 @@ def facts_of(case: CaseRecord | None) -> tuple[Fact, ...]:
     guards = [g for g in case.guards if isinstance(g, str)]
     if guards:
         head.append(Fact("Held back by", " ".join(GUARD_WORDS.get(g, text_of(g, 40)) for g in guards[:2]), CHECKED))
-    head += _metric_facts(case)
+    head += [] if unread_of(case) is not None else _metric_facts(case)  # the rows of the data that nothing reads say it better than two measurements of it
     typed = _typed_facts(case)
     tail: list[Fact] = []
     owner = case.owner if isinstance(case.owner, dict) else {}
@@ -831,16 +1017,19 @@ def build_brief(case: CaseRecord | None, plan: PlanRecord | None, action: Action
         change, who, rechecked, undo, risk = NO_CHANGE, "", "", Undo(True, ADVICE_UNDO), Risk("low", "Nothing changes in Azure.")
     found_at = (case.first_seen_at if case is not None and case.first_seen_at else (plan.created_at if plan is not None else ""))
     age, _ = ago_text(now, found_at)
+    saving = _saving(case, plan, action, state)
+    unread = unread_of(case)
     return Brief(
         case_id=plain(case.case_id if case is not None else (plan.case_id if plan is not None else ""), 64), plan_id=plain(plan.plan_id if plan is not None else "", 64),
         plan_code=plain(plan.code if plan is not None else "", 16), kind=kind, family=plain(family, 40), state=plain(state, 20),
         headline=headline_of(family, name, group, rtype, recommendation, plan.title if plan is not None else "", plan),
-        saving=_saving(case, plan, action, state), confidence=confidence_of(case, plan), facts=facts_of(case), reasoning=reasoning_of(case), doubt=doubt_of(case, plan),
+        saving=saving, confidence=confidence_of(case, plan), facts=facts_of(case), reasoning=reasoning_of(case), doubt=doubt_of(case, plan),
         change=change, who_acts=who, rechecked=rechecked, undo=undo, risk=risk, owner=owner_of(case), where=_where(name, group, subscription, resource_id, rtype),
         answers=_answers(kind, state, may_answer, changes_paused), found_at=plain(found_at, 30), age_days=age, expires_at=plain(plan.expires_at if plan is not None else "", 30),
         models=models_of(case), outcome=_outcome(plan, state, action, decisions), two_people=plan is not None and plan.approval_class == "R3",
         past=past_line(case.learned.get("past")) if kind != "info" and case is not None and isinstance(case.learned, dict) and "past" in case.learned else "",
-        access=ACCESS_WORDS.get(str(case.learned.get("access")), "") if kind != "info" and case is not None and isinstance(case.learned, dict) else "")
+        access=ACCESS_WORDS.get(str(case.learned.get("access")), "") if kind != "info" and case is not None and isinstance(case.learned, dict) else "",
+        unread=unread, options=options_of(unread, saving.monthly is not None) if kind == "advice" else ())
 
 
 def order_key(brief: Brief) -> tuple:

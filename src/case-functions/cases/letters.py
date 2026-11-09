@@ -31,6 +31,7 @@ from .people import Person
 SUBJECT_PREFIX = "[Meternaut]"
 MAX_LISTED = 5
 MAX_FACTS = 3
+MAX_KINDS = 3  # the kinds of data that nothing reads which a letter lists: a letter has no room for a table of five rows
 
 # Text and background pairs. The tests check the ratios that WCAG AA asks for (4.5 to 1) for every text colour on the colour it sits on.
 LIGHT = {"background": "#ffffff", "text": "#1b1b1b", "muted": "#4a4a4a", "link": "#0b5cad", "head": "#eef2f7", "rule": "#c9ced6", "button": "#0b5cad", "button_text": "#ffffff"}
@@ -216,17 +217,32 @@ def _page(subject: str, blocks: list[object]) -> str:
 
 # ---- what the letters say -------------------------------------------------------------------------------------------------------------------------
 
-def saving_line(saving: brief_mod.Saving) -> str:
+def saving_line(saving: brief_mod.Saving, basis_shown: bool = True) -> str:
     """What it is worth, with its level and, when the level does not say it, its basis; or why there is no figure. An expected saving is computed from the cost lines of the
-    last 30 days, so a letter does not repeat that."""
+    last 30 days, so a letter does not repeat that. `basis_shown` is false for a letter that says the basis in the lines that follow."""
     if saving.monthly is None:
         return f"No figure: {saving.why_none[0].lower()}{saving.why_none[1:]}" if saving.why_none else "No figure."
-    basis = "" if saving.level == "Expected" else f" ({saving.basis})"
+    basis = "" if saving.level == "Expected" or not basis_shown else f" ({saving.basis})"
     return f"{saving.level} saving: about {usd_text(saving.monthly)} a month{basis}."
 
 
 def _fact_rows(brief: Brief) -> tuple[tuple[str, str], ...]:
     return tuple((_data(f.label, 60), _data(f.value, 120)) for f in brief.facts[:MAX_FACTS])
+
+
+def _unread_block(doc: "_Doc", brief: Brief, closing: bool = False) -> None:
+    """What a finding about the data that a workspace takes in and nothing reads adds to a letter, in the room that a letter has: the method in one sentence, the first kinds of data as
+    short lines (the largest first, at most MAX_KINDS of them), and the choices in one line, with the closing sentence of the page's section when `closing` is set. The page has every line,
+    the readers of each and the whole of every choice."""
+    unread = brief.unread
+    if unread is None:
+        return
+    doc.paragraph(_data(unread.sentence, 240))
+    lines = [f"{_data(line.kind, 60)}, {line.gb} ({line.percent})" for line in unread.lines[:MAX_KINDS]]
+    left = len(unread.lines) - len(lines) + unread.more
+    doc.items(*lines, *([f"{left} more"] if left > 0 else []))
+    if brief.options:
+        doc.paragraph(_data(brief_mod.OPTIONS_SHORT + (f" {brief_mod.OPTIONS_END}" if closing else ""), 240))
 
 
 def _decision_rows(brief: Brief) -> tuple[tuple[str, str], ...]:
@@ -258,17 +274,22 @@ def approval_letter(plan: PlanRecord, case: CaseRecord | None, person: Person, b
     base = _base(base_url)
     url = _plan_url(base, plan.plan_id)
     brief = brief_mod.build_brief(case, plan, None, (), now=now)
+    about_data = brief.unread is not None and brief.kind == "advice"  # a finding about the data that a workspace takes in and nothing reads: the letter says what it rests on in its own lines
     doc = _Doc("A change to Azure waits for your OK" if brief.kind == "change" else "A decision waits for you")
     doc.heading(_data(brief.headline, 200))
     if brief.state != "open":
         closed = (brief.outcome.title or brief.state).lower()
         doc.paragraph(f"This request is closed: {closed}. Nothing can be answered now.")
-    doc.paragraph(saving_line(brief.saving) + f" How sure: {brief.confidence.level.lower()}.")
+    doc.paragraph(saving_line(brief.saving, not about_data) + f" How sure: {brief.confidence.level.lower()}.")
     for line in (brief.past, brief.access):
         if line:
             doc.paragraph(_data(line, 240))
-    doc.facts(*_fact_rows(brief))
-    doc.facts(*_decision_rows(brief))
+    if about_data:
+        _unread_block(doc, brief)
+        doc.facts(*_decision_rows(brief)[:2])  # whose it is, and that the answer changes nothing in Azure: the choices say what each puts at risk, and there is nothing to undo
+    else:
+        doc.facts(*_fact_rows(brief))
+        doc.facts(*_decision_rows(brief))
     doc.button("Decide" if brief.state == "open" else "See the request", url)
     approver = person.oid.lower() in {a.lower() for a in plan.approvers}
     doc.footer(brief.models, "You got this because you are named as an approver of this request." if approver
@@ -317,7 +338,8 @@ def _waits(plan: PlanRecord, now: dt.datetime) -> bool:
 
 def digest_letter(person: Person, base_url: str, now: dt.datetime, waiting: Sequence[tuple[PlanRecord, CaseRecord | None]], contacts: Sequence[str] = ()) -> Letter | None:
     """The decisions that wait for a person, at most five, one line each, and one link: to the page of the request when only one waits, else to the page that lists them. None
-    when nothing waits: nothing is sent then."""
+    when nothing waits: nothing is sent then. Advice has no letter of its own, so when the one decision that waits is about the data that a workspace takes in and nothing reads, the
+    letter is its decision letter: it adds what the finding rests on (the method, the first kinds of data and the choices), as far as a letter of this size has room for."""
     base = _base(base_url)
     briefs = sorted((brief_mod.build_brief(case, plan, None, (), now=now) for plan, case in waiting if _waits(plan, now)), key=brief_mod.order_key)
     if not briefs:
@@ -331,6 +353,8 @@ def digest_letter(person: Person, base_url: str, now: dt.datetime, waiting: Sequ
     doc.items(*lines)
     if count > MAX_LISTED:
         doc.paragraph(f"{count - MAX_LISTED} more wait on the page.")
+    if count == 1 and briefs[0].unread is not None and briefs[0].kind == "advice":
+        _unread_block(doc, briefs[0], closing=True)
     if count == 1:
         doc.button("Decide", _plan_url(base, briefs[0].plan_id))
     else:

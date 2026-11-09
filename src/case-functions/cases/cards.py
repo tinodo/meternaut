@@ -23,9 +23,10 @@ from dataclasses import dataclass
 from typing import Sequence
 
 from . import cardcheck
-from .brief import PAUSED_ADVICE, PAUSED_CHANGES, TWO_PEOPLE, Brief, footer_line, plain, usd_text
+from .brief import OPTIONS_SHORT, PAUSED_ADVICE, PAUSED_CHANGES, TWO_PEOPLE, Brief, footer_line, plain, usd_text
 
 SENDER = "Meternaut (AI)"
+MAX_KINDS = 3  # the kinds of data that nothing reads which a card lists
 CONTENT_TYPE = "application/vnd.microsoft.card.adaptive"
 MESSAGE_TYPE = "application/vnd.microsoft.activity.message"
 VERBS = ("approve", "decline", "not_mine", "later", "ask")  # the answers of the decider (models.DECISIONS); the card's verbs are the same words
@@ -128,6 +129,23 @@ def _facts(brief: Brief) -> list[dict]:
     return [{"type": "FactSet", "id": "facts", "facts": rows}] if rows else []
 
 
+def _unread(brief: Brief) -> list[dict]:
+    """The data that a workspace takes in and nothing reads, in the room that a card has: the method in one sentence, the first kinds of data (the largest first), and the choices in one
+    line. The page has every line, the readers of each and the whole of every choice."""
+    unread = brief.unread
+    if unread is None:
+        return []
+    shown = unread.lines[:MAX_KINDS]
+    left = len(unread.lines) - len(shown) + unread.more
+    blocks = [_block("unread", f"**Data that nothing reads.** {md(unread.sentence, 240)}")]
+    blocks += [_block(f"unread-{number}", f"{md(line.kind, 60)}, {md(line.gb, 24)} ({md(line.percent, 30)})") for number, line in enumerate(shown, 1)]
+    if left > 0:
+        blocks.append(_block("unread-more", f"{left} more"))
+    if brief.options:
+        blocks.append(_block("options", md(OPTIONS_SHORT, 200)))
+    return blocks
+
+
 def _undo(brief: Brief) -> dict:
     """Whether it can be undone: one bold line when it cannot, and nothing decorative."""
     if not brief.undo.reversible:
@@ -223,7 +241,7 @@ def decision_card(brief: Brief, ctx: CardContext, notice: str = "") -> dict:
     body: list[dict] = []
     if notice:
         body.append(_block("notice", md(notice, 240), weight="Bolder"))
-    body += [_saving(brief), _block("confidence", f"**How sure: {md(brief.confidence.level, 12)}.** {md(brief.confidence.because, 240)}"), *_learned(brief), *_facts(brief),
+    body += [_saving(brief), _block("confidence", f"**How sure: {md(brief.confidence.level, 12)}.** {md(brief.confidence.because, 240)}"), *_learned(brief), *_facts(brief), *_unread(brief),
              *_decision_lines(brief), *_answer_parts(brief, ctx)]
     return _card(brief, ctx, brief.kind, body, "A decision waits for you.")
 

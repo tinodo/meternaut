@@ -85,7 +85,7 @@ def why_not_ask(case: CaseRecord) -> str | None:
     saving and whose resource cost under ADVICE_MIN_USD in 30 days is held back: the AIs could not measure anything and nothing is at stake that a person can weigh."""
     if NO_MEASUREMENT not in case.objections:
         return None
-    if (case.saving_usd_month or 0) > 0 or (case.cost_usd_30d or 0) >= ADVICE_MIN_USD:
+    if (case.saving_usd_month or 0) > 0 or brief.unread_saving(case) is not None or (case.cost_usd_30d or 0) >= ADVICE_MIN_USD:
         return None
     return "no measurement backs the finding, it names no saving, and the resource cost little"
 
@@ -115,9 +115,10 @@ def build_plan(case: CaseRecord, lead: Lead, approvers: tuple[str, ...], now: dt
 
 
 def build_advice(case: CaseRecord, approvers: tuple[str, ...], now: dt.datetime, settings: ApprovalSettings, new_id: Callable[[], str] = lambda: uuid.uuid4().hex) -> PlanRecord:
-    """The plan that asks a person whether a finding is worth acting on. It changes nothing in Azure: the words are code's, and the figures are the case's own."""
+    """The plan that asks a person whether a finding is worth acting on. It changes nothing in Azure: the words are code's, and the figures are the case's own. A finding that has no figure
+    of its own (a change has none: decide.py) but whose facts hold one that code worked out from the data that a workspace takes in and nothing reads (cases/unread.py) takes that one."""
     expires = stamp(now + dt.timedelta(hours=settings.ttl_hours))
-    saving = case.saving_usd_month if (case.saving_usd_month or 0) > 0 else None
+    saving = case.saving_usd_month if (case.saving_usd_month or 0) > 0 else brief.unread_saving(case)
     judged = ("Judged: two AI reviewers agree that this looks wasted, and code re-checked the numbers that the first one cited." if case.status == "proposed" else
               "Judged: the AI reviewers did not settle it, or a check by code held it back, so a person has to decide.")
     return plan_digest.sealed(PlanRecord(

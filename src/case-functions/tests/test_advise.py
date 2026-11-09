@@ -164,6 +164,18 @@ class MakingTheAdvice(Base):
                 plan = Approvals(store, SETTINGS, self.clock).advise(case, NAMED)
                 self.assertEqual((plan.saving_usd_month, plan.waiting_costs_usd_day), (None, None))
 
+    def test_a_case_without_a_figure_of_its_own_takes_the_one_that_code_worked_out_for_the_data_that_nothing_reads_and_a_figure_of_its_own_stays(self):
+        digest = {"days": 30, "billableGb": 100.0, "unreadGb": 60.0, "share": 0.6, "savingUsd": 48.0, "costUsd30d": 80.0, "runsRecorded": True, "more": 0, "unknown": 0,
+                  "kinds": [{"kind": "Syslog", "gb": 60.0, "share": 0.6, "runs": 0}]}
+        for own, found, expected in ((None, digest, (48.0, 1.6)), (0, digest, (48.0, 1.6)), (-5.0, digest, (48.0, 1.6)), (120.0, digest, (120.0, 4.0)),
+                                     (None, {**digest, "savingUsd": 90.0}, (None, None)), (None, {**digest, "savingUsd": 0}, (None, None)), (None, {**digest, "savingUsd": "48"}, (None, None)),
+                                     (None, {"missing": "volume"}, (None, None)), (None, "text", (None, None))):
+            with self.subTest(saving=own, digest=found):
+                store = MemoryStore(clock=self.clock)
+                case = replace(self.case, saving_usd_month=own, cost_usd_30d=80.0, facts={"unread": found})
+                plan = Approvals(store, SETTINGS, self.clock).advise(case, NAMED)
+                self.assertEqual((plan.saving_usd_month, plan.waiting_costs_usd_day), expected)
+
     def test_a_case_that_the_ais_agreed_on_says_so_and_one_that_needs_a_person_says_that(self):
         self.assertTrue(self.plan.evidence_level.startswith("Judged: the AI reviewers did not settle it"))
         store = MemoryStore(clock=self.clock)
@@ -279,6 +291,16 @@ class TheWorthOfARequest(unittest.TestCase):
                               ("a negative saving", dict(saving_usd_month=-3.0))):
             with self.subTest(name):
                 self.assertIsNotNone(why_not_ask(self.finding(**changes)))
+
+    def test_a_figure_that_code_worked_out_for_the_data_that_a_workspace_takes_in_and_nothing_reads_is_something_to_decide_with_even_for_a_cheap_resource(self):
+        digest = {"days": 30, "billableGb": 100.0, "unreadGb": 60.0, "share": 0.6, "savingUsd": 12.0, "costUsd30d": 20.0, "runsRecorded": True, "more": 0, "unknown": 0,
+                  "kinds": [{"kind": "Syslog", "gb": 60.0, "share": 0.6, "runs": 0}]}
+        case = self.finding(cost_usd_30d=20.0, facts={"unread": digest})
+        self.assertIsNone(why_not_ask(case))
+        self.assertIsNotNone(self.approvals.advise(case, NAMED))
+        for name, found in (("no figure", {"missing": "volume"}), ("a figure above the cost", {**digest, "savingUsd": 25.0}), ("a figure of nothing", {**digest, "savingUsd": 0})):
+            with self.subTest(name):
+                self.assertIsNotNone(why_not_ask(self.finding(cost_usd_30d=20.0, facts={"unread": found})))
 
     def test_plan_for_holds_the_same_finding_back(self):
         case = self.finding()

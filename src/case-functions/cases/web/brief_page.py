@@ -13,12 +13,12 @@ from __future__ import annotations
 
 import json
 
-from ..brief import PAUSED_ADVICE, PAUSED_CHANGES, ago_text, Brief, Saving, usd_text
+from ..brief import OPTIONS_END, PAUSED_ADVICE, PAUSED_CHANGES, UNREAD, ago_text, Brief, Saving, usd_text
 from ..models import ActionRecord, CaseRecord, DecisionRecord, PlanRecord
 from . import words
 from .common import action_block, confidence, detector_cell, kind_text, read
 from .core import MAX_NOTE, Ctx, Response, Safe, esc, fmt, join, link_part, number, parse_time
-from .layout import block, button, code, details, error_summary, form, hidden, link, notice, page, paragraph, quoted, select, summary, table, textarea
+from .layout import block, button, code, details, error_summary, form, hidden, items, link, notice, page, paragraph, quoted, select, summary, table, textarea
 
 INVESTIGATION = "investigation"  # the detector of the cases that the Watch's own investigation opens (cases/investigate.py)
 STEP_HEADERS = ["Step", "Model", "Tokens in", "Tokens out", "Milliseconds", "Result", "Note"]
@@ -53,16 +53,40 @@ def _outcome(ctx: Ctx, brief: Brief) -> Safe:
     return notice(kind, outcome.title, join(paragraph(line) for line in outcome.lines), when)
 
 
+def _unread(brief: Brief) -> Safe:
+    """The data that a workspace takes in and nothing reads: the method in one sentence, then a typed line for each kind of data, the largest first, and what was not counted."""
+    unread = brief.unread
+    if unread is None:
+        return Safe("")
+    lines = [fmt("<strong>{kind}</strong>: {gb} in {days}, {percent} of what is billed. {reads}.", kind=line.kind, gb=line.gb, days=unread.days, percent=line.percent, reads=line.reads)
+             for line in unread.lines]
+    parts: list[object] = [Safe("<h3>Data that nothing reads</h3>"), paragraph(f"{unread.sentence} {unread.volume}"), items(lines)]
+    if unread.more:
+        parts.append(paragraph(f"{unread.more} more kind{'' if unread.more == 1 else 's'} of data that nothing reads {'is' if unread.more == 1 else 'are'} not listed.", "muted"))
+    if unread.note:
+        parts.append(paragraph(unread.note, "muted"))
+    return join(block(part) for part in parts)
+
+
 def _evidence(brief: Brief) -> Safe:
     rows = [(fact.label, fmt('{value}<br><span class="muted">{source}</span>', value=fact.value, source=fact.source)) for fact in brief.facts]
     parts: list[object] = [Safe("<h2>Evidence</h2>"), paragraph(fmt("<strong>How sure: {level}.</strong> {because}", level=brief.confidence.level, because=brief.confidence.because))]
     parts += [paragraph(line) for line in (brief.past, brief.access) if line]  # how past requests like this were answered, and what the access cannot see when that matters
     parts.append(summary(rows) if rows else paragraph("No fact is recorded for this case."))
+    parts.append(_unread(brief))
     if brief.reasoning:
         parts.append(quoted("The AI's reasoning (not checked by code)", brief.reasoning))
     if brief.doubt:
         parts.append(quoted("The second AI's doubt", brief.doubt))
     return join(block(part) for part in parts)
+
+
+def _options(brief: Brief) -> Safe:
+    """What a person could do about the finding, in the words that code wrote, each with what it loses or puts at risk. Nothing here changes anything: the section says so."""
+    if not brief.options:
+        return Safe("")
+    rows = [fmt('<li>{what} <span class="muted">At risk: {risk}</span></li>', what=option.what, risk=option.risk) for option in brief.options]
+    return join([Safe("<h2>What you could do</h2>"), fmt("<ol>{rows}</ol>", rows=join(rows)), paragraph(OPTIONS_END)])
 
 
 def _if_you_say_yes(brief: Brief) -> Safe:
@@ -190,7 +214,7 @@ def _details(ctx: Ctx, brief: Brief, case: CaseRecord | None, plan: PlanRecord |
     if case is not None:
         parts.append(_ai_words(case))
         parts += [Safe("<h3>Steps</h3>"), _steps(case)]
-        typed = case.facts if isinstance(case.facts, dict) else {}
+        typed = {name: value for name, value in (case.facts if isinstance(case.facts, dict) else {}).items() if name != UNREAD}  # the digest that code made is in the evidence above, and no AI saw it
         parts.append(table("facts", "The typed facts that the AIs saw", ["Fact", "Value"], [[code(name), _fact(value)] for name, value in sorted(typed.items())], row_header=False)
                      if typed else paragraph("No typed fact is recorded for this case."))
         parts.append(join([paragraph("These guards fired. A guard stops a case from becoming a proposal, and no model can lift it."),
@@ -211,7 +235,7 @@ def render(ctx: Ctx, brief: Brief, *, case: CaseRecord | None, plan: PlanRecord 
         parts.append(paragraph(meta, "muted"))
     if errors:
         parts.append(error_summary(list(errors.items())))
-    parts += [_outcome(ctx, brief), _evidence(brief), _if_you_say_yes(brief), _whose(brief)]
+    parts += [_outcome(ctx, brief), _evidence(brief), _options(brief), _if_you_say_yes(brief), _whose(brief)]
     if answer is not None:
         parts += [Safe("<h2>Your answer</h2>"), _own_answers(ctx, decisions), answer]
     elif brief.state == "open" and plan is not None:

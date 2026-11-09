@@ -127,7 +127,7 @@ class CaseRecord(Record):
     guards: tuple[str, ...] = ()
     models: dict = field(default_factory=dict)  # {"detective": name, "skeptic": name or None}
     steps: tuple[dict, ...] = ()  # one dict per step: step, model, promptTokens, completionTokens, ms, ok, note
-    facts: dict = field(default_factory=dict)  # the typed facts that the models saw
+    facts: dict = field(default_factory=dict)  # the typed facts that the models saw; a workspace has one more, `unread`, for a person to read and never for a model (cases/unread.py)
     plan_id: str | None = None
     first_seen_at: str = ""
     updated_at: str = ""
