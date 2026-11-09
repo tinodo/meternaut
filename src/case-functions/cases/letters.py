@@ -275,6 +275,7 @@ def approval_letter(plan: PlanRecord, case: CaseRecord | None, person: Person, b
     url = _plan_url(base, plan.plan_id)
     brief = brief_mod.build_brief(case, plan, None, (), now=now)
     about_data = brief.unread is not None and brief.kind == "advice"  # a finding about the data that a workspace takes in and nothing reads: the letter says what it rests on in its own lines
+    about_group = brief.group is not None and brief.kind == "advice"  # a finding about many resources: its rows say how many, what they cost together and which, and the letter keeps to them
     doc = _Doc("A change to Azure waits for your OK" if brief.kind == "change" else "A decision waits for you")
     doc.heading(_data(brief.headline, 200))
     if brief.state != "open":
@@ -287,6 +288,9 @@ def approval_letter(plan: PlanRecord, case: CaseRecord | None, person: Person, b
     if about_data:
         _unread_block(doc, brief)
         doc.facts(*_decision_rows(brief)[:2])  # whose it is, and that the answer changes nothing in Azure: the choices say what each puts at risk, and there is nothing to undo
+    elif about_group:
+        doc.facts(*_fact_rows(brief))
+        doc.facts(*_decision_rows(brief)[:2])  # whose it is, and that the answer changes nothing in Azure: a letter for many resources has no room for more
     else:
         doc.facts(*_fact_rows(brief))
         doc.facts(*_decision_rows(brief))
@@ -348,7 +352,8 @@ def digest_letter(person: Person, base_url: str, now: dt.datetime, waiting: Sequ
     doc = _Doc(f"{count} decision{' waits' if count == 1 else 's wait'} for you")
     lines = []
     for item in briefs[:MAX_LISTED]:
-        figure = f" About {usd_text(item.saving.monthly)} a month, {item.saving.level}." if item.saving.monthly is not None else ""
+        figure = (f" About {usd_text(item.saving.monthly)} a month, {item.saving.level}." if item.saving.monthly is not None else
+                  f" Together they cost {usd_text(item.group.cost)} in 30 days." if item.group is not None and item.group.cost is not None else "")
         lines.append(f"{_data(item.headline, 200)}.{figure}")
     doc.items(*lines)
     if count > MAX_LISTED:

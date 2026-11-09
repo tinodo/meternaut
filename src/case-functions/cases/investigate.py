@@ -12,9 +12,10 @@ object of findings. Nothing in it is believed before code has checked it:
 A resource whose finding cites no measurement that matched the tools is never proposed, whatever the agents say: a person has to judge it. The same holds for a
 resource that the Skeptic was not shown, for a finding that it gave no verdict (or two verdicts) for, and for a finding whose confidence is not a number from 0 to 1.
 
-Each resource of a finding that is left becomes one case, so that the History, the page of the case and the letters show it like any other case. Nothing here changes
-Azure: no plan of a change is made for a case that this module opens (approvals.create refuses it), and the advise plan that asks a person whether it is worth acting on
-changes nothing in Azure.
+Each resource of a finding that is left becomes one case, so that the History, the page of the case and the letters show it like any other case. The exception is a finding that asks
+for a look (the proposal investigate) and has more than GROUP_MIN resources left after the checks of code: it is one case, which belongs to its dearest resource, and so one question to a
+person, because nobody can use dozens of look-alike requests. Nothing here changes Azure: no plan of a change is made for a case that this module opens (approvals.create refuses it),
+and the advise plan that asks a person whether it is worth acting on changes nothing in Azure.
 """
 from __future__ import annotations
 
@@ -22,7 +23,7 @@ import datetime as dt
 import logging
 import math
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Callable, Mapping
 
 from . import agents, capability, decide, guards, learning, roles, unread, wiring
@@ -34,7 +35,7 @@ from .guards import Guards
 from .harness import HarnessRefused
 from .http import HttpError
 from .memory_store import parse, stamp
-from .models import ADVISE, CaseRecord, StoreError
+from .models import ADVISE, GROUP_FACT, CaseRecord, StoreError
 from .ownership import NOT_COMPLETE, NOT_IN_WINDOW, NOT_VISIBLE, UNAVAILABLE, OwnerReader, owner_hints
 from .roles import DetectiveAnswer, RoleError, SkepticAnswer, clean_text
 from .toolbox import SUBSCRIPTION_SECONDS, Resource, Toolbox
@@ -44,6 +45,8 @@ if TYPE_CHECKING:
 
 DETECTOR = "investigation"
 MAX_CASES = 60  # the cases that one run opens
+GROUP_MIN = 5  # a finding to investigate that has more resources than this left after the checks of code is one case, and one question to a person, not one for each resource
+MAX_GROUP_NAMES = 12  # the names of the other resources that the case of such a finding keeps, for the page of a person
 MAX_ENTRIES = 720  # the entries of metric_evidence that are read: a handful for each of the handles that a finding may hold
 MAX_FACT_METRICS = 12  # the measurements that a case keeps
 MAX_TOTALS = 20  # the totals of one measurement that are read: the toolbox records at most as many
@@ -80,6 +83,7 @@ class Item:
     lead: Lead
     metrics: dict[str, float]  # the entries of the finding that matched the tools: metric name -> the total that the tools returned
     shown: bool = False  # the Skeptic was given a row for the resource
+    earlier: CaseRecord | None = None  # the case that an earlier Watch opened for the resource, when there is one
 
 
 @dataclass
@@ -103,6 +107,7 @@ class Finding:
     recent: int = 0
     guarded: int = 0
     capped: int = 0
+    covered: bool = False  # a case that an earlier Watch opened for the finding's group of resources was judged lately, so that no resource of the finding is taken up again
     reason: str | None = None
     verdict: SkepticAnswer | None = None
     covered_usd: float | None = None
@@ -389,21 +394,21 @@ def _signature(facts: Mapping) -> tuple:
     return facts.get("basis"), facts.get("proposal"), tuple(sorted(metrics.items())) if isinstance(metrics, dict) else ()
 
 
-def _judged_lately(s: "Services", lead: Lead, facts: dict, open_questions: "learning.OpenQuestions | None" = None) -> bool:
-    """A resource whose case was updated within the days of RECHECK_DAYS is not taken up again unless its evidence changed. A case that ended in an error, or
-    whose steps did not all work, is taken up again at once. A case that a person has answered, or that the loop has taken on, is left alone for the whole time.
-
-    An open question (learning.OpenQuestions: a case that needs a person or is proposed, with no request to a person open or with a first AI that was not sure enough, that nobody
-    answered lately and that is not marked do-not-touch) is taken up again at once when the Investigator cites it again, whether its evidence changed or not: it comes back with the tools
-    until it is decision-ready or dropped, and a case that older code left with no request gets its request."""
+def _earlier(s: "Services", lead: Lead) -> CaseRecord | None:
+    """The case that an earlier Watch opened for the resource of a lead: None when there is no store, when nothing was opened, or when the store cannot be read."""
     ex = s.extras
     if ex is None:
-        return False
+        return None
     try:
-        old = ex.store.case_get(f"k{lead.lead_id}")
+        return ex.store.case_get(f"k{lead.lead_id}")
     except StoreError:
-        return False
-    if old is None or old.status == "error" or not old.updated_at or any(isinstance(x, dict) and x.get("ok") is False for x in old.steps):
+        return None
+
+
+def _recent(s: "Services", old: CaseRecord | None, facts: dict, open_questions: "learning.OpenQuestions | None" = None) -> bool:
+    """Whether the earlier case of a resource (None: there is none) keeps the resource from being taken up again now: see _judged_lately."""
+    ex = s.extras
+    if ex is None or old is None or old.status == "error" or not old.updated_at or any(isinstance(x, dict) and x.get("ok") is False for x in old.steps):
         return False
     if s.clock() - parse(old.updated_at) >= dt.timedelta(days=ex.settings.recheck_days):
         return False
@@ -412,6 +417,21 @@ def _judged_lately(s: "Services", lead: Lead, facts: dict, open_questions: "lear
             return False
         return _signature(old.facts if isinstance(old.facts, dict) else {}) == _signature(facts)
     return True
+
+
+def _judged_lately(s: "Services", lead: Lead, facts: dict, open_questions: "learning.OpenQuestions | None" = None) -> bool:
+    """A resource whose case was updated within the days of RECHECK_DAYS is not taken up again unless its evidence changed. A case that ended in an error, or
+    whose steps did not all work, is taken up again at once. A case that a person has answered, or that the loop has taken on, is left alone for the whole time.
+
+    An open question (learning.OpenQuestions: a case that needs a person or is proposed, with no request to a person open or with a first AI that was not sure enough, that nobody
+    answered lately and that is not marked do-not-touch) is taken up again at once when the Investigator cites it again, whether its evidence changed or not: it comes back with the tools
+    until it is decision-ready or dropped, and a case that older code left with no request gets its request."""
+    return _recent(s, _earlier(s, lead), facts, open_questions)
+
+
+def _stands_for_a_group(case: CaseRecord | None) -> bool:
+    """Whether an earlier case stands for the group of resources of a finding (cases opened by this module with a group in their facts)."""
+    return case is not None and isinstance(case.facts, dict) and isinstance(case.facts.get(GROUP_FACT), dict)
 
 
 # -- what the Skeptic is given -----------------------------------------------------------------------------------------------------------------------
@@ -687,8 +707,11 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
             if found_unread is not None:
                 facts[unread.KEY] = found_unread  # a workspace: the data that nothing reads, and the scenario figure that rests on it (the saving of a change has no figure of its own: decide.py)
             lead = _lead(resource, facts, costs[handle], _advisor(toolbox.evidence, handle))
-            if _judged_lately(s, lead, facts, open_questions):
+            old = _earlier(s, lead)
+            if _recent(s, old, facts, open_questions):
                 finding.recent += 1
+                if finding.proposal == "investigate" and _stands_for_a_group(old):
+                    finding.covered = True  # the case of the group was judged lately: the question to a person is open or was answered, and no other resource of the finding adds one
             elif room <= 0:
                 finding.capped += 1
             else:
@@ -699,8 +722,12 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
                     for name in flags.names:
                         held[name] = held.get(name, 0) + 1
                 else:
-                    finding.items.append(Item(handle, lead, finding.cited[handle]))
+                    finding.items.append(Item(handle, lead, finding.cited[handle], earlier=old))
                     room -= 1
+        if finding.covered:
+            finding.recent += len(finding.items) + finding.capped
+            room += len(finding.items)
+            finding.items, finding.capped = [], 0
         known = [i.lead.cost_usd_30d for i in finding.items if i.lead.cost_usd_30d is not None]
         finding.covered_usd = round(sum(known), 2) if known else None
         if not finding.items:
@@ -775,10 +802,13 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
     models = {"investigator": st.foundry_model_investigator, "skeptic": st.foundry_model_skeptic}
     number = 0
     for finding in survivors:
-        for item in finding.items:
+        group = _group_of(finding)
+        for item in (group[:1] if group else finding.items):
             number += 1
             steps = tuple(x for x in (investigator_step, _skeptic_step_of(skeptic_step, finding, item)) if x is not None)
-            _open_case(s, out, finding, item, models, steps, f"{h.run_id[:8]}-i{number}")
+            _open_case(s, out, finding, item, models, steps, f"{h.run_id[:8]}-i{number}", **({"group": group} if group else {}))
+        if group:
+            note(f"finding {finding.number}: its {len(group)} resources are one case and one question to a person, which belong to the dearest of them")
     out.kept = len(survivors)
     out.dropped_findings = len(raw_findings) - len(survivors)
     if out.guarded:
@@ -835,11 +865,43 @@ def _owner_of(s: "Services", out: Investigation, lead: Lead) -> dict:
             "changedBy": real(hint.get("lastChangedBy")), "changedAt": real(hint.get("lastChangedAt")), "lookedUp": looked_up}
 
 
-def _open_case(s: "Services", out: Investigation, finding: Finding, item: Item, models: dict, steps: tuple[dict, ...], case_id: str) -> None:
+def _group_of(finding: Finding) -> list[Item] | None:
+    """The resources of a finding that is one case, with the one that the case belongs to first, or None when each resource of the finding is a case.
+
+    Only a finding that asks for a look (investigate) is one case, and only when it has more than GROUP_MIN resources left after the checks of code: a delete and a change need a decision for
+    each resource, and a handful of requests can each be read. The case belongs to the resource that an earlier Watch made it for (so that a Watch that finds the same group again
+    does not make another case and another request when the costs have moved), or else to the dearest resource, and the first of them when the cost is the same."""
+    if finding.proposal != "investigate" or len(finding.items) <= GROUP_MIN:
+        return None
+    first = next((item for item in finding.items if _stands_for_a_group(item.earlier)), finding.items[0])  # the items are in the order of their cost, the dearest first
+    return [first] + [item for item in finding.items if item is not first]
+
+
+def _together(members: list[Item]) -> dict:
+    """What the case of a group keeps of it, as typed numbers and cleaned names (cases/brief.py shows it): how many resources, what they cost together (None when no cost line was read for any
+    of them), their type ("other" when they differ), in how many resource groups they are, and the names of the first of the others. The names are text of the estate: cut and cleaned here, and
+    cleaned again where they are shown."""
+    leads = [member.lead for member in members]
+    known = [lead.cost_usd_30d for lead in leads if lead.cost_usd_30d is not None]
+    types = {(lead.resource_type or "").lower() for lead in leads}
+    kind = next(iter(types)) if len(types) == 1 else "other"
+    names = [clean_text(lead.name, 60) for lead in leads[1 : 1 + MAX_GROUP_NAMES]]
+    return {"count": len(leads), "costUsd30d": _figure(sum(known)) if known else None, "type": kind if len(kind) <= 120 and RESOURCE_TYPE.fullmatch(kind) else "other",
+            "groups": len({(lead.subscription_id.lower(), (lead.resource_group or "").lower()) for lead in leads}), "names": [name for name in names if name]}
+
+
+def _open_case(s: "Services", out: Investigation, finding: Finding, item: Item, models: dict, steps: tuple[dict, ...], case_id: str, group: list[Item] | None = None) -> None:
     """The case of one resource: decide.py gives it its status, the History gets its result, and the store keeps it when there is a store. The verdict of the Skeptic
-    counts only for a resource that it was shown, and the case is never proposed without a measurement that code confirmed."""
+    counts only for a resource that it was shown, and the case is never proposed without a measurement that code confirmed.
+
+    The case of a group (`group`: its resources, `item` the one that the case belongs to) is judged as that resource is, with the verdict of the finding, and is the case of that resource in
+    the store: its cost is what all of them cost, its facts say how many they are, and the History has the one line, with the size of the group. The resources of the group that no
+    measurement backs are counted one by one."""
     h = s.history
     lead = item.lead
+    if group:
+        together = _together(group)
+        lead = replace(lead, cost_usd_30d=together["costUsd30d"], facts={**{k: v for k, v in lead.facts.items() if k != unread.KEY}, "costUsd30d": together["costUsd30d"], GROUP_FACT: together})
     detective = DetectiveAnswer(finding.proposal, finding.confidence, finding.summary)
     judged = finding.verdict if item.shown else None
     outcome = decide.decide(lead, Guards({}), detective, judged, backed=bool(item.metrics), notes=(finding.note,) if finding.note else ())
@@ -851,12 +913,11 @@ def _open_case(s: "Services", out: Investigation, finding: Finding, item: Item, 
     access = capability.access_code(out.profile, finding.basis)
     if access:
         learned["access"] = access  # what the identity cannot see of the commitments, as the one sentence that the brief of a finding about a commitment carries
-    if not item.metrics:
-        out.unmeasured += 1
+    out.unmeasured += sum(1 for member in (group or [item]) if not member.metrics)
     h.emit("case.result", caseId=case_id, leadId=lead.lead_id, detector=DETECTOR, resourceName=clean_text(lead.name, 120), resourceType=clean_text(lead.resource_type, 120),
            resourceGroup=clean_text(lead.resource_group, 90), costUsd30d=lead.cost_usd_30d, status=outcome.status, recommendation=outcome.recommendation,
            confidence=outcome.confidence, monthlySavingUsd=_figure(outcome.monthly_saving_usd), summary=outcome.summary, objections=list(outcome.objections),
-           guards=outcome.guards)
+           guards=outcome.guards, **({"groupSize": len(group)} if group else {}))
     out.cases += 1
     if outcome.status == "proposed":
         out.proposed += 1

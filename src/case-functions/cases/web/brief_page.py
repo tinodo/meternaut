@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 
 from ..brief import OPTIONS_END, PAUSED_ADVICE, PAUSED_CHANGES, UNREAD, ago_text, Brief, Saving, usd_text
-from ..models import ActionRecord, CaseRecord, DecisionRecord, PlanRecord
+from ..models import GROUP_FACT, ActionRecord, CaseRecord, DecisionRecord, PlanRecord
 from . import words
 from .common import action_block, confidence, detector_cell, kind_text, read
 from .core import MAX_NOTE, Ctx, Response, Safe, esc, fmt, join, link_part, number, parse_time
@@ -214,7 +214,7 @@ def _details(ctx: Ctx, brief: Brief, case: CaseRecord | None, plan: PlanRecord |
     if case is not None:
         parts.append(_ai_words(case))
         parts += [Safe("<h3>Steps</h3>"), _steps(case)]
-        typed = {name: value for name, value in (case.facts if isinstance(case.facts, dict) else {}).items() if name != UNREAD}  # the digest that code made is in the evidence above, and no AI saw it
+        typed = {name: value for name, value in (case.facts if isinstance(case.facts, dict) else {}).items() if name not in (UNREAD, GROUP_FACT)}  # what code made of the estate is in the evidence above, and no AI saw it
         parts.append(table("facts", "The typed facts that the AIs saw", ["Fact", "Value"], [[code(name), _fact(value)] for name, value in sorted(typed.items())], row_header=False)
                      if typed else paragraph("No typed fact is recorded for this case."))
         parts.append(join([paragraph("These guards fired. A guard stops a case from becoming a proposal, and no model can lift it."),

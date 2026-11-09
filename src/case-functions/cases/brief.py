@@ -18,11 +18,15 @@ from dataclasses import dataclass
 from typing import Mapping, Sequence
 
 from .families.words import called_of, shown, type_of, words_of  # called_of is also read by the pages, which know the brief and the records and nothing else
-from .models import ADVISE, TIME_FORMAT, ActionRecord, CaseRecord, DecisionRecord, PlanRecord
+from .models import ADVISE, GROUP_FACT, TIME_FORMAT, ActionRecord, CaseRecord, DecisionRecord, PlanRecord
 
 MAX_FACTS = 5
 MAX_REASON = 240  # the most characters of what an AI wrote that a brief shows
 MAX_NAME = 120
+MAX_GROUP_NAMES = 12  # the names of the other resources that a case which stands for many resources keeps (cases/investigate.py keeps the same number)
+MAX_GROUP = 100000  # the most resources that the digest of such a case may count and still be believed
+MAX_EXAMPLES = 6  # the resources that the row "Examples" of such a case names: the one that the case belongs to and the next five
+MAX_EXAMPLE = 48  # the characters of one of those names
 CONFIDENT = 0.85  # the first AI's own confidence that "High" asks for; the gate for a proposal is decide.PROPOSE_CONFIDENCE
 SURE_ENOUGH = 0.7
 # A case that has this status was proposed, so its second AI agreed (decide.py gives the status proposed to nothing else, and a plan of a change is made for no other case).
@@ -39,6 +43,8 @@ ACCESS_WORDS = {
 RESOURCE_GRAPH = "Azure Resource Graph"
 MONITOR = "Azure Monitor"
 CHECKED = "Azure, checked by code"
+# The verb of a headline, from what the first AI recommends: a finding that asks for a look (investigate, or no recommendation that is known) is "Look at".
+VERBS = {"delete": "Consider deleting", "change": "Consider changing", "keep": "Keep"}
 
 # resource type -> (what the resource is, in a sentence of a person)
 TYPE_WORDS = {
@@ -227,6 +233,19 @@ class Option:
 
 
 @dataclass(frozen=True)
+class Group:
+    """What a case stands for when its finding covers many resources and a person is asked about the finding, not about each resource: how many, what they cost together (None when no cost
+    line was read), the type that they share ("other" when they differ), in how many resource groups they are (0 when that is not known) and the names of the first few that follow the
+    resource that the case belongs to."""
+
+    count: int
+    cost: float | None
+    kind: str
+    groups: int
+    names: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class Brief:
     case_id: str
     plan_id: str
@@ -259,9 +278,10 @@ class Brief:
     past: str = ""
     access: str = ""
     # The data that a workspace takes in and nothing reads, and what a person could do about it (both written by code from the typed digest in the facts of the case; None and () for every
-    # other finding).
+    # other finding). And, for a case that stands for many resources, the group (also from the facts of the case; None for every other).
     unread: Unread | None = None
     options: tuple[Option, ...] = ()
+    group: Group | None = None
 
 
 # -- small helpers ------------------------------------------------------------------------------------------------------------------------------
@@ -441,8 +461,9 @@ def _subject(case: CaseRecord | None, plan: PlanRecord | None) -> tuple[str, str
     return "", "", "", "", ""
 
 
-def headline_of(family: str, name: str, group: str, rtype: str, recommendation: str | None, plan_title: str = "", plan: PlanRecord | None = None) -> str:
-    """The request in one line: a verb, the thing and the place. Written by code from the kind of change, never by a model."""
+def headline_of(family: str, name: str, group: str, rtype: str, recommendation: str | None, plan_title: str = "", plan: PlanRecord | None = None, together: Group | None = None) -> str:
+    """The request in one line: a verb, the thing and the place. Written by code from the kind of change, never by a model. `together` is the group that a case stands for (group_of), when it
+    stands for many resources: the line then says how many, of what kind and in how many groups, and names the first."""
     place = f" in group {text_of(group, 90)}" if group else ""
     label = text_of(name, MAX_NAME) or "this resource"
     said = words_of(family, plan, rtype, text_of(name, MAX_NAME), text_of(group, 90))
@@ -450,8 +471,10 @@ def headline_of(family: str, name: str, group: str, rtype: str, recommendation: 
         return said.headline
     if shown(family) is None and family and family != ADVISE and plan_title:
         return text_of(plan_title, 160)
+    if together is not None:
+        return group_headline(together, name, recommendation)
     noun = kind_words(rtype)[1]
-    verb = {"delete": "Consider deleting", "change": "Consider changing", "keep": "Keep"}.get(recommendation or "", "Look at")
+    verb = VERBS.get(recommendation or "", "Look at")
     return f"{verb} the {noun} {label}{place}"
 
 
@@ -603,6 +626,58 @@ def doubt_of(case: CaseRecord | None, plan: PlanRecord | None = None) -> str:
     return "The second AI raised no objection in words."
 
 
+# -- a case that stands for many resources ------------------------------------------------------------------------------------------------------------
+
+def _plural(noun: str) -> str:
+    """The plural of the noun of a kind of resource ("private endpoint", "public IP address", "Redis cache")."""
+    if noun.endswith(("s", "x", "z", "ch", "sh")):
+        return noun + "es"
+    if len(noun) > 1 and noun.endswith("y") and noun[-2] not in "aeiou":
+        return noun[:-1] + "ies"
+    return noun + "s"
+
+
+def group_of(case: CaseRecord | None) -> Group | None:
+    """The group that a case stands for, as the facts of the case keep it (cases/investigate.py), or None for a case that stands for one resource or whose digest is not as it should be. Every
+    value is checked again here: a digest that is not as it should be shows less and never something else."""
+    facts = case.facts if case is not None and isinstance(case.facts, dict) else {}
+    found = facts.get(GROUP_FACT)
+    if not isinstance(found, dict):
+        return None
+    count, groups, kind, names = found.get("count"), found.get("groups"), found.get("type"), found.get("names")
+    if isinstance(count, bool) or not isinstance(count, int) or not 2 <= count <= MAX_GROUP:
+        return None
+    cost = _figure(found.get("costUsd30d"))
+    named = tuple(name for name in (text_of(item, MAX_EXAMPLE) for item in (names if isinstance(names, list) else [])[:MAX_GROUP_NAMES] if isinstance(item, str)) if name)
+    return Group(count, cost if cost is not None and cost >= 0 else None, text_of(kind, 80) if isinstance(kind, str) and kind else "other",
+                 groups if isinstance(groups, int) and not isinstance(groups, bool) and 1 <= groups <= count else 0, named)
+
+
+def _things(group: Group, place: str) -> str:
+    """"60 private endpoints in 14 groups": how many, of what kind, and, when it is known, in how many places (`place` is the word for one: group, resource group)."""
+    where = f" in {number_text(group.groups)} {place}{'' if group.groups == 1 else 's'}" if group.groups else ""
+    return f"{number_text(group.count)} {_plural(kind_words(group.kind)[1])}{where}"
+
+
+def group_headline(group: Group, name: str, recommendation: str | None) -> str:
+    """The headline of a case that stands for many resources: "Look at 60 private endpoints in 14 groups, the first is pe-1". The first is the one that the case belongs to."""
+    first = text_of(name, MAX_NAME)
+    return f"{VERBS.get(recommendation or '', 'Look at')} {_things(group, 'group')}" + (f", the first is {first}" if first else "")
+
+
+def _group_facts(group: Group, case: CaseRecord) -> list[Fact]:
+    """The rows of a case that stands for many resources: how many there are, what they cost together, and the names of the first few. They take the place of the cost row of one resource."""
+    rows = [Fact("Covers", _things(group, "resource group"), RESOURCE_GRAPH)]
+    cost = group.cost if group.cost is not None else _figure(case.cost_usd_30d)
+    if cost is not None:
+        rows.append(Fact("Together they cost", f"{usd_text(cost)} in the last 30 days", "Azure cost lines"))
+    examples = [name for name in [text_of(case.resource_name, MAX_EXAMPLE), *group.names][:MAX_EXAMPLES] if name]
+    if examples:
+        left = group.count - len(examples)
+        rows.append(Fact("Examples", ", ".join(examples) + (f" and {number_text(left)} more" if left > 0 else ""), RESOURCE_GRAPH))
+    return rows
+
+
 # -- the data that a workspace takes in and nothing reads ----------------------------------------------------------------------------------------------
 
 CUSTOM_TABLE = re.compile(r"t[0-9]{1,4}")  # what the tools call a table that the platform did not make, when they do not know its name: a handle that means something in one run only
@@ -752,10 +827,13 @@ def _saving(case: CaseRecord | None, plan: PlanRecord | None, action: ActionReco
         return Saving(round(saved, 2), "Verified", "the cost lines of the whole days after the change are lower than those of the 30 days before it", None, "")
     if figure is None or figure <= 0:
         cost = _figure(case.cost_usd_30d) if case is not None else None
+        group = group_of(case)
         if cost is None:
-            why = "No cost line of the last 30 days was read for this resource."
+            why = "No cost line of the last 30 days was read for " + ("these resources." if group is not None else "this resource.")
         elif cost <= 0:
-            why = "The resource had no cost in the last 30 days."
+            why = "The resources had no cost in the last 30 days." if group is not None else "The resource had no cost in the last 30 days."
+        elif group is not None:
+            why = f"The {number_text(group.count)} resources cost {usd_text(cost)} together in the last 30 days. What a change would save was not worked out."
         else:
             why = f"The resource cost {usd_text(cost)} in the last 30 days. What a change would save was not worked out."
         if fam is not None and fam.no_figure:
@@ -851,13 +929,17 @@ def _date(value: object) -> str:
 
 
 def facts_of(case: CaseRecord | None) -> tuple[Fact, ...]:
-    """At most five rows of evidence, chosen by code from the cost lines, the typed facts, the checks and the owner record, the most decision-relevant first: the cost, a
-    check that held the resource back, what was measured, why it is a lead and its age, its last change, the checks that found nothing, and then what it is like."""
+    """At most five rows of evidence, chosen by code from the cost lines, the typed facts, the checks and the owner record, the most decision-relevant first: the cost (for a case that stands
+    for many resources: how many they are, what they cost together and the first few), a check that held the resource back, what was measured, why it is a lead and its age, its last
+    change, the checks that found nothing, and then what it is like."""
     if case is None:
         return ()
     head: list[Fact] = []
+    group = group_of(case)
     cost = _figure(case.cost_usd_30d)
-    if cost is not None:
+    if group is not None:
+        head += _group_facts(group, case)  # the cost of the case is what all of them cost: the row of the group says it
+    elif cost is not None:
         head.append(Fact("Cost, last 30 days", usd_text(cost), "Azure cost lines"))
     guards = [g for g in case.guards if isinstance(g, str)]
     if guards:
@@ -1019,17 +1101,18 @@ def build_brief(case: CaseRecord | None, plan: PlanRecord | None, action: Action
     age, _ = ago_text(now, found_at)
     saving = _saving(case, plan, action, state)
     unread = unread_of(case)
+    together = group_of(case)
     return Brief(
         case_id=plain(case.case_id if case is not None else (plan.case_id if plan is not None else ""), 64), plan_id=plain(plan.plan_id if plan is not None else "", 64),
         plan_code=plain(plan.code if plan is not None else "", 16), kind=kind, family=plain(family, 40), state=plain(state, 20),
-        headline=headline_of(family, name, group, rtype, recommendation, plan.title if plan is not None else "", plan),
+        headline=headline_of(family, name, group, rtype, recommendation, plan.title if plan is not None else "", plan, together=together),
         saving=saving, confidence=confidence_of(case, plan), facts=facts_of(case), reasoning=reasoning_of(case), doubt=doubt_of(case, plan),
         change=change, who_acts=who, rechecked=rechecked, undo=undo, risk=risk, owner=owner_of(case), where=_where(name, group, subscription, resource_id, rtype),
         answers=_answers(kind, state, may_answer, changes_paused), found_at=plain(found_at, 30), age_days=age, expires_at=plain(plan.expires_at if plan is not None else "", 30),
         models=models_of(case), outcome=_outcome(plan, state, action, decisions), two_people=plan is not None and plan.approval_class == "R3",
         past=past_line(case.learned.get("past")) if kind != "info" and case is not None and isinstance(case.learned, dict) and "past" in case.learned else "",
         access=ACCESS_WORDS.get(str(case.learned.get("access")), "") if kind != "info" and case is not None and isinstance(case.learned, dict) else "",
-        unread=unread, options=options_of(unread, saving.monthly is not None) if kind == "advice" else ())
+        unread=unread, options=options_of(unread, saving.monthly is not None) if kind == "advice" else (), group=together)
 
 
 def order_key(brief: Brief) -> tuple:

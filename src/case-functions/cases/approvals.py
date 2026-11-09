@@ -124,7 +124,8 @@ def build_advice(case: CaseRecord, approvers: tuple[str, ...], now: dt.datetime,
     return plan_digest.sealed(PlanRecord(
         plan_id=new_id(), case_id=case.case_id, family=ADVISE, resource_id=case.resource_id, resource_name=clean_text(case.resource_name, 120),
         resource_group=clean_text(case.resource_group, 90), subscription_id=case.subscription_id, code="",
-        title=brief.headline_of(ADVISE, case.resource_name, case.resource_group, case.resource_type, case.recommendation), what_changes=brief.ADVICE_CHANGE,
+        title=brief.headline_of(ADVISE, case.resource_name, case.resource_group, case.resource_type, case.recommendation, together=brief.group_of(case)),
+        what_changes=brief.ADVICE_CHANGE,
         saving_usd_month=saving, waiting_costs_usd_day=round(saving / 30, 2) if saving else None, could_go_wrong=brief.ADVICE_RISK, undo=brief.ADVICE_UNDO,
         evidence_level=judged + " Not measured yet: the saving, which cost lines confirm after a change.", approvers=approvers, created_at=stamp(now), expires_at=expires,
         state="open", approval_class="R1", preconditions={"family": ADVISE, "caseStatus": case.status}))
