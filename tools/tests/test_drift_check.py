@@ -107,11 +107,57 @@ class EveryBreakageIsFoundByTheControlThatWatchesIt(unittest.TestCase):
         self.failing("I-deployments", lambda e: e[f"{ACCOUNT}/deployments"]["value"][2]["properties"]["model"].update(version="1999-01-01"), ("version",))
         self.failing("I-deployments", lambda e: e[f"{ACCOUNT}/deployments"]["value"].pop(), ("not deployed",))
 
-    def test_a_shield_that_is_off_or_not_blocking(self):
+    def test_a_filter_of_the_guardrail_that_is_missing_off_not_blocking_or_at_another_severity(self):
         path = f"{ACCOUNT}/raiPolicies/{NAMES['guardrail']}"
-        self.failing("I-guardrail", lambda e: e[path]["properties"]["contentFilters"].pop(), ("Indirect Attack at PostToolCall",))
-        self.failing("I-guardrail", lambda e: e[path]["properties"]["contentFilters"][0].update(blocking=False), ("Jailbreak",))
+
+        def one(estate, name, source):
+            return next(f for f in estate[path]["properties"]["contentFilters"] if f["name"] == name and f["source"] == source)
+
+        self.failing("I-guardrail", lambda e: e[path]["properties"]["contentFilters"].pop(), ("Indirect Attack at PostToolCall", "not in the policy"))
+        self.failing("I-guardrail", lambda e: one(e, "Jailbreak", "Prompt").update(blocking=False), ("Jailbreak at Prompt", "not blocking"))
+        self.failing("I-guardrail", lambda e: one(e, "Profanity", "Prompt").update(enabled=False), ("Profanity at Prompt", "not enabled"))
+        self.failing("I-guardrail", lambda e: one(e, "Protected Material Text", "Completion").update(blocking=False), ("Protected Material Text at Completion", "not blocking"))
+        self.failing("I-guardrail", lambda e: one(e, "Violence", "Prompt").update(severityThreshold="High"), ("Violence at Prompt", "severity High, not Medium"))
+        self.failing("I-guardrail", lambda e: one(e, "Selfharm", "Completion").pop("severityThreshold"), ("Selfharm at Completion", "severity not set, not Medium"))
+        self.failing("I-guardrail", lambda e: e[path]["properties"]["contentFilters"].remove(one(e, "Indirect Attack Spotlighting", "Prompt")), ("Indirect Attack Spotlighting at Prompt",))
         self.failing("I-guardrail", lambda e: e[path]["properties"].update(mode="Default"), ("Blocking",))
+
+    def test_every_filter_of_the_guardrail_counts_and_a_guardrail_with_the_three_prompt_shields_alone_fails_naming_the_thirteen_others(self):
+        path = f"{ACCOUNT}/raiPolicies/{NAMES['guardrail']}"
+        required = dc.foundry_check().REQUIRED_FILTERS
+        self.assertEqual(len(required), 16)
+        for name, source, _ in required:
+            with self.subTest(filter=f"{name} at {source}"):
+                self.failing("I-guardrail", lambda e, n=name, s=source: e[path]["properties"].update(contentFilters=[f for f in e[path]["properties"]["contentFilters"] if (f["name"], f["source"]) != (n, s)]),
+                             (f"{name} at {source}", "1 of its 16 filters"))
+        shields = {("Jailbreak", "Prompt"), ("Indirect Attack", "Prompt"), ("Indirect Attack", "PostToolCall")}
+        results, closed, _, _ = world(lambda e: e[path]["properties"].update(contentFilters=[f for f in e[path]["properties"]["contentFilters"] if (f["name"], f["source"]) in shields]))
+        self.assertEqual(results["I-guardrail"]["state"], "FAIL")
+        self.assertIn("it does not block 13 of its 16 filters", results["I-guardrail"]["detail"])
+        for name, source, _ in required:
+            if (name, source) not in shields:
+                self.assertIn(f"{name} at {source}", results["I-guardrail"]["detail"])
+        self.assertIn("I-guardrail", closed)
+
+    def test_a_guardrail_that_holds_every_filter_says_pass_and_what_it_blocks(self):
+        results, closed, _, _ = world()
+        self.assertEqual(results["I-guardrail"]["state"], "PASS")
+        detail = results["I-guardrail"]["detail"]
+        for words in ("Hate, Sexual, Violence and Selfharm at Prompt and Completion from the severity Medium", "Profanity at Prompt and Completion", "Protected Material Code and Protected Material Text at Completion",
+                      "Jailbreak and Indirect Attack Spotlighting at Prompt", "Indirect Attack at Prompt and PostToolCall", "its mode is Blocking"):
+            self.assertIn(words, detail)
+        self.assertNotIn("I-guardrail", closed)
+
+    def test_the_control_judges_the_list_of_the_read_back_of_the_foundry_action_and_keeps_none_of_its_own(self):
+        template = (ROOT / "environment" / "foundry" / "main.bicep").read_text(encoding="utf-8")
+        declared = [(name, source, severity or None) for name, source, severity in
+                    re.findall(r"\{ name: '([A-Za-z ]+)', source: '(\w+)', enabled: true, blocking: true(?:, severityThreshold: '(\w+)')? \}", template)]
+        self.assertEqual(declared, list(dc.foundry_check().REQUIRED_FILTERS), "the template, the read-back and this control have one list")
+        self.assertIs(dc.foundry_check(), dc.foundry_check(), "the sibling is loaded once")
+        self.assertFalse(hasattr(dc, "SHIELDS"), "the three Prompt Shields alone are not what the guardrail must hold")
+        code = re.sub(r'""".*?"""', "", SOURCE, flags=re.S)
+        code = "\n".join(line for line in code.splitlines() if not line.lstrip().startswith("#"))
+        self.assertNotRegex(code, r'\("Jailbreak", "Prompt"\)|SHIELDS', "no second definition of the list")
 
     def test_a_policy_of_the_gateway_that_is_gone_or_looser(self):
         path = f"{GATEWAY}/workspaces/default"
