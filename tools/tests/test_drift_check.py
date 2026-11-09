@@ -26,11 +26,18 @@ SITE = f"{BASE}/providers/Microsoft.Web/sites/{NAMES['cases_app']}"
 PROJECT = f"{ACCOUNT}/projects/{NAMES['project']}"
 PROJECT_ROLES = f"{PROJECT}/providers/Microsoft.Authorization/roleAssignments"
 OPERATOR = dc.SELFTEST_IDS["operator"]
+PROJECT_IDENTITY = dc.SELFTEST_IDS["foundry-project"]
+SUBSCRIPTION_SCOPE = f"/subscriptions/{dc.SELFTEST_SUBSCRIPTION}"
+MANAGEMENT_GROUP = "/providers/Microsoft.Management/managementGroups/example-root"
 GOVERNANCE = (ROOT / "environment" / "governance" / "main.bicep").read_text(encoding="utf-8")
 TELEMETRY = (ROOT / "environment" / "aigateway" / "telemetry.bicep").read_text(encoding="utf-8")
 CASES = (ROOT / "environment" / "cases" / "main.bicep").read_text(encoding="utf-8")
 AIGATEWAY = (ROOT / "environment" / "aigateway" / "main.bicep").read_text(encoding="utf-8")
 SOURCE = TOOL.read_text(encoding="utf-8")
+
+
+def define_role(estate, role, permissions):
+    estate[f"/subscriptions/{dc.SELFTEST_SUBSCRIPTION}/providers/Microsoft.Authorization/roleDefinitions/{role}"] = {"properties": {"permissions": permissions}}
 
 
 def world(change=None, graph_rows=None, app_rows="healthy", **options):
@@ -196,71 +203,130 @@ class EveryBreakageIsFoundByTheControlThatWatchesIt(unittest.TestCase):
             with self.subTest(who=who):
                 self.failing("I-role-assignments", lambda e, w=who: e[path]["value"].append({"properties": {"scope": BASE, "roleDefinitionId": contributor, "principalId": dc.SELFTEST_IDS[w]}}), ("rule 29",))
 
-    def test_an_operator_without_foundry_user_on_the_project_is_a_plain_fail_that_says_what_the_tools_then_get(self):
-        self.failing("I-operator-role", lambda e: e[PROJECT_ROLES].update(value=[a for a in e[PROJECT_ROLES]["value"] if a["properties"]["principalId"] != OPERATOR]),
-                     ("does not hold the role Foundry User", "agents-drift, foundry-evals and foundry-redteam", "403 or 401", "the action foundry gives it the role"), closed=False)
+    IDENTITIES = (("I-operator-role", OPERATOR, "the Operator"), ("I-project-role", PROJECT_IDENTITY, "the Foundry project's identity"))
 
-    def test_an_operator_with_a_wider_foundry_role_on_the_project_or_any_foundry_role_on_the_resource_is_a_fail(self):
-        for role, name in dc.WIDER_FOUNDRY_ROLES.items():
-            with self.subTest(role=name):
-                self.failing("I-operator-role", lambda e, r=role: e[PROJECT_ROLES]["value"].append(dc.assignment_of(PROJECT, r, OPERATOR)), (f"holds {name} on the Foundry project", "wider than Foundry User"), closed=False)
-        for role in (dc.FOUNDRY_USER, *dc.WIDER_FOUNDRY_ROLES):
-            with self.subTest(role=role, scope="the resource"):
-                self.failing("I-operator-role", lambda e, r=role: e[PROJECT_ROLES]["value"].append(dc.assignment_of(ACCOUNT, r, OPERATOR)),
-                             ("on the Foundry resource", "a role on the project alone does not"), closed=False)
+    def test_an_identity_without_foundry_user_on_the_project_is_a_plain_fail_that_says_what_then_does_not_work(self):
+        gone = lambda who: lambda e: e[PROJECT_ROLES].update(value=[a for a in e[PROJECT_ROLES]["value"] if a["properties"]["principalId"] != who])
+        self.failing("I-operator-role", gone(OPERATOR),
+                     ("does not hold the role Foundry User", "agents-drift, foundry-evals and foundry-redteam", "403 or 401", "the action foundry gives it the role"), closed=False)
+        self.failing("I-project-role", gone(PROJECT_IDENTITY), ("does not hold the role Foundry User", "a continuous evaluation rule cannot run as it", "the action foundry gives it the role"), closed=False)
+
+    def test_a_wider_foundry_role_on_the_project_or_any_foundry_role_on_the_resource_is_a_fail_for_both_identities(self):
+        for control, who, words in self.IDENTITIES:
+            for role, name in dc.WIDER_FOUNDRY_ROLES.items():
+                with self.subTest(control=control, role=name):
+                    self.failing(control, lambda e, r=role, w=who: e[PROJECT_ROLES]["value"].append(dc.assignment_of(PROJECT, r, w)), (f"{words} holds {name} on the Foundry project", "wider than Foundry User"), closed=False)
+            for role in (dc.FOUNDRY_USER, *dc.WIDER_FOUNDRY_ROLES):
+                with self.subTest(control=control, role=role, scope="the resource"):
+                    self.failing(control, lambda e, r=role, w=who: e[PROJECT_ROLES]["value"].append(dc.assignment_of(ACCOUNT, r, w)),
+                                 (f"{words} holds", "on the Foundry resource", "a role on the project alone does not"), closed=False)
 
     def test_a_role_that_is_not_one_of_foundry_is_wider_when_it_can_change_azure_or_holds_data_actions_of_the_resource_and_harmless_as_a_reader(self):
-        def define(estate, role, permissions):
-            estate[f"/subscriptions/{dc.SELFTEST_SUBSCRIPTION}/providers/Microsoft.Authorization/roleDefinitions/{role}"] = {"properties": {"permissions": permissions}}
-
-        def add(role, permissions, scope=PROJECT):
+        def add(role, permissions, scope, who):
             def change(estate):
-                define(estate, role, permissions)
-                estate[PROJECT_ROLES]["value"].append(dc.assignment_of(scope, role, OPERATOR))
+                define_role(estate, role, permissions)
+                estate[PROJECT_ROLES]["value"].append(dc.assignment_of(scope, role, who))
             return change
-        self.failing("I-operator-role", add("custom-writer", [{"actions": ["Microsoft.CognitiveServices/accounts/projects/write"]}]), ("which can change Azure",), closed=False)
-        self.failing("I-operator-role", add("custom-caller", [{"actions": [], "dataActions": ["Microsoft.CognitiveServices/accounts/OpenAI/*"]}], ACCOUNT), ("data actions of the Foundry resource",), closed=False)
-        self.failing("I-operator-role", add("custom-all", [{"actions": [], "dataActions": ["*"]}]), ("data actions of the Foundry resource",), closed=False)
-        results, _, _, _ = world(add("custom-reader", [{"actions": ["*/read"], "dataActions": []}]))
-        self.assertEqual(results["I-operator-role"]["state"], "PASS", "a reader adds nothing to what Foundry User reads")
+        for control, who, words in self.IDENTITIES:
+            with self.subTest(control=control):
+                self.failing(control, add("custom-writer", [{"actions": ["Microsoft.CognitiveServices/accounts/projects/write"]}], PROJECT, who), ("which can change Azure",), closed=False)
+                self.failing(control, add("custom-caller", [{"actions": [], "dataActions": ["Microsoft.CognitiveServices/accounts/OpenAI/*"]}], ACCOUNT, who), ("data actions of the Foundry resource",), closed=False)
+                self.failing(control, add("custom-all", [{"actions": [], "dataActions": ["*"]}], PROJECT, who), ("data actions of the Foundry resource",), closed=False)
+                self.failing(control, add("custom-reads-all", [{"actions": [], "dataActions": ["*/read"]}], BASE, who), ("data actions of the Foundry resource",), closed=False)
+                results, _, _, _ = world(add("custom-reader", [{"actions": ["*/read"], "dataActions": []}], PROJECT, who))
+                self.assertEqual(results[control]["state"], "PASS", "a reader adds nothing to what Foundry User reads")
 
-    def test_the_operator_holds_foundry_user_on_the_project_and_what_others_or_the_other_roles_above_hold_is_not_its_business(self):
+    def test_a_role_that_reaches_the_model_deployments_is_a_fail_at_every_scope_above_the_project_and_the_message_names_the_role_and_the_level(self):
+        # Cognitive Services OpenAI User holds data actions only, so neither this control's neighbour (I-role-assignments, which judges the actions of Azure Resource Manager at the group) nor the Foundry
+        # roles of the control saw it: an identity that holds it at the group, the subscription or a management group could call a model deployment direct, which AGENTS.md rule 15 (c) forbids.
+        levels = ((BASE, "at the project's resource group"), (SUBSCRIPTION_SCOPE, "at the subscription"), (MANAGEMENT_GROUP, "at a management group"), ("/", "at the root of the tenant"),
+                  (ACCOUNT, "on the Foundry resource"), (PROJECT, "on the Foundry project"))
+        for control, who, words in self.IDENTITIES:
+            for scope, level in levels:
+                reaches = () if level == "on the Foundry project" else ("a role on the project alone does not",)
+                with self.subTest(control=control, level=level):
+                    self.failing(control, lambda e, s=scope, w=who: e[PROJECT_ROLES]["value"].append(dc.assignment_of(s, dc.SELFTEST_OPENAI_USER, w)),
+                                 (f"{words} holds Cognitive Services OpenAI User {level}", "data actions of the Foundry resource", *reaches), closed=False)
+
+    def test_a_role_that_adds_nothing_beyond_reading_passes_at_every_scope_above_the_project_and_the_other_identity_is_not_judged_by_it(self):
+        for control, who, words in self.IDENTITIES:
+            with self.subTest(control=control):
+                results, _, _, _ = world(lambda e, w=who: e[PROJECT_ROLES]["value"].extend(dc.assignment_of(s, dc.SELFTEST_READER, w) for s in (BASE, SUBSCRIPTION_SCOPE, MANAGEMENT_GROUP, "/")))
+                self.assertEqual(results[control]["state"], "PASS", results[control]["detail"])
+
+    def test_both_identities_hold_foundry_user_on_the_project_and_what_others_or_the_other_identity_hold_is_not_their_business(self):
+        stranger = dc.SELFTEST_IDS["stranger"]
         results, _, az, _ = world(lambda e: e[PROJECT_ROLES]["value"].extend([
-            dc.assignment_of(PROJECT, next(iter(dc.WIDER_FOUNDRY_ROLES)), dc.SELFTEST_IDS["stranger"], "User"),
-            dc.assignment_of(f"/subscriptions/{dc.SELFTEST_SUBSCRIPTION}", next(iter(dc.WIDER_FOUNDRY_ROLES)), dc.SELFTEST_IDS["stranger"], "User"),
-            dc.assignment_of(BASE, "acdd72a7-3385-48ef-bd42-f606fba81ae7", OPERATOR)]))
-        self.assertEqual(results["I-operator-role"]["state"], "PASS", results["I-operator-role"]["detail"])
-        self.assertIn("Foundry User on the Foundry project, and nothing wider", results["I-operator-role"]["detail"])
+            dc.assignment_of(PROJECT, next(iter(dc.WIDER_FOUNDRY_ROLES)), stranger, "User"),
+            dc.assignment_of(SUBSCRIPTION_SCOPE, dc.SELFTEST_OPENAI_USER, stranger, "User"),
+            dc.assignment_of(BASE, dc.SELFTEST_OPENAI_USER, dc.SELFTEST_IDS["cases"])]))
+        for control, who, words in self.IDENTITIES:
+            self.assertEqual(results[control]["state"], "PASS", results[control]["detail"])
+            self.assertIn(f"{words[0].upper() + words[1:]} holds Foundry User on the Foundry project, and nothing wider", results[control]["detail"])
         self.assertTrue([c for c in az.calls if f"/projects/{NAMES['project']}/providers/Microsoft.Authorization/roleAssignments" in c[c.index("--url") + 1] and c[c.index("--method") + 1] == "get"],
                         "the assignments are read at the project, with a GET")
+        self.assertEqual(len([c for c in az.calls if f"/projects/{NAMES['project']}/providers/Microsoft.Authorization/roleAssignments" in c[c.index("--url") + 1]]), 1, "once, for both controls")
 
-    def test_a_foundry_role_that_the_operator_holds_above_the_foundry_resource_is_wider_than_the_project_at_any_scope_and_is_not_a_missing_role(self):
-        for scope in (BASE, f"/subscriptions/{dc.SELFTEST_SUBSCRIPTION}", "/providers/Microsoft.Management/managementGroups/example-root"):
-            for role in (dc.FOUNDRY_USER, *dc.WIDER_FOUNDRY_ROLES):
-                with self.subTest(scope=scope.rsplit("/", 1)[-1], role=role[:8]):
-                    self.failing("I-operator-role", lambda e, s=scope, r=role: e[PROJECT_ROLES]["value"].append(dc.assignment_of(s, r, OPERATOR)),
-                                 ("above the Foundry resource", "wider than the project"), closed=False)
-        results, _, _, _ = world(lambda e: e[PROJECT_ROLES].update(value=[dc.assignment_of(BASE, dc.FOUNDRY_USER, OPERATOR)]))
-        self.assertEqual(results["I-operator-role"]["state"], "FAIL")
-        self.assertIn("Foundry User above the Foundry resource", results["I-operator-role"]["detail"])
-        self.assertNotIn("does not hold", results["I-operator-role"]["detail"], "it holds the role, wider than designed: the tools work, and the control says what is wrong")
+    def test_a_foundry_role_that_an_identity_holds_above_the_foundry_resource_is_a_wider_role_and_not_a_missing_one(self):
+        for control, who, words in self.IDENTITIES:
+            for scope, level in ((BASE, "at the project's resource group"), (SUBSCRIPTION_SCOPE, "at the subscription"), (MANAGEMENT_GROUP, "at a management group")):
+                for role in (dc.FOUNDRY_USER, *dc.WIDER_FOUNDRY_ROLES):
+                    with self.subTest(control=control, level=level, role=role[:8]):
+                        self.failing(control, lambda e, s=scope, r=role, w=who: e[PROJECT_ROLES]["value"].append(dc.assignment_of(s, r, w)), (level, "a role on the project alone does not"), closed=False)
+            results, _, _, _ = world(lambda e, w=who: e[PROJECT_ROLES].update(value=[a for a in e[PROJECT_ROLES]["value"] if a["properties"]["principalId"] != w] + [dc.assignment_of(BASE, dc.FOUNDRY_USER, w)]))
+            self.assertEqual(results[control]["state"], "FAIL")
+            self.assertIn(f"{words} holds Foundry User at the project's resource group", results[control]["detail"])
+            self.assertNotIn("does not hold", results[control]["detail"], "it holds the role, wider than designed: the tools work, and the control says what is wrong")
 
-    def test_the_role_is_unknown_when_the_assignments_or_a_definition_cannot_be_read_and_a_missing_project_or_operator_is_said(self):
+    def test_a_role_that_cannot_be_read_is_unknown_at_any_scope_and_never_hides_a_fail(self):
+        dead = "00000000-0000-0000-0000-00000000dead"
+        for control, who, words in self.IDENTITIES:
+            for scope in (PROJECT, ACCOUNT, BASE, SUBSCRIPTION_SCOPE, MANAGEMENT_GROUP):
+                with self.subTest(control=control, scope=scope.rsplit("/", 1)[-1]):
+                    results, _, _, _ = world(lambda e, s=scope, w=who: e[PROJECT_ROLES]["value"].append(dc.assignment_of(s, dead, w)))
+                    self.assertEqual(results[control]["state"], "UNKNOWN", "a role that cannot be read is not known to be harmless")
+                    self.assertIn("could not be read", results[control]["detail"])
+                    self.assertIn(dead[:8] + "...", results[control]["detail"])
+            self.failing(control, lambda e, w=who: e[PROJECT_ROLES]["value"].extend([dc.assignment_of(BASE, dead, w), dc.assignment_of(SUBSCRIPTION_SCOPE, dc.SELFTEST_OPENAI_USER, w)]),
+                         (f"{words} holds Cognitive Services OpenAI User at the subscription",), closed=False)
+
+    def test_the_words_of_a_fail_name_a_role_by_its_name_or_its_short_id_and_never_by_a_whole_id_or_a_text_that_could_start_a_workflow_command(self):
+        hostile = "custom-hostile"
+
+        def change(estate):
+            estate[f"/subscriptions/{dc.SELFTEST_SUBSCRIPTION}/providers/Microsoft.Authorization/roleDefinitions/{hostile}"] = {
+                "properties": {"roleName": "<b>::error::stop</b> 'quoted'", "permissions": [{"actions": ["Microsoft.Compute/virtualMachines/write"], "dataActions": []}]}}
+            estate[PROJECT_ROLES]["value"].extend([dc.assignment_of(BASE, hostile, OPERATOR), dc.assignment_of(BASE, dc.SELFTEST_OPENAI_USER, PROJECT_IDENTITY),
+                                                   dc.assignment_of(SUBSCRIPTION_SCOPE, "00000000-0000-0000-0000-00000000dead", PROJECT_IDENTITY)])
+        results, _, _, _ = world(change)
+        for control, who, words in self.IDENTITIES:
+            detail = results[control]["detail"]
+            self.assertNotRegex(detail, r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", control)
+            for bad in ("<", ">", "::", "'quoted'"):
+                self.assertNotIn(bad, detail, (control, bad))
+        self.assertIn("which can change Azure", results["I-operator-role"]["detail"])
+        self.assertIn("Cognitive Services OpenAI User at the project's resource group", results["I-project-role"]["detail"])
+
+    def test_the_roles_are_unknown_when_the_assignments_cannot_be_read_and_a_missing_project_operator_or_project_identity_is_said(self):
         estate = dc.fake_estate(MODELS, POLICIES, NAMES)
         az = dc.FakeAz(estate, app_rows=dc.healthy_rows())
         az.denied.add(PROJECT_ROLES.lower())
         results = {r["control"]: r for r in dc.run_controls(dc.selftest_context(az, MODELS, POLICIES, ACCESS))[0]}
-        self.assertEqual(results["I-operator-role"]["state"], "UNKNOWN")
-        self.assertIn("Reader at the project's group", results["I-operator-role"]["detail"])
-        unreadable = lambda e: e[PROJECT_ROLES]["value"].append(dc.assignment_of(PROJECT, "00000000-0000-0000-0000-00000000dead", OPERATOR))
-        results, _, _, _ = world(unreadable)
-        self.assertEqual(results["I-operator-role"]["state"], "UNKNOWN", "a role that cannot be read is not known to be harmless")
-        self.assertIn("could not be read", results["I-operator-role"]["detail"])
+        for control, who, words in self.IDENTITIES:
+            self.assertEqual(results[control]["state"], "UNKNOWN", control)
+            self.assertIn("Reader at the project's group", results[control]["detail"])
         results, _, _, _ = world(lambda e: [e.pop(PROJECT), e.pop(PROJECT_ROLES)])
-        self.assertEqual((results["I-operator-role"]["state"], results["I-operator-role"]["detail"]), ("FAIL", "The Foundry project is not there."))
+        for control, who, words in self.IDENTITIES:
+            self.assertEqual((results[control]["state"], results[control]["detail"]), ("FAIL", "The Foundry project is not there."), control)
         results, _, _, _ = world(lambda e: e.pop(f"{BASE}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/{dc.OPERATOR_IDENTITY}"))
         self.assertEqual(results["I-operator-role"]["state"], "PASS", "an Operator that is not made yet holds no role, and that is no drift")
         self.assertIn("not made yet", results["I-operator-role"]["detail"])
+        self.assertEqual(results["I-project-role"]["state"], "PASS", "and the Operator's absence is nothing to the project's identity")
+        results, _, _, _ = world(lambda e: e.update({PROJECT: {}}))
+        self.assertEqual(results["I-project-role"]["state"], "FAIL")
+        self.assertIn("no identity of its own", results["I-project-role"]["detail"])
+        results, _, _, _ = world()
+        self.assertEqual((results["I-project-role"]["state"], results["I-project-role"]["detail"].startswith("The Foundry project's identity holds Foundry User on the Foundry project")), ("PASS", True))
 
     def test_a_deployed_release_that_is_not_the_code_of_main(self):
         tags = lambda e: e[SITE]["tags"].update({"meternaut-build-commit": "c" * 40, "meternaut-package-sha256": "d" * 64})
@@ -548,9 +614,9 @@ class TheCommandLine(unittest.TestCase):
     def test_a_clean_run_exits_0_prints_the_table_and_writes_the_json_and_the_summary(self):
         code, out, err, report, summary = self.run_main()
         self.assertEqual((code, err), (0, ""))
-        self.assertIn("### Drift check, control plane: 20 PASS, 0 FAIL, 3 UNKNOWN", out)
+        self.assertIn("### Drift check, control plane: 21 PASS, 0 FAIL, 3 UNKNOWN", out)
         self.assertEqual(summary, out.rstrip("\n") + "\n" if not out.endswith("\n\n") else out[:-1])
-        self.assertEqual(report["summary"], {"PASS": 20, "FAIL": 0, "UNKNOWN": 3})
+        self.assertEqual(report["summary"], {"PASS": 21, "FAIL": 0, "UNKNOWN": 3})
         self.assertEqual(report["failClosed"], [])
         self.assertEqual(len(report["controls"]), len(dc.CONTROLS))
 
