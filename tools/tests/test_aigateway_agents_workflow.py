@@ -24,6 +24,7 @@ ACCOUNT = "aif-meternaut-agents-0123abcd"
 PROJECT = "meternaut"
 PROJECT_PRINCIPAL = "3b9e2f81-6c4d-4a7e-8f10-2d5a9c7b1e44"
 CASES_PRINCIPAL = "7d3c1f52-3b0a-4f6e-9a55-0c1f5f2b9d11"
+OPERATOR_PRINCIPAL = "5c2e8a17-9d3b-4e60-b1f4-7a6d0c3e9b28"
 GATEWAY_PRINCIPAL = "5a1c0de0-0000-4000-8000-0000000000de"
 GATEWAY_CLIENT = "11111111-2222-3333-4444-555555555555"
 HOSTILE = "ERROR: (AuthorizationFailed) The client '40404040-4040-4040-4040-404040404040' with object id 'a404b404-0000-0000-0000-000000000404' does not have authorization"
@@ -97,6 +98,7 @@ case "$*" in
     if [ -n "$FAKE_HOST_ERROR" ]; then echo "$FAKE_HOST_ERROR" >&2; exit 1; fi
     printf '%s' "$FAKE_HOST" ;;
   *"/providers/Microsoft.Web/sites/"*) printf '%s' "$FAKE_SYSTEM" ;;
+  *"/providers/Microsoft.ManagedIdentity/userAssignedIdentities/"*) printf '%s' "$FAKE_OPERATOR" ;;
   *"/projects/"*"--query identity.principalId"*)
     if [ -n "$FAKE_PROJECT_ERROR" ]; then echo "$FAKE_PROJECT_ERROR" >&2; exit 1; fi
     printf '%s' "$FAKE_PROJECT_PRINCIPAL" ;;
@@ -123,7 +125,7 @@ BUILD_ON = BUILD_OFF + "\nagents_via_ai_gateway=true\naigateway_connection_name=
 class TheSettingsStepReadsWhatTheSwitchNeedsAndNothingWhileItIsOff(unittest.TestCase):
     def settings(self, action, build=BUILD_ON, **changes):
         env = {"ACTION": action, "ENV_SUBSCRIPTION_ID": SUBSCRIPTION, "ENV_RESOURCE_GROUP": GROUP, "FAKE_BUILD_OUTPUT": build,
-               "FAKE_HOST": HOST, "FAKE_PROJECT_PRINCIPAL": PROJECT_PRINCIPAL, "FAKE_SYSTEM": CASES_PRINCIPAL, **changes}
+               "FAKE_HOST": HOST, "FAKE_PROJECT_PRINCIPAL": PROJECT_PRINCIPAL, "FAKE_SYSTEM": CASES_PRINCIPAL, "FAKE_OPERATOR": OPERATOR_PRINCIPAL, **changes}
         return run_step(SETTINGS, {"az": SETTINGS_AZ, "python3": SETTINGS_PYTHON3}, env)
 
     def builds(self, lines):

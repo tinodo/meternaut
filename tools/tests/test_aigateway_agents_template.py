@@ -98,7 +98,8 @@ class TheOrderOfTheWritesIsKept(unittest.TestCase):
     def test_nothing_else_is_written_to_the_resource_beside_it(self):
         names = re.findall(r"(?m)^resource (\w+) '", SOURCE)
         written = {name for name in names if re.search(r"^  (parent|scope): (account|project)$", resource(name)[2], re.M)}
-        self.assertEqual(written, {"aiGatewayConnection", "casesMayUseTheAgents", "guardrail", "modelDeployment", "project", "tracesConnection"})
+        roles = {"casesMayUseTheAgents", "operatorMayCheckTheAgents", "projectMayRunTheEvaluationRule"}
+        self.assertEqual(written, {"aiGatewayConnection", "guardrail", "modelDeployment", "project", "tracesConnection"} | roles)
 
         def before(name, seen):
             body = re.sub(r"(?m)^\s*//.*$", "", resource(name)[2])
@@ -109,8 +110,9 @@ class TheOrderOfTheWritesIsKept(unittest.TestCase):
             return seen
 
         earlier = before("privateEndpoint", set())
-        self.assertEqual(sorted(written - {"casesMayUseTheAgents"} - earlier), [], "every write to the resource but the role is before the private endpoint")
-        self.assertIn("privateEndpoint", before("casesMayUseTheAgents", set()), "and the role is after it")
+        self.assertEqual(sorted(written - roles - earlier), [], "every write to the resource but the roles is before the private endpoint")
+        for role in sorted(roles):
+            self.assertIn("privateEndpoint", before(role, set()), f"and {role} is after it")
 
     def test_the_header_says_so(self):
         header = SOURCE.split("targetScope = ")[0]
@@ -128,10 +130,11 @@ class NothingChangesWhileTheHostIsEmpty(unittest.TestCase):
         self.assertRegex(SOURCE, r"(?m)^@maxLength\(253\)\nparam aiGatewayHost string = ''$")
         self.assertRegex(SOURCE, r"(?m)^@minLength\(2\)\n@maxLength\(64\)\nparam aiGatewayConnectionName string = 'aigateway'$", "the limits of a connection's name")
 
-    def test_the_new_resource_is_the_only_one_with_a_condition_and_every_other_resource_is_declared_as_it_was(self):
-        self.assertEqual(re.findall(r"(?m)^resource (\w+) '[^']+' = if ", SOURCE), ["aiGatewayConnection"])
+    def test_the_connection_and_the_role_of_the_operator_are_the_only_resources_with_a_condition_and_every_other_resource_is_declared_as_it_was(self):
+        self.assertEqual(re.findall(r"(?m)^resource (\w+) '[^']+' = if ", SOURCE), ["aiGatewayConnection", "operatorMayCheckTheAgents"])
         self.assertEqual(sorted(re.findall(r"(?m)^resource (\w+) '", SOURCE)),
-                         ["account", "aiGatewayConnection", "casesMayUseTheAgents", "guardrail", "insights", "modelDeployment", "privateEndpoint", "project", "projectPublishesTraces", "tracesConnection"])
+                         ["account", "aiGatewayConnection", "casesMayUseTheAgents", "guardrail", "insights", "modelDeployment", "operatorMayCheckTheAgents", "privateEndpoint", "project",
+                          "projectMayRunTheEvaluationRule", "projectPublishesTraces", "tracesConnection"])
 
     def test_it_makes_no_output_of_the_connection_so_the_outputs_are_the_ones_the_workflow_reads(self):
         self.assertEqual(re.findall(r"(?m)^output (\w+) ", CODE), ["projectEndpoint", "accountName", "projectName", "guardrailName", "privateEndpointName"])
@@ -147,9 +150,10 @@ class NothingChangesWhileTheHostIsEmpty(unittest.TestCase):
         self.assertEqual(done.returncode, 0, done.stderr[-600:])
         compiled = json.loads(done.stdout)
         resources = compiled["resources"].values() if isinstance(compiled["resources"], dict) else compiled["resources"]
-        conditional = [r for r in resources if "condition" in r]
-        self.assertEqual(len(conditional), 1)
-        (connection,) = conditional
+        conditional = {r["type"]: r for r in resources if "condition" in r}
+        self.assertEqual(set(conditional), {KIND, "Microsoft.Authorization/roleAssignments"}, "the connection and the role of the Operator")
+        self.assertEqual(conditional["Microsoft.Authorization/roleAssignments"]["condition"], "[not(empty(parameters('operatorPrincipalId')))]")
+        connection = conditional[KIND]
         self.assertEqual(connection["condition"], "[not(empty(parameters('aiGatewayHost')))]")
         self.assertEqual(connection["type"], KIND)
         properties = connection["properties"]
@@ -157,7 +161,7 @@ class NothingChangesWhileTheHostIsEmpty(unittest.TestCase):
                          ("ApiManagement", "ProjectManagedIdentity", "https://azure-api.net/aigateway", False, {}))
         self.assertEqual(set(properties["metadata"]), {"deploymentInPath", "models"})
         self.assertEqual(properties["metadata"]["deploymentInPath"], "false")
-        for name, default in (("aiGatewayHost", ""), ("aiGatewayModels", []), ("aiGatewayConnectionName", "aigateway")):
+        for name, default in (("aiGatewayHost", ""), ("aiGatewayModels", []), ("aiGatewayConnectionName", "aigateway"), ("operatorPrincipalId", "")):
             self.assertEqual(compiled["parameters"][name]["defaultValue"], default, name)
         self.assertEqual(set(compiled["outputs"]), {"projectEndpoint", "accountName", "projectName", "guardrailName", "privateEndpointName"})
 

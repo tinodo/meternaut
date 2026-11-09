@@ -765,6 +765,40 @@ class Foundry(unittest.TestCase):
         self.assertRegex(self.FOUNDRY, r"(?m)^@minLength\(36\)\n@maxLength\(36\)\nparam casesSystemPrincipalId string$")
         self.assertNotIn("casesPrincipalId", self.FOUNDRY, "the user-assigned identity is gone from the template")
 
+    OPERATOR_PRINCIPAL = "ABCDEF01-2345-6789-ABCD-EF0123456789"
+
+    def test_the_identity_of_the_operator_reaches_the_foundry_file_when_it_is_given_and_the_file_is_what_it_was_when_it_is_not(self):
+        # The template gives that identity Foundry User on the project (docs/proposals/11-agent-harness-and-evaluation.md); the parameter is optional so that the Foundry resource still deploys on an estate with no Operator.
+        with_it, _ = self.files(CASES_SYSTEM_PRINCIPAL_ID=self.SYSTEM_PRINCIPAL, OPERATOR_PRINCIPAL_ID=self.OPERATOR_PRINCIPAL)
+        self.assertEqual(values(with_it["foundry.parameters.json"])["operatorPrincipalId"], self.OPERATOR_PRINCIPAL.lower())
+        declared = bicep_params(self.FOUNDRY)
+        self.assertEqual(declared["operatorPrincipalId"], ("string", True), "the template has a default: empty, and then no role")
+        self.assertTrue(set(with_it["foundry.parameters.json"]["parameters"]) <= set(declared))
+        without, _ = self.files(CASES_SYSTEM_PRINCIPAL_ID=self.SYSTEM_PRINCIPAL)
+        self.assertNotIn("operatorPrincipalId", without["foundry.parameters.json"]["parameters"], "not given: no parameter, so the template's default holds")
+        for empty in ("", "   "):
+            files, _ = self.files(CASES_SYSTEM_PRINCIPAL_ID=self.SYSTEM_PRINCIPAL, OPERATOR_PRINCIPAL_ID=empty)
+            self.assertEqual(files, without, repr(empty))
+        self.assertEqual({k: v for k, v in with_it["foundry.parameters.json"]["parameters"].items() if k != "operatorPrincipalId"}, without["foundry.parameters.json"]["parameters"])
+        for name in without:
+            if name != "foundry.parameters.json":
+                self.assertEqual(with_it[name], without[name], f"{name}: only the Foundry file asks for the role")
+
+    def test_an_identity_of_the_operator_that_is_not_an_object_id_is_refused_without_echoing_it(self):
+        for bad in ("me", "1234", "{" + self.OPERATOR_PRINCIPAL + "}", self.OPERATOR_PRINCIPAL + "0", "not-a-guid-but-with-secret"):
+            for extra in ((), ("--preview",)):
+                with self.subTest(bad=bad, extra=extra):
+                    code, out, err, files = run({**SETTINGS, "OPERATOR_PRINCIPAL_ID": bad}, *extra)
+                    self.assertEqual((code, out, files), (2, "", {}))
+                    self.assertIn("OPERATOR_PRINCIPAL_ID is the object id of the", err)
+                    self.assertNotIn("secret", err)
+                    if len(bad) > 8:
+                        self.assertNotIn(bad, err)
+
+    def test_the_template_takes_the_identity_of_the_operator_as_an_optional_parameter_of_at_most_guid_length_and_the_builder_documents_it(self):
+        self.assertRegex(self.FOUNDRY, r"(?m)^@maxLength\(36\)\nparam operatorPrincipalId string = ''$")
+        self.assertIn("OPERATOR_PRINCIPAL_ID (optional, may be empty)", TOOL.read_text(encoding="utf-8"), "the docstring of the builder names the setting")
+
     def test_the_cases_app_is_given_the_project_endpoint_only_when_the_workflow_found_the_project(self):
         for given in ("", "false", " FALSE "):
             code, out, err, files = self.cases_file(ENV_FOUNDRY_PROJECT_EXISTS=given)

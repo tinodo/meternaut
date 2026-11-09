@@ -71,6 +71,7 @@ def run_step_script(name, stand_ins, env, files=None, prelude=""):
 
 CASES_PRINCIPAL = "7d3c1f52-3b0a-4f6e-9a55-0c1f5f2b9d11"
 SYSTEM_PRINCIPAL = "3b9e2f81-6c4d-4a7e-8f10-2d5a9c7b1e44"
+OPERATOR_PRINCIPAL = "5c2e8a17-9d3b-4e60-b1f4-7a6d0c3e9b28"
 GATEWAY_NAME = "aigw-meternaut-abc123"
 GATEWAY_HOST = "aigw-meternaut-abc123.swedencentral-01.ai.gateway.azure.com"
 
@@ -86,6 +87,10 @@ case "$*" in
     if [ "$FAKE_SYSTEM" = "FAIL" ]; then echo "$FAKE_SYSTEM_ERROR" >&2; exit 1; fi
     if [ "$FAKE_SYSTEM" = "ABSENT" ]; then echo "ERROR: (ResourceNotFound) The Resource 'Microsoft.Web/sites/func-meternaut-cases-abc123' under resource group 'rg-of-the-project' was not found." >&2; exit 1; fi
     printf '%s' "$FAKE_SYSTEM" ;;
+  *"/providers/Microsoft.ManagedIdentity/userAssignedIdentities/"*)
+    if [ "$FAKE_OPERATOR" = "FAIL" ]; then echo "$FAKE_SYSTEM_ERROR" >&2; exit 1; fi
+    if [ "$FAKE_OPERATOR" = "ABSENT" ]; then echo "ERROR: (ResourceNotFound) The Resource 'Microsoft.ManagedIdentity/userAssignedIdentities/id-meternaut-operator' under resource group 'rg-of-the-project' was not found." >&2; exit 1; fi
+    printf '%s' "$FAKE_OPERATOR" ;;
   *"/projects/"*)
     if [ "$FAKE_PROJECT" = "found" ]; then echo meternaut; else echo "$FAKE_PROJECT" >&2; exit 1; fi ;;
   *) echo "unexpected az call: $*" >&2; exit 9 ;;
@@ -95,6 +100,7 @@ esac
 FOUNDRY_SETTINGS_PYTHON3 = """#!/bin/bash
 if [ "$2" = "build" ]; then
   echo "build preview=$([[ " $* " == *" --preview "* ]] && echo yes || echo no) foundry_project=${ENV_FOUNDRY_PROJECT_EXISTS-unset} cases_system=[${CASES_SYSTEM_PRINCIPAL_ID-unset}] retired=[${GATEWAY_PRINCIPAL_ID-unset}${GATEWAY_CLIENT_ID-unset}${RECORDING_FRAGMENTS-unset}] contract=$([[ " $* " == *" --contract"* ]] && echo yes || echo no) policies=$([[ " $* " == *" --aigateway-policies environment/aigateway/policies.json"* ]] && echo yes || echo no) aigw=[${AIGATEWAY_HOST-unset}]" >> "$FAKE_LOG"
+  echo "operator=[${OPERATOR_PRINCIPAL_ID-unset}]" >> "$FAKE_LOG"
   printf 'cases_function_app_name=func-meternaut-cases-abc123\\nfoundry_account_name=aif-meternaut-agents-abc123\\nfoundry_project_name=meternaut\\naigateway_name=aigw-meternaut-abc123\\nagents_via_ai_gateway=false\\n'
 else
   echo "check $*" >> "$FAKE_LOG"
@@ -115,11 +121,13 @@ class WorkOutTheFoundrySettings(unittest.TestCase):
     HOSTILE = "ERROR: (AuthorizationFailed) The client '40404040-4040-4040-4040-404040404040' with object id 'a404b404-0000-0000-0000-000000000404' does not have authorization"
     GATEWAY_CALL = ("az rest --method get --url https://management.azure.com/subscriptions/sub-of-the-project/resourceGroups/rg-of-the-project/providers/Microsoft.ApiManagement"
                     f"/aigateways/{GATEWAY_NAME}?api-version=2025-09-01-preview --query properties.frontend.defaultHostname --output tsv")
+    OPERATOR_CALL = ("az rest --method get --url https://management.azure.com/subscriptions/sub-of-the-project/resourceGroups/rg-of-the-project/providers/Microsoft.ManagedIdentity"
+                     "/userAssignedIdentities/id-meternaut-operator?api-version=2023-01-31 --query properties.principalId --output tsv")
 
-    def run_step(self, action="what-if", project="found", system=SYSTEM_PRINCIPAL, gateway=GATEWAY_HOST, **env):
+    def run_step(self, action="what-if", project="found", system=SYSTEM_PRINCIPAL, gateway=GATEWAY_HOST, operator=OPERATOR_PRINCIPAL, **env):
         return run_step_script("Work out the settings", {"az": FOUNDRY_SETTINGS_AZ, "python3": FOUNDRY_SETTINGS_PYTHON3},
                                {"ACTION": action, "FAKE_PROJECT": project,
-                                "FAKE_SYSTEM": system, "FAKE_SYSTEM_ERROR": self.HOSTILE, "FAKE_GATEWAY": gateway,
+                                "FAKE_SYSTEM": system, "FAKE_SYSTEM_ERROR": self.HOSTILE, "FAKE_GATEWAY": gateway, "FAKE_OPERATOR": operator,
                                 "ENV_SUBSCRIPTION_ID": "sub-of-the-project", "ENV_RESOURCE_GROUP": "rg-of-the-project", **env})
 
     def builds(self, lines):
@@ -232,6 +240,50 @@ class WorkOutTheFoundrySettings(unittest.TestCase):
                 self.assertIn("::error::The cases app could not be read: " + self.HOSTILE, said)
                 self.assertEqual(self.builds(lines), [self.PREVIEW], "no file was made with a placeholder for an identity that may be there")
                 self.assertEqual([line for line in lines if line.startswith("check ")], [])
+
+    def test_foundry_and_what_if_read_the_identity_of_the_operator_and_hand_its_object_id_to_the_final_build_and_to_no_other_build(self):
+        # The Foundry file gives that identity the Foundry User role on the project: the tools that check the agents from inside the network read the project with it. The first, preview build comes before it is known.
+        for action in ("foundry", "what-if"):
+            with self.subTest(action=action):
+                done, lines, _ = self.run_step(action)
+                self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+                self.assertEqual(lines.count(self.OPERATOR_CALL), 1, "read once, as a read, by its fixed name and with the version that the AI security's step reads it with")
+                self.assertEqual([line for line in lines if line.startswith("operator=")], ["operator=[unset]", f"operator=[{OPERATOR_PRINCIPAL}]"])
+                self.assertIn("The Operator's identity exists; its object id goes into the Foundry file (the Foundry User role on the project).", done.stdout)
+                self.assertNotIn(OPERATOR_PRINCIPAL, done.stdout + done.stderr, "an object id is handed to the builder and is not a line of the log")
+
+    def test_every_other_action_reads_nothing_of_the_operator_and_the_builder_gets_it_empty_so_that_a_refused_read_cannot_stop_it(self):
+        for action in ("cases", "aigateway", "base", "operator", "governance", "agents-drift", "loop-check"):
+            with self.subTest(action=action):
+                done, lines, _ = self.run_step(action, operator="FAIL")
+                self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+                self.assertEqual([line for line in lines if "userAssignedIdentities" in line], [])
+                self.assertEqual([line for line in lines if line.startswith("operator=")], ["operator=[unset]", "operator=[]"])
+                self.assertNotIn("The Operator's identity", done.stdout + done.stderr)
+
+    def test_an_operator_that_is_not_there_yet_is_no_error_and_the_file_then_asks_for_no_role(self):
+        # The identity is made by the action operator: on an estate that has none yet, foundry still deploys (the template's parameter is empty by default) and says what to do.
+        for action in ("foundry", "what-if"):
+            for answer in ("ABSENT", "None", "", "not-a-guid"):
+                with self.subTest(action=action, answer=answer):
+                    done, lines, _ = self.run_step(action, operator=answer)
+                    self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+                    self.assertEqual([line for line in lines if line.startswith("operator=")], ["operator=[unset]", "operator=[]"])
+                    self.assertIn("The Operator's identity is not there yet (the action operator makes it); the Foundry file asks for no role for it: run foundry again after operator.", done.stdout)
+                    self.assertNotIn("::error::", done.stdout + done.stderr)
+                    self.assertNotIn("::warning::", done.stdout + done.stderr)
+
+    def test_a_read_of_the_operator_that_fails_stops_foundry_and_is_a_warning_for_what_if_even_when_the_error_holds_the_digits_404_inside_an_object_id(self):
+        done, lines, _ = self.run_step("foundry", operator="FAIL")
+        self.assertNotEqual(done.returncode, 0)
+        self.assertIn("::error::The Operator's identity could not be read: " + self.HOSTILE, done.stderr + done.stdout)
+        self.assertEqual(self.builds(lines), [self.PREVIEW], "no file is made on a guess: the role is asked for only for an identity that was read")
+        self.assertEqual([line for line in lines if line.startswith("check ")], [])
+        done, lines, _ = self.run_step("what-if", operator="FAIL")
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertIn("::warning::The Operator's identity could not be read: " + self.HOSTILE, done.stdout + done.stderr)
+        self.assertNotIn("::error::", done.stdout + done.stderr)
+        self.assertEqual([line for line in lines if line.startswith("operator=")], ["operator=[unset]", "operator=[]"])
 
     ACTIONS = re.findall(r"^          - (\S+)$", re.search(r"(?ms)^      action:\n(.*?)^      \w", WORKFLOW).group(1), re.M)
 

@@ -756,7 +756,7 @@ def command_rule(args, client) -> int:
     if status != 200 or not isinstance(document, dict) or document.get("enabled") is not True:
         raise Problem(f"the rule was made and could not be read back as enabled ({status} {helpers.error_words(document)}): look at it in the portal, Build, Agents, {INVESTIGATOR}, Monitor")
     helpers.say("rule: made and read back as enabled; its results show in the portal under Build, Agents, the Investigator, Monitor, after the next real Watch")
-    helpers.say("rule: the project's identity needs the role Foundry User for it to run (a hand step: docs/proposals/11-agent-harness-and-evaluation.md)")
+    helpers.say("rule: the project's identity needs the role Foundry User for it to run (the action foundry gives it: docs/proposals/11-agent-harness-and-evaluation.md)")
     return 0
 
 
