@@ -15,6 +15,12 @@ VM_ID = VM
 
 NAV_ALL = ["Decisions", "History", "Settings", "Operations"]
 HEADLINE = "Delete the unattached disk planted-disk-1 in group meternaut-test-rg"
+TITLE = "Delete the unattached disk planted-disk-1"  # the headline of a request page: without its place, which the line under it says
+
+
+def opens(reply) -> str:
+    """The line under the title of a request page: what it is, where, when it was found and until when it is open."""
+    return reply.main.find("div", class_="head").find("p").text()
 
 
 def seeded() -> Console:
@@ -466,15 +472,15 @@ class TheBriefOfACase(unittest.TestCase):
 
     def test_it_is_the_brief_of_the_case_with_its_form_for_a_person_who_may_answer(self):
         self.assertEqual(self.reply.status, 200)
-        self.assertEqual(self.reply.headings(1), [HEADLINE])
-        self.assertEqual(self.reply.headings(2)[:4], ["Evidence", "If you approve", "Whose is it", "Your answer"])
+        self.assertEqual(self.reply.headings(1), [TITLE])
+        self.assertEqual(self.reply.headings(2)[:5], ["If you approve", "What was measured", "Why the AIs think so", "Whose is it", "Your answer"])
         self.assertEqual([f.action for f in self.reply.forms()], ["/ok/plan0001"])
 
     def test_a_person_who_is_not_named_reads_the_brief_and_cannot_answer_and_sees_nobody_elses_decisions(self):
         self.console.store.decision_put(make_decision(decision="ask", note="TINO-PRIVATE-QUESTION"))
         reply = self.console.get("/why/case0001", oid=OWNER)
         self.assertEqual(reply.status, 200)
-        self.assertEqual(reply.headings(1), [HEADLINE])
+        self.assertEqual(reply.headings(1), [TITLE])
         self.assertEqual(reply.forms(), [])
         self.assertIn("Only the people who are named for this request can answer it.", reply.content)
         self.assertNotIn("TINO-PRIVATE-QUESTION", reply.text)
@@ -484,19 +490,19 @@ class TheBriefOfACase(unittest.TestCase):
         console.seed(plan=False)
         reply = console.get("/why/case0001")
         self.assertEqual(reply.status, 200)
-        self.assertEqual(reply.headings(1), ["Consider deleting the disk planted-disk-1 in group meternaut-test-rg"])
+        self.assertEqual(reply.headings(1), ["Consider deleting the disk planted-disk-1"])
         self.assertEqual(reply.forms(), [])
         self.assertNotIn("Your answer", reply.headings(2))
         self.assertIn("No request is open for this case. Nothing changes in Azure.", reply.content)
         self.assertIn("Whose is it", reply.headings(2))
 
     def test_the_guards_that_fired_are_a_fact_and_are_explained_in_the_details(self):
-        self.assertIn("Locks and keep tags", self.reply.summary(0))
+        self.assertIn("Locks and keep tags", self.reply.measured())
         self.assertIn("No guard fired.", self.reply.content)
         self.console.store.case_put(make_case(guards=("locked", "keep-tag", "too-new", "managed-group", "unverified", "something-else"), status="needs_human", plan_id=None))
         reply = self.console.get("/why/case0001")
-        self.assertIn("Held back by", reply.summary(0))
-        self.assertIn("A management lock covers the resource.", reply.summary(0)["Held back by"])
+        self.assertIn("Held back by", reply.measured())
+        self.assertIn("A management lock covers the resource.", reply.measured()["Held back by"][0])
         self.assertIn("How sure: Low.", reply.content)
         (disclosure,) = reply.main.find_all("details")
         self.assertIn("A management lock covers the resource.", disclosure.text())
@@ -581,14 +587,14 @@ class TheBriefOfAnInvestigation(unittest.TestCase):
 
     def test_it_says_what_the_investigation_found_in_the_words_of_its_basis_and_what_the_tools_measured(self):
         self.assertEqual(self.reply.status, 200)
-        facts = self.reply.summary(0)
+        facts = {name: value for name, (value, _) in self.reply.measured().items()}
         self.assertEqual(list(facts)[:3], ["Cost, last 30 days", "MetricA", "What the investigation found"])
         self.assertTrue(facts["MetricA"].startswith("40 in the period measured"), facts["MetricA"])
         self.assertTrue(facts["What the investigation found"].startswith("Larger than its use needs"))
-        self.assertIn("Azure Monitor", facts["MetricA"])
+        self.assertIn("Azure Monitor", self.reply.measured()["MetricA"][1])
 
     def test_the_headline_says_consider_changing_and_the_page_says_how_sure_it_is(self):
-        self.assertEqual(self.reply.headings(1), ["Consider changing the disk planted-disk-1 in group meternaut-test-rg"])
+        self.assertEqual(self.reply.headings(1), ["Consider changing the disk planted-disk-1"])
         self.assertIn("How sure: ", self.reply.content)
 
     def test_the_two_agents_words_are_in_labelled_boxes_and_in_full_in_the_details(self):
@@ -631,6 +637,98 @@ class TheBriefOfAnInvestigation(unittest.TestCase):
         self.assertNotIn('href="https://evil.example"', reply.text)
         self.assertEqual(reply.root.find_all("script"), [])
         self.assertNotIn("https://evil.example", reply.links())
+
+
+class TheRequestPage(unittest.TestCase):
+    """The page of one request, drawn from the style guide: a card with what is at stake and what happens on a yes, what was measured and why beside the answer."""
+
+    def stake(self, reply):
+        """The figure of the card (its classes and its text) and the line under it."""
+        card = reply.main.find("section", class_="focus")
+        figure = next(p for p in card.find_all("p") if "fig" in p.classes())
+        sub = next(p for p in card.find_all("p") if "figsub" in p.classes())
+        return figure.classes(), figure.text(), sub.text()
+
+    def test_a_saving_is_a_green_figure_with_its_level_a_cost_is_a_plain_one_and_what_is_not_known_says_why(self):
+        console = seeded()
+        classes, figure, sub = self.stake(console.get("/ok/plan0001"))
+        self.assertEqual((classes, figure), (["fig", "save"], "$86 a year"))
+        self.assertEqual(sub, "Saves, Expected. $7.17 a month. Based on the cost lines of the last 30 days. Waiting costs about $0.24 a day.")
+        storage(console, 1, cost=lambda n: 358.11)
+        classes, figure, sub = self.stake(console.get("/ok/plan5000"))
+        self.assertEqual((classes, figure), (["fig"], "$4,297 a year"))
+        self.assertEqual(sub, "Costs, saving not measured. $358.11 a month. The most that a change could save: what it would save was not worked out.")
+        storage(console, 1, cost=lambda n: None)
+        classes, figure, sub = self.stake(console.get("/ok/plan5000"))
+        self.assertEqual((classes, figure, sub), (["fig"], "—", "Cost not visible. No cost line was read yet."))
+        storage(console, 1, cost=lambda n: 0.0)
+        self.assertEqual(self.stake(console.get("/ok/plan5000"))[2], "Cost not visible. No cost line in the last 30 days.")
+
+    def test_a_reason_of_the_findings_own_takes_the_place_of_the_general_one(self):
+        console = seeded()
+        console.store.plan_put(make_plan(family="change-disk-tier", saving_usd_month=None, waiting_costs_usd_day=None))
+        console.store.case_put(replace(console.store.case_get("case0001"), saving_usd_month=None, cost_usd_30d=80.0))
+        sub = self.stake(console.get("/ok/plan0001"))[2]
+        self.assertEqual(sub, "Costs, saving not measured. $80.00 a month. The price of a disk depends on its size and its type, and Meternaut does not read the price list, so it claims no figure "
+                              "for this change.")
+        storage(console, 1, cost=lambda n: 80.0)
+        self.assertNotIn("price list", self.stake(console.get("/ok/plan5000"))[2], "the general reason is the line of the figure, not a sentence of its own")
+
+    def test_the_card_draws_the_stored_daily_cost_and_a_request_without_one_says_why(self):
+        console = seeded()
+        self.assertIn("The next search reads them. The chart fills in then.", console.get("/ok/plan0001").content)
+        console.store.case_put(replace(console.store.case_get("case0001"), cost_series=[1.0, 2.0, 3.0] + [4.0] * 27, cost_series_end="2026-11-04"))
+        reply = console.get("/ok/plan0001")
+        (chart,) = [n for n in reply.main.find_all("figure") if "chart" in n.classes()]
+        self.assertEqual(chart.find("figcaption").text(), "Cost per day last 30 days, yesterday $4.00")
+        self.assertIn("Cost per day for the last 30 days", chart.find("svg").attrs["aria-label"])
+        self.assertNotIn("The chart fills in then.", reply.content)
+
+    def test_a_request_for_many_resources_is_titled_by_their_number_and_says_when_its_chart_is_read(self):
+        console = seeded()
+        endpoints(console)
+        reply = console.get("/ok/plan6000")
+        self.assertEqual(reply.headings(1), ["50 private endpoints in 8 resource groups"])
+        self.assertEqual(self.stake(reply)[1], "$4,297 a year")
+        self.assertIn("They are read when the AIs judge this finding again. The chart fills in then.", reply.content)
+
+    def test_the_answer_stands_beside_what_was_measured_and_a_page_that_takes_no_answer_has_one_column(self):
+        reply = seeded().get("/ok/plan0001")
+        (cols,) = reply.main.find_all("div", class_="cols")
+        self.assertEqual([child.tag for child in cols.children if hasattr(child, "tag")], ["div", "section"])
+        (panel,) = [s for s in cols.find_all("section") if s.classes() == ["panel"]]
+        self.assertEqual(panel.find("h2").text(), "Your answer")
+        self.assertEqual(len(panel.find_all("form")), 1)
+        closed = seeded()
+        closed.store.plan_put(make_plan(state="declined"))
+        reply = closed.get("/ok/plan0001")
+        self.assertEqual(len(reply.main.find_all("div", class_="cols solo")), 1)
+        self.assertEqual(reply.main.find_all("section", class_="panel"), [])
+
+    def test_a_person_who_may_not_answer_is_told_so_in_the_place_of_the_answer(self):
+        reply = seeded().get("/why/case0001", oid=OWNER)
+        self.assertEqual(reply.status, 200)
+        panel = reply.main.find("section", class_="panel")
+        self.assertEqual(panel.text(), "Your answer Only the people who are named for this request can answer it.")
+        self.assertEqual(reply.forms(), [])
+
+    def test_the_way_back_is_a_link_to_the_decisions_and_a_case_without_a_request_names_what_it_would_change(self):
+        reply = seeded().get("/ok/plan0001")
+        self.assertEqual([a.text() for a in reply.main.find_all("a") if a.attrs.get("href") == "/"], ["Back to the decisions"])
+        console = Console()
+        console.seed(plan=False)
+        info = console.get("/why/case0001")
+        self.assertEqual(info.headings(2)[0], "What changes")
+        self.assertEqual(list(info.facts()), ["What changes"])
+        self.assertEqual(info.facts()["What changes"], "No request is open for this case. Nothing changes in Azure.")
+
+    def test_advice_says_what_an_answer_does_and_has_a_chip_that_it_changes_nothing(self):
+        console = seeded()
+        storage(console, 1, cost=lambda n: 80.0)
+        reply = console.get("/ok/plan5000")
+        self.assertEqual(reply.headings(2)[0], "If you answer")
+        self.assertIn("Changes nothing in Azure", reply.main.find("p", class_="chips").text())
+        self.assertEqual([text for _, _, text in reply.forms()[0].buttons], ["Worth acting on", "Not worth it", "This is not mine", "Ask or tell", "Decide later"])
 
 
 class TheHistory(unittest.TestCase):
@@ -754,19 +852,19 @@ class Times(unittest.TestCase):
     def test_utc_and_a_zone_that_is_not_known_show_utc_alone(self):
         self.console.store.settings_put(SettingsRecord(oid=TINO, timezone="UTC"))
         reply = self.console.get("/ok/plan0001")
-        self.assertIn("Sun 8 Nov 2026 08:00 UTC.", reply.content)
+        self.assertTrue(opens(reply).endswith("open until Sun 8 Nov 2026 08:00 UTC"), opens(reply))
         self.assertNotIn("UTC (", reply.content)
         self.console.store.settings_put(SettingsRecord(oid=TINO, timezone="Mars/Olympus_Mons"))
-        self.assertIn("Sun 8 Nov 2026 08:00 UTC.", self.console.get("/ok/plan0001").content)
+        self.assertTrue(opens(self.console.get("/ok/plan0001")).endswith("open until Sun 8 Nov 2026 08:00 UTC"))
         self.console.store.settings_put(SettingsRecord(oid=TINO, timezone="../../etc/passwd"))
-        self.assertIn("Sun 8 Nov 2026 08:00 UTC.", self.console.get("/ok/plan0001").content)
+        self.assertTrue(opens(self.console.get("/ok/plan0001")).endswith("open until Sun 8 Nov 2026 08:00 UTC"))
 
     def test_a_person_whose_settings_cannot_be_read_still_gets_the_page_in_utc(self):
         console = Console(store=FailingStore(fail={"settings_get"}, clock=lambda: NOW))
         console.seed()
         reply = console.get("/ok/plan0001")
         self.assertEqual(reply.status, 200)
-        self.assertIn("Sun 8 Nov 2026 08:00 UTC.", reply.content)
+        self.assertTrue(opens(reply).endswith("open until Sun 8 Nov 2026 08:00 UTC"), opens(reply))
 
     def test_a_time_that_is_not_a_time_is_shown_as_it_is_stored_and_escaped(self):
         self.console.store.plan_put(make_plan(expires_at="<b>soon</b>"))
@@ -796,7 +894,7 @@ class Times(unittest.TestCase):
                 self.assertIsNone(core.canonical_zone("Mars/Olympus_Mons"))
                 self.assertIsNone(core.canonical_zone("Europe"))
                 self.assertIsNone(core.zone_of("Europe/Amsterdam"))
-                self.assertIn("Sun 8 Nov 2026 08:00 UTC.", self.console.get("/ok/plan0001").content)
+                self.assertTrue(opens(self.console.get("/ok/plan0001")).endswith("open until Sun 8 Nov 2026 08:00 UTC"))
         finally:
             core.zone_index.cache_clear()
 

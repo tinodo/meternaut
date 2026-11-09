@@ -6,10 +6,15 @@ A series is the cost of each day, oldest first, as a case keeps it.
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass
 from typing import Sequence
 
-from .core import Safe, fmt
+from ..brief import Brief, Saving, things
+from ..models import GROUP_FACT, CaseRecord
+from .core import Safe, esc, fmt
 
+WEAKEST_FIRST = ("Scenario", "Expected", "Verified")
+RISKS = {"low": ("Low risk", "low", "circle", 0), "medium": ("Medium risk", "mid", "triangle", 1), "high": ("High risk", "high", "diamond", 2)}
 SERIES_MIN = 2
 SERIES_MAX = 60
 NO_LINES = "Cost Management reports a cost 8 to 72 hours after it happens."
@@ -38,6 +43,69 @@ def summed(series: Sequence[list[float] | None]) -> list[float] | None:
     if not series or any(s is None for s in series) or len({len(s) for s in series}) != 1:  # type: ignore[arg-type]
         return None
     return [sum(day) for day in zip(*series)]  # type: ignore[arg-type]
+
+
+@dataclass(frozen=True)
+class Figure:
+    """What is at stake in a request, in a month: a saving (with its level and its basis), a cost (the most that a change could save, which nothing has measured), or nothing that can be
+    shown (and why). The list of the decisions and the page of one request draw the same figure from the same code."""
+
+    state: str  # save, cost or none
+    label: str
+    monthly: float | None
+    level: str
+    note: str
+
+
+def figure_of(savings: Sequence[Saving], costs: Sequence[float | None], basis: str = "") -> Figure:
+    """The figure of one request, or of the requests that a row stands for: their savings when every one has a figure (the weakest level of them, and `basis` when they have many), else
+    what they cost in 30 days, else nothing and the reason."""
+    if savings and all(s.monthly is not None for s in savings):
+        levels = {s.level for s in savings}
+        level = savings[0].level if len(levels) == 1 else next((w for w in WEAKEST_FIRST if w in levels), "Scenario")
+        return Figure("save", f"Saves, {level}", sum(s.monthly for s in savings), level, f"Based on {basis or savings[0].basis}.")  # type: ignore[misc]
+    known = [c for c in costs if c is not None]
+    if known and sum(known) > 0:
+        return Figure("cost", "Costs, saving not measured", sum(known), "", "The most that a change could save: what it would save was not worked out.")
+    return Figure("none", "Cost not visible", None, "", "No cost line in the last 30 days." if known else "No cost line was read yet.")
+
+
+def cost_of(brief: Brief, case: CaseRecord | None) -> float | None:
+    """What the finding costs in 30 days, from the cost lines: everything that it stands for when it is a group. None when no cost line was read."""
+    if brief.group is not None and brief.group.cost is not None:
+        return brief.group.cost
+    return number_of(case.cost_usd_30d) if case is not None else None
+
+
+def ids_known(brief: Brief, case: CaseRecord | None) -> bool:
+    """Whether the daily cost of the finding can be read: that of one resource always can, that of a group only when its case kept the ids of its resources (a case of an earlier search
+    kept their short hashes and nothing else)."""
+    if brief.group is None or case is None:
+        return True
+    group = case.facts.get(GROUP_FACT) if isinstance(case.facts, dict) else None
+    return isinstance(group, dict) and bool(group.get("resourceIds"))
+
+
+def series_reason(brief: Brief, case: CaseRecord | None) -> str:
+    """Why a request has no chart: its cost lines are there and the next search reads the series, the finding of an earlier search has to be judged again before its series can be read,
+    or no cost line exists yet."""
+    if not ids_known(brief, case):
+        return WHEN_JUDGED
+    return READ_LATER if (cost_of(brief, case) or 0) > 0 else NO_LINES
+
+
+def title_of(brief: Brief) -> tuple[Safe, str]:
+    """The title of one request as markup and as plain text: how many of what and where when it stands for many resources, else the headline without its place (the line under it says the
+    place), with "Review" for "Look at" and the name of the resource in code type."""
+    if brief.group is not None:
+        text = things(brief.group.count, brief.group.kind, brief.group.groups)
+        return esc(text), text
+    text, place = brief.headline, f" in group {brief.where.group}" if brief.where.group else ""
+    text = text[: -len(place)] if place and text.endswith(place) else text
+    text = "Review " + text[8:] if text.startswith("Look at ") else text
+    name = brief.where.name
+    before, found, after = text.partition(name) if name else (text, "", "")
+    return (fmt("{before}<code>{name}</code>{after}", before=before, name=name, after=after) if found else esc(text)), text
 
 
 def dollars(value: float, cents: bool = True) -> str:
@@ -112,3 +180,9 @@ def bar(share: float) -> Safe:
 def chip(label: str, kind: str = "", shape: str = "square") -> Safe:
     """A chip: a word and a shape. `kind` is low, mid, high or info (its colours), or empty."""
     return fmt('<span class="chip{kind}"><svg viewBox="0 0 12 12" aria-hidden="true">{shape}</svg>{label}</span>', kind=f" {kind}" if kind else "", shape=Safe(SHAPES[shape]), label=label)
+
+
+def risk_chip(level: str) -> Safe:
+    """The chip of a risk: a circle (low), a triangle (medium) or a diamond (high), and a word."""
+    label, kind, shape, _ = RISKS.get(level, RISKS["medium"])
+    return chip(label, kind, shape)

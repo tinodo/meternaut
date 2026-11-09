@@ -2,6 +2,7 @@ import re
 import unittest
 
 import support  # noqa: F401  (puts the app on the path)
+from cases.brief import Saving
 from cases.web import figures
 
 
@@ -81,6 +82,39 @@ class TheCharts(unittest.TestCase):
         for part in (figures.chart([1.0, 2.0]), figures.spark([1.0, 2.0]), figures.spark(None), figures.bar(0.5), figures.chip("Low risk", "low", "circle")):
             with self.subTest(part=str(part)[:40]):
                 self.assertNotRegex(str(part), r"\sstyle\s*=|#[0-9a-fA-F]{3,8}\b|<script|url\(")
+
+
+class TheFigure(unittest.TestCase):
+    def saving(self, monthly, level="Expected", basis="the cost lines of the last 30 days"):
+        return Saving(monthly, level, basis, None, "")
+
+    def test_a_saving_is_the_figure_when_every_request_has_one_and_it_says_its_level_and_its_basis(self):
+        one = figures.figure_of([self.saving(30.0)], [215.1])
+        self.assertEqual((one.state, one.label, one.monthly, one.level, one.note), ("save", "Saves, Expected", 30.0, "Expected", "Based on the cost lines of the last 30 days."))
+        many = figures.figure_of([self.saving(30.0), self.saving(10.0, "Scenario", "Azure Advisor's own estimate")], [None, None], "the figures of each, added up")
+        self.assertEqual((many.label, many.monthly, many.note), ("Saves, Scenario", 40.0, "Based on the figures of each, added up."), "the weakest level of them")
+        verified = figures.figure_of([self.saving(30.0, "Verified"), self.saving(1.0)], [None, None], "the figures of each, added up")
+        self.assertEqual(verified.level, "Expected")
+
+    def test_without_a_saving_the_cost_is_the_figure_and_without_a_cost_nothing_is_and_the_reason_is_said(self):
+        cost = figures.figure_of([self.saving(None)], [10.0, None, 5.0])
+        self.assertEqual((cost.state, cost.label, cost.monthly, cost.level), ("cost", "Costs, saving not measured", 15.0, ""))
+        self.assertIn("what it would save was not worked out", cost.note)
+        free = figures.figure_of([self.saving(None)], [0.0])
+        self.assertEqual((free.state, free.label, free.monthly, free.note), ("none", "Cost not visible", None, "No cost line in the last 30 days."))
+        unread = figures.figure_of([self.saving(None)], [None])
+        self.assertEqual((unread.state, unread.note), ("none", "No cost line was read yet."))
+        self.assertEqual(figures.figure_of([], []).state, "none")
+
+    def test_one_saving_without_a_figure_among_many_makes_the_row_a_cost_and_never_a_partial_sum(self):
+        mixed = figures.figure_of([self.saving(30.0), self.saving(None)], [5.0, 6.0])
+        self.assertEqual((mixed.state, mixed.monthly), ("cost", 11.0))
+
+    def test_a_risk_chip_is_a_word_and_a_shape_and_an_unknown_risk_is_read_as_medium(self):
+        self.assertEqual([figures.RISKS[level][0] for level in ("low", "medium", "high")], ["Low risk", "Medium risk", "High risk"])
+        self.assertIn('class="chip low"><svg viewBox="0 0 12 12" aria-hidden="true"><circle', str(figures.risk_chip("low")))
+        self.assertIn('class="chip high"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M6 1 11 6 6 11 1 6z"', str(figures.risk_chip("high")))
+        self.assertEqual(str(figures.risk_chip("unheard of")), str(figures.risk_chip("medium")))
 
 
 if __name__ == "__main__":

@@ -352,15 +352,25 @@ class TheWords(unittest.TestCase):
                 self.assertNotIn("?", reply.root.find("main").text())
 
     def test_nothing_is_called_saved_where_money_is_in_question_and_money_is_in_us_dollars(self):
-        names = ["GET /ok/plan0001", "GET /ok/plan0005", "GET /why/case0001", "GET /why/case0005", "GET /history", "GET /me/decisions", "GET /me/activity", "paused plan",
-                 "paused advice", "approved plan", "expired plan", "consumed plan", "failed plan", "answered advice"] + [name for name in self.pages
-                                                                                                                           if name.startswith(("answer ", "begin ", "return "))]
+        names = ["GET /history", "GET /me/decisions", "GET /me/activity"] + [name for name in self.pages if name.startswith(("answer ", "begin ", "return "))]
         for name in names:
             with self.subTest(page=name):
                 content = self.pages[name].content
                 self.assertNotRegex(content, r"\b(?:saved|saves|savings|save)\b", name)
                 self.assertNotRegex(content, r"[$€£]|\bEUR\b|\bUSD\b", name)
                 self.assertNotRegex(content.replace("US dollars", ""), r"\bdollars?\b", name)
+
+    def test_a_request_page_says_once_that_money_is_in_us_dollars_and_calls_a_saving_one_only_with_its_level(self):
+        names = ["GET /ok/plan0001", "GET /ok/plan0005", "GET /why/case0001", "GET /why/case0005", "paused plan", "paused advice", "approved plan", "expired plan", "consumed plan",
+                 "failed plan", "answered advice"]
+        for name in names:
+            with self.subTest(page=name):
+                content = self.pages[name].content
+                self.assertEqual(content.count("Money is in US dollars, and a year is twelve times the month."), 1, name)
+                self.assertNotRegex(content, r"[€£]|\bEUR\b|\bUSD\b", name)
+                self.assertNotRegex(content, r"\b(?:saved|savings|save)\b", name)
+                for found in re.findall(r"\bSaves\b[^.]*", content):
+                    self.assertRegex(found, r"^Saves, (?:Expected|Scenario|Verified)$", name)
 
     def test_no_figure_of_speech_and_no_fake_politeness(self):
         for name, reply in self.pages.items():

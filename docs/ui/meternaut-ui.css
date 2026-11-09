@@ -140,7 +140,7 @@ footer details p{margin-top:var(--spacingXS);max-width:46rem}
 .sec h2{margin:0}
 .sec p{margin:0;color:var(--colorNeutralForeground2)}
 .focus{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:var(--spacingXXL);padding:var(--spacingXXL);background:var(--colorNeutralBackground1);border:var(--strokeWidthThin) solid var(--colorNeutralStroke2);border-left:var(--strokeWidthThickest) solid var(--colorBrandStroke1);border-radius:var(--borderRadiusXLarge);box-shadow:var(--shadow4)}
-.eyebrow{display:flex;align-items:center;gap:var(--spacingS);margin:0;color:var(--colorBrandForegroundLink);font-weight:var(--fontWeightSemibold)}
+.eyebrow{display:flex;align-items:center;gap:var(--spacingS);margin:0;color:var(--colorBrandForegroundLink);font-size:var(--fontSizeBase300);line-height:var(--lineHeightBase300);font-weight:var(--fontWeightSemibold)}
 .focus h3{margin:var(--spacingS) 0 var(--spacingXS);font-size:var(--fontSizeBase600);line-height:var(--lineHeightBase600);overflow-wrap:anywhere}
 .m{margin:0;color:var(--colorNeutralForeground2);font-size:var(--fontSizeBase200);line-height:var(--lineHeightBase200)}
 .fig{margin:var(--spacingL) 0 0;font-size:var(--fontSizeHero900);line-height:var(--lineHeightHero900);font-weight:var(--fontWeightSemibold);font-variant-numeric:tabular-nums;color:var(--colorNeutralForeground1)}
@@ -150,7 +150,10 @@ footer details p{margin-top:var(--spacingXS);max-width:46rem}
 .facts{display:grid;grid-template-columns:max-content 1fr;gap:var(--spacingS) var(--spacingL);margin:var(--spacingL) 0}
 .facts dt{color:var(--colorNeutralForeground2);font-weight:var(--fontWeightSemibold)}
 .facts dd{margin:0}
+.focus>.facts{grid-column:1/-1;margin:0}
 .acts{display:flex;flex-wrap:wrap;gap:var(--spacingM);margin:var(--spacingL) 0 0}
+.acts.stack{flex-direction:column}
+.acts.stack>*{width:100%}
 .chart{margin:0 0 var(--spacingL)}
 .chart:last-child{margin-bottom:0}
 .chart figcaption{display:flex;flex-wrap:wrap;justify-content:space-between;gap:0 var(--spacingM);margin:0 0 var(--spacingXS);font-weight:var(--fontWeightSemibold)}
@@ -211,6 +214,15 @@ details.grp[open] .when-open{display:inline}
 .recent{margin:0;padding:0;list-style:none}
 .recent li{display:flex;flex-wrap:wrap;align-items:baseline;gap:var(--spacingXS) var(--spacingM);padding:var(--spacingS) 0;border-top:var(--strokeWidthThin) solid var(--colorNeutralStroke2)}
 .recent li:first-child{border-top:0}
+.cols{display:grid;grid-template-columns:minmax(0,1fr) 22rem;gap:var(--spacingXXL);align-items:start;margin-top:var(--spacingXXL)}
+.cols.solo{grid-template-columns:minmax(0,46rem)}
+.cols>div>h2:first-child{margin-top:0}
+.panel{padding:var(--spacingXL);background:var(--colorNeutralBackground2);border:var(--strokeWidthThin) solid var(--colorNeutralStroke2);border-radius:var(--borderRadiusXLarge)}
+.panel h2{margin-top:0}
+.panel form{margin:0}
+@media (max-width:64rem){
+.cols,.cols.solo{grid-template-columns:1fr}
+}
 @media (max-width:52rem){
 .focus{grid-template-columns:1fr}
 .item{grid-template-columns:2rem minmax(0,1fr) auto;grid-template-areas:"rank main impact" "rank spark act"}
@@ -232,7 +244,7 @@ td .btn,td button,.btn.sm{width:auto}
 a{color:LinkText}
 .btn,button{border:2px solid ButtonText;background:ButtonFace;color:ButtonText}
 .btn.primary,button.primary{border-color:Highlight}
-.notice,blockquote.quote,.table-wrap,th,td,details.more,details.grp,.item,.kpi,.focus,.chip{border-color:CanvasText}
+.notice,blockquote.quote,.table-wrap,th,td,details.more,details.grp,.item,.kpi,.focus,.panel,.chip{border-color:CanvasText}
 nav a[aria-current="page"]{border-bottom-color:Highlight}
 :focus-visible{outline:3px solid Highlight;box-shadow:none}
 .ln{stroke:Highlight}

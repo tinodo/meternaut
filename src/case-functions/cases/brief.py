@@ -146,13 +146,15 @@ class Fact:
 @dataclass(frozen=True)
 class Saving:
     """What it is worth, in US dollars a month as the data holds it. `level` is Verified, Expected or Scenario; `basis` says what the figure is computed from.
-    Without a figure `monthly` is None and `why_none` says why in one phrase."""
+    Without a figure `monthly` is None and `why_none` says why in one phrase; `specific` is set when that phrase is the finding's own reason (a family's, a workspace whose volume was
+    not read, a change that was not needed) and not only that no saving was worked out from the cost that was read."""
 
     monthly: float | None
     level: str
     basis: str
     waiting_per_day: float | None
     why_none: str
+    specific: bool = False
 
 
 @dataclass(frozen=True)
@@ -835,7 +837,7 @@ def _saving(case: CaseRecord | None, plan: PlanRecord | None, action: ActionReco
     check = action.verification if action is not None and isinstance(action.verification, dict) else {}
     before, after = _figure(check.get("costBeforeUsd30d")), _figure(check.get("costAfterUsd"))
     if action is not None and action.no_change:
-        return Saving(None, "", "", None, NOTHING_CHANGED_SAVING)
+        return Saving(None, "", "", None, NOTHING_CHANGED_SAVING, True)
     # Cost lines that show no cost confirm only a change that ends the cost (a delete, a stop). A resize or a change of tier leaves the resource billing, so its confirmation is a lower
     # figure, in the branch below, and never "no cost".
     ends = fam is None or fam.cost_ends
@@ -855,11 +857,12 @@ def _saving(case: CaseRecord | None, plan: PlanRecord | None, action: ActionReco
             why = f"The {number_text(group.count)} resources cost {usd_text(cost)} together in the last 30 days. What a change would save was not worked out."
         else:
             why = f"The resource cost {usd_text(cost)} in the last 30 days. What a change would save was not worked out."
+        specific = False
         if fam is not None and fam.no_figure:
-            why = fam.no_figure
+            why, specific = fam.no_figure, True
         elif _unread_missing(case):
-            why = _unread_missing(case)
-        return Saving(None, "", "", None, why)
+            why, specific = _unread_missing(case), True
+        return Saving(None, "", "", None, why, specific)
     if waiting is None:
         waiting = round(figure / 30, 2)
     if fam is not None and fam.saving_basis:

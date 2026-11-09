@@ -12,10 +12,11 @@ from dataclasses import dataclass
 from typing import Mapping, Sequence
 
 from ..brief import Brief, ago_text, plain, plan_headline, things
-from ..models import ADVICE_QUIET_DAYS, ADVISE, GROUP_FACT, INVESTIGATION, ActionRecord, CaseRecord, PlanRecord
+from ..models import ADVICE_QUIET_DAYS, ADVISE, INVESTIGATION, ActionRecord, CaseRecord, PlanRecord
 from .common import brief_of, cases_by_id, effective_state, is_expired, may_answer, read
 from .core import Ctx, Response, Safe, esc, fmt, join, link_part, stamp
-from .figures import NO_LINES, READ_LATER, WHEN_JUDGED, a_year, bar, chart, chip, dollars, number_of, series_of, spark, summed
+from .figures import (NO_LINES, READ_LATER, RISKS, WEAKEST_FIRST, WHEN_JUDGED, Figure, a_year, bar, chart, chip, cost_of, dollars, figure_of, ids_known, risk_chip, series_of, spark, summed,
+                      title_of)
 from .layout import code, details, notice, page, paragraph, table
 
 ROWS_SHOWN = 12  # the rows of each lane that the page shows, unless a person asks for all of them
@@ -27,8 +28,6 @@ RECENT_ACTIONS = 100
 HELD_CASES = 300  # the cases of each status that are looked at for the findings that are held back (the same number as cases/learning.py reads)
 HELD_PLANS = 200  # the plans that are looked at for the answers that people gave lately (the same number as cases/learning.py reads)
 SORTS = (("impact", "Impact", "Most at stake first."), ("age", "Age", "Waiting longest first."), ("risk", "Risk", "Lowest risk first."))
-RISKS = {"low": ("Low risk", "low", "circle", 0), "medium": ("Medium risk", "mid", "triangle", 1), "high": ("High risk", "high", "diamond", 2)}
-WEAKEST_FIRST = ("Scenario", "Expected", "Verified")
 OUTCOMES = {"done": ("Done", "low", "circle"), "verified": ("Done", "low", "circle"), "unchanged": ("Nothing to change", "", "square"), "declined": ("Declined", "", "square"),
             "failed": ("Failed", "high", "diamond"), "approved": ("Approved", "info", "square"), "running": ("Running", "info", "square"), "answered": ("Answered", "info", "square"),
             "withdrawn": ("Withdrawn", "", "square"), "expired": ("Expired", "", "square")}
@@ -45,10 +44,7 @@ class Row:
     @property
     def cost(self) -> float | None:
         """What the finding costs in 30 days, from the cost lines: everything that it stands for when it is a group. None when no cost line was read."""
-        group = self.brief.group
-        if group is not None and group.cost is not None:
-            return group.cost
-        return number_of(self.case.cost_usd_30d) if self.case is not None else None
+        return cost_of(self.brief, self.case)
 
     @property
     def series(self) -> list[float] | None:
@@ -56,24 +52,8 @@ class Row:
 
     @property
     def ids_known(self) -> bool:
-        """Whether the daily cost of the finding can be read: that of one resource always can, that of a group only when its case kept the ids of its resources (a case of an earlier
-        search kept their short hashes and nothing else)."""
-        if self.brief.group is None or self.case is None:
-            return True
-        group = self.case.facts.get(GROUP_FACT) if isinstance(self.case.facts, dict) else None
-        return isinstance(group, dict) and bool(group.get("resourceIds"))
-
-
-@dataclass(frozen=True)
-class Figure:
-    """What is at stake in a row, in a month: a saving (with its level and its basis), a cost (the most that a change could save, which nothing has measured), or nothing that can be
-    shown (and why)."""
-
-    state: str  # save, cost or none
-    label: str
-    monthly: float | None
-    level: str
-    note: str
+        """Whether the daily cost of the finding can be read (figures.ids_known)."""
+        return ids_known(self.brief, self.case)
 
 
 @dataclass(frozen=True)
@@ -110,16 +90,7 @@ class Unit:
 
 
 def _figure(members: Sequence[Row]) -> Figure:
-    savings = [m.brief.saving for m in members]
-    if all(s.monthly is not None for s in savings):
-        levels = {s.level for s in savings}
-        level = savings[0].level if len(levels) == 1 else next((w for w in WEAKEST_FIRST if w in levels), "Scenario")
-        basis = savings[0].basis if len(members) == 1 else "the figures of each, added up"
-        return Figure("save", f"Saves, {level}", sum(s.monthly for s in savings), level, f"Based on {basis}.")  # type: ignore[misc]
-    known = [m.cost for m in members if m.cost is not None]
-    if known and sum(known) > 0:
-        return Figure("cost", "Costs, saving not measured", sum(known), "", "The most that a change could save: what it would save was not worked out.")
-    return Figure("none", "Cost not visible", None, "", "No cost line in the last 30 days." if known else "No cost line was read yet.")
+    return figure_of([m.brief.saving for m in members], [m.cost for m in members], "the figures of each, added up" if len(members) > 1 else "")
 
 
 def _unit(members: Sequence[Row]) -> Unit:
@@ -160,15 +131,7 @@ def _title(unit: Unit) -> tuple[Safe, str]:
         rtype = unit.first.case.resource_type if unit.first.case is not None else ""
         text = things(len(unit.members), rtype, len({m.brief.where.group for m in unit.members if m.brief.where.group}))
         return esc(text), text
-    if first.group is not None:
-        text = things(first.group.count, first.group.kind, first.group.groups)
-        return esc(text), text
-    text, place = first.headline, f" in group {first.where.group}" if first.where.group else ""
-    text = text[: -len(place)] if place and text.endswith(place) else text
-    text = "Review " + text[8:] if text.startswith("Look at ") else text
-    name = first.where.name
-    before, found, after = text.partition(name) if name else (text, "", "")
-    return (fmt("{before}<code>{name}</code>{after}", before=before, name=name, after=after) if found else esc(text)), text
+    return title_of(first)
 
 
 def _meta(ctx: Ctx, unit: Unit) -> str:
@@ -180,8 +143,7 @@ def _meta(ctx: Ctx, unit: Unit) -> str:
 
 
 def _chips(unit: Unit) -> Safe:
-    label, kind, shape, _ = RISKS.get(max((m.brief.risk.level for m in unit.members), key=lambda level: RISKS.get(level, RISKS["medium"])[3]), RISKS["medium"])
-    chips = [chip(label, kind, shape)]
+    chips = [risk_chip(max((m.brief.risk.level for m in unit.members), key=lambda level: RISKS.get(level, RISKS["medium"])[3]))]
     if unit.figure.state != "save":
         chips.append(chip("Needs measuring"))
     elif len(unit.members) == 1:

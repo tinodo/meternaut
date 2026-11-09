@@ -151,9 +151,9 @@ class WithTheRealLoop(unittest.TestCase):
     def test_the_page_shows_the_plan_that_the_loop_made(self):
         reply = self.console.get(self.path)
         self.assertEqual(reply.status, 200)
-        self.assertEqual(reply.headings(1), ["Delete the unattached disk planted-disk-1 in group meternaut-test-rg"])
-        self.assertIn("Expected saving: about 7.17 US dollars a month", reply.main.find("p", class_="lead").text())
-        found = reply.summary(1)
+        self.assertEqual(reply.headings(1), ["Delete the unattached disk planted-disk-1"])
+        self.assertIn("Saves, Expected. $7.17 a month.", reply.main.find("p", class_="figsub").text())
+        found = reply.facts()
         self.assertEqual(found["What changes"], "Deletes the disk planted-disk-1 in resource group meternaut-test-rg. Nothing else changes.")
         self.assertEqual(found["Undo"], "This cannot be undone.")
         self.assertIn("Meternaut holds no right of its own to change anything.", found["Who does it"])

@@ -287,14 +287,14 @@ class WhatAPersonSees(unittest.TestCase):
 
     def test_the_page_has_the_type_word_the_figure_the_rows_and_the_choices_in_this_order(self):
         self.assertEqual(self.reply.status, 200)
-        self.assertEqual(self.reply.headings(1), ["Consider changing the Log Analytics workspace ws-demo in group rg-demo"])
-        self.assertEqual(self.reply.headings(2), ["Evidence", "What you could do", "If you answer", "Whose is it", "Your answer"])
+        self.assertEqual(self.reply.headings(1), ["Consider changing the Log Analytics workspace ws-demo"])
+        self.assertEqual(self.reply.headings(2), ["If you answer", "What was measured", "What you could do", "Why the AIs think so", "Whose is it", "Your answer"])
         self.assertIn("Data that nothing reads", self.reply.headings(3))
-        figure = self.text.index("Scenario saving: about 71.60 US dollars a month")
+        figure = self.text.index("Saves, Scenario. $71.60 a month.")
         method = self.text.index("About 75 percent of what this workspace is billed for is data that nothing reads. That is 88.4 GB of the 118.4 GB that it took in over 30 days.")
         rows = self.text.index("AzureDiagnostics: 40.2 GB in 30 days, 34 percent of what is billed.")
         choices = self.text.index("What you could do")
-        end = self.text.index("Nothing changes in Azure when you answer.")
+        end = self.text.index("Nothing changes in Azure when you answer.", choices)
         self.assertLess(figure, method)
         self.assertLess(method, rows)
         self.assertLess(rows, choices)
@@ -320,17 +320,18 @@ class WhatAPersonSees(unittest.TestCase):
         self.assertIn("a transformation in the data collection rule", parts[1])
         self.assertIn("move its table to the Basic or Auxiliary plan, if the table supports it, or keep it for less time", parts[2])
         self.assertIn("That lowers the bill by less than the figure above.", parts[2])
-        self.assertTrue(self.text[self.text.index("What you could do"):].split("If you answer")[0].rstrip().endswith("Nothing changes in Azure when you answer."))
+        self.assertTrue(self.text[self.text.index("What you could do"):].split("Why the AIs think so")[0].rstrip().endswith("Nothing changes in Azure when you answer."))
 
     def test_the_choices_name_no_writer_that_the_tools_did_not_show(self):
         self.assertNotIn("largest writers", self.text)
         for invented in ("Key Vault", "Kubernetes", "irtual machine"):
             self.assertNotIn(invented, self.text)
 
-    def test_the_words_of_money_on_the_page_are_those_of_every_page_and_the_page_asks_nothing(self):
+    def test_the_words_of_money_on_the_page_are_those_of_the_style_guide_and_the_page_asks_nothing(self):
         content = self.reply.content.replace("saved searches", "")  # what a workspace holds, not a money word
-        self.assertNotRegex(content, r"\b(?:saved|saves|savings|save)\b")
-        self.assertNotRegex(content, r"[$€£]|\bEUR\b|\bUSD\b")
+        self.assertNotRegex(content, r"\b(?:saved|savings|save)\b")
+        self.assertEqual(re.findall(r"\bSaves\b[^.]*", content), ["Saves, Scenario"], "a saving is called one only with its level")
+        self.assertNotRegex(content, r"[€£]|\bEUR\b|\bUSD\b")
         self.assertNotRegex(content.replace("US dollars", ""), r"\bdollars?\b")
         self.assertNotIn("?", self.text)
 
@@ -400,7 +401,7 @@ class WhenTheRecordIsNotEnough(unittest.TestCase):
         case, plan, text, letter = self.render(record({}, READERS, RUNS))
         self.assertEqual(case.facts["unread"], {"missing": "volume"})
         self.assertIsNone(plan.saving_usd_month)
-        self.assertIn("No figure. How much data this workspace takes in was not read, so there is no way to say how much of it nothing reads.", text)
+        self.assertIn("Costs, saving not measured. $95.90 a month. How much data this workspace takes in was not read, so there is no way to say how much of it nothing reads.", text)
         self.assertIn("No figure: how much data this workspace takes in was not read", letter.text)
         self.assertNotIn("Data that nothing reads", text)
         self.assertNotIn("What you could do", text)
@@ -413,8 +414,8 @@ class WhenTheRecordIsNotEnough(unittest.TestCase):
         case, plan, text, letter = self.render(record(VOLUMES, {kind: None for kind in READERS}, RUNS, volume={"billable_gb": 118.4, "days": 30, "tables": 5}))
         self.assertEqual(case.facts["unread"], {"missing": "readers"})
         self.assertIsNone(plan.saving_usd_month)
-        self.assertIn("No figure. Not everything that reads this workspace's data (its rules, saved searches, workbooks and analytics rules) could be read, so Meternaut cannot say which "
-                      "data nothing reads.", text)
+        self.assertIn("Costs, saving not measured. $95.90 a month. Not everything that reads this workspace's data (its rules, saved searches, workbooks and analytics rules) could be read, "
+                      "so Meternaut cannot say which data nothing reads.", text)
         self.assertIn("No figure: not everything that reads this workspace's data", letter.text)
         self.assertNotIn("What you could do", text)
         self.assertNotIn("AzureDiagnostics: ", text)
@@ -428,14 +429,14 @@ class WhenTheRecordIsNotEnough(unittest.TestCase):
                                           finding_about_the_workspace(evidence=[entry("r1", "Percentage CPU", 3.0)]))
         self.assertNotIn("unread", case.facts)
         self.assertIsNone(plan.saving_usd_month)
-        self.assertIn("No figure. The resource cost 95.90 US dollars in the last 30 days. What a change would save was not worked out.", text)
+        self.assertIn("Costs, saving not measured. $95.90 a month. The most that a change could save: what it would save was not worked out.", text)
         self.assertNotIn("What you could do", text)
 
     def test_a_workspace_whose_volume_was_read_and_whose_readers_were_never_asked_for_is_about_something_else(self):
         case, plan, text, _ = self.render(record(VOLUMES, volume={"billable_gb": 118.4, "days": 30, "tables": 5}), finding_about_the_workspace(evidence=[entry("r1", "Billable GB Perf", 30.0)]))
         self.assertNotIn("unread", case.facts)
         self.assertIsNone(plan.saving_usd_month)
-        self.assertIn("No figure. The resource cost 95.90 US dollars in the last 30 days. What a change would save was not worked out.", text)
+        self.assertIn("Costs, saving not measured. $95.90 a month. The most that a change could save: what it would save was not worked out.", text)
         self.assertNotIn("What you could do", text)
 
     def test_a_finding_about_anything_else_gets_no_digest_whatever_its_record_holds(self):
@@ -584,7 +585,7 @@ class WhenTheVolumeMovesWhileTheRequestIsOpen(unittest.TestCase):
     def test_the_page_the_letters_and_the_card_show_that_one_figure_and_never_the_old_one_under_the_name_of_another_source(self):
         case, plan = self.two_watches()
         reply, text = page_of(case, plan)
-        self.assertIn("Scenario saving: about 66.60 US dollars a month", text)
+        self.assertIn("Saves, Scenario. $66.60 a month.", text)
         self.assertIn("About 69 percent of what this workspace is billed for is data that nothing reads. That is 68.2 GB of the 98.2 GB that it took in over 30 days.", text)
         self.assertIn("AzureDiagnostics: 20 GB in 30 days, 20 percent of what is billed.", text)
         for gone in ("71.60", "71.6 ", "Azure Advisor", "75 percent"):
@@ -610,7 +611,7 @@ class WhenTheVolumeMovesWhileTheRequestIsOpen(unittest.TestCase):
         self.assertEqual((b.saving.monthly, b.saving.level, b.saving.basis, b.saving.waiting_per_day), (None, "", "", None))
         self.assertEqual(b.saving.why_none, "The resource had no cost in the last 30 days.")
         _, text = page_of(case, plan)
-        self.assertIn("No figure. The resource had no cost in the last 30 days.", text)
+        self.assertIn("Cost not visible. No cost line in the last 30 days.", text)
         self.assertNotIn("71.60", text)
         self.assertIn("AzureDiagnostics: 20 GB in 30 days", text, "the rows are those of the digest all the same")
 
@@ -836,7 +837,7 @@ class WithTheRealTools(unittest.TestCase):
         case, plan = case_and_plan(self.investigate())
         self.assertEqual(case.facts["unread"], {"missing": "readers"})
         self.assertEqual((case.recommendation, plan.saving_usd_month), ("investigate", None))
-        self.assertIn("No figure.", page_of(case, plan)[1])
+        self.assertRegex(page_of(case, plan)[1], r"Costs, saving not measured\.|Cost not visible\.")
 
 
 if __name__ == "__main__":

@@ -364,6 +364,7 @@ class AnApprovalThatChangedNothing(unittest.TestCase):
                 b = shown(world, plan)
                 self.assertEqual((b.saving.monthly, b.saving.level), (None, ""))
                 self.assertEqual(b.saving.why_none, brief.NOTHING_CHANGED_SAVING)
+                self.assertTrue(b.saving.specific)
 
     def test_the_decision_brief_says_that_nothing_was_changed_and_not_that_it_was_made_with_their_rights(self):
         world, plan, resource, action = self.nothing_to_do("stop-vm")

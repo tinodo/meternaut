@@ -21,6 +21,7 @@ from cases.families import digest as plan_digest
 from cases.families import registry
 from cases.models import ActionRecord
 from cases.people import Person
+from cases.web import figures
 
 BASE = "https://meternaut.example"
 NONCE = "N0nce-0123456789abcdefghijklmnop"
@@ -75,11 +76,11 @@ def console_of(world, plan, case) -> Console:
 
 
 def approve_rows(reply) -> dict[str, str]:
-    for which in range(3):
-        found = reply.summary(which)
-        if "What changes" in found:
-            return found
-    raise AssertionError("the page has no part that says what changes")
+    """What happens on a yes, as the card of the request page lists it."""
+    found = reply.facts()
+    if "What changes" not in found:
+        raise AssertionError("the page has no part that says what changes")
+    return found
 
 
 def card_context(b) -> CardContext:
@@ -167,7 +168,7 @@ class ThePageIsARenderOfTheBrief(unittest.TestCase):
                 expected = a_brief(plan, case, now=console.now)
                 reply = console.get(f"/ok/{plan.plan_id}")
                 self.assertEqual(reply.status, 200)
-                self.assertEqual(reply.headings(1), [expected.headline])
+                self.assertEqual(reply.headings(1), [figures.title_of(expected)[1]])
                 found = approve_rows(reply)
                 self.assertEqual(list(found), ["What changes", "Who does it", "Checked again", "Undo", "What could go wrong"])
                 self.assertEqual(found["What changes"], expected.change)
@@ -186,13 +187,14 @@ class ThePageIsARenderOfTheBrief(unittest.TestCase):
                 bold = [strong.text() for strong in reply.main.find_all("strong")]
                 self.assertEqual("This cannot be undone." in bold, not REVERSIBLE[name], bold)
 
-    def test_the_lead_says_the_level_and_the_figure_or_that_there_is_none(self):
+    def test_the_figure_says_the_level_and_the_figure_or_why_there_is_none(self):
         world, plan, case = made("change-disk-tier")
         reply = console_of(world, plan, case).get(f"/ok/{plan.plan_id}")
-        self.assertIn("No figure. The price of a disk depends on its size and its type", reply.main.find("p", class_="lead").text())
+        sub = reply.main.find("p", class_="figsub").text()
+        self.assertTrue(sub.startswith("Costs, saving not measured. $20.00 a month. The price of a disk depends on its size and its type"), sub)
         world, plan, case = made("resize-vm")
         reply = console_of(world, plan, case).get(f"/ok/{plan.plan_id}")
-        self.assertIn("Scenario saving: about 30.00 US dollars a month", reply.main.find("p", class_="lead").text())
+        self.assertIn("Saves, Scenario. $30.00 a month.", reply.main.find("p", class_="figsub").text())
 
 
 class TheLettersAndTheCardsAreRendersOfTheBrief(unittest.TestCase):

@@ -409,6 +409,7 @@ class TheSaving(unittest.TestCase):
         costly = brief_of(make_case(cost_usd_30d=848.75, saving_usd_month=None), make_plan(saving_usd_month=None)).saving
         self.assertEqual((costly.monthly, costly.why_none), (None, "The resource cost 848.75 US dollars in the last 30 days. What a change would save was not worked out."))
         self.assertNotIn("No cost line", costly.why_none, "a cost that is known is never said to be missing")
+        self.assertEqual([none.specific, free.specific, costly.specific], [False, False, False], "that no saving was worked out from the cost that was read is not a reason of the finding's own")
         for bad in (-5.0, math.nan, math.inf, True, "7"):
             with self.subTest(figure=bad):
                 self.assertIsNone(brief_of(make_case(), make_plan(saving_usd_month=bad)).saving.monthly)
@@ -515,11 +516,12 @@ class TheDataThatNothingReads(unittest.TestCase):
         for missing in ("volume", "readers"):
             with self.subTest(missing=missing):
                 b = brief_of(workspace_case({"missing": missing}), workspace_plan(saving_usd_month=None, waiting_costs_usd_day=None))
-                self.assertEqual((b.saving.monthly, b.saving.why_none), (None, brief.UNREAD_MISSING[missing]))
+                self.assertEqual((b.saving.monthly, b.saving.why_none, b.saving.specific), (None, brief.UNREAD_MISSING[missing], True))
                 self.assertLess(len(b.saving.why_none), 200)
                 self.assertEqual((b.unread, b.options), (None, ()))
         other = brief_of(workspace_case({"missing": "anything else"}), workspace_plan(saving_usd_month=None, waiting_costs_usd_day=None)).saving
         self.assertEqual(other.why_none, "The resource cost 80.00 US dollars in the last 30 days. What a change would save was not worked out.")
+        self.assertFalse(other.specific)
 
     def test_the_figure_of_advisor_stays_when_the_finding_has_one_and_the_lines_are_still_shown(self):
         b = brief_of(workspace_case(saving_usd_month=12.0), workspace_plan(saving_usd_month=12.0, waiting_costs_usd_day=0.4))

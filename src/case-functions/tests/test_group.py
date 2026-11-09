@@ -804,10 +804,11 @@ class WhatAPersonSees(unittest.TestCase):
         (self.plan,) = self.h.store.plans_open()
         self.reply, self.text = page_of(self.case, self.plan)
 
-    def test_the_page_has_the_headline_the_sentence_without_a_figure_the_rows_and_the_one_form(self):
+    def test_the_page_has_the_title_the_figure_without_a_saving_the_rows_and_the_one_form(self):
         self.assertEqual(self.reply.status, 200)
-        self.assertEqual(self.reply.headings(1), [HEADLINE])
-        self.assertIn("No figure. The 60 resources cost 1,830.00 US dollars together in the last 30 days. What a change would save was not worked out.", self.text)
+        self.assertEqual(self.reply.headings(1), ["60 private endpoints in 14 resource groups"])
+        self.assertEqual(self.reply.main.find("p", class_="fig").text(), "$21,960 a year")
+        self.assertIn("Costs, saving not measured. $1,830.00 a month. The most that a change could save: what it would save was not worked out.", self.text)
         self.assertIn("Covers 60 private endpoints in 14 resource groups Azure Resource Graph Together they cost 1,830.00 US dollars in the last 30 days Azure cost lines "
                       "Examples pe-60, pe-59, pe-58, pe-57, pe-56, pe-55 and 54 more Azure Resource Graph", self.text)
         self.assertTrue(self.reply.form(has_button="Worth acting on").has_button("Not worth it"))

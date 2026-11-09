@@ -13,6 +13,7 @@ CODE = "0.AbCdEfGhIjKlMnOpQrSt-code-from-the-sign-in"
 STATE = "state-of-the-sign-in_0123456789"
 RETURN = {"code": CODE, "state": STATE, "session_state": "a-session-state"}
 HEADLINE = "Delete the unattached disk planted-disk-1 in group meternaut-test-rg"
+TITLE = "Delete the unattached disk planted-disk-1"  # the headline without its place, which the line under the title says
 ANSWERS = [("decision", "approve", APPROVE), ("decision", "decline", "Decline"), ("decision", "not_mine", "This is not mine"), ("decision", "ask", "Ask or tell"),
            ("decision", "later", "Decide later")]
 
@@ -40,19 +41,23 @@ class ThePage(unittest.TestCase):
         self.console.seed()
         self.reply = self.console.get("/ok/plan0001")
 
-    def test_the_headline_says_what_is_asked_and_the_lead_what_it_gives(self):
+    def test_the_title_says_what_is_asked_and_the_card_what_it_gives(self):
         self.assertEqual(self.reply.status, 200)
-        self.assertEqual(self.reply.headings(1), [HEADLINE])
-        self.assertEqual(self.reply.root.find("title").text(), f"{HEADLINE} - Meternaut")
-        self.assertEqual(self.reply.main.find("p", class_="lead").text(),
-                         "Expected saving: about 7.17 US dollars a month, from the cost lines of the last 30 days. Waiting costs about 0.24 US dollars a day.")
-        self.assertEqual(self.reply.main.find("p", class_="muted").text(), "Found 3 days ago. Open until Sun 8 Nov 2026 08:00 UTC (09:00 CET).")
+        self.assertEqual(self.reply.headings(1), [TITLE])
+        self.assertEqual(self.reply.root.find("title").text(), f"{TITLE} - Meternaut")
+        self.assertEqual(self.reply.main.find("div", class_="head").find("p").text(),
+                         "Managed disk · resource group meternaut-test-rg · found 3 days ago · open until Sun 8 Nov 2026 08:00 UTC (09:00 CET)")
+        self.assertEqual(self.reply.main.find("p", class_="fig save").text(), "$86 a year")
+        self.assertEqual(self.reply.main.find("p", class_="figsub").text(),
+                         "Saves, Expected. $7.17 a month. Based on the cost lines of the last 30 days. Waiting costs about $0.24 a day.")
+        self.assertIn("Money is in US dollars, and a year is twelve times the month.", self.reply.content)
 
     def test_the_page_answers_the_eight_questions_in_this_order(self):
-        self.assertEqual(self.reply.headings(2)[:4], ["Evidence", "If you approve", "Whose is it", "Your answer"])
+        self.assertEqual(self.reply.headings(2)[:5], ["If you approve", "What was measured", "Why the AIs think so", "Whose is it", "Your answer"])
         self.assertIn("How sure: High.", self.reply.content)
-        self.assertEqual(list(self.reply.summary(0)), ["Cost, last 30 days", "State", "Locks and keep tags"])
-        found = self.reply.summary(1)
+        self.assertEqual(self.reply.measured(), {"Cost, last 30 days": ("7.17 US dollars", "Azure cost lines"), "State": ("Not attached to any virtual machine", "Azure Resource Graph"),
+                                                 "Locks and keep tags": ("None found", "Azure, checked by code")})
+        found = self.reply.facts()
         self.assertEqual(list(found), ["What changes", "Who does it", "Checked again", "Undo", "What could go wrong"])
         self.assertEqual(found["What changes"], "Deletes the disk planted-disk-1 in resource group meternaut-test-rg. Nothing else changes.")
         self.assertTrue(found["Who does it"].startswith("You do, with your own Azure sign-in"), found["Who does it"])
@@ -64,24 +69,32 @@ class ThePage(unittest.TestCase):
         self.assertIn("Meternaut has not looked up who owns this resource yet.", self.reply.content)
         self.assertIn("Managed disk planted-disk-1, resource group meternaut-test-rg, subscription bbbbbbbb.", self.reply.content)
 
+    def test_three_chips_say_the_risk_how_sure_the_ais_are_and_what_a_change_leaves_behind(self):
+        chips = [chip.text() for chip in self.reply.main.find("p", class_="chips").find_all("span")]
+        self.assertEqual([c for c in chips if c], ["Medium risk", "High confidence", "Cannot be undone"])
+        self.console.store.plan_put(make_plan(family="resize-disk", undo="Resize the disk back to its old size within 24 hours."))
+        undoable = self.console.get("/ok/plan0001").main.find("p", class_="chips").text()
+        self.assertIn("Can be undone", undoable)
+        self.assertNotIn("Cannot be undone", undoable)
+
     def test_what_could_go_wrong_and_the_undo_are_not_folded_away_and_a_delete_says_in_bold_that_it_cannot_be_undone(self):
         outside = [node for node in self.reply.main.walk() if node.tag == "dl" and not any(parent.tag == "details" for parent in _parents(node))]
         text = " ".join(node.text() for node in outside)
         self.assertIn("What could go wrong", text)
         self.assertIn("Undo", text)
-        self.assertEqual([strong.text() for strong in self.reply.main.find_all("strong")][-1:], ["This cannot be undone."])
+        self.assertIn("This cannot be undone.", [strong.text() for strong in self.reply.main.find_all("strong")])
 
     def test_a_change_that_has_an_undo_does_not_say_that_it_cannot_be_undone(self):
         self.console.store.plan_put(make_plan(family="resize-disk", undo="Resize the disk back to its old size within 24 hours."))
         reply = self.console.get("/ok/plan0001")
         self.assertNotIn("cannot be undone", reply.content)
-        self.assertEqual(reply.summary(1)["Undo"], "Resize the disk back to its old size within 24 hours.")
+        self.assertEqual(reply.facts()["Undo"], "Resize the disk back to its old size within 24 hours.")
         self.assertEqual(reply.headings(1), ["Delete an unattached managed disk in resource group meternaut-test-rg"], "a family without words of its own keeps the plan's title")
 
     def test_a_change_with_no_undo_text_says_so_plainly(self):
         self.console.store.plan_put(make_plan(family="resize-disk", undo=""))
         reply = self.console.get("/ok/plan0001")
-        self.assertEqual(reply.summary(1)["Undo"], "This cannot be undone.")
+        self.assertEqual(reply.facts()["Undo"], "This cannot be undone.")
 
     def test_the_two_ais_words_are_in_boxes_that_say_that_code_did_not_check_them(self):
         labels = [p.text() for p in self.reply.main.find_all("p", class_="quote-label")]
@@ -130,9 +143,9 @@ class ThePage(unittest.TestCase):
     def test_the_case_page_is_the_same_brief(self):
         case_page = self.console.get("/why/case0001")
         self.assertEqual(case_page.status, 200)
-        self.assertEqual(case_page.headings(1), [HEADLINE])
-        self.assertEqual(case_page.headings(2)[:4], ["Evidence", "If you approve", "Whose is it", "Your answer"])
-        self.assertEqual(case_page.summary(1), self.reply.summary(1))
+        self.assertEqual(case_page.headings(1), [TITLE])
+        self.assertEqual(case_page.headings(2)[:5], ["If you approve", "What was measured", "Why the AIs think so", "Whose is it", "Your answer"])
+        self.assertEqual(case_page.facts(), self.reply.facts())
 
     def test_the_footer_says_that_an_ai_wrote_it_and_under_about_this_page_why_the_person_sees_it_and_who_is_responsible(self):
         footer = self.reply.root.find("footer")
@@ -152,7 +165,7 @@ class ThePage(unittest.TestCase):
         for tag in ("h1", "h2", "h3", "a", "button", "title", "th", "dt"):
             for node in reply.root.find_all(tag):
                 self.assertNotIn("MODEL", node.text())
-        for rows_ in (reply.summary(0), reply.summary(1)):
+        for rows_ in (reply.facts(), {name: value for name, (value, _) in reply.measured().items()}):
             for name, value in rows_.items():
                 self.assertNotIn("MODEL", value, name)
 
@@ -166,17 +179,19 @@ class ThePage(unittest.TestCase):
         self.assertFalse(store.nonce_use(token, TINO, "plan0001"), "used once")
         self.assertNotEqual(self.console.get("/ok/plan0001").forms()[0].fields["nonce"], token, "each page has a token of its own")
 
-    def test_approve_and_decline_are_buttons_of_the_same_size_and_height_in_one_row(self):
+    def test_approve_and_decline_are_buttons_of_the_same_size_and_height_in_one_stack(self):
         form = self.reply.form("/ok/plan0001", has_button=APPROVE)
-        row = form.node.find("div", class_="actions")
+        row = form.node.find("div", class_="acts stack")
         buttons = row.find_all("button")
         self.assertEqual([b.text() for b in buttons], [APPROVE, "Decline"])
         self.assertEqual([(b.attrs["name"], b.attrs["value"]) for b in buttons], [("decision", "approve"), ("decision", "decline")])
         style = layout.STYLE
         self.assertRegex(style, r"\.btn,button\{[^}]*min-height:2\.5rem[^}]*min-width:8rem")
-        self.assertRegex(style, r"\.actions>\*\{flex:1 1 14rem;max-width:22rem\}")
+        self.assertRegex(style, r"\.acts\.stack\{flex-direction:column\}\n\.acts\.stack>\*\{width:100%\}")
         for rule in re.findall(r"(?:button|\.btn)\.(?:primary|secondary|danger)[^{]*\{[^}]*\}", style):
             self.assertNotRegex(rule, r"(?<![a-z-])(?:padding|min-height|min-width|height|width|font-size|border-width)\b", rule)
+        other = form.node.find_all("div", class_="acts")[0]
+        self.assertEqual([(b.text(), b.attrs["class"]) for b in other.find_all("button")], [("This is not mine", "subtle sm"), ("Ask or tell", "subtle sm"), ("Decide later", "subtle sm")])
 
     def test_the_token_lasts_until_the_plan_expires_but_not_longer_than_a_day(self):
         store = self.console.store
@@ -201,7 +216,7 @@ class ThePage(unittest.TestCase):
 
     def test_two_people_class_says_so(self):
         self.console.store.plan_put(make_plan(approval_class="R3"))
-        self.assertEqual(self.console.get("/ok/plan0001").summary(1)["Who approves"], "Two people approve this, each on their own.")
+        self.assertEqual(self.console.get("/ok/plan0001").facts()["Who approves"], "Two people approve this, each on their own.")
 
     def test_time_is_in_utc_and_in_the_persons_own_zone(self):
         content = self.reply.content
@@ -277,7 +292,7 @@ class WhenThePlanIsNotOpen(unittest.TestCase):
                 self.assert_no_buttons(reply)
                 self.assertEqual(self.notice(reply)[0], title)
                 self.assertIn(words_, self.notice(reply)[1])
-                self.assertIn(HEADLINE, reply.headings(1))
+                self.assertIn(TITLE, reply.headings(1))
                 self.assertIn("If you approve", reply.headings(2), "the plan stays readable")
 
     def test_a_plan_that_was_used_shows_what_happened_to_the_change_in_the_details(self):
@@ -426,7 +441,7 @@ class WhoMayAnswer(unittest.TestCase):
                 reply = self.console.get("/ok/plan0001", oid=who)
                 self.assertEqual(reply.status, 403)
                 self.assertEqual(reply.headings(1), ["I cannot take your OK on this request."])
-                for secret in (HEADLINE, make_plan().title, "planted-disk-1", "7F3K92QD", "meternaut-test-rg", "If you approve", "Expected saving", "7.17"):
+                for secret in (HEADLINE, TITLE, make_plan().title, "planted-disk-1", "7F3K92QD", "meternaut-test-rg", "If you approve", "Saves, Expected", "$86", "7.17"):
                     self.assertNotIn(secret, reply.content, f"no plan detail: {secret}")
                 self.assertEqual(reply.root.find_all("button"), [])
                 self.assertIn("Responsible for Meternaut: ", reply.content)

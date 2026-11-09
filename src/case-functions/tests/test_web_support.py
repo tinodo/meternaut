@@ -388,6 +388,26 @@ class Reply:
                 found[dt.text()] = dd.text()
         return found
 
+    def facts(self) -> dict[str, str]:
+        """The names and values of the facts of the decision card (the one list of class facts of the page)."""
+        (facts,) = self.main.find_all("dl", class_="facts")
+        found, name = {}, None
+        for child in facts.children:
+            tag = getattr(child, "tag", None)
+            if tag == "dt":
+                name = child.text()
+            elif tag == "dd" and name is not None:
+                found[name] = child.text()
+        return found
+
+    def measured(self) -> dict[str, tuple[str, str]]:
+        """What was measured, as a request page shows it: each fact with its value and the place that it was read."""
+        for table in self.main.find_all("table"):
+            caption = table.find("caption")
+            if caption is not None and caption.attrs.get("id") == "measured":
+                return {row.find("th").text(): (row.find_all("td")[0].text(), row.find_all("td")[1].text()) for row in table.find_all("tr")[1:]}
+        return {}
+
     @property
     def content(self) -> str:
         """The text of the page body, as a person reads it."""

@@ -169,6 +169,24 @@ nav.toc a{min-height:0;padding:0;border:0}
 <tr><td>Narrower than 40em</td><td>Everything is one column, in the same order. Buttons are as wide as the screen.</td></tr>
 </tbody></table></div>
 
+<h3>The request page</h3>
+<p>The page behind "Review": one request, in this order. It leaves out what it does not have. It is wide, like the Decisions page, so that the answer can stand beside what is read.</p>
+<ol class="anat">
+<li>Header and tabs, as on every page, and a plain link back to the decisions.</li>
+<li>The title: the action and its target, as in the row of the list. One line under it: the kind of resource, its group, when it was found and until when the request is open.</li>
+<li>Three chips: the risk, how sure the AIs are, and what a change leaves behind (it can or cannot be undone), or that an answer changes nothing in Azure.</li>
+<li>When the request is not open any more, one notice says what became of it.</li>
+<li>The decision card, headed "If you approve" (a change) or "If you answer" (advice): the figure a year, then the figure a month with its level and its basis, and the line that says money is in US dollars; the chart of daily cost beside it; and under both, the facts: what changes, who does it and with whose rights, what is checked again, the undo and what could go wrong.</li>
+<li>On the left, what code read (a table of fact, value and where it was read), what a person could do about it (only for data that nothing reads), why the AIs think so (how sure, then the words of the AIs in boxes that say that no code checked them) and whose resource it is.</li>
+<li>On the right, in a panel, the answer: a note, the reason for a decline, the main button and "Decline" one above the other, and the quiet answers (not mine, ask or tell, decide later) below them.</li>
+<li>Details, closed: ids, steps, models, guards and the log of the change. Then the footer.</li>
+</ol>
+<div class="table-wrap"><table><thead><tr><th scope="col">Width</th><th scope="col">What changes</th></tr></thead><tbody>
+<tr><td>Wider than 64rem</td><td>The card has the figure and the chart side by side, with the facts under them. The left column and the answer panel (22rem) stand side by side.</td></tr>
+<tr><td>52rem to 64rem</td><td>The card is as above. The panel follows the left column.</td></tr>
+<tr><td>Narrower than 52rem</td><td>The card is one column: figure, chart, facts. Everything else follows in the same order.</td></tr>
+</tbody></table></div>
+
 <h2 id="components">6 Components</h2>
 
 <h3>Summary tile</h3>
@@ -221,7 +239,14 @@ nav.toc a{min-height:0;padding:0;border:0}
 <ul><li>Columns: rank, headline with one note line and chips, the impact figure, a chart, one button. Nothing else.</li><li>The headline names the action and the target ("Stop virtual machine x"), or the count and the kind ("4 storage accounts in 3 resource groups").</li><li>A group row's button is "Show 4". Inside, the members are a table with a Review button for each, and a finding that stands for many resources has one button, "Review all 50", for its one request.</li></ul>
 
 <h3>The decision in focus</h3>
-<p>The decision with the most at stake, shown large: the rank, the title, the figure, the chips, four facts (what changes, why, checked, undo), one button, and a chart of its cost. A page has one. It is drawn in full in the <a href="decisions-preview.html">Decisions preview</a>, with a second chart (CPU use, with the 5% idle line) that the app does not draw yet: it needs a stored series of use.</p>
+<p>The decision with the most at stake, shown large: the rank, the title, the figure, the chips, four facts (what changes, why, checked, undo), one button, and a chart of its cost. A page has one. It is drawn in full in the <a href="decisions-preview.html">Decisions preview</a>, with a second chart (CPU use, with the 5% idle line) that the app does not draw yet: it needs a stored series of use. The request page uses the same card (class <code>focus</code>) with the figure and the chart side by side and the facts under them, so that the row, the card and the page show one figure that comes from one piece of code.</p>
+
+<h3>The answer panel</h3>
+<div class="demo"><section class="panel"><h2>Your answer</h2>
+<div class="acts stack"><a class="btn primary" href="#buttons">Approve and sign in to Azure</a><a class="btn secondary" href="#buttons">Decline</a></div>
+<div class="acts"><a class="btn sm subtle" href="#buttons">This is not mine</a><a class="btn sm subtle" href="#buttons">Ask or tell</a><a class="btn sm subtle" href="#buttons">Decide later</a></div>
+</section></div>
+<ul><li>One panel, one form. The note and the reason come first; then the main button and "Decline" stacked, full width; then the quiet answers, which are small and look like links.</li><li>The main button says what happens: for a change it is "Approve and sign in to Azure", for advice "Worth acting on". Nothing in the panel approves anything on its own.</li><li>While a switch holds changes, the main button is left out and a notice says so; the other answers stay.</li></ul>
 
 <h3>Notices</h3>
 <div class="demo">
@@ -282,12 +307,13 @@ nav.toc a{min-height:0;padding:0;border:0}
 <div class="table-wrap"><table><thead><tr><th scope="col">Means</th><th scope="col">State today</th></tr></thead><tbody>
 <tr><td>One stylesheet, <code>docs/ui/meternaut-ui.css</code>, that the pages of the app use as their only style</td><td>Built. The app carries the same text as <code>cases/web/style.py</code> (the web package reads no file), and every page uses it.</td></tr>
 <tr><td>The Decisions page drawn from it</td><td>Built into the app and deployed on 2026-11-09 (local run 316). The preview shows the same page with sample data.</td></tr>
+<tr><td>The request page drawn from it (the page behind "Review")</td><td>Built into the app on 2026-11-09 and tested; its figure, chips and chart are the same code as the rows of the Decisions page (<code>cases/web/figures.py</code>).</td></tr>
 <tr><td>A test that fails when the app's page style differs from the file</td><td>Built: <code>tests/test_web_style.py</code>.</td></tr>
 <tr><td>A test that fails on a style attribute, a colour value or a pixel size in the code of a page, and on a class that the stylesheet does not have</td><td>Built: the same file.</td></tr>
 <tr><td>This guide served by the app itself at <code>/styleguide</code>, with the real stylesheet</td><td>Next.</td></tr>
-<tr><td>Every other page (a request, History, Settings, Operations, letters, Teams cards) moved onto it, one at a time</td><td>The pages of the app already carry the stylesheet. Their words and layout follow the guide one page at a time, after the Decisions page.</td></tr>
+<tr><td>Every other page (History, Settings, Operations, the pages that say what came of an answer, letters, Teams cards) moved onto it, one at a time</td><td>The pages of the app already carry the stylesheet. Their words and layout follow the guide one page at a time, after the Decisions page and the request page.</td></tr>
 </tbody></table></div>
-<p class="muted">Changes to this guide: version 1, 2026-11-09, first version; the same day, made to say what the Decisions page of the app does (levels on every saving, one chart in focus, the footer).</p>
+<p class="muted">Changes to this guide: version 1, 2026-11-09, first version; the same day, made to say what the Decisions page of the app does (levels on every saving, one chart in focus, the footer); and again that evening for the request page (the card, the answer panel, the wide layout).</p>
 </main>
 <footer>
 <p>Meternaut style guide, version 1. Written with AI; checked by a person.</p>
