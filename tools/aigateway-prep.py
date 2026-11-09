@@ -7,7 +7,8 @@
         --models environment/models.json --policies aigateway-policies.json [--project-principal OBJECT-ID] [--cases-principal OBJECT-ID] [--summary FILE] [--timeout SECONDS]
 
 It calls the Azure CLI (`az rest`), which the workflow has signed in, and only Azure Resource Manager: the gateway's own endpoint is public and is never called from here (the check
-runs in the Operator, tools/aigateway-check.py). Only GitHub Actions may write (AGENTS.md rule 18): the two writing commands refuse to run anywhere else. Nothing that a response holds is
+runs in the Operator, tools/aigateway-check.py). Only a run of the Hub may write (AGENTS.md rule 18; tools/hubguard.py says what counts as one): the two writing commands refuse to run anywhere else, and
+they name the project's own subscription and resource group (the settings ENV_SUBSCRIPTION_ID and ENV_RESOURCE_GROUP that the workflow gives every step) and no other. Nothing that a response holds is
 printed but names, states and numbers, and no key is read: a list of API keys is read for the names of the keys alone.
 
 policies    The gateway-wide policies (a token limit, a request rate limit and cost limits for each caller) live in the `policies` array of the gateway's default workspace. The workspace
@@ -324,9 +325,16 @@ def merge(current: list, wanted: list[dict]) -> tuple[list, list[str]]:
 
 
 def only_in_actions() -> None:
-    why = guard.what_is_missing()
-    if why:
-        raise Problem(f"this command writes to Azure, and only a GitHub Actions run may do that (AGENTS.md rule 18): {why}", 2)
+    not_the_hub = guard.refusal()
+    if not_the_hub:
+        raise Problem(f"this command writes to Azure, and only a run of the Hub may do that (AGENTS.md rule 18): {not_the_hub}", 2)
+
+
+def only_in_the_project(args: argparse.Namespace) -> None:
+    """A call that writes names the project's own subscription and resource group and no other (tools/hubguard.py)."""
+    other_scope = guard.other_scope(args.subscription, args.resource_group)
+    if other_scope:
+        raise Problem(other_scope, 2)
 
 
 def guarded(action: Callable[[], list[Line]]) -> list[Line]:
@@ -692,10 +700,12 @@ def main(argv=None, az: Runner | None = None, sleep: Callable[[float], None] = t
         target = target_of(args)
         if args.command == "policies":
             only_in_actions()
+            only_in_the_project(args)
             lines = run_policies(runner, target, read_policies(Path(args.file)), sleep)
             return report("The gateway-wide policies of the AI Gateway", lines, args.summary)
         if args.command == "remove-key":
             only_in_actions()
+            only_in_the_project(args)
             lines = run_remove_key(runner, target, sleep)
             return report("The built-in key of the AI Gateway", lines, args.summary)
         for flag in ("vnet", "subnet", "foundry_account", "operator_identity"):

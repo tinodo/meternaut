@@ -294,9 +294,9 @@ NEW_IDENTITY = ("### The cases app is made again, with a new identity\n\n"
 
 
 def command_run(args, azure: Azure, environ, out, sleep) -> int:
-    why = guard.what_is_missing(environ)
-    if why:
-        raise Refused(f"this command deletes, and only a GitHub Actions run may do that (AGENTS.md rule 18): {why}")
+    not_the_hub = guard.refusal(environ)
+    if not_the_hub:
+        raise Refused(f"this command deletes, and only a run of the Hub may do that (AGENTS.md rule 18): {not_the_hub}")
     group = f"/subscriptions/{args.subscription}/resourceGroups/{args.resource_group}"
     out(f"Clearing what is in the way of the deploy of the cases app {args.app}, on the {args.wanted_kind} plan, in resource group {args.resource_group}:")
     app_deleted, plan_deleted = clear_the_app(azure, args, group, out)

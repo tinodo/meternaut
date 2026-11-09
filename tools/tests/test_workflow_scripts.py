@@ -893,7 +893,7 @@ class TheChecksBuildTheCallOfTheOperatorTool(unittest.TestCase):
         args = tool.build_parser().parse_args(called(lines)[0][1:])
         self.assertEqual((args.prefix, args.older_than_minutes, args.resource_group), ("op-check-", 0.0, self.GROUP))
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
-            with hubenv.patched():
+            with hubenv.patched(extra={"ENV_SUBSCRIPTION_ID": self.SUBSCRIPTION, "ENV_RESOURCE_GROUP": self.GROUP}):
                 self.assertEqual(tool.cleanup_command(args, lambda arguments: (0, "[]", "")), 0, "the prefix is one that the tool accepts")
 
 
@@ -1420,7 +1420,7 @@ class ThePublishStepsFindTheOperatorAskForTheTokenAndStartTheContainerGroup(unit
             args = tool.build_parser().parse_args(called(lines)[0][1:])
             self.assertEqual((args.prefix, args.older_than_minutes, args.resource_group), ("op-publish-", 0.0, self.GROUP))
             with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
-                with hubenv.patched():
+                with hubenv.patched(extra={"ENV_SUBSCRIPTION_ID": self.SUBSCRIPTION, "ENV_RESOURCE_GROUP": self.GROUP}):
                     self.assertEqual(tool.cleanup_command(args, lambda arguments: (0, "[]", "")), 0, "the prefix is one that the tool accepts")
         done, calls, other, _ = self.run_publish("cases")
         self.assertTrue(calls[0][calls[0].index("--name") + 1].startswith("op-publish-"), "the prefix of the cleanup is the start of the name that the publish gives its group")

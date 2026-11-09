@@ -355,28 +355,28 @@ class TheRefusal(unittest.TestCase):
         fake = FakeAzure()
         code, _, err, _ = go(RUN, fake, PROJECT)
         self.assertEqual(code, 2)
-        self.assertIn("this command deletes, and only a GitHub Actions run may do that (AGENTS.md rule 18)", err)
+        self.assertIn("this command deletes, and only a run of the Hub may do that (AGENTS.md rule 18): this call was not started by a run of the Hub", err)
         self.assertEqual(fake.calls, [])
 
-    def test_github_actions_true_alone_is_refused_and_the_refusal_names_what_is_missing(self):
+    def test_github_actions_true_alone_is_refused_and_the_refusal_says_nothing_of_what_is_missing(self):
         fake = FakeAzure()
         code, _, err, _ = go(RUN, fake, {**PROJECT, "GITHUB_ACTIONS": "true"})
         self.assertEqual(code, 2)
-        self.assertIn("GITHUB_ACTIONS=true alone is no proof", err)
-        for name in ("GITHUB_RUN_ID", "GITHUB_REPOSITORY", "ACTIONS_ID_TOKEN_REQUEST_URL", "METERNAUT_HUB_PROOF"):
-            self.assertIn(name, err)
+        self.assertIn("this call was not started by a run of the Hub", err)
+        self.assertNotRegex(err, r"GITHUB_|METERNAUT_|ACTIONS_ID|(?i:proof)|(?i:lock)", "a refusal says nothing to copy")
         self.assertEqual(fake.calls, [])
 
-    def test_the_proof_of_a_run_of_tools_hub_local_that_is_alive_is_enough_and_a_stale_one_is_not(self):
+    def test_the_proof_of_a_run_of_tools_hub_local_that_is_alive_is_enough_and_a_stale_one_or_one_of_another_folder_is_not(self):
         with tempfile.TemporaryDirectory() as folder:
-            proof = hubenv.make_proof(folder)
-            code, _, err, _ = go(RUN, FakeAzure(), {**PROJECT, "METERNAUT_HUB_PROOF": str(proof)})
+            code, _, err, _ = go(RUN, FakeAzure(), {**PROJECT, **hubenv.proof_environment(folder)})
             self.assertEqual(code, 0, err)
-            proof = hubenv.make_proof(folder, pid=hubenv.dead_pid())
             fake = FakeAzure()
-            code, _, err, _ = go(RUN, fake, {**PROJECT, "METERNAUT_HUB_PROOF": str(proof)})
+            code, _, err, _ = go(RUN, fake, {**PROJECT, **hubenv.proof_environment(folder, pid=hubenv.dead_pid())})
             self.assertEqual(code, 2)
-            self.assertIn("is not alive: this proof is stale", err)
+            self.assertIn("this call was not started by a run of the Hub", err)
+            with tempfile.TemporaryDirectory() as hostile:
+                code, _, err, _ = go(RUN, fake, {**PROJECT, **hubenv.proof_environment(hostile, run="1"), "METERNAUT_LOCAL": folder})
+            self.assertEqual(code, 2, "a proof that is not in the repository's own local folder")
             self.assertEqual(fake.calls, [])
 
     def test_show_reads_without_a_run_of_the_workflow(self):
@@ -1148,9 +1148,10 @@ class RefusalsOfTheEventHubsList(unittest.TestCase):
 
     def test_only_a_run_of_the_hub_may_delete(self):
         err = self.refused(EVENT_HUBS_RUN, PROJECT)
-        self.assertIn("this command deletes, and only a GitHub Actions run may do that (AGENTS.md rule 18)", err)
+        self.assertIn("this command deletes, and only a run of the Hub may do that (AGENTS.md rule 18): this call was not started by a run of the Hub", err)
         err = self.refused(EVENT_HUBS_RUN, {**PROJECT, "GITHUB_ACTIONS": "true"})
-        self.assertIn("GITHUB_ACTIONS=true alone is no proof", err)
+        self.assertIn("this call was not started by a run of the Hub", err)
+        self.assertNotIn("GITHUB_", err)
 
     def test_a_list_that_is_not_one_is_refused_by_the_parser(self):
         with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
