@@ -117,6 +117,7 @@ caption{padding:var(--spacingS) var(--spacingM);text-align:left;font-weight:var(
 th,td{padding:var(--spacingS) var(--spacingM);border-top:var(--strokeWidthThin) solid var(--colorNeutralStroke2);text-align:left;vertical-align:top;overflow-wrap:break-word}
 th{background:var(--colorNeutralBackground3);font-weight:var(--fontWeightSemibold)}
 td.r,th.r{text-align:right}
+.nw{white-space:nowrap}
 td form{margin:0}
 td .btn,td button{min-width:0;min-height:2rem;padding:var(--spacingXS) var(--spacingM)}
 blockquote.quote{margin:var(--spacingS) 0;padding:var(--spacingS) var(--spacingL);border-left:.375rem solid var(--colorNeutralStrokeAccessible);background:var(--colorNeutralBackground3);overflow-wrap:anywhere}

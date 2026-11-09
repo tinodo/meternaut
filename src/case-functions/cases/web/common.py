@@ -10,7 +10,7 @@ from ..models import ADVISE, SWITCH_NAMES, ActionRecord, CaseRecord, DecisionRec
 from . import words
 from .core import Ctx, Safe, esc, fmt, join, link_part, number, parse_time, usd
 from .figures import a_year, chip, cost_of, dollars, figure_of
-from .layout import code, paragraph, summary
+from .layout import code, nowrap, paragraph, summary
 
 T = TypeVar("T")
 
@@ -178,7 +178,7 @@ def case_rows(ctx: Ctx, cases: Iterable[CaseRecord]) -> list[list[object]]:
     for case in cases:
         rows.append([
             resource_cell(case.resource_name, case.resource_type, case.resource_group), detector_cell(case.detector), status_chip(case.status),
-            words.recommendation_word(case.recommendation), confidence(case.confidence), saving_cell(ctx, case), ctx.when(case.updated_at),
+            words.recommendation_word(case.recommendation), confidence(case.confidence), saving_cell(ctx, case), nowrap(ctx.when(case.updated_at)),
             fmt('<a href="{href}">Open<span class="visually-hidden"> the page of {name}</span></a>', href=ctx.url(f"/why/{link_part(case.case_id)}"),
                 name=case.resource_name),
         ])

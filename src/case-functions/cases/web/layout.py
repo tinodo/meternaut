@@ -82,6 +82,11 @@ def code(text: object) -> Safe:
     return fmt("<code>{text}</code>", text=text)
 
 
+def nowrap(text: object) -> Safe:
+    """Text that stays on one line, for a date in a table: a column of dates that wraps is a tall row of seven short lines."""
+    return fmt('<span class="nw">{text}</span>', text=text)
+
+
 def notice(kind: str, title: str, *body: object) -> Safe:
     """A box that says what it is in words (not by colour alone). `kind` is info, success, warning or error. Its title is a line of its own; a box with no title is only its lines."""
     role = {"error": ' role="alert"', "success": ' role="status"'}.get(kind, "")

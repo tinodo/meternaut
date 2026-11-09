@@ -12,7 +12,7 @@ from . import words
 from .common import CASE_HEADERS, case_rows, count, legend, read, run_result, switch_states
 from .core import ID, MAX_REASON, Ctx, Response, Safe, fmt, join, link_part, stamp
 from .figures import chip
-from .layout import block, button, error_summary, field, form, head, hidden, items, kpi, kpis, link, message_page, notice, page, panel, paragraph, table
+from .layout import block, button, error_summary, field, form, head, hidden, items, kpi, kpis, link, message_page, nowrap, notice, page, panel, paragraph, table
 
 PERMISSIONS_WHY = "your role lets you see how Meternaut is allowed to act"
 PAUSE_WHY = "your role ops lets you stop work at four levels"
@@ -73,7 +73,7 @@ def hub(ctx: Ctx) -> Response:
         parts.append(paragraph("No run is recorded yet."))
     else:
         parts.append(table("latest-runs", "The five latest runs, newest first", LATEST_RUNS,
-                           [[ctx.when(r.started_at), r.trigger, run_result(r), count(r.cases), count(r.proposed), count(r.needs_human), count(r.errors)] for r in runs]))
+                           [[nowrap(ctx.when(r.started_at)), r.trigger, run_result(r), count(r.cases), count(r.proposed), count(r.needs_human), count(r.errors)] for r in runs]))
     parts += [paragraph(link(ctx.url("/ops/runs"), "Every run and every finding")),
               Safe("<h2>What Meternaut can change in Azure</h2>"),
               paragraph(fmt("On its own, nothing: Meternaut holds no right to change Azure. When a person approves a change, they sign in to Azure and Meternaut makes that one change "
@@ -87,7 +87,7 @@ def _runs_table(ctx: Ctx, runs: list, selected: str) -> Safe:
     for run in runs:
         mark = Safe("<strong>Selected.</strong> ") if run.run_id == selected else ""
         rows.append([
-            fmt("{mark}{when}", mark=mark, when=ctx.when(run.started_at)), run.trigger, run_result(run), count(run.leads), count(run.cases), count(run.proposed),
+            fmt("{mark}{when}", mark=mark, when=nowrap(ctx.when(run.started_at))), run.trigger, run_result(run), count(run.leads), count(run.cases), count(run.proposed),
             count(run.needs_human), count(run.dropped), count(run.errors), count(run.tokens), count(run.seconds),
             items(run.notes) if run.notes else "none",
             fmt('<a href="{href}">Show them<span class="visually-hidden"> for run {run}</span></a>', href=ctx.url(f"/ops/runs?run={link_part(run.run_id)}"), run=run.run_id),
