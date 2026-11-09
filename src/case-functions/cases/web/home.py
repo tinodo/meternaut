@@ -77,7 +77,7 @@ def _waiting(ctx: Ctx) -> Safe:
 
 
 def _recently(ctx: Ctx) -> Safe:
-    """The last five requests that were decided (or that nobody answered, when the request was for a change: an advice that nobody answered is on the History page only), for the person who is named in them: what, who, when and the result."""
+    """The last five requests that were decided (or that nobody answered, for a change), for the person who is named in them: what, who, when and the result."""
     plans, ok = read(lambda: ctx.store.plans_recent(60), [])
     heading = Safe("<h2>Recently decided</h2>")
     if not ok:

@@ -441,6 +441,16 @@ class TheHistory(unittest.TestCase):
         self.assertIn("/ok/plan0001", self.reply.links())
         self.assertIn("/ok/plan0002", self.reply.links())
 
+    def test_advice_that_nobody_answered_is_one_line_for_each_day_and_a_change_that_nobody_answered_is_a_line_of_its_own(self):
+        store = self.console.store
+        for n in range(3):
+            store.case_put(make_advice_case(case_id=f"case5{n:03d}", resource_id=f"{VM_ID}-h{n}", resource_name=f"endpoint-h{n}", plan_id=f"plan5{n:03d}"))
+            store.plan_put(make_advice(plan_id=f"plan5{n:03d}", case_id=f"case5{n:03d}", resource_id=f"{VM_ID}-h{n}", state="expired", created_at=at(days=-3), expires_at=at(days=-1, hours=-n)))
+        feed = self.feed(self.console.get("/history"))
+        self.assertEqual(feed["Tue 3 Nov"][0], f"Nobody answered in time: {HEADLINE}.", "the change that expired is a line of its own")
+        self.assertIn("Closed with no answer: 3 requests to look at a finding.", feed["Wed 4 Nov"])
+        self.assertFalse([line for lines in feed.values() for line in lines if "Nobody answered in time: Consider" in line], feed)
+
     def test_the_old_addresses_of_my_decisions_and_what_i_did_here_answer_with_the_same_page(self):
         for path in ("/me/decisions", "/me/activity"):
             with self.subTest(path=path):

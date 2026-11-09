@@ -59,6 +59,7 @@ def _events(ctx: Ctx, since: str) -> tuple[list[tuple[str, Safe]], bool]:
     mine = [p for p in plans if may_answer(ctx.principal, p) and p.created_at >= old][:PLANS_READ]  # type: ignore[arg-type]
     actions = {a.plan_id: a for a in read(lambda: ctx.store.actions_recent(100), [])[0]}
     lines: list[tuple[str, Safe]] = []
+    quiet: dict[str, list[str]] = {}  # the advice that nobody answered, for each day: one line, not one for each
     for plan in mine:
         for decision in read(lambda plan=plan: ctx.store.decisions_of_plan(plan.plan_id), [])[0]:
             line = _decision_line(ctx, plan, decision)
@@ -67,7 +68,12 @@ def _events(ctx: Ctx, since: str) -> tuple[list[tuple[str, Safe]], bool]:
         if plan.family != "advise" and plan.plan_id in actions:
             lines += _action_lines(ctx, plan, actions[plan.plan_id])
         if effective_state(ctx, plan) == "expired":
-            lines.append((plan.expires_at, fmt("Nobody answered in time: {headline}.", headline=_headline(ctx, plan))))
+            if plan.family == "advise":
+                quiet.setdefault(ctx.day_key(plan.expires_at), []).append(plan.expires_at)
+            else:
+                lines.append((plan.expires_at, fmt("Nobody answered in time: {headline}.", headline=_headline(ctx, plan))))
+    for found in quiet.values():
+        lines.append((max(found), fmt("Closed with no answer: {n} request{s} to look at a finding.", n=len(found), s="" if len(found) == 1 else "s")))
     cases = read(lambda: ctx.store.cases_recent(1000), [])[0]
     per_day: dict[str, list[str]] = {}
     for case in cases:

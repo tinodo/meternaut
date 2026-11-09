@@ -12,7 +12,7 @@ from cases.models import ADVISE, GROUP_FACT
 from test_advise import NAMED, SETTINGS, Clock
 from test_run import estate_with, investigating, of_type
 from test_run_loop import Moving, loop_for
-from test_web_support import NOW, SUB, FailingStore, make_advice_case
+from test_web_support import NOW, SUB, FailingStore, make_advice_case, make_decision
 
 
 def short(n: int) -> str:
@@ -96,6 +96,22 @@ class WhenTheRequestOfAGroupWaits(unittest.TestCase):
         closed = self.approvals.supersede()
         self.assertEqual(sorted(plan.case_id for plan in closed), [f"k{short(1)}", f"k{short(4)}", f"k{short(5)}"])
         self.assertEqual((self.state(2), self.state(3)), ("declined", "consumed"))
+
+    def test_a_plan_that_a_person_put_off_or_asked_about_stays_open_with_its_decision(self):
+        for number, decision in ((1, "later"), (2, "ask")):
+            self.store.decision_put(make_decision(plan_id=self.plans[number].plan_id, decision=decision))
+        closed = self.approvals.supersede()
+        self.assertEqual(sorted(plan.case_id for plan in closed), [f"k{short(3)}", f"k{short(4)}", f"k{short(5)}"])
+        self.assertEqual((self.state(1), self.state(2)), ("open", "open"))
+
+    def test_a_closed_plan_ends_when_it_was_closed_and_not_at_the_time_that_was_set_for_it(self):
+        before = self.plans[1].expires_at
+        self.clock.advance(hours=5)
+        self.approvals.supersede()
+        closed = self.store.plan_get(self.plans[1].plan_id)
+        self.assertEqual((closed.state, closed.expires_at), ("expired", stamp(self.clock())))
+        self.assertLess(closed.expires_at, before, "the 72 hours that were set for it were not over")
+        self.assertEqual(self.store.plan_get(self.plans[6].plan_id).expires_at, self.plans[6].expires_at, "the request of the group keeps its own time")
 
     def test_a_member_list_that_is_not_a_list_of_text_closes_nothing_and_raises_nothing(self):
         for members in ("text", None, [1, 2, None], {"a": 1}):

@@ -18,7 +18,8 @@ from test_web_support import NOW as WEB_NOW, SUB, TINO, Console, make_advice_cas
 from cases import approvals, brief, cards, investigate, learning, letters
 from cases.approvals import ADVICE_MIN_USD, why_not_ask
 from cases.decide import NO_MEASUREMENT
-from cases.models import ADVISE, GROUP_FACT, NoteRecord, Principal, StoreError
+from cases.memory_store import stamp
+from cases.models import ADVISE, GROUP_FACT, CaseRecord, NoteRecord, Principal, StoreError
 
 TYPE = "microsoft.network/privateendpoints"
 HOSTILE_NAME = "<script>alert(1)</script>\n[click](https://evil.example/x) \u202eevil " + "n" * 200
@@ -357,6 +358,36 @@ class WhenTheSameFindingComesAgain(unittest.TestCase):
                 clock.advance(days=6, hours=22, minutes=minutes)
                 third = watch(raw_of(60, confidence=0.8), endpoints(60), clock=clock, extras=extras)
                 self.assertEqual(third.result.cases, again)
+
+    def test_a_group_whose_first_resource_is_named_is_judged_again_when_a_measurement_changed(self):
+        clock = Moving()
+        resources = endpoints(8, cost=lambda n: 100.0)
+        zero = lambda: raw_of(8, basis="low-usage", confidence=0.8, evidence=[entry(f"r{n}", "Traffic", 0) for n in range(1, 9)])
+        first = watch(zero(), resources, clock=clock, evidence={f"r{n}": metrics(Traffic=0) for n in range(1, 9)})
+        extras = first.extras
+        clock.advance(days=1)
+        same = watch(zero(), resources, clock=clock, extras=extras, evidence={f"r{n}": metrics(Traffic=0) for n in range(1, 9)})
+        self.assertEqual(same.result.cases, 0, "the same measurement: nothing is asked again")
+        moved = watch(raw_of(8, basis="low-usage", confidence=0.8, evidence=[entry(f"r{n}", "Traffic", 5) for n in range(1, 9)]), resources, clock=clock, extras=extras,
+                      evidence={f"r{n}": metrics(Traffic=5) for n in range(1, 9)})
+        self.assertEqual((moved.result.cases, only_case(moved).facts[GROUP_FACT]["count"]), (1, 8), "a measurement that changed: the group is judged again as a whole")
+
+    def test_members_whose_requests_were_closed_go_back_into_their_group_when_the_group_is_judged_again(self):
+        clock = Moving()
+        resources = endpoints(8, cost=lambda n: 100.0 + n)
+        first = watch(raw_of(8, basis="low-usage", confidence=0.8, evidence=[entry(f"r{n}", "Traffic", 0) for n in range(1, 9)]), resources, clock=clock,
+                      evidence={f"r{n}": metrics(Traffic=0) for n in range(1, 9)})
+        extras = first.extras
+        for member in resources[:-1]:
+            extras.store.case_put(CaseRecord(case_id=key_of(member), resource_id=member.resource_id, resource_name=member.name, resource_type=member.resource_type,
+                                             resource_group=member.resource_group, subscription_id=member.subscription_id, detector="investigation", run_id="r0", status="expired",
+                                             recommendation="investigate", confidence=0.4, summary="Closed for the request of the group.", updated_at=stamp(clock()),
+                                             first_seen_at=stamp(clock())))
+        clock.advance(days=1)
+        moved = watch(raw_of(8, basis="low-usage", confidence=0.8, evidence=[entry(f"r{n}", "Traffic", 5) for n in range(1, 9)]), resources, clock=clock, extras=extras,
+                      evidence={f"r{n}": metrics(Traffic=5) for n in range(1, 9)})
+        (group,) = [case for case in extras.store.cases_recent() if GROUP_FACT in case.facts]
+        self.assertEqual((moved.result.cases, group.facts[GROUP_FACT]["count"], group.runs_seen), (1, 8, 2), "all eight are the group again, and not the first one alone")
 
     def test_the_resources_that_older_runs_made_a_case_of_one_by_one_stay_as_they_were(self):
         clock = Moving()

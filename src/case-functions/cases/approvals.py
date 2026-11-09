@@ -33,7 +33,7 @@ ADVICE_MIN_USD = 50.0
 # And no more than ADVICE_OPEN_MAX requests wait at the same time for a finding that the AIs did not settle (a finding that both AIs agree on and that code re-checked is not held by it):
 # the first page of the start page. The rest wait as open questions, and a request is made for them when a place is free.
 ADVICE_OPEN_MAX = 10
-GROUP_CASES_READ = 200  # the latest cases that are read to find the groups whose requests are open (the same number as cases/investigate.py reads)
+GROUP_CASES_READ = 200  # the latest cases that are read to find the groups whose requests are open
 # The recommendations that may lead to a plan of a change (the family that matches picks among them: cases/families).
 CHANGE_RECOMMENDATIONS = ("delete", "change")
 PAUSED_MESSAGE = brief.PAUSED_CHANGES
@@ -332,9 +332,8 @@ class Approvals:
         return closed
 
     def supersede(self) -> list[PlanRecord]:
-        """Closes the open advise plans that a request for a group makes pointless. The first version asked about each resource of a finding on its own; the case of a group asks about all of
-        them once, so the older requests for the other resources of a group whose request is open ask the same question again. Each is closed as expired (an advise plan changes nothing), as
-        a plan whose time is over is. A plan of a change, a plan that anybody answered and the plan of a group are never touched. Returns the plans that it closed."""
+        """Closes, as expired, the open advice requests of the resources that an open group request stands for, other than the group's own: the first version asked about each resource on its own,
+        and the group asks once. A plan of a change, an answered plan and the plan of a group are never touched. Returns the plans that it closed."""
         try:
             open_plans = [plan for plan in self.store.plans_open() if plan.family == ADVISE and plan.state == "open"]
             waiting = {plan.case_id for plan in open_plans}
@@ -351,9 +350,9 @@ class Approvals:
             for plan in open_plans:
                 if plan.case_id in covered and plan.case_id not in groups:
                     plan = self.store.plan_get(plan.plan_id)  # read again: a person may have answered it since the list was read
-                    if plan is None or plan.state != "open":
-                        continue
-                    plan = _plan_with(plan, state="expired")
+                    if plan is None or plan.state != "open" or self.store.decisions_of_plan(plan.plan_id):
+                        continue  # a person who put it off or asked about it has answered it
+                    plan = _plan_with(plan, state="expired", expires_at=stamp(self.clock()))  # it ends now, and not at the time that was set for it
                     self.store.plan_put(plan)
                     self._set_case(plan.case_id, "expired")
                     closed.append(plan)

@@ -49,8 +49,8 @@ DETECTOR = "investigation"
 MAX_CASES = 60  # the cases that one run opens
 GROUP_MIN = 5  # a finding to investigate that has more resources than this left after the checks of code is one case, and one question to a person, not one for each resource
 COVER_PERCENT = 80  # of each hundred resources of a later finding, how many a group case that was judged lately has to stand for already, for that case to stand for the finding too
-GROUP_CASES_READ = 200  # the latest cases that are read once for a run, to find the groups that stand for the resources of a finding
-RECHECK_SLACK = dt.timedelta(hours=1)  # a case that a run saved some minutes after it began is judged lately for the run that begins RECHECK_DAYS later: the same slack as the timer's (run.TIMER_SLACK)
+GROUP_CASES_READ = 200  # the latest cases that are read once for a run, to find the groups
+RECHECK_SLACK = dt.timedelta(hours=1)  # a case saved minutes after a run began is checked again by the run that begins RECHECK_DAYS later (run.TIMER_SLACK)
 MAX_GROUP_NAMES = 12  # the names of the other resources that the case of such a finding keeps, for the page of a person
 MEMBER = re.compile(r"[0-9a-f]{12}")  # the short id of a resource that the case of a group keeps (Lead.lead_id)
 MAX_ENTRIES = 720  # the entries of metric_evidence that are read: a handful for each of the handles that a finding may hold
@@ -415,8 +415,7 @@ def _earlier(s: "Services", lead: Lead) -> CaseRecord | None:
 
 
 def _recent(s: "Services", old: CaseRecord | None, facts: dict | None, open_questions: "learning.OpenQuestions | None" = None) -> bool:
-    """Whether the earlier case of a resource (None: there is none) keeps the resource from being taken up again now: see _judged_lately. `facts` None: the evidence is not compared (the group
-    that the case stands for was found by its members, and the resource that it belongs to is not among those of the finding)."""
+    """Whether the earlier case of a resource (None: there is none) keeps the resource from being taken up again now: see _judged_lately. `facts` None: the evidence is not compared."""
     ex = s.extras
     if ex is None or old is None or old.status == "error" or not old.updated_at or any(isinstance(x, dict) and x.get("ok") is False for x in old.steps):
         return False
@@ -458,8 +457,7 @@ def _alike(later: set[str], stored: set[str]) -> bool:
 
 
 def _marked(s: "Services") -> set[str] | None:
-    """The ids, in lower case, of the resources that a person marked do-not-touch; None when the store cannot be read: a group is made from marks that were read, so the investigation does
-    not run then (approvals.advise reads the same marks, and makes no request when it cannot)."""
+    """The ids, in lower case, of the resources that a person marked do-not-touch; None when the store cannot be read: the investigation does not run then."""
     if s.extras is None:
         return set()
     try:
@@ -470,7 +468,7 @@ def _marked(s: "Services") -> set[str] | None:
 
 
 def _groups_lately(s: "Services") -> list[CaseRecord]:
-    """The cases of groups among the latest cases, read once for a run: a later finding names resources, and the one that a group belongs to may not be among them."""
+    """The cases of groups among the latest cases, read once for a run."""
     if s.extras is None:
         return []
     try:
@@ -792,6 +790,8 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
             lead = _lead(resource, facts, costs[handle], _advisor(toolbox.evidence, handle))
             finding.seen.add(lead.lead_id)
             old = _earlier(s, lead)
+            if old is not None and old.status == "expired" and any(lead.lead_id in _members_of(group) and group.case_id != old.case_id for group in groups):
+                old = None  # its request was closed (or nobody answered) and a group stands for it: it goes back into the group
             if _recent(s, old, facts, open_questions):
                 finding.recent += 1
                 if finding.proposal == "investigate" and _stands_for_a_group(old):
@@ -810,8 +810,8 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
                     room -= 1
         if finding.proposal == "investigate":
             for old in groups:
-                if _members_of(old) & finding.seen and all(old.case_id != known.case_id for known in finding.stood) and _recent(s, old, None, open_questions):
-                    finding.stood.append(old)  # a group that stands for resources of this finding, whether or not the resource that it belongs to is one of them
+                if _members_of(old) & finding.seen and old.case_id[1:] not in finding.seen and all(old.case_id != known.case_id for known in finding.stood) and _recent(s, old, None, open_questions):
+                    finding.stood.append(old)  # a group that stands for resources of this finding although the resource that it belongs to is not one of them
         room += _settle(finding, marked)
         known = [i.lead.cost_usd_30d for i in finding.items if i.lead.cost_usd_30d is not None]
         finding.covered_usd = round(sum(known), 2) if known else None
