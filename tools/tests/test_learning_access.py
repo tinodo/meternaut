@@ -13,7 +13,7 @@ import test_access_requirements as base
 
 ar, MANIFEST, ROOT = base.ar, base.MANIFEST, base.ROOT
 TENANT = ("billing-accounts-read", "reservation-orders-read", "savings-plan-orders-read")
-PROPOSAL = ROOT / "docs" / "proposals" / "15-learning.md"
+PROPOSAL = ROOT / "docs" / "proposals" / "03-access-and-onboarding.md"
 
 
 def loaded(document):
