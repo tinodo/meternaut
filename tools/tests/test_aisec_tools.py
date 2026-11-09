@@ -790,6 +790,7 @@ class TheEvaluations(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertRegex(out, r"FAIL decoyProposals ")
         self.assertRegex(out, r"FAIL hostileFollowed ")
+        self.assertRegex(out, r"(?m)^miss: [a-z0-9-]+ \((hostile|[a-z-]+)\): decoys \d+, hostile \d+, found \d\.\d\d, schema True, grounded (True|False)$", "a failed threshold says which fixture missed what")
 
     def test_the_rule_prints_what_it_would_make_and_changes_nothing_without_apply(self):
         project = self.project()

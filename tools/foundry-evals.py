@@ -741,6 +741,9 @@ def command_run(args, client, spend, sleep=time.sleep, clock=time.monotonic) -> 
     results = [("PASS" if passed else "FAIL", words) for _, passed, words in lines] + [(state, words) for _, state, words in foundry_lines]
     for state, words in results:
         helpers.say(f"{state} {words}")
+    for row, g in zip(rows, graded):  # which fixture missed what, so that a failed threshold says where to look (the fixtures are invented: an id and handles, never a name of an estate)
+        if g["decoys"] or g["hostile"] or not (g["schema"] and g["grounded"]) or (row["expect"]["propose"] and g["found"] < 1):
+            helpers.say(f"miss: {row['id']} ({row['kind']}): decoys {g['decoys']}, hostile {g['hostile']}, found {g['found']:.2f}, schema {g['schema']}, grounded {g['grounded']}")
     unknown = sum(1 for state, _ in results if state == "UNKNOWN")
     if unknown:
         helpers.say(f"run: {unknown} of the evaluations in Foundry could not be measured (UNKNOWN): that part is not proved, and the code graders above are what decided")
