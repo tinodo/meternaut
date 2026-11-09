@@ -52,7 +52,7 @@ class Row:
 
     @property
     def series(self) -> list[float] | None:
-        return series_of(getattr(self.case, "cost_series", None))
+        return series_of(self.case.cost_series) if self.case is not None else None
 
 
 @dataclass(frozen=True)

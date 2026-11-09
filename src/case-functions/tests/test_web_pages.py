@@ -1,6 +1,7 @@
 import datetime as dt
 import re
 import unittest
+from dataclasses import replace
 from unittest import mock
 
 from support import APP_ROOT
@@ -9,6 +10,7 @@ from test_web_support import (MAYA, NOW, OPS, OWNER, SUB, TINO, VM, XSS, Console
 
 from cases.models import GROUP_FACT, SettingsRecord
 from cases.web import core, figures
+
 VM_ID = VM
 
 NAV_ALL = ["Decisions", "History", "Settings", "Operations"]
@@ -287,6 +289,40 @@ class TheDecisionsPage(unittest.TestCase):
         console.store.action_put(make_action(plan_id="plan0009", case_id="case0009", state="verified", verified_at=at(hours=-1), verification={"gone": True, "costBeforeUsd30d": 30.0, "costAfterUsd": 0.0}))
         measured = console.get("/").main.find("ul", class_="kpis").find_all("li")[2]
         self.assertEqual((measured.find("p", class_="v").text(), measured.find("p", class_="n").text()), ("$360 a year", "$30.00 a month, confirmed by Cost Management after 1 change."))
+
+    def test_a_decision_in_focus_has_a_chart_of_its_cost_and_a_row_a_small_one_from_the_series_that_the_watch_stored(self):
+        console = seeded()
+        more_plans(console, 1, saving=lambda n: 1.0)
+        for case_id, series in (("case0001", [4.0] * 29 + [4.67]), ("case1000", [0.0] * 15 + [1.0] * 15)):
+            console.store.case_put(replace(console.store.case_get(case_id), cost_series=series, cost_series_end="2026-11-04"))
+        reply = console.get("/")
+        focus = reply.main.find("article", class_="focus")
+        chart = focus.find("figure", class_="chart")
+        self.assertEqual(chart.find("figcaption").text(), "Cost per day last 30 days, yesterday $4.67")
+        self.assertEqual(chart.find("svg").attrs["aria-label"], "Cost per day for the last 30 days: from $4.00 to $4.67 a day, $4.67 on the last day.")
+        (row,) = rows(reply, "ready")
+        self.assertEqual(row.find("svg", class_="sp").attrs["aria-label"], "Cost per day, last 30 days: from $0.00 to $1.00 a day, $1.00 on the last day.")
+        self.assertNotIn("No daily costs yet", reply.content)
+
+    def test_a_series_that_is_not_what_it_should_be_is_no_chart_and_says_that_the_next_search_reads_it(self):
+        console = seeded()
+        for series in ([4.0], [-1.0] * 30, "not a list", [float("nan")] * 30):
+            with self.subTest(series=str(series)[:20]):
+                console.store.case_put(replace(console.store.case_get("case0001"), cost_series=series))
+                content = console.get("/").content
+                self.assertIn("no daily costs yet", content)
+                self.assertIn("The next search reads them. The chart fills in then.", content)
+
+    def test_a_row_that_opens_has_the_sum_of_the_series_of_its_requests_and_none_when_one_is_missing(self):
+        console = Console()
+        storage(console, 2)
+        for n in range(2):
+            console.store.case_put(replace(console.store.case_get(f"case5{n:03d}"), cost_series=[1.0 + n] * 30, cost_series_end="2026-11-04"))
+        (row,) = rows(console.get("/"), "look")
+        self.assertEqual(row.find("svg", class_="sp").attrs["aria-label"], "Cost per day, last 30 days: flat at about $3.00 a day.")
+        console.store.case_put(replace(console.store.case_get("case5001"), cost_series=None))
+        (row,) = rows(console.get("/"), "look")
+        self.assertIn("No daily costs yet", row.text())
 
     def test_what_comes_from_the_estate_or_from_a_model_is_escaped_in_a_title_a_row_and_a_table(self):
         console = Console()
