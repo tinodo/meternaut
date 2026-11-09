@@ -21,7 +21,7 @@ from .families.azure import Azure
 from .families.base import Env, Family, Stop, Unreadable
 from .families.gates import ChangeScope, Gates
 from .memory_store import parse, stamp, utc_now
-from .models import (ADVICE_QUIET_DAYS, ADVISE, DECLINE_REASONS, ActionRecord, CaseRecord, DecideResult, DecisionRecord, PlanRecord, Principal, Store, StoreError)
+from .models import (ADVICE_QUIET_DAYS, ADVISE, DECLINE_REASONS, GROUP_FACT, ActionRecord, CaseRecord, DecideResult, DecisionRecord, PlanRecord, Principal, Store, StoreError)
 from .roles import clean_text
 
 # The answers that a person can give (a request that changes nothing in Azure takes all of them on the page; a change takes the sign-in for its approval).
@@ -33,6 +33,7 @@ ADVICE_MIN_USD = 50.0
 # And no more than ADVICE_OPEN_MAX requests wait at the same time for a finding that the AIs did not settle (a finding that both AIs agree on and that code re-checked is not held by it):
 # the first page of the start page. The rest wait as open questions, and a request is made for them when a place is free.
 ADVICE_OPEN_MAX = 10
+GROUP_CASES_READ = 200  # the latest cases that are read to find the groups whose requests are open (the same number as cases/investigate.py reads)
 # The recommendations that may lead to a plan of a change (the family that matches picks among them: cases/families).
 CHANGE_RECOMMENDATIONS = ("delete", "change")
 PAUSED_MESSAGE = brief.PAUSED_CHANGES
@@ -329,6 +330,36 @@ class Approvals:
             if after.state == "expired":
                 closed.append(after)
         return closed
+
+    def supersede(self) -> list[PlanRecord]:
+        """Closes the open advise plans that a request for a group makes pointless. The first version asked about each resource of a finding on its own; the case of a group asks about all of
+        them once, so the older requests for the other resources of a group whose request is open ask the same question again. Each is closed as expired (an advise plan changes nothing), as
+        a plan whose time is over is. A plan of a change, a plan that anybody answered and the plan of a group are never touched. Returns the plans that it closed."""
+        try:
+            open_plans = [plan for plan in self.store.plans_open() if plan.family == ADVISE and plan.state == "open"]
+            waiting = {plan.case_id for plan in open_plans}
+            groups: set[str] = set()
+            covered: set[str] = set()
+            for case in self.store.cases_recent(GROUP_CASES_READ):
+                together = case.facts.get(GROUP_FACT) if isinstance(case.facts, dict) else None
+                if isinstance(together, dict):
+                    groups.add(case.case_id)
+                    members = together.get("members")
+                    if case.case_id in waiting and isinstance(members, list):
+                        covered.update(f"k{member}" for member in members if isinstance(member, str))
+            closed = []
+            for plan in open_plans:
+                if plan.case_id in covered and plan.case_id not in groups:
+                    plan = self.store.plan_get(plan.plan_id)  # read again: a person may have answered it since the list was read
+                    if plan is None or plan.state != "open":
+                        continue
+                    plan = _plan_with(plan, state="expired")
+                    self.store.plan_put(plan)
+                    self._set_case(plan.case_id, "expired")
+                    closed.append(plan)
+            return closed
+        except StoreError:
+            return []
 
     def create(self, case: CaseRecord, lead: Lead, approvers: tuple[str, ...]) -> PlanRecord | None:
         """The plan for a case, or None when no plan can be made (why_not says why). The case moves to awaiting_ok.

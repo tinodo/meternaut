@@ -77,14 +77,14 @@ def _waiting(ctx: Ctx) -> Safe:
 
 
 def _recently(ctx: Ctx) -> Safe:
-    """The last five requests that were decided (or that nobody answered), for the person who is named in them: what, who, when and the result."""
+    """The last five requests that were decided (or that nobody answered, when the request was for a change: an advice that nobody answered is on the History page only), for the person who is named in them: what, who, when and the result."""
     plans, ok = read(lambda: ctx.store.plans_recent(60), [])
     heading = Safe("<h2>Recently decided</h2>")
     if not ok:
         return join([heading, notice("error", "The decisions cannot be read", "I cannot read the recent decisions now. Nothing has changed.")])
     actions = {a.plan_id: a for a in read(lambda: ctx.store.actions_recent(100), [])[0]}
     rows: list[tuple[str, Safe]] = []
-    for plan in [p for p in plans if may_answer(ctx.principal, p) and effective_state(ctx, p) != "open"][:DECIDED_CONSIDERED]:  # type: ignore[arg-type]
+    for plan in [p for p in plans if may_answer(ctx.principal, p) and effective_state(ctx, p) != "open" and not (p.family == ADVISE and effective_state(ctx, p) == "expired")][:DECIDED_CONSIDERED]:  # type: ignore[arg-type]
         decisions: list[DecisionRecord] = read(lambda plan=plan: ctx.store.decisions_of_plan(plan.plan_id), [])[0]
         outcome = brief_of(ctx, plan, None, action=actions.get(plan.plan_id), decisions=decisions).outcome
         if not outcome.state:

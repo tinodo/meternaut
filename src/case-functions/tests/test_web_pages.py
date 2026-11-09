@@ -162,6 +162,17 @@ class TheDecisionsPage(unittest.TestCase):
         listing = [li.text() for li in reply.main.find("ul", class_="feed").find_all("li")]
         self.assertEqual(listing, [f"Delete the unattached disk gone-{n} in group meternaut-test-rg: Declined, Tino on Thu 5 Nov." for n in range(5)])
 
+    def test_an_advice_that_nobody_answered_is_no_row_of_recently_decided_and_a_change_that_nobody_answered_is(self):
+        console = seeded()
+        for n in range(6):
+            console.store.case_put(make_advice_case(case_id=f"case4{n:03d}", resource_id=f"{VM_ID}-e{n}", resource_name=f"endpoint-e{n}", plan_id=f"plan4{n:03d}"))
+            console.store.plan_put(make_advice(plan_id=f"plan4{n:03d}", case_id=f"case4{n:03d}", resource_id=f"{VM_ID}-e{n}", state="expired", created_at=at(days=-6), expires_at=at(days=-1)))
+        console.store.plan_put(make_plan(plan_id="plan0005", case_id="case0005", state="expired", created_at=at(days=-6), expires_at=at(days=-2)))
+        listing = [li.text() for li in console.get("/").main.find("ul", class_="feed").find_all("li")]
+        self.assertEqual(len(listing), 1, "six advices that expired are not rows, and the change that expired is")
+        self.assertIn("Expired", listing[0])
+        self.assertNotIn("oversized-vm-1", listing[0])
+
     def test_what_moved_to_the_page_of_the_platform_team_is_not_on_the_start_page(self):
         reply = seeded().get("/")
         for gone in ("What Meternaut can change in Azure", "State of each switch", "The kill switch", "Latest runs", "Latest cases", "Needs a person"):

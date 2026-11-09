@@ -375,6 +375,11 @@ def execute(s: Services, trigger: str) -> Summary:
     summary.needs_human += investigation.needs_human
     summary.dropped += investigation.dropped
     summary.errors += investigation.errors
+    if s.extras is not None:
+        closed = s.extras.approvals.supersede()
+        if closed:
+            say(f"{len(closed)} earlier request{'s' if len(closed) != 1 else ''} about single resources {'were' if len(closed) != 1 else 'was'} closed: the request for the group of resources that "
+                f"{'they belong' if len(closed) != 1 else 'it belongs'} to waits")
     candidates = ranked
     if investigation.ran or investigation.held:
         # The investigation found the waste by itself, so the leads of the fixed detectors that are real resources are left to it. They stay in the History as leads. When the harness held
