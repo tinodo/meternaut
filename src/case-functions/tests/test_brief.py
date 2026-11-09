@@ -64,6 +64,14 @@ class TheHeadline(unittest.TestCase):
     def test_a_family_without_words_of_its_own_keeps_the_title_of_its_plan(self):
         self.assertEqual(headline_of("resize-disk", "d", "g", "microsoft.compute/disks", None, "Resize an unattached disk"), "Resize an unattached disk")
 
+    def test_every_type_that_has_words_is_named_in_the_headline_of_a_consideration_and_a_workspace_is_one_of_them(self):
+        self.assertEqual(headline_of(ADVISE, "ws-demo", "rg-demo", "Microsoft.OperationalInsights/workspaces", "change"), "Consider changing the Log Analytics workspace ws-demo in group rg-demo")
+        for rtype, (_, noun) in brief.TYPE_WORDS.items():
+            with self.subTest(type=rtype):
+                found = headline_of(ADVISE, "x-1", "rg-demo", rtype, "change")
+                self.assertEqual(found, f"Consider changing the {noun} x-1 in group rg-demo")
+                self.assertNotIn("the resource", found)
+
     def test_a_name_is_cut_and_is_one_line(self):
         found = headline_of("delete-disk", "n" * 500 + "\n<b>", "g", "microsoft.compute/disks", None)
         self.assertEqual(found.count("\n"), 0)
@@ -417,6 +425,149 @@ class TheSaving(unittest.TestCase):
             self.assertNotRegex(text, r"\b(saved|saves)\b")
 
 
+WORKSPACE = "microsoft.operationalinsights/workspaces"
+WORKSPACE_ID = f"/subscriptions/{SUB}/resourceGroups/rg-demo/providers/Microsoft.OperationalInsights/workspaces/ws-demo"
+LINE = {"kind": "Syslog", "gb": 5.0, "share": 0.05, "runs": 0}
+
+
+def digest_of(**changes) -> dict:
+    """What cases/unread.py keeps in the facts of the case of a workspace: 60 of its 100 GB are read by nothing, and it cost 80 US dollars."""
+    values = {"days": 30, "billableGb": 100.0, "unreadGb": 60.0, "share": 0.6, "runsRecorded": True, "more": 0, "unknown": 0, "costUsd30d": 80.0, "savingUsd": 48.0,
+              "kinds": [{"kind": "AzureDiagnostics", "gb": 40.0, "share": 0.4, "runs": 0}, {"kind": "Syslog", "gb": 20.0, "share": 0.2, "runs": 0, "writers": ["microsoft.compute/virtualmachines"]}]}
+    values.update(changes)
+    return values
+
+
+def workspace_case(found=None, **changes):
+    values = dict(resource_id=WORKSPACE_ID, resource_name="ws-demo", resource_type=WORKSPACE, resource_group="rg-demo", saving_usd_month=None, cost_usd_30d=80.0,
+                  facts={"unread": digest_of() if found is None else found})
+    values.update(changes)
+    return make_advice_case(**values)
+
+
+def workspace_plan(**changes):
+    values = dict(resource_id=WORKSPACE_ID, resource_name="ws-demo", resource_group="rg-demo", saving_usd_month=48.0, waiting_costs_usd_day=1.6,
+                  title="Consider changing the Log Analytics workspace ws-demo in group rg-demo")
+    values.update(changes)
+    return make_advice(**values)
+
+
+class TheDataThatNothingReads(unittest.TestCase):
+    """What a workspace takes in and nothing reads: the digest that code kept in the facts of the case, and what the brief makes of it."""
+
+    def test_the_brief_has_the_figure_as_a_scenario_with_its_method_the_lines_and_the_choices(self):
+        b = brief_of(workspace_case(), workspace_plan())
+        self.assertEqual(b.headline, "Consider changing the Log Analytics workspace ws-demo in group rg-demo")
+        self.assertEqual((b.saving.monthly, b.saving.level, b.saving.waiting_per_day), (48.0, "Scenario", 1.6))
+        self.assertEqual(b.saving.basis, "the workspace's cost of the last 30 days times the share of its data that nothing reads, about 60 percent")
+        self.assertEqual(b.unread.sentence, "About 60 percent of what this workspace is billed for is data that nothing reads.")
+        self.assertEqual(b.unread.volume, "That is 60 GB of the 100 GB that it took in over 30 days.")
+        self.assertEqual([(line.kind, line.gb, line.percent, line.writers) for line in b.unread.lines],
+                         [("AzureDiagnostics", "40 GB", "40 percent", ""), ("Syslog", "20 GB", "20 percent", "Virtual machine")])
+        self.assertEqual(b.unread.lines[0].reads, "Read by 0 rules, 0 saved searches and 0 workbooks; 0 queries run")
+        self.assertEqual((len(b.options), b.unread.more, b.unread.note), (3, 0, ""))
+
+    def test_a_digest_that_is_not_as_it_should_be_shows_nothing_and_never_something_else(self):
+        self.assertIsNone(brief.unread_of(None))
+        self.assertIsNone(brief.unread_of(make_advice_case(facts={})))
+        self.assertIsNone(brief.unread_of(make_advice_case(facts=None)))
+        for name, found in (("text", "text"), ("a list", [1]), ("no kinds", digest_of(kinds=[])), ("kinds that are not a list", digest_of(kinds="x")),
+                            ("items that are not kinds", digest_of(kinds=[5, None, "x", ["y"]])), ("a share of nothing", digest_of(share=0)), ("a share above 1", digest_of(share=1.2)),
+                            ("a share that is text", digest_of(share="0.6")), ("a share that is not a number", digest_of(share=math.nan)), ("more than the whole", digest_of(unreadGb=120.0)),
+                            ("nothing that is unread", digest_of(unreadGb=0)), ("no days", digest_of(days=0)), ("days that are a flag", digest_of(days=True)),
+                            ("days that are text", digest_of(days="30")), ("a kind that something reads", digest_of(kinds=[{**LINE, "runs": 3}])),
+                            ("a kind with no name", digest_of(kinds=[{**LINE, "kind": ""}])), ("a negative volume", digest_of(kinds=[{**LINE, "gb": -5.0}])),
+                            ("a share above 1", digest_of(kinds=[{**LINE, "share": 2}])), ("runs that are text", digest_of(kinds=[{**LINE, "runs": "0"}])),
+                            ("runs that are a flag", digest_of(kinds=[{**LINE, "runs": False}]))):
+            with self.subTest(digest=name):
+                self.assertIsNone(brief.unread_of(workspace_case(found)))
+        found = brief.unread_of(workspace_case(digest_of(kinds=[{**LINE, "runs": 3}, LINE, "x"])))
+        self.assertEqual([line.kind for line in found.lines], ["Syslog"], "a kind that is read is left out, and the others stay")
+
+    def test_six_lines_are_shown_what_is_left_is_counted_and_what_was_not_counted_is_said(self):
+        kinds = [{"kind": f"K{n}", "gb": 1.0, "share": 0.01, "runs": 0} for n in range(9)]
+        found = brief.unread_of(workspace_case(digest_of(kinds=kinds, more=2)))
+        self.assertEqual(([line.kind for line in found.lines], found.more), ([f"K{n}" for n in range(6)], 5), "the three that are left out and the two that the digest counted")
+        found = brief.unread_of(workspace_case(digest_of(unknown=2, runsRecorded=False, kinds=[{**LINE, "runs": None}])))
+        self.assertEqual(found.lines[0].reads, "Read by 0 rules, 0 saved searches and 0 workbooks; queries run: not recorded")
+        self.assertEqual(found.note, "What reads 2 other kinds of data could not be read, so they are not counted. "
+                                     "The queries that people run were not counted: the record of them is off or could not be read.")
+        one = brief.unread_of(workspace_case(digest_of(unknown=1)))
+        self.assertEqual(one.note, "What reads 1 other kind of data could not be read, so it is not counted.")
+
+    def test_the_figure_is_the_one_of_the_digest_when_it_is_above_nothing_and_not_above_the_cost(self):
+        for figure, expected in ((48.0, 48.0), (47.996, 48.0), (80.0, 80.0), (80.004, 80.0), (80.01, None), (0, None), (-1.0, None), (True, None), ("48", None), (math.nan, None),
+                                 (math.inf, None), (None, None)):
+            with self.subTest(figure=figure):
+                self.assertEqual(brief.unread_saving(workspace_case(digest_of(savingUsd=figure))), expected)
+        self.assertIsNone(brief.unread_saving(workspace_case(cost_usd_30d=None)))
+        self.assertIsNone(brief.unread_saving(workspace_case(cost_usd_30d=40.0)), "a figure above what the resource cost is not a figure")
+        self.assertIsNone(brief.unread_saving(workspace_case({"missing": "volume"})))
+        self.assertIsNone(brief.unread_saving(None))
+
+    def test_a_figure_above_the_cost_is_not_shown_by_the_brief_and_a_case_without_a_request_shows_the_one_of_the_digest(self):
+        b = brief_of(workspace_case(cost_usd_30d=40.0), workspace_plan(saving_usd_month=None, waiting_costs_usd_day=None))
+        self.assertIsNone(b.saving.monthly)
+        info = brief_of(workspace_case(), None)
+        self.assertEqual((info.kind, info.saving.monthly, info.saving.level, info.options), ("info", 48.0, "Scenario", ()))
+
+    def test_a_digest_that_says_what_is_missing_gives_no_figure_and_the_sentence_of_what_is_missing(self):
+        for missing in ("volume", "readers"):
+            with self.subTest(missing=missing):
+                b = brief_of(workspace_case({"missing": missing}), workspace_plan(saving_usd_month=None, waiting_costs_usd_day=None))
+                self.assertEqual((b.saving.monthly, b.saving.why_none), (None, brief.UNREAD_MISSING[missing]))
+                self.assertLess(len(b.saving.why_none), 200)
+                self.assertEqual((b.unread, b.options), (None, ()))
+        other = brief_of(workspace_case({"missing": "anything else"}), workspace_plan(saving_usd_month=None, waiting_costs_usd_day=None)).saving
+        self.assertEqual(other.why_none, "The resource cost 80.00 US dollars in the last 30 days. What a change would save was not worked out.")
+
+    def test_the_figure_of_advisor_stays_when_the_finding_has_one_and_the_lines_are_still_shown(self):
+        b = brief_of(workspace_case(saving_usd_month=12.0), workspace_plan(saving_usd_month=12.0, waiting_costs_usd_day=0.4))
+        self.assertEqual((b.saving.monthly, b.saving.level, b.saving.basis), (12.0, "Scenario", "Azure Advisor's own estimate: no cost line of this resource backs it"))
+        self.assertEqual(len(b.unread.lines), 2)
+
+    def test_the_two_cited_measurements_are_left_out_of_the_facts_when_the_lines_say_more_and_stay_when_they_do_not(self):
+        measured = {"metrics": {"Billable GB Syslog": 20.0, "Readers Syslog": 0}, "metricUnits": {"Billable GB Syslog": "GB"}, "metricDays": {"Billable GB Syslog": 30, "Readers Syslog": 30}}
+        self.assertEqual([fact.label for fact in facts_of(workspace_case(facts={"unread": digest_of(), **measured}))], ["Cost, last 30 days", "Locks and keep tags"])
+        labels = [fact.label for fact in facts_of(workspace_case(facts={"unread": {"missing": "readers"}, **measured}))]
+        self.assertIn("Billable GB Syslog", labels)
+        self.assertIn("Readers Syslog", labels)
+
+    def test_the_choices_are_code_s_words_they_name_the_listed_kinds_and_the_writers_and_never_an_invented_one(self):
+        unread = brief.unread_of(workspace_case())
+        first, second, third = brief.options_of(unread, True)
+        self.assertTrue(first.what.startswith("Stop sending AzureDiagnostics and Syslog at the source: the log categories that a diagnostic setting sends, or the data collection rule that writes it."))
+        self.assertIn("On the last closed day, the largest writers of Syslog were: Virtual machine.", first.what)
+        self.assertNotIn("writers of AzureDiagnostics", first.what)
+        self.assertIn("a transformation in the data collection rule", second.what)
+        self.assertIn("Basic or Auxiliary plan", third.what)
+        for option in (first, second, third):
+            self.assertTrue(option.risk, "each choice says what is lost or at risk")
+        self.assertTrue(third.risk.endswith("That lowers the bill by less than the figure above."))
+        self.assertFalse(brief.options_of(unread, False)[2].risk.endswith("That lowers the bill by less than the figure above."), "no figure, no remark about it")
+        nothing_shown = brief.unread_of(workspace_case(digest_of(kinds=[{**LINE, "writers": [5, None, ""]}])))
+        self.assertNotIn("largest writers", brief.options_of(nothing_shown, False)[0].what)
+        many = brief.unread_of(workspace_case(digest_of(more=2, kinds=[{**LINE, "kind": name} for name in ("A", "B", "C", "D", "E")])))
+        self.assertTrue(brief.options_of(many, False)[0].what.startswith("Stop sending A, B, C and 4 more at the source"))
+        self.assertEqual((brief.options_of(None, True), brief.options_of(dataclasses.replace(unread, lines=()), True)), ((), ()))
+
+    def test_only_a_request_to_a_person_for_advice_has_the_choices(self):
+        self.assertEqual(len(brief_of(workspace_case(), workspace_plan()).options), 3)
+        self.assertEqual(brief_of(workspace_case(), None).options, ())
+        self.assertEqual(brief_of(make_advice_case(), make_advice()).options, (), "advice about anything else has none")
+        self.assertIsNone(brief_of(make_advice_case(), make_advice()).unread)
+        self.assertEqual(brief_of(make_case(), make_plan()).options, ())
+
+    def test_a_name_is_cut_and_the_text_of_the_estate_is_plain_text(self):
+        hostile = "<script>alert(1)</script>[x](javascript:alert(1)) https://evil.example/x\u202e" + "n" * 300
+        found = brief.unread_of(workspace_case(digest_of(kinds=[{**LINE, "kind": "t1", "name": hostile, "writers": [hostile]}])))
+        (line,) = found.lines
+        self.assertLessEqual(len(line.kind), 64)
+        for text in (line.kind, line.writers, " ".join(option.what for option in brief.options_of(found, True))):
+            self.assertNotRegex(text, r"https?://|\]\(|\u202e|\n")
+        self.assertIn("...", line.kind)
+
+
 class TheOwner(unittest.TestCase):
     def test_who_the_resource_probably_belongs_to_is_said_as_plain_facts(self):
         owner = owner_of(make_case(owner={"tagOwner": "alice@example.com", "tagName": "owner", "createdBy": "bob@example.com", "createdAt": "2026-03-01T08:00:00Z",
@@ -526,6 +677,7 @@ class TheSmallWords(unittest.TestCase):
 
     def test_the_kind_of_a_resource_in_words(self):
         self.assertEqual(kind_words("Microsoft.Compute/Disks"), ("Managed disk", "disk"))
+        self.assertEqual(kind_words("Microsoft.OperationalInsights/Workspaces"), ("Log Analytics workspace", "Log Analytics workspace"))
         self.assertEqual(kind_words("microsoft.thing/things"), ("microsoft.thing/things", "resource"))
         self.assertEqual(kind_words(""), ("Resource", "resource"))
         every_type = {kind.type for family in registry.REGISTRY for kind in family.kinds}

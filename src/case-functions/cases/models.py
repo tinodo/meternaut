@@ -59,6 +59,9 @@ ADVISE = "advise"
 ADVICE_QUIET_DAYS = 30
 # The detector of the cases that the investigation opens (cases/investigate.py): the Watch's other detectors judge their own leads again at every run.
 INVESTIGATION = "investigation"
+# The key, in the facts of a case, of what a case stands for when its finding covers many resources and a person is asked about the finding and not about each resource (cases/investigate.py
+# writes it, cases/brief.py reads it): how many, what they cost together, their type, in how many resource groups they are, and the names of the first few.
+GROUP_FACT = "group"
 
 
 def _thaw(cls: type, data: dict) -> dict:
@@ -127,7 +130,7 @@ class CaseRecord(Record):
     guards: tuple[str, ...] = ()
     models: dict = field(default_factory=dict)  # {"detective": name, "skeptic": name or None}
     steps: tuple[dict, ...] = ()  # one dict per step: step, model, promptTokens, completionTokens, ms, ok, note
-    facts: dict = field(default_factory=dict)  # the typed facts that the models saw
+    facts: dict = field(default_factory=dict)  # the typed facts that the models saw; for a person to read and never for a model it can also hold `unread` (a workspace) and `group` (many resources)
     plan_id: str | None = None
     first_seen_at: str = ""
     updated_at: str = ""
