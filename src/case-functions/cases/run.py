@@ -30,7 +30,7 @@ from .http import Client, HttpError, allowed_calls, default_transport
 from .identity import Identity
 from .memory_store import parse, stamp
 from .modelcalls import ModelError, Models
-from .models import CaseRecord, RunRecord, StoreError
+from .models import GROUP_FACT, CaseRecord, RunRecord, StoreError
 from .redact import Redactor
 from .roles import RoleError, clean_text
 
@@ -42,6 +42,8 @@ READ_SHARE = 0.6
 # A subscription that was started inside the share may finish its own reads (Advisor, locks, cost lines) this much later; a call after that is refused by the client, as after the deadline.
 READ_GRACE = 0.1
 SCOPES_SHOWN = 5  # the subscriptions that run.started names, at eight characters each; it also carries their count
+COST_DAYS = 30  # the closed days of cost_usd_30d, and of the series that a case with an open plan carries (CaseRecord.cost_series)
+COST_IDS = 50  # the resource ids that one Cost Management query asks about
 LOG = logging.getLogger("meternaut.run")
 
 
@@ -262,6 +264,78 @@ def _unread_note(estate: Estate, deadline_seconds: int) -> str:
     return f"{what}: the time for reading them ({int(READ_SHARE * deadline_seconds)} of the {deadline_seconds} seconds of the run) was used up"
 
 
+def _members(case: CaseRecord) -> list[str]:
+    """The lower-case ids of what a case stands for: its resource, or the ones that a group case kept (none when it kept fewer than it covers)."""
+    group = case.facts.get(GROUP_FACT) if isinstance(case.facts, dict) else None
+    if not isinstance(group, dict):
+        return [case.resource_id.lower()]
+    ids = group.get("resourceIds")
+    return [i.lower() for i in ids] if isinstance(ids, list) and len(ids) == group.get("count") and all(isinstance(i, str) for i in ids) else []
+
+
+def _subscription(resource_id: str) -> str:
+    return resource_id.split("/")[2] if resource_id.startswith("/subscriptions/") else ""
+
+
+def read_cost_series(s: Services, contexts: Mapping[str, Context], say: Callable[[str], None]) -> None:
+    """The last step of a Watch: reads the daily cost (CaseRecord.cost_series) of each case with an open plan whose series does not end yesterday, in US dollars only, one query for each
+    subscription and COST_IDS resources. A failure leaves the case as it was and is one line in the History; a limit ends the step. It never fails the run."""
+    ex = s.extras
+    if ex is None:
+        return
+    try:
+        last = s.clock().astimezone(dt.timezone.utc).date() - dt.timedelta(days=1)
+        first = last - dt.timedelta(days=COST_DAYS - 1)
+        other = {sub for sub, context in contexts.items() if context.currency not in (None, "USD")}  # the Watch said already that these are not in dollars
+        due: dict[str, list[str]] = {}
+        for plan in ex.store.plans_open():
+            case = ex.store.case_get(plan.case_id)
+            if case is None or case.case_id in due or (case.cost_series_end == last.isoformat() and len(case.cost_series or ()) == COST_DAYS):
+                continue
+            ids = _members(case)
+            subs = {_subscription(i) for i in ids}
+            if ids and "" not in subs and subs.isdisjoint(other):
+                due[case.case_id] = ids
+        by_sub: dict[str, list[str]] = {}
+        for resource in sorted({i for ids in due.values() for i in ids}):
+            by_sub.setdefault(_subscription(resource), []).append(resource)
+        daily: dict[str, list[float]] = {}
+        read: set[str] = set()
+        why = ""
+        for sub, chunk in [(sub, ids[n:n + COST_IDS]) for sub, ids in by_sub.items() for n in range(0, len(ids), COST_IDS)]:
+            try:
+                rows = s.arm.cost_days(sub, first, last, where=("ResourceId", tuple(chunk)))
+            except HttpError as error:
+                why = why or clean_text(s.redact(error), 200)
+                if error.status == 429:
+                    break
+                continue
+            if any(code != "USD" for _, _, _, code in rows):
+                why = why or "the cost lines are not in US dollars"
+                continue
+            for day, resource, amount, _ in rows:
+                if 0 <= (day - first).days < COST_DAYS:
+                    daily.setdefault(resource, [0.0] * COST_DAYS)[(day - first).days] += amount
+            read.update(chunk)
+        done = 0
+        for case_id, ids in due.items():
+            if not read.issuperset(ids):
+                continue
+            series = [round(sum(daily[i][n] for i in ids if i in daily), 4) or 0.0 for n in range(COST_DAYS)]
+            try:
+                kept = ex.store.case_get(case_id)  # read again just before the write: a person may have answered since
+                if kept is not None:
+                    ex.store.case_put(replace(kept, cost_series=series, cost_series_end=last.isoformat()))
+                done += 1
+            except StoreError as error:
+                why = why or clean_text(s.redact(error), 200)
+        if done < len(due):
+            left = len(due) - done
+            say(f"the daily cost of {left} open request{'' if left == 1 else 's'} could not be read ({why}); what was read before stays")
+    except Exception as error:  # noqa: BLE001 (this step never stops the run)
+        say(f"the daily cost of the open requests could not be read ({clean_text(s.redact(f'{type(error).__name__}: {error}'), 200)})")
+
+
 def execute(s: Services, trigger: str) -> Summary:
     h, st = s.history, s.settings
     started = s.monotonic()
@@ -427,6 +501,7 @@ def execute(s: Services, trigger: str) -> Summary:
             summary.dropped += 1
         else:
             summary.errors += 1
+    read_cost_series(s, contexts, say)
     summary.tokens = tokens
     summary.seconds = int(s.monotonic() - started)
     h.emit("run.finished", ok=summary.ok, leads=summary.leads, cases=summary.cases, proposed=summary.proposed, needsHuman=summary.needs_human,

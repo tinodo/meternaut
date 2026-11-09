@@ -236,6 +236,14 @@ class StoreContract:
         self.assertEqual(self.store.case_get("k8").owner, {}, "a case that nobody looked up has no owner lines")
         self.assertEqual([c.case_id for c in self.store.cases_recent(status="acknowledged")], ["k7"])
 
+    def test_a_case_keeps_its_daily_cost_and_the_day_it_ends_on_and_a_case_without_them_has_none(self):
+        series = [round(0.25 * n, 2) for n in range(30)]
+        self.store.case_put(case("k9", "awaiting_ok", cost_series=series, cost_series_end="2026-11-03"))
+        self.store.case_put(case("k10", "awaiting_ok"))
+        got = self.store.case_get("k9")
+        self.assertEqual((got.cost_series, got.cost_series_end), (series, "2026-11-03"))
+        self.assertEqual((self.store.case_get("k10").cost_series, self.store.case_get("k10").cost_series_end), (None, None))
+
     def test_an_advise_plan_is_kept_and_listed_like_any_other_plan(self):
         advice = replace(plan("p5"), family="advise", approval_class="R1", preconditions={"family": "advise", "caseStatus": "needs_human"})
         self.store.plan_put(advice)

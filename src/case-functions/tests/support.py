@@ -86,8 +86,8 @@ class FakeEstate:
     """Answers every call that the app makes, from the lists below, and keeps them in `calls`.
 
     `graph` maps the name that heads a Resource Graph query (`// meternaut:<name>`) to its rows. `locks` is the answer of the subscription-wide list of
-    locks and `locks_at` maps a lower-case scope to the answer of the list of that scope. `failures` maps a source (`graph:<name>`, `advisor`, `locks`,
-    `locks_at`, `costs`, `chat`) to a status that is answered instead (or to a list of statuses, one for each call).
+    locks and `locks_at` maps a lower-case scope to the answer of the list of that scope. `days` holds the daily cost lines (a date, a resource id, a cost) that a query by day
+    asks for. `failures` maps a source (`graph:<name>`, `advisor`, `locks`, `locks_at`, `costs`, `daily`, `chat`) to a status that is answered instead (or to a list of statuses, one for each call).
     `after_chat` is called after each answer of the model, to move a clock. `first_call` is called before the first call of any kind, for the same reason.
     """
 
@@ -98,6 +98,7 @@ class FakeEstate:
         self.locks: list[dict] = []
         self.locks_at: dict[str, list[dict]] = {}
         self.cost_rows: list[list] = []
+        self.days: list[tuple[dt.date, str, float]] = []
         self.currency = "USD"
         self.failures: dict[str, object] = {}
         self.chat_replies: list[tuple[int, object]] = []
@@ -133,9 +134,12 @@ class FakeEstate:
             failed = self._failure(f"graph:{name}")
             return (failed, {}, b'{"error":{"code":"Failed","message":"boom"}}') if failed else self._json({"count": len(self.graph[name]), "data": self.graph[name]})
         if "/providers/microsoft.costmanagement/query" in path:
-            failed = self._failure("costs")
+            daily = body["dataset"]["granularity"] == "Daily"
+            failed = self._failure("daily" if daily else "costs")
             if failed:
                 return failed, {"retry-after": "1"} if failed == 429 else {}, b'{"error":{"code":"Throttled","message":"slow down"}}'
+            if daily:
+                return self._by_day(body)
             return self._json({"properties": {"columns": [{"name": "Cost"}, {"name": "ResourceId"}, {"name": "ServiceName"}, {"name": "Currency"}],
                                               "rows": [[cost, rid, "Storage", self.currency] for cost, rid in self.cost_rows]}})
         if "/providers/microsoft.advisor/recommendations" in path:
@@ -165,6 +169,12 @@ class FakeEstate:
     @staticmethod
     def _json(document, status: int = 200):
         return status, {}, json.dumps(document).encode("utf-8")
+
+    def _by_day(self, body):
+        """The answer to a query of Cost Management by day: the lines of `days` of the resources that the query names, each with its day as a number (20261103)."""
+        asked = {value.lower() for value in body["dataset"]["filter"]["dimensions"]["values"]}
+        return self._json({"properties": {"columns": [{"name": "Cost"}, {"name": "UsageDate"}, {"name": "ResourceId"}, {"name": "Currency"}],
+                                          "rows": [[cost, int(day.strftime("%Y%m%d")), rid.lower(), self.currency] for day, rid, cost in self.days if rid.lower() in asked]}})
 
     # -- what the tests ask -----------------------------------------------------------------------------------------------------------------------
     def prompts(self) -> list[str]:

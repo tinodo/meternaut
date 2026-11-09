@@ -102,10 +102,13 @@ class Tenant(FakeEstate):
         if mine is None:
             return self._graph(body)
         sub, source = mine.groups()
-        short = {"costmanagement/query": "costs", "advisor/recommendations": "advisor", "authorization/locks": "locks"}[source]
+        by_day = source == "costmanagement/query" and body["dataset"]["granularity"] == "Daily"
+        short = "daily" if by_day else {"costmanagement/query": "costs", "advisor/recommendations": "advisor", "authorization/locks": "locks"}[source]
         failed = self._trouble(short, sub)
         if failed:
             return self._refused(failed)
+        if by_day:
+            return self._by_day(body)
         if short == "costs":
             rows = [[cost, rid, "Storage", self.currency] for cost, rid in self.costs_of.get(sub, [])]
             return self._json({"properties": {"columns": [{"name": "Cost"}, {"name": "ResourceId"}, {"name": "ServiceName"}, {"name": "Currency"}], "rows": rows}})
@@ -136,9 +139,14 @@ class Tenant(FakeEstate):
     def asked(self, word):
         return [c for c in self.calls if word in c["path"].lower()]
 
+    @staticmethod
+    def by_day(call):
+        """A query of Cost Management by day, which the last step of a run makes for the cost of its open requests (cases/run.py: read_cost_series): it reads no subscription of the estate."""
+        return bool(call["body"]) and call["body"].get("dataset", {}).get("granularity") == "Daily"
+
     def read_subscriptions(self, word):
-        """The subscriptions for which a call of the kind was made, in the order of the calls."""
-        return [re.match(r"/subscriptions/([^/]+)/", c["path"].lower()).group(1) for c in self.asked(word)]
+        """The subscriptions for which a call of the kind was made to read the estate, in the order of the calls."""
+        return [re.match(r"/subscriptions/([^/]+)/", c["path"].lower()).group(1) for c in self.asked(word) if not self.by_day(c)]
 
 
 def arm_for(*answers):
@@ -761,6 +769,8 @@ class WhenThereAreMoreSubscriptionsThanTheTimeIsFor(unittest.TestCase):
         _, events, _ = watch(tenant, env=self.ENV, ticker=ticker, clock=clock, extras=extras)
         self.assertEqual(tenant.read_subscriptions("costmanagement")[0], SUBSCRIPTION)
         self.assertEqual(len(tenant.read_subscriptions("costmanagement")), 10)
+        by_day = [re.match(r"/subscriptions/([^/]+)/", c["path"].lower()).group(1) for c in tenant.asked("costmanagement") if tenant.by_day(c)]
+        self.assertEqual(sorted(by_day), sorted({plan.subscription_id.lower() for plan in extras.store.plans_open()}), "one query by day for each subscription that has an open request")
         self.assertIn("planted", [e["resourceName"] for e in of_type(events, "lead.found")])
         self.assertEqual(events[0]["scopes"], [sub[:8] for sub in subs[:5]], "the line names the first of the sorted list, not the order of reading")
 

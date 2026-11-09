@@ -206,7 +206,8 @@ class WhatTheLoopDoesNotRepeat(unittest.TestCase):
         self.clock.advance(days=1)
         watch(estate, self.extras, self.clock)
         (after,) = self.store.cases_recent()
-        self.assertEqual(before, after)
+        self.assertEqual(before, replace(after, cost_series=before.cost_series, cost_series_end=before.cost_series_end), "judged again by nobody: only its daily cost moves on")
+        self.assertEqual((before.cost_series_end, after.cost_series_end), ("2026-11-03", "2026-11-04"))
         self.assertEqual(len(self.store.plans_open()), 1)
 
     def test_a_case_that_ended_in_an_error_is_taken_up_again(self):

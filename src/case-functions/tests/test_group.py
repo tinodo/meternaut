@@ -10,6 +10,8 @@ import unittest
 from unittest import mock
 
 import support  # noqa: F401  (it puts the app on the path)
+from support import SUBSCRIPTION
+from test_cost_series import FIRST, LAST, FakeCosts, read as read_costs
 from test_investigate import OID, SAFE, FakeFoundry, FakeToolbox, Harness, Moving, answer, entry, finding, key_of, loop_for, metrics, resource, verdicts
 from test_letters import BASE, CONTACTS, MOST_WORDS, PERSON, word_count
 from test_unread import page_of
@@ -108,6 +110,28 @@ class WhenAFindingToInvestigateCoversManyResources(unittest.TestCase):
         self.assertIn(case.case_id[1:], together["members"], "the resource that the case belongs to is one of them")
         self.assertEqual((together["capped"], together["silenced"]), (0, 0))
         json.dumps(case.facts)
+
+    def test_the_case_keeps_the_resource_ids_of_the_group_in_lower_case_to_read_the_daily_cost_of_the_group(self):
+        resources = endpoints(60)
+        together = only_case(watch(raw_of(60), resources)).facts[GROUP_FACT]
+        self.assertEqual(together["resourceIds"], sorted(item.resource_id.lower() for item in resources))
+        self.assertEqual(len(together["resourceIds"]), together["count"])
+        self.assertNotEqual(together["resourceIds"], sorted(item.resource_id for item in resources), "the ids that Resource Graph gives have capitals")
+
+    def test_a_group_of_more_than_the_limit_keeps_that_many_ids_and_no_more(self):
+        items = [investigate.Item(f"r{n}", investigate._lead(resource(n), {}, 1.0, None), {}) for n in range(1, 206)]
+        together = investigate._together(items)
+        self.assertEqual((together["count"], len(together["resourceIds"]), investigate.MAX_GROUP_IDS), (205, 200, 200))
+
+    def test_the_daily_cost_of_the_group_is_the_sum_of_the_resources_that_its_case_kept_the_ids_of(self):
+        resources = endpoints(60)
+        h = watch(raw_of(60), resources)
+        case = only_case(h)
+        costs = FakeCosts({item.resource_id.lower(): {LAST: n / 10, FIRST: 1.0} for n, item in enumerate(resources, 1)})
+        self.assertEqual(read_costs(h.store, costs), [])
+        got = h.store.case_get(case.case_id)
+        self.assertEqual((got.cost_series[0], got.cost_series[29], got.cost_series_end), (60.0, 183.0, "2026-11-03"))
+        self.assertEqual(costs.asked(), [(SUBSCRIPTION, 50), (SUBSCRIPTION, 10)])
 
     def test_the_history_has_one_line_for_the_case_with_the_size_of_the_group_and_no_other_line_has_that_field(self):
         raw = [raw_of(8, handles=[f"r{n}" for n in range(1, 9)]), raw_of(3, handles=[f"r{n}" for n in range(9, 12)], proposal="delete")]

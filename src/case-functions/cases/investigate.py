@@ -52,6 +52,7 @@ COVER_PERCENT = 80  # of each hundred resources of a later finding, how many a g
 GROUP_CASES_READ = 200  # the latest cases that are read once for a run, to find the groups
 RECHECK_SLACK = dt.timedelta(hours=1)  # a case saved minutes after a run began is checked again by the run that begins RECHECK_DAYS later (run.TIMER_SLACK)
 MAX_GROUP_NAMES = 12  # the names of the other resources that the case of such a finding keeps, for the page of a person
+MAX_GROUP_IDS = 200  # the resource ids that the case of a group keeps, for its daily cost (run.read_cost_series)
 MEMBER = re.compile(r"[0-9a-f]{12}")  # the short id of a resource that the case of a group keeps (Lead.lead_id)
 MAX_ENTRIES = 720  # the entries of metric_evidence that are read: a handful for each of the handles that a finding may hold
 MAX_FACT_METRICS = 12  # the measurements that a case keeps
@@ -969,7 +970,8 @@ def _group_of(finding: Finding) -> list[Item] | None:
 def _together(members: list[Item], capped: int = 0, silenced: int = 0) -> dict:
     """What the case of a group keeps of it, as typed numbers and cleaned names (cases/brief.py shows it): how many resources, what they cost together (None when no cost line was read for any
     of them), their type ("other" when they differ), in how many resource groups they are, the names of the first of the others, how many more of the finding the cap of cases left out, how
-    many a person marked do-not-touch, and the short ids of the resources that it stands for (a later Watch compares a finding with them: _settle). The names are text of the estate: cut
+    many a person marked do-not-touch, the short ids of the resources that it stands for (a later Watch compares a finding with them: _settle) and their lower-case resource ids, at most
+    MAX_GROUP_IDS (the daily cost of the group is the sum of theirs: run.read_cost_series). The names are text of the estate: cut
     and cleaned here, and cleaned again where they are shown."""
     leads = [member.lead for member in members]
     known = [lead.cost_usd_30d for lead in leads if lead.cost_usd_30d is not None]
@@ -978,7 +980,8 @@ def _together(members: list[Item], capped: int = 0, silenced: int = 0) -> dict:
     names = [clean_text(lead.name, 60) for lead in leads[1 : 1 + MAX_GROUP_NAMES]]
     return {"count": len(leads), "costUsd30d": _figure(sum(known)) if known else None, "type": kind if len(kind) <= 120 and RESOURCE_TYPE.fullmatch(kind) else "other",
             "groups": len({(lead.subscription_id.lower(), (lead.resource_group or "").lower()) for lead in leads}), "names": [name for name in names if name],
-            "capped": capped, "silenced": silenced, "members": sorted(lead.lead_id for lead in leads)}
+            "capped": capped, "silenced": silenced, "members": sorted(lead.lead_id for lead in leads),
+            "resourceIds": sorted(lead.resource_id.lower() for lead in leads)[:MAX_GROUP_IDS]}
 
 
 def _open_case(s: "Services", out: Investigation, finding: Finding, item: Item, models: dict, steps: tuple[dict, ...], case_id: str, group: list[Item] | None = None) -> None:

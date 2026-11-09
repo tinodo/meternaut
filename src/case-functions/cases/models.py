@@ -11,7 +11,7 @@ renamed or removed, so no stored record has to be rewritten, and the tables keep
 The families of change added the same kind of thing: `PlanRecord.target` and `PlanRecord.digest` (a plan of before has no digest, so it cannot be approved: the Watch makes a new one),
 `DecisionRecord.plan_digest`, `ActionRecord.plan_digest` and `ActionRecord.operation`. The constant FAMILIES is gone: the families are in cases/families (their registry is
 cases/families/registry.py). The learning (docs/proposals/15-learning.md) added three new kinds of record, LessonRecord, ClaimRecord and CapabilityRecord, each with its own table, and no
-field of a record that was there before.
+field of a record that was there before. The daily cost of a request added `CaseRecord.cost_series` and `cost_series_end` (None: never read).
 """
 from __future__ import annotations
 
@@ -60,7 +60,7 @@ ADVICE_QUIET_DAYS = 30
 # The detector of the cases that the investigation opens (cases/investigate.py): the Watch's other detectors judge their own leads again at every run.
 INVESTIGATION = "investigation"
 # The key, in the facts of a case, of what a case stands for when its finding covers many resources and a person is asked about the finding and not about each resource (cases/investigate.py
-# writes it, cases/brief.py reads it): how many, what they cost together, their type, in how many resource groups they are, and the names of the first few.
+# writes it, cases/brief.py reads it): how many, what they cost together, their type, in how many resource groups they are, the names of the first few and their resource ids.
 GROUP_FACT = "group"
 
 
@@ -145,6 +145,10 @@ class CaseRecord(Record):
     # {"skeptic": the second AI's verdict, "past": {"n", "approved", "ratio", "boomerangs"}: how past requests like this were answered, "held": "history" when what past requests
     # showed held a proposal back, "access": a word of cases/capability.py when what the identity cannot see changes what can be said}. A key that is not known is left out.
     learned: dict = field(default_factory=dict)
+    # The cost of each of the last 30 closed days (US dollars, the oldest first, 0.0 for a day with no cost line, the last on `cost_series_end`: YYYY-MM-DD, UTC), summed for a case of a group,
+    # while a request about the case is open (cases/run.py, read_cost_series). None: never read, or could not be.
+    cost_series: list[float] | None = None
+    cost_series_end: str | None = None
 
 
 @dataclass(frozen=True)
