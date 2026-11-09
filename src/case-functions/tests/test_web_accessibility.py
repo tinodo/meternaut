@@ -1,6 +1,7 @@
 import re
 import unittest
 
+from test_web_pages import busy
 from test_web_support import (MAYA, NOW, STRANGER, TINO, Console, FailingStore, ScriptedDecider, ScriptedDelegate, at, make_action, make_advice, make_advice_case, make_case,
                               make_decision, make_plan, make_run)
 
@@ -88,6 +89,7 @@ def gallery() -> dict:
     for path in ("/", "/ok/plan0001", "/ok/plan0005", "/why/case0001", "/why/case0002", "/why/case0005", "/history", "/me/decisions", "/me/activity", "/me/settings",
                  "/me/notes", "/ops", "/ops/runs", "/ops/runs?run=run00001", "/ops/runs?run=%3C", "/ops/permissions", "/ops/pause", "/nothing", "/ok/nothing", "/why/nothing"):
         pages[f"GET {path}"] = console.get(path)
+    pages["busy decisions"] = busy().get("/")
     pages["GET refused"] = console.get("/ok/plan0001", oid=MAYA)
     pages["GET wrong role"] = console.get("/ops/pause", oid=MAYA)
     pages["denied"] = console.get("/", oid=STRANGER)
@@ -350,7 +352,7 @@ class TheWords(unittest.TestCase):
                 self.assertNotIn("?", reply.root.find("main").text())
 
     def test_nothing_is_called_saved_where_money_is_in_question_and_money_is_in_us_dollars(self):
-        names = ["GET /", "GET /ok/plan0001", "GET /ok/plan0005", "GET /why/case0001", "GET /why/case0005", "GET /history", "GET /me/decisions", "GET /me/activity", "paused plan",
+        names = ["GET /ok/plan0001", "GET /ok/plan0005", "GET /why/case0001", "GET /why/case0005", "GET /history", "GET /me/decisions", "GET /me/activity", "paused plan",
                  "paused advice", "approved plan", "expired plan", "consumed plan", "failed plan", "answered advice"] + [name for name in self.pages
                                                                                                                            if name.startswith(("answer ", "begin ", "return "))]
         for name in names:
@@ -375,28 +377,32 @@ class TheWords(unittest.TestCase):
                     self.assertNotIn(word, text)
                 self.assertNotIn("/withdraw", reply.text)
 
-    def test_the_footer_is_one_line_with_a_person_to_talk_to_as_plain_text_on_every_page_that_has_a_footer(self):
+    def test_the_footer_has_about_this_page_with_why_the_person_sees_it_and_who_is_responsible_as_plain_text_on_every_page_that_has_a_footer(self):
         for name, reply in self.pages.items():
             with self.subTest(page=name):
                 footer = reply.root.find("footer")
-                paragraphs = footer.find_all("p")
-                self.assertEqual(len(paragraphs), 1, "the footer is one line")
-                self.assertEqual(paragraphs[0].attrs["class"], "footer-line")
-                text = paragraphs[0].text()
+                (about,) = footer.find_all("details")
+                self.assertEqual(about.find("summary").text(), "About this page")
+                text = about.find("p").text()
                 self.assertIn("You see this because ", text)
-                self.assertRegex(text, r"Talk to a person: [A-Z][a-z]+ \([a-z]+@example\.com\)\.$")
+                self.assertRegex(text, r"Responsible for Meternaut: [A-Z][a-z]+ \([a-z]+@example\.com\)\.$")
                 self.assertEqual(footer.find_all("a"), [], "no link in the footer")
+                self.assertNotIn("Talk to a person", footer.text())
 
-    def test_the_pages_that_show_ai_text_carry_the_ai_line_and_the_others_do_not(self):
-        line = "Written by an AI (models: model-detective-x, model-skeptic-y); a person approves every change. You see this because "
+    def test_the_pages_that_show_ai_text_say_so_in_one_quiet_line_and_name_the_models_and_the_others_do_not(self):
+        line = "Recommendations written by AI. A person approves every change."
         for name, reply in self.pages.items():
             with self.subTest(page=name):
-                text = reply.root.find("footer").find_all("p")[0].text()
+                footer = reply.root.find("footer")
+                paragraphs = [p.text() for p in footer.find_all("p")]
+                about = paragraphs[-1]
                 if name in NOT_AI:
-                    self.assertTrue(text.startswith("You see this because "), text)
-                    self.assertNotIn("Written by an AI", text)
+                    self.assertEqual(len(paragraphs), 1, paragraphs)
+                    self.assertNotIn("written by AI", footer.text())
+                    self.assertTrue(about.startswith("You see this because "), about)
                 else:
-                    self.assertTrue(text.startswith(line), text)
+                    self.assertEqual(paragraphs[0], line)
+                    self.assertTrue(about.startswith("Models: model-detective-x, model-skeptic-y. You see this because "), about)
 
     def test_a_page_that_refuses_says_that_nothing_changed(self):
         refusing = ("refused_code", "refused_state", "refused_paused", "expired", "duplicate", "stopped", "azure_refused", "signin_failed", "step_up_failed")

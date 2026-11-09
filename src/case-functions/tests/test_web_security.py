@@ -40,14 +40,19 @@ def seeded() -> Console:
     return console
 
 
+SVG_PARTS = ("svg", "path", "line", "rect", "circle", "text")  # a chart is a drawing: shapes and words, with no script, link, image, animation or foreign content
+
+
 def active_content(reply) -> list[str]:
     """Everything in a page that could run or load something: scripts, event handlers, frames, scripted or outside addresses. The one link to the Azure portal is allowed,
-    once, with rel="noopener" and an address that has the shape of the page of one resource."""
+    once, with rel="noopener" and an address that has the shape of the page of one resource. A drawing (svg) is allowed when it is made of shapes and words only."""
     problems = []
     portal = 0
     for node in reply.root.walk():
-        if node.tag in ("script", "iframe", "object", "embed", "base", "frame", "applet", "svg", "canvas", "img", "video", "audio"):
+        if node.tag in ("script", "iframe", "object", "embed", "base", "frame", "applet", "canvas", "img", "video", "audio"):
             problems.append(f"<{node.tag}>")
+        if node.tag == "svg":
+            problems += [f"<{part.tag}> in a drawing" for part in node.walk() if part.tag not in SVG_PARTS]
         if node.tag == "link" or (node.tag == "meta" and node.attrs.get("http-equiv")):
             problems.append(f"<{node.tag}>")
         for name, value in node.attrs.items():

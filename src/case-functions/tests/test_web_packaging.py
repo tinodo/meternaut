@@ -34,8 +34,8 @@ def imported(path):
 
 class ThePackage(unittest.TestCase):
     def test_the_files_are_where_they_should_be_and_nothing_else_is(self):
-        self.assertEqual([p.name for p in modules()], ["__init__.py", "approval.py", "brief_page.py", "common.py", "core.py", "history.py", "home.py", "layout.py", "notebook.py",
-                                                       "notes.py", "ops.py", "router.py", "settings.py", "words.py"])
+        self.assertEqual([p.name for p in modules()], ["__init__.py", "approval.py", "brief_page.py", "common.py", "core.py", "figures.py", "history.py", "home.py", "layout.py",
+                                                       "notebook.py", "notes.py", "ops.py", "router.py", "settings.py", "style.py", "words.py"])
         self.assertEqual(sorted(p.name for p in WEB.iterdir() if p.name != "__pycache__"), [p.name for p in modules()])
 
     def test_it_imports_the_standard_library_only_and_the_three_modules_of_the_contract(self):
@@ -46,7 +46,8 @@ class ThePackage(unittest.TestCase):
                     if level == 0:
                         self.assertIn(module.split(".")[0], standard)
                     elif level == 1:
-                        self.assertIn(module.split(".")[0], {"", "core", "layout", "common", "words", "approval", "brief_page", "history", "home", "notebook", "notes", "ops", "router", "settings"})
+                        self.assertIn(module.split(".")[0], {"", "core", "layout", "common", "words", "approval", "brief_page", "figures", "history", "home", "notebook", "notes", "ops", "router",
+                                                             "settings", "style"})
                     else:
                         self.assertEqual(level, 2)
                         self.assertIn(module, {"brief", "models", "people"}, "the pages know the records, the people and the decision brief, and nothing of how they are kept")

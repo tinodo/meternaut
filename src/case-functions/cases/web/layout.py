@@ -1,14 +1,15 @@
 """The page shell and the parts that every page is made of: the style, the landmarks, the footer, notices, tables and form fields.
 
-The style has no script and no outside file: Fluent 2 design tokens as CSS custom properties (light and dark), and a block for forced colors.
-Every part returns `Safe` text, and every value that goes into it is escaped by `fmt`.
+The style is the one stylesheet of the style guide (style.py): no script and no outside file, Fluent 2 design tokens as CSS custom properties (light and dark), and a block for forced
+colors. Every part returns `Safe` text, and every value that goes into it is escaped by `fmt`.
 """
 from __future__ import annotations
 
 from typing import Iterable, Mapping, Sequence
 
-from ..brief import contact_text, written_by
+from ..brief import contact_text
 from .core import Ctx, Response, Safe, esc, fmt, join
+from .style import STYLE
 
 HTML = "text/html; charset=utf-8"
 TEXT = "text/plain; charset=utf-8"
@@ -31,130 +32,6 @@ SECURITY_HEADERS = {
     "Cross-Origin-Resource-Policy": "same-origin",
     "Permissions-Policy": "camera=(), microphone=(), geolocation=(), payment=(), usb=()",
 }
-
-STYLE = """
-:root{color-scheme:light dark;
---fontFamilyBase:"Segoe UI Variable Text","Segoe UI",system-ui,-apple-system,"Helvetica Neue",Arial,sans-serif;
---fontFamilyMonospace:"Cascadia Mono",Consolas,"Courier New",monospace;
---fontSizeBase200:.875rem;--fontSizeBase300:1rem;--fontSizeBase500:1.25rem;--fontSizeHero700:1.75rem;--fontWeightSemibold:600;
---borderRadiusMedium:4px;--strokeWidthThin:1px;--strokeWidthThick:2px;
---colorNeutralBackground1:#ffffff;--colorNeutralBackground2:#fafafa;--colorNeutralBackground3:#f5f5f5;
---colorNeutralForeground1:#242424;--colorNeutralForeground2:#424242;--colorNeutralForeground3:#616161;--colorNeutralForegroundOnBrand:#ffffff;
---colorNeutralStroke1:#d1d1d1;--colorNeutralStrokeAccessible:#616161;
---colorBrandBackground:#0f6cbd;--colorBrandBackgroundHover:#115ea3;--colorBrandStroke1:#0f6cbd;--colorBrandForegroundLink:#115ea3;
---colorStrokeFocus1:#ffffff;--colorStrokeFocus2:#000000;
---colorPaletteRedBackground1:#fdf3f4;--colorPaletteRedForeground1:#b10e1c;--colorPaletteRedBorder1:#d13438;
---colorPaletteGreenBackground1:#f1faf1;--colorPaletteGreenForeground1:#0e700e;--colorPaletteGreenBorder1:#107c10;
---colorPaletteYellowBackground1:#fffbe6;--colorPaletteYellowForeground1:#835b00;--colorPaletteYellowBorder1:#c19c00;
---colorPaletteBlueBackground1:#ebf3fc}
-@media (prefers-color-scheme:dark){:root{
---colorNeutralBackground1:#292929;--colorNeutralBackground2:#1f1f1f;--colorNeutralBackground3:#141414;
---colorNeutralForeground1:#ffffff;--colorNeutralForeground2:#d6d6d6;--colorNeutralForeground3:#adadad;--colorNeutralForegroundOnBrand:#ffffff;
---colorNeutralStroke1:#666666;--colorNeutralStrokeAccessible:#adadad;
---colorBrandBackground:#115ea3;--colorBrandBackgroundHover:#0f6cbd;--colorBrandStroke1:#479ef5;--colorBrandForegroundLink:#479ef5;
---colorStrokeFocus1:#292929;--colorStrokeFocus2:#ffffff;
---colorPaletteRedBackground1:#3f1011;--colorPaletteRedForeground1:#e37d80;--colorPaletteRedBorder1:#dc626d;
---colorPaletteGreenBackground1:#052505;--colorPaletteGreenForeground1:#54b054;--colorPaletteGreenBorder1:#54b054;
---colorPaletteYellowBackground1:#4a3500;--colorPaletteYellowForeground1:#f2c661;--colorPaletteYellowBorder1:#f2c661;
---colorPaletteBlueBackground1:#082338}}
-*,*::before,*::after{box-sizing:border-box}
-html{-webkit-text-size-adjust:100%}
-body{margin:0;background:var(--colorNeutralBackground1);color:var(--colorNeutralForeground1);font-family:var(--fontFamilyBase);font-size:var(--fontSizeBase300);line-height:1.5}
-a{color:var(--colorBrandForegroundLink);text-underline-offset:.2em}
-a:hover{text-decoration-thickness:.15em}
-:focus-visible{outline:3px solid var(--colorStrokeFocus2);outline-offset:2px;box-shadow:0 0 0 3px var(--colorStrokeFocus1)}
-.skip{position:absolute;left:-100vw;top:0;z-index:10;padding:.75rem 1rem;background:var(--colorNeutralBackground1);color:var(--colorNeutralForeground1)}
-.skip:focus{left:0}
-.visually-hidden{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
-body>header{display:flex;flex-wrap:wrap;gap:.25rem 1.5rem;align-items:baseline;justify-content:space-between;padding:.75rem 1.25rem;background:var(--colorNeutralBackground3);border-bottom:var(--strokeWidthThin) solid var(--colorNeutralStroke1)}
-.brand{margin:0;font-size:var(--fontSizeBase500);font-weight:var(--fontWeightSemibold)}
-.brand a{color:inherit;text-decoration:none}
-.who{margin:0;color:var(--colorNeutralForeground2);font-size:var(--fontSizeBase200)}
-nav{padding:0 1.25rem;border-bottom:var(--strokeWidthThin) solid var(--colorNeutralStroke1)}
-nav ul{display:flex;flex-wrap:wrap;gap:0 .25rem;margin:0;padding:0;list-style:none}
-nav a{display:inline-block;min-height:2.75rem;padding:.65rem .75rem;border-bottom:3px solid transparent;color:var(--colorNeutralForeground1);text-decoration:none}
-nav a:hover{background:var(--colorNeutralBackground3)}
-nav a[aria-current="page"]{border-bottom-color:var(--colorBrandStroke1);font-weight:var(--fontWeightSemibold)}
-main{max-width:46rem;margin:0 auto;padding:1.25rem}
-h1{margin:.5rem 0 .75rem;font-size:var(--fontSizeHero700);line-height:1.25}
-h2{margin:1.75rem 0 .5rem;font-size:var(--fontSizeBase500)}
-h3{margin:1.25rem 0 .25rem;font-size:1.0625rem}
-p{margin:.5rem 0}
-.lead{font-size:1.125rem}
-.muted{color:var(--colorNeutralForeground2)}
-code,.mono{font-family:var(--fontFamilyMonospace);font-size:.9em;overflow-wrap:anywhere}
-.notice{margin:1rem 0;padding:.75rem 1rem;border:var(--strokeWidthThin) solid var(--notice-border,var(--colorNeutralStroke1));border-left-width:.5rem;background:var(--notice-bg,var(--colorNeutralBackground2))}
-.notice p,.notice ul{margin:.25rem 0}
-.notice-title{margin:0 0 .25rem;font-weight:var(--fontWeightSemibold);font-size:1rem}
-.notice.info{--notice-bg:var(--colorPaletteBlueBackground1);--notice-border:var(--colorBrandStroke1)}
-.notice.success{--notice-bg:var(--colorPaletteGreenBackground1);--notice-border:var(--colorPaletteGreenBorder1)}
-.notice.warning{--notice-bg:var(--colorPaletteYellowBackground1);--notice-border:var(--colorPaletteYellowBorder1)}
-.notice.error{--notice-bg:var(--colorPaletteRedBackground1);--notice-border:var(--colorPaletteRedBorder1)}
-dl.summary{display:grid;grid-template-columns:minmax(9rem,14rem) 1fr;margin:1rem 0;border-top:var(--strokeWidthThin) solid var(--colorNeutralStroke1)}
-dl.summary>div{display:contents}
-dl.summary dt,dl.summary dd{margin:0;padding:.6rem .75rem .6rem 0;border-bottom:var(--strokeWidthThin) solid var(--colorNeutralStroke1)}
-dl.summary dt{font-weight:var(--fontWeightSemibold)}
-dl.summary dd{overflow-wrap:anywhere}
-.rows{margin:1rem 0;padding:0;list-style:none}
-.rows>li{padding:.9rem 0;border-top:var(--strokeWidthThin) solid var(--colorNeutralStroke1)}
-.rows>li:last-child{border-bottom:var(--strokeWidthThin) solid var(--colorNeutralStroke1)}
-.row-title{margin:0;font-weight:var(--fontWeightSemibold);overflow-wrap:anywhere}
-.row-meta{margin:.2rem 0 .6rem;color:var(--colorNeutralForeground2)}
-.feed{margin:.25rem 0 1rem;padding-left:1.1rem}
-.feed li{margin:.35rem 0;overflow-wrap:anywhere}
-.strong-line{font-weight:var(--fontWeightSemibold)}
-details.more{margin:2rem 0 0;border:var(--strokeWidthThin) solid var(--colorNeutralStroke1);border-radius:var(--borderRadiusMedium);background:var(--colorNeutralBackground2)}
-details.more>summary{display:flex;align-items:center;min-height:2.75rem;padding:.5rem 1rem;font-weight:var(--fontWeightSemibold);cursor:pointer}
-details.more[open]>summary{border-bottom:var(--strokeWidthThin) solid var(--colorNeutralStroke1)}
-details.more>div{padding:0 1rem 1rem}
-.actions{display:flex;flex-wrap:wrap;gap:.75rem;margin:1rem 0}
-.actions>*{flex:1 1 14rem;max-width:22rem}
-.btn,button{display:inline-flex;align-items:center;justify-content:center;min-height:2.75rem;min-width:11rem;padding:.5rem 1.25rem;border:var(--strokeWidthThick) solid var(--colorNeutralStrokeAccessible);border-radius:var(--borderRadiusMedium);background:var(--colorNeutralBackground1);color:var(--colorNeutralForeground1);font:inherit;font-weight:var(--fontWeightSemibold);text-align:center;text-decoration:none;cursor:pointer}
-.btn:hover,button:hover{background:var(--colorNeutralBackground3)}
-.btn.primary,button.primary{border-color:var(--colorBrandStroke1);background:var(--colorBrandBackground);color:var(--colorNeutralForegroundOnBrand)}
-.btn.primary:hover,button.primary:hover{background:var(--colorBrandBackgroundHover)}
-.btn.danger,button.danger{border-color:var(--colorPaletteRedBorder1);color:var(--colorPaletteRedForeground1)}
-form{margin:1rem 0}
-label,legend{display:block;margin:.75rem 0 .25rem;font-weight:var(--fontWeightSemibold)}
-.hint{margin:.1rem 0 .4rem;color:var(--colorNeutralForeground2);font-size:var(--fontSizeBase200)}
-.field-error{margin:.1rem 0 .4rem;color:var(--colorPaletteRedForeground1);font-weight:var(--fontWeightSemibold)}
-input[type=text],input[type=date],input[type=time],input[type=number],select,textarea{display:block;width:100%;max-width:38rem;min-height:2.5rem;padding:.4rem .6rem;border:var(--strokeWidthThin) solid var(--colorNeutralStrokeAccessible);border-radius:var(--borderRadiusMedium);background:var(--colorNeutralBackground1);color:var(--colorNeutralForeground1);font:inherit}
-textarea{min-height:6rem;resize:vertical}
-.field.error input,.field.error textarea,.field.error select{border:var(--strokeWidthThick) solid var(--colorPaletteRedBorder1)}
-fieldset{margin:1rem 0;padding:.25rem 1rem 1rem;border:var(--strokeWidthThin) solid var(--colorNeutralStroke1)}
-legend{padding:0 .25rem}
-.choice{display:flex;align-items:center;gap:.6rem;min-height:2.5rem}
-.choice input{flex:none;width:1.5rem;height:1.5rem;margin:0}
-.choice label{display:inline;margin:0;font-weight:400}
-.table-wrap{overflow-x:auto;margin:1rem 0;border:var(--strokeWidthThin) solid var(--colorNeutralStroke1)}
-table{width:100%;min-width:34rem;border-collapse:collapse}
-caption{padding:.6rem .75rem;text-align:left;font-weight:var(--fontWeightSemibold)}
-th,td{padding:.55rem .75rem;border-top:var(--strokeWidthThin) solid var(--colorNeutralStroke1);text-align:left;vertical-align:top;overflow-wrap:anywhere}
-th{background:var(--colorNeutralBackground3);font-weight:var(--fontWeightSemibold)}
-td form{margin:0}
-td .btn,td button{min-width:0;min-height:2.5rem;padding:.25rem .75rem}
-blockquote.quote{margin:.5rem 0;padding:.5rem 1rem;border-left:.375rem solid var(--colorNeutralStrokeAccessible);background:var(--colorNeutralBackground3);overflow-wrap:anywhere}
-.quote-label{margin:.75rem 0 0;color:var(--colorNeutralForeground2);font-size:var(--fontSizeBase200);font-weight:var(--fontWeightSemibold)}
-footer{max-width:46rem;margin:2rem auto 0;padding:1rem 1.25rem 2rem;border-top:var(--strokeWidthThin) solid var(--colorNeutralStroke1);color:var(--colorNeutralForeground2);font-size:var(--fontSizeBase200)}
-footer p{margin:0}
-@media (max-width:40em){
-main{padding:1rem}
-dl.summary{grid-template-columns:1fr}
-dl.summary dt{padding-bottom:0;border-bottom:0}
-.actions{flex-direction:column}
-.actions>*{flex:none;width:100%;max-width:none}
-.btn,button{width:100%}
-td .btn,td button{width:auto}
-}
-@media (forced-colors:active){
-a{color:LinkText}
-.btn,button{border:2px solid ButtonText;background:ButtonFace;color:ButtonText}
-.btn.primary,button.primary{border-color:Highlight}
-.notice,blockquote.quote,.table-wrap,th,td,details.more{border-color:CanvasText}
-nav a[aria-current="page"]{border-bottom-color:Highlight}
-:focus-visible{outline:3px solid Highlight;box-shadow:none}
-}
-"""
 
 NAV = (
     ("/", "Decisions", ()),
@@ -227,8 +104,9 @@ def details(label: str, *content: object) -> Safe:
     return fmt('<details class="more"><summary>{label}</summary><div>{content}</div></details>', label=label, content=join(block(c) for c in content))
 
 
-def table(table_id: str, caption: str, headers: Sequence[str], rows: Sequence[Sequence[object]], *, row_header: bool = False) -> Safe:
-    """A data table in a region that scrolls and can be reached with the keyboard. The first column is the row header when `row_header` is set."""
+def table(table_id: str, caption: str, headers: Sequence[str], rows: Sequence[Sequence[object]], *, row_header: bool = False, quiet_caption: bool = False) -> Safe:
+    """A data table in a region that scrolls and can be reached with the keyboard. The first column is the row header when `row_header` is set; the caption is only for a screen reader
+    when `quiet_caption` is set (the table sits under a heading that says the same)."""
     head = join(fmt('<th scope="col">{h}</th>', h=h) for h in headers)
     body = []
     for row in rows:
@@ -236,8 +114,9 @@ def table(table_id: str, caption: str, headers: Sequence[str], rows: Sequence[Se
         for index, cell in enumerate(row):
             cells.append(fmt('<th scope="row">{c}</th>', c=cell) if row_header and index == 0 else fmt("<td>{c}</td>", c=cell))
         body.append(fmt("<tr>{cells}</tr>", cells=join(cells)))
-    return fmt('<div class="table-wrap" role="region" aria-labelledby="{id}" tabindex="0"><table><caption id="{id}">{caption}</caption>'
-               "<thead><tr>{head}</tr></thead><tbody>{body}</tbody></table></div>", id=table_id, caption=caption, head=head, body=join(body))
+    return fmt('<div class="table-wrap" role="region" aria-labelledby="{id}" tabindex="0"><table><caption id="{id}"{quiet}>{caption}</caption>'
+               "<thead><tr>{head}</tr></thead><tbody>{body}</tbody></table></div>", id=table_id, caption=caption, head=head, body=join(body),
+               quiet=Safe(' class="visually-hidden"') if quiet_caption else Safe(""))
 
 
 # -- forms ---------------------------------------------------------------------------------------------------------------------------------------
@@ -330,12 +209,19 @@ def talk_to_a_person(ctx: Ctx) -> str:
     return ", ".join(contact_text(p.name, p.mail) for p in ([p for p in chosen if p.oid.lower() != me] or chosen)[:1])
 
 
+AI_LINE = "Recommendations written by AI. A person approves every change."
+
+
 def footer_line(ctx: Ctx, ai: bool, why: str, models: Sequence[str] | None = None) -> Safe:
-    """The one line at the foot of every page: that an AI wrote what is on it (and which models), why this person sees it, and whom to talk to."""
-    written = fmt("{line} ", line=written_by(tuple(ctx.services.models if models is None else models))) if ai else Safe("")
-    people = talk_to_a_person(ctx)
-    talk = fmt(" Talk to a person: {people}.", people=people) if people else Safe("")
-    return fmt('<p class="footer-line">{written}You see this because {why}.{talk}</p>', written=written, why=why or "you are listed as a person who may use this page", talk=talk)
+    """The foot of every page. A page that shows text that an AI wrote has one quiet line that says so and that a person approves every change. Every page has "About this page", which holds
+    the models (for a page with AI text), why this person sees the page and who answers for Meternaut: rule 13 (b) to (d) of AGENTS.md, in plain text and with no link."""
+    names = ", ".join(ctx.services.models if models is None else models)
+    written = fmt("Models: {names}. ", names=names) if ai and names else Safe("")
+    person = talk_to_a_person(ctx)
+    owner = fmt(" Responsible for Meternaut: {person}.", person=person) if person else Safe("")
+    about = fmt("<details><summary>About this page</summary><p>{written}You see this because {why}.{owner}</p></details>", written=written,
+                why=why or "you are listed as a person who may use this page", owner=owner)
+    return join([paragraph(AI_LINE) if ai else Safe(""), about])
 
 
 def _nav(ctx: Ctx, current: str) -> Safe:
@@ -346,8 +232,9 @@ def _nav(ctx: Ctx, current: str) -> Safe:
 
 
 def page(ctx: Ctx, title: str, body: Safe, *, status: int = 200, current: str = "", ai: bool = False, why: str = "", models: Sequence[str] | None = None,
-         headers: dict[str, str] | None = None) -> Response:
-    """A whole page for a signed-in person: the landmarks, the title, the footer. `why` finishes the sentence "You see this because ..." of the one footer line."""
+         headers: dict[str, str] | None = None, wide: bool = False) -> Response:
+    """A whole page for a signed-in person: the landmarks, the title, the footer. `why` finishes the sentence "You see this because ..." of "About this page". `wide` is for the page
+    of the decisions, which has room for a chart beside the text."""
     principal = ctx.principal
     footer = footer_line(ctx, ai, why, models)
     document = fmt(
@@ -355,9 +242,9 @@ def page(ctx: Ctx, title: str, body: Safe, *, status: int = 200, current: str = 
         '<meta name="color-scheme" content="light dark">\n<meta name="robots" content="noindex, nofollow">\n<title>{title} - Meternaut</title>\n'
         '<style>{style}</style>\n</head>\n<body>\n<a class="skip" href="#main">Skip to the content</a>\n'
         '<header>\n<p class="brand"><a href="{home}">Meternaut (AI)</a></p>\n<p class="who">Signed in as {name}. Roles: {roles}.</p>\n</header>\n'
-        '<nav aria-label="Pages"><ul>{nav}</ul></nav>\n<main id="main">\n{body}\n</main>\n<footer>\n{footer}\n</footer>\n</body>\n</html>\n',
+        '<nav aria-label="Pages"><ul>{nav}</ul></nav>\n<main id="main"{wide}>\n{body}\n</main>\n<footer>\n{footer}\n</footer>\n</body>\n</html>\n',
         title=title, style=Safe(STYLE), home=ctx.url("/"), name=principal.name if principal else "", roles=", ".join(principal.roles) if principal else "",
-        nav=_nav(ctx, current), body=body, footer=footer)
+        nav=_nav(ctx, current), body=body, footer=footer, wide=Safe(' class="wide"') if wide else Safe(""))
     return respond(status, document, headers=headers)
 
 

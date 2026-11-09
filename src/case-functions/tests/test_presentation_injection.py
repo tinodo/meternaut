@@ -38,7 +38,8 @@ PAYLOADS = {
 }
 PAYLOADS["everything"] = " | ".join(text for name, text in PAYLOADS.items() if not name.startswith("long"))
 
-FORBIDDEN_TAGS = {"script", "iframe", "object", "embed", "img", "svg", "math", "base", "frame", "frameset", "applet"}
+FORBIDDEN_TAGS = {"script", "iframe", "object", "embed", "img", "math", "base", "frame", "frameset", "applet"}
+DRAWING = {"svg", "path", "line", "rect", "circle", "text"}  # a chart of a page is a drawing: shapes and words, and nothing that runs, links, loads or moves
 LETTER_TAGS = {"html", "head", "meta", "title", "style", "body", "table", "tr", "td", "th", "h1", "p", "ul", "li", "a"}
 LINK_ATTRIBUTES = {"href", "src", "action", "formaction", "data", "poster", "srcset", "background", "cite", "ping", "manifest", "codebase", "xlink:href"}
 PORTAL = (r"https://portal\.azure\.com/#resource/subscriptions/[0-9A-Fa-f-]{36}/resourceGroups/[A-Za-z0-9._()-]{1,90}/providers/[A-Za-z0-9.]{1,80}"
@@ -147,6 +148,8 @@ def audit_html(test: unittest.TestCase, html: str, label: str, payload: str = ""
     nodes = [node for node in root.walk() if node.tag != "#root"]
     found = {node.tag for node in nodes} & FORBIDDEN_TAGS
     test.assertFalse(found, f"{label}: {sorted(found)}")
+    drawn = {part.tag for node in nodes if node.tag == "svg" for part in node.walk()} - DRAWING
+    test.assertFalse(drawn, f"{label}: {sorted(drawn)} in a drawing")
     for node in nodes:
         for name, value in node.attrs.items():
             test.assertFalse(name.lower().startswith("on"), f"{label}: the attribute {name} of <{node.tag}>")

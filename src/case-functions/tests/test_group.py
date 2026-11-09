@@ -807,8 +807,12 @@ class WhatAPersonSees(unittest.TestCase):
         console.store.case_put(self.case)
         console.store.plan_put(plan)
         text = console.get("/").main.text()
-        self.assertIn("Waiting for you (1)", text)
-        self.assertIn(HEADLINE, text)
+        self.assertIn("1 decision.", text)
+        self.assertIn("60 private endpoints in 14 resource groups", text)
+        self.assertIn("$21,960 a year", text)
+        self.assertIn("$1,830.00 a month", text)
+        self.assertIn("Review all 60", text)
+        self.assertNotIn("No figure", text)
 
     def test_the_weekly_letter_has_the_headline_and_what_the_resources_cost_together_and_stays_within_its_words(self):
         letter = letters.digest_letter(PERSON, BASE, WEB_NOW, [(self.plan, self.case)], CONTACTS)

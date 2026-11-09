@@ -4,11 +4,11 @@ import unittest
 from unittest import mock
 
 from support import APP_ROOT
-from test_web_support import (MAYA, NOW, OPS, OWNER, TINO, VM, Console, FailingStore, at, make_action, make_advice, make_advice_case, make_case, make_decision, make_plan, snapshot)
+from test_web_support import (MAYA, NOW, OPS, OWNER, SUB, TINO, VM, XSS, Console, FailingStore, at, make_action, make_advice, make_advice_case, make_case, make_decision, make_plan,
+                              snapshot)
 
-from cases.models import SettingsRecord
-from cases.web import core
-
+from cases.models import GROUP_FACT, SettingsRecord
+from cases.web import core, figures
 VM_ID = VM
 
 NAV_ALL = ["Decisions", "History", "Settings", "Operations"]
@@ -21,10 +21,68 @@ def seeded() -> Console:
     return console
 
 
-def waiting(reply) -> list[tuple[str, str, str]]:
-    """The rows of "Waiting for you": the headline, what it is worth with the risk and the age, and where its one button goes."""
-    (listing,) = reply.main.find_all("ol", class_="rows")
-    return [(li.find("p", class_="row-title").text(), li.find("p", class_="row-meta").text(), li.find("a").attrs["href"]) for li in listing.find_all("li")]
+def lane(reply, anchor: str):
+    """The section of one lane of the page of the decisions: "ready" (changes) or "look" (findings)."""
+    (section,) = [s for s in reply.main.find_all("section") if s.attrs.get("aria-labelledby") == anchor]
+    return section
+
+
+def decisions(reply, anchor: str) -> list[str]:
+    """Where the buttons of a lane go, in the order of the page: the decision in focus first, then the rows."""
+    return [a.attrs["href"] for a in lane(reply, anchor).find_all("a") if a.attrs["href"].startswith("/ok/")]
+
+
+def rows(reply, anchor: str) -> list:
+    """The rows of a lane under the decision in focus."""
+    return [li for ol in lane(reply, anchor).find_all("ol", class_="items") for li in ol.children if hasattr(li, "tag")]
+
+
+def spans(node) -> list[str]:
+    """The text of each span that is a direct child of a node: the parts of a figure, of a row of recent decisions."""
+    return [child.text() for child in node.children if hasattr(child, "tag") and child.tag == "span"]
+
+
+def chips(node) -> list[str]:
+    return [span.text() for span in node.find_all("span") if "chip" in span.classes()]
+
+
+def storage(console: Console, count: int, cost=lambda n: 3.0 + n, saving=lambda n: None) -> None:
+    """`count` findings of the investigation about one storage account each, in a resource group each, with a request for each."""
+    for n in range(count):
+        rid = f"/subscriptions/{SUB}/resourceGroups/rg-{n}/providers/Microsoft.Storage/storageAccounts/st{n}"
+        console.store.case_put(make_advice_case(case_id=f"case5{n:03d}", resource_id=rid, resource_name=f"st{n}", resource_type="microsoft.storage/storageaccounts",
+                                                resource_group=f"rg-{n}", saving_usd_month=saving(n), cost_usd_30d=cost(n), plan_id=f"plan5{n:03d}"))
+        console.store.plan_put(make_advice(plan_id=f"plan5{n:03d}", case_id=f"case5{n:03d}", resource_id=rid, resource_name=f"st{n}", resource_group=f"rg-{n}",
+                                           saving_usd_month=saving(n), title=f"Look at the storage account st{n} in group rg-{n}"))
+
+
+def endpoints(console: Console) -> None:
+    """One finding that stands for 50 private endpoints in 8 resource groups, and the one request about all of them."""
+    rid = f"/subscriptions/{SUB}/resourceGroups/rg-pe/providers/Microsoft.Network/privateEndpoints/pe-1"
+    group = {"count": 50, "groups": 8, "type": "microsoft.network/privateendpoints", "names": ["pe-2", "pe-3", "pe-4", "pe-5"], "costUsd30d": 358.11}
+    console.store.case_put(make_advice_case(case_id="case6000", resource_id=rid, resource_name="pe-1", resource_type="microsoft.network/privateendpoints", resource_group="rg-pe",
+                                            saving_usd_month=None, cost_usd_30d=358.11, plan_id="plan6000", facts={"basis": "idle", GROUP_FACT: group}))
+    console.store.plan_put(make_advice(plan_id="plan6000", case_id="case6000", resource_id=rid, resource_name="pe-1", resource_group="rg-pe", saving_usd_month=None,
+                                       title="Look at 50 private endpoints"))
+
+
+def busy() -> Console:
+    """A console whose page of the decisions has every part: a decision in focus, rows, a row that opens for three requests, one that stands for fifty resources, a finding with no
+    cost, a request that was put off, a finding that is held back and a decision that was made."""
+    console = seeded()
+    more_plans(console, 2, saving=lambda n: 30.0, seen=lambda n: (-3, -10)[n])
+    console.store.case_put(make_advice_case())
+    console.store.plan_put(make_advice())
+    storage(console, 3)
+    endpoints(console)
+    console.store.case_put(make_advice_case(case_id="case7000", resource_id=f"{VM}-none", resource_name="law-x", resource_type="microsoft.operationalinsights/workspaces",
+                                            saving_usd_month=None, cost_usd_30d=None, plan_id="plan7000"))
+    console.store.plan_put(make_advice(plan_id="plan7000", case_id="case7000", resource_id=f"{VM}-none", resource_name="law-x", saving_usd_month=None))
+    console.store.decision_put(make_decision(plan_id="plan7000", decision="later"))
+    console.store.case_put(make_advice_case(case_id="case3000", resource_id=f"{VM_ID}-held", resource_name="held-1", plan_id=None))
+    console.store.plan_put(make_plan(plan_id="plan2000", case_id="case2000", resource_name="gone-0", state="declined"))
+    console.store.decision_put(make_decision(plan_id="plan2000", decision="decline", at=at(hours=-1)))
+    return console
 
 
 def more_plans(console: Console, count: int, *, saving=lambda n: 1.0 + n, seen=lambda n: -3) -> None:
@@ -35,44 +93,102 @@ def more_plans(console: Console, count: int, *, saving=lambda n: 1.0 + n, seen=l
 
 
 class TheDecisionsPage(unittest.TestCase):
-    def test_it_is_a_short_page_of_two_lists_and_nothing_else(self):
+    def test_it_is_a_summary_two_lanes_and_the_last_decisions_and_nothing_else(self):
         reply = seeded().get("/")
         self.assertEqual(reply.status, 200)
         self.assertEqual(reply.headings(1), ["Decisions"])
-        self.assertEqual(reply.headings(2), ["Waiting for you (1)", "Recently decided"])
-        self.assertEqual(reply.root.find_all("table"), [], "no table: a list of what waits and a list of what was decided")
+        self.assertEqual(reply.headings(2), ["Ready to decide", "Recently decided"])
+        self.assertEqual(reply.root.find("main").classes(), ["wide"])
+        self.assertEqual(reply.root.find_all("table"), [], "no table: a table is only in a row that opens")
         self.assertEqual(reply.forms(), [])
+        self.assertEqual(reply.problems, [])
 
-    def test_a_row_is_the_headline_what_it_is_worth_with_its_level_the_risk_the_age_and_one_button(self):
+    def test_the_decision_with_the_most_at_stake_is_in_focus_with_its_figure_a_year_and_a_month_and_what_it_is_based_on(self):
         reply = seeded().get("/")
-        self.assertEqual(waiting(reply), [(HEADLINE, "About 7.17 US dollars a month, Expected. Risk: medium. Found 3 days ago.", "/ok/plan0001")])
-        button = reply.main.find("ol", class_="rows").find("a")
-        self.assertEqual((button.attrs["class"], button.text()), ("btn primary", f"Open: {HEADLINE}"))
-        self.assertEqual(len(reply.main.find("ol", class_="rows").find_all("a")), 1, "one button for each row")
+        focus = reply.main.find("article", class_="focus")
+        self.assertEqual(focus.find("h3").text(), "Delete the unattached disk planted-disk-1")
+        self.assertEqual(focus.find("p", class_="fig save").text(), "$86 a year")
+        self.assertEqual(focus.find("p", class_="figsub").text(), "Saves, Expected. $7.17 a month. Based on the cost lines of the last 30 days.")
+        self.assertEqual([dt.text() for dt in focus.find_all("dt")], ["What changes", "Why", "Checked", "Undo"])
+        self.assertEqual(chips(focus), ["Medium risk", "High confidence"])
+        button = focus.find("a")
+        self.assertEqual((button.attrs["class"], button.attrs["href"], button.text()), ("btn primary", "/ok/plan0001", "Review and decide: Delete the unattached disk planted-disk-1"))
+        self.assertEqual(rows(reply, "ready"), [], "the one decision is in focus and not again in a row")
+        self.assertEqual(reply.main.find("figure", class_="chart").find("p", class_="m").text(), f"{figures.READ_LATER} The chart fills in then.", "no series of daily costs is stored yet")
 
-    def test_the_largest_saving_comes_first_then_the_one_that_has_waited_longest(self):
+    def test_a_row_has_its_rank_its_figure_a_year_and_a_month_its_risk_and_one_button(self):
         console = seeded()
-        console.store.case_put(make_advice_case())
-        console.store.plan_put(make_advice())
         more_plans(console, 2, saving=lambda n: 30.0, seen=lambda n: (-3, -10)[n])
-        order = [href for _, _, href in waiting(console.get("/"))]
-        self.assertEqual(order, ["/ok/plan0002", "/ok/plan1001", "/ok/plan1000", "/ok/plan0001"])
+        reply = console.get("/")
+        first, last = rows(reply, "ready")
+        self.assertEqual((first.find("span", class_="rank").text(), last.find("span", class_="rank").text()), ("2", "3"))
+        self.assertEqual(first.find("span", class_="t").text(), "Delete the unattached disk disk-0")
+        self.assertEqual(spans(first.find("span", class_="impact save")), ["Saves, Expected", "$360 a year", "$30.00 a month"])
+        self.assertEqual(spans(last.find("span", class_="impact save")), ["Saves, Expected", "$86 a year", "$7.17 a month"])
+        self.assertEqual(chips(first), ["Medium risk", "High confidence"])
+        self.assertEqual([(a.attrs["class"], a.attrs["href"], a.text()) for a in first.find_all("a")], [("btn sm primary", "/ok/plan1000", "Review: Delete the unattached disk disk-0")])
+        self.assertIn("Managed disk · resource group meternaut-test-rg · found 3 days ago", first.text())
+        self.assertIn("Based on the cost lines of the last 30 days.", first.text())
 
-    def test_a_request_that_the_person_put_off_goes_to_the_end_and_says_so(self):
+    def test_the_decisions_are_ranked_by_what_is_at_stake_then_by_how_long_they_waited_and_the_order_can_be_asked_for(self):
         console = seeded()
         console.store.case_put(make_advice_case())
         console.store.plan_put(make_advice())
-        console.store.decision_put(make_decision(plan_id="plan0002", decision="later"))
-        rows = waiting(console.get("/"))
-        self.assertEqual([href for _, _, href in rows], ["/ok/plan0001", "/ok/plan0002"])
-        self.assertTrue(rows[1][1].endswith("You chose to decide later."), rows[1][1])
-        self.assertNotIn("decide later", rows[0][1])
+        more_plans(console, 2, saving=lambda n: (5.0, 50.0)[n], seen=lambda n: (-20, -3)[n])
+        for sort, order in (("impact", ["/ok/plan1001", "/ok/plan0001", "/ok/plan1000"]), ("age", ["/ok/plan1000", "/ok/plan1001", "/ok/plan0001"]),
+                            ("risk", ["/ok/plan1001", "/ok/plan0001", "/ok/plan1000"]), ("nonsense", ["/ok/plan1001", "/ok/plan0001", "/ok/plan1000"])):
+            with self.subTest(sort=sort):
+                reply = console.get("/", query={"sort": sort})
+                self.assertEqual(decisions(reply, "ready"), order)
+                self.assertEqual(decisions(reply, "look"), ["/ok/plan0002"], "the finding of the machine is a lane of its own")
+        links = {a.text(): a for a in console.get("/").main.find("div", class_="seg").find_all("a")}
+        self.assertEqual(list(links), ["Impact", "Age", "Risk"])
+        self.assertEqual([name for name, a in links.items() if "aria-current" in a.attrs], ["Impact"])
+        self.assertEqual(links["Age"].attrs["href"], "/?sort=age")
+        self.assertEqual([name for name, a in {a.text(): a for a in console.get("/", query={"sort": "age"}).main.find("div", class_="seg").find_all("a")}.items()
+                          if "aria-current" in a.attrs], ["Age"])
+        self.assertIsNone(seeded().get("/").main.find("div", class_="seg"), "one decision needs no order")
+
+    def test_a_request_that_the_person_put_off_goes_to_the_end_of_its_lane_and_says_so(self):
+        console = seeded()
+        more_plans(console, 1, saving=lambda n: 1.0)
+        console.store.decision_put(make_decision(plan_id="plan0001", decision="later"))
+        reply = console.get("/")
+        self.assertEqual(decisions(reply, "ready"), ["/ok/plan1000", "/ok/plan0001"])
+        (row,) = rows(reply, "ready")
+        self.assertEqual(chips(row), ["Medium risk", "High confidence", "You chose to decide later"])
+        self.assertNotIn("You chose to decide later", chips(lane(reply, "ready").find("article")))
 
     def test_a_request_of_advice_says_that_its_saving_is_a_scenario_when_azure_advisor_is_the_only_basis(self):
         console = seeded()
         console.store.case_put(make_advice_case())
         console.store.plan_put(make_advice())
-        self.assertEqual(waiting(console.get("/"))[0][1], "About 120.00 US dollars a month, Scenario. Risk: low. Found 3 days ago.")
+        (row,) = rows(console.get("/"), "look")
+        self.assertEqual(spans(row.find("span", class_="impact save")), ["Saves, Scenario", "$1,440 a year", "$120.00 a month"])
+        self.assertIn("Based on Azure Advisor's own estimate: no cost line of this resource backs it.", row.text())
+        self.assertEqual(row.find("span", class_="t").text(), "Consider changing the virtual machine oversized-vm-1")
+
+    def test_what_a_finding_costs_is_shown_when_nothing_says_what_a_change_would_save_and_nothing_is_ever_no_figure(self):
+        console = Console()
+        for n, cost in enumerate((3.0, 0.0, None)):
+            rid = f"/subscriptions/{SUB}/resourceGroups/rg-{n}/providers/Microsoft.Compute/disks/d{n}"
+            console.store.case_put(make_advice_case(case_id=f"case8{n:03d}", resource_id=rid, resource_name=f"d{n}", resource_type="microsoft.compute/disks", resource_group=f"rg-{n}",
+                                                    saving_usd_month=None, cost_usd_30d=cost, plan_id=f"plan8{n:03d}", recommendation=f"r{n}"))
+            console.store.plan_put(make_advice(plan_id=f"plan8{n:03d}", case_id=f"case8{n:03d}", resource_id=rid, resource_name=f"d{n}", resource_group=f"rg-{n}", saving_usd_month=None))
+        reply = console.get("/")
+        found = {row.find("span", class_="t").text(): spans(row.find("span", class_="impact cost") or row.find("span", class_="impact none")) for row in rows(reply, "look")}
+        self.assertEqual(found, {"Review the disk d0": ["Costs, saving not measured", "$36 a year", "$3.00 a month"],
+                                 "Review the disk d1": ["Cost not visible", "—", "No cost line in the last 30 days."],
+                                 "Review the disk d2": ["Cost not visible", "—", "No cost line was read yet."]})
+        self.assertNotIn("No figure", reply.content)
+
+    def test_money_is_in_dollars_a_year_is_twelve_months_and_nothing_is_called_saved_before_cost_management_measured_it(self):
+        console = seeded()
+        console.store.case_put(make_advice_case())
+        console.store.plan_put(make_advice())
+        content = console.get("/").content
+        self.assertIn("Money is in US dollars, and a year is twelve times the month.", content)
+        self.assertNotRegex(content, r"\bsaved\b|\bUSD\b|€|£|No figure|Talk to a person")
 
     def test_a_person_who_is_not_named_sees_nothing_to_answer_and_a_plan_that_is_not_open_or_has_expired_is_not_listed(self):
         console = seeded()
@@ -80,7 +196,7 @@ class TheDecisionsPage(unittest.TestCase):
             with self.subTest(who=who):
                 reply = console.get("/", oid=who)
                 self.assertIn("Nothing waits for you.", reply.content)
-                self.assertEqual(reply.main.find_all("ol", class_="rows"), [])
+                self.assertEqual(reply.main.find_all("section"), [])
         for changes in (dict(state="approved"), dict(state="declined"), dict(state="expired"), dict(expires_at=at(minutes=-1)), dict(expires_at="not a time")):
             with self.subTest(changes=changes):
                 console.store.plan_put(make_plan(**changes))
@@ -98,17 +214,92 @@ class TheDecisionsPage(unittest.TestCase):
         second, minute, hour, *_ = re.search(r'TIMER_SCHEDULE = "([^"]+)"', source).group(1).split()
         self.assertEqual((second, core.WATCH_AT), ("0", (int(hour), int(minute))), "the page says when the timer of function_app.py runs, in UTC")
 
-    def test_ten_rows_are_shown_and_all_of_them_on_request(self):
+    def test_twelve_rows_of_a_lane_are_shown_and_all_of_them_on_request(self):
         console = seeded()
         more_plans(console, 13)
         reply = console.get("/")
-        self.assertEqual(len(waiting(reply)), 10)
-        self.assertIn("Waiting for you (14)", reply.headings(2))
-        self.assertIn("4 more wait. Show all.", reply.content)
-        self.assertIn("/?all=1", reply.links())
+        self.assertEqual(len(decisions(reply, "ready")), 12, "the decision in focus and eleven rows")
+        self.assertIn("2 more wait. Show all.", reply.content)
+        self.assertIn("/?sort=impact&all=1", reply.links())
         everything = console.get("/", query={"all": "1"})
-        self.assertEqual(len(waiting(everything)), 14)
+        self.assertEqual(len(decisions(everything, "ready")), 14)
         self.assertNotIn("more wait", everything.content)
+
+    def test_findings_of_one_kind_about_one_resource_each_are_one_row_that_opens_with_a_request_for_each(self):
+        console = Console()
+        storage(console, 3)
+        reply = console.get("/")
+        (row,) = rows(reply, "look")
+        group = row.find("details")
+        self.assertEqual(group.classes(), ["grp"])
+        summary = group.find("summary")
+        self.assertEqual(summary.find("span", class_="t").text(), "3 storage accounts in 3 resource groups")
+        self.assertEqual(spans(summary.find("span", class_="impact cost")), ["Costs, saving not measured", "$144 a year", "$12.00 a month"])
+        self.assertEqual(reply.table("members-plan5002").rows, [{"Resource": "st2", "Resource group": "rg-2", "A month": "$5.00", "Request": "Review: st2"},
+                                                               {"Resource": "st1", "Resource group": "rg-1", "A month": "$4.00", "Request": "Review: st1"},
+                                                               {"Resource": "st0", "Resource group": "rg-0", "A month": "$3.00", "Request": "Review: st0"}])
+        self.assertEqual([a.attrs["href"] for a in group.find_all("a")], ["/ok/plan5002", "/ok/plan5001", "/ok/plan5000"], "a request for each: nothing answers three at once")
+        self.assertNotIn("Review all", reply.content)
+
+    def test_findings_of_one_kind_that_all_have_a_saving_are_one_row_with_the_sum_and_the_weakest_level_and_no_confidence_chip(self):
+        console = Console()
+        storage(console, 2, saving=lambda n: 10.0 + n)
+        (row,) = rows(console.get("/"), "look")
+        self.assertEqual(spans(row.find("span", class_="impact save")), ["Saves, Scenario", "$252 a year", "$21.00 a month"])
+        self.assertIn("Based on the figures of each, added up.", row.text())
+        self.assertEqual(chips(row), ["Low risk"])
+
+    def test_findings_of_another_kind_a_single_finding_and_a_change_are_not_consolidated(self):
+        console = seeded()
+        storage(console, 1)
+        console.store.case_put(make_advice_case())
+        console.store.plan_put(make_advice())
+        more_plans(console, 2)
+        reply = console.get("/")
+        self.assertEqual(len(rows(reply, "look")), 2)
+        self.assertEqual(reply.main.find_all("details", class_="grp"), [])
+        self.assertEqual(len(decisions(reply, "ready")), 3, "each change is a decision of its own")
+
+    def test_a_finding_that_stands_for_many_resources_is_one_row_with_one_request_for_all_of_them(self):
+        console = Console()
+        endpoints(console)
+        reply = console.get("/")
+        (row,) = rows(reply, "look")
+        self.assertEqual(row.find("span", class_="t").text(), "50 private endpoints in 8 resource groups")
+        self.assertEqual(spans(row.find("span", class_="impact cost")), ["Costs, saving not measured", "$4,297 a year", "$358.11 a month"])
+        self.assertEqual([(a.text(), a.attrs["href"]) for a in row.find_all("a")], [("Review all 50", "/ok/plan6000")])
+        self.assertEqual([r["Resource"] for r in reply.table("members-plan6000").rows], ["pe-1", "pe-2", "pe-3", "pe-4", "pe-5"])
+        self.assertIn("45 more. All 50 are in 8 resource groups.", row.text())
+
+    def test_the_summary_adds_up_what_is_known_what_is_under_review_and_what_cost_management_measured(self):
+        console = seeded()
+        console.store.case_put(make_advice_case())
+        console.store.plan_put(make_advice())
+        storage(console, 3)
+        reply = console.get("/")
+        tiles = {tile.find("p", class_="k").text(): (tile.find("p", class_="v").text(), tile.find("p", class_="n").text(), "good" in tile.classes())
+                 for tile in reply.main.find("ul", class_="kpis").find_all("li")}
+        self.assertEqual(tiles, {"Ready to save": ("$1,526 a year", "2 decisions · Scenario, Expected. The basis is in each row.", True),
+                                 "Cost under review": ("$144 a year", "1 decision · saving not measured. Cost Management, 30 days.", False),
+                                 "Saving measured": ("—", "Nothing measured yet. Cost lines arrive 8 to 72 hours after a change.", False)})
+        self.assertIn("3 decisions. $1,526 a year is ready to save, and $144 a year more is under review.", reply.content)
+        console.store.plan_put(make_plan(plan_id="plan0009", case_id="case0009", state="consumed"))
+        console.store.action_put(make_action(plan_id="plan0009", case_id="case0009", state="verified", verified_at=at(hours=-1), verification={"gone": True, "costBeforeUsd30d": 30.0, "costAfterUsd": 0.0}))
+        measured = console.get("/").main.find("ul", class_="kpis").find_all("li")[2]
+        self.assertEqual((measured.find("p", class_="v").text(), measured.find("p", class_="n").text()), ("$360 a year", "$30.00 a month, confirmed by Cost Management after 1 change."))
+
+    def test_what_comes_from_the_estate_or_from_a_model_is_escaped_in_a_title_a_row_and_a_table(self):
+        console = Console()
+        storage(console, 2)
+        console.store.case_put(make_advice_case(case_id="case9000", resource_name=XSS, plan_id="plan9000"))
+        console.store.plan_put(make_advice(plan_id="plan9000", case_id="case9000", resource_name=XSS, title=f"Look at the virtual machine {XSS} in group team-apps-rg", saving_usd_month=None))
+        console.store.case_put(make_advice_case(case_id="case9001", resource_name=XSS, resource_group=XSS, plan_id="plan9001", summary=XSS))
+        console.store.plan_put(make_advice(plan_id="plan9001", case_id="case9001", resource_name=XSS, resource_group=XSS, title=f"Look at the virtual machine {XSS} in group {XSS}", approvers=(TINO,)))
+        reply = console.get("/")
+        self.assertEqual(reply.problems, [])
+        for gone in ("<script", "<img", "onerror=alert(2)>"):
+            self.assertNotIn(gone, reply.text)
+        self.assertIn("&lt;script&gt;alert(1)&lt;/script&gt;", reply.text)
 
     def held(self, console: Console, count: int, **changes) -> None:
         """`count` findings of the investigation that need a person and that no request waits for."""
@@ -119,20 +310,21 @@ class TheDecisionsPage(unittest.TestCase):
 
     def test_findings_that_no_request_waits_for_are_counted_in_one_sentence_so_that_nothing_is_dropped_silently(self):
         console = seeded()
-        self.assertNotIn("held back", console.get("/").content, "none is held")
+        self.assertNotIn("Held back", console.get("/").content, "none is held")
         self.held(console, 3)
         reply = console.get("/")
-        self.assertIn("3 findings are held back: no measurement backs them yet, or the places for requests are full. The AIs look at them again at the next investigation.", reply.content)
-        self.assertEqual(len(waiting(reply)), 1, "they are not rows: nobody has to decide them")
+        self.assertIn("Held back: 3 findings", reply.content)
+        self.assertIn("No measurement backs them yet, or the places for requests are full. The AIs look at them again at the next investigation.", reply.content)
+        self.assertEqual(len(decisions(reply, "ready")), 1, "they are not rows: nobody has to decide them")
         self.held(console, 1, case_id="case3900", resource_id=f"{VM_ID}-x", resource_name="endpoint-x")
-        self.assertIn("4 findings are held back", console.get("/").content)
+        self.assertIn("Held back: 4 findings", console.get("/").content)
 
     def test_one_finding_is_said_in_the_singular_and_the_sentence_is_there_when_nothing_waits(self):
         console = Console()
         self.held(console, 1)
         content = console.get("/").content
         self.assertIn("Nothing waits for you. The next search is tomorrow at 06:30.", content)
-        self.assertIn("1 finding is held back: no measurement backs it yet, or the places for requests are full. The AIs look at it again at the next investigation.", content)
+        self.assertIn("Held back: 1 finding No measurement backs it yet, or the places for requests are full. The AIs look at it again at the next investigation.", content)
 
     def test_a_finding_with_a_request_an_answered_one_a_finding_of_another_detector_and_one_that_is_over_are_not_held(self):
         console = seeded()
@@ -140,18 +332,18 @@ class TheDecisionsPage(unittest.TestCase):
         self.held(console, 1, case_id="case3002", resource_id=f"{VM_ID}-b", detector="orphan-managed-disk")
         self.held(console, 1, case_id="case3003", resource_id=f"{VM_ID}-c", plan_id="plan3003")
         console.store.plan_put(make_advice(plan_id="plan3003", case_id="case3003", resource_id=f"{VM_ID}-c"))
-        self.assertNotIn("held back", console.get("/").content)
+        self.assertNotIn("Held back", console.get("/").content)
         self.held(console, 1, case_id="case3004", resource_id=f"{VM_ID}-d")
         console.store.plan_put(make_advice(plan_id="plan3004", case_id="case3004", resource_id=f"{VM_ID}-d", state="declined", created_at=at(days=-2)))
-        self.assertNotIn("held back", console.get("/").content, "a person answered it lately: nobody is to be asked again")
+        self.assertNotIn("Held back", console.get("/").content, "a person answered it lately: nobody is to be asked again")
 
     def test_a_store_that_cannot_be_read_says_nothing_of_the_held_findings_and_the_page_is_there(self):
         console = Console(store=FailingStore(fail={"cases_recent"}, clock=lambda: NOW))
         console.seed()
         reply = console.get("/")
         self.assertEqual(reply.status, 200)
-        self.assertNotIn("held back", reply.content)
-        self.assertIn("Waiting for you (1)", reply.headings(2))
+        self.assertNotIn("Held back", reply.content)
+        self.assertIn("Ready to decide", reply.headings(2))
 
     def test_the_last_five_decisions_are_one_line_each_newest_first(self):
         console = seeded()
@@ -159,8 +351,8 @@ class TheDecisionsPage(unittest.TestCase):
             console.store.plan_put(make_plan(plan_id=f"plan2{n:03d}", case_id=f"case2{n:03d}", resource_name=f"gone-{n}", state="declined"))
             console.store.decision_put(make_decision(plan_id=f"plan2{n:03d}", decision="decline", at=at(hours=-n - 1)))
         reply = console.get("/")
-        listing = [li.text() for li in reply.main.find("ul", class_="feed").find_all("li")]
-        self.assertEqual(listing, [f"Delete the unattached disk gone-{n} in group meternaut-test-rg: Declined, Tino on Thu 5 Nov." for n in range(5)])
+        listing = [spans(li) for li in reply.main.find("ul", class_="recent").find_all("li")]
+        self.assertEqual(listing, [["Declined", f"Delete the unattached disk gone-{n} in group meternaut-test-rg: Declined", "Tino, Thu 5 Nov"] for n in range(5)])
 
     def test_an_advice_that_nobody_answered_is_no_row_of_recently_decided_and_a_change_that_nobody_answered_is(self):
         console = seeded()
@@ -168,7 +360,7 @@ class TheDecisionsPage(unittest.TestCase):
             console.store.case_put(make_advice_case(case_id=f"case4{n:03d}", resource_id=f"{VM_ID}-e{n}", resource_name=f"endpoint-e{n}", plan_id=f"plan4{n:03d}"))
             console.store.plan_put(make_advice(plan_id=f"plan4{n:03d}", case_id=f"case4{n:03d}", resource_id=f"{VM_ID}-e{n}", state="expired", created_at=at(days=-6), expires_at=at(days=-1)))
         console.store.plan_put(make_plan(plan_id="plan0005", case_id="case0005", state="expired", created_at=at(days=-6), expires_at=at(days=-2)))
-        listing = [li.text() for li in console.get("/").main.find("ul", class_="feed").find_all("li")]
+        listing = [li.text() for li in console.get("/").main.find("ul", class_="recent").find_all("li")]
         self.assertEqual(len(listing), 1, "six advices that expired are not rows, and the change that expired is")
         self.assertIn("Expired", listing[0])
         self.assertNotIn("oversized-vm-1", listing[0])
@@ -181,7 +373,7 @@ class TheDecisionsPage(unittest.TestCase):
             self.assertFalse(reply.has_table(table))
 
     def test_a_part_that_cannot_be_read_says_so_and_the_rest_of_the_page_is_there(self):
-        for failing, notice, kept in (("plans_open", "I cannot read the open requests now.", "Recently decided"), ("plans_recent", "I cannot read the recent decisions now.", "Waiting for you")):
+        for failing, notice, kept in (("plans_open", "I cannot read the open requests now.", "Recently decided"), ("plans_recent", "I cannot read the recent decisions now.", "Ready to decide")):
             with self.subTest(failing=failing):
                 console = Console(store=FailingStore(fail={failing}, clock=lambda: NOW))
                 console.seed()
@@ -196,6 +388,7 @@ class TheDecisionsPage(unittest.TestCase):
         before = snapshot(console.store)
         console.get("/")
         console.get("/", query={"all": "1"})
+        console.get("/", query={"sort": "age"})
         self.assertEqual(snapshot(console.store), before)
 
 
@@ -325,7 +518,9 @@ class TheBriefOfACase(unittest.TestCase):
         self.assertIn("I cannot find this case", reply.content)
 
     def test_the_page_says_in_its_footer_that_an_ai_wrote_what_it_shows(self):
-        self.assertIn("Written by an AI (models: model-detective-x, model-skeptic-y); a person approves every change.", self.reply.root.find("footer").text())
+        footer = self.reply.root.find("footer")
+        self.assertIn("Recommendations written by AI. A person approves every change.", footer.text())
+        self.assertIn("Models: model-detective-x, model-skeptic-y.", footer.text())
 
 
 INVESTIGATED = dict(

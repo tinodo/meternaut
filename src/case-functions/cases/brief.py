@@ -664,6 +664,11 @@ def _things(group: Group, place: str) -> str:
     return f"{number_text(group.count)} {_plural(kind_words(group.kind)[1])}{where}"
 
 
+def things(count: int, rtype: str, groups: int = 0, place: str = "resource group") -> str:
+    """Resources of one kind and the places that they are in, for a page that shows findings of one kind as one row: "4 storage accounts in 3 resource groups"."""
+    return _things(Group(count, None, rtype, groups, ()), place)
+
+
 def group_headline(group: Group, name: str, recommendation: str | None) -> str:
     """The headline of a case that stands for many resources: "Look at 60 private endpoints in 14 groups, the first is pe-1". The first is the one that the case belongs to."""
     first = text_of(name, MAX_NAME)

@@ -134,13 +134,14 @@ class ThePage(unittest.TestCase):
         self.assertEqual(case_page.headings(2)[:4], ["Evidence", "If you approve", "Whose is it", "Your answer"])
         self.assertEqual(case_page.summary(1), self.reply.summary(1))
 
-    def test_the_footer_is_one_line_that_says_who_wrote_it_why_the_person_sees_it_and_whom_to_talk_to(self):
+    def test_the_footer_says_that_an_ai_wrote_it_and_under_about_this_page_why_the_person_sees_it_and_who_is_responsible(self):
         footer = self.reply.root.find("footer")
-        lines = footer.find_all("p")
-        self.assertEqual([p.text() for p in lines], [
-            "Written by an AI (models: model-detective-x, model-skeptic-y); a person approves every change. You see this because you are named as an approver of this "
-            "request, and you have the role approver. Talk to a person: Olga (olga@example.com)."])
-        self.assertEqual(footer.find_all("a"), [], "the person to talk to is plain text with the address, not a link")
+        self.assertEqual([p.text() for p in footer.find_all("p")], [
+            "Recommendations written by AI. A person approves every change.",
+            "Models: model-detective-x, model-skeptic-y. You see this because you are named as an approver of this request, and you have the role approver. "
+            "Responsible for Meternaut: Olga (olga@example.com)."])
+        self.assertEqual(footer.find("summary").text(), "About this page")
+        self.assertEqual(footer.find_all("a"), [], "the person who is responsible is plain text with the address, not a link")
         for gone in ("Plan code", "Why you are seeing this", "This page is served from", "This request expires on"):
             self.assertNotIn(gone, footer.text())
 
@@ -172,7 +173,7 @@ class ThePage(unittest.TestCase):
         self.assertEqual([b.text() for b in buttons], [APPROVE, "Decline"])
         self.assertEqual([(b.attrs["name"], b.attrs["value"]) for b in buttons], [("decision", "approve"), ("decision", "decline")])
         style = layout.STYLE
-        self.assertRegex(style, r"\.btn,button\{[^}]*min-height:2\.75rem[^}]*min-width:11rem")
+        self.assertRegex(style, r"\.btn,button\{[^}]*min-height:2\.5rem[^}]*min-width:8rem")
         self.assertRegex(style, r"\.actions>\*\{flex:1 1 14rem;max-width:22rem\}")
         for rule in re.findall(r"(?:button|\.btn)\.(?:primary|secondary|danger)[^{]*\{[^}]*\}", style):
             self.assertNotRegex(rule, r"(?<![a-z-])(?:padding|min-height|min-width|height|width|font-size|border-width)\b", rule)
@@ -428,7 +429,7 @@ class WhoMayAnswer(unittest.TestCase):
                 for secret in (HEADLINE, make_plan().title, "planted-disk-1", "7F3K92QD", "meternaut-test-rg", "If you approve", "Expected saving", "7.17"):
                     self.assertNotIn(secret, reply.content, f"no plan detail: {secret}")
                 self.assertEqual(reply.root.find_all("button"), [])
-                self.assertIn("Talk to a person: ", reply.content)
+                self.assertIn("Responsible for Meternaut: ", reply.content)
 
     def test_a_request_that_does_not_exist_is_a_404_for_an_approver_and_the_refusal_for_anybody_else(self):
         self.assertEqual(self.console.get("/ok/nothing", oid=TINO).status, 404)
@@ -507,7 +508,7 @@ KINDS = {  # the status, the title of the page, and a sentence that the page alw
     "step_up_failed": (400, "The extra sign-in check was not completed", "Nothing was changed. The request is closed."),
     "refused_code": (409, "This plan changed", "This plan changed. Nothing is approved. A new message will bring the new plan and code."),
     "refused_state": (409, "This request cannot take an answer", ""),
-    "refused_role": (403, "I cannot take your OK on this request.", "Nothing is approved. If this request should be yours, use Talk to a person below."),
+    "refused_role": (403, "I cannot take your OK on this request.", "Nothing is approved. If this request should be yours, ask the person named under About this page at the foot of this page."),
     "refused_paused": (409, "Changes are paused", "Changes are paused here. Nothing has changed, and your OK cannot be recorded now."),
     "expired": (410, "This request expired", "This request expired on Sun 8 Nov 2026 08:00 UTC (09:00 CET). Nothing has changed."),
     "duplicate": (409, "Already answered", "You answered this request already. Your first answer stands, and nothing has changed."),
@@ -562,8 +563,9 @@ class EveryKindOfResult(unittest.TestCase):
                     self.assertEqual(reply.status, status)
                     self.assertEqual(reply.headings(1), [title])
                     self.assertIn(sentence, reply.content)
-                    self.assertIn("Talk to a person: ", reply.content, "the same help on every page")
-                    self.assertIn("Written by an AI (models:", reply.content)
+                    self.assertIn("Responsible for Meternaut: ", reply.content, "the same help on every page")
+                    self.assertIn("Recommendations written by AI. A person approves every change.", reply.content)
+                    self.assertIn("Models: model-detective-x", reply.content)
                     self.assertEqual(reply.problems, [])
                     self.assertEqual(reply.root.find_all("button"), [])
                     self.assertEqual(reply.forms(), [])

@@ -35,8 +35,8 @@ def _base(ctx: Ctx, plan_id: str) -> str:
 
 
 def _refused_role(ctx: Ctx) -> Response:
-    return message_page(ctx, 403, REFUSED_ROLE, "Nothing is approved. If this request should be yours, use Talk to a person below.", back=("/", "Back to the decisions"),
-                        ai=True, why="you opened a request that is not yours to answer")
+    return message_page(ctx, 403, REFUSED_ROLE, "Nothing is approved. If this request should be yours, ask the person named under About this page at the foot of this page.",
+                        back=("/", "Back to the decisions"), ai=True, why="you opened a request that is not yours to answer")
 
 
 def _not_found(ctx: Ctx) -> Response:

@@ -17,21 +17,21 @@
 <nav aria-label="Pages"><ul><li><a href="#" aria-current="page">Decisions</a></li><li><a href="#">History</a></li><li><a href="#">Settings</a></li><li><a href="#">Operations</a></li></ul></nav>
 <main id="main" class="wide">
 
-<div class="notice info"><p class="notice-title">Design preview, built from the style guide</p><p>The private endpoints, the workspace and the planted machine carry real figures. Items marked <span class="sample">◇ sample</span> are invented to show the design. Nothing here can be clicked yet.</p></div>
+<div class="notice info"><p class="notice-title">Design preview, built from the style guide</p><p>The Decisions page of the app is built from this design. The private endpoints, the workspace and the planted machine carry real figures. Items marked <span class="sample">◇ sample</span> are invented to show the design. Nothing here can be clicked, and the CPU chart is not drawn by the app yet.</p></div>
 
 <div class="head">
-<div><h1>Decisions</h1><p>7 decisions. $3,255 a year is ready to save, and $5,915 a year more is under review.</p></div>
+<div><h1>Decisions</h1><p>7 decisions. $3,255 a year is ready to save, and $5,915 a year more is under review. Money is in US dollars, and a year is twelve times the month.</p></div>
 <div class="seg" role="group" aria-label="Sort the decisions"><span>Sort by</span><a href="#" aria-current="true">Impact</a><a href="#">Age</a><a href="#">Risk</a></div>
 </div>
 
 <ul class="kpis" aria-label="Summary">
-<li class="kpi good"><p class="k">Ready to save</p><p class="v">$3,255<small> a year</small></p><p class="n">3 decisions · saving known</p></li>
-<li class="kpi"><p class="k">Cost under review</p><p class="v">$5,915<small> a year</small></p><p class="n">4 groups · saving not yet measured</p></li>
-<li class="kpi"><p class="k">Saved so far</p><p class="v">—</p><p class="n">Nothing measured yet. Cost lines arrive 8 to 72 hours after a change.</p></li>
+<li class="kpi good"><p class="k">Ready to save</p><p class="v">$3,255<small> a year</small></p><p class="n">3 decisions · Scenario, Expected. The basis is in each row.</p></li>
+<li class="kpi"><p class="k">Cost under review</p><p class="v">$5,915<small> a year</small></p><p class="n">4 decisions · saving not measured. Cost Management, 30 days.</p></li>
+<li class="kpi"><p class="k">Saving measured</p><p class="v">—</p><p class="n">Nothing measured yet. Cost lines arrive 8 to 72 hours after a change.</p></li>
 </ul>
 
 <section aria-labelledby="ready">
-<div class="sec"><h2 id="ready">Ready to decide</h2><p>A concrete change and a known saving. Most valuable first.</p></div>
+<div class="sec"><h2 id="ready">Ready to decide</h2><p>A change in Azure that you may approve. Most at stake first.</p></div>
 
 <article class="focus" aria-labelledby="f1">
 <div>
@@ -39,7 +39,7 @@
 <h3 id="f1">Stop virtual machine <code>build-agent-03</code><span class="sample">◇ sample</span></h3>
 <p class="m">Resource group <code>rg-build-sample</code> · Sweden Central · found today</p>
 <p class="fig save">$1,682<small> a year</small></p>
-<p class="figsub">$140.16 a month. The saving is known: 30 days of cost lines, and no use.</p>
+<p class="figsub">Saves, Expected. $140.16 a month. Based on the cost lines of the last 30 days.</p>
 <p class="chips">
 <span class="chip mid"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M6 1.5 11 10.5H1z"/></svg>Medium risk</span>
 <span class="chip info"><svg viewBox="0 0 12 12" aria-hidden="true"><rect x="2" y="2" width="8" height="8" rx="1.5"/></svg>High confidence</span>
@@ -85,28 +85,30 @@
 <div class="main">
 <p class="t">Stop virtual machine <code>planted-vm-r298</code></p>
 <p class="m">Meternaut's own demo machine · stopped but not released · found today</p>
+<p class="m">Based on the cost lines of the machine in the last 30 days (its disks and public IP addresses keep billing and are not counted).</p>
 <p class="chips"><span class="chip mid"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M6 1.5 11 10.5H1z"/></svg>Medium risk</span><span class="chip info"><svg viewBox="0 0 12 12" aria-hidden="true"><rect x="2" y="2" width="8" height="8" rx="1.5"/></svg>High confidence</span></p>
 </div>
-<div class="impact save"><span class="lab">Saves, estimate</span><span class="y">$1,209<small> a year</small></span><span class="mo">$100.74 a month at list price</span><svg class="bar" viewBox="0 0 100 4" preserveAspectRatio="none" aria-hidden="true"><rect class="bt" width="100" height="4" rx="2"/><rect class="bv" width="72" height="4" rx="2"/></svg></div>
-<div class="spark"><svg class="sp none" viewBox="0 0 120 32" role="img" aria-label="No cost lines yet: Cost Management reports use 8 to 72 hours late."><path class="ln" d="M2,22 L118,22"/><text class="ax" x="60" y="12" text-anchor="middle">No cost lines yet</text></svg></div>
+<div class="impact save"><span class="lab">Saves, Expected</span><span class="y">$1,209<small> a year</small></span><span class="mo">$100.74 a month</span><svg class="bar" viewBox="0 0 100 4" preserveAspectRatio="none" aria-hidden="true"><rect class="bt" width="100" height="4" rx="2"/><rect class="bv" width="72" height="4" rx="2"/></svg></div>
+<div class="spark"><svg class="sp none" viewBox="0 0 120 32" role="img" aria-label="No daily costs yet: Cost Management reports a cost 8 to 72 hours after it happens."><path class="ln" d="M2,22 L118,22"/><text class="ax" x="60" y="12" text-anchor="middle">No daily costs yet</text></svg></div>
 <div class="act"><a class="btn sm primary" href="#">Review<span class="visually-hidden">: stop virtual machine planted-vm-r298</span></a></div>
 </li>
 <li class="item">
 <span class="rank">3</span>
 <div class="main">
-<p class="t">Move 3 disks to a lower tier<span class="sample">◇ sample</span></p>
-<p class="m">Premium SSD to Standard SSD · 3 disks in 1 resource group · found 3 days ago</p>
+<p class="t">Delete the unattached disk <code>disk-sample-02</code><span class="sample">◇ sample</span></p>
+<p class="m">Managed disk · resource group rg-sample-b · found 3 days ago</p>
+<p class="m">Based on the cost lines of the last 30 days.</p>
 <p class="chips"><span class="chip low"><svg viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="4"/></svg>Low risk</span><span class="chip info"><svg viewBox="0 0 12 12" aria-hidden="true"><rect x="2" y="2" width="8" height="8" rx="1.5"/></svg>High confidence</span></p>
 </div>
-<div class="impact save"><span class="lab">Saves</span><span class="y">$364<small> a year</small></span><span class="mo">$30.33 a month</span><svg class="bar" viewBox="0 0 100 4" preserveAspectRatio="none" aria-hidden="true"><rect class="bt" width="100" height="4" rx="2"/><rect class="bv" width="22" height="4" rx="2"/></svg></div>
+<div class="impact save"><span class="lab">Saves, Expected</span><span class="y">$364<small> a year</small></span><span class="mo">$30.33 a month</span><svg class="bar" viewBox="0 0 100 4" preserveAspectRatio="none" aria-hidden="true"><rect class="bt" width="100" height="4" rx="2"/><rect class="bv" width="22" height="4" rx="2"/></svg></div>
 <div class="spark"><svg class="sp" viewBox="0 0 120 32" role="img" aria-label="Cost per day, last 30 days: flat at about $1.01 a day."><path class="ar" d="M2.0,5.8 L6.0,5.7 L10.0,5.8 L14.0,5.9 L18.0,5.7 L22.0,5.7 L26.0,5.8 L30.0,5.8 L34.0,5.7 L38.0,5.7 L42.0,5.9 L46.0,5.8 L50.0,5.7 L54.0,5.8 L58.0,5.9 L62.0,5.7 L66.0,5.7 L70.0,5.8 L74.0,5.9 L78.0,5.7 L82.0,5.7 L86.0,5.9 L90.0,5.8 L94.0,5.7 L98.0,5.8 L102.0,5.9 L106.0,5.7 L110.0,5.7 L114.0,5.8 L118.0,5.9 L118.0,30 L2.0,30 Z"/><path class="ln" d="M2.0,5.8 L6.0,5.7 L10.0,5.8 L14.0,5.9 L18.0,5.7 L22.0,5.7 L26.0,5.8 L30.0,5.8 L34.0,5.7 L38.0,5.7 L42.0,5.9 L46.0,5.8 L50.0,5.7 L54.0,5.8 L58.0,5.9 L62.0,5.7 L66.0,5.7 L70.0,5.8 L74.0,5.9 L78.0,5.7 L82.0,5.7 L86.0,5.9 L90.0,5.8 L94.0,5.7 L98.0,5.8 L102.0,5.9 L106.0,5.7 L110.0,5.7 L114.0,5.8 L118.0,5.9"/><circle class="dt" cx="118" cy="5.9" r="2"/></svg></div>
-<div class="act"><a class="btn sm primary" href="#">Review<span class="visually-hidden">: move 3 disks to a lower tier</span></a></div>
+<div class="act"><a class="btn sm primary" href="#">Review<span class="visually-hidden">: delete the unattached disk disk-sample-02</span></a></div>
 </li>
 </ol>
 </section>
 
 <section aria-labelledby="look">
-<div class="sec"><h2 id="look">Worth a closer look</h2><p>Something looks wasteful, but nothing is measured yet. Cost is the most these could save, so no saving is promised.</p></div>
+<div class="sec"><h2 id="look">Worth a closer look</h2><p>No change is proposed yet. A saving here is an estimate, and a cost is the most that a change could save. Most at stake first.</p></div>
 <ol class="items">
 
 <li><details class="grp">
@@ -127,8 +129,8 @@
 <tr><td><code>pe-example-04</code></td><td><code>rg-example-b</code></td><td class="r num">$7.16</td></tr>
 <tr><td><code>pe-example-05</code></td><td><code>rg-example-c</code></td><td class="r num">$7.16</td></tr>
 </tbody>
-<tfoot><tr><td colspan="3" class="quiet">45 more in 8 resource groups.</td></tr></tfoot></table></div>
-<p class="acts"><a class="btn sm primary" href="#">Review all 50</a><a class="btn sm" href="#">Review one by one</a></p>
+<tfoot><tr><td colspan="3" class="quiet">45 more. All 50 are in 8 resource groups.</td></tr></tfoot></table></div>
+<p class="acts"><a class="btn sm primary" href="#">Review all 50</a></p>
 </div>
 </details></li>
 
@@ -166,20 +168,19 @@
 </summary>
 <div class="members">
 <div class="table-wrap"><table><caption class="visually-hidden">The 4 storage accounts</caption>
-<thead><tr><th scope="col">Storage account</th><th scope="col">Resource group</th><th scope="col" class="r">A month</th></tr></thead>
+<thead><tr><th scope="col">Storage account</th><th scope="col">Resource group</th><th scope="col" class="r">A month</th><th scope="col">Request</th></tr></thead>
 <tbody>
-<tr><td><code>stexample001</code></td><td><code>rg-example-a</code></td><td class="r num">$3.10</td></tr>
-<tr><td><code>stexample002</code></td><td><code>rg-example-a</code></td><td class="r num">$2.84</td></tr>
-<tr><td><code>stexample003</code></td><td><code>rg-example-b</code></td><td class="r num">$3.12</td></tr>
-<tr><td><code>stexample004</code></td><td><code>rg-example-c</code></td><td class="r num">$2.56</td></tr>
+<tr><td><code>stexample001</code></td><td><code>rg-example-a</code></td><td class="r num">$3.12</td><td><a class="btn sm" href="#">Review<span class="visually-hidden">: stexample001</span></a></td></tr>
+<tr><td><code>stexample002</code></td><td><code>rg-example-b</code></td><td class="r num">$3.10</td><td><a class="btn sm" href="#">Review<span class="visually-hidden">: stexample002</span></a></td></tr>
+<tr><td><code>stexample003</code></td><td><code>rg-example-a</code></td><td class="r num">$2.84</td><td><a class="btn sm" href="#">Review<span class="visually-hidden">: stexample003</span></a></td></tr>
+<tr><td><code>stexample004</code></td><td><code>rg-example-c</code></td><td class="r num">$2.56</td><td><a class="btn sm" href="#">Review<span class="visually-hidden">: stexample004</span></a></td></tr>
 </tbody></table></div>
-<p class="acts"><a class="btn sm primary" href="#">Review all 4</a><a class="btn sm" href="#">Review one by one</a></p>
 </div>
 </details></li>
 
 </ol>
 
-<details class="more"><summary>Held back: 26 findings, and 1 waiting to age</summary><div><p>No measurement backs 26 findings yet, or the places for requests are full. The AIs look at them again at the next investigation. One more, a disk created yesterday, waits until it is old enough to judge.</p></div></details>
+<details class="more"><summary>Held back: 26 findings</summary><div><p>No measurement backs them yet, or the places for requests are full. The AIs look at them again at the next investigation.</p></div></details>
 </section>
 
 <section aria-labelledby="recent">
@@ -193,7 +194,7 @@
 </main>
 <footer>
 <p>Recommendations written by AI. A person approves every change.</p>
-<details><summary>About this page</summary><p>Two AI agents, the Investigator and the Skeptic, wrote what you see. Code checked every figure against Cost Management and Azure. You see this page because you are listed as an approver. Responsible for Meternaut: Tino (owner@example.com).</p></details>
+<details><summary>About this page</summary><p>Models: the Investigator and the Skeptic. You see this because you are signed in and listed as a person who may use this page. Responsible for Meternaut: Tino (owner@example.com).</p></details>
 </footer>
 </body>
 </html>

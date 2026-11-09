@@ -61,7 +61,7 @@ nav.toc a{min-height:0;padding:0;border:0}
 <main id="main" class="wide gs">
 <div id="top" class="head"><div><h1>Meternaut style guide</h1><p>Fluent 2 tokens, one stylesheet, no script. Drawn from the Decisions page, which is the first page built from it.</p></div></div>
 <p class="lead">This is the one place that says how a Meternaut page looks and reads. Every page is made from the parts below, with the tokens below, and nothing else. A rule that is not written here is not a rule. When a page needs something new, it is drawn here first.</p>
-<p>See it all together in the <a href="decisions-preview.html">Decisions preview</a>. The stylesheet is <code>meternaut-ui.css</code>, next to this file.</p>
+<p>See it all together in the <a href="decisions-preview.html">Decisions preview</a>. The stylesheet is <code>meternaut-ui.css</code>, next to this file. The pages of the app carry the same text as <code>cases/web/style.py</code>, because the pages read no file, and a test fails when the two differ.</p>
 <nav class="toc" aria-label="On this page"><ul>
 <li><a href="#principles">1 Principles</a></li><li><a href="#colour">2 Colour</a></li><li><a href="#type">3 Type</a></li><li><a href="#space">4 Space, shape, depth</a></li><li><a href="#layout">5 Layout</a></li><li><a href="#components">6 Components</a></li><li><a href="#writing">7 Writing</a></li><li><a href="#charts">8 Charts</a></li><li><a href="#access">9 Access</a></li><li><a href="#keeping">10 Keeping to this guide</a></li>
 </ul></nav>
@@ -157,14 +157,14 @@ nav.toc a{min-height:0;padding:0;border:0}
 <li>Header and tabs, as on every page.</li>
 <li>Title and one sentence that says what is at stake, and how to sort.</li>
 <li>Summary tiles: at most three, each a figure with a unit and a note.</li>
-<li>The decision in focus: the one with the largest known saving, with its figure, its evidence and two charts.</li>
+<li>The decision in focus: the one with the most at stake (the largest saving, or failing that the largest cost), with its figure, what changes and why, and a chart of its cost.</li>
 <li>Ranked rows below it, with a bar that shows how much each is worth against the first.</li>
 <li>A second list for what looks wasteful but is not measured, headed by its total cost.</li>
 <li>What is held back, and what was decided lately, both quiet.</li>
 <li>The footer: who wrote this, and a way to find who answers for it.</li>
 </ol>
 <div class="table-wrap"><table><thead><tr><th scope="col">Width</th><th scope="col">What changes</th></tr></thead><tbody>
-<tr><td>Wider than 52rem</td><td>A row has five columns: rank, headline, figure, chart, button. The focus card has text on the left and two charts on the right.</td></tr>
+<tr><td>Wider than 52rem</td><td>A row has five columns: rank, headline, figure, chart, button. The focus card has text on the left and the cost chart on the right.</td></tr>
 <tr><td>40em to 52rem</td><td>A row has two lines: the headline and figure above, the chart and button below. The focus card is one column.</td></tr>
 <tr><td>Narrower than 40em</td><td>Everything is one column, in the same order. Buttons are as wide as the screen.</td></tr>
 </tbody></table></div>
@@ -172,17 +172,17 @@ nav.toc a{min-height:0;padding:0;border:0}
 <h2 id="components">6 Components</h2>
 
 <h3>Summary tile</h3>
-<div class="two"><div class="demo"><ul class="kpis"><li class="kpi good"><p class="k">Ready to save</p><p class="v">$3,255<small> a year</small></p><p class="n">3 decisions · saving known</p></li></ul></div>
-<ul><li>A label, one figure with its unit, one note.</li><li>The figure is green only when it is money saved.</li><li>No figure: show a dash, and put the reason in the note.</li></ul></div>
+<div class="two"><div class="demo"><ul class="kpis"><li class="kpi good"><p class="k">Ready to save</p><p class="v">$3,255<small> a year</small></p><p class="n">3 decisions · Scenario, Expected. The basis is in each row.</p></li></ul></div>
+<ul><li>A label, one figure with its unit, one note. The page has three: Ready to save, Cost under review and Saving measured.</li><li>The figure is green only for a saving. Saving measured counts what Cost Management confirmed after a change, and nothing that was only expected.</li><li>No figure: show a dash, and put the reason in the note.</li></ul></div>
 
 <h3>Impact figure</h3>
 <p>The most important part of a row. It has three states, and a row is always in one of them. The yearly figure is large, the monthly figure is small, and the label says what kind of figure it is.</p>
 <div class="demo flex">
-<div class="impact save"><span class="lab">Saves</span><span class="y">$364<small> a year</small></span><span class="mo">$30.33 a month</span></div>
+<div class="impact save"><span class="lab">Saves, Expected</span><span class="y">$364<small> a year</small></span><span class="mo">$30.33 a month</span></div>
 <div class="impact cost"><span class="lab">Costs, saving not measured</span><span class="y">$4,297<small> a year</small></span><span class="mo">$358.11 a month</span></div>
-<div class="impact none"><span class="lab">Cost not visible</span><span class="y">—</span><span class="mo">This identity cannot read cost</span></div>
+<div class="impact none"><span class="lab">Cost not visible</span><span class="y">—</span><span class="mo">No cost line was read yet.</span></div>
 </div>
-<ul><li><strong>Saves</strong>: a concrete change with a known saving. Green. Say "estimate" and the source when it comes from the list price.</li>
+<ul><li><strong>Saves, Expected</strong>: a concrete saving with its level, which is Expected (from the cost lines of the last 30 days), Scenario (an estimate: Azure Advisor's own, or the list price) or Verified (measured after the change). Green. The basis is one line under the title ("Based on the cost lines of the last 30 days.").</li>
 <li><strong>Costs, saving not measured</strong>: the cost is known and the saving is not. Neutral. The cost is the most that could be saved.</li>
 <li><strong>Cost not visible</strong>: nothing is known. Grey, with the reason. This is the only place a dash may stand in for a figure.</li>
 <li>Rows are ranked by the larger of the saving (when known) or the cost, and the bar under the figure shows it against the first row.</li></ul>
@@ -196,7 +196,7 @@ nav.toc a{min-height:0;padding:0;border:0}
 <span class="chip info"><svg viewBox="0 0 12 12" aria-hidden="true"><rect x="2" y="2" width="8" height="8" rx="1.5"/></svg>High confidence</span>
 <span class="chip"><svg viewBox="0 0 12 12" aria-hidden="true"><rect x="2" y="2" width="8" height="8" rx="1.5"/></svg>Needs measuring</span>
 </p></div>
-<ul><li>Risk is a circle (low), a triangle (medium) or a diamond (high). Confidence and state are squares.</li><li>At most two chips in a row, and never one that repeats the label next to it.</li></ul>
+<ul><li>Risk is a circle (low), a triangle (medium) or a diamond (high). Confidence and state are squares.</li><li>At most three chips in a row, and never one that repeats the label next to it.</li></ul>
 
 <h3>Buttons</h3>
 <div class="demo"><p class="acts"><a class="btn primary" href="#buttons">Review and decide</a><a class="btn" href="#buttons">Decide later</a><a class="btn subtle" href="#buttons">Show details</a><a class="btn danger" href="#buttons">Decline</a><a class="btn sm primary" href="#buttons">Review</a></p></div>
@@ -205,23 +205,23 @@ nav.toc a{min-height:0;padding:0;border:0}
 <h3>Charts in a row</h3>
 <div class="two"><div class="demo flex">
 <div class="w9"><svg class="sp" viewBox="0 0 120 32" role="img" aria-label="Cost per day, last 30 days: slowly rising from $0.36 to $0.42."><path class="ar" d="M2.0,9.1 L6.0,9.0 L10.0,8.9 L14.0,8.8 L18.0,8.7 L22.0,8.6 L26.0,8.4 L30.0,8.3 L34.0,8.1 L38.0,8.0 L42.0,7.9 L46.0,7.8 L50.0,7.7 L54.0,7.6 L58.0,7.4 L62.0,7.3 L66.0,7.2 L70.0,7.1 L74.0,7.0 L78.0,6.9 L82.0,6.8 L86.0,6.6 L90.0,6.5 L94.0,6.3 L98.0,6.2 L102.0,6.1 L106.0,6.0 L110.0,5.9 L114.0,5.8 L118.0,5.7 L118.0,30 L2.0,30 Z"/><path class="ln" d="M2.0,9.1 L6.0,9.0 L10.0,8.9 L14.0,8.8 L18.0,8.7 L22.0,8.6 L26.0,8.4 L30.0,8.3 L34.0,8.1 L38.0,8.0 L42.0,7.9 L46.0,7.8 L50.0,7.7 L54.0,7.6 L58.0,7.4 L62.0,7.3 L66.0,7.2 L70.0,7.1 L74.0,7.0 L78.0,6.9 L82.0,6.8 L86.0,6.6 L90.0,6.5 L94.0,6.3 L98.0,6.2 L102.0,6.1 L106.0,6.0 L110.0,5.9 L114.0,5.8 L118.0,5.7"/><circle class="dt" cx="118" cy="5.7" r="2"/></svg><p class="m">With data</p></div>
-<div class="w9"><svg class="sp none" viewBox="0 0 120 32" role="img" aria-label="No cost lines yet: Cost Management reports use 8 to 72 hours late."><path class="ln" d="M2,22 L118,22"/><text class="ax" x="60" y="12" text-anchor="middle">No cost lines yet</text></svg><p class="m">No data yet</p></div>
+<div class="w9"><svg class="sp none" viewBox="0 0 120 32" role="img" aria-label="No daily costs yet: Cost Management reports a cost 8 to 72 hours after it happens."><path class="ln" d="M2,22 L118,22"/><text class="ax" x="60" y="12" text-anchor="middle">No daily costs yet</text></svg><p class="m">No data yet</p></div>
 </div>
 <ul><li>30 daily points, a 1.5 pixel line, a tint under it and a dot on today. No axes: the figure beside it is the scale.</li><li>It starts at zero, so a flat line means a steady cost.</li><li>No data is a dashed line with the reason, never a line at zero.</li></ul></div>
 
 <h3>Decision row and group row</h3>
-<p>A row is one decision. When findings of one kind cover several resources, the row is a group: it shows the count and the total, and it opens into a table of its members. "Review all" decides them together, "Review one by one" does not.</p>
+<p>A row is one decision. Findings of one kind about one resource each are one row that opens into a table, and each member has its own Review button, because nothing answers several requests at once. A finding that stands for many resources is one request already: its row opens into the first few of them and one button, "Review all 50". A change is never consolidated: a person approves one change at a time.</p>
 <ol class="items"><li class="item">
 <span class="rank">3</span>
 <div class="main"><p class="t">Move 3 disks to a lower tier</p><p class="m">Premium SSD to Standard SSD · found 3 days ago</p><p class="chips"><span class="chip low"><svg viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="4"/></svg>Low risk</span></p></div>
-<div class="impact save"><span class="lab">Saves</span><span class="y">$364<small> a year</small></span><span class="mo">$30.33 a month</span><svg class="bar" viewBox="0 0 100 4" preserveAspectRatio="none" aria-hidden="true"><rect class="bt" width="100" height="4" rx="2"/><rect class="bv" width="22" height="4" rx="2"/></svg></div>
+<div class="impact save"><span class="lab">Saves, Expected</span><span class="y">$364<small> a year</small></span><span class="mo">$30.33 a month</span><svg class="bar" viewBox="0 0 100 4" preserveAspectRatio="none" aria-hidden="true"><rect class="bt" width="100" height="4" rx="2"/><rect class="bv" width="22" height="4" rx="2"/></svg></div>
 <div class="spark"><svg class="sp" viewBox="0 0 120 32" role="img" aria-label="Cost per day, last 30 days: flat at about $1.01 a day."><path class="ar" d="M2.0,5.8 L118.0,5.9 L118.0,30 L2.0,30 Z"/><path class="ln" d="M2.0,5.8 L118.0,5.9"/><circle class="dt" cx="118" cy="5.9" r="2"/></svg></div>
 <div class="act"><a class="btn sm primary" href="#components">Review</a></div>
 </li></ol>
-<ul><li>Columns: rank, headline with one note line and chips, the impact figure, a chart, one button. Nothing else.</li><li>The headline names the action and the target ("Stop virtual machine x"), or the count and the kind ("4 storage accounts in 3 resource groups").</li><li>A group row's button is "Show 4". Inside, the members are a table, and the choices are two buttons.</li></ul>
+<ul><li>Columns: rank, headline with one note line and chips, the impact figure, a chart, one button. Nothing else.</li><li>The headline names the action and the target ("Stop virtual machine x"), or the count and the kind ("4 storage accounts in 3 resource groups").</li><li>A group row's button is "Show 4". Inside, the members are a table with a Review button for each, and a finding that stands for many resources has one button, "Review all 50", for its one request.</li></ul>
 
 <h3>The decision in focus</h3>
-<p>The largest known saving, shown large: the rank, the title, the figure, the chips, four facts (what changes, why, checked, undo), two buttons, and two charts. A page has one. It is drawn in full in the <a href="decisions-preview.html">Decisions preview</a>.</p>
+<p>The decision with the most at stake, shown large: the rank, the title, the figure, the chips, four facts (what changes, why, checked, undo), one button, and a chart of its cost. A page has one. It is drawn in full in the <a href="decisions-preview.html">Decisions preview</a>, with a second chart (CPU use, with the 5% idle line) that the app does not draw yet: it needs a stored series of use.</p>
 
 <h3>Notices</h3>
 <div class="demo">
@@ -247,7 +247,7 @@ nav.toc a{min-height:0;padding:0;border:0}
 <tr><td><span class="ok">Review and decide</span></td><td><span class="no">OK, Open, Submit</span></td></tr>
 </tbody></table></div>
 <ul>
-<li><strong>Money.</strong> A dollar sign before the figure and a thousands separator: $4,297. Whole dollars from $100 up, cents below. "a year" and "a month" in words, never "/yr". Say the source when it is not Cost Management's cost lines: "at list price", "estimate".</li>
+<li><strong>Money.</strong> A dollar sign before the figure and a thousands separator: $4,297. A year is in whole dollars and is twelve times the month, a month has its cents ($358.11). "a year" and "a month" in words, never "/yr". Every saving carries its level (Expected, Scenario or Verified) and its basis in one line, and the page says once that money is in US dollars.</li>
 <li><strong>Time.</strong> "today", "yesterday", "3 days ago", then the weekday and date. The exact time is for the hover text and the history.</li>
 <li><strong>Names.</strong> A resource is in the monospace font, with its kind in words in front of it.</li>
 <li><strong>Words we do not use on a page for people.</strong> Family, plan (for a change), case, lead, gate, digest, re-check. Say kind, request, finding, "checked again".</li>
@@ -280,14 +280,14 @@ nav.toc a{min-height:0;padding:0;border:0}
 <h2 id="keeping">10 Keeping to this guide</h2>
 <p>A guide that nothing enforces is a wish. These are the means, and what is done.</p>
 <div class="table-wrap"><table><thead><tr><th scope="col">Means</th><th scope="col">State today</th></tr></thead><tbody>
-<tr><td>One stylesheet, <code>docs/ui/meternaut-ui.css</code>, that the pages of the app use as their only style</td><td>Written. The app does not use it yet.</td></tr>
-<tr><td>The Decisions page drawn from it</td><td>Drawn, with sample data. Not built into the app yet.</td></tr>
-<tr><td>A test that fails when the app's page style differs from the file</td><td>Next, with the first page that uses it.</td></tr>
-<tr><td>A test that fails on a style attribute, a colour value or a pixel size in the code of a page</td><td>Next.</td></tr>
+<tr><td>One stylesheet, <code>docs/ui/meternaut-ui.css</code>, that the pages of the app use as their only style</td><td>Built. The app carries the same text as <code>cases/web/style.py</code> (the web package reads no file), and every page uses it.</td></tr>
+<tr><td>The Decisions page drawn from it</td><td>Built into the app on 2026-11-09. The preview shows the same page with sample data.</td></tr>
+<tr><td>A test that fails when the app's page style differs from the file</td><td>Built: <code>tests/test_web_style.py</code>.</td></tr>
+<tr><td>A test that fails on a style attribute, a colour value or a pixel size in the code of a page, and on a class that the stylesheet does not have</td><td>Built: the same file.</td></tr>
 <tr><td>This guide served by the app itself at <code>/styleguide</code>, with the real stylesheet</td><td>Next.</td></tr>
-<tr><td>Every other page (a request, History, Settings, Operations, letters, Teams cards) moved onto it, one at a time</td><td>After the Decisions page.</td></tr>
+<tr><td>Every other page (a request, History, Settings, Operations, letters, Teams cards) moved onto it, one at a time</td><td>The pages of the app already carry the stylesheet. Their words and layout follow the guide one page at a time, after the Decisions page.</td></tr>
 </tbody></table></div>
-<p class="muted">Changes to this guide: version 1, 2026-11-09, first version.</p>
+<p class="muted">Changes to this guide: version 1, 2026-11-09, first version; the same day, made to say what the Decisions page of the app does (levels on every saving, one chart in focus, the footer).</p>
 </main>
 <footer>
 <p>Meternaut style guide, version 1. Written with AI; checked by a person.</p>
