@@ -68,7 +68,7 @@ class TheRulesAndThePages(unittest.TestCase):
             self.assertIn(words, rule_24, words)
         rule_29 = AGENTS.split("\n29. ")[1].split("\n30. ")[0]
         for words in ("every subscription that the cases app's identity can read, and nothing more than reads", "**Reading more does not widen what may be changed:**",
-                      "a change is planned and made only in the one resource group of `CHANGE_RESOURCE_GROUP` in `CHANGE_SUBSCRIPTION_ID`"):
+                      "a change is planned and made only in a resource group that `CHANGE_SCOPES` lists"):
             self.assertIn(words, rule_29, words)
         rule_31 = AGENTS.split("\n31. ")[1]
         self.assertIn("The Watch reads every subscription that its identity can read (rules 24 and 29), so an agent's finding can be about a resource that belongs to somebody else", rule_31)
