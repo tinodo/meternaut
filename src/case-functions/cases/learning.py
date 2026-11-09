@@ -162,9 +162,21 @@ def _answer(plan: PlanRecord, decisions: Sequence) -> tuple[str, str, str]:
     return (found.decision if found else "expired"), "", ""
 
 
+LEGACY_DAYS_READ = 2  # the days that the verifier read before it recorded which days it read (a record of an older action has no dates)
+
+
+def _days_read(check: dict) -> int | None:
+    """How many whole days the cost lines after the change covered, both ends included, from the dates that the verifier recorded (runner._cost_check); None when it recorded none."""
+    try:
+        first, last = dt.date.fromisoformat(str(check["costLinesFrom"])), dt.date.fromisoformat(str(check["costLinesTo"]))
+    except (KeyError, ValueError):
+        return None
+    return (last - first).days + 1 if last >= first else None
+
+
 def measured_of(plan: PlanRecord, action: ActionRecord | None, days: int | None = None) -> float | None:
     """What a change saved in a month, as the cost lines read afterwards showed, in US dollars: the cost of the 30 days before the change when the lines after it show none, else that cost
-    less what the lines after it show, scaled from the days that were read (the verifier reads `days` days after the change: runner.VERIFY_AFTER_DAYS). None when the lines were not read
+    less what the lines after it show, scaled from the days that were read (the days that the verifier recorded, or `days`). None when the lines were not read
     or are not in US dollars. Only a change has one: an answer of an advise plan changes nothing."""
     if plan.family == ADVISE or action is None or not isinstance(action.verification, dict):
         return None
@@ -174,9 +186,7 @@ def measured_of(plan: PlanRecord, action: ActionRecord | None, days: int | None 
         return None
     if after <= 0:
         return round(max(before, 0.0), 2)
-    from .runner import VERIFY_AFTER_DAYS  # imported here: the runner imports the approvals, which the sweep does not need to load first
-
-    return round(max(before - after * 30.0 / max(days or VERIFY_AFTER_DAYS, 1), 0.0), 2)
+    return round(max(before - after * 30.0 / max(days or _days_read(check) or LEGACY_DAYS_READ, 1), 0.0), 2)
 
 
 def _result(plan: PlanRecord, action: ActionRecord | None) -> str:

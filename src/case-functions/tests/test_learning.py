@@ -151,8 +151,15 @@ class MeasuredSaving(unittest.TestCase):
 
     def test_when_the_lines_still_show_a_cost_it_is_taken_off_scaled_from_the_days_that_were_read(self):
         two_days = action(verification={"costAfterUsd": 1.0, "costBeforeUsd30d": 42.5, "currency": "USD"})
-        self.assertEqual(learning.measured_of(plan(family="delete-disk"), two_days), round(42.5 - 1.0 * 30 / 2, 2))
+        self.assertEqual(learning.measured_of(plan(family="delete-disk"), two_days), round(42.5 - 1.0 * 30 / 2, 2), "an older record has no dates: the two days that were read then")
         self.assertEqual(learning.measured_of(plan(family="delete-disk"), action(verification={"costAfterUsd": 9.0, "costBeforeUsd30d": 42.5}), days=3), 0.0, "never below nothing")
+
+    def test_the_days_that_the_verifier_recorded_are_the_days_that_scale_the_cost_after_the_change(self):
+        read = action(verification={"costAfterUsd": 3.0, "costBeforeUsd30d": 42.5, "currency": "USD", "costLinesFrom": "2026-11-05", "costLinesTo": "2026-11-07"})
+        self.assertEqual(learning.measured_of(plan(family="resize-vm"), read), round(42.5 - 3.0 * 30 / 3, 2), "three days, both ends included")
+        for bad in ({"costLinesFrom": "x", "costLinesTo": "2026-11-07"}, {"costLinesFrom": "2026-11-08", "costLinesTo": "2026-11-07"}, {"costLinesTo": "2026-11-07"}):
+            odd = action(verification={"costAfterUsd": 1.0, "costBeforeUsd30d": 42.5, "currency": "USD", **bad})
+            self.assertEqual(learning.measured_of(plan(family="resize-vm"), odd), round(42.5 - 1.0 * 30 / 2, 2), bad)
 
     def test_nothing_is_measured_for_advice_a_currency_that_is_not_dollars_or_lines_that_were_not_read(self):
         self.assertIsNone(learning.measured_of(plan(), action()))
