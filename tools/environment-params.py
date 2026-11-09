@@ -159,9 +159,10 @@ SCOPE_ALL_SUBSCRIPTIONS = True
 # output and no action differs from what it was (a test holds that, with the constant set to False inside the test). The record says what stays after a way back.
 AGENTS_VIA_AI_GATEWAY = True
 # The size of the virtual machine that the action plant makes when plant_vm is set (environment/cases/planted.bicep). A burstable size that has a smaller one in its series, so that the family resize-vm
-# has a step to take (Standard_B2s to Standard_B1s): the cheapest burstable size, Standard_B1ls, has none. At the price list of Sweden Central (public Retail Prices API, read on 2026-11-08) it costs
-# 0.0432 US dollars an hour while it runs (Linux), nothing for compute once it is stopped and released, and 0.0108 after the resize. One value and a commit change it.
-PLANTED_VM_SIZE = "Standard_B2s"
+# has a step to take (Standard_B4als_v2 to Standard_B2als_v2). The older burstable sizes (Standard_B2s and its series) are not available to this subscription in Sweden Central (the real run of 2026-11-09
+# was refused: NotAvailableForSubscription), and the cheapest size of the v2 series, Standard_B2ts_v2, has none smaller. At the price list of Sweden Central (public Retail Prices API, read on
+# 2026-11-09) it costs 0.138 US dollars an hour while it runs (Linux), nothing for compute once it is stopped and released, and 0.0389 after the resize. One value and a commit change it.
+PLANTED_VM_SIZE = "Standard_B4als_v2"
 # The name of the project's connection to the gateway (the default of environment/foundry/main.bicep): an agent names its model `<connection>/<alias>`. The two models of the agents are the defaults of
 # environment/cases/main.bicep; a test holds the three together.
 AIGATEWAY_CONNECTION_NAME = "aigateway"
