@@ -12,11 +12,12 @@ and runs them here, one after the other, with the values that GitHub held as var
 changes, the next run follows it, as long as its layout stays the one that tools/workflow-lint.py enforces.
 
 THE HUB IS THIS TOOL NOW. The tools that the steps call and that change Azure (tools/az-deploy.py create, retire-old.py, cases-move.py, aigateway-prep.py, operator-run.py) accept only a run
-of the Hub (tools/hubguard.py): a real GitHub runner, or a process that holds the proof of a run of this tool. GITHUB_ACTIONS=true alone is not enough, because any process on this machine can set
-it: a stray call would skip every guard that only this tool has. So each run makes a proof: a random token in local/rt/<run>/hub-proof, the run's number, the SHA-256 of the token and the start time
-of its process in the lock, and METERNAUT_HUB_PROOF in the environment of every step. The tools look for the proof in this repository's own local folder only (the one found below), and they refuse a
-file anywhere else and a lock whose process was not started when the lock says. The file is deleted when the run ends, after a failure and after Ctrl+C too, and the token is never printed or
-written to the log or the record. This stops an accident and a stray call, like a tripwire; it is not a lock. It does not stop a process that holds the owner's az session: that can call az itself.
+of the Hub (tools/hubguard.py): a process that holds the proof of a run of this tool, and nothing else. GITHUB_ACTIONS=true is not enough, and neither is anything else that a GitHub runner sets:
+any process on this machine can set them, and since 2026-11-08 no GitHub run changes Azure (AGENTS.md rule 18). A stray call would skip every guard that only this tool has. So each run makes a
+proof: a random token in local/rt/<run>/hub-proof, the run's number, the SHA-256 of the token and the start time of its process in the lock, and METERNAUT_HUB_PROOF in the environment of every
+step. The tools look for the proof in this repository's own local folder only (the one found below), and they refuse a file anywhere else and a lock whose process was not started when the lock
+says. The file is deleted when the run ends, after a failure and after Ctrl+C too, and the token is never printed or written to the log or the record. This stops an accident and a stray call,
+like a tripwire; it is not a lock. It does not stop a process that holds the owner's az session: that can call az itself, or make a proof of its own.
 The steps still get GITHUB_ACTIONS=true and METERNAUT_HUB_LOCAL=1: the workflow passes the first on to the Operator's container, whose tools (aigateway-check.py, check-helpers.py,
 aisec-helpers.py) have no run lock to compare with and keep the old test. The guards that matter here are this tool's own: the owner's az session, the action's options, --yes for an action that
 changes Azure, a clean working tree, one run at a time, and a configuration file that git ignores.
@@ -125,7 +126,7 @@ REQUIRED_NAMES = ("ENV_SUBSCRIPTION_ID", "AZURE_SUBSCRIPTION_ID", "AZURE_TENANT_
 FIRST_RUN_NUMBER = 1000
 MIN_MASK_LENGTH = 3
 
-# What a step does not inherit from the person's own environment: the tokens of GitHub, and the variables that only a real GitHub runner has (hubguard.py takes them together as the proof of one).
+# What a step does not inherit from the person's own environment: the tokens of GitHub, and the variables that only a real GitHub runner has (nothing that a step runs here looks like one).
 STEP_ENV_DROPPED = ("GH_TOKEN", "GITHUB_TOKEN", "ACTIONS_ID_TOKEN_REQUEST_URL", "ACTIONS_ID_TOKEN_REQUEST_TOKEN", "GITHUB_REPOSITORY")
 STATUS_FUNCTIONS = ("always", "success", "failure", "cancelled")
 SESSION_COMMANDS = (("login",), ("logout",), ("account", "set"), ("account", "clear"), ("configure",), ("config", "set"), ("config", "unset"))

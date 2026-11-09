@@ -1,25 +1,24 @@
 #!/usr/bin/env python3
-"""Whether a run of the Hub started this process: the one test that the tools which change Azure from the runner share (standard library only).
+"""Whether a run of the Hub started this process: the one test that the tools which change Azure share (standard library only).
 
     python tools/hubguard.py        says yes or no; at a terminal it also says what is missing (the exit code is 0 for yes and 2 for no)
 
-Since 2026-11-08 the Hub is run by tools/hub-local.py on the owner's machine. Its tools (az-deploy.py create, retire-old.py, cases-move.py, aigateway-prep.py and operator-run.py) used to take
-GITHUB_ACTIONS=true as the proof that the Hub started them, and any process on the machine can set that variable: a stray call would have skipped every guard that only the local Hub has
-(--yes, a clean working tree, one run at a time, the record). A process was started by the Hub when one of these holds:
+Since 2026-11-08 the Hub is run by tools/hub-local.py on the owner's machine, and a GitHub workflow run changes nothing in Azure (AGENTS.md rule 18). Its tools (az-deploy.py create,
+retire-old.py, cases-move.py, aigateway-prep.py and operator-run.py) used to take GITHUB_ACTIONS=true as the proof that the Hub started them, and then the variables of a real GitHub runner (the run
+id, the repository and the address of an OpenID Connect token request). Any process on the machine can set all of them, and no GitHub run is left that needs them, so none counts any more: a stray
+call that copied them would skip every guard that only the local Hub has (--yes, a clean working tree, one run at a time, the record). The proof file is the only way in:
 
-  1. It is on a real GitHub runner: GITHUB_ACTIONS is true, and the run id (GITHUB_RUN_ID), the repository (GITHUB_REPOSITORY) and the address of an OpenID Connect token request
-     (ACTIONS_ID_TOKEN_REQUEST_URL) are set. The Hub's job has the permission id-token: write, so every one of its steps has the address.
-  2. METERNAUT_HUB_PROOF names the proof file of a run of tools/hub-local.py that is alive. The run makes <local>/rt/<run>/hub-proof before its first step, with a random token in it, and
-     writes into its lock, <local>/hub-local.lock, its number, the SHA-256 of the token and the start time of its process. It deletes the file when it ends, after a failure and after Ctrl+C
-     too. <local> is the repository's own local/ folder, found the way that tools/hub-local.py finds it (the main working tree's local/, or the folder that METERNAUT_LOCAL names), and never
-     from the path that the caller gives: a file anywhere else is refused, whatever sits next to it. The proof counts while the process that holds the lock is alive and started when the lock
-     says (so a process number that was used again does not pass), the number in the lock is the number of the proof's folder, and the file holds the token.
+  METERNAUT_HUB_PROOF names the proof file of a run of tools/hub-local.py that is alive. The run makes <local>/rt/<run>/hub-proof before its first step, with a random token in it, and
+  writes into its lock, <local>/hub-local.lock, its number, the SHA-256 of the token and the start time of its process. It deletes the file when it ends, after a failure and after Ctrl+C
+  too. <local> is the repository's own local/ folder, found the way that tools/hub-local.py finds it (the main working tree's local/, or the folder that METERNAUT_LOCAL names), and never
+  from the path that the caller gives: a file anywhere else is refused, whatever sits next to it. The proof counts while the process that holds the lock is alive and started when the lock
+  says (so a process number that was used again does not pass), the number in the lock is the number of the proof's folder, and the file holds the token.
 
 A refusal says only that the call was not started by a run of the Hub, so that a process that reads it learns nothing to copy. This command says more to a person at a terminal.
 
-What this stops: an accident, and a stray call (a script, a copied command line, a coding agent) that sets GITHUB_ACTIONS=true and nothing more. It is a tripwire and not a lock. What it does not
-stop: a process that holds the owner's az session, which can call az itself, or a process that reads this file and the proof file of a run that is alive and uses them. The tools that run inside
-the Operator's container group do not use it: the container has no run lock to compare with, and the services that they reach are private.
+What this stops: an accident, and a stray call (a script, a copied command line, a coding agent) that sets GITHUB_ACTIONS=true or what a GitHub runner sets, and nothing more. It is a tripwire and
+not a lock. What it does not stop: anything that holds the owner's machine and his az session. It can call az itself, read the proof file of a run that is alive and use it, or make a proof of its
+own. The tools that run inside the Operator's container group do not use this test: the container has no run lock to compare with, and the services that they reach are private.
 """
 from __future__ import annotations
 
@@ -36,7 +35,6 @@ LOCAL_VARIABLE = "METERNAUT_LOCAL"
 PROOF_NAME = "hub-proof"
 LOCK_NAME = "hub-local.lock"
 TEMP_NAME = "rt"
-RUNNER_VARIABLES = ("GITHUB_RUN_ID", "GITHUB_REPOSITORY", "ACTIONS_ID_TOKEN_REQUEST_URL")
 SCOPE_VARIABLES = ("ENV_SUBSCRIPTION_ID", "ENV_RESOURCE_GROUP")
 UNKNOWN = "unknown"
 # What a tool says when it refuses: nothing of what counts as a run of the Hub.
@@ -204,23 +202,19 @@ def proof_problem(proof: str, local, alive=process_alive, started=process_starte
 
 
 def what_is_missing(environ=None, *, alive=process_alive, started=process_started, git=None) -> str:
-    """'' when a run of the Hub started this process; else a sentence that says what is missing. Only a person who asks is told it (python tools/hubguard.py at a terminal): a tool refuses with REFUSAL."""
+    """'' when a run of the Hub started this process; else a sentence that says what is missing. Only a person who asks is told it (python tools/hubguard.py at a terminal): a tool refuses with REFUSAL.
+    Only the proof file of a run of tools/hub-local.py counts. GITHUB_ACTIONS and what else a GitHub runner sets are not read: any process can set them, and since 2026-11-08 no GitHub run is left that
+    changes Azure (AGENTS.md rule 18)."""
     env = os.environ if environ is None else environ
-    unset = [name for name in RUNNER_VARIABLES if not env.get(name)]
-    on_actions = env.get("GITHUB_ACTIONS") == "true"
-    if on_actions and not unset:
-        return ""
     proof = env.get(PROOF_VARIABLE) or ""
-    if proof:
-        try:
-            local = local_folder(env, None, git)
-        except NoLocalFolder:
-            local = None
-        return proof_problem(proof, local, alive, started)
-    if on_actions:
-        return (f"GITHUB_ACTIONS=true alone is no proof: this is no GitHub runner ({', '.join(unset)} not set), and {PROOF_VARIABLE} is not set, "
-                "so no run of tools/hub-local.py started it")
-    return f"GITHUB_ACTIONS is not true and {PROOF_VARIABLE} is not set: neither a GitHub runner nor a run of tools/hub-local.py started this"
+    if not proof:
+        return (f"{PROOF_VARIABLE} is not set: only the proof file of a run of tools/hub-local.py counts. GITHUB_ACTIONS=true and what else a GitHub runner sets are no proof: "
+                "any process can set them, and a GitHub run changes nothing in Azure since 2026-11-08 (AGENTS.md rule 18)")
+    try:
+        local = local_folder(env, None, git)
+    except NoLocalFolder:
+        local = None
+    return proof_problem(proof, local, alive, started)
 
 
 def started_by_the_hub(environ=None, **injected) -> bool:

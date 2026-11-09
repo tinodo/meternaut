@@ -2678,7 +2678,7 @@ class OperatorChecksWorkflow(unittest.TestCase):
             self.assertLess(size, 300_000, "far below the 400,000 bytes that the probe found a secret volume takes whole")
 
     def test_the_container_is_told_it_is_in_a_github_actions_run_only_because_only_a_run_of_this_workflow_makes_it(self):
-        # operator-run.py makes the group only for a run of the Hub (tools/hubguard.py: a GitHub runner, or the proof of a run of tools/hub-local.py): the container is told GITHUB_ACTIONS=true.
+        # operator-run.py makes the group only for a run of the Hub (tools/hubguard.py: the proof of a run of tools/hub-local.py, and nothing else): the container is told GITHUB_ACTIONS=true.
         self.assertIn("raise Problem(f\"this command makes and deletes resources in Azure, and only a run of the Hub may do that (AGENTS.md rule 18): {not_the_hub}\", 2)", text("tools/operator-run.py"))
         self.assertIn("not_the_hub = guard.refusal()", text("tools/operator-run.py"))
         for title in (self.CASES,):

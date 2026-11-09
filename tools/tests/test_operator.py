@@ -256,12 +256,13 @@ class Arguments(unittest.TestCase):
         self.assertEqual((code, az.calls), (2, []))
         self.assertIn("error: this command makes and deletes resources in Azure, and only a run of the Hub may do that (AGENTS.md rule 18): this call was not started by a run of the Hub", err)
 
-    def test_a_process_that_only_says_that_github_actions_is_true_makes_nothing_and_the_refusal_says_nothing_of_what_it_lacks(self):
-        az = FakeAz()
-        code, _, err = clean_run(az, actions=False, env={"GITHUB_ACTIONS": "true"})
-        self.assertEqual((code, az.calls), (2, []))
-        self.assertIn("this call was not started by a run of the Hub", err)
-        self.assertNotRegex(err, r"GITHUB_|METERNAUT_|ACTIONS_ID|(?i:proof)|(?i:lock)", "a refusal says nothing to copy")
+    def test_a_process_that_says_that_github_actions_is_true_or_sets_all_that_a_github_runner_sets_makes_nothing_and_the_refusal_says_nothing_of_what_it_lacks(self):
+        for env in ({"GITHUB_ACTIONS": "true"}, hubenv.RUNNER):
+            az = FakeAz()
+            code, _, err = clean_run(az, actions=False, env=env)
+            self.assertEqual((code, az.calls), (2, []), env)
+            self.assertIn("this call was not started by a run of the Hub", err)
+            self.assertNotRegex(err, r"GITHUB_|METERNAUT_|ACTIONS_ID|(?i:proof)|(?i:lock)", "a refusal says nothing to copy")
 
     def test_the_proof_of_a_run_of_tools_hub_local_that_is_alive_is_enough_and_a_stale_one_or_one_of_another_folder_is_not(self):
         with tempfile.TemporaryDirectory() as folder:

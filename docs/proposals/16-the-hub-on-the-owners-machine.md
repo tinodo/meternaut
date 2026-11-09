@@ -4,7 +4,7 @@
 
 ## Why
 
-The owner's GitHub Actions quota was used up, and the Hub workflow was the only way a change reached Azure ([rule 18](../../AGENTS.md)). He chose to deploy from his machine rather than wait.
+The owner's GitHub Actions quota was used up, and the Hub workflow was the only way a change reached Azure ([rule 18](../../AGENTS.md)).
 
 ## What runs where
 
@@ -14,17 +14,17 @@ The owner's GitHub Actions quota was used up, and the Hub workflow was the only 
 | `hub-local.env`, the run counter, the lock, the records | The git-ignored `local/` folder of the main working tree, shared by every worktree; `METERNAUT_LOCAL` overrides it |
 | `deploy-hub.yml` | GitHub, unchanged, run by a click only |
 
-The tool reads the workflow with its own reader, decides each `if:` itself and runs each step's script.
+The tool reads the workflow itself, decides each `if:` and runs each step's script.
 
 ## The guards
 
 A guard refuses and does not warn. The `az` session is a person's, in the configured tenant. The action and every input are the workflow's own. An action that only reads needs no `--yes` (`what-if`, `aigateway-check`, `page-latency`, `loop-check`, `operator-probe`, `drift-check`, `agents-drift`, `agent365-check`, and `foundry-evals` with `probe` or `rule`); every other action, and any unknown one, needs it; without it only the plan is printed. `aigateway` also needs `--public-ai-gateway-requested`, and `teams` needs `--public-teams-bot-requested` and the line `TEAMS_BOT_ENABLED=True` in the configuration. A change of Azure needs a clean working tree (`--allow-dirty` overrides). One run at a time: a lock file, taken over when its run is gone. The configuration is git-ignored and untracked. Every expression resolves, or nothing runs: a step that needs a GitHub token or calls `gh` stops the plan.
 
-The five tools that change Azure from the runner (`az-deploy.py create`, `retire-old.py`, `cases-move.py`, `aigateway-prep.py`, `operator-run.py`) trusted `GITHUB_ACTIONS=true`, which any process can set. They now ask `tools/hubguard.py`: a real GitHub runner, or `METERNAUT_HUB_PROOF`, a file with a random token that a run makes under `local/rt/` and deletes when it ends, after a failure or Ctrl+C too. Its lock holds the token's digest and the process's start time; only the repository's own `local/` counts. All five name only the project's subscription and group. A refusal says nothing of why; `python tools/hubguard.py` tells a person. A tripwire, not a lock: it stops accidents and stray calls, not a process that holds the owner's `az` session (it can call `az` itself). The three tools in the Operator's container (`aigateway-check.py`, `check-helpers.py`, `aisec-helpers.py`) have no run lock to ask and keep the old test; only a private endpoint stops a stray call from that machine.
+The five tools that change Azure (`az-deploy.py create`, `retire-old.py`, `cases-move.py`, `aigateway-prep.py`, `operator-run.py`) trusted `GITHUB_ACTIONS=true`, then what a GitHub runner sets. Any process can set both, and since a GitHub run changes nothing in Azure ([rule 18](../../AGENTS.md)) no runner needs them. So `tools/hubguard.py` accepts one thing: `METERNAUT_HUB_PROOF`, a file with a random token that a run makes under `local/rt/` and deletes when it ends, after a failure or Ctrl+C too. Its lock holds the token's digest and the process's start time; only the repository's own `local/` counts. All five name only the project's subscription and group. A refusal says nothing of why; `python tools/hubguard.py` tells a person. A tripwire, not a lock: it stops accidents and stray calls, not what holds the owner's machine and `az` session (it can call `az` or make a proof). The three tools in the Operator's container (`aigateway-check.py`, `check-helpers.py`, `aisec-helpers.py`) have no run lock to ask and keep the old test; only a private endpoint stops a stray call from that machine.
 
 ## What a person sees
 
-`--dry-run` prints the plan and needs no `az` session. The inputs are flags (`--help` lists them); a missing one takes the workflow's default, printed. A run prints the steps live, writes a record and a log to `local/records/` (commit, tree state, outcomes) and ends with `Hub (local) <action>: PASSED in N minutes` or `FAILED`.
+`--dry-run` prints the plan and needs no `az` session. The inputs are flags (`--help` lists them); a missing one takes the workflow's default, printed. A run prints the steps live, writes a record and a log to `local/records/` and ends with `Hub (local) <action>: PASSED in N minutes` or `FAILED`.
 
 ## What changed from a run on GitHub
 
@@ -37,7 +37,7 @@ The five tools that change Azure from the runner (`az-deploy.py create`, `retire
 
 ## What the Operator steps need
 
-The checks that run in the Operator (the health wait, `cases-run`, `page-latency`, `loop-check`, the gateway and agent checks) make a container group with the owner's own rights: Container Instances registered, and the right to create it, join the Operator's subnet and use its identity.
+The checks that run in the Operator (the health wait and the others) make a container group with the owner's own rights: Container Instances registered, and the right to create it, join the Operator's subnet and use its identity.
 
 ## Not supported
 
@@ -55,4 +55,4 @@ Anything that needs a GitHub OpenID Connect token: the publish of the cases thro
 
 ## The way back
 
-A click on the workflow deploys as before, once the quota is there.
+Deploying from GitHub again takes the owner's word: rule 18 and the test of `tools/hubguard.py` change together.
