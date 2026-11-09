@@ -831,8 +831,10 @@ def _open_case(s: "Services", out: Investigation, finding: Finding, item: Item, 
     detective = DetectiveAnswer(finding.proposal, finding.confidence, finding.summary)
     judged = finding.verdict if item.shown else None
     outcome = decide.decide(lead, Guards({}), detective, judged, backed=bool(item.metrics), notes=(finding.note,) if finding.note else ())
-    # What past requests like this showed may hold a proposal back for a person, and never makes a finding stronger (cases/learning.py). The case is always an advise plan's: no change is made for it.
-    outcome, held = learning.hold(s.extras.store if s.extras is not None else None, learning.type_word(lead.resource_type), ADVISE, detective.confidence, outcome)
+    # What past requests like this showed may hold a proposal back for a person, and never makes a finding stronger (cases/learning.py). It does so only when LEARNING_HOLD is on: the first run of
+    # tools/learning-check.py missed its thresholds (docs/proposals/15-learning.md). The case is always an advise plan's: no change is made for it.
+    store = s.extras.store if s.extras is not None and s.settings.learning_hold else None
+    outcome, held = learning.hold(store, learning.type_word(lead.resource_type), ADVISE, detective.confidence, outcome)
     learned = {"skeptic": judged.verdict if judged is not None else "none", **({"held": "history"} if held else {})}
     access = capability.access_code(out.profile, finding.basis)
     if access:

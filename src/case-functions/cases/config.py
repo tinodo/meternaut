@@ -79,6 +79,11 @@ LIMIT_STUDY_SECONDS = 600
 DEFAULT_STUDY_TOKENS = 400_000
 LIMIT_STUDY_TOKENS = 800_000
 
+# The hold of the learning (cases/learning.py, hold): a proposal that past requests like it rarely saw approved goes to a person as a finding that needs one. It is off until LEARNING_HOLD is on,
+# because the first run of tools/learning-check.py missed its thresholds (docs/proposals/15-learning.md): what is not shown to help is not switched on. The lessons, the line of the decision
+# brief and the tools that recall are not behind it: they count and they decide nothing.
+LEARNING_HOLD = "LEARNING_HOLD"
+
 OPTIONAL = {MAX_TOKENS_PER_RUN: str(LIMIT_TOKENS_PER_RUN), MAX_COMPLETION_TOKENS: str(LIMIT_COMPLETION_TOKENS), RUN_DEADLINE_SECONDS: str(LIMIT_DEADLINE_SECONDS),
             FOUNDRY_MODEL_INVESTIGATOR: DEFAULT_MODEL_INVESTIGATOR, FOUNDRY_MODEL_SKEPTIC: DEFAULT_MODEL_SKEPTIC,
             INVESTIGATE_MAX_CALLS: str(DEFAULT_INVESTIGATE_CALLS), INVESTIGATE_MAX_SECONDS: str(DEFAULT_INVESTIGATE_SECONDS), INVESTIGATE_MAX_TOKENS: str(LIMIT_INVESTIGATE_TOKENS),
@@ -129,6 +134,8 @@ class Settings:
     study_max_pages: int = DEFAULT_STUDY_PAGES
     study_max_seconds: int = DEFAULT_STUDY_SECONDS
     study_max_tokens: int = DEFAULT_STUDY_TOKENS
+    # The hold of the learning (cases/learning.py, hold). Off unless LEARNING_HOLD is on.
+    learning_hold: bool = False
 
 
 def _integer(env: Mapping[str, str], name: str, low: int, high: int, default: str, problems: list[str]) -> int:
@@ -222,6 +229,7 @@ def load(env: Mapping[str, str] | None = None) -> Settings:
     deadline = _integer(env, RUN_DEADLINE_SECONDS, 60, LIMIT_DEADLINE_SECONDS, OPTIONAL[RUN_DEADLINE_SECONDS], problems)
     investigation = _investigation(env, problems)
     study = _study(env, investigation["foundry_endpoint"], problems)
+    learning_hold = _switch(env, LEARNING_HOLD, False, problems)
     if problems:
         raise ConfigError("; ".join(problems))
     return Settings(
@@ -237,4 +245,5 @@ def load(env: Mapping[str, str] | None = None) -> Settings:
         all_subscriptions=all_subscriptions,
         **investigation,
         **study,
+        learning_hold=learning_hold,
     )

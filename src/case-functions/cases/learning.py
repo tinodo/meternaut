@@ -12,7 +12,8 @@ What is made of the lessons, all of it by code and all of it explainable:
   (brief.past_line), or says "no history yet" below MIN_ANSWERED.
 * `calibrated_confidence` says what past outcomes support for a confidence that the first AI stated: the share of the labelled outcomes in the same band (BANDS) that were approved, when
   there are at least MIN_BAND of them. `hold` uses it in one way only: a proposal whose stated confidence is at or above the gate and whose calibrated confidence is below it goes to a person
-  as a finding that needs one. Learning only ever makes a finding weaker: a calibrated confidence above the stated one changes nothing.
+  as a finding that needs one. Learning only ever makes a finding weaker: a calibrated confidence above the stated one changes nothing. The Watch calls `hold` only when LEARNING_HOLD is on,
+  and it is off: the first run of tools/learning-check.py missed two of its thresholds (docs/proposals/15-learning.md), and what is not shown to help is not switched on.
 * `sync` is the sweep that the timer of the loop runs: it writes the lesson of every plan that has ended, adds the measured saving when the verifier has read the cost lines, and, for a
   change that was made on a resource that Meternaut did not plant, looks in the Activity Log for the resource made again (a boomerang).
 * `OpenQuestions` says which earlier findings are still open questions: the case of the investigation is `needs_human` or `proposed`, and either no request to a person is open for the resource
@@ -20,7 +21,8 @@ What is made of the lessons, all of it by code and all of it explainable:
   for each (the resource, how often it was seen, for how long, how sure the last judgement was), and the Watch takes such a resource up again at once when the Investigator cites it again
   (investigate._judged_lately), so that an open question comes back with the tools until it is decision-ready or dropped.
 
-The starting values below were written before anything was measured, and tools/learning-check.py holds them against evaluation/learning-thresholds.json.
+The starting values below were written before anything was measured, and tools/learning-check.py holds them against evaluation/learning-thresholds.json: on its first run, on the invented replay set,
+updated memory held back 7 of the 9 proposals that people declined as wrong, and also 9 of the 23 that they approved, and the calibration error fell by 0.017 where 0.02 was asked.
 """
 from __future__ import annotations
 

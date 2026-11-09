@@ -1,12 +1,14 @@
-"""What the lessons change in the Watch: the verdict of the second AI and the past of a case are kept with it, and a proposal that past requests like it rarely led to an approval goes to a person."""
+"""What the lessons change in the Watch: the verdict of the second AI and the past of a case are kept with it, and, when the hold is switched on (LEARNING_HOLD), a proposal that past requests like it
+rarely led to an approval goes to a person."""
 import unittest
 
+from support import ENV
 from test_cards import BASE, NOW as CARD_NOW, ctx_for, make_advice_plan, make_case as card_case, texts
-from test_investigate import FakeFoundry, FakeToolbox, Harness, answer, finding, key_of, metrics, resource
+from test_investigate import FakeFoundry, FakeToolbox, Harness, answer, finding, key_of, make_settings, metrics, resource
 from test_run_loop import Moving, estate_with, loop_for, watch
 from test_web_support import NOW as WEB_NOW, Console, make_advice, make_advice_case
 
-from cases import cards, letters
+from cases import cards, config, letters
 from cases.brief import build_brief
 from cases.models import LessonRecord
 from cases.people import Person
@@ -24,8 +26,8 @@ def lessons_for(store, approved, wrong, confidence=0.9, resource_type=THINGS, fa
 
 
 class TheCaseOfTheInvestigationKeepsWhatItLearned(unittest.TestCase):
-    def go(self, approved=0, wrong=0, **options):
-        h = Harness(FakeFoundry(answer(finding(handles=["r1"]))), FakeToolbox([resource(1)], {"r1": metrics(MetricA=0)}), with_store=True)
+    def go(self, approved=0, wrong=0, hold=True):
+        h = Harness(FakeFoundry(answer(finding(handles=["r1"]))), FakeToolbox([resource(1)], {"r1": metrics(MetricA=0)}), make_settings(learning_hold=hold), with_store=True)
         lessons_for(h.store, approved, wrong)
         h.go()
         return h
@@ -74,7 +76,7 @@ class TheCaseOfTheInvestigationKeepsWhatItLearned(unittest.TestCase):
             self.assertEqual((case.status, "held" in case.learned), ("proposed", False), (approved, wrong))
 
     def test_the_lessons_of_another_type_or_another_family_are_not_the_past_of_this_case(self):
-        h = Harness(FakeFoundry(answer(finding(handles=["r1"]))), FakeToolbox([resource(1)], {"r1": metrics(MetricA=0)}), with_store=True)
+        h = Harness(FakeFoundry(answer(finding(handles=["r1"]))), FakeToolbox([resource(1)], {"r1": metrics(MetricA=0)}), make_settings(learning_hold=True), with_store=True)
         lessons_for(h.store, 0, 8, resource_type="microsoft.other/things")
         lessons_for(h.store, 0, 8, family="delete-disk")
         h.go()
@@ -82,9 +84,42 @@ class TheCaseOfTheInvestigationKeepsWhatItLearned(unittest.TestCase):
         self.assertEqual((case.status, case.learned["past"]["n"]), ("proposed", 0))
 
     def test_a_case_without_a_store_is_decided_as_it_always_was(self):
-        h = Harness(FakeFoundry(answer(finding(handles=["r1"]))), FakeToolbox([resource(1)], {"r1": metrics(MetricA=0)}))
+        h = Harness(FakeFoundry(answer(finding(handles=["r1"]))), FakeToolbox([resource(1)], {"r1": metrics(MetricA=0)}), make_settings(learning_hold=True))
         result = h.go()
         self.assertEqual((result.cases, result.proposed), (1, 1))
+
+
+class TheHoldIsASwitchThatIsOffUntilTheCheckPasses(unittest.TestCase):
+    def go(self, **settings):
+        h = Harness(FakeFoundry(answer(finding(handles=["r1"]))), FakeToolbox([resource(1)], {"r1": metrics(MetricA=0)}), make_settings(**settings), with_store=True)
+        lessons_for(h.store, 1, 5)
+        h.go()
+        return h
+
+    def test_lessons_that_would_hold_a_proposal_leave_it_alone_while_the_switch_is_off_and_the_past_is_still_kept(self):
+        h = self.go()
+        case = h.store.case_get(key_of(resource(1)))
+        self.assertEqual((case.status, case.recommendation), ("proposed", "delete"))
+        self.assertNotIn("held", case.learned)
+        self.assertEqual(case.learned["past"], {"n": 6, "approved": 1, "enough": True, "boomerangs": 0}, "the lessons are counted and shown: only the hold is behind the switch")
+        self.assertEqual((h.result.proposed, h.result.needs_human), (1, 0))
+        self.assertFalse(any(note.startswith("past cases like this") for note in case.objections), case.objections)
+
+    def test_the_same_lessons_hold_it_when_the_switch_is_on(self):
+        case = self.go(learning_hold=True).store.case_get(key_of(resource(1)))
+        self.assertEqual((case.status, case.learned["held"]), ("needs_human", "history"))
+
+    def test_the_switch_is_off_in_the_settings_of_the_app_and_is_read_as_the_other_switches_are(self):
+        self.assertFalse(config.load(dict(ENV)).learning_hold)
+        for value in ("1", "true", "on", "yes", "ON"):
+            self.assertTrue(config.load({**ENV, "LEARNING_HOLD": value}).learning_hold, value)
+        for value in ("0", "false", "off", "no", ""):
+            self.assertFalse(config.load({**ENV, "LEARNING_HOLD": value}).learning_hold, value)
+        with self.assertRaises(config.ConfigError) as raised:
+            config.load({**ENV, "LEARNING_HOLD": "maybe"})
+        self.assertIn("LEARNING_HOLD is on or off", str(raised.exception))
+        self.assertNotIn("LEARNING_HOLD", config.REQUIRED)
+        self.assertEqual(config.LEARNING_HOLD, "LEARNING_HOLD")
 
 
 class TheOlderPathKeepsItToo(unittest.TestCase):
