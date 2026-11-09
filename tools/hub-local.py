@@ -1961,11 +1961,12 @@ class Hub:
             path = shim / name
             path.write_text(text, encoding="utf-8", newline="\n")
             path.chmod(path.stat().st_mode | stat.S_IEXEC)
+        # The Azure CLI asks aka.ms for the latest Bicep release before every Bicep command, and that request has no time limit: on 2026-11-09 one hung for 14 minutes and held a deployment, so the check is off.
         env = {"GITHUB_ACTIONS": "true", "METERNAUT_HUB_LOCAL": "1", guard.PROOF_VARIABLE: posix(self.proof), "GITHUB_ACTOR": LOCAL_ACTOR, "GITHUB_REF": LOCAL_REF, "GITHUB_REF_NAME": "main",
                "GITHUB_SHA": self.head,
                "GITHUB_RUN_ID": str(self.ctx.github["run_id"]), "GITHUB_RUN_NUMBER": str(self.ctx.github["run_number"]), "GITHUB_RUN_ATTEMPT": "1",
                "GITHUB_EVENT_NAME": "workflow_dispatch", "GITHUB_WORKFLOW": self.workflow.name, "GITHUB_WORKSPACE": posix(self.root), "RUNNER_TEMP": posix(self.rt),
-               "MSYS_NO_PATHCONV": "1", "MSYS2_ARG_CONV_EXCL": "*", "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8", "PYTHONUNBUFFERED": "1", "AZ": "az",
+               "MSYS_NO_PATHCONV": "1", "MSYS2_ARG_CONV_EXCL": "*", "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8", "PYTHONUNBUFFERED": "1", "AZ": "az", "AZURE_BICEP_CHECK_VERSION": "false",
                "PATH": posix(shim) + os.pathsep + self.environ.get("PATH", "")}
         if os.name == "nt":
             (shim / "sitecustomize.py").write_text(sitecustomize_text(), encoding="utf-8", newline="\n")

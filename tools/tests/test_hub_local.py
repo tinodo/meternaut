@@ -922,7 +922,7 @@ class TheRuns(RunnerCase):
 
     def test_the_environment_of_a_step_is_the_one_of_a_run_of_the_hub(self):
         self.write_workflow(mini(CHECKOUT, LOGIN, block("Environment", """
-            for name in GITHUB_ACTIONS METERNAUT_HUB_LOCAL GITHUB_ACTOR GITHUB_REF GITHUB_RUN_NUMBER MSYS_NO_PATHCONV MSYS2_ARG_CONV_EXCL PYTHONUTF8 PYTHONUNBUFFERED ACTION ENV_RESOURCE_GROUP; do
+            for name in GITHUB_ACTIONS METERNAUT_HUB_LOCAL GITHUB_ACTOR GITHUB_REF GITHUB_RUN_NUMBER MSYS_NO_PATHCONV MSYS2_ARG_CONV_EXCL PYTHONUTF8 PYTHONUNBUFFERED AZURE_BICEP_CHECK_VERSION ACTION ENV_RESOURCE_GROUP; do
               echo "$name=${!name}"
             done
             echo "sha_set=$([ -n "$GITHUB_SHA" ] && echo yes)"
@@ -939,7 +939,7 @@ class TheRuns(RunnerCase):
         code, text = self.go("what-if", environ={"GH_TOKEN": "gh-secret-token", "GITHUB_TOKEN": "gh-secret-token-2", "ACTIONS_ID_TOKEN_REQUEST_URL": "https://example.invalid/token"})
         self.assertEqual(code, 0, text)
         for expected in ("GITHUB_ACTIONS=true", "METERNAUT_HUB_LOCAL=1", "GITHUB_ACTOR=tinodo", "GITHUB_REF=refs/heads/main", "GITHUB_RUN_NUMBER=288", "MSYS_NO_PATHCONV=1", "MSYS2_ARG_CONV_EXCL=*",
-                         "PYTHONUTF8=1", "PYTHONUNBUFFERED=1", "ACTION=what-if", "ENV_RESOURCE_GROUP=rg-of-the-project", "sha_set=yes", "run_id_is_a_number=yes", "output_file_in_temp=yes",
+                         "PYTHONUTF8=1", "PYTHONUNBUFFERED=1", "AZURE_BICEP_CHECK_VERSION=false", "ACTION=what-if", "ENV_RESOURCE_GROUP=rg-of-the-project", "sha_set=yes", "run_id_is_a_number=yes", "output_file_in_temp=yes",
                          "gh_token=unset github_token=unset oidc=unset", f"python3={sys.version_info[0]}", "converted=/subscriptions/abc/resourceGroups/x", "type_az=file"):
             self.assertIn(expected, text)
         self.assertRegex(text, r"temp=[A-Za-z]:/|temp=/", "the temp folder is written with forward slashes")
