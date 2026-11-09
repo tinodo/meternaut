@@ -678,6 +678,7 @@ class TheSmallWords(unittest.TestCase):
     def test_the_kind_of_a_resource_in_words(self):
         self.assertEqual(kind_words("Microsoft.Compute/Disks"), ("Managed disk", "disk"))
         self.assertEqual(kind_words("Microsoft.OperationalInsights/Workspaces"), ("Log Analytics workspace", "Log Analytics workspace"))
+        self.assertEqual(kind_words("Microsoft.CognitiveServices/accounts"), ("AI services account", "AI services account"))
         self.assertEqual(kind_words("microsoft.thing/things"), ("microsoft.thing/things", "resource"))
         self.assertEqual(kind_words(""), ("Resource", "resource"))
         every_type = {kind.type for family in registry.REGISTRY for kind in family.kinds}

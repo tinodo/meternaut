@@ -14,6 +14,7 @@ SERIES_MIN = 2
 SERIES_MAX = 60
 NO_LINES = "Cost Management reports a cost 8 to 72 hours after it happens."
 READ_LATER = "The next search reads them."
+WHEN_JUDGED = "They are read when the AIs judge this finding again."
 SHAPES = {"circle": '<circle cx="6" cy="6" r="4"/>', "triangle": '<path d="M6 1.5 11 10.5H1z"/>', "diamond": '<path d="M6 1 11 6 6 11 1 6z"/>',
           "square": '<rect x="2" y="2" width="8" height="8" rx="1.5"/>'}  # a chip says what it is in words and in a shape, never by colour alone
 NICE = (1, 1.2, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10)

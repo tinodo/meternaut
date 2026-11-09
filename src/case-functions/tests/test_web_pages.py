@@ -272,6 +272,11 @@ class TheDecisionsPage(unittest.TestCase):
         self.assertEqual([(a.text(), a.attrs["href"]) for a in row.find_all("a")], [("Review all 50", "/ok/plan6000")])
         self.assertEqual([r["Resource"] for r in reply.table("members-plan6000").rows], ["pe-1", "pe-2", "pe-3", "pe-4", "pe-5"])
         self.assertIn("45 more. All 50 are in 8 resource groups.", row.text())
+        self.assertEqual(row.find("svg", class_="sp none").attrs["aria-label"], f"No daily costs yet: {figures.WHEN_JUDGED}", "a finding of an earlier search kept no ids: its series is read after it is judged again")
+        case = console.store.case_get("case6000")
+        console.store.case_put(replace(case, facts={**case.facts, GROUP_FACT: {**case.facts[GROUP_FACT], "resourceIds": ["/subscriptions/x/resourcegroups/g/providers/p.q/t/n"]}}))
+        (row,) = rows(console.get("/"), "look")
+        self.assertEqual(row.find("svg", class_="sp none").attrs["aria-label"], f"No daily costs yet: {figures.READ_LATER}")
 
     def test_the_summary_adds_up_what_is_known_what_is_under_review_and_what_cost_management_measured(self):
         console = seeded()

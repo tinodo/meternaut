@@ -12,10 +12,10 @@ from dataclasses import dataclass
 from typing import Mapping, Sequence
 
 from ..brief import Brief, ago_text, plain, plan_headline, things
-from ..models import ADVICE_QUIET_DAYS, ADVISE, INVESTIGATION, ActionRecord, CaseRecord, PlanRecord
+from ..models import ADVICE_QUIET_DAYS, ADVISE, GROUP_FACT, INVESTIGATION, ActionRecord, CaseRecord, PlanRecord
 from .common import brief_of, cases_by_id, effective_state, is_expired, may_answer, read
 from .core import Ctx, Response, Safe, esc, fmt, join, link_part, stamp
-from .figures import NO_LINES, READ_LATER, a_year, bar, chart, chip, dollars, number_of, series_of, spark, summed
+from .figures import NO_LINES, READ_LATER, WHEN_JUDGED, a_year, bar, chart, chip, dollars, number_of, series_of, spark, summed
 from .layout import code, details, notice, page, paragraph, table
 
 ROWS_SHOWN = 12  # the rows of each lane that the page shows, unless a person asks for all of them
@@ -53,6 +53,15 @@ class Row:
     @property
     def series(self) -> list[float] | None:
         return series_of(self.case.cost_series) if self.case is not None else None
+
+    @property
+    def ids_known(self) -> bool:
+        """Whether the daily cost of the finding can be read: that of one resource always can, that of a group only when its case kept the ids of its resources (a case of an earlier
+        search kept their short hashes and nothing else)."""
+        if self.brief.group is None or self.case is None:
+            return True
+        group = self.case.facts.get(GROUP_FACT) if isinstance(self.case.facts, dict) else None
+        return isinstance(group, dict) and bool(group.get("resourceIds"))
 
 
 @dataclass(frozen=True)
@@ -93,7 +102,10 @@ class Unit:
 
     @property
     def reason(self) -> str:
-        """Why there is no chart: the cost lines are there and the series is read at the next search, or no cost line exists yet."""
+        """Why there is no chart: the cost lines are there and the series is read at the next search, the finding of an earlier search has to be judged again before its series can be read,
+        or no cost line exists yet."""
+        if not all(m.ids_known for m in self.members):
+            return WHEN_JUDGED
         return READ_LATER if any((m.cost or 0) > 0 for m in self.members) else NO_LINES
 
 

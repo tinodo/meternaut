@@ -74,6 +74,7 @@ TYPE_WORDS = {
     "microsoft.kusto/clusters": ("Data Explorer cluster", "Data Explorer cluster"),
     "microsoft.recoveryservices/vaults": ("Recovery Services vault", "Recovery Services vault"),
     "microsoft.operationalinsights/workspaces": ("Log Analytics workspace", "Log Analytics workspace"),
+    "microsoft.cognitiveservices/accounts": ("AI services account", "AI services account"),
 }
 GUARD_WORDS = {
     "locked": "A management lock covers the resource.",
