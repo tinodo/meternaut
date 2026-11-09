@@ -104,6 +104,10 @@ NO_CHANGE = "No request is open for this case. Nothing changes in Azure."
 WAITING_FOR_THE_CHECK = "Azure asked for an extra sign-in check before it would make the change. The change waits until the check is completed. Nothing was changed yet."
 # What a plan says while Azure carries out a change that it accepted and has not finished (a machine takes minutes to stop or resize): the runner records its own words in the action.
 RUNNING_IN_AZURE = "Azure accepted the change and is still making it. Meternaut reads the resource again in a few minutes."
+# What a request says when it was approved and nothing had to be changed: when Meternaut looked, the resource was in the state that the plan wants (somebody else got there first) or was
+# gone already. No write was made, so the saving is not claimed for this approval.
+NOTHING_CHANGED = "Nothing was changed"
+NOTHING_CHANGED_SAVING = "Nothing was changed, so no saving is claimed for this approval."
 # What a person is told while a switch holds the answer that approves: all of them hold a change, and only the full stop holds advice (nothing changes in Azure for it).
 PAUSED_CHANGES = "Changes are paused here. Nothing has changed, and your OK cannot be recorded now."
 PAUSED_ADVICE = "Meternaut is paused here. Nothing has changed, and your answer cannot be recorded now."
@@ -167,7 +171,7 @@ class Where:
 class Outcome:
     """What became of a request that is no longer open, in plain lines without a time; `at` is the time of the answer (or of the expiry)."""
 
-    state: str  # expired, declined, withdrawn, answered, approved, done, verified, failed or empty while the request is open
+    state: str  # expired, declined, withdrawn, answered, approved, running, done, unchanged (approved, and nothing had to be changed), verified, failed or empty while the request is open
     title: str
     lines: tuple[str, ...]
     result: str  # one short phrase for a list
@@ -554,11 +558,16 @@ def _saving(case: CaseRecord | None, plan: PlanRecord | None, action: ActionReco
     check = action.verification if action is not None and isinstance(action.verification, dict) else {}
     before, after = _figure(check.get("costBeforeUsd30d")), _figure(check.get("costAfterUsd"))
     fam = shown(plan.family) if plan is not None else None
-    if action is not None and action.state == "verified" and before is not None and after == 0 and before > 0:
+    if action is not None and action.no_change:
+        return Saving(None, "", "", None, NOTHING_CHANGED_SAVING)
+    # Cost lines that show no cost confirm only a change that ends the cost (a delete, a stop). A resize or a change of tier leaves the resource billing, so its confirmation is a lower
+    # figure, in the branch below, and never "no cost".
+    ends = fam is None or fam.cost_ends
+    if action is not None and action.state == "verified" and ends and before is not None and after == 0 and before > 0:
         return Saving(round(before, 2), "Verified", "the cost lines after the change show no cost for this resource", None, "")
     saved = _figure(check.get("savedUsdMonth"))
     if action is not None and action.state == "verified" and saved is not None and saved > 0:
-        return Saving(round(saved, 2), "Verified", "the cost lines after the change are lower than the 30 days before it", None, "")
+        return Saving(round(saved, 2), "Verified", "the cost lines of the whole days after the change are lower than those of the 30 days before it", None, "")
     if figure is None or figure <= 0:
         cost = _figure(case.cost_usd_30d) if case is not None else None
         if cost is None:
@@ -738,6 +747,17 @@ def check_lines(check: Mapping, said: str = "") -> list[str]:
     return [line for line in lines if line.lower() not in said.lower()]
 
 
+def _nothing_changed(result: object) -> str:
+    """The line of an approval that changed nothing: the action's own sentence of code ("The machine was already stopped ... Nothing to change.") without its last short sentence."""
+    why = text_of(result, 300)
+    for ending in ("Nothing to change.", "Nothing to delete."):
+        if why.endswith(ending):
+            why = why[: -len(ending)].rstrip()
+    if len(why) > 1 and why[0].isupper() and not why[1].isupper():
+        why = why[0].lower() + why[1:]
+    return f"Nothing was changed: {why}" if why else "Nothing was changed."
+
+
 def _outcome(plan: PlanRecord | None, state: str, action: ActionRecord | None, decisions: Sequence[DecisionRecord]) -> Outcome:
     none = Outcome("", "", (), "", "", "")
     if plan is None or state == "open":
@@ -767,6 +787,9 @@ def _outcome(plan: PlanRecord | None, state: str, action: ActionRecord | None, d
     if action is None:
         return Outcome("approved", "Approved", (f"Approved by {who}.",), "Approved", who, at)
     check = action.verification if isinstance(action.verification, dict) else {}
+    if action.no_change and action.state in ("done", "verified", "unknown") and state == "consumed":
+        # The person approved, and when Meternaut looked the resource was as the plan wants (or gone): nothing was written, so no line says that it was made with anyone's rights.
+        return Outcome("unchanged", NOTHING_CHANGED, (f"Approved by {who}.", _nothing_changed(action.result)), NOTHING_CHANGED, who, action.finished_at or at)
     if action.state == "verified":
         return Outcome("verified", "Done and checked", (f"Approved by {who}, and made with their own Azure rights.", *(check_lines(check) or [text_of(action.result, 300)])),
                        "Done and checked", who, action.finished_at or at)

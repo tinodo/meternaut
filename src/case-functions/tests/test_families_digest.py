@@ -303,6 +303,16 @@ class AtTheSignIn(unittest.TestCase):
         self.assertEqual(self.world.action(self.plan).plan_digest, self.plan.digest)
         self.assertEqual([d.plan_digest for d in self.world.store.decisions_of_plan(self.plan.plan_id)], [self.plan.digest])
 
+    def test_a_resource_that_is_as_the_plan_wants_when_the_person_returns_is_not_written_and_the_result_says_that_nothing_was_changed(self):
+        self.resource["properties"]["hardwareProfile"]["vmSize"] = "Standard_D2s_v5"  # somebody resized it between the plan and the OK
+        state = self.state_of(self.begin())
+        result = self.delegation.finish(APPROVER, {"code": CODE, "state": state})
+        self.assertEqual((result.ok, result.kind), (True, "unchanged"), result.message)
+        self.assertIn("already of size Standard_D2s_v5", result.message)
+        self.assertEqual(self.world.arm.writes(), [])
+        self.assertTrue(self.world.action(self.plan).no_change)
+        self.assertEqual(self.world.state(self.plan), ("consumed", "done", "done"))
+
     def test_the_digest_follows_the_second_sign_in_that_a_claims_challenge_asks_for_and_a_plan_changed_meanwhile_closes_the_change(self):
         self.world.arm.write_answers = [(401, challenge(), b'{"error":{"code":"InsufficientClaims","message":"a check is needed"}}')]
         state = self.state_of(self.begin())

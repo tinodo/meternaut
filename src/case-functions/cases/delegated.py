@@ -309,7 +309,7 @@ class Delegation:
             return DecideResult(False, "error", "I cannot reach my records right now. Look at the resource in Azure before anything is tried again.", plan)
         if done.kind == "step_up" and not started.get("stepup"):
             return self._ask_again(principal, plan, started, done.action, done.claims, str(tokens.claims.get("preferred_username") or ""))
-        return DecideResult(done.kind in ("ran", "ran_unconfirmed", "running"), done.kind, done.action.result or done.action.error or "", self._plan(plan.plan_id) or plan)
+        return DecideResult(done.kind in ("ran", "ran_unconfirmed", "running", "unchanged"), done.kind, done.action.result or done.action.error or "", self._plan(plan.plan_id) or plan)
 
     def _ask_again(self, principal: Principal, plan: PlanRecord, started: dict, action: ActionRecord, request: str, hint: str) -> DecideResult:
         """Azure asked for an extra sign-in check (a claims challenge): the person goes to Microsoft Entra once more, with the claims request that Azure gave.

@@ -440,7 +440,7 @@ class IdempotencyAndNoSecondTry(unittest.TestCase):
         plan, _ = world.approved(resource, "vm", "delete", 60.0)
         fs.Arm.set_power(resource, "deallocated")
         done = world.run(plan)
-        self.assertEqual((done.kind, done.action.state), ("ran", "done"))
+        self.assertEqual((done.kind, done.action.state), ("unchanged", "done"))
         self.assertIn("already stopped and released", done.action.result)
         self.assertEqual(world.arm.writes(), [])
 
@@ -451,7 +451,7 @@ class IdempotencyAndNoSecondTry(unittest.TestCase):
         plan, _ = world.approved(resource, "vm", "change", 60.0)
         resource["properties"]["hardwareProfile"]["vmSize"] = "Standard_D2s_v5"
         done = world.run(plan)
-        self.assertEqual((done.kind, done.action.state), ("ran", "done"))
+        self.assertEqual((done.kind, done.action.state), ("unchanged", "done"))
         self.assertIn("already of size Standard_D2s_v5", done.action.result)
         self.assertEqual(world.arm.writes(), [])
         world = World()
@@ -470,7 +470,7 @@ class IdempotencyAndNoSecondTry(unittest.TestCase):
         plan, _ = world.approved(resource, "disk", "change", 20.0)
         resource["sku"] = {"name": "StandardSSD_LRS"}
         done = world.run(plan)
-        self.assertEqual((done.kind, done.action.state), ("ran", "done"))
+        self.assertEqual((done.kind, done.action.state), ("unchanged", "done"))
         self.assertIn("already a Standard SSD", done.action.result)
         self.assertEqual(world.arm.writes(), [])
 
@@ -480,7 +480,7 @@ class IdempotencyAndNoSecondTry(unittest.TestCase):
         plan, _ = world.approved(resource, "disk", "delete", 20.0, detector="orphan-managed-disk")
         del world.arm.resources[resource["id"].lower()]
         done = world.run(plan)
-        self.assertEqual((done.kind, done.action.state), ("ran", "done"))
+        self.assertEqual((done.kind, done.action.state), ("unchanged", "done"))
         self.assertIn("did not exist any more", done.action.result)
         world = World()
         vm = world.arm.add(fs.vm())

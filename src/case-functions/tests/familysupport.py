@@ -282,16 +282,26 @@ class Clock:
 
 
 class FakeCosts:
-    """Cost Management for the check that the cost lines confirm a saving: `totals` is what the lines hold for each resource after the change."""
+    """Cost Management for the check that the cost lines confirm a saving: `totals` is what the lines hold for each resource after the change, whatever the days that are asked for.
 
-    def __init__(self, totals: dict | None = None, fail: bool = False) -> None:
-        self.totals, self.fail, self.asked = totals or {}, fail, []
+    A test that needs the days to count gives `days` instead: {a date: {a resource id in lower case: its cost that day}}, and the answer adds up the days from start to end (both included),
+    as Cost Management does. `asked` is every (subscription, start, end) that was asked for."""
+
+    def __init__(self, totals: dict | None = None, fail: bool = False, days: dict | None = None) -> None:
+        self.totals, self.fail, self.days, self.asked = totals or {}, fail, days, []
 
     def costs(self, subscription, start, end):
         self.asked.append((subscription, start, end))
         if self.fail:
             raise HttpError(500, "boom")
-        return self.totals, "USD"
+        if self.days is None:
+            return self.totals, "USD"
+        summed: dict[str, float] = {}
+        for day, lines in self.days.items():
+            if start <= day <= end:
+                for resource, amount in lines.items():
+                    summed[resource] = summed.get(resource, 0.0) + amount
+        return summed, "USD"
 
 
 class World:

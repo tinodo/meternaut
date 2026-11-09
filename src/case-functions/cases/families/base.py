@@ -111,9 +111,12 @@ JUDGED_AGENTS = "Judged: the Investigator proposed it, the Skeptic agreed, and c
 
 def per_day_check(before_30d: float | None, after_total: float, days_after: int, what: str) -> tuple[bool, str, float | None]:
     """What the cost lines after a change that lowers a cost without ending it say: the daily rate after against the daily rate before. Confirmed when it is lower; the saving that it
-    shows is the difference over thirty days."""
+    shows is the difference over thirty days. `after_total` is the cost of the whole days after the day of the change, `days_after` how many they are. A resource that still bills has
+    some cost in them: a total of nothing means that its lines are not in yet, and is never a confirmation (the runner does not even ask the family then)."""
     if before_30d is None or before_30d <= 0 or days_after <= 0:
         return False, "Not confirmed: there are no cost lines from before the change to compare with.", None
+    if after_total <= 0:
+        return False, f"Not confirmed: there is no cost line of {what} after the day of the change to compare with yet.", None
     before_day, after_day = before_30d / 30, after_total / days_after
     if after_day < before_day:
         saved = round((before_day - after_day) * 30, 2)
@@ -173,6 +176,12 @@ class Family:
     def called(self) -> str:
         """The change as a noun of a sentence ("The delete was refused or failed ..."): the family's own word in words.py, where the brief reads it too."""
         return words.SHOWN[self.name].called
+
+    @property
+    def cost_ends(self) -> bool:
+        """Whether the change ends the cost of the resource (a delete, a stop), so that no cost line after it is the aim. A resize or a change of tier only lowers the cost: the resource still
+        bills, so a missing cost line after it means that the line is not in yet. The flag is in words.py, where the brief reads it too."""
+        return words.SHOWN[self.name].cost_ends
 
     # -- which resources and which findings ------------------------------------------------------------------------------------------------------------------
 

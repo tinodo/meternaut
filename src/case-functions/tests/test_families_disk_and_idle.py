@@ -4,6 +4,7 @@ The tier is chosen by code from a table of steps that Learn documents; the idle 
 own answer. A kind that is not listed has no family. The planted list holds disks, public IP addresses, machines and network interfaces (what the planting makes), so for the other kinds
 of the closed list the test says that the planting made them, to show the family's own checks apart from the gate that the other tests hold.
 """
+import datetime as dt
 import re
 import unittest
 from dataclasses import replace
@@ -183,9 +184,11 @@ class TheCallToChangeTheTier(unittest.TestCase):
         plan, _ = world.approved(resource, "disk", "change", 30.0)
         world.run(plan)
         world.costs.totals = {resource["id"].lower(): 1.0}
-        world.clock.advance(days=4)
+        world.clock.advance(days=5)
         self.assertEqual([a.state for a in world.tick().verified], ["verified"])
-        self.assertEqual(world.action(plan).verification["savedUsdMonth"], 20.0, "before: 30 over 30 days is 1 a day; after: 1.0 over the 3 days that follow the day of the change is a third of that")
+        self.assertEqual(world.action(plan).verification["savedUsdMonth"], 20.0,
+                         "before: 30 over 30 days is 1 a day; after: 1.0 over the 3 whole days that follow the day of the change (9 to 11 November) is a third of that")
+        self.assertEqual(world.costs.asked, [(SUB, dt.date(2026, 11, 9), dt.date(2026, 11, 11))])
 
 
 # -- the idle resources ---------------------------------------------------------------------------------------------------------------------------------

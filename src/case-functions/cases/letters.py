@@ -38,6 +38,7 @@ DARK = {"background": "#1e1e1e", "text": "#f2f2f2", "muted": "#c8c8c8", "link": 
 
 DONE_SUBJECTS = {"done": "A change to Azure has run", "verified": "A change to Azure has run", "failed": "A change to Azure did not run",
                  "unknown": "The result of a change to Azure is not known"}
+UNCHANGED_SUBJECT = "Nothing had to change in Azure"
 BASE = re.compile(r"(?:https://[A-Za-z0-9.-]+(?::[0-9]{1,5})?|http://(?:localhost|127\.0\.0\.1)(?::[0-9]{1,5})?)(?:/(?!\.+(?:/|$))[A-Za-z0-9._~-]+)*")
 OPAQUE_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")
 
@@ -279,10 +280,16 @@ def done_letter(plan: PlanRecord, action: ActionRecord, case: CaseRecord | None,
     """What happened to the change of one plan: what was done, what it is worth so far, whether it can be undone, and one link to the page that shows the result."""
     base = _base(base_url)
     url = _plan_url(base, plan.plan_id)
-    ran = action.state in ("done", "verified")
     brief = brief_mod.build_brief(case, plan, action, (), now=now)
-    doc = _Doc(DONE_SUBJECTS.get(action.state, "The state of a change to Azure"))
-    if ran:
+    unchanged = brief.outcome.state == "unchanged"
+    ran = action.state in ("done", "verified") and not unchanged
+    doc = _Doc(UNCHANGED_SUBJECT if unchanged else DONE_SUBJECTS.get(action.state, "The state of a change to Azure"))
+    if unchanged:
+        # Approved, and nothing had to be changed: no line says that it ran, was made with anyone's rights or can be undone, and no saving is claimed.
+        doc.paragraph(f"You approved: {_data(brief.headline, 200)}.")
+        doc.paragraph(_data(brief.outcome.lines[-1], 300))
+        doc.paragraph("No saving is claimed for this approval.")
+    elif ran:
         doc.paragraph(f"Done: {_data(brief.headline, 200)}.")
         said = [_data(line, 240) for line in (action.result, *brief_mod.check_lines(action.verification if isinstance(action.verification, dict) else {}, action.result or "")) if line]
         doc.facts(*([("Result", " ".join(said[:3]))] if said else []))

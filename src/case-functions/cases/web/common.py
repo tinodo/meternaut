@@ -88,6 +88,8 @@ def verification_text(ctx: Ctx, data: object) -> Safe:
     """What the check after a change found, in words. Only the fields of the record are shown."""
     if not isinstance(data, dict) or not data:
         return esc("Not checked yet.")
+    if data.get("noChange") is True:
+        return esc("Nothing was changed, so there is nothing to check afterwards.")
     lines: list[object] = []
     if "gone" in data:
         lines.append("Azure no longer lists the resource." if data["gone"] else "Azure still lists the resource.")
@@ -96,12 +98,14 @@ def verification_text(ctx: Ctx, data: object) -> Safe:
     if "costAfterUsd" in data:
         lines.append(f"Cost lines after the change: {_money_in(data['costAfterUsd'], data.get('currency'))}.")
     if data.get("costLinesFrom"):
-        lines.append(f"Cost lines read from {data['costLinesFrom']}.")
+        lines.append(f"Cost lines read from {data['costLinesFrom']}" + (f" to {data['costLinesTo']}." if data.get("costLinesTo") else "."))
     if "costBeforeUsd30d" in data:
         lines.append(f"Cost lines of the 30 days before: {usd(data['costBeforeUsd30d'])}.")
+    if data.get("costAskedOn") and "costAfterUsd" not in data:
+        lines.append(f"Cost lines were last asked for on {data['costAskedOn']}.")
     if data.get("note"):
         lines.append(f"Note: {data['note']}")
-    known = {"gone", "checkedAt", "costAfterUsd", "currency", "costLinesFrom", "costBeforeUsd30d", "note"}
+    known = {"gone", "checkedAt", "costAfterUsd", "currency", "costLinesFrom", "costLinesTo", "costBeforeUsd30d", "costAskedOn", "costGaveUp", "note"}
     lines += [f"{name}: {value}" for name, value in sorted(data.items()) if name not in known and isinstance(value, (str, int, float, bool))][:5]
     return join((paragraph(line) for line in lines)) if lines else esc("Not checked yet.")
 
@@ -109,6 +113,8 @@ def verification_text(ctx: Ctx, data: object) -> Safe:
 def action_rows(ctx: Ctx, action: ActionRecord) -> list[tuple[str, object]]:
     """What happened to the change of one plan, and what the check afterwards found, as names and values."""
     state = words.ACTION_STATE.get(action.state, action.state)
+    if action.no_change and action.state in ("done", "verified", "unknown"):
+        state = words.NOTHING_CHANGED_STATE
     rows: list[tuple[str, object]] = [("State", state), ("Queued", ctx.when(action.queued_at))]
     if action.started_at:
         rows.append(("Started", ctx.when(action.started_at)))

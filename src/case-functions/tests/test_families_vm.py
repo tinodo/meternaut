@@ -3,6 +3,7 @@
 Each is shown from the plan that code writes out of a finding, through the re-check right before the change, the one call with its api-version and body, and what is read afterwards. The
 sizes, the quota and the state of the machine are Azure's own answers, read by code; nothing here is a model's word.
 """
+import datetime as dt
 import unittest
 from dataclasses import replace
 
@@ -363,13 +364,14 @@ class TheCallToResize(unittest.TestCase):
         resource = machine(world)
         plan, _ = world.approved(resource, "vm", "change", 60.0)
         world.run(plan)
-        world.costs.totals = {resource["id"].lower(): 3.0}  # three days after the change, a dollar a day against two a day before
-        world.clock.advance(days=4)
+        world.costs.totals = {resource["id"].lower(): 3.0}  # three whole days after the day of the change, a dollar a day against two a day before
+        world.clock.advance(days=5)
         result = world.tick()
         self.assertEqual([a.state for a in result.verified], ["verified"])
         action = world.action(plan)
         self.assertIn("Confirmed", action.verification["note"])
         self.assertEqual(action.verification["savedUsdMonth"], 30.0)
+        self.assertEqual(world.costs.asked, [(SUB, dt.date(2026, 11, 9), dt.date(2026, 11, 11))])
         self.assertEqual(world.store.case_get(plan.case_id).status, "verified")
 
     def test_a_resize_that_does_not_lower_the_cost_is_not_confirmed(self):

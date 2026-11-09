@@ -8,9 +8,9 @@ from cases.models import Begun, DecideResult, NoteRecord, SwitchRecord
 from cases.web import approval, layout
 
 APPROVE = "Approve and sign in to Azure"
-KINDS = ("declined", "asked", "later", "acknowledged", "not_mine", "ran", "ran_unconfirmed", "running", "stopped", "azure_refused", "failed", "signin_failed", "step_up_failed",
-         "refused_code", "refused_state", "refused_role", "refused_paused", "expired", "duplicate", "error")
-SUCCESSES = ("declined", "asked", "later", "acknowledged", "not_mine", "ran", "ran_unconfirmed", "running")
+KINDS = ("declined", "asked", "later", "acknowledged", "not_mine", "ran", "ran_unconfirmed", "running", "unchanged", "stopped", "azure_refused", "failed", "signin_failed",
+         "step_up_failed", "refused_code", "refused_state", "refused_role", "refused_paused", "expired", "duplicate", "error")
+SUCCESSES = ("declined", "asked", "later", "acknowledged", "not_mine", "ran", "ran_unconfirmed", "running", "unchanged")
 # The pages that show text that an AI wrote, or a list of requests: their footer says that an AI wrote them. The others (the settings, the notes, Operations, the permissions and the
 # kill switch) hold no AI text and their footer has no such sentence.
 NOT_AI = ("GET /me/settings", "GET /me/notes", "GET /ops", "GET /ops/permissions", "GET /ops/pause", "settings with problems", "settings saved", "notes with problems",
@@ -22,6 +22,7 @@ MESSAGES = {
     "ran_unconfirmed": "Azure accepted the delete and still lists the resource. The next check will look again.",
     "running": "Azure accepted the change and is still making it. Meternaut reads the resource again in a few minutes and records what it finds. It makes no second try: if it does not "
                "work, a new try is a new approval by a person.",
+    "unchanged": "The machine was already stopped and released when Meternaut looked. Nothing to change.",
     "stopped": "Stopped before the change: the disk is not unattached any more. Nothing was changed.",
     "azure_refused": "Azure refused to delete the resource (403, AuthorizationFailed): your account has no right to do this here. Nothing was changed.",
     "failed": "The delete was refused or failed (500 InternalError). Check the resource before anything is tried again.",

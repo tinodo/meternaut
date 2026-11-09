@@ -23,9 +23,9 @@ CHANGED = "This plan changed. Nothing is approved. A new message will bring the 
 # The only address that an approval may send a person to: the sign-in of Microsoft Entra, with a query that holds nothing but escaped characters. The same check holds for the
 # first sign-in (`begin`) and for the second one that Azure's claims challenge asks for (the result of `finish`).
 SIGNIN_ADDRESS = re.compile(re.escape(SIGNIN_ORIGIN) + rf"/[A-Za-z0-9._~%/+=&?-]{{1,{MAX_SIGNIN_PATH}}}")
-STATUS = {"declined": 200, "asked": 200, "not_mine": 200, "later": 200, "acknowledged": 200, "ran": 200, "ran_unconfirmed": 200, "running": 200, "stopped": 409, "azure_refused": 403,
-          "failed": 502, "signin_failed": 400, "step_up_failed": 400, "refused_code": 409, "refused_state": 409, "refused_role": 403, "refused_paused": 409, "expired": 410,
-          "duplicate": 409, "error": 500}
+STATUS = {"declined": 200, "asked": 200, "not_mine": 200, "later": 200, "acknowledged": 200, "ran": 200, "ran_unconfirmed": 200, "running": 200, "unchanged": 200, "stopped": 409,
+          "azure_refused": 403, "failed": 502, "signin_failed": 400, "step_up_failed": 400, "refused_code": 409, "refused_state": 409, "refused_role": 403, "refused_paused": 409,
+          "expired": 410, "duplicate": 409, "error": 500}
 WHY = "you answered a request on this page"
 ANSWERS = ("approve", "decline", "ask", "not_mine", "later")
 
@@ -107,7 +107,8 @@ def _called(plan: PlanRecord | None) -> str:
 
 
 def outcome(ctx: Ctx, result: DecideResult, plan_id: str | None) -> Response:
-    """Every kind of result as a plain page. A refusal says that nothing changed; a change says that it was made with the person's own permissions."""
+    """Every kind of result as a plain page. A refusal says that nothing changed; a change says that it was made with the person's own permissions; an approval that found nothing to
+    change says that nothing was changed."""
     kind = result.kind if result.kind in STATUS else "error"
     status = STATUS[kind]
     back = _back(ctx, plan_id)
@@ -124,6 +125,9 @@ def outcome(ctx: Ctx, result: DecideResult, plan_id: str | None) -> Response:
     if kind == "running":
         return show("The change is being made", text or "Azure accepted the change and is still making it.",
                     "Meternaut reads the resource again in a few minutes and records what it finds. It was made with your own permissions, and it is not made a second time.", history)
+    if kind == "unchanged":
+        return show("Nothing was changed", text or "Nothing was changed.",
+                    "The resource was already as the plan wants, so Meternaut wrote nothing, and no saving is claimed for this approval.", history)
     if kind == "stopped":
         return show("The change was stopped", text or "A check failed before the change.", "Nothing was changed. The request is closed.")
     if kind == "azure_refused":
