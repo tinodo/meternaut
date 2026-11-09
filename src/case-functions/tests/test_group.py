@@ -313,6 +313,51 @@ class WhenTheSameFindingComesAgain(unittest.TestCase):
         (again,) = extras.store.plans_open()
         self.assertEqual((third.result.cases, again.case_id, again.plan_id == plan.plan_id), (1, case.case_id, False))
 
+    def test_a_finding_that_names_the_group_without_the_resource_that_its_case_belongs_to_is_covered_by_the_case_all_the_same(self):
+        clock = Moving()
+        first = watch(raw_of(60, confidence=0.8), endpoints(60), clock=clock)
+        extras = first.extras
+        (case,) = extras.store.cases_recent()
+        (plan,) = extras.store.plans_open()
+        clock.advance(days=1)
+        second = watch(raw_of(59, confidence=0.8), endpoints(60), clock=clock, extras=extras)
+        (line,) = second.of("investigation.finding")
+        self.assertEqual((second.result.cases, line["judgedLately"], line["handles"]), (0, 59, 0), "the first resource of the group is not in the finding, and the group stands for it")
+        self.assertEqual((extras.store.cases_recent(), extras.store.plans_open()), ([case], [plan]), "no second case and no second request, as when the first resource is there")
+
+    def test_a_group_that_a_person_declined_is_not_put_to_them_again_by_a_finding_that_names_it_without_its_first_resource(self):
+        clock = Moving()
+        first = watch(raw_of(60, confidence=0.8), endpoints(60), clock=clock)
+        extras = first.extras
+        (plan,) = extras.store.plans_open()
+        self.assertTrue(self.answer(extras, plan, "decline").ok)
+        clock.advance(days=1)
+        second = watch(raw_of(59, confidence=0.8), endpoints(60), clock=clock, extras=extras)
+        self.assertEqual((second.result.cases, len(extras.store.cases_recent()), extras.store.plans_open()), (0, 1, []))
+
+    def test_a_group_that_a_finding_names_in_part_without_its_first_resource_is_asked_about_only_for_the_rest(self):
+        clock = Moving()
+        first = watch(raw_of(60, confidence=0.8), endpoints(60, cost=lambda n: 500.0 if n > 60 else float(n)), clock=clock)
+        extras = first.extras
+        (old,) = extras.store.cases_recent()
+        clock.advance(days=1)
+        resources = endpoints(70, cost=lambda n: 500.0 if n > 60 else float(n))
+        second = watch(raw_of(20, handles=[f"r{n}" for n in range(51, 60)] + [f"r{n}" for n in range(61, 71)] + ["r1"], confidence=0.8), resources, clock=clock, extras=extras)
+        new = next(case for case in extras.store.cases_recent() if case.case_id != old.case_id)
+        self.assertEqual((second.result.cases, new.facts[GROUP_FACT]["count"], set(new.facts[GROUP_FACT]["members"])), (1, 10, ids_of(resources[60:70])), "the ten that the group does not stand for")
+
+    def test_a_case_that_a_run_saved_a_few_minutes_after_its_start_is_taken_up_again_by_the_run_that_starts_a_week_later(self):
+        for label, minutes, again in (("two minutes before the slack of an hour ends", 58, 0), ("exactly when the slack ends", 60, 1), ("a run of the timer, eight minutes before the week", 52 + 60, 1)):
+            with self.subTest(label):
+                clock = Moving()
+                first = watch(raw_of(60, confidence=0.8), endpoints(60), clock=clock)
+                extras = first.extras
+                clock.advance(hours=73)
+                self.assertEqual(len(extras.approvals.expire()), 1)
+                clock.advance(days=6, hours=22, minutes=minutes)
+                third = watch(raw_of(60, confidence=0.8), endpoints(60), clock=clock, extras=extras)
+                self.assertEqual(third.result.cases, again)
+
     def test_the_resources_that_older_runs_made_a_case_of_one_by_one_stay_as_they_were(self):
         clock = Moving()
         first = watch(raw_of(5, confidence=0.8), endpoints(5, cost=lambda n: 100.0), clock=clock)
@@ -489,11 +534,15 @@ class WhenAPersonMarkedAResourceDoNotTouch(unittest.TestCase):
         (plan,) = self.extras.store.plans_open()
         self.assertEqual(plan.case_id, new.case_id)
 
-    def test_marks_that_cannot_be_read_do_not_stop_the_group_and_no_request_is_made_either(self):
+    def test_marks_that_cannot_be_read_stop_the_investigation_before_the_agents_run_and_nothing_is_spent_or_opened(self):
         with mock.patch.object(self.extras.store, "do_not_touch", side_effect=StoreError("down")):
             h = self.watch(raw_of(10), endpoints(10, cost=lambda n: 100.0))
-        case = only_case(h)
-        self.assertEqual((case.facts[GROUP_FACT]["count"], case.facts[GROUP_FACT]["silenced"], self.extras.store.plans_open()), (10, 0, []))
+        result = h.result
+        self.assertEqual((result.ran, result.off, result.held, result.cases, result.tokens), (False, False, False, 0, 0), "it did not run, and it was meant to")
+        self.assertEqual(result.note, "the marks of people, who asked that a resource is left alone, could not be read")
+        self.assertEqual((h.foundry.runs, h.foundry.specs, h.store.cases_recent(), h.store.plans_open()), ([], [], [], []), "no agent was made or asked, and no case or request was opened")
+        again = self.watch(raw_of(10), endpoints(10, cost=lambda n: 100.0))
+        self.assertEqual((again.result.ran, only_case(again).facts[GROUP_FACT]["count"]), (True, 10), "the next run, with the marks readable, is the investigation as it always was")
 
     def test_a_finding_that_asks_for_a_delete_is_not_changed_by_the_marks(self):
         resources = endpoints(8, cost=lambda n: 100.0)

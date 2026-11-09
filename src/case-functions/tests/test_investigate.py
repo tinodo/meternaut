@@ -1904,8 +1904,8 @@ class WhatIsNotTakenUpAgain(unittest.TestCase):
         self.assertEqual(moved.result.cases, 1)
 
     def test_after_the_days_of_the_setting_have_passed_it_is_taken_up_again_and_the_case_counts_the_runs(self):
-        self.clock.advance(days=6, hours=23)
-        self.assertEqual(self.again().result.cases, 0)
+        self.clock.advance(days=6, hours=22)
+        self.assertEqual(self.again().result.cases, 0, "less than the days of the setting, and more than an hour short of them: judged lately")
         self.clock.advance(hours=2)
         third = self.again()
         self.assertEqual(third.result.cases, 2)

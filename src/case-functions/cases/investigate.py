@@ -49,6 +49,8 @@ DETECTOR = "investigation"
 MAX_CASES = 60  # the cases that one run opens
 GROUP_MIN = 5  # a finding to investigate that has more resources than this left after the checks of code is one case, and one question to a person, not one for each resource
 COVER_PERCENT = 80  # of each hundred resources of a later finding, how many a group case that was judged lately has to stand for already, for that case to stand for the finding too
+GROUP_CASES_READ = 200  # the latest cases that are read once for a run, to find the groups that stand for the resources of a finding
+RECHECK_SLACK = dt.timedelta(hours=1)  # a case that a run saved some minutes after it began is judged lately for the run that begins RECHECK_DAYS later: the same slack as the timer's (run.TIMER_SLACK)
 MAX_GROUP_NAMES = 12  # the names of the other resources that the case of such a finding keeps, for the page of a person
 MEMBER = re.compile(r"[0-9a-f]{12}")  # the short id of a resource that the case of a group keeps (Lead.lead_id)
 MAX_ENTRIES = 720  # the entries of metric_evidence that are read: a handful for each of the handles that a finding may hold
@@ -412,17 +414,18 @@ def _earlier(s: "Services", lead: Lead) -> CaseRecord | None:
         return None
 
 
-def _recent(s: "Services", old: CaseRecord | None, facts: dict, open_questions: "learning.OpenQuestions | None" = None) -> bool:
-    """Whether the earlier case of a resource (None: there is none) keeps the resource from being taken up again now: see _judged_lately."""
+def _recent(s: "Services", old: CaseRecord | None, facts: dict | None, open_questions: "learning.OpenQuestions | None" = None) -> bool:
+    """Whether the earlier case of a resource (None: there is none) keeps the resource from being taken up again now: see _judged_lately. `facts` None: the evidence is not compared (the group
+    that the case stands for was found by its members, and the resource that it belongs to is not among those of the finding)."""
     ex = s.extras
     if ex is None or old is None or old.status == "error" or not old.updated_at or any(isinstance(x, dict) and x.get("ok") is False for x in old.steps):
         return False
-    if s.clock() - parse(old.updated_at) >= dt.timedelta(days=ex.settings.recheck_days):
+    if s.clock() - parse(old.updated_at) >= dt.timedelta(days=ex.settings.recheck_days) - RECHECK_SLACK:
         return False
     if old.status in ("proposed", "needs_human", "dropped"):
         if open_questions is not None and open_questions.is_open(old):
             return False
-        return _signature(old.facts if isinstance(old.facts, dict) else {}) == _signature(facts)
+        return facts is None or _signature(old.facts if isinstance(old.facts, dict) else {}) == _signature(facts)
     return True
 
 
@@ -454,15 +457,26 @@ def _alike(later: set[str], stored: set[str]) -> bool:
     return bool(later) and len(later & stored) * 100 >= COVER_PERCENT * len(later)
 
 
-def _marked(s: "Services") -> set[str]:
-    """The ids, in lower case, of the resources that a person marked do-not-touch. A store that cannot be read gives none: no request is made then either (approvals.advise reads the same marks)."""
+def _marked(s: "Services") -> set[str] | None:
+    """The ids, in lower case, of the resources that a person marked do-not-touch; None when the store cannot be read: a group is made from marks that were read, so the investigation does
+    not run then (approvals.advise reads the same marks, and makes no request when it cannot)."""
     if s.extras is None:
         return set()
     try:
         return {key.lower() for key in s.extras.store.do_not_touch()}
     except StoreError:
         LOG.warning("investigate: the do-not-touch marks could not be read")
-        return set()
+        return None
+
+
+def _groups_lately(s: "Services") -> list[CaseRecord]:
+    """The cases of groups among the latest cases, read once for a run: a later finding names resources, and the one that a group belongs to may not be among them."""
+    if s.extras is None:
+        return []
+    try:
+        return [case for case in s.extras.store.cases_recent(GROUP_CASES_READ) if _stands_for_a_group(case)]
+    except StoreError:
+        return []
 
 
 def _settle(finding: Finding, marked: set[str]) -> int:
@@ -640,6 +654,10 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
     if not st.foundry_endpoint or s.foundry is None:
         out.off, out.note = True, "no Foundry endpoint is set"
         return out
+    marked = _marked(s)  # read before the agents run, so that nothing is spent when it cannot be: the marks decide which resources a group stands for
+    if marked is None:
+        out.note = "the marks of people, who asked that a resource is left alone, could not be read"
+        return out
 
     def note(text: str) -> None:
         text = clean_text(s.redact(text), 300)
@@ -760,7 +778,7 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
     room = MAX_CASES
     held: dict[str, int] = {}
     open_questions = learning.OpenQuestions(s.extras.store, s.clock()) if s.extras is not None else None  # read once, when the first old case is looked at
-    marked = _marked(s)
+    groups = _groups_lately(s)
     for finding in findings:
         if finding.reason is not None:
             continue
@@ -790,6 +808,10 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
                 else:
                     finding.items.append(Item(handle, lead, finding.cited[handle], earlier=old))
                     room -= 1
+        if finding.proposal == "investigate":
+            for old in groups:
+                if _members_of(old) & finding.seen and all(old.case_id != known.case_id for known in finding.stood) and _recent(s, old, None, open_questions):
+                    finding.stood.append(old)  # a group that stands for resources of this finding, whether or not the resource that it belongs to is one of them
         room += _settle(finding, marked)
         known = [i.lead.cost_usd_30d for i in finding.items if i.lead.cost_usd_30d is not None]
         finding.covered_usd = round(sum(known), 2) if known else None
