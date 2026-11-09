@@ -491,7 +491,7 @@ class TheDataThatNothingReads(unittest.TestCase):
         found = brief.unread_of(workspace_case(digest_of(unknown=2, runsRecorded=False, kinds=[{**LINE, "runs": None}])))
         self.assertEqual(found.lines[0].reads, "Read by 0 rules, 0 saved searches and 0 workbooks; queries run: not recorded")
         self.assertEqual(found.note, "What reads 2 other kinds of data could not be read, so they are not counted. "
-                                     "The queries that people run were not counted: the record of them is off or could not be read.")
+                                     "The queries that people run were not counted: the record of them is off or could not be read in full.")
         one = brief.unread_of(workspace_case(digest_of(unknown=1)))
         self.assertEqual(one.note, "What reads 1 other kind of data could not be read, so it is not counted.")
 

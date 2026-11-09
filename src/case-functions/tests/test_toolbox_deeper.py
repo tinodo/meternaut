@@ -225,6 +225,31 @@ class TheReaders(Base):
         self.assertEqual(answer["sources"]["query_log"], "not recorded")
         self.assertTrue(all(line[-1] is None for line in answer["rows"]))
 
+    def test_a_read_of_the_texts_that_came_back_as_many_as_it_may_does_not_say_that_a_table_that_none_of_them_names_is_read_by_no_query(self):
+        cap = tb.deeper.MAX_AUDIT_TEXTS
+        self.estate.audit_totals = [{"Runs": 9000, "Callers": 12}]
+        self.estate.audit_texts = [{"QueryText": "Perf | take 5", "Runs": 5}, *({"QueryText": f"Usage | take {n}", "Runs": 1} for n in range(cap - 1))]
+        answer = ask(self.box, "data_readers", handle=self.workspace)
+        self.assertEqual(answer["sources"]["query_log"], {"runs": 9000, "callers": 12, "texts_read": cap, "texts_cut": True})
+        tables = by_name(answer)
+        self.assertEqual([tables[name]["runs"] for name in ("Perf", "Heartbeat", "AzureActivity", "t1")], [5, None, None, None], "a table that a text names is read all the same; the others are not known to be none")
+        metrics = self.box.evidence[self.workspace]["metrics"]
+        self.assertEqual([name for name in metrics if name.startswith("Runs ")], ["Runs Perf"], "a count that is not known is not recorded, and so it is never a count of nothing")
+        self.assertEqual(metrics["Readers t1"]["total"], 1, "the sources that were read in full count as they did")
+
+    def test_a_read_of_the_texts_that_did_not_come_back_full_has_all_of_the_texts_and_a_table_that_none_of_them_names_is_read_by_no_query(self):
+        cap = tb.deeper.MAX_AUDIT_TEXTS
+        self.estate.audit_texts = [{"QueryText": "Perf | take 5", "Runs": 5}, *({"QueryText": f"Usage | take {n}", "Runs": 1} for n in range(cap - 2))]
+        answer = ask(self.box, "data_readers", handle=self.workspace)
+        self.assertEqual(answer["sources"]["query_log"], {"runs": 7, "callers": 2, "texts_read": cap - 1})
+        self.assertEqual([by_name(answer)[name]["runs"] for name in ("Perf", "Heartbeat", "t1")], [5, 0, 0])
+        self.assertIn("Runs t1", self.box.evidence[self.workspace]["metrics"])
+
+    def test_the_description_of_the_tool_says_what_a_null_count_of_runs_means_when_the_read_was_cut(self):
+        description = tb.TOOLS["data_readers"].description
+        self.assertIn("300 texts that were run most often", description)
+        self.assertIn("texts_cut", description)
+
     def test_when_the_records_cannot_be_read_the_record_of_the_runs_is_not_asked_for_and_says_the_same(self):
         self.estate.failures["query"] = 403
         answer = ask(self.box, "data_readers", handle=self.workspace)

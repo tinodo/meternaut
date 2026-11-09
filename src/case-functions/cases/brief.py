@@ -214,7 +214,8 @@ class DataLine:
 @dataclass(frozen=True)
 class Unread:
     """The data that a workspace takes in and nothing reads, for the evidence of a request: the method in one plain sentence, the volume that it rests on ("That is 88 GB of the 118 GB that
-    it took in over 30 days."), the days, up to six typed lines (the largest first), how many more kinds there are, and one sentence about what was not counted ("" when everything was)."""
+    it took in over 30 days."), the days, up to six typed lines (the largest first), how many more kinds there are, and one sentence about what was not counted ("" when everything was).
+    `caveat` says the same in a few words, for a letter and a card, which have no room for the sentence (for example "Not counted: the queries people run.")."""
 
     sentence: str
     volume: str
@@ -222,6 +223,7 @@ class Unread:
     lines: tuple[DataLine, ...]
     more: int
     note: str
+    caveat: str = ""
 
 
 @dataclass(frozen=True)
@@ -235,14 +237,15 @@ class Option:
 @dataclass(frozen=True)
 class Group:
     """What a case stands for when its finding covers many resources and a person is asked about the finding, not about each resource: how many, what they cost together (None when no cost
-    line was read), the type that they share ("other" when they differ), in how many resource groups they are (0 when that is not known) and the names of the first few that follow the
-    resource that the case belongs to."""
+    line was read), the type that they share ("other" when they differ), in how many resource groups they are (0 when that is not known), the names of the first few that follow the
+    resource that the case belongs to, and how many more of the finding the limit of cases in one run left out."""
 
     count: int
     cost: float | None
     kind: str
     groups: int
     names: tuple[str, ...]
+    capped: int = 0
 
 
 @dataclass(frozen=True)
@@ -649,8 +652,10 @@ def group_of(case: CaseRecord | None) -> Group | None:
         return None
     cost = _figure(found.get("costUsd30d"))
     named = tuple(name for name in (text_of(item, MAX_EXAMPLE) for item in (names if isinstance(names, list) else [])[:MAX_GROUP_NAMES] if isinstance(item, str)) if name)
+    capped = found.get("capped")
     return Group(count, cost if cost is not None and cost >= 0 else None, text_of(kind, 80) if isinstance(kind, str) and kind else "other",
-                 groups if isinstance(groups, int) and not isinstance(groups, bool) and 1 <= groups <= count else 0, named)
+                 groups if isinstance(groups, int) and not isinstance(groups, bool) and 1 <= groups <= count else 0, named,
+                 capped if isinstance(capped, int) and not isinstance(capped, bool) and 0 < capped <= MAX_GROUP else 0)
 
 
 def _things(group: Group, place: str) -> str:
@@ -666,8 +671,10 @@ def group_headline(group: Group, name: str, recommendation: str | None) -> str:
 
 
 def _group_facts(group: Group, case: CaseRecord) -> list[Fact]:
-    """The rows of a case that stands for many resources: how many there are, what they cost together, and the names of the first few. They take the place of the cost row of one resource."""
-    rows = [Fact("Covers", _things(group, "resource group"), RESOURCE_GRAPH)]
+    """The rows of a case that stands for many resources: how many there are (and how many more the limit of one run left out), what they cost together, and the names of the first few. They take
+    the place of the cost row of one resource."""
+    covers = _things(group, "resource group") + (f", and {number_text(group.capped)} more that the limit of one run left out" if group.capped else "")
+    rows = [Fact("Covers", covers, RESOURCE_GRAPH)]
     cost = group.cost if group.cost is not None else _figure(case.cost_usd_30d)
     if cost is not None:
         rows.append(Fact("Together they cost", f"{usd_text(cost)} in the last 30 days", "Azure cost lines"))
@@ -748,16 +755,18 @@ def unread_of(case: CaseRecord | None) -> Unread | None:
         lines.append(DataLine(kind, _gb_text(volume), _percent(part), f"Read by {READS_NOTHING}; " + ("0 queries run" if counted else "queries run: not recorded"), _writers_text(item)))
     if not lines:
         return None
-    notes = []
+    notes, short = [], []
     unknown = _whole(digest.get("unknown"))
     if unknown:
         notes.append(f"What reads {unknown} other kind{'s' if unknown != 1 else ''} of data could not be read, so {'they are' if unknown != 1 else 'it is'} not counted.")
+        short.append(f"what reads {unknown} other kind{'s' if unknown != 1 else ''} of data")
     if digest.get("runsRecorded") is not True:
-        notes.append("The queries that people run were not counted: the record of them is off or could not be read.")
+        notes.append("The queries that people run were not counted: the record of them is off or could not be read in full.")
+        short.append("the queries people run")
     first = "Under 1 percent" if round(share * 100) < 1 else f"About {_percent(share)}"
     sentence = f"{first} of what this workspace is billed for is data that nothing reads."
     volume = f"That is {_gb_text(gone)} of the {_gb_text(whole)} that it took in over {days_text(days)}."
-    return Unread(sentence, volume, days_text(days), tuple(lines), _whole(digest.get("more")) + skipped, " ".join(notes))
+    return Unread(sentence, volume, days_text(days), tuple(lines), _whole(digest.get("more")) + skipped, " ".join(notes), f"Not counted: {' and '.join(short)}." if short else "")
 
 
 def unread_saving(case: CaseRecord | None) -> float | None:
@@ -809,12 +818,16 @@ def options_of(unread: Unread | None, figure: bool) -> tuple[Option, ...]:
 def _saving(case: CaseRecord | None, plan: PlanRecord | None, action: ActionRecord | None, state: str) -> Saving:
     figure = _figure(plan.saving_usd_month if plan is not None else (case.saving_usd_month if case is not None else None))
     scenario = unread_saving(case)  # the figure that code worked out from the data that a workspace takes in and nothing reads: the case holds no figure of its own for a change
-    if plan is None and (figure is None or figure <= 0):
+    fam = shown(plan.family) if plan is not None else None
+    own = _figure(case.saving_usd_month) if case is not None else None
+    # A case that holds that analysis and no figure of its own is worth what the analysis says now, the same numbers as its rows: the figure of a request is the one that code took when it was made,
+    # and a Watch that judged the case again while the request was open may have found the volume moved. That one stays in the plan as the record of what was asked.
+    current = fam is None and _digest(case) is not None and (own is None or own <= 0)
+    if current or (plan is None and (figure is None or figure <= 0)):
         figure = scenario
-    waiting = _figure(plan.waiting_costs_usd_day) if plan is not None else None
+    waiting = None if current else (_figure(plan.waiting_costs_usd_day) if plan is not None else None)
     check = action.verification if action is not None and isinstance(action.verification, dict) else {}
     before, after = _figure(check.get("costBeforeUsd30d")), _figure(check.get("costAfterUsd"))
-    fam = shown(plan.family) if plan is not None else None
     if action is not None and action.no_change:
         return Saving(None, "", "", None, NOTHING_CHANGED_SAVING)
     # Cost lines that show no cost confirm only a change that ends the cost (a delete, a stop). A resize or a change of tier leaves the resource billing, so its confirmation is a lower

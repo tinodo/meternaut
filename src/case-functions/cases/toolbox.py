@@ -675,7 +675,8 @@ TOOLS = {tool.name: tool for tool in (
           Param("days", "integer", "How many closed days to look back, 1 to 30. Null for 30.", low=1, high=MAX_DAYS), _OFFSET)),
     Tool("data_readers",
          "Counts what reads the kinds of data that a resource keeps: for each kind of data, how many rules, saved searches, workbooks and analytics rules name it, and how many times what "
-         "people ran named it, when the resource records that. Each source says how many of its items were read, so that 0 means that none of those named it; a source that this run's "
+         f"people ran named it, when the resource records that (it reads the {deeper.MAX_AUDIT_TEXTS} texts that were run most often: when there were more, a kind that none of them names is null, "
+         "and the source says texts_cut). Each source says how many of its items were read, so that 0 means that none of those named it; a source that this run's "
          "access cannot read says so and its counts are null. Items that read every kind of data at once name none: they are counted apart, as scanning_all. A count can be cited as the "
          "metric 'Readers <kind of data>' (the items that name it plus those that read every kind) and 'Runs <kind of data>'; a source that was not read makes it null. It shows no name "
          "and no text of an item. Kinds of data are named as data_volume names them.",
@@ -1833,6 +1834,7 @@ class Toolbox:
         for name, items in groups.items():
             sources[name] = {"read": len(items), **({"disabled": disabled} if name == "rules" and disabled else {}), "scanning_all": scanning[name]}
         runs: dict[str, int] | None = None
+        cut = False  # the read of the texts came back as full as it may be, so a table that none of them names is not known to be read by nothing
         log = done[len(READER_SOURCES)]
         if isinstance(log, Failed):
             if records != "read":
@@ -1842,9 +1844,10 @@ class Toolbox:
         else:
             totals, texts = log  # type: ignore[misc]
             first = totals[0] if totals else {}
-            sources["query_log"] = {"runs": deeper.count(first.get("Runs")) or 0, "callers": deeper.count(first.get("Callers")) or 0, "texts_read": len(texts)}
+            cut = deeper.audit_cut(texts)
+            sources["query_log"] = {"runs": deeper.count(first.get("Runs")) or 0, "callers": deeper.count(first.get("Callers")) or 0, "texts_read": len(texts), **({"texts_cut": True} if cut else {})}
             runs = deeper.audit_counts(texts, known)
-        self._kept[key] = {"sources": sources, "mentions": mentions, "runs": runs}
+        self._kept[key] = {"sources": sources, "mentions": mentions, "runs": runs, "runs_cut": cut}
         return self._kept[key]  # type: ignore[return-value]
 
     def _tool_data_readers(self, args: dict) -> dict:
@@ -1861,8 +1864,9 @@ class Toolbox:
         if word != "read":
             return answer
         counted = {name: sources[name] if isinstance(sources[name], dict) else 0 if sources[name] == "not enabled" else None for name in READER_SOURCES}
+        runs = found["runs"]
         rows = [[space.tables.label(use.name), *[None if counted[name] is None else found["mentions"].get(use.name, {}).get(name, 0) for name in READER_SOURCES],
-                 None if found["runs"] is None else found["runs"].get(use.name, 0)] for use in ranked[offset:offset + limit]]
+                 None if runs is None or (found["runs_cut"] and use.name not in runs) else runs.get(use.name, 0)] for use in ranked[offset:offset + limit]]  # null: not known to be none
         answer.update({"tables_with_data": len(ranked), "cols": ["table", *READER_SOURCES, "runs"], "rows": rows})
         _page(answer, rows, offset, len(ranked))
         broad = sum(source.get("scanning_all", 0) for source in sources.values() if isinstance(source, dict))  # the items that read every table at once

@@ -5,7 +5,9 @@ The first classes run the real investigation with a fake Foundry and a fake tool
 """
 import dataclasses
 import json
+import re
 import unittest
+from unittest import mock
 
 import support  # noqa: F401  (it puts the app on the path)
 from test_investigate import OID, SAFE, FakeFoundry, FakeToolbox, Harness, Moving, answer, entry, finding, key_of, loop_for, metrics, resource, verdicts
@@ -16,7 +18,7 @@ from test_web_support import NOW as WEB_NOW, SUB, TINO, Console, make_advice_cas
 from cases import approvals, brief, cards, investigate, learning, letters
 from cases.approvals import ADVICE_MIN_USD, why_not_ask
 from cases.decide import NO_MEASUREMENT
-from cases.models import ADVISE, GROUP_FACT, Principal
+from cases.models import ADVISE, GROUP_FACT, NoteRecord, Principal, StoreError
 
 TYPE = "microsoft.network/privateendpoints"
 HOSTILE_NAME = "<script>alert(1)</script>\n[click](https://evil.example/x) \u202eevil " + "n" * 200
@@ -56,6 +58,16 @@ def only_case(h: Harness):
     return case
 
 
+def mark(extras, resource_, *, expires_at="2099-01-01T00:00:00Z") -> None:
+    """A person's do-not-touch mark on one resource."""
+    extras.store.note_put(NoteRecord(note_id=f"n-{resource_.handle}", oid=OID, kind="do_not_touch", text="keep", scope_resource_id=resource_.resource_id, expires_at=expires_at))
+
+
+def ids_of(resources) -> set:
+    """The short ids that the case of a group keeps for its resources."""
+    return {key_of(item)[1:] for item in resources}
+
+
 class WhenAFindingToInvestigateCoversManyResources(unittest.TestCase):
     def test_sixty_resources_are_one_case_and_one_request_when_what_is_at_stake_is_enough(self):
         h = watch(raw_of(60), endpoints(60))
@@ -85,6 +97,15 @@ class WhenAFindingToInvestigateCoversManyResources(unittest.TestCase):
         self.assertEqual(together["names"], [f"pe-{n}" for n in range(59, 47, -1)], "the twelve dearest of the others, the dearest first")
         self.assertEqual(case.facts["costUsd30d"], 1830.0, "the facts of the case say what the case costs")
         self.assertEqual((case.facts["basis"], case.facts["proposal"], case.facts["finding"]), ("other", "investigate", 1))
+        json.dumps(case.facts)
+
+    def test_the_case_keeps_the_short_ids_of_the_resources_that_it_stands_for_and_how_many_the_cap_and_the_marks_left_out(self):
+        case = only_case(watch(raw_of(60), endpoints(60)))
+        together = case.facts[GROUP_FACT]
+        self.assertEqual(together["members"], sorted(ids_of(endpoints(60))))
+        self.assertTrue(all(re.fullmatch(r"[0-9a-f]{12}", member) for member in together["members"]))
+        self.assertIn(case.case_id[1:], together["members"], "the resource that the case belongs to is one of them")
+        self.assertEqual((together["capped"], together["silenced"]), (0, 0))
         json.dumps(case.facts)
 
     def test_the_history_has_one_line_for_the_case_with_the_size_of_the_group_and_no_other_line_has_that_field(self):
@@ -186,6 +207,8 @@ class WhenAFindingToInvestigateCoversManyResources(unittest.TestCase):
         self.assertEqual((sorted(by_name), by_name["pe-40"]["groupSize"], by_name["pe-70"]["groupSize"], h.result.cases), (["pe-40", "pe-70"], 40, 20, 2),
                          "the two groups take the sixty places, and the second one has the twenty that are left")
         self.assertIn("10 resources of the findings are not listed as cases: a run opens at most 60", h.notes)
+        cases = {c.resource_name: c for c in h.store.cases_recent()}
+        self.assertEqual((cases["pe-40"].facts[GROUP_FACT]["capped"], cases["pe-70"].facts[GROUP_FACT]["capped"]), (0, 10), "the second group says how many of its finding the cap left out")
         raw = [raw_of(40), raw_of(30, handles=[f"r{n}" for n in range(41, 71)], proposal="delete")]
         h = watch(raw, endpoints(70))
         first, second = h.of("investigation.finding")
@@ -299,6 +322,230 @@ class WhenTheSameFindingComesAgain(unittest.TestCase):
         clock.advance(days=1)
         second = watch(raw_of(8, confidence=0.8), endpoints(8, cost=lambda n: 100.0), clock=clock, extras=extras)
         self.assertEqual((second.result.cases, len(extras.store.cases_recent())), (3, 8), "the five that were judged lately are not taken up again, and three are new")
+
+
+class WhenAnotherFindingNamesTheFirstResourceOfAGroup(unittest.TestCase):
+    """The case of a group belongs to its first resource. A later finding that names that resource is covered by the case only when most of its resources are ones that the case stands for;
+    otherwise the resources that it does not stand for are asked about, as a group of their own or as cases of their own."""
+
+    def first_watch(self):
+        clock = Moving()
+        first = watch(raw_of(60, confidence=0.8), endpoints(60), clock=clock)
+        (case,) = first.store.cases_recent()
+        (plan,) = first.store.plans_open()
+        clock.advance(days=1)
+        return clock, first.extras, case, plan
+
+    @staticmethod
+    def later(clock, extras, numbers, resources):
+        return watch(raw_of(len(numbers), handles=[f"r{n}" for n in numbers], confidence=0.8), resources, clock=clock, extras=extras)
+
+    def test_six_new_resources_that_a_later_finding_names_with_the_first_one_are_not_dropped_and_are_a_group_of_their_own(self):
+        clock, extras, old_case, old_plan = self.first_watch()
+        resources = endpoints(66, cost=lambda n: 500.0 if n > 60 else float(n))
+        second = self.later(clock, extras, [60, 61, 62, 63, 64, 65, 66], resources)
+        (line,) = second.of("investigation.finding")
+        self.assertEqual((second.result.cases, line["judgedLately"], line["handles"], line["kept"]), (1, 1, 6, True), "only the first resource of the old group is judged lately")
+        cases = {c.case_id: c for c in extras.store.cases_recent()}
+        self.assertEqual(len(cases), 2)
+        new = cases[key_of(resources[60])]
+        self.assertEqual((new.resource_name, new.status, new.cost_usd_30d, new.facts[GROUP_FACT]["count"]), ("pe-61", "needs_human", 3000.0, 6), "the first of the new ones, which cost the same")
+        self.assertEqual(set(new.facts[GROUP_FACT]["members"]), ids_of(resources[60:66]))
+        self.assertEqual(cases[old_case.case_id], old_case, "the case of the old group is not touched")
+        plans = extras.store.plans_open()
+        self.assertEqual(sorted(plan.case_id for plan in plans), sorted([old_case.case_id, new.case_id]), "a request is made for the new group, next to the old one")
+        self.assertIn(old_plan, plans)
+
+    def test_the_dearest_of_the_new_resources_is_the_first_of_the_new_group_even_when_the_old_first_one_is_dearer(self):
+        clock, extras, old_case, _ = self.first_watch()
+        resources = endpoints(66, cost=lambda n: 5.0 * n if n > 60 else 1000.0 if n == 60 else float(n))
+        second = self.later(clock, extras, [60, 61, 62, 63, 64, 65, 66], resources)
+        new = next(c for c in extras.store.cases_recent() if c.case_id != old_case.case_id)
+        self.assertEqual((new.resource_name, new.facts[GROUP_FACT]["count"], second.result.cases), ("pe-66", 6, 1))
+
+    def test_a_finding_that_is_a_part_of_the_group_adds_nothing_and_neither_does_one_that_is_mostly_the_group(self):
+        clock, extras, old_case, old_plan = self.first_watch()
+        resources = endpoints(66, cost=lambda n: 500.0 if n > 60 else float(n))
+        for label, numbers in (("a part of it", range(31, 61)), ("all of it", range(1, 61)), ("all of it and five that are new", range(1, 66))):
+            with self.subTest(label):
+                second = self.later(clock, extras, list(numbers), resources)
+                self.assertEqual((second.result.cases, extras.store.cases_recent(), extras.store.plans_open()), (0, [old_case], [old_plan]))
+
+    def test_a_group_stands_for_a_finding_when_it_stands_for_eighty_percent_of_it_and_not_for_less(self):
+        self.assertEqual(investigate.COVER_PERCENT, 80)
+        resources = endpoints(70, cost=lambda n: 500.0 if n > 60 else float(n))
+        for stored, covered in ((40, True), (39, False)):
+            with self.subTest(stored=stored):
+                clock, extras, old_case, _ = self.first_watch()
+                second = self.later(clock, extras, list(range(61 - stored, 61)) + list(range(61, 71)), resources)
+                self.assertEqual(second.result.cases, 0 if covered else 1, f"{stored} of {stored + 10}")
+                if not covered:
+                    new = next(c for c in extras.store.cases_recent() if c.case_id != old_case.case_id)
+                    self.assertEqual(set(new.facts[GROUP_FACT]["members"]), ids_of(resources[60:70]), "the ten that the group does not stand for")
+
+    def test_a_finding_that_the_group_stands_for_in_part_is_asked_about_only_for_the_rest(self):
+        clock, extras, old_case, _ = self.first_watch()
+        resources = endpoints(90)
+        second = self.later(clock, extras, list(range(31, 91)), resources)
+        (line,) = second.of("investigation.finding")
+        new = next(c for c in extras.store.cases_recent() if c.case_id != old_case.case_id)
+        self.assertEqual((new.resource_name, new.facts[GROUP_FACT]["count"], new.cost_usd_30d), ("pe-90", 30, float(sum(range(61, 91)))))
+        self.assertTrue(set(new.facts[GROUP_FACT]["members"]).isdisjoint(ids_of(resources[:60])), "nothing of the old group is asked about again")
+        self.assertEqual((line["judgedLately"], line["handles"]), (30, 30), "the first resource of the old group and the twenty-nine that it stands for")
+
+    def test_a_finding_with_few_resources_that_the_group_stands_for_in_part_is_cases_for_the_rest(self):
+        clock, extras, old_case, _ = self.first_watch()
+        resources = endpoints(64, cost=lambda n: 500.0 if n > 60 else float(n))
+        second = self.later(clock, extras, [60, 61, 62, 63, 64], resources)
+        self.assertEqual((second.result.cases, len(extras.store.cases_recent()), len(extras.store.plans_open())), (4, 5, 5), "the four new ones are cases of their own, as for any finding of four")
+
+    def test_an_old_group_case_that_keeps_no_ids_stands_for_its_first_resource_only(self):
+        case = make_advice_case(case_id="kabcdef012345", facts={GROUP_FACT: {"count": 9, "names": []}})
+        self.assertEqual(investigate._members_of(case), {"abcdef012345"})
+        for bad in ("text", [5, None, "not an id", "ABCDEF012345", "abcdef01234"], {"a": 1}):
+            with self.subTest(members=bad):
+                found = make_advice_case(case_id="kabcdef012345", facts={GROUP_FACT: {"count": 9, "members": bad}})
+                self.assertEqual(investigate._members_of(found), {"abcdef012345"})
+        self.assertEqual(investigate._members_of(make_advice_case(case_id="kabcdef012345", facts=None)), {"abcdef012345"})
+        self.assertFalse(investigate._alike(set(), {"a"}))
+        self.assertTrue(investigate._alike({"a", "b", "c", "d", "e"}, {"a", "b", "c", "d"}))
+        self.assertFalse(investigate._alike({"a", "b", "c", "d", "e"}, {"a", "b", "c"}))
+
+
+class WhenAPersonMarkedAResourceDoNotTouch(unittest.TestCase):
+    """A do-not-touch mark holds for every resource of a group, as it does for a resource of its own: the resource is not asked about, and the group is not silenced by it."""
+
+    def setUp(self):
+        self.clock = Moving()
+        self.extras = loop_for(self.clock)
+
+    def watch(self, raw, resources, **options):
+        return watch(raw, resources, clock=self.clock, extras=self.extras, **options)
+
+    def test_a_member_that_a_person_marked_is_left_out_of_the_group_and_the_case_says_how_many(self):
+        resources = endpoints(10, cost=lambda n: 100.0)
+        mark(self.extras, resources[6])
+        mark(self.extras, resources[7])
+        h = self.watch(raw_of(10), resources)
+        case = only_case(h)
+        together = case.facts[GROUP_FACT]
+        self.assertEqual((together["count"], together["silenced"], together["capped"], case.cost_usd_30d), (8, 2, 0, 800.0))
+        self.assertEqual(set(together["members"]), ids_of(resources) - ids_of(resources[6:8]))
+        self.assertNotIn("pe-07", together["names"])
+        self.assertNotIn("pe-08", together["names"])
+        self.assertIn("finding 1: its 8 resources are one case and one question to a person, which belong to the dearest of them; 2 more that a person marked do-not-touch are left out", h.notes)
+        self.assertEqual([r.get("groupSize") for r in h.of("case.result")], [8])
+        self.assertEqual(len(self.extras.store.plans_open()), 1)
+
+    def test_a_mark_on_the_first_resource_does_not_silence_the_group_and_another_resource_is_the_first(self):
+        resources = endpoints(10, cost=lambda n: 10.0 * n)
+        mark(self.extras, resources[9])
+        h = self.watch(raw_of(10), resources)
+        case = only_case(h)
+        self.assertEqual((case.resource_name, case.facts[GROUP_FACT]["count"], case.facts[GROUP_FACT]["silenced"], case.cost_usd_30d), ("pe-09", 9, 1, 450.0))
+        (plan,) = self.extras.store.plans_open()
+        self.assertEqual((plan.case_id, plan.resource_id.lower(), case.plan_id), (case.case_id, resources[8].resource_id.lower(), plan.plan_id), "a request is made, for the resource that is not marked")
+        self.assertIn("1 more that a person marked do-not-touch is left out", " ".join(h.notes))
+
+    def test_marks_on_all_but_a_few_leave_cases_as_for_any_finding_of_a_few(self):
+        resources = endpoints(8, cost=lambda n: 100.0)
+        for number in (5, 6, 7):
+            mark(self.extras, resources[number])
+        h = self.watch(raw_of(8), resources)
+        cases = h.store.cases_recent()
+        self.assertEqual((h.result.cases, len(cases), len(self.extras.store.plans_open())), (8, 8, 5), "eight cases, as ever; the three that are marked get no request")
+        self.assertTrue(all(GROUP_FACT not in case.facts for case in cases))
+        marked = {key_of(resources[n]) for n in (5, 6, 7)}
+        self.assertEqual({case.case_id for case in cases if case.plan_id is None}, marked)
+
+    def test_six_that_nobody_marked_are_a_group_of_six_and_the_marks_are_counted(self):
+        resources = endpoints(8, cost=lambda n: 100.0)
+        mark(self.extras, resources[0])
+        mark(self.extras, resources[1])
+        case = only_case(self.watch(raw_of(8), resources))
+        self.assertEqual((case.facts[GROUP_FACT]["count"], case.facts[GROUP_FACT]["silenced"]), (6, 2))
+
+    def test_a_mark_that_ran_out_is_no_mark(self):
+        resources = endpoints(10, cost=lambda n: 100.0)
+        mark(self.extras, resources[3], expires_at="2020-01-01T00:00:00Z")
+        together = only_case(self.watch(raw_of(10), resources)).facts[GROUP_FACT]
+        self.assertEqual((together["count"], together["silenced"]), (10, 0))
+
+    def test_a_mark_on_the_first_resource_of_a_group_that_was_judged_lately_changes_nothing_until_the_recheck_and_then_another_resource_is_the_first(self):
+        resources = endpoints(10, cost=lambda n: 10.0 * n)
+        self.watch(raw_of(10, confidence=0.8), resources)
+        (old,) = self.extras.store.cases_recent()
+        mark(self.extras, resources[9])
+        self.clock.advance(days=1)
+        self.assertEqual(self.watch(raw_of(10, confidence=0.8), resources).result.cases, 0, "the group was judged lately and a request waits: nothing is asked again")
+        self.clock.advance(hours=73)
+        self.assertEqual(len(self.extras.approvals.expire()), 1)
+        self.assertEqual(self.watch(raw_of(10, confidence=0.8), resources).result.cases, 0, "the case that ran out is left alone for the days of the recheck, as any case is")
+        self.clock.advance(days=8)
+        third = self.watch(raw_of(10, confidence=0.8), resources)
+        self.assertEqual(third.result.cases, 1)
+        new = next(case for case in self.extras.store.cases_recent() if case.case_id != old.case_id)
+        self.assertEqual((new.resource_name, new.facts[GROUP_FACT]["count"], new.facts[GROUP_FACT]["silenced"]), ("pe-09", 9, 1))
+        (plan,) = self.extras.store.plans_open()
+        self.assertEqual(plan.case_id, new.case_id)
+
+    def test_marks_that_cannot_be_read_do_not_stop_the_group_and_no_request_is_made_either(self):
+        with mock.patch.object(self.extras.store, "do_not_touch", side_effect=StoreError("down")):
+            h = self.watch(raw_of(10), endpoints(10, cost=lambda n: 100.0))
+        case = only_case(h)
+        self.assertEqual((case.facts[GROUP_FACT]["count"], case.facts[GROUP_FACT]["silenced"], self.extras.store.plans_open()), (10, 0, []))
+
+    def test_a_finding_that_asks_for_a_delete_is_not_changed_by_the_marks(self):
+        resources = endpoints(8, cost=lambda n: 100.0)
+        mark(self.extras, resources[7])
+        h = self.watch(raw_of(8, proposal="delete"), resources)
+        cases = h.store.cases_recent()
+        self.assertEqual((h.result.cases, len(cases)), (8, 8))
+        self.assertTrue(all(GROUP_FACT not in case.facts for case in cases))
+
+
+class WhenTheCapCutAGroup(unittest.TestCase):
+    """Two findings of forty and thirty resources: the limit of a run is sixty cases, so the second group has twenty of its thirty, and says so."""
+
+    def setUp(self):
+        self.h = watch([raw_of(40), raw_of(30, handles=[f"r{n}" for n in range(41, 71)])], endpoints(70))
+        self.cases = {case.resource_name: case for case in self.h.store.cases_recent()}
+        self.case = self.cases["pe-70"]
+        self.plan = next(plan for plan in self.h.store.plans_open() if plan.case_id == self.case.case_id)
+        self.b = brief.build_brief(self.case, self.plan, now=WEB_NOW, may_answer=True)
+
+    def test_the_first_group_is_whole_and_says_nothing_of_the_cap(self):
+        whole = brief.build_brief(self.cases["pe-40"], None, now=WEB_NOW)
+        self.assertEqual(whole.facts[0].value, "40 private endpoints in 14 resource groups")
+        self.assertEqual(brief.group_of(self.cases["pe-40"]).capped, 0)
+
+    def test_the_second_group_says_in_its_first_row_how_many_more_the_limit_of_one_run_left_out(self):
+        self.assertEqual(self.case.facts[GROUP_FACT]["capped"], 10)
+        self.assertEqual((self.b.facts[0].label, self.b.facts[0].value), ("Covers", "20 private endpoints in 14 resource groups, and 10 more that the limit of one run left out"))
+        self.assertEqual(self.b.group.capped, 10)
+        self.assertEqual(self.b.headline, "Look at 20 private endpoints in 14 groups, the first is pe-70", "the headline says how many the case stands for")
+
+    def test_the_page_and_the_card_have_the_row_and_the_letter_has_it_and_keeps_to_its_words(self):
+        _, text = page_of(self.case, self.plan)
+        self.assertIn("20 private endpoints in 14 resource groups, and 10 more that the limit of one run left out", text)
+        self.assertIn("Examples", text)
+        card = json.dumps(cards.decision_card(self.b, cards.CardContext(page_url=f"https://meternaut.example/ok/{self.plan.plan_id}", nonce="n" * 24)))
+        self.assertIn("and 10 more that the limit of one run left out", card)
+        letter = letters.approval_letter(self.plan, self.case, PERSON, BASE, WEB_NOW, CONTACTS)
+        self.assertIn("Covers: 20 private endpoints in 14 resource groups, and 10 more that the limit of one run left out", letter.text)
+        self.assertIn("Together they cost: ", letter.text)
+        self.assertNotIn("Examples", letter.text, "the words of a letter went to the row that says what the case leaves out")
+        self.assertLessEqual(word_count(letter), MOST_WORDS["approval"])
+        weekly = letters.digest_letter(PERSON, BASE, WEB_NOW, [(self.plan, self.case)], CONTACTS)
+        self.assertLessEqual(word_count(weekly), MOST_WORDS["digest"])
+
+    def test_a_number_that_is_not_one_is_not_shown(self):
+        good = {"count": 20, "type": TYPE, "groups": 14, "names": ["a"], "costUsd30d": 1.0}
+        for bad in (0, -1, True, "5", 1.5, 10 ** 9, None, [1]):
+            with self.subTest(capped=bad):
+                self.assertEqual(brief.group_of(group_case({**good, "capped": bad})).capped, 0)
+                self.assertNotIn("left out", brief.facts_of(group_case({**good, "capped": bad}))[0].value)
+        self.assertEqual(brief.facts_of(group_case({**good, "capped": 7}))[0].value, "20 private endpoints in 14 resource groups, and 7 more that the limit of one run left out")
 
 
 class TheBriefOfAGroup(unittest.TestCase):
