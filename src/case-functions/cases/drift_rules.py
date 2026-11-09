@@ -252,11 +252,14 @@ _DIRECT_NAMES = re.compile(r"openai|deployment[_-]?name|inference[_-]?(?:endpoin
 # Set by the platform or by the template, and known not to hold a secret that anything accepts: the connection string of Application Insights names the component (the component takes only
 # tokens of the app's identity), and the platform sets the secret of its own identity endpoint.
 _EXEMPT = frozenset({("APPLICATIONINSIGHTS_" + "CONNECTION" + "_" + "STRING").lower(), "applicationinsights_authentication_string", "msi_secret"})
+# The platform keeps a copy of every setting of the app in the environment of the process under the name `APPSETTING_<name>`, so the same name is read twice. The copy is the setting itself and is
+# judged as it (the first real run of the check, 2026-11-09, failed on the copy of the connection string of Application Insights, which the setting itself is exempt for).
+_PLATFORM_COPY = re.compile(r"^APPSETTING_", re.I)
 
 
 def judge_settings(names: Iterable[str]) -> Finding:
     """A-SETTINGS from the names of the settings of the app (never their values)."""
-    seen = sorted({name for name in names if isinstance(name, str) and name})
+    seen = sorted({_PLATFORM_COPY.sub("", name) or name for name in names if isinstance(name, str) and name})
     keyed = [name for name in seen if name.lower() not in _EXEMPT and _KEY_NAMES.search(name)]
     direct = [name for name in seen if name.lower() not in _EXEMPT and name not in keyed and _DIRECT_NAMES.search(name)]
     if keyed or direct:

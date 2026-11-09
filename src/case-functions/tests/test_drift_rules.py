@@ -343,6 +343,21 @@ class TheSettings(unittest.TestCase):
     def test_what_is_not_a_name_is_left_out(self):
         self.assertEqual(rules.judge_settings(["", None, 3, "FINE"]).state, PASS)  # type: ignore[list-item]
 
+    def test_the_copy_that_the_platform_makes_of_a_setting_is_judged_as_the_setting_itself(self):
+        copies = ["APPSETTING_" + name for name in self.APP if name.isupper() or name.startswith(("Azure", "APPLICATION"))]
+        item = rules.judge_settings([*self.APP, *copies, "APPSETTING_APPLICATIONINSIGHTS_CONNECTION_STRING"])
+        self.assertEqual((item.state, item.control), (PASS, "A-SETTINGS"), item.detail)
+        self.assertIn(f"{len(self.APP)} settings read", item.detail, "the copy and the setting are one name")
+        self.assertEqual(rules.judge_settings(["appsetting_MSI_SECRET", "AppSetting_APPLICATIONINSIGHTS_CONNECTION_STRING"]).state, PASS)
+
+    def test_a_copy_of_a_setting_that_is_named_like_a_key_or_a_route_to_a_model_still_fails_under_its_own_name(self):
+        for copy, name in (("APPSETTING_OPENAI_API_KEY", "OPENAI_API_KEY"), ("appsetting_STORAGE_ACCOUNT_KEY", "STORAGE_ACCOUNT_KEY"), ("APPSETTING_AZURE_OPENAI_ENDPOINT", "AZURE_OPENAI_ENDPOINT")):
+            with self.subTest(copy=copy):
+                item = rules.judge_settings([*self.APP, copy])
+                self.assertEqual(item.state, FAIL)
+                self.assertIn(name, item.detail)
+                self.assertNotIn("APPSETTING_", item.detail.upper().replace(name, ""))
+
 
 class TheRelease(unittest.TestCase):
     DIGEST = "ab" * 32
