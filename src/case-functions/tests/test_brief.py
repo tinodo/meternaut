@@ -155,7 +155,7 @@ class TheBriefOfADeletePublicIp(unittest.TestCase):
         self.assertEqual(b.where.kind, "Public IP address")
 
     def test_the_facts_say_why_it_is_a_lead_and_what_it_is_like(self):
-        self.assertEqual([(f.label, f.value) for f in self.brief.facts], [("Cost, last 30 days", "7.17 US dollars"), ("State", "Not assigned to anything"), ("Address", "Static"),
+        self.assertEqual([(f.label, f.value) for f in self.brief.facts], [("Cost, last 30 days", "$7.17"), ("State", "Not assigned to anything"), ("Address", "Static"),
                                                                            ("Locks and keep tags", "None found")])
 
 
@@ -373,7 +373,7 @@ class TheFacts(unittest.TestCase):
 
     def test_a_case_without_a_cost_figure_has_no_cost_row(self):
         self.assertNotIn("Cost, last 30 days", [r.label for r in facts_of(make_case(cost_usd_30d=None))])
-        self.assertEqual([r.value for r in facts_of(make_case(cost_usd_30d=0.0)) if r.label == "Cost, last 30 days"], ["0.00 US dollars"])
+        self.assertEqual([r.value for r in facts_of(make_case(cost_usd_30d=0.0)) if r.label == "Cost, last 30 days"], ["$0.00"])
 
 
 class TheSaving(unittest.TestCase):
@@ -407,15 +407,15 @@ class TheSaving(unittest.TestCase):
         free = brief_of(make_case(cost_usd_30d=0.0), make_plan(saving_usd_month=0)).saving
         self.assertEqual(free.why_none, "The resource had no cost in the last 30 days.")
         costly = brief_of(make_case(cost_usd_30d=848.75, saving_usd_month=None), make_plan(saving_usd_month=None)).saving
-        self.assertEqual((costly.monthly, costly.why_none), (None, "The resource cost 848.75 US dollars in the last 30 days. What a change would save was not worked out."))
+        self.assertEqual((costly.monthly, costly.why_none), (None, "The resource cost $848.75 in the last 30 days. What a change would save was not worked out."))
         self.assertNotIn("No cost line", costly.why_none, "a cost that is known is never said to be missing")
         self.assertEqual([none.specific, free.specific, costly.specific], [False, False, False], "that no saving was worked out from the cost that was read is not a reason of the finding's own")
         for bad in (-5.0, math.nan, math.inf, True, "7"):
             with self.subTest(figure=bad):
                 self.assertIsNone(brief_of(make_case(), make_plan(saving_usd_month=bad)).saving.monthly)
 
-    def test_money_is_in_us_dollars_with_two_decimals(self):
-        for value, expected in ((41.2, "41.20 US dollars"), (1234.5, "1,234.50 US dollars"), (0, "0.00 US dollars"), (0.005, "0.01 US dollars"), (-3, "-3.00 US dollars")):
+    def test_money_is_written_with_a_dollar_sign_thousands_and_two_decimals(self):
+        for value, expected in ((41.2, "$41.20"), (1234.5, "$1,234.50"), (0, "$0.00"), (0.005, "$0.01"), (-3, "-$3.00")):
             with self.subTest(value=value):
                 self.assertEqual(usd_text(value), expected)
         for bad in (None, "5", True, math.nan, math.inf):
@@ -520,7 +520,7 @@ class TheDataThatNothingReads(unittest.TestCase):
                 self.assertLess(len(b.saving.why_none), 200)
                 self.assertEqual((b.unread, b.options), (None, ()))
         other = brief_of(workspace_case({"missing": "anything else"}), workspace_plan(saving_usd_month=None, waiting_costs_usd_day=None)).saving
-        self.assertEqual(other.why_none, "The resource cost 80.00 US dollars in the last 30 days. What a change would save was not worked out.")
+        self.assertEqual(other.why_none, "The resource cost $80.00 in the last 30 days. What a change would save was not worked out.")
         self.assertFalse(other.specific)
 
     def test_the_figure_of_advisor_stays_when_the_finding_has_one_and_the_lines_are_still_shown(self):
@@ -642,7 +642,7 @@ class TheOutcome(unittest.TestCase):
         verified = self.outcome("consumed", action=make_action(state="verified", result="Deleted.", verification={"gone": True, "costAfterUsd": 0.0, "costBeforeUsd30d": 7.17}),
                                 decisions=[make_decision()])
         self.assertEqual((verified.title, verified.result), ("Done and checked", "Done and checked"))
-        self.assertIn("The 30 days before the change cost 7.17 US dollars.", verified.lines)
+        self.assertIn("The 30 days before the change cost $7.17.", verified.lines)
         unknown = self.outcome("consumed", action=make_action(state="unknown", result="Azure accepted the delete."), decisions=[make_decision()])
         self.assertEqual(unknown.result, "Done, not confirmed yet")
 
@@ -721,9 +721,9 @@ class TheSmallWords(unittest.TestCase):
 
     def test_what_the_check_after_a_change_found_without_saying_the_same_twice(self):
         check = {"gone": True, "costAfterUsd": 0.0, "costBeforeUsd30d": 7.17, "currency": "USD", "note": "Confirmed."}
-        self.assertEqual(check_lines(check), ["Azure no longer lists the resource.", "Cost lines since the change: 0.00 US dollars.", "The 30 days before the change cost 7.17 US dollars.",
+        self.assertEqual(check_lines(check), ["Azure no longer lists the resource.", "Cost lines since the change: $0.00.", "The 30 days before the change cost $7.17.",
                                               "Confirmed."])
-        self.assertEqual(check_lines(check, "Deleted. Azure no longer lists the resource.")[0], "Cost lines since the change: 0.00 US dollars.")
+        self.assertEqual(check_lines(check, "Deleted. Azure no longer lists the resource.")[0], "Cost lines since the change: $0.00.")
         self.assertEqual(check_lines({"gone": False}), ["Azure still lists the resource."])
         self.assertEqual(check_lines({"costAfterUsd": 3.0, "currency": "EUR"}), [], "a figure in another currency is not shown as dollars")
         self.assertEqual(check_lines({}), [])

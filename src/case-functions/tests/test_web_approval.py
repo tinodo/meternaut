@@ -55,7 +55,7 @@ class ThePage(unittest.TestCase):
     def test_the_page_answers_the_eight_questions_in_this_order(self):
         self.assertEqual(self.reply.headings(2)[:5], ["If you approve", "What was measured", "Why the AIs think so", "Whose is it", "Your answer"])
         self.assertIn("How sure: High.", self.reply.content)
-        self.assertEqual(self.reply.measured(), {"Cost, last 30 days": ("7.17 US dollars", "Azure cost lines"), "State": ("Not attached to any virtual machine", "Azure Resource Graph"),
+        self.assertEqual(self.reply.measured(), {"Cost, last 30 days": ("$7.17", "Azure cost lines"), "State": ("Not attached to any virtual machine", "Azure Resource Graph"),
                                                  "Locks and keep tags": ("None found", "Azure, checked by code")})
         found = self.reply.facts()
         self.assertEqual(list(found), ["What changes", "Who does it", "Checked again", "Undo", "What could go wrong"])

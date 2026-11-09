@@ -361,7 +361,7 @@ class Approval(unittest.TestCase):
         self.assertIn("Managed disk, resource group rg-zq7-group", text)
         self.assertIn("Medium risk, High confidence, Cannot be undone", text)  # how sure, whether it can be undone: the chips of the page as words
         self.assertIn("$494 a year\nSaves, Expected. $41.20 a month. Based on the cost lines of the last 30 days.\nMoney is in US dollars, and a year is twelve times the month.", text)  # what do I get
-        self.assertIn("Cost, last 30 days: 41.20 US dollars", text)  # on what evidence
+        self.assertIn("Cost, last 30 days: $41.20", text)  # on what evidence
         self.assertIn("State: Not attached to any virtual machine", text)
         self.assertIn("Owner: Meternaut has not looked up who owns this resource yet.", text)  # whose is it
         self.assertIn("If you approve: Deletes the disk disk-zq7-name in resource group rg-zq7-group. Nothing else changes. "
@@ -594,7 +594,7 @@ class Done(unittest.TestCase):
         text = self.letter(action=action).text
         self.assertIn("$494 a year\nSaves, Verified. $41.20 a month. Based on the cost lines after the change, which show no cost for this resource.\nMoney is in US dollars,", text)
         self.assertNotIn("after a few days", text)
-        self.assertIn("Cost lines since the change: 0.00 US dollars.", text)
+        self.assertIn("Cost lines since the change: $0.00.", text)
 
     def test_the_word_verified_is_said_only_when_the_cost_lines_after_the_change_confirm_the_saving(self):
         for action in (make_action(), make_action(state="done", verification={"gone": True}), make_action(state="failed", error="Refused.", verification={}),

@@ -212,10 +212,10 @@ def time_text(moment: dt.datetime, zone: dt.tzinfo | None) -> str:
 
 
 def usd(value: object) -> str:
-    """Money as the records hold it: US dollars."""
+    """Money as the guide writes it: a dollar sign, thousands separated, two decimals. The page says once that money is in US dollars."""
     if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
         return "not known"
-    return f"{value:,.2f} US dollars"
+    return f"-${abs(value):,.2f}" if value < 0 else f"${value:,.2f}"
 
 
 def number(value: object) -> str:

@@ -348,9 +348,11 @@ def number_text(value: object) -> str:
 
 
 def usd_text(value: object) -> str:
-    """Money as the records hold it, in US dollars with two decimals. Empty for what is not a finite number."""
+    """Money as the guide writes it: a dollar sign, thousands separated, two decimals ($1,682.40). The page says once that money is in US dollars. Empty for what is not a finite number."""
     number = _figure(value)
-    return "" if number is None else f"{number:,.2f} US dollars"
+    if number is None:
+        return ""
+    return f"-${abs(number):,.2f}" if number < 0 else f"${number:,.2f}"
 
 
 def _bytes(value: float) -> str:

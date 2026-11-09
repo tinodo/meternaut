@@ -699,7 +699,7 @@ class TheBriefOfAGroup(unittest.TestCase):
     def test_the_rows_say_what_it_covers_what_it_costs_together_and_give_examples_and_the_cost_row_of_one_resource_is_not_there(self):
         self.assertEqual([(f.label, f.value, f.source) for f in self.b.facts[:3]],
                          [("Covers", "60 private endpoints in 14 resource groups", "Azure Resource Graph"),
-                          ("Together they cost", "1,830.00 US dollars in the last 30 days", "Azure cost lines"),
+                          ("Together they cost", "$1,830.00 in the last 30 days", "Azure cost lines"),
                           ("Examples", "pe-60, pe-59, pe-58, pe-57, pe-56, pe-55 and 54 more", "Azure Resource Graph")])
         self.assertNotIn("Cost, last 30 days", [f.label for f in self.b.facts])
         self.assertLessEqual(len(self.b.facts), brief.MAX_FACTS)
@@ -709,7 +709,7 @@ class TheBriefOfAGroup(unittest.TestCase):
         single = brief.build_brief(only_case(one), one.store.plans_open()[0], now=WEB_NOW, may_answer=True)
         self.assertEqual((self.b.answers, self.b.change, self.b.who_acts, self.b.undo, self.b.risk), (single.answers, single.change, single.who_acts, single.undo, single.risk))
         self.assertEqual((self.b.saving.monthly, self.b.saving.level, self.b.saving.waiting_per_day), (None, "", None))
-        self.assertEqual(self.b.saving.why_none, "The 60 resources cost 1,830.00 US dollars together in the last 30 days. What a change would save was not worked out.")
+        self.assertEqual(self.b.saving.why_none, "The 60 resources cost $1,830.00 together in the last 30 days. What a change would save was not worked out.")
         self.assertEqual((self.b.unread, self.b.options), (None, ()))
         self.assertEqual(single.group, None)
 
@@ -769,7 +769,7 @@ class TheBriefOfAGroup(unittest.TestCase):
                 self.assertIsNone(brief.group_of(found).cost)
                 self.assertEqual([f.label for f in brief.facts_of(found)][:2], ["Covers", "Examples"], "no cost row without a cost")
         fallback = group_case({**good, "costUsd30d": "12"}, cost_usd_30d=7.5)
-        self.assertEqual(brief.facts_of(fallback)[1].value, "7.50 US dollars in the last 30 days", "the cost of the case when the digest holds none")
+        self.assertEqual(brief.facts_of(fallback)[1].value, "$7.50 in the last 30 days", "the cost of the case when the digest holds none")
         for bad_groups in (0, -1, True, "14", 61, 2.5):
             with self.subTest(groups=bad_groups):
                 self.assertEqual(brief.group_of(group_case({**good, "groups": bad_groups})).groups, 0)
@@ -809,7 +809,7 @@ class WhatAPersonSees(unittest.TestCase):
         self.assertEqual(self.reply.headings(1), ["60 private endpoints in 14 resource groups"])
         self.assertEqual(self.reply.main.find("p", class_="fig").text(), "$21,960 a year")
         self.assertIn("Costs, saving not measured. $1,830.00 a month. The most that a change could save: what it would save was not worked out.", self.text)
-        self.assertIn("Covers 60 private endpoints in 14 resource groups Azure Resource Graph Together they cost 1,830.00 US dollars in the last 30 days Azure cost lines "
+        self.assertIn("Covers 60 private endpoints in 14 resource groups Azure Resource Graph Together they cost $1,830.00 in the last 30 days Azure cost lines "
                       "Examples pe-60, pe-59, pe-58, pe-57, pe-56, pe-55 and 54 more Azure Resource Graph", self.text)
         self.assertTrue(self.reply.form(has_button="Worth acting on").has_button("Not worth it"))
         self.assertEqual(self.reply.problems, [])
@@ -855,7 +855,7 @@ class WhatAPersonSees(unittest.TestCase):
 
     def test_the_decision_letter_has_the_three_rows_and_stays_within_the_words_of_a_letter(self):
         letter = letters.approval_letter(self.plan, self.case, PERSON, BASE, WEB_NOW, CONTACTS)
-        for row in ("Covers: 60 private endpoints in 14 resource groups", "Together they cost: 1,830.00 US dollars in the last 30 days",
+        for row in ("Covers: 60 private endpoints in 14 resource groups", "Together they cost: $1,830.00 in the last 30 days",
                     "Examples: pe-60, pe-59, pe-58, pe-57, pe-56, pe-55 and 54 more", "If you answer: Nothing changes in Azure. Your answer is recorded with your name."):
             self.assertIn(row, letter.text)
         self.assertEqual(letter.text.splitlines()[0], "60 private endpoints in 14 resource groups", "the title of the page: it counts the resources and their groups")
@@ -876,7 +876,7 @@ class WhatAPersonSees(unittest.TestCase):
         self.assertEqual(found["headline"], "60 private endpoints in 14 resource groups")
         self.assertNotIn("place", found, "a request for many resources has no place of its own")
         self.assertEqual((found["value"], found["saving-word"]), ("$21,960 a year", "Costs, saving not measured. $1,830.00 a month."))
-        for row in ("Covers", "60 private endpoints in 14 resource groups", "Together they cost", "1,830.00 US dollars in the last 30 days", "Examples", "and 54 more"):
+        for row in ("Covers", "60 private endpoints in 14 resource groups", "Together they cost", "$1,830.00 in the last 30 days", "Examples", "and 54 more"):
             self.assertIn(row, text)
         self.assertNotIn("No figure", text)
 

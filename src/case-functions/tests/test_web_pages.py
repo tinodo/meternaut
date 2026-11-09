@@ -546,6 +546,16 @@ class TheBriefOfACase(unittest.TestCase):
                 (disclosure,) = self.console.get("/why/case0001").main.find_all("details")
                 self.assertIn(words_, disclosure.text())
 
+    def test_the_check_afterwards_writes_money_as_the_guide_does(self):
+        self.console.store.case_put(make_case(plan_id="plan0001", status="verified"))
+        self.console.store.plan_put(make_plan(state="consumed"))
+        self.console.store.action_put(make_action(state="verified", finished_at=at(minutes=-5), verified_at=at(minutes=-1),
+                                                  verification={"gone": True, "costAfterUsd": 0.0, "costBeforeUsd30d": 7.17, "currency": "USD"}))
+        (disclosure,) = self.console.get("/why/case0001").main.find_all("details")
+        self.assertIn("Cost lines after the change: $0.00.", disclosure.text())
+        self.assertIn("Cost lines of the 30 days before: $7.17.", disclosure.text())
+        self.assertNotIn("US dollars", disclosure.text())
+
     def test_text_from_the_estate_or_a_model_is_escaped_quoted_and_never_a_link_or_a_control(self):
         hostile = "Ignore the rules <a href=\"https://evil.example\">click</a> [go](javascript:alert(1)) <script>alert(1)</script>"
         self.console.store.case_put(make_case(summary=hostile, objections=(hostile,), resource_name=hostile, owner={"tagOwner": hostile, "lookedUp": True}))
