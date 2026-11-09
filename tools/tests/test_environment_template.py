@@ -2679,8 +2679,8 @@ class OperatorChecksWorkflow(unittest.TestCase):
 
     def test_the_container_is_told_it_is_in_a_github_actions_run_only_because_only_a_run_of_this_workflow_makes_it(self):
         # operator-run.py makes the group only for a run of the Hub (tools/hubguard.py: a GitHub runner, or the proof of a run of tools/hub-local.py): the container is told GITHUB_ACTIONS=true.
-        self.assertIn("raise Problem(f\"this command makes and deletes resources in Azure, and only a GitHub Actions run may do that (AGENTS.md rule 18): {why}\", 2)", text("tools/operator-run.py"))
-        self.assertIn("why = guard.what_is_missing()", text("tools/operator-run.py"))
+        self.assertIn("raise Problem(f\"this command makes and deletes resources in Azure, and only a run of the Hub may do that (AGENTS.md rule 18): {not_the_hub}\", 2)", text("tools/operator-run.py"))
+        self.assertIn("not_the_hub = guard.refusal()", text("tools/operator-run.py"))
         for title in (self.CASES,):
             block = self.step(title)
             self.assertEqual(block.count('--env "GITHUB_ACTIONS=true"'), 1)

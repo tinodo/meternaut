@@ -13,12 +13,13 @@ changes, the next run follows it, as long as its layout stays the one that tools
 
 THE HUB IS THIS TOOL NOW. The tools that the steps call and that change Azure (tools/az-deploy.py create, retire-old.py, cases-move.py, aigateway-prep.py, operator-run.py) accept only a run
 of the Hub (tools/hubguard.py): a real GitHub runner, or a process that holds the proof of a run of this tool. GITHUB_ACTIONS=true alone is not enough, because any process on this machine can set
-it: a stray call would skip every guard that only this tool has. So each run makes a proof: a random token in local/rt/<run>/hub-proof, the run's number and the SHA-256 of the token in the lock,
-and METERNAUT_HUB_PROOF in the environment of every step. The file is deleted when the run ends, after a failure and after Ctrl+C too, and the token is never printed or written to the log or the
-record. This stops an accident and a stray call. It does not stop a process that holds the owner's az session: that can call az itself. The steps still get GITHUB_ACTIONS=true and
-METERNAUT_HUB_LOCAL=1: the workflow passes the first on to the Operator's container, whose tools (aigateway-check.py, check-helpers.py, aisec-helpers.py) have no run lock to compare with and keep
-the old test. The guards that matter here are this tool's own: the owner's az session, the action's options, --yes for an action that changes Azure, a clean working tree, one run at a time, and
-a configuration file that git ignores.
+it: a stray call would skip every guard that only this tool has. So each run makes a proof: a random token in local/rt/<run>/hub-proof, the run's number, the SHA-256 of the token and the start time
+of its process in the lock, and METERNAUT_HUB_PROOF in the environment of every step. The tools look for the proof in this repository's own local folder only (the one found below), and they refuse a
+file anywhere else and a lock whose process was not started when the lock says. The file is deleted when the run ends, after a failure and after Ctrl+C too, and the token is never printed or
+written to the log or the record. This stops an accident and a stray call, like a tripwire; it is not a lock. It does not stop a process that holds the owner's az session: that can call az itself.
+The steps still get GITHUB_ACTIONS=true and METERNAUT_HUB_LOCAL=1: the workflow passes the first on to the Operator's container, whose tools (aigateway-check.py, check-helpers.py,
+aisec-helpers.py) have no run lock to compare with and keep the old test. The guards that matter here are this tool's own: the owner's az session, the action's options, --yes for an action that
+changes Azure, a clean working tree, one run at a time, and a configuration file that git ignores.
 
 Where it keeps its files: the git-ignored local/ folder of the repository's MAIN working tree (the parent of `git rev-parse --git-common-dir`), so that every worktree finds the same
 configuration, run counter, lock and records; the environment variable METERNAUT_LOCAL names another folder.
@@ -107,7 +108,7 @@ STATE_NAME = "hub-local.state.json"
 LOCK_NAME = guard.LOCK_NAME
 RECORDS_NAME = "records"
 TEMP_NAME = guard.TEMP_NAME
-LOCAL_OVERRIDE = "METERNAUT_LOCAL"
+LOCAL_OVERRIDE = guard.LOCAL_VARIABLE
 
 # What GitHub held as variables and secrets for this workflow. The workflow's own references are checked against the file too, so a new name is found before a run starts.
 VARIABLE_NAMES = ("ENV_RESOURCE_GROUP", "ENV_LOCATION", "ENV_VNET_PREFIX", "ENV_PE_SUBNET_PREFIX", "ENV_DNS_SERVERS", "ENV_OWNER", "ENV_BUDGET_AMOUNT", "ENV_ALERT_EMAILS",
@@ -973,33 +974,18 @@ def posix_absolute(path) -> str:
     return text
 
 
-def run_git(args: list, cwd) -> tuple:
-    """(exit code, standard output, standard error) of one git command. This tool only reads with git: rev-parse, status, check-ignore and ls-files."""
-    try:
-        done = subprocess.run(["git", *args], cwd=str(cwd), capture_output=True, text=True, encoding="utf-8", errors="replace", stdin=subprocess.DEVNULL)
-    except OSError as error:
-        return 127, "", str(error)
-    return done.returncode, done.stdout, done.stderr
+run_git = guard.run_git
 
 
 def resolve_local_dir(environ, cwd: Path, git: Callable = run_git) -> Path:
     """The git-ignored local/ folder of the repository's MAIN working tree, or the folder that METERNAUT_LOCAL names.
 
-    A worktree has no local/ of its own: it is the parent of the common git directory that holds it, and every worktree finds the same configuration, counter, lock and records there."""
-    override = (environ.get(LOCAL_OVERRIDE) or "").strip()
-    if override:
-        return Path(override).expanduser().resolve()
-    code, out, _ = git(["rev-parse", "--path-format=absolute", "--git-common-dir"], cwd)
-    if code != 0:
-        code, out, _ = git(["rev-parse", "--git-common-dir"], cwd)
-    if code != 0 or not out.strip():
-        raise HubLocalError(f"git could not say where the main working tree of this repository is. Set {LOCAL_OVERRIDE} to the folder that holds {CONFIG_NAME}")
-    common = Path(out.strip())
-    if not common.is_absolute():
-        common = (Path(cwd) / common).resolve()
-    if common.name != ".git":
-        raise HubLocalError(f"the git directory {common} is not the .git folder of a working tree. Set {LOCAL_OVERRIDE} to the folder that holds {CONFIG_NAME}")
-    return common.parent / "local"
+    A worktree has no local/ of its own: it is the parent of the common git directory that holds it, and every worktree finds the same configuration, counter, lock and records there. The tools that
+    look for the proof of a run find the folder with the same function (tools/hubguard.py), so that the folder in which a run makes its proof is the folder in which they look for it."""
+    try:
+        return guard.local_folder(environ, cwd, git)
+    except guard.NoLocalFolder as error:
+        raise HubLocalError(str(error)) from None
 
 
 def git_tracking(paths: list, git: Callable = run_git) -> str:
@@ -1845,7 +1831,7 @@ class Hub:
         records.mkdir(parents=True, exist_ok=True)
         log_path = records / f"hub-local-{action}-{stamp}.log"
         record_path = records / f"hub-local-{action}-{stamp}.md"
-        self.lock = Lock(local / LOCK_NAME, {"pid": os.getpid(), "action": action, "started": iso(started)}, deps.pid_alive)
+        self.lock = Lock(local / LOCK_NAME, {"pid": os.getpid(), "action": action, "started": iso(started), "processStart": guard.process_started(os.getpid())}, deps.pid_alive)
         stale = self.lock.acquire()
         clock_start = time.monotonic()
         passed = False
@@ -1941,7 +1927,8 @@ class Hub:
         return info
 
     def make_proof(self, rt: Path) -> None:
-        """Before the first step: the proof that a run of the Hub holds (tools/hubguard.py). A random token in a file of the run's own folder, and in the lock the number of the run and the SHA-256 of the token.
+        """Before the first step: the proof that a run of the Hub holds (tools/hubguard.py). A random token in a file of the run's own folder, and in the lock the number of the run and the SHA-256 of the token
+        (the start time of this process is there since the lock was taken).
         The token is masked in everything that is printed or logged, and it is in no other file."""
         token = secrets.token_hex(32)
         self.proof = rt / guard.PROOF_NAME

@@ -493,25 +493,28 @@ class TheRefusals(unittest.TestCase):
         azure = basic_world()
         code, lines, _, _ = run(azure, environ=dict(PROJECT))
         self.assertEqual((code, azure.calls), (2, []))
-        self.assertIn("this command deletes, and only a GitHub Actions run may do that (AGENTS.md rule 18)", lines[-1])
+        self.assertIn("this command deletes, and only a run of the Hub may do that (AGENTS.md rule 18): this call was not started by a run of the Hub", lines[-1])
 
-    def test_github_actions_true_alone_is_refused_and_the_refusal_names_what_is_missing(self):
+    def test_github_actions_true_alone_is_refused_and_the_refusal_says_nothing_of_what_is_missing(self):
         azure = basic_world()
         code, lines, _, _ = run(azure, environ={**PROJECT, "GITHUB_ACTIONS": "true"})
         self.assertEqual((code, azure.calls), (2, []))
-        self.assertIn("GITHUB_ACTIONS=true alone is no proof", lines[-1])
-        self.assertIn("GITHUB_RUN_ID", lines[-1])
-        self.assertIn("METERNAUT_HUB_PROOF", lines[-1])
+        self.assertIn("this call was not started by a run of the Hub", lines[-1])
+        self.assertNotRegex(lines[-1], r"GITHUB_|METERNAUT_|ACTIONS_ID|(?i:proof)|(?i:lock)", "a refusal says nothing to copy")
 
-    def test_the_proof_of_a_run_of_tools_hub_local_that_is_alive_is_enough_and_a_stale_one_is_not(self):
+    def test_the_proof_of_a_run_of_tools_hub_local_that_is_alive_is_enough_and_a_stale_one_or_one_of_another_folder_is_not(self):
         with tempfile.TemporaryDirectory() as folder:
             azure = basic_world()
-            code, lines, _, _ = run(azure, environ={**PROJECT, "METERNAUT_HUB_PROOF": str(hubenv.make_proof(folder))})
+            code, lines, _, _ = run(azure, environ={**PROJECT, **hubenv.proof_environment(folder)})
             self.assertEqual(code, 0, lines)
             azure = basic_world()
-            code, lines, _, _ = run(azure, environ={**PROJECT, "METERNAUT_HUB_PROOF": str(hubenv.make_proof(folder, pid=hubenv.dead_pid()))})
+            code, lines, _, _ = run(azure, environ={**PROJECT, **hubenv.proof_environment(folder, pid=hubenv.dead_pid())})
             self.assertEqual((code, azure.calls), (2, []))
-            self.assertIn("is not alive: this proof is stale", lines[-1])
+            self.assertIn("this call was not started by a run of the Hub", lines[-1])
+            with tempfile.TemporaryDirectory() as hostile:
+                azure = basic_world()
+                code, lines, _, _ = run(azure, environ={**PROJECT, **hubenv.proof_environment(hostile, run="1"), "METERNAUT_LOCAL": folder})
+            self.assertEqual((code, azure.calls), (2, []), "a proof that is not in the repository's own local folder")
 
     def test_no_other_group_or_subscription_can_be_named(self):
         for environ in ({**ENVIRONMENT, "ENV_RESOURCE_GROUP": "rg-another"}, {**ENVIRONMENT, "ENV_SUBSCRIPTION_ID": "99999999-2222-3333-4444-555555555555"}):

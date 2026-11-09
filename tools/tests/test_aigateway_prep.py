@@ -43,6 +43,7 @@ GATEWAY_ROLES = f"{GATEWAY_ID}/providers/Microsoft.Authorization/roleAssignments
 ACCOUNT_ROLES = f"{ACCOUNT_ID}/providers/Microsoft.Authorization/roleAssignments"
 KEYS = f"{GATEWAY_ID}/apiKeys"
 ARGUMENTS = ["--subscription", SUBSCRIPTION, "--resource-group", GROUP, "--gateway", GATEWAY]
+PROJECT = {"ENV_SUBSCRIPTION_ID": SUBSCRIPTION, "ENV_RESOURCE_GROUP": GROUP}
 
 
 def assignment(role, principal, scope):
@@ -125,7 +126,7 @@ class Azure:
 
 def run(argv, azure, summary=None, actions=True, extra=None):
     out, err = io.StringIO(), io.StringIO()
-    with hubenv.patched(actions, extra), contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+    with hubenv.patched(actions, {**PROJECT, **(extra or {})}), contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
         code = prep.main([*argv, *(["--summary", str(summary)] if summary else [])], az=azure, sleep=azure.sleeps.append)
     return code, out.getvalue(), err.getvalue()
 
@@ -187,31 +188,52 @@ class Policies(unittest.TestCase):
     def command(self, azure, **kwargs):
         return run(["policies", *ARGUMENTS, "--file", str(self.file)], azure, **kwargs)
 
-    def test_it_refuses_to_run_anywhere_but_in_a_run_of_the_workflow_and_asks_azure_nothing(self):
+    def test_it_refuses_to_run_anywhere_but_in_a_run_of_the_hub_and_asks_azure_nothing(self):
         azure = Azure()
         code, out, err = self.command(azure, actions=False)
         self.assertEqual((code, out), (2, ""))
-        self.assertIn("this command writes to Azure, and only a GitHub Actions run may do that (AGENTS.md rule 18)", err)
+        self.assertIn("error: this command writes to Azure, and only a run of the Hub may do that (AGENTS.md rule 18): this call was not started by a run of the Hub", err)
         self.assertEqual(azure.calls, [])
 
-    def test_a_process_that_only_says_that_github_actions_is_true_is_refused_and_the_refusal_names_what_is_missing(self):
+    def test_a_process_that_only_says_that_github_actions_is_true_is_refused_and_the_refusal_says_nothing_of_what_it_lacks(self):
         azure = Azure()
         code, out, err = self.command(azure, actions=False, extra={"GITHUB_ACTIONS": "true"})
         self.assertEqual((code, out), (2, ""))
-        self.assertIn("GITHUB_ACTIONS=true alone is no proof", err)
-        self.assertIn("METERNAUT_HUB_PROOF", err)
+        self.assertIn("this call was not started by a run of the Hub", err)
+        self.assertNotRegex(err, r"GITHUB_|METERNAUT_|ACTIONS_ID|(?i:proof)|(?i:lock)", "a refusal says nothing to copy")
         self.assertEqual(azure.calls, [])
 
-    def test_the_proof_of_a_run_of_tools_hub_local_that_is_alive_is_enough_and_a_stale_one_is_not(self):
+    def test_the_proof_of_a_run_of_tools_hub_local_that_is_alive_is_enough_and_a_stale_one_or_one_of_another_folder_is_not(self):
         with tempfile.TemporaryDirectory() as folder:
             azure = Azure(world(policies=[]))
-            code, _, err = self.command(azure, actions=False, extra={"METERNAUT_HUB_PROOF": str(hubenv.make_proof(folder))})
+            code, _, err = self.command(azure, actions=False, extra=hubenv.proof_environment(folder))
             self.assertEqual(code, 0, err)
             azure = Azure()
-            code, out, err = self.command(azure, actions=False, extra={"METERNAUT_HUB_PROOF": str(hubenv.make_proof(folder, pid=hubenv.dead_pid()))})
+            code, out, err = self.command(azure, actions=False, extra=hubenv.proof_environment(folder, pid=hubenv.dead_pid()))
             self.assertEqual((code, out), (2, ""))
-            self.assertIn("is not alive: this proof is stale", err)
+            self.assertIn("this call was not started by a run of the Hub", err)
+            with tempfile.TemporaryDirectory() as hostile:
+                code, out, err = self.command(azure, actions=False, extra={**hubenv.proof_environment(hostile, run="1"), "METERNAUT_LOCAL": folder})
+            self.assertEqual((code, out), (2, ""), "a proof that is not in the repository's own local folder")
             self.assertEqual(azure.calls, [])
+
+    def test_it_names_the_projects_own_subscription_and_group_and_no_other_and_asks_azure_nothing_otherwise(self):
+        other = ["--subscription", "99999999-8888-7777-6666-555555555555", "--resource-group", GROUP, "--gateway", GATEWAY]
+        for arguments in (other, ["--subscription", SUBSCRIPTION, "--resource-group", "rg-another", "--gateway", GATEWAY], ["--subscription", SUBSCRIPTION, "--resource-group", GROUP.upper(), "--gateway", GATEWAY]):
+            azure = Azure()
+            code, out, err = run(["policies", *arguments, "--file", str(self.file)], azure)
+            self.assertEqual((code, out), (2, ""), arguments)
+            self.assertEqual(err.strip(), "error: the subscription or the resource group is not the project's own: this command names no other group")
+            self.assertEqual(azure.calls, [])
+        for settings in ({"ENV_SUBSCRIPTION_ID": ""}, {"ENV_RESOURCE_GROUP": ""}):
+            azure = Azure()
+            code, out, err = self.command(azure, extra=settings)
+            self.assertEqual((code, out), (2, ""))
+            self.assertIn("are not both set for this call", err)
+            self.assertEqual(azure.calls, [])
+        azure = Azure(world(policies=[]))
+        code, _, err = run(["policies", "--subscription", SUBSCRIPTION.upper(), "--resource-group", GROUP, "--gateway", GATEWAY, "--file", str(self.file)], azure)
+        self.assertEqual(code, 0, f"a subscription id has no case: {err}")
 
     def test_an_empty_workspace_gets_the_four_policies_in_one_patch_that_holds_nothing_else_and_they_are_read_back(self):
         azure = Azure(world(policies=[]))
@@ -304,7 +326,7 @@ class Policies(unittest.TestCase):
             return original(arguments)
 
         out, err = io.StringIO(), io.StringIO()
-        with hubenv.patched(), contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        with hubenv.patched(extra=PROJECT), contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
             code = prep.main(["policies", *ARGUMENTS, "--file", str(self.file)], az=patch_that_changes_nothing, sleep=azure.sleeps.append)
         self.assertEqual(code, 1)
         self.assertEqual(azure.sleeps, [prep.READ_BACK_SECONDS] * 5)
@@ -324,7 +346,7 @@ class Policies(unittest.TestCase):
             return original(arguments)
 
         out = io.StringIO()
-        with hubenv.patched(), contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+        with hubenv.patched(extra=PROJECT), contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
             code = prep.main(["policies", *ARGUMENTS, "--file", str(self.file)], az=patch_with_another_amount, sleep=lambda seconds: None)
         self.assertEqual(code, 1)
         self.assertIn("different: costLimit meternaut-day", out.getvalue())
@@ -359,12 +381,20 @@ class RemoveKey(unittest.TestCase):
     def command(self, azure, **kwargs):
         return run(["remove-key", *ARGUMENTS], azure, **kwargs)
 
-    def test_it_refuses_to_run_anywhere_but_in_a_run_of_the_workflow_and_asks_azure_nothing(self):
+    def test_it_refuses_to_run_anywhere_but_in_a_run_of_the_hub_and_asks_azure_nothing(self):
         azure = Azure()
         code, out, err = self.command(azure, actions=False)
         self.assertEqual((code, out), (2, ""))
-        self.assertIn("only a GitHub Actions run may do that", err)
+        self.assertIn("only a run of the Hub may do that", err)
         self.assertEqual(azure.calls, [])
+
+    def test_it_names_the_projects_own_subscription_and_group_and_no_other_and_deletes_nothing_otherwise(self):
+        for arguments in (["--subscription", "99999999-8888-7777-6666-555555555555", "--resource-group", GROUP, "--gateway", GATEWAY], ["--subscription", SUBSCRIPTION, "--resource-group", "rg-another", "--gateway", GATEWAY]):
+            azure = Azure()
+            code, out, err = run(["remove-key", *arguments], azure)
+            self.assertEqual((code, out), (2, ""), arguments)
+            self.assertIn("is not the project's own", err)
+            self.assertEqual(azure.calls, [])
 
     def test_a_gateway_without_the_key_has_nothing_to_delete_and_nothing_is_written(self):
         azure = Azure(world(keys=()))
@@ -442,7 +472,7 @@ class RemoveKey(unittest.TestCase):
             return original(arguments)
 
         out = io.StringIO()
-        with hubenv.patched(), contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+        with hubenv.patched(extra=PROJECT), contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
             code = prep.main(["remove-key", *ARGUMENTS], az=delete_that_deletes_nothing, sleep=azure.sleeps.append)
         self.assertEqual(code, 0)
         self.assertEqual(azure.sleeps, [prep.READ_BACK_SECONDS] * 5)
@@ -459,7 +489,7 @@ class RemoveKey(unittest.TestCase):
             return azure(arguments)
 
         out = io.StringIO()
-        with hubenv.patched(), contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+        with hubenv.patched(extra=PROJECT), contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
             code = prep.main(["remove-key", *ARGUMENTS], az=raced, sleep=lambda seconds: None)
         self.assertEqual(code, 0)
         self.assertIn("note: The service says that the key master is not there any more", out.getvalue())
@@ -802,6 +832,8 @@ class TheTemplateAndTheToolAgree(unittest.TestCase):
         self.assertEqual(source.count('"rest", "--method"'), 2, "one request that may write, and the read of the next page of a list")
         self.assertEqual(len(re.findall(r'(?m)^def (?:only_in_actions)', source)), 1)
         self.assertEqual(len(re.findall(r"\bonly_in_actions\(\)", source)), 3, "defined once and called by the two commands that write")
+        self.assertEqual(len(re.findall(r'(?m)^def (?:only_in_the_project)', source)), 1)
+        self.assertEqual(len(re.findall(r"\bonly_in_the_project\(args\)", source)), 2, "and the two commands that write name the project's own group and no other")
 
 
 if __name__ == "__main__":

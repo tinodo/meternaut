@@ -1,7 +1,8 @@
 """tools/hubguard.py: the one test that the tools which change Azure from the runner use to know that a run of the Hub started them.
 
-GITHUB_ACTIONS=true alone is refused. A real GitHub runner (its own variables) passes, and so does the proof of a run of tools/hub-local.py that is alive; a proof that is missing, stale or
-somebody else's is refused, and the refusal says what is missing. The tools that use it are held to it here; the tools that run inside the Operator's container are held to what they keep."""
+GITHUB_ACTIONS=true alone is refused. A real GitHub runner (its own variables) passes, and so does the proof of a run of tools/hub-local.py that is alive, found in the repository's own local folder
+and started when its lock says; a proof that is missing, stale, somebody else's or in another folder is refused. A refusal says nothing of what counts as a run: only a person who asks at a terminal
+is told. The tools that use it are held to it here; the tools that run inside the Operator's container are held to what they keep."""
 import hashlib
 import importlib.util
 import io
@@ -11,8 +12,10 @@ import re
 import subprocess
 import sys
 import tempfile
+import types
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
 spec = importlib.util.spec_from_file_location("hubguard_of_its_tests", ROOT / "tools" / "hubguard.py")
@@ -24,6 +27,8 @@ _hubenv_spec.loader.exec_module(hubenv)
 
 RUNNER_SIDE = ("az-deploy.py", "retire-old.py", "cases-move.py", "aigateway-prep.py", "operator-run.py")
 CONTAINER_SIDE = ("aigateway-check.py", "check-helpers.py", "aisec-helpers.py")
+# What a refusal must not say: nothing that a process that reads it could copy.
+NOTHING_TO_COPY = re.compile(r"(?i)github|meternaut|proof|actions|token|lock|\brt\b|_id\b|repository|environment|variable|file|hub-")
 
 
 def text(relative):
@@ -61,6 +66,20 @@ class TheRealRunner(unittest.TestCase):
     def test_nothing_at_all_is_refused_in_plain_words(self):
         self.assertEqual(hg.what_is_missing({}), "GITHUB_ACTIONS is not true and METERNAUT_HUB_PROOF is not set: neither a GitHub runner nor a run of tools/hub-local.py started this")
 
+    def test_a_refusal_says_only_that_the_call_was_not_started_by_a_run_of_the_hub_and_nothing_that_could_be_copied(self):
+        stale = self.stale_proof_environment()
+        for environ in ({}, {"GITHUB_ACTIONS": "true"}, {"GITHUB_ACTIONS": "true", "GITHUB_RUN_ID": "1"}, {"METERNAUT_HUB_PROOF": "somewhere"}, stale):
+            self.assertEqual(hg.refusal(environ), hg.REFUSAL, environ)
+        self.assertEqual(hg.REFUSAL, "this call was not started by a run of the Hub")
+        self.assertIsNone(NOTHING_TO_COPY.search(hg.REFUSAL), hg.REFUSAL)
+        self.assertEqual(hg.refusal(hubenv.inside()), "")
+        self.assertIn("GITHUB_RUN_ID", hg.what_is_missing({"GITHUB_ACTIONS": "true"}), "the long text exists, for a person who asks")
+
+    def stale_proof_environment(self):
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        return hubenv.proof_environment(folder.name, pid=hubenv.dead_pid())
+
     def test_the_runner_variables_are_the_ones_of_the_hub_workflow_and_its_job_may_ask_for_a_token(self):
         workflow = text(".github/workflows/deploy-hub.yml")
         self.assertRegex(workflow, r"(?m)^permissions:\n(?:  .*\n)*?  id-token: write\n", "every step of the Hub's job has the address of the token request, which hubguard.py asks for")
@@ -73,20 +92,25 @@ class TheProofOfARunOfTheLocalHub(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.folder = Path(self.tmp.name)
 
-    def why(self, proof, alive=None):
-        kwargs = {} if alive is None else {"alive": alive}
-        return hg.what_is_missing({"METERNAUT_HUB_PROOF": str(proof)}, **kwargs)
+    def environment(self, proof, **extra):
+        return {"METERNAUT_HUB_PROOF": str(proof), "METERNAUT_LOCAL": str(self.folder), **extra}
+
+    def why(self, proof, alive=None, **injected):
+        if alive is not None:
+            injected["alive"] = alive
+        return hg.what_is_missing(self.environment(proof), **injected)
 
     def test_the_proof_of_a_run_that_is_alive_passes_with_no_other_variable(self):
         proof = hubenv.make_proof(self.folder)
         self.assertEqual(self.why(proof), "")
-        self.assertTrue(hg.started_by_the_hub({"METERNAUT_HUB_PROOF": str(proof)}))
-        self.assertEqual(hg.what_is_missing({"GITHUB_ACTIONS": "true", "METERNAUT_HUB_PROOF": str(proof)}), "", "with the variable that the local Hub also sets")
+        self.assertTrue(hg.started_by_the_hub(self.environment(proof)))
+        self.assertEqual(hg.what_is_missing(self.environment(proof, GITHUB_ACTIONS="true")), "", "with the variable that the local Hub also sets")
 
     def test_a_missing_file_is_refused_and_so_is_one_that_a_run_deleted_at_its_end(self):
         proof = hubenv.make_proof(self.folder)
         proof.unlink()
-        self.assertIn("names no file that is there (a run of the Hub deletes its proof when it ends)", self.why(proof))
+        self.assertIn("names no file that is there", self.why(proof))
+        self.assertIn("a run of the Hub deletes its proof when it ends", self.why(proof))
         self.assertIn("names no file that is there", self.why(self.folder / "nothing-here"))
         self.assertIn("names no file that is there", self.why("bad\0name"))
 
@@ -99,7 +123,7 @@ class TheProofOfARunOfTheLocalHub(unittest.TestCase):
 
     def test_a_lock_that_is_not_there_or_is_not_a_lock_is_refused(self):
         proof = hubenv.make_proof(self.folder, lock=False)
-        self.assertIn("no run lock hub-local.lock is next to the folder rt: no run of the Hub is going on there", self.why(proof))
+        self.assertIn("no run lock hub-local.lock is in the repository's own local folder: no run of the Hub is going on", self.why(proof))
         for content in ("garbage", "[]", "42", "null", ""):
             (self.folder / "hub-local.lock").write_text(content, encoding="utf-8")
             self.assertIn("no run lock", self.why(proof), content)
@@ -138,24 +162,78 @@ class TheProofOfARunOfTheLocalHub(unittest.TestCase):
         (self.folder / "hub-local.lock").write_text(json.dumps(held), encoding="utf-8")
         self.assertIn("does not hold the token", self.why(proof), "a lock that has dropped the digest (the run is ending) proves nothing")
 
-    def test_a_file_that_is_not_the_proof_file_of_a_run_in_an_rt_folder_is_refused(self):
+    def test_a_file_that_is_not_the_proof_file_of_a_run_in_the_rt_folder_of_the_local_folder_is_refused(self):
         proof = hubenv.make_proof(self.folder)
         other = proof.with_name("something-else")
         other.write_text("a-token-of-the-tests", encoding="utf-8", newline="")
         elsewhere = self.folder / "elsewhere"
         elsewhere.mkdir()
         (elsewhere / "hub-proof").write_text("a-token-of-the-tests", encoding="utf-8", newline="")
-        for path in (other, elsewhere / "hub-proof", proof.parent, self.folder):
-            self.assertIn("does not name the proof file of a run of tools/hub-local.py", self.why(path), str(path))
+        deeper = self.folder / "rt" / "1762000000" / "deeper"
+        deeper.mkdir()
+        (deeper / "hub-proof").write_text("a-token-of-the-tests", encoding="utf-8", newline="")
+        for path in (other, elsewhere / "hub-proof", proof.parent, self.folder, deeper / "hub-proof"):
+            self.assertIn("is not the proof file of a run in the repository's own local folder", self.why(path), str(path))
+
+    def test_a_hostile_folder_with_its_own_proof_and_its_own_lock_is_refused_whatever_sits_next_to_it(self):
+        own = self.folder / "own-local"
+        hostile = self.folder / "hostile-local"
+        real = hubenv.make_proof(own, run="1762000002", token="the-token-of-the-real-run")
+        forged = hubenv.make_proof(hostile, run="1", token="a-token-that-the-forger-made")
+        environ = {"METERNAUT_HUB_PROOF": str(forged), "METERNAUT_LOCAL": str(own)}
+        self.assertIn("is not the proof file of a run in the repository's own local folder", hg.what_is_missing(environ))
+        self.assertFalse(hg.started_by_the_hub(environ))
+        self.assertEqual(hg.what_is_missing({"METERNAUT_HUB_PROOF": str(real), "METERNAUT_LOCAL": str(own)}), "", "the proof of the real run in the own folder is the one that counts")
+        (own / "hub-local.lock").unlink()
+        self.assertIn("no run lock", hg.what_is_missing({"METERNAUT_HUB_PROOF": str(real), "METERNAUT_LOCAL": str(own)}), "the lock is the own folder's: the forged one next to the forged proof is not read")
+        self.assertIn("is not the proof file of a run in the repository's own local folder", hg.what_is_missing(environ), "and the forged proof is still refused, whichever lock there is")
+
+    def test_the_local_folder_is_found_from_the_repository_and_not_from_the_path_that_the_caller_names(self):
+        main = self.folder / "main"
+        (main / "local").mkdir(parents=True)
+        (main / ".git").mkdir()
+        real = hubenv.make_proof(main / "local", run="1762000002", token="the-token-of-the-real-run")
+        forged = hubenv.make_proof(self.folder / "hostile-local", run="1", token="a-token-that-the-forger-made")
+        asked = []
+
+        def git(args, cwd):
+            asked.append((list(args), Path(cwd)))
+            return 0, str(main / ".git") + "\n", ""
+        self.assertEqual(hg.what_is_missing({"METERNAUT_HUB_PROOF": str(real)}, git=git), "")
+        self.assertIn("is not the proof file of a run in the repository's own local folder", hg.what_is_missing({"METERNAUT_HUB_PROOF": str(forged)}, git=git))
+        self.assertEqual({cwd for _, cwd in asked}, {Path(hg.__file__).resolve().parent}, "git is asked from the folder of the tool, whatever the caller's folder is")
+        no_git = lambda args, cwd: (128, "", "fatal: not a git repository")
+        self.assertIn("the repository's own local folder cannot be found", hg.what_is_missing({"METERNAUT_HUB_PROOF": str(real)}, git=no_git))
+
+    def test_a_proof_whose_process_started_at_another_time_than_the_lock_says_is_refused_because_its_number_was_used_again(self):
+        mine = hg.process_started(os.getpid())
+        proof = hubenv.make_proof(self.folder, start="a-start-that-this-process-never-had")
+        self.assertIn("did not start when the lock says", self.why(proof))
+        self.assertIn("its number was used again", self.why(proof))
+        self.assertEqual(self.why(proof, started=lambda pid: "a-start-that-this-process-never-had"), "", "what the platform says now is the caller's to give: it is asked about the pid of the lock")
+        self.assertIn("did not start when the lock says", self.why(hubenv.make_proof(self.folder, start="one"), started=lambda pid: "another"))
+        if mine != hg.UNKNOWN:
+            self.assertEqual(self.why(hubenv.make_proof(self.folder, start=mine)), "", "the start that the platform gives for this process is the one that counts")
+
+    def test_a_start_that_is_not_known_makes_the_check_no_weaker_than_the_one_that_asks_only_whether_the_number_is_alive(self):
+        proof = hubenv.make_proof(self.folder, start=hg.UNKNOWN)
+        self.assertEqual(self.why(proof), "", "the lock does not know when its process started")
+        proof = hubenv.make_proof(self.folder, start="a-start")
+        self.assertEqual(self.why(proof, started=lambda pid: hg.UNKNOWN), "", "the platform does not say now")
+        held = json.loads((self.folder / "hub-local.lock").read_text(encoding="utf-8"))
+        del held["processStart"]
+        (self.folder / "hub-local.lock").write_text(json.dumps(held), encoding="utf-8")
+        self.assertEqual(self.why(proof), "", "a lock of an older run, which holds no start")
+        self.assertIn("is not alive", self.why(proof, alive=lambda pid: False), "a number that is not alive is refused whatever the start says")
 
     def test_a_proof_that_is_not_valid_is_not_rescued_by_github_actions_true(self):
         proof = hubenv.make_proof(self.folder, pid=hubenv.dead_pid())
-        why = hg.what_is_missing({"GITHUB_ACTIONS": "true", "METERNAUT_HUB_PROOF": str(proof)})
+        why = hg.what_is_missing(self.environment(proof, GITHUB_ACTIONS="true"))
         self.assertIn("this proof is stale", why)
 
     def test_a_proof_that_is_valid_is_not_spoiled_by_a_partial_runner_environment(self):
         proof = hubenv.make_proof(self.folder)
-        self.assertEqual(hg.what_is_missing({"GITHUB_ACTIONS": "true", "GITHUB_RUN_ID": "1", "METERNAUT_HUB_PROOF": str(proof)}), "")
+        self.assertEqual(hg.what_is_missing(self.environment(proof, GITHUB_ACTIONS="true", GITHUB_RUN_ID="1")), "")
 
 
 class TheProcessTest(unittest.TestCase):
@@ -165,7 +243,7 @@ class TheProcessTest(unittest.TestCase):
             self.assertFalse(hg.process_alive(pid), repr(pid))
         self.assertFalse(hg.process_alive(hubenv.dead_pid()))
 
-    def test_the_hub_runner_uses_the_same_test_and_the_same_names(self):
+    def test_the_hub_runner_uses_the_same_test_the_same_names_and_the_same_way_to_find_the_local_folder(self):
         spec_hub = importlib.util.spec_from_file_location("hub_local_of_the_hubguard_tests", ROOT / "tools" / "hub-local.py")
         module = importlib.util.module_from_spec(spec_hub)
         sys.modules["hub_local_of_the_hubguard_tests"] = module
@@ -173,6 +251,56 @@ class TheProcessTest(unittest.TestCase):
         spec_hub.loader.exec_module(module)
         self.assertEqual((module.LOCK_NAME, module.TEMP_NAME, module.guard.PROOF_VARIABLE, module.guard.PROOF_NAME), (hg.LOCK_NAME, hg.TEMP_NAME, hg.PROOF_VARIABLE, hg.PROOF_NAME))
         self.assertIs(module.process_alive, module.guard.process_alive)
+        self.assertEqual(module.LOCAL_OVERRIDE, hg.LOCAL_VARIABLE)
+        self.assertIs(module.run_git, module.guard.run_git)
+        with tempfile.TemporaryDirectory() as folder:
+            self.assertEqual(module.resolve_local_dir({hg.LOCAL_VARIABLE: folder}, Path(folder)), hg.local_folder({hg.LOCAL_VARIABLE: folder}), "the same folder, found by the same function")
+        self.assertEqual(module.resolve_local_dir({}, ROOT), hg.local_folder({}, ROOT))
+
+
+class TheStartOfAProcess(unittest.TestCase):
+    def test_a_process_has_one_start_and_a_process_that_started_later_has_another(self):
+        mine = hg.process_started(os.getpid())
+        if mine == hg.UNKNOWN:
+            self.skipTest("this platform does not say when a process started")
+        self.assertEqual(mine, hg.process_started(os.getpid()))
+        child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+        try:
+            theirs = hg.process_started(child.pid)
+        finally:
+            child.kill()
+            child.wait()
+        self.assertNotIn(theirs, (hg.UNKNOWN, mine))
+
+    def test_a_number_that_means_nothing_or_that_no_process_has_is_unknown(self):
+        for pid in (None, 0, -1, True, "5", 1.5, [1]):
+            self.assertEqual(hg.process_started(pid), hg.UNKNOWN, repr(pid))
+        self.assertEqual(hg.process_started(hubenv.dead_pid()), hg.UNKNOWN)
+
+    def test_what_the_platform_cannot_say_is_unknown_and_never_an_error(self):
+        if os.name == "nt":
+            with mock.patch.object(hg, "started_on_windows", side_effect=OSError("denied")):
+                self.assertEqual(hg.process_started(os.getpid()), hg.UNKNOWN)
+        else:
+            with mock.patch.object(hg, "started_by_ps", side_effect=OSError("no ps")), mock.patch.object(hg.sys, "platform", "darwin"):
+                self.assertEqual(hg.process_started(os.getpid()), hg.UNKNOWN)
+
+    def test_the_start_that_linux_gives_is_read_from_the_stat_line_with_the_boot_id_and_a_name_with_brackets_does_not_move_it(self):
+        line = "4242 (my (odd) name) S 1 4242 4242 0 -1 4194560 100 0 0 0 5 3 0 0 20 0 1 0 987654 12345678 1234 18446744073709551615 1 1 0 0 0 0 0 0 0 0 0 0 17 3 0 0 0 0 0"
+        self.assertEqual(hg.linux_start(line, "a-boot-id\n"), "a-boot-id:987654")
+        self.assertNotEqual(hg.linux_start(line, "another-boot-id"), hg.linux_start(line, "a-boot-id"), "the same number after a reboot is another start")
+        for bad in ("", "4242 (x) S 1", "no bracket here"):
+            with self.assertRaises((ValueError, IndexError)):
+                hg.linux_start(bad, "a-boot-id")
+
+    def test_the_start_that_ps_gives_is_its_text_in_one_line_and_what_it_cannot_say_is_unknown(self):
+        said = types.SimpleNamespace(returncode=0, stdout="Mon Nov  9 01:48:22 2026\n")
+        with mock.patch.object(hg.subprocess, "run", return_value=said) as called:
+            self.assertEqual(hg.started_by_ps(4242), "Mon Nov 9 01:48:22 2026")
+        self.assertEqual(called.call_args.args[0], ["ps", "-o", "lstart=", "-p", "4242"])
+        for answer in (types.SimpleNamespace(returncode=1, stdout=""), types.SimpleNamespace(returncode=0, stdout="  \n")):
+            with mock.patch.object(hg.subprocess, "run", return_value=answer):
+                self.assertEqual(hg.started_by_ps(4242), hg.UNKNOWN)
 
 
 class TheScopeOfAStrayCall(unittest.TestCase):
@@ -184,40 +312,103 @@ class TheScopeOfAStrayCall(unittest.TestCase):
         self.assertEqual(hg.other_scope(sub.upper(), group, self.PROJECT), "", "a subscription id has no case")
         for subscription, resource_group in (("99999999-2222-3333-4444-555555555555", group), (sub, "rg-another"), (sub, group.upper()), ("", group), (sub, ""), (None, None)):
             why = hg.other_scope(subscription, resource_group, self.PROJECT)
-            self.assertIn("is not the project's own (ENV_SUBSCRIPTION_ID and ENV_RESOURCE_GROUP): this command names no other group", why)
+            self.assertEqual(why, "the subscription or the resource group is not the project's own: this command names no other group")
             for given in (subscription, resource_group):
                 if given:
                     self.assertNotIn(given, why)
+        self.assertNotIn("ENV_", why, "the settings are not named: a refusal says nothing to copy")
 
     def test_settings_that_are_not_both_set_refuse_everything(self):
         for environ in ({}, {"ENV_SUBSCRIPTION_ID": "x"}, {"ENV_RESOURCE_GROUP": "x"}, {"ENV_SUBSCRIPTION_ID": "", "ENV_RESOURCE_GROUP": "x"}):
-            self.assertIn("are not both set", hg.other_scope("x", "x", environ), environ)
+            self.assertIn("are not both set for this call", hg.other_scope("x", "x", environ), environ)
+
+    def test_an_id_is_in_the_project_when_it_names_its_subscription_and_group_and_has_no_case(self):
+        sub, group = self.PROJECT["ENV_SUBSCRIPTION_ID"], self.PROJECT["ENV_RESOURCE_GROUP"]
+        inside = f"/subscriptions/{sub}/resourceGroups/{group}/providers/Microsoft.Network/virtualNetworks/vnet-x/subnets/snet-x"
+        self.assertTrue(hg.in_the_project(inside, self.PROJECT))
+        self.assertTrue(hg.in_the_project(inside.upper(), self.PROJECT), "Azure writes the group of an id in the case that suits it")
+        for other in (inside.replace(group, "rg-another"), inside.replace(sub, "99999999-2222-3333-4444-555555555555"), inside.replace(f"{group}/providers", f"{group}-more/providers"),
+                      f"/subscriptions/{sub}/resourceGroups/{group}", f"/subscriptions/{sub}/resourceGroups/{group}/", "", None, "snet-x"):
+            self.assertFalse(hg.in_the_project(other, self.PROJECT), other)
+        self.assertFalse(hg.in_the_project(inside, {}), "no settings, no project")
+
+
+class TheLocalFolder(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.base = Path(self.tmp.name)
+
+    def test_the_variable_names_the_folder_and_a_blank_one_names_none(self):
+        elsewhere = self.base / "elsewhere"
+        self.assertEqual(hg.local_folder({"METERNAUT_LOCAL": str(elsewhere)}), elsewhere.resolve())
+        said = []
+        git = lambda args, cwd: said.append(args) or (0, str(self.base / ".git") + "\n", "")
+        for blank in ("", "   "):
+            self.assertEqual(hg.local_folder({"METERNAUT_LOCAL": blank}, self.base, git), self.base / "local")
+        self.assertEqual(len(said), 2, "a blank variable is no variable: git is asked")
+
+    def test_git_says_where_the_main_working_tree_is_from_the_folder_of_the_tool_unless_another_is_given(self):
+        asked = []
+
+        def git(args, cwd):
+            asked.append((list(args), Path(cwd)))
+            return 0, str(self.base / "main" / ".git") + "\n", ""
+        self.assertEqual(hg.local_folder({}, None, git), self.base / "main" / "local")
+        self.assertEqual(asked, [(["rev-parse", "--path-format=absolute", "--git-common-dir"], Path(hg.__file__).resolve().parent)])
+        asked.clear()
+        hg.local_folder({}, self.base, git)
+        self.assertEqual(asked[0][1], self.base)
+
+    def test_an_old_git_is_asked_again_a_relative_answer_is_made_absolute_and_what_is_no_dot_git_folder_or_unsaid_is_refused(self):
+        calls = []
+
+        def old_git(args, cwd):
+            calls.append(list(args))
+            return (129, "", "unknown option") if "--path-format=absolute" in args else (0, ".git\n", "")
+        self.assertEqual(hg.local_folder({}, self.base, old_git), self.base.resolve() / "local")
+        self.assertEqual(len(calls), 2)
+        for answer in ((128, "", "fatal: not a git repository"), (0, "", ""), (0, str(self.base / "repo.git") + "\n", "")):
+            with self.assertRaises(hg.NoLocalFolder) as caught:
+                hg.local_folder({}, self.base, lambda args, cwd, answer=answer: answer)
+            self.assertIn("METERNAUT_LOCAL", str(caught.exception))
+
+    def test_git_is_only_read_here(self):
+        source = text("tools/hubguard.py")
+        asked = set(re.findall(r'git\(\["([a-z-]+)"', source))
+        self.assertEqual(asked, {"rev-parse"})
 
 
 class TheCommandLine(unittest.TestCase):
     def run_it(self, env):
-        done = subprocess.run([sys.executable, str(ROOT / "tools" / "hubguard.py")], capture_output=True, text=True, env=env)
+        done = subprocess.run([sys.executable, str(ROOT / "tools" / "hubguard.py")], capture_output=True, text=True, env=env, stdin=subprocess.DEVNULL)
         return done.returncode, done.stdout.strip(), done.stderr
 
     def environment(self, **extra):
         return {**hubenv.outside(os.environ), **extra}
 
-    def test_it_says_yes_for_a_runner_and_no_with_the_reason_for_anything_else(self):
+    def test_it_says_yes_for_a_runner_and_for_a_proof_and_to_anything_that_is_no_terminal_only_that_the_call_was_not_started_by_a_run_of_the_hub(self):
         code, out, err = self.run_it(self.environment(**hubenv.inside()))
         self.assertEqual((code, out, err), (0, "yes: a run of the Hub started this process", ""))
-        code, out, err = self.run_it(self.environment(GITHUB_ACTIONS="true"))
-        self.assertEqual(code, 2)
-        self.assertTrue(out.startswith("no: GITHUB_ACTIONS=true alone is no proof"), out)
+        for environ in ({}, {"GITHUB_ACTIONS": "true"}):
+            code, out, err = self.run_it(self.environment(**environ))
+            self.assertEqual((code, out, err), (2, "no: this call was not started by a run of the Hub", ""), "a pipe is no terminal: nothing of what is missing")
         with tempfile.TemporaryDirectory() as folder:
-            code, out, _ = self.run_it(self.environment(METERNAUT_HUB_PROOF=str(hubenv.make_proof(folder))))
+            code, out, _ = self.run_it(self.environment(**hubenv.proof_environment(folder)))
             self.assertEqual((code, out), (0, "yes: a run of the Hub started this process"), "the process that holds the lock is this one, and it is alive")
+            code, out, _ = self.run_it(self.environment(**hubenv.proof_environment(folder, pid=hubenv.dead_pid())))
+            self.assertEqual((code, out), (2, "no: this call was not started by a run of the Hub"))
 
-    def test_the_main_function_prints_the_answer_to_the_stream_it_is_given(self):
+    def test_the_main_function_tells_a_person_what_is_missing_and_anything_else_only_the_refusal(self):
         out = io.StringIO()
         self.assertEqual(hg.main(environ={}, out=out), 2)
-        self.assertTrue(out.getvalue().startswith("no: GITHUB_ACTIONS is not true"))
+        self.assertEqual(out.getvalue().strip(), "no: this call was not started by a run of the Hub")
         out = io.StringIO()
-        self.assertEqual(hg.main(environ=hubenv.inside(), out=out), 0)
+        self.assertEqual(hg.main(environ={"GITHUB_ACTIONS": "true"}, out=out, person=True), 2)
+        self.assertTrue(out.getvalue().startswith("no: GITHUB_ACTIONS=true alone is no proof"), out.getvalue())
+        self.assertIn("GITHUB_REPOSITORY", out.getvalue())
+        out = io.StringIO()
+        self.assertEqual(hg.main(environ=hubenv.inside(), out=out, person=True), 0)
         self.assertEqual(out.getvalue().strip(), "yes: a run of the Hub started this process")
 
 
@@ -227,10 +418,26 @@ class TheToolsThatUseIt(unittest.TestCase):
             source = text(f"tools/{name}")
             with self.subTest(name):
                 self.assertIn('Path(__file__).with_name("hubguard.py")', source, "the helper is loaded from the tool's own folder, as the other shared helpers are")
-                self.assertIn("guard.what_is_missing(", source)
+                self.assertIn("guard.refusal(", source)
+                self.assertNotIn("guard.what_is_missing(", source, "a tool says only that the call was not started by a run of the Hub: what is missing is for a person at a terminal")
+                self.assertIn("only a run of the Hub may do that (AGENTS.md rule 18)", source)
                 self.assertNotRegex(source, r'GITHUB_ACTIONS"\) !?= ?"true"|GITHUB_ACTIONS"\) != "true"', "the old test is gone")
                 self.assertNotIn("os.environ.get(\"GITHUB_ACTIONS\")", source)
                 self.assertNotIn("environ.get(\"GITHUB_ACTIONS\")", source)
+                for word in ("METERNAUT_HUB_PROOF", "GITHUB_RUN_ID", "GITHUB_REPOSITORY", "ACTIONS_ID_TOKEN", "hub-proof"):
+                    self.assertNotIn(word, source, f"{name} does not name what counts as a run of the Hub")
+
+    def test_all_five_name_only_the_projects_own_subscription_and_group_when_they_change_something(self):
+        for name in ("az-deploy.py", "aigateway-prep.py", "operator-run.py"):
+            self.assertIn("guard.other_scope(", text(f"tools/{name}"), name)
+        for name in ("retire-old.py", "cases-move.py"):
+            source = text(f"tools/{name}")
+            self.assertIn("def refuse_unless_the_workflows_own(", source, name)
+            self.assertIn('environ.get("ENV_RESOURCE_GROUP")', source, name)
+            self.assertIn('environ.get("ENV_SUBSCRIPTION_ID")', source, name)
+        self.assertIn("guard.in_the_project(", text("tools/operator-run.py"), "the subnet and the identity are resources of the project's group")
+        prep = text("tools/aigateway-prep.py")
+        self.assertEqual(len(re.findall(r"\bonly_in_the_project\(args\)", prep)), 2, "the two commands that write")
 
     def test_the_helper_is_standard_library_only_and_keeps_the_names_that_the_local_hub_uses(self):
         source = text("tools/hubguard.py")

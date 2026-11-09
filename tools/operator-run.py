@@ -10,7 +10,8 @@ This is the Operator of docs/proposals/07-private-by-default.md. Once the servic
 sites that publish code, the queue that starts a run, the telemetry or the console from outside. What it still reaches is Azure Resource Manager. So it makes a
 container group (Azure Container Instances) in the Operator's delegated subnet, with the Operator's user-assigned identity, lets one script run in it, reads the
 log through Azure Resource Manager and deletes the group. The container group is made, and only a run of the Hub may make it (AGENTS.md rule 18; tools/hubguard.py says what
-counts as one): the command refuses to run anywhere else.
+counts as one): the command refuses to run anywhere else. It also names the project's own subscription and resource group and no other (the settings ENV_SUBSCRIPTION_ID and ENV_RESOURCE_GROUP that the
+workflow gives every step): --subscription is the project's when it is not given, and --subnet-id and --identity-id are resources of the project's group.
 
 run      Creates the group (`az container create --file`, restart policy Never, Linux, the identity, the subnet, the DNS servers that are given), mounts the script
          and every --secret-file as one secret volume at /mnt/op, and starts `/bin/bash /mnt/op/<script>`. It polls the group every --poll-seconds seconds with
@@ -230,9 +231,22 @@ def first_line(text: str, limit: int = 300) -> str:
 
 
 def require_actions() -> None:
-    why = guard.what_is_missing()
-    if why:
-        raise Problem(f"this command makes and deletes resources in Azure, and only a GitHub Actions run may do that (AGENTS.md rule 18): {why}", 2)
+    not_the_hub = guard.refusal()
+    if not_the_hub:
+        raise Problem(f"this command makes and deletes resources in Azure, and only a run of the Hub may do that (AGENTS.md rule 18): {not_the_hub}", 2)
+
+
+def only_in_the_project(args, *ids: tuple[str, str]) -> None:
+    """The call names the project's own subscription and resource group and no other (tools/hubguard.py): the subscription is the project's when none is given, and the ids of the subnet and
+    the identity are resources of the project's group."""
+    if not args.subscription:
+        args.subscription = os.environ.get("ENV_SUBSCRIPTION_ID") or ""
+    other_scope = guard.other_scope(args.subscription, args.resource_group)
+    if other_scope:
+        raise Problem(other_scope, 2)
+    for option, resource_id in ids:
+        if not guard.in_the_project(resource_id):
+            raise Problem(f"{option} is not a resource of the project's resource group", 2)
 
 
 def split_pair(pair: str, what: str) -> tuple[str, str]:
@@ -466,6 +480,7 @@ def write_summary(path: str, args, printer: Printer, code: int, seconds: int) ->
 
 def run_command(args, az, sleep=time.sleep, clock=time.monotonic) -> int:
     require_actions()
+    only_in_the_project(args, ("--subnet-id", args.subnet_id), ("--identity-id", args.identity_id))
     plain, secure, servers = check_options(args)
     files = read_files(args)
     printer = Printer([value for _, value in secure])
@@ -526,6 +541,7 @@ def age_in_minutes(started: str | None, now: datetime.datetime) -> float | None:
 
 def cleanup_command(args, az, now: datetime.datetime | None = None, sleep=time.sleep) -> int:
     require_actions()
+    only_in_the_project(args)
     if not GROUP.match(args.resource_group):
         raise Problem("the resource group is letters, digits and . _ - ( )", 2)
     if len(args.prefix) < MIN_PREFIX or not PREFIX.match(args.prefix):

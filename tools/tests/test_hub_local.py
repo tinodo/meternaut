@@ -1353,28 +1353,35 @@ class TheProofOfARunOfTheHub(RunnerCase):
         self.assertEqual(proof.parent.parent.parent.resolve(), self.local.resolve(), "the proof is in the rt folder of the local folder")
         held = json.loads((self.keep / "lock.json").read_text(encoding="utf-8"))
         self.assertEqual((held["pid"], held["run"], held["proof"]), (os.getpid(), proof.parent.name, hashlib.sha256(token.encode("utf-8")).hexdigest()))
+        self.assertEqual(held["processStart"], hub.guard.process_started(os.getpid()), "the lock says when its process started, so that a process number that is used again does not pass")
+        self.assertNotEqual(held["processStart"], "", "a start time, or the word unknown where the platform does not say")
         self.assertNotIn(token, json.dumps(held), "the lock holds the digest of the token and not the token")
         self.assertIn("the token is [***]", text)
         self.assertIn("repository=[unset] token request=[unset]", text, "what a GitHub runner has and a local run must not: nothing here looks like one")
         for place in (text, self.records()[0].read_text(encoding="utf-8"), self.records(".log")[0].read_text(encoding="utf-8")):
             self.assertNotIn(token, place)
 
-    def test_the_helper_lets_a_step_through_and_refuses_a_process_that_only_says_that_github_actions_is_true(self):
+    def test_the_helper_lets_a_step_through_and_refuses_a_process_that_only_says_that_github_actions_is_true_and_says_nothing_of_what_it_lacks(self):
+        here = f'METERNAUT_LOCAL="{hub.posix(self.local)}"'
         self.write_workflow(mini(CHECKOUT, LOGIN, block("Ask the helper", f"""
-            python3 "{self.helper}" || echo "exit=$?"
+            {here} python3 "{self.helper}" || echo "exit=$?"
             echo "---"
-            METERNAUT_HUB_PROOF= python3 "{self.helper}" || echo "exit=$?"
+            {here} METERNAUT_HUB_PROOF= python3 "{self.helper}" || echo "exit=$?"
+            echo "---"
+            python3 "{self.helper}" || echo "exit=$?"
             echo "GITHUB_ACTIONS is $GITHUB_ACTIONS in this step"
             """), ALWAYS))
         code, text = self.go("what-if")
         self.assertEqual(code, 0, text)
-        before, after = text.split("---")
+        before, between, after = text.split("---")
         self.assertIn("yes: a run of the Hub started this process", before)
         self.assertNotIn("exit=", before)
-        self.assertIn("no: GITHUB_ACTIONS=true alone is no proof: this is no GitHub runner (GITHUB_REPOSITORY, ACTIONS_ID_TOKEN_REQUEST_URL not set)", after)
-        self.assertIn("METERNAUT_HUB_PROOF is not set", after)
-        self.assertIn("exit=2", after)
+        for refused in (between, after):
+            self.assertIn("no: this call was not started by a run of the Hub", refused)
+            self.assertIn("exit=2", refused)
+            self.assertNotRegex(refused, r"GITHUB_ACTIONS=true alone|GITHUB_RUN_ID|GITHUB_REPOSITORY|ACTIONS_ID_TOKEN|METERNAUT_HUB_PROOF|(?i:hub-proof)", "a step that is not at a terminal is told nothing to copy")
         self.assertIn("GITHUB_ACTIONS is true in this step", after)
+        self.assertIn("exit=2", after, "the proof is looked for in the repository's own local folder, and the helper that sits in another repository finds another folder: the proof of this run is not in it")
 
     def test_the_proof_is_deleted_at_the_end_of_a_run_that_passed_failed_or_was_interrupted_and_counts_for_nothing_after_it(self):
         keep = block("Keep the path", f'echo "$METERNAUT_HUB_PROOF" > "{self.at}/path.txt"')
@@ -1395,7 +1402,7 @@ class TheProofOfARunOfTheHub(RunnerCase):
                 proof = Path((self.keep / "path.txt").read_text(encoding="utf-8").strip())
                 self.assertTrue(proof.parent.is_dir(), "the folder of the run was not deleted here (remove_tree is stubbed): so it is the proof that the run deleted itself")
                 self.assertFalse(proof.exists(), name)
-                self.assertIn("names no file that is there", hub.guard.what_is_missing({"GITHUB_ACTIONS": "true", hub.guard.PROOF_VARIABLE: str(proof)}))
+                self.assertIn("names no file that is there", hub.guard.what_is_missing({"GITHUB_ACTIONS": "true", hub.guard.PROOF_VARIABLE: str(proof), hub.LOCAL_OVERRIDE: str(self.local)}))
 
     def test_a_proof_that_a_killed_run_left_behind_counts_for_nothing_and_the_next_run_deletes_it(self):
         folder = self.local / hub.TEMP_NAME / "1700000000"
@@ -1406,7 +1413,7 @@ class TheProofOfARunOfTheHub(RunnerCase):
         gone.wait()
         (self.local / hub.LOCK_NAME).write_text(json.dumps({"pid": gone.pid, "action": "base", "started": "2026-11-08T10:00:00Z", "run": "1700000000",
                                                            "proof": hashlib.sha256(b"the-token-of-a-run-that-was-killed").hexdigest()}), encoding="utf-8")
-        self.assertIn("is not alive: this proof is stale", hub.guard.what_is_missing({hub.guard.PROOF_VARIABLE: str(stale)}))
+        self.assertIn("is not alive: this proof is stale", hub.guard.what_is_missing({hub.guard.PROOF_VARIABLE: str(stale), hub.LOCAL_OVERRIDE: str(self.local)}))
         code, text = self.go("what-if")
         self.assertEqual(code, 0, text)
         self.assertIn("an earlier run", text)
@@ -2358,9 +2365,12 @@ class NothingReachesGitHubButTheOptionalInitRead(unittest.TestCase):
 
     def test_git_is_only_read(self):
         used = set(re.findall(r'(?:git|self\.deps\.git|deps\.git)\(\["([a-z-]+)"', self.code))
-        self.assertEqual(used, {"rev-parse", "status", "ls-files", "check-ignore"})
+        self.assertEqual(used, {"status", "ls-files", "check-ignore"})
+        helper = re.sub(r'""".*?"""', "", (ROOT / "tools" / "hubguard.py").read_text(encoding="utf-8"), flags=re.S)
+        self.assertEqual(set(re.findall(r'(?:git|run_git)\(\["([a-z-]+)"', helper)), {"rev-parse"}, "the helper that finds the local folder (for this tool and for the tools that look for the proof) asks git one thing")
         for word in ("push", "fetch", "pull", "clone", "commit", "checkout", "reset", "worktree", "remote", "merge", "rebase", "stash"):
             self.assertIsNone(re.search(rf'git\(\["{word}"', self.code), word)
+            self.assertIsNone(re.search(rf'git\(\["{word}"', helper), word)
 
     def test_what_the_runner_itself_asks_of_az_is_the_session_and_one_read(self):
         used = set(re.findall(r'self\.az\.run\(\["([a-z-]+)", "([a-z-]+)"', self.code))
@@ -2374,6 +2384,9 @@ class NothingReachesGitHubButTheOptionalInitRead(unittest.TestCase):
         self.assertIn("deleted when the run ends, after a failure and after Ctrl+C too", header)
         self.assertIn("It does not stop a process that holds the owner's az session", header)
         self.assertIn("GITHUB_ACTIONS=true and METERNAUT_HUB_LOCAL=1", header)
+        self.assertIn("the start time of its process in the lock", header)
+        self.assertIn("look for the proof in this repository's own local folder only", header)
+        self.assertIn("like a tripwire; it is not a lock", header)
         self.assertIn("MAIN working tree", header)
         self.assertIn("METERNAUT_LOCAL", header)
 

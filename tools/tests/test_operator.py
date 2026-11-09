@@ -31,6 +31,7 @@ SUBNET = f"/subscriptions/{SUBSCRIPTION}/resourceGroups/{GROUP}/providers/Micros
 IDENTITY = f"/subscriptions/{SUBSCRIPTION}/resourceGroups/{GROUP}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/id-example-operator"
 DIGEST = "sha256:" + "ab" * 32
 IMAGE = f"mcr.microsoft.com/azure-cli@{DIGEST}"
+PROJECT = {"ENV_SUBSCRIPTION_ID": SUBSCRIPTION, "ENV_RESOURCE_GROUP": GROUP}
 SECRET = "Zx9-hunter2-QWERTY-42"
 TOKEN_OF_THE_RUN = "ghs_Tok3nOfTheRun_0123456789"
 
@@ -132,7 +133,7 @@ def run_tool(*extra, az, clock=None, env=None, script_text="echo hi\n", files=No
             path.write_bytes(content)
             argv += ["--secret-file", f"{file_name}={path}"]
         out, err = io.StringIO(), io.StringIO()
-        environment = {"RUNNER_TEMP": str(tmp), **(env or {})}
+        environment = {**PROJECT, "RUNNER_TEMP": str(tmp), **(env or {})}
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err), hubenv.patched(actions, environment):
             code = op.main(argv, az=az, sleep=clock.sleep, clock=clock)
         return code, out.getvalue(), err.getvalue(), tmp
@@ -176,19 +177,19 @@ class Arguments(unittest.TestCase):
                           f"mcr.microsoft.com/azure-cli@sha256:{'G' * 64}", f"mcr.microsoft.com/azure-cli@md5:{'a' * 32}", "mcr.microsoft.com/azure-cli@sha256:" + "a" * 64 + " --x"):
                 with self.subTest(image=image):
                     az, err = FakeAz(), io.StringIO()
-                    with contextlib.redirect_stderr(err), hubenv.patched():
+                    with contextlib.redirect_stderr(err), hubenv.patched(extra=PROJECT):
                         code = op.main([*base, "--image", image], az=az)
                     self.assertEqual(code, 2)
                     self.assertEqual(az.calls, [])
                     self.assertIn("sha256", err.getvalue())
             az, err = FakeAz(), io.StringIO()
-            with contextlib.redirect_stderr(err), hubenv.patched():
+            with contextlib.redirect_stderr(err), hubenv.patched(extra=PROJECT):
                 code = op.main([*base, "--image", "mcr.microsoft.com/azure-cli:2.92.0"], az=az)
             self.assertIn("is a tag, and a tag can move", err.getvalue())
             self.assertIn("--allow-tag", err.getvalue())
             az = FakeAz(shows=[shown(container="Terminated", exit_code=0)])
             out = io.StringIO()
-            with contextlib.redirect_stdout(out), hubenv.patched():
+            with contextlib.redirect_stdout(out), hubenv.patched(extra=PROJECT):
                 code = op.main([*base, "--image", "mcr.microsoft.com/azure-cli:2.92.0", "--allow-tag"], az=az, sleep=Clock().sleep)
             self.assertEqual(code, 0)
             self.assertIn("pinned by tag", out.getvalue())
@@ -198,11 +199,14 @@ class Arguments(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             script = Path(tmp) / "probe.sh"
             script.write_text("echo hi\n", encoding="utf-8")
-            for subnet, identity in (("snet-ops", IDENTITY), (SUBNET, "id-example-operator"), (SUBNET.replace("/subnets/snet-ops", ""), IDENTITY), (SUBNET, IDENTITY.replace("userAssignedIdentities", "disks"))):
+            for subnet, identity, why in (("snet-ops", IDENTITY, "--subnet-id is not a resource of the project's resource group"), (SUBNET, "id-example-operator", "--identity-id is not a resource of the project's resource group"),
+                                          (SUBNET.replace("/subnets/snet-ops", ""), IDENTITY, "--subnet-id is the resource id of a subnet"),
+                                          (SUBNET, IDENTITY.replace("userAssignedIdentities", "disks"), "--identity-id is the resource id of a user-assigned identity")):
                 az, err = FakeAz(), io.StringIO()
-                with contextlib.redirect_stderr(err), hubenv.patched():
+                with contextlib.redirect_stderr(err), hubenv.patched(extra=PROJECT):
                     code = op.main(["run", "--resource-group", GROUP, "--name", NAME, "--subnet-id", subnet, "--identity-id", identity, "--image", IMAGE, "--script", str(script)], az=az)
                 self.assertEqual((code, az.calls), (2, []), (subnet, identity))
+                self.assertIn(why, err.getvalue(), "an id that is not even in the project's group is refused by that check; one that is, by the check of its form")
 
     def test_environment_variables_are_checked(self):
         self.refused("--env", "NOVALUE")
@@ -250,25 +254,58 @@ class Arguments(unittest.TestCase):
         az = FakeAz()
         code, _, err = clean_run(az, actions=False)
         self.assertEqual((code, az.calls), (2, []))
-        self.assertIn("this command makes and deletes resources in Azure, and only a GitHub Actions run may do that (AGENTS.md rule 18)", err)
-        self.assertIn("rule 18", err)
+        self.assertIn("error: this command makes and deletes resources in Azure, and only a run of the Hub may do that (AGENTS.md rule 18): this call was not started by a run of the Hub", err)
 
-    def test_a_process_that_only_says_that_github_actions_is_true_makes_nothing_and_the_refusal_names_what_is_missing(self):
+    def test_a_process_that_only_says_that_github_actions_is_true_makes_nothing_and_the_refusal_says_nothing_of_what_it_lacks(self):
         az = FakeAz()
         code, _, err = clean_run(az, actions=False, env={"GITHUB_ACTIONS": "true"})
         self.assertEqual((code, az.calls), (2, []))
-        self.assertIn("GITHUB_ACTIONS=true alone is no proof", err)
-        self.assertIn("METERNAUT_HUB_PROOF", err)
+        self.assertIn("this call was not started by a run of the Hub", err)
+        self.assertNotRegex(err, r"GITHUB_|METERNAUT_|ACTIONS_ID|(?i:proof)|(?i:lock)", "a refusal says nothing to copy")
 
-    def test_the_proof_of_a_run_of_tools_hub_local_that_is_alive_is_enough_and_a_stale_one_is_not(self):
+    def test_the_proof_of_a_run_of_tools_hub_local_that_is_alive_is_enough_and_a_stale_one_or_one_of_another_folder_is_not(self):
         with tempfile.TemporaryDirectory() as folder:
             az = FakeAz(shows=[shown(container="Terminated", exit_code=0)])
-            code, _, err = clean_run(az, actions=False, env={"METERNAUT_HUB_PROOF": str(hubenv.make_proof(folder))})
+            code, _, err = clean_run(az, actions=False, env=hubenv.proof_environment(folder))
             self.assertEqual(code, 0, err)
             az = FakeAz()
-            code, _, err = clean_run(az, actions=False, env={"METERNAUT_HUB_PROOF": str(hubenv.make_proof(folder, pid=hubenv.dead_pid()))})
+            code, _, err = clean_run(az, actions=False, env=hubenv.proof_environment(folder, pid=hubenv.dead_pid()))
             self.assertEqual((code, az.calls), (2, []))
-            self.assertIn("is not alive: this proof is stale", err)
+            self.assertIn("this call was not started by a run of the Hub", err)
+            with tempfile.TemporaryDirectory() as hostile:
+                code, _, err = clean_run(az, actions=False, env={**hubenv.proof_environment(hostile, run="1"), "METERNAUT_LOCAL": folder})
+            self.assertEqual((code, az.calls), (2, []), "a proof that is not in the repository's own local folder")
+
+    def test_the_call_names_the_projects_own_subscription_and_group_and_no_other_and_asks_azure_nothing_otherwise(self):
+        elsewhere = "99999999-8888-7777-6666-555555555555"
+        for label, extra, env in (("another group", ["--resource-group", "rg-another"], {}), ("another subscription", ["--subscription", elsewhere], {}),
+                                  ("the project's group, named by its case", ["--resource-group", GROUP.upper()], {}),
+                                  ("a project without its own subscription", [], {"ENV_SUBSCRIPTION_ID": ""}), ("a project without its own group", [], {"ENV_RESOURCE_GROUP": ""})):
+            az = FakeAz()
+            code, _, err = clean_run(az, *extra, env=env)
+            self.assertEqual((code, az.calls), (2, []), label)
+            self.assertIn("no other group", err, label)
+            self.assertNotRegex(err, r"ENV_|METERNAUT_|GITHUB_", label)
+
+    def test_the_subnet_and_the_identity_are_resources_of_the_projects_own_group_and_of_no_other(self):
+        elsewhere = SUBSCRIPTION.replace("1111", "9999", 1)
+        other_group = "/resourceGroups/rg-another/"
+        for label, subnet, identity in (("a subnet of another group", SUBNET.replace(f"/resourceGroups/{GROUP}/", other_group), IDENTITY),
+                                        ("an identity of another group", SUBNET, IDENTITY.replace(f"/resourceGroups/{GROUP}/", other_group)),
+                                        ("a subnet of another subscription", SUBNET.replace(SUBSCRIPTION, elsewhere), IDENTITY),
+                                        ("an identity of another subscription", SUBNET, IDENTITY.replace(SUBSCRIPTION, elsewhere)),
+                                        ("a group whose name only starts like the project's", SUBNET.replace(f"/resourceGroups/{GROUP}/", f"/resourceGroups/{GROUP}-2/"), IDENTITY)):
+            with tempfile.TemporaryDirectory() as tmp:
+                script = Path(tmp) / "probe.sh"
+                script.write_text("echo hi\n", encoding="utf-8")
+                az, err = FakeAz(), io.StringIO()
+                with contextlib.redirect_stderr(err), hubenv.patched(extra=PROJECT):
+                    code = op.main(["run", "--resource-group", GROUP, "--name", NAME, "--subnet-id", subnet, "--identity-id", identity, "--image", IMAGE, "--script", str(script)], az=az)
+                self.assertEqual((code, az.calls), (2, []), label)
+                self.assertRegex(err.getvalue(), r"--(subnet|identity)-id is not a resource of the project's resource group", label)
+        az = FakeAz(shows=[shown(container="Terminated", exit_code=0)])
+        code, _, _ = clean_run(az, "--subscription", SUBSCRIPTION.upper())
+        self.assertEqual(code, 0, "an id has no case: the same subscription, written in capitals, is the project's own")
 
     def test_files_of_the_secret_volume_are_checked(self):
         az = FakeAz()
@@ -279,7 +316,7 @@ class Arguments(unittest.TestCase):
                 out, err = io.StringIO(), io.StringIO()
                 script = Path(tmp) / "probe.sh"
                 script.write_text("echo hi\n", encoding="utf-8")
-                with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err), hubenv.patched():
+                with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err), hubenv.patched(extra=PROJECT):
                     code = op.main(["run", "--resource-group", GROUP, "--name", NAME, "--subnet-id", SUBNET, "--identity-id", IDENTITY, "--image", IMAGE, "--script", str(script),
                                     "--secret-file", pair], az=az)
                 self.assertEqual(code, 2, pair)
@@ -326,7 +363,7 @@ class Arguments(unittest.TestCase):
     def test_the_script_that_cannot_be_read_is_refused(self):
         az = FakeAz()
         err = io.StringIO()
-        with contextlib.redirect_stderr(err), hubenv.patched():
+        with contextlib.redirect_stderr(err), hubenv.patched(extra=PROJECT):
             code = op.main(["run", "--resource-group", GROUP, "--name", NAME, "--subnet-id", SUBNET, "--identity-id", IDENTITY, "--image", IMAGE, "--script", "does-not-exist.sh"], az=az)
         self.assertEqual((code, az.calls), (2, []))
 
@@ -428,14 +465,16 @@ class TheRun(unittest.TestCase):
         if os.name != "nt":
             self.assertEqual(az.file_mode, 0o600)
 
-    def test_every_call_names_the_subscription_when_one_is_given(self):
+    def test_every_call_names_the_subscription_when_one_is_given_and_the_projects_own_when_none_is(self):
         az = self.good()
         clean_run(az, "--subscription", SUBSCRIPTION)
+        self.assertTrue(az.calls)
         for call in az.calls:
             self.assertEqual(call[call.index("--subscription") + 1], SUBSCRIPTION, call)
         az = self.good()
         clean_run(az)
-        self.assertFalse(any("--subscription" in call for call in az.calls))
+        for call in az.calls:
+            self.assertEqual(call[call.index("--subscription") + 1], SUBSCRIPTION, f"the subscription of the project when none is given: {call}")
 
     def test_a_group_that_is_not_visible_yet_is_waited_for_and_a_group_that_stays_unreadable_stops_the_run(self):
         not_found = (1, "", "ERROR: (ResourceNotFound) The Resource 'Microsoft.ContainerInstance/containerGroups/x' was not found.")
@@ -747,7 +786,7 @@ class Cleanup(unittest.TestCase):
         az = az or FakeAz(listing=(0, json.dumps(group_listing()), ""))
         out, err = io.StringIO(), io.StringIO()
         arguments = ["cleanup", "--resource-group", GROUP, "--prefix", "op-probe-", *extra]
-        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err), hubenv.patched(actions):
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err), hubenv.patched(actions, PROJECT):
             parser = op.build_parser()
             args = parser.parse_args(arguments)
             try:
@@ -784,14 +823,14 @@ class Cleanup(unittest.TestCase):
         for prefix in ("op", "OP-", "op probe", "-op-", "op/../"):
             az = FakeAz(listing=(0, "[]", ""))
             out, err = io.StringIO(), io.StringIO()
-            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err), hubenv.patched():
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err), hubenv.patched(extra=PROJECT):
                 code = op.main(["cleanup", "--resource-group", GROUP, f"--prefix={prefix}"], az=az)
             self.assertEqual((code, az.calls), (2, []), prefix)
 
     def test_a_list_that_fails_is_an_error_and_nothing_is_deleted(self):
         az = FakeAz(listing=(1, "", "ERROR: no"))
         out, err = io.StringIO(), io.StringIO()
-        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err), hubenv.patched():
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err), hubenv.patched(extra=PROJECT):
             code = op.main(["cleanup", "--resource-group", GROUP, "--prefix", "op-probe-"], az=az)
         self.assertEqual(code, 1)
         self.assertNotIn("delete", az.verbs())
@@ -800,6 +839,22 @@ class Cleanup(unittest.TestCase):
         code, out, err, az = self.cleanup(actions=False)
         self.assertEqual(code, 2)
         self.assertEqual(az.calls, [])
+        self.assertIn("this call was not started by a run of the Hub", err)
+
+    def test_it_lists_and_deletes_in_the_projects_own_group_and_subscription_and_in_no_other(self):
+        for label, group, extra in (("another group", "rg-another", []), ("the group in capitals", GROUP.upper(), []), ("another subscription", GROUP, ["--subscription", "99999999-8888-7777-6666-555555555555"])):
+            az = FakeAz(listing=(0, json.dumps(group_listing()), ""))
+            out, err = io.StringIO(), io.StringIO()
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err), hubenv.patched(extra=PROJECT):
+                code = op.main(["cleanup", "--resource-group", group, "--prefix", "op-probe-", *extra], az=az)
+            self.assertEqual((code, az.calls), (2, []), label)
+            self.assertIn("this command names no other group", err.getvalue(), label)
+        az = FakeAz(listing=(0, json.dumps(group_listing()), ""))
+        code, _, _, az = self.cleanup(az=az)
+        self.assertEqual(code, 0)
+        self.assertTrue(az.calls)
+        for call in az.calls:
+            self.assertEqual(call[call.index("--subscription") + 1], SUBSCRIPTION, f"the subscription of the project when none is given: {call}")
 
 
 class TheFolder(unittest.TestCase):

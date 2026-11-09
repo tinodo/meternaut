@@ -458,6 +458,7 @@ class TheCleanupOfTheHealthCheckGroup(unittest.TestCase):
 
     TITLE = "Delete any container group of the health check of the cases app that is left"
     GROUP = "rg-of-the-project"
+    SUBSCRIPTION = "11111111-2222-3333-4444-555555555555"
 
     def test_the_tool_is_asked_for_the_groups_that_start_with_the_name_of_the_health_check_and_the_call_is_accepted(self):
         done, lines, _ = run_step_script(self.TITLE, {"python3": PYTHON3}, {"ENV_RESOURCE_GROUP": self.GROUP})
@@ -468,7 +469,7 @@ class TheCleanupOfTheHealthCheckGroup(unittest.TestCase):
         self.assertEqual((args.prefix, args.older_than_minutes, args.resource_group), ("op-health-", 0.0, self.GROUP))
         self.assertTrue("op-health-1234567890".startswith(args.prefix), "the prefix is the start of the name that the health step gives its group")
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
-            with hubenv.patched():
+            with hubenv.patched(extra={"ENV_SUBSCRIPTION_ID": self.SUBSCRIPTION, "ENV_RESOURCE_GROUP": self.GROUP}):
                 self.assertEqual(operator_tool.cleanup_command(args, lambda arguments: (0, "[]", "")), 0, "the prefix is one that the tool accepts")
 
     def test_a_group_that_could_not_be_deleted_is_a_warning_and_does_not_fail_a_run_that_was_good(self):
@@ -760,7 +761,7 @@ class TheFrontDoorOfAClosedAppIsKnockedAtInsideTheNetwork(unittest.TestCase):
         for other in ("op-check-1", "op-health-1", "op-publish-1", "op-probe-1", "op-aigw-1"):
             self.assertFalse(other.startswith(args.prefix), f"{other}: the cleanup cannot take the group of another step")
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
-            with hubenv.patched():
+            with hubenv.patched(extra={"ENV_SUBSCRIPTION_ID": self.SUBSCRIPTION, "ENV_RESOURCE_GROUP": self.GROUP}):
                 self.assertEqual(operator_tool.cleanup_command(args, lambda arguments: (0, "[]", "")), 0, "the prefix is one that the tool accepts")
         done, lines, _ = run_step_script(self.CLEANUP, {"python3": PYTHON3}, {"ENV_RESOURCE_GROUP": self.GROUP, "FAKE_EXIT": "1"})
         self.assertEqual(done.returncode, 0, "a group that could not be deleted does not fail a run that was good")

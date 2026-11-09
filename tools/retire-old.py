@@ -410,9 +410,9 @@ def command_show(args, azure: Azure, out) -> int:
 
 
 def refuse_unless_the_hub(environ) -> None:
-    why = guard.what_is_missing(environ)
-    if why:
-        raise Refused(f"this command deletes, and only a GitHub Actions run may do that (AGENTS.md rule 18): {why}")
+    not_the_hub = guard.refusal(environ)
+    if not_the_hub:
+        raise Refused(f"this command deletes, and only a run of the Hub may do that (AGENTS.md rule 18): {not_the_hub}")
 
 
 def command_run(args, azure: Azure, environ, out) -> int:

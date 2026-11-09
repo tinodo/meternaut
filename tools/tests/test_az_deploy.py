@@ -68,30 +68,31 @@ class Commands(unittest.TestCase):
         runner = Runner()
         code, _, err, _ = run(["create", *BASE, "--name", "n"], runner, actions=False)
         self.assertEqual(code, 2)
-        self.assertIn("this command deploys, and only a GitHub Actions run may do that (AGENTS.md rule 18)", err)
+        self.assertEqual(err.strip(), "error: this command deploys, and only a run of the Hub may do that (AGENTS.md rule 18): this call was not started by a run of the Hub")
         self.assertEqual(run(["create", *BASE], runner)[0], 2)
         self.assertEqual(runner.commands, [])
 
-    def test_create_refuses_a_process_that_only_says_that_github_actions_is_true_and_names_what_is_missing(self):
+    def test_create_refuses_a_process_that_only_says_that_github_actions_is_true_and_says_nothing_of_what_it_lacks(self):
         runner = Runner()
         code, _, err, _ = run(["create", *BASE, "--name", "n"], runner, actions=False, extra={"GITHUB_ACTIONS": "true"})
         self.assertEqual(code, 2)
-        self.assertIn("GITHUB_ACTIONS=true alone is no proof", err)
-        for name in ("GITHUB_RUN_ID", "GITHUB_REPOSITORY", "ACTIONS_ID_TOKEN_REQUEST_URL", "METERNAUT_HUB_PROOF"):
-            self.assertIn(name, err)
+        self.assertIn("this call was not started by a run of the Hub", err)
+        self.assertNotRegex(err, r"GITHUB_|METERNAUT_|ACTIONS_ID|(?i:proof)|(?i:lock)", "a refusal says nothing to copy")
         self.assertEqual(runner.commands, [])
 
-    def test_create_goes_with_the_proof_of_a_run_of_tools_hub_local_that_is_alive_and_not_with_a_stale_one(self):
+    def test_create_goes_with_the_proof_of_a_run_of_tools_hub_local_that_is_alive_and_not_with_a_stale_one_or_one_of_another_folder(self):
         with tempfile.TemporaryDirectory() as folder:
             runner = Runner((0, "", ""))
-            proof = hubenv.make_proof(folder)
-            code, _, err, _ = run(["create", *BASE, "--name", "n"], runner, actions=False, extra={"METERNAUT_HUB_PROOF": str(proof)})
+            code, _, err, _ = run(["create", *BASE, "--name", "n"], runner, actions=False, extra=hubenv.proof_environment(folder))
             self.assertEqual((code, err, len(runner.commands)), (0, "", 1))
             runner = Runner()
-            proof = hubenv.make_proof(folder, pid=hubenv.dead_pid())
-            code, _, err, _ = run(["create", *BASE, "--name", "n"], runner, actions=False, extra={"METERNAUT_HUB_PROOF": str(proof)})
+            code, _, err, _ = run(["create", *BASE, "--name", "n"], runner, actions=False, extra=hubenv.proof_environment(folder, pid=hubenv.dead_pid()))
             self.assertEqual(code, 2)
-            self.assertIn("is not alive: this proof is stale", err)
+            self.assertIn("this call was not started by a run of the Hub", err)
+            with tempfile.TemporaryDirectory() as hostile:
+                forged = {**hubenv.proof_environment(hostile, run="1"), "METERNAUT_LOCAL": folder}
+                code, _, err, _ = run(["create", *BASE, "--name", "n"], runner, actions=False, extra=forged)
+            self.assertEqual(code, 2, "a proof that is not in the repository's own local folder")
             self.assertEqual(runner.commands, [])
 
     def test_create_names_no_other_subscription_or_group_than_the_projects_own(self):
@@ -100,7 +101,7 @@ class Commands(unittest.TestCase):
             argv = ["create", "--subscription", subscription, "--resource-group", group, "--template", "t.bicep", "--name", "n"]
             code, _, err, _ = run(argv, runner)
             self.assertEqual(code, 2, (subscription, group))
-            self.assertIn("is not the project's own (ENV_SUBSCRIPTION_ID and ENV_RESOURCE_GROUP): this command names no other group", err)
+            self.assertEqual(err.strip(), "error: the subscription or the resource group is not the project's own: this command names no other group")
             self.assertNotIn("another", err, "the names that were given are not printed back")
             self.assertEqual(runner.commands, [])
         runner = Runner((0, "", ""))
@@ -109,7 +110,7 @@ class Commands(unittest.TestCase):
             runner = Runner()
             code, _, err, _ = run(["create", *BASE, "--name", "n"], runner, extra=settings)
             self.assertEqual(code, 2)
-            self.assertIn("the project's own settings that the workflow gives every step, are not both set", err)
+            self.assertIn("the project's own subscription and resource group are not both set for this call", err)
             self.assertEqual(runner.commands, [])
 
     def test_what_if_reads_and_changes_nothing_so_it_may_name_any_group(self):

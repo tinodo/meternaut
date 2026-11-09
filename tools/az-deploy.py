@@ -75,9 +75,9 @@ def main(argv=None, runner=run, sleep=time.sleep) -> int:
     parser.add_argument("--restore-param", help="the template parameter that restores a soft-deleted account")
     args = parser.parse_args(argv)
     if args.mode == "create":
-        not_the_hub = guard.what_is_missing()
+        not_the_hub = guard.refusal()
         if not_the_hub:
-            print(f"error: this command deploys, and only a GitHub Actions run may do that (AGENTS.md rule 18): {not_the_hub}", file=sys.stderr)
+            print(f"error: this command deploys, and only a run of the Hub may do that (AGENTS.md rule 18): {not_the_hub}", file=sys.stderr)
             return 2
         other_scope = guard.other_scope(args.subscription, args.resource_group)
         if other_scope:
