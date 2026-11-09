@@ -231,15 +231,19 @@ CASES_SOURCE_FILES = {"function_app.py": b"# the cases app\n", "host.json": b"{}
                       "cases/__init__.py": b"", "cases/loop.py": b"# loop\n", "cases/web/__init__.py": b"", "cases/web/home.py": b"# home\n"}
 
 
+FIXED_TIME = (2026, 11, 9, 12, 0, 0)  # an archive holds the time of each file, and LZMA can make two of them differ by a byte: the helper below is the same bytes every time it is called
+
+
 def source_zip(files=None):
-    """The archive of the sources, as tools/build-function-app.sh makes it with FUNCTION_APP_SOURCES_ONLY=1: one LZMA entry, sources.zip, that holds the files at its root in a zip of their own, stored."""
+    """The archive of the sources, as tools/build-function-app.sh makes it with FUNCTION_APP_SOURCES_ONLY=1: one LZMA entry, sources.zip, that holds the files at its root in a zip of their own, stored.
+    The times of the entries are fixed, so that two calls make the same bytes (a test compares the size that the script saw with the size of a second call)."""
     inner = io.BytesIO()
     with zipfile.ZipFile(inner, "w", zipfile.ZIP_STORED) as archive:
         for name, content in (files or CASES_SOURCE_FILES).items():
-            archive.writestr(name, content)
+            archive.writestr(zipfile.ZipInfo(name, FIXED_TIME), content, zipfile.ZIP_STORED)
     outer = io.BytesIO()
     with zipfile.ZipFile(outer, "w", zipfile.ZIP_LZMA) as archive:
-        archive.writestr("sources.zip", inner.getvalue())
+        archive.writestr(zipfile.ZipInfo("sources.zip", FIXED_TIME), inner.getvalue(), zipfile.ZIP_LZMA)
     return outer.getvalue()
 
 
