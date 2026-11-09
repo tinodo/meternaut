@@ -79,7 +79,6 @@ FOUNDRY_USER = "53ca6127-db72-4b80-b1b0-d745d6d5456d"
 FOUNDRY_PROJECT_MANAGER = "eadc314b-1a2d-4efa-be10-5d325db5065e"
 WIDER_FOUNDRY_ROLES = {FOUNDRY_PROJECT_MANAGER: "Foundry Project Manager", "e47c6f54-e4a2-4754-9501-8e0985b135e1": "Foundry Account Owner", "c883944f-8b7b-4483-af10-35834be79c4a": "Foundry Owner"}
 MONITOR_AUDIENCE = "https://monitor.azure.com"
-SHIELDS = (("Jailbreak", "Prompt"), ("Indirect Attack", "Prompt"), ("Indirect Attack", "PostToolCall"))
 GATEWAY_AUDIENCE = "https://azure-api.net/aigateway"
 GATEWAY_PATH = "/default/models/openai/v1"
 CATEGORIES = ("hateSeverity", "violenceSeverity", "sexualSeverity", "selfHarmSeverity")
@@ -150,6 +149,16 @@ def load_sibling(name: str, file: str):
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+_FOUNDRY_CHECK = []
+
+
+def foundry_check():
+    """tools/foundry-check.py, loaded once: what the guardrail must hold (REQUIRED_FILTERS, and how it is judged) is defined there and nowhere else."""
+    if not _FOUNDRY_CHECK:
+        _FOUNDRY_CHECK.append(load_sibling("foundry_check_of_the_drift_check", "foundry-check.py"))
+    return _FOUNDRY_CHECK[0]
 
 
 def plain(value: object, limit: int = 60) -> str:
@@ -501,22 +510,21 @@ def deployments(ctx: Context) -> Outcome:
 
 @control("I-guardrail", "L2")
 def guardrail(ctx: Context) -> Outcome:
+    foundry = foundry_check()
     document = ctx.read(f"The guardrail {ctx.guardrail}", f"{ctx.account_path}/raiPolicies/{ctx.guardrail}", FOUNDRY_API)
     properties = document.get("properties") or {}
-    filters = [f for f in properties.get("contentFilters") or [] if isinstance(f, dict)]
-    off = []
-    for name, source in SHIELDS:
-        named = [f for f in filters if f.get("name") == name and f.get("source") == source]
-        if not named or not all(f.get("enabled") is True and f.get("blocking") is True for f in named):
-            off.append(f"{name} at {source}")
     problems = []
-    if off:
-        problems.append(f"it does not block {', '.join(off)}")
+    wrong = foundry.wrong_filters(properties.get("contentFilters"))
+    if wrong:
+        by_reason: dict[str, list[str]] = {}
+        for name, source, reason in wrong:
+            by_reason.setdefault(reason, []).append(f"{name} at {source}")
+        problems.append(f"it does not block {len(wrong)} of its {len(foundry.REQUIRED_FILTERS)} filters (" + "; ".join(f"{reason}: {', '.join(items)}" for reason, items in by_reason.items()) + ")")
     if properties.get("mode") not in (None, "Blocking"):
         problems.append(f"its mode is {plain(properties.get('mode'))}, not Blocking")
     if problems:
         return failed(f"The guardrail {ctx.guardrail}: {'; '.join(problems)}.")
-    return passed("The guardrail blocks Jailbreak and Indirect Attack on the user input and Indirect Attack on the tool results, and its mode is Blocking.")
+    return passed(f"The guardrail blocks {foundry.blocked_in_words()}, each on and blocking, and its mode is Blocking.")
 
 
 @control("I-model-lifecycle", "L2")
@@ -698,7 +706,7 @@ def telemetry(ctx: Context) -> Outcome:
 
 @control("I-connection", "L2")
 def connection(ctx: Context) -> Outcome:
-    foundry = load_sibling("foundry_check_of_the_drift_check", "foundry-check.py")
+    foundry = foundry_check()
     gateway_doc = ctx.read("The Foundry resource's gateway", ctx.gateway_path, GATEWAY_API)
     host = str(((gateway_doc.get("properties") or {}).get("frontend") or {}).get("defaultHostname") or "")
     name = ctx.params.AIGATEWAY_CONNECTION_NAME
@@ -1354,7 +1362,8 @@ def fake_estate(models: list[dict], policies: list[dict], names: dict[str, str])
         f"{account_path}/deployments": {"value": [{"name": m["name"], "sku": {"name": m["sku"], "capacity": m.get("agentCapacity", m["capacity"])},
                                                   "properties": {"model": {"name": m["name"], "version": m["version"]}, "raiPolicyName": guardrail, "versionUpgradeOption": "NoAutoUpgrade"}} for m in models]},
         f"{account_path}/raiPolicies/{guardrail}": {"properties": {"mode": "Blocking", "basePolicyName": "Microsoft.DefaultV2",
-                                                                    "contentFilters": [{"name": n, "source": s, "enabled": True, "blocking": True} for n, s in SHIELDS]}},
+                                                                    "contentFilters": [{"name": n, "source": s, "enabled": True, "blocking": True, **({"severityThreshold": v} if v else {})}
+                                                                                       for n, s, v in foundry_check().REQUIRED_FILTERS]}},
         f"{account_path}/models": {"value": [{"kind": "OpenAI", "model": {"name": m["name"], "version": m["version"], "lifecycleStatus": "GenerallyAvailable",
                                                                           "deprecation": {"inference": m["retirementDate"] + "T00:00:00Z"}, "skus": [{"name": m["sku"], "deprecationDate": m["retirementDate"] + "T00:00:00Z"}]}} for m in models]},
         f"{account_path}/projects/{names['project']}": {"identity": {"principalId": SELFTEST_IDS["foundry-project"]}},
@@ -1490,9 +1499,13 @@ def selftest() -> int:
     gateway_path = f"{base}/providers/Microsoft.ApiManagement/aigateways/{names['gateway']}"
     project_path = f"{account_path}/projects/{names['project']}"
     project_roles = f"{project_path}/providers/Microsoft.Authorization/roleAssignments"
+    guardrail_path = f"{account_path}/raiPolicies/{names['guardrail']}"
     operator_id = SELFTEST_IDS["operator"]
     project_id = SELFTEST_IDS["foundry-project"]
     management_group = "/providers/Microsoft.Management/managementGroups/example-root"
+
+    def filter_of(estate: dict, name: str, source: str) -> dict:
+        return next(f for f in estate[guardrail_path]["properties"]["contentFilters"] if f["name"] == name and f["source"] == source)
 
     healthy = world()
     expected_unknown = {"I-defender", "I-entra-console", "I-entra-agents"}
@@ -1504,7 +1517,11 @@ def selftest() -> int:
         ("I-foundry-flags", lambda e: e[account_path]["properties"].update(disableLocalAuth=False)),
         ("I-deployments", lambda e: e[f"{account_path}/deployments"]["value"].append({"name": "unlisted", "sku": {"name": "GlobalStandard", "capacity": 1}, "properties": {}})),
         ("I-deployments", lambda e: e[f"{account_path}/deployments"]["value"][0]["properties"].update(raiPolicyName="Microsoft.DefaultV2")),
-        ("I-guardrail", lambda e: e[f"{account_path}/raiPolicies/{names['guardrail']}"]["properties"]["contentFilters"].pop()),
+        ("I-guardrail", lambda e: e[guardrail_path]["properties"]["contentFilters"].pop()),
+        ("I-guardrail", lambda e: e[guardrail_path]["properties"]["contentFilters"].remove(filter_of(e, "Hate", "Completion"))),
+        ("I-guardrail", lambda e: filter_of(e, "Violence", "Prompt").update(severityThreshold="High")),
+        ("I-guardrail", lambda e: e[guardrail_path]["properties"]["contentFilters"].remove(filter_of(e, "Indirect Attack Spotlighting", "Prompt"))),
+        ("I-guardrail", lambda e: filter_of(e, "Protected Material Text", "Completion").update(blocking=False)),
         ("I-model-lifecycle", lambda e: e[f"{account_path}/models"]["value"][0]["model"].update(lifecycleStatus="Deprecated")),
         ("I-gateway-policies", lambda e: e[f"{gateway_path}/workspaces/default"]["properties"]["policies"].pop(0)),
         ("I-gateway-models", lambda e: e[f"{gateway_path}/workspaces/default/aliases"]["value"].append({"name": "sneaky", "properties": {"backendModels": []}})),

@@ -140,7 +140,7 @@ resource account 'Microsoft.CognitiveServices/accounts@2026-09-01' = {
   }
 }
 
-// The default guardrail of the models (Microsoft.DefaultV2) with the two Prompt Shields that an agent that reads tool results needs, both blocking:
+// The default guardrail of the models (Microsoft.DefaultV2) with the two Prompt Shields that an agent that reads tool results needs, both blocking (and, besides them, every filter that the audit initiative asks for: the block at contentFilters):
 // user prompt attacks (Jailbreak) on the user input, and indirect attacks (instructions hidden in text that the agent reads) on the user input and
 // on the tool results (Prompt, and PostToolCall for agents). Tool response scanning is a preview feature of the Agent Service, and Learn lists the
 // tools that support it (Azure AI Search, Azure Functions, OpenAPI and others): it may not apply to the function tools that the cases app runs itself.
@@ -153,9 +153,28 @@ resource guardrail 'Microsoft.CognitiveServices/accounts/raiPolicies@2026-09-01'
   properties: {
     basePolicyName: 'Microsoft.DefaultV2'
     mode: 'Blocking'
+    // The preview initiative "Guardrail for Cognitive Services Deployments" (the audit assignment of environment/governance/main.bicep) looks for these filters by name and source, and its
+    // policies read only the filters that this guardrail names itself, not those that it takes from Microsoft.DefaultV2: with the three Prompt Shields alone the drift check found nine of its
+    // controls unmet. The names, the sources and the severity range are the initiative's (Azure/azure-policy, built-in policy set 5207647b-3e83-4e28-b836-c382cb5e2a2e); it takes Medium or High
+    // for Hate, Sexual, Violence and Selfharm, and Medium is written here. Indirect Attack at PostToolCall is ours: the initiative has no control for it.
+    // Not tried against the service yet: whether the Agent Service takes Indirect Attack Spotlighting at Prompt, and the other filters at these sources, with blocking. tools/foundry-check.py reads
+    // every one of them back after the deploy (REQUIRED_FILTERS there is this list, and a test holds the two together), and the run fails when one is not as written here.
     contentFilters: [
+      { name: 'Hate', source: 'Prompt', enabled: true, blocking: true, severityThreshold: 'Medium' }
+      { name: 'Hate', source: 'Completion', enabled: true, blocking: true, severityThreshold: 'Medium' }
+      { name: 'Sexual', source: 'Prompt', enabled: true, blocking: true, severityThreshold: 'Medium' }
+      { name: 'Sexual', source: 'Completion', enabled: true, blocking: true, severityThreshold: 'Medium' }
+      { name: 'Violence', source: 'Prompt', enabled: true, blocking: true, severityThreshold: 'Medium' }
+      { name: 'Violence', source: 'Completion', enabled: true, blocking: true, severityThreshold: 'Medium' }
+      { name: 'Selfharm', source: 'Prompt', enabled: true, blocking: true, severityThreshold: 'Medium' }
+      { name: 'Selfharm', source: 'Completion', enabled: true, blocking: true, severityThreshold: 'Medium' }
+      { name: 'Profanity', source: 'Prompt', enabled: true, blocking: true }
+      { name: 'Profanity', source: 'Completion', enabled: true, blocking: true }
+      { name: 'Protected Material Code', source: 'Completion', enabled: true, blocking: true }
+      { name: 'Protected Material Text', source: 'Completion', enabled: true, blocking: true }
       { name: 'Jailbreak', source: 'Prompt', enabled: true, blocking: true }
       { name: 'Indirect Attack', source: 'Prompt', enabled: true, blocking: true }
+      { name: 'Indirect Attack Spotlighting', source: 'Prompt', enabled: true, blocking: true }
       { name: 'Indirect Attack', source: 'PostToolCall', enabled: true, blocking: true }
     ]
   }

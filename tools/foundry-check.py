@@ -14,7 +14,7 @@ for each thing that differs:
   - its project: there, with an identity of its own, and an endpoint that is reported and is the one that the cases app is given;
   - its model deployments: every model of environment/models.json, with its version, its deployment type and its capacity (`agentCapacity` of the model, which is the
     capacity of this resource and not the one of the model account), and the guardrail;
-  - the guardrail: there, with the Prompt Shields that the agents need (Jailbreak and Indirect Attack on the user input, Indirect Attack on tool results), each blocking;
+  - the guardrail: there, with every filter of REQUIRED_FILTERS (the harm filters from the severity Medium, profanity, protected material and the Prompt Shields of the agents), each on and blocking;
   - the connection of the project to Application Insights: there, and with an identity and no key;
   - only with --ai-gateway-host and --connection (the switch of the agents' route through the AI Gateway is on, docs/proposals/08-ai-gateway.md, step 2): the connection of the project to the
     gateway, read with a GET of its own and held to what the template writes: the category ApiManagement, the authentication ProjectManagedIdentity (the project's own identity), the audience
@@ -48,8 +48,22 @@ TIMEOUT_SECONDS = 120
 MAX_PAGES = 20
 # A connection that sends traces with an identity. The portal calls it "Project managed identity"; the template writes ProjectManagedIdentity.
 ENTRA_AUTH_TYPES = ("ProjectManagedIdentity", "AAD", "ManagedIdentity")
-# What the guardrail must hold: (name, source) of a Prompt Shield, each blocking.
-SHIELDS = (("Jailbreak", "Prompt"), ("Indirect Attack", "Prompt"), ("Indirect Attack", "PostToolCall"))
+# What the guardrail must hold, one entry per content filter: (name, source, severity). Each must be in the policy, on and blocking, and where a severity is given the threshold must be that one.
+# This is the one definition: tools/drift-check.py loads it, and environment/foundry/main.bicep declares exactly these filters (a test holds the two together). The names and sources are the ones that the
+# audit initiative "[Preview]: Guardrail for Cognitive Services Deployments" looks for (its policies are in Azure/azure-policy, built-in-policies/policyDefinitions/Cognitive Services); it takes the severity
+# Medium or High for the harm filters and the template holds Medium. The Prompt Shields that the agents need are Jailbreak and Indirect Attack at Prompt and Indirect Attack at PostToolCall (the tool
+# results, which the initiative does not ask for); Indirect Attack Spotlighting at Prompt is the initiative's own.
+HARM_SEVERITY = "Medium"
+REQUIRED_FILTERS = (
+    ("Hate", "Prompt", HARM_SEVERITY), ("Hate", "Completion", HARM_SEVERITY),
+    ("Sexual", "Prompt", HARM_SEVERITY), ("Sexual", "Completion", HARM_SEVERITY),
+    ("Violence", "Prompt", HARM_SEVERITY), ("Violence", "Completion", HARM_SEVERITY),
+    ("Selfharm", "Prompt", HARM_SEVERITY), ("Selfharm", "Completion", HARM_SEVERITY),
+    ("Profanity", "Prompt", None), ("Profanity", "Completion", None),
+    ("Protected Material Code", "Completion", None), ("Protected Material Text", "Completion", None),
+    ("Jailbreak", "Prompt", None), ("Indirect Attack", "Prompt", None), ("Indirect Attack Spotlighting", "Prompt", None),
+    ("Indirect Attack", "PostToolCall", None),
+)
 # The connection to the AI Gateway (environment/foundry/main.bicep): the audience of the gateway's tokens, the base of its OpenAI route, and the host names that the service gives a gateway.
 GATEWAY_AUDIENCE = "https://azure-api.net/aigateway"
 GATEWAY_PATH = "/default/models/openai/v1"
@@ -140,6 +154,41 @@ def plain(value: object, limit: int = 60) -> str:
     """A value of an answer as it may be printed: letters, digits and . _ : / - only, cut, and never two colons in a row. Nothing else of an answer is ever printed."""
     text = re.sub(r"[^A-Za-z0-9._:/ -]", "?", "" if value is None else str(value)).replace("::", ": :")
     return text if len(text) <= limit else text[: limit - 3] + "..."
+
+
+def wrong_filters(filters: object) -> list[tuple[str, str, str]]:
+    """The required filters that the guardrail's content filters do not hold, as (name, source, reason); none when it holds them all. Azure may return the filters of the base policy beside the guardrail's
+    own, so every entry that names a filter at a source is held to it: one that is off, not blocking or at another severity is a failure even when another entry for the same filter is right."""
+    entries = [f for f in filters if isinstance(f, dict)] if isinstance(filters, list) else []
+    wrong = []
+    for name, source, severity in REQUIRED_FILTERS:
+        named = [f for f in entries if f.get("name") == name and f.get("source") == source]
+        if not named:
+            reason = "not in the policy"
+        elif not all(f.get("enabled") is True for f in named):
+            reason = "not enabled"
+        elif not all(f.get("blocking") is True for f in named):
+            reason = "not blocking"
+        elif severity and not all(f.get("severityThreshold") == severity for f in named):
+            seen = sorted({plain(f.get("severityThreshold")) or "not set" for f in named})
+            reason = f"severity {' and '.join(seen)}, not {severity}"
+        else:
+            continue
+        wrong.append((name, source, reason))
+    return wrong
+
+
+def blocked_in_words() -> str:
+    """What REQUIRED_FILTERS makes the guardrail block, as plain words for a PASS text: the filters that share their sources and severity, each group once."""
+    groups: dict[tuple[tuple[str, ...], str | None], list[str]] = {}
+    for name in dict.fromkeys(n for n, _, _ in REQUIRED_FILTERS):
+        rows = [(source, severity) for n, source, severity in REQUIRED_FILTERS if n == name]
+        groups.setdefault((tuple(source for source, _ in rows), rows[0][1]), []).append(name)
+
+    def listed(items: list[str]) -> str:
+        return items[0] if len(items) == 1 else f"{', '.join(items[:-1])} and {items[-1]}"
+
+    return "; ".join(f"{listed(names)} at {listed(list(sources))}" + (f" from the severity {severity}" if severity else "") for (sources, severity), names in groups.items())
 
 
 def gateway_connection(document: dict, host: str, connection: str, models: list[dict]) -> list[tuple[bool, str]]:
@@ -281,12 +330,12 @@ def read_back(az: Runner, subscription: str, group: str, account: str, project: 
 
     document = fetch(f"The guardrail {guardrail}", f"{resource}/raiPolicies/{guardrail}")
     if document is not None:
-        filters = (document.get("properties") or {}).get("contentFilters") or []
-        for name, source in SHIELDS:
-            # Azure returns the whole policy, the filters of its base policy included: the shield is there when the policy names it, and every entry that names it is on and blocking.
-            named = [f for f in filters if isinstance(f, dict) and f.get("name") == name and f.get("source") == source]
-            ok = bool(named) and all(f.get("enabled") is True and f.get("blocking") is True for f in named)
-            say(ok, f"The guardrail blocks {name} at {source}" if ok else f"The guardrail does not block {name} at {source}")
+        wrong = {(name, source): reason for name, source, reason in wrong_filters((document.get("properties") or {}).get("contentFilters"))}
+        for name, source, severity in REQUIRED_FILTERS:
+            if (name, source) in wrong:
+                say(False, f"The guardrail does not block {name} at {source}: {wrong[(name, source)]}")
+            else:
+                say(True, f"The guardrail blocks {name} at {source}" + (f" from the severity {severity}" if severity else ""))
 
     items = fetch(f"The connections of the project {project}", f"{resource}/projects/{project}/connections", pages=True)
     if items is not None:

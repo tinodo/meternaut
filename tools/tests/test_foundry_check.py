@@ -2,6 +2,7 @@ import contextlib
 import copy
 import importlib.util
 import io
+import itertools
 import json
 import os
 import re
@@ -26,6 +27,18 @@ PROJECT = "meternaut"
 GUARDRAIL = "meternaut-agents"
 ENDPOINT = f"https://{ACCOUNT}.services.ai.azure.com/api/projects/{PROJECT}"
 PRIVATE_ENDPOINT = f"pe-{ACCOUNT}"
+# What the guardrail must hold, written out here on purpose and not taken from the tool: a list in the tool that shrank would not show otherwise. (name, source, severity)
+FILTERS = (
+    ("Hate", "Prompt", "Medium"), ("Hate", "Completion", "Medium"), ("Sexual", "Prompt", "Medium"), ("Sexual", "Completion", "Medium"),
+    ("Violence", "Prompt", "Medium"), ("Violence", "Completion", "Medium"), ("Selfharm", "Prompt", "Medium"), ("Selfharm", "Completion", "Medium"),
+    ("Profanity", "Prompt", None), ("Profanity", "Completion", None), ("Protected Material Code", "Completion", None), ("Protected Material Text", "Completion", None),
+    ("Jailbreak", "Prompt", None), ("Indirect Attack", "Prompt", None), ("Indirect Attack Spotlighting", "Prompt", None), ("Indirect Attack", "PostToolCall", None),
+)
+
+
+def entry(name, source, severity=None, **extra):
+    """One content filter as Azure returns it."""
+    return {"name": name, "source": source, "enabled": True, "blocking": True, **({"severityThreshold": severity} if severity else {}), **extra}
 
 
 def good():
@@ -38,10 +51,7 @@ def good():
         f"/projects/{PROJECT}": {"identity": {"principalId": "q"}, "properties": {"endpoints": {"AI Foundry API": ENDPOINT}}},
         "/deployments": {"value": [{"name": m["name"], "sku": {"name": m["sku"], "capacity": m.get("agentCapacity", m["capacity"])},
                                     "properties": {"model": {"format": "OpenAI", "name": m["name"], "version": m["version"]}, "raiPolicyName": GUARDRAIL}} for m in MODELS]},
-        f"/raiPolicies/{GUARDRAIL}": {"properties": {"contentFilters": [
-            {"name": "Jailbreak", "source": "Prompt", "enabled": True, "blocking": True},
-            {"name": "Indirect Attack", "source": "Prompt", "enabled": True, "blocking": True},
-            {"name": "Indirect Attack", "source": "PostToolCall", "enabled": True, "blocking": True}]}},
+        f"/raiPolicies/{GUARDRAIL}": {"properties": {"contentFilters": [entry(n, s, v) for n, s, v in FILTERS]}},
         f"/projects/{PROJECT}/connections": {"value": [{"name": "appi-meternaut", "properties": {"category": "AppInsights", "authType": "ProjectManagedIdentity"}}]},
     }
 
@@ -95,9 +105,11 @@ class ReadBack(unittest.TestCase):
         text = "\n".join(t for _, t in found)
         for words in ("public network access is Disabled", "local authentication is off", "project management is on", "made and approved", "with an identity of its own",
                       "is the one that the cases app is given", f"The deployment {MODELS[0]['name']}", f"The deployment {MODELS[1]['name']}",
-                      "blocks Jailbreak at Prompt", "blocks Indirect Attack at PostToolCall", "traces to Application Insights with its identity"):
+                      "blocks Jailbreak at Prompt", "blocks Indirect Attack at PostToolCall", "blocks Indirect Attack Spotlighting at Prompt", "blocks Hate at Prompt from the severity Medium",
+                      "blocks Selfharm at Completion from the severity Medium", "blocks Profanity at Completion", "blocks Protected Material Code at Completion",
+                      "traces to Application Insights with its identity"):
             self.assertIn(words, text)
-        self.assertEqual(len(found), 5 + 1 + 2 + len(MODELS) + 3 + 1)
+        self.assertEqual(len(found), 5 + 1 + 2 + len(MODELS) + 16 + 1)
 
     def test_only_reads_are_made_and_no_key_is_asked_for(self):
         _, az = check()
@@ -219,44 +231,62 @@ class ReadBack(unittest.TestCase):
         for model in MODELS:
             self.assertIn(f"{model.get('agentCapacity', model['capacity'])} thousand tokens a minute", " ".join(text for _, text in found))
 
-    def test_the_two_shields_of_the_user_input_are_among_the_ones_that_are_read(self):
-        self.assertIn(("Jailbreak", "Prompt"), fc.SHIELDS)
-        self.assertIn(("Indirect Attack", "Prompt"), fc.SHIELDS)
-        self.assertIn(("Indirect Attack", "PostToolCall"), fc.SHIELDS)
-        self.assertEqual(len(fc.SHIELDS), 3, "nothing else is required of the guardrail")
+    def test_the_guardrail_must_hold_the_filters_of_the_audit_initiative_and_the_prompt_shields_of_the_agents_and_none_is_dropped(self):
+        self.assertEqual(fc.REQUIRED_FILTERS, FILTERS)
+        self.assertEqual(len({(name, source) for name, source, _ in FILTERS}), 16, "one entry for each name at each source")
+        for name, _, severity in FILTERS:
+            self.assertEqual(severity, "Medium" if name in ("Hate", "Sexual", "Violence", "Selfharm") else None, name)
+        for shield in (("Jailbreak", "Prompt"), ("Indirect Attack", "Prompt"), ("Indirect Attack", "PostToolCall")):
+            self.assertIn(shield, {(name, source) for name, source, _ in fc.REQUIRED_FILTERS}, "the Prompt Shields of the agents stay whatever else is asked")
+
+    def test_the_words_of_a_pass_name_every_filter_by_what_it_blocks(self):
+        self.assertEqual(fc.blocked_in_words(), "Hate, Sexual, Violence and Selfharm at Prompt and Completion from the severity Medium; Profanity at Prompt and Completion; "
+                                                "Protected Material Code and Protected Material Text at Completion; Jailbreak and Indirect Attack Spotlighting at Prompt; Indirect Attack at Prompt and PostToolCall")
 
     def test_a_policy_as_azure_returns_it_with_the_filters_of_its_base_policy_passes_in_whatever_order(self):
-        base = [{"name": name, "severityThreshold": "Medium", "blocking": True, "enabled": True, "source": source} for name in ("Hate", "Sexual", "Selfharm", "Violence")
-                for source in ("Prompt", "Completion")]
-        base += [{"name": "Protected Material Text", "blocking": False, "enabled": True, "source": "Completion"},
-                 {"name": "Jailbreak", "blocking": False, "enabled": False, "source": "Completion"},
-                 {"name": "Task Adherence", "blocking": False, "enabled": False, "source": "PreToolCall"}]
-        ours = [{"name": "Jailbreak", "source": "Prompt", "enabled": True, "blocking": True}, {"name": "Indirect Attack", "source": "Prompt", "enabled": True, "blocking": True},
-                {"name": "Indirect Attack", "source": "PostToolCall", "enabled": True, "blocking": True}]
-        for filters in (base + ours, ours + base, [base[0], ours[2], base[1], ours[0], *base[2:], ours[1]]):
+        # entries of the base policy that ours do not name, and two that say the same as ours
+        base = [{"name": "Jailbreak", "blocking": False, "enabled": False, "source": "Completion"}, {"name": "Task Adherence", "blocking": False, "enabled": False, "source": "PreToolCall"},
+                entry("Hate", "Prompt", "Medium"), entry("Violence", "Completion", "Medium")]
+        ours = [entry(n, s, v) for n, s, v in FILTERS]
+        for filters in (base + ours, ours + base, ours[::-1] + base, [f for pair in itertools.zip_longest(ours, base) for f in pair if f]):
             policy = {"name": GUARDRAIL, "properties": {"basePolicyName": "Microsoft.DefaultV2", "mode": "Blocking", "contentFilters": filters}}
             found, _ = check(changed(f"/raiPolicies/{GUARDRAIL}", lambda d: d.update(policy)))
             self.assertEqual(failures(found), [])
 
-    def test_an_entry_that_names_a_shield_and_does_not_block_is_a_failure_even_when_another_entry_for_it_does(self):
+    def test_an_entry_that_names_a_filter_and_does_not_block_is_a_failure_even_when_another_entry_for_it_does(self):
         path = f"/raiPolicies/{GUARDRAIL}"
-        for index, (name, source) in enumerate(fc.SHIELDS):
-            for how, extra in (("not blocking", {"blocking": False}), ("not enabled", {"enabled": False}), ("blocking missing", {"blocking": None})):
-                document = changed(path, lambda d, e=extra, n=name, s=source: d["properties"]["contentFilters"].insert(0, {"name": n, "source": s, "enabled": True, "blocking": True, **e}))
+        for name, source, severity in FILTERS:
+            for how, extra, reason in (("not blocking", {"blocking": False}, "not blocking"), ("not enabled", {"enabled": False}, "not enabled"), ("blocking missing", {"blocking": None}, "not blocking")):
+                document = changed(path, lambda d, e=extra, n=name, s=source, v=severity: d["properties"]["contentFilters"].insert(0, entry(n, s, v, **e)))
                 found, _ = check(document)
-                self.assertEqual(failures(found), [f"The guardrail does not block {name} at {source}"], f"{name} at {source}: {how}")
+                self.assertEqual(failures(found), [f"The guardrail does not block {name} at {source}: {reason}"], f"{name} at {source}: {how}")
 
-    def test_the_guardrail_must_block_the_three_shields_it_is_for(self):
+    def test_every_filter_that_the_guardrail_must_hold_is_a_failure_when_it_is_missing_off_not_blocking_at_another_source_or_at_another_severity(self):
         path = f"/raiPolicies/{GUARDRAIL}"
-        for index, label in enumerate(("Jailbreak at Prompt", "Indirect Attack at Prompt", "Indirect Attack at PostToolCall")):
-            for how, change in (("missing", lambda d, i=index: d["properties"]["contentFilters"].pop(i)),
-                                ("not blocking", lambda d, i=index: d["properties"]["contentFilters"][i].update(blocking=False)),
-                                ("not enabled", lambda d, i=index: d["properties"]["contentFilters"][i].update(enabled=False)),
-                                ("another source", lambda d, i=index: d["properties"]["contentFilters"][i].update(source="Completion"))):
+        for index, (name, source, severity) in enumerate(FILTERS):
+            cases = [("missing", lambda d, i=index: d["properties"]["contentFilters"].pop(i), "not in the policy"),
+                     ("not blocking", lambda d, i=index: d["properties"]["contentFilters"][i].update(blocking=False), "not blocking"),
+                     ("not enabled", lambda d, i=index: d["properties"]["contentFilters"][i].update(enabled=False), "not enabled"),
+                     ("another source", lambda d, i=index: d["properties"]["contentFilters"][i].update(source="PreToolCall"), "not in the policy")]
+            if severity:
+                cases += [("a lower severity", lambda d, i=index: d["properties"]["contentFilters"][i].update(severityThreshold="Low"), "severity Low, not Medium"),
+                          ("a higher severity", lambda d, i=index: d["properties"]["contentFilters"][i].update(severityThreshold="High"), "severity High, not Medium"),
+                          ("no severity", lambda d, i=index: d["properties"]["contentFilters"][i].pop("severityThreshold"), "severity not set, not Medium")]
+            for how, change, reason in cases:
                 found, _ = check(changed(path, change))
-                self.assertEqual(failures(found), [f"The guardrail does not block {label}"], f"{label}: {how}")
+                self.assertEqual(failures(found), [f"The guardrail does not block {name} at {source}: {reason}"], f"{name} at {source}: {how}")
         found, _ = check(changed(path, lambda d: d["properties"].pop("contentFilters")))
-        self.assertEqual(len(failures(found)), 3)
+        self.assertEqual(len(failures(found)), 16)
+
+    def test_a_severity_is_judged_only_where_the_template_gives_one_and_what_azure_says_of_it_is_printed_plain(self):
+        path = f"/raiPolicies/{GUARDRAIL}"
+        found, _ = check(changed(path, lambda d: [f.update(severityThreshold="High") for f in d["properties"]["contentFilters"] if f["name"] in ("Jailbreak", "Profanity")]))
+        self.assertEqual(failures(found), [])
+        found, _ = check(changed(path, lambda d: d["properties"]["contentFilters"][0].update(severityThreshold="<script>alert(1)</script>" + "x" * 100)))
+        (text,) = failures(found)
+        self.assertTrue(text.startswith("The guardrail does not block Hate at Prompt: severity "), text)
+        self.assertNotRegex(text, r"[<>()]")
+        self.assertLess(len(text), 160)
 
     def test_the_connection_to_application_insights_must_exist_once_and_use_an_identity(self):
         path = f"/projects/{PROJECT}/connections"
@@ -276,7 +306,11 @@ class ReadBack(unittest.TestCase):
         template = (ROOT / "environment" / "foundry" / "main.bicep").read_text(encoding="utf-8")
         self.assertEqual(set(re.findall(r"'Microsoft\.CognitiveServices/[A-Za-z/]+@([0-9-]+)'", template)), {fc.API})
         self.assertIn(f"'Microsoft.Network/privateEndpoints@{fc.NETWORK_API}'", template)
-        self.assertEqual(sorted(fc.SHIELDS), sorted((n, s) for n, s in re.findall(r"\{ name: '([A-Za-z ]+)', source: '(\w+)', enabled: true, blocking: true \}", template)))
+        block = re.search(r"contentFilters: \[\n(.*?)\n    \]", template, re.S).group(1)
+        declared = [(name, source, severity or None) for name, source, severity in
+                    re.findall(r"\{ name: '([A-Za-z ]+)', source: '(\w+)', enabled: true, blocking: true(?:, severityThreshold: '(\w+)')? \}", block)]
+        self.assertEqual(declared, list(fc.REQUIRED_FILTERS), "the template declares the filters that the check reads back, in the same order")
+        self.assertEqual((block.count("{ name:"), template.count("{ name:")), (16, 16), "every filter is declared in the one block, in the one form")
         for word in fc.ENTRA_AUTH_TYPES[:1]:
             self.assertIn(f"authType: '{word}'", template)
 
@@ -295,7 +329,7 @@ class Main(unittest.TestCase):
         code, out, err = self.run_main()
         self.assertEqual((code, err), (0, ""))
         self.assertNotIn("FAILED", out)
-        self.assertEqual(len(out.splitlines()), 5 + 1 + 2 + len(MODELS) + 3 + 1, "the resource, its endpoint, its project, its models, the shields and the connection")
+        self.assertEqual(len(out.splitlines()), 5 + 1 + 2 + len(MODELS) + 16 + 1, "the resource, its endpoint, its project, its models, the filters of the guardrail and the connection")
 
     def test_a_difference_exits_1_names_it_and_says_that_nothing_is_repaired(self):
         code, out, err = self.run_main(changed(f"/accounts/{ACCOUNT}", lambda d: d["properties"].update(publicNetworkAccess="Enabled")))

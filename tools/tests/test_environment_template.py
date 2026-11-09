@@ -1633,14 +1633,24 @@ class Foundry(unittest.TestCase):
         self.assertRegex(self.code, r"(?m)^param models array$")
         self.assertNotIn("Microsoft.DefaultV2", mine)
 
-    def test_the_guardrail_is_the_default_one_with_the_prompt_shields_that_an_agent_that_reads_tool_results_needs_all_blocking(self):
+    def test_the_guardrail_is_the_default_one_with_every_filter_of_the_audit_initiative_and_the_prompt_shields_of_the_agents_all_blocking_in_one_block(self):
         body = self.found["guardrail"][1]
         self.assertIn("basePolicyName: 'Microsoft.DefaultV2'", body)
         self.assertIn("mode: 'Blocking'", body)
-        filters = re.findall(r"\{ name: '([A-Za-z ]+)', source: '(\w+)', enabled: (\w+), blocking: (\w+) \}", body)
-        self.assertEqual(filters, [("Jailbreak", "Prompt", "true", "true"), ("Indirect Attack", "Prompt", "true", "true"), ("Indirect Attack", "PostToolCall", "true", "true")])
-        self.assertEqual(body.count("{ name:"), 3, "no other control, and none that annotates only")
-        for word in ("blocking: false", "enabled: false", "severityThreshold", "customBlocklists", "safetyProviders", "egressPolicy"):
+        filters = re.findall(r"\{ name: '([A-Za-z ]+)', source: '(\w+)', enabled: (\w+), blocking: (\w+)(?:, severityThreshold: '(\w+)')? \}", body)
+        harm = ("Hate", "Sexual", "Violence", "Selfharm")
+        self.assertEqual(filters, [(name, source, "true", "true", "Medium" if name in harm else "") for name, source in (
+            [(name, source) for name in harm for source in ("Prompt", "Completion")]
+            + [("Profanity", "Prompt"), ("Profanity", "Completion"), ("Protected Material Code", "Completion"), ("Protected Material Text", "Completion"),
+               ("Jailbreak", "Prompt"), ("Indirect Attack", "Prompt"), ("Indirect Attack Spotlighting", "Prompt"), ("Indirect Attack", "PostToolCall")])])
+        self.assertEqual(body.count("{ name:"), 16, "no filter in another form, and none that annotates only")
+        self.assertEqual(body.count("severityThreshold:"), 8, "a severity only on the four harm categories, at both sources")
+        block = re.search(r"contentFilters: \[\n(.*?)\n    \]", body, re.S).group(1)
+        self.assertEqual(block.count("{ name:"), 16, "one block")
+        self.assertGreaterEqual(len(re.findall(r"(?m)^    //", body)), 4, "the block has its comment: why it is there and what was not tried")
+        for words in ("Guardrail for Cognitive Services Deployments", "names itself", "Not tried against the service yet", "Indirect Attack Spotlighting", "tools/foundry-check.py"):
+            self.assertIn(words, body, words)
+        for word in ("blocking: false", "enabled: false", "customBlocklists", "safetyProviders", "egressPolicy"):
             self.assertNotIn(word, body, word)
         self.assertRegex(self.code, r"(?m)^param guardrailName string = 'meternaut-agents'$")
 
@@ -2095,7 +2105,8 @@ class FoundryHandStep(unittest.TestCase):
 
     def test_the_section_says_what_the_read_back_checks_including_the_endpoint_the_pages_and_the_time_limit(self):
         for words in ("the project reports an endpoint and it is the address that the cases app is given", "(a list is read to its last page)",
-                      "Jailbreak and Indirect Attack on the user input, Indirect Attack on tool results", "No read waits longer than two minutes",
+                      "the guardrail holds each of its sixteen filters, on and blocking", "from the severity Medium", "Jailbreak and Indirect Attack on the user input, Indirect Attack on tool results",
+                      "No read waits longer than two minutes",
                       "fails the run with a message that names the request, and nothing after it is read"):
             self.assertIn(words, self.section, words)
 
